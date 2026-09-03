@@ -2,7 +2,8 @@
 
 import json
 import os
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
+from contextlib import AbstractAsyncContextManager
 from typing import Any
 
 from sqlalchemy import text
@@ -37,7 +38,14 @@ elif _db_url.startswith("postgresql+psycopg2://"):
 # env var BEFORE any app import. Production keeps the default QueuePool: one
 # process, one loop, one pool.
 _engine_kwargs: dict[str, Any] = (
-    {"poolclass": NullPool} if os.environ.get("CHEESEX_TEST_NULLPOOL") else {}
+    {"poolclass": NullPool}
+    if os.environ.get("CHEESEX_TEST_NULLPOOL")
+    else {
+        "pool_size": settings.db_pool_size,
+        "max_overflow": settings.db_max_overflow,
+        "pool_timeout": settings.db_pool_timeout_s,
+        "pool_pre_ping": settings.db_pool_pre_ping,
+    }
 )
 
 
@@ -60,9 +68,15 @@ engine = create_async_engine(
 )
 async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
+# What every caller actually does with one: `async with sessions() as session`.
+# Spelled as `Callable[[], AsyncSession]` it type-checks against nothing useful,
+# because the thing returned is a context manager, not a session.
+SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
+
 __all__ = [
     "AsyncSession",
     "Base",
+    "SessionFactory",
     "apply_migration_timeouts",
     "async_session_factory",
     "engine",

@@ -6,7 +6,7 @@
 
 **Architecture:** Keep durable state unchanged whenever an external effect is unknown or failed, and make the failure visible to the caller or deployment check. Each finding is isolated on a fresh branch; its regression test is first run against the vulnerable code, then against the fix, followed by the repository check script.
 
-**Tech Stack:** Python 3.13, FastAPI, httpx, Redis, Taskiq, Docker Compose, Bash, pytest, uv.
+**Tech Stack:** Python 3.13, FastAPI, httpx, Redis, Docker Compose, Bash, pytest, uv.
 
 ---
 
@@ -37,7 +37,7 @@
 ### Task 3: Acknowledge notification email only after SMTP success
 
 **Files:**
-- Modify: `backend/app/core/taskiq_tasks.py`
+- Modify: `backend/app/domain/notification/maintenance.py`
 - Modify: `backend/app/core/config.py`
 - Modify: `backend/sample.env`
 - Test: `backend/tests/unit/test_email_queue_task.py`
@@ -47,26 +47,7 @@
 3. Claim each item into a processing list, remove it only after successful delivery, and move failed items back with a bounded retry counter or to a dead-letter list after the configured maximum. Count only successful sends as processed.
 4. Run the focused tests and `bash .claude/scripts/check.sh`, record output, and commit on `fix/audit-email-retry`.
 
-### Task 4: Deploy the Taskiq worker and scheduler with an effect heartbeat
-
-**Files:**
-- Modify: `backend/pyproject.toml`
-- Modify: `backend/uv.lock`
-- Modify: `backend/Dockerfile`
-- Modify: `backend/app/core/taskiq_broker.py`
-- Modify: `backend/app/core/taskiq_tasks.py`
-- Create: `backend/app/core/taskiq_health.py`
-- Modify: `deploy/compose/docker-compose.base.yml`
-- Modify: `deploy/deploy-docker.sh`
-- Create: `deploy/tests/test-taskiq-runtime.sh`
-
-1. Add a deployment regression that imports `worker`, validates the rendered Compose services/commands, and exercises heartbeat freshness. Run it against `origin/main`; expect `ModuleNotFoundError: taskiq_redis` and missing worker/scheduler services.
-2. Use `uv add 'taskiq-redis>=1.2.3,<2.0.0'` so the separate Redis plugin and locks are real. Copy `worker.py` into the production image.
-3. Add `taskiq worker worker:broker` and `taskiq scheduler worker:scheduler` services. Add a minutely heartbeat task executed by the worker and a health command that rejects a missing/stale Redis timestamp, proving scheduler-to-broker-to-worker execution.
-4. Pull/start both services in deployment and require their heartbeat health before `DEPLOY OK`.
-5. Run the regression, Taskiq unit tests, and `bash .claude/scripts/check.sh`; record output and commit on `fix/audit-taskiq-runtime`.
-
-### Task 5: Require both backend and frontend before deploy/drift success
+### Task 4: Require both backend and frontend before deploy/drift success
 
 **Files:**
 - Modify: `deploy/deploy-docker.sh`
@@ -79,7 +60,7 @@
 2. Centralize validation of exactly one backend and frontend container, exact image tag, and healthy status. Make deploy probe both service endpoints before success and make both drift callers use the same predicate.
 3. Add healthy/current compatibility fixtures, run all shell cases and `bash .claude/scripts/check.sh`, record output, and commit on `fix/audit-app-tier-health`.
 
-### Task 6: Retain attachment metadata when object deletion fails
+### Task 5: Retain attachment metadata when object deletion fails
 
 **Files:**
 - Modify: `backend/app/core/storage.py`
@@ -90,7 +71,7 @@
 2. Treat a false storage effect as retryable service unavailability and retain the row. Make local deletion idempotently return success when the file is already absent, while an S3 exception remains failure.
 3. Run failure, success, no-storage-key, and absent-local-object tests plus `bash .claude/scripts/check.sh`; record output and commit on `fix/audit-attachment-delete`.
 
-### Task 7: Complete the machine LLM proxy boundary actually used by a turn
+### Task 6: Complete the machine LLM proxy boundary actually used by a turn
 
 **Files:**
 - Modify: `backend/app/domain/agent/device_provider.py`
@@ -103,7 +84,7 @@
 3. Reverse env precedence so backend proxy identity wins. Add the allowlisted Anthropic proxy route, derive project identity from `scoped_token_claims`, mint/use only that project's virtual gateway key, preserve streaming response semantics, and fail closed when project-key acquisition fails.
 4. Run route/device compatibility tests and `bash .claude/scripts/check.sh`; record output and commit on `fix/audit-machine-llm-proxy`.
 
-### Task 8: Final audit
+### Task 7: Final audit
 
 1. Confirm every branch tip is based directly on `origin/main`, contains exactly one new commit, and has no unrelated tracked changes.
 2. Confirm every entry in `tmp/audit/FIXES.md` contains branch, commit, pre-fix failure output, post-fix output, full check output, and legitimate-caller checks.

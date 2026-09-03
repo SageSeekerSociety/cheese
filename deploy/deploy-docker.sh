@@ -14,6 +14,10 @@
 # Env (with safe defaults baked into the compose file):
 #   BACKEND_ENV_FILE   path to the box's backend/.env   (default in compose)
 #   UPLOADS_HOST_PATH  host dir holding uploads          (default in compose)
+#   VIKING_HOST_PATH   host dir holding the openviking memory tree (created by
+#                      this script if missing; default in compose)
+#   CLAUDE_CACHE_HOST_PATH  host dir holding the claude binaries served to
+#                      enrolling machines (same treatment; default in compose)
 #   PROJECT            compose project name              (default cheese)
 #   DEPLOY_APP_IMAGE_SOURCE  registry (default) or local. In local mode,
 #                      BACKEND_IMAGE and FRONTEND_IMAGE must name existing images.
@@ -60,8 +64,7 @@ CI_POSTGRES_IMAGE="${CI_POSTGRES_IMAGE:-mirror.gcr.io/paradedb/paradedb:v0.18.8-
 CI_REDIS_IMAGE="${CI_REDIS_IMAGE:-mirror.gcr.io/valkey/valkey:8.0.2@sha256:57bcc49c6ade1813ef25206c571b65b66bb0094235ff7fb767941622892297d9}"
 export IMAGE_TAG="$SHA"
 export SANDBOX_IMAGE="${SANDBOX_IMAGE:-ghcr.io/sageseekersociety/cheese/sandbox:$SHA}"
-export TMUX_SANDBOX_IMAGE="${TMUX_SANDBOX_IMAGE:-ghcr.io/sageseekersociety/cheese/sandbox-tmux:$SHA}"
-export QUALITY_GATE_IMAGE="${QUALITY_GATE_IMAGE:-$TMUX_SANDBOX_IMAGE}"
+export QUALITY_GATE_IMAGE="${QUALITY_GATE_IMAGE:-$SANDBOX_IMAGE}"
 
 # Optional overlay compose files layered on top of the base (space-separated).
 # Bare names resolve against the committed compose dir; absolute paths pass
@@ -114,10 +117,10 @@ done
 # producing NOTHING: no output, no tools, indistinguishable from a model that
 # never spoke, which is exactly why this cost a full day to find (#316).
 #
-# The backend now rebuilds such a box and says so at boot, but the box loses its
-# tmux session to do it — so this is still worth catching one layer earlier,
-# where someone is actually watching. Warn, never fail: a deploy that refuses to
-# proceed over a config preference is a worse outage than the one it prevents.
+# Restarting a screen to re-sign it costs that topic its conversation — so this
+# is still worth catching one layer earlier, where someone is actually watching.
+# Warn, never fail: a deploy that refuses to proceed over a config preference is
+# a worse outage than the one it prevents.
 #
 # Only greps for the key's presence — the value is a secret and never printed.
 # Not applicable to app-only boxes (prod), which run no sibling containers.
@@ -126,8 +129,8 @@ if [ "$AGENT_RUNTIME_IMAGES_REQUIRED" = true ]; then
   if [ -r "$_envf" ] && ! grep -Eq '^[[:space:]]*SANDBOX_TOKEN=.+' "$_envf"; then
     log "WARNING: SANDBOX_TOKEN is not pinned in $_envf — the scoped-token"
     log "         signing secret is regenerated on every restart, so every"
-    log "         existing sandbox's hook token stops verifying and its box"
-    log "         must be rebuilt (losing that topic's tmux session). Pin it"
+    log "         live screen's hook token stops verifying and the screen must"
+    log "         be restarted (losing that topic's conversation). Pin it"
     log "         (and keep the metering proxy's CHEESE_SCOPED_SECRET equal)."
   fi
 fi
@@ -346,16 +349,10 @@ case "$APP_IMAGE_SOURCE" in
 esac
 
 # Runtime images are launched on demand through docker.sock, so compose cannot
-# pull or retain them for us. Pull both execution paths and run the same minimum
-# binary check a real tmux turn needs BEFORE touching the live app.
+# pull or retain them for us.
 if [ "$AGENT_RUNTIME_IMAGES_REQUIRED" = true ]; then
   log "pulling agent runtime images…"
-  retry_pull "SDK sandbox image pull ($SANDBOX_IMAGE)" docker pull "$SANDBOX_IMAGE"
-  retry_pull "tmux sandbox image pull ($TMUX_SANDBOX_IMAGE)" \
-    docker pull "$TMUX_SANDBOX_IMAGE"
-  docker run --rm --entrypoint sh "$TMUX_SANDBOX_IMAGE" -c \
-    'command -v tmux >/dev/null && command -v ttyd >/dev/null && command -v cheese >/dev/null' \
-    || fail "tmux sandbox smoke test failed: $TMUX_SANDBOX_IMAGE"
+  retry_pull "sandbox image pull ($SANDBOX_IMAGE)" docker pull "$SANDBOX_IMAGE"
 
   # `docker image prune -a` considers an on-demand image unused when no turn is
   # active. Stopped zero-cost containers make the desired runtime images explicit
@@ -371,7 +368,6 @@ if [ "$AGENT_RUNTIME_IMAGES_REQUIRED" = true ]; then
       || fail "could not retain $kind runtime image: $image"
   }
   prepare_image_retainer sandbox "$SANDBOX_IMAGE"
-  prepare_image_retainer tmux "$TMUX_SANDBOX_IMAGE"
 fi
 
 log_disk "after pull"
@@ -381,13 +377,12 @@ log "running DB migrations (alembic upgrade head)…"
 dc run --rm backend sh -c "alembic upgrade head" || fail "migration failed — aborting before swap"
 
 # The backend now runs as the same uid as the sandbox's `node` (1000) so the two
-# stop locking each other out of the shared jj store — see
+# stop locking each other out of the shared git store — see
 # fix-workspace-ownership.sh. Files the old uid (1001) left behind have to change
 # hands once, BEFORE the new backend starts and finds it cannot read them.
 # Idempotent: a marker in each path makes later deploys a no-op.
 # APPHOME matters as much as the workspaces themselves: it is the backend's HOME,
-# and jj keeps its per-repo secure config there (the other half of the
-# `.jj/repo/config-id` pointer).
+# and git reads its global config out of there.
 #
 # ORDER MATTERS, and it is why this block sits here rather than before the
 # migration. Handing 2.2M files to another uid is the one step of this deploy
@@ -398,11 +393,26 @@ dc run --rm backend sh -c "alembic upgrade head" || fail "migration failed — a
 # deploy-dev *after* the trees had already moved and took dev down until the
 # next deploy (run 31466502982). So: last fallible step first, irreversible step
 # last, and nothing between it and `dc up` that can fail.
+VIKING_PATH="${VIKING_HOST_PATH:-/home/nictheboy/cheese-viking}"
+# Create it here, not by letting the bind mount conjure it: a missing source
+# path makes docker create it as root:root, and the backend (uid 1000) then
+# cannot write the memory tree it was just told to keep there. Making it first
+# also puts it in reach of the handover below, which skips paths that do not
+# exist yet.
+mkdir -p "$VIKING_PATH" || fail "cannot create $VIKING_PATH"
+# Same story for the claude binaries the backend serves to the machines it
+# enrols: a cache the container has to be able to write, and that has to
+# outlive the container (see the compose file).
+CLAUDE_CACHE_PATH="${CLAUDE_CACHE_HOST_PATH:-/home/nictheboy/cheese-claude-cache}"
+mkdir -p "$CLAUDE_CACHE_PATH" || fail "cannot create $CLAUDE_CACHE_PATH"
+
 OWNERSHIP_REPORT="$(mktemp)"
 OWNERSHIP_PATHS=(
   "${WORKSPACES_HOST_PATH:-/home/nictheboy/cheese-workspaces}"
   "${UPLOADS_HOST_PATH:-/home/nictheboy/shared/uploads}"
   "${APPHOME_HOST_PATH:-/home/nictheboy/cheese-app-home}"
+  "$VIKING_PATH"
+  "$CLAUDE_CACHE_PATH"
 )
 OWNERSHIP_IMAGE="${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:$SHA}"
 OWNERSHIP_SECRETS="${GIT_CREDENTIALS_FILE:-/dev/null}"
@@ -482,7 +492,6 @@ promote_image_retainer() {
 }
 if [ "$AGENT_RUNTIME_IMAGES_REQUIRED" = true ]; then
   promote_image_retainer sandbox
-  promote_image_retainer tmux
 fi
 
 # Reclaim disk from superseded per-commit images: every deploy pulls a fresh
@@ -490,8 +499,8 @@ fi
 # 100% (2026-07-18) and CD wedged for a day. Best-effort, never fails a deploy.
 # NOT time-filtered: under a busy merge day every image is "too new" to prune
 # and the disk fills anyway (happened twice on 2026-07-18/19 — 8 image sets in
-# an afternoon). Keep what running containers and the two explicit runtime-image
-# retainers use; rollback re-pulls superseded images from ghcr.
+# an afternoon). Keep what running containers and the explicit runtime-image
+# retainer uses; rollback re-pulls superseded images from ghcr.
 #
 # Done inline rather than left to the EXIT trap so the reclaim and its disk
 # watermark still print before "DEPLOY OK"; clearing RECLAIM_PENDING is what

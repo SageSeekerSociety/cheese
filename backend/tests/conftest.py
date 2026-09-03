@@ -17,7 +17,9 @@ A stub agent keeps tests off the live model.
 import asyncio
 import os
 import re
+import sys
 import time
+import uuid
 from collections.abc import Callable, Iterator
 
 import pytest
@@ -78,14 +80,16 @@ os.environ["CHEESEX_TEST_NULLPOOL"] = "1"
 import app.models  # noqa: F401, E402  (registers all tables on Base.metadata)
 from app.api.deps import get_broker, get_chat_service, get_work_runner  # noqa: E402
 from app.core.db import Base, get_db  # noqa: E402
+from app.core.redis import get_redis_client  # noqa: E402
 from app.core.sandbox_auth import SANDBOX_TOKEN  # noqa: E402
 from app.domain.agent.chat import ChatService  # noqa: E402
-from app.domain.agent.service import (  # noqa: E402
-    AgentDelta,
-    AgentResult,
-    AgentService,
-    AgentUsage,
+from app.domain.agent.compute import ComputePool  # noqa: E402
+from app.domain.agent.harness.claude_code import (  # noqa: E402
+    Channel,
+    ClaudeCodeRuntime,
+    HookRouter,
 )
+from app.domain.agent.harness.launch import LaunchPlan  # noqa: E402
 from app.main import app  # noqa: E402
 
 # Tests always run on the DB memory backend: the openviking backend holds an
@@ -96,6 +100,46 @@ settings.memory_backend = "db"
 # ships it OFF for the conservative dogfood rollout). Same leak class as the
 # memory backend above: the .env value must not decide test behavior.
 settings.authz_enforce_topic_access = True
+# The `client` fixture enters lifespan, which starts every periodic job the
+# platform runs (scheduler/jobs.py). Three of them would act on the test's own
+# data behind its back: the email drain claims whatever a notification test
+# queued and dead-letters it after three tries, the finalizer closes an
+# aggregation window a test may be asserting is still open, and the deadline
+# sweep flips a membership to FAILED. Zero is the same "not on this box" switch
+# a deployment uses.
+settings.notification_email_drain_interval_s = 0
+settings.notification_finalize_interval_s = 0
+settings.task_deadline_sweep_interval_s = 0
+
+
+def _stranded_topics() -> set[str]:
+    """Topics whose work can no longer move, so waiting on it is waiting forever.
+
+    A turn is only ever finished by its own subscription's consumer, running on
+    the loop that subscription was created on. Plenty of tests build their own
+    ``ChatService``, run a turn on the test's loop, and return with hooks still
+    queued — the loop closes, the consumer dies with it, and the turn stays
+    marked in flight in the process-wide broker, which outlives all of it.
+
+    That mark is indistinguishable from a real background turn by count alone,
+    which is why waiting on the count alone used to cost thirty seconds a time.
+    A closed loop is the difference: a consumer on one cannot run again, so
+    whatever it was holding is not in flight, it is abandoned.
+    """
+    from app.domain.agent.harness.claude_code.hooks_substrate import (
+        _RUNTIMES,
+        ClaudeCodeRuntime,
+    )
+
+    stranded = set()
+    for runtime in list(_RUNTIMES):
+        if not isinstance(runtime, ClaudeCodeRuntime):
+            continue
+        for topic_id, subscription in list(runtime._subscriptions.items()):
+            task = subscription.consumer_task
+            if task is not None and task.get_loop().is_closed():
+                stranded.add(str(topic_id))
+    return stranded
 
 
 def wait_work_idle() -> None:
@@ -103,54 +147,239 @@ def wait_work_idle() -> None:
     finish: they run on the TestClient portal loop and write to this worker's DB —
     if a turn is still writing when the next test truncates, the test flakes.
     Returns as soon as they're idle; the generous ceiling only matters under heavy
-    parallel/external load, when a turn can take much longer than usual."""
+    parallel/external load, when a turn can take much longer than usual.
+
+    Abandoned work is skipped rather than waited out — see ``_stranded_topics``.
+    Giving up is no longer SILENT either, and between them those two hid the
+    suite's largest single cost for a long time: a test that stranded a turn paid
+    the whole ceiling here and left no trace but a slower run. The first
+    ``--durations`` report ever taken of this suite had seventeen of its twenty
+    slowest entries in teardown, every one of them at ~30.5s.
+    """
     runner = get_work_runner()
     for _ in range(3000):  # ~30s ceiling; returns early the instant turns drain
-        if runner.active_work_count() == 0:
+        active = set(runner._broker.active_channels())
+        moving = len(runner._tasks) or len(active - _stranded_topics())
+        if not moving:
             return
         time.sleep(0.01)
+    print(
+        f"\n[wait_work_idle] 等满 30 秒还有 {runner.active_work_count()} 份工作没收尾，"
+        "本条测试为此付了 30 秒。留下的："
+        f"{dict(runner._broker._active)}",
+        file=sys.stderr,
+    )
 
 
-class StubAgent(AgentService):
-    """Deterministic agent: streams two deltas then a final result.
+def retire_topic(client: TestClient, topic_id) -> None:
+    """Put down a turn the test left running on purpose.
 
-    Records the last system_prompt so tests can assert memory injection.
+    A few tests drive a session that never reports Stop — that IS the scenario
+    (a host that vanished mid-turn). The turn then stays in flight, correctly,
+    and every one of them pays ``wait_work_idle``'s full ceiling on the way out
+    for a turn nobody is waiting on any more.
+
+    The subscription lives on the TestClient's portal loop, so the drop has to
+    be made there rather than on whatever loop the test itself ran on.
+    """
+    from app.domain.agent.harness.claude_code import drop_topic_subscriptions
+
+    client.portal.call(drop_topic_subscriptions, uuid.UUID(str(topic_id)))
+
+
+class StubChannel(Channel):
+    """A channel with no machine behind it.
+
+    The turn flow tests exercise is the one production runs: the prompt is
+    handed to a session and the reply comes back later through the hook
+    subscription, not through the caller's iterator. So this stub supplies the
+    only thing a real screen supplies — the hooks — and every layer above
+    (assembly, attribution, receipts, turn close) is the real one.
+
+    The four hooks are the vocabulary of a one-message turn. ``UserPromptSubmit``
+    is not decoration: it is the receipt that stamps an injected message
+    consumed, and without it mid-turn deliveries stay pending forever and replay.
     """
 
-    def __init__(self) -> None:
-        super().__init__(model="stub")
+    name = "stub-hooks"
+
+    def __init__(self, **timeouts: float) -> None:
+        # Its own router: the module-global one is shared process-wide, and a
+        # test that inherited another test's sink would read its hooks.
+        self._router = HookRouter()
+        # The runtime this channel is driven by. A channel and its runtime are
+        # two objects in production and one fixture here, so the ~40 tests that
+        # hand a screen around keep handing one thing around.
+        # ``timeouts`` are the watchdog's (idle_suspect_s / hard_ceiling_s /
+        # delivery_timeout_s), so a test about a session that goes quiet does
+        # not have to wait the production fifteen minutes for it.
+        self.runtime = ClaudeCodeRuntime(self, router=self._router, **timeouts)
         self.last_system_prompt: str | None = None
         self.last_resume_session_id: str | None = None
         self.last_prompt: str | None = None
+        self.reply = "Hello world"
+        # Fired the moment the transport actually writes, so a test can assert
+        # what did (and did not) happen before the session was reached.
+        self.on_start: Callable[[], None] | None = None
 
-    async def stream_reply(
+    async def ensure_ready(  # type: ignore[override]
         self,
         *,
-        prompt,
-        system_prompt,
-        cwd,
-        resume_session_id,
-        sandbox=None,
-        allowed_tools=None,
-        **_,
-    ):
-        self.last_system_prompt = system_prompt
-        self.last_resume_session_id = resume_session_id
+        topic_id: uuid.UUID,
+        launch: LaunchPlan,
+        **_: object,
+    ) -> uuid.UUID:
+        self.last_system_prompt = launch.system_prompt
+        self.last_resume_session_id = launch.resume_session_id
+        return topic_id
+
+    async def send_prompt(  # type: ignore[override]
+        self, screen: uuid.UUID, prompt: str
+    ) -> bool:
         self.last_prompt = prompt
-        yield AgentDelta(text="Hello ")
-        yield AgentDelta(text="world")
-        yield AgentResult(
-            text="Hello world",
-            session_id="sess-test-1",
-            usage=AgentUsage(
-                model="stub", input_tokens=10, output_tokens=5, cost_usd=0.001
-            ),
+        if self.on_start is not None:
+            self.on_start()
+        # AFTER this returns, never inside it. `send_prompt` is the transport
+        # write; a screen that answered during it would collapse the whole
+        # reason this contract separates feeding from reading, and would put
+        # the reply ahead of frames the caller has not yielded yet.
+        asyncio.get_running_loop().call_soon(self.emit_turn, screen, prompt, self.reply)
+        return True
+
+    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+        """The hooks a screen emits for one prompt it answered.
+
+        Override this to script a different turn — a tool call between two
+        messages, a subagent, silence. What must not change is the frame: a
+        session announces itself, acknowledges the prompt, and stops. ``Stop``
+        in particular is not optional: it is what closes the turn and publishes
+        ``done``.
+        """
+        self.starts(topic_id)
+        self.acknowledges(topic_id, prompt)
+        self.says(topic_id, reply)
+        self.stops(topic_id, reply)
+
+    # --- the hooks, one method each ----------------------------------------
+
+    def hook(self, topic_id: uuid.UUID, **payload: object) -> None:
+        self._router.push(str(topic_id), dict(payload))
+
+    def starts(self, topic_id: uuid.UUID, session_id: str = "sess-test-1") -> None:
+        self.hook(topic_id, hook_event_name="SessionStart", session_id=session_id)
+
+    def acknowledges(self, topic_id: uuid.UUID, prompt: str) -> None:
+        """UserPromptSubmit — the receipt that stamps an injected message
+        consumed. A session that never emits it leaves every mid-turn delivery
+        pending, and pending messages are replayed (宁可重复不可丢失)."""
+        self.hook(topic_id, hook_event_name="UserPromptSubmit", prompt=prompt)
+
+    def says(self, topic_id: uuid.UUID, text: str) -> None:
+        self.hook(topic_id, hook_event_name="MessageDisplay", delta=text)
+
+    def uses(
+        self,
+        topic_id: uuid.UUID,
+        name: str,
+        *,
+        eid: str | None = None,
+        **tool_input: object,
+    ) -> None:
+        self.hook(
+            topic_id,
+            hook_event_name="PreToolUse",
+            tool_name=name,
+            tool_input=dict(tool_input),
+            _eid=eid,
+        )
+
+    def returns(
+        self,
+        topic_id: uuid.UUID,
+        name: str,
+        response: object,
+        *,
+        eid: str | None = None,
+        **tool_input: object,
+    ) -> None:
+        self.hook(
+            topic_id,
+            hook_event_name="PostToolUse",
+            tool_name=name,
+            tool_response=response,
+            tool_input=dict(tool_input),
+            _eid=eid,
+        )
+
+    def stops(
+        self,
+        topic_id: uuid.UUID,
+        text: str,
+        session_id: str = "sess-test-1",
+        **extra: object,
+    ) -> None:
+        self.hook(
+            topic_id,
+            hook_event_name="Stop",
+            session_id=session_id,
+            last_assistant_message=text,
+            usage={
+                "model": "stub",
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "cost_usd": 0.001,
+            },
+            **extra,
         )
 
 
+# Captured at import: a test that squeezes a production wait patches
+# `asyncio.sleep` on the shared module, and a poller using the patched one
+# never yields — it spins its whole budget without letting the consumer run.
+_REAL_SLEEP = asyncio.sleep
+
+
+async def drain_hooks(screen: StubChannel, topic_id: uuid.UUID) -> None:
+    """Wait until every hook this screen pushed has been consumed.
+
+    Narrower than `settle_turn`, and the right one when the turn is not going
+    to end: it asks whether what the session already said has landed, not
+    whether the session is done saying things.
+    """
+    subscription = screen.runtime._subscriptions.get(topic_id)
+    if subscription is not None:
+        await subscription.sink.queue.join()
+
+
+async def settle_turn(service, topic_id, *, tries: int = 2000) -> None:
+    """Wait until the session's hooks have been consumed and the turn closed.
+
+    `converse()` returns as soon as the prompt is in the session — the reply
+    arrives later, on the subscription. A test that drives the service directly
+    (rather than through the runner and a socket) has to wait for that, the
+    same way a room does.
+    """
+    for _ in range(tries):
+        if not any(t == topic_id for t, _ in service._hook_work):
+            return
+        await _REAL_SLEEP(0.01)
+    raise AssertionError(
+        f"turn on {topic_id} never closed; open work: {list(service._hook_work)}"
+    )
+
+
+def stub_compute(channel: StubChannel | None = None) -> ComputePool:
+    """A pool holding one screen, for the many tests that build a ChatService
+    by hand. Pass the channel when the test asserts against it."""
+    screen = channel or StubChannel()
+    return ComputePool([screen.runtime], screen.name)
+
+
 @pytest.fixture
-def stub_agent() -> StubAgent:
-    return StubAgent()
+def stub_hooks() -> StubChannel:
+    # Per test: its subscriptions and consumer tasks live on the TestClient's
+    # portal loop, which goes away with the client.
+    return StubChannel()
 
 
 @pytest.fixture
@@ -174,8 +403,30 @@ def bearer() -> Callable[[str], dict[str, str]]:
     return _headers
 
 
+@pytest.fixture(autouse=True)
+def _redis_client_per_loop() -> Iterator[None]:
+    """No test may inherit the redis client another test built.
+
+    ``get_redis_client`` is ``@lru_cache``d, and in production that is right —
+    one process, one event loop, one pool. Under pytest every test runs on a
+    fresh loop, so a cached client carries the previous test's dead loop into
+    this one and the first ``await`` on it raises "attached to a different
+    loop". The test that pays is whichever one next touches redis, never the
+    one that cached the client, so the failure arrives as an unrelated 500 in a
+    file that passes in isolation.
+
+    Autouse and here rather than in the files that noticed: a test file that
+    clears the cache for itself buys its own tests immunity and leaves the leak
+    for everyone downstream — which is precisely how this survived a release
+    with one test exposed and fifteen around it green.
+    """
+    get_redis_client.cache_clear()
+    yield
+    get_redis_client.cache_clear()
+
+
 @pytest.fixture
-def client(_pg_schema, stub_agent: StubAgent, tmp_path) -> Iterator[TestClient]:
+def client(_pg_schema, stub_hooks: StubChannel, tmp_path) -> Iterator[TestClient]:
     # Real PostgreSQL (not sqlite): the merged models use PG-native JSONB,
     # Sequences and ENUM types that sqlite's compiler can't render, and the schema
     # is defined by the alembic migrations (create_all can't build the pg ENUMs).
@@ -208,13 +459,18 @@ def client(_pg_schema, stub_agent: StubAgent, tmp_path) -> Iterator[TestClient]:
                 await session.rollback()
                 raise
 
+    chat_service = ChatService(
+        session_factory=test_factory,
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+        compute=ComputePool([stub_hooks.runtime], stub_hooks.name),
+    )
+
     def override_get_chat_service() -> ChatService:
-        return ChatService(
-            session_factory=test_factory,
-            agent=stub_agent,
-            base_system_prompt="你是芝士。",
-            workspace_root=str(tmp_path / "ws"),
-        )
+        # ONE instance, like production's lru_cache. A per-request instance was
+        # harmless while a turn was self-contained; it is not now that the reply
+        # arrives on a subscription owned by the service that started the turn.
+        return chat_service
 
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_chat_service] = override_get_chat_service
@@ -425,11 +681,14 @@ def _pg_schema_gate(request: pytest.FixtureRequest) -> None:
     """Provision the DB schema for the tests that need it — and only those.
 
     ``_pg_schema`` used to be ``autouse=True`` at session scope, which meant a
-    host with no Postgres could not run *any* test, including the ~132 unit files
-    that never touch a database: the session fixture errored during setup and took
-    the whole run down with it. Gating it per-test keeps behaviour identical for
-    DB-backed tests (still built once per session — ``_pg_schema`` is still
-    session-scoped) while letting ``tests/unit/`` run with no server at all.
+    host with no Postgres could not run *any* test, including the great majority
+    of unit files that never touch a database: the session fixture errored during
+    setup and took the whole run down with it. Gating it per-test keeps behaviour
+    identical for DB-backed tests (still built once per session — ``_pg_schema``
+    is still session-scoped) while letting every unit test that asks for nothing
+    run with no server at all. A unit test that DOES name a DB fixture (the turn
+    log lives in Postgres, so the runner's tests do) pays for one; the rest
+    still do not.
     """
     if _needs_db(request):
         request.getfixturevalue("_pg_schema")
@@ -453,7 +712,26 @@ def _pg_schema():
 
 
 @pytest.fixture
-async def python_client(_pg_schema, stub_agent: StubAgent, tmp_path):
+async def db_factory(_pg_schema):
+    """A truncated database and a session factory over it — no app around it.
+
+    ``client`` builds a whole TestClient to arrive at one of these. A test that
+    only seeds and reads rows should not pay for an ASGI app to do it, and
+    saying so in the fixture list is also how ``_pg_schema_gate`` learns this
+    test needs a database at all.
+    """
+    engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+    await _truncate_all(engine)
+    yield async_sessionmaker(engine, expire_on_commit=False)
+    await engine.dispose()
+
+
+@pytest.fixture
+async def python_client(
+    _pg_schema,
+    stub_hooks: StubChannel,
+    tmp_path,
+):
     """Async httpx client bound to the app over ASGI — the async counterpart to
     `client`. Inherited contract/route tests written against the main backend use
     it. Same postgres test DB + truncate isolation + agent seed as `client`, but
@@ -479,13 +757,18 @@ async def python_client(_pg_schema, stub_agent: StubAgent, tmp_path):
                 await session.rollback()
                 raise
 
+    chat_service = ChatService(
+        session_factory=test_factory,
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+        compute=ComputePool([stub_hooks.runtime], stub_hooks.name),
+    )
+
     def override_get_chat_service() -> ChatService:
-        return ChatService(
-            session_factory=test_factory,
-            agent=stub_agent,
-            base_system_prompt="你是芝士。",
-            workspace_root=str(tmp_path / "ws"),
-        )
+        # ONE instance, like production's lru_cache. A per-request instance was
+        # harmless while a turn was self-contained; it is not now that the reply
+        # arrives on a subscription owned by the service that started the turn.
+        return chat_service
 
     # ONE get_db across the whole app (app.db.session re-exports app.core.db's),
     # so a single override moves every route — cheesex and 知是 alike — onto the

@@ -1,6 +1,6 @@
-"""The ``link.Msg`` wire protocol — the frozen cli's control channel (P3).
+"""The ``link.Msg`` wire protocol — the device connector's control channel (P3).
 
-The frozen Go cli (``cli/internal/link/link.go``) speaks a single flat JSON union
+The Go cli (``cli/internal/link/link.go``) speaks a single flat JSON union
 in both directions over one dial-out WebSocket. This module is the Python side of
 that exact contract: ``PROTOCOL_VERSION`` (must equal the cli's ``link.Version``),
 typed constructors for every message the server sends down, and ``LinkMsg`` for
@@ -9,8 +9,9 @@ so it is unit-tested without a socket, and a wire-shape drift is caught by a tes
 rather than in production.
 
 The field names are the Go ``json`` tags verbatim: ``t`` (type), ``sid`` (screen id),
-``v`` (version), ``name``/``value`` (variables), ``id``/``args``/``error`` (rpc),
-``command``/``env``/``screen``/``cols``/``rows``/``source``/``adopt`` (session),
+``v`` (version), ``build``/``target`` (which connector binary said hello),
+``name``/``args``/``id``/``value``/``error`` (rpc),
+``command``/``env``/``screen``/``cols``/``rows``/``adopt`` (session),
 ``data`` (base64 raw screen bytes or one uploaded file), ``path`` (file upload),
 and the exec set
 ``cwd``/``stdin``/``timeout``/``stdout``/``stderr``/``exit``/``truncated``.
@@ -33,6 +34,11 @@ class LinkMsg:
     t: str
     sid: str = ""
     v: int | None = None
+    # `hello` only: the sha256 of the connector's own executable and the
+    # `<os>-<arch>` it was built for. Empty from a connector built before it
+    # announced either — which is the whole point of asking (`connector_build`).
+    build: str = ""
+    target: str = ""
     name: str = ""
     value: Any = None
     id: str = ""
@@ -51,6 +57,8 @@ class LinkMsg:
             t=str(m.get("t", "")),
             sid=str(m.get("sid", "")),
             v=m.get("v"),
+            build=str(m.get("build", "")),
+            target=str(m.get("target", "")),
             name=str(m.get("name", "")),
             value=m.get("value"),
             id=str(m.get("id", "")),
@@ -75,7 +83,7 @@ class LinkMsg:
 
 
 # --- outbound constructors (server → device) -----------------------------------
-# Every dict is a valid link.Msg the frozen cli understands. Optional fields are
+# Every dict is a valid link.Msg the cli understands. Optional fields are
 # omitted (not sent as null) to match the Go `omitempty` tags.
 
 
@@ -90,7 +98,6 @@ def session_create(
     screen_token: str,
     cols: int,
     rows: int,
-    source: str | None = None,
     env: dict[str, str] | None = None,
     adopt: bool = False,
 ) -> dict[str, Any]:
@@ -102,8 +109,6 @@ def session_create(
         "cols": cols,
         "rows": rows,
     }
-    if source is not None:
-        msg["source"] = source
     if env:
         msg["env"] = env
     if adopt:
@@ -115,26 +120,8 @@ def session_close(sid: str) -> dict[str, Any]:
     return {"t": "session.close", "sid": sid}
 
 
-def script_load(sid: str, source: str) -> dict[str, Any]:
-    return {"t": "script.load", "sid": sid, "source": source}
-
-
-def var_set(sid: str, name: str, value: Any) -> dict[str, Any]:
-    return {"t": "var.set", "sid": sid, "name": name, "value": value}
-
-
 def rpc_call(sid: str, call_id: str, name: str, args: list[Any]) -> dict[str, Any]:
     return {"t": "rpc.call", "sid": sid, "id": call_id, "name": name, "args": args}
-
-
-def rpc_result(sid: str, call_id: str, value: Any, error: str = "") -> dict[str, Any]:
-    return {
-        "t": "rpc.result",
-        "sid": sid,
-        "id": call_id,
-        "value": value,
-        "error": error,
-    }
 
 
 def file_put(sid: str, file_id: str, path: str, data: bytes) -> dict[str, Any]:
@@ -193,4 +180,10 @@ def exec_cancel(exec_id: str) -> dict[str, Any]:
 
 
 def update() -> dict[str, Any]:
+    """Tell the device to replace its connector binary and hand off to it.
+
+    Understood by every connector we have ever shipped, which is what makes it
+    the way out of version drift: the machine that is too old to receive a new
+    frame is not too old to receive this one.
+    """
     return {"t": "update"}

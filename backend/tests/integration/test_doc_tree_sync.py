@@ -18,7 +18,10 @@ def _nodes(client, tid: str) -> list[dict]:
 
 def test_doc_edit_builds_node_tree(client):
     tid = _project_and_topic(client)
-    r = client.put(f"/topics/{tid}/doc", json={"content": DOC_V1, "author": "u"})
+    r = client.put(
+        f"/topics/{tid}/doc",
+        json={"content": DOC_V1, "author": "u", "expected_version": 0},
+    )
     assert r.status_code == 200
 
     nodes = _nodes(client, tid)
@@ -41,22 +44,33 @@ def test_doc_edit_builds_node_tree(client):
 
 def test_resetting_same_doc_keeps_node_ids_stable(client):
     tid = _project_and_topic(client)
-    client.put(f"/topics/{tid}/doc", json={"content": DOC_V1, "author": "u"})
+    client.put(
+        f"/topics/{tid}/doc",
+        json={"content": DOC_V1, "author": "u", "expected_version": 0},
+    )
     ids1 = [n["id"] for n in _nodes(client, tid)]
     # Re-set identical markdown — should be a no-op for the tree.
-    client.put(f"/topics/{tid}/doc", json={"content": DOC_V1, "author": "u"})
+    client.put(
+        f"/topics/{tid}/doc",
+        json={"content": DOC_V1, "author": "u", "expected_version": 1},
+    )
     ids2 = [n["id"] for n in _nodes(client, tid)]
     assert ids1 == ids2
 
 
 def test_editing_one_block_preserves_other_node_ids(client):
     tid = _project_and_topic(client)
-    client.put(f"/topics/{tid}/doc", json={"content": DOC_V1, "author": "u"})
+    client.put(
+        f"/topics/{tid}/doc",
+        json={"content": DOC_V1, "author": "u", "expected_version": 0},
+    )
     before = {n["content"]: n["id"] for n in _nodes(client, tid)}
 
     # Change only the paragraph; headings and list are untouched.
     v2 = DOC_V1.replace("搭建原型。", "搭建一个推荐原型。")
-    client.put(f"/topics/{tid}/doc", json={"content": v2, "author": "u"})
+    client.put(
+        f"/topics/{tid}/doc", json={"content": v2, "author": "u", "expected_version": 1}
+    )
     after = {n["content"]: n["id"] for n in _nodes(client, tid)}
 
     for unchanged in ("# 目标", "## 约束", "- 数据脱敏\n- Recall@10"):
@@ -67,6 +81,9 @@ def test_editing_one_block_preserves_other_node_ids(client):
 
 def test_doc_nodes_excluded_from_conversation_timeline(client):
     tid = _project_and_topic(client)
-    client.put(f"/topics/{tid}/doc", json={"content": DOC_V1, "author": "u"})
+    client.put(
+        f"/topics/{tid}/doc",
+        json={"content": DOC_V1, "author": "u", "expected_version": 0},
+    )
     blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
     assert not any(b["kind"] == "doc_node" for b in blocks)

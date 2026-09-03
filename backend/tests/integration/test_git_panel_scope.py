@@ -11,8 +11,10 @@ These tests drive the HTTP endpoints the panel calls.
 import asyncio
 import uuid
 
-from app.domain.topic.repositories import TopicRepository
+from app.domain.agent_session.repositories import AgentSessionRepository
+from app.domain.identity.handles import CHEESE_HANDLE
 from app.domain.workspace import service as ws
+from tests.machine_work import machine_commits
 
 
 def _mkproject(client) -> uuid.UUID:
@@ -27,12 +29,8 @@ def _owner(client) -> dict[str, str]:
 
 
 def _turn(pid: uuid.UUID, tid: uuid.UUID, path: str, content: str, msg: str) -> None:
-    """A turn's edits, snapshotted as the topic's own commit."""
-    wt = ws.topic_worktree(pid, tid)
-    target = wt / path
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(content, encoding="utf-8")
-    ws.snapshot_worktree(pid, tid, message=msg)
+    """A turn's edits, committed and pushed by the machine that made them."""
+    machine_commits(pid, tid, {path: content}, msg)
 
 
 def _log(client, pid, topic=None) -> list[dict]:
@@ -60,10 +58,11 @@ def _seed_session(client, topic_id: uuid.UUID, session_id: str) -> None:
 
     async def _run() -> None:
         async with client.test_factory() as s:
-            repo = TopicRepository(s)
-            topic = await repo.get(topic_id)
-            assert topic is not None
-            await repo.set_session_id(topic, session_id)
+            await AgentSessionRepository(s).save(
+                topic_id=topic_id,
+                agent_handle=CHEESE_HANDLE,
+                resume_token=session_id,
+            )
             await s.commit()
 
     asyncio.run(_run())

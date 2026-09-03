@@ -51,10 +51,9 @@ def api_key_provider(gateway_base: str, key: str, model: str) -> ProviderChoice:
     way through.
 
     A machine used to receive the raw provider key in its environment, in plain
-    sight of anyone on that host — it was visible in a tmux command line — and
-    its spend landed in the invoice under one undifferentiated key. Keeping the
-    credential on the box makes attribution structural rather than a promise the
-    machine has to keep.
+    sight of anyone on that host, and its spend landed in the invoice under one
+    undifferentiated key. Keeping the credential on the box makes attribution
+    structural rather than a promise the machine has to keep.
     """
     return ProviderChoice(
         name="gateway",
@@ -79,11 +78,11 @@ def subscription_provider(
 ) -> ProviderChoice:
     """The subscription, as the container env for a metered sandbox.
 
-    The container holds NO real credential (hard requirement — a leaked machine
+    The machine holds NO real credential (hard requirement — a leaked machine
     credential is a leaked subscription). It ships a fake one, and every request
-    is redirected BY NAME to the metering proxy (``--add-host`` on 443, see
-    TmuxHooksProvider), which rewrites the Authorization to the real token — that
-    token lives only on the backend. So the container env only has to:
+    is redirected to the metering proxy, which rewrites the Authorization to the
+    real token — that token lives only on the backend. So the machine's env only
+    has to:
 
       - trust the proxy's CA (it terminates TLS for api.anthropic.com);
       - NOT carry a stale gateway key — blank, not absent, or the CLI inherits

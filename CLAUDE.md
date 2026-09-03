@@ -36,6 +36,14 @@ mature system pays to protect the users it already has. We do not have them yet,
 so it buys nothing and leaves more to unwind — and each one is a place the next
 reader can mistake for something still in use.
 
+Retiring something means deleting its code, and adopting a replacement means
+deleting what it replaced. Short of that the path stays wired: what nobody can
+select is still what an unconfigured case runs, and a new shape can be
+contracted, documented and never reached while the old call site serves every
+request. Both read as done to anyone checking the surface, which is what makes
+them worth naming — the change is finished when the code that chooses changes,
+so check there and not in the menu, the contract or the doc.
+
 The corollary is that a thing must be judged by what it does now, not by the
 reason it was created. Mechanisms drift away from their purpose while keeping
 their name: a check written after an incident points at where that incident
@@ -45,6 +53,8 @@ before deciding it is worth keeping.
 ## Assume other agents are working right now
 
 Not hypothetically — concurrently, in this repo, on adjacent files. Before starting a fix, look for someone already fixing it in an open PR. Before handing work off, review **every path your change touches**; a cache directory in that list is a stop sign.
+
+So never `git stash`. The stash is one stack for the whole repository, shared by every worktree, and nothing marks which worktree an entry came from — a pop in yours applies somebody else's uncommitted work and drops it from under them, silently, with no error on either side. Commit instead — the worktree you are in is already the second checkout a stash would have bought you, and `git reset --soft HEAD~1` hands the staged state back when you want it.
 
 ## Test behaviour, never the implementation
 

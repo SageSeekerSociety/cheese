@@ -19,6 +19,8 @@ import uuid
 
 from pydantic import BaseModel, Field
 
+from app.domain.agent.platform_notices import SEVERITY_ERROR, WHO_HUMAN
+
 DEDUP_WINDOW_S = 600.0
 MAX_BLOCKS_PER_WINDOW = 30  # per project
 _SEEN_PRUNE_AT = 512
@@ -78,11 +80,17 @@ intake = FrontendErrorIntake()
 
 def event_content(err: FrontendErrorIn) -> str:
     where = f"（{err.page}）" if err.page else ""
-    return f"🐞 前端报错{where}：{err.message}"
+    return f"前端报错{where}：{err.message}"
 
 
 def event_meta(err: FrontendErrorIn) -> dict:
-    meta: dict = {"event_type": "frontend_error"}
+    # 这类事件在房间里是隐藏的 (lib/platformNotice.ts)，但轻重照样随事件走 ——
+    # 读它的下一个消费者不该再去解析那句话。
+    meta: dict = {
+        "event_type": "frontend_error",
+        "severity": SEVERITY_ERROR,
+        "who": WHO_HUMAN,
+    }
     if err.stack:
         meta["stack"] = err.stack
     if err.source:

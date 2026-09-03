@@ -31,12 +31,13 @@ import uuid
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Literal, Protocol
+from typing import Any, Final, Literal, Protocol
 
 import httpx
 
 from app.core.config import settings
 from app.domain.agent.github_app import GitHubAppTokens
+from app.domain.review.pr_signals import ReviewSignal
 
 logger = logging.getLogger(__name__)
 
@@ -84,12 +85,23 @@ class PullRequestStatus:
     #: The PR's OWN head branch (`head.ref`), as GitHub reports it. The poller
     #: re-pushes 芝士's fixes to this branch, and it cannot be derived from the
     #: topic id: the two lanes name it differently (`pr_branch_name` →
-    #: `cheesex/<hex8>` for the personal-token lane, `ws.branch_for_topic` →
+    #: `cheesex/<hex8>` for the personal-token lane, `ws.branch_for_tree` →
     #: `topic/<hex8>` for the App lane). Deriving it pushed App cards' fixes to
     #: a branch no PR was open on — the commit landed, the PR never saw it.
     #: Empty only for a fake/older payload; callers fall back to the derived
     #: name, which is what the personal-token lane always used.
     head_ref: str = ""
+    #: GitHub's `mergeable`. **Three-valued on purpose**: True = git can merge
+    #: it, False = it conflicts with the base, and None = GitHub has not
+    #: finished computing it yet (it does that asynchronously on the first
+    #: read after any push). Only `False` is a conflict — treating None as one
+    #: would announce a conflict on every freshly-pushed PR, and treating it as
+    #: True would silently drop a real one.
+    mergeable: bool | None = None
+    #: How many INLINE review comments the PR carries, from the PR payload
+    #: itself. The poller uses it to decide whether the extra request that
+    #: lists those comments is worth making — most ticks it is 0.
+    review_comment_count: int = 0
 
 
 @dataclass
@@ -325,6 +337,29 @@ class GitHubPrClient(Protocol):
         this set has never reported, and its absence blocks the merge — a
         path-filtered or broken workflow must read as "still waiting", never
         as "nothing failed"."""
+        ...
+
+    async def review_signals(
+        self,
+        *,
+        owner: str,
+        repo: str,
+        number: int,
+        token: str,
+        with_comments: bool = True,
+    ) -> list[ReviewSignal]:
+        """Everything a human said on this PR that 芝士 may have to act on:
+        `CHANGES_REQUESTED` / `COMMENTED` reviews, plus the inline comments
+        when `with_comments` (the caller skips that request when the PR's own
+        payload says it has none).
+
+        Approvals are deliberately NOT returned — an approval asks the agent
+        for nothing, and a card that keeps nudging on one would be spam.
+
+        Never raises for a review it could not read: a poll tick that can't
+        reach the reviews API must still deliver the CI failure it already
+        has, so failures degrade to a short list rather than propagating.
+        """
         ...
 
     async def update_branch(
@@ -781,11 +816,19 @@ class HttpxGitHubPrClient:
             )
         data = resp.json()
         merged = bool(data.get("merged"))
+        mergeable = data.get("mergeable")
+        review_comments = data.get("review_comments")
         return PullRequestStatus(
             head_sha=data["head"]["sha"],
             head_ref=str(data["head"].get("ref") or ""),
             state=str(data.get("state") or ""),
             merged=merged,
+            # Anything that isn't a real bool stays None — "GitHub hasn't said
+            # yet" and "GitHub said no" must not collapse (see the field).
+            mergeable=mergeable if isinstance(mergeable, bool) else None,
+            review_comment_count=(
+                review_comments if isinstance(review_comments, int) else 0
+            ),
             # Gated on `merged` on purpose — see PullRequestStatus's docstring
             # for what this field holds on an unmerged PR.
             merge_commit_sha=(data.get("merge_commit_sha") or None) if merged else None,
@@ -969,6 +1012,53 @@ class HttpxGitHubPrClient:
             if isinstance(run, dict) and run.get("name")
         }
 
+    async def review_signals(
+        self,
+        *,
+        owner: str,
+        repo: str,
+        number: int,
+        token: str,
+        with_comments: bool = True,
+    ) -> list[ReviewSignal]:
+        base = f"{self._api_base}/repos/{owner}/{repo}/pulls/{number}"
+        out: list[ReviewSignal] = []
+        for path, builder in (
+            ("reviews", _review_signal),
+            *((("comments", _review_comment_signal),) if with_comments else ()),
+        ):
+            for item in await self._review_page(f"{base}/{path}", token=token):
+                signal = builder(item)
+                if signal is not None:
+                    out.append(signal)
+        return out
+
+    async def _review_page(self, url: str, *, token: str) -> list[dict]:
+        """One page of a reviews/comments listing, or [] if unreadable.
+
+        Degrading to [] rather than raising is the whole reason this is its
+        own method: the reviews API is the LAST thing a poll tick reads, and a
+        403 on it must not take the CI failure the same tick already found
+        down with it.
+        """
+        try:
+            async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as c:
+                resp = await c.get(
+                    url, headers=self._headers(token), params={"per_page": 100}
+                )
+            if resp.status_code != 200:
+                logger.info("could not read %s: HTTP %s", url, resp.status_code)
+                return []
+            payload = resp.json()
+        except (httpx.HTTPError, ValueError, OSError) as exc:
+            logger.info("could not read %s: %s", url, exc)
+            return []
+        return (
+            [item for item in payload if isinstance(item, dict)]
+            if (isinstance(payload, list))
+            else []
+        )
+
     async def update_branch(
         self, *, owner: str, repo: str, number: int, token: str
     ) -> bool:
@@ -987,6 +1077,55 @@ class HttpxGitHubPrClient:
             f"GitHub 拒绝更新 PR #{number} 的分支"
             f"（HTTP {resp.status_code}）：{resp.text[:300]}"
         )
+
+
+#: GitHub's review states 芝士 is expected to act on. `APPROVED` and
+#: `DISMISSED` are left out on purpose: neither asks for a change, and a card
+#: that nudged on an approval would be pure noise.
+_ACTIONABLE_REVIEW_STATES: Final = {
+    "CHANGES_REQUESTED": "changes_requested",
+    "COMMENTED": "commented",
+}
+
+
+def _review_signal(item: dict) -> ReviewSignal | None:
+    """One entry of `GET /pulls/{n}/reviews`, or None if it asks for nothing.
+
+    A `COMMENTED` review with an empty body is what GitHub records when
+    somebody submits inline comments without a summary — the comments
+    themselves come from the other endpoint, so this row would only duplicate
+    them.
+    """
+    state = str(item.get("state") or "").upper()
+    kind = _ACTIONABLE_REVIEW_STATES.get(state)
+    if kind is None:
+        return None
+    body = str(item.get("body") or "")
+    if kind == "commented" and not body.strip():
+        return None
+    return ReviewSignal(
+        id=f"review:{item.get('id')}",
+        kind=kind,
+        author=str((item.get("user") or {}).get("login") or ""),
+        body=body,
+    )
+
+
+def _review_comment_signal(item: dict) -> ReviewSignal | None:
+    """One entry of `GET /pulls/{n}/comments` — an inline comment on a line."""
+    body = str(item.get("body") or "")
+    if not body.strip():
+        return None
+    path = str(item.get("path") or "")
+    line = item.get("line") or item.get("original_line")
+    where = f"{path}:{line}" if path and isinstance(line, int) else path
+    return ReviewSignal(
+        id=f"comment:{item.get('id')}",
+        kind="comment",
+        author=str((item.get("user") or {}).get("login") or ""),
+        body=body,
+        where=where,
+    )
 
 
 def _summarize_runs(runs: list[dict]) -> tuple[CheckState, str]:
@@ -1321,10 +1460,10 @@ class GitHubPRClient:
     async def check_runs(self, ref: str) -> list[dict]:
         """Simplified check runs for a ref (branch name or sha) — display only.
 
-        Uses the read-only mint (checks:read); the write mint has no checks
-        permission by design.
+        Uses the full installation mint, which carries `checks: read`; the
+        named write set does not (`github_app._WRITE_PERMISSIONS`).
         """
-        token, _ = await self._tokens.readonly_token()
+        token, _ = await self._tokens.installation_token()
         async with httpx.AsyncClient(transport=self._transport, timeout=20.0) as client:
             resp = await client.get(
                 self._url(f"/commits/{ref}/check-runs"),

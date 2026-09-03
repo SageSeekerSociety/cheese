@@ -11,7 +11,7 @@
 | [`design-system.md`](design-system.md) | 前端视觉唯一规范：亮/暗双色板、圆角/字号/间距档位、琥珀用在哪 |
 | [`device-self-hosting.md`](device-self-hosting.md) | 自托管设备：**§0 是"别人的机器"约束**，其余是接入流程与排障 |
 | [`workflows.md`](workflows.md) | 这个项目实际怎么开发、测试、迭代 UI |
-| [`testing-without-docker.md`](testing-without-docker.md) | 没有 docker 的机器上怎么跑全量测试；三个环境缺口别再重新诊断（#516） |
+| [`testing-without-docker.md`](testing-without-docker.md) | 没有 docker 的机器上怎么跑全量测试；provider 凭据那条红别再重新诊断 |
 
 ## 当前是什么样（描述现状）
 
@@ -19,6 +19,9 @@
 |---|---|
 | [`product-impl.md`](product-impl.md) | 当前真实落地的产品行为与实现方式 |
 | [`infrastructure.md`](infrastructure.md) | 这个应用跑在哪、怎么发布、数据在哪 |
+| [`where-a-turn-runs.md`](where-a-turn-runs.md) | 一轮活落在哪台机器上：两条执行路，以及一台机器都没有时会怎样 |
+| [`microcloud.md`](microcloud.md) | Cloud 机器从哪来、`aiStatus` 各值对芝士意味着什么、ccproxy 在其中的位置，以及改 MicroCloud 的代码怎么合并、交给运维 agent 部署、发版 |
+| [`what-the-agent-perceives.md`](what-the-agent-perceives.md) | 芝士收得到什么、收不到什么：平台的三十种事件里有多少回流给它（答案是零） |
 | [`spec.md`](spec.md) | Cheese 2.0 产品与实现 Spec |
 | [`evals.md`](evals.md) | 评测配套 |
 | [`feishu-lark.md`](feishu-lark.md) | lark-cli 团队配置：飞书操作走 `--profile cheese`，含踩坑速查 |
@@ -33,7 +36,6 @@
 | [`deploy-unification-design.md`](deploy-unification-design.md) | **draft，未批准开工** |
 | [`permission-audit.md`](permission-audit.md) | 一次性权限审计记录 |
 | [`unification-plan.md`](unification-plan.md) | 统一化计划 |
-| [`tmux-backend-spike.md`](tmux-backend-spike.md) | 2026-07-09 的 spike 结论：tmux + send-keys 驱动交互式 claude。**投递部分已被 #480/#487 取代**（改走 rendezvous socket），留作当时判断的记录 |
 
 ## 目录
 

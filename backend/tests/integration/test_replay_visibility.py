@@ -10,37 +10,67 @@ These tests drive real turns through the WS against a provider whose result is
 an error, and assert what a person sitting in the room would see.
 """
 
+import uuid
+
 from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
-from app.domain.agent.service import AgentResult
+from app.domain.agent.runtime import AgentWorkRunner
 from app.main import app
-from tests.conftest import StubAgent
+from tests.conftest import StubChannel, stub_compute
 from tests.integration.conftest import chat_ws_url
 
 
-class FailingAgent(StubAgent):
-    """A provider whose turn ends in an error result — the shape that leaves the
-    pending batch unconsumed (chat.py returns before `mark_consumed`)."""
+class SilentScreen(StubChannel):
+    """A session that takes the prompt and then says nothing at all.
 
-    async def stream_reply(self, *, prompt, system_prompt, cwd, resume_session_id, **_):
-        self.last_prompt = prompt
-        self.last_system_prompt = system_prompt
-        yield AgentResult(text="upstream exploded", session_id=None, is_error=True)
+    The turn ends the way a dead session's turn ends — the watchdog gives up and
+    closes it as an error — which is the shape that leaves the pending batch
+    unconsumed (nothing ever reaches `mark_consumed`). The timeouts are squeezed
+    so the test does not sit through the production ones.
+    """
+
+    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+        del topic_id, prompt, reply
 
 
-def _use_failing_agent(client) -> FailingAgent:
-    agent = FailingAgent()
+def _use_failing_agent(client, monkeypatch) -> SilentScreen:
+    """A topic whose every turn dies, with nothing else re-prompting it.
 
-    def override() -> ChatService:
-        return ChatService(
-            session_factory=client.test_factory,
-            agent=agent,
-            base_system_prompt="你是芝士。",
-            workspace_root="/tmp/replay-ws",
-        )
+    The auto-resume chain is turned off for the same reason the watchdog's
+    timeouts are turned down: these tests count how many times ONE batch is
+    sent, and a turn that dies to the substrate schedules a system turn ten
+    seconds later that sends it again. That extra send is correct in
+    production — the batch really did go in a third time — but whether it
+    lands inside a test's few seconds is wall-clock luck, so the assertions
+    below would be counting the machine's speed.
+    """
+    monkeypatch.setattr(AgentWorkRunner, "MAX_RESUME_CHAIN", 0)
+    # `hard_ceiling_s` is NOT squeezed, and must not be: it is a wall clock that
+    # starts before the screen is even reached, so squeezing it races the setup
+    # it is supposed to outlive. Lose that race — and a loaded CI box loses it
+    # roughly two runs in five — and the monitor finds the ceiling already
+    # expired on its first pass, takes the branch for a session that never
+    # delivered anything, and the verdict lands with nobody subscribed to hear
+    # it: no `done` is ever published and `_say` blocks until pytest-timeout
+    # kills the run 300 seconds later.
+    #
+    # This screen ends its turns through `delivery_timeout_s` — it emits no
+    # hooks at all, so the prompt is never acknowledged — and THAT is the knob
+    # worth squeezing. The ceiling only has to stay far enough above the setup
+    # path that it cannot fire during it; it is never reached, so its size
+    # costs nothing.
+    screen = SilentScreen(
+        idle_suspect_s=0.2, hard_ceiling_s=10.0, delivery_timeout_s=0.2
+    )
 
-    app.dependency_overrides[get_chat_service] = override
-    return agent
+    service = ChatService(
+        session_factory=client.test_factory,
+        base_system_prompt="你是芝士。",
+        workspace_root="/tmp/replay-ws",
+        compute=stub_compute(screen),
+    )
+    app.dependency_overrides[get_chat_service] = lambda: service
+    return screen
 
 
 def _project_and_topic(client) -> str:
@@ -69,21 +99,29 @@ def _system_lines(client, topic_id: str) -> list[str]:
     return [b["content"] for b in blocks if b["author_type"] == "system"]
 
 
-def test_a_repeatedly_replayed_batch_is_announced_in_the_room(client):
-    _use_failing_agent(client)
+def _replay_notices(client, topic_id: str) -> list[str]:
+    """房间里「又重投了一次」那几行——按类别码找，不按开头那个字符找。"""
+    blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
+    return [
+        b["content"]
+        for b in blocks
+        if (b.get("meta") or {}).get("event_type") == "prompt_replayed"
+    ]
+
+
+def test_a_repeatedly_replayed_batch_is_announced_in_the_room(client, monkeypatch):
+    _use_failing_agent(client, monkeypatch)
     topic_id = _project_and_topic(client)
 
     # Three failing turns. The first message rides all three prompts, so by the
     # third one the batch is on its third attempt.
     _say(client, topic_id, "第一句")
-    assert not [x for x in _system_lines(client, topic_id) if "🔁" in x]
+    assert not _replay_notices(client, topic_id)
     _say(client, topic_id, "第二句")
-    assert not [x for x in _system_lines(client, topic_id) if "🔁" in x], (
-        "两次还不算模式，不该已经喊出来"
-    )
+    assert not _replay_notices(client, topic_id), "两次还不算模式，不该已经喊出来"
 
     _say(client, topic_id, "第三句")
-    notices = [x for x in _system_lines(client, topic_id) if "🔁" in x]
+    notices = _replay_notices(client, topic_id)
     assert len(notices) == 1, notices
     notice = notices[0]
     # It has to name the count...
@@ -105,19 +143,19 @@ def test_a_turn_that_finishes_never_announces_a_replay(client):
     for text in ("一", "二", "三", "四"):
         _say(client, topic_id, text)
 
-    assert not [x for x in _system_lines(client, topic_id) if "🔁" in x]
+    assert not _replay_notices(client, topic_id)
 
 
-def test_the_notice_throttles_instead_of_burying_the_conversation(client):
+def test_the_notice_throttles_instead_of_burying_the_conversation(client, monkeypatch):
     """A topic retrying for an hour must not fill the room with its own status:
     after the first warning the state is known, so the reminder goes quiet."""
-    _use_failing_agent(client)
+    _use_failing_agent(client, monkeypatch)
     topic_id = _project_and_topic(client)
 
     for i in range(8):
         _say(client, topic_id, f"消息{i}")
 
-    notices = [x for x in _system_lines(client, topic_id) if "🔁" in x]
+    notices = _replay_notices(client, topic_id)
     # 8 failing turns, but only the third one speaks (the next is the 10th).
     assert len(notices) == 1, notices
     assert "第 3 次" in notices[0]

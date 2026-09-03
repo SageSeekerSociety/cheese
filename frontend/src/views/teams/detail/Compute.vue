@@ -516,7 +516,9 @@ onBeforeUnmount(() => {
 }
 .profile-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  /* See NodeBoard: without min(), 240px is a floor the grid keeps even in a
+     narrower column, and the board overflows rather than reflowing. */
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
   gap: 10px;
 }
 .profile-card {

@@ -1,6 +1,5 @@
 <script setup lang="ts">
-// 工作面板: the right-hand half of a topic — four平级 tabs, 文档 / 现场 / 改动 /
-// 预览. It replaces the old 「文档 + 五个按需滑出的抽屉」 (预览/Git/现场/文件/资源):
+// 工作面板: the right-hand half of a topic — 平级 tabs, 总览 / 现场 / 改动 / 预览. It replaces the old 「文档 + 五个按需滑出的抽屉」 (预览/Git/现场/文件/资源):
 // the drawers' float/pinned duality, their own width slider and the scrim are
 // gone, and 资源 is no longer a panel at all — its numbers live in the topic
 // header's usage popover.
@@ -21,10 +20,11 @@ import type { TopicPhase } from '../lib/topicState'
 
 import { computed, nextTick, ref, watch } from 'vue'
 
-import { getPreview, getTopicWorkSummary } from '../api'
+import { getPreview, getTopicWorkSummary, listRoomTasks } from '../api'
+import { isThread, roomIdOf } from '../lib/place'
 
 import PanelChanges from './panels/PanelChanges.vue'
-import PanelDoc from './panels/PanelDoc.vue'
+import PanelOverview from './panels/PanelOverview.vue'
 import PanelPreview from './panels/PanelPreview.vue'
 import PanelSite from './panels/PanelSite.vue'
 
@@ -48,6 +48,9 @@ const props = withDefaults(
     // 话题此刻处在哪一段. Only used to pick which tab a topic OPENS on, and only
     // when the address named none — after that it is the reader's choice.
     phase?: TopicPhase
+    // 手机上对话不是左边那一栏，是这条 tab 栏的第一格——一屏放不下两栏，而这两
+    // 样东西本来就是平级的。开着它的时候 `chat` 插槽就是这一格的内容。
+    withChat?: boolean
   }>(),
   {
     worklog: () => [],
@@ -56,6 +59,7 @@ const props = withDefaults(
     topicList: () => [],
     tab: undefined,
     phase: undefined,
+    withChat: false,
   }
 )
 
@@ -65,25 +69,50 @@ const emit = defineEmits<{
   (e: 'update:tab', key: string): void
 }>()
 
-type TabKey = 'doc' | 'site' | 'changes' | 'preview'
+type TabKey = 'chat' | 'overview' | 'site' | 'changes' | 'preview'
 interface TabDef {
   key: TabKey
   label: string
   icon: string
 }
 const ALL_TABS: TabDef[] = [
-  { key: 'doc', label: '文档', icon: 'mdi-file-document-outline' },
+  { key: 'chat', label: '对话', icon: 'mdi-message-outline' },
+  // 文档 和 任务 合成了一格。它们回答的是同一个问题的两半——「这个房间在干什么」
+  // ——分成两格意味着看完一半得先想起来还有另一半，于是大多数人只看文档，房间里
+  // 有几条活在跑就没人知道。
+  { key: 'overview', label: '总览', icon: 'mdi-file-document-outline' },
   { key: 'site', label: '现场', icon: 'mdi-hammer-wrench' },
   { key: 'changes', label: '改动', icon: 'mdi-source-branch' },
   { key: 'preview', label: '预览', icon: 'mdi-eye-outline' },
 ]
-const active = ref<TabKey>('doc')
+// 地址没指定、阶段也没话说的时候落在哪一格：手机上是对话（你进话题多半是来说话
+// 的），桌面上对话就在旁边那一栏，所以是总览。
+const defaultTab = computed<TabKey>(() => (props.withChat ? 'chat' : 'overview'))
+// 旧地址还带着 ?tab=doc / ?tab=tasks —— 两个 tab 都并进总览了，所以它们指的就是
+// 总览。链接不该因为我们合并了界面而失效。
+const TAB_ALIASES: Record<string, TabKey> = { doc: 'overview', tasks: 'overview' }
+const active = ref<TabKey>(defaultTab.value)
+/** 打开的是房间里的一条支线，还是房间本身。 */
+const onThread = computed(() => !!props.topic && isThread(props.topic))
 
-/** The URL's answer, if it names a tab that exists. */
+/** The URL's answer, if it names a tab that exists (or one that used to). */
 function tabFromUrl(): TabKey | null {
   const asked = props.tab
-  return ALL_TABS.some((t) => t.key === asked) ? (asked as TabKey) : null
+  if (!asked) return null
+  if (ALL_TABS.some((t) => t.key === asked)) return asked as TabKey
+  return TAB_ALIASES[asked] ?? null
 }
+
+// 窄屏上这条栏会横向滚动，所以「哪一格是选中的」和「你看得见哪一格」不再是同一
+// 件事：阶段自动选中的那一格（比如开工时的现场）可能整个在屏幕外，屏幕上什么都
+// 没发生。选中态一变就把它带回视野里。
+const tabbarRef = ref<HTMLElement | null>(null)
+watch(active, () => {
+  void nextTick(() => {
+    const on = tabbarRef.value?.querySelector('[aria-selected="true"]')
+    on?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  })
+})
 
 // Every move the panel makes goes through here, so the address always says what
 // is on screen — 「你来看一眼这个 diff」的链接成立的前提就是这个。
@@ -106,10 +135,13 @@ function setTab(key: TabKey) {
 // again unless another topic is opened.
 const settled = ref(false)
 
+// 只能选 `tabIsOffered` 真的会给出来的那几格 —— 选了一个不在 tab 栏上的，界面就
+// 切到一片空白。支线上「改动」那一格不存在（见 `tabIsOffered`），所以支线在
+// reviewing/delivering 时留在默认格；「现场」是支线自己的，照常可以选。
 function tabForPhase(phase: TopicPhase): TabKey {
   if (phase === 'working') return 'site'
-  if (phase === 'reviewing' || phase === 'delivering') return 'changes'
-  return 'doc'
+  if (!onThread.value && (phase === 'reviewing' || phase === 'delivering')) return 'changes'
+  return defaultTab.value
 }
 
 // Back / forward, or someone pasting a link into the open topic.
@@ -125,12 +157,12 @@ watch(
 // what the drawer effectively did with its state (openPath, expanded folders,
 // the transcript all survived a close/open). 文档 is mounted from the start
 // because it is the default tab and its editor is expensive to rebuild.
-const mounted = ref<Set<TabKey>>(new Set<TabKey>(['doc']))
+const mounted = ref<Set<TabKey>>(new Set<TabKey>([active.value]))
 watch(active, (k) => {
   if (!mounted.value.has(k)) mounted.value = new Set(mounted.value).add(k)
 })
 
-const docRef = ref<InstanceType<typeof PanelDoc> | null>(null)
+const overviewRef = ref<InstanceType<typeof PanelOverview> | null>(null)
 const changesRef = ref<InstanceType<typeof PanelChanges> | null>(null)
 
 const topicId = computed(() => props.topic?.id ?? null)
@@ -147,6 +179,8 @@ watch(
     refreshTick.value += 1
     void pollPreviewPointer()
     void pollWorkSummary()
+    // 一轮里派出去的活，收工那一刻就该出现在 任务 那一格上。
+    void pollThreads()
   }
 )
 
@@ -227,17 +261,50 @@ function markChangesSeen() {
   changesSeen.value = changesKey.value
 }
 
+// ---- 这个房间派出去了几件活 ----
+// A signal, so 任务 can carry its count while closed and can stay out of the way
+// of a room that never dispatched anything. Threads are counted for the ROOM: a
+// thread's siblings are the same list, and `/tasks` only answers for a room.
+const threads = ref<{ total: number; open: number }>({ total: 0, open: 0 })
+
+async function pollThreads() {
+  const place = props.topic
+  if (!place) return
+  const roomId = roomIdOf(place)
+  try {
+    // limit: 1 — see TaskProgress. Without it this asks for every thread's whole
+    // history just to count them.
+    const rows = (await listRoomTasks(roomId, { limit: 1 })).data
+    if (!props.topic || roomIdOf(props.topic) !== roomId) return
+    threads.value = { total: rows.length, open: rows.filter((r) => r.status === 'open').length }
+  } catch {
+    // A failed poll is not a state — same rule as the two polls above.
+  }
+}
+
 function tabIsOffered(key: TabKey): boolean {
   // The tab you are ON never disappears from under you. A topic whose changes
   // just merged, or whose preview 芝士 retracted, would otherwise close the
   // thing you were reading — the same rule as 「信号上 Tab，不抢占视图」.
   if (key === active.value) return true
-  if (key === 'doc') return true
-  // 现场 is where 芝士 works: it is there once the topic has run, and from the
+  if (key === 'chat') return props.withChat
+  if (key === 'overview') return true
+  // 「改动」和「现场」在一条支线上不是同一回事，因为它们各自属于不同的东西：
+  //
+  // 改动属于**树**。一棵树 = 一个分支 = 一个 PR = 一批活，一条支线和它的同伴写
+  // 的是同一条分支，所以那份 diff 诚实地说就是他们一起做的。在支线上摆出「改动」
+  // 就是把一批人的活挂到一条活名下，看的人会以为屏幕上那些改动是这条活做的——所
+  // 以支线上不给这一格，改动只在房间那一层看。
+  //
+  // 现场属于**地点**。一条支线跑的是它自己的 agent、自己的会话、自己那块屏幕，
+  // 所以它的现场就是它自己的，不是它房间的、也不是同伴的。支线上给这一格。
+  if (key === 'changes') return !onThread.value && summary.value.changedFiles.length > 0
+  // 现场 is where 芝士 works: it is there once the place has run, and from the
   // first moment of the first turn (before the session id is captured).
   if (key === 'site') return summary.value.hasRun || props.working
-  if (key === 'changes') return summary.value.changedFiles.length > 0
-  return !!previewLatest.value
+  // 预览 is the room's: what 芝士 put on show is looked up and retracted per
+  // room, so a thread has none of its own to offer.
+  return !onThread.value && !!previewLatest.value
 }
 
 const tabs = computed(() => ALL_TABS.filter((t) => tabIsOffered(t.key)))
@@ -245,6 +312,10 @@ const tabs = computed(() => ALL_TABS.filter((t) => tabIsOffered(t.key)))
 /** What the signal on a tab means, for people who reach it by hover or reader. */
 function tabTitle(t: TabDef): string {
   if (t.key === 'site' && props.working) return `${t.label}（芝士正在工作）`
+  if (t.key === 'overview' && threads.value.total) {
+    const { total, open } = threads.value
+    return open ? `${t.label}（${total} 件活，${open} 件进行中）` : `${t.label}（${total} 件活）`
+  }
   if (t.key === 'preview' && previewHasNew.value) return `${t.label}（有新内容）`
   if (t.key === 'changes' && summary.value.changedFiles.length) {
     const n = summary.value.changedFiles.length
@@ -263,16 +334,18 @@ const showTabBar = computed(() => tabs.value.length > 1)
 watch(
   () => props.topic?.id,
   (id) => {
-    active.value = tabFromUrl() ?? 'doc'
+    active.value = tabFromUrl() ?? defaultTab.value
     // 「URL 里显式带 ?tab= 时以 URL 为准」: an address that names a tab has already
     // decided, so the phase does not get to.
     settled.value = !!tabFromUrl()
     markPreviewSeen(null)
     summary.value = { changedFiles: [], hasRun: false }
     changesSeen.value = ''
+    threads.value = { total: 0, open: 0 }
     if (id) {
       void pollPreviewPointer({ seen: true })
       void pollWorkSummary({ seen: true })
+      void pollThreads()
     }
   },
   { immediate: true }
@@ -296,17 +369,19 @@ watch(
 
 // ---- The panel's outward API (TopicView holds a ref) ----
 function pulse() {
-  setTab('doc')
-  void nextTick(() => docRef.value?.pulse())
+  setTab('overview')
+  void nextTick(() => overviewRef.value?.pulse())
 }
 function highlightTurn(turnId: string) {
-  setTab('doc')
-  void nextTick(() => docRef.value?.highlightTurn(turnId))
+  setTab('overview')
+  void nextTick(() => overviewRef.value?.highlightTurn(turnId))
 }
 async function openFile(path: string) {
   setTab('changes')
   await nextTick()
-  await changesRef.value?.openFile(path)
+  // A chip may carry the lines it was pointing at (`src/a.ts:12-30`) — that part
+  // names a place inside the file, not a file, and the tree only knows paths.
+  await changesRef.value?.openFile(path.replace(/:\d+(?:-\d+)?$/, ''))
 }
 defineExpose({ pulse, highlightTurn, openFile })
 </script>
@@ -321,7 +396,7 @@ defineExpose({ pulse, highlightTurn, openFile })
     </div>
 
     <template v-else>
-      <div v-if="showTabBar" class="tabbar" role="tablist">
+      <div v-if="showTabBar" ref="tabbarRef" class="tabbar" role="tablist">
         <button
           v-for="t in tabs"
           :key="t.key"
@@ -343,6 +418,9 @@ defineExpose({ pulse, highlightTurn, openFile })
           <!-- A dot, not a count: there is only ever one current preview, so a
                number would be noise. -->
           <span v-if="t.key === 'preview' && previewHasNew" class="tabbar__dot" />
+          <!-- 有几件活在跑。和 改动 一样用数字而不是点：几件在跑本身就是要看的
+               那个信息。它不变色——派出去的活不是「你还没看过的东西」。 -->
+          <span v-if="t.key === 'overview' && threads.total" class="tabbar__count">{{ threads.total }}</span>
           <!-- 改动 is the opposite: how much there is to review is the useful
                part, so the count carries the signal and turns amber when it is
                work you have not looked at yet. -->
@@ -356,12 +434,19 @@ defineExpose({ pulse, highlightTurn, openFile })
       </div>
 
       <div class="tabbody">
-        <PanelDoc
-          v-show="active === 'doc'"
-          ref="docRef"
+        <!-- 对话这一格由 TopicView 填（它拿着 ChatPanel 的那一堆接线）。一直挂着
+             而不是切走就卸载：卸掉会断掉连接、丢掉滚动位置。 -->
+        <div v-if="withChat" v-show="active === 'chat'" class="tabpane-chat">
+          <slot name="chat" />
+        </div>
+        <PanelOverview
+          v-show="active === 'overview'"
+          ref="overviewRef"
           :topic="topic"
           :activity-tick="activityTick"
           :topic-list="topicList"
+          :active="active === 'overview'"
+          :refresh-tick="refreshTick"
           @open-topic="emit('open-topic', $event)"
           @mention-click="emit('mention-click', $event)"
           @open-file="openFile"
@@ -407,6 +492,15 @@ defineExpose({ pulse, highlightTurn, openFile })
   height: 100%;
   background: var(--surface);
 }
+.tabpane-chat {
+  display: flex;
+  /* tabbody 是一条 flex 行，这一格必须占满它——按内容收缩的话，输入框只有半屏宽。 */
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
 .tabbar {
   display: flex;
   flex: 0 0 auto;
@@ -414,10 +508,20 @@ defineExpose({ pulse, highlightTurn, openFile })
   gap: 2px;
   padding: 0 6px;
   border-bottom: 1px solid var(--line);
+  /* 一屏放不下的时候横着滚，而不是把每一格压扁：挤压是没有边界的——tab 只会越
+     加越多，而窄屏上第一个被挤没的永远是文字，剩下一排认不出来的图标。滚动条不
+     画出来，因为这条栏本来就只有一行高，一条滚动条会占掉它三分之一。 */
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.tabbar::-webkit-scrollbar {
+  display: none;
 }
 .tabbar__tab {
   position: relative;
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 5px;
   padding: 8px 12px;
@@ -425,6 +529,7 @@ defineExpose({ pulse, highlightTurn, openFile })
   background: transparent;
   color: var(--muted);
   font-size: 13px;
+  white-space: nowrap;
   cursor: pointer;
 }
 .tabbar__tab:hover {

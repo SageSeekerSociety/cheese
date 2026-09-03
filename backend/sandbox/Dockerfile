@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1
 # Agent sandbox: 芝士 (claude code) runs INSIDE here, per topic, with native
-# tools jailed to this container. jj (colocated git) auto-snapshots edits.
+# tools jailed to this container. The topic's git worktree is mounted in, and
+# 芝士 commits to it itself.
 FROM node:22-bookworm-slim
 
 # Universal toolchain (the shared base, like Codex's `universal` image): package
@@ -10,11 +11,28 @@ FROM node:22-bookworm-slim
 # deleting the base image's docker-clean, and every image layered on this one —
 # tmux.Dockerfile, and whatever a hosted repo builds — would silently start
 # carrying its own downloaded .debs. This image is other people's base.
+# `procps` and `openssh-client` are here for the same reason as the rest, and
+# are the two that look droppable: a shell has `kill` as a BUILTIN and a slim
+# image looks like it already has it, but anything that spawns the binary —
+# `subprocess.run(["kill", ...])`, `pgrep`, `ps` — gets FileNotFoundError
+# instead. `ssh-keygen` is the same shape: no shell fallback exists at all.
 RUN --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
       git ca-certificates curl xz-utils python3 python3-pip \
       build-essential pkg-config ripgrep jq less unzip \
-      postgresql-client libpq-dev
+      postgresql-client libpq-dev \
+      procps openssh-client
+
+# git refuses to commit without an identity, so an image without one turns every
+# commit — 芝士's own, and any a hosted repo's test suite makes — into a failure
+# that names our environment rather than the work. `--system`, not `--global`:
+# it has to hold for whatever user a derived image runs as and wherever HOME is
+# mounted, and both are outside this file's control. Same identity the backend
+# writes into the repos it creates, so a commit made in here and one made by the
+# platform are by the same author; a repo that wants another one still wins,
+# since repo-local and global config both outrank system.
+RUN git config --system user.name "芝士" \
+ && git config --system user.email "cheese@zhishi.local"
 
 # uv — Python package/env manager (symmetric to npm). Installed from PyPI (the
 # uv wheel bundles the binary) — reliable through the proxy, unlike ghcr. uv
@@ -24,16 +42,10 @@ ARG UV_VERSION=0.12.1
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip3 install --break-system-packages "uv==${UV_VERSION}" && uv --version
 
-# jujutsu (jj) — auto-snapshotting VCS, git-compatible
-ARG JJ_VERSION=0.42.0
-RUN curl -fsSL "https://github.com/jj-vcs/jj/releases/download/v${JJ_VERSION}/jj-v${JJ_VERSION}-$(uname -m)-unknown-linux-musl.tar.gz" \
-      | tar xz -C /usr/local/bin ./jj \
-    && jj --version
-
 # GitHub CLI — so 芝士 can inspect CI/CD (`gh run view --log-failed`) with the
 # read-only token `cheese gh-token` mints (#188/#193). curl works too, but gh
 # is far less error-prone for reading Actions. Direct from releases (musl-free
-# deb), same reason as jj: reliable through the proxy, unlike ghcr/apt-key.
+# deb): reliable through the proxy, unlike ghcr/apt-key.
 ARG GH_VERSION=2.62.0
 RUN ARCH="$(dpkg --print-architecture)" \
     && curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${ARCH}.tar.gz" \
@@ -58,10 +70,11 @@ COPY cheese /usr/local/bin/cheese
 RUN chmod +x /usr/local/bin/cheese && mkdir -p /work && chown -R node:node /work
 
 # `node` is uid/gid 1000 here (node:22's own user) and the backend deliberately
-# runs as the SAME uid — the two share one jj store through the main-repo
-# .jj/.git bind mounts, and jj's 0600 store objects mean a uid split locks one
-# side out of every jj command. Do not usermod/groupmod this user, and keep any
-# derived image (backend/sandbox/cheesex-dev.Dockerfile) on `USER node`.
+# runs as the SAME uid — the two share one git store through the main-repo
+# `.git` bind mount and both COMMIT into it, and git's object directories
+# belong to whoever wrote them, so a uid split leaves one side unable to add
+# anything. Do not usermod/groupmod this user, and keep any derived image
+# (backend/sandbox/cheesex-dev.Dockerfile) on `USER node`.
 # The invariant is asserted by tests/unit/test_workspace_uid_alignment.py.
 RUN test "$(id -u node)" = 1000 && test "$(id -g node)" = 1000
 USER node

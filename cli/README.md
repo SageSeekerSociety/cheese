@@ -11,30 +11,23 @@ on nothing but a system `tmux` and a POSIX pty.
 
 ## The model
 
-A screen is a program running in a terminal. The server drives each screen two
-independent ways at once:
+A screen is a program running in a terminal. The server reaches each screen
+three independent ways:
 
-1. **A cheeselet** — a small piece of JavaScript the server hosts inside the
-   screen. Its entire world is three affordances, and nothing else:
+1. **The raw screen channel** — the server attaches to a screen's live byte
+   stream and reads/writes it directly (the "现场"): full-fidelity terminal in,
+   keystrokes and resizes out. This is what a browser terminal rides on.
 
-   - **a terminal** it can read (the current screen) and write (keystrokes);
-   - **variables**, of two kinds:
-     - *script-owned* (A-class): the cheeselet writes them, the server sees a
-       live read-only mirror — `cheese.own(name, initial)` → `{get, set}`;
-     - *server-owned* (B-class): the server writes them, the cheeselet observes
-       — `cheese.watch(name)` → `{get, onChange}`;
-   - **functions**, in both directions — `cheese.expose(name, fn)` lets the
-     server call the cheeselet; `cheese.call(name, ...args)` (a Promise) lets the
-     cheeselet call the server.
+2. **The screen's own socket** — a `prompt` call carries text the server wants
+   the hosted program to receive as input, and the host hands it to the socket
+   the program bound for itself. Nothing about that depends on the terminal:
+   not pane width, not TUI state, not a screen scrape. A call that cannot be
+   served is answered with an error, so the server never mistakes silence for
+   delivery.
 
-   The cheeselet is a trusted, dynamic part of the CLI — it is delivered by the
-   server, so any policy (what to watch, what to expose, what keys to allow)
-   lives *there*, expressed once, never duplicated in the host.
-
-2. **The raw screen channel** — separately, the server can attach to a screen's
-   live byte stream and read/write it directly (the "现场"): full-fidelity
-   terminal in, keystrokes and resizes out. This is what a browser terminal
-   rides on. It is independent of the cheeselet.
+3. **File staging and one-shot exec** — bytes written into a screen's workspace
+   before they are referred to, and commands run on the machine itself for
+   setup and health checks.
 
 The host binary is a dumb, safe sandbox that offers exactly these affordances
 and ascribes meaning to none of it. Read the code in `internal/` and you cannot
@@ -103,11 +96,3 @@ GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -o cheese-darwin-arm64 .
 ```
 
 Runtime needs `tmux` and a pty (Linux and macOS; no Windows).
-
-## Reference consumer
-
-`../misc/web-claude` is a complete, isolated example built on this framework: a
-server + browser UI that hosts **Claude Code** in the browser, using screens,
-cheeselets, the raw channel and screen-scoped `cheese api`. It is the first real
-consumer of `cheese` and doubles as a contract sample for a full backend. Note
-that the CLI here has no idea any of that is about AI — see `misc/web-claude`.

@@ -1,50 +1,29 @@
-"""Shared plumbing for the two "let the browser see inside the container" proxies.
+"""Who may look inside a topic's live workings, and how they prove it.
 
-Both 施工现场's live terminal (``routes/terminal.py``) and 运行环境预览's running
-app (``routes/app_preview.py``) have the same shape: something in the topic's
-container listens on a host port bound to **127.0.0.1**, which a remote browser
-can never reach, so the backend reverse-proxies it under the topic's API
-namespace. Same authorization question, same header hygiene, same WebSocket pump
-— so it lives here once instead of being copy-pasted per feature.
-
-Credential: a browser cannot set an ``Authorization`` header on an ``<iframe>``
-or a ``WebSocket``, so the session token rides as ``?token=``. The iframe's own
-*sub*-requests (assets, ttyd's ``/token``, HMR) don't inherit that query string,
-so a successful page load also drops a **path-scoped** cookie; everything under
-that path then authenticates itself. Scoping the cookie to the topic's own proxy
-path is what keeps it from becoming an ambient credential for the rest of the API.
+A browser cannot set an ``Authorization`` header on an ``<iframe>`` or a
+``WebSocket``, so the session token rides as ``?token=`` (or as a path-scoped
+cookie a page load left behind). Reading it back and turning it into "is this
+person on this project" is one question with one answer, so it lives here rather
+than in each surface that asks it.
 """
 
 import uuid
 
-import httpx
-import websockets
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
-from starlette.websockets import WebSocket, WebSocketDisconnect
+from starlette.websockets import WebSocket
 
+from app.core.config import GATEWAY_MOUNT
 from app.core.tokens import verify_session_token
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.services import TopicService
 from app.domain.user.repositories import UserRepository
 
-# The gateway mounts this whole app under `/api` and strips that one segment
-# (`proxy_pass http://backend:8081/`), so a backend route is bare while the URL
-# the browser used is `/api` + that route. Everything the BROWSER consumes has to
-# be built with this: a cookie's Path, a rewritten asset URL, a `url` we hand the
-# frontend to iframe. Deriving those from `request.url.path` reads the stripped
-# path and silently scopes the cookie to a path the browser never visits — which
-# is what #370 step 2 turned from correct into wrong, since the two iframe
-# prefixes used to carry a no-strip exception in nginx and now do not.
-GATEWAY_MOUNT = "/api"
-
-
-def browser_path(route_path: str) -> str:
-    """The URL the browser used to reach this backend route."""
-    return f"{GATEWAY_MOUNT}{route_path}"
-
+# How long the path-scoped sub-request cookie stays valid. Short: it only has to
+# outlive one open drawer, and it is re-issued on every page load.
+COOKIE_TTL_S = 8 * 3600
 
 # Hop-by-hop headers a proxy must not forward (RFC 7230 §6.1) plus length/type,
 # which the Response recomputes from the body it actually sends.
@@ -59,9 +38,10 @@ DROP_HEADERS = {
     "upgrade",
 }
 
-# How long the path-scoped sub-request cookie stays valid. Short: it only has to
-# outlive one open drawer, and it is re-issued on every page load.
-COOKIE_TTL_S = 8 * 3600
+
+def browser_path(route_path: str) -> str:
+    """The URL the browser used to reach this backend route."""
+    return f"{GATEWAY_MOUNT}{route_path}"
 
 
 def credential(conn: Request | WebSocket, cookie_name: str) -> str | None:
@@ -98,12 +78,12 @@ async def may_view_topic(
     conn: Request | WebSocket,
     cookie_name: str,
 ) -> bool:
-    """Whether this caller may look inside the topic's container.
+    """Whether this caller may look inside the topic's live workings.
 
-    A topic id is a UUID, but that is obscurity, not authorization: the pane (and
-    the running app) show whatever the agent is doing, so anyone who learns an id
-    would otherwise get a read of the project's contents. Gate is the same as the
-    device viewer's: a logged-in member or owner of the topic's project.
+    A topic id is a UUID, but that is obscurity, not authorization: the pane
+    shows whatever the agent is doing, so anyone who learns an id would otherwise
+    get a read of the project's contents. Gate is the same as the device
+    viewer's: a logged-in member or owner of the topic's project.
     """
     token = credential(conn, cookie_name)
     if not token:
@@ -127,8 +107,8 @@ def attach_cookie(
     """Re-issue the sub-request cookie from the credential this request proved.
 
     Only ever mirrors a token the caller already presented, so it grants nothing
-    new — it just carries the same proof to requests the browser makes on its own
-    (assets, ``/token``, HMR) which cannot carry the query string.
+    new — it just carries the same proof to the requests the browser makes on its
+    own (assets, HMR), which cannot carry the query string.
     """
     token = credential(request, cookie_name)
     if token:
@@ -143,56 +123,16 @@ def attach_cookie(
     return response
 
 
-async def probe(endpoint: str, *, timeout: float = 2.0) -> bool:
-    """Whether something actually answers HTTP on ``host:port`` right now.
-
-    A published docker port is NOT the same as a live server: the container can be
-    up with its process dead, and reporting ``available`` off the port mapping
-    alone is what made the frontend embed an iframe that could only ever render a
-    white box. Any failure is a "no" — this decides between a real embed and an
-    honest fallback, never between working and broken.
-    """
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.get(f"http://{endpoint}/")
-    except (httpx.HTTPError, OSError):
-        return False
-    return resp.status_code < 500
-
-
-async def forward(endpoint: str, path: str, request: Request) -> Response:
-    """Proxy one upstream request, minus the hop-by-hop headers.
-
-    Redirects are passed through rather than followed: the browser must see the
-    3xx so it re-resolves the ``Location`` against the proxy path, not against the
-    container's own loopback address.
-    """
-    async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
-        upstream = await client.request(
-            request.method,
-            f"http://{endpoint}/{path}",
-            params=request.query_params,
-            headers=_forwardable_request_headers(request),
-            content=await request.body() if request.method != "GET" else None,
-        )
-    headers = {
-        k: v for k, v in upstream.headers.items() if k.lower() not in DROP_HEADERS
-    }
-    return Response(
-        content=upstream.content,
-        status_code=upstream.status_code,
-        headers=headers,
-        media_type=upstream.headers.get("content-type"),
-    )
-
-
-def _forwardable_request_headers(request: Request) -> dict[str, str]:
+def forwardable_request_headers(conn: Request | WebSocket) -> list[tuple[str, str]]:
     """Pass the browser's content negotiation upstream (a dev server serves very
-    different bytes for ``Accept: text/html`` vs a module request) while dropping
-    hop-by-hop headers, our own Host, and the cookie (upstream has no business
-    seeing the session token). ``accept-encoding`` goes too: httpx decodes the
-    body it returns but we re-send it under the upstream's headers, so asking for
-    a compressed body only risks a content-encoding mismatch for zero gain."""
+    different bytes for ``Accept: text/html`` than for a module request) while
+    dropping hop-by-hop headers, our own Host, and the cookie — upstream has no
+    business seeing the session token, and what it serves is written by the agent.
+
+    ``accept-encoding`` goes too: the machine helper hands back a body its own
+    HTTP client already decoded, so asking for a compressed one only risks a
+    content-encoding mismatch for zero gain.
+    """
     drop = DROP_HEADERS | {
         "host",
         "cookie",
@@ -200,46 +140,4 @@ def _forwardable_request_headers(request: Request) -> dict[str, str]:
         "content-length",
         "accept-encoding",
     }
-    return {k: v for k, v in request.headers.items() if k.lower() not in drop}
-
-
-async def pump(browser: WebSocket, upstream: "websockets.ClientConnection") -> None:
-    """Run both directions until either side closes, then tear the other down."""
-    import asyncio
-
-    async def browser_to_upstream() -> None:
-        try:
-            while True:
-                msg = await browser.receive()
-                if msg["type"] == "websocket.disconnect":
-                    return
-                data = msg.get("bytes")
-                if data is not None:
-                    await upstream.send(data)
-                    continue
-                text = msg.get("text")
-                if text is not None:
-                    await upstream.send(text)
-        except (WebSocketDisconnect, websockets.WebSocketException):
-            return
-
-    async def upstream_to_browser() -> None:
-        try:
-            async for frame in upstream:
-                if isinstance(frame, bytes):
-                    await browser.send_bytes(frame)
-                else:
-                    await browser.send_text(frame)
-        except (WebSocketDisconnect, websockets.WebSocketException, RuntimeError):
-            return
-
-    t_up = asyncio.create_task(browser_to_upstream())
-    t_down = asyncio.create_task(upstream_to_browser())
-    _, pending = await asyncio.wait({t_up, t_down}, return_when=asyncio.FIRST_COMPLETED)
-    for task in pending:
-        task.cancel()
-    await upstream.close()
-    try:
-        await browser.close()
-    except RuntimeError:
-        pass
+    return [(k, v) for k, v in conn.headers.items() if k.lower() not in drop]

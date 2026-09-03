@@ -219,3 +219,26 @@ def test_core_overflow_gets_its_own_warning():
 
     assert "核心记忆超预算" in prompt
     assert "3" in prompt
+
+
+# --- 路径要以引用的形状进 prompt ------------------------------------------
+
+
+def test_a_bare_path_in_a_fact_arrives_as_a_reference_token():
+    """模型照抄它在 prompt 里看到的形状：裸路径进去，裸路径就会出现在它写的文档和
+    回复里，而裸路径在前端点不开。"""
+    prompt = _build_system_prompt(
+        "base", "", None, ["配置在 backend/app/core/db.py 里"]
+    )
+
+    assert "<&backend/app/core/db.py>" in prompt
+
+
+def test_the_lines_a_fact_points_at_stay_inside_the_token():
+    """`db.py:55-60` 指的是文件里的一段。行号被留在尖括号外面，token 就只剩半截——
+    前端认出来的是文件，而那条事实真正在说的是那六行。"""
+    prompt = _build_system_prompt(
+        "base", "", None, ["连接池在 backend/app/core/db.py:55-60"]
+    )
+
+    assert "<&backend/app/core/db.py:55-60>" in prompt

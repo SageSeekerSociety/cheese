@@ -33,7 +33,7 @@
 
 1. Resolve `topic selection -> project sticky -> team default -> platform default` in both the read API and turn execution.
 2. Keep topic PUT behavior: selecting a profile materializes it on the topic and updates project sticky.
-3. Preserve the `session_id` freeze and offline-device no-drift rule.
+3. Preserve the first-turn freeze (a topic with an `agent_sessions` row is pinned) and the offline-device no-drift rule.
 
 ## Task 3: Bind provisioned cloud machines to the team
 

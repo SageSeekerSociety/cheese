@@ -1,37 +1,48 @@
 """``DeviceHub`` — the server end of the frozen ``link.Msg`` protocol (P3).
 
 One long-lived control channel per connected device, over which the server opens
-*screens* (each a hosted ``claude`` + minimal cheeselet), relays a screen's raw
-terminal bytes to browser viewers (the 现场 — relayed, never parsed), answers the
-cheeselet's calls, and runs one-shot ``exec`` on the device. The wire shape is the
-frozen ``cli/`` ``link.Msg`` contract (``device_link``); the frozen cli is the other
-end and never changes.
+*screens* (each a hosted ``claude``), hands a screen its next prompt, relays a
+screen's raw terminal bytes to browser viewers (the 现场 — relayed, never parsed),
+and runs one-shot ``exec`` on the device. The wire shape is the ``cli/``
+``link.Msg`` contract (``device_link``).
 
 Ported from the reference ``app/agent/hub.py`` and kept I/O-free: it depends only on
 two tiny transport Protocols, so it is exercised with in-process fakes — no
 WebSocket, no device, no DB. Perception of what the agent *does* flows through our
-Claude Code hooks (``hook_events``), NOT through reading the screen; the cheeselet is
-therefore minimal (start ``claude`` + type prompts), and the raw screen channel here
-serves only the human viewer.
+Claude Code hooks (``hook_events``), NOT through reading the screen, so the raw
+screen channel here serves only the human viewer.
 
 Our adaptations vs the reference:
   * a screen carries our identity shape — ``agent_user_id: uuid`` + ``agent_handle``
     (the authorship key) — plus its ``project_id``/``topic_id`` and a ``hook_key``
     (the token the device's ``cheese-hook`` posts under, so hooks route to the turn);
-  * ``call_screen`` returns the call id so the caller (DeviceProvider) can correlate
+  * ``call_screen`` returns the call id so the caller (DeviceChannel) can correlate
     an ``rpc.result`` (used to await a ``prompt`` acknowledgement).
 """
 
 import asyncio
 import logging
 import uuid
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from app.domain.agent import device_link
+from app.domain.agent import connector_build, device_link
 
 logger = logging.getLogger(__name__)
+
+
+class DeviceOffline(RuntimeError):
+    """The device has no live link, so a frame to it would go nowhere.
+
+    Raised by the awaited calls (``exec``) instead of letting them wait out
+    their timeout: ``HubDevice.send`` drops a frame to a device with no
+    transport, and a caller that then waits 35s and reports "the connector
+    did not answer" has described the opposite of what happened."""
+
+    def __init__(self, device_id: str) -> None:
+        super().__init__(f"device {device_id} is offline")
+        self.device_id = device_id
+
 
 PROTOCOL_VERSION = device_link.PROTOCOL_VERSION
 
@@ -49,10 +60,6 @@ class ViewerTransport(Protocol):
     async def send_bytes(self, data: bytes) -> None: ...
 
 
-# A cheeselet→server function: (hub, screen, args) -> value. Errors are raised.
-ScreenFn = Callable[["DeviceHub", "HubScreen", list[Any]], Awaitable[Any]]
-
-
 @dataclass
 class HubScreen:
     sid: str
@@ -61,7 +68,7 @@ class HubScreen:
     token: str  # the CHEESE_SCREEN value injected into the screen
     # A screen *is* an agent (一个 agent 是一个屏幕): it acts as one agent-user in its
     # project/topic. Attribution of the screen's cheese-api calls keys on
-    # agent_user_id; hooks route by hook_key (see DeviceProvider).
+    # agent_user_id; hooks route by hook_key (see DeviceChannel).
     agent_user_id: int
     agent_handle: str
     project_id: uuid.UUID | None = None
@@ -70,15 +77,14 @@ class HubScreen:
     # UNIX expiry of the model credential the screen's `claude` was LAUNCHED with
     # (its `CHEESE_TOKEN_EXPIRES`). A bare `claude` reads that credential — the
     # HTTPS_PROXY CONNECT password / CLAUDE_CODE_OAUTH_TOKEN — ONCE at startup and
-    # never re-reads it, and a reused screen is only reasserted (a cheeselet
-    # hot-reload), never relaunched, so once this passes the process is a corpse
-    # that 407s/401s every turn while still alive. The DeviceProvider stamps it at
+    # never re-reads it, and a reused screen is only reasserted (an adopt-create),
+    # never relaunched, so once this passes the process is a corpse
+    # that 407s/401s every turn while still alive. The DeviceChannel stamps it at
     # open time and folds it into the reuse decision (retire + reopen past it),
     # and the zero-output fuse reads it to fast-fail with the true reason (#388).
     # `None` = never recorded (a screen adopted after a server restart, or a dev
     # token with no decodable expiry) → treated as fresh, never retired on it.
     credential_expires: int | None = None
-    vars: dict[str, Any] = field(default_factory=dict)
     viewers: set[ViewerTransport] = field(default_factory=set)
 
 
@@ -86,7 +92,20 @@ class HubScreen:
 class HubDevice:
     device_id: str
     transport: DeviceTransport | None = None
+    # What a person calls this machine, as the connector route knows it at attach
+    # time. Kept here so a failure on the link can name the machine without a
+    # database read on a path that is already failing.
+    name: str = ""
     proto: int | None = None
+    # What the connector said about itself in `hello`: the sha256 of its own
+    # executable and the `<os>-<arch>` it was built for. Both empty from a
+    # connector built before it announced either.
+    build: str = ""
+    target: str = ""
+    # Whether this CONNECTION has already been told to update itself. Reset on
+    # every attach, so a machine whose self-update failed is told again the next
+    # time it dials in rather than once and never again.
+    update_pushed: bool = False
     # Last time the device sent any frame (hello/heartbeat/…). A liveness signal for
     # ops/UX: `is_online` already tracks the socket; this dates the last contact so a
     # future reaper can distinguish a wedged-but-connected device from a healthy one.
@@ -111,63 +130,32 @@ class HubDevice:
                 await self.transport.send_json(msg)
 
 
-async def _screen_ready(hub: "DeviceHub", screen: "HubScreen", args: list[Any]) -> Any:
-    return {"ok": True}
-
-
-def _delivery_hook(name: str) -> "ScreenFn":
-    """A cheeselet-originated delivery report (#445), re-published into the
-    topic's hook stream so the ACTIVE turn hears it. Without this bridge the
-    driver's give-up existed only in the connector's local journal while the
-    room stared at silence until the 300s no-output bound."""
-
-    async def fn(hub: "DeviceHub", screen: "HubScreen", args: list[Any]) -> Any:
-        # Local import: hook_events imports nothing from this module, so the
-        # edge stays one-directional at runtime while avoiding a module-load
-        # cycle through the agent package's wiring.
-        from app.domain.agent.hook_events import hook_router
-
-        if screen.topic_id is None:
-            return {"ok": False}
-        phase = str(args[0]) if args else ""
-        ticks = int(args[1]) if len(args) > 1 and str(args[1]).isdigit() else 0
-        delivered = hook_router.push(
-            str(screen.topic_id),
-            {"hook_event_name": name, "phase": phase, "ticks": ticks},
-        )
-        return {"ok": delivered}
-
-    return fn
-
-
 class DeviceHub:
-    def __init__(self, screen_fns: dict[str, ScreenFn] | None = None) -> None:
+    def __init__(self) -> None:
         self._devices: dict[str, HubDevice] = {}
         self._screens: dict[str, HubScreen] = {}  # sid -> screen (across devices)
         self._by_screen_token: dict[str, HubScreen] = {}
-        self._fns: dict[str, ScreenFn] = {
-            "screenReady": _screen_ready,
-            "deliveryFailed": _delivery_hook("CheeseDeliveryFailed"),
-            "deliveryRetried": _delivery_hook("CheeseDeliveryRetried"),
-        }
-        if screen_fns:
-            self._fns.update(screen_fns)
 
     def _device(self, device_id: str) -> HubDevice:
         return self._devices.setdefault(device_id, HubDevice(device_id=device_id))
 
     # -- device connection -------------------------------------------------
 
-    async def attach_device(self, device_id: str, transport: DeviceTransport) -> None:
+    async def attach_device(
+        self, device_id: str, transport: DeviceTransport, *, name: str = ""
+    ) -> None:
         device = self._device(device_id)
         device.transport = transport
+        if name:
+            device.name = name
+        device.update_pushed = False
         await device.send(device_link.welcome())
 
     async def detach_device(self, device_id: str, transport: DeviceTransport) -> None:
         device = self._devices.get(device_id)
         if device is not None and device.transport is transport:
             device.transport = None
-            from app.domain.agent.hooks_substrate import (
+            from app.domain.agent.harness.claude_code import (
                 drop_device_subscriptions,
                 drop_screen_subscriptions,
             )
@@ -183,13 +171,24 @@ class DeviceHub:
     def online_device_ids(self) -> list[str]:
         return [d.device_id for d in self._devices.values() if d.transport is not None]
 
+    def device_name(self, device_id: str) -> str:
+        """The machine's name as announced at attach, or its id when unknown."""
+        device = self._devices.get(device_id)
+        return device.name if device is not None and device.name else device_id
+
+    def last_seen_age(self, device_id: str) -> float | None:
+        """Seconds since the device last sent any frame; None when it never has."""
+        device = self._devices.get(device_id)
+        if device is None or not device.last_seen:
+            return None
+        return asyncio.get_event_loop().time() - device.last_seen
+
     # -- screens (server -> device) ----------------------------------------
 
     async def open_screen(
         self,
         device_id: str,
         command: list[str],
-        cheeselet_source: str,
         *,
         agent_user_id: int,
         agent_handle: str,
@@ -201,9 +200,9 @@ class DeviceHub:
         rows: int = 32,
     ) -> HubScreen:
         """Open a screen (an agent) on the device acting as ``agent_user_id``: mint
-        its per-screen token, ship the cheeselet + command, and inject ``env`` into
-        the screen process. The token becomes ``CHEESE_SCREEN`` inside the screen so a
-        call from within it proves which screen it belongs to."""
+        its per-screen token, ship the command, and inject ``env`` into the screen
+        process. The token becomes ``CHEESE_SCREEN`` inside the screen so a call from
+        within it proves which screen it belongs to."""
         device = self._device(device_id)
         sid = "s" + uuid.uuid4().hex[:8]
         screen = HubScreen(
@@ -227,7 +226,6 @@ class DeviceHub:
                 screen_token=screen.token,
                 cols=cols,
                 rows=rows,
-                source=cheeselet_source,
                 env=env,
             )
         )
@@ -238,7 +236,6 @@ class DeviceHub:
         screen: HubScreen,
         *,
         command: list[str],
-        cheeselet_source: str,
         env: dict[str, str] | None = None,
         cols: int = 120,
         rows: int = 32,
@@ -246,13 +243,15 @@ class DeviceHub:
         """Re-send an existing screen's ``session.create`` with ``adopt`` set — the
         frozen cli's designed re-provision path. The registry alone never proves the
         device still runs a screen: the connector process may have restarted (its
-        private tmux dies with it), or the original create may not have been
-        delivered at all (``open_screen`` registers before an unacknowledged send).
+        tmux sessions outlive it, but its in-memory session map does not, so it
+        knows nothing about this sid until a create makes it re-adopt), or the
+        original create may not have been delivered at all (``open_screen``
+        registers before an unacknowledged send).
         The cli silently drops ``rpc.call`` for a sid it does not know, so prompting
         a lost screen strands the turn in a bare timeout. An adopt-create is
-        idempotent on the device: a live session hot-reloads the cheeselet and keeps
-        running; a lost one is respawned under the SAME sid + screen token, so
-        viewers and attribution stay intact."""
+        idempotent on the device: a live session keeps running untouched; a lost one
+        is respawned under the SAME sid + screen token, so viewers and attribution
+        stay intact."""
         screen.command = command
         await self._device(screen.device_id).send(
             device_link.session_create(
@@ -261,7 +260,6 @@ class DeviceHub:
                 screen_token=screen.token,
                 cols=cols,
                 rows=rows,
-                source=cheeselet_source,
                 env=env,
                 adopt=True,
             )
@@ -320,15 +318,13 @@ class DeviceHub:
             return False
         self._screens.pop(sid, None)
         self._by_screen_token.pop(screen.token, None)
-        from app.domain.agent.hooks_substrate import drop_screen_subscriptions
+        from app.domain.agent.harness.claude_code import (
+            drop_screen_subscriptions,
+        )
 
         await drop_screen_subscriptions(screen)
         await device.send(device_link.session_close(sid))
         return True
-
-    async def reload_driver(self, device_id: str, sid: str, source: str) -> None:
-        """Hot-reload the cheeselet into a running screen (``script.load``)."""
-        await self._device(device_id).send(device_link.script_load(sid, source))
 
     def screen_by_token(self, token: str) -> HubScreen | None:
         return self._by_screen_token.get(token)
@@ -358,8 +354,8 @@ class DeviceHub:
     async def call_screen(
         self, device_id: str, sid: str, name: str, args: list[Any]
     ) -> str:
-        """Server→cheeselet function call (e.g. ``prompt``). Returns the call id so
-        the caller may await the matching ``rpc.result`` via ``await_call``."""
+        """Server→screen call (``prompt``). Returns the call id so the caller may
+        await the matching ``rpc.result`` via ``await_call``."""
         device = self._device(device_id)
         device.call_seq += 1
         call_id = f"srv{device.call_seq}"
@@ -369,8 +365,8 @@ class DeviceHub:
     async def await_call(
         self, device_id: str, call_id: str, *, timeout: float = 30
     ) -> Any:
-        """Await the cheeselet's ``rpc.result`` for a prior ``call_screen``. Raises
-        on device error or timeout."""
+        """Await the screen's ``rpc.result`` for a prior ``call_screen``. Raises on
+        device error or timeout."""
         device = self._device(device_id)
         fut: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
         device.call_pending[call_id] = fut
@@ -412,8 +408,13 @@ class DeviceHub:
         timeout: float = 60,
         stdin: str | None = None,
     ) -> dict[str, Any]:
-        """One-shot command on the device → ``{stdout, stderr, exit, truncated}``."""
+        """One-shot command on the device → ``{stdout, stderr, exit, truncated}``.
+
+        Raises ``DeviceOffline`` at once when the device has no link, rather than
+        sending into the void and timing out ``timeout``+5s later."""
         device = self._device(device_id)
+        if device.transport is None:
+            raise DeviceOffline(device_id)
         device.exec_seq += 1
         eid = f"e{device.exec_seq}"
         fut: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
@@ -488,8 +489,11 @@ class DeviceHub:
 
         if msg.t == "hello":
             device.proto = msg.v
+            device.build = msg.build
+            device.target = msg.target
             if device.proto not in (None, PROTOCOL_VERSION):
                 self._on_version_skew(device_id, device.proto)
+            await self._update_if_stale(device, msg)
             return
         if msg.t == "session.error":
             # The device could not start (or attach) this screen. There is no
@@ -517,9 +521,6 @@ class DeviceHub:
                     }
                 )
             return
-        if msg.t == "var.push" and screen is not None:
-            screen.vars[msg.name] = msg.value
-            return
         if msg.t == "screen.data" and screen is not None:
             await self._fan_out_screen_data(screen, msg.decoded_data())
             return
@@ -539,9 +540,6 @@ class DeviceHub:
                 else:
                     fut.set_result(msg.value)
             return
-        if msg.t == "rpc.call":
-            await self._handle_screen_call(device, screen, m)
-            return
 
     async def _fan_out_screen_data(self, screen: HubScreen, raw: bytes) -> None:
         dead: list[ViewerTransport] = []
@@ -553,37 +551,58 @@ class DeviceHub:
         for viewer in dead:
             screen.viewers.discard(viewer)
 
-    async def _handle_screen_call(
-        self, device: HubDevice, screen: HubScreen | None, m: dict[str, Any]
-    ) -> None:
-        name = str(m.get("name", ""))
-        args = m.get("args", [])
-        value: Any = None
-        error = ""
-        fn = self._fns.get(name)
-        if fn is None or screen is None:
-            error = f"unknown function {name!r}"
-        else:
-            try:
-                value = await fn(self, screen, args if isinstance(args, list) else [])
-            except Exception as exc:  # noqa: BLE001 — a cheeselet call must not crash the channel
-                error = str(exc) or exc.__class__.__name__
-        await device.send(
-            device_link.rpc_result(
-                str(m.get("sid", "")), str(m.get("id", "")), value, error
-            )
-        )
-
     def _require_screen(self, device_id: str, sid: str) -> HubScreen:
         screen = self._device(device_id).screens.get(sid)
         if screen is None:
             raise KeyError(f"no screen {sid!r} on device {device_id!r}")
         return screen
 
+    async def _update_if_stale(
+        self, device: HubDevice, msg: device_link.LinkMsg
+    ) -> None:
+        """Tell a machine whose connector is not the one we serve to replace it.
+
+        Nothing else closes the gap between what the server sends and what the
+        far end can receive. A connector drops a frame it does not recognise
+        without answering it, so drift surfaces as a timeout somewhere
+        unrelated — an image that never arrived, a call that never returned —
+        and no error anywhere names a version. Left to a person to notice, a
+        machine stays behind for as long as nobody looks: one ran a build from
+        the day before ``file.put`` merged for two weeks, and every image
+        attached to any topic on it was staged into a twenty-second silence.
+
+        Only ever on a definite answer. A connector that identifies itself but
+        whose bytes we cannot compare is left alone — telling it to update on a
+        half-answer would re-exec the machine on every reconnect and never
+        converge, which is worse than the drift.
+        """
+        if device.update_pushed:
+            return
+        if msg.build or msg.target:
+            if not (msg.build and msg.target):
+                return
+            served = await asyncio.to_thread(connector_build.served_digest, msg.target)
+            if served is None or served == msg.build:
+                return
+        elif not await asyncio.to_thread(connector_build.has_any_build):
+            # It says nothing about itself, so it predates saying anything and
+            # is old by construction — but only tell it to fetch a build if we
+            # have one to give it.
+            return
+        device.update_pushed = True
+        logger.warning(
+            "device %s runs connector build %s for %s, not the one we serve — "
+            "pushing self-update",
+            device.device_id,
+            msg.build or "<unreported>",
+            msg.target or "<unreported>",
+        )
+        await device.send(device_link.update())
+
     # Overridable seam for logging/metrics; a no-op by default.
     def _on_version_skew(self, device_id: str, proto: int | None) -> None:
         pass
 
 
-# Shared singleton: the connector route and the DeviceProvider import this instance.
+# Shared singleton: the connector route and the DeviceChannel import this instance.
 device_hub = DeviceHub()

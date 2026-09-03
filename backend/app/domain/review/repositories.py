@@ -3,10 +3,11 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.review.models import AcceptApproval, AcceptCard, AcceptStatus
+from app.domain.room_task.place import room_and_task
 from app.domain.topic.models import Topic, TopicStatus
 
 
@@ -23,9 +24,16 @@ class AcceptCardRepository:
         status: AcceptStatus = AcceptStatus.pending,
         change_subject: str | None = None,
         change_body: str | None = None,
+        tree_id: uuid.UUID | None = None,
     ) -> AcceptCard:
+        # `topic_id` names the PLACE the card was filed from, which is normally
+        # a thread — a card is what a piece of work ends in. Stored as the pair
+        # so the room it is READ in and the work it is ABOUT stay separable.
+        room_id, task_id = await room_and_task(self._session, topic_id)
         card = AcceptCard(
-            topic_id=topic_id,
+            topic_id=room_id,
+            task_id=task_id,
+            tree_id=tree_id,
             reviewer_handle=reviewer_handle,
             routing_reason=routing_reason,
             status=status,
@@ -57,30 +65,127 @@ class AcceptCardRepository:
     async def get(self, card_id: uuid.UUID) -> AcceptCard | None:
         return await self._session.get(AcceptCard, card_id)
 
-    async def list_for_topic(self, topic_id: uuid.UUID) -> list[AcceptCard]:
+    async def list_for_tree(self, tree_id: uuid.UUID) -> list[AcceptCard]:
+        """Every card that has ever delivered this tree, newest first.
+
+        The scope "one card at a time" is really about: a tree has one branch
+        and therefore one PR, and two live cards on it would be two PRs racing
+        each other on the same commits.
+        """
         stmt = (
             select(AcceptCard)
-            .where(AcceptCard.topic_id == topic_id)
+            .where(AcceptCard.tree_id == tree_id)
             .order_by(AcceptCard.created_at.desc())
         )
         return list((await self._session.scalars(stmt)).all())
 
-    async def list_live_for_topics(
-        self, topic_ids: list[uuid.UUID], *, statuses: tuple[AcceptStatus, ...]
-    ) -> list[AcceptCard]:
-        """Undecided cards on ANY of these topics.
+    async def list_treeless_for_topic(self, topic_id: uuid.UUID) -> list[AcceptCard]:
+        """This place's cards that belong to no tree, newest first.
 
-        By topic-set rather than by topic because archiving is cascading: the
-        question this answers is "would archiving this sub-topic close a card
-        somebody is still waiting on", and a grandchild's card is closed by the
-        same cascade (`TopicService._archive_children`).
+        Cards filed before trees existed carry `tree_id IS NULL`, and the
+        backfill (migration `e4c9a2f60b18`) deliberately left it that way for
+        every card whose tree was never created — there was no honest value to
+        invent. They are still real: a `pr_open` one from that era is driving a
+        live PR. Anything scoped to a tree has to ask for them separately or
+        pretend they are not there.
         """
-        if not topic_ids:
+        stmt = (
+            select(AcceptCard)
+            .where(AcceptCard.topic_id == topic_id, AcceptCard.tree_id.is_(None))
+            .order_by(AcceptCard.created_at.desc())
+        )
+        return list((await self._session.scalars(stmt)).all())
+
+    async def list_for_topic(self, topic_id: uuid.UUID) -> list[AcceptCard]:
+        """Cards filed from one PLACE — a room's own, or one thread's.
+
+        Not the room's whole set: a thread asking "do I have a card" must not
+        see another thread's, which is the difference between a card that
+        belongs to this work and one that merely happens nearby.
+        """
+        room_id, task_id = await room_and_task(self._session, topic_id)
+        stmt = (
+            select(AcceptCard)
+            .where(
+                AcceptCard.topic_id == room_id,
+                AcceptCard.task_id.is_(None)
+                if task_id is None
+                else AcceptCard.task_id == task_id,
+            )
+            .order_by(AcceptCard.created_at.desc())
+        )
+        return list((await self._session.scalars(stmt)).all())
+
+    async def latest_by_task(
+        self, task_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, AcceptCard]:
+        """The newest card on each of these threads, in ONE query.
+
+        Batched on purpose. The rail shows every thread with the PR it rides
+        on, and asking per thread is the N+1 that turns one sidebar into one
+        request per piece of work ever dispatched. Newest wins because a thread
+        can file again after a rejection, and the current card is the one that
+        says where the work stands.
+        """
+        if not task_ids:
+            return {}
+        stmt = (
+            select(AcceptCard)
+            .where(AcceptCard.task_id.in_(task_ids))
+            .order_by(AcceptCard.created_at, AcceptCard.id)
+        )
+        latest: dict[uuid.UUID, AcceptCard] = {}
+        for card in (await self._session.scalars(stmt)).all():
+            # Ordered oldest-first, so the last write per key is the newest.
+            if card.task_id is not None:
+                latest[card.task_id] = card
+        return latest
+
+    async def latest_by_tree(
+        self, tree_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, AcceptCard]:
+        """The newest card on each of these trees, in ONE query.
+
+        A tree is a batch and a batch opens one PR, so this is how a room says
+        which PR its sealed batch is riding — the question 「这一批封口了，在哪儿
+        跑着」 has no other answer: the card belongs to the tree, not to any one
+        of the threads that wrote it.
+        """
+        if not tree_ids:
+            return {}
+        stmt = (
+            select(AcceptCard)
+            .where(AcceptCard.tree_id.in_(tree_ids))
+            .order_by(AcceptCard.created_at, AcceptCard.id)
+        )
+        latest: dict[uuid.UUID, AcceptCard] = {}
+        for card in (await self._session.scalars(stmt)).all():
+            # Ordered oldest-first, so the last write per key is the newest.
+            if card.tree_id is not None:
+                latest[card.tree_id] = card
+        return latest
+
+    async def list_live_for_places(
+        self, place_ids: list[uuid.UUID], *, statuses: tuple[AcceptStatus, ...]
+    ) -> list[AcceptCard]:
+        """Undecided cards on ANY of these places — rooms or threads.
+
+        Matched on EITHER key. A card filed from a thread stores the room in
+        `topic_id` and the thread in `task_id`, so asking only about `topic_id`
+        answers "no card" for every thread — and the caller is
+        `anybody_still_waiting`, whose "no" closes the place and revokes the very
+        card the reviewer had not seen yet. That is the 2026-08-16 incident this
+        whole guard was written for, one shape over.
+        """
+        if not place_ids:
             return []
         stmt = (
             select(AcceptCard)
             .where(
-                AcceptCard.topic_id.in_(topic_ids),
+                or_(
+                    AcceptCard.topic_id.in_(place_ids),
+                    AcceptCard.task_id.in_(place_ids),
+                ),
                 AcceptCard.status.in_(statuses),
             )
             .order_by(AcceptCard.created_at)
@@ -116,8 +221,8 @@ class AcceptCardRepository:
         rows = (await self._session.execute(stmt)).all()
         return {topic_id: bool(waiting) for topic_id, waiting in rows}
 
-    async def latest_decision_at(self, topic_ids: list[uuid.UUID]) -> datetime | None:
-        """When a card on these topics last changed hands — NULL if there are no
+    async def latest_decision_at(self, place_ids: list[uuid.UUID]) -> datetime | None:
+        """When a card on these places last changed hands — NULL if there are no
         cards at all.
 
         `decided_at` first, `updated_at` as the fallback: a card condemned by
@@ -125,11 +230,16 @@ class AcceptCardRepository:
         is exactly what a "give them a window to re-file" clock has to start
         from.
         """
-        if not topic_ids:
+        if not place_ids:
             return None
         stmt = select(
             func.max(func.coalesce(AcceptCard.decided_at, AcceptCard.updated_at))
-        ).where(AcceptCard.topic_id.in_(topic_ids))
+        ).where(
+            or_(
+                AcceptCard.topic_id.in_(place_ids),
+                AcceptCard.task_id.in_(place_ids),
+            )
+        )
         return (await self._session.scalars(stmt)).first()
 
     async def list_stale_pending_gate(self, cutoff: datetime) -> list[AcceptCard]:

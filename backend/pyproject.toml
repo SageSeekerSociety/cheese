@@ -26,7 +26,6 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0",
     "srp-rs",
     "structlog>=26.1.0",
-    "taskiq[fastapi,redis]>=0.11.0,<1.0.0",
     "uvicorn[standard]>=0.49.0",
     "webauthn>=3.0.0",
     "websockets>=16.0",
@@ -41,6 +40,7 @@ dev = [
     "pytest>=9.1.0",
     "pytest-anyio>=0.0.0",
     "pytest-rerunfailures>=16.4",
+    "pytest-timeout>=2.4.0",
     "pytest-xdist>=3.8.0",
     "ruff>=0.15.17",
 ]
@@ -117,6 +117,23 @@ venv = ".venv"
 [tool.pytest.ini_options]
 anyio_mode = "auto"
 testpaths = ["tests"]
+# A wedged test must name itself. Without this, one test that never returns
+# looks exactly like a slow suite: the run produces progress dots, then
+# nothing, and CI kills the job at its own ceiling — so the log ends with a
+# row of dots and no test name anywhere in it. That has now happened three
+# times, and each one cost twenty minutes of the box's single runner to learn
+# nothing at all.
+#
+# 300s is deliberately loose for a first pass. Nobody can currently say how
+# long the slowest honest test in here takes — that is the same blindness this
+# is meant to end — so the number is set where it cannot plausibly fire on a
+# healthy test, and a wedge still names itself with fifteen minutes to spare
+# under the job ceiling. Tighten it once `--durations` has reported a real
+# distribution; a timeout that turns a green suite red teaches nothing.
+#
+# It applies locally too, deliberately: the same silence is just as unreadable
+# on a laptop, and pytest-timeout stands down on its own under a debugger.
+timeout = 300
 
 [tool.uv.workspace]
 members = [

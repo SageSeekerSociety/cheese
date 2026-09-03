@@ -62,7 +62,7 @@ def test_errors_land_in_topic_timeline(client):
     events = _topic_events(client, tid)
     assert len(events) == 2
     boom = next(e for e in events if "boom" in e["content"])
-    assert "🐞" in boom["content"]
+    assert boom["meta"]["event_type"] == "frontend_error"
     assert boom["meta"]["stack"] == "Error: boom\n  at a.js:1"
 
 

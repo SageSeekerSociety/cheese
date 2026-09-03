@@ -88,27 +88,5 @@ def load_skills(names: list[str]) -> str:
     return "\n\n---\n\n".join(chunks)
 
 
-def load_cheese_cli_rules() -> str:
-    """The cheese CLI rules (the SKILL.md body) for direct system-prompt injection.
-
-    The cheese CLI lives as an Agent Skill at `sandbox/skills/cheese/SKILL.md`, but
-    Agent Skills are lazy: only the skill's name+description are preloaded; the body
-    loads only if the model decides to read it (a self-directed bash read). Weak,
-    non-Claude gateway models don't reliably do that — yet the cheese CLI is needed
-    on essentially every sandbox turn. Per Anthropic's guidance, always-needed
-    instructions belong in the system prompt, not in a lazily-loaded skill. So we
-    read the same SKILL.md (single source of truth) and inject its body directly.
-    """
-    from app.core.config import settings
-
-    sandbox_dir = Path(settings.sandbox_shim).resolve().parent
-    path = sandbox_dir / "skills" / "cheese" / "SKILL.md"
-    try:
-        _, body = _parse(path)
-    except OSError:
-        return ""
-    return body
-
-
 # Default skills loaded for an in-topic conversation.
 DEFAULT_CHAT_SKILLS = ["conversation-style", "doc-form"]

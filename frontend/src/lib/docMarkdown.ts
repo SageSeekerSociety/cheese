@@ -235,7 +235,7 @@ export function docExtensions(opts: DocExtensionsOptions = {}): AnyExtension[] {
 // escaping for EXACTLY those three token shapes (deterministic token syntax —
 // never general unescaping, which could turn user-typed literal HTML live).
 
-const ESCAPED_TOKEN_RE = /&lt;(@[\w-]+|#[0-9a-fA-F-]{8,}|&amp;[\w./一-鿿-]+)&gt;/g
+const ESCAPED_TOKEN_RE = /&lt;(@[\w-]+|#[0-9a-fA-F-]{8,}|&amp;[\w./一-鿿-]+(?::\d+(?:-\d+)?)?)&gt;/g
 
 // A pure autolink serializes as `[url](url)`; write the bare URL back so the
 // file stays byte-stable (GFM re-autolinks it on the next parse). The mark's

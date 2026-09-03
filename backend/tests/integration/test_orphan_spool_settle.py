@@ -6,56 +6,55 @@ and an undelivered prompt (the ONE re-send case) goes out as the original text.
 """
 
 import asyncio
-import json
-import time as _time
 import uuid
-from pathlib import Path
 
 import pytest
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.agent import runtime as rt
 from app.domain.agent.chat import ChatService
+from app.domain.agent.harness.claude_code import event_spool
 from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
-from app.domain.agent.service import AgentResult, AgentService
+from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.identity.handles import CHEESE_HANDLE
 from app.domain.project.services import ProjectService
-from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
 from app.domain.workspace import service as ws
+from tests.conftest import StubChannel, stub_compute
+from tests.turn_log import open_turn, open_turn_ids
 
 
-def _spool_event(spool: Path, eid: str, payload: dict) -> None:
+def _spool_event(spool, eid: str, payload: dict) -> None:
     """Simulate the cheese-hook forwarder's atomic write of one hook."""
-    spool.mkdir(parents=True, exist_ok=True)
-    (spool / f"{_time.time_ns()}.{eid}").write_text(
-        json.dumps(payload, ensure_ascii=False), encoding="utf-8"
-    )
+    event_spool.append(spool, eid, payload)
 
 
-class _MustNotRun(AgentService):
-    """An agent whose invocation IS the failure: attach mode means no prompt."""
+class _MustNotRun(StubChannel):
+    """A screen whose being written to IS the failure: attach mode means no
+    prompt is sent at all."""
 
-    def __init__(self) -> None:
-        super().__init__(model="stub")
-
-    async def stream_reply(self, **_):
+    async def send_prompt(
+        self, screen: uuid.UUID, prompt: str, images: list[dict] | None = None
+    ) -> bool:
+        del screen, prompt, images
         raise AssertionError("attach mode must never start a turn")
-        yield  # pragma: no cover — makes this an async generator
 
 
-class _RecordingAgent(AgentService):
+class _RecordingScreen(StubChannel):
     """Records every prompt it is asked to run (the re-send path's witness)."""
 
     def __init__(self) -> None:
-        super().__init__(model="stub")
+        super().__init__()
         self.prompts: list[str] = []
 
-    async def stream_reply(self, *, prompt, **_):
+    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+        del reply
         self.prompts.append(prompt)
-        yield AgentResult(text="收到", session_id="s-new", usage=None)
+        self.starts(topic_id, session_id="s-new")
+        self.acknowledges(topic_id, prompt)
+        self.stops(topic_id, "收到", session_id="s-new")
 
 
 async def _seed_topic(factory) -> tuple[uuid.UUID, uuid.UUID]:
@@ -81,7 +80,7 @@ async def test_settle_lands_parked_stop_and_finishes_the_turn(
     pid, tid = await _seed_topic(factory)
     svc = ChatService(
         session_factory=factory,
-        agent=_MustNotRun(),
+        compute=stub_compute(_MustNotRun()),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
     )
@@ -106,7 +105,7 @@ async def test_settle_lands_parked_stop_and_finishes_the_turn(
 
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
-        topic = await TopicRepository(session).get(tid)
+        resumes_by = await AgentSessionService(session).resume_token(tid, CHEESE_HANDLE)
     finals = [
         b
         for b in rows
@@ -114,8 +113,11 @@ async def test_settle_lands_parked_stop_and_finishes_the_turn(
     ]
     assert len(finals) == 1
     assert finals[0].meta.get("backfilled") is True
-    assert topic.session_id == "s-done"  # the next summon resumes the FINISHED session
-    assert not list(ws.spool_dir(pid, tid).iterdir())
+    assert resumes_by == "s-done"  # the next summon resumes the FINISHED session
+    # The settle read to the end. Reading no longer deletes — the files live out
+    # their retention — so what "drained" means is an empty tail past the cursor.
+    spool = ws.spool_dir(pid, tid)
+    assert event_spool.spool_entries(spool, after=event_spool.read_cursor(spool)) == []
 
 
 @pytest.mark.anyio
@@ -127,7 +129,7 @@ async def test_settle_lands_a_stop_only_final_message(client, tmp_path, monkeypa
     pid, tid = await _seed_topic(factory)
     svc = ChatService(
         session_factory=factory,
-        agent=_MustNotRun(),
+        compute=stub_compute(_MustNotRun()),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
     )
@@ -144,12 +146,12 @@ async def test_settle_lands_a_stop_only_final_message(client, tmp_path, monkeypa
     assert await svc.settle_spool(tid) == 1
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
-        topic = await TopicRepository(session).get(tid)
+        resumes_by = await AgentSessionService(session).resume_token(tid, CHEESE_HANDLE)
     finals = [b for b in rows if b.content == "只有Stop带回来的结论"]
     assert len(finals) == 1
     assert finals[0].kind == BlockKind.message
     assert finals[0].meta.get("eid") == "s-only"
-    assert topic.session_id == "s-final"
+    assert resumes_by == "s-final"
     # Idempotent: a second settle finds nothing to do.
     assert await svc.settle_spool(tid) == 0
 
@@ -158,17 +160,18 @@ async def test_settle_lands_a_stop_only_final_message(client, tmp_path, monkeypa
 async def test_orphan_with_parked_stop_is_settled_not_reprompted(
     client, tmp_path, monkeypatch
 ):
-    """The full chain of the incident fix: orphan turn + a Stop in the spool →
-    the sweep attaches (no prompt reaches the agent), and the settle it
-    schedules finishes the turn on its own — saying nothing, because from the
-    room's side nothing broke."""
+    """The full chain of the incident fix: a turn the transport had accepted,
+    whose screen is gone by the time the sweep runs (the container went with the
+    deploy). No prompt reaches the agent — asking again for work 芝士 already
+    heard is what stacked five zombie turns on one topic — and the settle the
+    sweep schedules finishes the turn out of the Stop the dead screen parked,
+    saying nothing, because from the room's side nothing broke."""
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
-    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
     factory = client.test_factory
     pid, tid = await _seed_topic(factory)
     svc = ChatService(
         session_factory=factory,
-        agent=_MustNotRun(),
+        compute=stub_compute(_MustNotRun()),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
     )
@@ -180,18 +183,7 @@ async def test_orphan_with_parked_stop_is_settled_not_reprompted(
         lambda self, topic_id, delay_s=2.0: real_schedule(self, topic_id, delay_s=0),
     )
 
-    rt._save_inflight(
-        {
-            str(uuid.uuid4()): {
-                "topic_id": str(tid),
-                "started_at": _time.time() - 300,
-                "is_resume": False,
-                "author": "u",
-                "content": "把测试跑绿",
-                "resendable": True,
-            }
-        }
-    )
+    await open_turn(factory, tid, content="把测试跑绿", age_s=300, delivered=True)
     _spool_event(
         ws.spool_dir(pid, tid),
         "s1",
@@ -230,7 +222,7 @@ async def test_orphan_with_parked_stop_is_settled_not_reprompted(
         if b.author_type == AuthorType.system and "部署中断" in (b.content or "")
     ]
     assert verdicts == []
-    assert rt._load_inflight() == {}
+    assert await open_turn_ids(factory) == set()
 
 
 @pytest.mark.anyio
@@ -240,13 +232,12 @@ async def test_zero_evidence_orphan_resends_the_original_text(
     """No block, no spool trace → the sweep re-sends, and the turn's prompt is
     the pending HUMAN message verbatim — not a continuation nudge."""
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
-    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
     factory = client.test_factory
     _pid, tid = await _seed_topic(factory)
-    agent = _RecordingAgent()
+    agent = _RecordingScreen()
     svc = ChatService(
         session_factory=factory,
-        agent=agent,
+        compute=stub_compute(agent),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
     )
@@ -262,18 +253,7 @@ async def test_zero_evidence_orphan_resends_the_original_text(
             kind=BlockKind.message,
         )
         await session.commit()
-    rt._save_inflight(
-        {
-            str(uuid.uuid4()): {
-                "topic_id": str(tid),
-                "started_at": _time.time() - 300,
-                "is_resume": False,
-                "author": "u",
-                "content": "修一下登录页",
-                "resendable": True,
-            }
-        }
-    )
+    await open_turn(factory, tid, content="修一下登录页", age_s=300)
     # Collapse the 3s re-send delay, keep the real path.
     real_resend = AgentWorkRunner._schedule_resend
     monkeypatch.setattr(
@@ -317,4 +297,4 @@ def test_parked_hook_schedules_a_settle(client, tmp_path, monkeypatch):
     assert r.json()["data"]["delivered"] is False
     assert scheduled == [tid]
     # The event really is parked for that settle to find.
-    assert len(list(ws.spool_dir(pid, tid).iterdir())) == 1
+    assert len(event_spool.spool_entries(ws.spool_dir(pid, tid))) == 1

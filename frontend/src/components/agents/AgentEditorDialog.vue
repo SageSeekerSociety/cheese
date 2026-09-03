@@ -7,6 +7,7 @@
 // 被别的项目共用的出厂设置。把两段并排放在一起，是因为人来这里想的是「改这个
 // 队友」，而不是「改一个类型」—— 但改下面那段会影响所有用同一个类型的队友，
 // 所以下面那段自己说明了这一点，平台预设更是直接只读。
+import type { AgentFieldChoice, AgentTypeOptions } from '../../api'
 import type { AgentType, ProjectAgent } from '../../cx_types'
 
 import { computed, ref, watch } from 'vue'
@@ -14,12 +15,13 @@ import { computed, ref, watch } from 'vue'
 import {
   createAgentType,
   createProjectAgent,
+  getAgentTypeOptions,
   isEndpointMissing,
   setProjectDefaultAgent,
   updateAgentType,
   updateProjectAgent,
 } from '../../api'
-import { displayNameError, findType, handleError } from '../../lib/projectAgents'
+import { displayNameError, fieldChoices, fieldIsChoosable, findType, handleError } from '../../lib/projectAgents'
 
 const props = defineProps<{
   modelValue: boolean
@@ -61,7 +63,7 @@ const submitted = ref(false)
 // 存进 B 类型。
 const typeBody = ref('')
 const typeHarness = ref('')
-const typeModel = ref('')
+const typeModel = ref<string | null>('')
 const typeEffort = ref<string | null>(null)
 const typeSkills = ref<string[]>([])
 const typeMcp = ref<string[]>([])
@@ -74,19 +76,29 @@ const typeOptions = computed(() => [
   ...allTypes.value.map((t) => ({ title: t.title || t.name, value: t.name })),
 ])
 
-const EFFORT_OPTIONS = [
-  { title: '跟随平台', value: null },
-  { title: '快', value: 'low' },
-  { title: '标准', value: 'medium' },
-  { title: '深', value: 'high' },
-  { title: '很深', value: 'xhigh' },
-  { title: '最深', value: 'max' },
-]
+// 能设什么由后端那份目录说了算，这里不留第二份清单。接不上运行链路的字段直接
+// 不渲染 —— 不摆一个填了不生效的框，也不摆一句「暂不可设置」的说明：两者都是
+// 在界面上给一个不存在的功能留位置。哪天它真接上了，改后端一处即可。
+const options = ref<AgentTypeOptions>({})
+
+function fieldChoosable(name: string): boolean {
+  return fieldIsChoosable(options.value, name)
+}
+function fieldItems(name: string): AgentFieldChoice[] {
+  return fieldChoices(options.value, name)
+}
+
+const modelHint = computed(() => {
+  const fallback = fieldItems('model').find((c) => c.default)
+  return typeModel.value
+    ? '用这个类型的队友，在所有房间里都跑这个模型'
+    : `不指定就跟项目走${fallback ? `（现在是 ${fallback.label}）` : ''}`
+})
 
 function loadTypeDraft(t: AgentType | null) {
   typeBody.value = t?.body ?? ''
   typeHarness.value = t?.harness ?? ''
-  typeModel.value = t?.model ?? ''
+  typeModel.value = t?.model ?? null
   typeEffort.value = t?.effort ?? null
   typeSkills.value = [...(t?.skills ?? [])]
   typeMcp.value = [...(t?.mcp_servers ?? [])]
@@ -103,9 +115,20 @@ watch(
     handle.value = props.agent?.handle ?? ''
     typeName.value = props.agent?.type_name ?? null
     loadTypeDraft(findType(allTypes.value, props.agent?.type_name))
+    void loadOptions()
   },
   { immediate: true }
 )
+
+// 取不到目录时保持空 —— 空的意思是「不知道能设什么」，于是模型选择器不渲染、
+// 也不列任何「暂不可设置」。把一次请求失败说成产品限制，比少显示一个框更糟。
+async function loadOptions() {
+  try {
+    options.value = await getAgentTypeOptions()
+  } catch {
+    options.value = {}
+  }
+}
 
 watch(typeName, (name) => loadTypeDraft(findType(allTypes.value, name)))
 
@@ -126,7 +149,7 @@ const typeDirty = computed(() => {
   return (
     typeBody.value !== t.body ||
     typeHarness.value !== (t.harness ?? '') ||
-    typeModel.value !== (t.model ?? '') ||
+    (typeModel.value || null) !== (t.model ?? null) ||
     typeEffort.value !== (t.effort ?? null) ||
     !sameList(typeSkills.value, t.skills) ||
     !sameList(typeMcp.value, t.mcp_servers)
@@ -190,7 +213,7 @@ async function save() {
       await updateAgentType(selectedType.value.name, {
         body: typeBody.value,
         harness: typeHarness.value.trim() || null,
-        model: typeModel.value.trim() || null,
+        model: typeModel.value || null,
         effort: typeEffort.value,
         skills: typeSkills.value,
         mcp_servers: typeMcp.value,
@@ -304,7 +327,9 @@ async function save() {
 
           <v-textarea
             v-model="typeBody"
-            label="角色设定"
+            label="角色设定（可留空）"
+            hint="留空也能用 —— 它攒下的记忆每轮都会带上，之后它也可以自己改这段"
+            persistent-hint
             rows="6"
             density="comfortable"
             variant="outlined"
@@ -312,55 +337,23 @@ async function save() {
             class="mb-1"
           />
           <div class="d-flex ga-3 mb-1 flex-wrap">
-            <v-text-field
-              v-model="typeModel"
-              label="模型"
-              placeholder="跟随平台"
-              density="comfortable"
-              variant="outlined"
-              :readonly="typeIsBuiltin"
-              style="min-width: 180px; flex: 1 1 180px"
-            />
             <v-select
-              v-model="typeEffort"
-              :items="EFFORT_OPTIONS"
-              label="思考深度"
+              v-if="fieldChoosable('model')"
+              v-model="typeModel"
+              :items="fieldItems('model')"
+              item-title="label"
+              item-value="id"
+              label="模型"
+              placeholder="跟随项目"
+              clearable
               density="comfortable"
               variant="outlined"
               :readonly="typeIsBuiltin"
-              style="min-width: 180px; flex: 1 1 180px"
-            />
-            <v-text-field
-              v-model="typeHarness"
-              label="运行方式"
-              placeholder="跟随平台"
-              density="comfortable"
-              variant="outlined"
-              :readonly="typeIsBuiltin"
-              style="min-width: 180px; flex: 1 1 180px"
+              :hint="modelHint"
+              persistent-hint
+              style="min-width: 220px; flex: 1 1 220px"
             />
           </div>
-          <v-combobox
-            v-model="typeSkills"
-            label="技能"
-            multiple
-            chips
-            closable-chips
-            density="comfortable"
-            variant="outlined"
-            :readonly="typeIsBuiltin"
-            class="mb-1"
-          />
-          <v-combobox
-            v-model="typeMcp"
-            label="外部工具"
-            multiple
-            chips
-            closable-chips
-            density="comfortable"
-            variant="outlined"
-            :readonly="typeIsBuiltin"
-          />
         </template>
       </v-card-text>
 

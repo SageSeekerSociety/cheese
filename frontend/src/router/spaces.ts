@@ -9,6 +9,8 @@ export default {
   },
   meta: {
     isFullPage: true,
+    // 这一棵下面还挂着 SpaceSidebar，手机上它是抽屉，所以顶栏给汉堡。
+    drawer: true,
   },
   redirect: { name: 'SpacesDetailTasks' },
   children: [

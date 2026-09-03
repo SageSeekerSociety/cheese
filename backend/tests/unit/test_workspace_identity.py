@@ -52,9 +52,9 @@ def test_no_identity_rather_than_an_address_that_links_to_nobody():
     assert identity.identity_from_profile(None, {"login": "octocat"}) is None
 
 
-def test_remembered_identity_survives_to_the_snapshot_path(tmp_path, monkeypatch):
-    """`snapshot_worktree` runs in a worker thread with no DB session, so the
-    identity has to be on disk by the time it commits."""
+def test_remembered_identity_survives_to_the_launch_path(tmp_path, monkeypatch):
+    """The machine that commits reads this while a screen is being opened, with
+    no DB session, so the identity has to be on disk by then."""
     monkeypatch.setattr(identity.settings, "workspace_root", str(tmp_path))
     pid, tid = _ids()
     assert identity.read(pid, tid) is None

@@ -33,16 +33,16 @@ def test_reading_a_file_needs_a_credential(client):
 
 
 def test_a_topic_worktree_listing_reflects_what_was_pushed(tmp_path, monkeypatch):
-    """A machine that owns its tree pushes to the branch; the backend's jj
-    workspace for that topic does not move on its own, so a read that goes
-    through it showed nothing — the push looked like it had done nothing."""
+    """A machine that owns its tree pushes to the branch, and the file panel
+    reads out of the backend's own checkout of it. A checkout that does not
+    move with the branch shows nothing — the push looks like it did nothing."""
     from app.api.routes.git_http import _configure_for_push
     from app.domain.workspace import service as ws
 
     monkeypatch.setattr(ws.settings, "workspace_root", str(tmp_path / "ws"))
     project, topic = uuid.uuid4(), uuid.uuid4()
     repo = ws.ensure_repo(project)
-    branch = ws.branch_for_topic(topic)
+    branch = ws.branch_for_tree(topic)
     ws._ensure_worktree(project, topic)
     _configure_for_push(repo)
 
@@ -114,7 +114,7 @@ def test_an_uncommitted_local_edit_is_never_swept_aside(tmp_path, monkeypatch):
     monkeypatch.setattr(ws.settings, "workspace_root", str(tmp_path / "ws"))
     project, topic = uuid.uuid4(), uuid.uuid4()
     repo = ws.ensure_repo(project)
-    branch = ws.branch_for_topic(topic)
+    branch = ws.branch_for_tree(topic)
     wt = ws._ensure_worktree(project, topic)
 
     (wt / "being_edited.txt").write_text("a human is typing here\n")
@@ -132,7 +132,7 @@ def test_a_clean_workspace_picks_the_push_up(tmp_path, monkeypatch):
     monkeypatch.setattr(ws.settings, "workspace_root", str(tmp_path / "ws2"))
     project, topic = uuid.uuid4(), uuid.uuid4()
     repo = ws.ensure_repo(project)
-    branch = ws.branch_for_topic(topic)
+    branch = ws.branch_for_tree(topic)
     ws._ensure_worktree(project, topic)
 
     _push_a_file(repo, tmp_path, branch, "landed.txt")

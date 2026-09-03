@@ -9,9 +9,9 @@
 # Per-turn env (set by AgentService):
 #   SBX_CONTAINER  deterministic container name for this topic
 #   SBX_WORKTREE   host path of the topic's git worktree → mounted at /work
-#   SBX_VCS_MOUNTS extra `-v host:container` pairs (space-joined) so the jj
-#                  workspace at SBX_WORKTREE — whose .jj/repo pointer is a path
-#                  relative to the host tree — can still reach the project's
+#   SBX_VCS_MOUNTS extra `-v host:container` pairs (space-joined) so the git
+#                  worktree at SBX_WORKTREE — whose `.git` pointer is a path
+#                  relative to the tree itself — can still reach the project's
 #                  main repo store once remapped to /work (see
 #                  ws.sandbox_vcs_mounts); empty/unset is a no-op
 #   SBX_SESSION    host path of the topic's persistent ~/.claude → session/--resume

@@ -1,9 +1,13 @@
 """DeviceHub: the server end of the link.Msg protocol (I/O-free, fake transports)."""
 
 import base64
+import hashlib
 import uuid
 
-from app.domain.agent.device_hub import DeviceHub, HubScreen
+import pytest
+
+from app.domain.agent import connector_build
+from app.domain.agent.device_hub import DeviceHub, DeviceOffline
 
 
 class FakeDeviceTransport:
@@ -43,16 +47,38 @@ async def test_open_screen_sends_session_create_and_registers_token():
     hub = DeviceHub()
     t = FakeDeviceTransport()
     await hub.attach_device("dev1", t)
-    screen = await hub.open_screen(
-        "dev1", ["claude"], "//js", env={"K": "V"}, **_screen_args()
-    )
+    screen = await hub.open_screen("dev1", ["claude"], env={"K": "V"}, **_screen_args())
     create = t.sent[-1]
     assert create["t"] == "session.create"
-    assert create["command"] == ["claude"] and create["source"] == "//js"
+    assert create["command"] == ["claude"]
     assert create["env"] == {"K": "V"} and create["screen"] == screen.token
     # The screen is discoverable by its token (attribution) and by sid.
     assert hub.screen_by_token(screen.token) is screen
     assert hub.screen(screen.sid) is screen
+
+
+async def test_exec_on_an_offline_device_fails_at_once_instead_of_timing_out():
+    hub = DeviceHub()
+    with pytest.raises(DeviceOffline):
+        await hub.exec("never-attached", ["true"], timeout=1)
+    t = FakeDeviceTransport()
+    await hub.attach_device("dev1", t)
+    await hub.detach_device("dev1", t)
+    with pytest.raises(DeviceOffline):
+        await hub.exec("dev1", ["true"], timeout=1)
+    assert t.sent == [{"t": "welcome", "v": 1}], "nothing was sent into the void"
+
+
+async def test_the_hub_can_name_a_machine_and_date_its_last_frame():
+    hub = DeviceHub()
+    assert hub.device_name("dev1") == "dev1", "unknown machines answer to their id"
+    assert hub.last_seen_age("dev1") is None
+    await hub.attach_device("dev1", FakeDeviceTransport(), name="andy 的笔记本")
+    assert hub.device_name("dev1") == "andy 的笔记本"
+    assert hub.last_seen_age("dev1") is None, "attached, but it has not spoken yet"
+    await hub.on_device_message("dev1", {"t": "heartbeat"})
+    age = hub.last_seen_age("dev1")
+    assert age is not None and 0 <= age < 1
 
 
 async def test_hello_version_skew_is_flagged_not_fatal():
@@ -72,7 +98,7 @@ async def test_screen_data_fans_out_to_viewers_only():
     hub = DeviceHub()
     t = FakeDeviceTransport()
     await hub.attach_device("dev1", t)
-    screen = await hub.open_screen("dev1", ["claude"], "//js", **_screen_args())
+    screen = await hub.open_screen("dev1", ["claude"], **_screen_args())
     viewer = FakeViewer()
     await hub.attach_viewer("dev1", screen.sid, viewer)
     assert t.sent[-1]["t"] == "screen.subscribe"  # first viewer subscribes
@@ -92,7 +118,7 @@ async def test_call_screen_await_resolved_by_rpc_result():
     hub = DeviceHub()
     t = FakeDeviceTransport()
     await hub.attach_device("dev1", t)
-    screen = await hub.open_screen("dev1", ["claude"], "//js", **_screen_args())
+    screen = await hub.open_screen("dev1", ["claude"], **_screen_args())
     call_id = await hub.call_screen("dev1", screen.sid, "prompt", ["hi"])
     assert t.sent[-1] == {
         "t": "rpc.call",
@@ -117,7 +143,7 @@ async def test_put_file_waits_for_device_file_result():
     hub = DeviceHub()
     transport = FakeDeviceTransport()
     await hub.attach_device("dev1", transport)
-    screen = await hub.open_screen("dev1", ["claude"], "//js", **_screen_args())
+    screen = await hub.open_screen("dev1", ["claude"], **_screen_args())
 
     import asyncio
 
@@ -143,37 +169,20 @@ async def test_put_file_waits_for_device_file_result():
     assert await pending == {"ok": True}
 
 
-async def test_exposed_screen_fn_answered_via_rpc_result():
-    async def echo(hub: DeviceHub, screen: HubScreen, args: list) -> dict:
-        return {"echo": args}
-
-    hub = DeviceHub(screen_fns={"echo": echo})
-    t = FakeDeviceTransport()
-    await hub.attach_device("dev1", t)
-    screen = await hub.open_screen("dev1", ["claude"], "//js", **_screen_args())
-    await hub.on_device_message(
-        "dev1",
-        {"t": "rpc.call", "sid": screen.sid, "id": "c1", "name": "echo", "args": [1]},
-    )
-    reply = t.sent[-1]
-    assert reply["t"] == "rpc.result" and reply["id"] == "c1"
-    assert reply["value"] == {"echo": [1]} and reply["error"] == ""
-
-
 async def test_screens_in_project_only_counts_online():
     hub = DeviceHub()
     t = FakeDeviceTransport()
     await hub.attach_device("dev1", t)
     args = _screen_args()
     project = args["project_id"]
-    screen = await hub.open_screen("dev1", ["claude"], "//js", **args)
+    screen = await hub.open_screen("dev1", ["claude"], **args)
     assert hub.screens_in_project(project) == [screen]
     await hub.detach_device("dev1", t)
     assert hub.screens_in_project(project) == []
 
 
 async def test_adopt_screen_reregisters_running_screen_after_restart():
-    # After a server restart the device (frozen cli) re-announces the screens it kept
+    # After a server restart the device re-announces the screens it kept
     # alive; adopting rebinds sid + screen token to the agent identity so viewers and
     # attribution work again without restarting the screen.
     hub = DeviceHub()
@@ -217,13 +226,13 @@ async def test_screens_for_topic_spans_devices_online_or_not():
     await hub.attach_device("dev1", FakeDeviceTransport())
     topic = uuid.uuid4()
     a = await hub.open_screen(
-        "dev1", ["claude"], "//js", **{**_screen_args(), "topic_id": topic}
+        "dev1", ["claude"], **{**_screen_args(), "topic_id": topic}
     )
     # dev2 has no transport (never attached) — its screen is still registered.
     b = await hub.open_screen(
-        "dev2", ["claude"], "//js", **{**_screen_args(), "topic_id": topic}
+        "dev2", ["claude"], **{**_screen_args(), "topic_id": topic}
     )
-    other = await hub.open_screen("dev1", ["claude"], "//js", **_screen_args())
+    other = await hub.open_screen("dev1", ["claude"], **_screen_args())
 
     found = {s.sid for s in hub.screens_for_topic(topic)}
     assert found == {a.sid, b.sid}
@@ -233,20 +242,18 @@ async def test_screens_for_topic_spans_devices_online_or_not():
 async def test_reassert_screen_resends_adopt_create_under_same_identity():
     """Re-asserting an existing screen re-sends session.create with `adopt` and the
     SAME sid + screen token (the cli's re-provision path): a live device session
-    hot-reloads the cheeselet; one lost to a connector restart — or to a create that
-    was never delivered — is respawned without changing the screen's identity."""
+    keeps running; one lost to a connector restart — or to a create that was never
+    delivered — is respawned without changing the screen's identity."""
     hub = DeviceHub()
     t = FakeDeviceTransport()
     await hub.attach_device("dev1", t)
-    screen = await hub.open_screen("dev1", ["claude"], "//js", **_screen_args())
+    screen = await hub.open_screen("dev1", ["claude"], **_screen_args())
 
-    await hub.reassert_screen(
-        screen, command=["claude", "--new"], cheeselet_source="//js2", env={"K": "V"}
-    )
+    await hub.reassert_screen(screen, command=["claude", "--new"], env={"K": "V"})
     create = t.sent[-1]
     assert create["t"] == "session.create" and create["adopt"] is True
     assert create["sid"] == screen.sid and create["screen"] == screen.token
-    assert create["command"] == ["claude", "--new"] and create["source"] == "//js2"
+    assert create["command"] == ["claude", "--new"]
     assert create["env"] == {"K": "V"}
     # The registry still resolves the screen by the same sid and token.
     assert hub.screen(screen.sid) is screen
@@ -262,7 +269,7 @@ async def test_session_error_is_logged_with_its_reason(caplog):
 
     hub = DeviceHub()
     await hub.attach_device("dev1", FakeDeviceTransport())
-    screen = await hub.open_screen("dev1", ["claude"], "//js", **_screen_args())
+    screen = await hub.open_screen("dev1", ["claude"], **_screen_args())
     with caplog.at_level(logging.WARNING, logger="app.domain.agent.device_hub"):
         await hub.on_device_message(
             "dev1",
@@ -272,3 +279,100 @@ async def test_session_error_is_logged_with_its_reason(caplog):
         screen.sid in r.getMessage() and "terminal: spawn boom" in r.getMessage()
         for r in caplog.records
     )
+
+
+# --- connector staleness -------------------------------------------------------
+# A connector drops a frame it does not recognise without answering it, so a
+# machine left behind by a compatibly-added capability looks healthy right up
+# until something times out somewhere unrelated. `hello` is the only moment the
+# server can see which binary it is talking to, and `update` is the only frame
+# old enough that every build understands it.
+
+
+def _publish(tmp_path, target: str, payload: bytes) -> str:
+    binary = tmp_path / target / "cheesehost"
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    binary.write_bytes(payload)
+    return hashlib.sha256(payload).hexdigest()
+
+
+async def test_connector_that_names_no_build_is_told_to_update(tmp_path, monkeypatch):
+    monkeypatch.setattr(connector_build, "dist_dir", lambda: tmp_path)
+    _publish(tmp_path, "linux-amd64", b"current build")
+    hub = DeviceHub()
+    t = FakeDeviceTransport()
+    await hub.attach_device("dev1", t)
+    await hub.on_device_message("dev1", {"t": "hello", "v": 1})
+    assert t.sent[-1] == {"t": "update"}
+
+
+async def test_connector_that_names_no_build_is_left_alone_with_nothing_to_serve(
+    tmp_path, monkeypatch
+):
+    """Telling a machine to fetch a build we do not have costs it a failed
+    download on every reconnect and fixes nothing."""
+    monkeypatch.setattr(connector_build, "dist_dir", lambda: tmp_path)
+    hub = DeviceHub()
+    t = FakeDeviceTransport()
+    await hub.attach_device("dev1", t)
+    await hub.on_device_message("dev1", {"t": "hello", "v": 1})
+    assert t.sent == [{"t": "welcome", "v": 1}]
+
+
+async def test_connector_running_our_bytes_is_left_alone(tmp_path, monkeypatch):
+    monkeypatch.setattr(connector_build, "dist_dir", lambda: tmp_path)
+    digest = _publish(tmp_path, "linux-amd64", b"current build")
+    hub = DeviceHub()
+    t = FakeDeviceTransport()
+    await hub.attach_device("dev1", t)
+    await hub.on_device_message(
+        "dev1", {"t": "hello", "v": 1, "build": digest, "target": "linux-amd64"}
+    )
+    assert t.sent == [{"t": "welcome", "v": 1}]
+
+
+async def test_connector_running_other_bytes_is_told_to_update(tmp_path, monkeypatch):
+    monkeypatch.setattr(connector_build, "dist_dir", lambda: tmp_path)
+    _publish(tmp_path, "linux-amd64", b"current build")
+    hub = DeviceHub()
+    t = FakeDeviceTransport()
+    await hub.attach_device("dev1", t)
+    await hub.on_device_message(
+        "dev1", {"t": "hello", "v": 1, "build": "d" * 64, "target": "linux-amd64"}
+    )
+    assert t.sent[-1] == {"t": "update"}
+
+
+async def test_connector_that_cannot_hash_itself_is_left_alone(tmp_path, monkeypatch):
+    """It named a platform, so it is new enough to be identified; without a
+    digest there is nothing to compare. Updating on that half-answer would
+    re-exec the machine on every reconnect and never converge."""
+    monkeypatch.setattr(connector_build, "dist_dir", lambda: tmp_path)
+    _publish(tmp_path, "linux-amd64", b"current build")
+    hub = DeviceHub()
+    t = FakeDeviceTransport()
+    await hub.attach_device("dev1", t)
+    await hub.on_device_message("dev1", {"t": "hello", "v": 1, "target": "linux-amd64"})
+    assert t.sent == [{"t": "welcome", "v": 1}]
+
+
+async def test_update_is_pushed_once_per_connection_and_again_on_reconnect(
+    tmp_path, monkeypatch
+):
+    """A self-update that fails leaves the machine on the build it has. Saying so
+    once per connection retries at the machine's own reconnect cadence instead of
+    on every frame of a connection where the answer cannot change."""
+    monkeypatch.setattr(connector_build, "dist_dir", lambda: tmp_path)
+    _publish(tmp_path, "linux-amd64", b"current build")
+    hub = DeviceHub()
+    t = FakeDeviceTransport()
+    await hub.attach_device("dev1", t)
+    await hub.on_device_message("dev1", {"t": "hello", "v": 1})
+    await hub.on_device_message("dev1", {"t": "hello", "v": 1})
+    assert [m for m in t.sent if m["t"] == "update"] == [{"t": "update"}]
+
+    await hub.detach_device("dev1", t)
+    t2 = FakeDeviceTransport()
+    await hub.attach_device("dev1", t2)
+    await hub.on_device_message("dev1", {"t": "hello", "v": 1})
+    assert t2.sent[-1] == {"t": "update"}

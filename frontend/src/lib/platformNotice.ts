@@ -11,9 +11,10 @@
  *
  * 契约（后端按这个发，见父话题「让房间干净下来」）：
  *
- *   kind=event, author_type=system
+ *   kind=event
  *   content = 一行人话，≤40 字
  *   meta = {
+ *     in_room: bool | None,                     # 露不露面；缺省 = 露面，见 showsInRoom
  *     event_type: str,                          # 类别码
  *     severity: 'info' | 'warn' | 'error',
  *     who: 'platform' | 'cheese' | 'human',     # 谁在管这件事（码，不是文案）
@@ -35,13 +36,50 @@ import type { PlatformErrorPresentation } from './platformEvents'
 import { backendErrorPresentation } from './backendErrorEvent'
 import { platformErrorPresentation } from './platformEvents'
 
+/**
+ * 这条事件在对话里露不露面。
+ *
+ * 「露不露面」和「谁写的」是两件事，过去挤在 `author_type` 一个字段里：
+ * system 出现、ai 不出现。于是一条确实由芝士产生、又该让人看见的事件无法表达，
+ * 而任何想知道作者的人读到的是一个在回答别的问题的字段。现在它自己有一格；没有
+ * 这一格的事件都露面 —— 平台其它所有写入方都是往房间里说话。
+ */
+function showsInRoom(block: Block): boolean {
+  return meta(block)?.in_room !== false
+}
+
 /** 谁在管这件事。扫一眼不点开就能决定跟不跟自己有关。 */
 export type WhoTag = 'platform' | 'cheese' | 'human'
 
+/** 后端每轮算出来的改动摘要（`meta.changeset`）。 */
+export interface ChangeSummary {
+  filesTotal: number
+  added: number
+  removed: number
+  files: string[]
+  filesOmitted: number
+}
+
+function changeSummary(block: Block): ChangeSummary | null {
+  const raw = meta(block)?.changeset
+  if (!raw || typeof raw !== 'object') return null
+  const c = raw as Record<string, unknown>
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
+  return {
+    filesTotal: num(c.files_total),
+    added: num(c.added),
+    removed: num(c.removed),
+    files: Array.isArray(c.files)
+      ? c.files.map((f) => String((f as Record<string, unknown>)?.path ?? '')).filter(Boolean)
+      : [],
+    filesOmitted: num(c.files_omitted),
+  }
+}
+
 const WHO_LABEL: Record<WhoTag, string> = {
-  platform: '平台自愈',
-  cheese: '芝士在处理',
-  human: '等人处理',
+  platform: '平台已处理',
+  cheese: '芝士处理中',
+  human: '待人工处理',
 }
 
 /** 折叠成一行的那一堆里，每一次各自的原文 —— 一次都不能丢。 */
@@ -69,12 +107,29 @@ export type PlatformNotice =
     }
   /** 后端报错：本来就是目标形态，原样保留（它是这套东西的样板）。 */
   | { mode: 'backend-error'; error: BackendErrorPresentation }
-  /** 芝士这轮干的活（更新了实况文档 / 递出了验收卡…）。 */
+  /** 芝士这轮干的活（更新了文档 / 提交了验收卡…）。 */
   | { mode: 'action'; resource: string; text: string }
+  /**
+   * 本轮摘要 (spec §8.5 变更提醒): 这一轮改了什么，外加它顺带动过的平台资源。
+   *
+   * 一轮里「更新了文档」「记录了决策」「提交了验收卡」各占一行，说的全是右边那栏
+   * 自己会亮的事；而**这一轮到底改了哪些文件**——房间里唯一没有别处可看的东西
+   * ——过去只在现场里躺着一行灰字。合成一行，噪音反而少了三行。
+   */
+  | {
+      mode: 'turn-summary'
+      changes: ChangeSummary | null
+      /** 同一轮里的动作行，按发生顺序；每条带自己的按钮资源码。 */
+      actions: { resource: string; text: string }[]
+      /** 「查看改动」要打开的那一轮。 */
+      turnId: string | null
+    }
   /** 折叠行：一行 summary + ×N + who 尾标，原文在展开区。 */
   | {
       mode: 'fold'
       line: string
+      /** 谁在管这件事的**码**——形态统一之后，只有它决定这一行的记号颜色。 */
+      who: WhoTag | ''
       whoLabel: string
       /** >1 时显示 ×N；1 表示没有折叠。 */
       count: number
@@ -91,9 +146,14 @@ function meta(block: Block): Record<string, unknown> | null {
   return (block.meta as Record<string, unknown> | null) ?? null
 }
 
-function whoLabel(block: Block): string {
+function whoTag(block: Block): WhoTag | '' {
   const who = str(meta(block)?.who)
-  return who in WHO_LABEL ? WHO_LABEL[who as WhoTag] : ''
+  return who in WHO_LABEL ? (who as WhoTag) : ''
+}
+
+function whoLabel(block: Block): string {
+  const who = whoTag(block)
+  return who ? WHO_LABEL[who] : ''
 }
 
 /**
@@ -189,6 +249,7 @@ export function platformNotice(block: Block, run: Block[] = [block]): PlatformNo
     return {
       mode: 'fold',
       line: block.content,
+      who: whoTag(block),
       whoLabel: whoLabel(block),
       count: run.length,
       occurrences: run.map(occurrenceOf).filter((o) => o.detail),
@@ -238,12 +299,12 @@ export function collapseNotices(blocks: Block[]): NoticeRow[] {
       }
       continue
     }
-    if (block.author_type !== 'system') continue
+    if (!showsInRoom(block)) continue
     if (str(meta(block)?.event_type) === 'frontend_error') continue
 
     const prev = rows[rows.length - 1]
     const prevBlock = prev?.block
-    if (prevBlock && prevBlock.kind === 'event' && prevBlock.author_type === 'system') {
+    if (prevBlock && prevBlock.kind === 'event' && showsInRoom(prevBlock)) {
       const key = foldKey(block)
       const sameType = key !== null && key === foldKey(prevBlock)
       const bothPlain = !str(meta(block)?.detail) && !str(meta(prevBlock)?.detail)
@@ -256,5 +317,55 @@ export function collapseNotices(blocks: Block[]): NoticeRow[] {
   }
 
   for (const row of rows) row.notice = platformNotice(row.block, row.run)
-  return rows
+  return foldTurnSummary(rows)
+}
+
+/** 这一行是不是「本轮里平台顺手做的事」——够格被折进本轮摘要。 */
+function summaryPart(row: NoticeRow): boolean {
+  return row.notice?.mode === 'action' || changeSummary(row.block) !== null
+}
+
+/**
+ * 把同一轮里连续的动作行和改动摘要折成一行。
+ *
+ * 只折**同一个 turn_id** 的连续行：一轮的收尾动作本来就是挨着落的，而跨轮合并会
+ * 把两次不同的工作说成一次。turn_id 为空的老块不参与（分不出轮次就别猜）。
+ */
+function foldTurnSummary(rows: NoticeRow[]): NoticeRow[] {
+  const out: NoticeRow[] = []
+  for (let i = 0; i < rows.length; i += 1) {
+    const row = rows[i]
+    const turnId = row.block.turn_id ?? null
+    if (!turnId || !summaryPart(row)) {
+      out.push(row)
+      continue
+    }
+    let end = i
+    while (end + 1 < rows.length && rows[end + 1].block.turn_id === turnId && summaryPart(rows[end + 1])) {
+      end += 1
+    }
+    const run = rows.slice(i, end + 1)
+    // 一条孤零零的动作行没什么可折的，保持原样——本轮摘要那一行的存在理由是
+    // 「这一轮改了什么」，没有改动摘要时它只是换个壳说同一句话。
+    const changes = run.map((r) => changeSummary(r.block)).find((c) => c !== null) ?? null
+    if (changes === null && run.length === 1) {
+      out.push(row)
+      i = end
+      continue
+    }
+    out.push({
+      block: run[run.length - 1].block,
+      run: run.flatMap((r) => r.run),
+      notice: {
+        mode: 'turn-summary',
+        changes,
+        actions: run
+          .map((r) => (r.notice?.mode === 'action' ? { resource: r.notice.resource, text: r.notice.text } : null))
+          .filter((a): a is { resource: string; text: string } => a !== null),
+        turnId,
+      },
+    })
+    i = end
+  }
+  return out
 }

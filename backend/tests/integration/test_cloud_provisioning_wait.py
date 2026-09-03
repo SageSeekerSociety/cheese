@@ -6,13 +6,13 @@ from unittest.mock import AsyncMock
 
 from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
-from app.domain.agent.cloud_provider import CloudProvider
+from app.domain.agent.cloud_provider import CloudChannel
 from app.domain.agent.compute import ComputePool
+from app.domain.agent.harness.claude_code import ClaudeCodeRuntime
 from app.domain.block.models import BlockKind, consumed_turn, prompt_attempts
 from app.domain.block.repositories import BlockRepository
 from app.domain.topic.repositories import TopicRepository
 from app.main import app
-from tests.conftest import StubAgent
 from tests.integration.conftest import chat_ws_url
 
 
@@ -32,7 +32,7 @@ def test_cloud_boot_preserves_pending_input_and_prompt_accounting(client, tmp_pa
             await session.commit()
 
     asyncio.run(_select_cloud())
-    cloud = CloudProvider(
+    cloud = CloudChannel(
         configured=True,
         ensure_topic_cloud=AsyncMock(),
         read_topic_cloud=AsyncMock(),
@@ -44,21 +44,28 @@ def test_cloud_boot_preserves_pending_input_and_prompt_accounting(client, tmp_pa
     def override() -> ChatService:
         return ChatService(
             session_factory=client.test_factory,
-            agent=StubAgent(),
             base_system_prompt="你是芝士。",
             workspace_root=str(tmp_path / "workspace"),
-            compute=ComputePool([cloud], "cloud"),
+            compute=ComputePool([ClaudeCodeRuntime(cloud)], "cloud"),
         )
 
+    # Restored in a finally: this override outlives the test otherwise, and every
+    # later test on the same worker then builds on a ChatService bound to a loop
+    # that has already closed. The one that pays is whichever test next reaches
+    # for a chat service — never this one — so it surfaces as `RuntimeError:
+    # Event loop is closed` in an unrelated file that passes in isolation.
     app.dependency_overrides[get_chat_service] = override
     seen: list[str] = []
-    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "不要丢掉我", "summon": True})
-        while True:
-            frame = ws.receive_json()
-            seen.append(frame["type"])
-            if frame["type"] == "done":
-                break
+    try:
+        with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+            ws.send_json({"type": "message", "content": "不要丢掉我", "summon": True})
+            while True:
+                frame = ws.receive_json()
+                seen.append(frame["type"])
+                if frame["type"] == "done":
+                    break
+    finally:
+        app.dependency_overrides.pop(get_chat_service, None)
 
     assert "waiting" in seen
     assert "error" not in seen

@@ -4,7 +4,7 @@
        while its icons follow --v-theme-on-surface → white tile, pale icons. -->
   <v-navigation-drawer permanent rail :rail-width="64" class="app-rail pb-2" color="background" border="none">
     <!-- <v-avatar v-tooltip="'知是'" :image="logo" size="48" /> -->
-    <RailItem v-for="item in showItems" :key="item.key" :item="item"></RailItem>
+    <RailItem v-for="item in items" :key="item.key" :item="item"></RailItem>
     <v-spacer></v-spacer>
     <v-menu
       v-if="userMenu.loggedIn.value"
@@ -139,7 +139,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, toRefs } from 'vue'
+import { toRefs } from 'vue'
 
 import { useUserMenu } from '@/composables/useUserMenu'
 
@@ -154,10 +154,6 @@ const navBarProps = withDefaults(defineProps<NavBarProps>(), {
 })
 
 const { items } = toRefs(navBarProps)
-
-const showItems = computed(() => {
-  return items.value.filter((item) => item.type !== 'item' || item.visibleOnPC !== false)
-})
 
 // 使用用户菜单 composable
 const userMenu = useUserMenu()

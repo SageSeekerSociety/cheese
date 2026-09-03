@@ -255,7 +255,7 @@ def test_hosted_subtype_migration_backfills_devices_and_topic_visibility(
         # The cloud binding too, and this one is load-bearing: a backfill that
         # joined through `hosted_device` would leave every cloud topic on the
         # column's `isolated` default, which is the one value both
-        # `resolve_pinned_device` and `host_swap` refuse — stranding every existing
+        # `resolve_pinned_device` refuses — stranding every existing
         # cloud topic the moment this migration ran.
         assert visibility[cloud_topic] == "host"
 

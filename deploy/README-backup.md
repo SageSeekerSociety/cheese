@@ -104,6 +104,15 @@ A deliberately empty fresh installation can exercise the schema-only path with
 `CHEESE_RESTORE_ALLOW_EMPTY=1 bash deploy/db-restore-test.sh <dump>`. The script
 prints that override in its output; scheduled production drills must not set it.
 
+## Related: the one-off SQL_ASCII → UTF8 rebuild
+
+Not a backup procedure, but it lives next door and uses the same dump/restore
+muscles: `cutover-sqlascii-to-utf8.sh` rebuilds a database whose server encoding
+is `SQL_ASCII` (which makes PostgreSQL reject non-ASCII `\uXXXX` inside `jsonb`,
+issue #233). Dev was rebuilt on 2026-08-16; **production is still `SQL_ASCII`**.
+Runbook — including the failure modes and the parts of the script that must not
+be "cleaned up" — in [`README-utf8-cutover.md`](README-utf8-cutover.md).
+
 ## Gaps / follow-ups
 
 - **PITR (second-level RPO):** hourly logical dumps are the client-side floor.

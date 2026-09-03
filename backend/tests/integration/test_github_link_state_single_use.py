@@ -32,21 +32,6 @@ pytestmark = pytest.mark.anyio
 SCOPE = "test_github_account_link"
 
 
-@pytest.fixture(autouse=True)
-def _redis_client_per_loop():
-    """`get_redis_client` is `@lru_cache`d, so the connection it hands out is
-    bound to whichever event loop asked first. The app has exactly one loop, so
-    that is correct in production — but every anyio test gets a fresh loop, and
-    reusing the cached client across them fails with `attached to a different
-    loop`. Drop the cache around each test rather than weaken the app's.
-    """
-    from app.core.redis import get_redis_client
-
-    get_redis_client.cache_clear()
-    yield
-    get_redis_client.cache_clear()
-
-
 async def test_a_reserved_token_can_be_spent_exactly_once():
     jti = uuid.uuid4().hex
     await reserve(SCOPE, jti, ttl_s=60)

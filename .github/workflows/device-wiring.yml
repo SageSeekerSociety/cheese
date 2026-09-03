@@ -91,9 +91,9 @@ jobs:
           else
             echo "FAIL  no device online — turns would queue forever"
             echo "--- connector service ---"
-            systemctl is-active cheese.service || true
+            systemctl --user is-active cheese.service || true
             echo "--- connector journal (tail) ---"
-            journalctl -u cheese.service -n 12 --no-pager 2>/dev/null | tail -6 || true
+            journalctl --user -u cheese.service -n 12 --no-pager 2>/dev/null | tail -6 || true
             curl -s -o /dev/null -w 'backend /healthz -> %{http_code}\n' http://192.168.16.5:8081/healthz || true
             fail=1
           fi

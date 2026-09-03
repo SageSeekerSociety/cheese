@@ -1,8 +1,9 @@
-"""Project workspace — jj-backed per-topic workspaces + git merge/diff (Phase 4).
+"""Project workspace — per-topic workspaces + git merge/diff (Phase 4).
 
-Files are authored by the sandbox's native tools (Bash/Write/Edit) inside the
-topic's jj workspace; the platform snapshots them with ``snapshot_worktree``.
-These tests simulate that by writing into the workspace dir then snapshotting.
+Files are authored by native tools (Bash/Write/Edit) on the machine the turn ran
+on, which commits and pushes the topic branch back. These tests do the same
+(`tests.machine_work`) rather than writing into the platform's own checkout,
+because that checkout is only ever read.
 """
 
 import subprocess
@@ -12,6 +13,7 @@ import pytest
 
 from app.core.errors import ValidationError
 from app.domain.workspace import service as ws
+from tests.machine_work import machine_commits
 
 
 def _mkproject(client) -> uuid.UUID:
@@ -28,13 +30,8 @@ def _owner(client) -> dict[str, str]:
 
 
 def _native_edit(pid: uuid.UUID, topic_id: uuid.UUID, path: str, content: str) -> None:
-    """Simulate a sandbox turn: native tools write a file into the topic's jj
-    workspace, then the platform snapshots it (as converse does after a turn)."""
-    wt = ws.topic_worktree(pid, topic_id)
-    target = wt / path
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(content, encoding="utf-8")
-    ws.snapshot_worktree(pid, topic_id)
+    """One turn: the machine writes a file, commits it, and pushes the branch."""
+    machine_commits(pid, topic_id, {path: content})
 
 
 def test_native_edit_versioned_and_browsable(client):
@@ -85,13 +82,13 @@ def test_parallel_topics_isolated(client):
     assert "b.txt" in n2 and "a.txt" not in n2
 
 
-def test_file_endpoints_survive_the_agent_using_jj(client):
+def test_file_endpoints_survive_the_agent_committing(client):
     """The file panel's 422 outage, at the level the user saw it.
 
-    芝士 running jj in its workspace writes into the project's SHARED main-repo
-    store (mounted into every sandbox container), and every backend file read
-    goes back through jj. While the backend ran as a different uid than the
-    sandbox, jj's 0600 store objects made that one command 422 the file list,
+    芝士 committing in its workspace writes into the project's SHARED store
+    (mounted into every sandbox container), and every backend file read reaches
+    for that same store. While the backend ran as a different uid than the
+    sandbox, one side's writes locked the other out and 422'd the file list,
     the file body, and the raw bytes — for every topic in the project, not just
     this one. Same uid on both sides → the endpoints keep answering.
     """
@@ -100,18 +97,29 @@ def test_file_endpoints_survive_the_agent_using_jj(client):
     _native_edit(pid, tid, "note.md", "hello\n")
 
     wt = ws.topic_worktree(pid, tid)
-    subprocess.run(
-        ["jj", "--no-pager", "config", "set", "--repo", "user.name", "芝士"],
-        cwd=wt,
-        check=True,
-        capture_output=True,
+    (wt / "from_the_agent.md").write_text(
+        "written in the container\n", encoding="utf-8"
     )
+    for args in (
+        ["add", "-A"],
+        [
+            "-c",
+            "user.name=芝士",
+            "-c",
+            "user.email=c@z.l",
+            "commit",
+            "-m",
+            "feat: work",
+        ],
+    ):
+        subprocess.run(["git", *args], cwd=wt, check=True, capture_output=True)
 
     listed = client.get(
         f"/projects/{pid}/files", params={"topic": str(tid)}, headers=_owner(client)
     )
     assert listed.status_code == 200
-    assert any(f["path"] == "note.md" for f in listed.json()["data"]["data"])
+    paths = {f["path"] for f in listed.json()["data"]["data"]}
+    assert {"note.md", "from_the_agent.md"} <= paths
 
     body = client.get(
         f"/projects/{pid}/file",
@@ -172,16 +180,19 @@ def test_git_diff_rejects_option_injection(client):
     assert r.status_code == 422
 
 
-def test_merge_folds_unsnapshotted_human_edits(client):
-    """采纳前快照: a human edit (人改文件即指令) with no agent turn afterwards
-    must still be delivered by the accept-merge."""
+def test_merge_delivers_the_branch_and_nothing_else(client):
+    """采纳 = 合并那个分支。An edit sitting in the checkout uncommitted was never
+    delivered, and the merge must not quietly deliver it for whoever wrote it."""
     pid = _mkproject(client)
     tid = uuid.uuid4()
+    _native_edit(pid, tid, "committed.txt", "pushed by the machine\n")
     wt = ws.topic_worktree(pid, tid)
-    (wt / "human.txt").write_text("edited by hand\n", encoding="utf-8")
-    # NO snapshot_worktree here — merge itself must fold the pending change.
+    (wt / "human.txt").write_text("edited by hand, never committed\n", encoding="utf-8")
+
     assert ws.merge_topic(pid, tid)["merged"] is True
-    assert "edited by hand" in ws.read_file(pid, "human.txt")
+    assert "pushed by the machine" in ws.read_file(pid, "committed.txt")
+    with pytest.raises(ValidationError):
+        ws.read_file(pid, "human.txt")
 
 
 def test_merge_leaves_no_worktree_debris(client):
@@ -194,9 +205,7 @@ def test_merge_leaves_no_worktree_debris(client):
     assert ws.merge_topic(pid, ok_tid)["merged"] is True
 
     # A guaranteed conflict: branch and base disagree on the same file.
-    wt = ws.topic_worktree(pid, conflict_tid)
-    (wt / "f.txt").write_text("branch version\n", encoding="utf-8")
-    ws.snapshot_worktree(pid, conflict_tid)
+    _native_edit(pid, conflict_tid, "f.txt", "branch version\n")
     repo = ws.ensure_repo(pid)
     (repo / "f.txt").write_text("base version\n", encoding="utf-8")
     import subprocess
@@ -228,7 +237,7 @@ def test_concurrent_accepts_on_the_same_project_dont_block_each_other(
     _native_edit(pid, hang_tid, "hang.txt", "hang work\n")
     _native_edit(pid, fast_tid, "fast.txt", "fast work\n")
 
-    hang_branch = ws.branch_for_topic(hang_tid)
+    hang_branch = ws.branch_for_tree(hang_tid)
     real_run = ws._run_subprocess
     hang_entered = threading.Event()
 

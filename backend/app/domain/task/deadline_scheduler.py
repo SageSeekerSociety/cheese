@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.db import SessionFactory
 from app.domain.task.models import TaskMembership
 
 logger = logging.getLogger(__name__)
@@ -68,9 +69,15 @@ async def check_and_fail_expired_deadlines(session: AsyncSession) -> int:
         if len(memberships) < PAGE_SIZE:
             break
 
-    if total_failed > 0:
-        logger.info(
-            "Marked %d task memberships as FAILED due to passed deadline", total_failed
-        )
-
     return total_failed
+
+
+async def sweep_expired_deadlines(sessions: SessionFactory) -> dict[str, int]:
+    """The periodic entry point: one session, one sweep.
+
+    A deadline is a promise the platform made to whoever set it, and no request
+    path can keep it — the moment it matters is the moment nobody is looking.
+    So a clock has to be what calls this.
+    """
+    async with sessions() as session:
+        return {"failed": await check_and_fail_expired_deadlines(session)}

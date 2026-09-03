@@ -19,9 +19,14 @@ def test_market_lists_ai_and_compute_pools(client):
     # false, so none of them is listed.
     ids = {p["id"] for p in data["compute"]}
     assert ids == {"device", "cloud"}
-    # Cloud is where a topic lands when nothing was selected anywhere.
-    cloud = next(p for p in data["compute"] if p["id"] == "cloud")
-    assert cloud["default"] is True
+    # Exactly one row is marked 默认, and it is the pool an unconfigured topic
+    # actually runs on — the same function answers both.
+    from app.core.config import settings
+    from app.domain.agent.market import compute_default_name
+
+    assert [p["id"] for p in data["compute"] if p["default"]] == [
+        compute_default_name(settings)
+    ]
     # Every listing still carries the browse-view fields.
     assert all(p["price"] and p["description"] for p in data["compute"])
 
@@ -57,10 +62,14 @@ def test_market_surfaces_the_whole_machine_visibility_choice_with_its_warning(cl
 
 def test_compute_profiles_default_and_reject_undeployed(client):
     pid = _project(client)
+    from app.core.config import settings
+    from app.domain.agent.market import compute_default_name
+
     body = client.get(f"/projects/{pid}/compute-profiles").json()["data"]
-    # Nothing selected anywhere → Cloud, the fallback (#358 retired local-docker,
-    # which used to be this answer).
-    assert body["current"] == "cloud"
+    # Nothing selected anywhere → the deployment's own fallback. With MicroCloud
+    # unconfigured in this test that is the self-hosted pool; what matters is
+    # that it names a machine this deployment has, never a retired one (#358).
+    assert body["current"] == compute_default_name(settings) == "device"
     # With no device online and MicroCloud unconfigured in this test, nothing is
     # actually deployed, so there is nothing to offer.
     assert [p["id"] for p in body["profiles"]] == []

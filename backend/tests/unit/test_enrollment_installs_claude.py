@@ -7,7 +7,7 @@ the binary is installed, and it comes from us rather than from a host the
 machine may not be able to reach.
 """
 
-from app.domain.agent import device_launch
+from app.domain.agent.harness.claude_code import device_launch
 from app.domain.machine.enrollment import bootstrap_script
 
 ORIGIN = "https://cheese.example.com"

@@ -5,6 +5,18 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CASE="${1:-all}"
 FAKE_BIN="$ROOT/deploy/tests/fakes/app-tier"
 
+# deploy-docker.sh CREATES the openviking memory dir (it must exist before the
+# bind mount, or docker makes it root-owned and the backend cannot write it).
+# Its default is a real path on the dev box, which a CI runner has neither
+# reason nor permission to create — so every deploy in this file gets one
+# inside the test tree. Exported once rather than per case: a future test that
+# forgets it would not fail here, it would fail on someone's machine.
+export VIKING_HOST_PATH="$ROOT/tmp/viking-$$"
+# The claude binary cache is the same shape: created by the deploy so the
+# backend can write it, defaulting to a dev-box path CI cannot create.
+export CLAUDE_CACHE_HOST_PATH="$ROOT/tmp/claude-cache-$$"
+trap 'rm -rf "$ROOT/tmp/viking-$$" "$ROOT/tmp/claude-cache-$$"' EXIT
+
 fail() {
   echo "FAIL: $*" >&2
   exit 1
@@ -63,18 +75,12 @@ test_deploy_keeps_agent_runtime_images() {
 
   grep -Fqx \
     'pull ghcr.io/sageseekersociety/cheese/sandbox:testsha' "$docker_log" || \
-    fail "deploy did not pull the SDK sandbox image"
-  grep -Fqx \
-    'pull ghcr.io/sageseekersociety/cheese/sandbox-tmux:testsha' "$docker_log" || \
-    fail "deploy did not pull the tmux sandbox image"
-  grep -F \
-    'run --rm --entrypoint sh ghcr.io/sageseekersociety/cheese/sandbox-tmux:testsha' \
-    "$docker_log" >/dev/null || fail "deploy did not smoke-test the tmux image"
-  grep -F 'create --name cheese-tmux-image-retainer-next' "$docker_log" \
-    >/dev/null || fail "deploy did not retain the tmux image before pruning"
+    fail "deploy did not pull the sandbox image"
+  grep -F 'create --name cheese-sandbox-image-retainer-next' "$docker_log" \
+    >/dev/null || fail "deploy did not retain the sandbox image before pruning"
 
   promote_line="$(grep -nF \
-    'rename cheese-tmux-image-retainer-next cheese-tmux-image-retainer' \
+    'rename cheese-sandbox-image-retainer-next cheese-sandbox-image-retainer' \
     "$docker_log" | cut -d: -f1)"
   prune_line="$(grep -nF 'image prune -af' "$docker_log" | cut -d: -f1)"
   [ -n "$promote_line" ] && [ -n "$prune_line" ] && \
@@ -353,6 +359,8 @@ ownership_run() {
     WORKSPACES_HOST_PATH="$run_dir/workspaces" \
     UPLOADS_HOST_PATH="$run_dir/uploads" \
     APPHOME_HOST_PATH="$run_dir/apphome" \
+    VIKING_HOST_PATH="$run_dir/viking" \
+    CLAUDE_CACHE_HOST_PATH="$run_dir/claude-cache" \
     HOME="$run_dir" \
     "$@"
 }
@@ -367,6 +375,8 @@ new_ownership_run_dir() {
   mkdir -p "$ROOT/tmp"
   local dir
   dir="$(mktemp -d "$ROOT/tmp/ownership-order.XXXXXX")"
+  # viking is deliberately NOT created: the deploy script makes it, and these
+  # tests are the only place that would notice if it stopped.
   mkdir -p "$dir/workspaces" "$dir/uploads" "$dir/apphome"
   : > "$dir/docker.log"
   printf '%s' "$dir"
@@ -420,6 +430,10 @@ test_rollback_leaves_an_already_migrated_box_alone() {
   # nothing and the previous image shares that uid. Handing anything back here
   # would be the change that breaks the rollback.
   for dir in workspaces uploads apphome; do : > "$run_dir/$dir/.cheese-uid-1000"; done
+  # Made by the deploy script, so it has to be marked after the fact — an
+  # unmarked path would make this "nothing moved" scenario move something.
+  mkdir -p "$run_dir/viking"; : > "$run_dir/viking/.cheese-uid-1000"
+  mkdir -p "$run_dir/claude-cache"; : > "$run_dir/claude-cache/.cheese-uid-1000"
 
   if ownership_run "$run_dir" rollback \
     "$ROOT/deploy/deploy-docker.sh" testsha \

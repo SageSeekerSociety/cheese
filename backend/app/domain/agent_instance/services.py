@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
+from app.domain.agent.harness import harness_name
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.repositories import AgentInstanceRepository
 from app.domain.agent_type.services import AgentTypeService
@@ -25,6 +26,7 @@ from app.domain.identity.handles import (
 )
 from app.domain.memory.models import MemoryScope, agent_project_scope_id
 from app.domain.project.models import Project
+from app.domain.room_task.models import Task
 from app.domain.topic.models import Topic
 
 # An instance handle keys a memory pool (``{project}:{handle}``), so it may not
@@ -93,8 +95,12 @@ class AgentInstanceService:
         instance = await self._repo.get(project.default_agent_instance_id)
         return self.resolved(instance) if instance else IMPLICIT_DEFAULT
 
-    async def for_topic(self, topic: Topic, project: Project) -> ResolvedAgent:
-        """The agent acting in *topic* — its own, else the project's default."""
+    async def for_topic(self, topic: Topic | Task, project: Project) -> ResolvedAgent:
+        """The agent acting in *topic* — its own, else the project's default.
+
+        Takes a thread as readily as a room: both carry the pick on their own
+        row, and a thread is given the room's when the work goes out.
+        """
         if topic.agent_instance_id is not None:
             instance = await self._repo.get(topic.agent_instance_id)
             if instance is not None:
@@ -104,6 +110,22 @@ class AgentInstanceService:
     async def system_prompt(self, agent: ResolvedAgent) -> str | None:
         """The system prompt *agent*'s type contributes, if it has one."""
         return await self._types.system_prompt(agent.type_name)
+
+    async def harness(self, agent: ResolvedAgent) -> str:
+        """Which harness this agent runs on — the platform's default when its
+        type declines to choose, which most do.
+
+        A type is 出厂设置: it says who an agent is, not which of a deployment's
+        runtimes it must use. Pinning one here would override a deployment that
+        ships something else, so a null means "whatever this platform runs" and
+        is resolved, not honoured as an absence.
+        """
+        resolved = await self._types.resolve(agent.type_name)
+        return harness_name(resolved.harness if resolved else None)
+
+    async def model(self, agent: ResolvedAgent) -> str | None:
+        """The model *agent* runs on, or None to follow the project's pick."""
+        return await self._types.model(agent.type_name)
 
     # --- management ---------------------------------------------------------
 

@@ -77,128 +77,149 @@ def test_artifact_requires_path(client):
     assert client.post(f"/topics/{tid}/artifact", json={"path": ""}).status_code == 422
 
 
-def test_app_artifact_and_preview(client, monkeypatch):
-    """运行环境预览: `cheese serve` declares a RUNNING app; the preview resolves
-    the container's published port live and returns kind=app + url."""
-    from app.api.routes import topics as topics_routes
+def test_an_unknown_artifact_type_is_refused_by_name(client):
+    """The renderer is chosen from what 芝士 DECLARED, never guessed from an
+    extension — so a type the platform has no renderer for has to be refused
+    here, and the refusal has to say which ones exist."""
+    _pid, tid = _topic(client)
+
+    r = client.post(f"/topics/{tid}/artifact", json={"path": "slides.pdf", "as": "pdf"})
+
+    assert r.status_code == 422
+    assert "html" in r.json()["message"], "must name the types that do work"
+    assert client.get(f"/topics/{tid}/preview").json()["data"] is None
+
+
+# --- 运行环境预览: an artifact that is a RUNNING app, not a file ----------------
+
+
+def _preview_machine(topic_id: str, *, alive: bool):
+    """A machine whose preview helper is connected, with or without an app behind
+    it. Attaches to the real hub over the real frame codec — the two states the
+    panel has to tell apart are exactly what a probe through the tunnel decides.
+    """
+    import uuid
+
+    from app.domain.agent import preview_tunnel as wire
+    from app.domain.agent.preview_hub import preview_hub
+
+    tid = uuid.UUID(topic_id)
+
+    class _Machine:
+        async def send_bytes(self, data: bytes) -> None:
+            op, stream, _payload = wire.decode(data)
+            if op != wire.OP_REQ:
+                return
+            if not alive:
+                preview_hub.on_frame(
+                    tid, wire.encode(wire.OP_ERR, stream, b"connection refused")
+                )
+                return
+            preview_hub.on_frame(
+                tid,
+                wire.encode(
+                    wire.OP_RESP,
+                    stream,
+                    wire.encode_meta({"status": 200, "headers": []}, b"ok"),
+                ),
+            )
+            preview_hub.on_frame(tid, wire.encode(wire.OP_END, stream))
+
+    machine = _Machine()
+    preview_hub.attach(tid, machine)
+    return machine
+
+
+def _detach(topic_id: str, machine) -> None:
+    import uuid
+
+    from app.domain.agent.preview_hub import preview_hub
+
+    preview_hub.detach(uuid.UUID(topic_id), machine)
+
+
+def test_app_artifact_and_preview(client):
+    """`cheese serve` declares a RUNNING app; the preview knocks on it live and
+    hands the browser a path a browser can actually fetch."""
     from app.domain.workspace import service as ws
-
-    def _answers(alive: bool):
-        async def _probe(_endpoint, **_kw):
-            return alive
-
-        return _probe
 
     pr = client.post("/projects", json={"name": "P"})
     pid = pr.json()["data"]["id"]
     tr = client.post("/topics", json={"project_id": pid, "title": "T"})
     tid = tr.json()["data"]["id"]
 
-    # Declaring an app is only allowed against a runtime that can serve one and a
-    # port that answers — see the two refusal tests below.
-    monkeypatch.setattr(topics_routes, "app_preview_reachable", lambda _p: True)
-    monkeypatch.setattr(ws, "app_endpoint", lambda t: "127.0.0.1:55007")
-    monkeypatch.setattr(topics_routes.proxy, "probe", _answers(True))
-    r = client.post(
-        f"/topics/{tid}/artifact", json={"path": "Vue dev server", "as": "app"}
-    )
-    assert r.status_code == 200
+    machine = _preview_machine(tid, alive=True)
+    try:
+        r = client.post(
+            f"/topics/{tid}/artifact", json={"path": "Vue dev server", "as": "app"}
+        )
+        assert r.status_code == 200, r.text
 
-    # App up → a url a BROWSER can actually fetch: the backend's reverse proxy,
-    # NOT the container's published host port. That port is bound to the server's
-    # own loopback, so handing it out (the old behavior) rendered a white frame
-    # for everyone except someone running the whole platform locally.
-    d = client.get(f"/topics/{tid}/preview").json()["data"]
-    assert d["url"] == f"/api/topics/{tid}/app/", d  # 浏览器侧
-    assert "127.0.0.1" not in (d["url"] or ""), "host loopback leaked to the browser"
-    assert d["kind"] == "app" and d["path"] == "Vue dev server"
-    assert d["container_up"] is True
-    assert d["supported"] is True
+        d = client.get(f"/topics/{tid}/preview").json()["data"]
+        assert d["kind"] == "app" and d["path"] == "Vue dev server"
+        # The backend's reverse proxy — never an address on the machine, which is
+        # somebody's laptop behind NAT and means nothing to a browser here.
+        assert d["url"] == f"/api/topics/{tid}/app/", d
+        assert "127.0.0.1" not in (d["url"] or ""), "a machine address leaked out"
+        assert d["tunnel_up"] is True
+    finally:
+        _detach(tid, machine)
 
-    # Container up but the server inside it died → no url, but say so distinctly:
-    # a published port with nothing answering is exactly the white-frame case.
-    monkeypatch.setattr(topics_routes.proxy, "probe", _answers(False))
-    d = client.get(f"/topics/{tid}/preview").json()["data"]
-    assert d["kind"] == "app" and d["url"] is None and d["container_up"] is True
+    # Tunnel up, app dead → no url, and said distinctly: a live tunnel with
+    # nothing behind it is exactly the white-frame case.
+    dead = _preview_machine(tid, alive=False)
+    try:
+        d = client.get(f"/topics/{tid}/preview").json()["data"]
+        assert d["kind"] == "app" and d["url"] is None and d["tunnel_up"] is True
+    finally:
+        _detach(tid, dead)
 
-    # Container down → declared but offline (url null), never a crash.
-    monkeypatch.setattr(ws, "app_endpoint", lambda t: None)
+    # Machine gone entirely → declared but offline, never a crash.
     d = client.get(f"/topics/{tid}/preview").json()["data"]
-    assert d["kind"] == "app" and d["url"] is None and d["container_up"] is False
+    assert d["kind"] == "app" and d["url"] is None and d["tunnel_up"] is False
 
     # A later file artifact supersedes the app as the current preview.
-    wt = ws.topic_worktree(__import__("uuid").UUID(pid), __import__("uuid").UUID(tid))
+    import uuid as _uuid
+
+    wt = ws.topic_worktree(_uuid.UUID(pid), _uuid.UUID(tid))
     (wt / "r.html").write_text("<h1>hi</h1>")
     client.post(f"/topics/{tid}/artifact", json={"path": "r.html", "as": "html"})
     d = client.get(f"/topics/{tid}/preview").json()["data"]
     assert d["kind"] == "file" and d["path"] == "r.html"
 
 
-def test_serve_is_refused_when_the_runtime_has_no_container(client, monkeypatch):
-    """A topic running on someone's own machine has no container here to publish
-    the app port, so `cheese serve` can only ever produce a dead preview. It is
-    refused at the API — not merely reported afterwards — because the sandbox's
-    `cheese` binary lags this repo by days and a client-side check would not
-    reach any agent already running."""
+def test_serve_is_refused_when_the_machine_carries_no_preview_out(client, monkeypatch):
+    """No tunnel means the running app cannot reach the panel at all. Refused at
+    the API rather than merely reported afterwards, so 芝士 never announces
+    「预览已就绪」 over a white frame."""
     from app.api.routes import topics as topics_routes
 
     _pid, tid = _topic(client)
-    monkeypatch.setattr(topics_routes, "app_preview_reachable", lambda _p: False)
+    # Don't sit through the real grace window for a machine that is not coming.
+    monkeypatch.setattr(topics_routes, "_PREVIEW_ATTACH_WAIT_S", 0.05)
+
     r = client.post(
         f"/topics/{tid}/artifact", json={"path": "Vue dev server", "as": "app"}
     )
-    assert r.status_code == 422
+
+    assert r.status_code == 422, r.text
     assert "cheese artifact" in r.json()["message"], "must name the way that works"
     # And nothing was recorded — an unreachable app must not become the preview.
     assert client.get(f"/topics/{tid}/preview").json()["data"] is None
 
 
-def test_serve_is_refused_when_nothing_answers_on_the_port(client, monkeypatch):
-    """The other half of the lie: the runtime CAN host an app, but 芝士 declared
-    one before anything was listening. That used to succeed and print 「预览已就
-    绪」, and the panel showed a white frame."""
-    from app.api.routes import topics as topics_routes
-    from app.domain.workspace import service as ws
-
-    async def _dead(_endpoint, **_kw):
-        return False
-
+def test_serve_is_refused_when_nothing_answers_on_the_declared_port(client):
+    """The other half of the lie: the tunnel is up, but 芝士 declared a preview
+    before anything was listening. That used to succeed, and the panel showed a
+    white frame."""
     _pid, tid = _topic(client)
-    monkeypatch.setattr(topics_routes, "app_preview_reachable", lambda _p: True)
 
-    # Port not published at all.
-    monkeypatch.setattr(ws, "app_endpoint", lambda _t: None)
-    r = client.post(f"/topics/{tid}/artifact", json={"path": "app", "as": "app"})
-    assert r.status_code == 422
+    dead = _preview_machine(tid, alive=False)
+    try:
+        r = client.post(f"/topics/{tid}/artifact", json={"path": "app", "as": "app"})
+    finally:
+        _detach(tid, dead)
 
-    # Published, but nothing is listening behind it.
-    monkeypatch.setattr(ws, "app_endpoint", lambda _t: "127.0.0.1:55007")
-    monkeypatch.setattr(topics_routes.proxy, "probe", _dead)
-    r = client.post(f"/topics/{tid}/artifact", json={"path": "app", "as": "app"})
-    assert r.status_code == 422
-    assert str(ws.APP_PORT) in r.json()["message"], "must say which port to use"
+    assert r.status_code == 422, r.text
+    assert "端口" in r.json()["message"], "must say what is wrong with the port"
     assert client.get(f"/topics/{tid}/preview").json()["data"] is None
-
-
-def test_preview_says_the_runtime_cannot_host_an_app(client, monkeypatch):
-    """An app artifact declared while the topic ran in a container, read back
-    after it moved to a machine: `container_up` is False for a box that is alive,
-    so `supported` is what tells the panel not to say 「再 @ 它一次即可拉起」."""
-    from app.api.routes import topics as topics_routes
-    from app.domain.workspace import service as ws
-
-    async def _alive(_endpoint, **_kw):
-        return True
-
-    _pid, tid = _topic(client)
-    monkeypatch.setattr(topics_routes, "app_preview_reachable", lambda _p: True)
-    monkeypatch.setattr(ws, "app_endpoint", lambda _t: "127.0.0.1:55007")
-    monkeypatch.setattr(topics_routes.proxy, "probe", _alive)
-    client.post(f"/topics/{tid}/artifact", json={"path": "app", "as": "app"})
-
-    monkeypatch.setattr(topics_routes, "app_preview_reachable", lambda _p: False)
-    monkeypatch.setattr(ws, "app_endpoint", lambda _t: None)
-    d = client.get(f"/topics/{tid}/preview").json()["data"]
-    assert d["kind"] == "app"
-    assert d["url"] is None and d["container_up"] is False
-    assert d["supported"] is False

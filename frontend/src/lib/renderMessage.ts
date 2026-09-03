@@ -38,7 +38,12 @@ function tokenChip(kind: string, id: string, maps: RefMaps): string {
 // Expand reference tokens to chip spans AFTER escaping/markdown: marked (and our
 // escape) turn "<@h>" into "&lt;@h&gt;", so we match that escaped form and swap in
 // the chip HTML — injecting raw <span> *before* marked would get re-escaped.
-const ESCAPED_TOKEN = /&lt;([@#])([\w-]+)&gt;|&lt;(&amp;|&)([\w./\u4e00-\u9fff-]+)&gt;/g
+//
+// 文件引用允许带行号：`<&path/to/x.ts:176-196>`。这是我们自己的工具链里到处在用
+// 的写法，而一个没被认出来的 token 不会安静地失败——它原样躺在正文里，把「点开
+// 那段代码」变成「读一串尖括号」。行号那一段是显式的 `:数字[-数字]`，不是往路径
+// 字符集里塞一个冒号：后者会把 `见 <&a.ts>:` 这种句子里的标点也吞进路径。
+const ESCAPED_TOKEN = /&lt;([@#])([\w-]+)&gt;|&lt;(&amp;|&)([\w./\u4e00-\u9fff-]+(?::\d+(?:-\d+)?)?)&gt;/g
 
 export function highlightTokens(html: string, maps: RefMaps): string {
   return html.replace(ESCAPED_TOKEN, (_m, k, id, _fk, fid) =>

@@ -6,6 +6,7 @@ from starlette.status import (
     HTTP_409_CONFLICT,
     HTTP_429_TOO_MANY_REQUESTS,
 )
+from starlette.testclient import TestClient
 
 from app.core.domain_errors import (
     NotTeamMemberYetError,
@@ -148,3 +149,40 @@ class TestErrorInheritance:
         error = NameAlreadyExistsError("team", "Test")
         assert isinstance(error, ConflictError)
         assert isinstance(error, BaseError)
+
+
+class TestUnhandledExceptionHandler:
+    """一个没被任何 except 兜住的异常必须还是一个我们自己的错误响应。
+
+    连接池被打满时抛出的 TimeoutError 谁也没接，Starlette 于是回了 21 字节的纯文
+    本 `Internal Server Error`——前端拿到的不是它认得的 `{code, message, data}`，
+    解析失败之后连「出错了」都说不出来，而后端日志里什么都没有。
+    """
+
+    def _client(self) -> TestClient:
+        from fastapi import FastAPI
+
+        from app.core.errors import register_exception_handlers
+
+        app = FastAPI()
+        register_exception_handlers(app)
+
+        @app.get("/boom")
+        async def _boom() -> None:
+            raise TimeoutError("QueuePool limit of size 5 overflow 10 reached")
+
+        return TestClient(app, raise_server_exceptions=False)
+
+    def test_unhandled_error_answers_in_our_envelope(self) -> None:
+        response = self._client().get("/boom")
+        assert response.status_code == 500
+        assert response.headers["content-type"].startswith("application/json")
+        body = response.json()
+        assert body["code"] == 500
+        assert body["data"] is None
+        assert body["message"]
+
+    def test_unhandled_error_does_not_leak_its_message(self) -> None:
+        """出了什么事写进日志，不写进给发起请求的人的回复里。"""
+        body = self._client().get("/boom").json()
+        assert "QueuePool" not in body["message"]

@@ -72,48 +72,63 @@ async def chat(
             with contextlib.suppress(WebSocketDisconnect, RuntimeError):
                 await websocket.send_json(frame)
 
-    # Resolve the actor ONCE from the connection's ?token= (browsers can't set an
-    # Authorization header on a WS). A verified token pins authorship for every
-    # message on this socket — the client cannot forge `author`.
-    # Resolve in a tightly-scoped session (released before the receive loop so it
-    # never overlaps the background turn's own sessions on the same connection).
     token = websocket.query_params.get("token") or ""
     conn_actor: Actor
     refusal: tuple[str, str] | None = None
-    async with chat_service.session_factory() as auth_session:
-        resolver = ActorResolver(
-            session=auth_session, bearer=token or None, cheese_token=""
-        )
-        conn_actor = await resolver.resolve(fallback_handle=None, topic_id=topic_id)
-        refusal = refuse_unauthenticated_chat(
-            conn_actor,
-            token_presented=bool(token),
-            allow_anonymous=settings.chat_ws_allow_anonymous,
-        )
-        if refusal is None and conn_actor.authenticated:
-            project_id = await resolver.project_of_topic(topic_id)
-            if project_id is not None:
-                try:
-                    await resolver.authorize_topic(
-                        conn_actor, project_id=project_id, topic_id=topic_id
-                    )
-                except ForbiddenError as exc:
-                    refusal = ("forbidden", exc.args[0])
-    if refusal is not None:
-        code, message = refusal
-        _log.info("chat_ws_refused", code=code, topic=str(topic_id))
-        await send({"type": "error", "code": code, "message": message})
-        await websocket.close(code=1008)
-        return
 
     async def relay(queue: asyncio.Queue[dict]) -> None:
         while True:
             await send(await queue.get())
 
-    # Register first, then snapshot active ids. If a turn ends while the
-    # turn_active frame is in flight, its turn_finished frame is already queued;
-    # the client can never be left permanently "working" by that race.
+    # Subscribe BEFORE authorising, not after. `accept()` has already returned,
+    # so as far as the client is concerned this topic is live and anything it
+    # does next may publish here — while the authorisation below is still two
+    # or three database round-trips from finishing. Frames published inside that
+    # window reach a channel with nobody registered on it, and the ones that are
+    # never buffered (a reaction fans out live and is deliberately not retained,
+    # so an idle channel cannot look in_flight forever) are simply gone: the
+    # person watching sees no emoji appear until something makes them refetch.
+    #
+    # Registering first costs nothing — frames only queue, and `relay` is not
+    # started until authorisation passes, so a refused connection is still sent
+    # nothing and drops its queue on the way out.
     async with broker.subscribe(channel, replay=True) as queue:
+        # Resolve the actor ONCE from the connection's ?token= (browsers can't
+        # set an Authorization header on a WS). A verified token pins authorship
+        # for every message on this socket — the client cannot forge `author`.
+        # Resolve in a tightly-scoped session (released before the receive loop
+        # so it never overlaps the background turn's own sessions on the same
+        # connection).
+        async with chat_service.session_factory() as auth_session:
+            resolver = ActorResolver(
+                session=auth_session, bearer=token or None, cheese_token=""
+            )
+            conn_actor = await resolver.resolve(fallback_handle=None, topic_id=topic_id)
+            refusal = refuse_unauthenticated_chat(
+                conn_actor,
+                token_presented=bool(token),
+                allow_anonymous=settings.chat_ws_allow_anonymous,
+            )
+            if refusal is None and conn_actor.authenticated:
+                project_id = await resolver.project_of_topic(topic_id)
+                if project_id is not None:
+                    try:
+                        await resolver.authorize_topic(
+                            conn_actor, project_id=project_id, topic_id=topic_id
+                        )
+                    except ForbiddenError as exc:
+                        refusal = ("forbidden", exc.args[0])
+        if refusal is not None:
+            code, message = refusal
+            _log.info("chat_ws_refused", code=code, topic=str(topic_id))
+            await send({"type": "error", "code": code, "message": message})
+            await websocket.close(code=1008)
+            return
+
+        # Snapshot active ids only after registering. If a turn ends while the
+        # turn_active frame is in flight, its turn_finished frame is already
+        # queued; the client can never be left permanently "working" by that
+        # race.
         active_turn_ids = broker.active_turn_ids(channel)
         if active_turn_ids:
             await send({"type": "turn_active", "turn_ids": active_turn_ids})
@@ -148,6 +163,12 @@ async def chat(
                     and isinstance(a.get("path"), str)
                     and a["path"]
                 ]
+                # 乐观渲染的对账号：客户端自己发的这一条叫什么。原样回传，
+                # 平台不解释它的内容。
+                raw_client_id = payload.get("client_id")
+                client_id = (
+                    str(raw_client_id)[:64] if isinstance(raw_client_id, str) else None
+                )
                 if not content and not attachments:
                     await send({"type": "error", "message": "empty content"})
                     continue
@@ -163,6 +184,7 @@ async def chat(
                         reply_to=reply_to,
                         attachments=attachments,
                         provision_actor=conn_actor,
+                        client_id=client_id,
                     )
                 except AppError as exc:
                     await send({"type": "error", "message": exc.message})

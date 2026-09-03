@@ -16,8 +16,6 @@ ITEMS = [
 
 def _meta(**kw) -> list[str]:
     base = {
-        "budget_s": 600,
-        "activity_aware": False,
         "is_resume": False,
         "disk": None,
         "open_cards": None,

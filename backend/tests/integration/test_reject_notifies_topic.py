@@ -2,7 +2,7 @@
 
 `AcceptService.reject` only writes the row — no message, no summon. So a rejected
 topic sat there until a human came back and poked it, while a CI failure on the
-same card DOES summon (`_nudge_pr_fix`): same "去改代码" verdict, opposite
+same card DOES summon (`_dispatch_nudges`): same "去改代码" verdict, opposite
 behaviour, and from the room the difference was invisible.
 
 The reason has to travel too. "被退了" without "退在哪" leaves 芝士 guessing, and
@@ -46,7 +46,7 @@ def _blocks(client, topic_id: str) -> list[dict]:
     return client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
 
 
-def test_reject_wakes_the_topic_with_the_reason(client, stub_agent):
+def test_reject_wakes_the_topic_with_the_reason(client, stub_hooks):
     pid = _project(client)
     tid = _topic(client, pid)
     cid = _card(client, tid)
@@ -57,12 +57,12 @@ def test_reject_wakes_the_topic_with_the_reason(client, stub_agent):
     wait_work_idle()
 
     # 叫醒: a turn ran, and the reviewer's reason reached the agent verbatim.
-    assert stub_agent.last_prompt is not None
-    assert "迁移没加索引，列表页会全表扫" in stub_agent.last_prompt
-    assert "alice" in stub_agent.last_prompt
-    assert "【平台】" in stub_agent.last_prompt
+    assert stub_hooks.last_prompt is not None
+    assert "迁移没加索引，列表页会全表扫" in stub_hooks.last_prompt
+    assert "alice" in stub_hooks.last_prompt
+    assert "【平台】" in stub_hooks.last_prompt
     # 重递不被阻塞 —— saying so matters: the agent must not think it is stuck.
-    assert "重新递卡" in stub_agent.last_prompt
+    assert "重新递卡" in stub_hooks.last_prompt
 
 
 def test_reject_leaves_a_room_visible_line_with_the_reason_in_meta(client):
@@ -86,7 +86,7 @@ def test_reject_leaves_a_room_visible_line_with_the_reason_in_meta(client):
     assert meta["severity"] == "warn"
 
 
-def test_reject_without_a_reason_still_wakes_and_says_there_is_none(client, stub_agent):
+def test_reject_without_a_reason_still_wakes_and_says_there_is_none(client, stub_hooks):
     """A reviewer who writes nothing is common. The turn must still happen, and
     must not invent a reason."""
     pid = _project(client)
@@ -96,7 +96,7 @@ def test_reject_without_a_reason_still_wakes_and_says_there_is_none(client, stub
     _reject(client, cid, note="")
     wait_work_idle()
 
-    assert "没写理由" in (stub_agent.last_prompt or "")
+    assert "没写理由" in (stub_hooks.last_prompt or "")
 
 
 def test_rejected_topic_stays_active(client):

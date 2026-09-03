@@ -17,8 +17,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update && \
     apt-get install -y --no-install-recommends \
         curl \
-        # The backend shells out to git for every workspace (jj colocates with
-        # it), and serves the smart-HTTP endpoints from git's own exec-path.
+        # The backend shells out to git for every workspace, and serves the
+        # smart-HTTP endpoints from git's own exec-path.
         git \
         postgresql-client \
         # The backend SSHes into machines it provisions to enroll them as agent
@@ -31,14 +31,13 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # roughly a duplicate of .venv + connector-dist on 2026-08-17.
 #
 # The uid/gid are NOT free to pick: this process and the agent sandbox share one
-# jj store on disk (ws.sandbox_vcs_mounts bind-mounts the project's main-repo
-# .jj/.git into every sandbox container, read-write). jj writes its store objects
-# — and `.jj/repo/config-id` in particular — with a hardcoded 0600, so whichever
-# uid touches the store first locks the other one out of EVERY jj command
-# ("Failed to determine the secure config for a repo … Permission denied").
-# Backend-side that surfaced as a project-wide 422 on the file panel; sandbox-side
-# as jj being unusable in every container. umask/group/ACL cannot fix a mode the
-# writer sets explicitly, so the two identities have to BE the same identity.
+# git store on disk (ws.sandbox_vcs_mounts bind-mounts the project's main-repo
+# `.git` into every sandbox container, read-write) and BOTH commit into it — the
+# agent's own commit is how a topic branch moves. git creates object directories
+# 0755 and loose objects 0444, owned by whoever wrote them, so a second uid can
+# read every one of them and add nothing: its commit fails on a directory it
+# does not own. Backend-side that surfaced as a project-wide 422 on the file
+# panel; sandbox-side as an agent whose work could not leave the container.
 #
 # 1000 rather than some other number because the sandbox side is the one we do
 # not fully control: it is `node:22` + `USER node` (= 1000), the tmux provider
@@ -168,14 +167,9 @@ WORKDIR /app
 # that matches its churn — a 150MB connector-dist rebuilt on every commit is
 # 150MB re-exported and re-pushed on every commit.
 
-# Agent workspace toolchain: worktrees are managed with jj (colocated git) by
-# the backend process itself, and sandboxed turns spawn SIBLING containers
-# through the host's docker.sock — so the image needs the docker CLI (client
-# only, no daemon). Same jj install as backend/sandbox/Dockerfile.
-ARG JJ_VERSION=0.42.0
-RUN curl -fsSL "https://github.com/jj-vcs/jj/releases/download/v${JJ_VERSION}/jj-v${JJ_VERSION}-$(uname -m)-unknown-linux-musl.tar.gz" \
-      | tar xz -C /usr/local/bin ./jj \
-    && jj --version
+# Agent workspace toolchain: sandboxed turns spawn SIBLING containers through
+# the host's docker.sock, so the image needs the docker CLI (client only, no
+# daemon).
 ARG DOCKER_CLI_VERSION=27.5.1
 RUN curl -fsSL "https://download.docker.com/linux/static/stable/$(uname -m)/docker-${DOCKER_CLI_VERSION}.tgz" \
       | tar xz --strip-components=1 -C /usr/local/bin docker/docker \
@@ -207,6 +201,11 @@ COPY --chown=cheese:python alembic.ini ./
 # (fetched by enrolled devices via /sandbox/cli/cheese) and the skills seeded
 # into a topic's ~/.claude. Without these the device path has no CLI.
 COPY --chown=cheese:python sandbox ./sandbox
+# One-shot data migration an operator has to be able to run ON the box (memory
+# rows to openviking, #187). Named file by file rather than `COPY scripts`: the
+# rest of that directory is dev probes and demo seeders that have no business in
+# a production image.
+COPY --chown=cheese:python scripts/migrate_memory_to_openviking.py ./scripts/
 
 # WORKDIR created /app as root; the app writes into it (and into uploads).
 RUN mkdir -p /app/uploads && chown cheese:python /app /app/uploads

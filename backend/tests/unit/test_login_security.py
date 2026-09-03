@@ -97,6 +97,24 @@ class TestTwoFactorBudgets:
         assert key != f"{TwoFactorRateLimiter._attempts_prefix}42"
 
     @pytest.mark.anyio
+    async def test_step_up_counts_under_keys_of_its_own(self, mock_redis) -> None:
+        """Re-proving 2FA inside a live session draws on neither the login
+        budget nor the backup one: a stolen session's guesses landing on the
+        login counter would let the thief lock the owner out of signing in."""
+        from app.domain.user.login_security import (
+            BackupCodeRateLimiter,
+            StepUpTwoFactorRateLimiter,
+            TwoFactorRateLimiter,
+        )
+
+        mock_redis.incr.return_value = 1
+        await StepUpTwoFactorRateLimiter(mock_redis).consume_attempt("42")
+
+        key = mock_redis.incr.call_args.args[0]
+        assert key != f"{TwoFactorRateLimiter._attempts_prefix}42"
+        assert key != f"{BackupCodeRateLimiter._attempts_prefix}42"
+
+    @pytest.mark.anyio
     async def test_the_slot_is_spent_before_the_code_is_checked(
         self, mock_redis
     ) -> None:

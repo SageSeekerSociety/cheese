@@ -6,19 +6,20 @@ import { defineStore } from 'pinia'
 import {
   archiveTopic,
   createTopic,
+  getPlace,
   getPrivateUnread,
-  getTopic,
   getTopicUnread,
   listProjectMembers,
   listProjects,
+  listProjectTasks,
   listTopics,
   markTopicRead,
   setTopicTitle,
-  splitTopic,
   unarchiveTopic,
   upgradeBlock,
 } from '@/api'
-import { refreshBlockCache } from '@/lib/blockCache'
+import { cachedWindow, refreshBlockCache } from '@/lib/blockCache'
+import { asPlace, isThread, threadAsPlace } from '@/lib/place'
 import { myHandle } from '@/me'
 
 // 项目级状态 (P0 架构): 话题树、成员、未读、排序、栏宽——一份，供项目框架下的
@@ -32,6 +33,7 @@ const LAYOUT_KEY = 'cheesex.layout'
 interface StoredLayout {
   railWidth?: number
   chatPct?: number
+  lastProjectId?: string
 }
 
 function loadLayout(): StoredLayout {
@@ -44,6 +46,12 @@ function loadLayout(): StoredLayout {
 }
 
 const clampNum = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
+
+// 手机底栏「工作区」那一格要在冷启动时就知道该落到哪个项目，那时 store 里还没有
+// 打开过任何项目——所以这个值从存储里直接读，不经过 store 实例。
+export function lastOpenedProjectId(): string | null {
+  return loadLayout().lastProjectId ?? null
+}
 
 export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   const projectId = ref<string | null>(null)
@@ -75,7 +83,14 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   const railWidth = ref(typeof stored.railWidth === 'number' ? stored.railWidth : 280)
   const chatPct = ref(typeof stored.chatPct === 'number' ? stored.chatPct : 50)
   function persistLayout() {
-    localStorage.setItem(LAYOUT_KEY, JSON.stringify({ railWidth: railWidth.value, chatPct: chatPct.value }))
+    localStorage.setItem(
+      LAYOUT_KEY,
+      JSON.stringify({
+        railWidth: railWidth.value,
+        chatPct: chatPct.value,
+        lastProjectId: projectId.value ?? undefined,
+      })
+    )
   }
   function setRailWidth(w: number) {
     railWidth.value = clampNum(w, 190, 480)
@@ -92,6 +107,70 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   }
 
   const rootTopic = computed<Topic | null>(() => topics.value.find((t) => t.kind === 'root') ?? null)
+
+  // 打开过的支线，按 id 存。
+  //
+  // 它**不能**并进 `topics`：那张表是侧栏那棵树，一条支线在里面就是侧栏多长一行，
+  // 而「一件活不再需要占一行」正是这次改造省下来的东西。所以支线走单独一张表，
+  // 只在有人真的打开它的时候按 id 取回来（`GET /topics/{id}`）。
+  const threads = ref<Record<string, Topic>>({})
+  // 正在取的那些，用来区分「还没取到」和「取到了，不存在」——少了它，打开支线的
+  // 第一帧会闪一下「这个话题不存在」。
+  const resolvingPlaces = ref<Record<string, boolean>>({})
+
+  /** 按 id 打开一个地点。房间已经在列表里就不用去问了。 */
+  async function loadPlace(placeId: string): Promise<void> {
+    if (!placeId) return
+    if (topics.value.some((t) => t.id === placeId)) return
+    if (threads.value[placeId] || resolvingPlaces.value[placeId]) return
+    resolvingPlaces.value = { ...resolvingPlaces.value, [placeId]: true }
+    try {
+      const place = asPlace(await getPlace(placeId))
+      if (isThread(place)) threads.value = { ...threads.value, [placeId]: place }
+      else if (!topics.value.some((t) => t.id === place.id)) topics.value.push(place)
+    } catch {
+      // 取不到就是不存在（或没权限）——视图那边照旧显示空状态。
+    } finally {
+      const next = { ...resolvingPlaces.value }
+      delete next[placeId]
+      resolvingPlaces.value = next
+    }
+  }
+
+  /** 这个 id 指向的地点，房间和支线都算。 */
+  function placeById(placeId: string): Topic | null {
+    return topics.value.find((t) => t.id === placeId) ?? threads.value[placeId] ?? null
+  }
+
+  function isResolvingPlace(placeId: string): boolean {
+    return !!resolvingPlaces.value[placeId]
+  }
+
+  /** 整个项目的支线，一次拉齐 —— 侧栏要画的是「房间 → 它派出去的活」整棵树。
+   *
+   * 按房间问是一个房间一个请求（这个项目有一百七十多个房间），所以走项目级那条
+   * 接口：两个批查询答完整棵树，每条支线还带着它当前骑的那张验收卡/PR。
+   */
+  async function refreshProjectTasks() {
+    const pid = projectId.value
+    if (!pid) return
+    try {
+      const payload = await listProjectTasks(pid)
+      if (projectId.value !== pid) return
+      const next: Record<string, Topic> = {}
+      for (const task of payload.data) next[task.id] = threadAsPlace(task)
+      threads.value = next
+    } catch {
+      // 拉不到就少画几行支线，不该让整条侧栏红掉。
+    }
+  }
+
+  /** 侧栏画的那棵树：房间，加上房间里派出去的活。
+   *
+   * 和 `topics` 分开是有意的：`topics` 是「房间」，@话题 补全、文档里的 <#id>
+   * 解析都读它，把支线混进去会顺带改掉那些地方的含义。这一份只给侧栏。
+   */
+  const tree = computed<Topic[]>(() => [...topics.value, ...Object.values(threads.value)])
   const projectName = computed<string>(() => projects.value.find((p) => p.id === projectId.value)?.name ?? '')
 
   async function refreshProjects() {
@@ -121,6 +200,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     try {
       const payload = await listTopics(pid, TOPIC_SORT)
       if (projectId.value === pid) topics.value = payload.data
+      void refreshProjectTasks()
     } catch {
       // Best-effort background refresh; ignore.
     }
@@ -139,7 +219,9 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
       return
     }
     projectId.value = id
+    persistLayout()
     topics.value = []
+    threads.value = {}
     members.value = []
     unreadMap.value = {}
     privateUnreadMap.value = {}
@@ -150,6 +232,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
       const payload = await listTopics(id, TOPIC_SORT)
       if (projectId.value !== id) return
       topics.value = payload.data
+      void refreshProjectTasks()
     } catch (e) {
       reportError(e, '加载话题失败')
     } finally {
@@ -171,8 +254,14 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
       // Background-refresh the timeline cache of topics whose unread grew: by
       // the time the user switches back, the reply that landed while they were
       // away is already rendered on the first frame (no late pop-in).
+      //
+      // 只预取「已经有缓存」的话题，也就是这一趟真的开过的那几个。没缓存的话题
+      // 下次打开本来就要拉一次，预取省不掉那一次，只是把它挪到了最不该发请求的
+      // 时刻：刷新页面时 unreadMap 是空的，于是**每一个**有未读的话题都算「变多
+      // 了」，一个两百多话题的项目会在同一瞬间打出几十个 GET /blocks，占满后端
+      // 的数据库连接池——被挤掉的不只是这些预取，还有用户此刻真正在等的那个请求。
       for (const [tid, n] of Object.entries(map)) {
-        if (n > (unreadMap.value[tid] ?? 0)) void refreshBlockCache(tid)
+        if (n > (unreadMap.value[tid] ?? 0) && cachedWindow(tid)) void refreshBlockCache(tid)
       }
       unreadMap.value = map
     } catch {
@@ -194,9 +283,13 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
 
   // Opening a topic = reading it: bump the server-side cursor and clear the
   // badge locally (optimistic — the next refresh agrees).
+  //
+  // 房间才有已读位。支线的消息**故意**不计进未读（否则每条支线说句话就把房间标红，
+  // 红点变噪音），所以打开一条支线什么都不用记——记了也没有它的红点可以清。
   function markRead(topicId: string) {
     const me = myHandle()
     if (!me) return
+    if (threads.value[topicId]) return
     if (unreadMap.value[topicId] !== undefined) {
       const next = { ...unreadMap.value }
       delete next[topicId]
@@ -217,16 +310,17 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     markTopicRead(topicId, me).catch(() => {})
   }
 
-  // After a decision the topic flips to archived — refetch it and patch the
-  // list so the header chip updates.
+  // 拍板之后这个地点的状态会变 —— 重新取一次，补进它所在的那张表，头部的状态
+  // 标才会跟着动。
   async function refreshTopicRow(topicId: string) {
-    const pid = projectId.value
-    if (!pid) return
     try {
-      const fresh = await getTopic(pid, topicId)
-      if (!fresh) return
+      const place = asPlace(await getPlace(topicId))
+      if (isThread(place)) {
+        threads.value = { ...threads.value, [place.id]: place }
+        return
+      }
       const i = topics.value.findIndex((t) => t.id === topicId)
-      if (i >= 0) topics.value[i] = fresh
+      if (i >= 0) topics.value[i] = place
     } catch {
       // ignore
     }
@@ -264,12 +358,15 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
 
   // The three ways a topic is born. Each returns the new topic so the caller can
   // navigate to it — creating a topic without opening it is never what was meant.
-  async function create(title: string): Promise<Topic | null> {
+  // agentInstanceId 不传 = 跟着项目默认走。选队友必须发生在**创建这一刻**：话题
+  // 一建出来第一条消息就可能进去了，而换队友要丢掉会话 —— 事后再改，改的就是一
+  // 段已经由别人说过话的对话。
+  async function create(title: string, agentInstanceId?: string | null): Promise<Topic | null> {
     const pid = projectId.value
     if (!pid) return null
     try {
       // Untitled by default — the title is derived from the first message.
-      const topic = await createTopic(pid, title.trim() || '新话题')
+      const topic = await createTopic(pid, title.trim() || '新话题', undefined, agentInstanceId)
       topics.value.push(topic)
       return topic
     } catch (e) {
@@ -278,22 +375,19 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     }
   }
 
-  async function split(topicId: string, title: string): Promise<Topic | null> {
-    try {
-      const sub = await splitTopic(topicId, title.trim() || '新话题', myHandle())
-      await refreshTopics()
-      return sub
-    } catch (e) {
-      reportError(e, '拆分子话题失败')
-      return null
-    }
+  // 派出去/升级出来的那个地点，调用方拿到就会跳过去——所以先把它记进来。
+  // 支线不在 `refreshTopics()` 拉回来的那张表里（那是侧栏，只列房间），
+  // 少这一步，跳过去就是「这个话题不存在」。
+  function remember(place: Topic): Topic {
+    if (isThread(place)) threads.value = { ...threads.value, [place.id]: place }
+    return place
   }
 
   async function upgradeMessage(messageId: string): Promise<Topic | null> {
     try {
-      const topic = await upgradeBlock(messageId, myHandle())
+      const place = asPlace(await upgradeBlock(messageId, myHandle()))
       await refreshTopics()
-      return topic
+      return remember(place)
     } catch (e) {
       reportError(e, '升级为话题失败')
       return null
@@ -304,6 +398,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     projectId,
     projects,
     topics,
+    threads,
     members,
     loadingTopics,
     unreadMap,
@@ -321,8 +416,13 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     refreshProjects,
     refreshMembers,
     refreshTopics,
+    refreshProjectTasks,
+    tree,
     refreshUnread,
     refreshTopicRow,
+    loadPlace,
+    placeById,
+    isResolvingPlace,
     openProject,
     markRead,
     markDmRead,
@@ -330,7 +430,6 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     archive,
     unarchive,
     create,
-    split,
     upgradeMessage,
   }
 })

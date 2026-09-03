@@ -129,9 +129,7 @@ export default defineConfig({
         // …but NEVER for backend routes. These are same-origin navigations that
         // must reach the server (or fail, when offline) — not be answered with
         // the SPA HTML: the /api/* backend API, the /connector/* device plane,
-        // bare 1.0 routes, and especially the two live iframes
-        // (/api/topics/<id>/{terminal,app}/) whose content is served by the
-        // backend and would break if shadowed by index.html.
+        // and bare 1.0 routes.
         navigateFallbackDenylist: [/^\/api\//, /^\/connector\//, /^\/users\//],
         runtimeCaching: [
           {
@@ -147,11 +145,14 @@ export default defineConfig({
               if (url.pathname.includes('/auth/')) return false
               if (url.pathname.includes('/oauth')) return false
               if (url.pathname.endsWith('/refresh-token')) return false
-              // Token-in-query URLs (device screen, running-app iframe,
-              // attachment downloads) — caching them would persist a bearer
-              // token on disk and serve another user stale bytes.
+              // Token-in-query URLs (device screen, attachment downloads) —
+              // caching them would persist a bearer token on disk and serve
+              // another user stale bytes.
               if (url.searchParams.has('token')) return false
-              // Live iframes: served by the backend, must stay live.
+              // Whether a topic has a live pane open right now: a cached answer
+              // is a wrong answer by the time it is read. The running-app iframe
+              // is the same story one step further — it is served live out of
+              // someone's machine, so a cached copy is a screenshot.
               if (/^\/api\/topics\/[^/]+\/(terminal|app)(\/|$)/.test(url.pathname)) return false
               // SSE streams (agent advice): a NetworkFirst would hang forever
               // waiting to cache a response that never ends.

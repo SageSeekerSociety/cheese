@@ -7,19 +7,15 @@ heartbeat (该催谁/该拆什么/风险). Per-topic serialization lives in Chat
 """
 
 import asyncio
-import contextlib
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 
-from app.core.config import settings
 from app.domain.agent.chat import ChatService
-from app.domain.block.models import AuthorType, Block
-from app.domain.memory.dream import DREAM_PROMPT, latest_dream, open_dream
+from app.domain.block.models import Block
 from app.domain.project.repositories import ProjectRepository
-from app.domain.topic.models import Topic
 from app.domain.workspace import service as ws
 
 logger = logging.getLogger("cheesex.scheduler")
@@ -62,6 +58,7 @@ class SchedulerService:
         child, sandbox image swap). Nothing re-read the registry in that case, so
         the topic stayed `active` forever — see AgentWorkRunner.sweep_orphans."""
         from app.api.deps import get_work_runner
+        from app.core.config import settings
 
         return await get_work_runner().sweep_orphans(
             self._chat,
@@ -90,182 +87,25 @@ class SchedulerService:
         for topic_id, last in rows:
             if last is None:
                 continue
-            # Same normalization as reap_idle_containers: the column is TIMESTAMPTZ
-            # but some drivers hand back a naive value, and a naive one would blow
-            # up the subtraction rather than merely being wrong.
+            # The column is TIMESTAMPTZ but some drivers hand back a naive
+            # value, and a naive one would blow up the subtraction rather than
+            # merely being wrong.
             out[topic_id] = (
                 last if last.tzinfo is not None else last.replace(tzinfo=UTC)
             )
         return out
 
-    async def reap_idle_containers(self, idle_hours: float = IDLE_REAP_HOURS) -> int:
-        """Remove sandbox containers whose topic has had NO block activity for
-        ``idle_hours`` (or whose topic no longer exists). Safe by construction:
-        an active turn has just-persisted blocks, so its topic can never look
-        idle.
-
-        A tmux box is named after a ROOM and hosts that room's tasks too, so its
-        idleness is the idleness of the room AND everything in it. Judging the
-        room alone would destroy a box with a task working in it the moment the
-        room's own timeline went quiet — which is the normal state of a room
-        whose work has been split out.
-
-        Reaping is not destructive to the conversation. The transcript lives in
-        the topic's config dir on the HOST, so the next turn recreates the box
-        and resumes from it — the container is the body, not the continuity.
-
-        记忆整理 (issue #187 step 4) hooks in here rather than anywhere else
-        because this is the last moment a claim can still be checked against the
-        workspace: `settings.dream_enabled` gives an about-to-die box one turn
-        to organize what the topic learned into memory (see memory/dream.py).
-        That pass runs INSIDE the box, so the box survives this sweep and is
-        reaped by the next one — this loop is background maintenance and must
-        not sit blocked for the minutes a model turn takes."""
-        names = ws.list_sandbox_containers()
-        if not names:
-            return 0
-        cutoff = datetime.now(UTC) - timedelta(hours=idle_hours)
-        reaped = 0
-        dreams_started = 0
-        async with self._sessions() as session:
-            rows = (
-                await session.execute(
-                    select(Topic.id, Topic.parent_id, Topic.project_id)
-                )
-            ).all()
-            by_hex = {row.id.hex[:12]: row.id for row in rows}
-            project_of = {row.id: row.project_id for row in rows}
-            children: dict[uuid.UUID, list[uuid.UUID]] = {}
-            for row in rows:
-                if row.parent_id is not None:
-                    children.setdefault(row.parent_id, []).append(row.id)
-            for name in names:
-                topic_id = by_hex.get(name.rsplit("-", 1)[-1])
-                if topic_id is not None:
-                    scope = [topic_id, *children.get(topic_id, [])]
-                    dream = await latest_dream(session, topic_id)
-                    last = await self._last_activity(session, scope, dream)
-                    if last is not None and last >= cutoff:
-                        continue  # recently active — keep the box warm
-                    if dreams_started < settings.dream_max_per_sweep and (
-                        await self._start_dream_if_worthwhile(
-                            session,
-                            topic_id=topic_id,
-                            project_id=project_of[topic_id],
-                            scope=scope,
-                            dream=dream,
-                        )
-                    ):
-                        dreams_started += 1
-                        continue  # organize now, reap on the next sweep
-                ws.remove_container(name)
-                reaped += 1
-        if dreams_started:
-            logger.info("idle reap: started %d 记忆整理 pass(es)", dreams_started)
-        return reaped
-
-    async def _last_activity(
-        self, session, scope: list[uuid.UUID], dream
-    ) -> datetime | None:
-        """When this box last did something that was NOT its own housekeeping.
-
-        A 记忆整理 pass writes blocks, and blocks are what idleness is measured
-        on — so counting them would have the box renew its own lease off the
-        very turn that was supposed to be its last, forever. The pass's turn id
-        is on the dream row precisely so those blocks can be subtracted here;
-        anything else in the topic, from anyone, still counts and still keeps
-        the box."""
-        stmt = select(func.max(Block.created_at)).where(Block.topic_id.in_(scope))
-        if dream is not None and dream.turn_id is not None:
-            stmt = stmt.where(
-                or_(Block.turn_id.is_(None), Block.turn_id != dream.turn_id)
-            )
-        last = (await session.execute(stmt)).scalar()
-        if last is not None and last.tzinfo is None:
-            last = last.replace(tzinfo=UTC)
-        return last
-
-    async def _start_dream_if_worthwhile(
-        self,
-        session,
-        *,
-        topic_id: uuid.UUID,
-        project_id: uuid.UUID,
-        scope: list[uuid.UUID],
-        dream,
-    ) -> bool:
-        """Give one about-to-die box a turn to organize its memory. True if a
-        pass was started (and the box therefore lives one more sweep).
-
-        Everything here is a reason NOT to spend a turn, because the default has
-        to be not spending one — the thing this repo already parked once was a
-        clock that woke 芝士 with nothing to say."""
-        if not settings.dream_enabled:
-            return False
-        if dream is not None and not await self._returned_to_life_since(
-            session, scope, dream
-        ):
-            # Already organized (or already tried and failed). Re-running is how
-            # a background trigger turns into an infinite loop, and "it failed,
-            # so try again" is the same loop with a nicer story.
-            return False
-        blocks = (
-            await session.execute(
-                select(func.count()).select_from(Block).where(Block.topic_id.in_(scope))
-            )
-        ).scalar() or 0
-        if blocks < settings.dream_min_blocks:
-            return False  # nothing in here a later read of the transcript misses
-        try:
-            from app.api.deps import get_work_runner
-
-            record = await open_dream(session, topic_id=topic_id, project_id=project_id)
-            turn_id = get_work_runner().submit_kickoff(
-                self._chat, topic_id, prompt=DREAM_PROMPT
-            )
-            record.turn_id = turn_id
-            await session.commit()
-        except Exception:  # noqa: BLE001 — 整理 must never hold up cleanup
-            await session.rollback()
-            logger.exception("记忆整理 failed to start for topic %s", topic_id)
-            return False
-        return True
-
-    async def _returned_to_life_since(self, session, scope, dream) -> bool:
-        """Did a PERSON come back to this topic after it was organized?
-
-        Deliberately narrower than `_last_activity`: that one decides whether to
-        destroy a container (cheap and recoverable), this one decides whether to
-        spend another model turn, and the two failure modes are not symmetric. A
-        human block cannot be produced by a pass under any circumstance, so this
-        answer cannot depend on the turn-id bookkeeping being perfect — which is
-        what makes "organize a topic at most once" a guarantee rather than a
-        hope."""
-        found = (
-            await session.execute(
-                select(Block.id)
-                .where(
-                    Block.topic_id.in_(scope),
-                    Block.author_type == AuthorType.human,
-                    Block.created_at > dream.created_at,
-                )
-                .limit(1)
-            )
-        ).scalar()
-        return found is not None
-
     async def reap_idle_device_screens(
         self, idle_hours: float = IDLE_REAP_HOURS
     ) -> int:
-        """Device counterpart to ``reap_idle_containers``: close a device screen whose
-        topic has had NO block activity for ``idle_hours``. Screens live in the device
-        hub's in-memory registry, not in Docker, so the container reaper never saw
-        them — a topic that ran on a device and then went quiet used to leak its screen
-        (and the ``claude`` process behind it) on the machine forever.
+        """Close a device screen whose topic has had NO block activity for
+        ``idle_hours`` — a topic that ran on a device and then went quiet used to
+        leak its screen (and the ``claude`` process behind it) on the machine
+        forever.
 
-        Only ONLINE devices are walked (an offline box is unreachable now). The same
-        safety holds as for containers: an active turn has just-persisted blocks, so
-        its topic can never look idle. Teardown removes the device's per-topic tree.
+        Only ONLINE devices are walked (an offline box is unreachable now). Safe
+        by construction: an active turn has just-persisted blocks, so its topic
+        can never look idle. Teardown removes the device's per-topic tree.
         Returns how many topics were released."""
         from app.domain.agent.device_hub import device_hub
         from app.domain.agent.device_provider import release_topic_screen
@@ -386,7 +226,32 @@ class SchedulerService:
                     await session.rollback()
                     errors.append(f"{card_id}: {exc}")
                     logger.exception("poll_open_prs failed for card %s", card_id)
+                    await self._note_card_poll_crashed(card_id, exc)
         return {"cards_checked": checked, "errors": errors}
+
+    async def _note_card_poll_crashed(
+        self, card_id: uuid.UUID, exc: BaseException
+    ) -> None:
+        """Leave the crash on the card, in its own transaction.
+
+        The rollback above throws away everything the failed tick wrote — which
+        is right for the state machine and wrong for the reader: the card keeps
+        showing whatever it said before, usually 「等 CI」, while every tick dies
+        the same way. A person watching a green PR that never merges has no way
+        to tell that apart from slow checks. So the explanation is written by a
+        SEPARATE session that the rollback cannot take with it.
+
+        Best-effort by construction: if even this write fails, the log line
+        above is still there and the poll loop keeps going.
+        """
+        from app.domain.review.services import AcceptService
+
+        try:
+            async with self._sessions() as session:
+                await AcceptService(session).note_poll_crashed(card_id, exc)
+                await session.commit()
+        except Exception:  # noqa: BLE001 — never let the explanation kill the loop
+            logger.exception("could not record poll failure on card %s", card_id)
 
     async def sweep_abandoned_gates(self) -> dict:
         """闸门孤儿卡扫底 (2026-08-11): condemn `pending_gate` cards whose gate
@@ -435,7 +300,6 @@ class SchedulerService:
         errors: list[str] = []
         settled: list[uuid.UUID] = []
         archived: list[uuid.UUID] = []
-        folded: list[uuid.UUID] = []
         async with self._sessions() as session:
             try:
                 settled = await ConclusionCardService(session).sweep_expired()
@@ -457,271 +321,27 @@ class SchedulerService:
                 await session.rollback()
                 logger.exception("deferred archive sweep failed")
                 errors.append(str(exc))
-        # 同理，合并重试也走自己的事务：git 那一侧出错不能把结算和归档回滚掉。
+        # 幽灵额度: a backend that died mid-turn leaves a task marked running
+        # forever, holding one of its room's four slots with nothing behind it.
+        # Materialised residency is what lets a slot survive a restart; this is
+        # the other half of that bargain.
+        freed: list = []
         async with self._sessions() as session:
             try:
-                folded = await ConclusionCardService(session).sweep_room_merges()
-                # Unconditional, unlike the two above: a round that folds
-                # nothing can still have written the room a line saying why
-                # (queued, or conflicted), and dropping that is what "不能默默
-                # 失败" forbids.
+                from app.domain.room_task.services import ResidencyService
+
+                svc = ResidencyService(session)
+                freed = await svc.sweep_ghosts()
+                for task in freed:
+                    await svc.dequeue(task.room_id)
                 await session.commit()
             except Exception as exc:  # noqa: BLE001 — maintenance must survive
                 await session.rollback()
-                logger.exception("room merge sweep failed")
+                logger.exception("ghost residency sweep failed")
                 errors.append(str(exc))
         return {
             "settled": len(settled),
             "archived": len(archived),
-            "folded": len(folded),
+            "freed_slots": len(freed),
             "errors": errors,
         }
-
-
-class SchedulerRunner:
-    """Background loop driving SchedulerService.tick() on an interval."""
-
-    def __init__(self, scheduler: SchedulerService, interval_seconds: int):
-        self._scheduler = scheduler
-        self._interval = interval_seconds
-        self._task: asyncio.Task | None = None
-
-    def start(self) -> None:
-        if self._interval > 0 and self._task is None:
-            self._task = asyncio.create_task(self._loop())
-            logger.info("scheduler started (every %ss)", self._interval)
-
-    async def stop(self) -> None:
-        if self._task is not None:
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
-            self._task = None
-
-    async def _loop(self) -> None:
-        while True:
-            await asyncio.sleep(self._interval)
-            try:
-                result = await self._scheduler.tick()
-                logger.info("scheduler tick: %s", result)
-            except Exception:  # never let the loop die
-                logger.exception("scheduler tick failed")
-
-
-class SandboxReaperRunner:
-    """Deterministic sandbox cleanup, independent from AI heartbeat scheduling."""
-
-    def __init__(
-        self,
-        scheduler: SchedulerService,
-        interval_seconds: int,
-        idle_hours: float = IDLE_REAP_HOURS,
-    ):
-        self._scheduler = scheduler
-        self._interval = interval_seconds
-        self._idle_hours = idle_hours
-        self._task: asyncio.Task | None = None
-
-    def start(self) -> None:
-        if self._interval > 0 and self._task is None:
-            self._task = asyncio.create_task(self._loop())
-            logger.info(
-                "sandbox reaper started (every %ss, idle>%sh)",
-                self._interval,
-                self._idle_hours,
-            )
-
-    async def stop(self) -> None:
-        if self._task is not None:
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
-            self._task = None
-
-    async def _loop(self) -> None:
-        while True:
-            await asyncio.sleep(self._interval)
-            # Containers and device screens are independent cleanups on the same
-            # cadence — one raising must not skip the other.
-            try:
-                reaped = await self._scheduler.reap_idle_containers(self._idle_hours)
-                if reaped:
-                    logger.info("idle reap: removed %d container(s)", reaped)
-            except Exception:  # noqa: BLE001 -- maintenance loop must survive
-                logger.exception("idle container reap failed")
-            try:
-                freed = await self._scheduler.reap_idle_device_screens(self._idle_hours)
-                if freed:
-                    logger.info("idle reap: freed %d device screen(s)", freed)
-            except Exception:  # noqa: BLE001 -- maintenance loop must survive
-                logger.exception("idle device screen reap failed")
-
-
-class PrPollRunner:
-    """两阶段采纳 (PR迭代式, 2026-08-09): drives SchedulerService.poll_open_prs()
-    on an interval, independent from the AI heartbeat and the idle reaper —
-    same shape as SandboxReaperRunner."""
-
-    def __init__(self, scheduler: SchedulerService, interval_seconds: int):
-        self._scheduler = scheduler
-        self._interval = interval_seconds
-        self._task: asyncio.Task | None = None
-
-    def start(self) -> None:
-        if self._interval > 0 and self._task is None:
-            self._task = asyncio.create_task(self._loop())
-            logger.info("PR poll runner started (every %ss)", self._interval)
-
-    async def stop(self) -> None:
-        if self._task is not None:
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
-            self._task = None
-
-    async def _loop(self) -> None:
-        while True:
-            await asyncio.sleep(self._interval)
-            try:
-                result = await self._scheduler.poll_open_prs()
-                if result["cards_checked"] or result["errors"]:
-                    logger.info("pr poll: %s", result)
-            except Exception:  # noqa: BLE001 -- maintenance loop must survive
-                logger.exception("pr poll failed")
-
-
-class OrphanSweepRunner:
-    """Drives SchedulerService.sweep_orphan_turns() on its own interval — same
-    shape as PrPollRunner. Cheap: it reads one small JSON file and does nothing
-    unless it finds a registered turn the process is not running."""
-
-    def __init__(self, scheduler: SchedulerService, interval_seconds: int):
-        self._scheduler = scheduler
-        self._interval = interval_seconds
-        self._task: asyncio.Task | None = None
-
-    def start(self) -> None:
-        if self._interval > 0 and self._task is None:
-            self._task = asyncio.create_task(self._loop())
-            logger.info("orphan sweep runner started (every %ss)", self._interval)
-
-    async def stop(self) -> None:
-        if self._task is not None:
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
-            self._task = None
-
-    async def _loop(self) -> None:
-        while True:
-            await asyncio.sleep(self._interval)
-            try:
-                resumed = await self._scheduler.sweep_orphan_turns()
-                if resumed:
-                    logger.info("orphan sweep: %s turn(s) resumed", resumed)
-            except Exception:  # noqa: BLE001 -- maintenance loop must survive
-                logger.exception("orphan sweep failed")
-
-
-class UpstreamSyncRunner:
-    """Drives SchedulerService.sync_upstreams() on its own interval — same shape
-    as PrPollRunner. Separate from the AI heartbeat on purpose: staying current
-    with upstream is deterministic plumbing, not a judgment call."""
-
-    def __init__(self, scheduler: SchedulerService, interval_seconds: int):
-        self._scheduler = scheduler
-        self._interval = interval_seconds
-        self._task: asyncio.Task | None = None
-
-    def start(self) -> None:
-        if self._interval > 0 and self._task is None:
-            self._task = asyncio.create_task(self._loop())
-            logger.info("upstream sync runner started (every %ss)", self._interval)
-
-    async def stop(self) -> None:
-        if self._task is not None:
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
-            self._task = None
-
-    async def _loop(self) -> None:
-        while True:
-            await asyncio.sleep(self._interval)
-            try:
-                result = await self._scheduler.sync_upstreams()
-                if result["synced"] or result["dispatched"] or result["errors"]:
-                    logger.info("upstream sync: %s", result)
-            except Exception:  # noqa: BLE001 -- maintenance loop must survive
-                logger.exception("upstream sync failed")
-
-
-class GateSweepRunner:
-    """闸门孤儿卡扫底 (2026-08-11): drives SchedulerService.sweep_abandoned_gates()
-    on an interval — same shape as PrPollRunner.
-
-    The startup sweep in `app.main.lifespan` covers cards orphaned by a
-    restart; this loop covers the other half — the gate task dying while the
-    process keeps running (see review/gate_sweep.py). Without it the ceiling on
-    "how long a topic stays unable to file a card" is "until the next redeploy".
-    """
-
-    def __init__(self, scheduler: SchedulerService, interval_seconds: int):
-        self._scheduler = scheduler
-        self._interval = interval_seconds
-        self._task: asyncio.Task | None = None
-
-    def start(self) -> None:
-        if self._interval > 0 and self._task is None:
-            self._task = asyncio.create_task(self._loop())
-            logger.info("gate sweep runner started (every %ss)", self._interval)
-
-    async def stop(self) -> None:
-        if self._task is not None:
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
-            self._task = None
-
-    async def _loop(self) -> None:
-        while True:
-            await asyncio.sleep(self._interval)
-            try:
-                result = await self._scheduler.sweep_abandoned_gates()
-                if result["condemned"] or result["errors"]:
-                    logger.info("gate sweep: %s", result)
-            except Exception:  # noqa: BLE001 -- maintenance loop must survive
-                logger.exception("gate sweep failed")
-
-
-class ConclusionSweepRunner:
-    """结论卡·阶段一: drives SchedulerService.sweep_conclusion_cards() on an
-    interval — same shape as PrPollRunner. Its whole job is making sure 默认采信
-    happens even when no turn ever ends."""
-
-    def __init__(self, scheduler: SchedulerService, interval_seconds: int):
-        self._scheduler = scheduler
-        self._interval = interval_seconds
-        self._task: asyncio.Task | None = None
-
-    def start(self) -> None:
-        if self._interval > 0 and self._task is None:
-            self._task = asyncio.create_task(self._loop())
-            logger.info("conclusion sweep runner started (every %ss)", self._interval)
-
-    async def stop(self) -> None:
-        if self._task is not None:
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
-            self._task = None
-
-    async def _loop(self) -> None:
-        while True:
-            await asyncio.sleep(self._interval)
-            try:
-                result = await self._scheduler.sweep_conclusion_cards()
-                if any(result[k] for k in ("settled", "archived", "folded", "errors")):
-                    logger.info("conclusion sweep: %s", result)
-            except Exception:  # noqa: BLE001 -- maintenance loop must survive
-                logger.exception("conclusion sweep failed")

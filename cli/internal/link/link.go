@@ -1,8 +1,9 @@
 // Package link is the dial-out control channel to the server. It carries a flat
 // stream of JSON messages in both directions and knows nothing about their
-// meaning — session lifecycle, variables and RPC are all just message types the
-// host and the server agree on. cheese always dials out, so it works from behind
-// NAT; the connection reconnects with backoff and heartbeats while up.
+// meaning — session lifecycle, screen bytes, calls and exec are all just message
+// types the host and the server agree on. cheese always dials out, so it works
+// from behind NAT; the connection reconnects with backoff and heartbeats while
+// up.
 package link
 
 import (
@@ -26,8 +27,17 @@ const Version = 1
 // Msg is the union of every field any control message uses. Only the relevant
 // ones are set per message type; the rest are omitted.
 type Msg struct {
-	T       string            `json:"t"`
-	V       int               `json:"v,omitempty"` // protocol version (hello / welcome)
+	T string `json:"t"`
+	V int    `json:"v,omitempty"` // protocol version (hello / welcome)
+	// Which binary is speaking, sent up in `hello`: Build is the sha256 of this
+	// connector's own executable, Target its `<os>-<arch>`. V cannot carry this
+	// — it moves only for a breaking change, so a build missing a compatibly
+	// added capability announces the same version as one that has it, and the
+	// server's frame is dropped here with no answer and no clue. Unknown to
+	// older peers, which simply announce neither (see the server's
+	// connector_build).
+	Build   string            `json:"build,omitempty"`
+	Target  string            `json:"target,omitempty"`
 	Sid     string            `json:"sid,omitempty"`
 	Name    string            `json:"name,omitempty"`
 	Value   any               `json:"value,omitempty"`
@@ -39,11 +49,10 @@ type Msg struct {
 	Screen  string            `json:"screen,omitempty"`
 	Cols    int               `json:"cols,omitempty"`
 	Rows    int               `json:"rows,omitempty"`
-	Source  string            `json:"source,omitempty"`
 	// Adopt marks a session.create that re-drives a screen whose tmux session
 	// already survives on the device (after a server restart or a `cheese update`
-	// re-exec): the host re-establishes the runtime + driver around the existing
-	// tmux instead of spawning a new session. Unknown to older peers (ignored).
+	// re-exec): the host re-attaches to the existing tmux instead of spawning a
+	// new session. Unknown to older peers (ignored).
 	Adopt bool `json:"adopt,omitempty"`
 	// Data carries base64-encoded raw terminal bytes for the direct screen
 	// channel (screen.data downstream, screen.input upstream).
@@ -72,17 +81,21 @@ const (
 
 // Conn maintains the dial-out websocket to the server.
 type Conn struct {
-	url   string
-	token string
+	url    string
+	token  string
+	build  string
+	target string
 
 	mu      sync.Mutex
 	conn    *websocket.Conn
 	writeMu sync.Mutex
 }
 
-// New builds a Conn dialing url, authenticating with token.
-func New(url, token string) *Conn {
-	return &Conn{url: url, token: token}
+// New builds a Conn dialing url, authenticating with token, announcing itself as
+// binary build (a sha256) for platform target. Either may be empty when this
+// build cannot say — the server then leaves it alone rather than guess.
+func New(url, token, build, target string) *Conn {
+	return &Conn{url: url, token: token, build: build, target: target}
 }
 
 // Run dials and pumps messages to onMsg until ctx is cancelled, reconnecting
@@ -138,7 +151,7 @@ func (c *Conn) runOnce(ctx context.Context, onMsg func(Msg)) (connected bool) {
 		c.mu.Unlock()
 	}()
 
-	_ = c.Send(Msg{T: "hello", V: Version})
+	_ = c.Send(Msg{T: "hello", V: Version, Build: c.build, Target: c.target})
 
 	// Liveness: reset the read deadline on every pong (and every message below).
 	_ = conn.SetReadDeadline(time.Now().Add(pongWait))

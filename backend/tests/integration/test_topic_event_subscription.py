@@ -8,118 +8,126 @@ import pytest
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.domain.agent import event_spool
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
-from app.domain.agent.hook_events import HookRouter
-from app.domain.agent.hooks_substrate import HooksSessionProvider, TopicSubscription
-from app.domain.agent.runtime import get_broker
-from app.domain.agent.service import (
-    AgentEvent,
-    AgentResult,
-    AgentService,
-    AgentUsage,
+from app.domain.agent.harness.claude_code import event_spool
+from app.domain.agent.harness.claude_code.hook_events import HookRouter
+from app.domain.agent.harness.claude_code.hooks_substrate import (
+    Channel,
+    ClaudeCodeRuntime,
 )
+from app.domain.agent.models import AgentTurn
+from app.domain.agent.runtime import AgentWorkRunner, get_broker
+from app.domain.agent.service import (
+    AgentResult,
+)
+from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import AuthorType, BlockKind, consumed_turn
 from app.domain.block.repositories import BlockRepository
+from app.domain.identity.handles import CHEESE_HANDLE
 from app.domain.project.services import ProjectService
-from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
 from app.domain.usage.models import ResourceUsage
 from app.domain.usage.repositories import UsageRepository
 from app.domain.workspace import service as ws
+from tests.conftest import StubChannel, settle_turn, stub_compute
+from tests.turn_log import open_turn
 
 pytestmark = pytest.mark.anyio
 
 
-class _ImmediateAgent(AgentService):
-    def __init__(self) -> None:
-        super().__init__(model="stub")
+class _ImmediateScreen(StubChannel):
+    """A session that answers the moment it is spoken to."""
 
-    async def stream_reply(self, **_: object) -> AsyncIterator[AgentEvent]:
-        yield AgentResult(
-            text="完成",
+    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+        del reply
+        self.starts(topic_id, session_id="session-1")
+        self.acknowledges(topic_id, prompt)
+        self.hook(
+            topic_id,
+            hook_event_name="Stop",
             session_id="session-1",
-            usage=AgentUsage(
-                model="stub",
-                input_tokens=3,
-                output_tokens=2,
-                cost_usd=0.01,
-            ),
+            last_assistant_message="完成",
+            usage={
+                "model": "stub",
+                "input_tokens": 3,
+                "output_tokens": 2,
+                "cost_usd": 0.01,
+            },
         )
 
 
-class _AnsweringLiveScreenProvider:
-    """A live-screen provider that accepts a message before finishing its run."""
+class _AnsweringLiveScreen(StubChannel):
+    """A live session that takes a message before it finishes its turn."""
 
     name = "answering-live-screen"
     embeds_images = False
 
     def __init__(self) -> None:
+        super().__init__()
         self.started = asyncio.Event()
         self.injected = asyncio.Event()
         self.release = asyncio.Event()
         self.delivered: list[str] = []
         self.runs = 0
+        self._answering: set[asyncio.Task] = set()
 
-    def available(self) -> bool:
+    async def send_prompt(
+        self, screen: uuid.UUID, prompt: str, images: list[dict] | None = None
+    ) -> bool:
+        del images
+        if self._answering:
+            # A write into a session that is already working — the transport
+            # cannot tell it from the one that started the turn, and neither
+            # can a real screen. What makes it an injection rather than a
+            # second turn is decided above, on the live-screen lookup.
+            self.delivered.append(prompt)
+            self.injected.set()
+            return True
+        self.runs += 1
+        self.last_prompt = prompt
+        self.started.set()
+        task = asyncio.get_running_loop().create_task(self._answer(screen, prompt))
+        self._answering.add(task)
+        task.add_done_callback(self._answering.discard)
         return True
 
-    async def run_turn(
-        self,
-        *,
-        prompt: str,
-        **_: object,
-    ) -> AsyncIterator[AgentEvent]:
-        self.runs += 1
-        self.started.set()
+    async def _answer(self, topic_id: uuid.UUID, prompt: str) -> None:
         await self.injected.wait()
         await self.release.wait()
-        yield AgentResult(
-            text=f"First: {prompt}\nSecond: {self.delivered[-1]}",
+        self.starts(topic_id, session_id="session-live")
+        self.acknowledges(topic_id, prompt)
+        self.stops(
+            topic_id,
+            f"First: {prompt}\nSecond: {self.delivered[-1]}",
             session_id="session-live",
-            usage=None,
         )
 
-    async def deliver(self, topic_id: uuid.UUID, text: str) -> bool:
-        del topic_id
-        self.delivered.append(text)
-        self.injected.set()
-        return True
 
-    def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
-        del project_id, topic_id
-
-
-class _IdleHooksProvider(HooksSessionProvider[str]):
+class _IdleChannel(Channel):
     """A live screen whose hooks can arrive without a platform request."""
 
     name = "idle-hooks"
 
-    async def _ensure_ready(self, **_: object) -> str:
+    async def ensure_ready(self, **_: object) -> str:
         return "screen"
 
-    async def _send_prompt(self, screen: str, prompt: str) -> None:
+    async def send_prompt(self, screen: str, prompt: str) -> None:
         del screen, prompt
 
 
-class _RecoveringHooksProvider(_IdleHooksProvider):
-    """A provider that rediscovers one surviving screen after restart."""
+class _RecoveringChannel(_IdleChannel):
+    """A channel that rediscovers one surviving screen after restart."""
 
     def __init__(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
         self.project_id = project_id
         self.topic_id = topic_id
-        super().__init__(router=HookRouter())
 
-    async def recover_subscriptions(
+    async def discover(
         self, device_id: str | None = None
-    ) -> list[TopicSubscription]:
+    ) -> list[tuple[uuid.UUID, uuid.UUID, object | None, str | None]]:
         del device_id
-        subscription = await self.ensure_subscription(
-            self.project_id, self.topic_id, paused=True
-        )
-        self._live[self.topic_id] = "surviving-screen"
-        return [subscription]
+        return [(self.project_id, self.topic_id, "surviving-screen", "claude-code")]
 
 
 async def _seed_topic(factory: object) -> tuple[uuid.UUID, uuid.UUID]:
@@ -145,7 +153,7 @@ async def test_exchange_blocks_and_usage_share_the_supplied_id(
     _project_id, topic_id = await _seed_topic(factory)
     service = ChatService(
         session_factory=factory,
-        agent=_ImmediateAgent(),
+        compute=stub_compute(_ImmediateScreen()),
         base_system_prompt="You are Cheese.",
         workspace_root=str(tmp_path / "ws"),
     )
@@ -160,6 +168,7 @@ async def test_exchange_blocks_and_usage_share_the_supplied_id(
             turn_id=work_id,
         )
     )
+    await settle_turn(service, topic_id)
 
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
@@ -190,7 +199,7 @@ async def test_human_summon_uses_message_id_as_work_attribution(
     _project_id, topic_id = await _seed_topic(factory)
     service = ChatService(
         session_factory=factory,
-        agent=_ImmediateAgent(),
+        compute=stub_compute(_ImmediateScreen()),
         base_system_prompt="You are Cheese.",
         workspace_root=str(tmp_path / "ws"),
     )
@@ -204,12 +213,16 @@ async def test_human_summon_uses_message_id_as_work_attribution(
         )
     )
     user = next(frame["block"] for frame in frames if frame["type"] == "user_block")
-    answer = next(
-        frame["block"] for frame in frames if frame["type"] == "assistant_block"
-    )
+    await settle_turn(service, topic_id)
 
     assert user["turn_id"] == user["id"]
-    assert answer["turn_id"] == user["id"]
+    async with factory() as session:
+        answers = [
+            block
+            for block in await BlockRepository(session).list_for_topic(topic_id)
+            if block.author_type == AuthorType.ai and block.kind == BlockKind.message
+        ]
+    assert [str(block.turn_id) for block in answers] == [user["id"]]
     async with factory() as session:
         usage = (
             await session.scalars(
@@ -229,7 +242,7 @@ async def test_hook_without_a_live_run_reaches_the_room_from_spool(
     project_id, topic_id = await _seed_topic(factory)
     service = ChatService(
         session_factory=factory,
-        agent=_ImmediateAgent(),
+        compute=stub_compute(_ImmediateScreen()),
         base_system_prompt="You are Cheese.",
         workspace_root=str(tmp_path / "ws"),
     )
@@ -258,13 +271,12 @@ async def test_mid_run_message_is_consumed_before_the_run_succeeds(
 ) -> None:
     factory = client.test_factory
     _project_id, topic_id = await _seed_topic(factory)
-    provider = _AnsweringLiveScreenProvider()
+    provider = _AnsweringLiveScreen()
     service = ChatService(
         session_factory=factory,
-        agent=_ImmediateAgent(),
         base_system_prompt="You are Cheese.",
         workspace_root=str(tmp_path / "ws"),
-        compute=ComputePool([provider], provider.name),  # type: ignore[list-item]
+        compute=ComputePool([provider.runtime], provider.name),
     )
 
     first = asyncio.create_task(
@@ -291,7 +303,11 @@ async def test_mid_run_message_is_consumed_before_the_run_succeeds(
     )
 
     assert all(frame["type"] != "done" for frame in second_frames)
-    assert not first.done()
+    # The first turn is still OPEN — the session has not stopped — even though
+    # the call that started it returned long ago. That gap is the point of the
+    # contract: feeding and reading are separate, so "still working" is a fact
+    # about the session, never about whether a caller is still holding on.
+    assert any(t == topic_id for t, _ in service._hook_work)
     assert provider.runs == 1
     assert provider.delivered == ["[u2]: Also handle B"]
     # #539 decision A: the write-accept delivered it, but the consumed stamp
@@ -309,12 +325,13 @@ async def test_mid_run_message_is_consumed_before_the_run_succeeds(
     assert consumed_turn(delivered[0]) is not None
 
     provider.release.set()
-    first_frames = await asyncio.wait_for(first, 1)
-    answer = next(
-        frame["block"]["content"]
-        for frame in first_frames
-        if frame["type"] == "assistant_block"
-    )
+    await asyncio.wait_for(first, 1)
+    await settle_turn(service, topic_id)
+    async with factory() as session:
+        rows = await BlockRepository(session).list_for_topic(topic_id)
+    answer = next(block.content for block in rows if block.author_type == AuthorType.ai)
+    # One answer, covering both messages: the second reached the session that
+    # was already working, rather than queueing behind the turn.
     assert "Handle A" in answer
     assert "Also handle B" in answer
 
@@ -325,10 +342,9 @@ async def test_session_initiated_work_is_persisted_and_broadcast(
     factory = client.test_factory
     project_id, topic_id = await _seed_topic(factory)
     router = HookRouter()
-    provider = _IdleHooksProvider(router=router)
+    provider = ClaudeCodeRuntime(_IdleChannel(), router=router)
     ChatService(
         session_factory=factory,
-        agent=_ImmediateAgent(),
         base_system_prompt="You are Cheese.",
         workspace_root=str(tmp_path / "ws"),
         compute=ComputePool([provider], provider.name),
@@ -384,16 +400,18 @@ async def test_session_initiated_work_is_persisted_and_broadcast(
 
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
-        topic = await TopicRepository(session).get(topic_id)
+        resumes_by = await AgentSessionService(session).resume_token(
+            topic_id, CHEESE_HANDLE
+        )
     ai_messages = [
         row
         for row in rows
         if row.kind == BlockKind.message and row.author_type == AuthorType.ai
     ]
     assert [row.content for row in ai_messages] == ["Background work finished"]
-    assert topic is not None and topic.session_id == "session-autonomous"
+    assert resumes_by == "session-autonomous"
 
-    await provider.drop_subscription(topic_id)
+    await provider._close_topic(topic_id)
     assert subscription.consumer_task is not None
     assert subscription.consumer_task.done()
 
@@ -404,8 +422,8 @@ async def test_late_hook_opens_fresh_unsolicited_work(client, tmp_path) -> None:
     router = HookRouter()
     topic_key = str(topic_id)
 
-    class _PlatformProvider(_IdleHooksProvider):
-        async def _send_prompt(self, screen: str, prompt: str) -> None:
+    class _PlatformChannel(_IdleChannel):
+        async def send_prompt(self, screen: str, prompt: str) -> None:
             del screen, prompt
             router.push(
                 topic_key,
@@ -416,10 +434,9 @@ async def test_late_hook_opens_fresh_unsolicited_work(client, tmp_path) -> None:
                 },
             )
 
-    provider = _PlatformProvider(router=router)
+    provider = ClaudeCodeRuntime(_PlatformChannel(), router=router)
     ChatService(
         session_factory=factory,
-        agent=_ImmediateAgent(),
         base_system_prompt="You are Cheese.",
         workspace_root=str(tmp_path / "ws"),
         compute=ComputePool([provider], provider.name),
@@ -469,7 +486,7 @@ async def test_late_hook_opens_fresh_unsolicited_work(client, tmp_path) -> None:
     }
     assert uuid.UUID(frame["block"]["turn_id"]) != requested_id
     assert frame["block"]["meta"]["platform_unsolicited"] is True
-    await provider.drop_subscription(topic_id)
+    await provider._close_topic(topic_id)
 
 
 async def test_restart_reattaches_and_replays_spooled_hooks(
@@ -495,10 +512,11 @@ async def test_restart_reattaches_and_replays_spooled_hooks(
             "session_id": "session-after-restart",
         },
     )
-    provider = _RecoveringHooksProvider(project_id, topic_id)
+    provider = ClaudeCodeRuntime(
+        _RecoveringChannel(project_id, topic_id), router=HookRouter()
+    )
     service = ChatService(
         session_factory=factory,
-        agent=_ImmediateAgent(),
         base_system_prompt="You are Cheese.",
         workspace_root=str(tmp_path / "ws"),
         compute=ComputePool([provider], provider.name),
@@ -506,7 +524,7 @@ async def test_restart_reattaches_and_replays_spooled_hooks(
 
     broker = get_broker()
     async with broker.subscribe(str(topic_id)) as room:
-        assert await service.recover_hook_subscriptions() == 1
+        assert await service.recover_sessions() == 1
         started = await asyncio.wait_for(room.get(), 1)
         message = await asyncio.wait_for(room.get(), 1)
         assert await asyncio.wait_for(room.get(), 1) == {"type": "done"}
@@ -522,8 +540,124 @@ async def test_restart_reattaches_and_replays_spooled_hooks(
         "eid": "restart-message-1",
         "platform_unsolicited": True,
     }
-    assert event_spool.spool_entries(ws.spool_dir(project_id, topic_id)) == []
-    await provider.drop_subscription(topic_id)
+    # Replayed to the end. The files stay for their retention window; what says
+    # they were consumed is the cursor, so the tail past it must be empty.
+    spool = ws.spool_dir(project_id, topic_id)
+    assert event_spool.spool_entries(spool, after=event_spool.read_cursor(spool)) == []
+    await provider._close_topic(topic_id)
+
+
+async def test_a_deploy_does_not_interrupt_a_turn_that_is_already_running(
+    client, tmp_path, monkeypatch
+) -> None:
+    """#316 / #459, as a person would check it: restart the backend mid-turn and
+    the turn finishes anyway — nothing re-prompted, nothing announced, every
+    event landing exactly once.
+
+    What survives a deploy is the screen, not the coroutine waiting on it. So
+    this drives the real shape of a restart: an interval left open by a process
+    that is gone, hook events waiting in the spool, and a provider that
+    rediscovers the screen on the way up. The turn is adopted rather than swept,
+    and what ends it is the Stop that screen sends — the interval closes without
+    anyone deciding it should.
+    """
+    monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
+    factory = client.test_factory
+    project_id, topic_id = await _seed_topic(factory)
+
+    # The dead process got as far as handing the prompt to the transport.
+    interrupted = await open_turn(
+        factory, topic_id, content="把测试跑绿", age_s=300, delivered=True
+    )
+    for eid, payload in (
+        (
+            "deploy-msg-1",
+            {"hook_event_name": "MessageDisplay", "delta": "跑绿了，收工"},
+        ),
+        (
+            "deploy-stop-1",
+            {
+                "hook_event_name": "Stop",
+                "last_assistant_message": "跑绿了，收工",
+                "session_id": "session-across-the-deploy",
+            },
+        ),
+    ):
+        event_spool.append(ws.spool_dir(project_id, topic_id), eid, payload)
+
+    provider = ClaudeCodeRuntime(
+        _RecoveringChannel(project_id, topic_id), router=HookRouter()
+    )
+    service = ChatService(
+        session_factory=factory,
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+        compute=ComputePool([provider], provider.name),
+    )
+    assert await service.recover_sessions() == 1
+
+    # The startup sweep runs next, exactly as `main.py` orders it. It must find
+    # nothing to do: the screen answered for this topic and the prompt reached
+    # it.
+    runner = AgentWorkRunner(get_broker())
+    assert await runner.resume_orphans(service) == 0
+    async with factory() as session:
+        blocks = await BlockRepository(session).list_for_topic(topic_id)
+    assert [b.content for b in blocks if b.author_type == AuthorType.ai] == [
+        "跑绿了，收工"
+    ]
+    # Nothing was announced — from the room's side the deploy did not happen.
+    assert [b for b in blocks if b.author_type == AuthorType.system] == []
+    # And the Stop closed the books on the interval the dead process opened.
+    async with factory() as session:
+        row = await session.get(AgentTurn, interrupted)
+    assert row is not None and row.stopped_at is not None
+    await provider._close_topic(topic_id)
+
+
+async def test_a_stop_does_not_end_a_turn_that_was_never_fed(
+    client, tmp_path, monkeypatch
+) -> None:
+    """A turn spends its first seconds — or minutes, if the box has to boot —
+    between opening its interval and reaching the transport. A Stop from the
+    conversation BEFORE it must not close that interval.
+
+    An interval closed early is a running turn no sweep can see, which is the
+    silent death the whole table exists to end; it would arrive through the one
+    door left open, a stale hook. So the rule is the interval's own definition:
+    投喂 → Stop, and a turn nobody fed is not what this Stop is ending.
+    """
+    monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
+    factory = client.test_factory
+    project_id, topic_id = await _seed_topic(factory)
+    still_provisioning = await open_turn(
+        factory, topic_id, content="新任务", age_s=5, delivered=False
+    )
+    event_spool.append(
+        ws.spool_dir(project_id, topic_id),
+        "stale-stop-1",
+        {
+            "hook_event_name": "Stop",
+            "last_assistant_message": "上一段对话的收尾",
+            "session_id": "session-before",
+        },
+    )
+
+    provider = ClaudeCodeRuntime(
+        _RecoveringChannel(project_id, topic_id), router=HookRouter()
+    )
+    service = ChatService(
+        session_factory=factory,
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+        compute=ComputePool([provider], provider.name),
+    )
+    assert await service.recover_sessions() == 1
+
+    async with factory() as session:
+        row = await session.get(AgentTurn, still_provisioning)
+    assert row is not None and row.stopped_at is None
+    await provider._close_topic(topic_id)
 
 
 async def test_an_accepted_write_is_announced_to_the_runtime(client, tmp_path) -> None:
@@ -535,15 +669,14 @@ async def test_an_accepted_write_is_announced_to_the_runtime(client, tmp_path) -
     without this test it can stop being emitted with no visible symptom — until
     a deploy re-sends a prompt 芝士 already has.
 
-    A refused write raises out of `inject_work` instead, so reaching this frame
+    A refused write raises out of `send` instead, so reaching this frame
     is itself the acceptance (#563)."""
     factory = client.test_factory
     project_id, topic_id = await _seed_topic(factory)
     del project_id
-    provider = _IdleHooksProvider(router=HookRouter())
+    provider = ClaudeCodeRuntime(_IdleChannel(), router=HookRouter())
     service = ChatService(
         session_factory=factory,
-        agent=_ImmediateAgent(),
         base_system_prompt="You are Cheese.",
         workspace_root=str(tmp_path / "ws"),
         compute=ComputePool([provider], provider.name),
@@ -558,7 +691,7 @@ async def test_an_accepted_write_is_announced_to_the_runtime(client, tmp_path) -
         )
     )
     assert "prompt_delivered" in [frame["type"] for frame in frames]
-    await provider.drop_subscription(topic_id)
+    await provider._close_topic(topic_id)
 
 
 async def test_session_timeout_retires_activity_but_keeps_subscription(
@@ -567,7 +700,8 @@ async def test_session_timeout_retires_activity_but_keeps_subscription(
     factory = client.test_factory
     project_id, topic_id = await _seed_topic(factory)
     router = HookRouter()
-    provider = _IdleHooksProvider(
+    provider = ClaudeCodeRuntime(
+        _IdleChannel(),
         router=router,
         idle_suspect_s=0.2,
         hard_ceiling_s=0.2,
@@ -575,11 +709,11 @@ async def test_session_timeout_retires_activity_but_keeps_subscription(
     )
     service = ChatService(
         session_factory=factory,
-        agent=_ImmediateAgent(),
         base_system_prompt="You are Cheese.",
         workspace_root=str(tmp_path / "ws"),
         compute=ComputePool([provider], provider.name),
     )
+    await settle_turn(service, topic_id)
 
     work_id = uuid.uuid4()
     broker = get_broker()
@@ -634,4 +768,4 @@ async def test_session_timeout_retires_activity_but_keeps_subscription(
     ]
     assert late_frames[1]["block"]["meta"]["platform_unsolicited"] is True
     assert late_frames[1]["block"]["turn_id"] != str(work_id)
-    await provider.drop_subscription(topic_id)
+    await provider._close_topic(topic_id)

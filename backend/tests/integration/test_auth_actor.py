@@ -45,7 +45,7 @@ def test_token_actor_wins_over_body_author(client):
     _, tid = _project_topic(client, owner="alice")
     r = client.put(
         f"/topics/{tid}/doc",
-        json={"content": "# hi", "author": "mallory-forged"},
+        json={"content": "# hi", "author": "mallory-forged", "expected_version": 0},
         headers=_bearer(token),
     )
     assert r.status_code == 200
@@ -59,7 +59,7 @@ def test_no_token_falls_back_to_body_author(client):
     _, tid = _project_topic(client, owner="alice")
     r = client.put(
         f"/topics/{tid}/doc",
-        json={"content": "# hi", "author": "alice"},
+        json={"content": "# hi", "author": "alice", "expected_version": 0},
     )
     assert r.status_code == 200
     assert r.json()["data"]["author"] == "alice"
@@ -72,7 +72,7 @@ def test_token_outsider_denied_on_rostered_topic(client):
     outsider = _login(client, "mallory")
     r = client.put(
         f"/topics/{tid}/doc",
-        json={"content": "# sneaky", "author": "mallory"},
+        json={"content": "# sneaky", "author": "mallory", "expected_version": 0},
         headers=_bearer(outsider),
     )
     assert r.status_code == 403
@@ -84,7 +84,7 @@ def test_token_owner_allowed(client):
     _, tid = _project_topic(client, owner="alice")
     r = client.put(
         f"/topics/{tid}/doc",
-        json={"content": "# ok", "author": "alice"},
+        json={"content": "# ok", "author": "alice", "expected_version": 0},
         headers=_bearer(token),
     )
     assert r.status_code == 200
@@ -165,7 +165,7 @@ def test_project_member_allowed_even_if_not_in_roster(client):
 
     r = client.put(
         f"/topics/{tid}/doc",
-        json={"content": "# member", "author": "bob"},
+        json={"content": "# member", "author": "bob", "expected_version": 0},
         headers=_bearer(token),
     )
     assert r.status_code == 200

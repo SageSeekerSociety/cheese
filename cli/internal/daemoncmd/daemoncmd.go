@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"syscall"
 	"time"
@@ -31,6 +30,7 @@ import (
 	"github.com/SageSeekerSociety/cheese/cli/internal/config"
 	"github.com/SageSeekerSociety/cheese/cli/internal/service"
 	"github.com/SageSeekerSociety/cheese/cli/internal/state"
+	"github.com/SageSeekerSociety/cheese/cli/internal/terminal"
 	"github.com/SageSeekerSociety/cheese/cli/internal/ui"
 	"github.com/SageSeekerSociety/cheese/cli/internal/update"
 )
@@ -136,57 +136,22 @@ func doLogin(cfgPath, serverArg string) (*config.Config, error) {
 	return cfg, nil
 }
 
-// elevateToRoot re-executes this exact command under sudo when it is about to install
-// the boot service and we are not already root. A *system* service is the right default
-// — on a server it starts with no user logged in — whereas a user-level service (which a
-// non-root install would produce) stops on logout and only makes sense on a personal
-// client machine; that rarer case stays available via the hidden --user flag. If sudo is
-// missing we fall back to a user service rather than fail. On success the elevated child
-// does all the work and this process exits.
-func elevateToRoot(userService bool, cfgPath string) error {
-	if userService || os.Geteuid() == 0 {
-		return nil
+// endHostedSessions tears down the tmux server this machine's screens live in —
+// the connector's own sessions and the `claude` each one hosts.
+//
+// The connector's exit path deliberately leaves them running, because a stop is
+// usually a restart and a restart is nobody's decision to end a turn. The verbs
+// below are the ones that DO mean it: disconnect, no-auto-connect, uninstall.
+// They say so to the user and then have to be true, and uninstall in particular
+// must leave nothing of ours behind on a machine we do not own.
+//
+// It addresses the socket by the running user, so it reaches the sessions when
+// the CLI runs as the account the service does — which it does, the service
+// being installed into that account's own service manager.
+func endHostedSessions() {
+	if tm, err := terminal.NewManager(); err == nil {
+		tm.KillServer()
 	}
-	sudo, err := exec.LookPath("sudo")
-	if err != nil {
-		ui.Hint("no sudo found — installing a user-level service (it stops on logout; pass --user to silence)")
-		return nil
-	}
-	self, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	fmt.Println("Installing a system-wide service (needs root) — elevating with sudo…")
-	fmt.Println("(pass --user for a user-level service instead, e.g. on a personal laptop)")
-	// Re-run the same invocation verbatim as root; the absolute self path means sudo's
-	// secure_path can't hide it. Inherit stdio so the login link, polling and any sudo
-	// password prompt all work interactively.
-	args := append([]string{self}, os.Args[1:]...)
-	// Forward this user's config path so the elevated root reads/writes the SAME config
-	// (where the installer recorded the server, and where the token lands — os.WriteFile
-	// keeps it user-owned). The system unit then runs `cheese run --config <that>` as the
-	// user (see service.New), so config + private tmux stay in the user's home.
-	if !hasFlag(os.Args[1:], "--config") {
-		args = append(args, "--config", cfgPath)
-	}
-	cmd := exec.Command(sudo, args...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	if err := cmd.Run(); err != nil {
-		return err
-	}
-	os.Exit(0)
-	return nil
-}
-
-// hasFlag reports whether argv already carries the given flag (as `--flag` or
-// `--flag=value`), so elevation doesn't append a duplicate.
-func hasFlag(argv []string, flag string) bool {
-	for _, a := range argv {
-		if a == flag || strings.HasPrefix(a, flag+"=") {
-			return true
-		}
-	}
-	return false
 }
 
 // ---------------------------------------------------------------------------
@@ -195,7 +160,6 @@ func hasFlag(argv []string, flag string) bool {
 
 func linkCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *cobra.Command {
 	var force bool
-	var userService bool
 
 	connect := withConfig(&cobra.Command{
 		Use:   "connect [server-url]",
@@ -203,13 +167,12 @@ func linkCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *c
 		Long: "Connects now (and, as a side effect of installing the background service,\n" +
 			"also reconnects after a reboot — `cheese link no-auto-connect` turns that off).\n" +
 			"If this machine is not logged in yet, the login flow runs first.\n\n" +
-			"Installs a system-wide service by default (starts even with no user logged in),\n" +
-			"elevating with sudo when needed. Use --user for a user-level service instead.",
+			"Never asks for root. The service is installed for your account only — a\n" +
+			"systemd --user unit or a launchd LaunchAgent. On Linux it is then set to\n" +
+			"linger, so it starts at boot and keeps running with nobody logged in. On\n" +
+			"macOS a LaunchAgent starts at your login and stops at your logout.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			if err := elevateToRoot(userService, *cfgPath); err != nil {
-				return err
-			}
 			serverArg := ""
 			if len(args) == 1 {
 				serverArg = args[0]
@@ -223,11 +186,23 @@ func linkCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *c
 				}
 				ui.OK("Logged in.")
 			}
-			_ = service.Control(*cfgPath, "install")
+			// The install's own refusals (a binary it could never self-update,
+			// #501; a machine-wide connector already installed) are the whole
+			// point of running it, so they reach the user instead of turning
+			// into whatever `start` says about a unit that was never written.
+			if err := service.Control(*cfgPath, "install"); err != nil {
+				return err
+			}
 			if err := service.Control(*cfgPath, "start"); err != nil {
 				return err
 			}
 			ui.OK("Connected. The server can now open screens on this machine.")
+			// Say what is true. Without linger this machine hosts until the
+			// session that started it ends, and a success line promising boot
+			// survival would be a lie the owner only catches after a reboot.
+			if err := service.KeepRunningAfterLogout(); err != nil {
+				ui.Warn("%v", err)
+			}
 			ui.Hint("`cheese status` to check · `cheese link disconnect` to disconnect")
 			return nil
 		},
@@ -247,6 +222,7 @@ func linkCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *c
 			if err := service.Control(*cfgPath, "stop"); err != nil {
 				return err
 			}
+			endHostedSessions()
 			fmt.Println("Disconnected. `cheese link connect` to reconnect.")
 			fmt.Println("(Note: it will still reconnect after a reboot; `cheese link no-auto-connect` prevents that.)")
 			return nil
@@ -275,6 +251,7 @@ func linkCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *c
 				}
 			}
 			_ = service.Control(*cfgPath, "stop")
+			endHostedSessions()
 			if err := service.Control(*cfgPath, "uninstall"); err != nil {
 				return err
 			}
@@ -283,13 +260,6 @@ func linkCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *c
 		},
 	})
 	noAutoConnect.Flags().BoolVar(&force, "force", false, "proceed even if screens are running")
-
-	// Hidden opt-out from the system-service default (rare: a personal client machine).
-	// Bound to the same var on both service-installing commands; only the invoked one parses.
-	for _, c := range []*cobra.Command{connect, autoConnect} {
-		c.Flags().BoolVar(&userService, "user", false, "install a user-level service instead of system-wide")
-		_ = c.Flags().MarkHidden("user")
-	}
 
 	group := &cobra.Command{Use: "link", Short: "Manage this machine's connection to the server"}
 	group.AddCommand(connect, disconnect, autoConnect, noAutoConnect)
@@ -409,17 +379,17 @@ func uninstallCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Comman
 			pid := state.RawPID(*cfgPath)
 			_ = service.Control(*cfgPath, "stop")
 			_ = service.Control(*cfgPath, "uninstall")
+			endHostedSessions()
 			// A running connector whose config+binary were deleted is the worst possible
 			// state: it keeps using stale in-memory credentials, can't be managed, and
 			// looks "connected" while the server sees it offline. So guarantee the process
-			// is gone before deleting anything. `systemctl stop` of a *system* unit needs
-			// root and silently no-ops otherwise — but the process itself runs as this
-			// user, so we can stop it directly. If we truly cannot (a root-owned process),
-			// fail loudly and leave every file intact so nothing is orphaned.
+			// is gone before deleting anything — asking the service manager to stop it is
+			// not the same as it being stopped. If we cannot, fail loudly and leave every
+			// file intact so nothing is orphaned.
 			if err := stopProcess(pid); err != nil {
 				return fmt.Errorf(
 					"the cheese connector is still running (pid %d) and could not be stopped; "+
-						"nothing was removed — re-run as: sudo cheese uninstall", pid)
+						"nothing was removed — stop it and run this again", pid)
 			}
 			if err := os.RemoveAll(config.Dir()); err != nil {
 				return fmt.Errorf("remove config %s: %w", config.Dir(), err)

@@ -227,27 +227,38 @@ export namespace UserApi {
       method: 'DELETE',
     })
 
+  /**
+   * What re-authenticating buys. `sudoTicket` is the server's own proof that
+   * it happened, redeemable once; it comes back only when a purpose was asked
+   * for, since operations the server does not gate have nothing to redeem it.
+   */
   export type VerifySudoResponse = {
-    accessToken: string
+    verified: boolean
+    sudoTicket?: string
   }
 
-  export const verifySudoPassword = (password: string) =>
+  /** The privileged operations the server gates on a sudo ticket. */
+  export type SudoPurpose = '2fa:disable'
+
+  export const verifySudoPassword = (password: string, purpose?: SudoPurpose) =>
     ApiInstance.request<VerifySudoResponse & { srpUpgraded?: boolean }>({
       url: '/users/auth/sudo',
       method: 'POST',
       data: {
         method: 'password',
         credentials: { password },
+        purpose,
       },
     })
 
-  export const verifySudoPasskey = (response: any) =>
+  export const verifySudoPasskey = (response: any, purpose?: SudoPurpose) =>
     ApiInstance.request<VerifySudoResponse>({
       url: '/users/auth/sudo',
       method: 'POST',
       data: {
         method: 'passkey',
         credentials: { passkeyResponse: response },
+        purpose,
       },
       withCredentials: true,
     })
@@ -298,10 +309,11 @@ export namespace UserApi {
       data,
     })
 
-  export const disableTOTP = (userId: number) =>
+  export const disableTOTP = (userId: number, sudoTicket: string) =>
     ApiInstance.request({
       url: `/users/${userId}/2fa/disable`,
       method: 'POST',
+      data: { sudoTicket },
     })
 
   export const generateBackupCodes = (userId: number) =>
@@ -336,13 +348,14 @@ export namespace UserApi {
       data: { always_required: alwaysRequired },
     })
 
-  export const verifySudoTOTP = (code: string) =>
+  export const verifySudoTOTP = (code: string, purpose?: SudoPurpose) =>
     ApiInstance.request<VerifySudoResponse>({
       url: '/users/auth/sudo',
       method: 'POST',
       data: {
         method: 'totp',
         credentials: { code },
+        purpose,
       },
     })
 
@@ -398,16 +411,17 @@ export namespace UserApi {
       withCredentials: true,
     })
 
-  export const verifySudoSrpVerify = (data: { clientPublicEphemeral: string; clientProof: string }) =>
-    ApiInstance.request<{
-      serverProof: string
-      accessToken: string
-    }>({
+  export const verifySudoSrpVerify = (
+    data: { clientPublicEphemeral: string; clientProof: string },
+    purpose?: SudoPurpose
+  ) =>
+    ApiInstance.request<VerifySudoResponse & { serverProof: string }>({
       url: '/users/auth/sudo',
       method: 'POST',
       data: {
         method: 'srp',
         credentials: data,
+        purpose,
       },
       withCredentials: true,
     })

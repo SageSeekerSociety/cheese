@@ -5,7 +5,7 @@ Every commit the platform makes used to be authored by `芝士
 GitHub the work showed up as a grey unlinked name: no avatar, no link, no
 contribution credit for the person who asked for it and approved it. This module
 resolves the human behind a topic to a git identity GitHub *can* link, and
-persists it next to the workspace so the synchronous snapshot path (which has no
+persists it next to the workspace so the synchronous launch path (which has no
 DB session) can read it.
 
 The address is GitHub's `<id>+<login>@users.noreply.github.com` form. It is the
@@ -23,14 +23,13 @@ for those.
 
 Accountable is not the same as sole contributor. A room can change hands — one
 person opens it, it stalls, someone else picks it up and the sub-topics split out
-of THEIR turns belong to them (`TopicService.split_to_subtopic`). The person who
+of THEIR turns belong to them (`TopicService.dispatch_task`). The person who
 asked in the first place still did something, so they come back as
 `Co-authored-by:`; see `coauthor_handles`.
 
-One knob, not two: git carries author and committer separately, but jj 0.43 sets
-both from JJ_USER/JJ_EMAIL and has no `--author`. So an attributed commit is
-attributed wholly, and there is no place to record "committed by 芝士" on the
-commit itself.
+Author and committer are two knobs, and they carry different facts: the author is
+the human this work belongs to (`GIT_AUTHOR_*`), the committer is 芝士, which is
+who actually ran `git commit` (`GIT_COMMITTER_*`).
 """
 
 import json
@@ -162,7 +161,9 @@ async def resolve_for_handle(session: Any, handle: str) -> GitIdentity | None:
     return identity_from_profile(*found)
 
 
-async def requester_handle(session: Any, topic: "Topic") -> str | None:
+async def requester_handle(
+    session: Any, topic: "Topic", *, task_id: uuid.UUID | None = None
+) -> str | None:
     """The handle of the human a topic's work belongs to — the one name behind
     `Requested-by:`, the git author of its commits, and the account the PR is
     opened under.
@@ -173,10 +174,15 @@ async def requester_handle(session: Any, topic: "Topic") -> str | None:
     those attributions silently degraded: the PR opened as ``cheesex-app[bot]``,
     its body said ``Requested-by: cheese-a7a0268b``, and the commits carried no
     ``Co-authored-by`` at all (PR #500, #504). The roster already knows better —
-    ``TopicService.split_to_subtopic`` walks a ladder (the splitter if human, else
+    ``TopicService.dispatch_task`` walks a ladder (the splitter if human, else
     the human whose turn the split came out of, else the parent room's owner, else
     the project's) precisely to seed a real human as the child's owner. This reads
     that answer instead of re-deriving it.
+
+    For a THREAD (``task_id``) the answer is `tasks.owner_handle` — a thread has
+    no roster at all, so reading one gets the ROOM's owner, and every piece of
+    work in a room would be attributed to whoever opened the room. That is the
+    same silent degradation as the robot handle, one level over.
 
     Falls back to ``created_by``, which is what every caller used before: a room
     a human opened directly is unaffected (owner and creator are the same
@@ -185,10 +191,28 @@ async def requester_handle(session: Any, topic: "Topic") -> str | None:
     never be the reason a PR fails to open, so a broken roster read is logged
     and swallowed.
     """
+    if task_id is not None:
+        thread = await _thread(session, task_id)
+        if thread is not None:
+            if thread.owner_handle and not looks_like_agent_handle(thread.owner_handle):
+                return thread.owner_handle
+            return thread.created_by or None
     owner = await _roster_owner(session, topic.id)
     if owner and not looks_like_agent_handle(owner):
         return owner
     return topic.created_by or None
+
+
+async def _thread(session: Any, task_id: uuid.UUID):
+    """The thread row, or None if it cannot be read. Never raises, same rule as
+    `_roster_owner`: attribution must not be why a PR fails to open."""
+    try:
+        from app.domain.room_task.services import TaskService
+
+        return await TaskService(session).get(task_id)
+    except Exception:  # noqa: BLE001 — attribution never fails its caller
+        logger.info("could not read thread %s", task_id, exc_info=True)
+        return None
 
 
 async def _roster_owner(session: Any, topic_id: uuid.UUID) -> str | None:
@@ -205,13 +229,17 @@ async def _roster_owner(session: Any, topic_id: uuid.UUID) -> str | None:
 
 
 async def coauthor_handles(
-    session: Any, topic: "Topic", *, besides: str | None
+    session: Any,
+    topic: "Topic",
+    *,
+    besides: str | None,
+    task_id: uuid.UUID | None = None,
 ) -> list[str]:
     """Humans who should be credited on this change but are not the one it is
     attributed to (`besides`, normally `requester_handle`'s answer).
 
-    Exactly one candidate today: the PARENT room's owner. When a room changes
-    hands, the sub-topics split out of the new driver's turns belong to the new
+    Exactly one candidate today: the ROOM's owner. When a room changes
+    hands, the work dispatched out of the new driver's turns belongs to the new
     driver — that is what makes their accept card land on someone who is still
     working on it — but the person who asked for the thing in the first place did
     not stop having asked, and `Co-authored-by:` is where git records that.
@@ -224,15 +252,20 @@ async def coauthor_handles(
     `Co-authored-by:` stopped being written on most changes: one room has one git
     identity, so a self-referential trailer naming the commit's own author added
     nothing but noise."""
-    if topic.parent_id is None:
+    # A thread's "one level up" is its room; a room's is the project root, which
+    # has no owner to credit — hence the empty answer for rooms, unchanged.
+    up = topic.id if task_id is not None else topic.parent_id
+    if up is None:
         return []
-    owner = await _roster_owner(session, topic.parent_id)
+    owner = await _roster_owner(session, up)
     if not owner or looks_like_agent_handle(owner) or owner == besides:
         return []
     return [owner]
 
 
-async def attribution(session: Any, topic: "Topic") -> "Attribution":
+async def attribution(
+    session: Any, topic: "Topic", *, task_id: uuid.UUID | None = None
+) -> "Attribution":
     """Everything a PR body and a squash commit need to say about who a change
     belongs to, resolved in ONE place.
 
@@ -247,7 +280,7 @@ async def attribution(session: Any, topic: "Topic") -> "Attribution":
     make the credit the trailer exists for the thing that destroys it."""
     handle: str | None = None
     try:
-        handle = await requester_handle(session, topic)
+        handle = await requester_handle(session, topic, task_id=task_id)
     except Exception:  # noqa: BLE001 — a trailer is not worth failing a merge
         logger.warning(
             "could not resolve the requester for topic %s", topic.id, exc_info=True
@@ -255,7 +288,9 @@ async def attribution(session: Any, topic: "Topic") -> "Attribution":
     author = await _identity_of(session, handle)
     coauthors: list[GitIdentity] = []
     try:
-        for who in await coauthor_handles(session, topic, besides=handle):
+        for who in await coauthor_handles(
+            session, topic, besides=handle, task_id=task_id
+        ):
             found = await _identity_of(session, who)
             # `!= author` again on the resolved identity, not just on the handle:
             # two handles can be connected to the same GitHub account, and a
@@ -283,7 +318,7 @@ async def _identity_of(session: Any, handle: str | None) -> GitIdentity | None:
 
 def read(project_id: uuid.UUID, topic_id: uuid.UUID) -> GitIdentity | None:
     """The remembered author for this topic. Synchronous and DB-free on purpose:
-    `snapshot_worktree` runs in a worker thread with no session."""
+    the machine that commits reads it while launching a screen, with no session."""
     try:
         raw = identity_path(project_id, topic_id).read_text("utf-8")
     except OSError:
@@ -312,16 +347,22 @@ def remember(project_id: uuid.UUID, topic_id: uuid.UUID, identity: GitIdentity) 
         logger.warning("could not persist git identity for topic %s", topic_id)
 
 
-async def sync_for_topic(session: Any, topic: "Topic") -> None:
+async def sync_for_topic(
+    session: Any, topic: "Topic", *, task_id: uuid.UUID | None = None
+) -> None:
     """Refresh the remembered author from the DB. Called once per turn — the
     connection can appear (someone links GitHub mid-project) or change, and a
-    topic created before this existed has no sidecar at all.
+    place created before this existed has no sidecar at all.
 
-    Takes the topic rather than a handle so that WHO a topic belongs to is
+    Takes the place rather than a handle so that WHO the work belongs to is
     decided in one place (`requester_handle`) instead of at each call site —
-    passing ``topic.created_by`` here is what left every 分身-split room
-    committing as 芝士."""
-    handle = await requester_handle(session, topic)
+    passing ``topic.created_by`` here is what left every 分身-dispatched thread
+    committing as 芝士.
+
+    The sidecar is keyed by the PLACE, because that is what the worktree is
+    keyed by: two threads in one room commit as two different people when they
+    belong to two different people."""
+    handle = await requester_handle(session, topic, task_id=task_id)
     if not handle:
         return
     try:
@@ -330,7 +371,7 @@ async def sync_for_topic(session: Any, topic: "Topic") -> None:
         logger.exception("could not resolve git identity for %s", handle)
         return
     if identity is not None:
-        remember(topic.project_id, topic.id, identity)
+        remember(topic.project_id, task_id or topic.id, identity)
 
 
 def coauthored_by(identity: GitIdentity | None) -> str | None:

@@ -6,6 +6,15 @@ from functools import lru_cache
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# The gateway mounts this whole app under `/api` and strips that one segment
+# (`proxy_pass http://backend:8081/`), so a backend route is bare while the URL
+# the browser used is `/api` + that route. Anything the BROWSER will resolve
+# against — a cookie's Path, a rewritten asset URL, the base a dev server has to
+# be started under — has to be built with this. It lives in core rather than in
+# the API layer because the device launcher needs the same string to tell an
+# agent where its app will be mounted, and the domain cannot import the API.
+GATEWAY_MOUNT = "/api"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -18,6 +27,20 @@ class Settings(BaseSettings):
     # TEST_PG_BASE), so running the suite never disturbs your dev data.
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/cheese"
     db_echo: bool = False
+    # How many database connections one backend process may hold. SQLAlchemy's
+    # own defaults (5 + 10) size a pool for a thread-per-request server; this is
+    # one asyncio process where every in-flight request holds a connection at
+    # the same time, so the ceiling is 「同时在飞的请求数」, not 「worker 数」. A
+    # single page load fans out dozens of them, and a request that cannot get a
+    # connection within `db_pool_timeout_s` raises TimeoutError — a 500 on a
+    # perfectly healthy database.
+    db_pool_size: int = 20
+    db_max_overflow: int = 30
+    db_pool_timeout_s: float = 30.0
+    # Hand out a connection only after checking it is still alive: a pooled
+    # asyncpg connection that the database (or anything in between) closed while
+    # idle otherwise fails the first statement of whoever checks it out next.
+    db_pool_pre_ping: bool = True
 
     # --- Migration timeouts (#356) ---
     # Bound how long a migration waits on a lock / runs, applied by alembic's
@@ -83,12 +106,12 @@ class Settings(BaseSettings):
     agent_haiku_model: str | None = "glm-4.5-air"
     agent_sonnet_model: str | None = "glm-5.2"
     agent_opus_model: str | None = "glm-5.2"
-    # --- LLM gateway admin (docs/llm-gateway.md L1/L2) ---
+    # --- LLM gateway admin (L1/L2 — defined in `app.domain.agent.gateway`) ---
     # When the pool routes through the self-hosted LiteLLM gateway, the backend can
     # use the gateway's ADMIN API to (L1) mint a per-project virtual key — injected
     # into the sandbox instead of the master key, so a sandbox never holds admin
     # credentials and spend is attributable per project — and read back REAL token
-    # usage from /spend/logs (fixes the tmux backend's usage=0), and (L2) set a
+    # usage from /spend/logs (fixes a provider-reported usage=0), and (L2) set a
     # per-key max_budget from the project's compute grants so the gateway refuses
     # further calls when the budget is exhausted (the mid-turn brake).
     # Unset (default) =整层关闭: env injection, usage, credits all behave as before.
@@ -138,7 +161,7 @@ class Settings(BaseSettings):
     # Still governs: AgentWorkRunner's outer transport-independent wrap for the SDK
     # backend (no activity signal exists there), plus the generic outer default
     # any backend keeps until it signals its own ceiling. The hooks-driven
-    # backends — LOCAL tmux AND remote device — no longer use this for their
+    # backends no longer use this for their
     # effective timeout: they run the two-layer idle-suspect / hard-ceiling loop
     # (agent_idle_suspect_s / agent_turn_hard_ceiling_s below) and reschedule the
     # outer wrap to their own ceiling (turn 活跃度检测, 2026-08-09).
@@ -152,11 +175,11 @@ class Settings(BaseSettings):
     # Generous on purpose: this must never cut a slow-but-live turn, only one
     # that never started. 0 disables it.
     agent_first_output_timeout_s: float = 300.0
-    # Two-layer safety net for the hooks-driven backends — LOCAL tmux AND remote
-    # device (they share one policy). Below this much idle time (no hook, and no
+    # Two-layer safety net for the hooks-driven backends (they share one
+    # policy). Below this much idle time (no hook, and no
     # backend-specific activity signal) a turn is normal; past it the turn is only
-    # SUSPECTED wedged and gets one lightweight liveness probe (tmux: pane_dead;
-    # device: a process-tree probe over the link) rather than being killed outright
+    # SUSPECTED wedged and gets one lightweight liveness probe (a process-tree
+    # probe over the link) rather than being killed outright
     # — a long foreground command with no interim hook must not look identical to a
     # dead screen.
     agent_idle_suspect_s: float = 300.0
@@ -165,21 +188,6 @@ class Settings(BaseSettings):
     # retrying forever, a genuine infinite loop that keeps printing).
     agent_turn_hard_ceiling_s: float = 10800.0
 
-    # Agent compute backend (design: two execution paths behind ComputeProvider):
-    # "sdk"  → the default LocalDockerProvider: runs the Claude Agent SDK
-    #          (stream-json over the cli_path shim) in a per-topic container.
-    # "tmux" → TmuxHooksProvider: an interactive `claude` lives in a tmux session
-    #          inside the container and is driven by tmux send-keys; structured
-    #          events come back via Claude Code HTTP hooks (POST /sandbox/hooks).
-    # Defaults to "sdk" so a broken tmux path never affects existing turns.
-    agent_backend: str = "sdk"
-    # "device" → DeviceProvider: the turn runs on a user's own enrolled machine
-    #          (self-hosted / BYO compute, P3). An interactive `claude` lives in a
-    #          screen the platform opens over the frozen link.Msg control channel;
-    #          structured events come back via Claude Code hooks (same as tmux).
-    # Image the tmux backend uses (base image + tmux + ttyd + pre-accepted
-    # first-launch gates). Independent of sandbox_image (the SDK path's image).
-    tmux_sandbox_image: str = "cheesex-agent-tmux:latest"
     # RETIRED (2026-08-10). Used to name a HOST directory holding a `cheese` CLI
     # to mount over the image's baked copy — but nothing kept that checkout in
     # sync with the backend, so boxes served agents a months-old CLI. The CLI is
@@ -287,10 +295,10 @@ class Settings(BaseSettings):
     microcloud_tenant_secret: str = ""
     microcloud_timeout_s: float = 30.0
     # The machine's built-in AI channel (the tenant console's →ccproxy button).
-    # MicroCloud provisions new machines on newapi, whose default routes to a
-    # cheap non-Claude model; the operator guidance is ccproxy. Provision
-    # switches right after create, and the enrollment sweep reconciles any
-    # machine that slipped through. "" = leave whatever MicroCloud defaults to.
+    # Sent in the create call (micro-cloud#78), so the machine is born on it;
+    # the enrollment sweep still switches any machine that came up on another
+    # channel — MicroCloud's default without the field is newapi, whose default
+    # routes to a cheap non-Claude model. "" = leave whatever MicroCloud does.
     microcloud_ai_mode: str = "ccproxy"
     # Pin a specific granted offering (machine type + zone + template); 0 = take
     # the first active one, which is right while a tenant is granted exactly one.
@@ -301,6 +309,13 @@ class Settings(BaseSettings):
     microcloud_default_memory_mb: int = 4096
     microcloud_default_disk_gb: int = 20
     microcloud_login_user: str = "cheese"
+    # An operator's SSH public key, authorised on every machine the platform
+    # opens, next to the one-shot bootstrap key. That key is erased the moment
+    # enrollment succeeds, so without this nobody can read a Cloud machine's
+    # connector journal afterwards — which is why the 2026-08-29 failure on
+    # machine 477 was never diagnosed. Platform-provisioned machines only: a
+    # self-hosted box is someone else's and never gets a key of ours.
+    microcloud_operator_ssh_pubkey: str = ""
     # The billing project's fund account, and the balance kept in it. MicroCloud
     # bills compute against this; 0 disables top-ups (an operator funds it by hand).
     microcloud_account_name: str = "compute"
@@ -314,9 +329,14 @@ class Settings(BaseSettings):
     # (which happened, and also consumed the per-project limit).
     microcloud_reconcile_interval_s: float = 120.0
     # How often to sweep for machines that came up and still need enrolling as
-    # devices. Its own switch, NOT the project scheduler's: that one spends model
-    # budget on 定期巡检 and ships off, and machines must not depend on it.
-    machine_enroll_interval_seconds: int = 60
+    # devices (and switching to the AI channel above). Its own switch, NOT the
+    # project scheduler's: that one spends model budget on 定期巡检 and ships
+    # off, and machines must not depend on it. Ten seconds, not sixty: a Cloud
+    # topic's first turn crosses this clock twice (running → switch the AI
+    # channel, ready → enroll), and at 60s a person waited up to two minutes on
+    # a timer for a machine that was already there. A tick with nothing
+    # unsettled is three cheap queries.
+    machine_enroll_interval_seconds: int = 10
 
     # --- ccproxy tenant realm: one revocable ticket per device (#420) ---
     # Cheese is one ccproxy tenant (micro-teams/ccproxy). Registering a device
@@ -330,26 +350,14 @@ class Settings(BaseSettings):
     ccproxy_tenant_timeout_s: float = 30.0
 
     # --- Agent sandbox (spec §9.1: 每话题在隔离容器里跑 claude + 原生工具) ---
-    # When on, the interactive turn runs `claude` INSIDE a per-topic Docker
-    # container (native Bash/Read/Write jailed there) via the cli_path shim, and
-    # platform actions go through the `cheese` CLI → REST. Requires Docker.
-    agent_sandbox_enabled: bool = False
-    # Compute plane (design v3 ComputePool): "local" runs turns in a local Docker
-    # sandbox; "remote" ships each turn to a cheesed node at cheesed_url. The node's
-    # container calls cheese back to cheesed_cheese_api (the backend's address that's
-    # reachable FROM the node — host.docker.internal works when the node is local).
-    compute_provider: str = "local"
-    cheesed_url: str = "http://localhost:8100"
-    cheesed_cheese_api: str = "http://host.docker.internal:8099"
     sandbox_image: str = "cheesex-agent-sandbox:latest"
     # Machine quality gates use a disposable sibling container and never the
     # backend process. Keep this explicit so operators can ship a test-toolchain
     # image without granting the gate Docker socket or backend credentials.
-    quality_gate_image: str = "cheesex-agent-tmux:latest"
+    quality_gate_image: str = "cheesex-agent-sandbox:latest"
     quality_gate_memory_mb: int = 2048
     quality_gate_cpus: float = 2.0
     quality_gate_pids_limit: int = 512
-    sandbox_shim: str = "./sandbox/claude-sbx"
     # Base URL the in-container `cheese` CLI calls back to (host → backend).
     # The app ROOT, with no `/api`. The in-container `cheese` CLI reaches the
     # backend port DIRECTLY (no gateway, so nothing strips a prefix), and since
@@ -378,7 +386,7 @@ class Settings(BaseSettings):
         every existing box's token the instant the backend restarted. The whole
         deployment went deaf at once — hooks 401ing into nothing, turns running
         to their ceiling reporting `tools: 0` while the agent inside worked
-        perfectly — recovering only by destroying each box (and with it the tmux
+        perfectly — recovering only by destroying each box (and with it the
         session that IS that topic's conversational continuity).
 
         Deriving instead of randomising makes the secret stable across restarts
@@ -394,27 +402,6 @@ class Settings(BaseSettings):
         return hashlib.sha256(
             b"cheesex:sandbox-signing-secret:v1:" + self.jwt_secret.encode()
         ).hexdigest()
-
-    # --- tmux sandbox: one box per ROOM, not per topic ---
-    # A room's box hosts the room's own tmux session plus one per task split out
-    # of it, so the quota is a ROOM budget now, not a topic's. Sized from what
-    # this repo actually needs: `pnpm run build` alone OOMs a 2g box (exit 134,
-    # measured), and a room routinely has a build, a test run and an idle
-    # session in flight at once. Operator-tunable because the right number is a
-    # property of the deployment's projects, not of this code.
-    sandbox_memory_gb: float = 6.0
-    sandbox_cpus: float = 4.0
-    sandbox_pids_limit: int = 2048
-    # How many topics of one room may hold a published app/ttyd port. Ports are
-    # published as a RANGE at container creation and can never be extended
-    # afterwards, so this is a hard ceiling on 运行环境预览 + 现场终端 slots per
-    # room — beyond it a session still runs, it just gets no published port.
-    sandbox_room_port_slots: int = 16
-    # Escape hatch: False puts every topic back in its own box (the pre-room
-    # behaviour). Here because room sharing merges a room's fault domain — one
-    # topic OOMing the box takes its siblings down — and an operator hitting
-    # that needs a way out that is not a redeploy.
-    sandbox_share_room_container: bool = True
 
     def agent_api_base(self) -> str:
         """`sandbox_api_base` with a stale trailing `/api` removed.
@@ -466,12 +453,11 @@ class Settings(BaseSettings):
     # since yesterday is paying rent for a conversation that will resume from
     # its transcript anyway.
     #
-    # 8 hours holds even though one box now serves a whole room (2026-08-17
-    # decision). What changed is not the threshold but what "idle" MEASURES:
-    # `reap_idle_containers` takes the room's last activity AND its tasks'.
-    # Judging the room alone would destroy a box with live work in it the
-    # moment the room's own timeline went quiet — and a room whose work has
-    # been split out is quiet by design, so that is the normal case.
+    # 8 hours holds for a whole room (2026-08-17 decision), because what
+    # "idle" MEASURES is the room's last activity AND its tasks'. Judging the
+    # room alone would tear down live work the moment the room's own timeline
+    # went quiet — and a room whose work has been split out is quiet by design,
+    # so that is the normal case.
     sandbox_reap_interval_seconds: int = 3600
     sandbox_idle_hours: float = 8
     # Seconds between orphan sweeps (AgentWorkRunner.sweep_orphans). On by default,
@@ -554,9 +540,9 @@ class Settings(BaseSettings):
 
     # --- GitHub App (cheesex-app, #188 minimal / #192 git integration) ---
     # The platform's GitHub credential: the backend holds the App private key
-    # and mints short-lived installation tokens, narrowed per use (sandboxes
-    # only ever see read-only ones). Unset = the /sandbox/github-token
-    # endpoint answers "not configured"; nothing else changes.
+    # and mints short-lived installation tokens from it. Unset = the
+    # /sandbox/github-token endpoint answers "not configured"; nothing else
+    # changes.
     github_app_id: int | None = None
     github_app_private_key_path: str | None = None
     # Which installation to mint a token for is resolved per-project via the
@@ -616,6 +602,15 @@ class Settings(BaseSettings):
     # (see SchedulerService.sync_upstreams), so this only has to run often
     # enough that the gap stays small — not on every commit. 0 disables it.
     upstream_sync_interval_s: int = 1800
+    # --- notifications and deadlines ---
+    # Three jobs nothing in a request path can do. An aggregation window that
+    # never closes is a notification written and never delivered; an undrained
+    # email queue is an inbox that never receives; an unswept deadline is a
+    # promise the platform made and quietly did not keep. Each failure is
+    # silent, which is why the intervals are on by default. 0 disables one.
+    notification_finalize_interval_s: int = 60
+    notification_email_drain_interval_s: int = 60
+    task_deadline_sweep_interval_s: int = 900
     # --- 结论卡 (2026-08-11) ---
     # How often open conclusion cards past their absolute deadline are swept and
     # auto-accepted. Backstop for the turn-end hook: 默认采信 must not depend on

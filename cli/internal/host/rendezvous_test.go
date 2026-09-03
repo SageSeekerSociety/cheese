@@ -1,12 +1,19 @@
 package host
 
 import (
+	"context"
 	"encoding/base64"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/SageSeekerSociety/cheese/cli/internal/link"
+	"github.com/gorilla/websocket"
 )
 
 func TestWriteScreenFileIsAtomicAndConfinedToUploads(t *testing.T) {
@@ -31,25 +38,123 @@ func TestWriteScreenFileIsAtomicAndConfinedToUploads(t *testing.T) {
 	}
 }
 
-func TestOnlyPromptTakesTheSocket(t *testing.T) {
-	armed := &sess{rvPath: "/tmp/x.sock"}
-	bare := &sess{}
-
-	if !armed.usesRendezvous("prompt") {
-		t.Fatal("an armed screen must deliver `prompt` over the socket")
+// A call the screen cannot serve must come back as an error, never as silence.
+// The server awaits an rpc.result for every prompt it sends; a dropped call
+// leaves the turn hanging on a timeout that says nothing about what went wrong,
+// which is the failure this delivery path was built to end.
+func TestAnUnservableCallIsAnsweredWithAnError(t *testing.T) {
+	cases := []struct {
+		name    string
+		call    string
+		screen  *sess
+		wantHas string
+	}{
+		{
+			name:    "a call this build does not know",
+			call:    "snapshot",
+			screen:  &sess{rvPath: "/tmp/x.sock"},
+			wantHas: `unknown call "snapshot"`,
+		},
+		{
+			name:    "a prompt for a screen with no socket",
+			call:    "prompt",
+			screen:  &sess{},
+			wantHas: envRvSock,
+		},
 	}
-	// Every other exposed function is still the cheeselet's. Routing them here
-	// would silently break any future script-side capability.
-	for _, name := range []string{"snapshot", "compact", "choose", ""} {
-		if armed.usesRendezvous(name) {
-			t.Fatalf("%q must not be routed to the socket", name)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := hostOnAFakeServer(t, map[string]*sess{"s1": tc.screen})
+			server.send(t, link.Msg{T: "rpc.call", Sid: "s1", ID: "c1",
+				Name: tc.call, Args: []any{"hello"}})
+
+			got := server.awaitResult(t, "c1")
+			if got.Error == "" {
+				t.Fatalf("%s was answered as a success: %+v", tc.call, got)
+			}
+			if !strings.Contains(got.Error, tc.wantHas) {
+				t.Fatalf("the error should name %q, got: %s", tc.wantHas, got.Error)
+			}
+		})
+	}
+}
+
+// fakeServer is the control channel's other end: it accepts the host's dial-out
+// websocket and lets a test push frames down it and read what comes back.
+type fakeServer struct {
+	mu sync.Mutex
+	ws *websocket.Conn
+	in chan link.Msg
+}
+
+func (f *fakeServer) send(t *testing.T, m link.Msg) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		f.mu.Lock()
+		ws := f.ws
+		f.mu.Unlock()
+		if ws != nil {
+			if err := ws.WriteJSON(m); err != nil {
+				t.Fatalf("send %s: %v", m.T, err)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the host never connected")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func (f *fakeServer) awaitResult(t *testing.T, id string) link.Msg {
+	t.Helper()
+	for {
+		select {
+		case m := <-f.in:
+			if m.T == "rpc.result" && m.ID == id {
+				return m
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("no rpc.result for %q", id)
 		}
 	}
-	// No socket configured (an old device, or a screen with no topic) falls
-	// through to the script rather than pretending to deliver.
-	if bare.usesRendezvous("prompt") {
-		t.Fatal("a screen with no socket must not claim the rendezvous path")
+}
+
+func hostOnAFakeServer(t *testing.T, sessions map[string]*sess) *fakeServer {
+	t.Helper()
+	f := &fakeServer{in: make(chan link.Msg, 16)}
+	up := websocket.Upgrader{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ws, err := up.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		f.mu.Lock()
+		f.ws = ws
+		f.mu.Unlock()
+		for {
+			var m link.Msg
+			if err := ws.ReadJSON(&m); err != nil {
+				return
+			}
+			select {
+			case f.in <- m:
+			default:
+			}
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	h := &Host{
+		conn:     link.New("ws"+strings.TrimPrefix(srv.URL, "http"), "", "", ""),
+		ctx:      ctx,
+		sessions: sessions,
 	}
+	go func() { _ = h.conn.Run(ctx, h.onMsg) }()
+	return f
 }
 
 func TestReadRvTokenTrimsAndReturns(t *testing.T) {

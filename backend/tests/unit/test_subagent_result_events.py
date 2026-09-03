@@ -12,11 +12,9 @@ from app.domain.agent.chat import (
     _subagent_event_text,
     _subagent_result_meta,
 )
-from app.domain.agent.hook_events import translate_hook
+from app.domain.agent.harness.claude_code.hook_events import translate_hook
 from app.domain.agent.service import (
     AgentToolResult,
-    event_from_dict,
-    event_to_dict,
 )
 
 
@@ -146,12 +144,3 @@ def test_no_meta_tool_key_so_todays_frontend_renders_the_text():
     unknown name raw. Leaving the key off routes this block down the
     content-text path, which reads correctly with no frontend change."""
     assert "tool" not in _subagent_result_meta("Task", "d", "r")
-
-
-def test_tool_result_survives_the_wire():
-    """The remote (cheesed) path serializes every event; a type missing from the
-    codec silently decodes as a turn-ending AgentResult."""
-    ev = AgentToolResult(name="Task", text="结论", description="问题", eid="e-9")
-    back = event_from_dict(event_to_dict(ev))
-    assert isinstance(back, AgentToolResult)
-    assert back == ev

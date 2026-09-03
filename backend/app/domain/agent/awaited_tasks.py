@@ -34,9 +34,6 @@ Guards (all four are here, not in the CLI — a sandbox-side check is advisory):
   has to guess what finished.
 * **归档 / 卡已结算** — an archived topic or a settled accept card takes the result
   as a block and nothing else.
-
-It also owns the other half of "a command outlives the turn": while one is in
-flight the topic's automatic snapshot is HELD (``checkpoint_worktree`` below).
 """
 
 import asyncio
@@ -52,7 +49,6 @@ from app.core.errors import ConflictError, ValidationError
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.webhook import service as webhook_service
-from app.domain.workspace import service as ws
 
 logger = logging.getLogger("cheesex.await")
 
@@ -71,11 +67,6 @@ DEFER_POLL_S = 3.0
 # (the gate's red-card nudge uses the same 1500).
 MAX_TIMEOUT_S = 6 * 3600
 TAIL_LIMIT = 1500
-# How long past its own timeout a task keeps holding the snapshot. The child
-# kills the command at `timeout_s` and reports right after, so anything still
-# registered past that is a child that died with its container — and a dead child
-# must not freeze a topic's version history forever.
-SNAPSHOT_HOLD_GRACE_S = 60.0
 
 # Terminal accept-card states: the work has been settled, so a late background
 # result is history, not something to wake anyone about.
@@ -101,19 +92,9 @@ class AwaitedTask:
 
 
 # Process-global, like AgentWorkRunner._tasks and HookRouter: a restart forgets
-# in-flight tasks. For the WAKE half that costs one wake (the child's report 404s
-# and it gives up) and corrupts nothing, and persisting would not buy much — a
-# container rebuild kills the child that was going to report anyway.
-#
-# For the SNAPSHOT-HOLD half it is worse, and the container-rebuild argument does
-# not transfer: the child runs in the agent's own sandbox, so a BACKEND restart
-# leaves it alive and still writing the worktree while every hold is forgotten —
-# the next checkpoint then tears the tree exactly as before. Strictly better than
-# no hold at all (was: always torn; now: torn only if a restart lands inside the
-# window) and not worth blocking on, but real: this topic itself was interrupted
-# by a platform restart twice on 2026-08-11. If it needs fixing, the fix is to
-# PERSIST the hold — widening SNAPSHOT_HOLD_GRACE_S does nothing for a restart and
-# only lets a dead child freeze history longer (裁定 2026-08-11, PR 采纳意见).
+# in-flight tasks. That costs one wake (the child's report 404s and it gives up)
+# and corrupts nothing, and persisting would not buy much — a machine rebuild
+# kills the child that was going to report anyway.
 _ACTIVE: dict[uuid.UUID, AwaitedTask] = {}
 # topic id → timestamps of recent automatic wakes (rolling window).
 _WAKES: dict[str, deque[float]] = {}
@@ -176,93 +157,9 @@ def forget(task_id: uuid.UUID) -> None:
     _ACTIVE.pop(task_id, None)
 
 
-# --- 快照撞上长命令 ---------------------------------------------------------
-#
-# The automatic snapshot fires when a turn ENDS (`provider.checkpoint` →
-# `ws.snapshot_worktree`), and `cheese await` exists precisely so a turn CAN end
-# while its command keeps running. The two windows overlap by construction, not
-# by bad luck — and a snapshot taken mid-command freezes whatever half-written
-# state the worktree is in into a commit. Every downstream reader (话题分支,
-# diff, 验收卡, 复核的人) reads commits, not the worktree, so the worktree healing
-# 35 seconds later fixes nothing. Measured 2026-08-11: a verification script
-# deleted the line it was validating, ran a negative control, then restored it;
-# the snapshot landed 10s in, and the branch showed the fix missing for 2 hours.
-#
-# Policy: HOLD the automatic snapshot while a task is in flight, then take one as
-# soon as the last task reports.
-#
-# The reason to prefer holding is NOT mainly that it is the recoverable option
-# (it is — the worktree is a host bind mount, so nothing is lost and the next
-# snapshot picks it up, whereas a torn commit stays in history with the bookmark
-# pointing at it for the whole run). It is what each failure LOOKS like:
-#
-# * a held snapshot produces a QUESTION — "why isn't my change on the branch?" —
-#   which somebody asks and somebody answers;
-# * a torn commit produces a CONFIDENT WRONG CONCLUSION — "this fix was never
-#   made" — which nobody re-checks, because it looks completely normal.
-#
-# The incident is the proof: those 2 hours were not spent failing to recover, they
-# were spent with nobody suspecting anything. So this choice holds even where both
-# options are recoverable. Same principle as 宁可重复不可丢失 on the message path:
-# make the failure mode the visible one (裁定 2026-08-11, PR 采纳意见).
-#
-# Which is also why the hold itself must be visible — `status_snapshot` puts it on
-# `cheese status`, or "my edits aren't on the branch" becomes the same mystery by
-# another route. Snapshots that CANNOT be held (采纳前快照 and friends: a human is
-# waiting, and refusing would wedge the accept) instead get a warning marker in
-# their commit message — see `ws.snapshot_worktree`.
-
-
-def snapshot_hold(topic_id: uuid.UUID) -> AwaitedTask | None:
-    """The in-flight command that must hold off this topic's automatic snapshot,
-    or None if the worktree is nobody else's to write.
-
-    Tasks past their own timeout plus ``SNAPSHOT_HOLD_GRACE_S`` no longer hold:
-    the registry is process-global and only cleared by a report, so a child that
-    died with its container would otherwise hold forever."""
-    now = time.time()
-    live = [
-        t
-        for t in active_for_topic(topic_id)
-        if now <= t.started_at + t.timeout_s + SNAPSHOT_HOLD_GRACE_S
-    ]
-    # The one that frees the hold last — that's when snapshots resume, so it is
-    # the honest thing to name in a log line or on `cheese status`.
-    return max(live, key=lambda t: t.started_at + t.timeout_s, default=None)
-
-
-def checkpoint_worktree(
-    project_id: uuid.UUID, topic_id: uuid.UUID, message: str | None = None
-) -> str:
-    """The automatic snapshot, with the hold applied. Returns what it did
-    (``"held: <label>"`` / ``"snapshotted"``) for the caller's logs.
-
-    Best-effort like every checkpoint path: a snapshot must never fail a turn."""
-    held = snapshot_hold(topic_id)
-    if held is not None:
-        logger.info(
-            "snapshot held for topic %s: background task %s still running",
-            topic_id,
-            held.label,
-        )
-        return f"held: {held.label}"
-    try:
-        if message is None:
-            ws.snapshot_worktree(project_id, topic_id)
-        else:
-            ws.snapshot_worktree(project_id, topic_id, message)
-    except Exception:  # noqa: BLE001 — git snapshot is best-effort
-        logger.warning("snapshot failed for topic %s", topic_id, exc_info=True)
-        return "failed"
-    return "snapshotted"
-
-
 def status_snapshot(topic_id: uuid.UUID) -> dict:
-    """What `cheese status` shows about this topic's background commands — and,
-    crucially, whether one of them is holding the automatic snapshot. A hold
-    nobody can see is how "my edits aren't on the branch" becomes a mystery."""
+    """What `cheese status` shows about this topic's background commands."""
     now = time.time()
-    held = snapshot_hold(topic_id)
     return {
         "tasks": [
             {
@@ -274,28 +171,7 @@ def status_snapshot(topic_id: uuid.UUID) -> dict:
             }
             for t in active_for_topic(topic_id)
         ],
-        "snapshot_held_by": held.label if held is not None else None,
     }
-
-
-async def _catch_up_snapshot(task: AwaitedTask) -> None:
-    """Take the snapshot that was held while ``task`` (and any sibling) ran.
-
-    Called once the task is out of the registry, so it only lands when the LAST
-    one finishes. Runs off the event loop — snapshotting shells out to jj, and
-    this is reached from the reporting child's HTTP request."""
-    if not ws.has_worktree(task.project_id, task.topic_id):
-        return  # nothing was ever checked out for this topic — nothing to commit
-    outcome = await asyncio.to_thread(
-        checkpoint_worktree,
-        task.project_id,
-        task.topic_id,
-        # Subject stays a plain Conventional Commits line; WHICH task settled
-        # this tree is body material (see ws.SNAPSHOT_MESSAGE's rationale).
-        "chore: snapshot workspace after background task\n\n"
-        f"Final state after the background task {task.label!r} finished.",
-    )
-    logger.info("catch-up snapshot after task %s: %s", task.id, outcome)
 
 
 def summary(task: AwaitedTask, *, exit_code: int, tail: str, duration_s: float) -> str:
@@ -361,7 +237,7 @@ def _submit_wake(runner, chat_service, task: AwaitedTask, content: str) -> bool:
             "接着处理它的结果：绿了就继续推进原来的活，红了就修。"
         ),
         summon=True,
-        nudge_event=f"⏱️ 后台任务「{task.label}」跑完了，芝士来处理",
+        nudge_event=f"后台任务「{task.label}」跑完了，芝士来处理",
     )
     return True
 
@@ -417,14 +293,6 @@ async def report(
     tell what the platform did with it."""
     content = summary(task, exit_code=exit_code, tail=tail, duration_s=duration_s)
     forget(task.id)
-    # The worktree is at rest again: take the snapshot this task was holding off,
-    # BEFORE the result lands and (maybe) wakes a turn, so whoever reads the topic
-    # next reads a settled branch. Never let it break the report — a dropped
-    # report is the frozen topic this whole path exists to prevent.
-    try:
-        await _catch_up_snapshot(task)
-    except Exception:  # noqa: BLE001
-        logger.warning("catch-up snapshot failed for task %s", task.id, exc_info=True)
     await webhook_service.post_with_retries(
         session_factory,
         project_id=task.project_id,

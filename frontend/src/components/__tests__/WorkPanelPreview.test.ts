@@ -1,14 +1,12 @@
-/** 预览 tab: what it says when the app is not reachable, and what a refresh must
- * not do to the app that IS.
+/** 预览 tab: what it says when a running app is not reachable, what a refresh
+ * must not do to the one that IS, and what a new preview has to announce.
  *
  * 三件事被钉在这里：
- *   1. 「运行环境到不了」和「运行环境挂了」是两回事。前者以前被当成后者，于是
- *      面板叫人「再 @ 它一次」去等一个永远不会出现的运行环境。
- *   2. 预览面板会自动刷新了，但静默刷新绝不能把 iframe 拆掉重建——那会让正在
- *      看的应用每 20 秒重载一次，比不刷新更糟。
+ *   1. 「那台机器没把预览通道拨出来」和「通道在、应用死了」是两回事。合成一句以后
+ *      面板会叫人「再 @ 它一次」去等一个 @ 不回来的通道。
+ *   2. 预览面板会自动刷新，但静默刷新绝不能把 iframe 拆掉重建——那会让正在看的
+ *      产物每 20 秒重载一次（交互式 artifact 里攒下的状态全丢），比不刷新更糟。
  *   3. 芝士换了预览，没停在这个 tab 上的人也要看得见。
- *
- * (Was DocPanelPreview.test.ts. 抽屉 → tab，断言一条没改。)
  */
 import type { Topic } from '../../cx_types'
 
@@ -28,6 +26,7 @@ vi.mock('../CodeEditor.vue', () => ({
 }))
 
 const getPreview = vi.fn()
+const readFile = vi.fn()
 const primeAppPreview = vi.fn()
 
 vi.mock('../../api', async () => {
@@ -35,17 +34,17 @@ vi.mock('../../api', async () => {
   return {
     ...actual,
     getPreview: (...a: unknown[]) => getPreview(...a),
+    readFile: (...a: unknown[]) => readFile(...a),
     primeAppPreview: (...a: unknown[]) => primeAppPreview(...a),
     getDoc: vi.fn().mockResolvedValue({ markdown: '', title: '' }),
     putDoc: vi.fn().mockResolvedValue({}),
     getComments: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getDocNodes: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listFiles: vi.fn().mockResolvedValue({ data: [], total: 0 }),
-    readFile: vi.fn().mockResolvedValue(null),
     getGitLog: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getGitDiff: vi.fn().mockResolvedValue({ diff: '' }),
     getTranscript: vi.fn().mockResolvedValue({ data: [], total: 0 }),
-    getTerminal: vi.fn().mockResolvedValue({ available: false, backend: 'none' }),
+    getTerminal: vi.fn().mockResolvedValue({ available: false }),
     getTopicUsage: vi.fn().mockResolvedValue(null),
     getProjectUsage: vi.fn().mockResolvedValue(null),
     // 规则 1: the tabs a topic offers follow what it actually holds. These suites
@@ -97,37 +96,36 @@ beforeAll(() => {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  primeAppPreview.mockResolvedValue({ ready: true })
   getPreview.mockResolvedValue(null)
+  readFile.mockResolvedValue({ path: 'report.html', content: '<p>hi</p>' })
+  primeAppPreview.mockResolvedValue({ ready: true })
 })
 
-describe('预览面板：应用到不了的时候说什么', () => {
-  it('运行环境不在平台这边 → 不叫人再 @ 一次去等一个不会来的容器', async () => {
+describe('预览面板：运行中的应用到不了的时候说什么', () => {
+  it('机器没把预览通道拨出来 → 说的是通道，不是应用', async () => {
     getPreview.mockResolvedValue({
       kind: 'app',
       path: 'Vue dev server',
       mime: 'application/x-cheesex-app',
       url: null,
-      container_up: false,
-      supported: false,
+      tunnel_up: false,
       artifact_id: 'a1',
     })
     const { container } = mountPanel()
     await flush()
     await openPreview(container)
 
-    expect(container.textContent).toContain('这里看不到运行中的应用')
-    expect(container.textContent).not.toContain('再 @ 它一次')
+    expect(container.textContent).toContain('预览通道')
+    expect(container.textContent).not.toContain('服务多半已经退出')
   })
 
-  it('运行环境在、应用死了 → 还是那句「再 @ 它一次」，这条没变', async () => {
+  it('通道在、应用死了 → 说的是应用，并告诉人再 @ 一次能拉起来', async () => {
     getPreview.mockResolvedValue({
       kind: 'app',
       path: 'Vue dev server',
       mime: 'application/x-cheesex-app',
       url: null,
-      container_up: true,
-      supported: true,
+      tunnel_up: true,
       artifact_id: 'a1',
     })
     const { container } = mountPanel()
@@ -135,44 +133,44 @@ describe('预览面板：应用到不了的时候说什么', () => {
     await openPreview(container)
 
     expect(container.textContent).toContain('应用暂时不在线')
-    expect(container.textContent).toContain('再 @ 它一次')
+    expect(container.textContent).toContain('服务多半已经退出')
   })
 
-  it('后端没有 supported 字段（旧版本）→ 沿用原来的说法，不误判成到不了', async () => {
+  it('应用活着 → 嵌的是反代路径，而不是机器上的地址', async () => {
     getPreview.mockResolvedValue({
-      kind: 'app',
-      path: 'Vue dev server',
-      mime: 'application/x-cheesex-app',
-      url: null,
-      container_up: true,
-      artifact_id: 'a1',
-    })
-    const { container } = mountPanel()
-    await flush()
-    await openPreview(container)
-
-    expect(container.textContent).toContain('应用暂时不在线')
-  })
-})
-
-describe('预览面板：刷新', () => {
-  it('静默刷新不重建 iframe——正在看的应用不会被重载', async () => {
-    const app = {
       kind: 'app',
       path: 'Vue dev server',
       mime: 'application/x-cheesex-app',
       url: '/api/topics/topic-A/app/',
-      container_up: true,
-      supported: true,
+      tunnel_up: true,
       artifact_id: 'a1',
-    }
-    getPreview.mockResolvedValue(app)
+    })
+    const { container } = mountPanel()
+    await flush()
+    await openPreview(container)
+
+    const frame = container.querySelector('iframe.preview-frame') as HTMLIFrameElement | null
+    expect(frame?.getAttribute('src')).toBe('/api/topics/topic-A/app/')
+    // 授权先落地，否则 iframe 的第一个请求就 404 —— 白框。
+    expect(primeAppPreview).toHaveBeenCalledWith('topic-A')
+    // 页面是芝士写的：给了 same-origin 就等于把会话 token 交出去。
+    expect(frame?.getAttribute('sandbox')).not.toContain('allow-same-origin')
+  })
+})
+
+describe('预览面板：刷新', () => {
+  it('静默刷新不重建 iframe——正在看的产物不会被重载', async () => {
+    getPreview.mockResolvedValue({
+      path: 'report.html',
+      mime: 'text/html',
+      artifact_id: 'a1',
+    })
     const { container, rerender } = mountPanel(true)
     await flush()
     await openPreview(container)
 
     const frame = container.querySelector('iframe.preview-frame')
-    expect(frame, '应用应该已经嵌进来了').toBeTruthy()
+    expect(frame, '产物应该已经嵌进来了').toBeTruthy()
     const callsBefore = getPreview.mock.calls.length
 
     // 一轮结束 → 面板重新拉一次。
@@ -180,17 +178,14 @@ describe('预览面板：刷新', () => {
     await flush()
 
     expect(getPreview.mock.calls.length).toBeGreaterThan(callsBefore)
-    // 同一个 DOM 节点 = 没有卸载重建 = 应用没有重载。
+    // 同一个 DOM 节点 = 没有卸载重建 = 产物没有重载。
     expect(container.querySelector('iframe.preview-frame')).toBe(frame)
-    // 授权 cookie 也不用再要一次：反代每转发一次就续一次。
-    expect(primeAppPreview).toHaveBeenCalledTimes(1)
   })
 })
 
 describe('预览面板：有新内容', () => {
   it('停在别的 tab 时芝士换了预览 → 预览 tab 上出现提示', async () => {
     getPreview.mockResolvedValue({
-      kind: 'file',
       path: 'report.html',
       mime: 'text/html',
       artifact_id: 'a1',
@@ -201,7 +196,6 @@ describe('预览面板：有新内容', () => {
     expect(previewButton(container).getAttribute('title')).toBe('预览')
 
     getPreview.mockResolvedValue({
-      kind: 'file',
       path: 'report.html',
       mime: 'text/html',
       artifact_id: 'a2',

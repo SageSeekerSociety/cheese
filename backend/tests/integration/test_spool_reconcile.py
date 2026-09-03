@@ -4,6 +4,7 @@ WAL at the next turn start — idempotently (no duplicate if it was also persist
 live). This is the W1 half of the event-durability fix."""
 
 import json
+import os
 import time
 import uuid
 from pathlib import Path
@@ -11,39 +12,25 @@ from pathlib import Path
 import pytest
 
 from app.core.config import settings
-from app.domain.agent.chat import ChatService
-from app.domain.agent.service import (
-    AgentMessage,
-    AgentResult,
-    AgentService,
-    AgentToolUse,
-)
+from app.domain.agent.chat import _SPOOL_PARTIAL_GRACE_S, ChatService
+from app.domain.agent.harness.claude_code import event_spool
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.project.models import ProjectMember
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from app.domain.workspace import service as ws
+from tests.conftest import StubChannel, settle_turn, stub_compute
 
 
-class QuietAgent(AgentService):
+class QuietScreen(StubChannel):
     """A turn that produces no events of its own — so the only 现场 event under
     test is the one recovered from the spool."""
 
-    def __init__(self) -> None:
-        super().__init__(model="stub")
-
-    async def stream_reply(
-        self,
-        *,
-        prompt,
-        system_prompt,
-        cwd,
-        resume_session_id,
-        sandbox=None,
-        allowed_tools=None,
-        **_,
-    ):
-        yield AgentResult(text="ok", session_id="s1", usage=None)
+    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+        del reply
+        self.acknowledges(topic_id, prompt)
+        self.stops(topic_id, "ok", session_id="s1")
 
 
 _PRE_TOOL_USE = {
@@ -55,10 +42,23 @@ _PRE_TOOL_USE = {
 
 def _spool_event(spool: Path, eid: str, payload: dict | None = None) -> None:
     """Simulate the cheese-hook forwarder's atomic write of one hook."""
-    spool.mkdir(parents=True, exist_ok=True)
-    (spool / f"1700000000000000000.{eid}").write_text(
-        json.dumps(payload or _PRE_TOOL_USE), encoding="utf-8"
-    )
+    event_spool.append(spool, eid, payload or _PRE_TOOL_USE)
+
+
+def _unread(spool: Path) -> list[str]:
+    """Event ids the spool has NOT handed to the timeline yet.
+
+    Reading no longer deletes: the file stays for its retention window and a
+    cursor records how far a reader got. So "drained" is an empty tail, not an
+    empty directory — asserting on the directory would be asserting on the
+    disposal schedule.
+    """
+    return [
+        eid
+        for _path, eid, _payload in event_spool.spool_entries(
+            spool, after=event_spool.read_cursor(spool)
+        )
+    ]
 
 
 def _event_blocks_for(rows, eid: str):
@@ -79,7 +79,7 @@ async def test_spooled_event_is_backfilled_then_deduped(client, tmp_path, monkey
     factory = client.test_factory
     svc = ChatService(
         session_factory=factory,
-        agent=QuietAgent(),
+        compute=stub_compute(QuietScreen()),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
     )
@@ -102,6 +102,7 @@ async def test_spooled_event_is_backfilled_then_deduped(client, tmp_path, monkey
         topic_id=topic_id, author="u", content="做点事", summon=True
     ):
         pass
+    await settle_turn(svc, topic_id)
 
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
@@ -109,8 +110,7 @@ async def test_spooled_event_is_backfilled_then_deduped(client, tmp_path, monkey
     assert len(backfilled) == 1
     assert backfilled[0].meta.get("backfilled") is True
     assert "echo hi" in backfilled[0].content
-    # The spool was drained (files removed after reconcile).
-    assert not list(ws.spool_dir(project_id, topic_id).iterdir())
+    assert _unread(ws.spool_dir(project_id, topic_id)) == []
 
     # Even if the same event reappears in the spool, a later turn must NOT
     # duplicate it — dedup is by event-id against already-persisted blocks.
@@ -119,9 +119,14 @@ async def test_spooled_event_is_backfilled_then_deduped(client, tmp_path, monkey
         topic_id=topic_id, author="u", content="再来", summon=True
     ):
         pass
+    await settle_turn(svc, topic_id)
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
     assert len(_event_blocks_for(rows, eid)) == 1  # deduped, not duplicated
+    # And the copy it skipped is READ, not left waiting: every hook is written
+    # to this spool, so a pass that only moved its cursor over what it landed
+    # would re-scan the whole history of the topic at every turn.
+    assert _unread(ws.spool_dir(project_id, topic_id)) == []
 
 
 @pytest.mark.anyio
@@ -132,7 +137,7 @@ async def test_spooled_chat_message_is_backfilled(client, tmp_path, monkeypatch)
     factory = client.test_factory
     svc = ChatService(
         session_factory=factory,
-        agent=QuietAgent(),
+        compute=stub_compute(QuietScreen()),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
     )
@@ -151,6 +156,7 @@ async def test_spooled_chat_message_is_backfilled(client, tmp_path, monkeypatch)
     )
     async for _ in svc.converse(topic_id=tid, author="u", content="继续", summon=True):
         pass
+    await settle_turn(svc, tid)
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
     backfilled = [
@@ -172,6 +178,7 @@ async def test_spooled_chat_message_is_backfilled(client, tmp_path, monkeypatch)
     )
     async for _ in svc.converse(topic_id=tid, author="u", content="再来", summon=True):
         pass
+    await settle_turn(svc, tid)
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
     assert (
@@ -186,28 +193,16 @@ async def test_spooled_chat_message_is_backfilled(client, tmp_path, monkeypatch)
     )
 
 
-class _DupToolAgent(AgentService):
+class _DupToolScreen(StubChannel):
     """Emits the SAME tool event twice (same event-id) — a device drainer
     re-delivery after a lost ack — then finishes."""
 
-    def __init__(self) -> None:
-        super().__init__(model="stub")
-
-    async def stream_reply(
-        self,
-        *,
-        prompt,
-        system_prompt,
-        cwd,
-        resume_session_id,
-        sandbox=None,
-        allowed_tools=None,
-        **_,
-    ):
-        tool = AgentToolUse(name="Bash", input={"command": "echo hi"}, eid="dup-1")
-        yield tool
-        yield tool
-        yield AgentResult(text="ok", session_id="s1", usage=None)
+    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+        del reply
+        self.acknowledges(topic_id, prompt)
+        for _ in range(2):
+            self.uses(topic_id, "Bash", eid="dup-1", command="echo hi")
+        self.stops(topic_id, "ok", session_id="s1")
 
 
 @pytest.mark.anyio
@@ -222,7 +217,7 @@ async def test_backfilled_events_are_broadcast_not_just_persisted(
     factory = client.test_factory
     svc = ChatService(
         session_factory=factory,
-        agent=QuietAgent(),
+        compute=stub_compute(QuietScreen()),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
     )
@@ -262,7 +257,7 @@ async def test_backfilled_events_are_broadcast_not_just_persisted(
     assert len(message_frames) == 1
 
 
-class _LateSpoolAgent(AgentService):
+class _LateSpoolScreen(StubChannel):
     """A hooks turn whose final message's OWN MessageDisplay hook lost the race
     with its Stop hook: the hook lands in the spool WHILE this turn is still
     running (mirrors the container's synchronous pre-curl spool write racing
@@ -270,27 +265,26 @@ class _LateSpoolAgent(AgentService):
     exactly echoes what that dropped hook would have delivered."""
 
     def __init__(self, spool: Path, text: str) -> None:
-        super().__init__(model="stub")
+        super().__init__()
         self._spool = spool
         self._text = text
+        self.turns = 0
 
-    async def stream_reply(
-        self,
-        *,
-        prompt,
-        system_prompt,
-        cwd,
-        resume_session_id,
-        sandbox=None,
-        allowed_tools=None,
-        **_,
-    ):
+    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+        del reply
+        self.acknowledges(topic_id, prompt)
+        self.turns += 1
+        if self.turns > 1:
+            # A later turn: its reconcile is what has to recognize the spooled
+            # copy as the message this session already delivered.
+            self.stops(topic_id, "接着干", session_id="s1")
+            return
         _spool_event(
             self._spool,
             "late-msg-1",
             {"hook_event_name": "MessageDisplay", "delta": self._text},
         )
-        yield AgentResult(text=self._text, session_id="s1", usage=None)
+        self.stops(topic_id, self._text, session_id="s1")
 
 
 @pytest.mark.anyio
@@ -315,31 +309,25 @@ async def test_fallback_reply_does_not_duplicate_a_late_spooled_message(
     text = "这段话既是Stop的兜底文本也是迟到的MessageDisplay"
     svc = ChatService(
         session_factory=factory,
-        agent=_LateSpoolAgent(ws.spool_dir(pid, tid), text),
+        compute=stub_compute(_LateSpoolScreen(ws.spool_dir(pid, tid), text)),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
     )
-    frames = [
-        f
-        async for f in svc.converse(
-            topic_id=tid, author="u", content="做点事", summon=True
-        )
-    ]
+    async for _ in svc.converse(
+        topic_id=tid, author="u", content="做点事", summon=True
+    ):
+        pass
+    await settle_turn(svc, tid)
+    # A later turn reconciles the spool — the copy that landed live and the
+    # spooled one are the same message, and only one of them may survive.
+    async for _ in svc.converse(topic_id=tid, author="u", content="接着", summon=True):
+        pass
+    await settle_turn(svc, tid)
 
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
     matches = [b for b in rows if b.kind == BlockKind.message and b.content == text]
     assert len(matches) == 1  # not duplicated
-    assert matches[0].meta.get("eid") == "late-msg-1"
-    assert matches[0].meta.get("backfilled") is True
-
-    # It still reached the frontend exactly once (fix #1), not zero or twice.
-    landed = [
-        f
-        for f in frames
-        if f["type"] == "assistant_block" and f["block"]["content"] == text
-    ]
-    assert len(landed) == 1
 
 
 @pytest.mark.anyio
@@ -347,7 +335,7 @@ async def test_duplicate_tool_event_is_deduped_by_event_id(client, tmp_path):
     factory = client.test_factory
     svc = ChatService(
         session_factory=factory,
-        agent=_DupToolAgent(),
+        compute=stub_compute(_DupToolScreen()),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
     )
@@ -359,14 +347,12 @@ async def test_duplicate_tool_event_is_deduped_by_event_id(client, tmp_path):
         topic_id = topic.id
         await session.commit()
 
-    frames = [
-        f
-        async for f in svc.converse(
-            topic_id=topic_id, author="u", content="做点事", summon=True
-        )
-    ]
-    # The re-delivery is dropped before it is streamed or persisted.
-    assert sum(1 for f in frames if f["type"] == "tool") == 1
+    async for _ in svc.converse(
+        topic_id=topic_id, author="u", content="做点事", summon=True
+    ):
+        pass
+    await settle_turn(svc, topic_id)
+    # The re-delivery is dropped: one event landed, not two.
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
     assert len(_event_blocks_for(rows, "dup-1")) == 1
@@ -386,7 +372,7 @@ async def test_fallback_dedup_survives_mention_expansion_and_trailing_newline(
     text = "@u 交给你了\n"
     svc = ChatService(
         session_factory=factory,
-        agent=_LateSpoolAgent(ws.spool_dir(pid, tid), text),
+        compute=stub_compute(_LateSpoolScreen(ws.spool_dir(pid, tid), text)),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
     )
@@ -394,6 +380,11 @@ async def test_fallback_dedup_survives_mention_expansion_and_trailing_newline(
         topic_id=tid, author="u", content="做点事", summon=True
     ):
         pass
+    await settle_turn(svc, tid)
+    # The later turn is what reconciles the spool.
+    async for _ in svc.converse(topic_id=tid, author="u", content="接着", summon=True):
+        pass
+    await settle_turn(svc, tid)
 
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
@@ -404,8 +395,7 @@ async def test_fallback_dedup_survives_mention_expansion_and_trailing_newline(
         and b.author_type == AuthorType.ai
         and "交给你了" in (b.content or "")
     ]
-    assert len(matches) == 1  # the spool-backfilled copy; no eid-less twin
-    assert matches[0].meta.get("eid") == "late-msg-1"
+    assert len(matches) == 1  # one copy, whichever path landed it
 
 
 # --- MessageDisplay flush coalescing in the reconcile --------------------------
@@ -419,24 +409,29 @@ def _spool_flush(
     delta: str,
     *,
     final: bool = False,
-    ns: int | None = None,
+    age_s: float = 0.0,
 ) -> None:
-    """One MessageDisplay flush file, exactly as the forwarder writes it."""
-    spool.mkdir(parents=True, exist_ok=True)
-    stamp = ns if ns is not None else 1700000000000000000 + idx
-    (spool / f"{stamp}.{eid}").write_text(
-        json.dumps(
-            {
-                "hook_event_name": "MessageDisplay",
-                "message_id": mid,
-                "index": idx,
-                "final": final,
-                "delta": delta,
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
+    """One MessageDisplay flush file, exactly as the forwarder writes it.
+
+    ``age_s`` backdates the file. How long ago a flush arrived is what decides
+    whether an unfinished message is still coming or was abandoned, and that is
+    the file's mtime — the name is a sequence number and says nothing about time.
+    """
+    event_spool.append(
+        spool,
+        eid,
+        {
+            "hook_event_name": "MessageDisplay",
+            "message_id": mid,
+            "index": idx,
+            "final": final,
+            "delta": delta,
+        },
     )
+    if age_s:
+        written = next(p for p in spool.iterdir() if p.name.endswith(f".{eid}"))
+        then = time.time() - age_s
+        os.utime(written, (then, then))
 
 
 async def _project_topic(factory) -> tuple[uuid.UUID, uuid.UUID]:
@@ -453,7 +448,7 @@ async def _project_topic(factory) -> tuple[uuid.UUID, uuid.UUID]:
 def _quiet_service(factory, tmp_path) -> ChatService:
     return ChatService(
         session_factory=factory,
-        agent=QuietAgent(),
+        compute=stub_compute(QuietScreen()),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
     )
@@ -498,6 +493,7 @@ async def test_spooled_message_flushes_land_as_one_block(client, tmp_path, monke
 
     async for _ in svc.converse(topic_id=tid, author="u", content="继续", summon=True):
         pass
+    await settle_turn(svc, tid)
 
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
@@ -505,7 +501,7 @@ async def test_spooled_message_flushes_land_as_one_block(client, tmp_path, monke
     assert [b.content for b in messages] == ["第一行\n第二行"]
     assert messages[0].meta.get("backfilled") is True
     assert messages[0].meta.get("eids") == ["f0", "f1"]
-    assert not list(spool.iterdir())
+    assert _unread(spool) == []
 
 
 @pytest.mark.anyio
@@ -520,45 +516,53 @@ async def test_incomplete_flushes_wait_for_the_missing_one(
     pid, tid = await _project_topic(factory)
     spool = ws.spool_dir(pid, tid)
 
-    _spool_flush(spool, "f0", "m1", 0, "第一行\n", ns=time.time_ns())
+    _spool_flush(spool, "f0", "m1", 0, "第一行\n")
     async for _ in svc.converse(
         topic_id=tid, author="u", content="催一下", summon=True
     ):
         pass
+    await settle_turn(svc, tid)
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
     assert _ai_messages(rows) == []
-    assert [p.name.split(".", 1)[1] for p in spool.iterdir()] == ["f0"]
+    assert _unread(spool) == ["f0"]
 
-    _spool_flush(spool, "f1", "m1", 1, "第二行", final=True, ns=time.time_ns())
+    _spool_flush(spool, "f1", "m1", 1, "第二行", final=True)
     async for _ in svc.converse(topic_id=tid, author="u", content="再催", summon=True):
         pass
+    await settle_turn(svc, tid)
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
     assert [b.content for b in _ai_messages(rows)] == ["第一行\n第二行"]
-    assert not list(spool.iterdir())
+    assert _unread(spool) == []
 
 
-class _FlushedMessageAgent(AgentService):
+class _FlushedMessageScreen(StubChannel):
     """A live hooks turn after coalescing: ONE whole message carrying every
     constituent flush id, then the Stop echoing the same text."""
 
-    def __init__(self) -> None:
-        super().__init__(model="stub")
-
-    async def stream_reply(
-        self,
-        *,
-        prompt,
-        system_prompt,
-        cwd,
-        resume_session_id,
-        sandbox=None,
-        allowed_tools=None,
-        **_,
-    ):
-        yield AgentMessage(text="第一行\n第二行", eid="f0", eids=("f0", "f1"))
-        yield AgentResult(text="第一行\n第二行", session_id="s1", usage=None)
+    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+        del reply
+        self.acknowledges(topic_id, prompt)
+        self.hook(
+            topic_id,
+            hook_event_name="MessageDisplay",
+            message_id="m0",
+            index=0,
+            final=False,
+            delta="第一行\n",
+            _eid="f0",
+        )
+        self.hook(
+            topic_id,
+            hook_event_name="MessageDisplay",
+            message_id="m0",
+            index=1,
+            final=True,
+            delta="第二行",
+            _eid="f1",
+        )
+        self.stops(topic_id, "第一行\n第二行", session_id="s1")
 
 
 @pytest.mark.anyio
@@ -573,13 +577,14 @@ async def test_live_coalesced_message_is_not_backfilled_again(
     factory = client.test_factory
     svc = ChatService(
         session_factory=factory,
-        agent=_FlushedMessageAgent(),
+        compute=stub_compute(_FlushedMessageScreen()),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
     )
     pid, tid = await _project_topic(factory)
     async for _ in svc.converse(topic_id=tid, author="u", content="说吧", summon=True):
         pass
+    await settle_turn(svc, tid)
 
     spool = ws.spool_dir(pid, tid)
     _spool_flush(spool, "f0", "m1", 0, "第一行\n")
@@ -608,11 +613,84 @@ async def test_abandoned_partial_lands_joined_after_grace(
     pid, tid = await _project_topic(factory)
     spool = ws.spool_dir(pid, tid)
 
-    _spool_flush(spool, "f0", "m1", 0, "只说到一半\n")  # ancient ns → stale
-    _spool_flush(spool, "f1", "m1", 1, "然后就断了")
+    stale = _SPOOL_PARTIAL_GRACE_S + 60
+    _spool_flush(spool, "f0", "m1", 0, "只说到一半\n", age_s=stale)
+    _spool_flush(spool, "f1", "m1", 1, "然后就断了", age_s=stale)
     async for _ in svc.converse(topic_id=tid, author="u", content="人呢", summon=True):
         pass
+    await settle_turn(svc, tid)
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
     assert [b.content for b in _ai_messages(rows)] == ["只说到一半\n然后就断了"]
-    assert not list(spool.iterdir())
+    assert _unread(spool) == []
+
+
+# --- Stop-vs-live dedup across mention canonicalization -----------------------
+
+
+class _LiveMessageScreen(StubChannel):
+    """One complete 芝士 message delivered live, with its own event id."""
+
+    def __init__(self, text: str) -> None:
+        super().__init__()
+        self.text = text
+
+    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+        del reply
+        self.acknowledges(topic_id, prompt)
+        self.hook(
+            topic_id,
+            hook_event_name="MessageDisplay",
+            delta=self.text,
+            _eid="live-1",
+        )
+        self.stops(topic_id, "", session_id="s1")
+
+
+def _spool_stop(spool: Path, eid: str, last_message: str) -> None:
+    """The turn-ending Stop, parked because nothing was listening for it."""
+    spool.mkdir(parents=True, exist_ok=True)
+    (spool / f"1700000000000000001.{eid}").write_text(
+        json.dumps({"hook_event_name": "Stop", "last_assistant_message": last_message}),
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.parametrize("text", ["我改完了", "@u 交给你了"])
+@pytest.mark.anyio
+async def test_stop_does_not_duplicate_a_message_that_landed_live(
+    client, tmp_path, monkeypatch, text
+):
+    """A Stop's `last_assistant_message` is a copy of a message already in the
+    room, so it must not land again — whether or not that message mentions
+    anyone. It has its own event id, so the ONLY guard is the text comparison,
+    and a message carrying "@handle" is stored canonicalized (`<@handle>`)
+    while the hook payload still holds the friendly form: comparing the two
+    raw put an identical-looking second copy in the room."""
+    monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
+    factory = client.test_factory
+    pid, tid = await _project_topic(factory)
+    async with factory() as session:
+        session.add(ProjectMember(project_id=pid, user_handle="u"))
+        await session.commit()
+
+    live = ChatService(
+        session_factory=factory,
+        compute=stub_compute(_LiveMessageScreen(text)),
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    async for _ in live.converse(
+        topic_id=tid, author="u", content="做点事", summon=True
+    ):
+        pass
+
+    _spool_stop(ws.spool_dir(pid, tid), "stop-1", text)
+    async for _ in _quiet_service(factory, tmp_path).converse(
+        topic_id=tid, author="u", content="再来", summon=True
+    ):
+        pass
+
+    async with factory() as session:
+        rows = await BlockRepository(session).list_for_topic(tid)
+    assert len(_ai_messages(rows)) == 1

@@ -1,19 +1,18 @@
-import importlib
+"""The email queue's claim/ack contract, exercised against a fake Redis.
+
+Nothing else in the platform reads the queue this drains, so every property
+below is the difference between mail sent and mail lost: an unacknowledged
+claim must come back, a failed send must stay retryable, and a send that has
+run out of retries must land somewhere a person can look rather than being
+dropped.
+"""
+
 import json
-import sys
 from collections import defaultdict
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-
-
-class FakeBroker:
-    def task(self, *args, **kwargs):
-        def decorate(function):
-            return function
-
-        return decorate
 
 
 class FakeLock:
@@ -116,30 +115,13 @@ class FakeSession:
         return SimpleNamespace(scalar_one_or_none=lambda: self.email)
 
 
-@pytest.fixture
-def task_module(monkeypatch):
-    broker_module = ModuleType("app.core.taskiq_broker")
-    broker_module.broker = FakeBroker()
-    broker_module.scheduler = SimpleNamespace(sources=[])
-    monkeypatch.setitem(sys.modules, "app.core.taskiq_broker", broker_module)
-    sys.modules.pop("app.core.taskiq_tasks", None)
-    module = importlib.import_module("app.core.taskiq_tasks")
-    yield module
-    sys.modules.pop("app.core.taskiq_tasks", None)
-
-
 def _notification_item() -> str:
     return json.dumps({"recipientId": 7, "type": "mention"})
 
 
-async def _run_queue_task(
-    monkeypatch, task_module, *, send_result, retry=0, start_in_processing=False
-):
-    import redis.asyncio as redis_asyncio
-
-    from app.core import email as email_module
+async def _drain(monkeypatch, *, send_result, retry=0, start_in_processing=False):
     from app.core.config import settings
-    from app.db import session as session_module
+    from app.domain.notification import maintenance
 
     queue_key = settings.notification_email_queue_key
     payload = json.loads(_notification_item())
@@ -156,21 +138,16 @@ async def _run_queue_task(
         def from_url(url, decode_responses=True):
             return redis
 
-    monkeypatch.setattr(redis_asyncio, "Redis", RedisFactory)
-    monkeypatch.setattr(email_module, "get_email_sender", lambda: sender)
-    monkeypatch.setattr(session_module, "AsyncSessionLocal", FakeSession)
+    monkeypatch.setattr(maintenance, "Redis", RedisFactory)
+    monkeypatch.setattr(maintenance, "get_email_sender", lambda: sender)
 
-    result = await task_module.process_email_queue_task()
+    result = await maintenance.drain_email_queue(FakeSession)
     return result, redis, sender
 
 
 @pytest.mark.anyio
-async def test_failed_smtp_delivery_stays_retryable_and_is_not_processed(
-    monkeypatch, task_module
-):
-    result, redis, sender = await _run_queue_task(
-        monkeypatch, task_module, send_result=False
-    )
+async def test_failed_smtp_delivery_stays_retryable_and_is_not_processed(monkeypatch):
+    result, redis, sender = await _drain(monkeypatch, send_result=False)
 
     queue_key = "cheese:notifications:email"
     assert result["processed"] == 0
@@ -182,10 +159,8 @@ async def test_failed_smtp_delivery_stays_retryable_and_is_not_processed(
 
 
 @pytest.mark.anyio
-async def test_successful_smtp_delivery_is_acknowledged(monkeypatch, task_module):
-    result, redis, sender = await _run_queue_task(
-        monkeypatch, task_module, send_result=True
-    )
+async def test_successful_smtp_delivery_is_acknowledged(monkeypatch):
+    result, redis, sender = await _drain(monkeypatch, send_result=True)
 
     queue_key = "cheese:notifications:email"
     assert result == {"processed": 1, "retried": 0, "dead_lettered": 0}
@@ -195,12 +170,11 @@ async def test_successful_smtp_delivery_is_acknowledged(monkeypatch, task_module
 
 
 @pytest.mark.anyio
-async def test_exhausted_smtp_retry_moves_to_dead_letter(monkeypatch, task_module):
+async def test_exhausted_smtp_retry_moves_to_dead_letter(monkeypatch):
     from app.core.config import settings
 
-    result, redis, _sender = await _run_queue_task(
+    result, redis, _sender = await _drain(
         monkeypatch,
-        task_module,
         send_result=False,
         retry=settings.notification_email_max_retries - 1,
     )
@@ -214,14 +188,11 @@ async def test_exhausted_smtp_retry_moves_to_dead_letter(monkeypatch, task_modul
 
 
 @pytest.mark.anyio
-async def test_item_claimed_by_a_crashed_consumer_is_recovered(
-    monkeypatch, task_module
-):
+async def test_item_claimed_by_a_crashed_consumer_is_recovered(monkeypatch):
     from app.core.config import settings
 
-    result, redis, _sender = await _run_queue_task(
+    result, redis, _sender = await _drain(
         monkeypatch,
-        task_module,
         send_result=True,
         start_in_processing=True,
     )

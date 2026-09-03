@@ -62,8 +62,17 @@ def _cred(token: str) -> dict[str, str]:
 
 
 def _write_doc(client, topic_id: str, token: str, content: str = "# 芝士写的"):
+    """Set the living doc, based on whatever version it is at right now — these
+    tests are about who the write is attributed to, not about the doc moving
+    under anyone."""
+    current = client.get(f"/topics/{topic_id}/doc").json()["data"]
     return client.put(
-        f"/topics/{topic_id}/doc", json={"content": content}, headers=_cred(token)
+        f"/topics/{topic_id}/doc",
+        json={
+            "content": content,
+            "expected_version": current["doc_version"] if current else 0,
+        },
+        headers=_cred(token),
     )
 
 

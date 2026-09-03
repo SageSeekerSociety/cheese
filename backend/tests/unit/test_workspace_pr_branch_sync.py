@@ -29,6 +29,7 @@ import pytest
 
 from app.core.errors import ValidationError
 from app.domain.workspace import service as ws
+from tests.machine_work import machine_commits
 
 WORKFLOW = ".github/workflows/e2e.yml"
 _E2E_V2 = "name: e2e\n# v2\n"
@@ -131,13 +132,8 @@ def _advance_github(tmp_path: Path, bare: Path, files: dict[str, str]) -> None:
 
 
 def _topic_commit(pid: uuid.UUID, tid: uuid.UUID, rel: str, content: str) -> None:
-    """A sandbox turn: native tools write into the topic's workspace, the
-    platform snapshots it onto the topic branch."""
-    wt = ws.topic_worktree(pid, tid)
-    target = wt / rel
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(content, encoding="utf-8")
-    ws.snapshot_worktree(pid, tid, "芝士 edits")
+    """A turn: the machine writes the file, commits it, and pushes the branch."""
+    machine_commits(pid, tid, {rel: content}, "芝士 edits")
 
 
 def _use_github(monkeypatch, bare: Path) -> None:
@@ -156,7 +152,7 @@ def _push(pid: uuid.UUID, tid: uuid.UUID, remote_branch: str = "cheesex/x") -> d
 
 
 def _branch_head(repo: Path, tid: uuid.UUID) -> str:
-    return _run(repo, "rev-parse", ws.branch_for_topic(tid)).strip()
+    return _run(repo, "rev-parse", ws.branch_for_tree(tid)).strip()
 
 
 def _remote_head(bare: Path, ref: str = "refs/heads/cheesex/x") -> str:
@@ -259,6 +255,58 @@ def test_a_later_agent_commit_builds_on_the_synced_branch(
     assert result["head_sha"] == fixed_head
     assert _remote_head(bare) == fixed_head
     assert _run(bare, "show", f"{fixed_head}:src/app.py") == "print('fixed')\n"
+
+
+def test_the_sync_reaches_the_checkout_the_agent_goes_on_working_in(
+    tmp_path, project, monkeypatch
+):
+    """After the sync, 芝士's own worktree must hold the synced files.
+
+    This sync is the one place a branch moves without git moving its checkout
+    with it, and the checkout is where the next turn happens. Left behind, it
+    describes the commit BEFORE the merge while sitting on the branch after it
+    — so `git status` reports the synced files as deletions, and the agent's
+    next commit hands back a branch with the sync undone. Nothing warns: the
+    tests are green, the CI re-run is red for a reason nobody can see.
+    """
+    pid, repo = project
+    tid = uuid.uuid4()
+    bare = _make_github(tmp_path, repo)
+    _advance_github(tmp_path, bare, {WORKFLOW: _E2E_V2})
+    _topic_commit(pid, tid, "src/app.py", "print('hi')\n")
+    worktree = ws.topic_worktree(pid, tid)  # the topic is open on this box
+    _use_github(monkeypatch, bare)
+
+    synced = _push(pid, tid)["head_sha"]
+
+    assert (worktree / WORKFLOW).read_text(encoding="utf-8") == _E2E_V2
+    assert _run(worktree, "status", "--porcelain") == ""
+    # And a commit made here builds on the sync rather than reverting it.
+    (worktree / "src" / "app.py").write_text("print('fixed')\n", encoding="utf-8")
+    _run(worktree, "add", "-A")
+    _run(
+        worktree,
+        "-c",
+        "user.name=芝士",
+        "-c",
+        "user.email=c@z.l",
+        "commit",
+        "-m",
+        "fix: ci",
+    )
+    kept = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "merge-base",
+            "--is-ancestor",
+            synced,
+            _branch_head(repo, tid),
+        ],
+        capture_output=True,
+    )
+    assert kept.returncode == 0, "the agent's next commit dropped the sync merge"
 
 
 def test_conflicting_sync_reports_the_conflict_and_leaves_the_branch_alone(

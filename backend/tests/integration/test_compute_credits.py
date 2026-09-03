@@ -181,12 +181,22 @@ def test_exhausted_credits_refuse_next_turn(client):
 
 
 def test_market_nodes_board(client):
+    """节点看板 shows the machine pools this deployment offers, and marks the one
+    an unconfigured topic lands on. It used to show exactly one node — the
+    platform's own container host — which was the one pool nobody could pick."""
+    from app.core.config import settings
+    from app.domain.agent.market import compute_default_name, compute_listings
+
     r = client.get("/market/nodes")
     assert r.status_code == 200
     data = r.json()["data"]
+
     ids = [n["id"] for n in data["nodes"]]
-    assert "local-docker" in ids
-    local = data["nodes"][ids.index("local-docker")]
-    assert local["online"] is True
-    assert isinstance(local["active_turns"], int)
-    assert data["current_provider"] in ("local", "remote")
+    assert ids == [p.id for p in compute_listings(settings)]
+    assert data["current_provider"] == compute_default_name(settings)
+    assert [n["id"] for n in data["nodes"] if n["current"]] == [
+        data["current_provider"]
+    ]
+    for node in data["nodes"]:
+        assert isinstance(node["online"], bool)
+        assert node["detail"]

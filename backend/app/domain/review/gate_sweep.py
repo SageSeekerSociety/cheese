@@ -52,14 +52,14 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
-from app.domain.review import archive
+from app.domain.review import archive, notes
 from app.domain.review.gate import GATE_TIMEOUT_S
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.review.services import GATE_ABANDONED_PREFIX
 from app.domain.topic.repositories import TopicRepository
 
-#: 检查自己的硬上限之外再给的余量：工作区准备（jj checkout 可能很慢）和排队都
+#: 检查自己的硬上限之外再给的余量：工作区准备（检出可能很慢）和排队都
 #: 落在这里。10 分钟 —— 实测健康的闸门是 17–23 秒，所以这已经宽出两个数量级，
 #: 而坏掉的卡从 2 小时 44 分（观测值）缩到 20 分钟被发现。
 GATE_STALE_GRACE_S = 600
@@ -80,7 +80,7 @@ _ABANDONED_NUDGE = (
 #: 平台提示统一契约：房间里只留这一行，上面那段给芝士的说明收进 `meta.detail`。
 #: 「判死」和「没通过」在这里也必须分得开 —— 这正是本模块 docstring 里那一节讲的
 #: 事，只不过现在多了一个前端读得懂的码，不用再从正文里猜。
-_ABANDONED_EVENT = "⏱ 闸门结果丢了，卡判死 · 芝士重递"
+_ABANDONED_EVENT = "检查结果丢了，这张验收卡已判死"
 _ABANDONED_DETAIL_LABEL = "怎么回事"
 
 
@@ -112,9 +112,13 @@ async def condemn(session: AsyncSession, card: AcceptCard) -> None:
     """
     card.status = AcceptStatus.gate_failed
     card.gate_output = archive.prefix_note(card.gate_output, _ABANDONED_OUTPUT)
-    card.note = archive.prefix_note(
-        card.note,
-        f"{GATE_ABANDONED_PREFIX}：检查没跑完就失去结果，卡片判死，话题可以重新递卡。",
+    notes.record(
+        card,
+        notes.NoteCode.gate_abandoned,
+        archive.prefix_note(
+            card.note,
+            f"{GATE_ABANDONED_PREFIX}：检查没跑完就失去结果，卡片判死，话题可以重新递卡。",
+        ),
     )
     # decided_by/decided_at 留空是刻意的：没有人做过这个决定，写上谁都是假的。
     await session.flush()
@@ -127,12 +131,23 @@ async def condemn(session: AsyncSession, card: AcceptCard) -> None:
         topic_id=card.topic_id,
         author="cheese",
         author_type=AuthorType.system,
-        content=(
-            "⏱ 平台没能拿到这张验收卡的检查结果（多半是后端重启时闸门任务随进程丢了），"
-            "已判死。**不是检查没通过**——检查没跑完。重新递一次卡即可。"
-        ),
+        content="检查没跑完，这张验收卡已判死",
         kind=BlockKind.event,
-        meta={"platform": True},
+        meta={
+            "platform": True,
+            **notice(
+                EVENT_GATE_ABANDONED,
+                severity=SEVERITY_WARN,
+                who=WHO_CHEESE,
+                detail=(
+                    "平台没能拿到这次检查的结果，多半是后端重启时闸门任务"
+                    "随进程丢了。\n"
+                    "这不是检查没通过——检查根本没跑完，没有任何证据说明代码"
+                    "有问题。重新递一次卡即可。"
+                ),
+                detail_label="为什么判死",
+            ),
+        },
     )
 
 

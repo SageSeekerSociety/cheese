@@ -14,8 +14,6 @@ but bills nothing" if it regresses:
 
 import json
 
-import pytest
-
 from app.domain.agent import provider_env
 
 
@@ -131,44 +129,25 @@ def test_model_names_are_never_pinned_on_the_subscription():
     assert not [k for k in choice.env if "MODEL" in k]
 
 
-@pytest.mark.parametrize("enabled", [True, False])
-def test_sandbox_capture_args_follow_the_switch(monkeypatch, enabled):
-    """A sandbox must only resolve api.anthropic.com to the meter when the meter
-    is actually deployed — otherwise every turn fails on a dead address."""
-    from app.core.config import settings
-    from app.domain.agent import tmux_provider
-
-    monkeypatch.setattr(settings, "subscription_enabled", enabled)
-    monkeypatch.setattr(settings, "subscription_proxy_host", "172.17.0.1")
-    monkeypatch.setattr(settings, "subscription_ca_host_path", "/host/ca.pem")
-
-    args = tmux_provider._subscription_args()
-    if not enabled:
-        assert args == []
-        return
-    assert "--add-host" in args
-    # Messages AND the login/refresh hosts all route to the meter.
-    assert "api.anthropic.com:172.17.0.1" in args
-    assert "console.anthropic.com:172.17.0.1" in args
-    assert "platform.claude.com:172.17.0.1" in args
-    assert "/host/ca.pem:/etc/cheese/proxy-ca.pem:ro" in args
-
-
 def test_no_credential_file_is_ever_planted_in_the_box(monkeypatch, tmp_path):
     """Hard requirement: a sandbox must not hold a valid credential. Login is via
     the CLAUDE_CODE_OAUTH_TOKEN env placeholder, so NO .credentials.json is
     written — not even a fake one (the file gets a local validation that rejected
     the placeholder, and a real token there would be the very leak we forbid)."""
     from app.core.config import settings
-    from app.domain.agent.tmux_provider import TmuxHooksProvider
+    from app.domain.agent.harness.claude_code import build_session_launch
 
-    provider = TmuxHooksProvider(image="x", idle_suspect_s=1.0, hard_ceiling_s=1.0)
     monkeypatch.setattr(settings, "subscription_enabled", True)
-    provider._write_session_settings(str(tmp_path), "/topics/topic_ab12cd34")
-    assert not (tmp_path / ".credentials.json").exists()
+    launch = build_session_launch(
+        config_dir="/sessions/ab12cd34",
+        workdir="/topics/topic_ab12cd34",
+        system_prompt="",
+    )
+    planted = {f.name: f.content for f in launch.files}
+    assert ".credentials.json" not in planted
     # The gates it DOES plant are not credential-shaped, and they trust this
     # topic's own cwd rather than a path baked into the image.
-    gates = json.loads((tmp_path / ".claude.json").read_text(encoding="utf-8"))
+    gates = json.loads(planted[".claude.json"])
     assert gates["hasCompletedOnboarding"] is True
     assert "/topics/topic_ab12cd34" in gates["projects"]
     assert "token" not in json.dumps(gates).lower()

@@ -33,7 +33,11 @@ class ConclusionCardOut(BaseModel):
 
     id: uuid.UUID
     project_id: uuid.UUID
+    # The room this conclusion happened in — the same on both ends now that work
+    # is a thread rather than a room of its own.
     topic_id: uuid.UUID
+    # Which thread produced it. NULL only on cards filed before work was a thread.
+    task_id: uuid.UUID | None = None
     receiver_topic_id: uuid.UUID
     conclusion: str
     status: ConclusionStatus

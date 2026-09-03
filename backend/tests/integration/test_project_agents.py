@@ -327,33 +327,47 @@ def test_a_credential_with_no_room_at_all_falls_to_the_sentinel(client):
 # --- switching agents costs the session --------------------------------------
 
 
-def test_switching_agent_drops_the_conversation(client, stub_agent):
-    """A session is ONE agent's memory of the conversation. Resuming it as
-    somebody else produces an agent confidently remembering things it never
-    said — so the thread does not survive the switch, and the API says so."""
+def _turn(client, room: str, text: str) -> None:
+    with client.websocket_connect(chat_ws_url(room, "u")) as ws:
+        ws.send_json({"type": "message", "content": text, "summon": True})
+        while True:
+            if ws.receive_json()["type"] in ("done", "error"):
+                break
+
+
+def test_each_agent_keeps_its_own_thread_in_one_room(client, stub_hooks):
+    """Handing a room to another agent costs nothing and loses nothing.
+
+    A conversation belongs to ONE agent — resuming it as somebody else produces
+    an agent confidently remembering things it never said. So the incoming agent
+    starts fresh. But the outgoing agent's thread is its own row, not the room's
+    single column, so handing the room back finds it exactly where it was.
+    """
     pid = _project(client)
     room = _topic(client, pid, "handover")
     reviewer = _add_agent(client, pid, handle="reviewer")
 
-    with client.websocket_connect(chat_ws_url(room, "u")) as ws:
-        ws.send_json({"type": "message", "content": "你好", "summon": True})
-        while True:
-            if ws.receive_json()["type"] in ("done", "error"):
-                break
+    _turn(client, room, "你好")
+    first_session = stub_hooks.last_resume_session_id
+    _turn(client, room, "再说一句")
+    # 芝士 is resuming its own thread by now.
+    assert stub_hooks.last_resume_session_id is not None
+    cheese_session = stub_hooks.last_resume_session_id
+    assert first_session is None
 
     r = client.put(f"/topics/{room}/agent", json={"instance_id": reviewer["id"]})
     assert r.status_code == 200, r.text
-    assert r.json()["data"]["session_reset"] is True
     assert r.json()["data"]["handle"] == "reviewer"
 
-    # The next turn starts a fresh conversation rather than resuming the one the
-    # previous agent was having.
-    with client.websocket_connect(chat_ws_url(room, "u")) as ws:
-        ws.send_json({"type": "message", "content": "还在吗", "summon": True})
-        while True:
-            if ws.receive_json()["type"] in ("done", "error"):
-                break
-    assert stub_agent.last_resume_session_id is None
+    # The reviewer starts a fresh conversation rather than inheriting 芝士's.
+    _turn(client, room, "还在吗")
+    assert stub_hooks.last_resume_session_id is None
+
+    # ...and handing the room back finds 芝士's thread still there.
+    r = client.put(f"/topics/{room}/agent", json={"instance_id": None})
+    assert r.status_code == 200, r.text
+    _turn(client, room, "我回来了")
+    assert stub_hooks.last_resume_session_id == cheese_session
 
 
 def test_switching_back_to_the_project_default_is_a_switch_too(client):
@@ -368,12 +382,19 @@ def test_switching_back_to_the_project_default_is_a_switch_too(client):
     assert r.json()["data"]["inherited"] is True
 
 
-def test_setting_the_same_agent_again_keeps_the_conversation(client):
-    """Only a real change costs the session — an idempotent PUT must not."""
+def test_setting_the_same_agent_again_keeps_the_conversation(client, stub_hooks):
+    """An idempotent PUT is not a handover — the thread carries on."""
     pid = _project(client)
     reviewer = _add_agent(client, pid, handle="reviewer")
     room = _topic(client, pid)
 
     client.put(f"/topics/{room}/agent", json={"instance_id": reviewer["id"]})
+    _turn(client, room, "开工")
+    _turn(client, room, "继续")
+    resumed = stub_hooks.last_resume_session_id
+    assert resumed is not None
+
     r = client.put(f"/topics/{room}/agent", json={"instance_id": reviewer["id"]})
-    assert r.json()["data"]["session_reset"] is False
+    assert r.status_code == 200, r.text
+    _turn(client, room, "还在")
+    assert stub_hooks.last_resume_session_id == resumed

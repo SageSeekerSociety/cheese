@@ -32,8 +32,14 @@ services:
       retries: 3
     restart: unless-stopped
     logging:
-      driver: json-file
-      options: { max-size: "10m", max-file: "3" }
+      # These two carry ALL machine model traffic, and they are the pair that
+      # 「container up, pipe dead」 was diagnosed on (#579) — every claude on the
+      # box failing with ConnectionRefused while both showed healthy. Whatever
+      # they said at that moment is the only first-hand account of it, so it
+      # must not sit in a file that `up.sh` deletes on the next operator run.
+      driver: journald
+      options:
+        tag: "{{.Name}}"
 
   api-front:
     image: mirror.gcr.io/library/nginx:1.27-alpine
@@ -53,5 +59,8 @@ services:
       retries: 3
     restart: unless-stopped
     logging:
-      driver: json-file
-      options: { max-size: "10m", max-file: "3" }
+      # Same as the tunnel above — and this one owns :8081, so its access log is
+      # where 「did the request even reach the box」 gets answered.
+      driver: journald
+      options:
+        tag: "{{.Name}}"

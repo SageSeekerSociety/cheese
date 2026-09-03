@@ -34,15 +34,13 @@ What is NOT traded away is the COUNT. A burst used to get its summary only from
 the next occurrence of the same fingerprint, so the commonest case — a bug you
 fixed, which by definition stops recurring — kept the first detail line and
 silently lost "it happened 500 times", usually the number that says how bad it
-was. `BackendErrorFlushRunner` ticks `flush_expired` so a window closes on time
-instead of on the next failure. Late, never absent.
+was. `flush_expired` is on the platform's periodic-job list, so a window closes
+on time instead of on the next failure. Late, never absent.
 
 In-memory state matches the platform's single-process reality (same assumption
 as the per-topic chat locks and ``frontend_log``'s intake).
 """
 
-import asyncio
-import contextlib
 import hashlib
 import logging
 import re
@@ -297,13 +295,13 @@ def event_content(err: BackendErrorIn) -> str:
     """The one line a human sees. The stack lives in ``meta`` — 芝士 reads the
     whole thing, a person reads this."""
     where = f"（{err.where}）" if err.where else ""
-    return f"💥 后端报错{where}：{_headline(err)}"
+    return f"后端报错{where}：{_headline(err)}"
 
 
 def summary_content(err: BackendErrorIn, count: int) -> str:
     minutes = int(DEDUP_WINDOW_S // 60)
     where = f"（{err.where}）" if err.where else ""
-    return f"💥 后端报错刷屏{where}：{_headline(err)} —— {minutes} 分钟内 {count} 次"
+    return f"后端报错刷屏{where}：{_headline(err)} —— {minutes} 分钟内 {count} 次"
 
 
 def event_meta(err: BackendErrorIn, verdict: Verdict) -> dict:
@@ -459,43 +457,6 @@ async def flush_expired(now: float | None = None) -> int:
             )
         await session.commit()
     return len(bursts)
-
-
-class BackendErrorFlushRunner:
-    """Ticks `flush_expired` so a burst that STOPPED still gets counted.
-
-    Its own loop rather than a step in the project scheduler, for the reason
-    given in `machine/runner.py`: that scheduler spends model budget and is off
-    by default in deployments, and this is plumbing with no judgment in it.
-
-    The interval only bounds how LATE a summary is, never whether it arrives —
-    the window length decides that — so it can be lazy and cheap. A tick with no
-    expired window touches no database at all.
-    """
-
-    def __init__(self, interval_seconds: int) -> None:
-        self._interval = interval_seconds
-        self._task: asyncio.Task[None] | None = None
-
-    def start(self) -> None:
-        if self._interval > 0 and self._task is None:
-            self._task = asyncio.create_task(self._loop())
-            logger.info("backend error flush started (every %ss)", self._interval)
-
-    async def stop(self) -> None:
-        if self._task is not None:
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
-            self._task = None
-
-    async def _loop(self) -> None:
-        while True:
-            await asyncio.sleep(self._interval)
-            try:
-                await flush_expired()
-            except Exception:  # noqa: BLE001 — a flush must never kill the loop
-                logger.exception("backend error flush failed")
 
 
 async def report_request_failure(

@@ -24,9 +24,50 @@
 
 所以问的不是"这样能不能 work"，而是：**这步在用户机器上做错了，谁会发现？** 答案若是"他，几周后，且不会联想到我们"，换做法。
 
-### 已知未修的耦合
+### agent 会话住在 connector 自己的 tmux server 里
 
-启动器起 claude 用 **tmux 默认 server**（`unset TMUX` 之后），不是 connector 的私有 socket。他 `tmux kill-server` 会带走所有 agent 会话，反之亦然。修好之前，**任何"重启一下 connector"都要按"会杀掉所有会话"对待**：`systemctl stop` 会（`KillServer` 在 deferred 里），`systemctl kill` 也会（打整个 cgroup）。
+启动器起的内层 `claude` 会话，在 **connector 的私有 tmux server** 上，不在机主的默认 server 上。socket 不靠任何约定传递：这段启动器本来就跑在 connector 的一个 pane 里，tmux 把 socket 路径放在 `$TMUX` 的第一段（`<socket>,<pid>,<session>`），读出来即可（读完才 `unset TMUX`——从 pane 里 attach 必须先去掉它）。于是他的 `tmux ls` 看不见我们，他的 `tmux kill-server` 带不走 agent，我们的清理也碰不到他的会话。
+
+在默认 server 上发现同名的 `cheese_*` 会话，启动器直接杀掉再起自己的：那会话是我们放的，它握着这个话题的 rendezvous socket、spool 和工作树，留着就等于同一个话题有两个 claude 在应答。
+
+**"重启一下 connector"是非破坏性操作**，靠三件事一起成立，缺一件就不成立：
+
+| | 没有它会怎样 |
+|---|---|
+| 会话在我们自己的 socket 上 | 机主一句 `tmux kill-server` 就全清；反过来我们也清他的 |
+| connector 退出时只**释放**不拆（放开 viewer pty / rendezvous 连接 / runtime，tmux 会话原样留着） | `systemctl stop` 走 deferred 拆除路径，屏幕全没 |
+| unit 里的 `KillMode=process` | systemd 默认 `control-group`，`stop`/`restart` 一律 SIGTERM 整个 cgroup，而 tmux server 就在里面（2026-08-17 实测：一次带走 20 个会话，6 个正在干活） |
+
+下次启动会 re-adopt 活着的会话（`HasSession` 分支），drainer 继续重投它 spool 下来的 hook，viewer 重新 attach 回原来那个 pane。
+
+第三行只对 systemd 说话，**macOS 不需要对应物**：tmux server 一起来就 daemonize（实测 tmux 3.5a：PPID 1、自成进程组），而 launchd 拆 job 只管 job 自己的进程组，于是 server 和里面的会话原样活着，`launchctl bootout` 之后 `has-session` 仍然成立。Linux 非要那一行，是因为 cgroup 不是进程组：fork 出来的进程离不开自己所在的 unit，除非有个特权的 manager 把它搬走。所以「把 tmux server 挪出 connector 名下、让它结构上就不归我们」在不要 sudo 的前提下无处可去，那一行就是做法本身，不是权宜。
+
+`KillMode=process` 对 `--user` unit 一样成立（systemd 252 实测：unit 停掉，它 fork 出来的 tmux server 和里面的会话照旧）——这一点值得单说，因为那是现在**每台机器都走的路**，不再是没 sudo 时的退路。它撑住的**上限是同一次开机**：重启会带走 tmux server 和里面的会话，那不是任何一行 unit 挡得住的；connector 自己能不能回来是另一件事，见下。
+
+**真的要结束会话的动作是另外几个**，它们说了就得算数：`cheese link disconnect`、`cheese link no-auto-connect`、`cheese uninstall`（这条尤其——机器不是我们的，不能留东西），以及服务端关掉某块屏幕。
+
+unit 文件由 `cheese link connect` 每次重写（kardianos 本身拒绝覆盖已存在的 unit，所以是先 uninstall 再 install），否则老版本装出来的 unit 会一直活着，而这类"发布悄悄没生效"正是 #501 的形状。
+
+### connector 装在他自己的账户下，从不问 root
+
+`cheese link connect` 只装**用户级** service——Linux 是 `systemd --user` unit（`~/.config/systemd/user/cheese.service`），macOS 是 LaunchAgent（`~/Library/LaunchAgents/cheese.plist`）。没有提权、没有 polkit 弹窗、没有 `sudo` 这个词。这是上面那条约束的直接推论：「一个 `sudo` 让安装成功」本来就写在它列出的、最容易破坏它的写法里。
+
+「系统级 service 才能在没人登录时起来」曾经是提权的理由，在 Linux 上它不成立：**`loginctl enable-linger` 不需要管理员**。systemd 自带的 polkit 策略里 `org.freedesktop.login1.set-self-linger` 是 `allow_any=yes`（要管理员的是给**别人**开的 `set-user-linger`）。systemd 252 实测：普通用户 `loginctl enable-linger` exit 0、`Linger=yes`；`loginctl list-sessions` 空着，`user@1000.service` 仍然 active。所以 `link connect` 装完就替自己开 linger——**开不了不静默降级**，把后果和那一条修复命令印出来；入册脚本更进一步，linger 不是 `yes` 就直接判这次入册失败（那台机器没人会登录，它会绿一下然后随 ssh 一起消失）。
+
+唯一一处 `sudo` 在**入册脚本**里，那是平台自己开的机器（§0 明说 Cloud 不适用），上面几行装 tmux/git 用的就是同一个免密 sudo：镜像里没跑 polkit 时 logind 会直接拒掉普通用户的 `enable-linger`，那就补一次 `sudo -n loginctl enable-linger`，然后仍旧只认 linger 自己的回答。**connector 里没有这条路**——它跑在别人的笔记本上。
+
+两个细节必须同时到位，缺一个都是「装成功了，然后永远不会自己起来」：
+
+- **`WantedBy=default.target`**。user manager 里根本没有 `multi-user.target`——systemd 252 实测：`systemctl --user enable` 照收，回一句 "added as a dependency to a non-existent unit"，之后谁也不会拉起它。于是 connector 只在 `link connect` 亲手 start 的那一次活着，重启后再不回来，而安装报的是成功。
+- **unit 里不能有 `User=`**。systemd 拒绝加载带 `User=` 的 user unit，而 scope 里本来就只有一个账户。
+
+`KillUserProcesses=` 不是这里的开关，别去调它——它管的是 login session scope，而 connector 和它的 tmux server 在 `user@.service` 下面，从来不在那里面。
+
+**`uninstall` 不关 linger**，尽管它是我们开的。linger 是账户级设置，机主自己的 user timer / service 可能正靠着它，而我们分不清那台机器上它本来是不是就开着；关掉它的代价落在别人的东西上，留着它的代价是一个空转的 user manager。§0 那条「走之后还是原样」在这里的读法是前者更重。
+
+**macOS 没有 linger 的对应物，也不打算造一个。** LaunchAgent 活在机主的登录会话里（实测：job 落在 `gui/501` 域，`type = login`、`creator = loginwindow`；非 root `launchctl bootstrap user/501` 直接 `Bootstrap failed: 5`）。他登录时起、登出时停、下次登录再起。**一台没人登录的 Mac 不托管**——这是「不问别人要管理员密码」的诚实代价，不是漏了一个 case。真要 headless Mac，那是 LaunchDaemon、是一个新决定，不是在这里留一个开关等着被捡起来。
+
+**机器上已经有 root 装的 cheese service 时，`link connect` 拒绝安装**，并打印删掉它的命令。同一个账户下跑两个 connector 比一个都没有更糟：共用一份 device 凭据、共用同一个 tmux server，互相收养又互相拆掉对方的屏幕。
 
 ---
 
@@ -44,13 +85,13 @@
 
 3. **人在网页批准**。打开 `approve_url`，登录后落到前端 `/connect` 审批页（批准**在登录态后面**，没有裸批准按钮）：可给节点改名、可选绑定一个项目，提交即 `POST /connector/connect`——把设备绑到当前用户为 owner，签发**不过期的 durable token**（只能服务端撤销）。
 
-4. **`cheese link connect` 上线**。CLI 轮询拿到 token，写入 `~/.config/cheese/config.json`，随即拨出 `WS /connector/agent`，用 durable token 鉴权。握手成功后这台机器在 `device_hub` 里标记为在线。`cheese link auto-connect` 可让它开机自动重连。
+4. **`cheese link connect` 上线**。CLI 轮询拿到 token，写入 `~/.config/cheese/config.json`，随即拨出 `WS /connector/agent`，用 durable token 鉴权。握手成功后这台机器在 `device_hub` 里标记为在线。`cheese link auto-connect` 可让它开机自动重连。**这一步不需要 sudo**：service 装在当前账户下（Linux 顺带 `loginctl enable-linger`，macOS 是 LaunchAgent），细节和它的边界见 §0。
 
 5. **绑定项目/团队**。在「我的设备」页或各小队的「算力」页把设备绑到项目（`assign_to_project`）或团队（`assign_to_team`——团队下**所有项目**都能跑在这台机器上）。只有设备的 owner 能绑，且 owner 必须是该项目/团队的成员。
 
 6. **话题选 device 算力**。两种姿势：
-   - **全局**：`AGENT_BACKEND=device`。整个算力池就是 DeviceProvider，每次 agent 请求都落到一台在线的、绑定了该项目的设备。
-   - **话题/项目级**：DeviceProvider 与 local-docker 并列在算力池里，通过 `compute_profile` / provider_id 选用 `device`。**仅当有在线设备时才可选**（市场 listing 里 `available` 按 `device_online` gating）。
+   - **全局**：不配 Cloud 的部署，整个算力池就是 DeviceChannel，每次 agent 请求都落到一台在线的、绑定了该项目的设备。
+   - **话题/项目级**：DeviceChannel 与 local-docker 并列在算力池里，通过 `compute_profile` / provider_id 选用 `device`。**仅当有在线设备时才可选**（市场 listing 里 `available` 按 `device_online` gating）。
    - **话题亲和（关键）**：一个话题第一次落在哪台设备就**写死 pin** 在那台，之后仍回到同一台——工作树 + 可恢复 Claude Code 会话都在那台机器上。pinned 设备离线时**绝不漂到别的在线设备**（否则工作树清零、resume 错乱）。
 
 > 一个 gotcha：`approve_url` 用的是 `frontend_url`（前端 SPA 的 `/connect`），**不是** `CONNECTOR_PUBLIC_BASE`——后者是后端/webhook 基址（默认 localhost:8099），在浏览器里会 404。
@@ -68,8 +109,10 @@
 | **curl** | hook 转发器用 curl 把每个 hook JSON POST 回后端；`install.sh` 也用 curl 下二进制 | 必须 |
 | **tmux** | 把 `claude` 养在持久会话里，链路/屏幕掉线不丢进程，重开屏幕即 re-attach | 必须。连接器**没有 tmux 就直接退出**，而 `link connect` 仍报成功（systemd 在进程倒下之前就返回了），所以缺它表现为"机器永远不上线"，不是任何一条错误信息 |
 | **git** | agent 把项目 clone 进工作目录、把话题分支推回来 | 必须。缺它则轮次在**空目录**里跑完并报成功，工作没人看得见 |
+| **python3** | 平台发到机器上跑的那几个小工具：计量隧道（订阅轮次）、运行环境预览的隧道（`cheese serve`）。只用标准库，机器上不需要 venv、不需要 `pip install` | 轮次不需要它，这两样功能需要。缺它则订阅轮次到不了计量端、`cheese serve` 起不来通道——两边都会明说，不会静默 |
 | **claude**（Claude Code CLI） | 真正干活的 agent | 必须，**由平台装**（见下） |
 | **cheesehost** 连接器 | `install.sh` 装到 `~/.local/bin/`；必须装在**该服务自己能写的目录**里，否则自更新永远失败且无声（#501） |
+| **能用的用户级 service manager** | 后台常驻靠它，而我们只用当前账户的那一个 | 必须。Linux 上是 `systemd --user`（要 logind：ssh 进来得有 `XDG_RUNTIME_DIR`，还要能 `loginctl enable-linger`），macOS 上是 launchd。装不上不是无声的：`link connect` 直接报错，入册脚本判失败 |
 
 平台：Linux / macOS（需 pty），**无 Windows**。
 
@@ -101,7 +144,7 @@
 - 首次开屏时，设备通过带 scoped token 的 smart HTTP clone 话题分支；请求结束时 `cheese-sync` 提交并 push 回同一分支。
 - 图片附件先由后端通过控制信道 `file.put` 写进这个 checkout，收到设备确认后，再用 `@相对路径` 送进 rendezvous。
 - 后端从不把自己的 topic workspace 路径翻译成设备路径，也不跳过复制。仓库中没有“后端与设备共享 workspace”的配置或分支。
-- DeviceProvider 不快照后端 worktree；后端以设备 push 回来的分支作为结果。
+- 后端不往任何工作树里写提交；它以设备 push 回来的分支作为结果。
 
 ---
 
@@ -131,13 +174,15 @@
 ```
 设备侧                                          后端侧
 claude COMMAND hooks                            /sandbox/hooks/{topic_id}
-  → ~/.claude/cheese-hook 转发器                  → 共享 hook_router
-  → 先写本地 spool (~/.claude/cheese-spool,        → translate_hook → AgentEvent
-     CHEESE_HOOK_SPOOL_ONLY=1)                  → code:200 = 推给活 turn 或存进 topic
-  → 后台 drainer 用 curl POST                       的服务端 spool，等下次 reconcile
-     {CONNECTOR_PUBLIC_BASE}/sandbox/hooks/{topic}
+  → ~/.claude/cheese-hook 转发器                  → 先写 topic 的服务端 spool
+  → 先写本地 spool (~/.claude/cheese-spool,        → 再推给活 turn（hook_router →
+     CHEESE_HOOK_SPOOL_ONLY=1)                       translate_hook → AgentEvent）
+  → 后台 drainer 用 curl POST                     → code:200 = 已落到我们盘上
+     {CONNECTOR_PUBLIC_BASE}/sandbox/hooks/{topic}    （drainer 见 200 才删本地副本）
      带 X-Cheese-Token + X-Cheese-Event-Id      （按 event-id 去重）
 ```
+
+**200 = 这条事件已经在我们自己的盘上。** drainer 见 200 就删掉设备上的副本，所以后端在落盘之前给的任何 ack 都是在拿一台**别人的机器**（§0）当我们的持久层：它可以离线、被擦、被机主删掉。落盘失败、缺 `X-Cheese-Event-Id`、token 里没有项目，一律回非 200——事件留在它还存在的地方，drainer 下一轮再来。
 
 - **事件没回来**：先看设备侧 spool 目录有没有堆积——后端不可达时 drainer 会一直重试，24h 过期清理；spool 堆积 = 设备到后端的回连断了。再看 `CONNECTOR_PUBLIC_BASE` 设备是否可达、scoped token 对不对。
 - **事件丢序/重复**：后端按 `X-Cheese-Event-Id` 去重；durable 投递保证一次 link/后端抖动不丢事件，但可能重投，消费侧需幂等。
@@ -147,7 +192,7 @@ claude COMMAND hooks                            /sandbox/hooks/{topic_id}
 - **设备掉线**：`device_hub.is_online` 转 false，「我的设备」该设备变灰「离线」。CLI 侧带退避重连 + 心跳，NAT 后也能恢复；持久 tmux 会话 `cheese` 在掉线期间**继续跑**，重连后重开屏幕即 re-attach，工作树/会话不丢。
 - **已 pin 该设备的话题发 turn**：`resolve_pinned_device` 发现 pinned 设备离线 → 抛 `ScreenSetupError`「话题绑定的算力设备已离线，请重新连接该设备再继续本轮（不会漂到别的设备，以免工作树/会话错乱）」→ 该轮排队/失败重试，**绝不漂到别的在线设备**。
 - **话题还没 pin、且没有任何绑定设备在线**：报「没有在线的绑定设备可运行本轮（self-hosted 设备未连接）」。
-- **解绑/撤销 token**：`DELETE /my/devices/{id}` 或服务端撤销 durable token → 该设备所有 screen 失效、`device_hub` 标记离线、`DeviceProvider.available` 转 false、市场 listing 里 `device` 变为不可选。
+- **解绑/撤销 token**：`DELETE /my/devices/{id}` 或服务端撤销 durable token → 该设备所有 screen 失效、`device_hub` 标记离线、`DeviceChannel.available` 转 false、市场 listing 里 `device` 变为不可选。
 
 ---
 
@@ -158,8 +203,8 @@ claude COMMAND hooks                            /sandbox/hooks/{topic_id}
 curl -fsSL https://<你的站点>/connector/install.sh | sh
 cheesehost auth login https://<你的站点>/connector      # 打印 approve_url，阻塞轮询
 # 人浏览器打开 approve_url → 登录 → 批准（可命名/绑项目）
-# CLI 自动 link connect 上线
+# CLI 自动 link connect 上线——全程不需要 sudo
 
 # 平台侧：在小队「算力」页把设备绑给团队（或「我的设备」绑项目）
-# 话题选 device 算力（全局 AGENT_BACKEND=device，或用 compute_profile/provider_id 选 device）
+# 话题选 device 算力（不配 Cloud 时就是默认，也可以用 compute_profile/provider_id 显式选）
 ```

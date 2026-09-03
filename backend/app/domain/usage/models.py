@@ -43,8 +43,15 @@ class ResourceUsage(UuidPk, Timestamps, Base):
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), index=True
     )
+    # The room the spend happened in; NULL when it cannot be attributed at all.
     topic_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("topics.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    # Which piece of work inside it. NULL is the room's own main line — the
+    # distinction matters here because "what did this task cost" is a question
+    # people ask, and a room-level total cannot answer it.
+    task_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("tasks.id", ondelete="CASCADE"), nullable=True, index=True
     )
     # The human message or platform work id this spend belongs to. One attributed
     # unit can write more than one row because the metering proxy logs every

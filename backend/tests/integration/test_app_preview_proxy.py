@@ -1,27 +1,77 @@
-"""运行环境预览 reverse proxy — the route that makes a container's app reachable.
+"""运行环境预览 over the machine's own tunnel — the route that makes an app the
+agent started on someone else's laptop reachable from a browser.
 
-Without it `/preview` handed the browser `http://127.0.0.1:<host-port>`, which is
-the *server's* loopback: only someone running the whole platform locally ever saw
-anything. These pin the replacement — same authorization posture as the 现场
-terminal, and no wider.
+Every machine a turn runs on is behind NAT with zero inbound ports, so there is
+no address the platform can dial. What these pin is the replacement transport:
+the machine dials out, the browser's requests ride that connection, and the
+authorization posture stays exactly the 现场 terminal's — no wider.
+
+They talk to the REAL hub over the REAL frame codec; only the machine at the far
+end is a stand-in, and it answers the way the shipped helper does.
 """
 
 import uuid
 
-from fastapi.responses import Response
+import pytest
+from starlette.websockets import WebSocketDisconnect
 
-from app.api import proxy
 from app.api.routes import app_preview
-from app.domain.workspace import service as ws
+from app.domain.agent import preview_tunnel as wire
+from app.domain.agent.preview_hub import preview_hub
 from tests.integration.test_connector_viewer import _login
 
 
-def _serving(served: list[str], body: bytes = b"<html><body>hi</body></html>"):
-    async def _forward(endpoint, path, _request):
-        served.append(f"http://{endpoint}/{path}")
-        return Response(content=body, status_code=200, media_type="text/html")
+class FakeMachine:
+    """A machine whose helper answers every request with one canned response.
 
-    return _forward
+    Speaks the same frames the shipped helper speaks — the test's whole point is
+    that the route and the helper agree on the wire, so nothing here is allowed
+    to short-circuit it.
+    """
+
+    def __init__(
+        self,
+        body: bytes = b"<html><body>hi</body></html>",
+        status: int = 200,
+        content_type: str = "text/html",
+    ) -> None:
+        self.body = body
+        self.status = status
+        self.content_type = content_type
+        self.asked: list[str] = []
+        self.topic_id: uuid.UUID | None = None
+
+    def attach(self, topic_id: uuid.UUID) -> "FakeMachine":
+        self.topic_id = topic_id
+        preview_hub.attach(topic_id, self)
+        return self
+
+    def detach(self) -> None:
+        if self.topic_id is not None:
+            preview_hub.detach(self.topic_id, self)
+
+    async def send_bytes(self, data: bytes) -> None:
+        assert self.topic_id is not None
+        op, stream, payload = wire.decode(data)
+        if op != wire.OP_REQ:
+            return
+        meta, _ = wire.decode_meta(payload)
+        self.asked.append(f"{meta['method']} {meta['path']}")
+        preview_hub.on_frame(
+            self.topic_id,
+            wire.encode(
+                wire.OP_RESP,
+                stream,
+                wire.encode_meta(
+                    {
+                        "status": self.status,
+                        "headers": [["content-type", self.content_type]],
+                    },
+                    self.body,
+                ),
+            ),
+        )
+        preview_hub.on_frame(self.topic_id, wire.encode(wire.OP_END, stream))
 
 
 def _project_topic(client, handle: str = "alice"):
@@ -34,61 +84,65 @@ def _project_topic(client, handle: str = "alice"):
     return project, topic
 
 
-def test_the_app_proxy_requires_a_credential(client, monkeypatch):
-    """The app is whatever the agent started in the project's workspace — a topic
-    UUID must not be enough to read it."""
-    served: list[str] = []
-    monkeypatch.setattr(ws, "app_endpoint", lambda _t: "127.0.0.1:55007")
-    monkeypatch.setattr(proxy, "forward", _serving(served))
-
-    resp = client.get(f"/topics/{uuid.uuid4()}/app/")
+def test_the_app_proxy_requires_a_credential(client):
+    """The app is whatever the agent started on that machine — a topic UUID must
+    not be enough to read it."""
+    topic_id = uuid.uuid4()
+    machine = FakeMachine().attach(topic_id)
+    try:
+        resp = client.get(f"/topics/{topic_id}/app/")
+    finally:
+        machine.detach()
 
     assert resp.status_code == 404, resp.text
-    assert not served, "the request reached the app without any credential"
+    assert not machine.asked, "the request reached the app without any credential"
 
 
-def test_a_member_reaches_the_app(client, monkeypatch):
-    served: list[str] = []
-    monkeypatch.setattr(ws, "app_endpoint", lambda _t: "127.0.0.1:55007")
-    monkeypatch.setattr(proxy, "forward", _serving(served))
-
+def test_a_member_reaches_the_app(client):
     _project, topic = _project_topic(client)
     token = _login(client, "alice")
-
-    resp = client.get(f"/topics/{topic['id']}/app/index.html?token={token}")
+    machine = FakeMachine().attach(uuid.UUID(topic["id"]))
+    try:
+        resp = client.get(f"/topics/{topic['id']}/app/index.html?x=1&token={token}")
+    finally:
+        machine.detach()
 
     assert resp.status_code == 200, resp.text
-    assert served == ["http://127.0.0.1:55007/index.html"], served
+    assert resp.content == b"<html><body>hi</body></html>", resp.content
+    # The query string travels with the request — a dev server routes on it —
+    # but the credential does NOT. The page is written by the agent, and a
+    # session token reaching it (readable in `location.search`, logged by its own
+    # server) is the one thing this surface exists to prevent.
+    assert machine.asked == ["GET /index.html?x=1"], machine.asked
+    assert token not in machine.asked[0]
 
 
-def test_root_absolute_asset_urls_are_moved_onto_the_proxy_prefix(client, monkeypatch):
+def test_root_absolute_asset_urls_are_moved_onto_the_proxy_prefix(client):
     """The app is served under a sub-path, so a page asking for `/assets/x.js`
-    would miss the container entirely and hit the platform SPA instead."""
-    monkeypatch.setattr(ws, "app_endpoint", lambda _t: "127.0.0.1:55007")
-    monkeypatch.setattr(
-        proxy,
-        "forward",
-        _serving([], b'<html><script src="/main.js"></script><a href="//x/y"></a>'),
-    )
-
+    would miss the machine entirely and hit the platform SPA instead."""
     _project, topic = _project_topic(client)
     token = _login(client, "alice")
-
-    body = client.get(f"/topics/{topic['id']}/app/?token={token}").text
+    machine = FakeMachine(
+        b'<html><script src="/main.js"></script><a href="//x/y"></a>'
+    ).attach(uuid.UUID(topic["id"]))
+    try:
+        body = client.get(f"/topics/{topic['id']}/app/?token={token}").text
+    finally:
+        machine.detach()
 
     assert f'src="/api/topics/{topic["id"]}/app/main.js"' in body, body  # 浏览器侧
     assert 'href="//x/y"' in body, "protocol-relative URLs must be left alone"
 
 
-def test_the_app_page_leaves_a_cookie_scoped_to_its_own_path(client, monkeypatch):
+def test_the_app_page_leaves_a_cookie_scoped_to_its_own_path(client):
     """Assets and HMR are fetched by the page itself and carry no query string."""
-    monkeypatch.setattr(ws, "app_endpoint", lambda _t: "127.0.0.1:55007")
-    monkeypatch.setattr(proxy, "forward", _serving([]))
-
     _project, topic = _project_topic(client)
     token = _login(client, "alice")
-
-    resp = client.get(f"/topics/{topic['id']}/app/?token={token}")
+    machine = FakeMachine().attach(uuid.UUID(topic["id"]))
+    try:
+        resp = client.get(f"/topics/{topic['id']}/app/?token={token}")
+    finally:
+        machine.detach()
 
     cookie = resp.headers.get("set-cookie", "")
     assert app_preview.COOKIE_NAME in cookie, cookie
@@ -120,12 +174,89 @@ def test_the_handshake_refuses_a_stranger(client):
     assert resp.status_code == 404, resp.text
 
 
-def test_no_app_running_is_a_404_not_a_crash(client, monkeypatch):
-    monkeypatch.setattr(ws, "app_endpoint", lambda _t: None)
-
+def test_no_tunnel_is_a_404_not_a_crash(client):
+    """The machine is offline, or never carried a preview out at all."""
     _project, topic = _project_topic(client)
     token = _login(client, "alice")
 
     resp = client.get(f"/topics/{topic['id']}/app/?token={token}")
 
     assert resp.status_code == 404, resp.text
+
+
+class EchoingMachine(FakeMachine):
+    """Also accepts a WebSocket and echoes what it is sent — a dev server's HMR
+    socket reduced to the only thing the proxy has to get right."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.ws_path = ""
+        self.ws_headers: list[list[str]] = []
+
+    async def send_bytes(self, data: bytes) -> None:
+        assert self.topic_id is not None
+        op, stream, payload = wire.decode(data)
+        if op == wire.OP_WS_OPEN:
+            meta, _ = wire.decode_meta(payload)
+            self.ws_path = meta["path"]
+            self.ws_headers = meta["headers"]
+            preview_hub.on_frame(
+                self.topic_id,
+                wire.encode(
+                    wire.OP_WS_OK, stream, wire.encode_meta({"subprotocol": "vite-hmr"})
+                ),
+            )
+            return
+        if op == wire.OP_WS_MSG:
+            preview_hub.on_frame(
+                self.topic_id, wire.encode(wire.OP_WS_MSG, stream, payload)
+            )
+            return
+        await super().send_bytes(data)
+
+
+def test_the_hmr_socket_reaches_the_app_and_carries_both_directions(client):
+    """A dev server pushes reloads over a WebSocket. Without this leg the page
+    loads once and then reconnects forever, which reads as a broken preview."""
+    _project, topic = _project_topic(client)
+    token = _login(client, "alice")
+    machine = EchoingMachine().attach(uuid.UUID(topic["id"]))
+    try:
+        with client.websocket_connect(
+            f"/topics/{topic['id']}/app/@vite/client?token={token}",
+            subprotocols=["vite-hmr"],
+        ) as ws:
+            ws.send_text("ping")
+            assert ws.receive_text() == "ping"
+            ws.send_bytes(b"\x00\x01")
+            assert ws.receive_bytes() == b"\x00\x01"
+    finally:
+        machine.detach()
+
+    assert machine.ws_path == "/@vite/client", machine.ws_path
+    forwarded = {k.lower() for k, _ in machine.ws_headers}
+    # This leg's own handshake stops here: the machine performs its own, and a
+    # relayed key or a negotiated compression extension corrupts that one.
+    assert not forwarded & {"sec-websocket-key", "sec-websocket-extensions"}
+    # The subprotocol is the exception — it is negotiated end to end.
+    assert "sec-websocket-protocol" in forwarded
+
+
+def test_the_hmr_socket_refuses_a_caller_without_a_credential(client):
+    _project, topic = _project_topic(client)
+    machine = EchoingMachine().attach(uuid.UUID(topic["id"]))
+    try:
+        with pytest.raises(WebSocketDisconnect):
+            with client.websocket_connect(f"/topics/{topic['id']}/app/ws") as ws:
+                ws.receive_text()
+    finally:
+        machine.detach()
+    assert machine.ws_path == "", "the handshake reached the app unauthenticated"
+
+
+def test_the_tunnel_refuses_a_caller_that_cannot_name_a_topic(client):
+    """Whoever dials in decides what the room sees, so the token IS the routing
+    table: no valid topic claim, no tunnel."""
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect("/preview/tunnel?token=not-a-token") as ws:
+            ws.receive_bytes()

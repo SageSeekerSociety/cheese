@@ -8,10 +8,15 @@
 // #650) counts CJK characters as punctuation for flanking, restoring the
 // escape hatch without touching non-CJK text.
 //
-// The doc editor builds its own instance (it also needs the Tiptap schema) and
-// the chat renderer builds its own (it also needs highlighting + KaTeX); both
-// apply the same extension. Anything that just parses markdown to HTML uses
-// this one instead of marked's global singleton.
+// The doc editor builds its own instance (it also needs the Tiptap schema);
+// everything else — including the chat renderer — parses through this one
+// rather than marked's global singleton, so the CJK extension is never the
+// thing someone forgot to apply.
+//
+// Note what that means today: chat code blocks are NOT highlighted and math is
+// NOT rendered, in either surface. The doc editor carries hljs styles; the chat
+// carries neither. Same markdown, two renderings — worth closing, and worth not
+// describing as already closed.
 import { Marked } from 'marked'
 import markedCjkFriendly from 'marked-cjk-friendly'
 

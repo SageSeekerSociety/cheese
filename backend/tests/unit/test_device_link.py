@@ -1,4 +1,4 @@
-"""link.Msg wire protocol: constructors + parse round-trip (frozen cli contract)."""
+"""link.Msg wire protocol: constructors + parse round-trip (the cli's contract)."""
 
 import base64
 
@@ -23,8 +23,8 @@ def test_session_create_omits_empty_optionals():
         "cols": 120,
         "rows": 32,
     }
-    # source / env / adopt only present when set (matches Go omitempty).
-    assert "source" not in msg and "env" not in msg and "adopt" not in msg
+    # env / adopt only present when set (matches Go omitempty).
+    assert "env" not in msg and "adopt" not in msg
 
 
 def test_session_create_with_optionals():
@@ -34,11 +34,10 @@ def test_session_create_with_optionals():
         screen_token="tok",
         cols=1,
         rows=1,
-        source="//js",
         env={"A": "B"},
         adopt=True,
     )
-    assert msg["source"] == "//js" and msg["env"] == {"A": "B"} and msg["adopt"] is True
+    assert msg["env"] == {"A": "B"} and msg["adopt"] is True
 
 
 def test_screen_input_base64_encodes():
@@ -87,3 +86,21 @@ def test_parse_inbound_and_decoded_data():
 def test_parse_tolerates_missing_fields():
     m = LinkMsg.parse({"t": "hello", "v": 1})
     assert m.t == "hello" and m.v == 1 and m.sid == "" and m.decoded_data() == b""
+
+
+def test_parse_hello_carries_which_binary_is_speaking():
+    m = LinkMsg.parse(
+        {"t": "hello", "v": 1, "build": "a" * 64, "target": "linux-amd64"}
+    )
+    assert m.build == "a" * 64 and m.target == "linux-amd64"
+
+
+def test_parse_hello_from_a_connector_too_old_to_say():
+    """The version alone cannot distinguish it from a current build — which is
+    exactly why the server treats the silence as old."""
+    m = LinkMsg.parse({"t": "hello", "v": 1})
+    assert m.build == "" and m.target == ""
+
+
+def test_update_frame():
+    assert device_link.update() == {"t": "update"}

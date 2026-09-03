@@ -188,8 +188,8 @@ def test_detail_renders_one_line_and_parks_the_stack_in_meta() -> None:
     err = _err(where="POST /api/topics/x/chat", stack=STACK, request_id="abc123")
     content = event_content(err)
     assert "\n" not in content
-    assert "💥" in content
     assert "ValueError" in content and "boom" in content
+    # 这是不是一条报错，读码，不读开头那个字符。
     meta = event_meta(err, BackendErrorIntake().admit("p", "fp", now=1.0))
     assert meta["event_type"] == "backend_error"
     assert meta["stack"] == STACK

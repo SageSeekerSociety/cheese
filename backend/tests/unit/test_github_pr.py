@@ -26,7 +26,7 @@ class _FakeTokens:
     async def write_token(self) -> tuple[str, str]:
         return "ghs_write", "2099-01-01T00:00:00+00:00"
 
-    async def readonly_token(self) -> tuple[str, str]:
+    async def installation_token(self) -> tuple[str, str]:
         return "ghs_read", "2099-01-01T00:00:00+00:00"
 
 
@@ -159,7 +159,7 @@ async def test_merge_other_failure_is_not_a_conflict():
 
 
 @pytest.mark.anyio
-async def test_check_runs_use_the_readonly_token_and_simplify():
+async def test_check_runs_use_the_installation_token_and_simplify():
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:

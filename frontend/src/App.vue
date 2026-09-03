@@ -6,7 +6,7 @@
         <app-bar v-if="!hideAppBar" :links="[]" />
       </keep-alive>
       <keep-alive>
-        <LeftAppRail v-if="!hideAppBar" :items="navItems" />
+        <LeftAppRail v-if="!hideAppBar" :items="rail" />
       </keep-alive>
 
       <!-- 二级导航：通过路由渲染 -->
@@ -16,14 +16,14 @@
       <!-- 二级导航：通过路由渲染 -->
       <router-view name="sidebar" />
 
-      <!-- 移动端：使用全高 Toolbar -->
-      <keep-alive>
-        <mobile-app-bar v-if="!hideAppBar" />
-      </keep-alive>
+      <!-- 移动端：唯一的一条顶栏，从不卸载。内容由当前页填（MobileAppBar 里的
+           #app-bar-slot）——挂上/卸下这条横条会让 v-main 的 padding 滑一下，
+           页面跟着抖。 -->
+      <mobile-app-bar v-if="!hideAppBar" />
 
       <!-- 一级导航：桌面端左侧 Rail，移动端底部 -->
       <keep-alive>
-        <BottomAppBar v-if="!hideAppBar" :items="navItems" />
+        <BottomAppBar v-if="!hideAppBar && !hideTabs" :items="tabs" />
       </keep-alive>
     </template>
 
@@ -87,6 +87,7 @@
 
 <script setup lang="ts">
 import type { Project } from '@/cx_types'
+import type { NavSources } from './components/common/Navigation/destinations'
 
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
@@ -96,8 +97,8 @@ import { usePageTitle } from '@/composables/usePageTitle'
 
 import MyApp from './components/common/MyApp.vue'
 import BottomAppBar from './components/common/Navigation/BottomAppBar.vue'
+import { railItems, tabItems, workspaceProject } from './components/common/Navigation/destinations'
 import LeftAppRail from './components/common/Navigation/LeftAppRail.vue'
-import { NavGenericItem } from './components/common/Navigation/types'
 import { usePageTitleStore } from './stores/title'
 
 import { createProject, listProjects } from '@/api'
@@ -105,9 +106,11 @@ import AppBar from '@/components/common/Navigation/AppBar.vue'
 import MobileAppBar from '@/components/common/Navigation/MobileAppBar.vue'
 import OfflineBanner from '@/components/common/OfflineBanner.vue'
 import VersionBadge from '@/components/common/VersionBadge.vue'
+import { trackKeyboardInset } from '@/lib/keyboardInset'
 import { loadCachedProjects, saveCachedProjects } from '@/lib/projectCache'
 import { myHandle } from '@/me'
 import AccountService from '@/services/account'
+import { lastOpenedProjectId, useWorkspaceStore } from '@/stores/workspace'
 import { useAppTheme } from '@/theme'
 
 // Activate the theme runtime app-wide. First paint is already correct without
@@ -118,8 +121,12 @@ import { useAppTheme } from '@/theme'
 // login page would not follow their machine switching to dark at sunset.
 useAppTheme()
 
+// 软键盘盖住多少，写进 --keyboard-inset 供布局减掉 (style.css)。
+trackKeyboardInset()
+
 const currentRoute = useRoute()
 const router = useRouter()
+const workspace = useWorkspaceStore()
 
 const titleManager = usePageTitle()
 const store = usePageTitleStore()
@@ -140,10 +147,12 @@ const hideAppBar = computed(() => {
   return currentRoute.meta.hideAppBar
 })
 
-// Fusion merge (C): the LeftAppRail carries the product surfaces (首页/空间/小队)
-// PLUS our projects — each project is a rail icon (Discord-style, replacing the
-// old 元思 assistant). Clicking a project opens OUR full workspace (topics/群聊/
-// doc/agent) for it. Projects come from our backend (/api/projects).
+// 页面栈的末端（话题页、私聊页）收起底栏：它们是栈里的一层，不是一级目的地。
+const hideTabs = computed(() => currentRoute.meta.hideTabs === true)
+
+// Fusion merge (C): 项目来自我们的后端 (/api/projects)，在桌面 rail 上一个项目
+// 一格方头像（Discord 式，取代了原来的元思助手），点开的是我们的完整工作区
+// (话题/群聊/doc/agent)。两端各拿到哪些格子由 Navigation/destinations.ts 说了算。
 const cxProjects = ref<Project[]>(loadCachedProjects(myHandle()))
 const projectListWarning = ref('')
 const showProjectListWarning = ref(false)
@@ -183,49 +192,20 @@ watch(
   }
 )
 
-const navItems = computed<NavGenericItem[]>(() => [
-  { key: 'Home', type: 'item', title: '首页', to: '/', icon: 'cheese', visibleOnMobile: false, shortcut: 1 },
-  {
-    key: 'Spaces',
-    type: 'item',
-    title: '空间',
-    to: '/spaces',
-    icon: 'mdi-view-dashboard',
-    visibleOnMobile: true,
-    visibleOnPC: false,
-  },
-  {
-    key: 'Teams',
-    type: 'item',
-    title: '小队',
-    to: '/teams',
-    icon: 'mdi-account-group',
-    visibleOnMobile: true,
-    visibleOnPC: false,
-  },
-  ...(cxProjects.value.length ? [{ key: 'cx-divider', type: 'divider' as const }] : []),
-  // Each project → our workspace (topics/群聊/doc/agent). Discord-style: a
-  // squircle avatar (initial + color), not a cut-off title.
-  ...cxProjects.value.map((p, i) => ({
-    key: `cx-${p.id}`,
-    type: 'item' as const,
-    title: p.name,
-    to: `/projects/${p.id}`,
-    img: projectAvatar(p.name),
-    shortcut: i + 2, // ⌘1 = 首页, then projects
-  })),
-  // Discord-style "+" at the bottom of the project list: create a new project.
-  {
-    key: 'cx-add',
-    type: 'item' as const,
-    title: '新建项目',
-    icon: 'mdi-plus',
-    add: true,
-    action: createNewProject,
-    visibleOnMobile: false,
-  },
-])
+// 上次开过的那个项目存在 workspace store 的布局里，所以冷启动也落得回去。
+const workspaceProjectId = computed<string | null>(() =>
+  workspaceProject(cxProjects.value, workspace.projectId, lastOpenedProjectId())
+)
 
+const navSources = computed<NavSources>(() => ({
+  projects: cxProjects.value,
+  workspaceProjectId: workspaceProjectId.value,
+  projectAvatar,
+  createProject: createNewProject,
+}))
+
+const rail = computed(() => railItems(navSources.value))
+const tabs = computed(() => tabItems(navSources.value))
 // The "+" rail affordance opens an in-app dialog (no native prompt). On confirm
 // we create the project owned by the current user, refresh the rail so the new
 // tile appears, then open its workspace.
@@ -263,7 +243,7 @@ function onRailShortcut(e: KeyboardEvent) {
   if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return
   const n = Number(e.key)
   if (!n) return
-  const item = navItems.value.find((it) => it.type === 'item' && it.shortcut === n)
+  const item = rail.value.find((it) => it.type === 'item' && it.shortcut === n)
   if (item && item.type === 'item' && item.to) {
     e.preventDefault()
     router.push(item.to)

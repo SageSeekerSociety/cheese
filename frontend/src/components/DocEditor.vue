@@ -13,7 +13,7 @@ import { onBeforeUnmount, ref, watch } from 'vue'
 import { DragHandle } from '@tiptap/extension-drag-handle-vue-3'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
 
-import { getDoc, putDoc } from '../api'
+import { ApiError, getDoc, putDoc } from '../api'
 import { compareRoundTrip, docExtensions, serializeDoc } from '../lib/docMarkdown'
 import { myHandle } from '../me'
 
@@ -54,6 +54,12 @@ const rawDoc = ref<string>('')
 // 军规 1: a lossy load (parse→serialize differs from disk) pauses autosave so a
 // visual edit can't silently rewrite unsupported syntax.
 const lossy = ref(false)
+// The doc_version this editor's content is based on; every save sends it.
+const docVersion = ref(0)
+// A save the backend refused because the doc moved. Pauses autosave for the
+// same reason `lossy` does: retrying on a timer would either fail forever or,
+// worse, succeed by overwriting. ⌘S is the way out — the person deciding.
+const conflict = ref(false)
 
 // ---- Editor: the SHARED extension list, plus the DragHandle in the template. ----
 const editor = useEditor({
@@ -101,6 +107,8 @@ async function loadDoc(topicId: string) {
     const block = await getDoc(topicId)
     if (props.topicId !== topicId) return // guard against fast switches
     installDoc(block?.content ?? '')
+    docVersion.value = block?.doc_version ?? 0
+    conflict.value = false
     dirty.value = false
   } catch (e) {
     emit('error', e instanceof Error ? e.message : '加载文档失败')
@@ -116,7 +124,7 @@ let autosaveTimer: ReturnType<typeof setTimeout> | null = null
 function queueAutosave() {
   if (autosaveTimer) clearTimeout(autosaveTimer)
   autosaveTimer = setTimeout(() => {
-    if (lossy.value) return
+    if (lossy.value || conflict.value) return
     if (dirty.value && props.editable && !saving.value) void save()
   }, 2500)
 }
@@ -132,7 +140,9 @@ async function save() {
   saving.value = true
   emit('saving')
   try {
-    await putDoc(topicId, full, AUTHOR)
+    const saved = await putDoc(topicId, full, AUTHOR, docVersion.value)
+    docVersion.value = saved.doc_version ?? docVersion.value + 1
+    conflict.value = false
     rawDoc.value = full
     // Lost-update guard: an edit that landed while the save was in flight must
     // not have its dirty flag wiped by this completion.
@@ -144,9 +154,28 @@ async function save() {
       queueAutosave()
     }
   } catch (e) {
-    emit('error', e instanceof Error ? e.message : '保存失败')
+    if (e instanceof ApiError && e.status === 409) {
+      // Somebody else wrote this doc since we read it. Say so, stop the timer
+      // from retrying into the same wall, and adopt their version so the next
+      // save the PERSON asks for is an overwrite they chose.
+      conflict.value = true
+      await adoptServerVersion(topicId)
+      emit('error', '文档在别处被改过了，这次保存没写进去。按 ⌘S 用你现在这份覆盖')
+    } else {
+      emit('error', e instanceof Error ? e.message : '保存失败')
+    }
   } finally {
     saving.value = false
+  }
+}
+
+async function adoptServerVersion(topicId: string) {
+  try {
+    const block = await getDoc(topicId)
+    if (props.topicId === topicId) docVersion.value = block?.doc_version ?? 0
+  } catch {
+    // Leave the old version in place: the next save is refused again, which is
+    // the safe direction.
   }
 }
 

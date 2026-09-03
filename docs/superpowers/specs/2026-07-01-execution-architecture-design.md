@@ -131,16 +131,13 @@ v1 把"多实例"只挂在 broker 上，错了。`asyncio.Lock` 是进程内的�
 
 ## R2（BLOCKER）ComputeProvider 的接缝画在了 SDK 之下，必须上移成"turn 执行器"
 真执行路径是 `AgentService.stream_reply` 在**后端进程**里构造 `ClaudeSDKClient` 并把 `cli_path` 当**本地子进程**拉起。`exec(argv)`/`cli_path` 根本不在 turn 路径上。要做远端节点，返回不同 `cli_path` 没用——整个 `ClaudeSDKClient` + 子进程 + `AgentEvent` 翻译都得搬到节点、把事件流经 RPC 回传。
-**定稿：接口改为 turn 执行器**：
-```
-ComputeProvider:
-  async def run_turn(env_spec, prompt, system_prompt, resume_session_id,
-                     callback) -> AsyncIterator[AgentEvent]   # 同 AgentService 的事件并集
-  async def materialize(env_spec) -> Handle   # 起/复用沙箱 + 工作区就位
-  async def checkpoint(handle) / fetch_refs(handle) / get_diff(handle)  # 工作区 git 生命周期
-  async def teardown(handle);  def capacity() -> Capacity;  caps: Caps
-```
-`LocalDockerProvider` = 今天的进程内 SDK + 本地 docker exec；`RemoteCheesedProvider` = 把请求发给 cheesed 节点、解 RPC 事件流。`cli_path`/`exec` 降级为 LocalDocker 的内部细节。**这是 re-plumb 最热路径，不是填空——诚实写明。**
+**定稿：`ComputeProvider` 只回答「在哪台机器上」——起机器、备好工作区、事后快照。
+「上面跑的是什么」是另一个接缝**：长在那儿的会话是 `AgentRuntime`
+（ensure / send / read / interrupt / close），每轮起一个进程的是 `TurnStream`
+（`run_turn`）。`cli_path`/`exec` 降级为后者的内部细节。
+
+一个接口同时管这两件事，就等于「换 harness」和「换机器」必须是同一个开关——而那
+正是 `AgentType.harness` 存在却没人读的原因。
 
 ## R3（SERIOUS）重连不无缝：整轮产物在 tx2 收尾前只活在瞬时流里
 现状：流式中只发 `delta/tool/state/todo`；**所有持久 block（现场事件、assistant、行动卡、usage、`set_session_id`）都在流结束后的 tx2 才落**。`InProcessBroker` 无 backlog，订阅者只收订阅之后的帧。→ 手机中途打开/掉线重连，`GET /blocks` 只看到用户块，turn 看着像卡住直到最后一坨蹦出来；missed 的 delta 永久丢失。
@@ -252,7 +249,7 @@ v3 把 compute 选择挂在**项目层**（`ComputePool.select(project)`）。�
 
 ## §affinity：实例化冻结（数据正确性红线，独立可落地）
 
-- **分界线 = `Topic.session_id`**（首轮捕获，已有字段）。`session_id IS NULL` = 未实例化，算力可切；**非空 = 已落地，锁定**。
+- **分界线 = 这个话题有没有 `agent_sessions` 行**（首轮捕获）。没有 = 未实例化，算力可切；有 = 已落地，锁定。
 - 首轮把选择**物化**成具体 compute target 写回 `Topic.compute`，此后只读。
 - **自托管设备离线 → 该会话排队 / 报"算力离线"，绝不漂到别处**：工作树 + `~/.claude` session 都在那台机器，漂移 = 静默丢历史 + resume 损坏。这条是原始 bug（"话题实例化后会漂到别的在线设备"）的定稿修复，**不依赖归属/IA 重构，可先落地**。
 - 平台/虚拟节点无漂移问题（provider 内部保证逻辑节点稳定，虚拟化 reuse 对上层透明）。
@@ -265,6 +262,6 @@ v3 把 compute 选择挂在**项目层**（`ComputePool.select(project)`）。�
 
 ## §对 v2/v3 落点的修正
 
-- v3 `ComputePool.select(project)` → 细化为 `select(team-context)` 得池、`resolve(topic)` 得该会话冻结的 target。`Topic` 增 `compute` 字段；`Project` 增 `sticky_compute`；冻结分界线复用已有 `Topic.session_id`。
+- v3 `ComputePool.select(project)` → 细化为 `select(team-context)` 得池、`resolve(topic)` 得该会话冻结的 target。`Topic` 增 `compute` 字段；`Project` 增 `sticky_compute`；冻结分界线是「这个话题有没有 `agent_sessions` 行」。
 - v2 R1 `topic_turn` lease / R2 `run_turn` 契约不变；**affinity 冻结与 lease 正交**（lease 管"同话题串行"，affinity 管"钉在哪台"）。
 - UI 落点（实现细节，非本 spec）：会话算力选择器落在**新建话题流程 / 草稿话题 composer 那条**（`# 本话题 · @芝士` 旁），锁定态显示 🔒。

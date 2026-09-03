@@ -1,17 +1,20 @@
 <script setup lang="ts">
-import type { Project, ProjectMemberRow, Topic } from '../cx_types'
+import type { Project, ProjectAgent, ProjectMemberRow, Topic } from '../cx_types'
 import type { FlatRow, VisibleRow } from '../lib/topicTree'
 
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import { listProjectAgents } from '../api'
+import { columnDotStyle } from '../lib/board'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '../lib/topicTitle'
 import {
   ancestorPathIds,
-  loadCollapsedTopics,
+  isMyTopic,
+  loadExpandedTopics,
   loadOthersGroupOpen,
   partitionByRelevance,
-  saveCollapsedTopics,
+  saveExpandedTopics,
   saveOthersGroupOpen,
   visibleRows,
 } from '../lib/topicTree'
@@ -45,12 +48,13 @@ const props = defineProps<{
   // 私聊未读: {peerHandle: count}, `cheese` = the 芝士 DM. Separate from
   // unreadMap because DM rows are built from the roster and have no topic id.
   privateUnreadMap?: Record<string, number>
+  // 整页形态: 手机上话题列表是页面栈的一层，占满内容区，不是侧边抽屉。
+  page?: boolean
 }>()
 
 const emit = defineEmits<{
   (e: 'select-topic', id: string): void
-  (e: 'create-topic', title: string): void
-  (e: 'split-topic', payload: { topicId: string; title: string }): void
+  (e: 'create-topic', title: string, agentInstanceId?: string | null): void
   // 归档去向: manual archive / unarchive from the row's ⋯ actions.
   (e: 'archive-topic', id: string): void
   (e: 'unarchive-topic', id: string): void
@@ -91,6 +95,7 @@ const route = useRoute()
 
 const projectPages = [
   { key: 'overview', label: '总览', icon: 'mdi-view-agenda-outline' },
+  { key: 'workspace-running', label: '看板', icon: 'mdi-view-column-outline' },
   { key: 'calendar', label: '日历', icon: 'mdi-calendar-outline' },
   { key: 'project-agents', label: 'AI 队友', icon: 'mdi-robot-outline' },
 ] as const
@@ -101,9 +106,34 @@ function openProjectPage(name: string) {
 
 // New topic: don't ask the human for a title — create an untitled one and open
 // it; the title is derived from the first message (and 芝士 can refine it).
-function newTopic() {
-  emit('create-topic', '')
+//
+// 队友是另一回事，必须在这一刻选：换队友会丢掉话题的会话，所以事后再改改的是一
+// 段已经有人说过话的对话。菜单第一项就是默认那个，常用路径仍然是「点开、点第一
+// 项」两下，而且点之前就看得见这个房间要交给谁。
+function newTopic(agentInstanceId?: string | null) {
+  emit('create-topic', '', agentInstanceId)
 }
+
+// 这个项目有哪些队友，供上面那个菜单用。拿不到就退化成不带队友创建（跟项目默认
+// 走）—— 一个还没上线 agent 接口的环境不该连新建话题都点不动。
+const projectAgents = ref<ProjectAgent[]>([])
+async function loadProjectAgents(pid: string | null | undefined) {
+  if (!pid) {
+    projectAgents.value = []
+    return
+  }
+  try {
+    projectAgents.value = (await listProjectAgents(pid)).data
+  } catch {
+    projectAgents.value = []
+  }
+}
+watch(() => props.selectedProjectId, loadProjectAgents, { immediate: true })
+
+// 默认那个排第一 —— 常用路径是「点开、点第一项」，不用在列表里找。
+const newTopicAgents = computed(() =>
+  [...projectAgents.value].sort((a, b) => Number(b.is_default) - Number(a.is_default))
+)
 
 // ----- Topic tree -----
 // A flattened tree node: a topic plus its nesting depth, so the template can
@@ -114,27 +144,45 @@ interface TreeRow {
 }
 
 function inferKind(t: Topic): string {
-  // Backend may already supply `kind`; otherwise derive it from the shape:
-  // a root (no parent) is 本体, a child is 分身, top-level non-root is 话题.
+  // Backend may already supply `kind`; otherwise derive it from the shape.
   const explicit = (t as Topic & { kind?: string }).kind
   if (typeof explicit === 'string' && explicit) return explicit
-  if (!t.parent_id) return 'root'
-  return 'subtopic'
+  return t.parent_id ? 'topic' : 'root'
 }
 
+// 边栏画的是「房间 → 房间里派出去的活」这棵树。活是 `tasks` 表的一行，不是话题，
+// 但它照样要看得见——一件活看不见，房间就会照着自己那份清单把它又做一遍。
+// 「分身」是改造前的残留标签，现在永远取不到了。
 const KIND_BADGE: Record<string, string> = {
   root: '全局',
   topic: '话题',
-  // A task is one piece of work inside a room. It still shows in the rail for
-  // now — moving it into the room's timeline as a card is a UI change of its
-  // own, and dropping the row before that lands would make split-out work
-  // unreachable.
-  task: '任务',
-  subtopic: '分身', // legacy rows, created before work had its own kind
+  thread: '任务',
 }
 
 function kindLabel(t: Topic): string {
   return KIND_BADGE[inferKind(t)] ?? '话题'
+}
+
+/** 这一行是一件活，不是一个房间。 */
+function isThreadRow(t: Topic): boolean {
+  return t.kind === 'thread'
+}
+
+/** 一件活现在骑在哪个 PR 上 —— 「交付」这一段在树上唯一看得见的东西。 */
+function prLabel(t: Topic): string | null {
+  const n = t.card?.pr_number
+  return typeof n === 'number' ? `#${n}` : null
+}
+
+/** 一件活的交付走到哪了。没有卡 = 还在做，什么都不显示。 */
+function cardLabel(t: Topic): string | null {
+  const status = t.card?.status
+  if (!status) return null
+  if (status === 'pending') return '待验收'
+  if (status === 'pr_open') return '等 CI'
+  if (status === 'accepted') return '已采纳'
+  if (status === 'rejected') return '被打回'
+  return null
 }
 
 // Status: only show when notable (archived / draft); active is implicit. Shown
@@ -142,6 +190,9 @@ function kindLabel(t: Topic): string {
 function statusBadge(status: string): string | null {
   if (status === 'archived') return '已归档'
   if (status === 'draft') return '草稿'
+  // 支线只有 open / closed。收工了要说出来，不然一条做完的活在树上和在跑的
+  // 长得一模一样。
+  if (status === 'closed') return '已完成'
   return null
 }
 
@@ -188,7 +239,33 @@ const tree = computed<TreeRow[]>(() => {
 // 「已归档」 group at the bottom (newest archived first) — like Feishu's
 // folded conversations. Non-archived children of an archived parent stay in
 // the active list (their work isn't done).
-const activeTree = computed<TreeRow[]>(() => tree.value.filter((r) => r.topic.status !== 'archived'))
+//
+// 但**活跟着它的房间走**：活只有 open/closed，没有「已归档」这个状态，所以房间
+// 归档时活这一行自己一个字都不变。不显式把它拿掉，房间那一行走了、挂在它下面的
+// 活却全留在活跃列表里——而拍平的树是按 depth 认父子的（见 lib/topicTree 的
+// buildNodes），于是这些活会挂到前面最近的那个房间下面，画进一个跟它毫无关系的
+// 房间，或者干脆摊在顶层。同理，房间不在这份列表里（私聊里派出去的活、房间已经
+// 不在了）的活也没有能挂的地方。要看归档房间里的活，点进那个房间。
+//
+// 子话题不一样，它有自己的归档状态：父话题归了、它还活着，那份活儿没做完，照旧
+// 留在活跃列表里——只是父行没了，深度提到 0，免得被画到隔壁那棵树底下。
+const activeTree = computed<TreeRow[]>(() => {
+  // 深度按**留下来的那个父行**重新算，不沿用原树的：拍平的树里深度就是父子关系
+  // 本身，中间少一层就得少一层缩进，否则缩进指着一行不存在的父行。
+  const depths = new Map<string, number>()
+  const rows: TreeRow[] = []
+  for (const row of tree.value) {
+    if (row.topic.status === 'archived') continue
+    const parentId = row.topic.parent_id
+    const parentDepth = parentId ? depths.get(parentId) : undefined
+    // 房间那一行不在了，活就没有能挂的地方。
+    if (parentDepth === undefined && isThreadRow(row.topic)) continue
+    const depth = parentDepth === undefined ? 0 : parentDepth + 1
+    depths.set(row.topic.id, depth)
+    rows.push(depth === row.depth ? row : { topic: row.topic, depth })
+  }
+  return rows
+})
 const archivedRows = computed<Topic[]>(() =>
   props.topics
     .filter((t) => t.status === 'archived' && inferKind(t) !== 'root')
@@ -241,24 +318,34 @@ function startDm(handle: string) {
   emit('select-peer-dm', handle)
 }
 
-// ---- 子话题折叠 ----
+// ---- 折叠 ----
+// 一个房间下面挂的是**它派出去的活**，不是子话题——房间之下不能再建房间。
 // 范式跟底部的「已归档」分组一致（一个 chevron 收起一堆行），只是这里的开关
 // 长在每一个有子话题的行上。行的可见性/未读聚合是纯逻辑，住在 lib/topicTree.ts
 // 里（有单测），这里只管状态和落盘。
 //
-// 默认展开：升级前后所见完全一致，没有人会因为这次改动突然找不到自己的话题；
-// "这里还有内容" 这个提示再好也弱于直接看见那一行。100+ 话题带来的长列表由
-// 「收起来的状态会被记住」来解——每个人只需要把噪音大的父话题收一次。
-// 按项目存 localStorage（而不是只放内存）：这个 rail 是主导航，每次刷新都要
-// 重收一遍等于没有折叠。存的是**收起来的** id，所以新拆出来的话题天然可见。
-const collapsedIds = ref<ReadonlySet<string>>(new Set<string>())
+// 默认收起，展开是个动作。挂在一个房间下面的是它派出去的活，而活的去处是右边的
+// Task Progress —— 一个跑久了的房间有近两百条，全都摊在主导航上等于把侧栏变成
+// 一份没人读得完的清单。要看某个房间在干什么，点进去比在侧栏里滚要快。
+// 按项目存 localStorage（而不是只放内存）：这个 rail 是主导航，每次刷新都要重展
+// 一遍等于没有记住。存的是**展开的** id，所以新派出去的活天然是收起来的。
+const expandedIds = ref<ReadonlySet<string>>(new Set<string>())
+// `visibleRows` 问的是「哪些行是收起来的」，而我们记的是展开过的那些 —— 有孩子
+// 的行里，没被展开过的就是收起来的。
+const collapsedIds = computed<ReadonlySet<string>>(() => {
+  const withChildren = new Set<string>()
+  for (const t of props.topics) {
+    if (t.parent_id && !expandedIds.value.has(t.parent_id)) withChildren.add(t.parent_id)
+  }
+  return withChildren
+})
 // 「其他话题」这一组展开没展开。默认折叠——这一整条改动的意义就在这里，所以它
 // 也按项目落盘（键不在 = 折叠，见 lib/topicTree.ts）。
 const othersOpen = ref(false)
 watch(
   () => props.selectedProjectId,
   (pid) => {
-    collapsedIds.value = loadCollapsedTopics(pid)
+    expandedIds.value = loadExpandedTopics(pid)
     othersOpen.value = loadOthersGroupOpen(pid)
   },
   { immediate: true }
@@ -284,7 +371,12 @@ function awaitsOf(id: string): boolean {
 //
 // 两组的**行是同一种形态**：同一段模板渲染，所以树形缩进、竖向引导线、16px 状态
 // 槽、未读角标、hover 的 ⋯ 一个不少。折叠组只是把一批行收起来，不是换一种行。
-const grouped = computed(() => partitionByRelevance(activeTree.value))
+//
+// 一件活不参与这个判定：它身上根本没有 `i_participate`（那是房间的字段，见
+// lib/place.ts 里合成地点时给了哪些），而判定把"字段缺失"当相关——于是**任何派
+// 过活的房间都会被它自己的活顶进「我参与的」**，哪怕后端明说这个房间与我无关。
+// 相关不相关由房间回答，活跟着它的房间走：房间上去了，它派出去的活跟着上去。
+const grouped = computed(() => partitionByRelevance(activeTree.value, (t) => !isThreadRow(t) && isMyTopic(t)))
 
 function rowsOf(rows: readonly FlatRow<Topic>[]) {
   return visibleRows(rows, {
@@ -354,18 +446,18 @@ function rowRunning(row: VisibleRow<Topic>): boolean {
   return row.topic.running === true || row.hiddenRunning
 }
 function toggleTitle(row: VisibleRow<Topic>): string {
-  if (!row.collapsed) return '收起子话题'
-  if (row.hiddenAwaits) return '展开子话题：里面有事等你处理'
-  if (row.hiddenRunning) return '展开子话题：芝士正在里面工作'
-  return '展开子话题'
+  if (!row.collapsed) return '收起'
+  if (row.hiddenAwaits) return '展开：里面有事等你处理'
+  if (row.hiddenRunning) return '展开：芝士正在里面工作'
+  return '展开'
 }
 
 function toggleCollapse(id: string) {
-  const next = new Set(collapsedIds.value)
+  const next = new Set(expandedIds.value)
   if (next.has(id)) next.delete(id)
   else next.add(id)
-  collapsedIds.value = next
-  saveCollapsedTopics(props.selectedProjectId, next)
+  expandedIds.value = next
+  saveExpandedTopics(props.selectedProjectId, next)
 }
 
 // The root topic (本体) — the pinned 「全局」 row at the top of the list. And
@@ -397,13 +489,6 @@ function saveRename(t: Topic) {
   if (title) emit('rename-topic', { id: t.id, title })
 }
 
-function onSplit(t: Topic) {
-  // Never ask the human for a title (spec §rule 4, mirrors newTopic()). The
-  // sub-topic is born untitled and opened; its title is derived from the first
-  // message (芝士 can refine it via a tool).
-  emit('split-topic', { topicId: t.id, title: '' })
-}
-
 // 行操作收进一颗 ⋯ (C5): hover 只浮出一个入口，不再是三颗并排的按钮盖住标题
 // 尾巴。菜单展开期间那一颗必须留在屏幕上——它是菜单的 activator，跟着 hover
 // 一起消失的话，鼠标一移进菜单，菜单自己就塌了。
@@ -426,9 +511,15 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
 </script>
 
 <template>
-  <SecondaryNavigation :width="width ?? 280" custom-class="topic-rail">
-    <!-- Drag handle on the right edge to resize the rail. -->
-    <div class="rail-resizer" title="拖动调整宽度" @mousedown="startResize" />
+  <component
+    :is="page ? 'div' : SecondaryNavigation"
+    :width="page ? undefined : width ?? 280"
+    :custom-class="page ? undefined : 'topic-rail'"
+    :class="page ? 'topic-rail topic-rail--page' : undefined"
+  >
+    <!-- Drag handle on the right edge to resize the rail. 整页形态下没有可拖的
+         宽度——它占满内容区。 -->
+    <div v-if="!page" class="rail-resizer" title="拖动调整宽度" @mousedown="startResize" />
     <!-- 三段式 (C3): 头固定 / 中段唯一滚动 / 尾固定。私聊和它的未读徽标在
          话题列表滚到底时必须还在屏幕上。 -->
     <div class="d-flex flex-column fill-height">
@@ -438,29 +529,33 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
            整块可点就得整块可聚焦、能用回车/空格打开，否则键盘用户够不着项目
            设置。右边的 chevron 只是"这里能展开"的指示，不再是唯一的靶子——所以
            它是 v-icon 不是 v-btn，按钮套按钮既非法也抢焦点。 -->
-      <v-menu location="bottom end">
-        <template #activator="{ isActive, props: menuProps }">
-          <button
-            v-bind="menuProps"
-            type="button"
-            class="sidebar-header sidebar-header-menu rail-header"
-            :class="{ 'sidebar-header-menu-active': isActive }"
-            title="项目菜单"
-          >
-            <!-- 名字自己留一个 title：它是省略号截断的，鼠标停在名字上要能看到全名。 -->
-            <span class="rail-header__name" :title="currentProjectName">{{ currentProjectName }}</span>
-            <v-icon class="rail-header__caret" size="18" icon="mdi-chevron-down" />
-          </button>
-        </template>
-        <v-list density="compact" nav>
-          <v-list-item
-            prepend-icon="mdi-cog-outline"
-            title="项目设置"
-            :disabled="!selectedProjectId"
-            @click="openProjectPage('project-settings')"
-          />
-        </v-list>
-      </v-menu>
+      <!-- 整页形态（手机上的话题列表）下这一行不长在页面上，而是填进顶栏那一格：
+           手机上只有一条顶栏，页面自己再画一条就是两条横条一上一下写同类的东西。 -->
+      <Teleport to="#app-bar-slot" :disabled="!page">
+        <v-menu location="bottom end">
+          <template #activator="{ isActive, props: menuProps }">
+            <button
+              v-bind="menuProps"
+              type="button"
+              class="sidebar-header sidebar-header-menu rail-header"
+              :class="{ 'sidebar-header-menu-active': isActive, 'rail-header--bar': page }"
+              title="项目菜单"
+            >
+              <!-- 名字自己留一个 title：它是省略号截断的，鼠标停在名字上要能看到全名。 -->
+              <span class="rail-header__name" :title="currentProjectName">{{ currentProjectName }}</span>
+              <v-icon class="rail-header__caret" size="18" icon="mdi-chevron-down" />
+            </button>
+          </template>
+          <v-list density="compact" nav>
+            <v-list-item
+              prepend-icon="mdi-cog-outline"
+              title="项目设置"
+              :disabled="!selectedProjectId"
+              @click="openProjectPage('project-settings')"
+            />
+          </v-list>
+        </v-menu>
+      </Teleport>
 
       <!-- 中段：这个侧栏里唯一会滚的东西 -->
       <div class="rail-scroll flex-grow-1 overflow-y-auto">
@@ -522,7 +617,34 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
 
           <div class="t-eyebrow side-subhead side-subhead--row">
             <span>话题</span>
-            <v-btn icon="mdi-plus" size="x-small" variant="tonal" color="primary" title="新建话题" @click="newTopic" />
+            <!-- 建话题时就把房间交给谁定下来。队友列表拿不到时（旧环境）退回
+                 一键直建，不让侧栏的主要动作被一个可选接口卡住。 -->
+            <v-menu v-if="projectAgents.length" location="bottom end">
+              <template #activator="{ props: menu }">
+                <v-btn v-bind="menu" icon="mdi-plus" size="x-small" variant="tonal" color="primary" title="新建话题" />
+              </template>
+              <v-list density="compact" min-width="220">
+                <v-list-subheader>交给哪个 AI 队友</v-list-subheader>
+                <v-list-item v-for="a in newTopicAgents" :key="a.id ?? a.handle" @click="newTopic(a.id)">
+                  <template #prepend>
+                    <v-icon size="small" icon="mdi-robot-outline" />
+                  </template>
+                  <v-list-item-title>{{ a.display_name }}</v-list-item-title>
+                  <template v-if="a.is_default" #append>
+                    <span class="t-meta c-muted">默认</span>
+                  </template>
+                </v-list-item>
+              </v-list>
+            </v-menu>
+            <v-btn
+              v-else
+              icon="mdi-plus"
+              size="x-small"
+              variant="tonal"
+              color="primary"
+              title="新建话题"
+              @click="newTopic()"
+            />
           </div>
 
           <div v-if="loadingTopics" class="px-4 py-2">
@@ -609,6 +731,12 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                     <span v-else-if="row.topic.running" class="row-slot">
                       <span class="running-dot" title="芝士正在这个话题里工作" />
                     </span>
+                    <!-- 一件活不是一个地方。缩进说的是「它在这个房间里」，这颗
+                         记号说的是「这一行是一件活」——两者缺一，树上就分不出
+                         「房间」和「房间里在做的事」。 -->
+                    <span v-else-if="isThreadRow(row.topic)" class="row-slot">
+                      <v-icon size="13" class="thread-mark">mdi-call-split</v-icon>
+                    </span>
                     <span v-else class="row-slot" />
                   </template>
                   <v-list-item-title class="d-flex align-center topic-title">
@@ -627,6 +755,16 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                       @blur="saveRename(row.topic)"
                     />
                     <template v-else>
+                      <!-- 「该谁动」的色点，和看板上那一列同一个颜色、同一个形状
+                           （`lib/board.ts` 是唯一的来源）。侧栏和看板对不上的话，
+                           人就得在两块屏幕之间自己做一次翻译。
+                           后端没给 `presentation` 就不画——不在前端另算一个顶上。 -->
+                      <span
+                        v-if="row.topic.presentation"
+                        class="board-dot"
+                        :style="columnDotStyle(row.topic.presentation.column)"
+                        :title="row.topic.presentation.display_status"
+                      />
                       <span class="text-truncate" :class="{ 'title-unread': row.unreadTotal > 0 }">{{
                         row.topic.title
                       }}</span>
@@ -634,7 +772,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                       <span
                         v-if="row.collapsed && row.hiddenCount > 0"
                         class="subtree-count ms-2"
-                        :title="`收起了 ${row.hiddenCount} 个子话题`"
+                        :title="`收起了 ${row.hiddenCount} 项`"
                         >{{ countLabel(row.hiddenCount) }}</span
                       >
                       <span
@@ -643,6 +781,14 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                       >
                         <span class="status-dot status-dot--warn" />
                         {{ statusBadge(row.topic.status) }}
+                      </span>
+                      <!-- 交付：这件活骑在哪个 PR 上，走到哪一步了。房间的交付是整条
+                           分支一张卡，不在树上；一件活的卡才挂在它自己这一行。 -->
+                      <span v-if="prLabel(row.topic)" class="thread-pr ms-2" :title="cardLabel(row.topic) ?? '已开 PR'">
+                        {{ prLabel(row.topic) }}
+                      </span>
+                      <span v-else-if="cardLabel(row.topic)" class="thread-card ms-2">
+                        {{ cardLabel(row.topic) }}
                       </span>
                     </template>
                   </v-list-item-title>
@@ -682,14 +828,6 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                             prepend-icon="mdi-archive-arrow-down-outline"
                             title="归档"
                             @click="emit('archive-topic', row.topic.id)"
-                          />
-                          <!-- 拆出子话题点一下就真的建一个话题并打开它——比上面两条
-                               重一个量级，所以在菜单里单独隔一组，不和改名并排。 -->
-                          <v-divider class="my-1" />
-                          <v-list-item
-                            prepend-icon="mdi-source-branch-plus"
-                            title="拆出子话题"
-                            @click="onSplit(row.topic)"
                           />
                         </v-list>
                       </v-menu>
@@ -854,11 +992,17 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
       <!-- 新建项目 moved to the project rail's + (App.vue) — one affordance,
            Discord-style. The create-project emit stays for API compatibility. -->
     </div>
-  </SecondaryNavigation>
+  </component>
 </template>
 
 <style scoped>
 /* Right-edge resize handle (sits on top of the drawer's border). */
+/* 整页形态：占满内容区，不画抽屉那条右边线。 */
+.topic-rail--page {
+  width: 100%;
+  height: 100%;
+  background: var(--canvas);
+}
 .rail-resizer {
   position: absolute;
   top: 0;
@@ -923,6 +1067,12 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   text-align: start;
   cursor: pointer;
 }
+/* 填进顶栏的那一份不画自己的高度和底线——那两样归顶栏。 */
+.rail-header--bar {
+  height: 100%;
+  border-block-end: 0;
+  padding-inline: 0;
+}
 .rail-header:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
@@ -934,7 +1084,8 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
 }
 .rail-header__name {
   min-width: 0;
-  font-size: 14px;
+  /* 15/600 = .t-title，和话题头、手机顶栏同一号：这三条横条在屏幕上是接着的。 */
+  font-size: 15px;
   font-weight: 600;
   color: var(--ink);
   white-space: nowrap;
@@ -1009,6 +1160,28 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   color: var(--muted) !important;
 }
 
+/* 一件活骑的 PR。数字本身就是它要说的全部，所以是最轻的一档字，不抢标题。 */
+.thread-pr,
+.thread-card {
+  flex: none;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.thread-mark {
+  color: var(--faint);
+}
+/* 「该谁动」的色点。颜色和形状由 `lib/board.ts` 一处给出（内联样式），这里只管
+   尺寸和位置 —— scoped 样式进不了别的组件，颜色写在这儿就意味着看板和房间总览
+   各有一份，而这颗点存在的全部意义就是三处说的是同一件事。 */
+.board-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-inline-end: 6px;
+  border-radius: 50%;
+  border: 2px solid var(--faint);
+}
 .topic-status {
   font-size: 11.5px;
 }
@@ -1300,6 +1473,18 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
 .split-btn:hover {
   background: var(--fill);
   color: var(--accent);
+}
+/* 触摸屏没有 hover，:focus-within 又要先聚焦——这两条规则加起来，⋯ 菜单在手机上
+   根本摸不到。所以在没有 hover 能力的设备上它常驻。按输入方式判断，不按视口宽度：
+   带触摸屏的笔记本两样都对。 */
+@media (hover: none) {
+  .row-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .topic-row .unread-badge {
+    opacity: 1;
+  }
 }
 /* 菜单展开时那颗 ⋯ 必须留着：它是菜单的 activator，跟 hover 一起消失的话
    鼠标一离开行、菜单就没了根。 */

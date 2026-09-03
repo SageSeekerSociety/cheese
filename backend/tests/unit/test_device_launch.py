@@ -1,5 +1,6 @@
 """Device screen launcher: hooks settings + self-contained launch command."""
 
+import contextlib
 import os
 import re
 import subprocess
@@ -7,7 +8,7 @@ import time
 
 import pytest
 
-from app.domain.agent import device_launch
+from app.domain.agent.harness.claude_code import device_launch
 
 
 def test_hooks_settings_wire_command_hook_to_forwarder():
@@ -24,7 +25,7 @@ def test_hooks_settings_wire_command_hook_to_forwarder():
 
 
 def test_build_screen_launch_shapes_command_and_env():
-    command, env, cheeselet = device_launch.build_screen_launch(
+    command, env = device_launch.build_screen_launch(
         hook_url="http://h/sandbox/hooks/T",
         hook_token="scoped-tok",
         home_dir="/dev/home",
@@ -47,7 +48,7 @@ def test_build_screen_launch_shapes_command_and_env():
     # Session name is derived from the work dir (per-topic isolation; a stale
     # session can't serve a different topic's tree).
     assert 'SESSION="cheese_$(printf' in script
-    assert 'tmux new-session -d -s "$SESSION" -c "$CHEESE_WORK"' in script
+    assert 'new-session -d -s "$SESSION" -c "$CHEESE_WORK"' in script
     assert "CHEESE_HOOK_SPOOL" in script
     # The drainer deletes only on DURABLE acceptance (code:200 = live delivery or
     # server-side parking), with a 24h age cap for an unreachable backend.
@@ -62,8 +63,6 @@ def test_build_screen_launch_shapes_command_and_env():
     # The gates are written by the launch script itself; nothing is passed for a
     # separate interpreter to read back.
     assert "CHEESE_CLAUDE_GATES" not in env
-    # The minimal cheeselet only drives input (no state inference).
-    assert "cheese.expose('prompt'" in cheeselet
 
 
 def test_forwarder_posts_hook_json_with_token():
@@ -121,7 +120,7 @@ def test_no_ca_means_no_ca_block():
 
 
 def test_build_screen_launch_threads_the_ca_through():
-    command, _env, _cheeselet = device_launch.build_screen_launch(
+    command, _env = device_launch.build_screen_launch(
         hook_url="http://h/sandbox/hooks/T",
         hook_token="t",
         home_dir="/h",
@@ -289,8 +288,8 @@ def test_the_gates_written_are_valid_json():
 
 # --- the inner claude must boot on THIS launch's token, not a frozen one ------
 #
-# A device's `claude` runs in a PERSISTENT inner tmux session on the box's default
-# tmux server. The 407-that-outlives-a-re-mint has two layers:
+# A device's `claude` runs in a PERSISTENT inner tmux session on the connector's
+# own private tmux server. The 407-that-outlives-a-re-mint has two layers:
 #   1. tmux seeds a new session's env from the SERVER's GLOBAL env — frozen when
 #      the server first started — for every var not in `update-environment`
 #      (DISPLAY/SSH_* only). So a brand-new claude on an already-running server
@@ -307,14 +306,25 @@ def _tmux_hosting_block() -> str:
     """The tmux-hosting branch of the launcher, standalone (its env is supplied by
     the caller instead of the full launcher's earlier setup)."""
     script = device_launch.build_launch_script()
-    after = script.split("  unset TMUX\n", 1)[1]
-    body = after.split('  exec tmux attach -t "$SESSION"\n', 1)[0]
-    return "set -e\nunset TMUX\n" + body + 'exec tmux attach -t "$SESSION"\n'
+    head = "if command -v tmux >/dev/null 2>&1; then\n"
+    tail = '  exec tmux -S "$CHEESE_TMUX_SOCK" attach -t "$SESSION"\n'
+    body = script.split(head, 1)[1].split(tail, 1)[0]
+    return "set -e\n" + head + body + tail + "fi\n"
+
+
+# The socket the stub/real tmux below stands for: the launcher reads it out of
+# $TMUX, exactly as a pane of the connector's own tmux would.
+STUB_SOCK = "/tmp/cheese-test-connector.sock"  # noqa: S108 — never bound, only named
 
 
 def _stub_tmux_env(tmp_path):
     """A home + a stub `tmux` that records kill/new/window to a log and toggles a
-    has-session marker, so a run's session-lifecycle decisions are observable."""
+    has-session marker, so a run's session-lifecycle decisions are observable.
+
+    The stub distinguishes the two servers a launch can talk to: one named with
+    `-S` (ours) and the machine owner's DEFAULT one (no `-S`). Calls against the
+    default server are logged with a `default:` prefix so a test can assert we
+    never host anything there."""
     home = tmp_path / "home"
     (home / ".claude").mkdir(parents=True)
     work = home / "work"
@@ -326,14 +336,26 @@ def _stub_tmux_env(tmp_path):
     stub = bindir / "tmux"
     stub.write_text(
         "#!/bin/sh\n"
+        'sock=""\n'
+        'if [ "$1" = "-S" ]; then sock="$2"; shift 2; fi\n'
         'cmd="$1"; shift\n'
+        'if [ -z "$sock" ]; then\n'
+        '  printf \'default:%s\\n\' "$cmd" >> "$STUB_LOG"\n'
+        '  case "$cmd" in\n'
+        '    has-session) [ -f "$STUB_OWNER_MARK" ] ;;\n'
+        '    kill-session) rm -f "$STUB_OWNER_MARK" ;;\n'
+        "    *) : ;;\n"
+        "  esac\n"
+        "  exit\n"
+        "fi\n"
+        'printf \'%s\\n\' "$sock" >> "$STUB_SOCKS"\n'
         'case "$cmd" in\n'
         '  has-session) [ -f "$STUB_MARK" ] ;;\n'
         '  kill-session) printf \'kill\\n\' >> "$STUB_LOG"; rm -f "$STUB_MARK" ;;\n'
         "  new-session) printf 'new\\n' >> \"$STUB_LOG\";"
         ' printf \'%s\\n\' "$@" >> "$STUB_ARGS"; : > "$STUB_MARK" ;;\n'
         "  new-window) printf 'window\\n' >> \"$STUB_LOG\" ;;\n"
-        "  list-panes) printf '12345\\n' ;;\n"
+        "  list-panes) printf '%s\\n' \"${STUB_PANES:-12345}\" ;;\n"
         "  attach) printf 'attach\\n' >> \"$STUB_LOG\" ;;\n"
         "  *) : ;;\n"
         "esac\n"
@@ -345,8 +367,11 @@ def _stub_tmux_env(tmp_path):
         "HOME": str(home),
         "CHEESE_WORK": str(work),
         "CLAUDE": "claude --model x",
+        "TMUX": f"{STUB_SOCK},1,0",
         "STUB_LOG": str(log),
         "STUB_MARK": str(mark),
+        "STUB_OWNER_MARK": str(tmp_path / "owner-session.mark"),
+        "STUB_SOCKS": str(tmp_path / "sockets.seen"),
         "STUB_ARGS": str(tmp_path / "newsession.args"),
     }
     return home, env, log
@@ -365,6 +390,56 @@ def _tokexp_file(home):
     files = list((home / ".claude").glob("*.tokexp"))
     assert len(files) == 1, files
     return files[0]
+
+
+def test_the_agent_session_never_lands_on_the_machine_owners_tmux_server(tmp_path):
+    """A Hosted machine is someone's own laptop. If our claude lives in their
+    DEFAULT tmux server then their `tmux kill-server` takes every agent on the
+    box with it, our teardown takes their sessions, and `tmux ls` shows them our
+    internals. So every command that hosts, adopts or attaches must name the
+    connector's own socket — the one $TMUX handed this pane."""
+    home, env, log = _stub_tmux_env(tmp_path)
+    _run_block(env, expiry=int(time.time()) + 100_000)
+
+    sockets = set(open(env["STUB_SOCKS"]).read().split())
+    assert sockets == {STUB_SOCK}, (
+        f"an inner tmux command went to a server we do not own: {sockets}"
+    )
+    on_default = [s for s in log.read_text().split() if s.startswith("default:")]
+    assert not [s for s in on_default if s not in ("default:has-session",)], (
+        f"the machine owner's server was used for more than a look: {on_default}"
+    )
+
+
+def test_a_session_left_on_the_machine_owners_server_is_retired(tmp_path):
+    """An agent session sitting on the default server is ours wherever it came
+    from, and it is not inert: it holds this topic's rendezvous socket, spool and
+    work tree, so leaving it means a second claude answering for this topic. The
+    launch takes it down instead of hosting alongside it."""
+    home, env, log = _stub_tmux_env(tmp_path)
+    open(env["STUB_OWNER_MARK"], "w").close()  # one is squatting there
+
+    _run_block(env, expiry=int(time.time()) + 100_000)
+
+    steps = log.read_text().split()
+    assert "default:kill-session" in steps, "the misplaced session was left running"
+    assert not os.path.exists(env["STUB_OWNER_MARK"])
+    assert "new" in steps, "and this launch still hosts its own claude"
+
+
+def test_a_session_whose_claude_died_is_not_adopted(tmp_path):
+    """The connector's server keeps a pane after its program exits, so a claude
+    that died leaves the session standing with a dead pane. Adopting it hosts
+    nothing — every later turn would attach to a corpse and the topic would never
+    get a claude again."""
+    home, env, log = _stub_tmux_env(tmp_path)
+    good = int(time.time()) + 100_000
+    _run_block(env, expiry=good)  # create
+    _run_block({**env, "STUB_PANES": "1"}, expiry=good)  # its claude has since died
+
+    steps = log.read_text().split()
+    assert "kill" in steps, "a session whose pane is dead must be retired"
+    assert steps.count("new") == 2, "and replaced by a live claude"
 
 
 def test_a_fresh_inner_session_records_the_launch_token_expiry(tmp_path):
@@ -479,10 +554,9 @@ def test_fresh_token_overrides_a_stale_tmux_server_global(tmp_path):
     fake_claude.chmod(0o755)
     bindir = tmp_path / "bin"
     bindir.mkdir()
-    # A tmux that pins every launcher call to our private test server (which we
-    # pre-seed with a STALE global token, standing in for the box's old server).
-    (bindir / "tmux").write_text(f'#!/bin/sh\nexec "{real_tmux}" -S "{sock}" "$@"\n')
-    (bindir / "tmux").chmod(0o755)
+    # PATH leads with a dir of our own so the assertion below can tell THIS
+    # launch's PATH from the one frozen into the seed server's global env.
+    (bindir / "keep").write_text("")
     try:
         subprocess.run(
             [real_tmux, "-S", sock, "new-session", "-d", "-s", "seed", "sleep 60"],
@@ -502,6 +576,10 @@ def test_fresh_token_overrides_a_stale_tmux_server_global(tmp_path):
             "CLAUDE_CODE_OAUTH_TOKEN": "FRESH-live-token",
             "CHEESE_HOOK_SPOOL": f"{home}/.claude/cheese-spool",
             "CHEESE_TOKEN_EXPIRES": str(int(time.time()) + 100_000),
+            # What a pane of the connector's own tmux sees. The launcher reads
+            # the socket out of it, so the seeded server IS the one it hosts in
+            # — no wrapper pinning it there.
+            "TMUX": f"{sock},1,0",
         }
         subprocess.run(
             ["sh", "-c", _tmux_hosting_block()],
@@ -552,7 +630,7 @@ def _launch_with_tunnel(**overrides):
         "HTTPS_PROXY": "http://127.0.0.1:8445",
     }
     env.update(overrides)
-    command, _env, _cheeselet = device_launch.build_screen_launch(
+    command, _env = device_launch.build_screen_launch(
         hook_url="http://h/sandbox/hooks/T",
         hook_token="scoped-tok",
         home_dir="/dev/home",
@@ -597,7 +675,7 @@ def test_the_helper_starts_inside_the_session_and_before_claude():
     claude reads HTTPS_PROXY once and calls out immediately, so a helper that is
     still binding loses that race and the screen boots unauthenticated."""
     script = _launch_with_tunnel()
-    assert "$TUP $DRAINCMD & exec $CLAUDE" in script
+    assert "$TUP$PUP $DRAINCMD & exec $CLAUDE" in script
     assert 'TUP="sh \\"$HOME/.claude/cheese-tunnel-up\\" >/dev/null 2>&1;"' in script
     # The wait itself, in the up-script — and NOT via bash's /dev/tcp: this runs
     # under `sh`, which is dash on the machine images, where that redirect fails
@@ -630,13 +708,187 @@ def test_a_helper_running_older_code_is_retired_not_adopted():
     assert 'kill "$PID"' in script
 
 
+def _tunnel_up_home(tmp_path):
+    """A HOME laid out the way the launcher leaves one, with a stub helper that
+    binds its --port and then sits there — the only thing about the real helper
+    this script cares about."""
+    from app.domain.agent.harness.claude_code.device_launch import CHEESE_TUNNEL_UP
+
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude" / "cheese-tunnel.py").write_text(
+        "import socket, sys, time\n"
+        "port = int(sys.argv[sys.argv.index('--port') + 1])\n"
+        "s = socket.socket()\n"
+        "s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\n"
+        "s.bind(('127.0.0.1', port))\n"
+        "s.listen(5)\n"
+        "print('tunnel listening on 127.0.0.1:%d' % port, flush=True)\n"
+        "time.sleep(300)\n"
+    )
+    (home / ".claude" / "cheese-tunnel.token").write_text("")
+    up = home / ".claude" / "cheese-tunnel-up"
+    up.write_text(CHEESE_TUNNEL_UP)
+    up.chmod(0o755)
+    return home, up
+
+
+def _free_port() -> int:
+    import socket
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
+
+
+def _listening(port: int) -> bool:
+    import socket
+
+    try:
+        socket.create_connection(("127.0.0.1", port), timeout=0.5).close()
+    except OSError:
+        return False
+    return True
+
+
+def _await_listening(port: int, *, timeout: float = 10.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if _listening(port):
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def _kill_pidfile(home) -> None:
+    import signal
+
+    try:
+        pid = int((home / ".claude" / "cheese-tunnel.pid").read_text().strip())
+    except (OSError, ValueError):
+        return
+    with contextlib.suppress(OSError):
+        os.kill(pid, signal.SIGKILL)
+
+
+@pytest.mark.skipif(not _tmux_ge_30(), reason="needs a real tmux >= 3.0")
+def test_the_tunnel_helper_outlives_the_window_that_started_it(tmp_path):
+    """The reuse path starts the helper as the command of its own tmux window,
+    and that window is torn down the instant the command returns. A helper that
+    dies with it leaves `claude` — which read HTTPS_PROXY once at startup and
+    cannot be told a new one — dialling a dead port for the life of the screen.
+
+    Measured 2026-08-30: fifteen topics in exactly that state, their
+    `cheese-tunnel.log` showing `tunnel listening` at the last launch's
+    timestamp, one of them re-@'d four times in three hours without a single
+    reply."""
+    import shutil
+
+    home, _up = _tunnel_up_home(tmp_path)
+    port = _free_port()
+    tmux = shutil.which("tmux") or "tmux"  # the skipif above already found it
+    sock = f"/tmp/cu{os.getpid()}.sock"  # noqa: S108 — ephemeral, killed below
+    try:
+        subprocess.run(
+            [tmux, "-S", sock, "new-session", "-d", "-s", "s", "sleep 60"], check=True
+        )
+        subprocess.run(
+            [
+                tmux, "-S", sock, "new-window", "-d", "-t", "s:", "-n", "cheese-tunnel",
+                f'HOME={home} CHEESE_TUNNEL_PORT={port} CHEESE_TUNNEL_URL=wss://x/y '
+                f'exec sh "{home}/.claude/cheese-tunnel-up"',
+            ],
+            check=True,
+        )  # fmt: skip
+        assert _await_listening(port), (
+            "the helper did not come up in its own tmux window"
+        )
+        # The window's command has long returned by now; the helper must not have
+        # gone down with it.
+        time.sleep(2)
+        assert _listening(port), (
+            "the helper died with the window that started it — every turn on this "
+            "screen now fails with ConnectionRefused and nothing can repair it"
+        )
+    finally:
+        _kill_pidfile(home)
+        subprocess.run([tmux, "-S", sock, "kill-server"], capture_output=True)
+
+
+def _run_tunnel_up(home, port: int):
+    return subprocess.run(
+        ["sh", str(home / ".claude" / "cheese-tunnel-up")],
+        env={
+            **os.environ,
+            "HOME": str(home),
+            "CHEESE_TUNNEL_PORT": str(port),
+            "CHEESE_TUNNEL_URL": "wss://x/y",
+        },
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
+def test_a_helper_it_already_started_is_adopted_rather_than_churned(tmp_path):
+    """A screen is reused across turns, so this runs on every launch. Restarting
+    a working helper each time would reset every in-flight connection."""
+    home, _up = _tunnel_up_home(tmp_path)
+    port = _free_port()
+    pidf = home / ".claude" / "cheese-tunnel.pid"
+    try:
+        _run_tunnel_up(home, port)
+        assert _await_listening(port)
+        first = pidf.read_text().strip()
+        _run_tunnel_up(home, port)
+        assert pidf.read_text().strip() == first, (
+            "a healthy helper was restarted instead of adopted"
+        )
+        assert _listening(port)
+    finally:
+        _kill_pidfile(home)
+
+
+def test_a_recorded_pid_that_is_alive_but_serves_no_port_is_replaced(tmp_path):
+    """The recorded pid being alive proves only that SOME process holds that
+    number — after a reboot, or on a box that has burnt through the pid space,
+    that is a coincidence. Adopting on it would leave the port dead for the life
+    of the screen, which is the failure this script exists to end."""
+    home, _up = _tunnel_up_home(tmp_path)
+    port = _free_port()
+    claude = home / ".claude"
+    impostor = subprocess.Popen(["sh", "-c", "sleep 300"])
+    try:
+        # The state the box is actually found in: a pid that resolves, a stamp
+        # that matches the helper on disk, and nothing listening.
+        (claude / "cheese-tunnel.pid").write_text(f"{impostor.pid}\n")
+        stamp = subprocess.run(
+            ["cksum", str(claude / "cheese-tunnel.py")],
+            capture_output=True,
+            text=True,
+        ).stdout.split()[0]
+        (claude / "cheese-tunnel.stamp").write_text(f"{stamp}\n")
+        assert not _listening(port)
+
+        _run_tunnel_up(home, port)
+
+        assert _await_listening(port), (
+            "the port is still dead — an impostor pid was adopted as a live helper"
+        )
+        assert (claude / "cheese-tunnel.pid").read_text().strip() != str(impostor.pid)
+    finally:
+        _kill_pidfile(home)
+        impostor.terminate()
+        impostor.wait(timeout=5)
+
+
 def test_the_helper_is_verified_by_the_dash_syntax_check_too():
     """`cheese-tunnel-up` runs under sh (dash on the machine images), and it is
     nested inside a heredoc inside an f-string — `bash -n` on the outer script
     does not parse it. Extracting it is the only way this is checked at all."""
     import subprocess
 
-    from app.domain.agent.device_launch import CHEESE_TUNNEL_UP
+    from app.domain.agent.harness.claude_code.device_launch import CHEESE_TUNNEL_UP
 
     checked = subprocess.run(
         ["sh", "-n"], input=CHEESE_TUNNEL_UP, text=True, capture_output=True
@@ -733,7 +985,9 @@ def _run_reconcile(
     import os
     import subprocess
 
-    from app.domain.agent.device_launch import CHEESE_SETTINGS_RECONCILE
+    from app.domain.agent.harness.claude_code.device_launch import (
+        CHEESE_SETTINGS_RECONCILE,
+    )
 
     live = f"{tmp}/settings.json"
     if settings is not None:
@@ -896,6 +1150,7 @@ def test_a_transient_create_failure_fails_loudly_not_into_the_fallback(tmp_path)
     stub = bindir / "tmux"
     stub.write_text(
         "#!/bin/sh\n"
+        'if [ "$1" = "-S" ]; then shift 2; fi\n'
         f'echo "$@" >> "{calls}"\n'
         'case "$1" in\n'
         "  has-session) exit 1 ;;\n"
@@ -912,6 +1167,7 @@ def test_a_transient_create_failure_fails_loudly_not_into_the_fallback(tmp_path)
             "CHEESE_WORK": str(work),
             "CLAUDE": "true",
             "CHEESE_TOKEN_EXPIRES": str(int(time.time()) + 100_000),
+            "TMUX": f"{STUB_SOCK},1,0",
         },
         capture_output=True,
         text=True,
@@ -939,6 +1195,7 @@ def test_an_old_tmux_without_dash_e_still_gets_the_fallback(tmp_path):
     stub = bindir / "tmux"
     stub.write_text(
         "#!/bin/sh\n"
+        'if [ "$1" = "-S" ]; then shift 2; fi\n'
         f'echo "$@" >> "{calls}"\n'
         'case "$1" in\n'
         "  has-session) exit 1 ;;\n"
@@ -961,9 +1218,92 @@ def test_an_old_tmux_without_dash_e_still_gets_the_fallback(tmp_path):
             "CHEESE_WORK": str(work),
             "CLAUDE": "true",
             "CHEESE_TOKEN_EXPIRES": str(int(time.time()) + 100_000),
+            "TMUX": f"{STUB_SOCK},1,0",
         },
         capture_output=True,
         text=True,
     )
     assert result.returncode == 0, result.stderr
     assert "fallback-done" in calls.read_text()
+
+
+# --- 运行环境预览: the preview helper shipped alongside the tunnel's -------------
+
+
+def _launch_with_preview(**overrides):
+    return _launch_with_tunnel(
+        CHEESE_PREVIEW_URL="wss://gw.example/api/preview/tunnel", **overrides
+    )
+
+
+def test_the_preview_helper_and_its_token_are_written_every_launch():
+    """Same reasoning as the tunnel helper's: it re-reads the token per
+    connection, so rewriting the file is how a refreshed credential reaches a
+    helper that is already running."""
+    script = _launch_with_preview()
+    assert 'cat > "$HOME/.claude/cheese-preview.py"' in script
+    # The real module, not a paraphrase of it.
+    assert "class PortSource:" in script and "OP_WS_OPEN" in script
+    # Written atomically and mode-restricted: it holds a scoped token.
+    assert 'chmod 600 "$HOME/.claude/cheese-preview.token.tmp"' in script
+
+
+def test_a_deployment_without_a_preview_url_writes_and_runs_none_of_it():
+    script = _launch_with_tunnel(CHEESE_PREVIEW_URL="")
+    assert 'PUP=""' in script
+    assert 'if [ -n "${CHEESE_PREVIEW_URL:-}" ]; then' in script
+
+
+def test_the_preview_up_script_is_valid_shell_under_dash_too():
+    """It runs under `sh` (dash on the machine images) and is nested inside a
+    heredoc inside an f-string, so `bash -n` on the outer script never parses
+    it — extracting it is the only way this is checked at all."""
+    checked = subprocess.run(
+        ["sh", "-n"],
+        input=device_launch.CHEESE_PREVIEW_UP,
+        text=True,
+        capture_output=True,
+    )
+    assert checked.returncode == 0, checked.stderr
+
+
+def test_a_machine_that_never_previews_anything_runs_no_helper(tmp_path):
+    """The point of the port file: a preview costs a process only once somebody
+    has asked for one. Starting the helper on every screen would put an idle
+    python on every enrolled laptop for a feature most topics never use."""
+    (tmp_path / ".claude").mkdir()
+    result = subprocess.run(
+        ["sh", "-c", device_launch.CHEESE_PREVIEW_UP],
+        env={
+            "HOME": str(tmp_path),
+            "PATH": os.environ["PATH"],
+            "CHEESE_PREVIEW_URL": "wss://gw.example/api/preview/tunnel",
+        },
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert not (tmp_path / ".claude/cheese-preview.pid").exists()
+
+
+def test_declaring_a_port_writes_it_on_the_machine(tmp_path):
+    """`cheese serve` hands the port to this script and to nothing else. The
+    file it lands in is the only address the helper will ever dial, so nothing
+    the platform sends can move it — the whole reason the port is not a field on
+    the wire. (No CHEESE_PREVIEW_URL here, so the helper itself never starts;
+    what is under test is where the port ends up.)"""
+    (tmp_path / ".claude").mkdir()
+    result = subprocess.run(
+        [
+            "sh",
+            "-c",
+            device_launch.CHEESE_PREVIEW_UP + "\n",
+            "cheese-preview-up",
+            "5173",
+        ],
+        env={"HOME": str(tmp_path), "PATH": os.environ["PATH"]},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / ".claude/cheese-preview.port").read_text().strip() == "5173"

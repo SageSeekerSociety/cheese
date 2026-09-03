@@ -1,56 +1,38 @@
-"""Background loop that enrolls provisioned machines.
+"""Enrolling provisioned machines.
 
-Deliberately its own loop rather than a step inside the project scheduler. That
-scheduler drives 定期巡检 — it spends model budget and makes AI judgment calls,
-so deployments keep it off (its interval defaults to 0). Enrolling a machine is
-platform plumbing with no judgment in it, and hanging it off that switch would
-mean a deployment could not have working machines without also turning on
-autonomous patrols. They are separate concerns with separate switches.
+Deliberately on its own interval rather than a step inside the project
+scheduler. That scheduler drives 定期巡检 — it spends model budget and makes AI
+judgment calls, so deployments keep it off (its interval defaults to 0).
+Enrolling a machine is platform plumbing with no judgment in it, and hanging it
+off that switch would mean a deployment could not have working machines without
+also turning on autonomous patrols. They are separate concerns with separate
+switches — see ``app.core.background.PeriodicRunner`` for the clock.
 """
 
-import asyncio
-import contextlib
 import logging
 import uuid
 from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.db import SessionFactory
+
+if TYPE_CHECKING:
+    from app.domain.machine.services import FailedLease
 
 logger = logging.getLogger("cheese.machine.runner")
 
 
-class MachineEnrollmentRunner:
+class MachineEnrollmentSweeper:
     def __init__(
         self,
-        session_factory: Callable[[], AsyncSession],
-        interval_seconds: int,
+        session_factory: SessionFactory,
         on_ready: Callable[[list[tuple[uuid.UUID, str]]], Awaitable[None]]
         | None = None,
+        on_failed: Callable[[list["FailedLease"]], Awaitable[None]] | None = None,
     ) -> None:
         self._sessions = session_factory
-        self._interval = interval_seconds
         self._on_ready = on_ready
-        self._task: asyncio.Task[None] | None = None
-
-    def start(self) -> None:
-        if self._interval > 0 and self._task is None:
-            self._task = asyncio.create_task(self._loop())
-            logger.info("machine enrollment sweep started (every %ss)", self._interval)
-
-    async def stop(self) -> None:
-        if self._task is not None:
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
-            self._task = None
-
-    async def _loop(self) -> None:
-        while True:
-            await asyncio.sleep(self._interval)
-            try:
-                await self.sweep()
-            except Exception:  # noqa: BLE001 — a sweep must never kill the loop
-                logger.exception("machine enrollment sweep failed")
+        self._on_failed = on_failed
 
     async def sweep(self) -> dict[str, int]:
         # Imported here: the machine domain pulls in the device service, and
@@ -78,13 +60,13 @@ class MachineEnrollmentRunner:
             await service.reconcile_ai_mode()
             result = await service.enroll_pending()
             ready = await service.ready_topic_devices()
+            # A lease MicroCloud has given up on will never appear in `ready`,
+            # and the room is still showing 「机器正在创建」 for it. Handed over
+            # here rather than left for the next human message to trip on.
+            failed = await service.failed_topic_leases()
             await session.commit()
         if self._on_ready is not None and ready:
             await self._on_ready(ready)
-        if result["enrolled"] or result["failed"]:
-            logger.info(
-                "enrollment sweep: %s enrolled, %s failed",
-                result["enrolled"],
-                result["failed"],
-            )
+        if self._on_failed is not None and failed:
+            await self._on_failed(failed)
         return result

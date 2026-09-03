@@ -5,7 +5,9 @@ Alembic autogenerate, the test schema creator, and anywhere that needs the full
 metadata. Keep this list complete when adding a new model.
 """
 
+from app.domain.agent import models as agent  # noqa: F401
 from app.domain.agent_instance import models as agent_instance  # noqa: F401
+from app.domain.agent_session import models as agent_session  # noqa: F401
 from app.domain.agent_type import models as agent_type  # noqa: F401
 from app.domain.alert import models as alert  # noqa: F401
 from app.domain.answers import models as answers  # noqa: F401
@@ -31,6 +33,7 @@ from app.domain.passkey import models as passkey  # noqa: F401
 from app.domain.project import models as project  # noqa: F401
 from app.domain.questions import models as questions  # noqa: F401
 from app.domain.review import models as review  # noqa: F401
+from app.domain.room_task import models as room_task  # noqa: F401
 from app.domain.space import models as space  # noqa: F401
 from app.domain.tag import models as tag  # noqa: F401
 from app.domain.task import models as task  # noqa: F401

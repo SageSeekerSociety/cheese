@@ -5,6 +5,7 @@ import logging
 import re
 import uuid
 from dataclasses import asdict
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
@@ -58,7 +59,11 @@ from app.domain.project.schemas import (
     ProjectOut,
 )
 from app.domain.project.services import ProjectService
-from app.domain.topic.models import Topic
+from app.domain.review.repositories import AcceptCardRepository
+from app.domain.room_task import presentation
+from app.domain.room_task.place import Place
+from app.domain.room_task.repositories import TaskRepository
+from app.domain.room_task.schemas import TaskOut
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
 from app.domain.workspace import service as ws
@@ -329,73 +334,146 @@ async def list_decisions(project_id: uuid.UUID, db: DbSession) -> dict:
     return ok(page(items, len(items)))
 
 
+@router.get("/{project_id}/tasks")
+async def list_project_tasks(project_id: uuid.UUID, db: DbSession) -> dict:
+    """Every thread in the project, each with the card it currently rides on.
+
+    The rail draws rooms and the work inside them, so it needs both halves at
+    once. Two round trips, not two per room and one per thread: a project here
+    already holds ~170 rooms, and the per-room shape (`/topics/{id}/tasks`)
+    would make painting one sidebar 170 requests before a single PR badge.
+
+    `card` is the newest accept card ON THAT THREAD, narrowed to what a rail row
+    can show — where the work stands and the PR it rides on. Null for a thread
+    that has not been filed for acceptance, which is most of them while the work
+    is still going.
+
+    `presentation` is the board's answer for that row — which column it is in
+    and the one phrase to print on it — derived here rather than in the client,
+    so every client gives the same answer (`room_task/presentation.py`). Two
+    round trips still: it is computed from the two batches already fetched.
+    """
+    await ProjectService(db).get_or_404(project_id)
+    tasks = await TaskRepository(db).list_for_project(project_id)
+    task_ids = [t.id for t in tasks]
+    cards = await AcceptCardRepository(db).latest_by_task(task_ids)
+    # 每条活最后一次说话是什么时候 —— 看板判「失联」的心跳。第三次批查询，走的是
+    # blocks 上那条 (task_id, created_at) 的部分索引，不是每条活一次。
+    beats = await TaskRepository(db).last_block_at_for_tasks(task_ids)
+    # 一次，给全部行用同一个「现在几点」：逐行取 now 会让同一批数据里两条本该
+    # 一样的活分到不同格子，而那种差别没人再能复现。
+    now = datetime.now(UTC)
+    items = []
+    for task in tasks:
+        card = cards.get(task.id)
+        shown = presentation.task_presentation(
+            presentation.facts_for_task(task, card, beats.get(task.id)), now=now
+        )
+        items.append(
+            {
+                **TaskOut.model_validate(task).model_dump(mode="json"),
+                "presentation": shown.as_dict(),
+                "card": None
+                if card is None
+                else {
+                    "id": str(card.id),
+                    "status": str(card.status),
+                    "pr_number": card.pr_number,
+                    "pr_url": card.pr_url,
+                },
+            }
+        )
+    return ok(page(items, len(items)))
+
+
 async def _authorized_memory_topic(
     db: DbSession,
     resolver: ActorResolverDep,
     project_id: uuid.UUID,
     topic_raw: str,
-) -> Topic | None:
-    """Resolve and authorize the body-carried topic, when present."""
+) -> Place | None:
+    """Resolve and authorize the body-carried place, when present.
+
+    A place, not a room: `cheese remember` is run by whoever is doing the work,
+    and that is usually a thread. Resolving only rooms answered 404 for the one
+    caller this endpoint exists for.
+    """
     if not topic_raw:
         return None
     try:
         topic_id = uuid.UUID(topic_raw)
     except ValueError as exc:
         raise ValidationError("topic 不是合法的话题 id") from exc
-    topic = await TopicService(db).get_or_404(topic_id)
-    if topic.project_id != project_id:
+    place = await TopicService(db).place_or_404(topic_id)
+    if place.project_id != project_id:
         raise ForbiddenError("这个话题不属于 URL 中的项目")
+    # Two different ids on purpose. A per-turn token is scoped to the PLACE it
+    # was minted for, so that is what identity is checked against — handing it
+    # the room would read a thread's token as out-of-scope and erase its author.
+    # Access, though, is the room's roster: threads do not have one.
     actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=project_id
+        fallback_handle=None, topic_id=place.id, project_id=project_id
     )
-    await resolver.authorize_topic(actor, project_id=project_id, topic_id=topic_id)
-    return topic
+    await resolver.authorize_topic(actor, project_id=project_id, topic_id=place.room_id)
+    return place
 
 
 async def _agent_memory_scope(
-    db: DbSession, project_id: uuid.UUID, topic: Topic | None
+    db: DbSession, project_id: uuid.UUID, place: Place | None
 ) -> tuple[MemoryScope, str] | None:
-    """Where the agent working in ``topic`` writes what it learns.
+    """Where the agent working in ``place`` writes what it learns.
 
     Keyed by the AGENT, not by the room: the same 芝士 moving between rooms of
     one project keeps one pool, which is the whole point of an instance owning
-    its memory. Returns ``None`` when no usable topic was supplied, so the
+    its memory. Returns ``None`` when no usable place was supplied, so the
     caller falls back to the shared project pool.
+
+    A thread is asked about its own row: it was handed the room's agent when
+    the work went out, so what it learns lands in the pool the room reads back
+    — which is the entire reason the room dispatched it.
     """
-    if topic is None:
+    if place is None:
         return None
     project = await ProjectService(db).get_or_404(project_id)
-    agent = await AgentInstanceService(db).for_topic(topic, project)
+    owner = place.task if place.task is not None else place.room
+    agent = await AgentInstanceService(db).for_topic(owner, project)
     return memory_pool(project_id, agent)
 
 
 async def _agent_memory_read_scopes(
-    db: DbSession, project_id: uuid.UUID, topic: Topic | None
+    db: DbSession, project_id: uuid.UUID, place: Place | None
 ) -> list[tuple[MemoryScope, str]]:
-    """Every pool a read on behalf of ``topic`` should cover.
+    """Every pool a read on behalf of ``place`` should cover.
 
     The agent's own pool, plus the pool this room filled back when memory was
     keyed by the room. Writes go to the first alone; the second is a read-only
     tail so that repointing memory at the agent does not read as amnesia in
     every room that had already learned something.
+
+    The legacy tail is the ROOM's, even when a thread is asking: that pool was
+    filled when work was a room of its own, so keying it by the thread would
+    look up an id nothing ever wrote under.
     """
-    if topic is None:
+    if place is None:
         return []
-    agent_scope = await _agent_memory_scope(db, project_id, topic)
+    agent_scope = await _agent_memory_scope(db, project_id, place)
     if agent_scope is None:
         return []
     scopes = [agent_scope]
-    legacy = legacy_topic_pool(project_id, topic.id)
+    legacy = legacy_topic_pool(project_id, place.room_id)
     if legacy != agent_scope:
         scopes.append(legacy)
     return scopes
 
 
-def _authorize_personal_memory_owner(topic: Topic | None, owner: str) -> None:
-    if topic is None:
+def _authorize_personal_memory_owner(place: Place | None, owner: str) -> None:
+    """个人记忆 lives in a private chat, and a private chat is a room — so this
+    asks the room even when a thread inside it is the caller."""
+    if place is None:
         return
-    participants = {topic.private_owner, topic.private_peer} - {None}
-    if not topic.is_private or owner not in participants:
+    room = place.room
+    participants = {room.private_owner, room.private_peer} - {None}
+    if not room.is_private or owner not in participants:
         raise ForbiddenError("只能在该成员自己的私聊中读写个人记忆")
 
 
@@ -417,7 +495,7 @@ async def add_memory(
     from app.domain.memory.store import memory_store
 
     await ProjectService(db).get_or_404(project_id)
-    topic = await _authorized_memory_topic(
+    place = await _authorized_memory_topic(
         db, resolver, project_id, (body.get("topic") or "").strip()
     )
     content = (body.get("content") or "").strip()
@@ -431,10 +509,10 @@ async def add_memory(
         owner = (body.get("owner") or "").strip()
         if not owner:
             raise ValidationError("owner 不能为空（个人记忆需要 owner）")
-        _authorize_personal_memory_owner(topic, owner)
+        _authorize_personal_memory_owner(place, owner)
         await memory_store(db).remember(MemoryScope.user, owner, content, layer=layer)
         return ok({"remembered": True, "layer": layer.value})
-    agent_scope = await _agent_memory_scope(db, project_id, topic)
+    agent_scope = await _agent_memory_scope(db, project_id, place)
     if agent_scope is not None:
         await memory_store(db).remember(*agent_scope, content, layer=layer)
     else:
@@ -460,7 +538,7 @@ async def search_memory(
     from app.domain.memory.store import memory_store
 
     await ProjectService(db).get_or_404(project_id)
-    topic = await _authorized_memory_topic(
+    place = await _authorized_memory_topic(
         db, resolver, project_id, (body.get("topic") or "").strip()
     )
     query = (body.get("query") or "").strip()
@@ -471,7 +549,7 @@ async def search_memory(
         owner = (body.get("owner") or "").strip()
         if not owner:
             raise ValidationError("owner 不能为空（个人记忆需要 owner）")
-        _authorize_personal_memory_owner(topic, owner)
+        _authorize_personal_memory_owner(place, owner)
         hits = await store.search(MemoryScope.user, owner, query)
         return ok({"hits": [h.as_dict() for h in hits]})
     # The agent's own memory, the pool this room filled before memory followed
@@ -480,7 +558,7 @@ async def search_memory(
     # happens to sit in says nothing about how well it answers the question, and
     # the caller reads top-down.
     hits = []
-    for scope in await _agent_memory_read_scopes(db, project_id, topic):
+    for scope in await _agent_memory_read_scopes(db, project_id, place):
         hits.extend(await store.search(*scope, query))
     hits.extend(await store.search(MemoryScope.project, str(project_id), query))
     hits.sort(key=lambda h: -h.score)
@@ -774,11 +852,18 @@ async def get_quality_gate(project_id: uuid.UUID, db: DbSession) -> dict:
     """The project's 硬门 settings: `check_command` and `approvals_required`
     (distinct approvals an accept needs; default 1).
 
-    采纳即合并退役闸门 (docs/accept-is-merge.md #296, stage 1): `check_command`
-    is RETIRED. It used to run in the topic workspace before a card reached the
-    reviewer; that mechanism is gone — a card is the view of a PR and real CI on
-    that PR decides. The value is still stored and returned (round-trip stays
-    working, a later stage clears it) but nothing runs it any more.
+    `check_command` is no longer a PLATFORM gate. #296 retired that: a card is
+    the view of a PR, and the real CI on that PR is what decides whether a
+    change is good — not a private check the platform runs before a reviewer
+    ever sees the card.
+
+    It is now the agent's own quick check, which `cheese check` runs in the
+    agent's sandbox, on the room's heavy lane, costing no CI runner. The result
+    is recorded on the tree and shown on the card. It still gates nothing: red
+    does not stop a card being filed or accepted. What it does is make a red
+    check VISIBLE to the person about to accept, which is the half that was
+    missing — a check whose result goes nowhere is a check nobody runs.
+
     `approvals_required` is unaffected."""
     from app.domain.review.services import approvals_required_of, check_command_of
 

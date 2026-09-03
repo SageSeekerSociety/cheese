@@ -9,7 +9,6 @@ and claiming a 赛题 lives on the Space pages.
 from dataclasses import asdict
 from typing import Annotated
 
-import httpx
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,7 +17,10 @@ from app.api.response import ok
 from app.core.config import settings
 from app.core.db import get_db
 from app.domain.agent.market import (
+    COMPUTE_CLOUD,
+    COMPUTE_DEVICE,
     ai_listings,
+    compute_default_name,
     compute_listings,
     visibility_listings,
 )
@@ -52,67 +54,40 @@ async def list_pools(registry: Registry) -> dict:
 # ---- 节点看板 (spec §9.1 机构提供算力: where turns physically run) ----
 
 
-async def _probe_cheesed(url: str) -> tuple[bool, str]:
-    """Liveness of a cheesed node via its existing /health endpoint. Returns
-    (online, node_image) — image empty when unreachable/unhealthy."""
-    try:
-        async with httpx.AsyncClient(timeout=2.0) as client:
-            resp = await client.get(f"{url.rstrip('/')}/health")
-            data = resp.json()
-    except (httpx.HTTPError, ValueError):
-        return False, ""
-    if data.get("status") != "healthy":
-        return False, ""
-    return True, str(data.get("image") or "")
-
-
 @router.get("/nodes")
 async def list_nodes(runner: Runner) -> dict:
-    """节点看板: every configured compute node (local + cheesed remote) with
-    liveness, current load (in-flight turns), and what it runs. Load is the
-    runner's active-turn count attributed to the provider turns actually run on
-    (compute_provider) — the platform runs one provider at a time today."""
-    from app.domain.workspace import service as ws
+    """节点看板: the compute pools this deployment can run a turn on, with
+    liveness and current load (in-flight turns).
 
-    active = runner.active_work_count()
-    current = settings.compute_provider  # "local" | "remote"
-
-    local_sandboxed = settings.agent_sandbox_enabled and ws.sandbox_available()
-    nodes: list[dict] = [
+    Built from the same catalogue the 市场 browses, so the board cannot show a
+    node the picker does not offer — it used to show exactly one, the platform's
+    own container host, which was the one pool the catalogue never listed."""
+    default_name = compute_default_name(settings)
+    # What makes each pool live, in its own terms — the mono line under the card.
+    detail = {
+        COMPUTE_DEVICE: ("有已连接的设备", "暂无已连接的设备"),
+        COMPUTE_CLOUD: ("可以为话题开一台机器", "这个部署还没有云端算力"),
+    }
+    nodes = [
         {
-            "id": "local-docker",
-            "label": "知是本地算力",
-            "kind": "local",
-            "online": True,
-            "current": current == "local",
-            "active_turns": active if current == "local" else 0,
-            "detail": (
-                f"沙箱镜像 {settings.sandbox_image}"
-                if local_sandboxed
-                else "无 Docker 沙箱（降级：纯模型回合）"
-            ),
-            "description": "平台托管的容器算力（CPU 级），跑代码、文档与数据分析。",
+            "id": pool.id,
+            "label": pool.label,
+            "kind": pool.id,
+            "online": pool.available,
+            "current": pool.id == default_name,
+            "detail": detail[pool.id][0 if pool.available else 1],
+            "description": pool.description,
         }
+        for pool in compute_listings(settings)
     ]
-    if settings.cheesed_url:
-        online, image = await _probe_cheesed(settings.cheesed_url)
-        nodes.append(
-            {
-                "id": "remote-cheesed",
-                "label": "远程节点（cheesed）",
-                "kind": "remote",
-                "online": online,
-                "current": current == "remote",
-                "active_turns": active if current == "remote" else 0,
-                "detail": f"沙箱镜像 {image}" if image else settings.cheesed_url,
-                "description": "自带机器上的 cheesed 节点，数据不出你的环境。",
-            }
-        )
+    # In-flight turns are counted per DEPLOYMENT: the work runner tracks a turn
+    # without recording which machine took it, so there is no per-node number to
+    # report. Repeating the total under every card would read as that many each.
     return ok(
         {
             "nodes": nodes,
-            "active_turns_total": active,
-            "current_provider": current,
+            "active_turns_total": runner.active_work_count(),
+            "current_provider": default_name,
         }
     )
 

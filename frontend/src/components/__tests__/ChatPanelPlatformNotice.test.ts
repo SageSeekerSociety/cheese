@@ -204,7 +204,7 @@ describe('平台提示：一行 + 可展开', () => {
 
     const shown = visibleText(container.querySelector('[data-testid="platform-notice"]')!)
     expect(shown).toContain('CI 没过')
-    expect(shown).toContain('芝士在处理')
+    expect(shown).toContain('芝士处理中')
   })
 
   it('who 的三个码各渲染成一句人话', async () => {
@@ -219,8 +219,8 @@ describe('平台提示：一行 + 可展开', () => {
     await flush()
 
     const rows = container.querySelectorAll('[data-testid="platform-notice"]')
-    expect(visibleText(rows[0])).toContain('平台自愈')
-    expect(visibleText(rows[1])).toContain('等人处理')
+    expect(visibleText(rows[0])).toContain('平台已处理')
+    expect(visibleText(rows[1])).toContain('待人工处理')
   })
 })
 
@@ -352,7 +352,7 @@ describe('向后兼容：库里存量的老事件一个都不能变样', () => {
 
     const card = container.querySelector('.action-card')!
     expect(card.textContent).toContain('更新了实况文档')
-    expect(card.querySelector('button')!.textContent).toContain('看实况文档')
+    expect(card.querySelector('button')!.textContent).toContain('查看文档')
     expect(container.querySelector('[data-testid="platform-notice"]')).toBeNull()
   })
 
@@ -391,10 +391,12 @@ describe('向后兼容：库里存量的老事件一个都不能变样', () => {
   })
 
   it('有 event_type 但没有 detail 的事件，还是那条淡行（不硬塞进折叠框）', async () => {
-    const { container } = mountRoom([event('', '这轮换了一台机器继续跑', { event_type: 'host_swap', who: 'platform' })])
+    const { container } = mountRoom([
+      event('', '机器「dev-box」连续失败，已暂停派活', { event_type: 'host_failure', who: 'human' }),
+    ])
     await flush()
 
-    expect(container.querySelector('.im-event')!.textContent).toContain('这轮换了一台机器继续跑')
+    expect(container.querySelector('.im-event')!.textContent).toContain('机器「dev-box」连续失败，已暂停派活')
     expect(container.querySelector('[data-testid="platform-notice"]')).toBeNull()
   })
 

@@ -106,6 +106,20 @@ heartbeat, backup checks) — its single slot used to serialize every heavy job
   from the dev box (`ssh ci@192.168.30.x`, dev box's `~/.ssh/id_ed25519`).
   MicroCloud does not support resizing yet — pick sizes at creation; more
   machines = ask Lg for capacity.
+- The pool shares one Proxmox disk with every other guest on pve119 (a single
+  1.7 TB SAS logical volume, thin pool `local-lvm`, no NVMe on the box), so a
+  service container's disk IO competes with MicroCloud provisioning, the
+  observability stack and everything else there. The `test` job's integration
+  two-thirds used to be bound by that disk's sync-write latency (2026-09-02: a
+  4 KB `oflag=dsync` write took 3.5 ms on runner-3, IO stall 23% of the time,
+  #668 needed five attempts to finish inside the 20-minute timeout while #667
+  had taken 7 minutes on a quiet host). Since #670 the Postgres data directory
+  of the `test` and `e2e` service containers is a 3 GB tmpfs: no disk in the
+  path, and pytest went from 7m18s (#667, quiet host) to 4m58s (#670, busy
+  host). A full run writes about 1 GB including WAL, measured locally; if the
+  suite ever outgrows the tmpfs, Postgres fails with ENOSPC and the size in the
+  workflow is the knob. The unit-test third never touched the disk and runs at
+  the same pace either way.
 - One runner slot per machine is deliberate: the workflows bind host ports
   5432/6379 for service containers, so two heavy jobs on one machine would
   collide (`port is already allocated`). Lifting this (常驻 PG/Valkey + drop the
@@ -155,6 +169,39 @@ stopped work.
 To see disk across the CI pool without ssh, run `box-diag.yml`'s `ci-pool` job —
 it prints hostname and disk per machine.
 
+## Logs — reading a container that no longer exists
+
+The dev/prod containers log to **journald**, not to a json-file. The difference
+only matters after a deploy, and then it matters completely: a json-file lives
+in the container's own directory, so `docker compose down` deletes it. Turns die
+*during* deploys, so the failures most worth reading were the ones whose
+evidence the deploy had already removed — that is how 257 turn failures on
+2026-08-18 ended up permanently unclassifiable (#574).
+
+`docker logs` works exactly as before for a *live* container. For one that is
+gone:
+
+```bash
+sudo journalctl -t cheese-backend-1 --since "2 hours ago"   # by container name
+sudo journalctl -t cheese-llm-tunnel -t cheese-api-front -f # the data plane
+sudo journalctl -t cheese-backend-1 --since "09:00" --until "09:30"
+```
+
+`sudo` (or membership of `systemd-journal`) is required — an ordinary user sees
+only their own messages, and the command returns empty rather than refusing,
+which reads exactly like "there are no logs".
+
+Retention is journald's default, `SystemMaxUse` = min(10% of the filesystem,
+4 GB). Measured on dev, the backend writes ~61 MB/day, so 4 GB is on the order
+of two months; the journal also gives back space automatically when the disk
+runs low (`SystemKeepFree`), so it cannot be the thing that fills a box.
+
+The standing data-plane pair (`cheese-llm-tunnel`, `cheese-api-front`) is
+covered too. It is deployed by `deploy/llm-tunnel/up.sh` rather than
+`deploy-docker.sh`, so its logs used to vanish whenever an operator re-ran that
+script — including across the 「container up, pipe dead」 incident (#579), whose
+first-hand account was exactly what nobody could read afterwards.
+
 ## Box ops runbook — changing backend env on a box
 
 The one rule: **containers are only ever (re)created by `deploy/deploy-docker.sh`.**
@@ -198,6 +245,46 @@ Related: never hand-install files INTO a running container (they evaporate on
 the next recreate); the gateway's own env keys follow the same
 recreate-not-restart rule (`deploy/gateway/README.md`).
 
+### Turning on the openviking memory backend (#187)
+
+Everything except the key is already in place: `deploy-docker.sh` creates
+`VIKING_HOST_PATH` (default `/home/nictheboy/cheese-viking`), hands it to uid
+1000 with the other mounts, and compose bind-mounts it at `/data/viking` with
+`OPENVIKING_DATA_DIR` pointed there. On the default `MEMORY_BACKEND=db` the
+directory simply stays empty.
+
+To switch a box over, add to its `backend/.env` and redeploy the running sha
+(step 2 above — `docker restart` will not do):
+
+```
+MEMORY_BACKEND=openviking
+OPENVIKING_LLM_API_KEY=<zhipu key>
+OPENVIKING_EMBEDDING_API_KEY=<zhipu key>
+```
+
+Then import the facts the db backend already holds. The rows are kept as the
+audit trail, so this is additive; imported ids are checkpointed on the volume,
+so a re-run resumes instead of duplicating:
+
+```bash
+docker exec -w /app cheese-backend-1 \
+  python scripts/migrate_memory_to_openviking.py --dry-run   # then without it
+```
+
+Two things to know before flipping it:
+
+- **That directory IS the database.** Not Postgres, not the image. It is
+  excluded from the PG backup job, so if these memories are to survive a box
+  rebuild it needs its own backup line.
+- **The key buys extraction, not just vectors.** Every remembered fact costs a
+  chat call (OpenViking's extractor) plus embedding calls. A key that only
+  works on the embedding endpoint gets you a backend that stores nothing.
+
+`backend/tests/integration/test_openviking_fake_endpoint.py` exercises this
+whole path against a local stand-in endpoint, so the wiring is verifiable
+without a key — but it says nothing about extraction quality, which is exactly
+what the real key is for.
+
 ## Backups
 
 Every box runs the same scripts (only the R2 prefix and host differ); details and
@@ -218,6 +305,44 @@ The backup scripts are version-controlled, but **installing them on a box**
 (copying to `~/ops/`, systemd timers, the R2 credential in `~/ops/r2.env`) is a
 manual runbook, not automated provisioning — see `deploy/README-backup.md`.
 
+## Database encoding — always create with an explicit `ENCODING 'UTF8'`
+
+**Never let `initdb`/`CREATE DATABASE` pick the encoding from the ambient
+locale.** A box with no `LANG` set gets `SQL_ASCII`, and a `SQL_ASCII` server
+**rejects non-ASCII `\uXXXX` escapes inside `jsonb`** — which is how the first
+GitHub profile with a Chinese display name 500'd the OAuth callback (#222 →
+#233). Spell it out every time:
+
+```sql
+CREATE DATABASE <name> OWNER cheese ENCODING 'UTF8' TEMPLATE template0
+  LOCALE_PROVIDER builtin BUILTIN_LOCALE 'C.UTF-8';   -- PG 17
+```
+
+```bash
+initdb -D "$PGDATA" --encoding=UTF8 --locale=C          # cluster level
+```
+
+Status: **dev was rebuilt as UTF8 on 2026-08-16; production
+(`192.168.16.10`) is still `SQL_ASCII`** and is scheduled for the same rebuild.
+The procedure, its failure modes, and what must not be edited in the script:
+[`deploy/README-utf8-cutover.md`](../deploy/README-utf8-cutover.md). Application
+code carries a stopgap for the meantime — `_json_dumps_utf8` in
+`backend/app/core/db.py` sends JSON binds as raw UTF-8 rather than `\uXXXX`, and
+raw bytes are accepted under either server encoding.
+
+**No amount of testing catches this class of bug**, and that is worth knowing
+before someone proposes "add a test so it can't happen again": every test
+environment is already UTF8 — `.claude/scripts/dev-db.sh` runs
+`initdb --encoding=UTF8 --locale=C`, and CI's postgres service container
+(`paradedb`, a postgres-image derivative) inherits that image's UTF-8 locale
+default. There *is* already a regression test for the Chinese-`jsonb` path
+(`backend/tests/integration/test_github_account_link.py`) — but it only ever
+runs against a UTF8 server, so it confirms the stopgap works and still tells you
+nothing about the encoding of the box you deploy to. Server encoding is a
+property of the box, not of the
+code, so it can only be caught by asserting on the real box — or by never
+creating a database without naming the encoding, which is the rule above.
+
 ## Access
 
 - **ghg private net (dev/prod boxes)**: reachable via the OpenVPN split-tunnel
@@ -227,17 +352,21 @@ manual runbook, not automated provisioning — see `deploy/README-backup.md`.
 
 ## The backend runs as uid 1000 — and must keep doing so
 
-The backend process and the agent inside a sandbox container share one jj store:
-`ws.sandbox_vcs_mounts` bind-mounts a project's main-repo `.jj`/`.git` into every
-sandbox container, read-write. jj writes its store objects — `.jj/repo/config-id`
-above all — with a **hardcoded 0600**, so if the two sides run as different uids,
-whichever writes first locks the other out of every jj command
-(`Failed to determine the secure config for a repo … Permission denied`). That is
-not a theoretical risk: both directions have hit production — the file panel
-422ing for every topic in a project, and jj being unusable inside sandboxes.
+The backend process and the agent inside a sandbox container share one git
+store: `ws.sandbox_vcs_mounts` bind-mounts a project's main-repo `.git` into
+every sandbox container, read-write — and **both sides commit into it**, since
+the agent's own commit in its worktree is how a topic branch moves. git creates
+object directories 0755 and loose objects 0444, owned by whoever wrote them, so
+if the two sides run as different uids the second one can read every object and
+add none: its commit fails on a directory it does not own, and the backend's
+reads fail on a store it cannot enter (which git reports as `not a git
+repository`, not as a permission error). Both directions have hit production —
+the file panel 422ing for every topic in a project, and an agent whose work
+could not leave the container.
 
-umask, a shared group, and default ACLs are all powerless against a mode the
-writer sets explicitly. The only fix is that both sides ARE the same uid:
+`core.sharedRepository` is git's supported way to widen those modes, so this
+constraint is negotiable — but nothing negotiates it today, so the fix is that
+both sides ARE the same uid:
 
 - sandbox: `node:22` + `USER node` = **1000**, started with `--user node`;
   `backend/sandbox/Dockerfile` asserts the uid at build time.
@@ -247,9 +376,10 @@ writer sets explicitly. The only fix is that both sides ARE the same uid:
 
 **Ops consequence.** The host bind mounts (`WORKSPACES_HOST_PATH`,
 `UPLOADS_HOST_PATH`, `APPHOME_HOST_PATH` — the last one is the backend's `HOME`,
-where jj keeps the per-repo secure config that `config-id` points at) hold files
-written by the pre-2026-08 backend as uid 1001. `deploy/deploy-docker.sh` hands
-them over once via `deploy/fix-workspace-ownership.sh` before the swap —
+where git reads its global config from — and `VIKING_HOST_PATH`, the openviking
+memory tree) hold files written by the pre-2026-08 backend as uid 1001.
+`deploy/deploy-docker.sh` hands them over once via
+`deploy/fix-workspace-ownership.sh` before the swap —
 idempotent, marker-guarded, and it runs the chown in a throwaway root container
 (no sudo on the box). If a backend ever boots onto an unmigrated path it logs
 `workspace_ownership` at ERROR naming the offending file; the fix is to run that

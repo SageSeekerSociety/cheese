@@ -1,4 +1,4 @@
-// 左侧话题列表的两件纯逻辑：**分组**（按"与我相关"切成两组）和**折叠**（有子话题
+// 左侧房间列表的两件纯逻辑：**分组**（按"与我相关"切成两组）和**折叠**（有下级
 // 的行可以收起来，「其他话题」整组也可以收起来）。
 //
 // TopicSidebar 的树是**拍平**的（`{topic, depth}` 的数组，DFS 顺序），折叠因此
@@ -36,7 +36,7 @@ export interface FlatRow<T extends TopicNodeLike = TopicNodeLike> {
 
 /** 一行渲染所需的全部信息（折叠开关、收起来的条数、要显示的未读总数）。 */
 export interface VisibleRow<T extends TopicNodeLike = TopicNodeLike> extends FlatRow<T> {
-  /** 这行在当前（未归档）列表里有没有子话题——没有就不画折叠开关。 */
+  /** 这行在当前（未归档）列表里有没有下级——没有就不画折叠开关。 */
   hasChildren: boolean
   /** 用户把这行收起来了。 */
   collapsed: boolean
@@ -242,10 +242,16 @@ export function visibleRows<T extends TopicNodeLike>(
 }
 
 // ---- 折叠状态的持久化 ----
-// 按项目一份，存**收起来的** id（不是展开的）：默认展开，新话题天然可见，
-// 存量数据也不会因为多了个话题就把它藏起来。
-
-const COLLAPSE_PREFIX = 'cheesex.topicCollapsed.v1:'
+// 按项目一份，存**展开的** id。
+//
+// 以前存的是反过来的（收起来的 id，默认全展开），因为那时一个房间下面挂的是子
+// 话题，藏起来就等于弄丢了一个人可能正在找的话题。现在挂的是这个房间派出去的
+// 活，而活的去处是右边的 Task Progress —— 一个跑久了的房间有近两百条，全都摊在
+// 主导航上，等于把侧栏变成一份没人读得完的清单。所以默认收起，展开是个动作。
+//
+// 键换了新的（`.v2`），不是加个版本号图好看：旧键里那批 id 的含义正好相反，照
+// 旧读进来会把用户当初收起来的那几个房间变成唯一展开的那几个。
+const EXPANDED_PREFIX = 'cheesex.topicExpanded.v2:'
 // 「其他话题」组展开没展开，也按项目一份。和上面共用同一套键格式，只是存的东西
 // 反过来：这一组**默认折叠**，所以键存在 = 用户展开过，键不在 = 默认的折叠态。
 // （折叠集合那边默认展开，存的是"收起来的 id"，同样是让默认态等于键不存在。）
@@ -257,7 +263,7 @@ function keyFor(prefix: string, projectId: string | null | undefined): string | 
 }
 
 function storageKey(projectId: string | null | undefined): string | null {
-  return keyFor(COLLAPSE_PREFIX, projectId)
+  return keyFor(EXPANDED_PREFIX, projectId)
 }
 
 export function loadOthersGroupOpen(projectId: string | null | undefined): boolean {
@@ -281,7 +287,7 @@ export function saveOthersGroupOpen(projectId: string | null | undefined, open: 
   }
 }
 
-export function loadCollapsedTopics(projectId: string | null | undefined): Set<string> {
+export function loadExpandedTopics(projectId: string | null | undefined): Set<string> {
   const key = storageKey(projectId)
   if (!key || typeof localStorage === 'undefined') return new Set()
   try {
@@ -294,18 +300,18 @@ export function loadCollapsedTopics(projectId: string | null | undefined): Set<s
     }
     return new Set(parsed.filter((v): v is string => typeof v === 'string'))
   } catch {
-    // 读坏了就当没折叠过——宁可多显示，也不要因为一条脏数据让人看不到话题。
+    // 读坏了就回到默认的收起态。一条脏数据不该把两百行活摊到主导航上。
     return new Set()
   }
 }
 
-export function saveCollapsedTopics(projectId: string | null | undefined, collapsed: ReadonlySet<string>): void {
+export function saveExpandedTopics(projectId: string | null | undefined, expanded: ReadonlySet<string>): void {
   const key = storageKey(projectId)
   if (!key || typeof localStorage === 'undefined') return
   try {
-    if (collapsed.size === 0) localStorage.removeItem(key)
-    else localStorage.setItem(key, JSON.stringify([...collapsed]))
+    if (expanded.size === 0) localStorage.removeItem(key)
+    else localStorage.setItem(key, JSON.stringify([...expanded]))
   } catch {
-    // 隐私模式/配额满：折叠仍然在内存里生效，只是这次刷新后不保留。
+    // 隐私模式/配额满：展开仍然在内存里生效，只是这次刷新后不保留。
   }
 }

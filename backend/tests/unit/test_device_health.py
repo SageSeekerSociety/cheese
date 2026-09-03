@@ -112,8 +112,8 @@ async def test_two_different_failures_are_two_accidents_not_one_dying_machine():
 def test_only_machine_shaped_failures_can_indict_a_machine():
     """A missing runtime image is a registry problem: it hits every machine at once
     and would follow the topic wherever it went, so it must never count against the
-    box it happened to land on. This flag is the gate — the swap path refuses any
-    failure without it (see ``test_host_swap``)."""
+    box it happened to land on. This flag is the gate — the failure accounting
+    refuses any failure without it (see ``test_host_failure``)."""
     assert STORAGE_EXHAUSTED.host_scoped, "a full disk belongs to the machine"
     assert HOST_UNREACHABLE.host_scoped, "an unreachable host IS the machine"
     assert not RUNTIME_IMAGE_MISSING.host_scoped

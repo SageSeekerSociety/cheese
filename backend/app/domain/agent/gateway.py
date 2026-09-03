@@ -1,7 +1,10 @@
-"""LiteLLM gateway ADMIN client (docs/llm-gateway.md L1/L2).
+"""LiteLLM gateway ADMIN client. **This docstring is where L1/L2 are defined** —
+the rest of the codebase refers to them by pointing here.
 
-When the model pool routes through the self-hosted gateway (L0), this client
-gives cheesex the two things the hooks backends can't get locally:
+Three layers, of which this module is the top two. **L0** is the pool merely
+routing through the self-hosted gateway, which needs nothing from this file.
+On top of it, this client gives cheesex the two things the hooks backends
+cannot get locally:
 
 - **L1 attribution + metering**: mint a per-project VIRTUAL key (the sandbox
   gets that instead of the master key — a sandbox never holds admin credentials)

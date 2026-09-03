@@ -20,13 +20,12 @@ import enum
 from collections.abc import Iterable
 
 from app.domain.review.models import AcceptStatus
-from app.domain.topic.models import TopicKind, TopicStatus
 
 
 class TopicStage(enum.StrEnum):
     """话题当前所处的流程阶段。值同时是 skill 的 scenario 标签后缀。"""
 
-    # 房间（root/topic）：它自己不带分支和验收卡，它的活是拆给子话题去做。
+    # 房间：它自己不带分支和验收卡，它的活是派成支线去做。
     delegating = "delegating"
     # 一件事正在做：有分支、还没递卡（或卡被打回后回到这里）。
     working = "working"
@@ -66,31 +65,29 @@ _CARD_PRECEDENCE = (
     AcceptStatus.pending,
 )
 
-# 房间 vs 一件事。`subtopic` 是 `task` 的历史值（见 TopicKind 的 docstring），
-# 两者都是「一件事」。
-_ROOM_KINDS = (TopicKind.root, TopicKind.topic)
-
 
 def resolve_stage(
     *,
-    kind: TopicKind,
-    status: TopicStatus,
+    is_room: bool,
+    finished: bool,
     card_statuses: Iterable[AcceptStatus] = (),
 ) -> TopicStage:
-    """算出话题当前所处的流程阶段。
+    """算出这个地点当前所处的流程阶段。
 
-    卡状态优先于话题形态：一张活着的卡说明「现在正卡在流程的某一环」，比
-    「这是个房间还是一件事」更具体、更该被告知。没有活卡时才退回到形态判断。
+    卡状态优先于地点形态：一张活着的卡说明「现在正卡在流程的某一环」，比
+    「这是个房间还是一件活」更具体、更该被告知。没有活卡时才退回到形态判断。
+
+    问的是 `is_room` 而不是 `kind`：一件活已经不是 `topics` 表里的一行了，
+    `topics.kind` 从此永远回答「房间」。照着它算，每一条支线都会被当成房间、
+    拿到「拆活」那一段说明——分身会去拆它本该自己做的事。**这个错不报错。**
     """
     present = set(card_statuses)
     for candidate in _CARD_PRECEDENCE:
         if candidate in present:
             return _CARD_STAGE[candidate]
-    if status == TopicStatus.archived:
+    if finished:
         return TopicStage.merged
-    if kind in _ROOM_KINDS:
-        return TopicStage.delegating
-    return TopicStage.working
+    return TopicStage.delegating if is_room else TopicStage.working
 
 
 def stage_scenario(stage: TopicStage) -> str:

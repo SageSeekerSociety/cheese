@@ -56,6 +56,14 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '连接设备', isFullPage: true },
   },
   {
+    // 「待办」: 手机底栏三格之一。桌面同样缺这个页面——今天离它最近的只有顶栏
+    // 那颗铃铛的下拉，没有路由、没有页面。
+    name: 'inbox',
+    path: '/inbox',
+    component: () => import('@/views/InboxView.vue'),
+    meta: { title: '待办', isFullPage: true },
+  },
+  {
     name: 'market',
     path: '/market',
     component: () => import('@/views/MarketView.vue'),

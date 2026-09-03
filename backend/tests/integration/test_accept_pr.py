@@ -27,6 +27,7 @@ from app.domain.review import github_pr
 from app.domain.workspace import service as ws
 from tests.conftest import wait_work_idle
 from tests.integration.conftest import room_text, session_auth_headers
+from tests.machine_work import machine_commits
 
 
 def _make_project(client) -> str:
@@ -120,6 +121,14 @@ class FakeGitHubPrClient:
         self.check_names_by_sha: dict[str, set[str]] = {}
         self.update_branch_calls: list[int] = []
         self.update_branch_result: bool = True
+        # Which credential each Update-branch was made with. It matters on the
+        # App lane the same way `check_state_tokens` does, in the opposite
+        # direction: this call PUSHES a merge of main onto the PR branch, so the
+        # read mint answers 403 and the poller retries forever.
+        self.update_branch_tokens: list[str] = []
+        # A GitHub failure to raise out of `check_state`, for the "the poll
+        # cannot read GitHub at all" case.
+        self.check_state_error: Exception | None = None
         # run id → 那次运行的 job 列表。默认（未登记的 run）给一个真的部署过的
         # job，因为绝大多数测试关心的不是这一层；「跳过了部署」和「挂在哪个
         # job 上」的用例自己登记。
@@ -133,6 +142,11 @@ class FakeGitHubPrClient:
         # the App lane: the write mint carries no `checks` permission, so a
         # read made with it is a 403 that the poller retries forever.
         self.check_state_tokens: list[str] = []
+        # PR 回流 (review/pr_signals.py): number → 这个 PR 上的评审动静，
+        # number → GitHub 的 `mergeable`（None = 它还没算完，不是「冲突」）。
+        self.reviews_by_number: dict[int, list] = {}
+        self.mergeable_by_number: dict[int, bool | None] = {}
+        self.review_signal_calls: list[tuple[int, bool]] = []
 
     async def open_pull_request(
         self, *, owner, repo, head, base, title, body, token
@@ -185,6 +199,12 @@ class FakeGitHubPrClient:
             merged=pr["merged"],
             merge_commit_sha=pr["merge_commit_sha"],
             merged_at=pr["merged_at"],
+            # 默认 None，和真 GitHub 在「还没算完」时给的一样 —— 一个默认 True 会
+            # 让「冲突」这条路在所有别的用例里悄悄变成不可达。
+            mergeable=self.mergeable_by_number.get(number),
+            review_comment_count=sum(
+                1 for s in self.reviews_by_number.get(number, []) if s.kind == "comment"
+            ),
         )
 
     def seed_pr(self, number: int, *, head: str, base: str = "main") -> str:
@@ -232,6 +252,8 @@ class FakeGitHubPrClient:
 
     async def check_state(self, *, owner, repo, ref, token) -> tuple[str, str]:
         self.check_state_tokens.append(token)
+        if self.check_state_error is not None:
+            raise self.check_state_error
         return self.check_state_by_sha.get(ref, ("pending", "还没跑"))
 
     async def compare_files(
@@ -272,6 +294,20 @@ class FakeGitHubPrClient:
         self.compare_status_calls.append((base, head))
         return self.compare_status_by_pair.get((base, head))
 
+    async def review_signals(
+        self, *, owner, repo, number, token, with_comments=True
+    ) -> list:
+        """PR 上的评审动静。默认没有 —— 绝大多数用例跟评审正交。
+
+        `with_comments` 照实记下来（`review_signal_calls`），因为「PR 自己说没有
+        行内评论时就别再问一次」是这条路上真正省下来的那次请求。
+        """
+        self.review_signal_calls.append((number, with_comments))
+        signals = list(self.reviews_by_number.get(number, []))
+        if not with_comments:
+            signals = [s for s in signals if s.kind != "comment"]
+        return signals
+
     async def check_run_names(self, *, owner, repo, ref, token) -> set[str]:
         # Default: everything required is present — existing tests exercise the
         # green/red/pending states, not the tier-2 absence valve (#468).
@@ -281,6 +317,14 @@ class FakeGitHubPrClient:
 
     async def update_branch(self, *, owner, repo, number, token) -> bool:
         self.update_branch_calls.append(number)
+        self.update_branch_tokens.append(token)
+        if self.update_branch_result:
+            # GitHub's Update branch MERGES base into head, so it creates a
+            # commit and the PR's head moves. Modelling that is what makes the
+            # rebase cap observable at all — see
+            # test_accept_app_waits_for_ci.test_rebasing_stops_after_three_tries.
+            pr = self.prs[number]
+            pr["head_sha"] = f"{pr['head_sha']}-rebased"
         return self.update_branch_result
 
     async def workflow_run_jobs(
@@ -311,7 +355,7 @@ def _pr_ready(
     this file EXCEPT the repush ones below is testing something orthogonal
     to the repush mechanism (CI states, merge, deploy, nudging) and none of
     them ever create a real workspace commit, so a real lookup would just be
-    incidental git/jj plumbing unrelated to what's under test. The repush
+    incidental git plumbing unrelated to what's under test. The repush
     tests pass `patch_local_head=False` to exercise the real thing."""
 
     async def fake_token(_session, h, *, provider_id="github_app"):
@@ -355,10 +399,10 @@ def _reset_client():
 def _real_git_head(project_id: _uuid.UUID, topic_id: _uuid.UUID) -> str:
     """The REAL current head of a topic's local git branch — used by the
     repush tests below to prove the platform actually reads real git state
-    (via the same public ensure_repo/branch_for_topic helpers production code
+    (via the same public ensure_repo/branch_for_tree helpers production code
     uses), not a value we made up in the test."""
     repo_path = ws.ensure_repo(project_id)
-    branch = ws.branch_for_topic(topic_id)
+    branch = ws.branch_for_tree(topic_id)
     return subprocess.run(
         ["git", "-C", str(repo_path), "rev-parse", branch],
         capture_output=True,
@@ -552,7 +596,7 @@ def test_poll_ci_green_merges_and_that_finishes_the_accept(client, monkeypatch):
         _reset_client()
 
 
-def test_poll_ci_failure_nudges_cheese_once(client, monkeypatch, stub_agent):
+def test_poll_ci_failure_nudges_cheese_once(client, monkeypatch, stub_hooks):
     fake = _pr_ready(client, monkeypatch)
     try:
         pid = _make_project(client)
@@ -575,7 +619,7 @@ def test_poll_ci_failure_nudges_cheese_once(client, monkeypatch, stub_agent):
         # 都算上），而**行动指引整段只进芝士的 prompt**，房间里根本不显示 —— 所以
         # 下面这四条断言的对象是 prompt，不是块。
         assert "pytest: 3 failed" in contents
-        prompt = stub_agent.last_prompt or ""
+        prompt = stub_hooks.last_prompt or ""
         # 2026-08-09 fix: 芝士's sandbox can't push to GitHub — the nudge must
         # not tell it to "推送新 commit", or it goes chasing an impossible
         # instruction (see docs/topics for the incident this caused).
@@ -618,9 +662,9 @@ def test_repush_pushes_new_local_commit_and_updates_pr_head_sha(client, monkeypa
     workspace used to sit local forever — nothing ever pushed it to the PR
     branch (the platform's own `push_topic_branch_for_github_pr` was only
     ever called once, at PR-open time). This exercises the REAL local git
-    plumbing that now detects and re-pushes it: `ensure_repo`/
-    `branch_for_topic`/`snapshot_worktree` run for real against a real
-    jj-colocated repo. Only the actual network hop to github.com is faked
+    plumbing that now detects and re-pushes it: the machine's own commit lands on
+    the branch, and `ensure_repo`/`branch_for_tree` run for real against a real
+    repo. Only the actual network hop to github.com is faked
     (the sandbox has no route there — see docs/topics for that constraint);
     the fake still computes the pushed head_sha via a real `git rev-parse`,
     exactly like the production function does. Also proves the platform does
@@ -644,10 +688,8 @@ def test_repush_pushes_new_local_commit_and_updates_pr_head_sha(client, monkeypa
         tid = _make_topic(client, pid)
         puid, tuid = _uuid.UUID(pid), _uuid.UUID(tid)
 
-        # 芝士 does real work in its workspace before the card is even accepted.
-        wt = ws.topic_worktree(puid, tuid)
-        (wt / "work.txt").write_text("first pass\n")
-        ws.snapshot_worktree(puid, tuid)
+        # 芝士 does real work on its machine before the card is even accepted.
+        machine_commits(puid, tuid, {"work.txt": "first pass\n"})
         first_head = _real_git_head(puid, tuid)
 
         cid = _make_card(client, tid)
@@ -670,11 +712,17 @@ def test_repush_pushes_new_local_commit_and_updates_pr_head_sha(client, monkeypa
         assert len(push_calls) == 1
         assert _cards_for_topic(client, tid)[0]["pr_head_sha"] == first_head
 
-        # 芝士 fixes something — a plain edit in the same workspace, no special
-        # "please push" step (that's the whole point of the fix: it can't).
-        (wt / "work.txt").write_text("fixed\n")
+        # 芝士 fixes something: it commits on its own machine and pushes the
+        # branch back. Nothing on the platform made that commit — the poller
+        # stopped committing on a timer, because every write it swept up moved
+        # the PR and `cancel-in-progress` killed the CI run checking it.
+        machine_commits(puid, tuid, {"work.txt": "fixed\n"})
 
-        _poll(client)
+        # Saying so is what puts it on the PR without waiting for the next tick.
+        pushed = client.post(
+            f"/topics/{tid}/push-fix", headers=session_auth_headers("alice")
+        ).json()["data"]
+        assert pushed["pushed"] is True
         assert len(push_calls) == 2
         second_head = push_calls[1]["head_sha"]
         assert second_head != first_head
@@ -683,8 +731,13 @@ def test_repush_pushes_new_local_commit_and_updates_pr_head_sha(client, monkeypa
         assert card["pr_head_sha"] == second_head
 
         # Idempotent: polling again with no further local change must not
-        # trigger a third push.
+        # trigger a third push, and neither must asking again.
         _poll(client)
+        assert len(push_calls) == 2
+        again = client.post(
+            f"/topics/{tid}/push-fix", headers=session_auth_headers("alice")
+        ).json()["data"]
+        assert again["pushed"] is False, "没有新东西可推时,再问一次不算错误"
         assert len(push_calls) == 2
     finally:
         _reset_client()
@@ -715,9 +768,7 @@ def test_repush_failure_degrades_without_failing_the_card(client, monkeypatch):
         tid = _make_topic(client, pid)
         puid, tuid = _uuid.UUID(pid), _uuid.UUID(tid)
 
-        wt = ws.topic_worktree(puid, tuid)
-        (wt / "work.txt").write_text("first pass\n")
-        ws.snapshot_worktree(puid, tuid)
+        machine_commits(puid, tuid, {"work.txt": "first pass\n"})
         first_head = _real_git_head(puid, tuid)
 
         cid = _make_card(client, tid)
@@ -729,10 +780,11 @@ def test_repush_failure_degrades_without_failing_the_card(client, monkeypatch):
         holder["pr_number"] = accepted["pr_number"]
         fake.prs[holder["pr_number"]]["head_sha"] = first_head
 
-        # 芝士 fixes something, then the token goes bad before the platform
-        # can re-push it (expired token / network hiccup / non-ff — same
-        # degrade contract either way).
-        (wt / "work.txt").write_text("fixed\n")
+        # 芝士 fixes something and commits it, then the token goes bad before
+        # the platform can re-push it (expired token / network hiccup / non-ff
+        # — same degrade contract either way). The commit is the agent's own:
+        # the poller reads the branch head, it does not move it.
+        machine_commits(puid, tuid, {"work.txt": "fixed\n"})
         holder["fail"] = True
 
         result = _poll(client)
@@ -862,12 +914,9 @@ def test_remote_head_ff_from_local_reads_real_git_ancestry(client):
     tid = _make_topic(client, pid)
     puid, tuid = _uuid.UUID(pid), _uuid.UUID(tid)
 
-    wt = ws.topic_worktree(puid, tuid)
-    (wt / "a.txt").write_text("1\n")
-    ws.snapshot_worktree(puid, tuid)
+    machine_commits(puid, tuid, {"a.txt": "1\n"})
     head1 = _real_git_head(puid, tuid)
-    (wt / "a.txt").write_text("2\n")
-    ws.snapshot_worktree(puid, tuid)
+    machine_commits(puid, tuid, {"a.txt": "2\n"})
     head2 = _real_git_head(puid, tuid)
     assert head1 != head2
 
@@ -916,7 +965,8 @@ def test_repush_skips_a_doomed_non_fast_forward_and_says_so(client, monkeypatch)
         card = _cards_for_topic(client, tid)[0]
         assert pushes == []  # the doomed push was never attempted
         assert card["status"] == "pr_open"
-        assert card["note"].startswith("🌿 本地分支与 PR 分支已分叉")
+        assert card["note_level"] == "error"
+        assert card["note"].startswith("本地分支与 PR 分支已分叉")
         assert _topic(client, tid)["status"] == "active"
 
         # 60s polling: no spam, still no push on the next tick.
@@ -1199,7 +1249,7 @@ def test_poll_merge_refused_puts_the_reason_on_the_card(client, monkeypatch):
 
 
 def test_poll_merge_refusal_summons_cheese_once_per_reason(
-    client, monkeypatch, stub_agent
+    client, monkeypatch, stub_hooks
 ):
     """A note nobody is looking at is not a notification (2026-08-11): a PR the
     platform can't merge — typically merge conflicts, which 芝士 can fix in its
@@ -1230,7 +1280,7 @@ def test_poll_merge_refusal_summons_cheese_once_per_reason(
         # Must be actionable from inside the sandbox: 芝士 has no GitHub
         # credentials, so the same promise the CI nudge makes has to hold here.
         # 平台提示统一契约: 这句是**给芝士的指令**，只进 prompt，房间里不显示。
-        assert "平台会自动把新提交同步到这个 PR" in (stub_agent.last_prompt or "")
+        assert "平台会自动把新提交同步到这个 PR" in (stub_hooks.last_prompt or "")
         first_count = contents.count("Pull Request has merge conflicts")
         assert first_count == 1
 
@@ -1305,15 +1355,17 @@ def test_poll_merge_refusal_replaces_a_stale_ci_failure_note(client, monkeypatch
         head_sha = fake.prs[number]["head_sha"]
         fake.check_state_by_sha[head_sha] = ("failure", "lint 挂了")
         _poll(client)
-        assert _cards_for_topic(client, tid)[0]["note"].startswith("⚠️")
+        assert _cards_for_topic(client, tid)[0]["note_level"] == "error"
 
         fake.check_state_by_sha[head_sha] = ("success", "全部通过")
         fake.merge_blocked_by_number[number] = "HTTP 405：merge method disabled"
         _poll(client)
 
-        note = _cards_for_topic(client, tid)[0]["note"]
-        assert "405" in note
-        assert not note.startswith("⚠️")
+        # 合并被拒是新的停因，它要顶掉旧的检查失败，而不是排在它后面。
+        refused = _cards_for_topic(client, tid)[0]
+        assert "405" in refused["note"]
+        assert "拒绝合并" in refused["note"]
+        assert "lint 挂了" not in refused["note"]
     finally:
         _reset_client()
 

@@ -40,8 +40,15 @@ services:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
     logging:
-      driver: json-file
-      options: { max-size: "10m", max-file: "3" }
+      # journald so the lines survive the container. etrip deploys by
+      # recreating these services, and a json-file log dies with the container
+      # it belonged to — taking the record of whatever went wrong just before
+      # the redeploy with it (#574). Read a dead container with
+      # `journalctl -t <container-name>`; `docker logs` is unchanged for a live
+      # one. Verified on this box 2026-08-18.
+      driver: journald
+      options:
+        tag: "{{.Name}}"
 
   valkey:
     image: valkey/valkey:8.0.2
@@ -56,8 +63,9 @@ services:
       start_period: 10s
     restart: unless-stopped
     logging:
-      driver: json-file
-      options: { max-size: "10m", max-file: "3" }
+      driver: journald
+      options:
+        tag: "{{.Name}}"
 
   backend:
     image: ${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:${IMAGE_TAG:-main}}
@@ -73,6 +81,11 @@ services:
         condition: service_healthy
       valkey:
         condition: service_healthy
+    # tini as PID 1, so orphans get reaped. The git the backend runs is waited on,
+    # but git's own children outlive it and reparent to PID 1 — and uvicorn never
+    # waits on a process it did not start. Without this they pile up as zombies:
+    # 77 `git` after 17 hours on dev (2026-09-01). They cost PIDs, not fds.
+    init: true
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8081/healthz"]
       interval: 30s
@@ -81,8 +94,9 @@ services:
       retries: 3
     restart: unless-stopped
     logging:
-      driver: json-file
-      options: { max-size: "10m", max-file: "3" }
+      driver: journald
+      options:
+        tag: "{{.Name}}"
 
   frontend:
     image: ${FRONTEND_IMAGE:-ghcr.io/sageseekersociety/cheese/frontend:${IMAGE_TAG:-main}}
@@ -106,8 +120,9 @@ services:
       retries: 3
     restart: unless-stopped
     logging:
-      driver: json-file
-      options: { max-size: "10m", max-file: "3" }
+      driver: journald
+      options:
+        tag: "{{.Name}}"
 
 volumes:
   postgres_data:

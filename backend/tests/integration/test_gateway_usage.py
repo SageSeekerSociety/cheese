@@ -4,42 +4,64 @@ backends) gets its REAL usage drained from the gateway spend log into the
 usage table."""
 
 import uuid
+from unittest.mock import AsyncMock
 
 import pytest
 
 from app.core.errors import AppError
 from app.domain.agent import gateway as gw
 from app.domain.agent.chat import ChatService
+from app.domain.agent.cloud_provider import CloudChannel
+from app.domain.agent.device_provider import DeviceChannel
+from app.domain.agent.harness.claude_code import ClaudeCodeRuntime
 from app.domain.agent.profiles import (
     TIER_BYO,
     TIER_DEFAULT,
     AgentProfile,
     ProfileRegistry,
 )
-from app.domain.agent.service import AgentResult, AgentService
 from app.domain.project.repositories import ProjectRepository
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
+from tests.conftest import StubChannel, settle_turn, stub_compute
 
 
-class QuietAgent(AgentService):
-    """A turn that reports NO usage — the tmux/device reality."""
+def _on_a_machine() -> ClaudeCodeRuntime:
+    """A backend whose machine is somewhere else, so it builds that machine's
+    model environment where the machine is."""
+    return ClaudeCodeRuntime(DeviceChannel())
 
-    def __init__(self) -> None:
-        super().__init__(model="stub")
 
-    async def stream_reply(
-        self,
-        *,
-        prompt,
-        system_prompt,
-        cwd,
-        resume_session_id,
-        sandbox=None,
-        allowed_tools=None,
-        **_,
-    ):
-        yield AgentResult(text="ok", session_id="s1", usage=None)
+def _leases_a_machine() -> ClaudeCodeRuntime:
+    """The Cloud backend, built the way the app wires it."""
+    return ClaudeCodeRuntime(
+        CloudChannel(
+            configured=True,
+            ensure_topic_cloud=AsyncMock(),
+            read_topic_cloud=AsyncMock(),
+        )
+    )
+
+
+def _in_this_process() -> ClaudeCodeRuntime:
+    """A backend with no machine of its own: nothing out there will build it a
+    model environment, so the platform hands it the resolved profile env."""
+    return StubChannel().runtime
+
+
+class QuietScreen(StubChannel):
+    """A turn that reports NO usage — the interactive reality."""
+
+    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+        del reply
+        self.starts(topic_id, session_id="s1")
+        self.acknowledges(topic_id, prompt)
+        self.hook(
+            topic_id,
+            hook_event_name="Stop",
+            session_id="s1",
+            last_assistant_message="ok",
+        )
 
 
 class FakeGateway:
@@ -78,10 +100,10 @@ class FailingMintGateway(FakeGateway):
         return None
 
 
-async def _mk_service(factory, tmp_path, fake, profiles=None):
+async def _mk_service(factory, tmp_path, fake, profiles=None, screen=None):
     svc = ChatService(
         session_factory=factory,
-        agent=QuietAgent(),
+        compute=stub_compute(screen or QuietScreen()),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
         profiles=profiles,
@@ -102,8 +124,8 @@ async def test_virtual_key_minted_once_and_injected(client, tmp_path):
     fake = FakeGateway()
     svc, factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
 
-    kw1, route1 = await svc._model_kwargs(pid, "local-docker")
-    kw2, route2 = await svc._model_kwargs(pid, "local-docker")
+    kw1, route1 = await svc._model_kwargs(pid, _in_this_process())
+    kw2, route2 = await svc._model_kwargs(pid, _in_this_process())
     # Injected into the turn env both times, but minted exactly once (persisted).
     assert route1 == route2 == "gateway"
     assert kw1["env"]["ANTHROPIC_AUTH_TOKEN"] == "sk-virt-1"
@@ -123,7 +145,7 @@ async def test_gateway_pool_refuses_turn_when_project_key_cannot_be_minted(
     svc, _factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
 
     with pytest.raises(AppError, match="project-scoped key"):
-        await svc._model_kwargs(pid, "local-docker")
+        await svc._model_kwargs(pid, _in_this_process())
 
     assert fake.minted == [pid]
 
@@ -132,7 +154,7 @@ async def test_gateway_pool_refuses_turn_when_project_key_cannot_be_minted(
 async def test_gateway_disabled_does_not_require_a_virtual_key(client, tmp_path):
     svc, _factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, None)
 
-    kwargs, route = await svc._model_kwargs(pid, "local-docker")
+    kwargs, route = await svc._model_kwargs(pid, _in_this_process())
 
     assert route == "native"
     assert "env" not in kwargs
@@ -177,7 +199,7 @@ async def test_non_pool_profile_keeps_its_own_credentials(
         project.settings = {"execution_profile": "byo"}
         await session.commit()
 
-    kwargs, route = await svc._model_kwargs(pid, "local-docker")
+    kwargs, route = await svc._model_kwargs(pid, _in_this_process())
 
     assert route == "native"
     assert kwargs["env"]["ANTHROPIC_AUTH_TOKEN"] == "byo-key"
@@ -203,6 +225,7 @@ async def test_zero_usage_turn_gets_real_usage_from_gateway(
         topic_id=tid, author="u", content="做点事", summon=True
     ):
         pass
+    await settle_turn(svc, tid)
 
     from app.domain.usage.repositories import UsageRepository
 
@@ -241,6 +264,7 @@ async def test_credits_burn_by_real_spend_not_raw_tokens(client, tmp_path, monke
         topic_id=tid, author="u", content="做点事", summon=True
     ):
         pass
+    await settle_turn(svc, tid)
 
     async with factory() as session:
         summary = await ComputeGrantRepository(session).summary(pid)
@@ -266,6 +290,7 @@ async def test_late_spend_rows_land_via_deferred_drain(client, tmp_path, monkeyp
         topic_id=tid, author="u", content="做点事", summon=True
     ):
         pass
+    await settle_turn(svc, tid)
     # Let the deferred task run (its sleep is patched away).
     import asyncio as _asyncio
 
@@ -284,11 +309,11 @@ async def test_late_spend_rows_land_via_deferred_drain(client, tmp_path, monkeyp
 
 @pytest.mark.anyio
 async def test_device_turn_route_follows_the_deployment_supply(client, tmp_path):
-    """A device turn's model env belongs to the device provider — the profile
-    env (box-local gateway URL + a real key) must never reach the machine. The
-    ROUTE follows where its traffic actually goes (#325 G2): the /llm gateway
-    without a subscription, the metering proxy with one — same as the local
-    container, so moving a topic to a device never swaps its model."""
+    """A device turn's model env belongs to the backend that reaches the machine
+    — the profile env (box-local gateway URL + a real key) must never reach the
+    machine. The ROUTE follows where its traffic actually goes (#325 G2): the
+    /llm gateway without a subscription, the metering proxy with one, so moving
+    a topic between machines never swaps its model."""
     from app.core.config import settings as app_settings
 
     pool_url = "http://pool.example"
@@ -305,7 +330,7 @@ async def test_device_turn_route_follows_the_deployment_supply(client, tmp_path)
         client.test_factory, tmp_path, fake, profiles=profiles
     )
 
-    kwargs, route = await svc._model_kwargs(pid, "device")
+    kwargs, route = await svc._model_kwargs(pid, _on_a_machine())
 
     assert route == "gateway"
     assert "env" not in kwargs  # no profile env, no virtual key on the machine
@@ -315,34 +340,67 @@ async def test_device_turn_route_follows_the_deployment_supply(client, tmp_path)
     import unittest.mock
 
     with unittest.mock.patch.object(app_settings, "subscription_enabled", True):
-        kwargs, route = await svc._model_kwargs(pid, "device")
+        kwargs, route = await svc._model_kwargs(pid, _on_a_machine())
     assert route == "subscription"
-    assert "env" not in kwargs  # the device provider builds the proxy env itself
+    assert "env" not in kwargs  # the backend builds the proxy env itself
     assert kwargs["model"] == ""  # the subscription's default, no --model flag
 
 
 @pytest.mark.anyio
-async def test_subscription_route_applies_only_to_the_hooks_providers(
+async def test_subscription_route_follows_the_capability_not_the_backend_name(
     client, tmp_path, monkeypatch
 ):
-    """subscription_enabled names a capability only the hooks providers (tmux,
-    device) implement — they build the metering-proxy env themselves. The sdk
-    provider under that flag used to fall through with no env and run on the
-    backend's own inherited credentials — it must keep its profile/gateway
-    routing instead."""
+    """subscription_enabled names a capability a backend has to IMPLEMENT — it
+    builds the metering-proxy env itself, so nothing travels from here. A
+    backend without that transport used to fall through under the same flag with
+    no env at all and run on the backend process's own inherited credentials; it
+    must keep its profile/gateway routing instead."""
     from app.core.config import settings as app_settings
 
     monkeypatch.setattr(app_settings, "subscription_enabled", True)
     fake = FakeGateway()
     svc, _factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
 
-    kwargs, route = await svc._model_kwargs(pid, "tmux-hooks")
+    kwargs, route = await svc._model_kwargs(pid, _on_a_machine())
     assert route == "subscription"
-    assert "env" not in kwargs  # the tmux provider builds the proxy env itself
+    assert "env" not in kwargs  # the backend builds the proxy env itself
 
-    kwargs, route = await svc._model_kwargs(pid, "local-docker")
+    kwargs, route = await svc._model_kwargs(pid, _in_this_process())
     assert route == "gateway"  # profile/gateway logic, not the subscription
     assert kwargs["env"]["ANTHROPIC_AUTH_TOKEN"] == "sk-virt-1"
+
+
+@pytest.mark.anyio
+async def test_a_leased_machine_takes_the_same_supply_as_an_enrolled_one(
+    client, tmp_path, monkeypatch
+):
+    """Cloud and device are two answers to WHICH machine, never to which supply.
+
+    Both reach a machine over the same link and both assemble its model
+    environment there, so a subscription deployment must meter them the same way
+    and hand them the same --model alias. When this was decided by the backend's
+    NAME, a Cloud turn matched neither name: it was shipped the profile env and
+    a virtual gateway key, launched `claude --model <the pool's model>` at a
+    subscription that does not serve it, and its usage row named the gateway's
+    meter while its traffic went through the proxy — counted once in each.
+    """
+    from app.core.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "subscription_enabled", True)
+    fake = FakeGateway()
+    svc, factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
+    async with factory() as session:
+        project = await ProjectRepository(session).get(pid)
+        assert project is not None
+        project.settings = {"subscription_model": "opus"}
+        await session.commit()
+
+    device_kwargs, device_route = await svc._model_kwargs(pid, _on_a_machine())
+    cloud_kwargs, cloud_route = await svc._model_kwargs(pid, _leases_a_machine())
+
+    assert cloud_route == device_route == "subscription"
+    assert cloud_kwargs == device_kwargs == {"model": "claude-opus-5"}
+    assert fake.minted == []  # no gateway key is minted for either
 
 
 @pytest.mark.anyio
@@ -359,6 +417,7 @@ async def test_usage_rows_record_their_route(client, tmp_path, monkeypatch):
         topic_id=tid, author="u", content="做点事", summon=True
     ):
         pass
+    await settle_turn(svc, tid)
 
     from sqlalchemy import select
 
@@ -380,29 +439,29 @@ async def test_zero_usage_report_lands_as_unmetered_not_metered_zero(client, tmp
     """Interactive Claude Code's Stop hook decodes to an all-zero usage — that
     is 'unknown', not 'this turn was free'. Without a meter for the route, the
     row must say unmetered."""
-    from app.domain.agent.service import AgentUsage
 
-    class ZeroUsageAgent(AgentService):
-        def __init__(self) -> None:
-            super().__init__(model="stub")
+    class ZeroUsageScreen(StubChannel):
+        def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+            del reply
+            self.starts(topic_id, session_id="s1")
+            self.acknowledges(topic_id, prompt)
+            self.hook(
+                topic_id,
+                hook_event_name="Stop",
+                session_id="s1",
+                last_assistant_message="ok",
+                usage={"input": 0, "output": 0},
+            )
 
-        async def stream_reply(self, **_kw):
-            yield AgentResult(text="ok", session_id="s1", usage=AgentUsage())
-
-    svc, factory, pid, tid = await _mk_service(client.test_factory, tmp_path, None)
-    # Rebuild the pool around the zero-usage agent (the ctor built it already).
-    from app.domain.agent.compute import ComputePool
-
-    svc._compute = ComputePool.local(
-        agent=ZeroUsageAgent(),
-        workspace_root=str(tmp_path / "ws"),
-        sandbox_enabled=False,
+    svc, factory, pid, tid = await _mk_service(
+        client.test_factory, tmp_path, None, screen=ZeroUsageScreen()
     )
 
     async for _ in svc.converse(
         topic_id=tid, author="u", content="做点事", summon=True
     ):
         pass
+    await settle_turn(svc, tid)
 
     from sqlalchemy import select
 

@@ -2,8 +2,7 @@
 
 Covers: deadline scheduler, AIConversation creation, route ordering, material
 upload, migration chain, groups search count, datetime timezone, identity
-patch, and histogram defaults. (The in-process notification finalizer this
-file once covered was superseded by the taskiq cron and removed.)
+patch, and histogram defaults.
 """
 
 from datetime import UTC, datetime

@@ -5,9 +5,9 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { getMarketNodes } from '../api'
 
-// 节点状态 (spec §9.1): the physical side of the compute pools — every
-// configured node (local docker + cheesed remote), its liveness, and how many
-// turns it is running right now. Self-contained: fetches + refreshes itself.
+// 节点状态 (spec §9.1): the physical side of the compute pools — every machine
+// pool this deployment can run a turn on, and whether it can run one right now.
+// Self-contained: fetches + refreshes itself.
 const board = ref<MarketNodes | null>(null)
 const loading = ref(false)
 const error = ref<string | null>(null)
@@ -27,7 +27,7 @@ async function load() {
 
 onMounted(() => {
   void load()
-  // Light auto-refresh so 在线/负载 stays honest while the page is open.
+  // Light auto-refresh so 在线 stays honest while the page is open.
   timer = window.setInterval(() => void load(), 15000)
 })
 onBeforeUnmount(() => {
@@ -40,7 +40,7 @@ onBeforeUnmount(() => {
     <div class="node-board__head">
       <v-icon size="20" class="me-2 c-muted">mdi-lan</v-icon>
       <h2 class="node-board__title">机器状态</h2>
-      <span class="node-board__hint c-faint">算力池背后的机器，在线状态与当前负载</span>
+      <span class="node-board__hint c-faint">算力池背后的机器，以及现在能不能跑</span>
       <v-spacer />
       <span v-if="board" class="node-board__total c-faint"> 全平台进行中 {{ board.active_turns_total }} 轮 </span>
     </div>
@@ -57,16 +57,12 @@ onBeforeUnmount(() => {
         <div class="node-card__top">
           <span class="node-dot" :class="n.online ? 'node-dot--on' : 'node-dot--off'" />
           <span class="node-card__status">{{ n.online ? '在线' : '离线' }}</span>
-          <span class="node-card__kind">{{ n.kind === 'local' ? '本地' : '远程' }}</span>
-          <span v-if="n.current" class="node-card__current">当前执行的机器</span>
+          <span class="node-card__kind">{{ n.kind === 'device' ? '自托管' : '云端' }}</span>
+          <span v-if="n.current" class="node-card__current">没有选择时落在这里</span>
         </div>
         <h3 class="node-card__title">{{ n.label }}</h3>
         <p class="node-card__desc c-muted">{{ n.description }}</p>
         <div class="node-card__meta">
-          <span class="node-card__load">
-            <v-icon size="13">mdi-pulse</v-icon>
-            进行中 {{ n.active_turns }} 轮
-          </span>
           <span class="node-card__detail c-faint">{{ n.detail }}</span>
         </div>
       </article>
@@ -97,7 +93,11 @@ onBeforeUnmount(() => {
 }
 .node-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  /* min() is what keeps the track from being wider than what holds it: a bare
+     minmax(280px, …) is a floor the grid honours even when the column it sits
+     in is 200px, so the cards keep their width and the panel scrolls sideways
+     instead. Measured at a 200px container: 80px of overflow without it. */
+  grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
   gap: 14px;
 }
 .node-card {
@@ -165,14 +165,6 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-}
-.node-card__load {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 0.78rem;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
 }
 .node-card__detail {
   font-size: 0.74rem;

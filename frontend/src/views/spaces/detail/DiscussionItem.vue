@@ -198,7 +198,7 @@ const fetchDiscussionDetail = async () => {
     }
   } catch (err: any) {
     console.error('Failed to load discussion detail:', err)
-    errorLoading.value = err.message || 'Unknown error'
+    errorLoading.value = err.message || '未知错误'
     toast.error(t('spaces.discussions.loadFailed'))
   }
   isLoading.value = false

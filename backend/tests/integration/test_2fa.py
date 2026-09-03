@@ -32,6 +32,10 @@ class TestTwoFactorIntegration:
         from app.domain.user.login_security import (
             BACKUP_CODE_ATTEMPTS_PREFIX,
             BACKUP_CODE_LOCKOUT_PREFIX,
+            STEP_UP_2FA_ATTEMPTS_PREFIX,
+            STEP_UP_2FA_LOCKOUT_PREFIX,
+            STEP_UP_PASSWORD_ATTEMPTS_PREFIX,
+            STEP_UP_PASSWORD_LOCKOUT_PREFIX,
             TOTP_ALWAYS_PREFIX,
             TOTP_BACKUP_PREFIX,
             TOTP_SECRET_PREFIX,
@@ -53,6 +57,10 @@ class TestTwoFactorIntegration:
                     TWO_FACTOR_LOCKOUT_PREFIX,
                     BACKUP_CODE_ATTEMPTS_PREFIX,
                     BACKUP_CODE_LOCKOUT_PREFIX,
+                    STEP_UP_2FA_ATTEMPTS_PREFIX,
+                    STEP_UP_2FA_LOCKOUT_PREFIX,
+                    STEP_UP_PASSWORD_ATTEMPTS_PREFIX,
+                    STEP_UP_PASSWORD_LOCKOUT_PREFIX,
                 )
             )
         )
@@ -124,10 +132,8 @@ class TestTwoFactorIntegration:
         )
         assert again.status_code == 400
 
-        disable = self.client.post(
-            f"/users/{self.user.user_id}/2fa/disable", headers=self.headers, json={}
-        )
-        assert disable.status_code == 200
+        disable = self._disable(self._sudo_ticket(secret))
+        assert disable.status_code == 200, disable.text
         assert disable.json()["data"] == {"success": True}
 
         status = self.client.get(
@@ -389,6 +395,270 @@ class TestTwoFactorIntegration:
         # is why backup guesses can be capped harder than a phone code.
         ok = self._verify(self._temp_token(), pyotp.TOTP(secret).now())
         assert ok.status_code == 200, ok.text
+
+    # ── #389: a live session is not consent, and the gate is server-side ──
+    #
+    # Different attacker from the block above. Here the password is beside
+    # the point: whoever is at the keyboard already holds a working session —
+    # a stolen cookie, an unlocked laptop — and 2FA is what stands between
+    # them and taking the account over properly. /2fa/disable is the sharp
+    # end, being the one entrance where success ends 2FA for good.
+
+    def _sudo_totp(self, code: str, purpose: str | None = "2fa:disable"):
+        payload: dict = {"method": "totp", "credentials": {"code": code}}
+        if purpose is not None:
+            payload["purpose"] = purpose
+        return self.client.post("/users/auth/sudo", headers=self.headers, json=payload)
+
+    def _sudo_password(self, password: str, purpose: str | None = "2fa:disable"):
+        payload: dict = {"method": "password", "credentials": {"password": password}}
+        if purpose is not None:
+            payload["purpose"] = purpose
+        return self.client.post("/users/auth/sudo", headers=self.headers, json=payload)
+
+    def _sudo_ticket(self, secret: str) -> str:
+        """A ticket obtained the way a client gets one — by re-authenticating.
+
+        Never minted directly: a ticket is only redeemable if its ``jti`` was
+        reserved when it was issued, and going through the endpoint is what
+        proves the issuing side actually does that.
+        """
+        resp = self._sudo_totp(pyotp.TOTP(secret).now())
+        assert resp.status_code == 200, resp.text
+        return resp.json()["data"]["sudoTicket"]
+
+    def _disable(self, ticket: str | None = None):
+        return self.client.post(
+            f"/users/{self.user.user_id}/2fa/disable",
+            headers=self.headers,
+            json={} if ticket is None else {"sudoTicket": ticket},
+        )
+
+    def _2fa_enabled(self) -> bool:
+        resp = self.client.get(
+            f"/users/{self.user.user_id}/2fa/status", headers=self.headers
+        )
+        assert resp.status_code == 200, resp.text
+        return resp.json()["data"]["enabled"]
+
+    def test_a_live_session_alone_cannot_turn_2fa_off(self):
+        """The whole of #389 in one test. Sudo used to answer
+        ``{"verified": true}`` and record nothing, so the gate in front of
+        this endpoint lived in the client: anyone holding a session could
+        POST here directly and switch the second factor off without proving
+        anything at all."""
+        self._enable_2fa()
+
+        refused = self._disable()
+        assert refused.status_code == 403, refused.text
+        assert refused.json()["error"]["name"] == "SudoRequiredError"
+        assert self._2fa_enabled() is True
+
+    def test_a_sudo_ticket_is_spent_by_the_operation_it_opens(self):
+        """Redeemable once, so a ticket captured on its way past — a proxy
+        log, a shared screen, a browser extension — is worth nothing after
+        the owner's own click has used it."""
+        secret, _codes = self._enable_2fa()
+        ticket = self._sudo_ticket(secret)
+
+        first = self._disable(ticket)
+        assert first.status_code == 200, first.text
+        assert first.json()["data"] == {"success": True}
+        assert self._2fa_enabled() is False
+
+        # The owner turns 2FA back on; the used ticket must not open it again.
+        self._enable_2fa()
+        replay = self._disable(ticket)
+        assert replay.status_code == 403, replay.text
+        assert replay.json()["error"]["name"] == "SudoRequiredError"
+        assert self._2fa_enabled() is True
+
+    def test_being_signed_in_is_not_having_re_authenticated(self):
+        """The session's own access token is signed by the same key and names
+        the same user. What it does not say is that anybody proved they were
+        present a minute ago — which is the only thing this gate asks."""
+        self._enable_2fa()
+
+        refused = self._disable(self.headers["Authorization"].split(" ", 1)[1])
+        assert refused.status_code == 403, refused.text
+        assert self._2fa_enabled() is True
+
+    def test_re_authenticating_for_nothing_in_particular_mints_no_ticket(self):
+        """Sudo also fronts operations the server does not yet gate. Those
+        ask for no purpose and must get no ticket: a credential nobody
+        redeems is not a protection, it is a spare key on the wire."""
+        secret, _codes = self._enable_2fa()
+
+        resp = self._sudo_totp(pyotp.TOTP(secret).now(), purpose=None)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"] == {"verified": True}
+
+    def test_turning_2fa_off_tells_the_owner_out_of_band(self, monkeypatch):
+        """The notification is the half that survives the attacker winning.
+        They hold the session, so every in-app signal is theirs to dismiss;
+        mail goes somewhere they may not reach, which is what turns a silent
+        lockout into something the owner can still catch."""
+        sent: list[dict] = []
+
+        class _Recorder:
+            async def send(self, **kwargs):
+                sent.append(kwargs)
+                return True
+
+        import app.core.email as email_module
+
+        monkeypatch.setattr(email_module, "get_email_sender", lambda: _Recorder())
+
+        secret, _codes = self._enable_2fa()
+        ok = self._disable(self._sudo_ticket(secret))
+        assert ok.status_code == 200, ok.text
+
+        assert len(sent) == 1, sent
+        assert sent[0]["to"] == self.user.email
+        # It has to be actionable on its own: someone reading only this mail
+        # must learn what happened and what to do about it.
+        assert "two-factor" in sent[0]["subject"].lower()
+        assert "password" in sent[0]["body_text"].lower()
+
+    def test_a_failing_mail_server_does_not_undo_the_disable(self, monkeypatch):
+        """The factor is already off by the time the mail goes out. Reporting
+        failure here would send the owner back to retry something that has
+        already happened, and the retry answers "2FA is not enabled"."""
+
+        class _Broken:
+            async def send(self, **kwargs):
+                raise RuntimeError("smtp is down")
+
+        import app.core.email as email_module
+
+        monkeypatch.setattr(email_module, "get_email_sender", lambda: _Broken())
+
+        secret, _codes = self._enable_2fa()
+        ok = self._disable(self._sudo_ticket(secret))
+        assert ok.status_code == 200, ok.text
+        assert self._2fa_enabled() is False
+
+    def test_sudo_totp_is_budgeted(self):
+        """Both sides of the wall: what a guess costs before it, and what
+        happens at it."""
+        from app.domain.user.login_security import MAX_STEP_UP_2FA_ATTEMPTS
+
+        secret, _codes = self._enable_2fa()
+
+        # Before: the right code works, and a wrong one comes back saying how
+        # much rope is left — no replacement ticket, there is no ticket here.
+        assert self._sudo_totp(pyotp.TOTP(secret).now()).status_code == 200
+        wrong = self._wrong_totp(secret)
+        first = self._sudo_totp(wrong)
+        assert first.status_code == 401, first.text
+        assert first.json()["error"]["data"] == {
+            "reason": "invalid_code",
+            "attemptsRemaining": MAX_STEP_UP_2FA_ATTEMPTS - 1,
+        }
+
+        for attempt in range(1, MAX_STEP_UP_2FA_ATTEMPTS):
+            resp = self._sudo_totp(wrong)
+            assert resp.status_code in (401, 403), f"attempt {attempt + 1}: {resp.text}"
+
+        # After: refused without the code being looked at — proven by sending
+        # the CORRECT one, which this same test already watched be accepted.
+        blocked = self._sudo_totp(pyotp.TOTP(secret).now())
+        assert blocked.status_code == 403, blocked.text
+        assert blocked.json()["error"]["data"]["reason"] == "too_many_attempts"
+        assert blocked.json()["error"]["data"]["retryAfterSeconds"] > 0
+
+    def test_sudo_password_is_budgeted(self):
+        """The other credential this endpoint accepts. It went uncounted
+        entirely: a stolen session bought unlimited password guesses against
+        an account whose owner never sees a login counter move, because the
+        login counter is keyed by username and this path never touches it."""
+        from app.domain.user.login_security import MAX_STEP_UP_PASSWORD_ATTEMPTS
+
+        self._enable_2fa()
+        assert self._sudo_password(self.user.password).status_code == 200
+
+        first = self._sudo_password("definitely-not-the-password")
+        assert first.status_code == 401, first.text
+        assert first.json()["error"]["data"] == {
+            "reason": "invalid_credentials",
+            "attemptsRemaining": MAX_STEP_UP_PASSWORD_ATTEMPTS - 1,
+        }
+        for attempt in range(1, MAX_STEP_UP_PASSWORD_ATTEMPTS):
+            resp = self._sudo_password("definitely-not-the-password")
+            assert resp.status_code in (401, 403), f"attempt {attempt + 1}: {resp.text}"
+
+        # Again the correct credential, refused unseen.
+        blocked = self._sudo_password(self.user.password)
+        assert blocked.status_code == 403, blocked.text
+        assert blocked.json()["error"]["data"]["reason"] == "too_many_attempts"
+
+    def test_the_two_step_up_budgets_cannot_spend_each_other(self):
+        """Password and TOTP are separate credentials and get separate
+        allowances. Sharing one would mean grinding either factor exhausts
+        the other, so the second factor would stop being a second chance."""
+        from app.domain.user.login_security import MAX_STEP_UP_PASSWORD_ATTEMPTS
+
+        secret, _codes = self._enable_2fa()
+
+        for _ in range(MAX_STEP_UP_PASSWORD_ATTEMPTS):
+            self._sudo_password("definitely-not-the-password")
+        assert self._sudo_password(self.user.password).status_code == 403
+
+        # TOTP is untouched, and still opens the gate it is supposed to.
+        ticket = self._sudo_ticket(secret)
+        assert self._disable(ticket).status_code == 200
+
+    def test_step_up_and_login_budgets_cannot_spend_each_other(self):
+        """Why the step-up counters live under their own keys. Grinding a
+        stolen session must not lock the owner out of signing in — that would
+        make the rate limit an attack of its own — and signing in must not
+        refill the attacker's allowance."""
+        from app.domain.user.login_security import (
+            MAX_STEP_UP_2FA_ATTEMPTS,
+            MAX_STEP_UP_PASSWORD_ATTEMPTS,
+        )
+
+        secret, _codes = self._enable_2fa()
+        wrong = self._wrong_totp(secret)
+
+        for _ in range(MAX_STEP_UP_2FA_ATTEMPTS):
+            self._sudo_totp(wrong)
+        for _ in range(MAX_STEP_UP_PASSWORD_ATTEMPTS):
+            self._sudo_password("definitely-not-the-password")
+        assert self._sudo_totp(pyotp.TOTP(secret).now()).status_code == 403
+
+        # The owner signs in normally, password and second step and all.
+        signed_in = self._verify(self._temp_token(), pyotp.TOTP(secret).now())
+        assert signed_in.status_code == 200, signed_in.text
+
+        # And that login left the step-up lockout exactly where it was.
+        assert self._sudo_totp(pyotp.TOTP(secret).now()).status_code == 403
+
+    def test_a_backup_code_is_not_a_step_up_credential(self):
+        """Sudo does not check backup codes — only the TOTP secret — so one
+        presented there is just a wrong code: refused, charged to the step-up
+        budget, and never looked up, which is why it survives to be used at
+        the one place it *is* a credential."""
+        from app.domain.user.login_security import MAX_STEP_UP_2FA_ATTEMPTS
+
+        secret, codes = self._enable_2fa()
+
+        assert self._sudo_totp(codes[0]).status_code == 401
+        assert self._sudo_totp(codes[1]).status_code == 401
+        assert self._2fa_enabled() is True
+
+        # Charged like any other guess: two spent here plus three more empties
+        # the allowance, and the next correct TOTP is refused on the budget.
+        wrong = self._wrong_totp(secret)
+        for _ in range(MAX_STEP_UP_2FA_ATTEMPTS - 2):
+            self._sudo_totp(wrong)
+        assert self._sudo_totp(pyotp.TOTP(secret).now()).status_code == 403
+
+        # Both are still live at login, where backup codes are a credential.
+        for code in (codes[0], codes[1]):
+            resp = self._verify(self._temp_token(), code)
+            assert resp.status_code == 200, resp.text
+            assert resp.json()["data"]["usedBackupCode"] is True
 
     def test_backup_codes_regenerate_invalidates_old(self):
         _secret, old_codes = self._enable_2fa()

@@ -152,6 +152,41 @@ def test_agent_ws_rejects_unknown_token(client):
             ws.receive_text()  # should not get here; the server closes 1008
 
 
+def test_a_device_attaching_wakes_the_cloud_topic_waiting_on_it(client, monkeypatch):
+    """A Cloud topic holds its first message until its machine is enrolled AND
+    connected. The connector attaching is usually the last of those two facts,
+    and it must trigger delivery itself rather than wait for the next sweep tick
+    (53 s of a 4½-minute first turn on dev, 2026-09-02)."""
+    owner = _login(client, "erin")
+    code = client.post(
+        "/connector/auth/device/start", json={"device_name": "erins-cloud-box"}
+    ).json()["device_code"]
+    connect = client.post(
+        "/connector/connect", json={"device_code": code}, headers=_bearer(owner)
+    )
+    assert connect.status_code == 200, connect.text
+    poll = client.post("/connector/auth/device/poll", json={"device_code": code}).json()
+    device_id, device_token = poll["device_id"], poll["token"]
+
+    woken: list[str] = []
+
+    class Wakeup:
+        async def wake_device(self, connected_device_id: str) -> None:
+            woken.append(connected_device_id)
+
+    class Chat:
+        async def recover_sessions(self, connected_device_id: str) -> int:
+            return 0
+
+    monkeypatch.setattr("app.api.deps.get_chat_service", lambda: Chat())
+    monkeypatch.setattr("app.api.deps.get_cloud_wakeup", lambda: Wakeup())
+
+    with client.websocket_connect(f"/connector/agent?token={device_token}") as ws:
+        ws.close()
+
+    assert woken == [device_id]
+
+
 def test_agent_ws_does_not_park_a_session_idle_in_transaction(client, monkeypatch):
     """#356 regression, against a real Postgres.
 
@@ -187,7 +222,7 @@ def test_agent_ws_does_not_park_a_session_idle_in_transaction(client, monkeypatc
     recovered: list[str] = []
 
     class Chat:
-        async def recover_hook_subscriptions(self, connected_device_id: str) -> int:
+        async def recover_sessions(self, connected_device_id: str) -> int:
             recovered.append(connected_device_id)
             return 0
 

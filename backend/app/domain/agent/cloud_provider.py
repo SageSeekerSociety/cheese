@@ -1,4 +1,4 @@
-"""The concrete MicroCloud compute provider for one-machine-per-topic Cloud."""
+"""The concrete MicroCloud channel for one-machine-per-topic Cloud."""
 
 import uuid
 from collections.abc import Awaitable, Callable
@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.domain.agent.device_hub import DeviceHub, device_hub
-from app.domain.agent.device_provider import DeviceProvider
-from app.domain.agent.hooks_substrate import ScreenSetupError
+from app.domain.agent.device_provider import DeviceChannel
+from app.domain.agent.harness.claude_code import ScreenSetupError
 from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
@@ -28,18 +28,30 @@ EnsureTopicCloud = Callable[[uuid.UUID, Actor | None], Awaitable[CloudLease]]
 ReadTopicCloud = Callable[[uuid.UUID], Awaitable[CloudLease | None]]
 
 
-class CloudProvider(DeviceProvider):
-    """One-topic lease resolution over the existing device transport."""
+class CloudChannel(DeviceChannel):
+    """One-topic lease resolution over the existing device transport.
+
+    Inheritance here is not the M×N the composition split removed: a leased
+    Cloud machine IS a device, reached over the same link with the same screen —
+    only WHICH device is different. What used to be re-inherited per transport
+    was the harness, and that now lives above the seam for both of these.
+
+    Everything overridden below answers one question — WHICH machine, and is it
+    up yet. None of it touches the model environment: ``builds_model_env`` is
+    inherited because ``_ensure_screen`` is, so a leased machine takes the same
+    supply route and the same --model alias an enrolled one takes. Code that
+    asks which of the two a turn is on in order to answer THAT is asking the
+    wrong question.
+    """
 
     name = "cloud"
+    provisions_machine = True
 
     def __init__(
         self,
         *,
         session_factory: async_sessionmaker | None = None,
         hub: DeviceHub | None = None,
-        idle_suspect_s: float = 300.0,
-        hard_ceiling_s: float = 10800.0,
         configured: bool,
         ensure_topic_cloud: EnsureTopicCloud,
         read_topic_cloud: ReadTopicCloud,
@@ -47,8 +59,6 @@ class CloudProvider(DeviceProvider):
         super().__init__(
             session_factory=session_factory,
             hub=hub,
-            idle_suspect_s=idle_suspect_s,
-            hard_ceiling_s=hard_ceiling_s,
         )
         self._hub = hub or device_hub
         self._configured = configured
@@ -63,7 +73,7 @@ class CloudProvider(DeviceProvider):
         *,
         project_id: uuid.UUID,
         topic_id: uuid.UUID,
-        actor: Actor | None,
+        actor: Actor | None = None,
     ) -> tuple[bool, str]:
         """Provision/poll before ChatService counts a prompt delivery attempt."""
         lease = await self._ensure_topic_cloud(topic_id, actor)
@@ -79,10 +89,7 @@ class CloudProvider(DeviceProvider):
         )
         if ready:
             return True, ""
-        return (
-            False,
-            "⏳ Cloud 机器正在创建并接入，本话题会保留这条消息，机器就绪后自动继续。",
-        )
+        return False, "Cloud 机器正在创建并接入"
 
     async def _resolve_device_agent(
         self, project_id: uuid.UUID, topic_id: uuid.UUID
@@ -115,7 +122,7 @@ class CloudProvider(DeviceProvider):
             await session.commit()
             return lease.device_id, agent.id, agent.username
 
-    async def _precheck(
+    async def precheck(
         self, project_id: uuid.UUID, topic_id: uuid.UUID
     ) -> tuple[str, int, str]:
         resolved = await self._resolve_device_agent(project_id, topic_id)

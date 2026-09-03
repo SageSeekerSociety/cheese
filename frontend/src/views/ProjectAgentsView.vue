@@ -23,14 +23,7 @@ import {
 } from '../api'
 import AgentEditorDialog from '../components/agents/AgentEditorDialog.vue'
 import UserAvatar from '../components/common/UserAvatar.vue'
-import {
-  agentKey,
-  effortLabel,
-  findType,
-  memoryCountsByHandle,
-  topicCountsByAgent,
-  typeLabel,
-} from '../lib/projectAgents'
+import { agentKey, findType, memoryCountsByHandle, topicCountsByAgent, typeLabel } from '../lib/projectAgents'
 import { relTime } from '../lib/relTime'
 
 const props = defineProps<{ projectId: string }>()
@@ -66,8 +59,6 @@ function subtitleOf(agent: ProjectAgent): string {
   const t = findType(types.value, agent.type_name)
   const parts = [typeLabel(types.value, agent.type_name)]
   if (t?.model) parts.push(t.model)
-  const effort = effortLabel(t?.effort)
-  if (effort) parts.push(effort)
   return parts.join(' · ')
 }
 

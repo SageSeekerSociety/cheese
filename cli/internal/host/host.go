@@ -1,12 +1,15 @@
 // Package host is the composition root of `cheese run`: it dials the server and
 // lets the server open any number of screens on this machine. Each screen is a
-// program in a terminal, and the server drives it two ways at once:
+// program in a terminal, and the server reaches it three ways:
 //
-//   - through a hosted script (the cheeselet) over a variable/function bus, and
-//   - directly, as a raw byte stream to and from the terminal.
+//   - as a raw byte stream to and from the terminal (what a browser viewer
+//     rides),
+//   - through the screen's own rendezvous socket, where a prompt is enqueued as
+//     human-origin input without passing through the terminal at all,
+//   - and by staging files into the screen's workspace.
 //
 // The host wires those together and ascribes no meaning to any of it; all
-// behavior lives in the server and its scripts.
+// behavior lives in the server.
 package host
 
 import (
@@ -28,7 +31,6 @@ import (
 	"github.com/SageSeekerSociety/cheese/cli/internal/config"
 	"github.com/SageSeekerSociety/cheese/cli/internal/link"
 	"github.com/SageSeekerSociety/cheese/cli/internal/rendezvous"
-	"github.com/SageSeekerSociety/cheese/cli/internal/runtime"
 	"github.com/SageSeekerSociety/cheese/cli/internal/state"
 	"github.com/SageSeekerSociety/cheese/cli/internal/terminal"
 	"github.com/SageSeekerSociety/cheese/cli/internal/update"
@@ -56,8 +58,6 @@ type Host struct {
 
 type sess struct {
 	term     *terminal.Session
-	rt       *runtime.Runtime
-	cancel   context.CancelFunc
 	client   *terminal.Client // a real tmux client (pty) while a viewer is attached
 	lastCols int
 	lastRows int
@@ -87,8 +87,14 @@ func New(cfg *config.Config, cfgPath string) (*Host, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Which binary this is, for the server's staleness check. Both are
+	// best-effort: a connector that cannot hash itself or does not know its own
+	// platform announces nothing for that field, and the server declines to act
+	// on a half-answer rather than re-exec this machine on every reconnect.
+	build, _ := update.SelfDigest()
+	target, _ := update.PlatformDir()
 	return &Host{
-		conn:     link.New(ctrlURL, cfg.Token),
+		conn:     link.New(ctrlURL, cfg.Token, build, target),
 		tm:       tm,
 		cfgPath:  cfgPath,
 		base:     cfg.Base,
@@ -97,13 +103,23 @@ func New(cfg *config.Config, cfgPath string) (*Host, error) {
 	}, nil
 }
 
-// Run connects and serves screens until ctx is cancelled, then tears down.
+// Run connects and serves screens until ctx is cancelled, then LETS GO of them:
+// it releases what this process owns (viewer ptys, rendezvous clients) and
+// leaves every tmux session running.
+//
+// Stopping the connector is not a decision to end anybody's work. The service
+// manager stops this process to restart it, to apply an update, on a reboot —
+// and a turn mid-flight on this machine has nothing to do with any of that. So
+// the exit path releases and the sessions live on; the next run re-adopts them
+// (createSession's HasSession branch), the drainer keeps retrying the hooks it
+// spooled, and the viewer reattaches to the pane it left. Ending a session is a
+// separate, explicit act: the server closing a screen, or the operator running
+// `cheese link disconnect` / `cheese uninstall`, which tear the server down.
 func (h *Host) Run(ctx context.Context) error {
 	h.ctx = ctx
 	h.publishState()
 	defer h.clearState()
-	defer h.closeAll()
-	defer h.tm.KillServer()
+	defer h.releaseAll()
 
 	// A manual `cheese update` signals the running service with SIGUSR2 so the
 	// update happens INSIDE this process (which then hands off via syscall.Exec,
@@ -128,12 +144,11 @@ func (h *Host) Run(ctx context.Context) error {
 }
 
 // performUpdate updates the `cheese` binary in place and hands this process off to
-// it, WITHOUT tearing down the private tmux (so the hosted tasks survive). It runs
-// inside the live service process: download + verify + atomic replace, then
-// syscall.Exec into the new binary — which REPLACES the process image, so the
-// deferred KillServer never runs and tmux + tasks live on; the new binary
-// reconnects and re-adopts the surviving screens. Any failure keeps the current
-// process running unchanged (a failed update must never kill live tasks).
+// it. It runs inside the live service process: download + verify + atomic
+// replace, then syscall.Exec into the new binary — which REPLACES the process
+// image, so even the release path below never runs; the new binary reconnects
+// and re-adopts the surviving screens. Any failure keeps the current process
+// running unchanged (a failed update must never kill live tasks).
 func (h *Host) performUpdate() {
 	if !h.updating.CompareAndSwap(false, true) {
 		return // an update is already in flight
@@ -159,7 +174,7 @@ func (h *Host) performUpdate() {
 		return
 	}
 	// Detach any live viewer pty clients (but NOT the tmux sessions) before the exec.
-	// syscall.Exec skips the deferred closeAll, so an attached viewer's tmux client
+	// syscall.Exec skips the deferred releaseAll, so an attached viewer's tmux client
 	// (a child process) would otherwise survive as an ORPHAN still attached to the
 	// session — and with `window-size latest` it fights the fresh viewer the new
 	// binary attaches, leaving 现场 garbled/unopenable. Closing the client here only
@@ -167,9 +182,10 @@ func (h *Host) performUpdate() {
 	// the new binary re-adopts it, then a re-subscribe attaches a clean single viewer.
 	h.closeViewerClients()
 	fmt.Fprintln(os.Stderr, "cheese: binary updated in place; handing off to the new build (tasks preserved)…")
-	// syscall.Exec replaces the process image: deferred functions (KillServer!) do
-	// NOT run, so the private tmux and every hosted task survive; the new image
-	// reconnects and re-adopts them. If exec fails we deliberately do NOT exit —
+	// syscall.Exec replaces the process image, so the viewer relays this process
+	// owns are the only thing that has to be let go by hand; the private tmux and
+	// every hosted task survive as they do across an ordinary stop, and the new
+	// image reconnects and re-adopts them. If exec fails we deliberately do NOT exit —
 	// the tasks must live on; the already-replaced binary applies on next restart.
 	if err := syscall.Exec(self, os.Args, os.Environ()); err != nil {
 		fmt.Fprintf(os.Stderr, "cheese: exec into new binary failed (applies on next restart): %v\n", err)
@@ -202,36 +218,15 @@ func (h *Host) onMsg(m link.Msg) {
 		h.createSession(m)
 	case "session.close":
 		h.closeSession(m.Sid)
-	case "script.load":
+	case "rpc.call": // the server asks this screen to do something
 		if s := h.session(m.Sid); s != nil {
-			s.rt.LoadScript(m.Source)
-		}
-	case "var.set": // server-owned variable pushed down
-		if s := h.session(m.Sid); s != nil {
-			s.rt.SetVar(m.Name, m.Value)
-		}
-	case "rpc.call": // server invokes a script-exposed function
-		if s := h.session(m.Sid); s != nil {
-			// `prompt` is the one call that must never go through the terminal:
-			// it carries what a person said, and typing it into a TUI made
-			// delivery depend on pane width and screen scraping. When the
-			// launcher armed a rendezvous socket, deliver over that instead —
-			// same call name, same rpc.result contract, different transport.
-			if s.usesRendezvous(m.Name) {
-				go h.deliverPrompt(m, s)
-				return
-			}
-			s.rt.Invoke(m.ID, m.Name, m.Args)
+			go h.serveCall(m, s)
 		}
 	case "file.put":
 		if s := h.session(m.Sid); s != nil {
 			go h.putFile(m, s)
 		} else {
 			_ = h.conn.Send(link.Msg{T: "file.result", Sid: m.Sid, ID: m.ID, Error: "unknown screen"})
-		}
-	case "rpc.result": // result of a script->server call
-		if s := h.session(m.Sid); s != nil {
-			s.rt.Resolve(m.ID, m.Value, m.Error)
 		}
 	case "screen.subscribe": // attach a real tmux client sized to the viewer
 		h.subscribeScreen(m.Sid, m.Cols, m.Rows)
@@ -273,14 +268,9 @@ func (h *Host) session(sid string) *sess {
 }
 
 func (h *Host) createSession(m link.Msg) {
-	if existing := h.session(m.Sid); existing != nil {
-		// Same-process reconnect: the screen is already live locally. An adopt
-		// create carries the current driver source — hot-reload it into the live
-		// runtime (this is how a backend restart pushes the latest cheeselet into
-		// already-running screens). A non-adopt duplicate is a harmless no-op.
-		if m.Adopt && m.Source != "" {
-			existing.rt.LoadScript(m.Source)
-		}
+	if h.session(m.Sid) != nil {
+		// Same-process reconnect: the screen is already live locally, and every
+		// way of reaching it is per-message, so there is nothing to re-establish.
 		return
 	}
 	// The server owns the screen's identity: it hands down an opaque token in
@@ -295,10 +285,10 @@ func (h *Host) createSession(m link.Msg) {
 	}
 
 	// If a tmux session for this sid already exists (it survived a `cheese update`
-	// re-exec or a server restart), ADOPT it: re-establish the runtime + driver +
-	// polling around the still-running program instead of spawning a new session.
-	// Otherwise spawn a fresh tmux session + program as usual. The server sets
-	// m.Adopt on the re-provision path; HasSession is the ground truth we act on.
+	// re-exec or a server restart), ADOPT it: re-attach to the still-running
+	// program instead of spawning a new session. Otherwise spawn a fresh tmux
+	// session + program as usual. The server sets m.Adopt on the re-provision
+	// path; HasSession is the ground truth we act on.
 	var term *terminal.Session
 	if h.tm.HasSession(m.Sid) {
 		term = h.tm.Adopt(m.Sid)
@@ -310,22 +300,15 @@ func (h *Host) createSession(m link.Msg) {
 			return
 		}
 	}
-	rt := runtime.New(term, &busAdapter{conn: h.conn, sid: m.Sid})
-	ctx, cancel := context.WithCancel(h.ctx)
-
 	h.mu.Lock()
 	h.sessions[m.Sid] = &sess{
-		term: term, rt: rt, cancel: cancel,
-		rvPath: m.Env[envRvSock], rvTokenFile: m.Env[envRvTokenFile],
-		workDir: m.Env["CHEESE_WORK"],
+		term:        term,
+		rvPath:      m.Env[envRvSock],
+		rvTokenFile: m.Env[envRvTokenFile],
+		workDir:     m.Env["CHEESE_WORK"],
 	}
 	h.mu.Unlock()
 
-	go func() { _ = rt.Run(ctx) }()
-
-	if m.Source != "" {
-		rt.LoadScript(m.Source)
-	}
 	_ = h.conn.Send(link.Msg{T: "session.ready", Sid: m.Sid})
 	h.publishState()
 }
@@ -389,17 +372,23 @@ func (h *Host) closeViewerClients() {
 	}
 }
 
-func (h *Host) closeAll() {
+// releaseAll lets go of every screen without ending any of it: the tmux sessions
+// (and the tmux server) keep running, so a stop/restart of this process is not a
+// decision about anybody's in-flight turn.
+func (h *Host) releaseAll() {
 	h.mu.Lock()
 	all := h.sessions
 	h.sessions = map[string]*sess{}
 	h.mu.Unlock()
 	for _, s := range all {
-		h.teardown(s)
+		h.release(s)
 	}
 }
 
-func (h *Host) teardown(s *sess) {
+// release drops what this PROCESS owns for a screen — the viewer's pty client
+// and the rendezvous connection. Nothing here outlives the process anyway, and
+// none of it is the screen's work.
+func (h *Host) release(s *sess) {
 	if s == nil {
 		return
 	}
@@ -412,7 +401,15 @@ func (h *Host) teardown(s *sess) {
 		s.rv = nil
 	}
 	s.rvMu.Unlock()
-	s.cancel()
+}
+
+// teardown ends a screen for good: release, then kill the tmux session with the
+// program in it. Only for a close the SERVER asked for.
+func (h *Host) teardown(s *sess) {
+	if s == nil {
+		return
+	}
+	h.release(s)
 	_ = s.term.Close()
 }
 
@@ -618,11 +615,24 @@ func (h *Host) dropRendezvous(s *sess) {
 // have to spend it.
 var rvTokenWait = 20 * time.Second
 
-// usesRendezvous reports whether this call should bypass the cheeselet. Only
-// `prompt` does, and only when the launcher armed a socket for this screen —
-// every other exposed function still belongs to the script.
-func (s *sess) usesRendezvous(callName string) bool {
-	return callName == promptCall && s.rvPath != ""
+// serveCall answers one server->screen call. `prompt` is the only thing a screen
+// can be asked to do, and it goes over the rendezvous socket the launcher armed.
+// Anything else — a call this build does not know, or a prompt for a screen with
+// no socket — is answered with an error rather than dropped: a call the server
+// believes it made and this side silently ignored is the exact failure shape
+// this delivery path exists to end.
+func (h *Host) serveCall(m link.Msg, s *sess) {
+	if m.Name != promptCall {
+		_ = h.conn.Send(link.Msg{T: "rpc.result", Sid: m.Sid, ID: m.ID,
+			Error: fmt.Sprintf("unknown call %q", m.Name)})
+		return
+	}
+	if s.rvPath == "" {
+		_ = h.conn.Send(link.Msg{T: "rpc.result", Sid: m.Sid, ID: m.ID,
+			Error: "rendezvous: this screen has no socket (" + envRvSock + " was not in its env)"})
+		return
+	}
+	h.deliverPrompt(m, s)
 }
 
 // readRvToken reads the launcher-written token. It waits briefly: the file is
@@ -743,25 +753,3 @@ func (c *cappedBuffer) Write(p []byte) (int, error) {
 
 func (c *cappedBuffer) String() string { return c.buf.String() }
 func (c *cappedBuffer) Len() int       { return c.buf.Len() }
-
-// busAdapter maps one screen's runtime.Bus onto sid-tagged link messages.
-type busAdapter struct {
-	conn *link.Conn
-	sid  string
-}
-
-func (b *busAdapter) PushVar(name string, value any) {
-	_ = b.conn.Send(link.Msg{T: "var.push", Sid: b.sid, Name: name, Value: value})
-}
-
-func (b *busAdapter) CallServer(id, name string, args []any) {
-	_ = b.conn.Send(link.Msg{T: "rpc.call", Sid: b.sid, ID: id, Name: name, Args: args})
-}
-
-func (b *busAdapter) ReplyServer(id string, result any, errStr string) {
-	_ = b.conn.Send(link.Msg{T: "rpc.result", Sid: b.sid, ID: id, Value: result, Error: errStr})
-}
-
-// SetInbound is unused: the host routes inbound messages to the runtime directly
-// (see onMsg), so the adapter needs no reference back.
-func (b *busAdapter) SetInbound(runtime.Inbound) {}
