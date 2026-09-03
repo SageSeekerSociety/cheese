@@ -6,7 +6,6 @@ it must not make the process unready, because the process can still serve every
 request that has nothing to do with memory.
 """
 
-
 import pytest
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse

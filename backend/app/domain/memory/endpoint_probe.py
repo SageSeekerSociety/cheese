@@ -317,7 +317,9 @@ async def check_on_startup() -> None:
         return
     _CACHE.store(result)
 
-    borrowed = [e.role for e in result.endpoints if e.key_setting == FALLBACK_KEY_SETTING]
+    borrowed = [
+        e.role for e in result.endpoints if e.key_setting == FALLBACK_KEY_SETTING
+    ]
     if borrowed:
         logger.warning(
             "memory: the %s endpoint(s) fell back to the %s key. That token "
