@@ -28,6 +28,17 @@ longer ago than `topic_home_retention_days`. The retention is the un-archive
 window: inside it the work comes back with its session intact, past it from an
 empty checkout of the branch.
 
+A home is stored before it is deleted, on both paths. It holds the only copy of
+the agent's raw session files (`.claude/projects/**/*.jsonl` — the room's
+conversation is in `blocks`, that is not), so `_remove_home` first has the
+device ship `.claude/projects` and `.claude/todos` to the platform
+(`PUT /connector/transcripts/<project>/<place>`, stored under
+`settings.transcripts_dir`, see topic/transcripts.py), records the upload on
+the place as `transcripts_archived_at`, and only on a 2xx runs the `rm`. Any
+other answer leaves the home where it is with one WARN line, and the sweep
+tries again next tick. A home that never ran a session has nothing to keep and
+goes without an upload.
+
 The branch is never touched. Its commits are the record; the directory was only
 a checkout of them plus uncommitted work, which an archive abandons by definition.
 """
@@ -121,14 +132,27 @@ async def _retire_home(
             place_id,
         )
         return
-    await _remove_home(project_id, place_id, binding.device_id, reason="archived")
+    await _remove_home(
+        session, project_id, place_id, binding.device_id, reason="archived"
+    )
 
 
 async def _remove_home(
-    project_id: uuid.UUID, place_id: uuid.UUID, device_id: str, *, reason: str
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    place_id: uuid.UUID,
+    device_id: str,
+    *,
+    reason: str,
 ) -> bool:
+    """Store the home's transcripts on the platform, then delete it. Only a
+    stored home — or one with nothing to store — is deleted; anything short of
+    that leaves it in place for the sweep to try again."""
     from app.domain.agent.device_hub import DeviceOffline, device_hub
-    from app.domain.agent.device_provider import remove_device_home
+    from app.domain.agent.device_provider import (
+        remove_device_home,
+        upload_device_transcripts,
+    )
 
     if not device_hub.is_online(device_id):
         logger.info(
@@ -139,7 +163,35 @@ async def _remove_home(
             device_id,
         )
         return False
+    # The upload authenticates as the device, with the credential the device
+    # already holds; it is read here rather than off the machine because the
+    # exec frame is the one place the platform can hand the command its env.
+    device = await sql_device_service(session).get_device(device_id)
+    if device is None:
+        logger.warning(
+            "retire: home=%s/%s device=%s outcome=left reason=device row gone, "
+            "nothing to upload the transcripts as",
+            project_id,
+            place_id,
+            device_id,
+        )
+        return False
     try:
+        outcome, receipt = await upload_device_transcripts(
+            device_id, project_id, place_id, token=device.token
+        )
+        if outcome == "uploaded" and not await _record_transcripts_archived(
+            session, place_id
+        ):
+            outcome = "uploaded (no place row to record it on)"
+        logger.info(
+            "retire: home=%s/%s device=%s transcripts=%s%s",
+            project_id,
+            place_id,
+            device_id,
+            outcome,
+            f" receipt={receipt}" if receipt else "",
+        )
         await remove_device_home(device_id, project_id, place_id)
     except DeviceOffline:
         logger.info(
@@ -175,6 +227,19 @@ async def _remove_home(
         reason,
     )
     return True
+
+
+async def _record_transcripts_archived(
+    session: AsyncSession, place_id: uuid.UUID
+) -> bool:
+    """Stamp the place — a room, or a thread in one — with when its transcripts
+    reached the platform. False when no row has this id (the home of a deleted
+    place: its archive is on disk all the same, there is just nothing to note
+    it on)."""
+    now = datetime.now(UTC)
+    if await TopicRepository(session).mark_transcripts_archived(place_id, now):
+        return True
+    return await TaskService(session).mark_transcripts_archived(place_id, now)
 
 
 # ---- on a clock -------------------------------------------------------------
@@ -284,8 +349,11 @@ async def _sweep_homes(
                     )
                     continue
                 gone = await _remove_home(
-                    project_id, place_id, device_id, reason=reason
+                    session, project_id, place_id, device_id, reason=reason
                 )
+                # Per home, not per device: a `transcripts_archived_at` stamp
+                # must not be lost to a later home's failure on the same tick.
+                await session.commit()
                 counts["homes_removed" if gone else "homes_left"] += 1
 
 

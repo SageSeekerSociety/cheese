@@ -15,7 +15,9 @@ export VIKING_HOST_PATH="$ROOT/tmp/viking-$$"
 # The claude binary cache is the same shape: created by the deploy so the
 # backend can write it, defaulting to a dev-box path CI cannot create.
 export CLAUDE_CACHE_HOST_PATH="$ROOT/tmp/claude-cache-$$"
-trap 'rm -rf "$ROOT/tmp/viking-$$" "$ROOT/tmp/claude-cache-$$"' EXIT
+# And the transcript archives, once more the same shape.
+export TRANSCRIPTS_HOST_PATH="$ROOT/tmp/transcripts-$$"
+trap 'rm -rf "$ROOT/tmp/viking-$$" "$ROOT/tmp/claude-cache-$$" "$ROOT/tmp/transcripts-$$"' EXIT
 
 fail() {
   echo "FAIL: $*" >&2
@@ -361,6 +363,7 @@ ownership_run() {
     APPHOME_HOST_PATH="$run_dir/apphome" \
     VIKING_HOST_PATH="$run_dir/viking" \
     CLAUDE_CACHE_HOST_PATH="$run_dir/claude-cache" \
+    TRANSCRIPTS_HOST_PATH="$run_dir/transcripts" \
     HOME="$run_dir" \
     "$@"
 }

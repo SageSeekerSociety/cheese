@@ -4,7 +4,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Literal
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import (
     ColumnElement,
@@ -198,6 +198,19 @@ class TopicRepository:
         What the storage sweep reconciles the disk against."""
         stmt = select(Topic.id, Topic.archived_at).where(Topic.project_id == project_id)
         return dict((await self._session.execute(stmt)).tuples().all())
+
+    async def mark_transcripts_archived(
+        self, topic_id: uuid.UUID, at: datetime
+    ) -> bool:
+        """Record that the topic's raw session files reached the platform.
+        False when no topic has this id."""
+        stamped = await self._session.execute(
+            update(Topic)
+            .where(Topic.id == topic_id)
+            .values(transcripts_archived_at=at)
+            .returning(Topic.id)
+        )
+        return stamped.scalar() is not None
 
     async def count_for_project(self, project_id: uuid.UUID) -> int:
         stmt = (
