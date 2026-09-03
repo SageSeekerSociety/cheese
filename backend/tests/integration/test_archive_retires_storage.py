@@ -1,4 +1,4 @@
-"""Archive takes a place's disk with it, and the sweep takes what archive missed.
+"""Archive stops a place's session; the sweep takes its disk after the retention.
 
 A room's git worktree on this box and its isolated home on the device that ran
 it used to outlive the room forever (dev box, 2026-09-03: 141 GB of worktrees
@@ -17,6 +17,7 @@ whose upload did not go through is still there.
 
 import hashlib
 import io
+import logging
 import os
 import re
 import subprocess
@@ -219,7 +220,7 @@ def _home(project_id: uuid.UUID, place_id: uuid.UUID) -> str:
     return f"{project_id}/{place_id}"
 
 
-async def test_archive_removes_the_worktree_and_the_device_home(
+async def test_archive_keeps_the_disk_and_the_sweep_takes_it_after_retention(
     client, workspace_root, connected_device
 ):
     factory = client.test_factory
@@ -243,7 +244,24 @@ async def test_archive_removes_the_worktree_and_the_device_home(
         archived = await TopicService(session).archive(tid, by="u")
         await session.commit()
 
+    # Archive only stops the session. An un-archive inside the retention picks
+    # the work back up with its session intact, so both leftovers stay put.
     assert archived.status == TopicStatus.archived
+    assert wt.is_dir() and str(wt) in _registered_worktrees(pid)
+    assert connected_device.homes == [_home(pid, tid)]
+    assert connected_device.removed == [] and connected_device.uploads == []
+
+    counts = await sweep_retired_storage(factory, retention_days=7)
+    assert counts == {
+        "worktrees_removed": 0,
+        "worktrees_left": 0,
+        "homes_removed": 0,
+        "homes_left": 0,
+    }
+    assert wt.is_dir() and connected_device.homes == [_home(pid, tid)]
+
+    counts = await sweep_retired_storage(factory, retention_days=0)
+    assert counts["worktrees_removed"] == 1 and counts["homes_removed"] == 1
     assert not wt.exists()
     assert str(wt) not in _registered_worktrees(pid)
     assert connected_device.removed == [f"$HOME/.cheese/home/{pid}/{tid}"]
@@ -257,7 +275,7 @@ async def test_archive_removes_the_worktree_and_the_device_home(
         assert topic.transcripts_archived_at is None
 
 
-async def test_archive_stores_the_transcripts_before_removing_the_home(
+async def test_the_sweep_stores_the_transcripts_before_removing_the_home(
     client, workspace_root, connected_device
 ):
     factory = client.test_factory
@@ -278,7 +296,12 @@ async def test_archive_stores_the_transcripts_before_removing_the_home(
     async with factory() as session:
         await TopicService(session).archive(tid, by="u")
         await session.commit()
+    assert connected_device.homes == [_home(pid, tid)]
+    assert connected_device.uploads == []
 
+    counts = await sweep_retired_storage(factory, retention_days=0)
+
+    assert counts["homes_removed"] == 1 and counts["homes_left"] == 0
     assert connected_device.uploads == [_home(pid, tid)]
     assert connected_device.removed == [f"$HOME/.cheese/home/{pid}/{tid}"]
     (archive,) = _stored_archives(pid, tid)
@@ -311,17 +334,18 @@ async def test_a_home_stays_until_its_transcripts_are_stored(
     connected_device.homes = [home]
     connected_device.sessions[home] = '{"type":"assistant","text":"..."}'
 
-    monkeypatch.setattr(settings, "transcripts_max_bytes", 16)
     async with factory() as session:
-        archived = await TopicService(session).archive(tid, by="u")
+        await TopicService(session).archive(tid, by="u")
         await session.execute(
             update(Topic)
             .where(Topic.id == tid)
             .values(archived_at=datetime.now(UTC) - timedelta(days=10))
         )
         await session.commit()
-    # The archive itself is not held up by its disk; the home is.
-    assert archived.status == TopicStatus.archived
+
+    monkeypatch.setattr(settings, "transcripts_max_bytes", 16)
+    counts = await sweep_retired_storage(factory, retention_days=7)
+    assert counts["homes_left"] == 1 and counts["homes_removed"] == 0
     assert connected_device.homes == [home] and connected_device.removed == []
     assert _stored_archives(pid, tid) == []
     assert list(Path(settings.transcripts_dir).rglob("*.part")) == []
@@ -366,10 +390,10 @@ async def test_archive_succeeds_when_the_device_is_offline(client, workspace_roo
         await session.commit()
 
     # The archive is a fact about the place, not about a machine that is not
-    # there: it goes through, the worktree here goes, the home waits for the
-    # sweep.
+    # there: it goes through, and nothing here depends on the device answering.
+    # The worktree stays for the retention like any other.
     assert archived.status == TopicStatus.archived
-    assert not wt.exists()
+    assert wt.is_dir()
     async with factory() as session:
         assert (await TopicService(session).get_or_404(tid)).archived_at is not None
 
@@ -434,8 +458,8 @@ async def test_sweep_removes_leftovers_and_keeps_live_places(
         active_id, old_id, recent_id = active.id, old.id, recent.id
         done_id, going_id, tree_id = done.id, going.id, second.id
 
-    # Leftovers on disk, created AFTER the archives so they stand for what
-    # archive could not reach, plus one for a topic that never existed.
+    # A leftover on disk for every kind of place the sweep has to judge, plus
+    # one for a topic that never existed.
     gone_id = uuid.uuid4()
     on_disk = {
         name: ws._ensure_worktree(pid, place)  # noqa: SLF001
@@ -499,6 +523,35 @@ async def test_sweep_removes_leftovers_and_keeps_live_places(
             "not-a-project/not-a-place",
         ]
     )
+
+
+async def test_a_home_whose_project_is_gone_goes_unstored(
+    client, workspace_root, connected_device, caplog
+):
+    """The transcripts are filed under the project. With no project row there
+    is nothing to file them under and nobody left who could read them, so the
+    home goes without an upload — and the log says so, once."""
+    factory = client.test_factory
+    async with factory() as session:
+        await _seed_device(session, connected_device.device_id)
+        await session.commit()
+    pid, tid = uuid.uuid4(), uuid.uuid4()
+    connected_device.homes = [_home(pid, tid)]
+    connected_device.sessions[_home(pid, tid)] = '{"topic":"孤儿"}'
+
+    with caplog.at_level(logging.WARNING, logger="cheesex.topic.retire"):
+        counts = await sweep_retired_storage(factory, retention_days=7)
+
+    assert counts["homes_removed"] == 1 and counts["homes_left"] == 0
+    assert connected_device.homes == []
+    assert connected_device.uploads == []
+    assert _stored_archives(pid, tid) == []
+    said = [
+        record
+        for record in caplog.records
+        if record.levelno == logging.WARNING and "project gone" in record.getMessage()
+    ]
+    assert len(said) == 1
 
 
 async def test_sweep_leaves_a_worktree_whose_prefix_names_two_places(

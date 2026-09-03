@@ -139,10 +139,11 @@ def periodic_jobs(
             settings.task_deadline_sweep_interval_s,
             lambda: sweep_expired_deadlines(sessions),
         ),
-        # Archive removes a place's worktree and device home itself; this is for
-        # what it could not reach — an offline device, a crash mid-archive, a
-        # topic deleted outright, and the backlog from before it removed
-        # anything (topic/retire.py). Disk, not data: the branch stays.
+        # Archive takes nothing off disk: a place's worktree here and its home
+        # on the device stay for the retention so an un-archive resumes with
+        # its session. This is what removes them after that — transcripts
+        # stored first — and at once for places no longer in the database
+        # (topic/retire.py). Disk, not data: the branch stays.
         PeriodicRunner(
             "topic storage sweep",
             settings.topic_storage_sweep_interval_s,

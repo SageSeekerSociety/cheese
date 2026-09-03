@@ -667,20 +667,20 @@ class TopicService:
         await MachineService(self._session).release_topic_machine(topic_id)
 
     async def _retire_storage(self, place: Topic | Task) -> None:
-        """What the place leaves on disk goes with it — its worktree here and
-        its home on the device that ran it (topic/retire.py). After the Cloud
-        release on purpose: that drops a Cloud topic's device pin, and a home on
-        a VM being destroyed is nobody's to clean. Best-effort inside; the
-        archive is a fact about the place, not about its disk."""
+        """Stop the place's session on its device (topic/retire.py). Nothing
+        comes off disk here: the worktree and the home stay for the retention
+        so that an un-archive resumes with its session, and the storage sweep
+        takes them after. Best-effort inside; the archive is a fact about the
+        place, not about its machine."""
         from app.domain.topic.retire import (
             retire_room_storage,
             retire_thread_storage,
         )
 
         if isinstance(place, Task):
-            await retire_thread_storage(self._session, place)
+            await retire_thread_storage(place)
         else:
-            await retire_room_storage(self._session, place)
+            await retire_room_storage(place)
 
     async def unarchive(self, topic_id: uuid.UUID, *, by: str) -> Topic:
         """Bring an archived topic back to active (idempotent). Accept markers

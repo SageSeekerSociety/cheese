@@ -460,21 +460,20 @@ class Settings(BaseSettings):
     # so that is the normal case.
     sandbox_reap_interval_seconds: int = 3600
     sandbox_idle_hours: float = 8
-    # What a finished place leaves on disk — its git worktree on this box and
-    # its isolated home on the device that ran it — is removed at archive time
-    # (topic/retire.py). This sweep is for what archive could not reach: a
-    # device that was offline, a process killed mid-archive, a topic deleted
-    # outright, and the backlog from before archive removed anything (dev box,
+    # Archive takes nothing off disk (topic/retire.py): a finished place's git
+    # worktree on this box and its isolated home on the device that ran it stay
+    # for `topic_home_retention_days`, and this sweep is what removes them after
+    # that — and at once for places no longer in the database (dev box,
     # 2026-09-03: 141 GB of worktrees and 162 GB of homes, most of them for
     # places long gone). 0 disables it.
     topic_storage_sweep_interval_s: int = 3600
-    # How long after archive the sweep still leaves a place's worktree and home
-    # alone. Both leftovers, not only the home: an archive is reversible, and
-    # this is the window in which somebody un-archives to pick the work back up
-    # with its session intact rather than from an empty checkout of the branch.
-    # A grace period, not a safety net: a home is only ever deleted after its
-    # raw Claude session files have been stored under `transcripts_dir`, so
-    # what expires here is the convenience of resuming in place.
+    # How long after archive the sweep leaves a place's worktree and home
+    # alone. Archive itself removes neither: it is reversible, and this is the
+    # window in which somebody un-archives to pick the work back up with its
+    # session intact rather than from an empty checkout of the branch. A grace
+    # period, not a safety net: a home is only ever deleted after its raw
+    # Claude session files have been stored under `transcripts_dir`, so what
+    # expires here is the convenience of resuming in place.
     topic_home_retention_days: float = 30
     # Where the platform keeps the raw Claude session files of every place that
     # ran on a device — `.claude/projects/**/*.jsonl` and `.claude/todos` from
