@@ -45,6 +45,7 @@ def periodic_jobs(
         finalize_expired_aggregations,
     )
     from app.domain.task.deadline_scheduler import sweep_expired_deadlines
+    from app.domain.topic.retire import sweep_retired_storage
     from app.domain.usage.subscription_ingest import ingest_once
 
     usage_log = settings.subscription_usage_log.strip()
@@ -137,5 +138,14 @@ def periodic_jobs(
             "task deadline sweep",
             settings.task_deadline_sweep_interval_s,
             lambda: sweep_expired_deadlines(sessions),
+        ),
+        # Archive removes a place's worktree and device home itself; this is for
+        # what it could not reach — an offline device, a crash mid-archive, a
+        # topic deleted outright, and the backlog from before it removed
+        # anything (topic/retire.py). Disk, not data: the branch stays.
+        PeriodicRunner(
+            "topic storage sweep",
+            settings.topic_storage_sweep_interval_s,
+            lambda: sweep_retired_storage(sessions),
         ),
     ]

@@ -460,6 +460,24 @@ class Settings(BaseSettings):
     # so that is the normal case.
     sandbox_reap_interval_seconds: int = 3600
     sandbox_idle_hours: float = 8
+    # What a finished place leaves on disk — its git worktree on this box and
+    # its isolated home on the device that ran it — is removed at archive time
+    # (topic/retire.py). This sweep is for what archive could not reach: a
+    # device that was offline, a process killed mid-archive, a topic deleted
+    # outright, and the backlog from before archive removed anything (dev box,
+    # 2026-09-03: 141 GB of worktrees and 162 GB of homes, most of them for
+    # places long gone). 0 disables it.
+    topic_storage_sweep_interval_s: int = 3600
+    # How long after archive the sweep still leaves a place's worktree and home
+    # alone. Both leftovers, not only the home: an archive is reversible, and
+    # this is the window in which somebody un-archives to pick the work back up
+    # with its session intact rather than from an empty checkout of the branch.
+    # A month rather than a week because the home holds the only copy of the
+    # raw Claude session files (`.claude/projects/**/*.jsonl`): the room's
+    # conversation is in the `blocks` table, but nothing else keeps those, so
+    # until the platform archives them before deleting a home, the retention is
+    # what stands between an archived topic and losing its raw transcript.
+    topic_home_retention_days: float = 30
     # Seconds between orphan sweeps (AgentWorkRunner.sweep_orphans). On by default,
     # unlike the heartbeat above: it consumes no model calls unless it actually
     # finds a killed turn, and its whole purpose is catching the case where

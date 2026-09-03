@@ -41,6 +41,12 @@ class WorkTreeRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
+    async def list_for_project(self, project_id: uuid.UUID) -> list[WorkTree]:
+        """Every tree of every room in the project — the set whose directories
+        the storage sweep may find on disk."""
+        stmt = select(WorkTree).where(WorkTree.project_id == project_id)
+        return list((await self._session.scalars(stmt)).all())
+
     async def add(
         self,
         *,

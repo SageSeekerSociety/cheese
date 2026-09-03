@@ -190,6 +190,15 @@ class TopicRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
+    async def archival_for_project(
+        self, project_id: uuid.UUID
+    ) -> dict[uuid.UUID, datetime | None]:
+        """Every topic of the project — private chats included, since they have
+        directories too — mapped to when it was archived (None while active).
+        What the storage sweep reconciles the disk against."""
+        stmt = select(Topic.id, Topic.archived_at).where(Topic.project_id == project_id)
+        return dict((await self._session.execute(stmt)).tuples().all())
+
     async def count_for_project(self, project_id: uuid.UUID) -> int:
         stmt = (
             select(func.count())
