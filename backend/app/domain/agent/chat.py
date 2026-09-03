@@ -3796,8 +3796,11 @@ class ChatService:
             # loop and manage their own inner ceiling (which can be hours), so the
             # outer wall-clock wrap (runtime.py) must be told their REAL ceiling via
             # a `turn_ceiling` frame instead of killing them at the generic
-            # `agent_turn_timeout_s`. The SDK / remote-cheesed backends have no such
-            # signal and keep the generic default. Without this the device's own
+            # `agent_turn_timeout_s`. Every provider emits that frame today, since
+            # `runtime_for` refuses one that runs no harness, so the generic
+            # default now covers only the window before the frame arrives. That
+            # window is not nothing: it is what the ceiling is measured against
+            # until the backend speaks. Without this the device's own
             # two-layer fix is dead on arrival — the outer guard still kills at 900s.
             if topic.compute_profile is None:
                 # v4 affinity red line: materialize the effective target BEFORE
