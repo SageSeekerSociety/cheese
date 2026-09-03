@@ -11,10 +11,12 @@ import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
+from app.core.config import settings
 from app.domain.agent.chat import ChatService
-from app.domain.block.models import Block
+from app.domain.block.models import AuthorType, Block
+from app.domain.memory.dream import DREAM_PROMPT, latest_dream, open_dream
 from app.domain.project.repositories import ProjectRepository
 from app.domain.workspace import service as ws
 
@@ -106,7 +108,22 @@ class SchedulerService:
         Only ONLINE devices are walked (an offline box is unreachable now). Safe
         by construction: an active turn has just-persisted blocks, so its topic
         can never look idle. Teardown removes the device's per-topic tree.
-        Returns how many topics were released."""
+        Returns how many topics were released.
+
+        记忆整理 (issue #187) hangs here rather than on a clock of its own because
+        this is the last moment a remembered claim can still be checked against
+        the workspace it came from: `settings.dream_enabled` gives an
+        about-to-die screen one turn to organize what the topic learned into the
+        project's memory (see memory/dream.py). That pass runs INSIDE the screen,
+        so the screen survives this sweep and is released by the next one — this
+        loop is background maintenance and must never sit blocked for the minutes
+        a model turn takes.
+
+        A turn does NOT have to run on a device: it can run on Cloud, which
+        leaves no screen behind, and this is the platform's only reaper. So
+        dreaming reaches topics that ran on self-hosted devices and no others.
+        That gap is known and accepted — closing it needs a Cloud-side reaper
+        that does not exist yet, not a change here."""
         from app.domain.agent.device_hub import device_hub
         from app.domain.agent.device_provider import release_topic_screen
 
@@ -119,26 +136,127 @@ class SchedulerService:
             return 0
         cutoff = datetime.now(UTC) - timedelta(hours=idle_hours)
         idle: list[tuple[uuid.UUID, uuid.UUID]] = []
+        dreams_started = 0
         async with self._sessions() as session:
             for project_id, topic_id in pairs:
-                last = (
-                    await session.execute(
-                        select(func.max(Block.created_at)).where(
-                            Block.topic_id == topic_id
-                        )
-                    )
-                ).scalar()
-                if last is not None and last.tzinfo is None:
-                    last = last.replace(tzinfo=UTC)
+                dream = await latest_dream(session, topic_id)
+                last = await self._last_activity(session, topic_id, dream)
                 if last is not None and last >= cutoff:
                     continue  # recently active — keep the screen alive
+                if dreams_started < settings.dream_max_per_sweep and (
+                    await self._start_dream_if_worthwhile(
+                        session,
+                        topic_id=topic_id,
+                        project_id=project_id,
+                        dream=dream,
+                    )
+                ):
+                    dreams_started += 1
+                    continue  # organize now, release on the next sweep
                 idle.append((project_id, topic_id))
         # Release outside the query session so teardown cannot hold it open.
         for project_id, topic_id in idle:
             await release_topic_screen(
                 project_id, topic_id, session_factory=self._sessions
             )
+        if dreams_started:
+            logger.info("idle screen reap: started %d 记忆整理 pass(es)", dreams_started)
         return len(idle)
+
+    async def _last_activity(
+        self, session, topic_id: uuid.UUID, dream
+    ) -> datetime | None:
+        """When this topic last did something that was NOT its own housekeeping.
+
+        A 记忆整理 pass writes blocks, and blocks are what idleness is measured on
+        — so counting them would have the screen renew its own lease off the very
+        turn that was supposed to be its last, forever. The pass's turn id is on
+        the dream row precisely so those blocks can be subtracted here; anything
+        else in the topic, from anyone, still counts and still keeps the screen.
+
+        Scope is the one topic, not the topic and its children. A screen is
+        per-topic (so is the tree it works in, `~/.cheese/work/<project>/<topic>`),
+        so a room and each of its 支线 hold separate screens with separate
+        lifetimes and releasing one costs the others nothing."""
+        stmt = select(func.max(Block.created_at)).where(Block.topic_id == topic_id)
+        if dream is not None and dream.turn_id is not None:
+            stmt = stmt.where(
+                or_(Block.turn_id.is_(None), Block.turn_id != dream.turn_id)
+            )
+        last = (await session.execute(stmt)).scalar()
+        if last is not None and last.tzinfo is None:
+            last = last.replace(tzinfo=UTC)
+        return last
+
+    async def _start_dream_if_worthwhile(
+        self,
+        session,
+        *,
+        topic_id: uuid.UUID,
+        project_id: uuid.UUID,
+        dream,
+    ) -> bool:
+        """Give one about-to-die screen a turn to organize its memory. True if a
+        pass was started (and the screen therefore lives one more sweep).
+
+        Everything here is a reason NOT to spend a turn, because the default has
+        to be not spending one — the thing this repo already parked once was a
+        clock that woke 芝士 with nothing to say."""
+        if not settings.dream_enabled:
+            return False
+        if dream is not None and not await self._returned_to_life_since(
+            session, topic_id, dream
+        ):
+            # Already organized (or already tried and failed). Re-running is how
+            # a background trigger turns into an infinite loop, and "it failed,
+            # so try again" is the same loop with a nicer story.
+            return False
+        blocks = (
+            await session.execute(
+                select(func.count())
+                .select_from(Block)
+                .where(Block.topic_id == topic_id)
+            )
+        ).scalar() or 0
+        if blocks < settings.dream_min_blocks:
+            return False  # nothing in here a later read of the transcript misses
+        try:
+            from app.api.deps import get_work_runner
+
+            record = await open_dream(session, topic_id=topic_id, project_id=project_id)
+            turn_id = get_work_runner().submit_kickoff(
+                self._chat, topic_id, prompt=DREAM_PROMPT
+            )
+            record.turn_id = turn_id
+            await session.commit()
+        except Exception:  # noqa: BLE001 — 整理 must never hold up cleanup
+            await session.rollback()
+            logger.exception("记忆整理 failed to start for topic %s", topic_id)
+            return False
+        return True
+
+    async def _returned_to_life_since(self, session, topic_id, dream) -> bool:
+        """Did a PERSON come back to this topic after it was organized?
+
+        Deliberately narrower than `_last_activity`: that one decides whether to
+        release a screen (cheap and recoverable), this one decides whether to
+        spend another model turn, and the two failure modes are not symmetric. A
+        human block cannot be produced by a pass under any circumstance, so this
+        answer cannot depend on the turn-id bookkeeping being perfect — which is
+        what makes "organize a topic at most once" a guarantee rather than a
+        hope."""
+        found = (
+            await session.execute(
+                select(Block.id)
+                .where(
+                    Block.topic_id == topic_id,
+                    Block.author_type == AuthorType.human,
+                    Block.created_at > dream.created_at,
+                )
+                .limit(1)
+            )
+        ).scalar()
+        return found is not None
 
     async def sync_upstreams(self) -> dict:
         """Keep every linked project's base current with its upstream, unattended.
