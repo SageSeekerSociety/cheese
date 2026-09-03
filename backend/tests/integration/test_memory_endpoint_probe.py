@@ -10,7 +10,6 @@ OpenAI-protocol stand-in) or against a socket that is deliberately not
 listening, so nothing needs a real key.
 """
 
-import asyncio
 import json
 import socket
 import subprocess
@@ -38,7 +37,9 @@ def _fresh_verdict():
 def openviking_settings(monkeypatch):
     """Point the openviking settings somewhere, on the openviking backend."""
 
-    def configure(base_url: str, *, dimension: int = 256) -> None:
+    # 2048 is what the stand-in returns when nothing asks for a width — the
+    # healthy case is "the configured width is the one the endpoint gives you".
+    def configure(base_url: str, *, dimension: int = 2048) -> None:
         monkeypatch.setattr(settings, "memory_backend", "openviking")
         monkeypatch.setattr(settings, "openviking_llm_api_base", base_url)
         monkeypatch.setattr(settings, "openviking_embedding_api_base", base_url)
@@ -255,7 +256,3 @@ class _Serve:
 
 def _serve(app) -> _Serve:
     return _Serve(app)
-
-
-# Keep the linters honest about the async helper import above.
-assert asyncio is not None

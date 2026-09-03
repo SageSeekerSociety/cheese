@@ -6,7 +6,6 @@ it must not make the process unready, because the process can still serve every
 request that has nothing to do with memory.
 """
 
-import socket
 
 import pytest
 from fastapi import FastAPI
@@ -28,10 +27,10 @@ def _fresh_verdict():
 def test_the_db_backend_reports_a_skipped_memory_check(client, monkeypatch):
     monkeypatch.setattr(settings, "memory_backend", "db")
 
-    def refuse(*args, **kwargs):
-        raise AssertionError("the db backend must not open a socket")
+    async def refuse(*args, **kwargs):
+        raise AssertionError("the db backend must not probe anything")
 
-    monkeypatch.setattr(socket.socket, "connect", refuse)
+    monkeypatch.setattr(endpoint_probe, "probe", refuse)
 
     body = client.get("/health/detailed").json()
 
