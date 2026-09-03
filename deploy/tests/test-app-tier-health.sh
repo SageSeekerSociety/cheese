@@ -437,6 +437,7 @@ test_rollback_leaves_an_already_migrated_box_alone() {
   # unmarked path would make this "nothing moved" scenario move something.
   mkdir -p "$run_dir/viking"; : > "$run_dir/viking/.cheese-uid-1000"
   mkdir -p "$run_dir/claude-cache"; : > "$run_dir/claude-cache/.cheese-uid-1000"
+  mkdir -p "$run_dir/transcripts"; : > "$run_dir/transcripts/.cheese-uid-1000"
 
   if ownership_run "$run_dir" rollback \
     "$ROOT/deploy/deploy-docker.sh" testsha \
