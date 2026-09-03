@@ -492,15 +492,16 @@ class Settings(BaseSettings):
     # budget on a background trigger, which is the exact shape of the thing this
     # repo parked once already (SchedulerService.tick): a clock cannot tell
     # "there is something worth saying" from "say something". What makes this
-    # different is that the trigger is a real event — the box is about to be
-    # destroyed, so this is the last moment anything CAN be checked against the
+    # different is that the trigger is a real event — the screen is about to be
+    # closed, so this is the last moment anything CAN be checked against the
     # workspace — not that the cost went away. Turning it on costs roughly one
     # agent turn per organized topic, and no more than
     # `dream_max_per_sweep` of them per sweep.
     dream_enabled: bool = False
     # How many topics one sweep may organize. A sweep that finds thirty idle
-    # boxes must not start thirty turns at once; the rest are picked up an hour
-    # later, and nothing is lost because the boxes were not reaped either.
+    # screens must not start thirty turns at once; the rest are picked up an
+    # hour later, and nothing is lost because those screens were not closed
+    # either.
     dream_max_per_sweep: int = 1
     # Below this many blocks a topic is not worth a turn — a three-message
     # topic has nothing in it that reading the transcript later would not give.
