@@ -11,6 +11,7 @@ listening, so nothing needs a real key.
 """
 
 import json
+import logging
 import socket
 import subprocess
 import sys
@@ -145,6 +146,59 @@ async def test_a_key_that_works_but_returns_the_wrong_width_is_not_healthy(
     embedding_error = health["endpoints"]["embedding"]["error"]
     assert "2048" in embedding_error
     assert "1024" in embedding_error
+
+
+async def test_boot_says_out_loud_that_the_endpoints_are_unreachable(
+    monkeypatch, openviking_settings, caplog
+):
+    """The signal at the moment it is cheapest to act on.
+
+    Whoever just set MEMORY_BACKEND=openviking is reading the container log
+    right then. If the only record of a rejected key is a stack trace at some
+    other level, the deploy looks like it worked and the platform quietly stops
+    learning — which is the entire failure this exists to prevent.
+    """
+    from fastapi import FastAPI
+    from fastapi.responses import JSONResponse
+
+    app = FastAPI()
+
+    @app.post("/v1/{path:path}")
+    async def unauthorized(path: str) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
+        return JSONResponse({"error": {"message": "invalid api key"}}, status_code=401)
+
+    with _serve(app) as base_url:
+        openviking_settings(base_url)
+        monkeypatch.setattr(settings, "openviking_llm_api_key", None)
+        monkeypatch.setattr(settings, "openviking_embedding_api_key", None)
+        monkeypatch.setattr(settings, "anthropic_auth_token", "sk-che-gateway-virtual")
+
+        with caplog.at_level(logging.INFO):
+            await endpoint_probe.check_on_startup()
+
+    errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert errors, "a rejected key must not be reported below ERROR"
+    said = errors[0].getMessage()
+    assert "MEMORY_BACKEND=openviking" in said
+    assert "401" in said
+    # It has to say what to do, not only that something is wrong.
+    assert "OPENVIKING_LLM_API_KEY" in said
+    assert "/health/detailed" in said
+
+    # And separately: the key was never configured, it was borrowed from the
+    # gateway token. That is the actual root cause, so it gets its own line.
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("anthropic_auth_token" in w for w in warnings)
+
+
+async def test_boot_stays_quiet_when_the_endpoints_answer(openviking_settings, caplog):
+    with fake_model_server() as server:
+        openviking_settings(server["base_url"])
+        with caplog.at_level(logging.INFO):
+            await endpoint_probe.check_on_startup()
+
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any("endpoints answered" in r.getMessage() for r in caplog.records)
 
 
 async def test_the_db_backend_check_sends_no_packet(monkeypatch):

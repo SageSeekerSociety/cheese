@@ -338,8 +338,10 @@ async def check_on_startup() -> None:
     logger.error(
         "memory: MEMORY_BACKEND=openviking but its model endpoints did not "
         "answer — %s. Nothing will be recorded and recall will stay empty, with "
-        "no other symptom. Fix the key/base/model settings and redeploy "
-        "(restarting the container does not re-read env_file). The current "
-        "verdict is also served at /health/detailed under checks.memory.",
+        "no other symptom at all. Check OPENVIKING_LLM_API_KEY / "
+        "OPENVIKING_EMBEDDING_API_KEY (and the matching _API_BASE / _MODEL "
+        "settings), then redeploy — restarting the container does not re-read "
+        "env_file. The current verdict is also served at /health/detailed "
+        "under checks.memory.",
         result.summary(),
     )
