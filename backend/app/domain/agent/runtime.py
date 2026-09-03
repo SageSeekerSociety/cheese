@@ -1958,6 +1958,9 @@ class AgentWorkRunner:
             # `loop_start` is not that moment: preparing the database, choosing a
             # backend and attaching the screen all happen after it.
             turn_start: float | None = None
+            # The last `tool` frame. The ceiling rolls off this once there is
+            # one, for the reason in `ceiling_deadline`.
+            last_progress: float | None = None
 
             def ceiling_deadline() -> float:
                 """When this turn's ceiling comes due.
@@ -1970,6 +1973,15 @@ class AgentWorkRunner:
                 deadline was already spent by the time there was anything to
                 watch.
 
+                Then it rolls forward on every tool call, so what it measures
+                is time with NO tool call rather than a turn's total length.
+                The harness side does the same with the same number
+                (`hooks_substrate`'s progress clock), and both are answering
+                the question a fixed wall-clock could not: an agent three hours
+                into a large refactor and a session wedged in a printing loop
+                are indistinguishable by elapsed time, and tell themselves
+                apart instantly by whether a tool ever runs.
+
                 Never returns a moment already past. `reschedule` to a past
                 moment comes due on the very next pass, so a base that setup has
                 outrun turns "very little time left" into "no time at all",
@@ -1978,7 +1990,12 @@ class AgentWorkRunner:
                 it asks whether this turn ever STARTED, so it has to count the
                 setup this one excludes.
                 """
-                base = loop_start if turn_start is None else turn_start
+                if last_progress is not None:
+                    base = last_progress
+                elif turn_start is not None:
+                    base = turn_start
+                else:
+                    base = loop_start
                 return max(
                     asyncio.get_running_loop().time(), base + max(0.0, ceiling_s)
                 )
@@ -2148,6 +2165,13 @@ class AgentWorkRunner:
                             turn_deadline.reschedule(ceiling_deadline())
                     if kind == "tool":
                         rec["tools"] += 1
+                        # Work happened, so the ceiling starts over. Without
+                        # this the outer wrap would still cut a turn at a fixed
+                        # length while the harness side, reading the same
+                        # number, had already moved on.
+                        last_progress = asyncio.get_running_loop().time()
+                        if fuse_deadline is None:
+                            turn_deadline.reschedule(ceiling_deadline())
                     if kind == "error":
                         rec["status"] = "error"
                         rec["detail"] = str(frame.get("message", ""))[:200]

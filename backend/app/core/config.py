@@ -187,6 +187,15 @@ class Settings(BaseSettings):
     # against a pathological "looks active but never converges" turn (a tool
     # retrying forever, a genuine infinite loop that keeps printing).
     agent_turn_hard_ceiling_s: float = 10800.0
+    # The harness monitor's own backstop, and deliberately far larger than the
+    # one above. That one is a real deadline for a turn that has stopped calling
+    # tools, and it refreshes on every tool call. This one fires against a
+    # session that `confirm_alive` keeps reporting alive, which is what a long
+    # foreground command looks like from here (a 20-minute test run emits no
+    # interim hook), so it must not be the number that ends a turn the probe
+    # just said was healthy. It exists for the case where the probe itself has
+    # stopped meaning anything.
+    agent_session_ceiling_s: float = 86400.0
 
     # RETIRED (2026-08-10). Used to name a HOST directory holding a `cheese` CLI
     # to mount over the image's baked copy — but nothing kept that checkout in

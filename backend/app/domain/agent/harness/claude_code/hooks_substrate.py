@@ -827,6 +827,7 @@ class ClaudeCodeRuntime:
         router: HookRouter | None = None,
         idle_suspect_s: float = 900.0,
         hard_ceiling_s: float = 900.0,
+        session_ceiling_s: float | None = None,
         delivery_timeout_s: float = DELIVERY_TIMEOUT_S,
     ) -> None:
         self._channel = channel
@@ -834,6 +835,26 @@ class ClaudeCodeRuntime:
         # Equal by default preserves the legacy single-deadline behavior.
         self._idle_suspect_s = idle_suspect_s
         self._hard_ceiling_s = hard_ceiling_s
+        # Two ceilings, because the two layers can do different things when they
+        # come due and so they want different numbers.
+        #
+        # `_hard_ceiling_s` is what the OUTER wall-clock wrap is told (see the
+        # `hard_ceiling_s` property). That layer sees only frames, has no way to
+        # ask whether a session is alive, and refreshes on every tool call, so
+        # what it ends is a turn that has stopped calling tools: exactly a loop
+        # that only emits output.
+        #
+        # `_session_ceiling_s` is this monitor's own unconditional backstop, and
+        # it fires against a session that idle-suspect has been probing and
+        # `confirm_alive` keeps calling alive. That combination is a busy pane
+        # with no interim hook, which is what a long foreground command looks
+        # like, so cutting it at the same number would kill exactly the work the
+        # probe just confirmed was fine. It stays large on purpose: past this
+        # much wall clock the answer stops being "still working" whatever the
+        # probe says.
+        self._session_ceiling_s = (
+            hard_ceiling_s if session_ceiling_s is None else session_ceiling_s
+        )
         self._delivery_timeout_s = delivery_timeout_s
         # Screen-lifetime state. ``_live`` is the transport handle; subscriptions
         # own the stable router sink, consumer task, and current attribution.
@@ -1426,7 +1447,7 @@ class ClaudeCodeRuntime:
             async for event in monitor_session_activity(
                 queue=activity.queue,
                 idle_suspect_s=self._idle_suspect_s,
-                hard_ceiling_s=self._hard_ceiling_s,
+                hard_ceiling_s=self._session_ceiling_s,
                 resume_session_id=None,
                 timeout_message=self._channel.timeout_message,
                 delivery_timeout_s=(
@@ -1676,7 +1697,7 @@ class ClaudeCodeRuntime:
                 async for event in monitor_session_activity(
                     queue=attribution.queue,
                     idle_suspect_s=self._idle_suspect_s,
-                    hard_ceiling_s=self._hard_ceiling_s,
+                    hard_ceiling_s=self._session_ceiling_s,
                     resume_session_id=resume_session_id,
                     timeout_message=self._channel.timeout_message,
                     tracker=tracker,
