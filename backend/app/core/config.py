@@ -183,9 +183,13 @@ class Settings(BaseSettings):
     # — a long foreground command with no interim hook must not look identical to a
     # dead screen.
     agent_idle_suspect_s: float = 300.0
-    # Unconditional backstop for both hooks backends regardless of activity — guards
-    # against a pathological "looks active but never converges" turn (a tool
-    # retrying forever, a genuine infinite loop that keeps printing).
+    # Wall-clock ceiling for both hooks backends. Crossing it is recorded and
+    # logged and no longer ends the turn: with the three gates below in place
+    # (the process probe past idle-suspect, output with no progress, an unread
+    # injection), what a wall clock alone can still end is a turn that is
+    # working and has not finished, which is not a fault. The outer wrap in
+    # runtime.py still receives this number via the `turn_ceiling` frame and
+    # refreshes it on every tool call.
     agent_turn_hard_ceiling_s: float = 10800.0
     # The harness monitor's own backstop, and deliberately far larger than the
     # one above. That one is a real deadline for a turn that has stopped calling
@@ -209,6 +213,14 @@ class Settings(BaseSettings):
     # responsiveness target. Ending the turn on this verdict replays the pending
     # message into the next one, so the cost of firing is a restart, not a loss.
     agent_unread_grace_s: float = 1800.0
+    # How long a session may keep producing output with no tool call and no
+    # ending before it is called stuck. This is the gate for a loop: a session
+    # that talks and never acts keeps every other signal healthy, because the
+    # idle check sees hooks arriving and the process probe sees a live process.
+    # A long foreground command does not trip it, since it emits no output
+    # while it runs. Sized for the longest honest stretch of pure writing, a
+    # document drafted with no tool call in between.
+    agent_no_progress_s: float = 1800.0
 
     # RETIRED (2026-08-10). Used to name a HOST directory holding a `cheese` CLI
     # to mount over the image's baked copy — but nothing kept that checkout in
