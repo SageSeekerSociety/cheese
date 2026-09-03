@@ -174,6 +174,9 @@ class WorkTreeService:
     async def history(self, room_id: uuid.UUID) -> list[WorkTree]:
         return await self._repo.list_for_room(room_id)
 
+    async def trees_in_project(self, project_id: uuid.UUID) -> list[WorkTree]:
+        return await self._repo.list_for_project(project_id)
+
     async def record_check(self, tree: WorkTree, *, ok: bool, detail: str) -> WorkTree:
         """Remember what the quick check said about this tree's content.
 

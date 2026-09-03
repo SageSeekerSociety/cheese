@@ -596,6 +596,7 @@ class TopicService:
                 continue
             thread.status = TaskStatus.closed
             thread.closed_at = datetime.now(UTC)
+            await self._retire_storage(thread)
             # Why it stopped has to be readable IN the thread that stopped: the
             # room's own archive note lands on the room, and whoever opens the
             # thread later sees work that simply ended mid-sentence.
@@ -631,6 +632,7 @@ class TopicService:
         topic.status = TopicStatus.archived
         topic.archived_at = datetime.now(UTC)
         await self._release_cloud_machine(topic.id)
+        await self._retire_storage(topic)
         # 孤儿卡修复 (2026-08-10): 归档必须同时终结这个话题上还没决议的验收卡。
         # 一张 `pr_open` 的卡不是"停着"——轮询器每 60 秒还在用当初批准人的
         # GitHub token 推进它。去向与理由见 review/archive.py 的模块 docstring。
@@ -663,6 +665,22 @@ class TopicService:
         from app.domain.machine.services import MachineService
 
         await MachineService(self._session).release_topic_machine(topic_id)
+
+    async def _retire_storage(self, place: Topic | Task) -> None:
+        """What the place leaves on disk goes with it — its worktree here and
+        its home on the device that ran it (topic/retire.py). After the Cloud
+        release on purpose: that drops a Cloud topic's device pin, and a home on
+        a VM being destroyed is nobody's to clean. Best-effort inside; the
+        archive is a fact about the place, not about its disk."""
+        from app.domain.topic.retire import (
+            retire_room_storage,
+            retire_thread_storage,
+        )
+
+        if isinstance(place, Task):
+            await retire_thread_storage(self._session, place)
+        else:
+            await retire_room_storage(self._session, place)
 
     async def unarchive(self, topic_id: uuid.UUID, *, by: str) -> Topic:
         """Bring an archived topic back to active (idempotent). Accept markers
