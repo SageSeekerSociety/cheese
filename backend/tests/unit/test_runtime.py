@@ -324,6 +324,10 @@ async def test_turn_ceiling_frame_reschedules_the_outer_timeout(db_factory):
 
         async def converse(self, **_):
             yield {"type": "turn_ceiling", "seconds": 10.0}
+            # Where the declared ceiling takes effect: both clocks have a real
+            # base only once the prompt has landed, so this frame is what a real
+            # `converse` sends between the two (chat.py sends it on every turn).
+            yield {"type": "prompt_delivered"}
             # Longer than the generic 0.05s default, well under the 10s ceiling
             # this turn actually asked for.
             await asyncio.sleep(0.15)
@@ -1506,3 +1510,63 @@ async def test_repeated_timeouts_also_stop_chaining(db_factory, monkeypatch):
     assert any(meta.get("who") == "human" for _, meta in svc.events), (
         "超时续跑用尽后没有把话题交给人"
     )
+
+
+@pytest.mark.anyio
+async def test_a_slow_setup_does_not_spend_the_ceiling_before_the_turn_starts(
+    db_factory,
+):
+    """上限问的是「一轮活最多能活多久」，而准备数据库、挑后端、接屏幕都发生在这一轮
+    真正开始之前。这些算进上限，一个还没接上屏幕的会话就会被判超时，而上限本身看起来
+    是够用的：#617 里两个测试把上限压到 0.4 秒，CI 慢的时候准备阶段自己就超过 0.4 秒，
+    于是判决在有东西可看之前就下了。
+
+    冷启动保险丝故意仍然从最早算起，因为它问的是另一件事：这一轮到底有没有开始过。
+    """
+    broker = InProcessBroker()
+    # Generic default long enough that the fuse is not what cuts here.
+    runner = AgentWorkRunner(broker, turn_timeout_s=5.0)
+
+    class _SlowSetup:
+        session_factory = db_factory
+
+        async def converse(self, **_):
+            yield {"type": "turn_ceiling", "seconds": 0.3}
+            # Setup: everything before the prompt reaches the session, and here
+            # it takes longer than the whole declared ceiling.
+            await asyncio.sleep(0.4)
+            yield {"type": "prompt_delivered"}
+            # The turn itself, comfortably inside its ceiling.
+            await asyncio.sleep(0.1)
+            yield {"type": "done"}
+
+    topic = await a_topic(db_factory)
+    async with broker.subscribe(str(topic)) as q:
+        runner.submit(_SlowSetup(), topic, author="u", content="hi", summon=True)
+        f = await _next_frame(q, "done", timeout=3)
+    assert f["type"] == "done"
+
+
+@pytest.mark.anyio
+async def test_a_turn_cut_by_its_ceiling_still_ends_its_stream(db_factory):
+    """超时那条路是把 chat 的生成器从中间切断的，所以 chat 自己那句 `done` 不会发；
+    而 `turn_finished` 只对「已经宣布过自己开始」的一轮发，一个还在准备阶段就被切掉
+    的轮次两个都没有。订阅者于是一直读到自己的读超时为止——0.4 秒的上限变成 300 秒的
+    挂起就是这么来的，而失败本身是 1 秒内就知道的。
+    """
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker, turn_timeout_s=0.05)
+
+    class _NeverFinishes:
+        session_factory = db_factory
+
+        async def converse(self, **_):
+            yield {"type": "prompt_delivered"}
+            await asyncio.sleep(5)
+            yield {"type": "done"}
+
+    topic = await a_topic(db_factory)
+    async with broker.subscribe(str(topic)) as q:
+        runner.submit(_NeverFinishes(), topic, author="u", content="hi", summon=True)
+        f = await _next_frame(q, "done", timeout=3)
+    assert f["type"] == "done"
