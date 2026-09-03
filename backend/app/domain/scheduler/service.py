@@ -60,7 +60,6 @@ class SchedulerService:
         child, sandbox image swap). Nothing re-read the registry in that case, so
         the topic stayed `active` forever — see AgentWorkRunner.sweep_orphans."""
         from app.api.deps import get_work_runner
-        from app.core.config import settings
 
         return await get_work_runner().sweep_orphans(
             self._chat,
@@ -160,7 +159,9 @@ class SchedulerService:
                 project_id, topic_id, session_factory=self._sessions
             )
         if dreams_started:
-            logger.info("idle screen reap: started %d 记忆整理 pass(es)", dreams_started)
+            logger.info(
+                "idle screen reap: started %d 记忆整理 pass(es)", dreams_started
+            )
         return len(idle)
 
     async def _last_activity(
