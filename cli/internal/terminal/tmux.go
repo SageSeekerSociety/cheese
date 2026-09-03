@@ -7,9 +7,11 @@ package terminal
 import (
 	"bytes"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -124,7 +126,19 @@ func NewManager() (*Manager, error) {
 		return nil, fmt.Errorf("terminal: runtime dir: %w", err)
 	}
 	conf := filepath.Join(dir, "tmux.conf")
-	if err := os.WriteFile(conf, []byte("set -g remain-on-exit on\n"), 0o600); err != nil {
+	// `remain-on-exit on`: keep a pane after its program exits, so a program
+	// that dies instantly still leaves its output and a dead marker on screen
+	// instead of tearing the server down.
+	//
+	// `exit-empty off`: keep the SERVER after its last session ends. tmux
+	// otherwise exits an empty server, and then the next `new-session` forks a
+	// fresh one from whoever asked — which on Linux puts it back in the
+	// connector's cgroup and undoes EnsureServer for every session after the
+	// first quiet moment. Measured: without this, a server started inside a
+	// scope is gone before the first spawn and the spawn re-forks it here.
+	if err := os.WriteFile(
+		conf, []byte("set -g remain-on-exit on\nset -g exit-empty off\n"), 0o600,
+	); err != nil {
 		return nil, fmt.Errorf("terminal: write config: %w", err)
 	}
 	return &Manager{bin: bin, sock: filepath.Join(dir, "t.sock"), conf: conf}, nil
@@ -135,6 +149,80 @@ func (m *Manager) tmux(args ...string) *exec.Cmd {
 	cmd := exec.Command(m.bin, full...)
 	cmd.Env = append(os.Environ(), "LC_ALL=C.UTF-8", "LANG=C.UTF-8")
 	return cmd
+}
+
+// serverUp reports whether a tmux server is already listening on our socket.
+//
+// Asked of the socket rather than of tmux, because tmux answers "no server
+// running" and "no such session" with the same exit code, and a stale socket
+// file left behind by a dead server looks identical to a live one by name. A
+// connect either reaches a process or it does not.
+func (m *Manager) serverUp() bool {
+	c, err := net.Dial("unix", m.sock)
+	if err != nil {
+		return false
+	}
+	_ = c.Close()
+	return true
+}
+
+// EnsureServer brings the tmux server up before anything else asks it for a
+// session, and on Linux puts it in a systemd scope of its own.
+//
+// The server is otherwise started implicitly: the first tmux command that needs
+// one forks it. Forked from this process, it lands in THIS process's cgroup —
+// and systemd manages a unit by its cgroup, so an operation addressed at the
+// unit is addressed at every session too. `KillMode=process` exempts them from
+// one such operation, `stop`, and from that one only: `systemctl kill
+// --kill-whom=all` still reaches them, and a cgroup-level resource limit on the
+// unit still counts every `claude` inside them against the connector's budget.
+//
+// A scope is how systemd is asked to put processes in a group of their own, and
+// it is the only way out, because a process cannot leave its own cgroup —
+// root or systemd has to move it. Measured on systemd 252: the server
+// daemonizes to PPID 1 and stays in the scope, the scope stays `active
+// (running)` with only that daemonized server left in it, and it goes
+// `inactive` by itself once the server exits. So this adds no teardown path.
+//
+// macOS needs no equivalent: tmux daemonizes into a process group of its own
+// and launchd tears down only the job's own group, so the sessions already
+// survive `launchctl bootout`.
+//
+// A non-empty `degraded` means the server had to be started the old way (no
+// systemd-run, or the scope was refused). The sessions work either way; what is
+// lost is everything `KillMode=process` does not cover, so the caller is
+// expected to say so rather than let it pass silently.
+func (m *Manager) EnsureServer() (degraded string, err error) {
+	if m.serverUp() {
+		// Already running: a restart or a self-update found the server it left
+		// behind. Its cgroup was decided when it started and nothing short of
+		// restarting it can move it, so there is nothing to do and nothing to
+		// report.
+		return "", nil
+	}
+	if runtime.GOOS != "linux" {
+		return "", m.tmux("start-server").Run()
+	}
+	// --collect so a scope that fails is reaped instead of lingering as a
+	// failed unit that the next start would then collide with.
+	scope := exec.Command("systemd-run",
+		"--user", "--scope", "--quiet", "--collect",
+		"--unit", fmt.Sprintf("cheese-tmux-%d", os.Getuid()),
+		"--", m.bin, "-S", m.sock, "-f", m.conf, "start-server")
+	scope.Env = append(os.Environ(), "LC_ALL=C.UTF-8", "LANG=C.UTF-8")
+	var stderr bytes.Buffer
+	scope.Stderr = &stderr
+	if err := scope.Run(); err == nil {
+		return "", nil
+	} else if reason := strings.TrimSpace(stderr.String()); reason != "" {
+		degraded = reason
+	} else {
+		degraded = err.Error()
+	}
+	if err := m.tmux("start-server").Run(); err != nil {
+		return "", fmt.Errorf("terminal: start tmux server: %w", err)
+	}
+	return degraded, nil
 }
 
 // KillServer tears down the whole private tmux server (and every session).

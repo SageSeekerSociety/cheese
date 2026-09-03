@@ -40,7 +40,13 @@
 
 下次启动会 re-adopt 活着的会话（`HasSession` 分支），drainer 继续重投它 spool 下来的 hook，viewer 重新 attach 回原来那个 pane。
 
-第三行只对 systemd 说话，**macOS 不需要对应物**：tmux server 一起来就 daemonize（实测 tmux 3.5a：PPID 1、自成进程组），而 launchd 拆 job 只管 job 自己的进程组，于是 server 和里面的会话原样活着，`launchctl bootout` 之后 `has-session` 仍然成立。Linux 非要那一行，是因为 cgroup 不是进程组：fork 出来的进程离不开自己所在的 unit，除非有个特权的 manager 把它搬走。所以「把 tmux server 挪出 connector 名下、让它结构上就不归我们」在不要 sudo 的前提下无处可去，那一行就是做法本身，不是权宜。
+第三行只对 systemd 说话，**macOS 不需要对应物**：tmux server 一起来就 daemonize（实测 tmux 3.5a：PPID 1、自成进程组），而 launchd 拆 job 只管 job 自己的进程组，于是 server 和里面的会话原样活着，`launchctl bootout` 之后 `has-session` 仍然成立。Linux 非要那一行，是因为 cgroup 不是进程组：fork 出来的进程离不开自己所在的 unit，除非有个特权的 manager 把它搬走。
+
+**Linux 上那个 manager 就是 systemd 自己，而请它搬不需要 sudo。** connector 启动时不再让第一条 tmux 命令隐式 fork server，而是自己用 `systemd-run --user --scope` 起它（`Manager.EnsureServer`），server 于是落在一个属于它自己的 scope 单元里，从一开始就不在 connector 的 cgroup 中。systemd 252 实测：server daemonize 到 PPID 1 之后仍然留在那个 scope 里，scope 保持 `active (running)`，server 退出之后 scope 自己转 `inactive`，所以没有多出一条要人去走的拆除路径。没有 `systemd-run`、或者拿不到 user manager 的机器退回隐式启动，并把这件事打到 stderr，不静默降级。
+
+**scope 和 `KillMode=process` 防的不是同一件事，两个都要。** `KillMode=process` 让 `stop` 和 `restart` 只对主进程发信号，也就是上面表格第三行；scope 管的是所有按 cgroup 整组来的操作，`systemctl kill --kill-whom=all` 是一个，unit 上的 cgroup 资源限制是另一个（不加 scope 时，tmux 里每个 `claude` 都算进 connector 的额度）。systemd 自己不推荐 `KillMode=process`，理由正是停止之后残留的进程仍然记在那个 cgroup 里，而 scope 取消的就是这个残留。
+
+**`exit-empty off` 是这件事成立的必要条件**，写在我们自己那份 tmux.conf 里。tmux 默认在最后一个 session 结束时退掉空 server，而空 server 一死，下一次 `new-session` 就变成谁请求谁 fork，server 又回到 connector 的 cgroup 里去了。这个失败是实测出来的：不加这一行，scope 里起的 server 在第一次 spawn 之前就已经没了，spawn 把它重新 fork 在了调用者名下，cgroup 断言当场失败。
 
 `KillMode=process` 对 `--user` unit 一样成立（systemd 252 实测：unit 停掉，它 fork 出来的 tmux server 和里面的会话照旧）——这一点值得单说，因为那是现在**每台机器都走的路**，不再是没 sudo 时的退路。它撑住的**上限是同一次开机**：重启会带走 tmux server 和里面的会话，那不是任何一行 unit 挡得住的；connector 自己能不能回来是另一件事，见下。
 
