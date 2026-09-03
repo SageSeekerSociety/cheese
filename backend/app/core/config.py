@@ -469,10 +469,15 @@ class Settings(BaseSettings):
     # places long gone). 0 disables it.
     topic_storage_sweep_interval_s: int = 3600
     # How long after archive the sweep still leaves a place's worktree and home
-    # alone. Both leftovers, not only the home: an archive is reversible, and a
-    # week is the window in which somebody un-archives to pick the work back up
+    # alone. Both leftovers, not only the home: an archive is reversible, and
+    # this is the window in which somebody un-archives to pick the work back up
     # with its session intact rather than from an empty checkout of the branch.
-    topic_home_retention_days: float = 7
+    # A month rather than a week because the home holds the only copy of the
+    # raw Claude session files (`.claude/projects/**/*.jsonl`): the room's
+    # conversation is in the `blocks` table, but nothing else keeps those, so
+    # until the platform archives them before deleting a home, the retention is
+    # what stands between an archived topic and losing its raw transcript.
+    topic_home_retention_days: float = 30
     # Seconds between orphan sweeps (AgentWorkRunner.sweep_orphans). On by default,
     # unlike the heartbeat above: it consumes no model calls unless it actually
     # finds a killed turn, and its whole purpose is catching the case where
