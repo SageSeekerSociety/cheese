@@ -48,6 +48,7 @@ from app.domain.agent.harness.claude_code.hook_events import (
     HookRouter,
     HookSink,
     MessageAssembler,
+    _hook_event_name,
     hook_router,
     translate_hook,
 )
@@ -219,10 +220,35 @@ class ActivityTracker:
 
     last_at: float
     suspect_since: float | None = None
+    #: Last hook that means work moved: a tool about to run, or the turn ending.
+    #: Seeded by the monitor, since callers build this with `last_at` alone.
+    last_progress_at: float | None = None
+    #: Last hook that means the assistant said something. On its own it proves
+    #: nothing about work; against `last_progress_at` it is the whole signal.
+    last_output_at: float | None = None
+    #: When the wall-clock ceiling was crossed, if it was. Recorded, not acted
+    #: on: the ceiling stopped being a verdict and became a fact worth logging.
+    ceiling_crossed_at: float | None = None
 
     def touch(self, at: float) -> None:
         self.last_at = at
         self.suspect_since = None
+
+    def saw_progress(self, at: float) -> None:
+        self.last_progress_at = at
+        self.touch(at)
+
+    def saw_output(self, at: float) -> None:
+        self.last_output_at = at
+        self.touch(at)
+
+
+#: The hooks that mean work moved. `PreToolUse` is a tool actually about to run;
+#: `Stop` is the turn finishing on its own. Nothing else counts, and assistant
+#: output least of all: a session wedged in a loop produces exactly that.
+_PROGRESS_HOOKS = frozenset({"PreToolUse", "Stop"})
+#: The hook that means the assistant produced text.
+_OUTPUT_HOOKS = frozenset({"MessageDisplay"})
 
 
 @dataclass
@@ -328,6 +354,7 @@ async def monitor_session_activity(
     hard_ceiling_s: float,
     unread_since: Callable[[], float | None] | None = None,
     unread_grace_s: float = 0.0,
+    no_progress_s: float = 0.0,
     resume_session_id: str | None,
     timeout_message: str,
     delivery_timeout_s: float = DELIVERY_TIMEOUT_S,
@@ -376,6 +403,8 @@ async def monitor_session_activity(
     start = now()
     hard_deadline = start + hard_ceiling_s
     tracker = tracker if tracker is not None else ActivityTracker(last_at=start)
+    if tracker.last_progress_at is None:
+        tracker.last_progress_at = start
     # Until something comes back, we have no evidence the prompt was received at
     # all: it is typed into a terminal, and typing has no return value. So the
     # first wait is short. Any hook clears it — `UserPromptSubmit` is the direct
@@ -385,18 +414,51 @@ async def monitor_session_activity(
     while True:
         t = now()
         if t >= hard_deadline:
+            # Recorded, not acted on. Elapsed time alone cannot tell an agent
+            # three hours into a refactor from a session that is stuck, and the
+            # three gates below each catch a specific way of being stuck: the
+            # process gone (`confirm_alive`), output with no tool call
+            # (`no_progress_s`), input never consumed (`unread_grace_s`). What
+            # is left for a wall clock to end is a turn that is working and has
+            # not finished, which is not a fault. It stays as a fact: logged
+            # here, kept on the tracker, and the next interval starts.
+            if tracker.ceiling_crossed_at is None:
+                tracker.ceiling_crossed_at = t
             logger.warning(
-                "session hit its hard ceiling after %.0fs — ending as timeout (%s)",
-                hard_ceiling_s,
+                "session past its %.0fs ceiling and still going — recorded, not "
+                "ended (%s)",
+                t - start,
                 context,
             )
-            yield AgentResult(
-                text=timeout_message,
-                session_id=resume_session_id,
-                is_error=True,
-                failure_code=TURN_TIMEOUT_CODE,
-            )
-            return
+            hard_deadline = t + hard_ceiling_s
+        # A session that talks and never acts. `last_output_at` newer than
+        # `last_progress_at` means something was said since the last tool ran;
+        # the gap since that tool is what this measures. A long foreground
+        # command never trips it: it emits no output while it runs, so the
+        # first condition fails, which is what keeps this from being the
+        # "kill the 20-minute pytest" bug in a new shape.
+        if no_progress_s > 0:
+            progressed_at = tracker.last_progress_at
+            output_at = tracker.last_output_at
+            if (
+                progressed_at is not None
+                and output_at is not None
+                and output_at > progressed_at
+                and t - progressed_at >= no_progress_s
+            ):
+                logger.warning(
+                    "output for %.0fs with no tool call or ending — the session "
+                    "is talking and not working; ending it (%s)",
+                    t - progressed_at,
+                    context,
+                )
+                yield AgentResult(
+                    text=timeout_message,
+                    session_id=resume_session_id,
+                    is_error=True,
+                    failure_code=TURN_TIMEOUT_CODE,
+                )
+                return
         # Asked before the waits below, because this is the one verdict that can
         # be true while every other signal looks healthy.
         if unread_grace_s > 0 and unread_since is not None:
@@ -466,7 +528,13 @@ async def monitor_session_activity(
         if on_hook is not None:
             on_hook(hook)
         delivered = True
-        tracker.touch(now())
+        hook_name = _hook_event_name(hook)
+        if hook_name in _PROGRESS_HOOKS:
+            tracker.saw_progress(now())
+        elif hook_name in _OUTPUT_HOOKS:
+            tracker.saw_output(now())
+        else:
+            tracker.touch(now())
         event = (
             delivery.event
             if isinstance(delivery, HookDelivery)
@@ -860,6 +928,7 @@ class ClaudeCodeRuntime:
         hard_ceiling_s: float = 900.0,
         session_ceiling_s: float | None = None,
         unread_grace_s: float = 0.0,
+        no_progress_s: float = 0.0,
         delivery_timeout_s: float = DELIVERY_TIMEOUT_S,
     ) -> None:
         self._channel = channel
@@ -888,6 +957,7 @@ class ClaudeCodeRuntime:
             hard_ceiling_s if session_ceiling_s is None else session_ceiling_s
         )
         self._unread_grace_s = unread_grace_s
+        self._no_progress_s = no_progress_s
         self._unread_probe: UnreadProbe | None = None
         self._delivery_timeout_s = delivery_timeout_s
         # Screen-lifetime state. ``_live`` is the transport handle; subscriptions
@@ -1500,6 +1570,7 @@ class ClaudeCodeRuntime:
                 hard_ceiling_s=self._session_ceiling_s,
                 unread_since=self._unread_since_for(subscription.topic_id),
                 unread_grace_s=self._unread_grace_s,
+                no_progress_s=self._no_progress_s,
                 resume_session_id=None,
                 timeout_message=self._channel.timeout_message,
                 delivery_timeout_s=(
@@ -1752,6 +1823,7 @@ class ClaudeCodeRuntime:
                     hard_ceiling_s=self._session_ceiling_s,
                     unread_since=self._unread_since_for(topic_id),
                     unread_grace_s=self._unread_grace_s,
+                    no_progress_s=self._no_progress_s,
                     resume_session_id=resume_session_id,
                     timeout_message=self._channel.timeout_message,
                     tracker=tracker,

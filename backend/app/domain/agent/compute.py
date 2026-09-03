@@ -304,6 +304,7 @@ def build_compute_pool(cloud_channel: "Channel | None" = None) -> ComputePool:
             hard_ceiling_s=settings.agent_turn_hard_ceiling_s,
             session_ceiling_s=settings.agent_session_ceiling_s,
             unread_grace_s=settings.agent_unread_grace_s,
+            no_progress_s=settings.agent_no_progress_s,
         )
 
     channels: list[Channel] = [DeviceChannel()]
