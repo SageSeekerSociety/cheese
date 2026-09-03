@@ -112,7 +112,35 @@ class PeriodicRunner:
         this job at all — the switch every deployment and every test uses."""
         if self._interval > 0 and self._task is None:
             self._task = asyncio.create_task(self._loop(), name=self._name)
+            self._task.add_done_callback(self._restart_if_it_died)
             logger.info("%s started (every %ss)", self._name, self._interval)
+
+    @property
+    def alive(self) -> bool:
+        """Is this job's loop running right now?
+
+        False both for a job this box does not run (interval 0, never started)
+        and for one whose loop ended. `/healthz` needs `interval_seconds` to
+        tell those apart, because only the second is a fault.
+        """
+        return self._task is not None and not self._task.done()
+
+    def _restart_if_it_died(self, task: "asyncio.Task[None]") -> None:
+        """Bring the loop back if it ended without being cancelled.
+
+        `_loop` never returns and swallows every per-cycle failure, so arriving
+        here at all means something got past it. Cancellation is the one
+        ordinary way out and only `stop()` does that, so everything else is a
+        job that has silently stopped happening — the exact failure this class
+        exists to prevent, one level up.
+        """
+        if task.cancelled() or self._task is not task:
+            return
+        self._task = None
+        logger.error(
+            "%s loop ended on its own (%r); restarting", self._name, task.exception()
+        )
+        self.start()
 
     async def stop(self) -> None:
         if self._task is not None:
@@ -126,6 +154,24 @@ class PeriodicRunner:
             await asyncio.sleep(self._interval)
             try:
                 result = await self._job()
+            except asyncio.CancelledError:
+                # Caught apart from `Exception` because CancelledError is not
+                # one: it inherits BaseException, so the clause below never saw
+                # it and the loop ended in silence.
+                #
+                # Two different events arrive as this same exception and only
+                # one of them means "stop looping". `stop()` cancels this task
+                # and `cancelling()` counts that. Anything else surfaced from
+                # inside the job (a nested task cancelled, a timeout firing on a
+                # shared connection), which is this cycle's failure and not the
+                # loop's end.
+                task = asyncio.current_task()
+                if task is None or task.cancelling() > 0:
+                    raise
+                logger.exception(
+                    "%s: a CancelledError surfaced from inside the job", self._name
+                )
+                continue
             except Exception:  # noqa: BLE001 — one bad cycle must not end the loop
                 logger.exception("%s failed", self._name)
                 continue

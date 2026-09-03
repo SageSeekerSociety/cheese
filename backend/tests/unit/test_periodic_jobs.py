@@ -151,3 +151,75 @@ def test_the_jobs_nobody_was_running_are_scheduled(name, interval_setting):
 def test_every_job_is_named_once():
     names = [job.name for job in _jobs()]
     assert len(names) == len(set(names)), f"duplicate job names: {names}"
+
+
+async def test_a_cancellederror_from_inside_the_job_does_not_end_the_loop():
+    """`CancelledError` 不是 `Exception` 的子类，它直接挂在 `BaseException` 下面。
+
+    所以一个从任务内部冒出来的取消（嵌套任务被取消、共享连接上的超时打中了这一次
+    调用）会绕过「一个坏周期不该终结循环」那道防线，整个循环就此无声结束，而这个
+    任务仍然留在表上，看代码的人只会以为它在跑。这正是这批测试要防的那种缺席，
+    只是往上挪了一层。
+    """
+    ran = asyncio.Event()
+    calls = 0
+
+    async def job():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise asyncio.CancelledError
+        ran.set()
+        return None
+
+    runner = PeriodicRunner("cancelled from inside", 0.01, job)
+    runner.start()
+    try:
+        await asyncio.wait_for(ran.wait(), timeout=2)
+    finally:
+        await runner.stop()
+    assert calls >= 2
+
+
+async def test_stop_still_ends_the_loop():
+    """上一条要求循环扛住内部的取消，这一条要求它照旧听 `stop()` 的话。
+
+    两者是同一个异常类型，区别只在于是谁取消的，所以这一条和上一条必须同时成立，
+    少了哪个都是错的：只扛住就停不下来，只听话就回到原来的静默。
+    """
+    calls = 0
+
+    async def job():
+        nonlocal calls
+        calls += 1
+        return None
+
+    runner = PeriodicRunner("stoppable", 0.01, job)
+    runner.start()
+    await asyncio.sleep(0.05)
+    await runner.stop()
+    assert not runner.alive
+    settled = calls
+    await asyncio.sleep(0.05)
+    assert calls == settled
+
+
+async def test_alive_separates_a_job_this_box_does_not_run_from_a_dead_one():
+    """`/healthz` 靠这两个属性区分两种「没在跑」，只有后一种是故障。"""
+
+    async def job():
+        return None
+
+    off = PeriodicRunner("not on this box", 0, job)
+    off.start()
+    assert not off.alive
+    assert off.interval_seconds == 0
+
+    on = PeriodicRunner("on this box", 0.01, job)
+    on.start()
+    try:
+        assert on.alive
+        assert on.interval_seconds > 0
+    finally:
+        await on.stop()
+    assert not on.alive

@@ -25,6 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 import app.api.routes as routes_pkg
+from app.core.background import PeriodicRunner
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import register_exception_handlers
@@ -177,9 +178,11 @@ async def lifespan(_: FastAPI):
     )
     for job in jobs:
         job.start()
+    RUNNING_JOBS[:] = jobs
     try:
         yield
     finally:
+        RUNNING_JOBS.clear()
         for job in reversed(jobs):
             await job.stop()
         # The openviking backend keeps the whole memory tree in one embedded
@@ -195,6 +198,11 @@ async def lifespan(_: FastAPI):
             except Exception:  # noqa: BLE001 — shutdown must still finish
                 get_logger("cheesex.runtime").exception("openviking shutdown failed")
 
+
+# The periodic jobs this boot started. Read by /healthz so a runner whose loop
+# ended cannot pass a health check while the job it was running silently stops
+# happening — the same blind spot as an unmounted route, one layer in.
+RUNNING_JOBS: list[PeriodicRunner] = []
 
 # Route modules that failed to import this boot. Read by /healthz so a partially
 # mounted app cannot pass a health check quietly.

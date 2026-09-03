@@ -14,17 +14,28 @@ router = APIRouter(tags=["health"])
 
 @router.get("/healthz", summary="Health check")
 async def health_check() -> dict[str, Any]:
-    """Healthy means every route module mounted, not merely that the process is up.
+    """Healthy means everything this boot was supposed to start is still running.
 
-    A module that fails to import is skipped in production so one bad file cannot
-    take the app down — but the app is then serving 404s for a whole group of
-    endpoints, and the only party that finds out is the caller. Reporting it here
-    is what turns that into something monitoring can see.
+    Two ways for that to be false while the process answers requests normally. A
+    module that fails to import is skipped in production so one bad file cannot
+    take the app down, and the app then serves 404s for a whole group of
+    endpoints. A periodic job whose loop ended keeps its place in the table
+    while its sweep simply stops running. Neither reaches a caller as an error,
+    so reporting them here is what turns them into something monitoring sees.
     """
-    from app.main import FAILED_ROUTE_MODULES
+    from app.main import FAILED_ROUTE_MODULES, RUNNING_JOBS
 
+    problems: dict[str, Any] = {}
     if FAILED_ROUTE_MODULES:
-        return {"status": "degraded", "unmounted": list(FAILED_ROUTE_MODULES)}
+        problems["unmounted"] = list(FAILED_ROUTE_MODULES)
+    # A job whose loop ended stops happening, and nothing else notices: the
+    # sweep simply never runs again. `interval_seconds` is what separates that
+    # from a job this deployment does not run at all.
+    stalled = [j.name for j in RUNNING_JOBS if j.interval_seconds > 0 and not j.alive]
+    if stalled:
+        problems["stalled_jobs"] = stalled
+    if problems:
+        return {"status": "degraded", **problems}
     return {"status": "ok"}
 
 
