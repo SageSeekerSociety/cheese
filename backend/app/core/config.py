@@ -439,7 +439,19 @@ class Settings(BaseSettings):
     # Project-level concurrency ceiling: at most this many agent turns run at
     # once per project; turns beyond it queue (visible as a system event).
     # Overridable per project via project.settings["max_concurrent_turns"].
-    max_concurrent_turns: int = 2
+    #
+    # The number comes from the room side. A room runs up to
+    # `MAX_RESIDENT_TASKS_PER_ROOM` threads and its own line is not one of them,
+    # so a saturated room is five turns, and a project normally has more than
+    # one room working. At 2, a single busy room queued three of its own threads
+    # behind itself while the rest of the project waited on top of that.
+    #
+    # This is the ONLY concurrency gate in the system: nothing limits how many
+    # turns land on ONE machine. So this number also decides what a single
+    # self-hosted laptop can be asked to run at once, which is not what it is
+    # named for and not a limit anybody chose. Raise this and that exposure
+    # rises with it, until a per-machine gate exists.
+    max_concurrent_turns: int = 16
 
     # --- Scheduler (spec §9.1: 确定性调度——定时巡检/生命周期) ---
     # Seconds between automatic 定期巡检 ticks across all projects. 0 = off
