@@ -24,6 +24,7 @@ if TYPE_CHECKING:
         EventConsumer,
         ReceiptConsumer,
         SessionRef,
+        UnreadProbe,
     )
     from app.domain.agent.harness.claude_code import Channel
 
@@ -185,6 +186,12 @@ class ComputePool:
         for runtime in self._runtimes():
             runtime.bind_receipts(consumer)
 
+    def bind_unread_probe(self, probe: "UnreadProbe") -> None:
+        """Give every runtime a way to ask whether anything it was handed is
+        still unread — the other half of the same bookkeeping."""
+        for runtime in self._runtimes():
+            runtime.bind_unread_probe(probe)
+
     def holds(self, topic_id: uuid.UUID) -> bool:
         """Does any backend still hold a live session for this topic?"""
         return any(runtime.holds(topic_id) for runtime in self._runtimes())
@@ -296,6 +303,7 @@ def build_compute_pool(cloud_channel: "Channel | None" = None) -> ComputePool:
             idle_suspect_s=settings.agent_idle_suspect_s,
             hard_ceiling_s=settings.agent_turn_hard_ceiling_s,
             session_ceiling_s=settings.agent_session_ceiling_s,
+            unread_grace_s=settings.agent_unread_grace_s,
         )
 
     channels: list[Channel] = [DeviceChannel()]

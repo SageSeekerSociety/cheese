@@ -1287,3 +1287,71 @@ async def test_a_channel_that_raises_while_staging_does_not_lose_the_message():
     assert prompt is not None
     assert "[fulu] 看看这张截图" in prompt
     assert "没能送到" in prompt
+
+
+# --- 第三道判据：会话还在产出，但已经不再读进任何东西 ------------------------
+#
+# 前两道判据看的都是会话「产出」什么：多久没有 hook、跑了多久。一个停止读取输入
+# 的会话照样产出，所以那两道永远不会为它响。它做不到的是接住下一句话，而那是
+# 唯一一种「有人在等」的失败。
+
+
+async def test_an_injected_message_left_unread_ends_the_session():
+    """注入的消息超过宽限期还没被消费，这个会话就该结束。
+
+    结束不是丢弃：那条消息仍然留在待消费列表里，下一轮会重放它。
+    """
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    queue.put_nowait({"hook_event_name": "UserPromptSubmit", "prompt": "hi"})
+    loop = asyncio.get_running_loop()
+    written_at = loop.time() - 10  # 十秒前写进去的，至今没有回执
+
+    events = await _drain(
+        queue,
+        idle_suspect_s=30,
+        hard_ceiling_s=30,
+        timeout_message="不该是这句",
+        delivery_message="读不进去",
+        unread_since=lambda: written_at,
+        unread_grace_s=0.05,
+    )
+    assert len(events) == 1
+    assert events[0].is_error
+    # 是「读不进去」而不是「超时」：两道判据的结论不能混，房间里显示的原因不同。
+    assert events[0].text == "读不进去"
+
+
+async def test_nothing_waiting_means_this_check_never_fires():
+    """没有人在等的时候，这道判据完全不参与，会话照旧由前两道管。"""
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    events = await _drain(
+        queue,
+        idle_suspect_s=0.05,
+        hard_ceiling_s=0.05,
+        timeout_message="轮次超时",
+        unread_since=lambda: None,
+        unread_grace_s=0.05,
+    )
+    assert len(events) == 1
+    assert events[0].text == "轮次超时"
+
+
+async def test_a_message_still_inside_its_grace_does_not_end_anything():
+    """刚注入的消息不算读不进去。一个跑长命令的会话在工具返回之前本来就读不到
+    输入，宽限期就是留给这种情况的。"""
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    queue.put_nowait({"hook_event_name": "UserPromptSubmit", "prompt": "hi"})
+    loop = asyncio.get_running_loop()
+    just_now = loop.time()
+
+    events = await _drain(
+        queue,
+        idle_suspect_s=0.05,
+        hard_ceiling_s=0.1,
+        timeout_message="轮次超时",
+        delivery_message="读不进去",
+        unread_since=lambda: just_now,
+        unread_grace_s=30,
+    )
+    # 结束它的是硬上限，不是这道判据。
+    assert events[-1].text == "轮次超时"

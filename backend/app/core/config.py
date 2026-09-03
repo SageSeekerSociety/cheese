@@ -196,6 +196,19 @@ class Settings(BaseSettings):
     # just said was healthy. It exists for the case where the probe itself has
     # stopped meaning anything.
     agent_session_ceiling_s: float = 86400.0
+    # How long a message we injected may sit unconsumed before the session is
+    # called unable to read. On a different axis from the two above: those watch
+    # what a session PRODUCES, and a session that has stopped reading goes on
+    # producing, so neither of them ever fires for it. This one only exists
+    # while something is actually waiting, which makes it the narrower check and
+    # the one with a person behind it.
+    #
+    # Sized against the longest legitimate reason a message goes unread, which
+    # is a single long tool call: input is taken at tool boundaries, so a
+    # 20-minute command legitimately holds a message that long. This is not a
+    # responsiveness target. Ending the turn on this verdict replays the pending
+    # message into the next one, so the cost of firing is a restart, not a loss.
+    agent_unread_grace_s: float = 1800.0
 
     # RETIRED (2026-08-10). Used to name a HOST directory holding a `cheese` CLI
     # to mount over the image's baked copy — but nothing kept that checkout in

@@ -40,6 +40,7 @@ from app.domain.agent.harness import (
     Opening,
     ReceiptConsumer,
     SessionRef,
+    UnreadProbe,
 )
 from app.domain.agent.harness.claude_code import event_spool
 from app.domain.agent.harness.claude_code.hook_events import (
@@ -325,6 +326,8 @@ async def monitor_session_activity(
     queue: "asyncio.Queue[dict] | asyncio.Queue[HookDelivery]",
     idle_suspect_s: float,
     hard_ceiling_s: float,
+    unread_since: Callable[[], float | None] | None = None,
+    unread_grace_s: float = 0.0,
     resume_session_id: str | None,
     timeout_message: str,
     delivery_timeout_s: float = DELIVERY_TIMEOUT_S,
@@ -352,6 +355,16 @@ async def monitor_session_activity(
     - ``hard_ceiling_s``: an unconditional backstop regardless of activity, so a
       pathologically active session (a tool retrying forever, a real infinite
       loop that keeps printing) still can't run forever.
+
+    A third check, on a different axis from those two. Both of the above ask
+    whether the session is producing anything. ``unread_since`` asks whether it
+    is still CONSUMING: it reports when the oldest message we injected and never
+    saw consumed was written. A session that has stopped reading its input keeps
+    producing output, so idle-suspect never fires and ``confirm_alive`` keeps
+    saying yes, while everything typed at it queues up behind a prompt box that
+    will not take it. That failure is narrower than the other two, because it
+    only exists while something is actually waiting, and it is the one with a
+    person on the other end. ``unread_grace_s`` of 0 disables it.
 
     With no ``tracker``/``confirm_alive`` given (the device backend today) and
     ``idle_suspect_s == hard_ceiling_s``, this reduces to exactly the old
@@ -384,6 +397,24 @@ async def monitor_session_activity(
                 failure_code=TURN_TIMEOUT_CODE,
             )
             return
+        # Asked before the waits below, because this is the one verdict that can
+        # be true while every other signal looks healthy.
+        if unread_grace_s > 0 and unread_since is not None:
+            waiting_since = unread_since()
+            if waiting_since is not None and t - waiting_since >= unread_grace_s:
+                logger.warning(
+                    "an injected message went unread for %.0fs — the session is "
+                    "producing but not consuming; ending it (%s)",
+                    t - waiting_since,
+                    context,
+                )
+                yield AgentResult(
+                    text=delivery_message,
+                    session_id=resume_session_id,
+                    is_error=True,
+                    failure_code=PROMPT_UNDELIVERED_CODE,
+                )
+                return
         if delivered:
             idle_for = t - tracker.last_at
             if idle_for >= idle_suspect_s:
@@ -828,6 +859,7 @@ class ClaudeCodeRuntime:
         idle_suspect_s: float = 900.0,
         hard_ceiling_s: float = 900.0,
         session_ceiling_s: float | None = None,
+        unread_grace_s: float = 0.0,
         delivery_timeout_s: float = DELIVERY_TIMEOUT_S,
     ) -> None:
         self._channel = channel
@@ -855,6 +887,8 @@ class ClaudeCodeRuntime:
         self._session_ceiling_s = (
             hard_ceiling_s if session_ceiling_s is None else session_ceiling_s
         )
+        self._unread_grace_s = unread_grace_s
+        self._unread_probe: UnreadProbe | None = None
         self._delivery_timeout_s = delivery_timeout_s
         # Screen-lifetime state. ``_live`` is the transport handle; subscriptions
         # own the stable router sink, consumer task, and current attribution.
@@ -955,6 +989,22 @@ class ClaudeCodeRuntime:
         screen emits is reported as ``(topic_id, prompt_text)`` — ChatService
         matches it against messages it injected and stamps them consumed."""
         self._receipt_consumer = consumer
+
+    def bind_unread_probe(self, probe: UnreadProbe) -> None:
+        """Bind the other end of the same books: what was injected and never
+        came back as a receipt. The monitor asks per topic while a session
+        runs."""
+        self._unread_probe = probe
+
+    def _unread_since_for(
+        self, topic_id: uuid.UUID
+    ) -> Callable[[], float | None] | None:
+        """Bind the probe to one topic, so the monitor can ask without knowing
+        which topic it is watching."""
+        probe = self._unread_probe
+        if probe is None:
+            return None
+        return lambda: probe(topic_id)
 
     def bind_activity(self, consumer: ActivityConsumer) -> None:
         """Bind the room's session-activity lifecycle callback."""
@@ -1448,6 +1498,8 @@ class ClaudeCodeRuntime:
                 queue=activity.queue,
                 idle_suspect_s=self._idle_suspect_s,
                 hard_ceiling_s=self._session_ceiling_s,
+                unread_since=self._unread_since_for(subscription.topic_id),
+                unread_grace_s=self._unread_grace_s,
                 resume_session_id=None,
                 timeout_message=self._channel.timeout_message,
                 delivery_timeout_s=(
@@ -1698,6 +1750,8 @@ class ClaudeCodeRuntime:
                     queue=attribution.queue,
                     idle_suspect_s=self._idle_suspect_s,
                     hard_ceiling_s=self._session_ceiling_s,
+                    unread_since=self._unread_since_for(topic_id),
+                    unread_grace_s=self._unread_grace_s,
                     resume_session_id=resume_session_id,
                     timeout_message=self._channel.timeout_message,
                     tracker=tracker,
