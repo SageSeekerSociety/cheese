@@ -35,6 +35,16 @@ describe('responseInterceptor', () => {
     expect(responseInterceptor(response)).toBe(response)
   })
 
+  it('passes a blob through: only what was asked for as JSON is judged', () => {
+    const response = {
+      status: 200,
+      config: { url: '/avatars/1', method: 'get', responseType: 'blob' },
+      data: new Blob(['png'], { type: 'image/png' }),
+    } as unknown as AxiosResponse
+
+    expect(responseInterceptor(response)).toBe(response)
+  })
+
   it('passes a 204 through: nothing is an answer too', () => {
     const response = {
       status: 204,

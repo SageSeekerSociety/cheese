@@ -268,17 +268,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     // what a hackathon room read while Cloudflare's tunnel flapped for a few
     // seconds, and they asked whether the backend was broken. It was not.
     const body = await readJson(res)
-    if (isTransportFailure(res.status, body)) {
-      if (
-        attempt < GET_RETRY_DELAYS_MS.length &&
-        isRetryableGetFailure(method, res.status, undefined, body === NOT_JSON)
-      ) {
+    if (isTransportFailure(body)) {
+      if (attempt < GET_RETRY_DELAYS_MS.length && isRetryableGetFailure(method, res.status, undefined, true)) {
         await wait(GET_RETRY_DELAYS_MS[attempt])
         continue
       }
       throw new ApiError(res.status, transportFailureMessage(method, res.status))
     }
     if (!res.ok) {
+      if (attempt < GET_RETRY_DELAYS_MS.length && isRetryableGetFailure(method, res.status)) {
+        await wait(GET_RETRY_DELAYS_MS[attempt])
+        continue
+      }
       // #450 rule 2 (frontend edition): the backend's errors carry a human
       // sentence (`message`) — a toast that shows only "HTTP 422 for /path"
       // sends the room hunting a mystery the server had already explained.
@@ -340,7 +341,7 @@ async function legacyRequest<T>(path: string, init?: RequestInit): Promise<T> {
     },
   })
   const body = await readJson(res)
-  if (isTransportFailure(res.status, body)) {
+  if (isTransportFailure(body)) {
     throw new ApiError(res.status, transportFailureMessage(method, res.status))
   }
   if (!res.ok) {

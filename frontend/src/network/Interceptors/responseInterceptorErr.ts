@@ -20,10 +20,11 @@ export default (error: AxiosError<ResponseDataType>) => {
     return refreshToken(error)
   }
 
-  // The edge answered in place of the app: a page for a body, or a server-side
-  // status. Reading `.message` off an HTML string is how 「服务器错误」 reached a
-  // hackathon room and sent it asking whether the backend was down.
-  if (error.response && isTransportFailure(error.response.status, error.response.data)) {
+  // The edge answered in place of the app: a page for a body. Reading
+  // `.message` off an HTML string is how 「服务器错误」 reached a hackathon room
+  // and sent it asking whether the backend was down. A JSON envelope with any
+  // status is the app's own answer and keeps its sentence, below.
+  if (error.response && isTransportFailure(error.response.data)) {
     throw new ServerError(
       transportFailureMessage(error.response.config.method ?? 'get', error.response.status),
       error.response.status

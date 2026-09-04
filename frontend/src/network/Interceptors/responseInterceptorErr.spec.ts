@@ -72,20 +72,20 @@ describe('responseInterceptorErr', () => {
     )
   })
 
-  it('a 5xx is not the app answering even when it carries the envelope', () => {
+  it("a 5xx envelope is the app's own answer and keeps its sentence", () => {
+    // 后端自己的 500 也是信封，里面那句是写给用户的（github_account_link 就这么答）。
     const error = {
       response: {
         status: 500,
-        config: { url: '/tasks', method: 'get' },
-        data: { code: 500, message: '服务器内部错误', data: null },
+        config: { url: '/users/me/github/link', method: 'post' },
+        data: { code: 500, message: '暂时无法发起 GitHub 账号连接，请稍后重试', data: null },
       },
     } as unknown as AxiosError<ResponseDataType>
 
     expect(() => responseInterceptorErr(error)).toThrowError(
       expect.objectContaining<Partial<ServerError>>({
-        name: 'ServerError',
         code: 500,
-        message: '服务暂时不可达，请稍后重试（HTTP 500）',
+        message: '暂时无法发起 GitHub 账号连接，请稍后重试',
       })
     )
   })

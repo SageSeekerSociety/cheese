@@ -83,6 +83,23 @@ describe('边缘的错误页不是应用的答复', () => {
     })
   })
 
+  it('GET：后端自己的 503 信封，抛的是它写的那句，不是那句人话', async () => {
+    // 信封里有句子的 5xx 是应用在答话（sandbox 路由就这么答 503）。GET 照旧按
+    // 状态码重试，重试完抛出去的必须是服务端那句。
+    const envelope = {
+      ok: false,
+      status: 503,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => ({ code: 503, message: '暂时无法发起 GitHub 账号连接，请稍后重试', data: null }),
+    } as unknown as Response
+    serve([envelope])
+    await expect(listProjects()).rejects.toMatchObject({
+      status: 503,
+      message: '暂时无法发起 GitHub 账号连接，请稍后重试（HTTP 503）',
+    })
+    expect(calls).toHaveLength(3)
+  })
+
   it('POST：502 的页面不重试，抛的是写操作那句', async () => {
     // 写操作不能由客户端重放：送没送达都不知道，再发一次可能就是两次。
     serve([page(502)])

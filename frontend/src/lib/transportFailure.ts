@@ -1,17 +1,21 @@
 // What the app did not answer.
 //
-// Every answer of ours is a JSON envelope. Anything else in its place — nginx's
-// 502 page, Cloudflare's 530 (error 1033: a tunnel that flapped), a captive
-// portal's 200, the SPA's own fallback — is the edge speaking for an app that
-// did not, and is neither a business error nor a success. Both API layers
-// (`api.ts` on fetch, `network/` on axios) come here, so the user reads one
-// sentence whichever layer the call went through.
+// Every answer of ours is a JSON envelope, and so is every error of ours: a
+// 500 from the backend still arrives as `{code, message, data}` with a
+// sentence it wrote for the user (「暂时无法发起 GitHub 账号连接，请稍后重试」
+// is one). Anything else in the envelope's place — nginx's 502 page,
+// Cloudflare's 530 (error 1033: a tunnel that flapped), a captive portal's 200,
+// the SPA's own fallback — is the edge speaking for an app that did not, and
+// is neither a business error nor a success. Both API layers (`api.ts` on
+// fetch, `network/` on axios) come here, so the user reads one sentence
+// whichever layer the call went through.
 
-// A server-side status, or a body that is not the envelope. Both are checked
-// because the page comes with either: Cloudflare's 1033 says 530, a captive
-// portal says 200.
-export function isTransportFailure(status: number, body: unknown): boolean {
-  return status >= 500 || typeof body !== 'object' || body === null
+// A page instead of an envelope: the body is not a JSON object. The status
+// line does not decide this — the page comes with any of them (Cloudflare's
+// 1033 says 530, a captive portal says 200) and so does the envelope (the
+// backend's own 5xx carries one, and its sentence must reach the user).
+export function isTransportFailure(body: unknown): boolean {
+  return typeof body !== 'object' || body === null
 }
 
 // The status stays on the error for whoever is debugging; the sentence is for
