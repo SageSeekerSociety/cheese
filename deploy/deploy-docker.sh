@@ -434,8 +434,96 @@ OWNERSHIP_REPORT_FILE="$OWNERSHIP_REPORT" \
 OWNERSHIP_MIGRATED="$(cat "$OWNERSHIP_REPORT" 2>/dev/null || echo no)"
 rm -f "$OWNERSHIP_REPORT"
 
-log "bringing up backend + frontend…"
-dc up -d backend frontend || fail "compose up failed"
+# ---- Backend rollout without downtime (boxes with an api-front switch) ----
+# ACTIVE_BACKEND_DIR names the directory the box's host nginx (api-front,
+# deploy/llm-tunnel) reads its backend upstream from. When it is set, the
+# backend is not recreated in place: a second container comes up on the new
+# image first, api-front is pointed at it, the compose backend is recreated
+# behind it, api-front is pointed back, and the second container goes away.
+# The box's :8081 — and the frontend's /api, which a rollout box points at it
+# (API_UPSTREAM) — never has a moment without a healthy backend behind it.
+# Measured before this existed: every deploy cut the backend for the ~13 s the
+# new container took to boot (2026-09-04, 01:48:27→01:48:40Z).
+#
+# Unset — prod (RUC), etrip, the test harness — the in-place recreate below
+# runs, gap included.
+ACTIVE_BACKEND_DIR="${ACTIVE_BACKEND_DIR:-}"
+API_FRONT_CONTAINER="${API_FRONT_CONTAINER:-cheese-api-front}"
+BACKEND_PORT="${BACKEND_PORT:-8081}"
+BACKEND_PORT_NEXT="${BACKEND_PORT_NEXT:-18082}"
+BACKEND_START_TIMEOUT="${DEPLOY_BACKEND_START_TIMEOUT:-180}"
+DRAIN_SECONDS="${DEPLOY_DRAIN_SECONDS:-5}"
+NEXT_BACKEND="${PROJECT}-backend-next"
+
+switch_active_backend() {
+  local target="$1" tmp
+  tmp="$(mktemp "$ACTIVE_BACKEND_DIR/backend.conf.XXXXXX")" \
+    || fail "cannot write into $ACTIVE_BACKEND_DIR"
+  printf 'upstream backend_active { server %s; }\n' "$target" > "$tmp"
+  # Rename, never rewrite in place: nginx re-reads the file on reload and a
+  # half-written one would take the whole server config down with it.
+  mv -f "$tmp" "$ACTIVE_BACKEND_DIR/backend.conf"
+  docker exec "$API_FRONT_CONTAINER" nginx -s reload \
+    || fail "api-front did not reload: $ACTIVE_BACKEND_DIR/backend.conf now names $target but traffic has not moved"
+  log "api-front now sends backend traffic to $target"
+}
+
+# $1 = host port, $2 = what is expected there. Polls the published port from
+# the host, which is what api-front will use, rather than docker's own health
+# state — a one-off container may not carry the service healthcheck.
+wait_for_healthz() {
+  local port="$1" what="$2" waited=0 step="$HEALTH_INTERVAL_SECONDS"
+  [ "$step" -gt 0 ] 2>/dev/null || step=1
+  while [ "$waited" -lt "$BACKEND_START_TIMEOUT" ]; do
+    if curl -fsS -m 3 "http://127.0.0.1:${port}/healthz" >/dev/null 2>&1; then
+      log "$what answers /healthz on :$port after ${waited}s"
+      return 0
+    fi
+    sleep "$HEALTH_INTERVAL_SECONDS"
+    waited=$((waited + step))
+  done
+  return 1
+}
+
+rollout_backend() {
+  docker rm -f "$NEXT_BACKEND" >/dev/null 2>&1 || true
+  log "starting the next backend as $NEXT_BACKEND on :$BACKEND_PORT_NEXT…"
+  # A one-off from the service definition: same image, env file, mounts and
+  # network as the compose backend, but no published port of its own except
+  # the one given here, so it cannot collide with the running one.
+  dc run -d --no-deps --name "$NEXT_BACKEND" \
+    -p "0.0.0.0:${BACKEND_PORT_NEXT}:8081" backend >/dev/null \
+    || fail "could not start $NEXT_BACKEND; the running backend was not touched"
+  if ! wait_for_healthz "$BACKEND_PORT_NEXT" "$NEXT_BACKEND"; then
+    docker logs --tail 40 "$NEXT_BACKEND" 2>&1 | sed 's/^/  next| /' || true
+    docker rm -f "$NEXT_BACKEND" >/dev/null 2>&1 || true
+    fail "$NEXT_BACKEND never answered /healthz within ${BACKEND_START_TIMEOUT}s; the running backend was not touched"
+  fi
+  switch_active_backend "127.0.0.1:${BACKEND_PORT_NEXT}"
+  log "recreating backend on the new image behind $NEXT_BACKEND…"
+  dc up -d --no-deps backend \
+    || fail "compose up backend failed; $NEXT_BACKEND is still serving on :$BACKEND_PORT_NEXT and api-front points at it"
+  if ! wait_for_healthz "$BACKEND_PORT" "the recreated backend"; then
+    fail "the recreated backend never answered /healthz on :$BACKEND_PORT; $NEXT_BACKEND is still serving on :$BACKEND_PORT_NEXT and api-front points at it — repair the backend, then point api-front back by hand"
+  fi
+  switch_active_backend "127.0.0.1:${BACKEND_PORT}"
+  # Requests the old nginx workers were still answering go to the container
+  # that is about to disappear; give them a moment to finish.
+  sleep "$DRAIN_SECONDS"
+  docker rm -f "$NEXT_BACKEND" >/dev/null 2>&1 || true
+  log "$NEXT_BACKEND removed; backend rollout complete"
+}
+
+if [ -n "$ACTIVE_BACKEND_DIR" ]; then
+  [ -d "$ACTIVE_BACKEND_DIR" ] \
+    || fail "ACTIVE_BACKEND_DIR=$ACTIVE_BACKEND_DIR does not exist — run deploy/llm-tunnel/up.sh first"
+  rollout_backend
+  log "bringing up frontend…"
+  dc up -d --no-deps frontend || fail "compose up frontend failed"
+else
+  log "bringing up backend + frontend…"
+  dc up -d backend frontend || fail "compose up failed"
+fi
 
 log "waiting for health…"
 code=""
