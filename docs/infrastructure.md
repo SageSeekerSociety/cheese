@@ -106,6 +106,20 @@ heartbeat, backup checks) — its single slot used to serialize every heavy job
   from the dev box (`ssh ci@192.168.30.x`, dev box's `~/.ssh/id_ed25519`).
   MicroCloud does not support resizing yet — pick sizes at creation; more
   machines = ask Lg for capacity.
+- The pool shares one Proxmox disk with every other guest on pve119 (a single
+  1.7 TB SAS logical volume, thin pool `local-lvm`, no NVMe on the box), so a
+  service container's disk IO competes with MicroCloud provisioning, the
+  observability stack and everything else there. The `test` job's integration
+  two-thirds used to be bound by that disk's sync-write latency (2026-09-02: a
+  4 KB `oflag=dsync` write took 3.5 ms on runner-3, IO stall 23% of the time,
+  #668 needed five attempts to finish inside the 20-minute timeout while #667
+  had taken 7 minutes on a quiet host). Since #670 the Postgres data directory
+  of the `test` and `e2e` service containers is a 3 GB tmpfs: no disk in the
+  path, and pytest went from 7m18s (#667, quiet host) to 4m58s (#670, busy
+  host). A full run writes about 1 GB including WAL, measured locally; if the
+  suite ever outgrows the tmpfs, Postgres fails with ENOSPC and the size in the
+  workflow is the knob. The unit-test third never touched the disk and runs at
+  the same pace either way.
 - One runner slot per machine is deliberate: the workflows bind host ports
   5432/6379 for service containers, so two heavy jobs on one machine would
   collide (`port is already allocated`). Lifting this (常驻 PG/Valkey + drop the
@@ -279,6 +293,13 @@ restore/DR runbook in [`deploy/README-backup.md`](../deploy/README-backup.md).
 - **DB**: hourly `pg_dump -Fc` → verify → off-site to Cloudflare R2 (bucket
   `cheese-db-backups`). Prefixes: `db/` (dev), `prod-db/` (prod), `etrip/`.
 - **Uploads** (prod, local disk): hourly additive mirror to R2 `prod-uploads/`.
+- **Transcripts** (`TRANSCRIPTS_HOST_PATH`, default
+  `/home/nictheboy/cheese-transcripts`, mounted at `/data/transcripts`): the
+  raw Claude session files of every place that ran on a device, one
+  `<project>/<place>/<timestamp>.tar.gz` per upload, shipped there before the
+  device home is deleted (`docs/where-a-turn-runs.md` §八). **Not in any
+  backup job yet** — like the memory tree, that directory IS the data, and it
+  needs its own line if it is to survive a box rebuild.
 - **Monitoring** (code-enforced tripwires): `backup-freshness.yml` (daily, fails
   if last backup > 26h), `box-uptime.yml` (twice hourly at :25/:50, fails when
   the last **two** heartbeats both failed to complete — dev box, prod box, or
@@ -362,8 +383,9 @@ both sides ARE the same uid:
 
 **Ops consequence.** The host bind mounts (`WORKSPACES_HOST_PATH`,
 `UPLOADS_HOST_PATH`, `APPHOME_HOST_PATH` — the last one is the backend's `HOME`,
-where git reads its global config from — and `VIKING_HOST_PATH`, the openviking
-memory tree) hold files written by the pre-2026-08 backend as uid 1001.
+where git reads its global config from — `VIKING_HOST_PATH`, the openviking
+memory tree, and `TRANSCRIPTS_HOST_PATH`, the transcript archives) hold files
+written by the pre-2026-08 backend as uid 1001.
 `deploy/deploy-docker.sh` hands them over once via
 `deploy/fix-workspace-ownership.sh` before the swap —
 idempotent, marker-guarded, and it runs the chown in a throwaway root container

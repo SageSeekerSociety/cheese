@@ -8,7 +8,7 @@
 server_default 是 true：既有的 agent 一个都没被停用过。
 
 Revision ID: b3f1c7d9a204
-Revises: 89fb9b9a11e0
+Revises: c4e2a9d17b03
 Create Date: 2026-09-01 00:00:00.000000
 
 """
@@ -20,7 +20,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "b3f1c7d9a204"
-down_revision: str | Sequence[str] | None = "89fb9b9a11e0"
+down_revision: str | Sequence[str] | None = "c4e2a9d17b03"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

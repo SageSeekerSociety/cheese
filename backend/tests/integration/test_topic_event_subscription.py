@@ -289,7 +289,7 @@ async def test_mid_run_message_is_consumed_before_the_run_succeeds(
             )
         )
     )
-    await asyncio.wait_for(provider.started.wait(), 1)
+    await asyncio.wait_for(provider.started.wait(), 5)
     second_frames = await asyncio.wait_for(
         _drain(
             service.converse(
@@ -299,7 +299,7 @@ async def test_mid_run_message_is_consumed_before_the_run_succeeds(
                 summon=True,
             )
         ),
-        1,
+        2,
     )
 
     assert all(frame["type"] != "done" for frame in second_frames)
@@ -325,7 +325,7 @@ async def test_mid_run_message_is_consumed_before_the_run_succeeds(
     assert consumed_turn(delivered[0]) is not None
 
     provider.release.set()
-    await asyncio.wait_for(first, 1)
+    await asyncio.wait_for(first, 5)
     await settle_turn(service, topic_id)
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)

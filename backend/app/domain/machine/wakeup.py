@@ -30,6 +30,7 @@ WAKE_NOTICE = "Cloud 机器已接入，正在继续刚才的消息"
 ReadyLeases = Callable[[str], Awaitable[list[tuple[uuid.UUID, str]]]]
 WaitingTopics = Callable[[list[uuid.UUID]], Awaitable[list[uuid.UUID]]]
 TopicAction = Callable[[uuid.UUID], Awaitable[None]]
+FailureAction = Callable[[uuid.UUID, str], Awaitable[None]]
 
 
 class CloudWakeup:
@@ -41,12 +42,14 @@ class CloudWakeup:
         kickoff: TopicAction,
         announce: TopicAction,
         is_online: Callable[[str], bool],
+        announce_failure: FailureAction | None = None,
     ) -> None:
         self._ready_leases = ready_leases
         self._waiting_topics = waiting_topics
         self._kickoff = kickoff
         self._announce = announce
         self._is_online = is_online
+        self._announce_failure = announce_failure
 
     async def wake(self, ready: list[tuple[uuid.UUID, str]]) -> None:
         """Start the delivering turn for every lease whose machine is connected
@@ -61,6 +64,26 @@ class CloudWakeup:
             await self._kickoff(topic_id)
             await self._announce(topic_id)
             logger.info("cloud topic %s woken: its machine is connected", topic_id)
+
+    async def report_failures(self, failed: list) -> None:
+        """Tell every room still waiting on a lease that MicroCloud has given up
+        on that it is not coming. Once: a room whose latest Cloud event is no
+        longer 「waiting」 has already been told. No retry and no other machine —
+        the topic stays on the failed lease until a person has looked."""
+        if self._announce_failure is None or not failed:
+            return
+        by_topic = {lease.topic_id: lease for lease in failed}
+        for topic_id in await self._waiting_topics(list(by_topic)):
+            lease = by_topic[topic_id]
+            await self._announce_failure(
+                topic_id, f"Cloud 机器「{lease.hostname}」没有起来：{lease.reason}"
+            )
+            logger.warning(
+                "cloud topic %s told its machine %s failed: %s",
+                topic_id,
+                lease.hostname,
+                lease.reason,
+            )
 
     async def wake_device(self, device_id: str) -> None:
         """The connector of ``device_id`` just attached: if a settled lease is

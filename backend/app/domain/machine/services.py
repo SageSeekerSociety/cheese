@@ -11,6 +11,7 @@ looking is correct the next time anyone asks.
 import logging
 import re
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -70,6 +71,13 @@ def derive_hostname(project_name: str, project_id: uuid.UUID, index: int) -> str
 # within one coffee. It trades the per-machine ccproxy identity — a fallback the
 # meter already handles — for never leaving a healthy machine unenrolled.
 ENROLL_SETTLE_GRACE = timedelta(minutes=10)
+
+
+@dataclass(frozen=True, slots=True)
+class FailedLease:
+    topic_id: uuid.UUID
+    hostname: str
+    reason: str
 
 
 class MachineService:
@@ -237,6 +245,14 @@ class MachineService:
             "user": user,
             **spec,
         }
+        # Ask for the AI channel at create (micro-cloud#78): a machine born on
+        # ccproxy starts its subscription login the moment it runs, instead of
+        # being set up on newapi first and switched by our sweep — one
+        # provisioning of the channel rather than two. A MicroCloud that
+        # predates the field ignores it and the sweep switches as before.
+        desired_ai_mode = (settings.microcloud_ai_mode or "").strip().lower()
+        if desired_ai_mode:
+            body["aiMode"] = desired_ai_mode
         # The platform needs its own way in to enroll the machine later, and the
         # human must not lose theirs by us taking the single key slot: both are
         # authorised, one per line, which is what authorized_keys is.
@@ -249,11 +265,11 @@ class MachineService:
         if authorized:
             body["sshPubkey"] = authorized
 
-        # The AI channel is NOT switched here. MicroCloud answers 400 to a
-        # switch on a machine that is still provisioning and its create call
-        # has no field for the mode, so asking now only cost the turn path a
-        # 22s refusal (measured 2026-09-02, machine 478); `reconcile_ai_mode`
-        # switches it the moment the sweep sees it running.
+        # No separate switch call here. MicroCloud answers 400 to a switch on a
+        # machine that is still provisioning, so asking right after create only
+        # cost the turn path a 22s refusal (measured 2026-09-02, machine 478).
+        # The mode rides in the create body above; `reconcile_ai_mode` still
+        # switches a machine that came up on the wrong channel.
         created = await self._client.create_machine(body)
         return await self._repo.add(
             project_id=project_id,
@@ -347,6 +363,28 @@ class MachineService:
         self, device_id: str | None = None
     ) -> list[tuple[uuid.UUID, str]]:
         return await self._repo.list_ready_topic_devices(device_id)
+
+    async def failed_topic_leases(self) -> list[FailedLease]:
+        """Topic leases that will never become ready, with the reason in words."""
+        out: list[FailedLease] = []
+        for machine in await self._repo.list_failed_topic_leases():
+            assert machine.topic_id is not None
+            reason = (
+                "MicroCloud 报告机器创建失败"
+                if machine.status == MachineStatus.error
+                else "MicroCloud 报告机器的 AI 通道配置失败"
+            )
+            out.append(
+                FailedLease(
+                    topic_id=machine.topic_id,
+                    hostname=machine.hostname,
+                    reason=(
+                        f"{reason}（status={machine.status}, "
+                        f"ai_status={machine.ai_status}）"
+                    ),
+                )
+            )
+        return out
 
     async def reconcile_ai_mode(self, limit: int = 5) -> int:
         """Level-triggered half of the →ccproxy story: any settled machine on

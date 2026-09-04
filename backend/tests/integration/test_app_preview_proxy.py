@@ -34,10 +34,12 @@ class FakeMachine:
         body: bytes = b"<html><body>hi</body></html>",
         status: int = 200,
         content_type: str = "text/html",
+        extra_headers: list[list[str]] | None = None,
     ) -> None:
         self.body = body
         self.status = status
         self.content_type = content_type
+        self.extra_headers = extra_headers or []
         self.asked: list[str] = []
         self.topic_id: uuid.UUID | None = None
 
@@ -65,7 +67,10 @@ class FakeMachine:
                 wire.encode_meta(
                     {
                         "status": self.status,
-                        "headers": [["content-type", self.content_type]],
+                        "headers": [
+                            ["content-type", self.content_type],
+                            *self.extra_headers,
+                        ],
                     },
                     self.body,
                 ),
@@ -115,6 +120,57 @@ def test_a_member_reaches_the_app(client):
     # server) is the one thing this surface exists to prevent.
     assert machine.asked == ["GET /index.html?x=1"], machine.asked
     assert token not in machine.asked[0]
+
+
+def test_the_sandboxed_frame_is_allowed_to_read_what_it_fetched(client):
+    """The frame is sandboxed WITHOUT ``allow-same-origin``, so the browser gives
+    it an opaque origin and every sub-request it makes carries ``Origin: null``.
+
+    A ``<script type="module">`` — how essentially every current frontend loads
+    itself — is always fetched in CORS mode, unlike a classic script tag. Without
+    this header the browser throws away a perfectly good 200 the moment it
+    arrives and the app never executes a line, which reads as a blank preview.
+    """
+    _project, topic = _project_topic(client)
+    token = _login(client, "alice")
+    machine = FakeMachine(b"export const x = 1", content_type="text/javascript").attach(
+        uuid.UUID(topic["id"])
+    )
+    try:
+        resp = client.get(
+            f"/topics/{topic['id']}/app/main.js?token={token}",
+            headers={"Origin": "null"},
+        )
+    finally:
+        machine.detach()
+
+    assert resp.status_code == 200, resp.text
+    assert resp.headers["access-control-allow-origin"] == "*", dict(resp.headers)
+
+
+def test_the_apps_own_cors_header_does_not_survive_next_to_ours(client):
+    """A dev server that sets its own ``Access-Control-Allow-Origin`` (vite does)
+    must not leave two of them on the way out: a browser rejects a response
+    carrying the header twice, so a passthrough would break exactly the apps that
+    tried hardest to be reachable."""
+    _project, topic = _project_topic(client)
+    token = _login(client, "alice")
+    machine = FakeMachine(
+        b"export const x = 1",
+        content_type="text/javascript",
+        extra_headers=[["access-control-allow-origin", "http://localhost:5173"]],
+    ).attach(uuid.UUID(topic["id"]))
+    try:
+        resp = client.get(
+            f"/topics/{topic['id']}/app/main.js?token={token}",
+            headers={"Origin": "null"},
+        )
+    finally:
+        machine.detach()
+
+    assert resp.headers.get_list("access-control-allow-origin") == ["*"], dict(
+        resp.headers
+    )
 
 
 def test_root_absolute_asset_urls_are_moved_onto_the_proxy_prefix(client):
