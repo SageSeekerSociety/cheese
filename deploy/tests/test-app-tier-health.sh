@@ -340,6 +340,96 @@ test_rollback_restores_exact_previous_images() {
   echo "PASS: rollback restores exact previous image references"
 }
 
+# A box with an api-front switch (ACTIVE_BACKEND_DIR) deploys the backend by
+# rollout: the next container comes up and answers /healthz, api-front is
+# pointed at it, the compose backend is recreated behind it, api-front is
+# pointed back, the next container is removed. Every deploy used to cut the
+# backend for the ~13 s a fresh container takes to boot; these two tests pin
+# the order that removes that gap, and the one failure that must leave the
+# running backend alone.
+rollout_run() {
+  local run_dir="$1"
+  shift
+  PATH="$FAKE_BIN:$PATH" \
+    APP_TIER_SCENARIO=healthy \
+    APP_TIER_MAIN_SHA=testsha \
+    APP_TIER_DOCKER_LOG="$run_dir/docker.log" \
+    ACTIVE_BACKEND_DIR="$run_dir/active" \
+    BACKEND_PORT=18081 \
+    BACKEND_PORT_NEXT=18082 \
+    DEPLOY_DRAIN_SECONDS=0 \
+    DEPLOY_BACKEND_START_TIMEOUT=3 \
+    DEPLOY_HEALTH_ATTEMPTS=1 \
+    DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
+    HOME="$run_dir" \
+    "$@" \
+    "$ROOT/deploy/deploy-docker.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml"
+}
+
+new_rollout_run_dir() {
+  mkdir -p "$ROOT/tmp"
+  local dir
+  dir="$(mktemp -d "$ROOT/tmp/rollout.XXXXXX")"
+  mkdir -p "$dir/active"
+  printf 'upstream backend_active { server 127.0.0.1:18081; }\n' > "$dir/active/backend.conf"
+  : > "$dir/docker.log"
+  printf '%s' "$dir"
+}
+
+# Nth log line matching a pattern (1-based), or "" if there is no Nth match.
+nth_log_line() { grep -n -- "$2" "$1" 2>/dev/null | sed -n "${3}p" | cut -d: -f1 || true; }
+last_log_line() { grep -n -- "$2" "$1" 2>/dev/null | tail -n 1 | cut -d: -f1 || true; }
+
+test_rollout_keeps_a_backend_serving() {
+  local run_dir docker_log next_up flip_to_next blue_up flip_back next_gone frontend_up
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  rollout_run "$run_dir" env >/dev/null 2>&1 || fail "rollout deploy did not succeed"
+  next_up="$(log_line "$docker_log" 'run -d --no-deps --name cheese-backend-next -p 0.0.0.0:18082:8081 backend')"
+  flip_to_next="$(nth_log_line "$docker_log" 'exec cheese-api-front nginx -s reload' 1)"
+  blue_up="$(log_line "$docker_log" 'up -d --no-deps backend')"
+  flip_back="$(nth_log_line "$docker_log" 'exec cheese-api-front nginx -s reload' 2)"
+  next_gone="$(last_log_line "$docker_log" 'rm -f cheese-backend-next')"
+  frontend_up="$(log_line "$docker_log" 'up -d --no-deps frontend')"
+  [ -n "$next_up" ] || fail "rollout never started cheese-backend-next"
+  [ -n "$flip_to_next" ] && [ -n "$flip_back" ] || fail "rollout did not reload api-front twice"
+  [ -n "$blue_up" ] || fail "rollout never recreated the compose backend"
+  [ -n "$frontend_up" ] || fail "rollout never brought the frontend up"
+  [ "$next_up" -lt "$flip_to_next" ] || fail "api-front was reloaded before the next backend existed"
+  [ "$flip_to_next" -lt "$blue_up" ] || fail "the compose backend was recreated before traffic had moved off it"
+  [ "$blue_up" -lt "$flip_back" ] || fail "api-front was pointed back before the compose backend was recreated"
+  [ "$flip_back" -lt "$next_gone" ] || fail "cheese-backend-next was removed while api-front still pointed at it"
+  [ "$next_gone" -lt "$frontend_up" ] || fail "the frontend came up before the backend rollout finished"
+  grep -Fqx 'upstream backend_active { server 127.0.0.1:18081; }' "$run_dir/active/backend.conf" \
+    || fail "api-front was left pointing away from the compose backend: $(cat "$run_dir/active/backend.conf")"
+  [ "$(ls "$run_dir/active" | wc -l | tr -d ' ')" = 1 ] \
+    || fail "the switch directory holds leftovers: $(ls "$run_dir/active")"
+  rm -rf "$run_dir"
+  echo "PASS: rollout keeps a healthy backend behind api-front throughout"
+}
+
+test_rollout_leaves_the_running_backend_alone_when_next_never_comes_up() {
+  local run_dir docker_log
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  if rollout_run "$run_dir" env APP_TIER_CURL_FAIL=1 >/dev/null 2>&1; then
+    fail "rollout succeeded although the next backend never answered /healthz"
+  fi
+  grep -q 'run -d --no-deps --name cheese-backend-next' "$docker_log" \
+    || fail "the next backend was never started"
+  ! grep -q 'up -d --no-deps backend' "$docker_log" \
+    || fail "the running backend was recreated although nothing healthy could replace it"
+  ! grep -q 'exec cheese-api-front nginx -s reload' "$docker_log" \
+    || fail "api-front was reloaded although the next backend was unhealthy"
+  grep -Fqx 'upstream backend_active { server 127.0.0.1:18081; }' "$run_dir/active/backend.conf" \
+    || fail "api-front was moved off the running backend"
+  [ "$(last_log_line "$docker_log" 'rm -f cheese-backend-next')" -gt "$(log_line "$docker_log" 'run -d --no-deps')" ] \
+    || fail "the failed next backend was not cleaned up"
+  rm -rf "$run_dir"
+  echo "PASS: an unhealthy next backend leaves the running one untouched"
+}
+
 # Handing the bind mounts to another uid is the one step of a deploy that
 # outlives a failure: everything before it can abort and leave the box exactly as
 # it was, nothing after it can. On 2026-08-11 it ran third of five and the fourth
@@ -554,6 +644,8 @@ case "$CASE" in
   operator-sha-width) test_operator_uses_registry_sha_width ;;
   workflow) test_workflow_rejects_stale_frontend ;;
   healthy) test_healthy_current_pair_passes ;;
+  rollout) test_rollout_keeps_a_backend_serving ;;
+  rollout-unhealthy-next) test_rollout_leaves_the_running_backend_alone_when_next_never_comes_up ;;
   all)
     test_deploy_rejects_absent_frontend
     test_deploy_accepts_healthy_pair
@@ -574,6 +666,8 @@ case "$CASE" in
     test_operator_uses_registry_sha_width
     test_workflow_rejects_stale_frontend
     test_healthy_current_pair_passes
+    test_rollout_keeps_a_backend_serving
+    test_rollout_leaves_the_running_backend_alone_when_next_never_comes_up
     ;;
   *) fail "unknown case: $CASE" ;;
 esac

@@ -38,14 +38,32 @@ private on GHCR; boxes pull with their existing GHCR auth.
 
 dev and prod (RUC) run the app as **Docker containers** (`deploy/deploy-docker.sh`
 + `deploy/compose/docker-compose.base.yml`): pull the per-commit `backend` +
-`frontend` images, migrate, `up`, health-check, auto-rollback. The frontend image
-bundles nginx (SPA + `/api` reverse-proxy), so there's **no host nginx** — the ghg
-edge (APISIX) proxies to the box on **:8080** (frontend) + **:8081** (backend),
-bound `0.0.0.0` (private net, safe). DB/Redis are **external** ghg hosts (the app
-only holds `DATABASE_URL`/`REDIS_URL`); uploads bind-mount a host dir outside the
-containers (`/home/nictheboy/shared/uploads` on prod — the 赛题 PDFs). Each box
-was cut over from bare-metal once (`deploy/{dev,prod}-docker-cutover.sh`); the old
-systemd service is kept **installed-but-disabled** as an instant rollback.
+`frontend` images, migrate, bring the app tier up, health-check, auto-rollback.
+The frontend image bundles nginx (SPA + `/api` reverse-proxy). DB/Redis are
+**external** ghg hosts (the app only holds `DATABASE_URL`/`REDIS_URL`); uploads
+bind-mount a host dir outside the containers (`/home/nictheboy/shared/uploads`
+on prod — the 赛题 PDFs). Each box was cut over from bare-metal once
+(`deploy/{dev,prod}-docker-cutover.sh`); the old systemd service is kept
+**installed-but-disabled** as an instant rollback.
+
+**On dev the backend rolls out without downtime.** The box's **:8081** is
+`cheese-api-front`, a host-network nginx from `deploy/llm-tunnel/` whose
+backend upstream comes from an include file (`~/ops/llm-tunnel/active/
+backend.conf`). With `ACTIVE_BACKEND_DIR` set in `~/ops/deploy.env`, the deploy
+script starts the new image as `cheese-backend-next` on **:18082**, waits for
+its `/healthz`, points api-front at it and reloads, recreates the compose
+`backend` (on **:18081**) behind it, points api-front back, and removes the
+temporary container. The frontend container reaches the backend through that
+same host port (`API_UPSTREAM=host.docker.internal:8081`), so its `/api` never
+sees the swap either; the ghg edge (APISIX) proxies to **:8080** (frontend) and
+**:8081** (api-front). What remains is about one second on **:8080** when the
+frontend container itself is recreated. Measured on the first rollout
+(2026-09-04): 0 failed requests on :8081 across the swap, 1 second of refused
+connections on :8080. Before it, every deploy cut the backend for the ~13 s a
+container takes to boot. A box without `ACTIVE_BACKEND_DIR` — prod (RUC),
+etrip — still recreates in place, gap included; the first deploy after
+enabling it on a box pays the old gap once, because the frontend that is still
+running resolves `backend` by compose name.
 
 ### dev — continuous deploy
 
