@@ -174,7 +174,7 @@ def test_unsummoned_message_gets_no_receipt(client):
 
 @pytest.mark.anyio
 async def test_resume_turn_adds_no_receipt(client, tmp_path):
-    """A system-initiated turn (自动续跑 / nudge) has no human summon message —
+    """A system-initiated turn (重发 / nudge) has no human summon message —
     nothing gets ✅-acked and no reaction frame is emitted."""
     # Use the shared Postgres-backed factory: the merged Base.metadata now carries
     # main's PG-only sequences (e.g. discussion_seq), which SQLite cannot create.
@@ -202,7 +202,7 @@ async def test_resume_turn_adds_no_receipt(client, tmp_path):
         async for f in svc.converse(
             topic_id=topic_id,
             author="system",
-            content="接着跑",
+            content="重发一次",
             summon=True,
             is_resume=True,
             resume_reason="测试",
