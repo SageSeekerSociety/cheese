@@ -5,6 +5,8 @@ import { BusinessError, ServerError, SudoRequiredError } from '../types/error'
 
 import refreshToken from './hooks/refreshToken'
 
+import { isTransportFailure, transportFailureMessage } from '@/lib/transportFailure'
+
 export default (error: AxiosError<ResponseDataType>) => {
   const statusCode = error.response?.status
   const path = error.response?.config.url
@@ -16,6 +18,16 @@ export default (error: AxiosError<ResponseDataType>) => {
     }
     // Token 过期，尝试刷新
     return refreshToken(error)
+  }
+
+  // The edge answered in place of the app: a page for a body, or a server-side
+  // status. Reading `.message` off an HTML string is how 「服务器错误」 reached a
+  // hackathon room and sent it asking whether the backend was down.
+  if (error.response && isTransportFailure(error.response.status, error.response.data)) {
+    throw new ServerError(
+      transportFailureMessage(error.response.config.method ?? 'get', error.response.status),
+      error.response.status
+    )
   }
 
   // 403 错误可能是 SudoRequired 或其他业务错误

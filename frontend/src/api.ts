@@ -45,6 +45,7 @@ import type { PlacePayload } from './lib/place'
 
 import { isThreadPayload } from './lib/place'
 import { TOPIC_TITLE_MAX_LENGTH } from './lib/topicTitle'
+import { isTransportFailure, transportFailureMessage } from './lib/transportFailure'
 
 export { TOPIC_TITLE_MAX_LENGTH }
 
@@ -83,13 +84,38 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
-const RETRYABLE_GET_STATUSES = new Set([502, 503, 504])
+// Retried on GET: the edge's own statuses. nginx answers 502–504 for an app it
+// could not reach, Cloudflare answers 520–530 for an origin it could not (a
+// tunnel that flapped is 530, error 1033). Each is about the second it was
+// sent in, which is why the next attempt is worth making.
+const CLOUDFLARE_ORIGIN_STATUSES = Array.from({ length: 11 }, (_, i) => 520 + i)
+const RETRYABLE_GET_STATUSES = new Set([502, 503, 504, ...CLOUDFLARE_ORIGIN_STATUSES])
 const GET_RETRY_DELAYS_MS = [250, 750]
 
-export function isRetryableGetFailure(method: string, status?: number, error?: unknown): boolean {
+// `errorPage`: the body was not JSON. That is the edge's page in place of an
+// answer whatever the status line says — a captive portal and the SPA fallback
+// both say 200 — and, like the statuses above, it is about this second.
+export function isRetryableGetFailure(method: string, status?: number, error?: unknown, errorPage = false): boolean {
   if (method.toUpperCase() !== 'GET') return false
+  if (errorPage) return true
   if (status != null) return RETRYABLE_GET_STATUSES.has(status)
   return !(error instanceof DOMException && error.name === 'AbortError')
+}
+
+// The parsed body, or NOT_JSON when there is no JSON to parse. The content-type
+// is checked first so an HTML page is never handed to a JSON parser; a response
+// with no `headers` at all (fetch always sets them, test doubles do not) is
+// given the benefit of the parse.
+const NOT_JSON = Symbol('not JSON')
+
+async function readJson(res: Response): Promise<unknown> {
+  const type = res.headers?.get('content-type')
+  if (type != null && !type.includes('application/json')) return NOT_JSON
+  try {
+    return await res.json()
+  } catch {
+    return NOT_JSON
+  }
 }
 
 function wait(ms: number): Promise<void> {
@@ -225,39 +251,45 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       await wait(GET_RETRY_DELAYS_MS[attempt])
       continue
     }
-    if (!res.ok) {
-      if (res.status === 401 && !authRetried) {
-        authRetried = true
-        const before = authToken()
-        await refreshNow()
-        // `attempt` is deliberately not advanced: this retry is not one of the
-        // transport's backoff attempts, and spending one here would cost a real
-        // 502 its retry budget.
-        if (authToken() !== before) {
-          attempt -= 1
-          continue
-        }
+    if (res.status === 401 && !authRetried) {
+      authRetried = true
+      const before = authToken()
+      await refreshNow()
+      // `attempt` is deliberately not advanced: this retry is not one of the
+      // transport's backoff attempts, and spending one here would cost a real
+      // 502 its retry budget.
+      if (authToken() !== before) {
+        attempt -= 1
+        continue
       }
-      if (attempt < GET_RETRY_DELAYS_MS.length && isRetryableGetFailure(method, res.status)) {
+    }
+    // Before asking what the app said, ask whether it was the app that spoke.
+    // `HTTP 530 for /topics` and a raw `SyntaxError: Unexpected token '<'` were
+    // what a hackathon room read while Cloudflare's tunnel flapped for a few
+    // seconds, and they asked whether the backend was broken. It was not.
+    const body = await readJson(res)
+    if (isTransportFailure(res.status, body)) {
+      if (
+        attempt < GET_RETRY_DELAYS_MS.length &&
+        isRetryableGetFailure(method, res.status, undefined, body === NOT_JSON)
+      ) {
         await wait(GET_RETRY_DELAYS_MS[attempt])
         continue
       }
+      throw new ApiError(res.status, transportFailureMessage(method, res.status))
+    }
+    if (!res.ok) {
       // #450 rule 2 (frontend edition): the backend's errors carry a human
       // sentence (`message`) — a toast that shows only "HTTP 422 for /path"
       // sends the room hunting a mystery the server had already explained.
-      let serverSaid = ''
-      try {
-        const body = (await res.json()) as { message?: string; error?: { message?: string } }
-        serverSaid = body?.message || body?.error?.message || ''
-      } catch {
-        // non-JSON body — the status line is all there is
-      }
+      const said = body as { message?: string; error?: { message?: string } }
+      const serverSaid = said.message || said.error?.message || ''
       throw new ApiError(
         res.status,
         serverSaid ? `${serverSaid}（HTTP ${res.status}）` : `HTTP ${res.status} for ${path}`
       )
     }
-    const envelope = (await res.json()) as ApiEnvelope<T>
+    const envelope = body as ApiEnvelope<T>
     if (envelope.code !== 200) {
       throw new Error(envelope.message || `API error code ${envelope.code}`)
     }
@@ -298,6 +330,7 @@ async function connectorRequest<T>(path: string, init?: RequestInit): Promise<T>
 // rename — it decides whether 1.0 calls start being retried, or 2.0 calls stop
 // being — so it wants its own change, not a drive-by.
 async function legacyRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const method = init?.method ?? 'GET'
   const res = await fetch(`/api${path}`, {
     ...init,
     headers: {
@@ -306,17 +339,16 @@ async function legacyRequest<T>(path: string, init?: RequestInit): Promise<T> {
       ...(init?.headers ?? {}),
     },
   })
+  const body = await readJson(res)
+  if (isTransportFailure(res.status, body)) {
+    throw new ApiError(res.status, transportFailureMessage(method, res.status))
+  }
   if (!res.ok) {
-    let serverSaid = ''
-    try {
-      const body = (await res.json()) as { message?: string; error?: { message?: string } }
-      serverSaid = body?.message || body?.error?.message || ''
-    } catch {
-      // non-JSON body — the status line is all there is
-    }
+    const said = body as { message?: string; error?: { message?: string } }
+    const serverSaid = said.message || said.error?.message || ''
     throw new Error(serverSaid ? `${serverSaid}（HTTP ${res.status}）` : `HTTP ${res.status} for ${path}`)
   }
-  const envelope = (await res.json()) as ApiEnvelope<T>
+  const envelope = body as ApiEnvelope<T>
   if (envelope.code !== 200) {
     throw new Error(envelope.message || `API error code ${envelope.code}`)
   }
