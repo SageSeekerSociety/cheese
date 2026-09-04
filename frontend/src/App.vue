@@ -50,6 +50,20 @@
             :disabled="creatingProject"
             @keyup.enter="confirmNewProject"
           />
+          <v-select
+            v-model="newProjectTeamId"
+            :items="newProjectTeams"
+            :item-title="teamLabel"
+            item-value="id"
+            label="所属小队"
+            variant="outlined"
+            color="primary"
+            class="mt-3"
+            hide-details
+            :loading="loadingTeams"
+            :disabled="creatingProject || loadingTeams"
+          />
+          <div class="t-meta mt-2">选「个人」只有你自己看得到</div>
           <v-alert v-if="newProjectError" type="error" density="compact" variant="tonal" class="mt-3">
             {{ newProjectError }}
           </v-alert>
@@ -87,12 +101,14 @@
 
 <script setup lang="ts">
 import type { Project } from '@/cx_types'
+import type { Team } from '@/types/teams'
 import type { NavSources } from './components/common/Navigation/destinations'
 
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useRouter } from 'vue-router'
 
+import { defaultTeamFor, teamIdInPath, useNewProjectDialog } from '@/composables/useNewProjectDialog'
 import { usePageTitle } from '@/composables/usePageTitle'
 
 import MyApp from './components/common/MyApp.vue'
@@ -109,6 +125,7 @@ import VersionBadge from '@/components/common/VersionBadge.vue'
 import { trackKeyboardInset } from '@/lib/keyboardInset'
 import { loadCachedProjects, saveCachedProjects } from '@/lib/projectCache'
 import { myHandle } from '@/me'
+import { TeamsApi } from '@/network/api/teams'
 import AccountService from '@/services/account'
 import { lastOpenedProjectId, useWorkspaceStore } from '@/stores/workspace'
 import { useAppTheme } from '@/theme'
@@ -208,17 +225,44 @@ const rail = computed(() => railItems(navSources.value))
 const tabs = computed(() => tabItems(navSources.value))
 // The "+" rail affordance opens an in-app dialog (no native prompt). On confirm
 // we create the project owned by the current user, refresh the rail so the new
-// tile appears, then open its workspace.
-const newProjectDialog = ref(false)
+// tile appears, then open its workspace. The same dialog is what a team page's
+// 新建项目 opens (useNewProjectDialog), with that team preselected.
+const { open: newProjectDialog, presetTeamId, show: showNewProjectDialog } = useNewProjectDialog()
 const newProjectName = ref('')
 const creatingProject = ref(false)
 const newProjectError = ref<string | null>(null)
+// 所属小队: which team the project belongs to decides who can see it. Without
+// this the rail ＋ always chose the personal team, so a project someone made
+// for their team was invisible to the rest of it.
+const newProjectTeams = ref<Team[]>([])
+const newProjectTeamId = ref<number | null>(null)
+const loadingTeams = ref(false)
+const teamLabel = (t: Team) => (t.personal ? '个人' : t.name)
 
 function createNewProject() {
+  // From a team page, that team; elsewhere the dialog falls back to 个人.
+  showNewProjectDialog(teamIdInPath(currentRoute.path))
+}
+
+watch(newProjectDialog, async (opened) => {
+  if (!opened) return
   newProjectName.value = ''
   newProjectError.value = null
-  newProjectDialog.value = true
-}
+  loadingTeams.value = true
+  try {
+    const {
+      data: { teams },
+    } = await TeamsApi.getMyTeams()
+    newProjectTeams.value = teams
+  } catch {
+    // The select simply stays empty; the backend then files the project under
+    // the personal team, which is what it did before this dialog asked.
+    newProjectTeams.value = []
+  } finally {
+    loadingTeams.value = false
+  }
+  newProjectTeamId.value = defaultTeamFor(presetTeamId.value, newProjectTeams.value)
+})
 
 async function confirmNewProject() {
   const name = newProjectName.value.trim()
@@ -226,7 +270,7 @@ async function confirmNewProject() {
   creatingProject.value = true
   newProjectError.value = null
   try {
-    const project = await createProject(name, myHandle())
+    const project = await createProject(name, myHandle(), newProjectTeamId.value ?? undefined)
     await loadCxProjects()
     newProjectDialog.value = false
     router.push(`/projects/${project.id}`)
