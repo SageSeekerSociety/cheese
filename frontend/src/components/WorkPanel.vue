@@ -302,9 +302,9 @@ function tabIsOffered(key: TabKey): boolean {
   // 现场 is where 芝士 works: it is there once the place has run, and from the
   // first moment of the first turn (before the session id is captured).
   if (key === 'site') return summary.value.hasRun || props.working
-  // 预览 is the room's: what 芝士 put on show is looked up and retracted per
-  // room, so a thread has none of its own to offer.
-  return !onThread.value && !!previewLatest.value
+  // 预览和现场一样属于**地点**：`cheese artifact` / `cheese serve` 都按地点记，
+  // 一条支线拿出来给人看的是它自己那份结果，房间的还是房间的。支线上给这一格。
+  return !!previewLatest.value
 }
 
 const tabs = computed(() => ALL_TABS.filter((t) => tabIsOffered(t.key)))
