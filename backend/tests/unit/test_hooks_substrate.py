@@ -122,7 +122,7 @@ async def test_a_timed_out_turn_carries_its_own_classification():
     把排查的人指向一个根本没收到这轮请求的服务。这里故意用一句和原文毫无共同
     字词的文案，它照样得被认出来。
 
-    现在产生这条失败的是「有输出、没进展」那道判据。
+    现在产生这条失败的是「有输出、没进展」那道判据，所以会话得一直在说话。
     """
     from app.domain.agent.platform_failures import (
         TURN_TIMEOUT,
@@ -131,14 +131,25 @@ async def test_a_timed_out_turn_carries_its_own_classification():
 
     queue: asyncio.Queue[dict] = asyncio.Queue()
     queue.put_nowait({"hook_event_name": "UserPromptSubmit", "prompt": "hi"})
-    queue.put_nowait({"hook_event_name": "MessageDisplay", "delta": "还在说"})
-    events = await _drain(
-        queue,
-        idle_suspect_s=5,
-        hard_ceiling_s=5,
-        no_progress_s=0.05,
-        timeout_message="完全不一样的一句话",
-    )
+
+    async def keep_talking() -> None:
+        while True:
+            await asyncio.sleep(0.01)
+            queue.put_nowait({"hook_event_name": "MessageDisplay", "delta": "还在说"})
+
+    task = asyncio.create_task(keep_talking())
+    try:
+        events = await _drain(
+            queue,
+            idle_suspect_s=5,
+            hard_ceiling_s=5,
+            no_progress_s=0.1,
+            timeout_message="完全不一样的一句话",
+        )
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
     result = events[-1]
     assert isinstance(result, AgentResult) and result.is_error
     assert (
@@ -1460,19 +1471,63 @@ async def test_a_message_still_inside_its_grace_does_not_end_anything():
 
 
 async def test_output_with_no_progress_ends_the_session():
+    """一直在吐字、一次工具都不调：这就是这道判据要拦的那个会话。"""
     queue: asyncio.Queue[dict] = asyncio.Queue()
     queue.put_nowait({"hook_event_name": "UserPromptSubmit", "prompt": "hi"})
-    queue.put_nowait({"hook_event_name": "MessageDisplay", "delta": "还在说"})
-    events = await _drain(
-        queue,
-        idle_suspect_s=5,
-        hard_ceiling_s=5,
-        no_progress_s=0.05,
-        timeout_message="光说不做",
-    )
-    assert len(events) >= 1
+
+    async def keep_talking() -> None:
+        while True:
+            await asyncio.sleep(0.01)
+            queue.put_nowait({"hook_event_name": "MessageDisplay", "delta": "还在说"})
+
+    task = asyncio.create_task(keep_talking())
+    try:
+        events = await _drain(
+            queue,
+            idle_suspect_s=5,
+            hard_ceiling_s=5,
+            no_progress_s=0.1,
+            timeout_message="光说不做",
+        )
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
     assert events[-1].is_error is True
     assert events[-1].text == "光说不做"
+
+
+async def test_a_session_that_spoke_once_and_went_quiet_belongs_to_the_probe():
+    """说过一句然后沉默：这不是「在说话没干活」，是安静。安静归探针管，探针说
+    活着就一直等；这道判据不许因为很久以前的一句话就把它判掉。"""
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    queue.put_nowait({"hook_event_name": "UserPromptSubmit", "prompt": "hi"})
+    queue.put_nowait({"hook_event_name": "MessageDisplay", "delta": "说一句"})
+
+    async def confirm_alive() -> bool:
+        return True
+
+    async def stop_later() -> None:
+        await asyncio.sleep(0.4)
+        queue.put_nowait(_stop())
+
+    task = asyncio.create_task(stop_later())
+    try:
+        events = await _drain(
+            queue,
+            idle_suspect_s=0.05,
+            hard_ceiling_s=30,
+            no_progress_s=0.1,
+            timeout_message="光说不做",
+            confirm_alive=confirm_alive,
+            confirm_poll_s=0.02,
+        )
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    assert events[-1].is_error is False
+    assert events[-1].text == "done"
 
 
 async def test_output_interleaved_with_tool_calls_is_work():

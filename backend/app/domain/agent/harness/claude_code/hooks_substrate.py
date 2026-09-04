@@ -432,6 +432,50 @@ async def monitor_session_activity(
     delivered = False
     delivery_deadline = start + delivery_timeout_s
 
+    def progress_verdict(t: float) -> AgentResult | None:
+        """Is the session talking without working?
+
+        The shape is two clocks against each other. `last_output_at` says the
+        session is ACTIVE right now: output within the idle threshold, so this
+        is the half of the space the idle check does not own. A session that
+        has gone quiet belongs to the probe, whatever it said before it went
+        quiet, and this verdict never touches it. `last_progress_at` says when
+        work last moved: a tool starting, a tool returning, or the turn ending.
+        Active for that long with nothing moving is a loop.
+
+        A long foreground command never trips this. It emits no output while it
+        runs, so the first clock is stale and the session reads as quiet, which
+        is the probe's business. The earlier form of this check, "any output
+        since the last progress", let a single line spoken before a long
+        silence count as talking for the whole silence, and ended sessions the
+        probe had already judged alive.
+
+        Asked at the same two moments as `unread_verdict` and for the same
+        reason: after a hook has been consumed the clocks are fresh, and after a
+        wait has run out the queue is known to be empty.
+        """
+        if no_progress_s <= 0:
+            return None
+        output_at, progressed_at = tracker.last_output_at, tracker.last_progress_at
+        if output_at is None or progressed_at is None:
+            return None
+        if t - output_at >= idle_suspect_s:
+            return None
+        if t - progressed_at < no_progress_s:
+            return None
+        logger.warning(
+            "output for %.0fs with no tool call or ending — the session is "
+            "talking and not working; ending it (%s)",
+            t - progressed_at,
+            context,
+        )
+        return AgentResult(
+            text=timeout_message,
+            session_id=resume_session_id,
+            is_error=True,
+            failure_code=TURN_TIMEOUT_CODE,
+        )
+
     def unread_verdict(t: float) -> AgentResult | None:
         """Has an injected message gone unread past its grace, at a moment the
         session could have read it?
@@ -494,34 +538,6 @@ async def monitor_session_activity(
                 context,
             )
             hard_deadline = t + hard_ceiling_s
-        # A session that talks and never acts. `last_output_at` newer than
-        # `last_progress_at` means something was said since the last tool ran;
-        # the gap since that tool is what this measures. A long foreground
-        # command never trips it: it emits no output while it runs, so the
-        # first condition fails, which is what keeps this from being the
-        # "kill the 20-minute pytest" bug in a new shape.
-        if no_progress_s > 0:
-            progressed_at = tracker.last_progress_at
-            output_at = tracker.last_output_at
-            if (
-                progressed_at is not None
-                and output_at is not None
-                and output_at > progressed_at
-                and t - progressed_at >= no_progress_s
-            ):
-                logger.warning(
-                    "output for %.0fs with no tool call or ending — the session "
-                    "is talking and not working; ending it (%s)",
-                    t - progressed_at,
-                    context,
-                )
-                yield AgentResult(
-                    text=timeout_message,
-                    session_id=resume_session_id,
-                    is_error=True,
-                    failure_code=TURN_TIMEOUT_CODE,
-                )
-                return
         # Asked before the waits below, because this is the one verdict that can
         # be true while every other signal looks healthy.
         if delivered:
@@ -551,7 +567,7 @@ async def monitor_session_activity(
                     )
                     return
                 continue
-            verdict = unread_verdict(now())
+            verdict = progress_verdict(now()) or unread_verdict(now())
             if verdict is not None:
                 yield verdict
                 return
@@ -589,7 +605,7 @@ async def monitor_session_activity(
             yield event
             if isinstance(event, AgentResult):
                 return  # Stop hook → session idle
-        verdict = unread_verdict(now())
+        verdict = progress_verdict(now()) or unread_verdict(now())
         if verdict is not None:
             yield verdict
             return
