@@ -315,8 +315,8 @@ _CONSUMED_HOOKS_KEPT = 4000
 # How often a suspected-wedged session re-checks liveness while it stays idle (a
 # single ``confirm_alive`` at the 5-minute mark isn't enough — the screen could
 # die at minute 6 and go unnoticed until the 3-hour hard ceiling otherwise).
-# Cheap by design (e.g. a tmux capture-pane / list-panes call), so a short
-# cadence costs nothing.
+# Cheap by design (the device channel reads the box's process tree over the
+# connector's exec, DEVICE_ALIVE_PROBE), so a short cadence costs nothing.
 CONFIRM_POLL_S = 15.0
 
 
@@ -364,9 +364,10 @@ async def monitor_session_activity(
     hard_deadline = start + hard_ceiling_s
     tracker = tracker if tracker is not None else ActivityTracker(last_at=start)
     # Until something comes back, we have no evidence the prompt was received at
-    # all: it is typed into a terminal, and typing has no return value. So the
-    # first wait is short. Any hook clears it — `UserPromptSubmit` is the direct
-    # receipt, and any other activity proves delivery just as well.
+    # all: it went into the rendezvous socket, whose protocol has no positive ack
+    # (written and not refused is all "delivered" means). So the first wait is
+    # short. Any hook clears it — `UserPromptSubmit` is the direct receipt, and
+    # any other activity proves delivery just as well.
     delivered = False
     delivery_deadline = start + delivery_timeout_s
     while True:
@@ -509,11 +510,12 @@ def _prompt_with_native_images(
 ) -> str:
     """Use Claude Code's own @path attachment path for interactive sessions.
 
-    Verified end to end on 2.1.224: a bracketed paste containing `@uploads/x.png`
-    collapses into a `[Pasted text]` widget, and submitting it still resolves the
-    mention — the request that goes out carries a real image block. So the
-    mention is the delivery, and it only works for a file that is actually on
-    the machine the screen is running on.
+    Verified end to end on 2.1.224 back when prompts were pasted into the
+    composer: submitting `@uploads/x.png` resolved the mention and the request
+    that went out carried a real image block. Prompts now arrive over the
+    rendezvous socket, enqueued where a keystroke lands, and the mention has not
+    been re-verified on that path. Either way the mention is the delivery, and it
+    only works for a file that is actually on the machine the screen runs on.
 
     ``missing`` is for the ones that are not. They get a sentence instead of a
     mention, because the alternative shapes are both worse: @-mentioning a path
@@ -770,10 +772,9 @@ class Channel:
     async def start_activity_monitor(
         self, screen: object, tracker: ActivityTracker
     ) -> asyncio.Task | None:
-        """Optional background activity signal alongside hook arrivals (e.g. the
-        tmux backend's capture-pane polling — a long tool call between hooks
-        must still count as "alive"). Return a task that keeps ``tracker``
-        touched; ``run_turn`` cancels it when the turn ends.
+        """Optional background activity signal alongside hook arrivals — a long
+        tool call between hooks must still count as "alive". Return a task that
+        keeps ``tracker`` touched; ``run_turn`` cancels it when the turn ends.
 
         Default: no extra signal, activity is judged from hook arrivals alone —
         correct for the device channel today (TODO: an equivalent remote
@@ -947,10 +948,12 @@ class ClaudeCodeRuntime:
         This is what lets a message posted mid-turn reach 芝士 now instead of
         queueing behind the whole turn. It works because the thing on the other
         end is an interactive Claude Code, which accepts input while it is
-        working and folds it into the run (measured: a prompt pasted into a busy
-        session was answered without waiting for the running command). The
-        platform used to be stricter than the tool it drives — one message per
-        topic per turn — so a long command made every later message wait it out.
+        working and folds it into the run at the next tool boundary (measured
+        2026-09-04 over the rendezvous socket, on 2.1.224 and 2.1.261: a text
+        delivered 5 s into a 75 s foreground command was answered in the same
+        turn, right after the tool returned). The platform used to be stricter
+        than the tool it drives — one message per topic per turn — so a long
+        command made every later message wait it out.
 
         Deliberately does not create a screen. ``False`` tells the caller to
         construct and inject fresh work through the normal path."""
@@ -991,10 +994,18 @@ class ClaudeCodeRuntime:
                 return False
             # The write was accepted — that IS delivery (#539 decision A, per
             # #487's transport contract: a write either reaches the process or
-            # errors). UserPromptSubmit fires when the session CONSUMES the
-            # message — often much later on a busy session — so it must never
-            # gate this verdict; it arrives through _observe_delivery_hook and
-            # stamps the message consumed then.
+            # errors). Consumption is a separate event and must never gate this
+            # verdict; when it is observable it arrives as UserPromptSubmit
+            # through _observe_delivery_hook, which stamps the message consumed.
+            #
+            # Measured 2026-09-04 with a text delivered over the socket while a
+            # 75 s foreground tool ran: both 2.1.224 (the pinned device build)
+            # and 2.1.261 folded it into the turn right after the tool returned,
+            # but only 2.1.261 fired UserPromptSubmit for it — 2.1.224 did not,
+            # twice. So on the pinned build a mid-turn message that WAS read
+            # keeps its pending entry: the block is never stamped, the next turn
+            # re-sends it (the at-least-once contract), and anything that reads
+            # "no receipt" as "not read" is wrong there.
             return True
 
     def _observe_delivery_hook(self, topic_id: uuid.UUID, hook: dict) -> None:
@@ -1192,7 +1203,8 @@ class ClaudeCodeRuntime:
     async def interrupt(self, session: SessionRef) -> bool:
         """Take the work away without saying anything. Escape is what stops a
         claude mid-generation — the same key a person watching the screen would
-        press, sent down the same channel that carries their typing.
+        press, sent down the viewer-keystroke channel rather than the rendezvous
+        socket, which carries messages.
 
         Weaker than tearing the screen down, deliberately: the session and its
         conversation survive, and the next ``send`` continues it.

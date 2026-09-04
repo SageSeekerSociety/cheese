@@ -3791,14 +3791,13 @@ class ChatService:
             # failure mode this counter exists to expose.
             await session.commit()
             replay_notice = _replay_notice(replay_n, pending)
-            # turn 活跃度检测: the hooks-driven backends (remote
-            # device) run hooks_substrate's two-layer idle-suspect + hard-ceiling
-            # loop and manage their own inner ceiling (which can be hours), so the
-            # outer wall-clock wrap (runtime.py) must be told their REAL ceiling via
-            # a `turn_ceiling` frame instead of killing them at the generic
-            # `agent_turn_timeout_s`. The SDK / remote-cheesed backends have no such
-            # signal and keep the generic default. Without this the device's own
-            # two-layer fix is dead on arrival — the outer guard still kills at 900s.
+            # turn 活跃度检测: the device channel runs hooks_substrate's two-layer
+            # idle-suspect + hard-ceiling loop and manages its own inner ceiling
+            # (which can be hours), so the outer wall-clock wrap (runtime.py) must
+            # be told the REAL ceiling via a `turn_ceiling` frame instead of
+            # killing the turn at the generic `agent_turn_timeout_s`. Without this
+            # the device's own two-layer fix is dead on arrival — the outer guard
+            # still kills at 900s.
             if topic.compute_profile is None:
                 # v4 affinity red line: materialize the effective target BEFORE
                 # the first provider call. A later team-default/sticky change must

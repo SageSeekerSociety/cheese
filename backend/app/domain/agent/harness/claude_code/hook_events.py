@@ -235,9 +235,9 @@ class MessageAssembler:
     Persisting each flush as its own chat message is what split one reply into
     several bubbles — and what then defeated every whole-text dedup downstream,
     because the Stop hook's ``last_assistant_message`` never matches a fragment,
-    so the full text landed AGAIN next to its own pieces. The SDK backend fixed
-    the same shape in #170 by buffering fragments to a semantic boundary; this
-    is the hooks-path equivalent, with ``final`` as the boundary.
+    so the full text landed AGAIN next to its own pieces. #170 fixed the same
+    shape once before by buffering fragments to a semantic boundary; this does
+    the same with ``final`` as the boundary.
 
     Also absorbs at-least-once redelivery: a flush re-POSTed after a lost ack
     arrives with the same (message_id, index) and is dropped, whether its

@@ -53,12 +53,9 @@ from app.domain.agent.harness.claude_code.hooks_substrate import (
 )
 from app.domain.agent.harness.claude_code.session_launch import (
     HARNESS_ENV,
-    ScreenHost,
     build_session_launch,
-    ensure_claude,
     harness_of,
     hooks_settings,
-    input_box_ready,
 )
 
 __all__ = [
@@ -73,7 +70,6 @@ __all__ = [
     "ClaudeCodeRuntime",
     "HookRouter",
     "MessageAssembler",
-    "ScreenHost",
     "ScreenSetupError",
     "SpoolBacklog",
     "TopicSubscription",
@@ -81,7 +77,6 @@ __all__ = [
     "append_event",
     "build_screen_launch",
     "build_session_launch",
-    "ensure_claude",
     "drop_device_subscriptions",
     "drop_screen_subscriptions",
     "drop_topic_subscriptions",
@@ -89,7 +84,6 @@ __all__ = [
     "harness_of",
     "hooks_settings",
     "hook_router",
-    "input_box_ready",
     "log_cursor",
     "read_log",
 ]
