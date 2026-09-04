@@ -188,6 +188,17 @@ async function loadCxProjects() {
 }
 onMounted(loadCxProjects)
 
+// A project can appear from outside this dialog — made on a team page, or by
+// a teammate — and the rail would keep showing the cached list until a reload.
+// Opening a project the rail does not know is the cheapest signal that the
+// list is stale, so reload it then.
+watch(
+  () => workspace.projectId,
+  (id) => {
+    if (id && !cxProjects.value.some((p) => p.id === id)) void loadCxProjects()
+  }
+)
+
 // …and again whenever the identity changes. The rail used to load exactly once,
 // on mount — and the app normally mounts on the sign-in page, i.e. with no
 // credential yet. Signing in is an SPA navigation, not a reload, so nothing
