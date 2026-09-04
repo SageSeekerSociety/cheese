@@ -20,7 +20,9 @@ whose JS builds root-absolute URLs at runtime still needs to be started under a
 matching base (vite: ``--base=$CHEESE_APP_BASE``).
 
 **Who may look.** A member or owner of the topic's project — ``may_view_topic``,
-the same gate the 现场 terminal answers with. That is deliberately not a new
+the same gate the 现场 terminal answers with. The id in the URL names a PLACE and
+the roster belongs to its ROOM, which for a thread are two different uuids;
+``_viewer_place`` is the single spot that keeps them apart. That is deliberately not a new
 boundary: whoever can open this can already TYPE into a shell on that machine
 through the 现场 viewer, so a read-only view of one loopback port on it grants
 nothing further. What the preview must never do is hand the page itself a
@@ -47,6 +49,7 @@ from app.core.errors import NotFoundError
 from app.core.sandbox_auth import scoped_token_claims
 from app.domain.agent import preview_tunnel as wire
 from app.domain.agent.preview_hub import PreviewStream, preview_hub
+from app.domain.room_task.place import Place, PlaceResolver
 
 router = APIRouter(prefix="/topics", tags=["preview"])
 tunnel_router = APIRouter(prefix="/preview", tags=["preview"])
@@ -180,6 +183,32 @@ async def preview_tunnel(
 # --- the browser's end ---------------------------------------------------------
 
 
+async def _viewer_place(
+    db: AsyncSession, topic_id: uuid.UUID, conn: Request | WebSocket
+) -> Place | None:
+    """The place this id names, if the caller may look inside it.
+
+    Two ids, and for a thread they are not the same id: the app, the tunnel and
+    the cookie all belong to the PLACE (a thread serves its own app under its
+    own id), while who may look is the ROOM's roster — the only roster there is.
+    ``may_view_topic`` finds its roster through a ``topics`` row, so handing it a
+    thread's id is not a 403 but a 404 from underneath: work that plainly exists,
+    with a running app, reported as no such topic. A room never shows it, the two
+    ids being one there.
+
+    "No such place" and "not allowed" both come back as None on purpose. A topic
+    id is a uuid and nothing more, so answering the two apart would turn this
+    route into an oracle for whether an id names anything — which is the reason
+    the callers below reply 404 to an unauthorized caller in the first place.
+    """
+    place = await PlaceResolver(db).resolve(topic_id)
+    if place is None:
+        return None
+    if not await proxy.may_view_topic(db, place.room_id, conn, COOKIE_NAME):
+        return None
+    return place
+
+
 @router.get("/{topic_id}/app-session")
 async def app_session(
     topic_id: uuid.UUID, request: Request, response: Response, db: DbSession
@@ -196,7 +225,7 @@ async def app_session(
     The frontend calls this (with its normal ``Authorization`` header) right
     before it sets the iframe's src.
     """
-    if not await proxy.may_view_topic(db, topic_id, request, COOKIE_NAME):
+    if await _viewer_place(db, topic_id, request) is None:
         raise NotFoundError("没有可预览的应用")
     # Hard-coded rather than derived from this request's path: THIS route is
     # reached through the gateway's `/api`-stripping prefix while the iframe is
@@ -220,7 +249,7 @@ async def app_proxy_http(
     """Reverse-proxy one request to the topic's running app, over its tunnel."""
     # 404 rather than 403: an unauthorized caller learns nothing about whether the
     # topic or its app exists.
-    if not await proxy.may_view_topic(db, topic_id, request, COOKIE_NAME):
+    if await _viewer_place(db, topic_id, request) is None:
         return Response(status_code=404, content=b"preview unavailable")
     upstream = await preview_hub.request(
         topic_id,
@@ -266,7 +295,7 @@ async def app_proxy_ws(
 ) -> None:
     """Reverse-proxy a WebSocket to the topic's app — dev servers push HMR over
     one, and without it the page reloads forever trying to reconnect."""
-    allowed = await proxy.may_view_topic(db, topic_id, websocket, COOKIE_NAME)
+    allowed = await _viewer_place(db, topic_id, websocket) is not None
     # Release the authz read-transaction before the (long-lived) pump. A get_db
     # session injected into a WebSocket route is only finalized when the socket
     # closes, so leaving it open parks it `idle in transaction` for the whole

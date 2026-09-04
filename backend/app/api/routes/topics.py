@@ -1980,18 +1980,22 @@ async def get_preview_raw(
 ) -> Response:
     """The current file artifact served as a real page — 在新窗口打开 (Claude
     Artifacts style). CSP `sandbox allow-scripts` keeps it an opaque origin so
-    artifact JS can't call our API as the user."""
-    topic = await TopicService(db).get_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    artifact JS can't call our API as the user.
+
+    Per place, exactly as `get_preview` above: this is the 在新窗口打开 of the very
+    artifact that panel is showing, so the two must agree on whose artifact it is
+    — a thread opening its own preview in a new tab must not be handed the
+    room's, and until this resolved a place it was handed a 404 instead."""
+    place = await TopicService(db).place_or_404(topic_id)
+    await _actor_in_place(resolver, place)
+    art = await BlockRepository(db).latest_artifact(
+        place.room_id, task_id=place.task_id
     )
-    await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
-    )
-    art = await BlockRepository(db).latest_artifact(topic_id)
     if art is None or art.mime_type == _ARTIFACT_MIME["app"]:
         raise NotFoundError("没有可打开的文件 artifact")
-    data = ws.read_file_bytes(topic.project_id, art.content, topic_id=topic_id)
+    # The place id, not the room's: a thread's files are in its tree's worktree,
+    # which `read_file_bytes` resolves from the place it is handed.
+    data = ws.read_file_bytes(place.project_id, art.content, topic_id=topic_id)
     return Response(
         content=data,
         media_type=art.mime_type or "text/html",
