@@ -140,7 +140,10 @@ def test_an_id_that_names_nothing_looks_exactly_like_one_that_is_refused(client)
     nonexistent = client.get(f"/topics/{uuid.uuid4()}/app/index.html?token={stranger}")
 
     assert refused.status_code == nonexistent.status_code == 404
-    assert refused.content == nonexistent.content, (refused.content, nonexistent.content)
+    assert refused.content == nonexistent.content, (
+        refused.content,
+        nonexistent.content,
+    )
 
 
 # ---- 运行环境预览：WebSocket（HMR） -------------------------------------------

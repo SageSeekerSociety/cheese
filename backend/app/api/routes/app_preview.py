@@ -22,8 +22,8 @@ matching base (vite: ``--base=$CHEESE_APP_BASE``).
 **Who may look.** A member or owner of the topic's project — ``may_view_topic``,
 the same gate the 现场 terminal answers with. The id in the URL names a PLACE and
 the roster belongs to its ROOM, which for a thread are two different uuids;
-``_viewer_place`` is the single spot that keeps them apart. That is deliberately not a new
-boundary: whoever can open this can already TYPE into a shell on that machine
+``_viewer_place`` is the single spot that keeps them apart. That is deliberately
+not a new boundary: whoever can open this can already TYPE into a shell on that machine
 through the 现场 viewer, so a read-only view of one loopback port on it grants
 nothing further. What the preview must never do is hand the page itself a
 credential, and it does not: the iframe carries no ``?token=`` (agent-authored
