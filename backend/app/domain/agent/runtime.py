@@ -2011,7 +2011,12 @@ class AgentWorkRunner:
                 fuse_deadline = loop_start + min(first_output_fuse_s, self._timeout)
             else:
                 fuse_deadline = None
-            async with asyncio.timeout(self._timeout) as turn_deadline:
+            # No deadline until the fuse asks for one. `self._timeout` used to
+            # be the starting value, standing in for a ceiling the backend had
+            # not declared yet; the ceiling is recorded now, never scheduled, so
+            # a wrap that started at `self._timeout` would cut every turn whose
+            # fuse is disabled at exactly that mark, with nothing to say why.
+            async with asyncio.timeout(None) as turn_deadline:
                 if fuse_deadline is not None:
                     turn_deadline.reschedule(fuse_deadline)
                 turn_frames = (
@@ -2047,14 +2052,18 @@ class AgentWorkRunner:
                     # call persists no Block, so without this a turn legitimately
                     # grinding through tools looks identical to a wedged one.
                     self._last_frame_at[str(turn_id)] = time.monotonic()
+                    # Measured from `turn_start` when the backend told us when
+                    # the turn began, and from `loop_start` when it did not: a
+                    # recorded fact must not depend on an optional frame.
+                    ceiling_base = loop_start if turn_start is None else turn_start
                     if (
                         not ceiling_crossed
-                        and turn_start is not None
-                        and asyncio.get_running_loop().time() >= turn_start + ceiling_s
+                        and asyncio.get_running_loop().time()
+                        >= ceiling_base + ceiling_s
                     ):
                         ceiling_crossed = True
                         rec["ceiling_crossed_s"] = round(
-                            asyncio.get_running_loop().time() - turn_start
+                            asyncio.get_running_loop().time() - ceiling_base
                         )
                         logger.warning(
                             "turn %s is past its %ss ceiling and still going — "
