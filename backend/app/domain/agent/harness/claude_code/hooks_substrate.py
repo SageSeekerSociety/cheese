@@ -48,6 +48,7 @@ from app.domain.agent.harness.claude_code.hook_events import (
     HookRouter,
     HookSink,
     MessageAssembler,
+    _hook_event_name,
     hook_router,
     translate_hook,
 )
@@ -219,10 +220,30 @@ class ActivityTracker:
 
     last_at: float
     suspect_since: float | None = None
+    #: The one state a hook stream states outright: a tool is running. Set on
+    #: `PreToolUse`; the first hook of any other kind afterwards means the tool
+    #: returned (the model cannot emit anything else while a tool is in flight).
+    #: `PostToolUse` is the usual one, but reading "anything else" keeps this
+    #: right when a tool fails, since `PostToolUseFailure` is not subscribed.
+    tool_started_at: float | None = None
+    tool_returned_at: float | None = None
 
     def touch(self, at: float) -> None:
         self.last_at = at
         self.suspect_since = None
+
+    def saw_hook(self, name: str, at: float) -> None:
+        """Advance the clocks for one hook, including the in-tool state."""
+        if name == "PreToolUse":
+            self.tool_started_at = at
+        elif self.in_tool:
+            self.tool_returned_at = at
+        self.touch(at)
+
+    @property
+    def in_tool(self) -> bool:
+        started, returned = self.tool_started_at, self.tool_returned_at
+        return started is not None and (returned is None or returned < started)
 
 
 @dataclass
@@ -382,6 +403,49 @@ async def monitor_session_activity(
     # receipt, and any other activity proves delivery just as well.
     delivered = False
     delivery_deadline = start + delivery_timeout_s
+
+    def unread_verdict(t: float) -> AgentResult | None:
+        """Has an injected message gone unread past its grace, at a moment the
+        session could have read it?
+
+        Asked in two places and deliberately not at the top of the loop: after a
+        hook has been consumed (so `in_tool` reflects it) and after a wait has
+        run out (so the queue is known to be empty). At the loop top a queued
+        `PreToolUse` has not been read yet, and the verdict would fire on a
+        session that is, one line later, discovered to be inside a tool.
+
+        Three gates on it. `delivered`: until the session has taken its first
+        prompt there is no unread injection, only an undelivered prompt, which
+        has its own verdict. `in_tool`: input is read at tool boundaries, so
+        while a tool is in flight the clock does not run at all. And the clock
+        starts from the tool's RETURN when there was one, not from the
+        injection: a message that sat behind a 40-minute command gets its grace
+        after the first boundary at which the session could see it.
+        """
+        if not (delivered and unread_grace_s > 0 and unread_since is not None):
+            return None
+        if tracker.in_tool:
+            return None
+        waiting_since = unread_since()
+        if waiting_since is None:
+            return None
+        if tracker.tool_returned_at is not None:
+            waiting_since = max(waiting_since, tracker.tool_returned_at)
+        if t - waiting_since < unread_grace_s:
+            return None
+        logger.warning(
+            "an injected message went unread for %.0fs — the session is "
+            "producing but not consuming; ending it (%s)",
+            t - waiting_since,
+            context,
+        )
+        return AgentResult(
+            text=delivery_message,
+            session_id=resume_session_id,
+            is_error=True,
+            failure_code=PROMPT_UNDELIVERED_CODE,
+        )
+
     while True:
         t = now()
         if t >= hard_deadline:
@@ -399,22 +463,6 @@ async def monitor_session_activity(
             return
         # Asked before the waits below, because this is the one verdict that can
         # be true while every other signal looks healthy.
-        if unread_grace_s > 0 and unread_since is not None:
-            waiting_since = unread_since()
-            if waiting_since is not None and t - waiting_since >= unread_grace_s:
-                logger.warning(
-                    "an injected message went unread for %.0fs — the session is "
-                    "producing but not consuming; ending it (%s)",
-                    t - waiting_since,
-                    context,
-                )
-                yield AgentResult(
-                    text=delivery_message,
-                    session_id=resume_session_id,
-                    is_error=True,
-                    failure_code=PROMPT_UNDELIVERED_CODE,
-                )
-                return
         if delivered:
             idle_for = t - tracker.last_at
             if idle_for >= idle_suspect_s:
@@ -442,6 +490,10 @@ async def monitor_session_activity(
                     )
                     return
                 continue
+            verdict = unread_verdict(now())
+            if verdict is not None:
+                yield verdict
+                return
             idle_for = now() - tracker.last_at
             if idle_for >= idle_suspect_s:
                 if tracker.suspect_since is None:
@@ -466,17 +518,20 @@ async def monitor_session_activity(
         if on_hook is not None:
             on_hook(hook)
         delivered = True
-        tracker.touch(now())
+        tracker.saw_hook(_hook_event_name(hook), now())
         event = (
             delivery.event
             if isinstance(delivery, HookDelivery)
             else translate_hook(delivery)
         )
-        if event is None:
-            continue
-        yield event
-        if isinstance(event, AgentResult):
-            return  # Stop hook → session idle
+        if event is not None:
+            yield event
+            if isinstance(event, AgentResult):
+                return  # Stop hook → session idle
+        verdict = unread_verdict(now())
+        if verdict is not None:
+            yield verdict
+            return
 
 
 def _is_mid_response(events: list[AgentEvent]) -> bool:
