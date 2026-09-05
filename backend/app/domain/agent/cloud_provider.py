@@ -73,6 +73,12 @@ class CloudChannel(DeviceChannel):
     def available(self) -> bool:
         return self._configured
 
+    def owns(self, supply: Supply) -> bool:
+        """The machines this channel listens to are the ones the platform
+        opened. Inverting the base channel's answer is the whole of it — see
+        ``DeviceChannel.discover`` for what a topic recovered by both costs."""
+        return supply is Supply.cloud
+
     def _sessions(self) -> AsyncSession:
         factory = self._session_factory
         if factory is None:
