@@ -166,7 +166,7 @@ def test_admission_verdict_carries_the_supply_decision():
         return core.Verdict(True, "ok", pool=core.GATEWAY, key="sk-virt-1")
 
     gate = core.AdmissionGate("http://backend/llm/admission", post=gateway_post)
-    v = gate.check("p1", "tok")
+    v = gate.check("p1", "t1", "tok")
     assert v.allow and v.pool == core.GATEWAY and v.key == "sk-virt-1"
 
 
@@ -239,19 +239,51 @@ def test_admission_gate_caches_and_fails_open():
         return core.Verdict(False, "budget spent: 5.0000 of 5.0000")
 
     gate = core.AdmissionGate("http://backend/llm/admission", post=fake_post)
-    first = gate.check("p1", "tok")
+    first = gate.check("p1", "t1", "tok")
     assert first.allow is False and "5.0000" in first.reason
-    assert gate.check("p1", "tok").allow is False
+    assert gate.check("p1", "t1", "tok").allow is False
     assert len(calls) == 1  # second answer came from the cache
 
     def broken_post(url, bearer, timeout_s):
         raise OSError("backend down")
 
     open_gate = core.AdmissionGate("http://backend/llm/admission", post=broken_post)
-    v = open_gate.check("p2", "tok")
+    v = open_gate.check("p2", "t1", "tok")
     assert v.allow is True and "fail-open" in v.reason
     # Fail-open has a direction: never guess a gateway we have no key for.
     assert v.pool == core.SUBSCRIPTION
 
     # Not configured → always allow, no calls.
-    assert core.AdmissionGate("", post=fake_post).check("p3", "tok").allow is True
+    assert core.AdmissionGate("", post=fake_post).check("p3", "t1", "tok").allow is True
+
+
+def test_one_topics_machine_identity_is_never_served_to_another():
+    """Two topics of ONE project, on two different machines — the ordinary shape
+    of a project that leased more than one box.
+
+    The budget half of an admission answer is the project's, but the identity
+    half names a single machine, and ccproxy only honours a machine's ticket
+    over that machine's own connection. So a verdict cached per project hands
+    the second topic the first one's identity for the rest of the window: the
+    turn is authenticated as a machine it is not, which the far edge answers
+    with a 401 that names nothing, and whatever does get through is billed to
+    the wrong machine.
+    """
+    identities = {"t-alpha": "m516:pw516", "t-beta": "m784:pw784"}
+    asked: list[str] = []
+
+    def post(url, bearer, timeout_s):
+        asked.append(bearer)
+        return core.Verdict(True, "ok", upstream=identities[bearer])
+
+    gate = core.AdmissionGate("http://backend/llm/admission", post=post)
+
+    # The bearer is the per-topic scoped token, so it stands in for the topic.
+    assert gate.check("p1", "t-alpha", "t-alpha").upstream == "m516:pw516"
+    assert gate.check("p1", "t-beta", "t-beta").upstream == "m784:pw784"
+    assert asked == ["t-alpha", "t-beta"]
+
+    # Still cached — per topic, which is the point. Neither answer moved.
+    assert gate.check("p1", "t-alpha", "t-alpha").upstream == "m516:pw516"
+    assert gate.check("p1", "t-beta", "t-beta").upstream == "m784:pw784"
+    assert len(asked) == 2
