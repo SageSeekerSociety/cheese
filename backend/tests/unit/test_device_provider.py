@@ -17,7 +17,7 @@ from app.domain.agent.harness.claude_code.hooks_substrate import ClaudeCodeRunti
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent.service import AgentMessage, AgentResult, AgentSessionInfo
 from app.domain.device.repository import TopicDevice
-from app.domain.device.supply import Visibility
+from app.domain.device.supply import Supply, Visibility
 
 
 @pytest.fixture(autouse=True)
@@ -208,6 +208,11 @@ async def test_restart_recovery_uses_durable_topic_pins(monkeypatch):
             return None
 
     class Service:
+        async def get_device(self, device_id):
+            # An enrolled box: this channel's to recover. A Cloud machine here
+            # would belong to the Cloud channel instead.
+            return SimpleNamespace(device_id=device_id, supply=Supply.self_hosted)
+
         async def list_topic_bindings(self, device_id):
             assert device_id == "dev1"
             return [
@@ -268,6 +273,9 @@ async def test_a_hook_delivered_live_and_again_by_replay_is_consumed_once(
             return None
 
     class Service:
+        async def get_device(self, device_id):
+            return SimpleNamespace(device_id=device_id, supply=Supply.self_hosted)
+
         async def list_topic_bindings(self, device_id):
             return [
                 TopicDevice(
