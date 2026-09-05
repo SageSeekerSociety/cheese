@@ -134,8 +134,12 @@ async def test_each_channel_recovers_only_the_machines_it_owns(client):
     hub = _Hub({str(seeded["cloud_device"]), str(seeded["own_device"])})
     device, cloud = _channels(factory, hub)
 
-    on_device = {topic_id for _project, topic_id, _screen, _runs in await device.discover()}
-    on_cloud = {topic_id for _project, topic_id, _screen, _runs in await cloud.discover()}
+    on_device = {
+        topic_id for _project, topic_id, _screen, _runs in await device.discover()
+    }
+    on_cloud = {
+        topic_id for _project, topic_id, _screen, _runs in await cloud.discover()
+    }
 
     assert on_device == {seeded["on_own_box"]}
     assert on_cloud == {seeded["on_cloud"]}
