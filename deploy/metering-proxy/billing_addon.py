@@ -306,8 +306,9 @@ def _refuse(flow: http.HTTPFlow, status: int, kind: str, message: str) -> None:
 
     Clearing the flag here rather than at each refusal site is deliberate. There
     are eight of them across `requestheaders` and more will be added; a rule that
-    lives at the single point where a response is set cannot be forgotten by the
-    ninth.
+    lives at the one point all of them go through cannot be forgotten by the
+    ninth. (`http_connect` answers 407 without coming through here, and does not
+    need to: a CONNECT has no body, so it never reaches the streaming branch.)
 
     The cost is that a refused request's body is buffered instead of streamed
     (mitmproxy offers no third option — a response is delivered only from the
