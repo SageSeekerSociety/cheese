@@ -290,6 +290,32 @@ def _route_to_gateway(flow: http.HTTPFlow, key: str) -> bool:
 
 
 def _refuse(flow: http.HTTPFlow, status: int, kind: str, message: str) -> None:
+    """Answer this request here, and take back the streaming decision.
+
+    Setting a response and streaming the request body are mutually exclusive in
+    mitmproxy: once the `requestheaders` hook returns, a flow with `stream` set
+    goes to `start_request_stream`, which raises `NotImplementedError("Can't set
+    a response and enable streaming at the same time.")` — and that kills the
+    whole connection instead of delivering the refusal. Only a request that
+    CARRIES A BODY reaches that branch, which is what made this so hard to see:
+    every refusal of a GET was delivered normally while every refused
+    `POST /v1/messages` crashed the proxy, so the caller waited out its timeout
+    and reported a hung platform rather than the reason it was refused. Measured
+    on the dev box: 68 refused message turns over 48h, zero 503s delivered, 350
+    crashes.
+
+    Clearing the flag here rather than at each refusal site is deliberate. There
+    are eight of them across `requestheaders` and more will be added; a rule that
+    lives at the single point where a response is set cannot be forgotten by the
+    ninth.
+
+    The cost is that a refused request's body is buffered instead of streamed
+    (mitmproxy offers no third option — a response is delivered only from the
+    buffering path). That is not the #654 leak coming back: nothing is forwarded
+    and nothing is held for the length of a turn, the body is consumed and
+    dropped as soon as the refusal goes out.
+    """
+    flow.request.stream = False
     flow.response = http.Response.make(
         status,
         json.dumps(
@@ -386,8 +412,9 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
     # its entire grown conversation as the request body every turn; buffering
     # that (together with the response) is what OOM-kills this proxy on long
     # runs, after which the client just sees a refused connection until it
-    # restarts. Refusals still work: setting flow.response here short-circuits
-    # before any body is forwarded upstream.
+    # restarts. Refusals still work, but they must go through `_refuse` — a
+    # refusal and a streamed body cannot both stand, and that is where the flag
+    # is taken back.
 
     # Multi-host by SNI: the sandbox --add-hosts api.anthropic.com AND the login
     # hosts (console.anthropic.com, platform.claude.com) to this one proxy, so
@@ -416,8 +443,10 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
         return
 
     # Host is allowed and we intend to forward: stream the body rather than
-    # buffer it. (A path below may still refuse via flow.response, which
-    # short-circuits regardless of this flag.)
+    # buffer it. A path below may still refuse, and refusing TAKES THIS BACK —
+    # see `_refuse`, which is where the two decisions are reconciled. They are
+    # not independent: leaving the flag on while setting a response is a fatal
+    # error in mitmproxy, not a harmless contradiction.
     flow.request.stream = True
 
     via = _via()
@@ -435,12 +464,16 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
     # opened by whichever request comes first, and Claude Code's startup
     # api/oauth/profile check beats the first turn to it — so the identity that
     # connection authenticates as has to be settled by then, or the turn's own
-    # ticket goes out over the wrong one. Cheap: verdicts are cached per project.
+    # ticket goes out over the wrong one. Cheap: verdicts are cached per
+    # (project, topic) — the topic is part of the answer, not just of the
+    # question, because the identity it resolves belongs to that topic's machine.
     verdict = None
     if project_id and ADMISSION_URL:
         # Off-loop: urllib blocks, and one slow admission call must not stall
         # every other flow through the proxy.
-        verdict = await asyncio.to_thread(ADMISSION.check, project_id, bearer)
+        verdict = await asyncio.to_thread(
+            ADMISSION.check, project_id, topic_id, bearer
+        )
 
     if is_messages:
         if SCOPED_SECRET and not ALLOW_HEADER_ATTR and not project_id:

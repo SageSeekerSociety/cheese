@@ -283,6 +283,15 @@ class AdmissionGate:
     this project. Fail-open therefore has a direction — an unreachable control
     plane falls back to the subscription, the destination this proxy has always
     had, rather than to a gateway whose per-project key it would not have.
+
+    Cached per (project, topic), not per project. The budget half of the answer
+    is the project's, but the ``upstream`` half names ONE machine — the one that
+    topic's turns run on — and a project's topics can be spread over several. A
+    project-wide key hands the second topic the first one's machine identity for
+    the rest of the window, and ccproxy only honours a machine's ticket over that
+    machine's own connection, so the turn either 401s at the far edge or is
+    billed to the wrong machine. The extra key costs one admission call per topic
+    per window, which is what the endpoint was already sized for.
     """
 
     def __init__(
@@ -297,14 +306,15 @@ class AdmissionGate:
         self._timeout = timeout_s
         self._post = post  # test seam
         self._lock = threading.Lock()
-        self._cache: dict[str, tuple[float, Verdict]] = {}
+        self._cache: dict[tuple[str, str], tuple[float, Verdict]] = {}
 
-    def check(self, project_id: str, bearer: str) -> Verdict:
+    def check(self, project_id: str, topic_id: str, bearer: str) -> Verdict:
         if not self._url or not project_id:
             return Verdict(True, "admission not configured")
+        key = (project_id, topic_id)
         now = time.time()
         with self._lock:
-            hit = self._cache.get(project_id)
+            hit = self._cache.get(key)
             if hit and now - hit[0] < self._cache_s:
                 return hit[1]
         try:
@@ -312,5 +322,5 @@ class AdmissionGate:
         except (urllib.error.URLError, OSError, ValueError, json.JSONDecodeError):
             return Verdict(True, "admission unreachable (fail-open)")
         with self._lock:
-            self._cache[project_id] = (now, verdict)
+            self._cache[key] = (now, verdict)
         return verdict

@@ -16,6 +16,7 @@ from app.domain.machine.models import (
     MachineStatus,
     ProjectMachine,
 )
+from app.domain.room_task.place import room_and_task
 
 
 class ProjectMachineRepository:
@@ -317,14 +318,25 @@ class ProjectMachineRepository:
         )
         return list(result.scalars())
 
-    async def ccproxy_upstream_for_topic(self, topic_id: uuid.UUID) -> str | None:
-        """The ccproxy identity of the machine this topic's turns run on.
+    async def ccproxy_upstream_for_place(self, place_id: uuid.UUID) -> str | None:
+        """The ccproxy identity of the machine this place's turns run on.
 
         One join rather than two round trips, because the metering proxy asks
         this on the admission path — the hop every turn already waits on. The
-        chain is topic → pinned device → machine: a topic's work tree and its
+        chain is room → pinned device → machine: a room's work tree and its
         resumable claude session live on ONE machine, and that pin is write-once
-        (``bind_topic_device``), so the answer is stable for the topic's life.
+        (``bind_topic_device``), so the answer is stable for the room's life.
+
+        A THREAD is asked about by its own id and answered from its ROOM's pin.
+        The proxy only ever holds the id the per-turn token carries, and a
+        thread's token carries the thread's — while the pin is the room's, both
+        because a thread runs on its room's machine (#702) and because
+        ``bind_topic_device`` binds nothing else. So looking a thread's own id up
+        in the pin table can only ever come back empty, and empty here is not the
+        harmless fallback it is for a room: a caller that brought its own ccproxy
+        ticket is REFUSED when no identity is resolved, rather than spending the
+        platform's credential. Every thread turn on an enrolled machine died that
+        way, and the refusal never reached the caller either — it timed out.
 
         Two sources, one meaning. A MicroCloud machine's identity is captured at
         enrollment into `ProjectMachine`; a self-hosted device has no enrollment,
@@ -332,16 +344,17 @@ class ProjectMachineRepository:
         device — the dev box first). Checked in that order; they cannot disagree,
         because a device is only ever one of the two kinds.
 
-        None whenever every link is missing — an unpinned topic, a device that
+        None whenever every link is missing — an unpinned room, a device that
         brings no identity, a machine enrolled before the identity was recorded.
         Every one of those means "use the deployment-wide identity", which is
         the behaviour those turns have today.
         """
+        room_id, _ = await room_and_task(self._session, place_id)
         from_machine = await self._session.scalar(
             select(ProjectMachine.ccproxy_upstream)
             .join(DeviceTopicRow, DeviceTopicRow.device_id == ProjectMachine.device_id)
             .where(
-                DeviceTopicRow.topic_id == topic_id,
+                DeviceTopicRow.topic_id == room_id,
                 ProjectMachine.ccproxy_upstream.is_not(None),
             )
         )
@@ -351,7 +364,7 @@ class ProjectMachineRepository:
             select(DeviceRow.ccproxy_upstream)
             .join(DeviceTopicRow, DeviceTopicRow.device_id == DeviceRow.device_id)
             .where(
-                DeviceTopicRow.topic_id == topic_id,
+                DeviceTopicRow.topic_id == room_id,
                 DeviceRow.ccproxy_upstream.is_not(None),
             )
         )
