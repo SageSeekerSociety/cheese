@@ -51,6 +51,7 @@ from app.domain.agent.platform_failures import (
 )
 from app.domain.device.service import DeviceService
 from app.domain.device.supply import (
+    Supply,
     default_visibility,
     has_runnable_transport,
 )
@@ -408,15 +409,38 @@ class DeviceChannel(Channel):
         happen per turn, in ``precheck``."""
         return bool(self._hub.online_device_ids())
 
+    def owns(self, supply: Supply) -> bool:
+        """Is a machine that entered this way THIS channel's to listen to?
+
+        Both channels bind their topics into the same table, so a pin does not
+        say which of them made it — the machine does, and ``Supply`` is the axis
+        that separates them (the platform opened it → Cloud's; a human enrolled
+        it → this one's). ``_resolve_device_agent`` on the Cloud side already
+        refuses a machine of the wrong supply for the same reason.
+        """
+        return supply is not Supply.cloud
+
     async def discover(
         self, device_id: str | None = None
     ) -> list[tuple[uuid.UUID, uuid.UUID, object | None, str | None]]:
-        """Topics durably pinned to currently connected devices.
+        """Topics durably pinned to currently connected devices OF THIS CHANNEL.
 
         No screen comes back with them: the ``HubScreen`` that was open before
         the restart is gone from this process, and the device reattaches on the
         topic's next turn. What survives is the PIN, which is enough to start
-        listening again."""
+        listening again.
+
+        A topic may come back from exactly ONE channel, because a topic's hooks
+        arrive on exactly one process-wide queue (``hook_router``) and every
+        channel that discovers a topic puts a consumer on it. Two consumers do
+        not each get a copy — they SPLIT the queue: a message that arrives in
+        four flushes is assembled half by each, both halves land as separate
+        replies, and the Stop that carries the full text lands a third, because
+        "已经说过的话" is a per-consumer list. That is what an unfiltered
+        discover cost: every topic on an online connector was recovered by the
+        device channel AND the cloud one, on every backend start and every
+        connector reconnect.
+        """
         online = set(self._hub.online_device_ids())
         device_ids = [device_id] if device_id in online else []
         if device_id is None:
@@ -434,6 +458,9 @@ class DeviceChannel(Channel):
             devices = sql_device_service(session)
             topics = TopicService(session)
             for connected_device_id in device_ids:
+                endpoint = await devices.get_device(connected_device_id)
+                if endpoint is None or not self.owns(endpoint.supply):
+                    continue
                 bindings = await devices.list_topic_bindings(connected_device_id)
                 for binding in bindings:
                     topic = await topics.get(binding.topic_id)
