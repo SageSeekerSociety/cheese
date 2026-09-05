@@ -751,8 +751,10 @@ def _refusals_of_a_message_turn(monkeypatch, tmp_path):
     )
     yield "an unattributable caller", mod, _make_flow(caller_bearer="not-a-token")
 
-    # A box whose own subscription credential is missing.
-    mod = _load_addon(monkeypatch, tmp_path, inject=None, scoped_secret=secret)
+    # A box whose own subscription credential is missing. Its own directory:
+    # `inject=None` means "write nothing", so sharing one with the cases above
+    # would leave THEIR token file sitting there and this box would be fine.
+    mod = _load_addon(monkeypatch, tmp_path / "bare-box", inject=None, scoped_secret=secret)
     yield (
         "no platform credential on the box",
         mod,
