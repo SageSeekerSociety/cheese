@@ -284,7 +284,7 @@ def test_session_pointer_survives_a_real_sigkill(client, tmp_path):
 
     stored = asyncio.run(_stored_session_id(client.test_factory, topic_id))
     assert stored == SESSION_ID, (
-        "被 SIGKILL 的轮次没留下会话指针——续跑会开一个全新会话，"
+        "被 SIGKILL 的轮次没留下会话指针——重发/重新 @ 会开一个全新会话，"
         "芝士将不记得自己已经做过什么"
     )
 

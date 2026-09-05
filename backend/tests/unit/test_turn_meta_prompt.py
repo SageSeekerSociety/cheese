@@ -23,12 +23,12 @@ def test_no_countdown_is_ever_claimed() -> None:
     assert "到点会被中断" not in joined
     assert "活跃度检测" in joined
     assert "cheese status" in joined  # the unconditional hint still applies
-    assert "本轮是自动续跑" not in joined
+    assert "本轮接着上一轮跑" not in joined
 
 
 def test_resume_line_present_on_resumed_turn() -> None:
     lines = _turn_meta_lines(is_resume=True, disk=None, open_cards=None)
-    assert any("本轮是自动续跑" in ln for ln in lines)
+    assert any("本轮接着上一轮跑" in ln for ln in lines)
 
 
 def test_disk_line_and_pressure_warning() -> None:
