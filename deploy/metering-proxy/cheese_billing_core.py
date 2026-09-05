@@ -322,5 +322,13 @@ class AdmissionGate:
         except (urllib.error.URLError, OSError, ValueError, json.JSONDecodeError):
             return Verdict(True, "admission unreachable (fail-open)")
         with self._lock:
+            # Drop what has expired instead of letting it pile up. Keyed by
+            # project alone this was one entry per project and effectively
+            # bounded; keyed by topic it is one per topic ever served, which on a
+            # box carrying hundreds of them is a slow leak — in a process that
+            # has already been OOM-killed once (#654). The sweep is O(entries
+            # still inside the window) and only runs on a miss.
+            cutoff = now - self._cache_s
+            self._cache = {k: v for k, v in self._cache.items() if v[0] >= cutoff}
             self._cache[key] = (now, verdict)
         return verdict

@@ -287,3 +287,22 @@ def test_one_topics_machine_identity_is_never_served_to_another():
     assert gate.check("p1", "t-alpha", "t-alpha").upstream == "m516:pw516"
     assert gate.check("p1", "t-beta", "t-beta").upstream == "m784:pw784"
     assert len(asked) == 2
+
+
+def test_the_verdict_cache_does_not_grow_for_every_topic_ever_served():
+    """One entry per topic ever served would be a slow leak in a proxy that runs
+    for weeks and has already been OOM-killed once. An entry past its window is
+    no longer an answer to anything, so it goes."""
+    gate = core.AdmissionGate(
+        "http://backend/llm/admission",
+        cache_s=0.01,
+        post=lambda url, bearer, timeout_s: core.Verdict(True, "ok"),
+    )
+    for i in range(50):
+        gate.check("p1", f"t{i}", "tok")
+        time.sleep(0.001)
+
+    time.sleep(0.05)
+    gate.check("p1", "t-last", "tok")
+
+    assert len(gate._cache) == 1, "expired verdicts were kept"
