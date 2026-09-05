@@ -15,6 +15,7 @@ picked the right facts is the real model's job.
 """
 
 import asyncio
+import gc
 import time
 import uuid
 
@@ -51,11 +52,29 @@ async def _wait_extractions(timeout: float = _EXTRACTION_TIMEOUT_S) -> None:
 
 async def _shutdown() -> None:
     from openviking import AsyncOpenViking
+    from openviking.storage import viking_fs
+    from openviking_cli.utils.config.open_viking_config import (
+        OpenVikingConfigSingleton,
+    )
 
     from app.domain.memory.openviking_store import get_runtime
 
     await get_runtime().close()
     await AsyncOpenViking.reset()
+    # `reset()` drops the client singleton and nothing else, and two more
+    # singletons keep the model clients alive past it — the `openai.AsyncOpenAI`
+    # objects built on the (now joined) queue-worker loop, each inside its
+    # per-loop client cache. Left in place they stay alive into whatever test
+    # runs next; the fixture below says what happens when they finally die.
+    #   * `init_viking_fs` stores the VikingFS in a module global that nothing
+    #     in openviking ever clears; it holds the embedder. Private surface,
+    #     because the package offers no reset for it.
+    #   * the config singleton caches the VLM instance on its `VLMConfig`
+    #     (`_vlm_instance`); it holds the chat client. The app re-initializes
+    #     this singleton from its own conf on every `client()`, so resetting it
+    #     here changes nothing for the next test.
+    viking_fs._instance = None
+    OpenVikingConfigSingleton.reset_instance()
 
 
 @pytest.fixture
@@ -77,6 +96,21 @@ def openviking_on_fake_endpoint(tmp_path, monkeypatch):
         # under test is dimension-agnostic.
         monkeypatch.setattr(settings, "openviking_embedding_dimension", 256)
         yield server
+    # Collect the embedder's leftover clients HERE, in a sync teardown with no
+    # event loop running — not "later, whenever". openviking builds an
+    # `openai.AsyncOpenAI` on its queue-worker thread's own loop and caches it
+    # by that loop; `_shutdown()` joins the worker but nothing closes the
+    # client, so it survives its loop inside a reference cycle until cyclic GC
+    # frees it. openai's `AsyncHttpxClientWrapper.__del__` then does
+    # `asyncio.get_running_loop().create_task(self.aclose())`: on whatever loop
+    # is running at that moment, against a socket bound to the dead worker
+    # loop, which raises `Event loop is closed` into whichever unrelated test
+    # happens to be running (#693 — the victim was different every time). With
+    # no loop running, `get_running_loop()` raises inside that `__del__`, its
+    # `except Exception: pass` swallows it, and the sockets are simply dropped.
+    # Measured 2026-09-05: 3–4 such clients alive after each test here, 0 after
+    # this line; see tmp/queued-input-probe/gc_probe.py.
+    gc.collect()
 
 
 async def test_openviking_round_trip_without_a_key(openviking_on_fake_endpoint):
