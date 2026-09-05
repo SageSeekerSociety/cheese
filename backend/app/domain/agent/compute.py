@@ -294,15 +294,14 @@ def build_compute_pool(cloud_channel: "Channel | None" = None) -> ComputePool:
         # One timeout policy, applied where the watching happens. The two-layer
         # shape (turn 活跃度检测) is `idle_suspect_s` of no hook and no liveness
         # evidence → only SUSPECTED wedged, then a `confirm_alive` probe until it
-        # says dead, with `hard_ceiling_s` as the unconditional backstop. It used
-        # to be a constructor argument on every transport, which is how a single
-        # 900s deadline could kill a long-but-silent turn on one of them and not
-        # the others.
+        # says dead, with `hard_ceiling_s` recorded when crossed and ending
+        # nothing. It used to be a constructor argument on every transport, which
+        # is how a single 900s deadline could kill a long-but-silent turn on one
+        # of them and not the others.
         return ClaudeCodeRuntime(
             channel,
             idle_suspect_s=settings.agent_idle_suspect_s,
             hard_ceiling_s=settings.agent_turn_hard_ceiling_s,
-            session_ceiling_s=settings.agent_session_ceiling_s,
             unread_grace_s=settings.agent_unread_grace_s,
             no_progress_s=settings.agent_no_progress_s,
         )

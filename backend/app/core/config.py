@@ -183,23 +183,15 @@ class Settings(BaseSettings):
     # — a long foreground command with no interim hook must not look identical to a
     # dead screen.
     agent_idle_suspect_s: float = 300.0
-    # Wall-clock ceiling for both hooks backends. Crossing it is recorded and
-    # logged and no longer ends the turn: with the three gates below in place
-    # (the process probe past idle-suspect, output with no progress, an unread
-    # injection), what a wall clock alone can still end is a turn that is
-    # working and has not finished, which is not a fault. The outer wrap in
-    # runtime.py still receives this number via the `turn_ceiling` frame and
-    # refreshes it on every tool call.
+    # The wall-clock mark past which a turn is recorded as long. A metric, not
+    # a gate: crossing it is logged once by the harness monitor and written to
+    # the turn record (`ceiling_crossed_s`), and nothing ends. With the three
+    # gates in place (the process probe past idle-suspect, output with no
+    # progress, an unread injection), what a wall clock alone could still end
+    # is a turn that is working and has not finished, which is not a fault. One
+    # number for both layers: the monitor reads it directly and the outer wrap
+    # in runtime.py receives it via the `turn_ceiling` frame.
     agent_turn_hard_ceiling_s: float = 10800.0
-    # The harness monitor's own backstop, and deliberately far larger than the
-    # one above. That one is a real deadline for a turn that has stopped calling
-    # tools, and it refreshes on every tool call. This one fires against a
-    # session that `confirm_alive` keeps reporting alive, which is what a long
-    # foreground command looks like from here (a 20-minute test run emits no
-    # interim hook), so it must not be the number that ends a turn the probe
-    # just said was healthy. It exists for the case where the probe itself has
-    # stopped meaning anything.
-    agent_session_ceiling_s: float = 86400.0
     # How long a message we injected may sit unconsumed before the session is
     # called unable to read. On a different axis from the two above: those watch
     # what a session PRODUCES, and a session that has stopped reading goes on
