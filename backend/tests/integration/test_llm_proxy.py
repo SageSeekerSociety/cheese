@@ -507,3 +507,41 @@ async def test_admission_still_names_nothing_for_a_place_that_owns_no_machine(
         }
         body = client.post("/llm/admission", headers=headers).json()["data"]
         assert "upstream" not in body["supply"]
+
+
+async def test_a_thread_with_its_own_pin_is_not_answered_from_its_room(
+    client, monkeypatch
+):
+    """The other direction, and the reason the room is a FALLBACK and not the
+    answer. On a self-hosted device the resolver pins whatever place it is given,
+    so a thread pins itself — and two threads of one room can land on two
+    different boxes. Resolving a thread through its room would then name a
+    machine its turns do not run on, which is the same wrong-identity failure
+    read backwards: ccproxy only honours a ticket over its own machine's
+    connection."""
+    from app.core.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "subscription_enabled", True)
+    pid = _make_project(client)
+    room_id, thread_id = await _room_with_a_thread(client, pid)
+    await _pin_topic_to_machine(
+        client,
+        project_id=pid,
+        topic_id=uuid.UUID(room_id),
+        machine_id=800,
+        upstream="m800:pw800",
+    )
+    await _pin_topic_to_self_hosted_device(
+        client,
+        topic_id=uuid.UUID(thread_id),
+        device_id="the-threads-own-box",
+        upstream="m801:pw801",
+    )
+
+    headers = {
+        "Authorization": "Bearer "
+        + mint_scoped_token(project_id=pid, topic_id=thread_id)
+    }
+    body = client.post("/llm/admission", headers=headers).json()["data"]
+
+    assert body["supply"]["upstream"] == "m801:pw801"
