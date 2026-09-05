@@ -145,8 +145,8 @@ async def test_router_delivers_between_platform_requests():
 # --- MessageAssembler: MessageDisplay flushes → whole messages ---------------
 #
 # Claude Code fires MessageDisplay once per batch of newly completed lines
-# while an assistant message streams (payload verified against 2.1.224, the
-# pinned device version, and 2.1.233 live): `message_id` is stable across the
+# while an assistant message streams (payload verified live against 2.1.224,
+# 2.1.233 and 2.1.261, the pinned device version): `message_id` is stable across the
 # message's flushes, `index` increments per flush, exactly one flush carries
 # `final: true`, and concatenating the deltas in index order reconstructs the
 # message verbatim.
