@@ -7,14 +7,16 @@ Archiving a room releases its Cloud machine and settles its cards, and until
   `<workspace_root>/.worktrees/<project>/topic_<hex8>`;
 - the place's isolated claude home on the device that ran it,
   `$HOME/.cheese/home/<project>/<place>` — session files and caches, 1-4 GB each.
+  Only rooms have one now; the sweep still resolves a thread's, because the
+  directories a thread left on disk before 任务=分身 are still there.
 
 Nothing removed either. Measured on the dev box on 2026-09-03: 373 worktrees
 (141 GB), 118 of them for archived topics and 219 for topics no longer in the
 database at all; 162 homes (162 GB), 46 archived and 85 unknown.
 
-Archive itself still removes neither. `retire_room_storage` /
-`retire_thread_storage` run at archive time, from `TopicService`, and only
-close the place's screen on its device: an archive is reversible
+Archive itself still removes neither. `retire_room_storage` runs
+at archive time, from `TopicService`, and only closes the room's screen on its
+device: an archive is reversible
 (`POST /{topic_id}/unarchive`), and for `topic_home_retention_days` the
 worktree and the home stay so that the work comes back with its session intact
 rather than from an empty checkout of the branch. Best-effort by design —
@@ -57,7 +59,7 @@ from app.core.config import settings
 from app.core.db import SessionFactory
 from app.domain.device.wiring import sql_device_service
 from app.domain.project.services import ProjectService
-from app.domain.room_task.models import Task, TaskStatus
+from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.services import TaskService, WorkTreeService
 from app.domain.topic.models import Topic
 from app.domain.topic.repositories import TopicRepository
@@ -74,11 +76,6 @@ async def retire_room_storage(room: Topic) -> None:
     trees and its home stay for the retention, so that an un-archive picks the
     work back up with the session intact, and the sweep takes them after."""
     await _release_screen(room.project_id, room.id)
-
-
-async def retire_thread_storage(thread: Task) -> None:
-    """A thread has its own screen and home; the tree it wrote to is its room's."""
-    await _release_screen(thread.project_id, thread.id)
 
 
 async def _release_screen(project_id: uuid.UUID, place_id: uuid.UUID) -> None:

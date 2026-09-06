@@ -596,7 +596,6 @@ class TopicService:
                 continue
             thread.status = TaskStatus.closed
             thread.closed_at = datetime.now(UTC)
-            await self._retire_storage(thread)
             # Why it stopped has to be readable IN the thread that stopped: the
             # room's own archive note lands on the room, and whoever opens the
             # thread later sees work that simply ended mid-sentence.
@@ -666,21 +665,19 @@ class TopicService:
 
         await MachineService(self._session).release_topic_machine(topic_id)
 
-    async def _retire_storage(self, place: Topic | Task) -> None:
-        """Stop the place's session on its device (topic/retire.py). Nothing
+    async def _retire_storage(self, topic: Topic) -> None:
+        """Stop the room's session on its device (topic/retire.py). Nothing
         comes off disk here: the worktree and the home stay for the retention
         so that an un-archive resumes with its session, and the storage sweep
         takes them after. Best-effort inside; the archive is a fact about the
-        place, not about its machine."""
-        from app.domain.topic.retire import (
-            retire_room_storage,
-            retire_thread_storage,
-        )
+        place, not about its machine.
 
-        if isinstance(place, Task):
-            await retire_thread_storage(place)
-        else:
-            await retire_room_storage(place)
+        Only the room. The threads closed alongside it have no session to stop:
+        each is a 分身 inside this very session, and it goes when this does.
+        """
+        from app.domain.topic.retire import retire_room_storage
+
+        await retire_room_storage(topic)
 
     async def unarchive(self, topic_id: uuid.UUID, *, by: str) -> Topic:
         """Bring an archived topic back to active (idempotent). Accept markers

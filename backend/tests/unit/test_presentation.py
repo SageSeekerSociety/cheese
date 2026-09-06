@@ -10,7 +10,7 @@ import pytest
 
 from app.domain.review.models import AcceptStatus
 from app.domain.review.notes import NoteCode
-from app.domain.room_task.models import Residency, TaskStatus
+from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.presentation import (
     LOST_SIGNAL_AFTER,
     CardFacts,
@@ -31,8 +31,6 @@ def task(**kw) -> TaskFacts:
     """A thread that is doing nothing at all, plus whatever the case is about."""
     base = {
         "status": TaskStatus.open,
-        "residency": Residency.idle,
-        "queued_at": None,
         "last_signal_at": None,
         "accepted_at": None,
         "card": None,
@@ -59,30 +57,7 @@ def card(status: AcceptStatus, **kw) -> CardFacts:
 
 TASK_CASES = [
     # (名字, 事实, 列, 短语)
-    (
-        "在跑",
-        task(residency=Residency.running, last_signal_at=JUST_NOW),
-        Column.building,
-        "运行中",
-    ),
-    ("排队", task(queued_at=JUST_NOW), Column.building, "排队中"),
     ("闲着", task(), Column.building, "空闲"),
-    # 说自己在跑、但已经太久没有任何动静了。今天前端没有这一格：taskRing 只看
-    # residency，于是一条卡死的活和一条真在跑的活长得一模一样。
-    (
-        "在跑但早就没动静了",
-        task(residency=Residency.running, last_signal_at=LONG_AGO),
-        Column.building,
-        "失联",
-    ),
-    # residency 说 running，却一个信号都没有过 —— 既没说过话也没记下开跑，
-    # 「没有证据」不能读成「一切正常」。
-    (
-        "在跑但从没被确认过",
-        task(residency=Residency.running, last_signal_at=None),
-        Column.building,
-        "失联",
-    ),
     # 一条活由房间会话里的一个分身做，所以「它还在不在」有两个答案，先问屏幕。
     (
         "分身在做，刚说过话",
@@ -254,7 +229,7 @@ def test_delivery_beats_everything():
     shown = task_presentation(
         task(
             accepted_at=JUST_NOW,
-            residency=Residency.running,
+            has_worker=True,
             last_signal_at=JUST_NOW,
             card=card(AcceptStatus.pending),
         ),
@@ -267,7 +242,7 @@ def test_the_live_fact_beats_the_paperwork():
     """在跑压过卡：卡描述的是它可能马上就要顶掉的那一版。"""
     shown = task_presentation(
         task(
-            residency=Residency.running,
+            has_worker=True,
             last_signal_at=JUST_NOW,
             card=card(AcceptStatus.pending),
         ),
@@ -385,7 +360,7 @@ def test_a_thread_waiting_on_a_person_is_not_out_of_contact():
 
 def test_it_reads_nothing_but_the_facts_it_was_given():
     """纯函数：同样的事实 + 同样的「现在几点」= 同样的答案，跑多少次都一样。"""
-    facts = task(residency=Residency.running, last_signal_at=LONG_AGO)
+    facts = task(has_worker=True, last_signal_at=LONG_AGO)
     first = task_presentation(facts, now=NOW)
     assert first == task_presentation(facts, now=NOW)
     # 只有「现在几点」变了，同一行事实就换了一格 —— 时间是参数，不是它自己去读的。

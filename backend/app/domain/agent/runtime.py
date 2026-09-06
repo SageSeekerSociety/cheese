@@ -20,7 +20,6 @@ from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
 from functools import lru_cache
-from typing import Any
 
 from app.core.errors import AppError
 from app.core.obs import bind_context, clear_context
@@ -46,7 +45,6 @@ from app.domain.agent.platform_notices import (
 from app.domain.agent.repositories import AgentTurnRepository, TurnRecord
 from app.domain.identity.actor import Actor
 from app.domain.identity.handles import names_a_person
-from app.domain.room_task.services import ResidencyService
 
 logger = logging.getLogger("cheesex.runtime")
 
@@ -130,7 +128,6 @@ class InProcessBroker:
         self._active_since: dict[tuple[str, str], float] = {}
         self._last_activity_at: dict[str, float] = {}
         self._replay_size = replay_size
-        self._on_idle: list[Callable[[str], None]] = []
 
     def reset(self) -> None:
         """Drop all buffered frames + subscriptions. The broker is a process-wide
@@ -143,31 +140,6 @@ class InProcessBroker:
         self._active.clear()
         self._active_since.clear()
         self._last_activity_at.clear()
-
-    def watch_idle(self, callback: Callable[[str], None]) -> None:
-        """Be told the moment a channel's last live turn ends.
-
-        Anything that must last as long as the WORK — not as long as the
-        coroutine that started it — has to hang off this, because no single
-        caller knows when a turn is over. A request-scoped turn ends where it
-        was started; an interactive one ends in the session subscription that
-        took it over, long after that request returned; a message folded into a
-        standing turn ends with neither. All three publish here, and only the
-        broker sees whether ANY of them is still going.
-
-        Called synchronously from `publish`, so it must not block: schedule.
-
-        Added to, never replaced. A watcher that silently switched one off would
-        make a second runner in the process disable the first's releases — and a
-        room quietly stuck at its cap is the kind of thing nobody reports as a
-        bug. Every watcher hears every channel and ignores the ones it is not
-        holding anything for.
-        """
-        self._on_idle.append(callback)
-
-    def _went_quiet(self, channel: str) -> None:
-        for callback in list(self._on_idle):
-            callback(channel)
 
     async def publish(self, channel: str, frame: Frame) -> None:
         kind = frame.get("type")
@@ -209,13 +181,6 @@ class InProcessBroker:
                     self._active.pop(channel, None)
                     self._buffer.pop(channel, None)
                     self._last_activity_at.pop(channel, None)
-            # Asked of the channel, not of the branch above: a session that
-            # never got as far as opening its activity still says it stopped,
-            # and that end is exactly the one whose slot would otherwise be held
-            # until a sweep hours later.
-            if not self._active.get(channel):
-                self._went_quiet(channel)
-
         for q in list(self._subs.get(channel, ())):
             q.put_nowait(frame)
 
@@ -313,19 +278,6 @@ class AgentWorkRunner:
         self._credential_expired_fuse_s = credential_expired_fuse_s
         # Keep references so tasks aren't GC'd mid-flight (and for shutdown).
         self._tasks: set[asyncio.Task] = set()
-        # 占着房间额度的地点 → (谁的数据库, 那次占用的写入). Keyed by channel so one
-        # hold has exactly one release: the slot outlives the coroutine that
-        # took it (see `_channel_went_quiet`), so more than one path can reach
-        # the release, and a second one must be a no-op rather than a second
-        # `dequeue` starting the queued thread twice. Holding the write itself
-        # is what lets `_free_slot` refuse to record `idle` before the
-        # `running` it is undoing has landed.
-        self._slot_holds: dict[str, tuple[Any, asyncio.Future[None]]] = {}
-        # …and a strong reference to each of those writes for as long as it is
-        # in flight. `_slot_holds` cannot be that reference: a second turn
-        # starting on the same place replaces the entry, and asyncio keeps only
-        # a weak one — the dropped write would be collectable mid-await.
-        self._holds_in_flight: set[asyncio.Future[None]] = set()
         # 可 debug: lifecycle summaries of the last ~100 turns (/debug/turns).
         self._recent: deque[dict] = deque(maxlen=100)
         # Project-level concurrency gate (spec §9.1): at most N turns run at
@@ -362,8 +314,6 @@ class AgentWorkRunner:
         # what this set cannot see (a failure recorded before a restart) is covered
         # by the staleness rule in `device.health` instead.
         self._host_failed_topics: set[str] = set()
-        # Last, so nothing can be called back into a half-built runner.
-        broker.watch_idle(self._channel_went_quiet)
 
     def recent_work(self) -> list[dict]:
         """Newest-first lifecycle summaries for /debug/turns."""
@@ -1594,23 +1544,6 @@ class AgentWorkRunner:
             )
             return
         lifecycle = {"started": False, "session_owned": False}
-        # 占住这条活的额度。A thread holds one of its room's four slots while a
-        # turn is going and gives it back below; a room's own line holds none.
-        #
-        # Detached deliberately: this is bookkeeping, and awaiting it would put a
-        # database round-trip in front of the turn's first frame — the person is
-        # waiting on that frame, and the slot is not what they are waiting for.
-        # The authoritative gate is `admit`, at dispatch and at dequeue; this
-        # only re-takes the slot for a thread somebody woke back up.
-        #
-        # Kept rather than fired and forgotten, because the release has to be
-        # able to wait for it: a turn shorter than this round-trip would
-        # otherwise write `idle` first and `running` after, and leave the room
-        # one slot poorer until the ghost sweep hours later.
-        holding = asyncio.ensure_future(self._hold_slot(chat_service, topic_id))
-        self._holds_in_flight.add(holding)
-        holding.add_done_callback(self._holds_in_flight.discard)
-        self._slot_holds[channel] = (chat_service, holding)
         try:
             if landed_user_block_id is not None:
                 frames = chat_service.converse_prepared(
@@ -1664,33 +1597,6 @@ class AgentWorkRunner:
             session_ended_it = handed_over and chat_service.session_took_over(
                 topic_id, turn_id
             )
-            # 额度什么时候还回去: when the WORK stops, which is not always when
-            # this coroutine returns. An interactive turn is handed to a live
-            # session at injection and this request comes back right then, with
-            # the agent about to work for minutes; a message folded into a
-            # standing turn never had an ending of its own at all. Releasing on
-            # the way out of here gave the slot back at the START of the work —
-            # which is why a thread visibly producing output read 「空闲」, and why
-            # the room's four slots, being a count of `running` rows, never
-            # filled. Both of those endings belong to the session that owns
-            # them, and `_channel_went_quiet` picks them up off the broker when
-            # it retires its activity.
-            #
-            # The same two questions asked just above therefore answer this one
-            # too, and nothing new has to be worked out: the session ended it →
-            # the session releases it; anyone else still live here → the slot is
-            # theirs to give back; otherwise this turn WAS the ending, and it is
-            # released here and awaited. A bookkeeping write with a live
-            # coroutine able to wait for it should never be left to finish on
-            # its own — nothing would be left to notice it failed, and on the
-            # way down it can be cut off mid-transaction.
-            others_live = [
-                work_id
-                for work_id in self._broker.active_turn_ids(channel)
-                if work_id != str(turn_id)
-            ]
-            if not session_ended_it and not others_live:
-                await self._free_slot(chat_service, topic_id)
             if lifecycle["started"] and not session_ended_it:
                 await self._broker.publish(
                     channel, {"type": "turn_finished", "turn_id": str(turn_id)}
@@ -1705,111 +1611,6 @@ class AgentWorkRunner:
             self._live_topics.pop(str(turn_id), None)
             if gate is not None:
                 gate.release()
-
-    async def _hold_slot(self, chat_service, topic_id: uuid.UUID) -> None:
-        """Mark this place's task as resident while its turn runs.
-
-        A room's own line is not a task and holds no slot — `_task_of` finding
-        nothing is the normal case, not an error.
-        """
-        factory = getattr(chat_service, "session_factory", None)
-        if factory is None:
-            return
-        try:
-            async with factory() as session:
-                task = await ResidencyService(session)._repo.get(topic_id)
-                if task is not None:
-                    await ResidencyService(session).touch(task)
-                    await session.commit()
-        except Exception:  # noqa: BLE001 — bookkeeping must never fail a turn
-            logger.exception("could not hold the slot for %s", topic_id)
-
-    def _channel_went_quiet(self, channel: str) -> None:
-        """This place's last live turn ended — give its room slot back.
-
-        The broker calls this synchronously from `publish`, so the round-trip is
-        scheduled rather than awaited: a frame's fan-out must not wait on
-        bookkeeping, and no caller of `publish` is in a position to handle a
-        failure here.
-
-        Scheduled, but not let go of. `_tasks` is the runner's answer to "is
-        there work in flight" — `/health` drains on it before a redeploy, and it
-        is what anything waiting for a turn to be finished with actually waits
-        on. A release only this function knows about is a database write nobody
-        is waiting for: a deploy does not wait for it and can cut it off between
-        the row and the commit, and a caller already told the work is over is
-        still racing it. Moving the release here was right — the turn's own
-        coroutine is long gone by now — but somebody still has to hold it, and
-        the runner is the one left.
-        """
-        held = self._slot_holds.get(channel)
-        if held is None:
-            return
-        chat_service, _ = held
-        releasing = self._free_slot(chat_service, uuid.UUID(channel))
-        try:
-            task = asyncio.ensure_future(releasing)
-        except RuntimeError:
-            # Published from a thread with no running loop (sync tests, scripts).
-            # Nothing to schedule onto is a no-op, not an error — the ghost sweep
-            # is the backstop, the same one a process that dies here relies on.
-            releasing.close()
-            return
-        task.set_name(f"free-slot-{channel}")
-        self._tasks.add(task)
-        task.add_done_callback(self._release_finished)
-
-    def _release_finished(self, task: asyncio.Task) -> None:
-        """Drop the finished release — and read its failure, if it had one.
-
-        A bare `add_done_callback(discard)` is enough for a turn, which reports
-        its own failures; this is bookkeeping nobody else speaks for, and an
-        exception nobody retrieves surfaces (if ever) as a warning at garbage
-        collection, attached to nothing.
-        """
-        self._tasks.discard(task)
-        if task.cancelled():
-            return
-        exc = task.exception()
-        if exc is not None:
-            logger.warning("slot release %r failed", task.get_name(), exc_info=exc)
-
-    async def _free_slot(self, chat_service, topic_id: uuid.UUID) -> None:
-        """Release this place's slot and start whoever was queued behind it.
-
-        Claims the hold first, so one hold gets exactly one release however many
-        paths reach here — a second release would run `dequeue` again and start
-        the queued thread a second time.
-        """
-        held = self._slot_holds.pop(str(topic_id), None)
-        if held is None:
-            return
-        # Never record `idle` before the `running` it undoes has landed: taking
-        # the slot is deliberately not awaited in front of the turn's first
-        # frame, so on a turn short enough the two writes arrive in the wrong
-        # order and the row is left claiming a slot nobody is using. By the end
-        # of a real turn this finished long ago and costs nothing.
-        with contextlib.suppress(Exception):
-            await held[1]
-        factory = getattr(chat_service, "session_factory", None)
-        if factory is None:
-            return
-        try:
-            async with factory() as session:
-                svc = ResidencyService(session)
-                task = await svc._repo.get(topic_id)
-                if task is None:
-                    return
-                promoted = await svc.release(task)
-                await session.commit()
-        except Exception:  # noqa: BLE001 — bookkeeping must never fail a turn
-            logger.exception("could not release the slot for %s", topic_id)
-            return
-        if promoted is not None:
-            # Outside the session: starting a turn is not part of the
-            # bookkeeping transaction, and holding one open across it is how a
-            # slow kickoff turns into a lock nobody can explain.
-            self.submit_kickoff(chat_service, promoted.id)
 
     def _credential_is_known_expired(self, topic_id: uuid.UUID) -> bool:
         """Does the backend already KNOW this topic's model credential is expired?
