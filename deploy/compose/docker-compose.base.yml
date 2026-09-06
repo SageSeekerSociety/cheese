@@ -32,11 +32,6 @@ services:
       # Uploads live OUTSIDE any release/image, on a host path bind-mounted below,
       # so deploys never touch them (the 赛题 PDFs on prod).
       - STORAGE_LOCAL_PATH=/data/uploads
-      # Wire git (inside the container) to the mounted credential store — env
-      # config needs no image change and applies to every git the backend runs.
-      - GIT_CONFIG_COUNT=1
-      - GIT_CONFIG_KEY_0=credential.helper
-      - GIT_CONFIG_VALUE_0=store --file /data/git-credentials
       # The image's app user has HOME=/nonexistent; git needs a writable,
       # PERSISTENT home. Backed by a host path so its global config and the
       # repo-trust records survive redeploys.
@@ -63,12 +58,8 @@ services:
       # Platform workspaces (project git repos / topic worktrees / sessions)
       # must OUTLIVE container recreations — without this bind every deploy
       # erased them (they lived in the container FS). Required for the fused
-      # platform features (topics/芝士) and the self-hosting dogfood loop.
+      # platform features (topics/芝士).
       - ${WORKSPACES_HOST_PATH:-/home/nictheboy/cheese-workspaces}:/app/.workspaces
-      # Git credentials for the platform's upstream-sync / push_back against
-      # private GitHub repos: a host-side store file (chmod 600, NOT in git).
-      # Default /dev/null = feature off (git prompts fail cleanly).
-      - ${GIT_CREDENTIALS_FILE:-/dev/null}:/data/git-credentials:ro
       - ${APPHOME_HOST_PATH:-/home/nictheboy/cheese-app-home}:/data/apphome
       # Everything the openviking memory backend remembers. Mounted
       # unconditionally: on MEMORY_BACKEND=db the directory just stays empty,

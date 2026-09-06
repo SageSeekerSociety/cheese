@@ -160,7 +160,9 @@ def app_world(monkeypatch):
     monkeypatch.setattr(ws, "ensure_repo", lambda pid: Path("."))
     monkeypatch.setattr(ws, "upstream_default_branch", lambda repo: "main")
     monkeypatch.setattr(ws, "pr_base_branch", lambda pid: "main")
-    monkeypatch.setattr(ws, "sync_upstream", lambda pid: {"synced": True, "commits": 1})
+    monkeypatch.setattr(
+        ws, "sync_upstream", lambda pid, token=None: {"synced": True, "commits": 1}
+    )
 
     def _push(pid, tid, token):
         branch = ws.branch_for_tree(tid)

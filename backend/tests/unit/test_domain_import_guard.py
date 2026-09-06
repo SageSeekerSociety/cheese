@@ -134,8 +134,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # --- webhook / workspace ---
         ("app.domain.usage.subscription_ingest", "app.domain.project.repositories"),
         ("app.domain.webhook.service", "app.domain.block.repositories"),
-        ("app.domain.workspace.dogfood_notices", "app.domain.block.repositories"),
-        ("app.domain.workspace.dogfood_notices", "app.domain.topic.repositories"),
     }
 )
 

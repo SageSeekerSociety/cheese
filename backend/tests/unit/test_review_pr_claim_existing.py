@@ -148,9 +148,6 @@ def _wire(monkeypatch, client) -> list[str]:
     monkeypatch.setattr(
         ws, "merge_topic", lambda *_a: {"merged": True, "commit": "abc"}
     )
-    monkeypatch.setattr(
-        ws, "push_back", lambda *_a: {"mode": "upstream", "target": "origin/main"}
-    )
     github_pr.set_default_client(client)
     return posted
 
@@ -226,7 +223,7 @@ async def test_other_github_failures_still_degrade_and_say_so(monkeypatch):
     assert card.status == AcceptStatus.accepted
     assert card.pr_number is None
     assert card.note.startswith("未走 PR 采纳（GitHub 侧调用失败：")
-    assert "已合并并推送到上游 origin/main" in card.note
+    assert "；" not in card.note  # the local merge is the end; nothing pushed
     # 交付完成 ≠ 话题结束 (#442 decision 1)：本地合并这条路同样不归档。
     assert topic.status == TopicStatus.active
     assert topic.accepted_at is not None

@@ -9,8 +9,6 @@ a top-level ``router`` is included. This lets domains be added without editing
 this file.
 """
 
-# dogfood loop: accepted on cheesex, deployed to dev (2026-07-18)
-
 import importlib
 import logging
 import pkgutil
