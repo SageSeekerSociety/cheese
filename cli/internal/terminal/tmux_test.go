@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -202,5 +203,91 @@ func TestChunkEnd(t *testing.T) {
 	}
 	if got := chunkEnd([]byte{0x80, 0x80, 0x80, 0x80}, 2); got != 2 {
 		t.Errorf("chunkEnd of invalid UTF-8 = %d, want 2 (no stall)", got)
+	}
+}
+
+// TestEnsureServerStartsItAndIsIdempotent covers what a connector restart does:
+// the first run has to bring a server up, and the second has to find the one it
+// left behind rather than fail or start a second.
+func TestEnsureServerStartsItAndIsIdempotent(t *testing.T) {
+	if _, err := findTmux(); err != nil {
+		t.Skip("no tmux available")
+	}
+	isolate(t)
+	m, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	if m.serverUp() {
+		t.Fatal("a private socket of this test's own already has a server on it")
+	}
+	if _, err := m.EnsureServer(); err != nil {
+		t.Fatalf("EnsureServer: %v", err)
+	}
+	t.Cleanup(m.KillServer)
+	if !m.serverUp() {
+		t.Fatal("EnsureServer returned, but nothing is listening on the socket")
+	}
+	if _, err := m.EnsureServer(); err != nil {
+		t.Fatalf("second EnsureServer: %v", err)
+	}
+	if !m.serverUp() {
+		t.Fatal("the second EnsureServer took the server down")
+	}
+}
+
+// TestEnsureServerLeavesOurCgroupOnLinux is the whole point of #628: the tmux
+// server must NOT be in the cgroup of the process that started it, because that
+// is the connector's unit cgroup and everything addressed at the unit reaches
+// whatever is in it.
+//
+// Reads the two cgroups rather than asking systemd about the scope: what has to
+// hold is "these are different groups", and /proc answers that about the real
+// server after it daemonized, which is the moment the whole design depends on.
+func TestEnsureServerLeavesOurCgroupOnLinux(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("cgroups and systemd scopes are Linux-only")
+	}
+	if _, err := findTmux(); err != nil {
+		t.Skip("no tmux available")
+	}
+	if _, err := exec.LookPath("systemd-run"); err != nil {
+		t.Skip("no systemd-run on this machine")
+	}
+	isolate(t)
+	m, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	degraded, err := m.EnsureServer()
+	if err != nil {
+		t.Fatalf("EnsureServer: %v", err)
+	}
+	t.Cleanup(m.KillServer)
+	if degraded != "" {
+		// No user manager here (a container, a box without logind). The
+		// fallback is the tested-elsewhere old behaviour, and the cgroup claim
+		// below is deliberately not true of it.
+		t.Skipf("scope unavailable on this machine: %s", degraded)
+	}
+	if _, err := m.Spawn("cheesescope", []string{"sleep", "60"}, nil, 80, 24); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	out, err := m.tmux("display-message", "-p", "-t", "cheesescope", "#{pid}").Output()
+	if err != nil {
+		t.Fatalf("read server pid: %v", err)
+	}
+	pid := strings.TrimSpace(string(out))
+	mine, err := os.ReadFile("/proc/self/cgroup")
+	if err != nil {
+		t.Fatalf("read own cgroup: %v", err)
+	}
+	theirs, err := os.ReadFile("/proc/" + pid + "/cgroup")
+	if err != nil {
+		t.Fatalf("read tmux cgroup: %v", err)
+	}
+	if strings.TrimSpace(string(mine)) == strings.TrimSpace(string(theirs)) {
+		t.Errorf("tmux server shares this process's cgroup, so a cgroup-wide "+
+			"operation would take the sessions with it:\n%s", mine)
 	}
 }

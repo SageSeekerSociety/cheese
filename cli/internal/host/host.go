@@ -117,6 +117,20 @@ func New(cfg *config.Config, cfgPath string) (*Host, error) {
 // `cheese link disconnect` / `cheese uninstall`, which tear the server down.
 func (h *Host) Run(ctx context.Context) error {
 	h.ctx = ctx
+	// Start the tmux server here rather than letting the first session fork it
+	// implicitly, so that on Linux it lands in a cgroup of its own instead of
+	// this unit's — see Manager.EnsureServer for why that matters and what
+	// `KillMode=process` does not cover.
+	degraded, err := h.tm.EnsureServer()
+	if err != nil {
+		return err
+	}
+	if degraded != "" {
+		fmt.Fprintf(os.Stderr,
+			"cheese: tmux server is in this unit's cgroup (%s); sessions still "+
+				"survive stop/restart, but a cgroup-wide kill or resource limit reaches them\n",
+			degraded)
+	}
 	h.publishState()
 	defer h.clearState()
 	defer h.releaseAll()
