@@ -1287,3 +1287,207 @@ async def test_a_channel_that_raises_while_staging_does_not_lose_the_message():
     assert prompt is not None
     assert "[fulu] 看看这张截图" in prompt
     assert "没能送到" in prompt
+
+
+# --- 第三道判据：会话还在产出，但已经不再读进任何东西 ------------------------
+#
+# 前两道判据看的都是会话「产出」什么：多久没有 hook、跑了多久。一个停止读取输入
+# 的会话照样产出，所以那两道永远不会为它响。它做不到的是接住下一句话，而那是
+# 唯一一种「有人在等」的失败。
+
+
+async def test_an_injected_message_left_unread_ends_the_session():
+    """注入的消息超过宽限期还没被消费，这个会话就该结束。
+
+    结束不是丢弃：那条消息仍然留在待消费列表里，下一轮会重放它。
+    """
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    queue.put_nowait({"hook_event_name": "UserPromptSubmit", "prompt": "hi"})
+    loop = asyncio.get_running_loop()
+    written_at = loop.time() - 10  # 十秒前写进去的，至今没有回执
+
+    events = await _drain(
+        queue,
+        idle_suspect_s=30,
+        hard_ceiling_s=30,
+        timeout_message="不该是这句",
+        delivery_message="读不进去",
+        unread_since=lambda: written_at,
+        unread_grace_s=0.05,
+    )
+    assert len(events) == 1
+    assert events[0].is_error
+    # 是「读不进去」而不是「超时」：两道判据的结论不能混，房间里显示的原因不同。
+    assert events[0].text == "读不进去"
+
+
+async def test_nothing_waiting_means_this_check_never_fires():
+    """没有人在等的时候，这道判据完全不参与，会话照旧由前两道管。"""
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    events = await _drain(
+        queue,
+        idle_suspect_s=0.05,
+        hard_ceiling_s=0.05,
+        timeout_message="轮次超时",
+        unread_since=lambda: None,
+        unread_grace_s=0.05,
+    )
+    assert len(events) == 1
+    assert events[0].text == "轮次超时"
+
+
+async def test_a_message_still_inside_its_grace_does_not_end_anything():
+    """刚注入的消息不算读不进去。一个跑长命令的会话在工具返回之前本来就读不到
+    输入，宽限期就是留给这种情况的。"""
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    queue.put_nowait({"hook_event_name": "UserPromptSubmit", "prompt": "hi"})
+    loop = asyncio.get_running_loop()
+    just_now = loop.time()
+
+    events = await _drain(
+        queue,
+        idle_suspect_s=0.05,
+        hard_ceiling_s=0.1,
+        timeout_message="轮次超时",
+        delivery_message="读不进去",
+        unread_since=lambda: just_now,
+        unread_grace_s=30,
+    )
+    # 结束它的是硬上限，不是这道判据。
+    assert events[-1].text == "轮次超时"
+
+
+# --- 第二道关卡不看工具在飞的时候 ---------------------------------------------
+#
+# 输入是在工具边界被读走的。一条消息在一个 40 分钟的命令跑着的时候注入，
+# 它读不到不是聋了，是还没到能读的那一刻。
+#
+# 注入都在会话已经进入工具之后才发生（`injected["at"]` 由一个任务稍后填），
+# 因为那才是这条判据真正面对的顺序：先有工具在飞，然后有人说话。
+
+
+def _stop() -> dict:
+    return {
+        "hook_event_name": "Stop",
+        "last_assistant_message": "done",
+        "session_id": "s1",
+    }
+
+
+async def test_an_unread_message_during_a_tool_call_is_not_a_verdict():
+    """PreToolUse 之后没有 PostToolUse，工具在飞：注入多久没被读都不算。"""
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    queue.put_nowait({"hook_event_name": "UserPromptSubmit", "prompt": "hi"})
+    queue.put_nowait(
+        {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {}}
+    )
+    loop = asyncio.get_running_loop()
+    injected: dict[str, float | None] = {"at": None}
+
+    async def confirm_alive() -> bool:
+        return True
+
+    async def inject_then_stop() -> None:
+        await asyncio.sleep(0.05)
+        injected["at"] = loop.time() - 100  # already far past any grace
+        await asyncio.sleep(0.2)
+        queue.put_nowait(_stop())
+
+    task = asyncio.create_task(inject_then_stop())
+    try:
+        events = await _drain(
+            queue,
+            idle_suspect_s=0.05,
+            hard_ceiling_s=30,
+            timeout_message="轮次超时",
+            delivery_message="读不进去",
+            unread_since=lambda: injected["at"],
+            unread_grace_s=0.05,
+            confirm_alive=confirm_alive,
+            confirm_poll_s=0.02,
+        )
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    assert events[-1].is_error is False
+    assert events[-1].text == "done"
+
+
+async def test_the_unread_clock_starts_over_when_the_tool_returns():
+    """工具返回之后，等待从返回那一刻起算，而不是从注入起算：会话在这个边界
+    上才第一次有机会读到它，宽限期要给在这之后。"""
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    queue.put_nowait({"hook_event_name": "UserPromptSubmit", "prompt": "hi"})
+    queue.put_nowait(
+        {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {}}
+    )
+    loop = asyncio.get_running_loop()
+    injected: dict[str, float | None] = {"at": None}
+
+    async def inject_return_stop() -> None:
+        await asyncio.sleep(0.05)
+        injected["at"] = loop.time() - 100
+        await asyncio.sleep(0.05)
+        queue.put_nowait(
+            {"hook_event_name": "PostToolUse", "tool_name": "Bash", "tool_response": {}}
+        )
+        # Inside the grace measured from the return; the injection itself is
+        # ancient. If the clock ran from injection this would have fired.
+        await asyncio.sleep(0.1)
+        queue.put_nowait(_stop())
+
+    task = asyncio.create_task(inject_return_stop())
+    try:
+        events = await _drain(
+            queue,
+            idle_suspect_s=30,
+            hard_ceiling_s=30,
+            timeout_message="轮次超时",
+            delivery_message="读不进去",
+            unread_since=lambda: injected["at"],
+            unread_grace_s=1.0,
+        )
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    assert events[-1].is_error is False
+    assert events[-1].text == "done"
+
+
+async def test_an_unread_message_after_the_tool_returned_still_counts():
+    """工具返回、宽限期从返回算起过完、还是没读：这才是聋了。"""
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    queue.put_nowait({"hook_event_name": "UserPromptSubmit", "prompt": "hi"})
+    queue.put_nowait(
+        {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {}}
+    )
+    loop = asyncio.get_running_loop()
+    injected: dict[str, float | None] = {"at": None}
+
+    async def inject_then_return() -> None:
+        await asyncio.sleep(0.05)
+        injected["at"] = loop.time() - 100
+        await asyncio.sleep(0.05)
+        queue.put_nowait(
+            {"hook_event_name": "PostToolUse", "tool_name": "Bash", "tool_response": {}}
+        )
+
+    task = asyncio.create_task(inject_then_return())
+    try:
+        events = await _drain(
+            queue,
+            idle_suspect_s=30,
+            hard_ceiling_s=30,
+            timeout_message="轮次超时",
+            delivery_message="读不进去",
+            unread_since=lambda: injected["at"],
+            unread_grace_s=0.1,
+        )
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    assert events[-1].is_error is True
+    assert events[-1].text == "读不进去"

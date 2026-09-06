@@ -40,6 +40,7 @@ from app.domain.agent.harness import (
     Opening,
     ReceiptConsumer,
     SessionRef,
+    UnreadProbe,
 )
 from app.domain.agent.harness.claude_code import event_spool
 from app.domain.agent.harness.claude_code.hook_events import (
@@ -47,6 +48,7 @@ from app.domain.agent.harness.claude_code.hook_events import (
     HookRouter,
     HookSink,
     MessageAssembler,
+    _hook_event_name,
     hook_router,
     translate_hook,
 )
@@ -218,10 +220,30 @@ class ActivityTracker:
 
     last_at: float
     suspect_since: float | None = None
+    #: The one state a hook stream states outright: a tool is running. Set on
+    #: `PreToolUse`; the first hook of any other kind afterwards means the tool
+    #: returned (the model cannot emit anything else while a tool is in flight).
+    #: `PostToolUse` is the usual one, but reading "anything else" keeps this
+    #: right when a tool fails, since `PostToolUseFailure` is not subscribed.
+    tool_started_at: float | None = None
+    tool_returned_at: float | None = None
 
     def touch(self, at: float) -> None:
         self.last_at = at
         self.suspect_since = None
+
+    def saw_hook(self, name: str, at: float) -> None:
+        """Advance the clocks for one hook, including the in-tool state."""
+        if name == "PreToolUse":
+            self.tool_started_at = at
+        elif self.in_tool:
+            self.tool_returned_at = at
+        self.touch(at)
+
+    @property
+    def in_tool(self) -> bool:
+        started, returned = self.tool_started_at, self.tool_returned_at
+        return started is not None and (returned is None or returned < started)
 
 
 @dataclass
@@ -325,6 +347,8 @@ async def monitor_session_activity(
     queue: "asyncio.Queue[dict] | asyncio.Queue[HookDelivery]",
     idle_suspect_s: float,
     hard_ceiling_s: float,
+    unread_since: Callable[[], float | None] | None = None,
+    unread_grace_s: float = 0.0,
     resume_session_id: str | None,
     timeout_message: str,
     delivery_timeout_s: float = DELIVERY_TIMEOUT_S,
@@ -353,6 +377,16 @@ async def monitor_session_activity(
       pathologically active session (a tool retrying forever, a real infinite
       loop that keeps printing) still can't run forever.
 
+    A third check, on a different axis from those two. Both of the above ask
+    whether the session is producing anything. ``unread_since`` asks whether it
+    is still CONSUMING: it reports when the oldest message we injected and never
+    saw consumed was written. A session that has stopped reading its input keeps
+    producing output, so idle-suspect never fires and ``confirm_alive`` keeps
+    saying yes, while everything typed at it queues up behind a prompt box that
+    will not take it. That failure is narrower than the other two, because it
+    only exists while something is actually waiting, and it is the one with a
+    person on the other end. ``unread_grace_s`` of 0 disables it.
+
     With no ``tracker``/``confirm_alive`` given (the device backend today) and
     ``idle_suspect_s == hard_ceiling_s``, this reduces to exactly the old
     single-deadline behaviour.
@@ -369,6 +403,49 @@ async def monitor_session_activity(
     # receipt, and any other activity proves delivery just as well.
     delivered = False
     delivery_deadline = start + delivery_timeout_s
+
+    def unread_verdict(t: float) -> AgentResult | None:
+        """Has an injected message gone unread past its grace, at a moment the
+        session could have read it?
+
+        Asked in two places and deliberately not at the top of the loop: after a
+        hook has been consumed (so `in_tool` reflects it) and after a wait has
+        run out (so the queue is known to be empty). At the loop top a queued
+        `PreToolUse` has not been read yet, and the verdict would fire on a
+        session that is, one line later, discovered to be inside a tool.
+
+        Three gates on it. `delivered`: until the session has taken its first
+        prompt there is no unread injection, only an undelivered prompt, which
+        has its own verdict. `in_tool`: input is read at tool boundaries, so
+        while a tool is in flight the clock does not run at all. And the clock
+        starts from the tool's RETURN when there was one, not from the
+        injection: a message that sat behind a 40-minute command gets its grace
+        after the first boundary at which the session could see it.
+        """
+        if not (delivered and unread_grace_s > 0 and unread_since is not None):
+            return None
+        if tracker.in_tool:
+            return None
+        waiting_since = unread_since()
+        if waiting_since is None:
+            return None
+        if tracker.tool_returned_at is not None:
+            waiting_since = max(waiting_since, tracker.tool_returned_at)
+        if t - waiting_since < unread_grace_s:
+            return None
+        logger.warning(
+            "an injected message went unread for %.0fs — the session is "
+            "producing but not consuming; ending it (%s)",
+            t - waiting_since,
+            context,
+        )
+        return AgentResult(
+            text=delivery_message,
+            session_id=resume_session_id,
+            is_error=True,
+            failure_code=PROMPT_UNDELIVERED_CODE,
+        )
+
     while True:
         t = now()
         if t >= hard_deadline:
@@ -384,6 +461,8 @@ async def monitor_session_activity(
                 failure_code=TURN_TIMEOUT_CODE,
             )
             return
+        # Asked before the waits below, because this is the one verdict that can
+        # be true while every other signal looks healthy.
         if delivered:
             idle_for = t - tracker.last_at
             if idle_for >= idle_suspect_s:
@@ -411,6 +490,10 @@ async def monitor_session_activity(
                     )
                     return
                 continue
+            verdict = unread_verdict(now())
+            if verdict is not None:
+                yield verdict
+                return
             idle_for = now() - tracker.last_at
             if idle_for >= idle_suspect_s:
                 if tracker.suspect_since is None:
@@ -435,17 +518,20 @@ async def monitor_session_activity(
         if on_hook is not None:
             on_hook(hook)
         delivered = True
-        tracker.touch(now())
+        tracker.saw_hook(_hook_event_name(hook), now())
         event = (
             delivery.event
             if isinstance(delivery, HookDelivery)
             else translate_hook(delivery)
         )
-        if event is None:
-            continue
-        yield event
-        if isinstance(event, AgentResult):
-            return  # Stop hook → session idle
+        if event is not None:
+            yield event
+            if isinstance(event, AgentResult):
+                return  # Stop hook → session idle
+        verdict = unread_verdict(now())
+        if verdict is not None:
+            yield verdict
+            return
 
 
 def _is_mid_response(events: list[AgentEvent]) -> bool:
@@ -828,6 +914,7 @@ class ClaudeCodeRuntime:
         idle_suspect_s: float = 900.0,
         hard_ceiling_s: float = 900.0,
         session_ceiling_s: float | None = None,
+        unread_grace_s: float = 0.0,
         delivery_timeout_s: float = DELIVERY_TIMEOUT_S,
     ) -> None:
         self._channel = channel
@@ -855,6 +942,8 @@ class ClaudeCodeRuntime:
         self._session_ceiling_s = (
             hard_ceiling_s if session_ceiling_s is None else session_ceiling_s
         )
+        self._unread_grace_s = unread_grace_s
+        self._unread_probe: UnreadProbe | None = None
         self._delivery_timeout_s = delivery_timeout_s
         # Screen-lifetime state. ``_live`` is the transport handle; subscriptions
         # own the stable router sink, consumer task, and current attribution.
@@ -955,6 +1044,22 @@ class ClaudeCodeRuntime:
         screen emits is reported as ``(topic_id, prompt_text)`` — ChatService
         matches it against messages it injected and stamps them consumed."""
         self._receipt_consumer = consumer
+
+    def bind_unread_probe(self, probe: UnreadProbe) -> None:
+        """Bind the other end of the same books: what was injected and never
+        came back as a receipt. The monitor asks per topic while a session
+        runs."""
+        self._unread_probe = probe
+
+    def _unread_since_for(
+        self, topic_id: uuid.UUID
+    ) -> Callable[[], float | None] | None:
+        """Bind the probe to one topic, so the monitor can ask without knowing
+        which topic it is watching."""
+        probe = self._unread_probe
+        if probe is None:
+            return None
+        return lambda: probe(topic_id)
 
     def bind_activity(self, consumer: ActivityConsumer) -> None:
         """Bind the room's session-activity lifecycle callback."""
@@ -1448,6 +1553,8 @@ class ClaudeCodeRuntime:
                 queue=activity.queue,
                 idle_suspect_s=self._idle_suspect_s,
                 hard_ceiling_s=self._session_ceiling_s,
+                unread_since=self._unread_since_for(subscription.topic_id),
+                unread_grace_s=self._unread_grace_s,
                 resume_session_id=None,
                 timeout_message=self._channel.timeout_message,
                 delivery_timeout_s=(
@@ -1698,6 +1805,8 @@ class ClaudeCodeRuntime:
                     queue=attribution.queue,
                     idle_suspect_s=self._idle_suspect_s,
                     hard_ceiling_s=self._session_ceiling_s,
+                    unread_since=self._unread_since_for(topic_id),
+                    unread_grace_s=self._unread_grace_s,
                     resume_session_id=resume_session_id,
                     timeout_message=self._channel.timeout_message,
                     tracker=tracker,
