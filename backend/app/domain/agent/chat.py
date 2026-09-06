@@ -1093,20 +1093,23 @@ class _ThreadHere:
     title: str
 
 
-def thread_message_prompt(*, thread: _ThreadHere, author: str, message: str) -> str:
-    """The ROOM's wake-up instruction when a person writes on one of its threads.
+def thread_relay_prompt(
+    *, task_id: uuid.UUID, task_title: str, author: str, message: str
+) -> str:
+    """The ROOM's wake-up instruction when a person says something on one of its
+    threads — a chat message, a comment on its living doc.
 
     Same reason as 补证据 and 讨论升级: the person is looking at the thread, but
     the worker doing it lives in the room's session, so the room is the only
-    thing that can hear them. The message itself stays where it was typed — this
-    only says who has to act on it.
+    thing that can hear them. What was said stays where it was said — this only
+    says who has to act on it.
     """
     return (
-        f"有人在活「{thread.title}」（task id `{thread.task_id}`）上说话了：\n\n"
-        f"---\n[{author}]: {message}\n---\n\n"
+        f"有人在活「{task_title}」（task id `{task_id}`）上说话了：\n\n"
+        f"---\n[{author}] {message}\n---\n\n"
         "**转达给做这条活的分身**：它还在跑就直接给它发消息；已经收工了，你就自己"
         "看着办——能替它答的当场答，要接着干的照原来的简报重起一个分身并 "
-        f"`cheese bind {thread.task_id} <新的 agent_id>`。"
+        f"`cheese bind {task_id} <新的 agent_id>`。"
         "回话说在这条活上（`cheese tell` 到它），别只在房间里说，"
         "问话的人看的是那边。"
     )

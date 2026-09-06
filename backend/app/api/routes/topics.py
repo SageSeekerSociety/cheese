@@ -24,7 +24,11 @@ from app.core.db import get_db
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import awaited_tasks
-from app.domain.agent.chat import ChatService, thread_upgraded_prompt
+from app.domain.agent.chat import (
+    ChatService,
+    thread_relay_prompt,
+    thread_upgraded_prompt,
+)
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.market import (
     COMPUTE_CLOUD,
@@ -1007,13 +1011,24 @@ async def add_comment(
 
     if not actor.is_agent:
         where = f"「{quote[:80]}」" if quote else "整篇"
+        said = f"在实况文档 {where} 处评论：{content}"
+        # 评论落在哪，处理它的就是哪个会话 —— 除非那是一条活：它没有自己的会话，
+        # 朝它的 id 开一轮就是为它起一整个容器。那时叫醒的是房间，由房间转达。
+        thread = place.task
         runner.submit(
             chat,
-            topic_id,
+            place.room_id,
             author="system",
             content=(
-                f"{author} 在实况文档 {where} 处评论：{content}\n"
+                f"{author} {said}\n"
                 "请处理这条评论：需要改文档就直接改；有分歧就在对话里简短回应。"
+                if thread is None
+                else thread_relay_prompt(
+                    task_id=thread.id,
+                    task_title=thread.title,
+                    author=author,
+                    message=said,
+                )
             ),
             summon=True,
             nudge_event=f"{author} 在文档上留了评论，芝士来处理",

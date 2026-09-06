@@ -381,7 +381,12 @@ def test_sync_conflict_dispatches_cheese_at_the_materialized_merge(client, tmp_p
     # a race — it passed locally and failed in CI on the very first run.
     from app.domain.workspace.upstream_conflict import _prompt
 
-    assert "验收卡" in _prompt(["hello.txt"])
+    prompt = _prompt(["hello.txt"], _uuid.UUID(tid))
+    assert "验收卡" in prompt
+    # 提示词是发给**房间**的：解冲突是一条活，而一条活是房间会话里的一个分身，
+    # 它没有自己的会话可以叫醒。所以这段话得说清是哪条活、以及起完分身要 bind。
+    assert tid in prompt, "不给 task id，房间没法把分身绑到这条活上"
+    assert "cheese bind" in prompt
 
 
 def test_second_sync_reuses_the_open_resolution_task(client, tmp_path):

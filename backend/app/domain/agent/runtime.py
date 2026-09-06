@@ -611,13 +611,16 @@ class AgentWorkRunner:
             # the room's session, and the room is the only thing that can reach
             # it. Waking the thread's own id instead would raise a container for
             # the shape threads stopped having.
-            from app.domain.agent.chat import thread_message_prompt
+            from app.domain.agent.chat import thread_relay_prompt
 
             self.submit_kickoff(
                 chat_service,
                 thread.room_id,
-                prompt=thread_message_prompt(
-                    thread=thread, author=author, message=content
+                prompt=thread_relay_prompt(
+                    task_id=thread.task_id,
+                    task_title=thread.title,
+                    author=author,
+                    message=f"说：{content}",
                 ),
             )
             # No turn started HERE, so this channel is not about to produce one:
