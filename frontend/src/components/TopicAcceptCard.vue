@@ -201,7 +201,7 @@ async function onAcceptCard() {
   try {
     const updated = await acceptCard(card.id, AUTHOR)
     if (updated.status === 'conflict') {
-      store.error = '采纳时出现合并冲突，本次未归档。芝士正在解决，完成后可重试采纳。'
+      store.error = '采纳时出现合并冲突，本次未合并。芝士正在解决，完成后可重试采纳。'
     }
     await Promise.all([loadAcceptCard(), store.refreshTopicRow(props.topicId)])
   } catch (e) {
@@ -495,7 +495,7 @@ defineExpose({ reload: loadAcceptCard })
             prepend-icon="mdi-check"
             @click="onAcceptCard"
           >
-            {{ pendingCard.status === 'conflict' ? '重试采纳' : '采纳并归档' }}
+            {{ pendingCard.status === 'conflict' ? '重试采纳' : '采纳' }}
           </v-btn>
           <v-btn
             variant="text"
@@ -648,12 +648,12 @@ defineExpose({ reload: loadAcceptCard })
       </div>
     </v-card>
 
-    <!-- Archived (accepted) topic: 采纳可撤销 (spec §6.3). -->
+    <!-- Accepted topic: 采纳可撤销 (spec §6.3). -->
     <v-card v-else-if="acceptedCard" variant="outlined" class="merge-box mt-2">
       <div class="pa-3">
         <div class="d-flex align-center ga-2 mb-1">
           <v-icon color="success" size="19">mdi-check-circle-outline</v-icon>
-          <span class="t-title">已采纳并归档</span>
+          <span class="t-title">已采纳</span>
         </div>
         <div class="text-body-2 c-muted mb-3">
           由 <strong>@{{ acceptedCard.decided_by }}</strong> 采纳
