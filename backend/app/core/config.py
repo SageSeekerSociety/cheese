@@ -469,6 +469,32 @@ class Settings(BaseSettings):
     # so that is the normal case.
     sandbox_reap_interval_seconds: int = 3600
     sandbox_idle_hours: float = 8
+    # Archive takes nothing off disk (topic/retire.py): a finished place's git
+    # worktree on this box and its isolated home on the device that ran it stay
+    # for `topic_home_retention_days`, and this sweep is what removes them after
+    # that — and at once for places no longer in the database (dev box,
+    # 2026-09-03: 141 GB of worktrees and 162 GB of homes, most of them for
+    # places long gone). 0 disables it.
+    topic_storage_sweep_interval_s: int = 3600
+    # How long after archive the sweep leaves a place's worktree and home
+    # alone. Archive itself removes neither: it is reversible, and this is the
+    # window in which somebody un-archives to pick the work back up with its
+    # session intact rather than from an empty checkout of the branch. A grace
+    # period, not a safety net: a home is only ever deleted after its raw
+    # Claude session files have been stored under `transcripts_dir`, so what
+    # expires here is the convenience of resuming in place.
+    topic_home_retention_days: float = 30
+    # Where the platform keeps the raw Claude session files of every place that
+    # ran on a device — `.claude/projects/**/*.jsonl` and `.claude/todos` from
+    # the device home, as `<project>/<place>/<utc timestamp>.tar.gz`, one file
+    # per upload and never overwritten. The room's conversation is in the
+    # `blocks` table; these are the agent's own transcripts, and this is their
+    # only copy once the home is gone. On a deployment it must be a persistent
+    # mount (compose: /data/transcripts), like the memory tree.
+    transcripts_dir: str = "./.transcripts"
+    # The most one upload may carry. A device that sends more gets 413 and
+    # keeps its home; the sweep says so every tick until somebody looks.
+    transcripts_max_bytes: int = 512 * 1024 * 1024
     # Seconds between orphan sweeps (AgentWorkRunner.sweep_orphans). On by default,
     # unlike the heartbeat above: it consumes no model calls unless it actually
     # finds a killed turn, and its whole purpose is catching the case where
@@ -492,6 +518,30 @@ class Settings(BaseSettings):
     # L0/L1/L2 levels, semantic search, LLM extraction). Fully local storage;
     # needs an OpenAI-compatible chat + embedding endpoint for extraction/vectors.
     memory_backend: str = "db"
+
+    # --- 记忆整理 dreaming (issue #187 step 4, domain/memory/dream.py) ---
+    # Before an idle sandbox is destroyed, 芝士 gets one turn to reread the
+    # topic and organize what it learned into the project's memory pools.
+    #
+    # OFF by default, and the default is the honest one. This spends model
+    # budget on a background trigger, which is the exact shape of the thing this
+    # repo parked once already (SchedulerService.tick): a clock cannot tell
+    # "there is something worth saying" from "say something". What makes this
+    # different is that the trigger is a real event — the screen is about to be
+    # closed, so this is the last moment anything CAN be checked against the
+    # workspace — not that the cost went away. Turning it on costs roughly one
+    # agent turn per organized topic, and no more than
+    # `dream_max_per_sweep` of them per sweep.
+    dream_enabled: bool = False
+    # How many topics one sweep may organize. A sweep that finds thirty idle
+    # screens must not start thirty turns at once; the rest are picked up an
+    # hour later, and nothing is lost because those screens were not closed
+    # either.
+    dream_max_per_sweep: int = 1
+    # Below this many blocks a topic is not worth a turn — a three-message
+    # topic has nothing in it that reading the transcript later would not give.
+    dream_min_blocks: int = 20
+
     # Local storage root for the embedded OpenViking instance (AGFS + vectors).
     openviking_data_dir: str = "./.viking"
     # OpenAI-compatible endpoints OpenViking uses internally. These are separate

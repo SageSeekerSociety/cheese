@@ -933,5 +933,8 @@ export interface ProjectAgent {
   is_default: boolean
   // False = it resolves and owns a memory pool, but there is no row to edit.
   configured: boolean
+  // False = 已停用. Still listed and still working in the topics that already
+  // have it — just not offered when picking an agent for new work.
+  is_active: boolean
   created_at?: string | null
 }

@@ -174,6 +174,9 @@ class WorkTreeService:
     async def history(self, room_id: uuid.UUID) -> list[WorkTree]:
         return await self._repo.list_for_room(room_id)
 
+    async def trees_in_project(self, project_id: uuid.UUID) -> list[WorkTree]:
+        return await self._repo.list_for_project(project_id)
+
     async def record_check(self, tree: WorkTree, *, ok: bool, detail: str) -> WorkTree:
         """Remember what the quick check said about this tree's content.
 
@@ -195,6 +198,11 @@ class TaskService:
 
     async def get(self, task_id: uuid.UUID) -> Task | None:
         return await self._repo.get(task_id)
+
+    async def mark_transcripts_archived(self, task_id: uuid.UUID, at: datetime) -> bool:
+        """Stamp the thread with when its device home's transcripts reached
+        the platform (topic/retire.py). False when no thread has this id."""
+        return await self._repo.mark_transcripts_archived(task_id, at)
 
     async def open_thread(
         self,

@@ -804,8 +804,8 @@ def _turn_meta_lines(
     ]
     if is_resume:
         lines.append(
-            "- 本轮是自动续跑：上一轮被中断后接着跑。"
-            "先确认上一轮做到哪了再继续，别重做。"
+            "- 本轮接着上一轮跑：上一轮中途断了，这是同一件事的继续。"
+            "先确认上一轮做到哪了再继续（翻消息记录、git status），别凭印象重做。"
         )
     # 机器有多大: the agent cannot read its own cgroup limit, and the failure it
     # produces without knowing — a build the kernel OOM-kills — looks like a
@@ -1440,7 +1440,7 @@ class ChatService:
         if is_resume or nudge_event:
             turn_id = turn_id or uuid.uuid4()
             continuation_id = continuation_id or turn_id
-            # System-initiated turn (自动续跑 / 评论叫醒 / 冲突调度…): no human
+            # System-initiated turn (重发 / 评论叫醒 / 冲突调度…): no human
             # spoke — the opener is a SYSTEM event in the 现场, and the
             # instruction goes straight to the agent as the prompt.
             #
@@ -1450,8 +1450,7 @@ class ChatService:
             # glanceable while nothing is lost. `content` is untouched: it is
             # still the whole instruction 芝士 gets as its prompt.
             if not nudge_event:
-                why = resume_reason or "从上一轮的断点继续"
-                nudge_event = f"自动续跑：{why}"
+                nudge_event = resume_reason or "平台重发了上一轮的消息"
             payload = await self.post_system_event(
                 topic_id, nudge_event, turn_id, meta=nudge_meta
             )
@@ -2560,7 +2559,7 @@ class ChatService:
         matching an existing block means this message already landed.
 
         Returns None when ``continuation_id`` says this exact message already
-        landed in an earlier attempt at the same work (④ 自动续跑): the resumed
+        landed in an earlier attempt at the same work (④ 重发): the re-sent
         turn re-narrating "我先看一下 X" must not post a second copy of it. The
         caller treats None as "nothing to broadcast"."""
         meta: dict | None = None

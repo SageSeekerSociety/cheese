@@ -51,6 +51,9 @@ services:
     network_mode: host
     volumes:
       - ${API_FRONT_CONF:-./nginx.conf}:/etc/nginx/nginx.conf:ro
+      # The backend switch (see nginx.conf); up.sh seeds it, deploy-docker.sh
+      # flips it. A directory so a renamed-in file is what nginx reads next.
+      - ${ACTIVE_BACKEND_DIR:-./active}:/etc/nginx/active:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8081/healthz >/dev/null"]
       interval: 30s
