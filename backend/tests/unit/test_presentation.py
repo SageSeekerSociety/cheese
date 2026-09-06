@@ -110,6 +110,26 @@ TASK_CASES = [
         Column.building,
         "空闲",
     ),
+    # 同样安静得理直气壮的另一种：卡已经递出去了，在等人。分身干完活不会把
+    # `subagent_id` 抹掉，所以「失联」要是抢在卡前面说，每一条等验收的活都会
+    # 被误报成失联。
+    (
+        "分身递了卡，安静地等人验收",
+        task(has_worker=True, last_signal_at=LONG_AGO, card=card(AcceptStatus.pending)),
+        Column.needs_you,
+        "等待验收",
+    ),
+    (
+        "分身递了卡，检查还在跑",
+        task(
+            has_worker=True,
+            last_signal_at=LONG_AGO,
+            room_screen_live=False,
+            card=card(AcceptStatus.pending_gate),
+        ),
+        Column.delivering,
+        "检查运行中",
+    ),
     (
         "闸门在跑",
         task(card=card(AcceptStatus.pending_gate)),
@@ -341,6 +361,26 @@ def test_a_finished_thread_still_reads_as_finished_with_a_worker_on_it():
     assert task_presentation(closed, now=NOW).display_status == "已收工"
     delivered = task(has_worker=True, accepted_at=JUST_NOW, last_signal_at=LONG_AGO)
     assert task_presentation(delivered, now=NOW).display_status == "已采纳"
+
+
+def test_a_thread_waiting_on_a_person_is_not_out_of_contact():
+    """分身干完活不会把自己从这条活上摘掉，所以「等人」的每一格都要能压过失联 ——
+    否则整个 delivering / needs_you 两列会被一句「失联」抹平。"""
+    for status in (
+        AcceptStatus.pending,
+        AcceptStatus.pending_gate,
+        AcceptStatus.pr_open,
+        AcceptStatus.conflict,
+    ):
+        quiet = task(
+            has_worker=True,
+            last_signal_at=LONG_AGO,
+            room_screen_live=False,
+            card=card(status),
+        )
+        shown = task_presentation(quiet, now=NOW)
+        assert shown.display_status != "失联", f"{status} 的卡被失联抢答了"
+        assert shown.column in (Column.delivering, Column.needs_you)
 
 
 def test_it_reads_nothing_but_the_facts_it_was_given():

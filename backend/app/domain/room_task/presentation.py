@@ -325,18 +325,18 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
     if facts.accepted_at is not None:
         return _show(Done.accepted)
 
-    # 分身做的活，「还在不在」有两个答案，先问屏幕：那个分身住在房间的会话里，
-    # 房间的屏幕没了它一定也没了 —— 它自己不会来说一声，而没有这一问，一条活会
-    # 永远转圈。屏幕还在，就退回问它自己最近有没有动静。
+    # 有分身在做这条活。它住在**房间的**会话里，所以「它还在不在」有两个答案，
+    # 先问屏幕：房间的屏幕没了，它一定也没了 —— 而它自己不会来说一声。
     #
-    # 结论已经回流的不算失联：那是干完了在等房间结算，不是断了。
-    if (
+    # 结论已经回流的不算在内：那是干完了在等房间结算，不是还在做。
+    worker_on_it = (
         facts.has_worker
         and facts.status == TaskStatus.open
         and not facts.conclusion_pending
-    ):
-        if not facts.room_screen_live or _lost_signal(facts.last_signal_at, now=now):
-            return _show(Building.lost)
+    )
+    alive = facts.room_screen_live and not _lost_signal(facts.last_signal_at, now=now)
+    # 规矩 2：在跑压过纸面。
+    if worker_on_it and alive:
         return _show(Building.running)
 
     if facts.residency == Residency.running:
@@ -348,6 +348,13 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
         shown = _card_presentation(facts.card)
         if shown is not None:
             return shown
+
+    # 说自己有人在做，却没有任何东西确认过 —— **在卡说完之后才轮到这一句**。一条
+    # 递了卡、安静地等人验收的活，安静得理直气壮：它不是断了联系，它在等你。分身
+    # 干完活并不会把 `subagent_id` 抹掉，所以抢在卡前面说，等于把每一条等验收的活
+    # 都误报成失联。
+    if worker_on_it:
+        return _show(Building.lost)
 
     if facts.queued_at is not None:
         return _show(Building.queued)
