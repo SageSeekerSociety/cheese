@@ -113,6 +113,24 @@ async def _on_main_line(factory, room_id):
         return await BlockRepository(session).list_for_topic(room_id)
 
 
+async def _settle(factory, room_id, *eids: str) -> None:
+    """Wait until every one of `eids` has landed — or give up after a second.
+
+    A fixed sleep is a bet on how loaded the machine is: it holds when this file
+    runs alone and starts losing when the whole suite runs in one process, which
+    is the run that matters. Waiting for the WRITE instead is the same wait when
+    things are fast and a correct one when they are not. An event the platform
+    deliberately drops never arrives, so the timeout is a real outcome here, not
+    only a failure — the assertions decide which.
+    """
+    for _ in range(100):
+        rows = await _blocks(factory, room_id)
+        landed = {(r.meta or {}).get("eid") for r in rows}
+        if all(eid in landed for eid in eids):
+            return
+        await asyncio.sleep(0.01)
+
+
 async def test_a_bound_workers_tool_call_lands_in_its_thread(client, tmp_path) -> None:
     """归流: the room ran the session, but this piece of work owns the event."""
     factory = client.test_factory
@@ -132,7 +150,7 @@ async def test_a_bound_workers_tool_call_lands_in_its_thread(client, tmp_path) -
             "_eid": "bound-tool-1",
         },
     )
-    await asyncio.sleep(0.2)
+    await _settle(factory, room_id, "bound-tool-1")
 
     rows = await _blocks(factory, room_id)
     tool = next(r for r in rows if (r.meta or {}).get("eid") == "bound-tool-1")
@@ -165,7 +183,7 @@ async def test_two_workers_in_one_room_do_not_mix(client, tmp_path) -> None:
                 "_eid": eid,
             },
         )
-    await asyncio.sleep(0.2)
+    await _settle(factory, room_id, "w1-tool", "w2-tool")
 
     rows = await _blocks(factory, room_id)
     landed = {
@@ -197,7 +215,7 @@ async def test_a_workers_closing_message_is_kept_in_full(client, tmp_path) -> No
             "_eid": "bound-stop-1",
         },
     )
-    await asyncio.sleep(0.2)
+    await _settle(factory, room_id, "bound-stop-1")
 
     rows = await _blocks(factory, room_id)
     stop = next(r for r in rows if (r.meta or {}).get("eid") == "bound-stop-1")
@@ -233,7 +251,7 @@ async def test_a_stop_does_not_conclude_the_work(client, tmp_path) -> None:
                 "_eid": eid,
             },
         )
-    await asyncio.sleep(0.2)
+    await _settle(factory, room_id, "w1-stop", "w2-stop")
 
     # 两次都记下来了——第二次不是重复，是它续跑之后又交了一次。
     rows = await _blocks(factory, room_id)
@@ -272,7 +290,7 @@ async def test_an_unbound_workers_tool_call_still_reaches_the_room(
             "_eid": "unbound-tool-1",
         },
     )
-    await asyncio.sleep(0.2)
+    await _settle(factory, room_id, "unbound-tool-1")
 
     rows = await _blocks(factory, room_id)
     tool = next(r for r in rows if (r.meta or {}).get("eid") == "unbound-tool-1")
@@ -306,7 +324,7 @@ async def test_an_unknown_workers_stop_is_not_written_anywhere(
             "_eid": "stranger-stop-1",
         },
     )
-    await asyncio.sleep(0.2)
+    await _settle(factory, room_id, "stranger-stop-1")
 
     rows = await _blocks(factory, room_id)
     assert [r for r in rows if (r.meta or {}).get("eid") == "stranger-stop-1"] == []
@@ -340,7 +358,7 @@ async def test_a_finished_threads_id_stops_catching_events(client, tmp_path) -> 
             "_eid": "after-close-1",
         },
     )
-    await asyncio.sleep(0.2)
+    await _settle(factory, room_id, "after-close-1")
 
     rows = await _blocks(factory, room_id)
     tool = next(r for r in rows if (r.meta or {}).get("eid") == "after-close-1")
@@ -414,13 +432,23 @@ async def test_a_workers_checklist_is_its_own(client, tmp_path) -> None:
             "_eid": "w1-todo-2",
         },
     )
-    await asyncio.sleep(0.3)
+    # 清单不落 block，所以等的是那两行清单本身写到位 —— 而且等的是**最后一笔**：
+    # 「有了一条」会在 TaskCreate 就成立，那时 TaskUpdate 还没到，读到的是一个写了
+    # 一半的答案（和 test_topic_progress 里记下的是同一个坑）。
+    room_list = thread_list = None
+    for _ in range(200):
+        async with factory() as session:
+            repo = TopicProgressRepository(session)
+            room_list = await repo.get(room_id)
+            thread_list = await repo.get(room_id, task_id=task_id)
+        done = thread_list is not None and [
+            (i["subject"], i["status"]) for i in thread_list.items
+        ] == [("分身的第一件事", "completed")]
+        if room_list is not None and done:
+            break
+        await asyncio.sleep(0.01)
 
-    async with factory() as session:
-        repo = TopicProgressRepository(session)
-        room_list = await repo.get(room_id)
-        thread_list = await repo.get(room_id, task_id=task_id)
-
+    assert room_list is not None, "房间自己那条都没记下来"
     assert [i["subject"] for i in room_list.items] == ["房间的第一件事"]
     assert room_list.items[0]["status"] == "pending", "分身勾掉了房间自己的第一条"
     assert thread_list is not None, "分身的清单没被记下来"
