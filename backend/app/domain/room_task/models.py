@@ -331,6 +331,11 @@ class Task(UuidPk, Timestamps, Base):
     closed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # A thread has its own device home, so the same stamp as on a topic: when
+    # its raw Claude session files last reached the platform.
+    transcripts_archived_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     # If this work was dispatched from a message in the room, the block it came
     # from — so that position in the timeline stays a live link to the thread.
     # use_alter: tasks↔blocks is a circular FK; add this one via ALTER.

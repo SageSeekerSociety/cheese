@@ -33,6 +33,7 @@ function agent(overrides: Partial<ProjectAgent> = {}): ProjectAgent {
     display_name: '芝士',
     is_default: true,
     configured: true,
+    is_active: true,
     ...overrides,
   }
 }

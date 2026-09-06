@@ -180,9 +180,40 @@ class AgentInstanceService:
         instance.type_name = type_name or None
         return instance
 
+    async def rename(self, instance: AgentInstance, display_name: str) -> AgentInstance:
+        """What this agent is called. Its ``handle`` is deliberately untouched:
+        that keys the memory pool, so a rename must not move what it knows."""
+        name = display_name.strip()
+        if not name:
+            raise ValidationError("名字不能为空")
+        if len(name) > 64:
+            raise ValidationError("名字最多 64 个字")
+        instance.display_name = name
+        return instance
+
+    async def deactivate(self, project: Project, instance: AgentInstance) -> None:
+        """Retire an agent: no new work goes to it, everything it has stays.
+
+        Deliberately not a delete. The rooms already working with it keep
+        resolving it — :meth:`for_topic` looks the row up by id and never asks
+        whether it is still on offer — and its memory survives because the row
+        that keys the pool survives.
+
+        A retired agent cannot remain the project's default, or every new room
+        would be handed the one agent nobody may choose. Clearing the pointer is
+        the whole fix: :meth:`for_project` already answers ``IMPLICIT_DEFAULT``
+        when it is None.
+        """
+        instance.is_active = False
+        if project.default_agent_instance_id == instance.id:
+            project.default_agent_instance_id = None
+        await self._session.flush()
+
     async def set_project_default(
         self, project: Project, instance: AgentInstance | None
     ) -> ResolvedAgent:
+        if instance is not None and not instance.is_active:
+            raise ValidationError("这个队友已停用，不能设为默认")
         project.default_agent_instance_id = instance.id if instance else None
         await self._session.flush()
         return await self.for_project(project)
@@ -206,6 +237,10 @@ class AgentInstanceService:
             type_name=None,
             display_name=IMPLICIT_DEFAULT.display_name,
         )
+        # Configuring the project's 芝士 is choosing it, so a retired row under
+        # that handle comes back rather than becoming a default nobody may pick.
+        # Same pool either way — the handle never moved.
+        instance.is_active = True
         project.default_agent_instance_id = instance.id
         await self._session.flush()
         return instance

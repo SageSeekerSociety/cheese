@@ -1334,8 +1334,8 @@ async def record_decision(
     decision = await canonicalize_refs(
         db, place.project_id, decision, exclude_topic_id=place.room_id
     )
-    # 自动续跑幂等 (④): inside an automatic turn, the same decision text is the
-    # same decision — a resumed 芝士 re-recording it must not stack a second
+    # 重发幂等 (④): inside a re-sent turn, the same decision text is the
+    # same decision — a re-sent 芝士 re-recording it must not stack a second
     # 决策记录 row. Outside a turn (a human in the UI) there is no continuation
     # and no dedup: pressing the button twice means it twice.
     continuation = get_work_runner().continuation_for(topic_id)
@@ -1489,9 +1489,9 @@ async def split_topic(
     await resolver.authorize_topic(
         actor, project_id=parent_place.project_id, topic_id=parent_place.room_id
     )
-    # 自动续跑幂等 (④) — the costliest of the five to repeat: a duplicate split
+    # 重发幂等 (④) — the costliest of the five to repeat: a duplicate split
     # does not just write a row, it spawns a second 分身 that starts working.
-    # `split 是唯一会生出另一个 agent 的动作` (cheese CLI help), so a resumed
+    # `split 是唯一会生出另一个 agent 的动作` (cheese CLI help), so a re-sent
     # turn re-splitting doubles the agents on the same brief.
     runner = get_work_runner()
     continuation = runner.continuation_for(topic_id)

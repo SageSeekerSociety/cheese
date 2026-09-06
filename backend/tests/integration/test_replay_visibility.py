@@ -14,7 +14,6 @@ import uuid
 
 from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
-from app.domain.agent.runtime import AgentWorkRunner
 from app.main import app
 from tests.conftest import StubChannel, stub_compute
 from tests.integration.conftest import chat_ws_url
@@ -36,15 +35,11 @@ class SilentScreen(StubChannel):
 def _use_failing_agent(client, monkeypatch) -> SilentScreen:
     """A topic whose every turn dies, with nothing else re-prompting it.
 
-    The auto-resume chain is turned off for the same reason the watchdog's
-    timeouts are turned down: these tests count how many times ONE batch is
-    sent, and a turn that dies to the substrate schedules a system turn ten
-    seconds later that sends it again. That extra send is correct in
-    production — the batch really did go in a third time — but whether it
-    lands inside a test's few seconds is wall-clock luck, so the assertions
-    below would be counting the machine's speed.
+    A turn that dies to the substrate is not re-run by the platform — it fails
+    loud once and waits for a person — so nothing schedules a second send of the
+    batch behind these tests' backs. That is what makes it safe to count how
+    many times ONE batch is sent, which is the whole assertion here.
     """
-    monkeypatch.setattr(AgentWorkRunner, "MAX_RESUME_CHAIN", 0)
     # `hard_ceiling_s` is NOT squeezed, and must not be: it is a wall clock that
     # starts before the screen is even reached, so squeezing it races the setup
     # it is supposed to outlive. Lose that race — and a loaded CI box loses it

@@ -48,6 +48,11 @@ services:
       # Set here rather than in backend/.env because the value is a CONTAINER
       # path that only makes sense together with the bind mount below.
       - OPENVIKING_DATA_DIR=/data/viking
+      # Raw Claude session files shipped from device homes before the home is
+      # deleted (topic/retire.py): one tar.gz per place per upload, and the
+      # only copy once the home is gone. A container path like the one above,
+      # paired with the bind mount below.
+      - TRANSCRIPTS_DIR=/data/transcripts
       # Agent containers are siblings spawned through docker.sock, not compose
       # services. Pin them to this deployment's sha so a floating/local alias
       # cannot disappear or drift independently of the backend.
@@ -70,6 +75,9 @@ services:
       # and having it already in place is what makes flipping the backend a
       # one-line env change instead of a deploy edit.
       - ${VIKING_HOST_PATH:-/home/nictheboy/cheese-viking}:/data/viking
+      # The transcript archives (TRANSCRIPTS_DIR above). Mounted so they
+      # outlive the container: nothing else holds them.
+      - ${TRANSCRIPTS_HOST_PATH:-/home/nictheboy/cheese-transcripts}:/data/transcripts
       # The claude binaries the backend serves to machines it enrols. It fetches
       # each version once from the vendor and caches it under connector-dist,
       # which is image content — so every deploy threw the cache away and the
@@ -140,6 +148,14 @@ services:
       # prod (RUC) needs its WS-edge override (https://119pve.ghg.org.cn) because
       # the cheese.ruc.edu.cn edge strips WebSocket Upgrade; set per box.
       - VITE_CONNECTOR_WS_BASE=${VITE_CONNECTOR_WS_BASE:-}
+      # Where this nginx forwards /api and /connector. The default is the
+      # compose backend. A box that deploys without downtime sets it (in
+      # ops/deploy.env) to host.docker.internal:8081, the host nginx that
+      # deploy-docker.sh moves between backends during a rollout.
+      - API_UPSTREAM=${API_UPSTREAM:-backend:8081}
+    # Lets API_UPSTREAM name the host; unused otherwise.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     # The ghg edge proxies the SPA to the box on :8080; also publish :80 so direct
     # in-net access and any :80 probe keep working (bare-metal exposed both). Both
     # are overridable so a parallel validation run can use alt ports without

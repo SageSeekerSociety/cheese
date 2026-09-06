@@ -342,11 +342,17 @@ def _worktree_path(project_id: uuid.UUID, place_id: uuid.UUID) -> Path:
     "itself" for a room on its first tree — which is what keeps every existing
     directory exactly where it already is.
     """
+    return tree_worktree_path(project_id, tree_for_place(place_id))
+
+
+def tree_worktree_path(project_id: uuid.UUID, tree_id: uuid.UUID) -> Path:
+    """Where a TREE's files are — for the callers that hold the tree itself
+    (retiring a room's trees, one by one) rather than a place writing to it."""
     return (
         Path(settings.workspace_root)
         / ".worktrees"
         / str(project_id)
-        / _tree_dirname(tree_for_place(place_id))
+        / _tree_dirname(tree_id)
     ).resolve()
 
 
@@ -1108,6 +1114,70 @@ def _discard_worktree(repo: Path, wt: Path) -> None:
         _git(repo, "worktree", "prune")
     except ValidationError:
         pass
+
+
+def remove_worktree(project_id: uuid.UUID, wt: Path) -> bool:
+    """Take a topic tree's worktree off this box for good. True when nothing
+    of it is left on disk afterwards (including when there was nothing to begin
+    with). `wt` is a `tree_worktree_path` or an entry `topic_worktrees_on_disk`
+    returned — never the merge staging tree, which `_discard_worktree` owns.
+
+    The branch is untouched: its commits are the record of the work, and the
+    tree's directory is only ever a checkout of them plus whatever was never
+    committed — which, for a place being archived, is abandoned by definition.
+
+    Same teardown as `_discard_worktree`, with one difference it has to have:
+    the project's main repo may itself be gone (a deleted project leaves its
+    `.worktrees/<project>` behind), and then there is nothing to ask git to
+    unregister from — the directory just goes.
+    """
+    if not wt.exists():
+        return True
+    repo = _repo(project_id)
+    if (repo / ".git").exists():
+        # A generous timeout: this deletes a whole checkout, and a run that is
+        # cut short falls through to rmtree below rather than being lost.
+        with contextlib.suppress(ValidationError):
+            _git(repo, "worktree", "remove", "--force", str(wt), timeout=300)
+    if wt.exists():
+        shutil.rmtree(wt, ignore_errors=True)
+    if (repo / ".git").exists():
+        with contextlib.suppress(ValidationError):
+            _git(repo, "worktree", "prune")
+    return not wt.exists()
+
+
+# A topic tree's directory, and nothing else that lives beside one: the merge
+# staging root (`_merge`), the adoption staging dirs (`.adopting-*`) and the
+# shared stores (`.pnpm-store`, ...) all fail this on purpose.
+_TOPIC_TREE_DIR = re.compile(r"^topic_([0-9a-f]{8})$")
+
+
+def topic_worktrees_on_disk() -> list[tuple[uuid.UUID, str, Path]]:
+    """Every topic tree directory under the workspace, as
+    ``(project_id, tree id hex prefix, path)`` — the disk's own account of what
+    is there, for the sweep that reconciles it against the database.
+
+    Only the eight hex digits are on disk (`_tree_dirname`), never the whole
+    id; resolving them is the caller's job. A `.worktrees/<project>` entry that
+    is not a uuid is not one of ours and is passed over."""
+    root = Path(settings.workspace_root) / ".worktrees"
+    found: list[tuple[uuid.UUID, str, Path]] = []
+    if not root.is_dir():
+        return found
+    for project_dir in sorted(root.iterdir()):
+        try:
+            project_id = uuid.UUID(project_dir.name)
+        except ValueError:
+            continue
+        if not project_dir.is_dir():
+            continue
+        for entry in sorted(project_dir.iterdir()):
+            match = _TOPIC_TREE_DIR.match(entry.name)
+            if match is None or not entry.is_dir():
+                continue
+            found.append((project_id, match.group(1), entry))
+    return found
 
 
 @contextlib.contextmanager
