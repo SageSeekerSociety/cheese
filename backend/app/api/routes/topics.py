@@ -316,6 +316,7 @@ async def get_topic(
     topic_id: uuid.UUID,
     db: DbSession,
     runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
+    chat: Annotated[ChatService, Depends(get_chat_service)],
     resolver: ActorResolverDep,
 ) -> dict:
     """One place's header — a room's, or one thread's.
@@ -355,7 +356,7 @@ async def get_topic(
                 beats.get(place.task.id),
                 # 做这条活的分身住在房间的会话里 —— 屏幕没了它就没了，而它不会来
                 # 说一声。这一位是内存里的当下事实，不是库里的一列。
-                room_screen_live=get_chat_service().has_live_screen(place.room_id),
+                room_screen_live=chat.has_live_screen(place.room_id),
                 conclusion_pending=place.task.id in pending,
             ),
             now=datetime.now(UTC),
@@ -450,6 +451,7 @@ async def list_topic_blocks(
 async def list_room_tasks(
     topic_id: uuid.UUID,
     db: DbSession,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
     resolver: ActorResolverDep,
     limit: Annotated[int | None, Query(ge=1, le=500)] = None,
 ) -> dict:
@@ -493,7 +495,7 @@ async def list_room_tasks(
     pending = await ConclusionCardRepository(db).live_task_ids(thread_ids)
     # One answer for the whole room: every thread's worker lives in this room's
     # one session, so the screen is alive for all of them or for none.
-    screen_live = get_chat_service().has_live_screen(topic_id)
+    screen_live = chat.has_live_screen(topic_id)
     now = datetime.now(UTC)
     items = []
     for task, blocks in threads:

@@ -405,7 +405,11 @@ async def list_decisions(project_id: uuid.UUID, db: DbSession) -> dict:
 
 
 @router.get("/{project_id}/tasks")
-async def list_project_tasks(project_id: uuid.UUID, db: DbSession) -> dict:
+async def list_project_tasks(
+    project_id: uuid.UUID,
+    db: DbSession,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+) -> dict:
     """Every thread in the project, each with the card it currently rides on.
 
     The rail draws rooms and the work inside them, so it needs both halves at
@@ -437,7 +441,6 @@ async def list_project_tasks(project_id: uuid.UUID, db: DbSession) -> dict:
     now = datetime.now(UTC)
     # 分身住在它房间的会话里，所以这一位按房间问，一个房间只问一次（内存里的
     # 当下事实，不走库）。
-    chat = get_chat_service()
     live_rooms = {t.room_id: chat.has_live_screen(t.room_id) for t in tasks}
     items = []
     for task in tasks:
