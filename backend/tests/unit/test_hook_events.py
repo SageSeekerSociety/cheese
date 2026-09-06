@@ -313,6 +313,56 @@ def test_multi_flush_message_coalesces_into_one_event():
     assert ev.eids == ("e0", "e1", "e2")
 
 
+def test_a_streamed_message_still_says_which_worker_said_it():
+    """流式拼装是分身发言真正走的那条路——`translate_hook` 那条分支只在没有
+    flush 字段的老 payload 上生效。标签必须穿过拼装层活下来，否则整条回复出来
+    的时候没有主语，按 agent_id 归卡就永远漏掉分身说的话。"""
+    asm = MessageAssembler()
+    sub = {"agent_id": "worker-1", "agent_type": "general-purpose"}
+    assert asm.add({**_flush("m1", 0, "查到三处\n", eid="e0"), **sub}) is None
+    ev = asm.add({**_flush("m1", 1, "都在同一个文件里", final=True, eid="e1"), **sub})
+    assert isinstance(ev, AgentMessage)
+    assert ev.text == "查到三处\n都在同一个文件里"
+    assert (ev.agent_id, ev.agent_type) == ("worker-1", "general-purpose")
+
+
+def test_a_streamed_message_from_the_session_itself_has_no_worker():
+    asm = MessageAssembler()
+    assert asm.add(_flush("m1", 0, "先看代码。\n", eid="e0")) is None
+    ev = asm.add(_flush("m1", 1, "再跑测试。", final=True, eid="e1"))
+    assert isinstance(ev, AgentMessage)
+    assert (ev.agent_id, ev.agent_type) == (None, None)
+
+
+def test_a_later_flush_cannot_unname_the_worker():
+    """乱序到达是常态（补录的 spool 文件会落在后面的 flush 之后）。第一条报出
+    名字的 flush 说了算，后面缺这个 key 的 flush 不能把它抹掉——否则同一条消息
+    归谁，取决于哪条 flush 碰巧先被处理。"""
+    asm = MessageAssembler()
+    named = {"agent_id": "worker-1", "agent_type": "general-purpose"}
+    assert asm.add({**_flush("m1", 0, "前半句 ", eid="e0"), **named}) is None
+    ev = asm.add(_flush("m1", 1, "后半句", final=True, eid="e1"))
+    assert isinstance(ev, AgentMessage)
+    assert ev.agent_id == "worker-1"
+
+
+def test_a_drained_partial_keeps_the_worker_it_belonged_to():
+    """屏幕死在一句话中间时，拼装器把收到的部分倒出来——倒出来的东西同样要
+    带着它是谁说的。"""
+    asm = MessageAssembler()
+    asm.add(
+        {
+            **_flush("m1", 0, "只说了一半", eid="e0"),
+            "agent_id": "worker-1",
+            "agent_type": "Explore",
+        }
+    )
+    drained = asm.drain()
+    assert [(m.text, m.agent_id, m.agent_type) for m in drained] == [
+        ("只说了一半", "worker-1", "Explore")
+    ]
+
+
 def test_single_flush_final_message_passes_through():
     ev = MessageAssembler().add(_flush("m1", 0, "hi", final=True, eid="e0"))
     assert isinstance(ev, AgentMessage)

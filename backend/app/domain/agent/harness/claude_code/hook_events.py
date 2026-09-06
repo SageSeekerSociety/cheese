@@ -283,6 +283,13 @@ class _PendingMessage:
     deltas: dict[int, str] = field(default_factory=dict)
     eids: dict[int, str | None] = field(default_factory=dict)
     final_index: int | None = None
+    #: Which worker is saying this. Taken from the first flush that names one
+    #: and then left alone: the flushes of ONE message all come from the same
+    #: thread, so a later flush can only repeat it — while a payload that omits
+    #: the key must not erase what an earlier one established, or a message
+    #: assembled out of order would come out belonging to nobody.
+    agent_id: str | None = None
+    agent_type: str | None = None
     #: When the first flush of this message arrived — the moment 芝士 started
     #: saying it, which is where it belongs in the timeline. Assembly finishes
     #: later (a message is only known to be whole once something after it
@@ -348,7 +355,14 @@ class MessageAssembler:
         ):
             if not text.strip():
                 return None
-            return AgentMessage(text=text, eid=eid, eids=(eid,) if eid else (), at=at)
+            return AgentMessage(
+                text=text,
+                eid=eid,
+                eids=(eid,) if eid else (),
+                at=at,
+                agent_id=_agent_id(hook),
+                agent_type=_agent_type(hook),
+            )
         if message_id in self._done:
             return None
         pending = self._pending.setdefault(message_id, _PendingMessage())
@@ -356,6 +370,23 @@ class MessageAssembler:
             return None
         pending.deltas[index] = text
         pending.eids[index] = eid
+        # The tag has to survive assembly, not just translation: this is the
+        # path a streamed message actually takes, and a whole reply that comes
+        # out of it unattributed is one no reader can file under the worker who
+        # said it.
+        #
+        # Measured on 2.1.224, twice (a nested claude in tmux with every hook
+        # logged): a subagent's own answer produces NO MessageDisplay at all —
+        # this stream carries only the main thread's display, and the
+        # subagent's whole reply reached us solely as
+        # SubagentStop.last_assistant_message. So nothing arrives here tagged
+        # today. It stays because the cost is two fields and the failure it
+        # prevents is silent: whoever changes that in Claude Code will not come
+        # and tell us, and an untagged reply is indistinguishable from one the
+        # session said itself.
+        if pending.agent_id is None:
+            pending.agent_id = _agent_id(hook)
+            pending.agent_type = _agent_type(hook)
         # Earliest wins: flushes can arrive out of order (a retried spool file
         # lands after later ones), and what this records is when the message
         # STARTED, not which flush happened to be handled first.
@@ -426,6 +457,8 @@ class MessageAssembler:
             eid=eids[0] if eids else None,
             eids=eids,
             at=pending.started_at,
+            agent_id=pending.agent_id,
+            agent_type=pending.agent_type,
         )
 
 
