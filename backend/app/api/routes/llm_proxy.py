@@ -123,6 +123,21 @@ async def admission(
         limit=None if summary["unlimited"] else summary["credits_total"],
     )
     decision = decide(state)
+    if not decision.allow:
+        # Tell the room NOW, from the place that actually knows why (#715) —
+        # rather than let Claude Code retry ten times into a `StopFailure` it
+        # reads as a bad API key. `t` is the PLACE claim (room or thread); a
+        # token minted without one (project-wide capabilities) has nothing to
+        # tell, and a place with no turn running is the turn-start refusal
+        # path's job, not this one's.
+        place = claims.get("t")
+        if isinstance(place, str) and place:
+            try:
+                place_uuid = uuid.UUID(place)
+            except ValueError:
+                place_uuid = None
+            if place_uuid is not None:
+                await chat.note_credits_refusal(place_uuid)
 
     # The supply decision rides along with the admission answer: the proxy has
     # to ask before every turn anyway, and one round trip that says both "may
