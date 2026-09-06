@@ -12,7 +12,8 @@
 例:
   cheese doc set DOC.md            # 把 DOC.md 设为本话题实况文档
   cheese doc get                   # 打印本话题实况文档
-  cheese split "数据清洗"           # 派出一条支线
+  cheese split "数据清洗"           # 在本房间开一条活(开完自己起分身去做)
+  cheese bind <task_id> <agent_id>  # 告诉平台这条活归哪个分身
   cheese decision "用 item-based CF" # 记一条决策
   cheese remember "技术栈=FastAPI"  # 记入项目记忆
   cheese recall "技术选型"          # 按需检索记忆(关键词检索)
@@ -628,23 +629,23 @@ def build_parser() -> argparse.ArgumentParser:
 
     ps = sub.add_parser(
         "split",
-        help="派出一条支线（分身自动开工）",
+        help="在这个房间里开一条活（开完你自己起分身去做）",
         description=(
-            "在这个房间里派出一条支线,平台立刻起一个分身去做它。\n"
+            "开一条活并给它建好任务简报文档。**它不会自己动起来**——起分身是你的事:\n"
             "\n"
-            "分身开工时能看到的只有两样东西,都来自本命令:\n"
-            "  1. --brief 的原文(标题为「拆分意图」)\n"
-            "  2. 本话题当前实况文档的快照(平台自动附上,不用你复制)\n"
-            "它看不到本话题的对话历史。简报里没写的前提,它就是不知道。\n"
+            "  1. cheese split \"标题\" --brief \"...\"   → 拿到 task id\n"
+            "  2. 用你自己的 Agent 工具起一个分身,把 --brief 的原文放进 prompt\n"
+            "  3. cheese bind <task_id> <agent_id>   → 告诉平台这条活归哪个分身\n"
             "\n"
-            "分身跑在一个独立沙箱里,工作区是从 main 新建的 git 工作树:\n"
-            "  - 本话题工作区里 gitignored 的东西(reference/、tmp/、clone 下来的\n"
-            "    参照仓库、装好的依赖)都不会跟过去,要它用就在简报里写清怎么自己弄\n"
-            "  - 它写的文件必须落在自己工作区的相对路径下,写 /tmp 会丢\n"
-            "  - 它和你并行改同一个仓库,会撞车的地方(同一个文件/同一份配置)要在\n"
-            "    简报里划成硬边界\n"
+            "第 3 步不做,这条活在界面上就永远是「没人做」,分身干的每一件事都记在\n"
+            "你(房间)头上,谁也分不出来。\n"
             "\n"
-            "split 是唯一会生出另一个 agent 的动作,没有深度/频率上限。"
+            "分身和你共用同一个工作区、同一条分支,所以:\n"
+            "  - 装好的依赖、clone 下来的参照仓库它都直接能用,不用重来一遍\n"
+            "  - 两条活整块改同一个文件会互相盖掉,拿 --paths 划开\n"
+            "\n"
+            "分身能看到的只有你放进 prompt 的东西。--brief 会存成它的任务简报文档,\n"
+            "但**它不会自动读**,记得在 prompt 里把简报原文带上。"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -663,12 +664,47 @@ def build_parser() -> argparse.ArgumentParser:
         "--brief",
         default=None,
         help=(
-            "任务简报,分身的全部起点:要干什么、硬边界(别碰哪些文件/别做哪些事)、"
+            "任务简报:要干什么、硬边界(别碰哪些文件/别做哪些事)、"
             "验收标准(做到什么程度算完)、已知但未核实的事实要标出来。"
-            "不用重复房间的实况文档(平台会自动附快照)。"
-            "不填的话分身只有标题和那份快照,基本等于让它自己猜。"
+            "它会存成这条活的任务简报文档(附一份房间实况文档快照),"
+            "**同时你要把这段原文放进分身的 prompt**——分身不会自己去读文档。"
         ),
     )
+
+    pb = sub.add_parser(
+        "bind",
+        help="告诉平台这条活由哪个分身在做",
+        description=(
+            "起完分身立刻调它。平台从此知道哪些事件是这条活干的:分身的每一次工具\n"
+            "调用都记进这条活的时间线,而不是混在房间的流水里。\n"
+            "\n"
+            "agent_id 从你起分身时拿到的那个 id 来。绑错了不能改绑到别的活上——\n"
+            "一个分身同时只做一条活,重复绑会被拒。\n"
+            "\n"
+            "不绑的后果是无声的:活看着没人做,事件全记在房间头上。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    pb.add_argument("task_id", help="cheese split 返回的那个 id")
+    pb.add_argument("agent_id", help="你起的那个分身的 id")
+
+    pct = sub.add_parser(
+        "conclude-task",
+        help="替房间里的一条活回流结论(开结论卡)",
+        description=(
+            "分身报完成、你验过货之后,由你把它的结论落成一张结论卡。\n"
+            "\n"
+            "为什么不是分身报完成就自动落:一个分身可以报好几次完成(它把长命令丢进\n"
+            "自己的后台再停下来等,也算一次完成),而且还会收到来路不明的完成通知。\n"
+            "所以「完成」是给你看的信号,不是结论——**验过再落**。\n"
+            "\n"
+            "结论写摘要不写流水账。值钱的三样:做了什么、查出来但故意没做的(以及\n"
+            "为什么)、哪些结论没核实。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    pct.add_argument("task_id", help="这条活的 id")
+    pct.add_argument("conclusion", help="结论摘要,给房间看的")
 
     paw = sub.add_parser(
         "await",
@@ -1150,19 +1186,25 @@ def main() -> None:
         if a.paths:
             body["paths"] = a.paths
         r = _call("POST", f"/topics/{topic}/split", body)["data"]
-        if r.get("queued"):
-            held = "\n".join(
-                f"  · {h['title']}（主：{h.get('owner_handle') or '—'}，"
-                f"最后活动 {h.get('last_turn_at') or '未开始'}）"
-                for h in r.get("slots_held_by") or []
-            )
-            print(
-                f"已派出支线：{r['title']}（id={r['id']}），"
-                f"但本房间的 4 个额度都占着，它排在第 {r.get('queue_position') or '?'} 位，"
-                f"有额度就自动开工。\n现在占着额度的是：\n{held}"
-            )
-        else:
-            print(f"已派出支线：{r['title']}（id={r['id']}），分身已带简报自动开工")
+        print(
+            f"已开一条活：{r['title']}（id={r['id']}）。**它还没人做**，接下来两步：\n"
+            f"  1. 用你的 Agent 工具起一个分身，把 --brief 的原文放进 prompt\n"
+            f"  2. cheese bind {r['id']} <分身的 agent_id>"
+        )
+    elif a.cmd == "bind":
+        topic = _need("CHEESE_TOPIC", TOPIC)
+        r = _call(
+            "POST", f"/topics/{topic}/tasks/{a.task_id}/bind", {"agent_id": a.agent_id}
+        )["data"]
+        print(f"「{r['title']}」现在归分身 {r['subagent_id']}，它干的事会记到这条活上。")
+    elif a.cmd == "conclude-task":
+        topic = _need("CHEESE_TOPIC", TOPIC)
+        _call(
+            "POST",
+            f"/topics/{topic}/tasks/{a.task_id}/conclude",
+            {"conclusion": a.conclusion},
+        )
+        print("结论已回流本房间，结论卡已开出。")
     elif a.cmd == "await":
         _await_start(a.command, a.label, a.timeout)
     elif a.cmd == "__await-child":

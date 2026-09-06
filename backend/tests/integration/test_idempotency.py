@@ -227,8 +227,13 @@ def test_message_dedup_does_not_leak_across_continuations(client, tmp_path):
 
 
 def test_split_does_not_spawn_a_second_subtopic(client, in_a_turn, monkeypatch):
-    """The costliest repeat of the five: a duplicate split does not just write a
-    row, it starts a second agent working the same brief."""
+    """A re-sent turn re-splitting leaves the room holding two threads on one
+    brief, and nobody can tell which of them the work is happening in.
+
+    Dispatch starts no worker of its own any more — the caller does that, and
+    would do it once per row it was handed. So the row is the whole of what has
+    to not double.
+    """
     kickoffs: list[uuid.UUID] = []
     monkeypatch.setattr(
         in_a_turn,
@@ -253,7 +258,7 @@ def test_split_does_not_spawn_a_second_subtopic(client, in_a_turn, monkeypatch):
         )
     )
     assert children == 1, "重发派出了第二条支线"
-    assert len(kickoffs) == 1, "第二个分身被叫起来干活了"
+    assert kickoffs == [], "派活不该起任何会话——分身是调用方在自己会话里起的"
     # The replay gets the FIRST child back, not an error: a resumed 芝士 asking
     # again should learn what already exists.
     assert second.json()["data"]["id"] == first.json()["data"]["id"]

@@ -17,9 +17,12 @@
 段对话** —— 尽管 transcript 就躺在它自己的 session 目录里。这里用「第二轮冷启动
 时拿到的 resume 指针」来钉它，因为那正是唯一用得上它的时刻。
 
-两种支线在这里是分开的，因为它们证的事不一样：`/split` 派出去的活**当场就会被
-自动踢一轮**（spec §8.4 分身异步工作），所以它复现的是线上那个症状本身；而
-`open_thread` 建出来的是一条**谁都没跑过**的活，用来挡住「无脑返回 True」。
+两种支线在这里是分开的，因为它们证的事不一样：一条是**跑过一轮**的活，复现的是
+线上那个症状本身；另一条是**谁都没跑过**的活，用来挡住「无脑返回 True」。
+
+派活本身不再跑任何东西（`/split` 只建行和简报文档），所以「跑过」这件事在这里是
+显式跑一轮跑出来的 —— 这也更贴题：这个文件问的是写侧记没记下会话，不是谁把那一轮
+踢起来的。
 """
 
 import asyncio
@@ -64,11 +67,18 @@ def _room(client) -> tuple[str, str]:
 
 
 def _dispatched(client, room_id: str, title: str = "一件活") -> str:
-    """派出去的一条活 —— 派出即开跑，所以等它跑完再问。"""
+    """派出去的一条活。派活不跑任何东西，所以它出来时是安静的。"""
     r = client.post(f"/topics/{room_id}/split", json={"title": title})
     assert r.status_code == 200, r.text
     wait_work_idle()
     return r.json()["data"]["id"]
+
+
+def _worked(client, tmp_path, room_id: str, title: str = "一件活") -> str:
+    """一条派出去、并且真的跑过一轮的活。"""
+    thread = _dispatched(client, room_id, title)
+    _turn(client, _service(client, tmp_path, _Screen()), thread)
+    return thread
 
 
 def _dormant(client, project_id: str, room_id: str, title: str = "没跑过的") -> str:
@@ -127,33 +137,38 @@ def _has_run(client, project_id: str, place_id: str, bearer) -> bool:
 # --- has_run：这一格该不该摆出来 ---------------------------------------------
 
 
-def test_a_dispatched_thread_says_it_has_run(client, bearer):
-    """派出去、跑过一轮的活要说自己跑过 —— 「现场」全靠这一个布尔值决定出不出。
-
-    走的是真实派活那条路（`/split` 当场踢一轮），因为那正是线上那条支线的处境。
-    """
+def test_a_dispatched_thread_says_it_has_run(client, tmp_path, bearer):
+    """跑过一轮的活要说自己跑过 —— 「现场」全靠这一个布尔值决定出不出。"""
     pid, room = _room(client)
-    thread = _dispatched(client, room)
+    thread = _worked(client, tmp_path, room)
 
     assert _has_run(client, pid, thread, bearer) is True
 
 
-def test_an_untouched_sibling_still_says_it_has_not(client, bearer):
+def test_a_freshly_dispatched_thread_has_not_run(client, bearer):
+    """刚派出去、还没人做的活说自己没跑过 —— 派活本身不算跑过一轮。"""
+    pid, room = _room(client)
+    thread = _dispatched(client, room)
+
+    assert _has_run(client, pid, thread, bearer) is False
+
+
+def test_an_untouched_sibling_still_says_it_has_not(client, tmp_path, bearer):
     """同房间另一条谁都没跑过的活，不能被兄弟带成「跑过」。
 
     没有这一条，一个无脑返回 True 的修法也能过上面那条。
     """
     pid, room = _room(client)
-    _dispatched(client, room, "跑过的")
+    _worked(client, tmp_path, room, "跑过的")
     idle = _dormant(client, pid, room)
 
     assert _has_run(client, pid, idle, bearer) is False
 
 
-def test_a_threads_turn_does_not_make_its_room_look_run(client, bearer):
+def test_a_threads_turn_does_not_make_its_room_look_run(client, tmp_path, bearer):
     """支线跑过，房间自己没跑过 —— 两个地点，两条会话。"""
     pid, room = _room(client)
-    _dispatched(client, room)
+    _worked(client, tmp_path, room)
 
     assert _has_run(client, pid, room, bearer) is False
 

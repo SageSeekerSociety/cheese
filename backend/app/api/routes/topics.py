@@ -62,7 +62,6 @@ from app.domain.room_task.repositories import TaskRepository
 from app.domain.room_task.schemas import TaskOut
 from app.domain.room_task.services import (
     ClaimService,
-    ResidencyService,
     RoomLockService,
     TaskService,
     WorkTreeService,
@@ -75,6 +74,7 @@ from app.domain.topic.repositories import SortOrder, TopicSortField
 from app.domain.topic.schemas import (
     BackgroundTaskDoneIn,
     BackgroundTaskIn,
+    BindSubagentIn,
     CheckResultIn,
     ClaimIn,
     ConclusionIn,
@@ -508,6 +508,87 @@ async def list_room_tasks(
             }
         )
     return ok(page(items, len(items)))
+
+
+@router.post("/{topic_id}/tasks/{task_id}/bind")
+async def bind_task_subagent(
+    topic_id: uuid.UUID,
+    task_id: uuid.UUID,
+    body: BindSubagentIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """认领: the room says which worker in its session is doing this thread.
+
+    The one new thing a room has to tell the platform under 任务=分身. A worker
+    id is minted inside the container when the worker starts, so nothing handed
+    out at dispatch could name it — the room spawns one and reports back, and
+    only then can the platform tell that worker's events from its own.
+
+    ONLY the room may call it. A thread's token names the thread, so the scope
+    check below refuses one anyway; the explicit refusal is here because "the
+    caller is the room" is a rule worth failing loudly on rather than by a
+    coincidence of ids.
+    """
+    place = await TopicService(db).place_or_404(topic_id)
+    if place.is_thread:
+        raise ValidationError("认领分身是房间的事，一条活自己认领不了")
+    await _actor_in_place(resolver, place)
+    task = await TaskService(db).bind_subagent(
+        room_id=place.room_id, task_id=task_id, subagent_id=body.agent_id
+    )
+    out = TaskOut.model_validate(task).model_dump(mode="json")
+    await db.commit()
+    return ok(out)
+
+
+@router.post("/{topic_id}/tasks/{task_id}/conclude")
+async def conclude_task(
+    topic_id: uuid.UUID,
+    task_id: uuid.UUID,
+    body: ConclusionIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """结论回流, said by the ROOM about one of its threads.
+
+    A worker inside the room's session has no token and no place of its own to
+    call `/return-conclusion` from, so the room files the conclusion for it —
+    after it has read what came back and satisfied itself the work is done.
+
+    Deliberately NOT automatic on the worker's Stop. A worker reports finished
+    more than once (parking a long command counts as finishing), and Stops
+    arrive from workers the platform never bound — measured on 2.1.224: after
+    the session's own Stop, with an unknown id, an empty type and a fragment of
+    a prompt as their closing message. Filing a conclusion off either of those
+    would open a card for work that is not done, or for work nobody dispatched.
+
+    No wake, unlike `/return-conclusion`: the room is the caller and is already
+    running the turn that would be woken. The card still has its own deadline,
+    so nothing waits on a turn that never comes.
+    """
+    service = TopicService(db)
+    place = await service.place_or_404(topic_id)
+    if place.is_thread:
+        raise ValidationError("这是房间替它的活回流结论，一条活自己回流不了")
+    await _actor_in_place(resolver, place)
+    task = await TaskService(db).get(task_id)
+    if task is None or task.room_id != place.room_id:
+        raise NotFoundError("这个房间里没有这条活")
+    # Friendly "@名字/@话题名" → structured tokens BEFORE it lands in the room,
+    # same as the thread's own path: chips render and notifications fire there.
+    conclusion = await canonicalize_refs(
+        db, place.project_id, body.conclusion, exclude_topic_id=place.room_id
+    )
+    block, _ = await service.return_conclusion(
+        subtopic_id=task_id, conclusion=conclusion
+    )
+    out = BlockOut.model_validate(block).model_dump(mode="json")
+    await db.commit()
+    await get_broker().publish(
+        str(place.room_id), {"type": "assistant_block", "block": out}
+    )
+    return ok(out)
 
 
 @router.get("/{topic_id}/trees")
@@ -1463,14 +1544,20 @@ async def split_topic(
     topic_id: uuid.UUID,
     body: SplitIn,
     db: DbSession,
-    chat: Annotated[ChatService, Depends(get_chat_service)],
     resolver: ActorResolverDep,
 ) -> dict:
     """从上往下拆解：dispatch a todo as a thread of work in this room (eval A2).
 
-    The thread is seeded with a task-brief living doc, then its 分身 is kicked
-    off automatically (spec §8.4 分身异步工作): without this, freshly dispatched
-    work just sits idle until a human wanders in and posts a message.
+    Writes the thread and seeds its task-brief living doc, and stops there. The
+    WORKER is the caller's to start: it spawns one inside its own session and
+    reports the id back with `/tasks/{id}/bind`. The platform used to raise a
+    whole second container per thread — its own screen, its own home, its own
+    clone of the repository — to run something that is a second worker in a
+    session the room already has.
+
+    So a thread returned from here has no worker yet, and that is a normal state
+    rather than a half-finished dispatch: 认领 is a separate call because the id
+    it carries does not exist until the worker does.
 
     `topic_id` may be a thread's — 芝士 working on one piece of work often finds
     a second. Work does not nest, so the new thread hangs in the same ROOM
@@ -1489,10 +1576,9 @@ async def split_topic(
     await resolver.authorize_topic(
         actor, project_id=parent_place.project_id, topic_id=parent_place.room_id
     )
-    # 重发幂等 (④) — the costliest of the five to repeat: a duplicate split
-    # does not just write a row, it spawns a second 分身 that starts working.
-    # `split 是唯一会生出另一个 agent 的动作` (cheese CLI help), so a re-sent
-    # turn re-splitting doubles the agents on the same brief.
+    # 重发幂等 (④): a re-sent turn re-splitting would leave the room holding two
+    # threads on one brief, and whoever reads the room cannot tell which of them
+    # the work is actually happening in.
     runner = get_work_runner()
     continuation = runner.continuation_for(topic_id)
     key = (
@@ -1519,39 +1605,13 @@ async def split_topic(
         # behaves exactly as it did before.
         triggered_by=runner.turn_author_for(topic_id),
     )
-    # 一个房间最多同时开 4 条: over the cap the thread is QUEUED, not refused.
-    # It keeps its brief, its owner and its place in the room; it starts when a
-    # slot frees. Refusing would hand the caller a condition that clears by
-    # itself and nothing useful to do about it.
-    residency = ResidencyService(db)
-    admitted = await residency.admit(task)
-    position = 0 if admitted else await residency.queue_position(task)
-    holders = [] if admitted else await residency.holders(task.room_id)
-
     out = TaskOut.model_validate(task).model_dump(mode="json")
-    out["queued"] = not admitted
-    out["queue_position"] = position
-    # 满额时不能只说「排队中」: the person has to know WHICH four threads are
-    # holding the room, and when each was last active, or they cannot tell
-    # which one to go and finish.
-    out["slots_held_by"] = [
-        {
-            "id": str(t.id),
-            "title": t.title,
-            "owner_handle": t.owner_handle,
-            "last_turn_at": t.last_turn_at.isoformat() if t.last_turn_at else None,
-        }
-        for t in holders
-    ]
     if key is not None:
         await idem.record_result(db, key, out)
-    # Commit BEFORE kicking off: the 分身's first turn runs in the background
-    # with its own session and must see the thread + its brief doc. The
-    # idempotency key commits in this same transaction, so a crash between the
-    # commit and the kickoff cannot produce a SECOND thread on resume.
+    # The thread and its idempotency key commit together, so a crash here cannot
+    # produce a second thread on resume — and the caller must see the row and
+    # its brief doc before it can bind a worker to them.
     await db.commit()
-    if admitted:
-        runner.submit_kickoff(chat, task.id)
     return ok(out)
 
 

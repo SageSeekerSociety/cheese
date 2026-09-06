@@ -43,6 +43,9 @@ class TaskOut(BaseModel):
     # 这条活在哪棵树上干 — many tasks share one, and that tree is the batch
     # that opens one PR. A task has no branch of its own any more.
     tree_id: uuid.UUID
+    # 哪个分身在做它. NULL = 还没有分身认领——派活写下这一行，绑定发生在房间
+    # 真的起了一个分身之后，中间这段时间是正常状态，不是错误。
+    subagent_id: str | None = None
     # Delivery, which is NOT the same question as `status` — work can be
     # delivered and still open, or closed with nothing delivered.
     accepted_by: str | None = None

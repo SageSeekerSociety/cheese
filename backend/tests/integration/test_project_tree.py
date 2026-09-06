@@ -192,10 +192,12 @@ def test_upgrade_from_private_chat_lands_under_root(client):
     assert "父话题当时还没有实况文档" in doc["content"]
 
 
-def test_split_seeds_brief_doc_and_kicks_off_the_分身(client):
-    # 分身开工带简报: the child is born with a task-brief living doc (splitter's
-    # brief + parent-doc snapshot), the canned opening is gone, and the 分身's
-    # first turn starts by itself (no human message needed).
+def test_split_seeds_the_brief_doc_and_starts_nobody(client):
+    # 派活带简报: the thread is born with a task-brief living doc (splitter's
+    # brief + parent-doc snapshot) — and with NOBODY on it. The worker is the
+    # caller's to spawn in its own session and to bind; a thread that has just
+    # been dispatched is legitimately empty and silent, and reading that as a
+    # failed dispatch is the mistake this asserts against.
     p = _project(client)
     topic = client.post(
         "/topics", json={"project_id": p["id"], "title": "推荐系统"}
@@ -217,23 +219,20 @@ def test_split_seeds_brief_doc_and_kicks_off_the_分身(client):
             "brief": "把 10 万条借阅日志去重、去空值，产出干净数据集",
         },
     ).json()["data"]
-    _wait_work_idle()  # kickoff runs in the background; don't race its writes
+    _wait_work_idle()
 
-    # The brief IS the child's living doc, parent doc copied verbatim below it.
+    # The brief IS the thread's living doc, parent doc copied verbatim below it.
     doc = client.get(f"/topics/{sub['id']}/doc").json()["data"]
     assert doc is not None
     assert "把 10 万条借阅日志去重" in doc["content"]
     assert "给校园二手书平台做推荐" in doc["content"]
     assert "推荐系统" in doc["content"]  # source: parent title
 
-    # Auto-kickoff (spec §8.4): the 分身's own opening shows up without anyone
-    # posting — and it is the FIRST message (no canned template before it).
-    _wait_work_idle()
+    # 没人做，也没有套话开场白。The platform raises nothing on its own, and it
+    # does not write an opening in 芝士's voice either — 语义内容必须由 AI 生成.
+    assert sub["subagent_id"] is None
     blocks = client.get(f"/topics/{sub['id']}/blocks").json()["data"]["data"]
-    msgs = [b for b in blocks if b["kind"] == "message"]
-    assert msgs, "分身没有自动开工（没等到它的开场白）"
-    assert msgs[0]["author_type"] == "ai"
-    assert "我先确认理解，再开始推进" not in msgs[0]["content"]  # template gone
+    assert [b for b in blocks if b["kind"] == "message"] == []
 
 
 def test_split_without_brief_still_seeds_doc(client):
