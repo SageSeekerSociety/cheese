@@ -34,6 +34,14 @@ export default defineConfig({
           },
         ],
       },
+      // unplugin-fonts preloads EVERY font file in the bundle unless told not
+      // to: `custom.preload` is on by default even when no custom fonts are
+      // declared. That put 64 `<link rel="preload" as="font">` on every page,
+      // 40 of them KaTeX faces the login page never renders, each a request
+      // that competes with the app's own chunks. `families: []` is there only
+      // because the type demands it; the line that matters is `preload: false`.
+      // The @font-face rules still fetch a face the moment something uses it.
+      custom: { families: [], preload: false },
     }),
     prismjsPlugin({
       languages: 'all',
@@ -251,7 +259,25 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
+          // Vite's dynamic-import helper (`\0vite/preload-helper.js`) is a
+          // virtual module every chunk with a lazy import shares. Left
+          // unassigned, Rollup merged it into the first manual chunk that
+          // needed it, which after the split below was `monaco`, so the entry
+          // and every route chunk imported `monaco` just to reach the helper
+          // and Monaco was back on the first paint. Pin it where the entry
+          // already goes.
+          if (id.includes('vite/preload-helper')) {
+            return 'vendor'
+          }
           if (id.includes('node_modules')) {
+            // Monaco is the largest package in node_modules and only the code
+            // panels use it, yet the catch-all `vendor` at the bottom pulled it
+            // into the one chunk every page preloads (1.29 MB gzipped, most of
+            // it Monaco). In its own chunk it is reachable only from the lazy
+            // TopicView route, so first paint no longer pays for it.
+            if (id.includes('monaco-editor')) {
+              return 'monaco'
+            }
             if (id.includes('prosemirror')) {
               return 'prosemirror'
             }

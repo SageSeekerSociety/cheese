@@ -399,9 +399,10 @@ async def monitor_session_activity(
       ``confirm_alive``
       (if given) is polled every ``confirm_poll_s`` until it says the screen is
       actually dead, or activity resumes and clears the suspicion.
-    - ``hard_ceiling_s``: an unconditional backstop regardless of activity, so a
-      pathologically active session (a tool retrying forever, a real infinite
-      loop that keeps printing) still can't run forever.
+    - ``hard_ceiling_s``: the wall-clock mark past which the session is recorded
+      as long — a warning with context, and ``tracker.ceiling_crossed_at`` — and
+      nothing else. Elapsed time cannot tell working from stuck, so it is a
+      metric, not a verdict; the loop body says why.
 
     A third check, on a different axis from those two. Both of the above ask
     whether the session is producing anything. ``unread_since`` asks whether it
@@ -412,10 +413,6 @@ async def monitor_session_activity(
     will not take it. That failure is narrower than the other two, because it
     only exists while something is actually waiting, and it is the one with a
     person on the other end. ``unread_grace_s`` of 0 disables it.
-
-    With no ``tracker``/``confirm_alive`` given (the device backend today) and
-    ``idle_suspect_s == hard_ceiling_s``, this reduces to exactly the old
-    single-deadline behaviour.
 
     The subscription owns the queue lifecycle; this function only observes its
     activity stream."""
@@ -990,7 +987,6 @@ class ClaudeCodeRuntime:
         router: HookRouter | None = None,
         idle_suspect_s: float = 900.0,
         hard_ceiling_s: float = 900.0,
-        session_ceiling_s: float | None = None,
         unread_grace_s: float = 0.0,
         no_progress_s: float = 0.0,
         delivery_timeout_s: float = DELIVERY_TIMEOUT_S,
@@ -999,27 +995,12 @@ class ClaudeCodeRuntime:
         self._router = router or hook_router
         # Equal by default preserves the legacy single-deadline behavior.
         self._idle_suspect_s = idle_suspect_s
+        # One ceiling for both layers, because neither layer ends anything at
+        # it any more: the monitor logs the crossing and stamps the tracker, the
+        # outer wrap (told the same number via `turn_ceiling`) writes it to the
+        # turn record. Two numbers made sense while the two layers did different
+        # things when they came due; they no longer do.
         self._hard_ceiling_s = hard_ceiling_s
-        # Two ceilings, because the two layers can do different things when they
-        # come due and so they want different numbers.
-        #
-        # `_hard_ceiling_s` is what the OUTER wall-clock wrap is told (see the
-        # `hard_ceiling_s` property). That layer sees only frames, has no way to
-        # ask whether a session is alive, and refreshes on every tool call, so
-        # what it ends is a turn that has stopped calling tools: exactly a loop
-        # that only emits output.
-        #
-        # `_session_ceiling_s` is this monitor's own unconditional backstop, and
-        # it fires against a session that idle-suspect has been probing and
-        # `confirm_alive` keeps calling alive. That combination is a busy pane
-        # with no interim hook, which is what a long foreground command looks
-        # like, so cutting it at the same number would kill exactly the work the
-        # probe just confirmed was fine. It stays large on purpose: past this
-        # much wall clock the answer stops being "still working" whatever the
-        # probe says.
-        self._session_ceiling_s = (
-            hard_ceiling_s if session_ceiling_s is None else session_ceiling_s
-        )
         self._unread_grace_s = unread_grace_s
         self._no_progress_s = no_progress_s
         self._unread_probe: UnreadProbe | None = None
@@ -1047,7 +1028,8 @@ class ClaudeCodeRuntime:
 
     @property
     def hard_ceiling_s(self) -> float:
-        """This runtime's absolute active-session ceiling."""
+        """The wall-clock mark past which a turn is recorded as long. It ends
+        nothing; chat.py hands it to the outer wrap as the `turn_ceiling`."""
         return self._hard_ceiling_s
 
     @property
@@ -1631,7 +1613,7 @@ class ClaudeCodeRuntime:
             async for event in monitor_session_activity(
                 queue=activity.queue,
                 idle_suspect_s=self._idle_suspect_s,
-                hard_ceiling_s=self._session_ceiling_s,
+                hard_ceiling_s=self._hard_ceiling_s,
                 unread_since=self._unread_since_for(subscription.topic_id),
                 unread_grace_s=self._unread_grace_s,
                 no_progress_s=self._no_progress_s,
@@ -1884,7 +1866,7 @@ class ClaudeCodeRuntime:
                 async for event in monitor_session_activity(
                     queue=attribution.queue,
                     idle_suspect_s=self._idle_suspect_s,
-                    hard_ceiling_s=self._session_ceiling_s,
+                    hard_ceiling_s=self._hard_ceiling_s,
                     unread_since=self._unread_since_for(topic_id),
                     unread_grace_s=self._unread_grace_s,
                     no_progress_s=self._no_progress_s,

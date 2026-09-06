@@ -4,7 +4,7 @@ those threads work on."""
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.models import Block, BlockKind
@@ -39,6 +39,12 @@ class WorkTreeRepository:
             .where(WorkTree.room_id == room_id)
             .order_by(WorkTree.created_at, WorkTree.id)
         )
+        return list((await self._session.scalars(stmt)).all())
+
+    async def list_for_project(self, project_id: uuid.UUID) -> list[WorkTree]:
+        """Every tree of every room in the project — the set whose directories
+        the storage sweep may find on disk."""
+        stmt = select(WorkTree).where(WorkTree.project_id == project_id)
         return list((await self._session.scalars(stmt)).all())
 
     async def add(
@@ -95,6 +101,17 @@ class TaskRepository:
 
     async def get(self, task_id: uuid.UUID) -> Task | None:
         return await self._session.get(Task, task_id)
+
+    async def mark_transcripts_archived(self, task_id: uuid.UUID, at: datetime) -> bool:
+        """Record that the thread's raw session files reached the platform.
+        False when no thread has this id."""
+        stamped = await self._session.execute(
+            update(Task)
+            .where(Task.id == task_id)
+            .values(transcripts_archived_at=at)
+            .returning(Task.id)
+        )
+        return stamped.scalar() is not None
 
     async def add(
         self,

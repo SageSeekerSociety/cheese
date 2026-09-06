@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Stand-in for the /healthz probe the rollout makes against a published port.
+# APP_TIER_CURL_FAIL=1 makes every probe fail, which is how a test drives the
+# "next backend never comes up" path.
+if [ -n "${APP_TIER_DOCKER_LOG:-}" ]; then
+  printf 'curl %s\n' "$*" >> "$APP_TIER_DOCKER_LOG"
+fi
+[ -z "${APP_TIER_CURL_FAIL:-}" ] || exit 22
+exit 0

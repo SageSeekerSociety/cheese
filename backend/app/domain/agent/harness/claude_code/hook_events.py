@@ -399,6 +399,15 @@ class HookRouter:
     The endpoint and provider run on the same asyncio loop, so ``put_nowait`` is
     safe. Re-subscribing is idempotent: a second caller gets the existing sink
     instead of replacing it and starving its consumer.
+
+    Which is why a topic must have exactly ONE consumer in the process. The sink
+    is a queue, not a broadcast: a second consumer reading the same sink does not
+    see the same hooks, it takes half of them. Half the flushes of a message
+    assemble into half a reply on each side, and the "已经说过的话" a consumer
+    checks the final Stop against is its own — so one sentence reaches the room
+    as two fragments plus a full copy. Nothing here can enforce that (a sink does
+    not know who is reading it); what does is that every channel discovers only
+    its own machines, so no two of them ever recover the same topic.
     """
 
     def __init__(self) -> None:
