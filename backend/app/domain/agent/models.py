@@ -90,3 +90,11 @@ class AgentTurn(Base):
     stopped_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None
     )
+    # Admission refused a `/v1/messages` call for this turn's place because the
+    # project's compute credits are spent (#715). First-writer-wins, like
+    # `delivered_at`: the proxy caches a verdict for 30s and Claude Code retries
+    # ten times, so admission is asked again and again for the SAME refusal —
+    # this is what lets the room notice fire once instead of once per retry.
+    credits_refused_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )

@@ -1863,6 +1863,79 @@ class ChatService:
         except Exception:  # noqa: BLE001 — the Stop matters more than the row
             logger.exception("could not close open turns for topic %s", topic_id)
 
+    async def note_credits_refusal(self, topic_id: uuid.UUID) -> None:
+        """Admission just refused a `/v1/messages` call at this place because
+        the project's compute credits are spent (#715). If a turn is running
+        here, stamp it once and say so in the room right away — the same
+        `CREDITS_EXHAUSTED_EVENT` a turn-start refusal already posts — instead
+        of waiting for Claude Code's ten retries to end in `StopFailure` with a
+        reading of the 429 that says "Invalid API key".
+
+        Nothing to stamp (no turn in flight at this place) is not an error:
+        the turn-start refusal path already covers a turn that has not begun.
+        Never raises — the proxy fails OPEN on an admission error, so a
+        bookkeeping bug here must not become a reason to let a refused turn
+        through.
+        """
+        from datetime import UTC, datetime
+
+        from app.domain.agent.repositories import AgentTurnRepository
+        from app.domain.usage.credits import (
+            CREDITS_EXHAUSTED_EVENT,
+            CREDITS_EXHAUSTED_META,
+        )
+
+        turn_id: uuid.UUID | None = None
+        try:
+            async with self._sessions() as session:
+                repo = AgentTurnRepository(session)
+                turn_id = await repo.open_turn_id_for_topic(topic_id)
+                if turn_id is None:
+                    return
+                flipped = await repo.mark_credits_refused(turn_id, datetime.now(UTC))
+                if flipped:
+                    await session.commit()
+        except Exception:  # noqa: BLE001 — see docstring
+            logger.exception("could not stamp credits-refused for topic %s", topic_id)
+            return
+        if not flipped or turn_id is None:
+            return
+        try:
+            payload = await self.post_system_event(
+                topic_id,
+                CREDITS_EXHAUSTED_EVENT,
+                turn_id,
+                meta=CREDITS_EXHAUSTED_META,
+            )
+            if payload is not None:
+                from app.domain.agent.runtime import get_broker
+
+                await get_broker().publish(
+                    str(topic_id),
+                    {
+                        "type": "error",
+                        "message": CREDITS_EXHAUSTED_EVENT,
+                        "persisted": True,
+                    },
+                )
+        except Exception:  # noqa: BLE001 — see docstring
+            logger.exception(
+                "could not post credits-refused notice for topic %s", topic_id
+            )
+
+    async def _turn_credits_refused(self, turn_id: uuid.UUID) -> bool:
+        """Was `turn_id` ever stamped refused-for-credits by admission? What
+        the turn's own end (`StopFailure`) reads to decide whose wording —
+        the platform's or Claude Code's — the room gets."""
+        from app.domain.agent.repositories import AgentTurnRepository
+
+        try:
+            async with self._sessions() as session:
+                return await AgentTurnRepository(session).credits_refused(turn_id)
+        except Exception:  # noqa: BLE001 — a failed read must not break the notice
+            logger.exception("could not read credits-refused stamp for %s", turn_id)
+            return False
+
     def has_live_screen(self, topic_id: uuid.UUID) -> bool:
         """Is a session for this topic still reachable? The orphan sweep's first
         question, and the one that used to be unanswerable."""
@@ -2147,6 +2220,19 @@ class ChatService:
                             detail_label="详细说明",
                         ),
                     )
+                elif await self._turn_credits_refused(turn_id):
+                    # Admission already told the room WHY this turn is ending
+                    # (#715): it refused every `/v1/messages` call for spent
+                    # credits, and Claude Code's own reading of that refusal
+                    # — "Invalid API key" — is wrong advice for a spent
+                    # balance. Repeat the platform's own line rather than
+                    # Claude Code's text, however the hook happened to word it.
+                    from app.domain.usage.credits import (
+                        CREDITS_EXHAUSTED_EVENT,
+                        CREDITS_EXHAUSTED_META,
+                    )
+
+                    line, meta = CREDITS_EXHAUSTED_EVENT, CREDITS_EXHAUSTED_META
                 else:
                     line, meta = _turn_failure_notice(event.text, event.failure_code)
                 error_line, error_code = line, meta.get("code")
