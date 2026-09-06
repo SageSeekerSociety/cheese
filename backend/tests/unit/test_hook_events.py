@@ -327,3 +327,62 @@ def test_an_unstamped_hook_falls_back_to_now():
     assert isinstance(message, AgentMessage)
     assert message.at is not None
     assert before <= message.at <= datetime.now(UTC)
+
+
+# --- StopFailure：API 拒绝了这一轮 ------------------------------------------------
+#
+# Claude Code 在这种情况下发的是 StopFailure 而不是 Stop（2.1.224 和 2.1.260 上
+# 实测，529/402/429/401 都如此）。不接它，这一轮在平台这边就永远不结束。
+
+
+def test_stop_failure_ends_the_turn_as_an_error():
+    from app.domain.agent.harness.claude_code.hook_events import translate_hook
+    from app.domain.agent.service import AgentResult
+
+    result = translate_hook(
+        {
+            "hook_event_name": "StopFailure",
+            "error": "server_error",
+            "last_assistant_message": "API Error: Repeated 529 Overloaded errors.",
+            "session_id": "s1",
+        }
+    )
+    assert isinstance(result, AgentResult)
+    assert result.is_error is True
+    assert result.session_id == "s1"
+    assert "Repeated 529" in result.text
+    assert result.errors == ["server_error"]
+    # 不带 failure_code：`error` 字段不可靠（代理返回的 429 被读成
+    # authentication_failed），房间里那句话交给文本路径去定。
+    assert result.failure_code is None
+
+
+def test_stop_failure_carries_the_error_kind_into_the_text():
+    """余额那类错误要能被 chat 层的 out-of-credit 标记认出来，`billing` 得在文本里。"""
+    from app.domain.agent.harness.claude_code.hook_events import translate_hook
+
+    result = translate_hook(
+        {
+            "hook_event_name": "StopFailure",
+            "error": "billing_error",
+            "last_assistant_message": "Your credit balance is too low.",
+            "session_id": "s1",
+        }
+    )
+    assert result is not None and result.is_error
+    assert "billing_error" in result.text
+
+
+def test_stop_failure_with_no_message_still_says_something():
+    from app.domain.agent.harness.claude_code.hook_events import translate_hook
+
+    result = translate_hook({"hook_event_name": "StopFailure", "error": "rate_limit"})
+    assert result is not None and result.is_error
+    assert "rate_limit" in result.text
+
+
+def test_the_launch_subscribes_to_stop_failure():
+    """不订阅它，API 错误结束的一轮就没有任何结束信号。"""
+    from app.domain.agent.harness.claude_code.session_launch import hooks_settings
+
+    assert "StopFailure" in hooks_settings()["hooks"]

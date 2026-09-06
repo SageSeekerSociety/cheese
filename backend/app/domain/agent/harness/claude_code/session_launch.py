@@ -106,6 +106,12 @@ def hooks_settings(extra_stop: list[str] | None = None) -> dict:
             "PostToolUse": tool_matched,
             "MessageDisplay": plain,
             "Stop": [{"hooks": stop_hooks}],
+            # The turn that ends because the API refused it. Claude Code fires
+            # this INSTEAD of `Stop` (measured on 2.1.224 and 2.1.260, in `-p`
+            # and interactive, for 529/402/429/401), so without it such a turn
+            # never ends from the platform's side: the process sits alive at its
+            # prompt, the probe says alive, and nothing else is coming.
+            "StopFailure": plain,
         },
     }
 
