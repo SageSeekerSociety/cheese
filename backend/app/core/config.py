@@ -162,9 +162,10 @@ class Settings(BaseSettings):
     # backend (no activity signal exists there), plus the generic outer default
     # any backend keeps until it signals its own ceiling. The hooks-driven
     # backends no longer use this for their
-    # effective timeout: they run the two-layer idle-suspect / hard-ceiling loop
-    # (agent_idle_suspect_s / agent_turn_hard_ceiling_s below) and reschedule the
-    # outer wrap to their own ceiling (turn 活跃度检测, 2026-08-09).
+    # effective timeout: they run the liveness loop the settings below describe
+    # (idle-suspect then a process probe, no-progress, unread grace; the ceiling
+    # only records) and hand the outer wrap their own ceiling through the
+    # `turn_ceiling` frame.
     agent_turn_timeout_s: float = 900.0
     # 冷启动看门狗: a turn that has emitted no assistant text and made no tool
     # call within this many seconds is declared dead, whatever its ceiling says.
