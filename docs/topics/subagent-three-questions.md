@@ -73,6 +73,31 @@
 
 改造清单（图中两条 + 实测补一条）：hook 接收端按 agent_id 归卡；轮次机制认「通知唤起的轮次」；**完成通知≠终态**（同一分身可多次报完成，收尸别拿第一条当结束）；#708 钉 2.1.261。
 
+## 实施方案（@wangchangxin 已拍板「去做」，2026-09-06）
+
+### 现状摸底结论（两轮代码勘察，关键事实）
+
+- 「任务」已经是房间里的 `tasks` 行（`backend/app/domain/room_task/models.py:258`），不是话题；但**执行层每个任务仍起一整套**：独立 tmux 屏幕、独立 claude 进程、独立 $HOME、独立 git clone（共享房间机器和树分支）。launch 路径在 `cloud_provider.py` / `device_launch.py`。改造要拆的就是这一层。
+- hooks 归属**只按话题（place）分**：`POST /sandbox/hooks/{topic_id}`（`routes/sandbox.py:76`），`hook_key = str(topic_id)`。`SubagentStart/SubagentStop` **没注册**（`session_launch.py:97-109` 只注册六种），`agent_id` 在后端代码里零实现，唯一引用是一条断言它被丢弃的负向测试（`test_hook_events.py:103`）。
+- 轮次机制有个现成的口子：hook 到达而没有进行中轮次时，`hooks_substrate.py:1227` 会当场造一个 `platform_unsolicited` 的内存轮次——分身通知唤起的轮次今天就走它。但它**没有 `agent_turns` 行、不记用量、不结卡、不消费待读消息、不受收尸保护**。要把它变成正式轮次。
+- 分身工具事件今天已经混进房间时间线（PreToolUse/PostToolUse 的 matcher 是 `*`，分身里照样触发上报），只是没带标签、无法区分——所以第一步的翻译层改造对现状是纯增益。
+
+### 分阶段拆活（顺序做，共用房间分支 topic/80027df3）
+
+**T1 hooks 认分身事件（已拆出）**：注册 SubagentStart/SubagentStop；翻译层新增两种事件并把 agent_id/agent_type 带到现有事件上；消费端不崩、不误开活动指示。纯地基，不改任何行为语义。
+
+**T2 任务绑定分身 + split 的分身模式**：`tasks` 加 agent 绑定（agent_id 列或绑定表）；`cheese split` 增加分身模式（建 task 行、返回 id，房间芝士自己 spawn 分身后用新的 `cheese bind` 上报 agent_id）；带 agent_id 的事件按绑定归到任务时间线；SubagentStop 的 last_assistant_message 自动落为任务结论并开结论卡；need-evidence 唤醒房间转达（SendMessage 续跑分身）。旧的每任务起屏幕路径在本阶段末删除（CLAUDE.md：采用替代即删除被替代者）。
+
+**T3 轮次与收尸认新形态**：`platform_unsolicited` 轮次落 `agent_turns` 行（新 reason）、记用量、结卡；#689 的 unread 闸门和 PROMPT_UNDELIVERED 不误伤通知唤起的轮次；presentation 给绑定了分身的任务算「失联」（房间屏幕死了或 SubagentStop 永不到）；完成通知非终态（同一分身可多次报完成）。
+
+### 设计依据与风险
+
+见上文「设计评估（更新版）」。最大风险：进程死亡时任务的表现（T3 的失联态），故 T2 上线前 T3 必须跟上。
+
 ## 待办
 
-（无——三条全部核实完毕，设计评估已给出，等拍板。）
+- [x] 三条待核结论全部实测核实
+- [x] 设计评估 + 拍板
+- [ ] T1 hooks 认分身事件（子任务进行中）
+- [ ] T2 任务绑定分身 + split 分身模式
+- [ ] T3 轮次与收尸认新形态
