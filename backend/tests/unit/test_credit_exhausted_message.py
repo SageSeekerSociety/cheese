@@ -13,6 +13,7 @@ stamps the turn it refused (`credits_refused_at`) the moment it happens, and the
 turn's own end reads that stamp back to decide whose wording the room gets.
 """
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 
@@ -78,13 +79,32 @@ class _CreditsRefusedScreen(StubChannel):
 
 
 async def _run_stop_failure(
-    chat: ChatService, topic_id: uuid.UUID, turn_id: uuid.UUID
+    chat: ChatService,
+    screen: _CreditsRefusedScreen,
+    topic_id: uuid.UUID,
+    turn_id: uuid.UUID,
 ) -> None:
     async for _ in chat.converse(
         topic_id=topic_id, author="u", content="做事", summon=True, turn_id=turn_id
     ):
         pass
     await settle_turn(chat, topic_id)
+    # The hook subscription's consumer task otherwise outlives this test: the
+    # ~40 other tests that hand a screen around go through `client`/
+    # `python_client`, whose own teardown retires it; this one builds a
+    # `ChatService` straight on `db_factory`, with nothing else to do that.
+    # `runtime.close()` would also do this, but it routes through the session-
+    # activity watchdog teardown (`_end_session_activity`/
+    # `_watch_session_activity`), which under full-suite load has been seen to
+    # hang; the consumer task is a plain `while True: await queue.get()` loop
+    # with no such risk, so retire exactly that.
+    subscription = screen.runtime._subscriptions.get(topic_id)
+    if subscription is not None and subscription.consumer_task is not None:
+        subscription.consumer_task.cancel()
+        try:
+            await subscription.consumer_task
+        except asyncio.CancelledError:
+            pass
 
 
 async def _system_event_lines(factory, topic_id: uuid.UUID) -> list[str]:
@@ -116,13 +136,14 @@ async def test_a_turn_stamped_refused_gets_the_platforms_own_line(db_factory, tm
         )
         await session.commit()
 
+    screen = _CreditsRefusedScreen()
     chat = ChatService(
         session_factory=db_factory,
-        compute=stub_compute(_CreditsRefusedScreen()),
+        compute=stub_compute(screen),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
     )
-    await _run_stop_failure(chat, topic_id, turn_id)
+    await _run_stop_failure(chat, screen, topic_id, turn_id)
 
     lines = await _system_event_lines(db_factory, topic_id)
     assert CREDITS_EXHAUSTED_EVENT in lines
@@ -138,13 +159,14 @@ async def test_an_unstamped_stop_failure_keeps_todays_notice(db_factory, tmp_pat
     topic_id = await a_topic(db_factory)
     turn_id = uuid.uuid4()
 
+    screen = _CreditsRefusedScreen()
     chat = ChatService(
         session_factory=db_factory,
-        compute=stub_compute(_CreditsRefusedScreen()),
+        compute=stub_compute(screen),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
     )
-    await _run_stop_failure(chat, topic_id, turn_id)
+    await _run_stop_failure(chat, screen, topic_id, turn_id)
 
     lines = await _system_event_lines(db_factory, topic_id)
     assert any("Invalid API key" in line for line in lines)

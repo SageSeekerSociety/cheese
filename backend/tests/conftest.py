@@ -754,13 +754,18 @@ def pytest_runtest_teardown(item: pytest.Item):
     Only the client database (``_c``): it is truncate-isolated, so any open
     transaction there once the test is over is a leak by definition. The
     integration database uses a session-long connection with per-test rollback,
-    where a transaction between tests can be the harness itself.
+    where a transaction between tests can be the harness itself. ``client``,
+    ``python_client`` and ``db_factory`` all sit on this same database (all
+    three build their engine on ``TEST_DATABASE_URL``), so all three name it
+    here — ``db_factory``'s own teardown check (see the fixture) is meant to
+    catch a leak first, by cancelling the task that holds it; this is the
+    backstop for whatever gets past that.
 
     Cost: one connection to the maintenance DB per client-DB test, a few ms.
     """
     yield
     names = getattr(item, "fixturenames", ())
-    if "client" not in names and "python_client" not in names:
+    if not ({"client", "python_client", "db_factory"} & set(names)):
         return
     leaked = asyncio.run(_terminate_open_transactions(_CLIENT_DB_NAME))
     if leaked:
@@ -814,6 +819,69 @@ def _pg_schema():
     yield
 
 
+def _is_anyio_runner_plumbing(task: asyncio.Task) -> bool:
+    """Whether ``task`` is anyio's own pytest-runner machinery, not test work.
+
+    Every async fixture step (this teardown included) is driven through
+    ``anyio.pytest_plugin``'s ``TestRunner._call_in_runner_task``: the caller
+    wraps itself in a task via ``run_until_complete`` and suspends on
+    ``await future``, and that future only resolves once THIS very coroutine
+    returns — so that caller task is always still "pending" by construction
+    at the exact moment this check runs, for every fixture and test, leak or
+    not. It is identified by where its code lives (anyio's own package),
+    not by name, since it is the same bound method regardless of which
+    fixture or test it is currently ferrying.
+    """
+    code = getattr(task.get_coro(), "cr_code", None)
+    filename = getattr(code, "co_filename", "") or ""
+    return f"{os.sep}anyio{os.sep}" in filename
+
+
+async def _fail_on_background_work(label: str) -> None:
+    """Refuse to let a test return while something it started is still running.
+
+    A test that submits work onto a runner (``AgentWorkRunner.submit``) and
+    returns without waiting for it races the per-test event loop's own
+    teardown: whatever task is still going gets frozen mid-await the moment
+    the loop closes under it — mid a DB transaction, most dangerously, holding
+    a lock the next test's ``TRUNCATE`` then waits on (see
+    ``pytest_runtest_teardown`` above, which is the backstop for whatever gets
+    past this).
+
+    So: wait briefly (a turn's tail is milliseconds), and if anything is still
+    pending, cancel it — cancelling on the still-live loop is what makes the
+    leak impossible, since an ``async with session_factory()`` that gets
+    cancelled rolls back and closes right here rather than freezing — then
+    fail loudly naming every offending coroutine, instead of letting the next
+    test silently inherit the lock.
+    """
+    current = asyncio.current_task()
+    pending = {
+        t
+        for t in asyncio.all_tasks()
+        if t is not current and not t.done() and not _is_anyio_runner_plumbing(t)
+    }
+    if not pending:
+        return
+    _, still_pending = await asyncio.wait(pending, timeout=2.0)
+    if not still_pending:
+        return
+    offenders = sorted(t.get_coro().__qualname__ for t in still_pending)
+    for t in still_pending:
+        t.cancel()
+    # Give the cancellation itself a moment to actually unwind (rollback +
+    # close) before the caller's next teardown step (disposing the engine
+    # these tasks' sessions borrow connections from).
+    await asyncio.wait(still_pending, timeout=2.0)
+    pytest.fail(
+        f"{label} returned with background work still running: "
+        + ", ".join(offenders)
+        + ". A test must not return while a runner's turn task is still"
+        " going — await `runner.drain()` before returning.",
+        pytrace=False,
+    )
+
+
 @pytest.fixture
 async def db_factory(_pg_schema):
     """A truncated database and a session factory over it — no app around it.
@@ -826,6 +894,7 @@ async def db_factory(_pg_schema):
     engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
     await _truncate_all(engine)
     yield async_sessionmaker(engine, expire_on_commit=False)
+    await _fail_on_background_work("db_factory")
     await engine.dispose()
 
 
@@ -891,6 +960,7 @@ async def python_client(
         yield c
 
     app.dependency_overrides.clear()
+    await _fail_on_background_work("python_client")
     await engine.dispose()
 
 
