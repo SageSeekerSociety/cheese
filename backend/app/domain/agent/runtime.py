@@ -787,6 +787,7 @@ class AgentWorkRunner:
         )
         self._last_frame_at[str(turn_id)] = time.monotonic()
         self._live_topics[str(turn_id)] = topic_id
+        now = _utcnow()
         await _open_turn(
             chat_service.session_factory,
             turn_id=turn_id,
@@ -798,9 +799,12 @@ class AgentWorkRunner:
             # Nothing to re-send: there was no prompt. This is what stops the
             # sweep from ever picking one of these as a re-send candidate.
             resendable=False,
-            started_at=_utcnow(),
+            started_at=now,
+            # Stamped in the same write, not after it: a row that exists for even
+            # a moment without it is a row a Stop landing in that moment cannot
+            # close, and nothing would ever come back to close it.
+            delivered_at=now,
         )
-        await _stamp_delivery(chat_service.session_factory, turn_id)
 
     def close_self_started_turn(self, turn_id: uuid.UUID) -> None:
         """Drop the in-memory marks for a self-started turn that has stopped.

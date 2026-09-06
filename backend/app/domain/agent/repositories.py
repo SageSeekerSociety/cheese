@@ -57,11 +57,16 @@ class AgentTurnRepository:
         is_resume: bool,
         resendable: bool,
         started_at: datetime,
+        delivered_at: datetime | None = None,
     ) -> None:
         # `topic_id` is the id of the PLACE this turn runs in, which may be a
         # thread. Resolved here rather than by every caller: the runtime addresses
         # a place by one id everywhere else, and this is one of the few tables
         # that has to store both halves.
+        #
+        # `delivered_at` is for a turn that has no 投喂 phase to stamp later — it
+        # is born delivered or it is born unclosable. Everything the platform
+        # feeds leaves it None and stamps it when the transport accepts.
         room_id, task_id = await room_and_task(self._session, topic_id)
         self._session.add(
             AgentTurn(
@@ -74,6 +79,7 @@ class AgentTurnRepository:
                 is_resume=is_resume,
                 resendable=resendable,
                 started_at=started_at,
+                delivered_at=delivered_at,
             )
         )
 
