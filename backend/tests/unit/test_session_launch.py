@@ -130,11 +130,26 @@ def test_hooks_settings_wire_every_perception_hook_to_the_forwarder():
         "PreToolUse",
         "PostToolUse",
         "MessageDisplay",
+        # A subagent is a second worker inside the same session. Without these
+        # two the room gets its tool calls mixed into the session's own stream
+        # with nothing saying whose they are, and never gets what it concluded.
+        "SubagentStart",
+        "SubagentStop",
         "Stop",
     )
     for event in names:
         entry = s["hooks"][event][0]
         assert entry["hooks"][0] == {"type": "command", "command": "cheese-hook"}
+
+
+def test_a_subagent_finishing_does_not_hand_the_tree_back():
+    """`extra_stop`（cheese-sync）是「这一轮完了，把机器上的活推回去」。分身停下
+    不是轮次停下——会话还在干，往往紧接着再派一个。挂上去就会一轮推好几次，
+    而且每次推的都是一棵还没写完的树。"""
+    s = hooks_settings(["cheese-sync"])
+    assert s["hooks"]["SubagentStop"][0]["hooks"] == [
+        {"type": "command", "command": "cheese-hook"}
+    ]
 
 
 def test_hooks_settings_deny_the_tool_no_user_can_answer():

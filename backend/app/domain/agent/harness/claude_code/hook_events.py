@@ -19,7 +19,15 @@ Event mapping:
                                             assembled from its line-batch
                                             flushes; see the class docstring)
   PostToolUse{tool_name, tool_response}   → AgentToolResult (subagents only)
+  SubagentStart{agent_id, agent_type}     → AgentSubagentStart
+  SubagentStop{agent_id, last_assistant_message, agent_transcript_path}
+                                          → AgentSubagentStop
   Stop{last_assistant_message, ...}       → AgentResult (ends the turn stream)
+
+One session can have several workers going at once — a subagent's hooks come up
+the same pipe as the session's own, tagged with ``agent_id`` (see ``_agent_id``).
+Every event above carries that tag when the payload had one, so a reader can tell
+whose work it is looking at instead of one interleaved stream from nobody.
 """
 
 import asyncio
@@ -32,6 +40,8 @@ from app.domain.agent.service import (
     AgentMessage,
     AgentResult,
     AgentSessionInfo,
+    AgentSubagentStart,
+    AgentSubagentStop,
     AgentToolResult,
     AgentToolUse,
     AgentUsage,
@@ -57,6 +67,27 @@ def _flush_time(hook: dict) -> datetime:
 # question and never the answer. Both names are live — `Task` is the older CLI's
 # name for `Agent` and either can arrive depending on the box's image age.
 _SUBAGENT_TOOLS = {"Task", "Agent"}
+
+
+def _agent_id(hook: dict) -> str | None:
+    """WHICH worker inside the session produced this hook — a subagent's id, or
+    None for the session's own thread.
+
+    The main thread's payloads do not carry the key at all (verified against
+    2.1.224: a subagent's PreToolUse/PostToolUse carry `agent_id` and
+    `agent_type`, the spawner's carry neither), so absence IS the answer rather
+    than a gap: nothing has to be reconciled to decide an event belongs to the
+    session. A blank value is read as absent for the same reason — an id that
+    identifies nobody cannot attribute anything.
+    """
+    value = hook.get("agent_id")
+    return value.strip() or None if isinstance(value, str) else None
+
+
+def _agent_type(hook: dict) -> str | None:
+    """The subagent kind (`general-purpose`, a custom agent's name…), or None."""
+    value = hook.get("agent_type")
+    return value.strip() or None if isinstance(value, str) else None
 
 
 def _hook_event_name(hook: dict) -> str:
@@ -113,6 +144,35 @@ def translate_hook(hook: dict) -> AgentEvent | None:
         sid = hook.get("session_id")
         return AgentSessionInfo(session_id=str(sid)) if sid else None
 
+    if event == "SubagentStart":
+        # No id, no event: everything downstream of this exists to attribute
+        # later hooks to a worker, and an unnamed worker cannot be told apart
+        # from the session — announcing one would put work on the room's
+        # timeline under a name nothing else will ever match.
+        agent_id = _agent_id(hook)
+        if agent_id is None:
+            return None
+        sid = hook.get("session_id")
+        return AgentSubagentStart(
+            agent_id=agent_id,
+            agent_type=_agent_type(hook) or "",
+            session_id=str(sid) if sid else None,
+        )
+
+    if event == "SubagentStop":
+        agent_id = _agent_id(hook)
+        if agent_id is None:
+            return None
+        path = hook.get("agent_transcript_path")
+        sid = hook.get("session_id")
+        return AgentSubagentStop(
+            agent_id=agent_id,
+            text=str(hook.get("last_assistant_message") or ""),
+            agent_type=_agent_type(hook) or "",
+            transcript_path=str(path) if path else None,
+            session_id=str(sid) if sid else None,
+        )
+
     if event == "PreToolUse":
         tool_input = hook.get("tool_input")
         eid = hook.get("_eid")
@@ -120,6 +180,8 @@ def translate_hook(hook: dict) -> AgentEvent | None:
             name=str(hook.get("tool_name") or ""),
             input=tool_input if isinstance(tool_input, dict) else {},
             eid=eid if isinstance(eid, str) else None,
+            agent_id=_agent_id(hook),
+            agent_type=_agent_type(hook),
         )
 
     if event == "PostToolUse":
@@ -143,6 +205,8 @@ def translate_hook(hook: dict) -> AgentEvent | None:
                 else ""
             ),
             eid=eid if isinstance(eid, str) else None,
+            agent_id=_agent_id(hook),
+            agent_type=_agent_type(hook),
         )
 
     if event == "MessageDisplay":
@@ -153,7 +217,12 @@ def translate_hook(hook: dict) -> AgentEvent | None:
         text = hook.get("delta")
         if isinstance(text, str) and text.strip():
             eid = hook.get("_eid")
-            return AgentMessage(text=text, eid=eid if isinstance(eid, str) else None)
+            return AgentMessage(
+                text=text,
+                eid=eid if isinstance(eid, str) else None,
+                agent_id=_agent_id(hook),
+                agent_type=_agent_type(hook),
+            )
         return None
 
     if event == "CheeseSync":
@@ -199,6 +268,8 @@ def translate_hook(hook: dict) -> AgentEvent | None:
             text=str(hook.get("last_assistant_message") or ""),
             session_id=str(sid) if sid else None,
             usage=_usage_from_hook(hook),
+            agent_id=_agent_id(hook),
+            agent_type=_agent_type(hook),
         )
 
     # Any unmapped event: nothing to surface.

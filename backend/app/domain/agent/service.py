@@ -42,6 +42,12 @@ class AgentMessage:
     # room showed 「先看代码链路。」 between the two greps it introduced.
     # None off the hooks path, where the persist time is already the right one.
     at: datetime | None = None
+    # WHO produced this, when it was not the session itself: a subagent the
+    # session spawned. See the module note on AgentSubagentStart. None means the
+    # main thread — the harness leaves the key off entirely there, so absent and
+    # "the session" are the same answer.
+    agent_id: str | None = None
+    agent_type: str | None = None
 
 
 @dataclass
@@ -54,6 +60,9 @@ class AgentToolUse:
     # Lets the durable-spool reconcile dedup a backfilled 现场 event against the one
     # the live hook path already persisted. None off the hooks path (sdk backend).
     eid: str | None = None
+    # Which subagent did this; None for the session's own thread (AgentMessage).
+    agent_id: str | None = None
+    agent_type: str | None = None
 
 
 @dataclass
@@ -76,6 +85,11 @@ class AgentToolResult:
     description: str = ""
     # Stable per-event id, same contract as AgentToolUse.eid.
     eid: str | None = None
+    # Which subagent SPAWNED this one — not the one it describes. A subagent may
+    # spawn its own, and the id on the hook is always the thread the tool call
+    # was made from.
+    agent_id: str | None = None
+    agent_type: str | None = None
 
 
 @dataclass
@@ -124,8 +138,65 @@ class AgentResult:
     # re-derived: the alternative is reading back the sentence this same code
     # just wrote, which makes the copy unchangeable.
     failure_code: str | None = None
+    # Which subagent stopped, when the Stop came from one. None for the
+    # session's own Stop — the one that ends a turn.
+    agent_id: str | None = None
+    agent_type: str | None = None
+
+
+@dataclass
+class AgentSubagentStart:
+    """A subagent the session spawned has begun work.
+
+    A subagent is a second worker inside one session: it has its own context and
+    its own tool calls, and everything it does reaches us through the SAME hook
+    stream as the session's own work, distinguished only by ``agent_id`` riding
+    on each payload. The main thread's hooks carry no such key at all, so
+    "absent" is the session itself rather than an unknown subagent — which is
+    what makes the id usable as the sole discriminator.
+
+    Carried as its own event rather than inferred from the first tool call an
+    unseen id makes: a subagent that starts and dies without calling anything is
+    invisible under inference, and that is exactly the case a reader needs told.
+    """
+
+    agent_id: str
+    agent_type: str = ""
+    #: The session this subagent belongs to (the spawner's, not its own).
+    session_id: str | None = None
+
+
+@dataclass
+class AgentSubagentStop:
+    """A subagent finished — but NOT necessarily its work.
+
+    One subagent can report finished more than once: putting a long command in
+    its own background and standing by counts as finishing, and resuming it
+    produces another Stop later. So this marks "handed something back", never
+    "done"; whatever reads it must stay open to a later one for the same id.
+
+    ``text`` is the subagent's closing message verbatim — the answer that
+    otherwise reaches only the thread that spawned it and dies with the
+    container's transcript.
+    """
+
+    agent_id: str
+    text: str = ""
+    agent_type: str = ""
+    #: Path to the subagent's own transcript ON THE MACHINE THAT RAN IT. Present
+    #: for a reader that can reach that filesystem; useless to one that cannot,
+    #: which is why the closing message is carried in full rather than by
+    #: reference to it.
+    transcript_path: str | None = None
+    session_id: str | None = None
 
 
 AgentEvent = (
-    AgentMessage | AgentToolUse | AgentToolResult | AgentSessionInfo | AgentResult
+    AgentMessage
+    | AgentToolUse
+    | AgentToolResult
+    | AgentSessionInfo
+    | AgentResult
+    | AgentSubagentStart
+    | AgentSubagentStop
 )
