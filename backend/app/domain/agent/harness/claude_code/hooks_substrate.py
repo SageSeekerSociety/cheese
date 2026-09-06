@@ -227,23 +227,48 @@ class ActivityTracker:
     #: right when a tool fails, since `PostToolUseFailure` is not subscribed.
     tool_started_at: float | None = None
     tool_returned_at: float | None = None
+    #: Last hook that means work moved: a tool about to run, or the turn ending.
+    #: Seeded by the monitor, since callers build this with `last_at` alone.
+    last_progress_at: float | None = None
+    #: Last hook that means the assistant said something. On its own it proves
+    #: nothing about work; against `last_progress_at` it is the whole signal.
+    last_output_at: float | None = None
+    #: When the wall-clock ceiling was crossed, if it was. Recorded, not acted
+    #: on: the ceiling stopped being a verdict and became a fact worth logging.
+    ceiling_crossed_at: float | None = None
 
     def touch(self, at: float) -> None:
         self.last_at = at
         self.suspect_since = None
 
     def saw_hook(self, name: str, at: float) -> None:
-        """Advance the clocks for one hook, including the in-tool state."""
+        """Advance every clock for one hook: the in-tool state, the progress and
+        output clocks, and plain activity."""
         if name == "PreToolUse":
             self.tool_started_at = at
         elif self.in_tool:
             self.tool_returned_at = at
+        if name in _PROGRESS_HOOKS:
+            self.last_progress_at = at
+        elif name in _OUTPUT_HOOKS:
+            self.last_output_at = at
         self.touch(at)
 
     @property
     def in_tool(self) -> bool:
         started, returned = self.tool_started_at, self.tool_returned_at
         return started is not None and (returned is None or returned < started)
+
+
+#: The hooks that mean work moved. `PreToolUse` is a tool about to run,
+#: `PostToolUse` is one that came back (a 40-minute command returning IS
+#: progress, and the model's next line after it must not look like a session
+#: that has done nothing since), `Stop` is the turn finishing on its own.
+#: Nothing else counts, and assistant output least of all: a session wedged in
+#: a loop produces exactly that.
+_PROGRESS_HOOKS = frozenset({"PreToolUse", "PostToolUse", "Stop"})
+#: The hook that means the assistant produced text.
+_OUTPUT_HOOKS = frozenset({"MessageDisplay"})
 
 
 @dataclass
@@ -349,6 +374,7 @@ async def monitor_session_activity(
     hard_ceiling_s: float,
     unread_since: Callable[[], float | None] | None = None,
     unread_grace_s: float = 0.0,
+    no_progress_s: float = 0.0,
     resume_session_id: str | None,
     timeout_message: str,
     delivery_timeout_s: float = DELIVERY_TIMEOUT_S,
@@ -373,9 +399,10 @@ async def monitor_session_activity(
       ``confirm_alive``
       (if given) is polled every ``confirm_poll_s`` until it says the screen is
       actually dead, or activity resumes and clears the suspicion.
-    - ``hard_ceiling_s``: an unconditional backstop regardless of activity, so a
-      pathologically active session (a tool retrying forever, a real infinite
-      loop that keeps printing) still can't run forever.
+    - ``hard_ceiling_s``: the wall-clock mark past which the session is recorded
+      as long — a warning with context, and ``tracker.ceiling_crossed_at`` — and
+      nothing else. Elapsed time cannot tell working from stuck, so it is a
+      metric, not a verdict; the loop body says why.
 
     A third check, on a different axis from those two. Both of the above ask
     whether the session is producing anything. ``unread_since`` asks whether it
@@ -387,22 +414,64 @@ async def monitor_session_activity(
     only exists while something is actually waiting, and it is the one with a
     person on the other end. ``unread_grace_s`` of 0 disables it.
 
-    With no ``tracker``/``confirm_alive`` given (the device backend today) and
-    ``idle_suspect_s == hard_ceiling_s``, this reduces to exactly the old
-    single-deadline behaviour.
-
     The subscription owns the queue lifecycle; this function only observes its
     activity stream."""
     now = asyncio.get_event_loop().time
     start = now()
     hard_deadline = start + hard_ceiling_s
     tracker = tracker if tracker is not None else ActivityTracker(last_at=start)
+    if tracker.last_progress_at is None:
+        tracker.last_progress_at = start
     # Until something comes back, we have no evidence the prompt was received at
     # all: it is typed into a terminal, and typing has no return value. So the
     # first wait is short. Any hook clears it — `UserPromptSubmit` is the direct
     # receipt, and any other activity proves delivery just as well.
     delivered = False
     delivery_deadline = start + delivery_timeout_s
+
+    def progress_verdict(t: float) -> AgentResult | None:
+        """Is the session talking without working?
+
+        The shape is two clocks against each other. `last_output_at` says the
+        session is ACTIVE right now: output within the idle threshold, so this
+        is the half of the space the idle check does not own. A session that
+        has gone quiet belongs to the probe, whatever it said before it went
+        quiet, and this verdict never touches it. `last_progress_at` says when
+        work last moved: a tool starting, a tool returning, or the turn ending.
+        Active for that long with nothing moving is a loop.
+
+        A long foreground command never trips this. It emits no output while it
+        runs, so the first clock is stale and the session reads as quiet, which
+        is the probe's business. The earlier form of this check, "any output
+        since the last progress", let a single line spoken before a long
+        silence count as talking for the whole silence, and ended sessions the
+        probe had already judged alive.
+
+        Asked at the same two moments as `unread_verdict` and for the same
+        reason: after a hook has been consumed the clocks are fresh, and after a
+        wait has run out the queue is known to be empty.
+        """
+        if no_progress_s <= 0:
+            return None
+        output_at, progressed_at = tracker.last_output_at, tracker.last_progress_at
+        if output_at is None or progressed_at is None:
+            return None
+        if t - output_at >= idle_suspect_s:
+            return None
+        if t - progressed_at < no_progress_s:
+            return None
+        logger.warning(
+            "output for %.0fs with no tool call or ending — the session is "
+            "talking and not working; ending it (%s)",
+            t - progressed_at,
+            context,
+        )
+        return AgentResult(
+            text=timeout_message,
+            session_id=resume_session_id,
+            is_error=True,
+            failure_code=TURN_TIMEOUT_CODE,
+        )
 
     def unread_verdict(t: float) -> AgentResult | None:
         """Has an injected message gone unread past its grace, at a moment the
@@ -449,18 +518,23 @@ async def monitor_session_activity(
     while True:
         t = now()
         if t >= hard_deadline:
+            # Recorded, not acted on. Elapsed time alone cannot tell an agent
+            # three hours into a refactor from a session that is stuck, and the
+            # three gates below each catch a specific way of being stuck: the
+            # process gone (`confirm_alive`), output with no tool call
+            # (`no_progress_s`), input never consumed (`unread_grace_s`). What
+            # is left for a wall clock to end is a turn that is working and has
+            # not finished, which is not a fault. It stays as a fact: logged
+            # here, kept on the tracker, and the next interval starts.
+            if tracker.ceiling_crossed_at is None:
+                tracker.ceiling_crossed_at = t
             logger.warning(
-                "session hit its hard ceiling after %.0fs — ending as timeout (%s)",
-                hard_ceiling_s,
+                "session past its %.0fs ceiling and still going — recorded, not "
+                "ended (%s)",
+                t - start,
                 context,
             )
-            yield AgentResult(
-                text=timeout_message,
-                session_id=resume_session_id,
-                is_error=True,
-                failure_code=TURN_TIMEOUT_CODE,
-            )
-            return
+            hard_deadline = t + hard_ceiling_s
         # Asked before the waits below, because this is the one verdict that can
         # be true while every other signal looks healthy.
         if delivered:
@@ -490,7 +564,7 @@ async def monitor_session_activity(
                     )
                     return
                 continue
-            verdict = unread_verdict(now())
+            verdict = progress_verdict(now()) or unread_verdict(now())
             if verdict is not None:
                 yield verdict
                 return
@@ -528,7 +602,7 @@ async def monitor_session_activity(
             yield event
             if isinstance(event, AgentResult):
                 return  # Stop hook → session idle
-        verdict = unread_verdict(now())
+        verdict = progress_verdict(now()) or unread_verdict(now())
         if verdict is not None:
             yield verdict
             return
@@ -913,36 +987,22 @@ class ClaudeCodeRuntime:
         router: HookRouter | None = None,
         idle_suspect_s: float = 900.0,
         hard_ceiling_s: float = 900.0,
-        session_ceiling_s: float | None = None,
         unread_grace_s: float = 0.0,
+        no_progress_s: float = 0.0,
         delivery_timeout_s: float = DELIVERY_TIMEOUT_S,
     ) -> None:
         self._channel = channel
         self._router = router or hook_router
         # Equal by default preserves the legacy single-deadline behavior.
         self._idle_suspect_s = idle_suspect_s
+        # One ceiling for both layers, because neither layer ends anything at
+        # it any more: the monitor logs the crossing and stamps the tracker, the
+        # outer wrap (told the same number via `turn_ceiling`) writes it to the
+        # turn record. Two numbers made sense while the two layers did different
+        # things when they came due; they no longer do.
         self._hard_ceiling_s = hard_ceiling_s
-        # Two ceilings, because the two layers can do different things when they
-        # come due and so they want different numbers.
-        #
-        # `_hard_ceiling_s` is what the OUTER wall-clock wrap is told (see the
-        # `hard_ceiling_s` property). That layer sees only frames, has no way to
-        # ask whether a session is alive, and refreshes on every tool call, so
-        # what it ends is a turn that has stopped calling tools: exactly a loop
-        # that only emits output.
-        #
-        # `_session_ceiling_s` is this monitor's own unconditional backstop, and
-        # it fires against a session that idle-suspect has been probing and
-        # `confirm_alive` keeps calling alive. That combination is a busy pane
-        # with no interim hook, which is what a long foreground command looks
-        # like, so cutting it at the same number would kill exactly the work the
-        # probe just confirmed was fine. It stays large on purpose: past this
-        # much wall clock the answer stops being "still working" whatever the
-        # probe says.
-        self._session_ceiling_s = (
-            hard_ceiling_s if session_ceiling_s is None else session_ceiling_s
-        )
         self._unread_grace_s = unread_grace_s
+        self._no_progress_s = no_progress_s
         self._unread_probe: UnreadProbe | None = None
         self._delivery_timeout_s = delivery_timeout_s
         # Screen-lifetime state. ``_live`` is the transport handle; subscriptions
@@ -968,7 +1028,8 @@ class ClaudeCodeRuntime:
 
     @property
     def hard_ceiling_s(self) -> float:
-        """This runtime's absolute active-session ceiling."""
+        """The wall-clock mark past which a turn is recorded as long. It ends
+        nothing; chat.py hands it to the outer wrap as the `turn_ceiling`."""
         return self._hard_ceiling_s
 
     @property
@@ -1552,9 +1613,10 @@ class ClaudeCodeRuntime:
             async for event in monitor_session_activity(
                 queue=activity.queue,
                 idle_suspect_s=self._idle_suspect_s,
-                hard_ceiling_s=self._session_ceiling_s,
+                hard_ceiling_s=self._hard_ceiling_s,
                 unread_since=self._unread_since_for(subscription.topic_id),
                 unread_grace_s=self._unread_grace_s,
+                no_progress_s=self._no_progress_s,
                 resume_session_id=None,
                 timeout_message=self._channel.timeout_message,
                 delivery_timeout_s=(
@@ -1804,9 +1866,10 @@ class ClaudeCodeRuntime:
                 async for event in monitor_session_activity(
                     queue=attribution.queue,
                     idle_suspect_s=self._idle_suspect_s,
-                    hard_ceiling_s=self._session_ceiling_s,
+                    hard_ceiling_s=self._hard_ceiling_s,
                     unread_since=self._unread_since_for(topic_id),
                     unread_grace_s=self._unread_grace_s,
+                    no_progress_s=self._no_progress_s,
                     resume_session_id=resume_session_id,
                     timeout_message=self._channel.timeout_message,
                     tracker=tracker,

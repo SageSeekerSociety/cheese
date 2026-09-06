@@ -360,94 +360,6 @@ async def test_topic_turn_reports_the_rescheduled_ceiling(db_factory):
 
 
 @pytest.mark.anyio
-async def test_timeout_message_reports_the_effective_ceiling_and_elapsed(db_factory):
-    """F: the timeline message a timed-out turn posts used to drop the actual
-    timeout value entirely ("⚠️ 芝士这轮超时被中断了..." with no number) —
-    only logger.warning had it, and agent has no host SSH to read logger. The
-    message must carry the SAME effective ceiling `topic_work()`/`cheese
-    status` report, plus roughly how long it actually ran."""
-    broker = InProcessBroker()
-    runner = AgentWorkRunner(broker, turn_timeout_s=1.0)
-
-    class _Hang:
-        session_factory = db_factory
-
-        def __init__(self) -> None:
-            self.posted: str | None = None
-            self.posted_meta: dict | None = None
-
-        async def converse(self, **_):
-            yield {"type": "user_block"}
-            # 说过话之后才卡住。这一帧是必需的，不是装饰：它把这一轮明确地放进
-            # 「跑起来了然后卡住」那一类，而不是「压根没起来」那一类
-            # （见 test_cold_start_watchdog.py）。两类共用这个 except 分支、
-            # 报的话术不同，而这条测试要钉的是前者那句。
-            yield {"type": "assistant_block", "text": "在看了"}
-            await asyncio.sleep(10)  # wedge, well past the 1s ceiling
-            yield {"type": "done"}  # pragma: no cover
-
-        async def post_system_event(self, topic_id, content, turn_id=None, meta=None):
-            self.posted = content
-            self.posted_meta = meta
-            return {"id": "b1", "kind": "event", "content": content}
-
-    svc = _Hang()
-    topic = await a_topic(db_factory)
-    async with broker.subscribe(str(topic)) as q:
-        runner.submit(svc, topic, author="u", content="hi", summon=True)
-        await _next_frame(q, "event_block", timeout=3)
-    assert svc.posted is not None
-    assert "1秒的上限" in svc.posted
-    # 平台提示统一契约: 房间里一行，"实际跑了约 N 秒"收进 meta.detail 由前端折叠。
-    assert svc.posted_meta is not None
-    assert svc.posted_meta["event_type"] == "turn_timeout"
-    assert "实际跑了约" in svc.posted_meta["detail"]
-
-
-@pytest.mark.anyio
-async def test_timeout_message_uses_the_rescheduled_ceiling_not_the_generic_default(
-    db_factory,
-):
-    """A turn that rescheduled its ceiling via `turn_ceiling` (turn 活跃度检测,
-    e.g. the tmux backend) must have its timeout message report THAT ceiling,
-    not the generic outer default — otherwise "was this the generic safety
-    net or the backend's real, much longer ceiling" is unanswerable without
-    host SSH."""
-    broker = InProcessBroker()
-    runner = AgentWorkRunner(broker, turn_timeout_s=0.05)  # tiny generic default
-
-    class _Hang:
-        session_factory = db_factory
-
-        def __init__(self) -> None:
-            self.posted: str | None = None
-            self.posted_meta: dict | None = None
-
-        async def converse(self, **_):
-            yield {"type": "turn_ceiling", "seconds": 2.0}
-            # 同上：`turn_ceiling` 只说明选中了哪个后端，不说明它起来了。要让这一轮
-            # 真的按「后端自己的上限」跑完再超时，它得先开口——否则冷启动保险丝
-            # 会先把它按「运行环境没起来」砍掉，报的就是另一句话。
-            yield {"type": "assistant_block", "text": "在看了"}
-            await asyncio.sleep(10)  # wedge, well past the rescheduled 2s
-            yield {"type": "done"}  # pragma: no cover
-
-        async def post_system_event(self, topic_id, content, turn_id=None, meta=None):
-            self.posted = content
-            self.posted_meta = meta
-            return {"id": "b1", "kind": "event", "content": content}
-
-    svc = _Hang()
-    topic = await a_topic(db_factory)
-    async with broker.subscribe(str(topic)) as q:
-        runner.submit(svc, topic, author="u", content="hi", summon=True)
-        await _next_frame(q, "event_block", timeout=5)
-    assert svc.posted is not None
-    assert "2秒的上限" in svc.posted
-    assert "0.05" not in svc.posted
-
-
-@pytest.mark.anyio
 async def test_running_topic_ids_reports_only_in_flight_turns(db_factory):
     # Bulk signal for the sidebar's「芝士还在跑」indicator: a topic whose turn
     # already finished must drop out, one still mid-flight must show up.
@@ -1523,8 +1435,9 @@ async def test_a_slow_setup_does_not_spend_the_ceiling_before_the_turn_starts(
 
 
 @pytest.mark.anyio
-async def test_a_turn_cut_by_its_ceiling_still_ends_its_stream(db_factory):
-    """超时那条路是把 chat 的生成器从中间切断的，所以 chat 自己那句 `done` 不会发；
+async def test_a_turn_cut_by_the_fuse_still_ends_its_stream(db_factory):
+    """冷启动保险丝（一个字都没输出）那条路是把 chat 的生成器从中间切断的，
+    所以 chat 自己那句 `done` 不会发；
     而 `turn_finished` 只对「已经宣布过自己开始」的一轮发，一个还在准备阶段就被切掉
     的轮次两个都没有。订阅者于是一直读到自己的读超时为止——0.4 秒的上限变成 300 秒的
     挂起就是这么来的，而失败本身是 1 秒内就知道的。
@@ -1580,28 +1493,34 @@ async def test_a_turn_that_keeps_calling_tools_outlives_its_ceiling(db_factory):
 
 
 @pytest.mark.anyio
-async def test_a_turn_that_only_produces_output_is_still_cut(db_factory):
-    """反过来：一直吐字、一次工具都不调的会话必须还是被拦下来。
-
-    它是这道闸真正要挡的那个，而且任何「有没有动静」的判据都拦不住它，因为它
-    一直有动静。
+async def test_crossing_the_ceiling_is_recorded_and_ends_nothing(db_factory, caplog):
+    """上限不再是判决。一轮跑过了它，日志里记一笔、turn 记录里记一笔，然后照常
+    跑到它自己的 `done`。「一直吐字、一次工具都不调」那种会话现在由 harness 的
+    monitor 判（test_hooks_substrate），这一层不再替它做。
     """
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker, turn_timeout_s=5.0)
 
-    class _OnlyTalks:
+    class _TalksPastTheCeiling:
         session_factory = db_factory
 
         async def converse(self, **_):
-            yield {"type": "turn_ceiling", "seconds": 0.3}
+            yield {"type": "turn_ceiling", "seconds": 0.1}
             yield {"type": "prompt_delivered"}
-            for _ in range(40):
+            for _ in range(8):
                 yield {"type": "assistant_block", "text": "还在说"}
                 await asyncio.sleep(0.05)
             yield {"type": "done"}
 
     topic = await a_topic(db_factory)
-    async with broker.subscribe(str(topic)) as q:
-        runner.submit(_OnlyTalks(), topic, author="u", content="hi", summon=True)
-        f = await _next_frame(q, "error", timeout=5)
-    assert "超时" in f["message"]
+    with caplog.at_level("WARNING"):
+        async with broker.subscribe(str(topic)) as q:
+            runner.submit(
+                _TalksPastTheCeiling(), topic, author="u", content="hi", summon=True
+            )
+            f = await _next_frame(q, "done", timeout=5)
+    assert f["type"] == "done"
+    assert any(
+        "ceiling" in r.getMessage() and "recorded" in r.getMessage()
+        for r in caplog.records
+    ), [r.getMessage() for r in caplog.records]

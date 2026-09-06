@@ -1812,47 +1812,16 @@ class AgentWorkRunner:
             # `loop_start` is not that moment: preparing the database, choosing a
             # backend and attaching the screen all happen after it.
             turn_start: float | None = None
-            # The last `tool` frame. The ceiling rolls off this once there is
-            # one, for the reason in `ceiling_deadline`.
-            last_progress: float | None = None
-
-            def ceiling_deadline() -> float:
-                """When this turn's ceiling comes due.
-
-                Measured from `prompt_delivered` rather than from the top of
-                this function, because the ceiling answers "how long may a turn
-                LIVE" and setup happens before the turn has begun. Counting
-                setup against it is what let a squeezed ceiling in a test
-                condemn a session that had not even attached its screen: the
-                deadline was already spent by the time there was anything to
-                watch.
-
-                Then it rolls forward on every tool call, so what it measures
-                is time with NO tool call rather than a turn's total length.
-                The harness side does the same with the same number
-                (`hooks_substrate`'s progress clock), and both are answering
-                the question a fixed wall-clock could not: an agent three hours
-                into a large refactor and a session wedged in a printing loop
-                are indistinguishable by elapsed time, and tell themselves
-                apart instantly by whether a tool ever runs.
-
-                Never returns a moment already past. `reschedule` to a past
-                moment comes due on the very next pass, so a base that setup has
-                outrun turns "very little time left" into "no time at all",
-                which is the same failure again by arithmetic instead of by
-                accounting. The cold-start fuse deliberately keeps `loop_start`:
-                it asks whether this turn ever STARTED, so it has to count the
-                setup this one excludes.
-                """
-                if last_progress is not None:
-                    base = last_progress
-                elif turn_start is not None:
-                    base = turn_start
-                else:
-                    base = loop_start
-                return max(
-                    asyncio.get_running_loop().time(), base + max(0.0, ceiling_s)
-                )
+            # Past `turn_start + ceiling_s` the turn is RECORDED as long, and
+            # nothing else: the ceiling stopped being a deadline. Elapsed time
+            # cannot tell an agent three hours into a refactor from a session
+            # that is stuck, and the harness monitor now carries three checks
+            # that each catch a specific way of being stuck (a process gone,
+            # output with no tool call, an injected message never read). What a
+            # wall clock alone could still end here is a turn that is working
+            # and has not finished. So the only deadline this wrap keeps is the
+            # cold-start fuse below, which asks a different question.
+            ceiling_crossed = False
 
             # 冷启动看门狗: until the model has said ANYTHING, the wrap runs on a
             # much shorter fuse than the turn ceiling.
@@ -1896,7 +1865,12 @@ class AgentWorkRunner:
                 fuse_deadline = loop_start + min(first_output_fuse_s, self._timeout)
             else:
                 fuse_deadline = None
-            async with asyncio.timeout(self._timeout) as turn_deadline:
+            # No deadline until the fuse asks for one. `self._timeout` used to
+            # be the starting value, standing in for a ceiling the backend had
+            # not declared yet; the ceiling is recorded now, never scheduled, so
+            # a wrap that started at `self._timeout` would cut every turn whose
+            # fuse is disabled at exactly that mark, with nothing to say why.
+            async with asyncio.timeout(None) as turn_deadline:
                 if fuse_deadline is not None:
                     turn_deadline.reschedule(fuse_deadline)
                 turn_frames = (
@@ -1932,6 +1906,26 @@ class AgentWorkRunner:
                     # call persists no Block, so without this a turn legitimately
                     # grinding through tools looks identical to a wedged one.
                     self._last_frame_at[str(turn_id)] = time.monotonic()
+                    # Measured from `turn_start` when the backend told us when
+                    # the turn began, and from `loop_start` when it did not: a
+                    # recorded fact must not depend on an optional frame.
+                    ceiling_base = loop_start if turn_start is None else turn_start
+                    if (
+                        not ceiling_crossed
+                        and asyncio.get_running_loop().time()
+                        >= ceiling_base + ceiling_s
+                    ):
+                        ceiling_crossed = True
+                        rec["ceiling_crossed_s"] = round(
+                            asyncio.get_running_loop().time() - ceiling_base
+                        )
+                        logger.warning(
+                            "turn %s is past its %ss ceiling and still going — "
+                            "recorded, not ended (topic %s)",
+                            turn_id,
+                            round(ceiling_s),
+                            topic_id,
+                        )
                     if kind == "prompt_delivered":
                         # The transport accepted the write. Stamp the durable
                         # registry NOW: if this process dies a moment later, the
@@ -1946,48 +1940,20 @@ class AgentWorkRunner:
                         # run too long" from the moment there was something to
                         # run.
                         turn_start = asyncio.get_running_loop().time()
-                        if fuse_deadline is None:
-                            turn_deadline.reschedule(ceiling_deadline())
-                        else:
-                            turn_deadline.reschedule(
-                                min(fuse_deadline, ceiling_deadline())
-                            )
                         continue
                     if kind == "turn_ceiling":
                         ceiling_s = float(frame.get("seconds", self._timeout))
                         # `topic_work()` reads this so `cheese status` reports the
                         # backend's REAL ceiling, not the generic outer default.
                         rec["ceiling_s"] = ceiling_s
-                        # No deadline moves here while the fuse is up. This
-                        # frame is emitted before the container is touched, so it
-                        # proves a backend was selected and nothing more, and the
-                        # ceiling it declares measures a turn that has not begun.
-                        # Folding it into the fuse against `loop_start` was what
-                        # made a small declared ceiling come due during setup: the
-                        # deadline was spent before there was anything to watch.
-                        # The fuse holds the line until `prompt_delivered`, which
-                        # is where this number is applied, against the moment the
-                        # turn actually started.
-                        #
-                        # A backend that declares 900s still does not buy 900
-                        # seconds of silence: the fuse is untouched here and
-                        # `prompt_delivered` takes whichever of the two comes
-                        # first.
-                        if fuse_deadline is None:
-                            # Fuse disabled on this deployment, so the ceiling is
-                            # the only guard there is. Based on `loop_start`,
-                            # since the turn has not started yet, and re-based
-                            # when it does.
-                            turn_deadline.reschedule(ceiling_deadline())
-                        else:
-                            # The generic default stood in for a ceiling nobody
-                            # had declared yet, and it truncated the fuse
-                            # (`min(first_output_fuse_s, self._timeout)` above).
-                            # The backend has now said what its real ceiling is,
-                            # so the fuse gets its own full length back. Whether
-                            # the ceiling is the shorter of the two is settled at
-                            # `prompt_delivered`, which is the first moment the
-                            # ceiling has a base to be measured from.
+                        # The frame's only remaining job here: it is emitted before
+                        # the container is touched, so the generic default that
+                        # truncated the fuse (`min(first_output_fuse_s,
+                        # self._timeout)` above) was standing in for a ceiling
+                        # nobody had declared. Now one is declared, the fuse gets
+                        # its own full length back. The ceiling itself is recorded
+                        # against `turn_start`, never scheduled.
+                        if fuse_deadline is not None:
                             fuse_deadline = loop_start + max(0.0, first_output_fuse_s)
                             turn_deadline.reschedule(fuse_deadline)
                         continue
@@ -2009,16 +1975,9 @@ class AgentWorkRunner:
                         # its real ceiling and retire the cold-start fuse.
                         if fuse_deadline is not None:
                             fuse_deadline = None
-                            turn_deadline.reschedule(ceiling_deadline())
+                            turn_deadline.reschedule(None)
                     if kind == "tool":
                         rec["tools"] += 1
-                        # Work happened, so the ceiling starts over. Without
-                        # this the outer wrap would still cut a turn at a fixed
-                        # length while the harness side, reading the same
-                        # number, had already moved on.
-                        last_progress = asyncio.get_running_loop().time()
-                        if fuse_deadline is None:
-                            turn_deadline.reschedule(ceiling_deadline())
                     if kind == "error":
                         rec["status"] = "error"
                         rec["detail"] = str(frame.get("message", ""))[:200]
@@ -2099,7 +2058,6 @@ class AgentWorkRunner:
             # `turn_ceiling` frame may have raised this well above
             # `self._timeout`, so logging the base default here would be
             # misleading about what actually elapsed before the cut.
-            effective_ceiling_s = round(rec.get("ceiling_s") or self._timeout)
             # Two different failures share this handler, and telling them apart is
             # the whole point of the cold-start fuse — it decides which message
             # the room gets. "Ran a long time and wedged" is a turn problem, and
@@ -2109,9 +2067,16 @@ class AgentWorkRunner:
             # Neither is retried — a person picks it up (a wedged turn re-runs
             # into the same dead machine, and an environment that never came up
             # needs someone to look).
+            # Only the cold-start fuse raises this now: the ceiling is recorded
+            # rather than scheduled, so a turn that produced output has no
+            # deadline left to hit. Kept as a check rather than assumed, so a
+            # future deadline added above cannot silently borrow the fuse's
+            # wording.
             never_started = bool(
                 rec["first_output_s"] is None and self._first_output_timeout_s
             )
+            if not never_started:
+                raise
             # Meta for the posted event: only the credential-expired case carries a
             # platform_error classification the frontend can render; the two generic
             # branches stay a plain system event, exactly as before.
@@ -2134,7 +2099,7 @@ class AgentWorkRunner:
                 rec["detail"] = "subscription credential expired"
                 text = SUBSCRIPTION_CREDENTIAL_EXPIRED.content
                 fuse_meta = SUBSCRIPTION_CREDENTIAL_EXPIRED.meta
-            elif never_started:
+            else:
                 logger.error(
                     "turn %s produced no output within %ss for topic %s; "
                     "treating as a substrate failure (tools=%s)",
@@ -2165,31 +2130,6 @@ class AgentWorkRunner:
                         "修好后 @ 芝士。"
                     ),
                     detail_label="常见原因",
-                )
-            else:
-                logger.warning(
-                    "turn %s timed out (>%ss, elapsed %ss) for topic %s; interrupted",
-                    turn_id,
-                    effective_ceiling_s,
-                    rec["duration_s"],
-                    topic_id,
-                )
-                text = (
-                    f"芝士这轮超时被中断了"
-                    f"（{effective_ceiling_s}秒的上限），平台不会自动重试。"
-                )
-                timeout_meta = notice(
-                    EVENT_TURN_TIMEOUT,
-                    severity=SEVERITY_WARN,
-                    # 平台不再自动重试 —— 要有人看一眼、或重新 @ 它。
-                    who=WHO_HUMAN,
-                    detail=(
-                        f"上限 {effective_ceiling_s} 秒，实际跑了约 "
-                        f"{rec['duration_s']} 秒，可能卡在某步。"
-                        "已完成的改动都在；平台不会自动重试 —— 需要继续的话，"
-                        "有人看一眼后重新 @ 芝士，它会从断点接着做。"
-                    ),
-                    detail_label="详细说明",
                 )
             block = None
             try:
