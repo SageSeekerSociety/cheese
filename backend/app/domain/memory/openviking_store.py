@@ -196,10 +196,34 @@ class _OpenVikingRuntime:
         return client._service  # noqa: SLF001
 
     async def close(self) -> None:
-        if self._client is not None:
-            await self._client.close()
-            self._client = None
-            self._known_users.clear()
+        """Undo `client()` completely, not only the object it returned.
+
+        `client()` leaves three process-wide marks besides `self._client`: the
+        `AsyncOpenViking` class singleton, the module global
+        `openviking.storage.viking_fs._instance` (holding the embedder), and the
+        config singleton's cached VLM (`VLMConfig._vlm_instance`). openviking's
+        own `close()`/`reset()` clear only the first. The other two keep the
+        `openai.AsyncOpenAI` clients that were built on the queue worker's loop
+        alive after that loop is gone, and whoever later drops them — a re-init
+        or cyclic GC — lands their `__del__`'s `aclose()` on some unrelated
+        loop as `Event loop is closed` (#693). A close that leaves them is a
+        close that has not happened; the next `client()` re-creates all three
+        anyway.
+        """
+        if self._client is None:
+            return
+        from openviking import AsyncOpenViking
+        from openviking.storage import viking_fs
+        from openviking_cli.utils.config.open_viking_config import (
+            OpenVikingConfigSingleton,
+        )
+
+        await self._client.close()
+        self._client = None
+        self._known_users.clear()
+        await AsyncOpenViking.reset()
+        viking_fs._instance = None  # private: the package offers no reset for it
+        OpenVikingConfigSingleton.reset_instance()
 
 
 _runtime = _OpenVikingRuntime()

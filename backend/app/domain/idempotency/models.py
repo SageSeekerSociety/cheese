@@ -4,7 +4,8 @@ One row = one side effect that has already happened. The row and the effect are
 written in the SAME transaction, so "the key exists" and "the effect happened"
 can never disagree — which is the whole point: a Redis key written next to a DB
 write has a window where the process can die between the two, and that window is
-exactly what 自动续跑 walks into.
+exactly what a re-sent turn (重发, re-running under the same continuation) walks
+into.
 
 See ``store.claim`` for the contract.
 """
