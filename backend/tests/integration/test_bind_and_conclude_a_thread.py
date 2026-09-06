@@ -61,9 +61,9 @@ def test_binding_says_which_worker_is_on_it(client):
     assert r.status_code == 200, r.text
     assert r.json()["data"]["subagent_id"] == "worker-1"
 
-    listed = client.get(
-        f"/topics/{room_id}/tasks", headers=_bearer("alice")
-    ).json()["data"]["data"]
+    listed = client.get(f"/topics/{room_id}/tasks", headers=_bearer("alice")).json()[
+        "data"
+    ]["data"]
     assert [t["subagent_id"] for t in listed] == ["worker-1"]
 
 
