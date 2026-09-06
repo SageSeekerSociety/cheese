@@ -33,7 +33,6 @@ def _run(monkeypatch, argv: list[str], data: dict) -> list[tuple[str, str, dict]
         return {"data": data}
 
     monkeypatch.setattr(cli, "TOPIC", _ROOM)
-    monkeypatch.setattr(cli, "ROOM", _ROOM)
     monkeypatch.setattr(cli, "_call", _call)
     monkeypatch.setattr(cli.sys, "argv", ["cheese", *argv])
     cli.main()

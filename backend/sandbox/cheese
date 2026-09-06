@@ -19,8 +19,8 @@
   cheese recall "技术选型"          # 按需检索记忆(关键词检索)
   cheese notify --title "看下" --to mentor-1 --level strong --kind decision_request --options "A|B"
   cheese accept-request mentor-1 "中期验收"  # 递验收卡
-  cheese conclude "原型完成,Recall@10=0.18"  # 支线结论回流房间
-  cheese tell "数据清洗" "口径改了,按新的来"    # 给正在跑的支线追加要求(会叫醒它)
+  cheese conclude-task <task_id> "原型完成,Recall@10=0.18"  # 替一条活落结论
+  cheese tell "数据清洗" "口径改了,按新的来"    # 在那条活上留一句话(不叫醒任何人)
   cheese milestone "中期汇报" --due 2026-06-20
   cheese await "bash .claude/scripts/check.sh --full"  # 后台跑;跑完平台叫醒本话题
   cheese status                             # 平台状态快照(本轮运行状态/验收卡/闸门输出/水位)
@@ -44,11 +44,6 @@ import urllib.request
 API = os.environ.get("CHEESE_API", "http://host.docker.internal:8099").rstrip("/")
 PROJECT = os.environ.get("CHEESE_PROJECT", "")
 TOPIC = os.environ.get("CHEESE_TOPIC", "")
-# The ROOM this turn happens in. A room's own turn has it equal to TOPIC; a
-# thread's is the room it lives in, so `ROOM != TOPIC` is exactly "this is a
-# thread". Not every runtime puts it in the environment, so an empty value means
-# "not known here", never "this is a room" — the backend is the actual rule.
-ROOM = os.environ.get("CHEESE_ROOM", "")
 AUTHOR = os.environ.get("CHEESE_AUTHOR", "cheese")
 TOKEN = os.environ.get("CHEESE_TOKEN", "")
 # The agent turn this CLI call belongs to — sent back so the blocks it creates
@@ -944,9 +939,9 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "成果做完了,把验收卡递给某个具体的人(不是广播)。\n"
             "\n"
-            "**只有房间递得了卡,支线递不了。** 一棵树=一个分支=一个 PR=一批活,而这批活是\n"
-            "整个房间的:递卡会把分支封口开 PR,你的兄弟支线还在往同一条分支上写。所以支线\n"
-            "做完是 `cheese conclude` 把结论交回房间,由房间统一递卡。\n"
+            "一棵树=一个分支=一个 PR=一批活,而这批活是整个房间的:递卡会把分支封口\n"
+            "开 PR。所以派出去的活不是各递各的卡——分身干完把结论交回来,你用\n"
+            "`cheese conclude-task` 替它落一条,攒够了整个房间递一次。\n"
             "\n"
             "配了质量闸门的项目,递卡后平台会自动跑一遍检查,红了卡片会被打回、"
             "根本到不了验收人手上。**递卡前先自己把检查跑绿**,省一个来回。\n"
@@ -979,43 +974,25 @@ def build_parser() -> argparse.ArgumentParser:
         "--body", default=None, help="提交正文: 为什么要这次改动(不明显时才写)"
     )
 
-    pc = sub.add_parser(
-        "conclude",
-        help="支线结论回流它所在的房间",
-        description=(
-            "这条支线做完了,把结论回流到它所在的房间。房间读到的就只有这段话——"
-            "写摘要,不写流水账。\n"
-            "\n"
-            "值钱的三样:做了什么、**查出来但故意没做的(以及为什么)**、"
-            "哪些结论是没核实的。否定结论和肯定结论一样值钱,别省掉。"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    pc.add_argument("conclusion", help="结论摘要,给房间看的")
-
     pt = sub.add_parser(
         "tell",
-        help="给正在跑的支线(或你所在的房间)传一句话,并叫醒它",
+        help="在你派出的一条活上留一句话",
         description=(
-            "往父子这条边上传一句话,**并且真的叫醒对方**。只有两个方向通:\n"
-            "  房间 → 它派出的支线    支线 → 它所在的房间\n"
-            "没有父子关系的两个话题之间发不通——那等于放弃话题级隔离。\n"
+            "把一句话写在你派出的某条活的时间线上。只有这一个方向:\n"
+            "  房间 → 它派出的活\n"
             "\n"
-            "它解决的是:任务简报是一次性的、写完就改不了。发现简报写错了、"
-            "口径变了、有个前提不成立,用这个追过去,别等对方交完活再返工。\n"
+            "它**不叫醒任何人**,也不需要:做那条活的分身就在你自己的会话里,\n"
+            "你直接给它发消息就是了。这条命令管的是**留痕**——你跟分身说了什么、\n"
+            "分身回了什么,写在活那边,盯着那条活的人才看得到(他们够不着分身),\n"
+            "下周翻开这条活的人也才知道中途改过什么。\n"
             "\n"
-            "多快:对方**正在跑一轮**的话,这句话直接插进它那一轮(秒级,像人在旁边\n"
-            "插话);对方闲着就叫醒它开一轮;已经有一轮在排队就搭同一轮——\n"
-            "同一个话题连收多条只处理一轮,不会被反复叫醒。命令的输出会告诉你\n"
-            "走的是哪一种。\n"
-            "长的东西写进实况文档(两边都读得到),这里只发「一条追加要求」。\n"
+            "长的东西写进实况文档(两边都读得到),这里只写「一条追加要求」。\n"
             "\n"
-            "对方是谁:地点 id、`<#id>`、或者标题都行(只在你派出的支线+你所在的房间里认)。\n"
-            "回母话题可以直接写 `parent`,不用去查它叫什么: cheese tell parent \"...\""
+            "对方是谁:活的 id、`<#id>`、或者标题都行(只认你自己派出的活)。"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    pt.add_argument("target", help="收方: 支线/房间的 id、<#id> 或标题")
+    pt.add_argument("target", help="哪条活: id、<#id> 或标题")
     pt.add_argument("message", help="要说的话")
 
     pcc = sub.add_parser(
@@ -1339,48 +1316,23 @@ def main() -> None:
         print(f"已发送通知给 {a.to or '所有人'}。")
     elif a.cmd == "accept-request":
         topic = _need("CHEESE_TOPIC", TOPIC)
-        # 递卡是房间的事。The backend refuses this too — this is here so a thread
-        # that tries gets told in its own sandbox, with the command it should
-        # have run, instead of a round trip and an HTTP status to decode.
-        if ROOM and ROOM != topic:
-            print(
-                "[cheese] 递卡是房间的事，一条支线递不了。\n"
-                "一棵树=一个分支=一个 PR=一批活，而这批活是整个房间的：递卡会把分支"
-                "封口开 PR，而你的兄弟支线还在往同一条分支上写。\n"
-                "你要做的是把结论交回房间，由房间统一递卡：\n"
-                '  cheese conclude "<做了什么、故意没做什么、哪些结论没核实>"',
-                file=sys.stderr,
-            )
-            sys.exit(2)
         _call("POST", f"/topics/{topic}/accept-card",
               {"reviewer_handle": a.reviewer, "routing_reason": a.reason,
                "change_subject": a.subject, "change_body": a.body})
         print(f"已把验收卡递给 {a.reviewer}。")
-    elif a.cmd == "conclude":
-        topic = _need("CHEESE_TOPIC", TOPIC)
-        _call("POST", f"/topics/{topic}/return-conclusion", {"conclusion": a.conclusion})
-        print("已把结论回流父话题。")
     elif a.cmd == "tell":
         # URL 里的 topic 是**发方**（per-turn token 按它校验作用域）；收方在 body 里，
-        # 由后端按父子关系校验。
+        # 由后端校验它确实是这个房间派出的活。
         topic = _need("CHEESE_TOPIC", TOPIC)
         data = _call(
             "POST", f"/topics/{topic}/tell",
             {"target": a.target, "content": a.message},
         ).get("data", {})
         where = data.get("target_title") or data.get("target_topic_id") or a.target
-        print({
-            "injected": f"已插进「{where}」正在跑的那一轮——它现在就看到了。",
-            "woke": f"已传给「{where}」，它被叫醒了，马上开一轮处理。",
-            "merged": (
-                f"已传给「{where}」。它那边已经有一个待跑的轮次，这条搭同一轮"
-                "一起处理（不重复叫醒）。"
-            ),
-            "archived": (
-                f"「{where}」已归档，消息留在那边了，但**没有人被叫醒**"
-                "（归档话题不再跑轮次）。要它动起来先取消归档。"
-            ),
-        }.get(data.get("delivery"), f"已传给「{where}」。"))
+        print(
+            f"已写在「{where}」上。**没有人被叫醒**——做这条活的分身在你自己的"
+            "会话里，要它动就直接给它发消息。"
+        )
     elif a.cmd == "conclusion":
         # 路由挂在父话题下：per-turn token 按 URL 里的 topic 校验作用域，而结算
         # 这一步是父话题在自己那一轮做的，所以 CHEESE_TOPIC 就是收方。

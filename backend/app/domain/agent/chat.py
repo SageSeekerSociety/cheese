@@ -140,7 +140,18 @@ class _HookWorkState:
     started_at: datetime
     assistant_count: int = 0
     todo: list[dict] = field(default_factory=list)
+    #: 每个分身自己那份清单，按它做的那条活分开。Claude Code 的任务编号是**每个
+    #: agent 各数各的**，都从 1 开始，所以几份清单混进一个 list 里不只是看着乱：
+    #: 分身的 `TaskUpdate("1")` 会去勾掉房间自己的第一条。
+    worker_todo: dict[str, list[dict]] = field(default_factory=dict)
     actions: list[str] = field(default_factory=list)
+
+    def todo_of(self, work_id: uuid.UUID | None) -> list[dict]:
+        """这条事件该记进谁的清单。None = 房间自己的。"""
+        if work_id is None:
+            return self.todo
+        return self.worker_todo.setdefault(str(work_id), [])
+
     # The topic branch's commits as of turn start — what makes "this turn's
     # changes" answerable at turn end. A task rather than a value, because the
     # read shells out to git and creates the repo on first use; see where it is
@@ -1120,47 +1131,6 @@ def thread_upgraded_prompt(*, task_id: uuid.UUID, source_message: str) -> str:
         "（分身不会自己去读文档）。\n"
         f"3. `cheese bind {task_id} <分身的 agent_id>`——不 bind，这条活在界面上"
         "永远是「没人做」，分身干的每件事都记在你头上。"
-    )
-
-
-def conclusion_digest_prompt(
-    conclusion_message: str,
-    *,
-    card_id: str | None = None,
-    deadline: datetime | None = None,
-) -> str:
-    """The parent's wake-up instruction when a sub-topic returns its conclusion
-    (结论回流唤醒父话题 — the return leg of the subagent loop: in Claude Code
-    the parent resumes when the Task tool result arrives). Prompt-only; the
-    conclusion text is copied verbatim, nothing is derived from it.
-
-    结论卡·阶段一: when a card was filed, the parent is told how to settle it —
-    and, more importantly, that doing NOTHING is 采信. The prompt is only half
-    the mechanism; the platform accepts the card when this turn ends whatever
-    the model does (see conclusion.services.settle_turn_cards)."""
-    card_note = ""
-    if card_id is not None:
-        by = f"（{deadline:%H:%M} UTC 前）" if deadline is not None else ""
-        card_note = (
-            "\n\n---\n"
-            f"这条结论挂着一张结论卡 `{card_id}`。**默认采信**：你这一轮结束时"
-            f"它就自动采信、那条支线随之收起{by}，你不需要做任何事。\n"
-            "只有两种情况才动它：\n"
-            "- 缺一条关键证据、而那条支线的上下文还热着 → "
-            f'`cheese conclusion need-evidence {card_id} "要补什么"`'
-            "（每张卡只能打回一次）；\n"
-            "- 这个结论要以某个人的名义做出去 → "
-            f'`cheese conclusion escalate {card_id} "要谁拍什么板"`。'
-        )
-    return (
-        "一条支线刚回流了结论（原文如下，也已织进本话题实况文档末尾）。"
-        "请消化它：\n"
-        "1. 把实况文档整理成最新状态——结论的要点合并进对应章节，"
-        "别让「支线结论」堆在文档末尾。\n"
-        "2. 判断下一步：这个结论解锁了什么？需要继续拆活就拆（split 带 --brief），"
-        "需要人拍板/验收就发通知或验收卡，整件事收尾了就说明结论。\n"
-        "3. 在对话里用一两句话向大家报信（结论已在文档里，别复述全文）。\n\n"
-        f"---\n{conclusion_message}{card_note}"
     )
 
 
@@ -2282,11 +2252,14 @@ class ChatService:
             name = event.name.replace("mcp__cheese__", "")
             args = event.input or {}
             if state is not None and name in _TASK_TOOLS:
-                if _apply_task_event(state.todo, name, args):
-                    await self._persist_progress(topic_id, state.todo, turn_id)
+                # 清单跟着做事的人走。一个分身的清单是它自己的计划，编号也是它
+                # 自己从 1 数的 —— 记进房间那份，房间的清单会被别人的进度改写。
+                todo = state.todo_of(task_id)
+                if _apply_task_event(todo, name, args):
+                    await self._persist_progress(task_id or topic_id, todo, turn_id)
                     frame = {
                         "type": "todo",
-                        "items": [dict(item) for item in state.todo],
+                        "items": [dict(item) for item in todo],
                     }
             elif name not in _TASK_TOOLS:
                 payload = await self._persist_tool_event(

@@ -49,6 +49,10 @@ class FakeChat:
     def has_running_turn(self, topic_id: uuid.UUID) -> bool:
         return False
 
+    async def thread_at(self, topic_id: uuid.UUID):
+        """这些用例说的都是房间：一条活没有轮次可以被准入，也没有轮次可以排队。"""
+        return None
+
     async def post_user_message(self, topic_id, **kwargs):
         self.converse_calls.append({"received": True, **kwargs})
         ids = []

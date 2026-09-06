@@ -24,11 +24,7 @@ from app.core.db import get_db
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import awaited_tasks
-from app.domain.agent.chat import (
-    ChatService,
-    conclusion_digest_prompt,
-    thread_upgraded_prompt,
-)
+from app.domain.agent.chat import ChatService, thread_upgraded_prompt
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.market import (
     COMPUTE_CLOUD,
@@ -74,7 +70,7 @@ from app.domain.room_task.services import (
 from app.domain.team.repositories import TeamRepository
 from app.domain.topic.doc_change import summarize_doc_change
 from app.domain.topic.models import Topic, TopicStatus
-from app.domain.topic.relay import TopicRelayService, deliver_or_wake
+from app.domain.topic.relay import TopicRelayService
 from app.domain.topic.repositories import SortOrder, TopicSortField
 from app.domain.topic.schemas import (
     BackgroundTaskDoneIn,
@@ -1843,110 +1839,41 @@ async def tell_topic(
     topic_id: uuid.UUID,
     body: RelayIn,
     db: DbSession,
-    chat: Annotated[ChatService, Depends(get_chat_service)],
-    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
     resolver: ActorResolverDep,
 ) -> dict:
-    """母子传话: send one message across the parent/child edge AND wake the other
-    side (`cheese tell`). See `app.domain.topic.relay` for why the comments
-    endpoint could not be this channel and why only this one edge is open.
+    """留话给一条活: write one message onto a thread this room dispatched
+    (`cheese tell`). See `app.domain.topic.relay` for why the comments endpoint
+    could not be this channel, and why nothing is woken.
 
     `topic_id` is the SENDER — the place whose turn is speaking, which is what
     the per-turn token in `_CHEESE_WRITE_PATHS` is scoped to. The receiver rides
-    in the body and is resolved against what the sender can reach (its room, or
-    the threads it dispatched): an id in the URL says "who is talking", never
-    "which resource is this".
+    in the body and is resolved against the threads that sender dispatched: an
+    id in the URL says "who is talking", never "which resource is this".
     """
     sender = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, sender)
     service = TopicRelayService(db)
     target = await service.resolve_target(sender=sender, target=body.target)
-    # Friendly "@名字 / @话题名" → structured tokens BEFORE the message lands in
-    # the other room, so chips render and @mentions notify over there.
+    # Friendly "@名字 / @话题名" → structured tokens BEFORE the message lands on
+    # the thread, so chips render and @mentions notify over there.
     content = await canonicalize_refs(
         db, sender.project_id, body.content, exclude_topic_id=target.id
     )
-    block, direction = await service.relay(
-        sender=sender, target=target, content=content
-    )
+    block = await service.relay(sender=sender, target=target, content=content)
     out = BlockOut.model_validate(block).model_dump(mode="json")
-    # Commit BEFORE waking: the woken turn runs on its own session and has to be
-    # able to read the message it is being woken about.
     await db.commit()
     # The room is where a person is watching; a thread's message shows up there
     # too, under its thread.
     await get_broker().publish(
         str(target.room_id), {"type": "assistant_block", "block": out}
     )
-    delivery = await deliver_or_wake(
-        chat=chat,
-        runner=runner,
-        target=target,
-        direction=direction,
-        sender_title=sender.title,
-        sender_id=sender.id,
-        block_id=block.id,
-        message=content,
-    )
     return ok(
         {
             "block": out,
             "target_topic_id": str(target.id),
             "target_title": target.title,
-            "direction": direction,
-            # injected / woke / merged / archived — see relay.RelayDelivery. The
-            # sender is told which, because "芝士 has it now" and "nobody will
-            # ever read it" must not look the same.
-            "delivery": delivery,
         }
     )
-
-
-@router.post("/{topic_id}/return-conclusion")
-async def return_conclusion(
-    topic_id: uuid.UUID,
-    body: ConclusionIn,
-    db: DbSession,
-    chat: Annotated[ChatService, Depends(get_chat_service)],
-    resolver: ActorResolverDep,
-) -> dict:
-    """结论回流：write a sub-topic's conclusion back to its parent — then WAKE
-    the parent to digest it (the return leg of the subagent loop: in Claude
-    Code the parent resumes when the Task result arrives; here the parent 芝士
-    runs a turn to weave the conclusion in and decide what's next)."""
-    service = TopicService(db)
-    place = await service.place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
-    # Friendly "@名字/@话题名" in the conclusion → structured tokens BEFORE it
-    # lands in the room (chips render + notifications fire there).
-    conclusion = await canonicalize_refs(
-        db, place.project_id, body.conclusion, exclude_topic_id=place.room_id
-    )
-    block, card = await service.return_conclusion(
-        subtopic_id=topic_id, conclusion=conclusion
-    )
-    parent = place.room
-    out = BlockOut.model_validate(block).model_dump(mode="json")
-    wake = parent.status != TopicStatus.archived
-    # 结论卡·阶段一: the card id has to reach the digest turn, otherwise the
-    # parent has a card it cannot address — read it BEFORE the commit expires
-    # the instance.
-    card_id = str(card.id) if card is not None else None
-    card_deadline = card.digest_deadline_at if card is not None else None
-    # Commit BEFORE waking: the parent's turn runs on its own session.
-    await db.commit()
-    await get_broker().publish(
-        str(parent.id), {"type": "assistant_block", "block": out}
-    )
-    if wake:
-        get_work_runner().submit_kickoff(
-            chat,
-            parent.id,
-            prompt=conclusion_digest_prompt(
-                block.content, card_id=card_id, deadline=card_deadline
-            ),
-        )
-    return ok(out)
 
 
 # 芝士 → UI rendering (spec §9.1): an artifact is a file the AI explicitly points

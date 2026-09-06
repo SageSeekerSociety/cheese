@@ -36,6 +36,7 @@ from app.domain.block.models import Block
 from app.domain.block.repositories import BlockRepository
 from app.domain.project.services import ProjectService
 from app.domain.room_task.services import TaskService
+from app.domain.topic.repositories import TopicProgressRepository
 from app.domain.topic.services import TopicService
 
 pytestmark = pytest.mark.anyio
@@ -373,5 +374,58 @@ async def test_the_rooms_own_events_are_untouched(client, tmp_path) -> None:
     rows = await _blocks(factory, room_id)
     tool = next(r for r in rows if (r.meta or {}).get("eid") == "room-tool-1")
     assert tool.task_id is None
+
+    await provider._close_topic(room_id)
+
+
+async def test_a_workers_checklist_is_its_own(client, tmp_path) -> None:
+    """分身的清单归它做的那条活，不进房间的清单。
+
+    不是整洁问题：Claude Code 的任务编号**每个 agent 各数各的**，都从 1 开始。混进
+    一份 list 里，一个分身的 `TaskUpdate("1")` 会去勾掉房间自己的第一条 —— 房间的
+    计划被别人的进度改写，而且谁也看不出是怎么改的。
+    """
+    factory = client.test_factory
+    project_id, room_id = await _seed_room(factory)
+    task_id = await _dispatch(factory, project_id, room_id, "查一下分页")
+    await _bind(factory, room_id, task_id, "worker-1")
+    router, provider = await _live_runtime(factory, tmp_path, project_id, room_id)
+
+    # 房间先给自己列一条，分身随后列它自己的第一条并勾掉它。
+    for payload in (
+        {"tool_input": {"subject": "房间的第一件事"}, "_eid": "room-todo-1"},
+        {
+            "tool_input": {"subject": "分身的第一件事"},
+            "agent_id": "worker-1",
+            "_eid": "w1-todo-1",
+        },
+    ):
+        assert router.push(
+            str(room_id),
+            {"hook_event_name": "PreToolUse", "tool_name": "TaskCreate", **payload},
+        )
+    assert router.push(
+        str(room_id),
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "TaskUpdate",
+            "tool_input": {"taskId": "1", "status": "completed"},
+            "agent_id": "worker-1",
+            "_eid": "w1-todo-2",
+        },
+    )
+    await asyncio.sleep(0.3)
+
+    async with factory() as session:
+        repo = TopicProgressRepository(session)
+        room_list = await repo.get(room_id)
+        thread_list = await repo.get(room_id, task_id=task_id)
+
+    assert [i["subject"] for i in room_list.items] == ["房间的第一件事"]
+    assert room_list.items[0]["status"] == "pending", "分身勾掉了房间自己的第一条"
+    assert thread_list is not None, "分身的清单没被记下来"
+    assert [(i["subject"], i["status"]) for i in thread_list.items] == [
+        ("分身的第一件事", "completed")
+    ]
 
     await provider._close_topic(room_id)

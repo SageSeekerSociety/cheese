@@ -332,11 +332,10 @@ _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
         "POST",
         re.compile(r"^/topics/(?P<topic>[^/]+)/background-task/[^/]+/done$"),
     ),
-    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/return-conclusion$")),
-    # 母子传话: the scoping id is the SENDER (whose turn is talking); the receiver
-    # is in the body and is checked against the parent/child edge by
-    # `TopicRelayService.direction` — this gate can only prove "some agent of this
-    # project", because a project-scoped credential reaches every topic of it.
+    # 留话给一条活: the scoping id is the SENDER (the room whose turn is talking);
+    # the receiver is in the body and is checked against the threads that room
+    # dispatched — this gate can only prove "some agent of this project", because
+    # a project-scoped credential reaches every topic of it.
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/tell$")),
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/accept-card$")),
     # 重推是意图，不是定时器: the poller stopped committing on a timer, so this
