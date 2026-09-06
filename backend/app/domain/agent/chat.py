@@ -2887,13 +2887,18 @@ class ChatService:
         if task_id is None:
             return None
         if isinstance(event, AgentSubagentStart):
-            content = "分身开工"
+            # The platform's own sentence about a worker, not anybody's words —
+            # so `system`, the same as every other line the platform says out
+            # loud. Attributing it to 芝士 would make the room's history contain
+            # a remark 芝士 never made.
+            content, author_type = "分身开工", AuthorType.system
             meta: dict = {"event_type": "subagent_start"}
         else:
-            # The closing message in full. It reaches the platform exactly once,
-            # here — the room's own transcript does not contain it, and the
-            # worker's own dies with the container that ran it.
+            # The closing message in full, and it IS the worker's own words. It
+            # reaches the platform exactly once, here — the room's transcript
+            # does not contain it and the worker's dies with its container.
             content = event.text.strip() or "分身交回了一次结果（没有留话）"
+            author_type = AuthorType.ai
             meta = {"event_type": "subagent_stop"}
             if event.transcript_path:
                 meta["transcript_path"] = event.transcript_path
@@ -2909,6 +2914,7 @@ class ChatService:
             eid=eid,
             platform_unsolicited=platform_unsolicited,
             task_id=task_id,
+            author_type=author_type,
             # Shown in the thread rather than kept to 现场: what a worker handed
             # back is the whole reason anybody opens the thread.
             in_room=True,
