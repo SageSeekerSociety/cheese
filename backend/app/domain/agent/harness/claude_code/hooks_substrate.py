@@ -64,6 +64,7 @@ from app.domain.agent.service import (
     AgentResult,
     AgentToolResult,
     AgentToolUse,
+    proves_output,
 )
 from app.domain.workspace import service as ws
 
@@ -446,36 +447,6 @@ async def monitor_session_activity(
         yield event
         if isinstance(event, AgentResult):
             return  # Stop hook → session idle
-
-
-def _is_mid_response(events: list[AgentEvent]) -> bool:
-    """Does this hook prove the session is PART-WAY THROUGH a response?
-
-    An activity is what the room reads as 正在处理, and the only thing that
-    retires one on the ordinary path is the session's own ``Stop``. So it may
-    only be opened by something a ``Stop`` is guaranteed to follow — the agent
-    producing output. That is the whole rule, and it is not a list of hook
-    names: a hook type added later is covered by it without being enumerated.
-
-    A hook that merely HAPPENED is not that. A session coming up
-    (``SessionStart``, which fires again on every resume and every auto-compact),
-    a tool returning after the answer was already given, a prompt being typed —
-    each of those used to light the room and then had nothing left to take it
-    down, because no ``Stop`` was coming. The mark then stood until the hard
-    ceiling three hours later, reasserted onto every reconnecting client by the
-    ``turn_active`` snapshot: 「芝士正在处理…」 in a room where nobody was working,
-    which no amount of reloading could clear.
-
-    A batch that carries the ending is not an opening either: nothing is
-    in-flight after a ``Stop``, and opening on it only to close it two lines
-    later would flash the indicator for a response already finished.
-    """
-    if any(isinstance(event, AgentResult) for event in events):
-        return False
-    return any(
-        isinstance(event, AgentMessage | AgentToolUse | AgentToolResult)
-        for event in events
-    )
 
 
 class ScreenSetupError(Exception):
@@ -1263,9 +1234,18 @@ class ClaudeCodeRuntime:
                 # turned out to say is what decides whether an activity may be
                 # opened at all.
                 activity = subscription.activity
+                # An activity is what the room reads as 正在处理, and the only
+                # thing that retires one on the ordinary path is the session's
+                # own Stop — so it may only be opened by a hook a Stop is
+                # guaranteed to follow. A session coming up, a tool returning
+                # after the answer was already given, a prompt being typed: each
+                # of those used to light the room and then had nothing left to
+                # take it down, and the mark stood until the hard ceiling three
+                # hours later, reasserted onto every reconnecting client by the
+                # `turn_active` snapshot.
                 if (
                     activity is None
-                    and _is_mid_response(events)
+                    and proves_output(events)
                     and (attribution.platform_unsolicited or attribution.consumer_owned)
                 ):
                     screen = self._live.get(subscription.topic_id)
