@@ -58,6 +58,7 @@ from app.domain.agent.service import (
     AgentToolResult,
     AgentToolUse,
     AgentUsage,
+    proves_output,
 )
 from app.domain.agent.skills import DEFAULT_CHAT_SKILLS, load_scenario, load_skills
 from app.domain.agent.stages import TopicStage, resolve_stage, stage_scenario
@@ -118,10 +119,12 @@ class _HookWorkState:
     project_id: uuid.UUID
     topic_id: uuid.UUID
     work_id: uuid.UUID
-    provider: ComputeProvider
     pending_ids: set[uuid.UUID]
     reply_to: uuid.UUID | None
-    roster: list[dict]
+    # None where no prompt was assembled to read one — `_persist_assistant_message`
+    # then loads it, which is NOT the same as passing []: [] means 私聊 (no member
+    # list at all), and conflating the two flags every @ as a non-member.
+    roster: list[dict] | None
     topic_refs: list[dict]
     continuation_id: uuid.UUID | None
     route: str
@@ -144,6 +147,10 @@ class _HookWorkState:
     # started. `None` (or a read that failed) means the turn lands NO change
     # summary rather than a wrong one: with no baseline, every commit looks new.
     known_commits: asyncio.Task[set[str] | None] | None = None
+    # Did the SESSION open this work rather than the platform? Then its
+    # bookkeeping has no coroutine to fall out of, and turn end is the only
+    # place the marks it left in the runner can be dropped.
+    self_started: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -1368,6 +1375,11 @@ class ChatService:
         # message only after the exact UserPromptSubmit receipt.
         self._active_turn_ids: dict[uuid.UUID, uuid.UUID] = {}
         self._hook_work: dict[tuple[uuid.UUID, uuid.UUID], _HookWorkState] = {}
+        # Where each live session's model traffic goes, remembered from the last
+        # turn the platform assembled for it. A turn the session starts by itself
+        # rides the same screen and therefore the same supply, and has no prompt
+        # of its own to resolve one from.
+        self._session_route: dict[uuid.UUID, str] = {}
         # Strong refs to in-flight post-turn memory-extraction tasks (asyncio
         # only keeps weak refs; without this a pending commit could be GC'd).
         self._memory_tasks: set[asyncio.Task] = set()
@@ -2029,6 +2041,84 @@ class ChatService:
             )
         return task.id if task is not None else None
 
+    async def _begin_self_started_turn(
+        self, project_id: uuid.UUID, topic_id: uuid.UUID, turn_id: uuid.UUID
+    ) -> "_HookWorkState | None":
+        """Give a turn the session started for itself the context to end like
+        any other: an interval a sweep can find, and everything its Stop needs.
+
+        Without this, a self-started turn's Stop landed the message and then did
+        nothing at all — no usage row, no conclusion cards settled, no change
+        summary, and no interval to close, because none was ever opened. The
+        room could not even tell you the turn had happened.
+
+        Read rather than assembled: there is no prompt to build here, so this
+        takes only what turn END needs, and takes it in one transaction. Two
+        fields are deliberately not read — `roster` stays None so the message
+        path loads it (passing [] would mean 私聊 and flag every @ as a
+        non-member), and `pending_ids` stays empty because nothing was fed to
+        this turn. A message that merges into it mid-flight is stamped consumed
+        by its own receipt (`confirm_prompt_receipt`), not from here.
+
+        Returns None if the place is gone or the bookkeeping write fails; the
+        event that triggered this still lands, exactly as it did before.
+        """
+        from app.api.deps import get_work_runner
+
+        try:
+            async with self._sessions() as session:
+                place = await PlaceResolver(session).resolve(topic_id)
+                if place is None:
+                    return None
+                topic = place.room
+                project = await ProjectRepository(session).get(project_id)
+                agents = AgentInstanceService(session)
+                agent = (
+                    await agents.for_topic(topic, project)
+                    if project is not None
+                    else IMPLICIT_DEFAULT
+                )
+                agent_pool = memory_pool(topic.project_id, agent)
+                acting_agent = await self._agent_handle(session, topic_id)
+                is_private = topic.is_private
+                private_owner = topic.private_owner
+            await get_work_runner().open_self_started_turn(self, topic_id, turn_id)
+        except Exception:  # noqa: BLE001 — the event matters more than the row
+            logger.exception(
+                "could not open a self-started turn (topic=%s, work=%s)",
+                topic_id,
+                turn_id,
+            )
+            return None
+        state = _HookWorkState(
+            project_id=project_id,
+            topic_id=topic_id,
+            work_id=turn_id,
+            pending_ids=set(),
+            reply_to=None,
+            roster=None,
+            topic_refs=[],
+            continuation_id=turn_id,
+            # "native" when this process has never assembled a turn for this
+            # session (a screen recovered on the way up, say). It is the answer
+            # that cannot invent spend: the gateway's log is drained by whatever
+            # turn closes next, which is exactly what happened before any of
+            # this existed.
+            route=self._session_route.get(topic_id, "native"),
+            is_private=is_private,
+            private_owner=private_owner,
+            acting_agent=acting_agent,
+            agent_pool=agent_pool,
+            user_text="",
+            started_at=datetime.now(UTC),
+            known_commits=asyncio.ensure_future(
+                self._known_commits(project_id, topic_id)
+            ),
+            self_started=True,
+        )
+        self._hook_work[(topic_id, turn_id)] = state
+        return state
+
     async def _consume_hook_event(
         self,
         project_id: uuid.UUID,
@@ -2051,6 +2141,14 @@ class ChatService:
         # panel, and both have to go out.
         refresh_frame: dict | None = None
         state = self._hook_work.get((topic_id, turn_id))
+        if state is None and platform_unsolicited and proves_output([event]):
+            # Nobody fed this session anything and it is producing output anyway
+            # — one of its workers finished and the completion notice woke it.
+            # That is a whole turn, and it gets a turn's bookkeeping from here:
+            # an interval a sweep can find, and the context its Stop needs to
+            # close the books. Opened on OUTPUT rather than on the first hook of
+            # any kind, because only output guarantees the Stop that closes it.
+            state = await self._begin_self_started_turn(project_id, topic_id, turn_id)
         # Whose work this is. Deliberately NOT asked of AgentResult: that event
         # is the turn ending, which is the session's business no matter what id
         # rode in on it — re-addressing it would close a turn somewhere else.
@@ -2236,6 +2334,10 @@ class ChatService:
                     )
                 finally:
                     self._hook_work.pop((topic_id, turn_id), None)
+                    if state.self_started:
+                        # No coroutine owns this one, so there is no `finally`
+                        # anywhere else to drop the marks it left in the runner.
+                        get_work_runner().close_self_started_turn(turn_id)
             if event.is_error:
                 frame_out = {
                     "type": "error",
@@ -4084,6 +4186,11 @@ class ChatService:
         # In a private chat, `cheese remember` targets the owner's personal memory
         # (spec §8.4). The provider runs a plain model turn when no Docker (tests).
         model_kwargs, route = await self._model_kwargs(project_id, provider, topic_id)
+        # Remembered for the turns this session starts by itself. A route is a
+        # fact about where a SESSION's traffic goes, not about one prompt, and a
+        # self-started turn has no prompt to resolve it from — it rides the same
+        # screen as this one, so this is the answer for both.
+        self._session_route[topic_id] = route
         # Internal: the screen subscription, not this request, owns timeout and
         # thinking lifecycle. Runtime consumes this frame and disables its
         # request-scoped lifecycle before provider setup begins.
@@ -4146,7 +4253,6 @@ class ChatService:
                     project_id=project_id,
                     topic_id=topic_id,
                     work_id=marked_work_id,
-                    provider=provider,
                     pending_ids=set(pending_ids),
                     reply_to=user_block_id,
                     roster=roster,

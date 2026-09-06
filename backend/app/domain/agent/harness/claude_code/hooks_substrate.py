@@ -62,7 +62,6 @@ from app.domain.agent.service import (
     AgentEvent,
     AgentMessage,
     AgentResult,
-    AgentToolResult,
     AgentToolUse,
     proves_output,
 )

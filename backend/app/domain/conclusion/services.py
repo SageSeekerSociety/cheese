@@ -95,7 +95,7 @@ def need_evidence_prompt(card: ConclusionCard, *, task_title: str = "") -> str:
         f"要补的是：\n{card.settle_reason}\n\n"
         "**转达给做这条活的分身**：它还在跑就直接给它发消息，让它把这条证据补上"
         "（跑一次、读一遍、或者说明为什么补不了）；已经收工了就照这条重新起一个分身。"
-        f"补回来、你验过之后再 `cheese conclude-task {card.task_id} \"<结论>\"` 一次，"
+        f'补回来、你验过之后再 `cheese conclude-task {card.task_id} "<结论>"` 一次，'
         "新的结论会接着这张卡走。"
     )
 
