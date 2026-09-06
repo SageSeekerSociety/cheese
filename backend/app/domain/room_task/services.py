@@ -205,6 +205,16 @@ class TaskService:
         the platform (topic/retire.py). False when no thread has this id."""
         return await self._repo.mark_transcripts_archived(task_id, at)
 
+    async def open_by_subagent(
+        self, *, room_id: uuid.UUID, subagent_id: str
+    ) -> Task | None:
+        """The open thread in *room_id* this worker is doing, if any.
+
+        Asked once per hook event a worker produces, which is what the
+        (room_id, subagent_id) index is for.
+        """
+        return await self._repo.open_by_subagent(room_id, subagent_id)
+
     async def bind_subagent(
         self, *, room_id: uuid.UUID, task_id: uuid.UUID, subagent_id: str
     ) -> Task:

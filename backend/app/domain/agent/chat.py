@@ -53,6 +53,8 @@ from app.domain.agent.service import (
     AgentMessage,
     AgentResult,
     AgentSessionInfo,
+    AgentSubagentStart,
+    AgentSubagentStop,
     AgentToolResult,
     AgentToolUse,
     AgentUsage,
@@ -2000,6 +2002,33 @@ class ChatService:
             frame = {"type": "turn_finished", "turn_id": str(work_id)}
         await get_broker().publish(str(topic_id), frame)
 
+    async def _work_of_worker(
+        self, topic_id: uuid.UUID, agent_id: str | None
+    ) -> uuid.UUID | None:
+        """Which piece of work this event belongs to, when a worker produced it.
+
+        Several workers run inside one session and everything they do arrives on
+        the same pipe as the session's own, told apart only by the id riding on
+        each payload — the main thread's hooks carry no such key at all, which is
+        what makes the id usable as the sole discriminator.
+
+        None for two different situations that want the same handling: the room
+        itself did this, or a worker nobody bound did. Both land where they
+        landed before this existed, on the room's own line. Swallowing the
+        unbound one instead would make an unclaimed worker's whole run invisible,
+        which is worse than the attribution being coarse.
+        """
+        from app.domain.room_task.services import TaskService
+
+        if not agent_id:
+            return None
+        async with self._sessions() as session:
+            room_id, _ = await room_and_task(session, topic_id)
+            task = await TaskService(session).open_by_subagent(
+                room_id=room_id, subagent_id=agent_id
+            )
+        return task.id if task is not None else None
+
     async def _consume_hook_event(
         self,
         project_id: uuid.UUID,
@@ -2022,8 +2051,33 @@ class ChatService:
         # panel, and both have to go out.
         refresh_frame: dict | None = None
         state = self._hook_work.get((topic_id, turn_id))
+        # Whose work this is. Deliberately NOT asked of AgentResult: that event
+        # is the turn ending, which is the session's business no matter what id
+        # rode in on it — re-addressing it would close a turn somewhere else.
+        task_id = (
+            None
+            if isinstance(event, AgentResult)
+            else await self._work_of_worker(topic_id, getattr(event, "agent_id", None))
+        )
+        # A thread's own channel is what its view subscribes to, and it is the
+        # room's when there is no thread. Attributed frames must not go out on
+        # the room's channel: the block lands in the thread, so a live watcher
+        # would see an event that a reload then moves somewhere else.
+        channel = str(task_id) if task_id is not None else str(topic_id)
         if isinstance(event, AgentSessionInfo):
             await self._save_session_pointer(topic_id, event.session_id)
+        elif isinstance(event, AgentSubagentStart | AgentSubagentStop):
+            payload = await self._persist_worker_event(
+                project_id=project_id,
+                topic_id=topic_id,
+                event=event,
+                task_id=task_id,
+                turn_id=turn_id,
+                eid=eid,
+                platform_unsolicited=platform_unsolicited,
+            )
+            if payload is not None:
+                frame = {"type": "event_block", "block": payload}
         elif isinstance(event, AgentMessage):
             payload = await self._persist_assistant_message(
                 project_id=project_id,
@@ -2042,6 +2096,7 @@ class ChatService:
                 platform_unsolicited=platform_unsolicited,
                 continuation_id=(state.continuation_id if state is not None else None),
                 at=event.at,
+                task_id=task_id,
             )
             if payload is not None:
                 if state is not None:
@@ -2067,6 +2122,7 @@ class ChatService:
                     turn_id=turn_id,
                     eid=eid or event.eid,
                     platform_unsolicited=platform_unsolicited,
+                    task_id=task_id,
                 )
                 if payload is not None:
                     frame = {"type": "event_block", "block": payload}
@@ -2097,6 +2153,7 @@ class ChatService:
                 turn_id=turn_id,
                 eid=eid,
                 platform_unsolicited=platform_unsolicited,
+                task_id=task_id,
             )
             if payload is not None:
                 frame = {"type": "event_block", "block": payload}
@@ -2149,12 +2206,14 @@ class ChatService:
                         state.assistant_count += 1
                     frame = {"type": "assistant_block", "block": payload}
         if frame is not None:
-            await broker.publish(str(topic_id), frame)
+            await broker.publish(channel, frame)
             if frame["type"] in ("assistant_block", "event_block", "todo"):
                 get_work_runner().note_session_output(
                     turn_id, tool=isinstance(event, AgentToolUse)
                 )
         if refresh_frame is not None:
+            # The room's, always: a panel going stale is a fact about the place
+            # the panel is in, and the worker that made it stale ran there.
             await broker.publish(str(topic_id), refresh_frame)
         if isinstance(event, AgentResult):
             # 投喂 → Stop is the interval. Closing it HERE, rather than where the
@@ -2548,6 +2607,7 @@ class ChatService:
         platform_unsolicited: bool = False,
         continuation_id: uuid.UUID | None = None,
         at: datetime | None = None,
+        task_id: uuid.UUID | None = None,
     ) -> dict | None:
         """Persist ONE discrete 芝士 message (Slack-style): committed the moment
         the SDK reports the AssistantMessage complete, so a turn lands as
@@ -2618,6 +2678,7 @@ class ChatService:
             block = await blocks.add(
                 project_id=project_id,
                 topic_id=topic_id,
+                task_id=task_id,
                 author=author,
                 author_type=AuthorType.ai,
                 content=text,
@@ -2642,6 +2703,9 @@ class ChatService:
                     await blocks.add(
                         project_id=project_id,
                         topic_id=topic_id,
+                        # Beside the message it is about, not in the room the
+                        # message did not go to.
+                        task_id=task_id,
                         author=author,
                         author_type=AuthorType.ai,
                         content=warn,
@@ -2689,6 +2753,7 @@ class ChatService:
         eid: str | None = None,
         backfilled: bool = False,
         platform_unsolicited: bool = False,
+        task_id: uuid.UUID | None = None,
     ) -> dict | None:
         """Persist ONE 施工现场 event the moment it streams in, not batched to the
         turn-end tx2. Mirrors _persist_assistant_message's commit-now contract so
@@ -2706,6 +2771,7 @@ class ChatService:
             eid=eid,
             backfilled=backfilled,
             platform_unsolicited=platform_unsolicited,
+            task_id=task_id,
         )
 
     async def _persist_room_event(
@@ -2721,6 +2787,7 @@ class ChatService:
         platform_unsolicited: bool = False,
         in_room: bool = False,
         author_type: AuthorType = AuthorType.ai,
+        task_id: uuid.UUID | None = None,
     ) -> dict | None:
         """One event block, committed NOW and deduped by event-id.
 
@@ -2755,6 +2822,7 @@ class ChatService:
             block = await blocks.add(
                 project_id=project_id,
                 topic_id=topic_id,
+                task_id=task_id,
                 author=await self._agent_handle(session, topic_id),
                 author_type=author_type,
                 content=content,
@@ -2776,6 +2844,7 @@ class ChatService:
         eid: str | None = None,
         backfilled: bool = False,
         platform_unsolicited: bool = False,
+        task_id: uuid.UUID | None = None,
     ) -> dict | None:
         """Land a returning subagent's conclusion in the room timeline."""
         return await self._persist_room_event(
@@ -2787,6 +2856,62 @@ class ChatService:
             eid=eid or event.eid,
             backfilled=backfilled,
             platform_unsolicited=platform_unsolicited,
+            task_id=task_id,
+        )
+
+    async def _persist_worker_event(
+        self,
+        *,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID,
+        event: AgentSubagentStart | AgentSubagentStop,
+        task_id: uuid.UUID | None,
+        turn_id: uuid.UUID | None,
+        eid: str | None = None,
+        platform_unsolicited: bool = False,
+    ) -> dict | None:
+        """A worker started, or handed something back — on ITS thread's line.
+
+        Nothing is written for a worker the platform never bound, and that is
+        not tidiness. Measured twice on 2.1.224: after the session's own Stop, a
+        SubagentStop arrives with an id matching no worker we saw, an empty
+        type, and a fragment of a prompt where the closing message should be —
+        something inside Claude Code, not work anybody dispatched. Writing those
+        would put a stranger's half-sentence in a room as if 芝士 had said it.
+
+        A Stop is "handed something back", never "done": the same worker reports
+        finished again after it resumes. So this is an event on the timeline and
+        nothing more — it settles nothing and closes nothing. The room decides
+        the work is over by reading what came back (`cheese conclude-task`).
+        """
+        if task_id is None:
+            return None
+        if isinstance(event, AgentSubagentStart):
+            content = "分身开工"
+            meta: dict = {"event_type": "subagent_start"}
+        else:
+            # The closing message in full. It reaches the platform exactly once,
+            # here — the room's own transcript does not contain it, and the
+            # worker's own dies with the container that ran it.
+            content = event.text.strip() or "分身交回了一次结果（没有留话）"
+            meta = {"event_type": "subagent_stop"}
+            if event.transcript_path:
+                meta["transcript_path"] = event.transcript_path
+        meta["agent_id"] = event.agent_id
+        if event.agent_type:
+            meta["agent_type"] = event.agent_type
+        return await self._persist_room_event(
+            project_id=project_id,
+            topic_id=topic_id,
+            content=content,
+            meta=meta,
+            turn_id=turn_id,
+            eid=eid,
+            platform_unsolicited=platform_unsolicited,
+            task_id=task_id,
+            # Shown in the thread rather than kept to 现场: what a worker handed
+            # back is the whole reason anybody opens the thread.
+            in_room=True,
         )
 
     async def _turn_changeset(
@@ -3025,6 +3150,7 @@ class ChatService:
                     eids=message.eids,
                     backfilled=True,
                     at=message.at,
+                    task_id=await self._work_of_worker(topic_id, message.agent_id),
                 )
                 seen.add(fallback_eid)
                 seen.update(message.eids)
@@ -3097,6 +3223,27 @@ class ChatService:
                         recovered += 1
                         yield {"type": "assistant_block", "block": block_payload}
                         continue
+                    if isinstance(event, AgentSubagentStart | AgentSubagentStop):
+                        # A worker's closing message reaches the platform exactly
+                        # once, in the Stop that carries it — its own transcript
+                        # dies with the container. So a lost delivery here is the
+                        # answer itself going missing, not a redraw.
+                        block_payload = await self._persist_worker_event(
+                            project_id=project_id,
+                            topic_id=topic_id,
+                            event=event,
+                            task_id=await self._work_of_worker(
+                                topic_id, event.agent_id
+                            ),
+                            turn_id=turn_id,
+                            eid=eid,
+                        )
+                        seen.add(eid)
+                        if block_payload is None:
+                            continue
+                        recovered += 1
+                        yield {"type": "event_block", "block": block_payload}
+                        continue
                     if isinstance(event, AgentToolResult):
                         # A subagent's conclusion whose live delivery was lost. Worth
                         # backfilling for the same reason it is worth showing at all:
@@ -3109,6 +3256,9 @@ class ChatService:
                             turn_id=turn_id,
                             eid=eid,
                             backfilled=True,
+                            task_id=await self._work_of_worker(
+                                topic_id, event.agent_id
+                            ),
                         )
                         seen.add(eid)
                         if block_payload is None:
@@ -3131,6 +3281,7 @@ class ChatService:
                         turn_id=turn_id,
                         eid=eid,
                         backfilled=True,
+                        task_id=await self._work_of_worker(topic_id, event.agent_id),
                     )
                     seen.add(eid)
                     if block_payload is None:
