@@ -116,4 +116,4 @@
 - [x] T2 任务绑定分身 + split 切换（已完成）
 - [x] T3 轮次与收尸认新形态（已完成）
 - [x] T4 收尾清扫（已完成）
-- [ ] 房间递验收卡（一棵树一个 PR）← 当前步骤
+- [x] 房间递卡：**PR #714**（71 文件 +3996/-3430）。已合 GitHub main（含 #689/#691/#708，一处 docstring 冲突已解）；合并树本地全量验证全绿（unit 3634 passed、integration 相关子集 511 passed、ruff/pyright 干净）；GitHub CI 九项全绿、mergeable clean。**等 <@wangchangxin> 验收采纳。**
