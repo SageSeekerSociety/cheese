@@ -1073,6 +1073,34 @@ KICKOFF_PROMPT = (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class _ThreadHere:
+    """一条活的身份证：它是谁、住在哪个房间、叫什么。"""
+
+    task_id: uuid.UUID
+    room_id: uuid.UUID
+    title: str
+
+
+def thread_message_prompt(*, thread: _ThreadHere, author: str, message: str) -> str:
+    """The ROOM's wake-up instruction when a person writes on one of its threads.
+
+    Same reason as 补证据 and 讨论升级: the person is looking at the thread, but
+    the worker doing it lives in the room's session, so the room is the only
+    thing that can hear them. The message itself stays where it was typed — this
+    only says who has to act on it.
+    """
+    return (
+        f"有人在活「{thread.title}」（task id `{thread.task_id}`）上说话了：\n\n"
+        f"---\n[{author}]: {message}\n---\n\n"
+        "**转达给做这条活的分身**：它还在跑就直接给它发消息；已经收工了，你就自己"
+        "看着办——能替它答的当场答，要接着干的照原来的简报重起一个分身并 "
+        f"`cheese bind {thread.task_id} <新的 agent_id>`。"
+        "回话说在这条活上（`cheese tell` 到它），别只在房间里说，"
+        "问话的人看的是那边。"
+    )
+
+
 def thread_upgraded_prompt(*, task_id: uuid.UUID, source_message: str) -> str:
     """The ROOM's wake-up instruction when one of its messages became a thread.
 
@@ -1744,6 +1772,23 @@ class ChatService:
                         "consumed stamp failed on receipt (topic=%s)", topic_id
                     )
                 return
+
+    async def thread_at(self, topic_id: uuid.UUID) -> "_ThreadHere | None":
+        """This id read as a THREAD — None when it names a room.
+
+        Plain values rather than the `Place` itself: the caller reads them after
+        this session is gone, and an ORM instance from a closed session answers
+        an attribute access with an exception instead of a value.
+        """
+        async with self._sessions() as session:
+            place = await PlaceResolver(session).resolve(topic_id)
+            if place is None or place.task is None:
+                return None
+            return _ThreadHere(
+                task_id=place.task.id,
+                room_id=place.room_id,
+                title=place.task.title,
+            )
 
     def has_running_turn(self, topic_id: uuid.UUID) -> bool:
         """Whether this process currently owns live work for the topic."""

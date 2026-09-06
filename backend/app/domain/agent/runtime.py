@@ -654,6 +654,27 @@ class AgentWorkRunner:
             await self._broker.publish(
                 channel, {"type": "user_block", "block": payload}
             )
+        thread = await chat_service.thread_at(topic_id)
+        if summon and thread is not None:
+            # 人对着一条活说话。The message stays where it was typed, but a thread
+            # has no session to hand it to — the worker doing it is a 分身 inside
+            # the room's session, and the room is the only thing that can reach
+            # it. Waking the thread's own id instead would raise a container for
+            # the shape threads stopped having.
+            from app.domain.agent.chat import thread_message_prompt
+
+            self.submit_kickoff(
+                chat_service,
+                thread.room_id,
+                prompt=thread_message_prompt(
+                    thread=thread, author=author, message=content
+                ),
+            )
+            # No turn started HERE, so this channel is not about to produce one:
+            # say so, or the person watching the thread waits on a spinner that
+            # belongs to the room's screen.
+            await self._broker.publish(channel, {"type": "done"})
+            return turn_id
         if not summon:
             # 没 @ 不等于没说 (spec §7.1 所有消息 AI 都会收到). An unsummoned
             # message is meant to be picked up by the pending window the next
