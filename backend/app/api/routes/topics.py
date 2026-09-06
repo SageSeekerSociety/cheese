@@ -24,7 +24,11 @@ from app.core.db import get_db
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import awaited_tasks
-from app.domain.agent.chat import ChatService, conclusion_digest_prompt
+from app.domain.agent.chat import (
+    ChatService,
+    conclusion_digest_prompt,
+    thread_upgraded_prompt,
+)
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.market import (
     COMPUTE_CLOUD,
@@ -557,6 +561,44 @@ async def bind_task_subagent(
     task = await TaskService(db).bind_subagent(
         room_id=place.room_id, task_id=task_id, subagent_id=body.agent_id
     )
+    out = TaskOut.model_validate(task).model_dump(mode="json")
+    await db.commit()
+    return ok(out)
+
+
+@router.post("/{topic_id}/tasks/{task_id}/title")
+async def set_task_title(
+    topic_id: uuid.UUID,
+    task_id: uuid.UUID,
+    body: dict,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """给房间里的一条活起/改标题, said by the ROOM.
+
+    `/{topic_id}/title` already names a thread when the id IS the thread's, and
+    that is the path a person takes from the sidebar. 芝士 cannot take it: its
+    per-turn token names the room, so addressing a thread's id with it is a
+    cross-place call and gets a 403 — correctly, since the token was minted for
+    one place. So the room names its thread through the room, like 认领 and
+    结论回流.
+
+    Naming is the room's now because nothing else is left to do it: a thread
+    dispatched by /split is named by whoever dispatched it, but one upgraded
+    out of a message starts untitled, and the session that used to name itself
+    on its first turn is exactly what 任务=分身 removed.
+    """
+    place = await TopicService(db).place_or_404(topic_id)
+    if place.is_thread:
+        raise ValidationError("这是房间给它的活起名字，一条活自己起不了")
+    await _actor_in_place(resolver, place)
+    task = await TaskService(db).get(task_id)
+    if task is None or task.room_id != place.room_id:
+        raise NotFoundError("这个房间里没有这条活")
+    title = (body.get("title") or "").strip()
+    if not title:
+        raise ValidationError("title 不能为空")
+    task.title = title[:80]
     out = TaskOut.model_validate(task).model_dump(mode="json")
     await db.commit()
     return ok(out)
@@ -2224,25 +2266,44 @@ async def upgrade_block(
     """讨论升级：upgrade a block into a place of its own (eval A1).
 
     Same mechanics as /split: the upgraded block is preset as the new place's
-    task-brief doc, and its 分身 kicks off automatically (it also names the
-    place on that first turn — upgraded places start untitled).
+    task-brief doc, and it starts untitled.
 
     A message in a room becomes a THREAD of work in that room; a message in a
     private chat becomes a room, because private chats are not in the topic tree
     and a thread there would be one nobody else could open. The response says
     which by carrying either a task or a topic.
+
+    Who gets woken follows from that split. A room has a session of its own, so
+    it kicks itself off. A thread does NOT — it is a 分身 inside the room's own
+    session, and addressing a thread's id here would raise a whole container for
+    a shape threads stopped having. So the ROOM is woken, and it is told to name
+    the thread, raise the worker and bind it.
     """
     place, created = await TopicService(db).upgrade_block_to_place(
         block_id=block_id, created_by=body.created_by
     )
+    thread = place.task
     out = (
-        TaskOut.model_validate(place.task).model_dump(mode="json")
-        if place.task is not None
+        TaskOut.model_validate(thread).model_dump(mode="json")
+        if thread is not None
         else TopicOut.model_validate(place.room).model_dump(mode="json")
     )
-    # Commit BEFORE kicking off (the 分身's turn uses its own session); an
-    # idempotent re-upgrade (created=False) must not kick the 分身 again.
+    # 升级的那段话 IS the brief — read it before the commit expires the instance,
+    # the same way the returned card reads its id before waking the room.
+    source_message = (await BlockRepository(db).get(block_id)) if created else None
+    upgraded_text = "" if source_message is None else source_message.content
+    # Commit BEFORE waking (the woken turn runs on its own session); an
+    # idempotent re-upgrade (created=False) must not wake anyone again.
     await db.commit()
     if created:
-        get_work_runner().submit_kickoff(chat, place.id)
+        if thread is not None:
+            get_work_runner().submit_kickoff(
+                chat,
+                place.room_id,
+                prompt=thread_upgraded_prompt(
+                    task_id=thread.id, source_message=upgraded_text
+                ),
+            )
+        else:
+            get_work_runner().submit_kickoff(chat, place.id)
     return ok(out)

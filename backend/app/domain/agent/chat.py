@@ -1057,18 +1057,42 @@ def _prompt_topic_refs(topics: list[Topic]) -> list[dict]:
     return [{"id": str(t.id), "title": t.title} for t in live if titles[t.title] == 1]
 
 
-# 分身开工首轮的内部指令 (split auto-kickoff)。Prompt-only: it never appears as a
-# message; what the humans see is the 分身's own opening, generated from the task
-# brief preset as the topic's living doc (语义内容由 AI 生成 — see CLAUDE.md).
+# 新话题开工首轮的内部指令 (讨论升级出一个房间时的 auto-kickoff)。Prompt-only: it
+# never appears as a message; what the humans see is 芝士's own opening, generated
+# from the brief preset as the topic's living doc (语义内容由 AI 生成 — see
+# CLAUDE.md). A ROOM is the only thing this still starts: work inside a room is a
+# 分身 in that room's own session, and the room is what raises it.
 KICKOFF_PROMPT = (
-    "这个话题刚从父话题拆分/升级出来，由你（分身）负责推进。任务简报在系统提示的"
-    "「当前话题的实况文档」里：拆分意图（或被升级的那段讨论）+ 父话题文档快照。"
+    "这个话题刚从一条消息升级出来，由你负责推进。任务简报在系统提示的"
+    "「当前话题的实况文档」里：被升级的那段讨论 + 它原来所在地方的文档快照。"
     "现在开工：\n"
     "1. 先发开场白：一两句复述你理解的任务、说明打算怎么推进（给人纠偏的机会）；"
-    "简报信息不足就明确列出缺什么、@ 拆分发起人补充。\n"
+    "简报信息不足就明确列出缺什么、@ 升级发起人补充。\n"
     "2. 把实况文档改写成你自己的状态摘要（目标/约束/下一步），别留着简报原文不动。\n"
     "3. 能直接开始的活就开始干；需要拍板的用决策请求找对的人。"
 )
+
+
+def thread_upgraded_prompt(*, task_id: uuid.UUID, source_message: str) -> str:
+    """The ROOM's wake-up instruction when one of its messages became a thread.
+
+    Addressed to the room for the same reason 补证据 is: a thread is a 分身 inside
+    the room's own session and has no session to wake. The platform writes the
+    row and its brief doc; raising the worker is the room's, and so is naming the
+    thread — it is created untitled and nothing else is in a position to name it.
+    """
+    return (
+        f"你把一条消息升级成了这个房间里的一条活（task id `{task_id}`）。"
+        "平台已经把它的任务简报文档建好了，简报正文就是被升级的那段话：\n\n"
+        f"---\n{source_message}\n---\n\n"
+        "接下来是你的事：\n"
+        f'1. `cheese title "<≤12 字的标题>" --task {task_id}`——它现在还叫「新话题」，'
+        "只有你能给它起名字。\n"
+        "2. 用你的 Agent 工具起一个分身，**把上面这段简报原文放进它的 prompt**"
+        "（分身不会自己去读文档）。\n"
+        f"3. `cheese bind {task_id} <分身的 agent_id>`——不 bind，这条活在界面上"
+        "永远是「没人做」，分身干的每件事都记在你头上。"
+    )
 
 
 def conclusion_digest_prompt(
@@ -1759,6 +1783,7 @@ class ChatService:
                 # work, so an auto-resume re-saying a message it already posted
                 # is recognized (④) — kickoff turns ran unprotected before.
                 continuation_id=turn_id,
+                platform_turn=True,
             ):
                 yield frame
 
@@ -3748,6 +3773,7 @@ class ChatService:
         turn_id: uuid.UUID,
         user_block_id: uuid.UUID | None,
         provision_actor: Actor | None,
+        platform_turn: bool = False,
     ) -> "_TurnContext | _TurnBail":
         """Everything a turn needs before anything runs it, read in one
         transaction: who is here, what was said, what is remembered, which
@@ -4038,10 +4064,21 @@ class ChatService:
             # No pending human block ⇒ nobody spoke: this is a resume nudge,
             # a kickoff or a returned conclusion. Say so, rather than handing
             # 芝士 bare text that looks like a person's message.
-            prompt_text = "\n".join(
+            backlog = "\n".join(
                 _prompt_line(b, embeds_images=getattr(provider, "embeds_images", True))
                 for b in pending
-            ) or platform_prompt(content)
+            )
+            prompt_text = backlog or platform_prompt(content)
+            # 平台指令不会被待读消息挤掉。A platform turn EXISTS because of its
+            # instruction — raise a worker for this thread, relay this returned
+            # card — and nobody re-sends it: the backlog is marked consumed by
+            # this same turn, so an instruction dropped here is gone for good and
+            # the thread never gets a worker. Dropping it was easy to miss
+            # because it needs a room where somebody typed without summoning
+            # 芝士, which is a room's ordinary state (没 @ 不等于没说) rather than
+            # a rare race.
+            if platform_turn and backlog:
+                prompt_text = f"{backlog}\n\n{platform_prompt(content)}"
             # 重放可见 (#416): count this attempt on the blocks themselves. A
             # turn that dies stamps no `consumed_turn`, so the SAME batch is
             # re-sent next turn, and the next — correct (a dead turn must not
@@ -4109,6 +4146,7 @@ class ChatService:
         is_resume: bool = False,
         continuation_id: uuid.UUID | None = None,
         provision_actor: Actor | None = None,
+        platform_turn: bool = False,
     ) -> AsyncIterator[dict]:
         """Run the AGENT part of a turn (the human block was already posted by
         post_user_message), yielding WS frames as JSON-ready dicts. Runs under
@@ -4122,6 +4160,7 @@ class ChatService:
             turn_id=turn_id,
             user_block_id=user_block_id,
             provision_actor=provision_actor,
+            platform_turn=platform_turn,
         )
         if isinstance(prepared, _TurnBail):
             for frame in prepared.frames:

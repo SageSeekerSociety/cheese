@@ -837,10 +837,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     ptitle = sub.add_parser(
         "title",
-        help="给本话题起/改标题",
-        description="话题还叫「新话题」时,据任务起一个 ≤12 字的标题。这是开工第一步。",
+        help="给本话题(或它下面的一条活)起/改标题",
+        description=(
+            "话题还叫「新话题」时,据任务起一个 ≤12 字的标题。这是开工第一步。\n"
+            "\n"
+            "--task 给这个房间里的一条活起名字:讨论升级出来的活是没有标题的,\n"
+            "只有你能给它起一个。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ptitle.add_argument("text", help="标题,≤12 字")
+    ptitle.add_argument(
+        "--task",
+        default=None,
+        help="给这条活(而不是本话题)起标题,填 task id",
+    )
 
     prem = sub.add_parser(
         "remember",
@@ -1266,8 +1277,16 @@ def main() -> None:
         print("已记入决策记录。")
     elif a.cmd == "title":
         topic = _need("CHEESE_TOPIC", TOPIC)
-        _call("POST", f"/topics/{topic}/title", {"title": a.text})
-        print(f"话题标题已设为：{a.text}")
+        if a.task:
+            # 房间给它的活起名字。走房间的地址,因为这一轮的 token 是按房间签的,
+            # 直接拿活的 id 当地址会被判成跨话题(403)。
+            r = _call(
+                "POST", f"/topics/{topic}/tasks/{a.task}/title", {"title": a.text}
+            )["data"]
+            print(f"这条活现在叫「{r['title']}」。")
+        else:
+            _call("POST", f"/topics/{topic}/title", {"title": a.text})
+            print(f"话题标题已设为：{a.text}")
     elif a.cmd == "remember":
         proj = _need("CHEESE_PROJECT", PROJECT)
         # 带上话题：后端据此认出是哪个芝士在记，存进它自己的项目记忆

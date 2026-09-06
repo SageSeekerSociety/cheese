@@ -15,6 +15,7 @@ import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 
+from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.conclusion.models import ConclusionStatus
 from app.domain.conclusion.repositories import ConclusionCardRepository
 from app.domain.conclusion.services import ConclusionCardService
@@ -346,6 +347,53 @@ def test_need_evidence_wakes_the_room_to_relay_it(client, stub_hooks):
     assert _topic_status(client, sub["id"]) != "closed", "打回不收起"
     room_blocks = client.get(f"/topics/{parent['id']}/blocks").json()["data"]["data"]
     assert len(room_blocks) > before, "房间没被叫醒"
+
+
+def test_a_platform_instruction_is_not_squeezed_out_by_unread_chatter(
+    client, stub_hooks
+):
+    """房间里有没读过的闲聊时，平台交代给房间的事照样要送到。
+
+    待读消息和平台指令抢的是同一个 prompt，而没被送进去的那一个是**不会重发**的：
+    这一轮就把待读消息标成已读了，指令从此消失，那条活永远等不到分身。它难被发现，
+    是因为要复现只需要有人不 @ 芝士地说过一句话 —— 而那是房间的常态。
+    """
+    p = _project(client)
+    parent = _topic(client, p["id"])
+    sub = _split(client, parent["id"], "子活")
+    card = _file_card(client, sub["id"], "结论：这样最快")
+    _say_without_summoning(client, p["id"], parent["id"], "顺便说一句，午饭订好了")
+
+    client.post(
+        f"/topics/{parent['id']}/conclusion-cards/{card['id']}/need-evidence",
+        json={"decided_by": "user-1", "reason": "把基准测试的数跑出来"},
+    )
+    _wait_work_idle()
+
+    prompt = stub_hooks.last_prompt or ""
+    assert "午饭订好了" in prompt, "待读消息没送到"
+    assert card["id"] in prompt, "平台指令被待读消息挤掉了，这张卡再没人管"
+
+
+def _say_without_summoning(client, project_id: str, room_id: str, text: str) -> None:
+    """一条没 @ 芝士的人类消息 —— 它会一直待读，直到某一轮把它读进去。"""
+
+    async def _seed() -> None:
+        async with client.test_factory() as session:
+            session.add(
+                Block(
+                    project_id=uuid.UUID(project_id),
+                    topic_id=uuid.UUID(room_id),
+                    kind=BlockKind.message,
+                    author_type=AuthorType.human,
+                    author="user-1",
+                    content=text,
+                    refs=[],
+                )
+            )
+            await session.commit()
+
+    asyncio.run(_seed())
 
 
 def test_need_evidence_still_says_so_where_the_work_happened(client):

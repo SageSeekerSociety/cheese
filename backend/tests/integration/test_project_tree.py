@@ -71,23 +71,108 @@ def test_upgrade_block_to_topic(client):
     assert doc is not None
     assert "我们要不要单独做一个数据清洗的模块" in doc["content"]
 
-    # Auto-kickoff, same as split: the 分身's own opening is the first message
-    # (the canned "我先确认理解" template is gone).
-    blocks = client.get(f"/topics/{new_topic['id']}/blocks").json()["data"]["data"]
-    msgs = [b for b in blocks if b["kind"] == "message"]
-    assert msgs and msgs[0]["author_type"] == "ai"
-    assert "我先确认理解，再开始推进" not in msgs[0]["content"]
+    # The ROOM is what runs a turn: a thread is a 分身 in the room's session and
+    # has no session of its own, so the thread starts with nothing said in it.
+    msgs = _messages(client, new_topic["id"])
+    assert not msgs, f"这条活自己跑了一轮——它没有会话，这是在起容器：{msgs}"
+    room_msgs = _messages(client, topic["id"])
+    assert room_msgs and room_msgs[-1]["author_type"] == "ai"
 
     # Re-upgrading the same block is idempotent: it returns the topic already
     # created (so a double-click just navigates), not an error — and it does
-    # NOT kick the 分身 off a second time.
+    # NOT wake the room a second time.
     r2 = client.post(f"/blocks/{block_id}/upgrade", json={})
     assert r2.status_code == 200
     assert r2.json()["data"]["id"] == new_topic["id"]
     _wait_work_idle()
-    blocks2 = client.get(f"/topics/{new_topic['id']}/blocks").json()["data"]["data"]
-    msgs2 = [b for b in blocks2 if b["kind"] == "message"]
-    assert len(msgs2) == len(msgs)  # no second kickoff turn
+    assert len(_messages(client, topic["id"])) == len(room_msgs)
+
+
+def _messages(client, place_id: str) -> list[dict]:
+    blocks = client.get(f"/topics/{place_id}/blocks").json()["data"]["data"]
+    return [b for b in blocks if b["kind"] == "message"]
+
+
+def _record_screens(stub_hooks) -> list[str]:
+    """每一次「起一块屏幕」的 topic id。起屏幕就是起容器，这是唯一看得见它的地方。"""
+    seen: list[str] = []
+    original = stub_hooks.ensure_ready
+
+    async def _spy(**kw):
+        seen.append(str(kw.get("topic_id")))
+        return await original(**kw)
+
+    stub_hooks.ensure_ready = _spy
+    return seen
+
+
+def test_upgrading_a_message_wakes_the_room_to_raise_the_worker(client, stub_hooks):
+    """讨论升级出来的是房间里的一条活，而活没有自己的会话可以叫醒。
+
+    这条路和「结论卡打回」是同一颗雷的两个引信：朝一条活的 id 开轮次，平台就得为它
+    起一整个容器 —— 正是「一条活 = 房间会话里的一个分身」拆掉的东西。所以轮次落在
+    房间，提示词里带着房间起分身所需要的一切：活的 id、简报原文、起名和认领怎么做。
+    """
+    p = _project(client)
+    room = client.post("/topics", json={"project_id": p["id"], "title": "讨论"}).json()[
+        "data"
+    ]
+    block_id = _insert_block(client, p["id"], room["id"], "把导入这段单独拆出来做")
+
+    screens = _record_screens(stub_hooks)
+    r = client.post(f"/blocks/{block_id}/upgrade", json={"created_by": "user-1"})
+    assert r.status_code == 200
+    thread = r.json()["data"]
+    _wait_work_idle()
+
+    assert thread["id"] not in screens, "为一条活起了屏幕——这是在复活容器"
+    assert screens == [room["id"]], f"叫醒的不是房间：{screens}"
+    prompt = stub_hooks.last_prompt or ""
+    assert thread["id"] in prompt, "不给 task id，房间没法 bind，也没法给它起名字"
+    assert "把导入这段单独拆出来做" in prompt, "简报原文没带过去，分身就没东西可读"
+    assert "bind" in prompt, "不说 bind，这条活在界面上永远是「没人做」"
+
+
+def test_a_room_names_its_own_thread(client):
+    """升级出来的活是没有标题的，而唯一能给它起名字的是房间。
+
+    房间自己的地址是 `/{room}/tasks/{task}/title`：这一轮的 token 是按房间签的，
+    直接拿活的 id 当地址会被判成跨话题。
+    """
+    p = _project(client)
+    room = client.post("/topics", json={"project_id": p["id"], "title": "讨论"}).json()[
+        "data"
+    ]
+    block_id = _insert_block(client, p["id"], room["id"], "把导入这段单独拆出来做")
+    thread = client.post(
+        f"/blocks/{block_id}/upgrade", json={"created_by": "user-1"}
+    ).json()["data"]
+    _wait_work_idle()
+    assert thread["title"] == "新话题"
+
+    r = client.post(
+        f"/topics/{room['id']}/tasks/{thread['id']}/title", json={"title": "拆导入"}
+    )
+    assert r.status_code == 200
+    assert r.json()["data"]["title"] == "拆导入"
+
+    tasks = client.get(f"/topics/{room['id']}/tasks").json()["data"]["data"]
+    assert [t["title"] for t in tasks if t["id"] == thread["id"]] == ["拆导入"]
+
+    # 一条活自己起不了名字，别的房间的活也够不着。
+    assert (
+        client.post(
+            f"/topics/{thread['id']}/tasks/{thread['id']}/title",
+            json={"title": "自己来"},
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            f"/topics/{room['id']}/tasks/{uuid.uuid4()}/title", json={"title": "谁"}
+        ).status_code
+        == 404
+    )
 
 
 def test_upgrade_doc_node_to_subtopic(client):
