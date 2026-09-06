@@ -83,6 +83,53 @@ TASK_CASES = [
         Column.building,
         "失联",
     ),
+    # 一条活由房间会话里的一个分身做，所以「它还在不在」有两个答案，先问屏幕。
+    (
+        "分身在做，刚说过话",
+        task(has_worker=True, last_signal_at=JUST_NOW),
+        Column.building,
+        "运行中",
+    ),
+    # 屏幕没了，那个分身一定也没了 —— 它住在房间的会话里，而它不会来说一声。
+    (
+        "分身所在的屏幕没了",
+        task(has_worker=True, last_signal_at=JUST_NOW, room_screen_live=False),
+        Column.building,
+        "失联",
+    ),
+    (
+        "屏幕还在，但分身早就没动静了",
+        task(has_worker=True, last_signal_at=LONG_AGO),
+        Column.building,
+        "失联",
+    ),
+    # 干完了在等房间结算，不是断了 —— 这一条安静得理直气壮。
+    (
+        "分身交了结论，等房间结算",
+        task(has_worker=True, last_signal_at=LONG_AGO, conclusion_pending=True),
+        Column.building,
+        "空闲",
+    ),
+    # 同样安静得理直气壮的另一种：卡已经递出去了，在等人。分身干完活不会把
+    # `subagent_id` 抹掉，所以「失联」要是抢在卡前面说，每一条等验收的活都会
+    # 被误报成失联。
+    (
+        "分身递了卡，安静地等人验收",
+        task(has_worker=True, last_signal_at=LONG_AGO, card=card(AcceptStatus.pending)),
+        Column.needs_you,
+        "等待验收",
+    ),
+    (
+        "分身递了卡，检查还在跑",
+        task(
+            has_worker=True,
+            last_signal_at=LONG_AGO,
+            room_screen_live=False,
+            card=card(AcceptStatus.pending_gate),
+        ),
+        Column.delivering,
+        "检查运行中",
+    ),
     (
         "闸门在跑",
         task(card=card(AcceptStatus.pending_gate)),
@@ -291,6 +338,49 @@ def test_every_phrase_is_reachable():
 
     every = {p for phrases in COLUMN_PHRASES.values() for p in phrases}
     assert reached == every
+
+
+def test_a_worker_that_stopped_reporting_is_not_a_worker_that_finished():
+    """分身报完成不是活干完了 —— 一个分身可以报好几次完成（把长命令丢进自己的后台
+    再停下来等也算一次），所以看板绝不能因为它安静下来就把这条活翻成「已收工」。
+    只有收工（`TaskStatus.closed`）或者已交付才是终态。"""
+    quiet = task(has_worker=True, last_signal_at=LONG_AGO)
+    shown = task_presentation(quiet, now=NOW)
+    assert shown.column is Column.building, "断了联系不等于干完了"
+    assert shown.display_status == "失联"
+
+    gone = task_presentation(
+        task(has_worker=True, last_signal_at=JUST_NOW, room_screen_live=False), now=NOW
+    )
+    assert gone.column is Column.building
+
+
+def test_a_finished_thread_still_reads_as_finished_with_a_worker_on_it():
+    """反过来也得成立：绑过分身不能盖掉真正的终态。"""
+    closed = task(has_worker=True, status=TaskStatus.closed, last_signal_at=LONG_AGO)
+    assert task_presentation(closed, now=NOW).display_status == "已收工"
+    delivered = task(has_worker=True, accepted_at=JUST_NOW, last_signal_at=LONG_AGO)
+    assert task_presentation(delivered, now=NOW).display_status == "已采纳"
+
+
+def test_a_thread_waiting_on_a_person_is_not_out_of_contact():
+    """分身干完活不会把自己从这条活上摘掉，所以「等人」的每一格都要能压过失联 ——
+    否则整个 delivering / needs_you 两列会被一句「失联」抹平。"""
+    for status in (
+        AcceptStatus.pending,
+        AcceptStatus.pending_gate,
+        AcceptStatus.pr_open,
+        AcceptStatus.conflict,
+    ):
+        quiet = task(
+            has_worker=True,
+            last_signal_at=LONG_AGO,
+            room_screen_live=False,
+            card=card(status),
+        )
+        shown = task_presentation(quiet, now=NOW)
+        assert shown.display_status != "失联", f"{status} 的卡被失联抢答了"
+        assert shown.column in (Column.delivering, Column.needs_you)
 
 
 def test_it_reads_nothing_but_the_facts_it_was_given():

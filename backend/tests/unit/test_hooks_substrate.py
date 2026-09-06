@@ -1209,6 +1209,68 @@ async def test_the_session_working_on_its_own_still_lights_the_room():
     await provider._close_topic(topic_id)
 
 
+async def test_nobody_accuses_a_self_running_session_of_never_hearing_us():
+    """投递看门狗看的是「投喂进去的话，会话接到了吗」。会话自己开始干活的那一轮压根
+    没有投喂 —— 要是它照样被算进去，房间里会冒出一行「消息没送进芝士的会话」，说的
+    是一条从来不存在的消息。
+
+    它不会，而且不是靠豁免：开出这段 activity 的就是会话产出的那个钩子，那个钩子
+    同一批进了 activity 的队列，投递因此当场成立。
+    """
+    import uuid as _uuid
+
+    from app.domain.agent.platform_failures import PROMPT_UNDELIVERED_CODE
+
+    router = HookRouter()
+    consumed: list[object] = []
+    reported: list[tuple[object, bool]] = []
+
+    async def consumer(_p, _t, _work_id, event, _eid, _seen, _unsolicited):
+        consumed.append(event)
+
+    async def watch_activity(_project, _topic, work_id, active):
+        reported.append((work_id, active))
+
+    # 投递窗口掐到 50ms：真要误判，这个测试会当场看见。
+    provider = ClaudeCodeRuntime(
+        _AliveScreen(),
+        router=router,
+        idle_suspect_s=30,
+        hard_ceiling_s=30,
+        delivery_timeout_s=0.05,
+    )
+    provider.bind_events(consumer)
+    provider.bind_activity(watch_activity)
+    project_id, topic_id = _uuid.uuid4(), _uuid.uuid4()
+    topic_key = str(topic_id)
+    await provider.ensure_subscription(project_id, topic_id)
+    provider._live[topic_id] = "screen"
+
+    router.push(
+        topic_key,
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": "ls"},
+            "_eid": "own-1",
+        },
+    )
+    for _ in range(60):
+        await asyncio.sleep(0.01)
+
+    # 先确认看门狗真的在跑 —— 不然「没有误判」只是因为压根没人判过。
+    assert [w for w, a in reported if a], "会话自己在产出，房间没亮，这条测试等于没测"
+    failures = [
+        e
+        for e in consumed
+        if isinstance(e, AgentResult)
+        and e.is_error
+        and e.failure_code == PROMPT_UNDELIVERED_CODE
+    ]
+    assert not failures, f"会话自己在干活，平台却说消息没送到：{failures}"
+    await provider._close_topic(topic_id)
+
+
 # --- 图片输入: an image that cannot be staged costs the image, not the message ---
 #
 # The bytes live in the backend's worktree. A screen on another machine can only

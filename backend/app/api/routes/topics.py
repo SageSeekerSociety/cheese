@@ -44,6 +44,7 @@ from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
+from app.domain.conclusion.repositories import ConclusionCardRepository
 from app.domain.device.supply import Visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.idempotency import store as idem
@@ -315,6 +316,7 @@ async def get_topic(
     topic_id: uuid.UUID,
     db: DbSession,
     runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
+    chat: Annotated[ChatService, Depends(get_chat_service)],
     resolver: ActorResolverDep,
 ) -> dict:
     """One place's header — a room's, or one thread's.
@@ -345,10 +347,17 @@ async def get_topic(
         # 算的，所以深链接进来和从侧栏点进来不可能给出两种说法。
         cards = await AcceptCardRepository(db).latest_by_task([place.task.id])
         beats = await TaskRepository(db).last_block_at_for_tasks([place.task.id])
+        pending = await ConclusionCardRepository(db).live_task_ids([place.task.id])
         out = TaskOut.model_validate(place.task).model_dump(mode="json")
         out["presentation"] = presentation.task_presentation(
             presentation.facts_for_task(
-                place.task, cards.get(place.task.id), beats.get(place.task.id)
+                place.task,
+                cards.get(place.task.id),
+                beats.get(place.task.id),
+                # 做这条活的分身住在房间的会话里 —— 屏幕没了它就没了，而它不会来
+                # 说一声。这一位是内存里的当下事实，不是库里的一列。
+                room_screen_live=chat.has_live_screen(place.room_id),
+                conclusion_pending=place.task.id in pending,
             ),
             now=datetime.now(UTC),
         ).as_dict()
@@ -442,6 +451,7 @@ async def list_topic_blocks(
 async def list_room_tasks(
     topic_id: uuid.UUID,
     db: DbSession,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
     resolver: ActorResolverDep,
     limit: Annotated[int | None, Query(ge=1, le=500)] = None,
 ) -> dict:
@@ -482,6 +492,10 @@ async def list_room_tasks(
     thread_ids = [t.id for t, _ in threads]
     cards = await AcceptCardRepository(db).latest_by_task(thread_ids)
     beats = await TaskRepository(db).last_block_at_for_tasks(thread_ids)
+    pending = await ConclusionCardRepository(db).live_task_ids(thread_ids)
+    # One answer for the whole room: every thread's worker lives in this room's
+    # one session, so the screen is alive for all of them or for none.
+    screen_live = chat.has_live_screen(topic_id)
     now = datetime.now(UTC)
     items = []
     for task, blocks in threads:
@@ -491,7 +505,13 @@ async def list_room_tasks(
                 **TaskOut.model_validate(task).model_dump(mode="json"),
                 # 同一个函数算的那一格，和项目级列表、和这条活自己的头一模一样。
                 "presentation": presentation.task_presentation(
-                    presentation.facts_for_task(task, card, beats.get(task.id)),
+                    presentation.facts_for_task(
+                        task,
+                        card,
+                        beats.get(task.id),
+                        room_screen_live=screen_live,
+                        conclusion_pending=task.id in pending,
+                    ),
                     now=now,
                 ).as_dict(),
                 "blocks": [

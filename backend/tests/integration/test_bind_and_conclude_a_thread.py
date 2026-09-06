@@ -14,7 +14,8 @@ its tool calls went.
 
 import uuid
 
-from tests.integration.conftest import session_token
+from tests.conftest import wait_work_idle as _wait_work_idle
+from tests.integration.conftest import chat_ws_url, session_token
 
 
 def _bearer(handle: str) -> dict:
@@ -220,3 +221,86 @@ def test_concluding_something_that_is_not_a_thread_is_refused(client):
         headers=_bearer("alice"),
     )
     assert r.status_code == 404
+
+
+# —— 看板上的这条活 ——————————————————————————————————————————————
+
+
+def _shown(client, room_id: str, task_id: str) -> dict:
+    listed = client.get(f"/topics/{room_id}/tasks", headers=_bearer("alice")).json()[
+        "data"
+    ]["data"]
+    return next(t["presentation"] for t in listed if t["id"] == task_id)
+
+
+def _pump(client, room_id: str, rounds: int = 20) -> None:
+    """把 TestClient 那条事件循环叫醒几次。
+
+    钩子是从测试这条线程塞进它队列里的，塞的时候唤不醒它（跨线程 `put_nowait` 叫
+    不动等在那儿的 waiter）；它下一次醒来是因为有请求进来。
+    """
+    import time
+
+    for _ in range(rounds):
+        client.get(f"/topics/{room_id}", headers=_bearer("alice"))
+        time.sleep(0.02)
+
+
+def test_a_thread_whose_room_has_no_screen_says_it_is_out_of_contact(client):
+    """分身住在房间的会话里 —— 屏幕没了它一定也没了，而它不会来说一声。看板不问，
+    这条活就永远转圈。"""
+    _, room_id = _room(client)
+    task = _split(client, room_id)
+    assert _shown(client, room_id, task["id"])["display_status"] == "空闲", (
+        "还没人做的活不是失联,是没人做"
+    )
+
+    client.post(
+        f"/topics/{room_id}/tasks/{task['id']}/bind",
+        json={"agent_id": "worker-1"},
+        headers=_bearer("alice"),
+    )
+    assert _shown(client, room_id, task["id"])["display_status"] == "失联"
+
+
+def test_a_worker_reporting_in_is_not_the_work_finishing(client, stub_hooks):
+    """一个分身可以报好几次完成（把长命令丢进自己的后台再停下来等也算一次），而且
+    还会飘来来路不明的完成通知。所以一条 SubagentStop 落在这条活的时间线上之后，
+    看板绝不能把它翻成「已收工」—— 只有房间验过货、落了结论才算。"""
+    _, room_id = _room(client)
+    task = _split(client, room_id)
+    client.post(
+        f"/topics/{room_id}/tasks/{task['id']}/bind",
+        json={"agent_id": "worker-1"},
+        headers=_bearer("alice"),
+    )
+    # 一轮普通的轮次，房间因此有了一块活着的屏幕（也才有钩子可以推）。
+    with client.websocket_connect(chat_ws_url(room_id, "alice")) as ws:
+        ws.send_json({"type": "message", "content": "你好", "summon": True})
+        while ws.receive_json()["type"] not in ("done", "error"):
+            pass
+    _wait_work_idle()
+    assert _shown(client, room_id, task["id"])["display_status"] == "运行中"
+
+    stub_hooks.hook(
+        uuid.UUID(room_id),
+        hook_event_name="SubagentStop",
+        agent_id="worker-1",
+        last_assistant_message="我这边跑完了",
+    )
+    _pump(client, room_id)
+
+    blocks = client.get(
+        f"/topics/{task['id']}/blocks", headers=_bearer("alice")
+    ).json()["data"]["data"]
+    assert any("我这边跑完了" in b["content"] for b in blocks), (
+        "分身的收尾话没落到这条活上"
+    )
+
+    shown = _shown(client, room_id, task["id"])
+    assert shown["column"] == "building", f"报了一次完成就被当成干完了：{shown}"
+    assert shown["display_status"] != "已收工"
+    listed = client.get(f"/topics/{room_id}/tasks", headers=_bearer("alice")).json()[
+        "data"
+    ]["data"]
+    assert [t["status"] for t in listed] == ["open"]

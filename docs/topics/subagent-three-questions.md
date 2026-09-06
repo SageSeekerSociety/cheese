@@ -79,7 +79,7 @@
 
 - 「任务」已经是房间里的 `tasks` 行（`backend/app/domain/room_task/models.py:258`），不是话题；但**执行层每个任务仍起一整套**：独立 tmux 屏幕、独立 claude 进程、独立 $HOME、独立 git clone（共享房间机器和树分支）。launch 路径在 `cloud_provider.py` / `device_launch.py`。改造要拆的就是这一层。
 - hooks 归属**只按话题（place）分**：`POST /sandbox/hooks/{topic_id}`（`routes/sandbox.py:76`），`hook_key = str(topic_id)`。`SubagentStart/SubagentStop` **没注册**（`session_launch.py:97-109` 只注册六种），`agent_id` 在后端代码里零实现，唯一引用是一条断言它被丢弃的负向测试（`test_hook_events.py:103`）。
-- 轮次机制有个现成的口子：hook 到达而没有进行中轮次时，`hooks_substrate.py:1227` 会当场造一个 `platform_unsolicited` 的内存轮次——分身通知唤起的轮次今天就走它。但它**没有 `agent_turns` 行、不记用量、不结卡、不消费待读消息、不受收尸保护**。要把它变成正式轮次。
+- 轮次机制有个现成的口子：hook 到达而没有进行中轮次时，`hooks_substrate.py` 会当场造一个 `platform_unsolicited` 的内存轮次——分身通知唤起的轮次走它。（勘察当时它**没有 `agent_turns` 行、不记用量、不结卡、不消费待读消息、不受收尸保护**；T3 已把它变成正式轮次，见下。）
 - 分身工具事件今天已经混进房间时间线（PreToolUse/PostToolUse 的 matcher 是 `*`，分身里照样触发上报），只是没带标签、无法区分——所以第一步的翻译层改造对现状是纯增益。
 
 ### 分阶段拆活（顺序做，共用房间分支 topic/80027df3）

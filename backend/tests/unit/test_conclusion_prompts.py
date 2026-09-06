@@ -63,13 +63,32 @@ def test_digest_prompt_mentions_the_deadline_when_there_is_one():
 # --- 打回提示词 -------------------------------------------------------------
 
 
+def _returned_card(reason: str = "把 p99 延迟的实测数跑出来") -> SimpleNamespace:
+    return SimpleNamespace(id="card-9", task_id="task-7", settle_reason=reason)
+
+
 def test_need_evidence_prompt_is_not_a_rejection():
-    card = SimpleNamespace(settle_reason="把 p99 延迟的实测数跑出来")
-    prompt = need_evidence_prompt(card)
-    assert "把 p99 延迟的实测数跑出来" in prompt, "要补什么必须原样传给子话题"
+    prompt = need_evidence_prompt(_returned_card(), task_title="分页调研")
+    assert "把 p99 延迟的实测数跑出来" in prompt, "要补什么必须原样传下去"
     assert "不是驳回" in prompt
     assert "驳回" not in prompt.replace("不是驳回", ""), "别的地方不许出现驳回"
-    assert "cheese conclude" in prompt, "没告诉它补完怎么交回来"
+
+
+def test_need_evidence_prompt_tells_the_room_to_relay_it():
+    """收这条提示词的是**房间**，不是那条活——活是房间会话里的一个分身，它没有自己
+    的会话可以叫醒。所以这段话必须够房间去转达：哪条活、哪张卡、补什么、补完怎么走。"""
+    prompt = need_evidence_prompt(_returned_card(), task_title="分页调研")
+    assert "分页调研" in prompt, "不说是哪条活，房间不知道该找哪个分身"
+    assert "card-9" in prompt, "不给卡号，补回来的结论接不上这张卡"
+    assert "转达" in prompt
+    assert "cheese conclude-task task-7" in prompt, "没告诉房间补完怎么交回来"
+
+
+def test_need_evidence_prompt_survives_a_thread_with_no_title():
+    """标题是空的也得能说人话——这段话是提示词，缺一栏不能变成一句半截的指令。"""
+    prompt = need_evidence_prompt(_returned_card())
+    assert "「」" not in prompt
+    assert "card-9" in prompt
 
 
 # --- sandbox CLI ------------------------------------------------------------

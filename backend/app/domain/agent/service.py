@@ -200,3 +200,28 @@ AgentEvent = (
     | AgentSubagentStart
     | AgentSubagentStop
 )
+
+
+def proves_output(events: list[AgentEvent]) -> bool:
+    """Does this batch prove the session is PART-WAY THROUGH a response?
+
+    The rule is "the agent is producing output", and it is deliberately not a
+    list of event names: a type added later is covered by it without being
+    enumerated. What makes the question worth its own function is what follows
+    from a yes — a ``Stop`` is guaranteed to come, so whatever is opened on it
+    is guaranteed to be closed again.
+
+    An event that merely HAPPENED is not that. A session coming up, a tool
+    returning after the answer was already given, a prompt being typed, a worker
+    reporting in — any of those can arrive with no ``Stop`` behind it, and
+    whatever was opened on one then stays open forever.
+
+    A batch that carries the ending is not an opening either: nothing is
+    in-flight after a ``Stop``.
+    """
+    if any(isinstance(event, AgentResult) for event in events):
+        return False
+    return any(
+        isinstance(event, AgentMessage | AgentToolUse | AgentToolResult)
+        for event in events
+    )

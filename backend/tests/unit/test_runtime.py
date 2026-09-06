@@ -989,6 +989,124 @@ async def test_sweep_spares_a_turn_grinding_through_tools(db_factory):
     task.cancel()
 
 
+class _SweepChat:
+    """The two things a sweep asks of a ChatService, and a log of what it said."""
+
+    def __init__(self, db_factory, *, live_screen: bool = False):
+        self.session_factory = db_factory
+        self._live_screen = live_screen
+        self.texts: list[str] = []
+
+    def has_live_screen(self, topic_id):
+        del topic_id
+        return self._live_screen
+
+    async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
+        del topic_id, turn_id, meta
+        self.texts.append(text)
+        return {"id": "b1", "content": text}
+
+
+@pytest.mark.anyio
+async def test_a_self_started_turn_opens_an_interval_nothing_will_re_send(db_factory):
+    """会话自己开的一轮也是一轮 —— 但它是**没有提示词**的那一种。
+
+    没人喂过它，所以没有原文可以重发；`resendable` 为假就是这件事写进表里。而
+    `delivered` 反过来必须盖上：`close_for_topic` 只关送达过的行，一行永远关不掉
+    的轮次比没有这一行更糟。
+    """
+    from app.domain.agent.runtime import AgentWorkRunner as _Runner
+
+    topic = await a_topic(db_factory)
+    turn_id = uuid.uuid4()
+    runner = AgentWorkRunner(InProcessBroker())
+    await runner.open_self_started_turn(_SweepChat(db_factory), topic, turn_id)
+
+    row = await turn_row(db_factory, turn_id)
+    assert row is not None
+    assert row.author == _Runner.SELF_STARTED_AUTHOR
+    assert row.content == "", "没有提示词可记 —— 记一段假的会让收尸去重发它"
+    assert row.resendable is False
+    assert row.is_resume is False
+    assert row.delivered_at is not None, "不盖送达，这一行就永远关不掉"
+    assert row.stopped_at is None
+    # 没有协程在跑它，所以它不进 `_live`；收尸判安静靠的是帧戳。
+    assert str(turn_id) not in runner._live
+    assert str(turn_id) in runner._last_frame_at
+
+
+@pytest.mark.anyio
+async def test_a_self_started_turn_that_went_quiet_is_swept_but_not_re_sent(db_factory):
+    """自启轮次是唯一一种两条老路都抓不到的轮次：它没有协程（所以不在 `_live`），
+    而它的屏幕是房间自己的、在它背后那件事早就停了以后照样答「我还在」（所以
+    `_adopted` 一直说是）。不让收尸看见它，这一行就永远开着。
+
+    收得掉，但**绝不重发** —— 它压根没有可发的东西。
+    """
+    from datetime import UTC, datetime, timedelta
+
+    topic = await a_topic(db_factory)
+    turn_id = uuid.uuid4()
+    runner = AgentWorkRunner(InProcessBroker())
+    # 屏幕还活着 —— 这正是老路放过它的原因。
+    chat = _SweepChat(db_factory, live_screen=True)
+    await runner.open_self_started_turn(chat, topic, turn_id)
+    runner._last_frame_at[str(turn_id)] = time.monotonic() - 3 * 3600
+
+    async def _last_block(topic_ids):
+        assert topic_ids == {topic}
+        return {topic: datetime.now(UTC) - timedelta(hours=3)}
+
+    remedied = await runner.sweep_orphans(
+        chat, min_age_s=0.0, last_activity=_last_block
+    )
+    assert remedied == 0, "没有提示词的一轮不许被重发"
+    assert await open_turn_ids(db_factory) == set(), "挂死的自启轮次没被关掉"
+    assert len(chat.texts) == 1
+    assert "卡死" in chat.texts[0]
+    # 内存里的标记也得跟着走，否则下一次收尸会再捡一遍同一具尸体。
+    assert str(turn_id) not in runner._last_frame_at
+    assert str(turn_id) not in runner._live_topics
+
+
+@pytest.mark.anyio
+async def test_a_self_started_turn_still_working_is_left_alone(db_factory):
+    """刚说过话的自启轮次不能被当成尸体收掉 —— 误杀比晚一步发现贵得多。"""
+    from datetime import UTC, datetime, timedelta
+
+    topic = await a_topic(db_factory)
+    turn_id = uuid.uuid4()
+    runner = AgentWorkRunner(InProcessBroker())
+    chat = _SweepChat(db_factory, live_screen=True)
+    await runner.open_self_started_turn(chat, topic, turn_id)
+    runner._last_frame_at[str(turn_id)] = time.monotonic() - 5
+
+    async def _last_block(topic_ids):
+        return {topic: datetime.now(UTC) - timedelta(hours=3)}  # 库里看着安静
+
+    assert (
+        await runner.sweep_orphans(chat, min_age_s=0.0, last_activity=_last_block) == 0
+    )
+    assert await open_turn_ids(db_factory) == {turn_id}
+    assert chat.texts == []
+
+
+@pytest.mark.anyio
+async def test_closing_a_self_started_turn_drops_the_marks_it_left(db_factory):
+    """它的 Stop 走的是别人的路（`_close_open_turns`），所以内存里那几笔没有任何
+    `finally` 会替它清 —— 不清，房间的状态会一直报着一个早就停了的轮次。"""
+    topic = await a_topic(db_factory)
+    turn_id = uuid.uuid4()
+    runner = AgentWorkRunner(InProcessBroker())
+    await runner.open_self_started_turn(_SweepChat(db_factory), topic, turn_id)
+    assert runner.live_work_for_topic(topic) is None, "没有协程在跑它，别说成在跑"
+
+    runner.close_self_started_turn(turn_id)
+    assert str(turn_id) not in runner._last_frame_at
+    assert str(turn_id) not in runner._live_topics
+    assert runner.topic_work(topic)["status"] == "done"
+
+
 @pytest.mark.anyio
 async def test_sweep_spares_live_turns_when_the_activity_probe_fails(db_factory):
     """A DB hiccup must not become a mass cancellation: with no usable evidence

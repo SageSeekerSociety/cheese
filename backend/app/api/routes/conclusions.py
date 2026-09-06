@@ -37,6 +37,7 @@ from app.domain.conclusion.services import (
     ConclusionCardService,
     need_evidence_prompt,
 )
+from app.domain.room_task.services import TaskService
 
 logger = logging.getLogger("cheesex.conclusion")
 
@@ -81,8 +82,8 @@ async def need_evidence(
     chat: Annotated[ChatService, Depends(get_chat_service)],
     runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
 ) -> dict:
-    """补证据 —— costs a whole turn (the sub-topic is woken), which is precisely
-    the asymmetry that makes 采信 the path of least resistance."""
+    """补证据 —— costs a whole turn (the room is woken to relay it), which is
+    precisely the asymmetry that makes 采信 the path of least resistance."""
     svc = ConclusionCardService(db)
     card = await svc.get_for_receiver(receiver_topic_id=topic_id, card_id=card_id)
     await svc.need_evidence(
@@ -92,15 +93,18 @@ async def need_evidence(
         blocking_ref=body.blocking_ref,
     )
     out = _out(card)
-    prompt = need_evidence_prompt(card)
-    # The THREAD that produced the conclusion, not the room it hangs in. Waking
-    # the room would put "go get more evidence" in front of everyone except the
-    # 分身 the instruction is for.
-    sub_id = card.task_id or card.topic_id
-    # Commit BEFORE waking: the thread's turn runs on its own session and
-    # must see the card already in `returned`.
+    task = None if card.task_id is None else await TaskService(db).get(card.task_id)
+    prompt = need_evidence_prompt(card, task_title="" if task is None else task.title)
+    # The ROOM, not the thread that produced the conclusion. A thread is a 分身
+    # inside the room's own session and has no session to wake — addressing one
+    # raises a whole container for it, which is the shape threads stopped having.
+    # The room is the only thing that can reach the worker, so the room is what
+    # gets told, and the prompt says to relay.
+    room_id = card.topic_id
+    # Commit BEFORE waking: the room's turn runs on its own session and must see
+    # the card already in `returned`.
     await db.commit()
-    runner.submit_kickoff(chat, sub_id, prompt=prompt)
+    runner.submit_kickoff(chat, room_id, prompt=prompt)
     return ok(out)
 
 

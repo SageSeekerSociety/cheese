@@ -300,14 +300,33 @@ def test_accept_route_settles_the_card_and_archives_the_subtopic(client):
     assert again.status_code == 422
 
 
-def test_need_evidence_sends_the_card_back_and_wakes_the_subtopic(client):
-    """补证据要付一整轮（唤醒子话题）——这个不对称正是「采信是默认」的原因。"""
+def _record_screens(stub_hooks) -> list[str]:
+    """每一次「起一块屏幕」的 topic id。起屏幕就是起容器，这是唯一看得见它的地方。"""
+    seen: list[str] = []
+    original = stub_hooks.ensure_ready
+
+    async def _spy(**kw):
+        seen.append(str(kw.get("topic_id")))
+        return await original(**kw)
+
+    stub_hooks.ensure_ready = _spy
+    return seen
+
+
+def test_need_evidence_wakes_the_room_to_relay_it(client, stub_hooks):
+    """补证据要付一整轮 —— 但付的是**房间**那一轮。
+
+    做这条活的分身住在房间的会话里，它没有自己的会话可以叫醒。朝那条活开一轮，平台
+    就得为它起一整个容器 —— 而那正是「一条活 = 房间会话里的一个分身」拆掉的东西。
+    所以这一轮落在房间，提示词里带着房间转达所需的一切。
+    """
     p = _project(client)
     parent = _topic(client, p["id"])
     sub = _split(client, parent["id"], "子活")
     card = _file_card(client, sub["id"], "结论：这样最快")
 
-    before = len(client.get(f"/topics/{sub['id']}/blocks").json()["data"]["data"])
+    screens = _record_screens(stub_hooks)
+    before = len(client.get(f"/topics/{parent['id']}/blocks").json()["data"]["data"])
     r = client.post(
         f"/topics/{parent['id']}/conclusion-cards/{card['id']}/need-evidence",
         json={"decided_by": "user-1", "reason": "把基准测试的数跑出来"},
@@ -317,14 +336,40 @@ def test_need_evidence_sends_the_card_back_and_wakes_the_subtopic(client):
     assert r.json()["data"]["returned_count"] == 1
     _wait_work_idle()
 
+    assert sub["id"] not in screens, "为一条活起了屏幕——那条活没有会话，这是在复活容器"
+    assert screens == [parent["id"]], f"叫醒的不是房间：{screens}"
+    prompt = stub_hooks.last_prompt or ""
+    assert card["id"] in prompt, "不给卡号，补回来的结论接不上这张卡"
+    assert "基准测试" in prompt, "要补什么没传到房间"
+    assert "子活" in prompt, "不说是哪条活，房间不知道该找哪个分身"
+
     assert _topic_status(client, sub["id"]) != "closed", "打回不收起"
+    room_blocks = client.get(f"/topics/{parent['id']}/blocks").json()["data"]["data"]
+    assert len(room_blocks) > before, "房间没被叫醒"
+
+
+def test_need_evidence_still_says_so_where_the_work_happened(client):
+    """判决还是落在那条活的时间线上：等在那儿的分身看的是这里，后来翻开这条活的人
+    也是从这里知道它是怎么结束的。"""
+    p = _project(client)
+    parent = _topic(client, p["id"])
+    sub = _split(client, parent["id"], "子活")
+    card = _file_card(client, sub["id"], "结论：这样最快")
+
+    before = len(client.get(f"/topics/{sub['id']}/blocks").json()["data"]["data"])
+    client.post(
+        f"/topics/{parent['id']}/conclusion-cards/{card['id']}/need-evidence",
+        json={"decided_by": "user-1", "reason": "把基准测试的数跑出来"},
+    )
+    _wait_work_idle()
+
     blocks = client.get(f"/topics/{sub['id']}/blocks").json()["data"]["data"]
-    assert len(blocks) > before, "子话题没被叫醒"
+    assert len(blocks) > before
     # 一行给房间，要补的那句话在展开区里——两处都算送到了。
     said = [
         b["content"] + str((b.get("meta") or {}).get("detail") or "") for b in blocks
     ]
-    assert any("基准测试" in t for t in said), "要补什么没传到子话题"
+    assert any("基准测试" in t for t in said), "要补什么没写在这条活上"
 
 
 def test_need_evidence_requires_a_reason(client):

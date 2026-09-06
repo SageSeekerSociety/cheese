@@ -739,6 +739,89 @@ class AgentWorkRunner:
         task.add_done_callback(self._tasks.discard)
         return turn_id
 
+    #: The author on an interval the SESSION opened for itself. Deliberately not
+    #: "system": a platform-event turn is one the platform asked for and could
+    #: ask for again, and this is neither — nobody wrote its prompt, so there is
+    #: nothing to re-send. `names_a_person` already reads it as not-a-person, so
+    #: `turn_author_for` keeps answering None the way it does for 平台 turns.
+    SELF_STARTED_AUTHOR = "session"
+
+    async def open_self_started_turn(
+        self, chat_service, topic_id: uuid.UUID, turn_id: uuid.UUID
+    ) -> None:
+        """Register an interval for work the SESSION started on its own.
+
+        A session works without being asked whenever one of its workers finishes:
+        the completion notice wakes it and it runs a whole turn off that. The
+        platform fed it nothing, so until now no interval was ever opened — which
+        made such a turn the one kind this table cannot see, and therefore the one
+        kind no sweep can ever find wedged.
+
+        Opened DELIVERED, and that is not laziness: `close_for_topic` only closes
+        delivered intervals because 投喂 → Stop is what an interval means for a fed
+        turn, so an undelivered row here would be one nothing could ever close.
+        What delivery guards against — a Stop from the previous conversation
+        closing a turn whose prompt is still in flight — cannot happen to this
+        one: it is opened BY output from the very session whose Stop ends it.
+
+        Registered in `_last_frame_at`/`_live_topics` but NOT in `_live`: no
+        coroutine of ours is running it, and claiming otherwise would have the
+        sweep try to cancel a task that does not exist. The frame stamp is what
+        lets silence be judged at all — see `_wedged_turns`.
+        """
+        self._recent.append(
+            {
+                "turn_id": str(turn_id),
+                "topic_id": str(topic_id),
+                "continuation_id": str(turn_id),
+                "author": self.SELF_STARTED_AUTHOR,
+                "summon": False,
+                "is_resume": False,
+                "status": "running",
+                "started_at": time.time(),
+                "first_output_s": None,
+                "tools": 0,
+                "duration_s": None,
+                "detail": None,
+            }
+        )
+        self._last_frame_at[str(turn_id)] = time.monotonic()
+        self._live_topics[str(turn_id)] = topic_id
+        now = _utcnow()
+        await _open_turn(
+            chat_service.session_factory,
+            turn_id=turn_id,
+            topic_id=topic_id,
+            continuation_id=turn_id,
+            author=self.SELF_STARTED_AUTHOR,
+            content="",
+            is_resume=False,
+            # Nothing to re-send: there was no prompt. This is what stops the
+            # sweep from ever picking one of these as a re-send candidate.
+            resendable=False,
+            started_at=now,
+            # Stamped in the same write, not after it: a row that exists for even
+            # a moment without it is a row a Stop landing in that moment cannot
+            # close, and nothing would ever come back to close it.
+            delivered_at=now,
+        )
+
+    def close_self_started_turn(self, turn_id: uuid.UUID) -> None:
+        """Drop the in-memory marks for a self-started turn that has stopped.
+
+        The durable row is closed by the Stop that ends it, like any other; these
+        maps have no `finally` to fall out of, because no coroutine owns one.
+        """
+        self._forget_turn(turn_id)
+        for rec in reversed(self._recent):
+            if rec.get("turn_id") == str(turn_id):
+                rec["status"] = "done"
+                return
+
+    def _forget_turn(self, turn_id: uuid.UUID) -> None:
+        self._last_frame_at.pop(str(turn_id), None)
+        self._live_topics.pop(str(turn_id), None)
+
     # Past this age an orphan is left for a person rather than acted on: a
     # deploy that stranded a prompt this long ago is one nobody still wants
     # re-sent unasked, so the sweep hands it over instead. Do NOT reach for this
@@ -798,10 +881,22 @@ class AgentWorkRunner:
         silence_s: float,
         now: datetime,
     ) -> set[uuid.UUID]:
-        """Of the turns this process believes it is running, which have gone
-        quiet on BOTH signals? Startup passes no `last_activity` — there is
-        nothing in `_live` to judge then, so the probe is skipped entirely."""
-        candidates = {tid for tid in open_turns if str(tid) in self._live}
+        """Of the turns this process is watching, which have gone quiet on BOTH
+        signals? Startup passes no `last_activity` — there is nothing to judge
+        then, so the probe is skipped entirely.
+
+        Watching, not running: a self-started turn has no coroutine and so is
+        never in `_live`, but it is the one kind of turn that CANNOT be caught by
+        the other branch either. Its screen is the room's own and answers a
+        liveness probe long after the work behind it stopped, so `_adopted` keeps
+        saying yes and its interval would stay open forever. What it does have is
+        a frame stamp, which is exactly what silence is judged on.
+        """
+        candidates = {
+            tid
+            for tid in open_turns
+            if str(tid) in self._live or str(tid) in self._last_frame_at
+        }
         if not candidates or last_activity is None:
             return set()
         try:
@@ -965,6 +1060,13 @@ class AgentWorkRunner:
         # and a running turn no sweep can see is how the next death goes silent
         # again, which is the whole bug.
         await _close_turns(chat_service.session_factory, orphans)
+        for turn_id in orphans:
+            # A turn with a coroutine gets its marks dropped by that coroutine's
+            # own `finally`; one without (a self-started turn, or anything left
+            # by a dead process generation) has nobody to do it, and a stale
+            # frame stamp would keep offering the same corpse to every sweep.
+            if str(turn_id) not in self._live:
+                self._forget_turn(turn_id)
         remedied = 0
         # --- wedged turns: their claude died WITH whatever they were driving.
         # Cancel to release the topic lock, tell the room once, and stop —

@@ -79,17 +79,23 @@ SYSTEM_ACTOR = "system"
 RETURN_BUDGET = min(MAX_RETURNS, HARD_MAX_RETURNS)
 
 
-def need_evidence_prompt(card: ConclusionCard) -> str:
-    """The sub-topic's wake-up instruction when its conclusion is sent back.
+def need_evidence_prompt(card: ConclusionCard, *, task_title: str = "") -> str:
+    """The ROOM's wake-up instruction when it sends a thread's conclusion back.
 
-    Prompt-only, and the reason is copied verbatim — nothing is derived from it.
+    Addressed to the room, because the room is the only thing that can reach the
+    worker: a thread is a 分身 running inside the room's own session and has no
+    session of its own to wake. So the instruction is to RELAY, and what it
+    carries is what relaying needs — which thread, which card, and the reason
+    copied verbatim.
     """
+    which = f"「{task_title}」" if task_title else "你房间里的一条活"
     return (
-        "父话题看了你回流的结论，要你**补一条证据**再重新回流"
-        "（这不是驳回：结论本身没被否掉，缺的是支撑它的那一条证据）。\n\n"
-        f"父话题要补的是：\n{card.settle_reason}\n\n"
-        "你的容器、会话和读过的代码都还在——去把这条证据补上"
-        "（跑一次、读一遍、或者说明为什么补不了），然后再 `cheese conclude` 一次，"
+        f"你把{which}回流的结论打回去补证据了（结论卡 {card.id}）。"
+        "这不是驳回：结论本身没被否掉，缺的是支撑它的那一条证据。\n\n"
+        f"要补的是：\n{card.settle_reason}\n\n"
+        "**转达给做这条活的分身**：它还在跑就直接给它发消息，让它把这条证据补上"
+        "（跑一次、读一遍、或者说明为什么补不了）；已经收工了就照这条重新起一个分身。"
+        f'补回来、你验过之后再 `cheese conclude-task {card.task_id} "<结论>"` 一次，'
         "新的结论会接着这张卡走。"
     )
 
@@ -186,9 +192,9 @@ class ConclusionCardService:
     ) -> ConclusionCard:
         """补证据 —— deliberately NOT called 驳回/rejected.
 
-        Its point is reusing the sub-topic's still-warm context (container,
-        session, the code it just read), not quality gatekeeping. Costs a whole
-        turn, which is exactly why it is capped.
+        Its point is reusing the worker's still-warm context (the code it just
+        read, the commands it just ran), not quality gatekeeping. Costs the room
+        a whole turn to relay, which is exactly why it is capped.
         """
         self._require_open(card)
         if not reason.strip():
