@@ -539,6 +539,11 @@ def _change_summary_meta(changeset: _Changeset) -> dict:
 # are streamed live but NOT persisted as 现场 events.
 _TASK_TOOLS = {"TaskCreate", "TaskUpdate", "TaskList", "TaskGet"}
 
+#: How many sessions' supply routes to remember. Well past the number of screens
+#: one backend drives at once, so in practice nothing is ever evicted; it is a
+#: ceiling on a dict nothing else prunes, not a policy.
+_SESSION_ROUTES_KEPT = 512
+
 
 def _apply_task_event(todo: list[dict], name: str, args: dict) -> bool:
     """Fold a TaskCreate/TaskUpdate event into the todo list. Returns whether the
@@ -1378,7 +1383,10 @@ class ChatService:
         # Where each live session's model traffic goes, remembered from the last
         # turn the platform assembled for it. A turn the session starts by itself
         # rides the same screen and therefore the same supply, and has no prompt
-        # of its own to resolve one from.
+        # of its own to resolve one from. Insertion-ordered and trimmed from the
+        # front: nothing tells this service a screen is gone, so without a bound
+        # this is a dict that only ever grows in a process that runs for weeks.
+        # Losing an entry costs the accuracy of one label, never a wrong charge.
         self._session_route: dict[uuid.UUID, str] = {}
         # Strong refs to in-flight post-turn memory-extraction tasks (asyncio
         # only keeps weak refs; without this a pending commit could be GC'd).
@@ -4106,6 +4114,8 @@ class ChatService:
         post_user_message), yielding WS frames as JSON-ready dicts. Runs under
         the per-topic lock; the prompt is built from history at lock time so a
         queued turn picks up every message posted while it waited."""
+        from app.api.deps import get_work_runner
+
         prepared = await self._assemble_turn(
             topic_id=topic_id,
             content=content,
@@ -4190,7 +4200,10 @@ class ChatService:
         # fact about where a SESSION's traffic goes, not about one prompt, and a
         # self-started turn has no prompt to resolve it from — it rides the same
         # screen as this one, so this is the answer for both.
+        self._session_route.pop(topic_id, None)
         self._session_route[topic_id] = route
+        while len(self._session_route) > _SESSION_ROUTES_KEPT:
+            del self._session_route[next(iter(self._session_route))]
         # Internal: the screen subscription, not this request, owns timeout and
         # thinking lifecycle. Runtime consumes this frame and disables its
         # request-scoped lifecycle before provider setup begins.
@@ -4247,6 +4260,16 @@ class ChatService:
         def _register_work(marked_work_id: uuid.UUID) -> None:
             marked_work_ids.append(marked_work_id)
             key = (topic_id, marked_work_id)
+            # This turn takes the session over, so anything it was doing on its
+            # own is over: the Stop that ends this turn will be attributed HERE,
+            # and the self-started state would sit in these maps forever waiting
+            # for a Stop of its own that is never coming. Its durable row closes
+            # either way — `_close_open_turns` closes every open interval on the
+            # place — so what is dropped here is only the bookkeeping.
+            for prior_key, prior in list(self._hook_work.items()):
+                if prior_key[0] == topic_id and prior.self_started:
+                    self._hook_work.pop(prior_key, None)
+                    get_work_runner().close_self_started_turn(prior_key[1])
             state = self._hook_work.get(key)
             if state is None:
                 self._hook_work[key] = _HookWorkState(
