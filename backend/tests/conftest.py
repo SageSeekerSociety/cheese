@@ -15,6 +15,7 @@ A stub agent keeps tests off the live model.
 """
 
 import asyncio
+import faulthandler
 import os
 import re
 import sys
@@ -27,6 +28,14 @@ from fastapi.testclient import TestClient
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
+
+# DIAGNOSTIC for the #721 CI tail hang — this PR is never merged. Every pytest
+# process (the controller and each xdist worker) prints all of its thread
+# stacks to stderr 11 minutes after this import. A green run finishes in ~6 and
+# the job ceiling is 20, so this fires only on the hang, and names where each
+# process is stuck — including a stall after the last test, which no per-test
+# timeout can see.
+faulthandler.dump_traceback_later(11 * 60, repeat=False, file=sys.stderr, exit=False)
 
 # Strip inherited git env. When the suite runs from the pre-commit HOOK it executes
 # DURING `git commit`, which exports GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE for
