@@ -93,9 +93,9 @@
 
 **T2 任务绑定分身 + split 切换（✅ 完成）**：已合入分支（HEAD be2f15937，20 文件 +1272/-107，全绿：unit 3637 passed、integration 578 passed、迁移单头检查过）。落地要点：`tasks.subagent_id` 列 + `(room_id, subagent_id)` 索引；bind 路由五条校验齐全（含幂等重绑）；split 不再 kickoff/占槽（旧代码直接删除，返回值去掉队列字段）；带绑定 agent_id 的事件归到任务时间线（实时帧发活自己的频道）；`cheese conclude-task` 由房间显式落结论开卡。三个定下来的规则：**未绑定分身的工具事件照旧记房间（别丢跑动），野 SubagentStart/Stop 一个字不落**（不对称是故意的——野 Stop 实测是提示词碎片，落了等于替陌生人贴半截话）；归属查询走 TaskService 新薄壳（不跨域摸 repository）；收工的任务其 agent_id 立即停止接事件。
 
-**T3 轮次与收尸认新形态（进行中）**：①**need-evidence 打回改道（头号，T2 点名的雷）**：`routes/conclusions.py` 打回今天会 `submit_kickoff` 去起那条活自己的会话——活已没有会话，这会复活一个刚删掉形态的容器；改为唤醒房间转达（删旧路，不留分支）。②`platform_unsolicited` 轮次转正：落 `agent_turns` 行（自启型、不可重投）、记用量、结卡、消费待读，收尸能收但不重投。③失联态：绑定了分身的任务，房间屏幕死了或该 agent_id 长时间无事件 → presentation 判「失联」，不许永远转圈。④完成通知非终态钉测试。
+**T3 轮次与收尸认新形态（✅ 完成）**：已合入分支（HEAD 07c7b695f，19 文件 +986/-75，全绿：unit 3653 passed、integration 1845 passed/1 条既有失败与本改动无关、三个守卫脚本 PASS）。落地要点：①打回唤醒房间转达（旧的起容器路径整行删除，判决仍落在活的时间线上）；②自启轮次转正——产出型 hook 无轮次到达即开 `agent_turns` 行（author='session'、resendable=False、开行即 stamp delivered，判据抽成公共的 `proves_output`，只有垃圾野事件的场景不开行）；③收尸能收不重投（wedged 候选放宽到「有帧戳」，claim 时清内存标记防重复收尸）；④失联态三个新事实外喂进 presentation 纯函数，且**在跑压过卡、失联排在卡后面**（等人验收≠失联），bind 时盖一次 last_turn_at（刚认领≠失联）；⑤完成通知非终态钉死（SubagentStop 落时间线但不翻 done）。两个实现取舍已复核认可：用量 route 记在会话上（自启轮次复用、缺省 'native' 不会记错账）；自启型用 author='session' 区分、不为未合入的 #689/#691 加列。一条前提更正：idle/hard-ceiling 看门狗管得着自启轮次（是好事——裁决走正常收尾，比收尸早），PROMPT_UNDELIVERED 天然不误伤（开 activity 的钩子本身就完成了投递）。
 
-**T4 收尾清扫**：人在任务视图留言 → 唤醒房间转达（SendMessage 续跑分身）；`cheese tell` 对分身任务的语义重定义或删除；旧每任务屏幕路径的残余大扫除（retire_thread_storage 对任务、ghost sweep、device_launch 的任务分支、residency 机制去留）；分身的 TaskCreate/TaskUpdate 仍写进房间清单的归属问题（T2 确认非新回归，改动前就如此）。
+**T4 收尾清扫（进行中）**：①**讨论升级改道**（T3 点名：`upgrade_block_to_place` 的 submit_kickoff 是同一颗雷的第二引信，改成唤醒房间起分身并 bind）；②人在任务视图留言 → 唤醒房间转达；③`cheese tell` 对分身任务的语义收束；④以上三条改完后，「拿活的 id 开轮次」的路径应当为零——旧每任务屏幕路径的残余整体删除（retire_thread_storage 对任务、device_launch/cloud_provider 的任务分支、驻留槽机制去留）；⑤分身的 TaskCreate/TaskUpdate 不再污染房间清单。
 
 ### 设计依据与风险
 
@@ -107,5 +107,6 @@
 - [x] 设计评估 + 拍板
 - [x] T1 hooks 认分身事件（含拼装层补丁与三条实测新事实，已完成）
 - [x] T2 任务绑定分身 + split 切换（已完成）
-- [ ] T3 轮次与收尸认新形态（子任务进行中）
-- [ ] T4 收尾清扫（转达路 + 旧路径残余）
+- [x] T3 轮次与收尸认新形态（已完成）
+- [ ] T4 收尾清扫（子任务进行中）
+- [ ] 全部落地后：房间递验收卡（一棵树一个 PR）
