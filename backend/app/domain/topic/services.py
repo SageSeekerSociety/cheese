@@ -849,9 +849,13 @@ class TopicService:
 
         The thread is born with a TASK BRIEF as its living doc (分身靠文档保持
         一致, spec §8.4): the splitter's `brief` plus a verbatim snapshot of the
-        ROOM's living doc. No canned opening message anymore — the 分身's
-        auto-kickoff first turn (routes/topics.py) writes its own opening
+        ROOM's living doc. No canned opening message: the worker writes its own
         (复述确认), because 语义内容必须由 AI 生成 (see CLAUDE.md).
+
+        No worker is started here, and none is started for us. The caller spawns
+        one in its own session and binds it (`/tasks/{id}/bind`), so a thread
+        exists for a moment with nobody on it — which is also the state a thread
+        stays in if the caller never gets around to it.
 
         `place_id` is wherever the splitter was standing, which may itself be a
         thread: 芝士 working on one piece of work often finds a second. Work does
