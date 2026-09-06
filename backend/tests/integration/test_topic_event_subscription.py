@@ -20,6 +20,9 @@ from app.domain.agent.models import AgentTurn
 from app.domain.agent.runtime import AgentWorkRunner, get_broker
 from app.domain.agent.service import (
     AgentResult,
+    AgentSubagentStart,
+    AgentSubagentStop,
+    AgentToolUse,
 )
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import AuthorType, BlockKind, consumed_turn
@@ -438,6 +441,19 @@ async def test_a_subagents_boundaries_pass_through_the_room_untouched(
     await provider.ensure_subscription(project_id, topic_id)
     provider._live[topic_id] = "screen"
 
+    # Watch what the REAL consumer is handed, not just what the room ends up
+    # showing: "nothing was published" is also what a hook nobody translated
+    # looks like, and those two have to be told apart.
+    handed: list[object] = []
+    consumer = provider._event_consumer
+    assert consumer is not None
+
+    async def watching(*args):
+        handed.append(args[3])
+        return await consumer(*args)
+
+    provider.bind_events(watching)
+
     broker = get_broker()
     async with broker.subscribe(str(topic_id)) as room:
         assert router.push(
@@ -493,6 +509,16 @@ async def test_a_subagents_boundaries_pass_through_the_room_untouched(
     ]
     assert frames[1]["block"]["meta"]["eid"] == "subagent-tool-1"
     assert frames[2]["block"]["content"] == "会话答完了"
+
+    started = [e for e in handed if isinstance(e, AgentSubagentStart)]
+    stopped = [e for e in handed if isinstance(e, AgentSubagentStop)]
+    assert [(e.agent_id, e.agent_type) for e in started] == [
+        ("worker-1", "general-purpose")
+    ]
+    assert [(e.agent_id, e.text) for e in stopped] == [("worker-1", "分身查完了")]
+    # 那条工具调用是谁发的，事件上说得出来——T2 要按这个把活归到卡上。
+    tool = next(e for e in handed if isinstance(e, AgentToolUse))
+    assert (tool.agent_id, tool.agent_type) == ("worker-1", "general-purpose")
 
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
