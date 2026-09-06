@@ -684,7 +684,16 @@ class AgentWorkRunner:
         would raise a whole container for the shape threads stopped having. The
         message stays where it was typed; the ROOM is woken to relay it.
         """
-        thread = await chat_service.thread_at(topic_id)
+        try:
+            thread = await chat_service.thread_at(topic_id)
+        except Exception:  # noqa: BLE001 — a lookup must not eat the message
+            # Nothing retrieves an exception from a spawned task, so an unlucky
+            # read here would end as a line at garbage-collection time with the
+            # person still waiting. Falling through runs the turn, which is what
+            # happened before this question was asked at all — and a turn is the
+            # thing that reports its own failures.
+            logger.exception("could not tell whether %s is a thread", topic_id)
+            thread = None
         if thread is not None:
             from app.domain.agent.chat import thread_relay_prompt
 
