@@ -46,6 +46,7 @@ const AGENT: ProjectAgent = {
   display_name: '评审员',
   is_default: false,
   configured: true,
+  is_active: true,
 }
 
 const OPTIONS = {

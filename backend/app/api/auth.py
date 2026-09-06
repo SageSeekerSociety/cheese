@@ -36,6 +36,7 @@ from app.domain.identity.handles import UNRESOLVED_AGENT_HANDLE, topic_agent_han
 from app.domain.identity.services import IdentityService
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.repositories import ProjectRepository
+from app.domain.team.repositories import TeamRepository
 from app.domain.topic.models import TopicRole
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
@@ -373,8 +374,6 @@ class ActorResolver:
         if not settings.authz_enforce_topic_access:
             return
         members = TopicMembershipRepository(self._session)
-        project_members = MemberRepository(self._session)
-        projects = ProjectRepository(self._session)
         topic = await TopicRepository(self._session).get(topic_id)
 
         async def topic_role(tid: uuid.UUID, handle: str) -> TopicRole | None:
@@ -385,10 +384,7 @@ class ActorResolver:
             return await members.count_for_topic(tid) > 0
 
         async def is_project_member(pid: uuid.UUID, handle: str) -> bool:
-            if await project_members.get(project_id=pid, user_handle=handle):
-                return True
-            project = await projects.get(pid)
-            return project is not None and project.owner_handle == handle
+            return await self._is_project_member(pid, handle)
 
         allowed = await authorize_topic_access(
             actor,
@@ -414,14 +410,44 @@ class ActorResolver:
             return
         if not actor.authenticated or actor.is_agent:
             return
-        project_members = MemberRepository(self._session)
-        if await project_members.get(project_id=project_id, user_handle=actor.handle):
-            return
-        project = await ProjectRepository(self._session).get(project_id)
-        if project is not None and project.owner_handle == actor.handle:
+        if await self._is_project_member(project_id, actor.handle):
             return
         _log.info("project_access_denied", handle=actor.handle, project=str(project_id))
         raise ForbiddenError("你不是这个项目的成员，无权查看")
+
+    async def _is_project_member(self, project_id: uuid.UUID, handle: str) -> bool:
+        """The one notion of 项目成员 both guards share: on the project's roster,
+        its owner, or a member of the team the project belongs to.
+
+        Those are exactly the three claims ``ProjectRepository.list_visible_to``
+        lists a project under. Until 2026-09-04 the guards accepted only the
+        first two, so a teammate saw the project in their sidebar and on the
+        team page, clicked in, and the topic list answered 403 — the listing
+        promised what the door refused. Measured on dev: a member who had
+        accepted a team invitation minutes earlier got 200 on
+        ``/projects/{id}`` and 403 on ``/topics?project_id=``.
+
+        Team membership is keyed by user id while every other authorization key
+        is the handle string (see ``_recover_numeric_handle``), so the handle is
+        resolved to its user here rather than trusting ``actor.user_id`` — a
+        session token carries none."""
+        if await MemberRepository(self._session).get(
+            project_id=project_id, user_handle=handle
+        ):
+            return True
+        project = await ProjectRepository(self._session).get(project_id)
+        if project is None:
+            return False
+        if project.owner_handle == handle:
+            return True
+        if project.team_id is None:
+            return False
+        user = await UserRepository(self._session).get_by_username(handle)
+        if user is None:
+            return False
+        return await TeamRepository(self._session).is_team_member(
+            project.team_id, user.id
+        )
 
     async def project_of_topic(self, topic_id: uuid.UUID) -> uuid.UUID | None:
         topic = await TopicRepository(self._session).get(topic_id)

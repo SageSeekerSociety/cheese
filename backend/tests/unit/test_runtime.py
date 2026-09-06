@@ -184,7 +184,7 @@ async def test_a_turn_the_session_did_not_adopt_is_still_reported_finished(db_fa
 
 
 @pytest.mark.anyio
-async def test_cloud_wait_is_terminal_without_spending_a_retry(db_factory, monkeypatch):
+async def test_cloud_wait_is_terminal_without_spending_a_retry(db_factory):
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
     chat = _FakeChat(
@@ -195,10 +195,6 @@ async def test_cloud_wait_is_terminal_without_spending_a_retry(db_factory, monke
         db_factory,
     )
     actor = Actor("owner", 1, False, "token")
-    scheduled: list[object] = []
-    monkeypatch.setattr(
-        runner, "_schedule_resume", lambda *args, **kwargs: scheduled.append(args)
-    )
 
     runner.submit(
         chat,
@@ -214,7 +210,8 @@ async def test_cloud_wait_is_terminal_without_spending_a_retry(db_factory, monke
 
     assert runner.recent_work()[0]["status"] == "waiting"
     assert chat.kwargs["provision_actor"] is actor
-    assert scheduled == []
+    # A cloud wait is terminal: no second turn is spun up behind it.
+    assert len(runner.recent_work()) == 1
 
 
 class _FakeKickoffChat:
@@ -467,7 +464,7 @@ async def test_turn_failure_lands_in_the_timeline(db_factory):
     ],
 )
 async def test_platform_failure_is_coded_and_never_auto_resumes(
-    db_factory, monkeypatch, failure, expected_code
+    db_factory, failure, expected_code
 ):
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
@@ -477,8 +474,10 @@ async def test_platform_failure_is_coded_and_never_auto_resumes(
 
         def __init__(self) -> None:
             self.meta: dict | None = None
+            self.converse_calls = 0
 
         async def converse(self, **_):
+            self.converse_calls += 1
             raise failure
             yield  # pragma: no cover
 
@@ -493,10 +492,6 @@ async def test_platform_failure_is_coded_and_never_auto_resumes(
                 "meta": meta,
             }
 
-    def unexpected_resume(*_args, **_kwargs):
-        pytest.fail("platform incidents must wait for recovery, not auto-resume")
-
-    monkeypatch.setattr(runner, "_schedule_resume", unexpected_resume)
     svc = _Full()
     topic = await a_topic(db_factory)
     async with broker.subscribe(str(topic)) as q:
@@ -513,19 +508,16 @@ async def test_platform_failure_is_coded_and_never_auto_resumes(
         "persisted": True,
     }
     assert svc.meta == event["block"]["meta"]
+    # A named platform incident waits for recovery; it never re-runs the turn.
+    await asyncio.sleep(0.05)
+    assert svc.converse_calls == 1
 
 
 @pytest.mark.anyio
-async def test_failed_turn_auto_resumes_once(db_factory, monkeypatch):
-    """续跑: a crashed turn schedules a system-nudged continuation, and the
-    continuation carries is_resume=True so 芝士 is told to pick up rather than
-    start over. What bounds the chain is the resume counter, not this flag —
-    see test_unclassified_failure_stops_chaining_and_hands_to_a_human."""
-
-    async def _instant(_s):
-        return None
-
-    monkeypatch.setattr(asyncio, "sleep", _instant)
+async def test_failed_turn_fails_loud_and_does_not_resume(db_factory):
+    """An unnamed crash is a bug signal, not a transience signal: the turn posts
+    ONE event handing the topic to a person and is NOT re-run — retrying a bug
+    just triggers it again (the 2026-09-04 room flood)."""
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
 
@@ -534,38 +526,38 @@ async def test_failed_turn_auto_resumes_once(db_factory, monkeypatch):
 
         def __init__(self) -> None:
             self.calls: list[dict] = []
+            self.events: list[tuple[str, dict]] = []
 
         async def converse(self, **kw):
             self.calls.append(kw)
-            if len(self.calls) == 1:
-                raise RuntimeError("boom")
-                yield  # pragma: no cover — makes this an async generator
-            yield {"type": "assistant_block", "block": {"id": "a"}}
-            yield {"type": "done"}
+            raise RuntimeError("boom")
+            yield  # pragma: no cover — makes this an async generator
 
         async def post_system_event(self, topic_id, content, turn_id=None, meta=None):
-            return {"id": "sys", "kind": "event", "content": content}
+            self.events.append((content, meta or {}))
+            return {"id": "sys", "kind": "event", "content": content, "meta": meta}
 
     svc = _Svc()
     topic = await a_topic(db_factory)
     async with broker.subscribe(str(topic)) as q:
         runner.submit(svc, topic, author="u", content="hi", summon=True)
-        seen: list[str] = []
-        while "assistant_block" not in seen:
-            f = await asyncio.wait_for(q.get(), 2)
-            seen.append(f["type"])
+        error = await _next_frame(q, "error")
 
-    assert len(svc.calls) == 2  # original + exactly one auto-resume
-    resumed = svc.calls[1]
-    assert resumed["is_resume"] is True
-    assert resumed["author"] == "system"
-    assert "断" in resumed["content"]  # the continuation instruction
-    # The failure surfaced first, then the resumed turn's reply.
-    assert "error" in seen and seen[-1] == "assistant_block"
+    # Give any (erroneously) scheduled follow-up turn a chance to fire.
+    await asyncio.sleep(0.05)
+    assert len(svc.calls) == 1, "a crashed turn must not be re-run"
+    text, meta = svc.events[0]
+    assert error["message"] == text
+    # Handed to a person, and it does not promise the platform will self-recover.
+    assert meta["who"] == "human"
+    assert "自动恢复" not in ((meta.get("detail") or "") + text)
 
 
 @pytest.mark.anyio
-async def test_repeated_platform_failure_stays_platform_owned(db_factory, monkeypatch):
+async def test_a_resent_turn_that_crashes_also_fails_loud(db_factory):
+    """A re-sent turn (is_resume) that then crashes is handled exactly like any
+    other unnamed failure — one event to a person, no further automatic turn.
+    is_resume no longer buys a bounded retry chain; there is no chain."""
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
 
@@ -573,23 +565,18 @@ async def test_repeated_platform_failure_stays_platform_owned(db_factory, monkey
         session_factory = db_factory
 
         def __init__(self) -> None:
+            self.calls = 0
             self.events: list[tuple[str, dict]] = []
 
         async def converse(self, **_):
+            self.calls += 1
             raise RuntimeError("still broken")
             yield  # pragma: no cover
 
         async def post_system_event(self, topic_id, content, turn_id=None, meta=None):
-            self.events.append((content, meta))
+            self.events.append((content, meta or {}))
             return {"id": "sys", "kind": "event", "content": content, "meta": meta}
 
-    scheduled: list[tuple[tuple, dict]] = []
-
-    monkeypatch.setattr(
-        runner,
-        "_schedule_resume",
-        lambda *args, **kwargs: scheduled.append((args, kwargs)),
-    )
     svc = _BoomAgain()
     topic = await a_topic(db_factory)
     async with broker.subscribe(str(topic)) as queue:
@@ -603,11 +590,11 @@ async def test_repeated_platform_failure_stays_platform_owned(db_factory, monkey
         )
         error = await _next_frame(queue, "error")
 
-    text, meta = svc.events[0]
-    assert "需要人来处理" not in text
-    assert meta["who"] == "platform"
-    assert "自动恢复" in meta["detail"]
-    assert len(scheduled) == 1
+    await asyncio.sleep(0.05)
+    assert svc.calls == 1, "a crashed re-sent turn must not chain another turn"
+    text, meta = svc.events[-1]
+    assert meta["who"] == "human"
+    assert "自动恢复" not in ((meta.get("detail") or "") + text)
     assert error["message"] == text
 
 
@@ -620,14 +607,14 @@ async def test_orphan_turns_resume_after_restart(db_factory, monkeypatch):
     test_orphan_sweep_attach.py."""
     topic = await a_topic(db_factory)
     await open_turn(db_factory, topic, content="修一下登录页", age_s=60)
-    # an auto-resume nudge must never chain another automatic turn, even across
-    # restarts: "从上一轮的断点继续" means nothing to a session that never heard
-    # the task
+    # a re-sent turn (is_resume, not resendable) must never itself trigger
+    # another automatic turn across a restart: it is a re-delivery, not work a
+    # task-less session can pick up, so it is dropped loudly instead.
     await open_turn(
         db_factory,
         await a_topic(db_factory),
         author="system",
-        content="续跑",
+        content="重发的一轮",
         age_s=60,
         is_resume=True,
         resendable=False,
@@ -944,9 +931,10 @@ async def test_sweep_spares_live_turns_when_the_activity_probe_fails(db_factory)
 
 
 @pytest.mark.anyio
-async def test_a_wedged_turn_young_enough_to_resume_is_resumed(db_factory, monkeypatch):
-    """Under ORPHAN_STALE_S the wedged turn gets the full treatment: torn down,
-    announced, AND continued — nobody has to come back and @ it by hand."""
+async def test_a_wedged_turn_is_cancelled_and_handed_to_a_human(db_factory):
+    """A wedged turn is torn down and announced, but NOT re-run: re-running only
+    re-enters the machine that just died under it, so a person picks it up and
+    re-@s 芝士 once the environment is back."""
     from datetime import UTC, datetime, timedelta
 
     topic = await a_topic(db_factory)
@@ -956,12 +944,6 @@ async def test_a_wedged_turn_young_enough_to_resume_is_resumed(db_factory, monke
     task = await _park_a_task()
     runner._live[str(wedged)] = task
     runner._last_frame_at[str(wedged)] = time.monotonic() - 2700
-    scheduled: list[tuple[uuid.UUID, float]] = []
-    monkeypatch.setattr(
-        runner,
-        "_schedule_resume",
-        lambda _chat, tid, after, why, **_kw: scheduled.append((tid, after)),
-    )
 
     async def _last_block(topic_ids):
         return {topic: datetime.now(UTC) - timedelta(seconds=2700)}
@@ -969,15 +951,26 @@ async def test_a_wedged_turn_young_enough_to_resume_is_resumed(db_factory, monke
     class _Chat:
         session_factory = db_factory
 
+        def __init__(self) -> None:
+            self.metas: list[dict] = []
+            # 平台提示统一契约: 房间里的一行是 text，长文在 meta.detail。
+            self.notices: list[str] = []
+
         async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
+            self.metas.append(meta or {})
+            self.notices.append(text + ((meta or {}).get("detail") or ""))
             return {"id": "b1", "content": text}
 
-    assert await runner.sweep_orphans(_Chat(), last_activity=_last_block) == 1
+    chat = _Chat()
+    # Zero remedial re-sends scheduled: a wedged turn is cancelled and announced,
+    # never re-run.
+    assert await runner.sweep_orphans(chat, last_activity=_last_block) == 0
     await asyncio.sleep(0)
     assert task.cancelled() or task.cancelling()
-    # Resumed with a delay, not instantly: the cancelled task needs to unwind
-    # before it lets go of the topic lock.
-    assert scheduled == [(topic, 10.0)]
+    # Exactly one notice, and it hands the topic to a person — no auto-retry.
+    assert len(chat.metas) == 1
+    assert chat.metas[0].get("who") == "human"
+    assert "@ 芝士" in chat.notices[0]
 
 
 @pytest.mark.anyio
@@ -1314,27 +1307,14 @@ async def test_a_deploy_that_loses_a_message_for_good_still_warns(
 
 
 @pytest.mark.anyio
-async def test_unclassified_failure_stops_chaining_and_hands_to_a_human(
-    db_factory, monkeypatch
-):
-    """一个平台认不出来的失败,不能一直自动接着跑 (#574).
+async def test_unclassified_failure_hands_to_a_human_without_retrying(db_factory):
+    """一个平台认不出来的失败,直接交给人,绝不自动重跑 (#574).
 
-    Dev ran one topic this way for 87 minutes: every crash scheduled the next
+    Dev ran one topic the old way for 87 minutes: every crash scheduled the next
     turn, that turn crashed the same way, and only a deploy restart ever broke
-    the chain — 228 events, and one user's 「1」 re-sent into a turn 80 times.
-
-    A turn that failed for a reason the platform cannot name gives no grounds to
-    repeat it indefinitely. A bounded number of attempts is right (most such
-    failures are transient); when they are spent the topic goes to a person
-    rather than round again."""
-    real_sleep = asyncio.sleep
-
-    async def _instant(_s):
-        # Skip the wait but keep the yield point — a resume chain only advances
-        # if control actually returns to the loop.
-        await real_sleep(0)
-
-    monkeypatch.setattr(asyncio, "sleep", _instant)
+    the chain — 228 events, and one user's 「1」 re-sent into a turn 80 times. An
+    unnamed failure is a bug signal, not a transience signal — repeating it just
+    triggers the same bug — so there is no chain: one event to a person, done."""
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
 
@@ -1360,32 +1340,28 @@ async def test_unclassified_failure_stops_chaining_and_hands_to_a_human(
     svc = _AlwaysBroken()
     topic = await a_topic(db_factory)
     runner.submit(svc, topic, author="u", content="hi", summon=True)
-    for _ in range(400):  # drain the chain, however long it decides to be
-        await real_sleep(0.01)
+    for _ in range(200):
+        await asyncio.sleep(0.01)
         if any(meta.get("who") == "human" for _, meta in svc.events):
             break
+    # Nothing must sneak a second turn in after the event lands.
+    await asyncio.sleep(0.05)
 
-    assert len(svc.calls) <= 4, (
-        f"未分类失败连着自动跑了 {len(svc.calls)} 轮 —— 自动续跑没有上限"
+    assert len(svc.calls) == 1, (
+        f"未分类失败自动跑了 {len(svc.calls)} 轮 —— 不该自动重跑"
     )
     assert any(meta.get("who") == "human" for _, meta in svc.events), (
-        "续跑用尽后没有把话题交给人:房间里没有一条 who=human 的事件"
+        "失败后没有把话题交给人:房间里没有一条 who=human 的事件"
     )
 
 
 @pytest.mark.anyio
-async def test_repeated_timeouts_also_stop_chaining(db_factory, monkeypatch):
-    """超时那条路径和崩溃那条一样要有上限 (#574).
+async def test_a_timeout_hands_to_a_human_without_retrying(db_factory):
+    """超时那条路径和崩溃那条一样:不自动重跑,直接交给人 (#574).
 
-    Both ends of `_execute` schedule the same auto-resume, and a turn that keeps
-    timing out is exactly as unbounded as one that keeps crashing — the room
-    measured on dev carried both wordings. Fixing one and leaving the other is
-    how this comes back wearing the other message."""
-    real_sleep = asyncio.sleep
-
-    async def _instant(_s):
-        await real_sleep(0)
-
+    Both ends of `_execute` used to schedule the same auto-resume; now neither
+    does. A turn that times out re-entering a wedged machine gains nothing from
+    a re-run, so it fails loud once and waits for a person."""
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker, turn_timeout_s=0.01)
 
@@ -1398,7 +1374,7 @@ async def test_repeated_timeouts_also_stop_chaining(db_factory, monkeypatch):
 
         async def converse(self, **kw):
             self.calls.append(kw)
-            await real_sleep(0.05)  # outlive the ceiling, every time
+            await asyncio.sleep(0.05)  # outlive the ceiling
             yield {"type": "done"}  # pragma: no cover
 
         async def post_system_event(self, topic_id, content, turn_id=None, meta=None):
@@ -1408,19 +1384,18 @@ async def test_repeated_timeouts_also_stop_chaining(db_factory, monkeypatch):
     svc = _AlwaysHangs()
     topic = await a_topic(db_factory)
     runner.submit(svc, topic, author="u", content="hi", summon=True)
-    # Patch the clock only now: the ceiling above must stay real, it is what
-    # makes each turn time out. Only the resume delay is skipped.
-    monkeypatch.setattr(asyncio, "sleep", _instant)
     for _ in range(400):
-        await real_sleep(0.005)
+        await asyncio.sleep(0.005)
         if any(meta.get("who") == "human" for _, meta in svc.events):
             break
+    # Nothing must sneak a second turn in after the timeout event lands.
+    await asyncio.sleep(0.05)
 
-    assert len(svc.calls) <= 4, (
-        f"超时连着自动跑了 {len(svc.calls)} 轮 —— 超时那条路径也没有上限"
+    assert len(svc.calls) == 1, (
+        f"超时自动跑了 {len(svc.calls)} 轮 —— 超时那条路径也不该自动重跑"
     )
     assert any(meta.get("who") == "human" for _, meta in svc.events), (
-        "超时续跑用尽后没有把话题交给人"
+        "超时后没有把话题交给人"
     )
 
 

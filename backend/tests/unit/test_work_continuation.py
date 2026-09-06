@@ -1,13 +1,13 @@
-"""Automatic retries must inherit the same continuation id.
+"""A re-send must inherit the same continuation id.
 
 The idempotency keys in ``domain.idempotency`` are all scoped to a continuation
-id. If an auto-resume ran under a FRESH one, every key the interrupted attempt
+id. If a re-sent turn ran under a FRESH one, every key the interrupted attempt
 claimed would stop matching and all five side effects would be repeated — the
 keys would still be there, still durable, and completely inert.
 
-This is the load-bearing assertion: one request and every automatic continuation
-are one unit of work on all three paths
-(timeout resume / crash resume / restart re-send).
+This is the load-bearing assertion: a request and the platform's one re-send of
+it (the deploy-stranded case) are one unit of work — the re-send runs under the
+dead turn's recorded continuation.
 """
 
 import asyncio
@@ -17,25 +17,6 @@ import pytest
 
 from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
 from tests.turn_log import a_topic, open_turn
-
-
-class _Hang:
-    """A turn that never finishes — what the wall-clock ceiling exists for."""
-
-    session_factory = None
-
-    async def converse(self, **_):
-        yield {"type": "user_block"}
-        await asyncio.sleep(10)
-        yield {"type": "done"}  # pragma: no cover
-
-
-class _Boom:
-    session_factory = None
-
-    async def converse(self, **_):
-        yield {"type": "user_block"}
-        raise RuntimeError("turn crashed")
 
 
 class _Quiet:
@@ -76,16 +57,6 @@ def _wired(chat, factory):
     return chat
 
 
-def _capture_resumes(runner, monkeypatch) -> list[dict]:
-    seen: list[dict] = []
-
-    def _fake(_chat, tid, after, why="", *, continuation_id=None, chain=0):
-        seen.append({"topic": tid, "continuation_id": continuation_id, "chain": chain})
-
-    monkeypatch.setattr(runner, "_schedule_resume", _fake)
-    return seen
-
-
 def _capture_resends(runner, monkeypatch) -> list[dict]:
     seen: list[dict] = []
 
@@ -111,48 +82,6 @@ async def test_a_fresh_turn_starts_its_own_continuation(db_factory):
     # "第一次尝试的 continuation 就是它自己的 turn id" — the invariant the
     # orphan-sweep fallback also relies on.
     assert rec["continuation_id"] == str(turn_id)
-
-
-@pytest.mark.anyio
-async def test_timeout_resume_inherits_the_continuation(db_factory, monkeypatch):
-    broker = InProcessBroker()
-    runner = AgentWorkRunner(broker, turn_timeout_s=0.05)
-    seen = _capture_resumes(runner, monkeypatch)
-    topic = await a_topic(db_factory)
-    async with broker.subscribe(str(topic)) as q:
-        turn_id = runner.submit(
-            _wired(_Hang(), db_factory), topic, author="u", content="hi", summon=True
-        )
-        for _ in range(3):
-            f = await asyncio.wait_for(q.get(), 2)
-            if f["type"] == "error":
-                break
-    for _ in range(200):  # the resume is scheduled just after the error frame
-        if seen:
-            break
-        await asyncio.sleep(0.01)
-    assert [s["continuation_id"] for s in seen] == [turn_id]
-
-
-@pytest.mark.anyio
-async def test_crash_resume_inherits_the_continuation(db_factory, monkeypatch):
-    broker = InProcessBroker()
-    runner = AgentWorkRunner(broker)
-    seen = _capture_resumes(runner, monkeypatch)
-    topic = await a_topic(db_factory)
-    async with broker.subscribe(str(topic)) as q:
-        turn_id = runner.submit(
-            _wired(_Boom(), db_factory), topic, author="u", content="hi", summon=True
-        )
-        for _ in range(4):
-            f = await asyncio.wait_for(q.get(), 2)
-            if f["type"] == "error":
-                break
-    for _ in range(200):
-        if seen:
-            break
-        await asyncio.sleep(0.01)
-    assert [s["continuation_id"] for s in seen] == [turn_id]
 
 
 @pytest.mark.anyio

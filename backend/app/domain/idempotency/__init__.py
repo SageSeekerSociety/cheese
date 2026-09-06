@@ -1,1 +1,1 @@
-"""Durable idempotency keys for agent side effects (④ 超时重跑)."""
+"""Durable idempotency keys for agent side effects (④ 重发)."""

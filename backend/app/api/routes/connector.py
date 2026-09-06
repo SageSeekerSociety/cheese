@@ -29,6 +29,7 @@ from fastapi import (
     Depends,
     Header,
     Query,
+    Request,
     WebSocket,
     WebSocketDisconnect,
 )
@@ -38,7 +39,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import ActorResolverDep
 from app.core.config import settings
 from app.core.db import get_db
-from app.core.errors import ForbiddenError, NotFoundError, UnauthorizedError
+from app.core.errors import (
+    BadRequestError,
+    BaseError,
+    ForbiddenError,
+    NotFoundError,
+    UnauthorizedError,
+)
 from app.core.tokens import verify_session_token
 from app.domain.agent.device_hub import HubScreen, ViewerTransport, device_hub
 from app.domain.device.repository import Device
@@ -47,7 +54,10 @@ from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.device.supply import Supply, Visibility
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.repositories import ProjectRepository
+from app.domain.room_task.services import TaskService
 from app.domain.team.repositories import TeamRepository
+from app.domain.topic import transcripts
+from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
 
 router = APIRouter(prefix="/connector", tags=["connector"])
@@ -239,6 +249,87 @@ async def agent_socket(
         pass
     finally:
         await device_hub.detach_device(device.device_id, transport)
+
+
+# --- transcripts: a device stores a home's raw session files here before the
+# home is deleted (topic/retire.py, docs/where-a-turn-runs.md §8) --------------
+
+
+async def _device_ran_place(
+    service: DeviceService,
+    device: Device,
+    project_id: uuid.UUID,
+    place_id: uuid.UUID,
+) -> bool:
+    """Whether this machine is the one whose home holds the place's transcripts.
+
+    The pin says so directly while it stands. Once it is gone — the compute
+    picker replaced it, or the place is not in the database any more — the
+    machine has to at least be one the project may run on, directly or through
+    its team, which is the same set `DeviceChannel` picks from."""
+    binding = await service.topic_binding(place_id)
+    if binding is not None:
+        return binding.device_id == device.device_id
+    return any(
+        d.device_id == device.device_id
+        for d in await service.list_devices_for_project(project_id)
+    )
+
+
+@router.put("/transcripts/{project_id}/{place_id}")
+async def store_transcripts(
+    project_id: uuid.UUID,
+    place_id: uuid.UUID,
+    request: Request,
+    service: DeviceServiceDep,
+    db: DbSession,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Receive one home's `.claude/projects` + `.claude/todos` as a tar.gz body.
+
+    Authenticated with the durable device token as a bearer (the cli's own
+    `CHEESE_TOKEN`), authorized by the pin. The archive is kept as a new
+    timestamped file under `transcripts_dir/<project>/<place>/`, never
+    replacing an earlier one; 413 past `transcripts_max_bytes`, 400 for a body
+    that is not a whole archive, and neither keeps anything on disk."""
+    scheme, _, token = (authorization or "").partition(" ")
+    device = await service.verify_token(
+        token.strip() if scheme.lower() == "bearer" else ""
+    )
+    if device is None:
+        raise UnauthorizedError("unknown or missing device token")
+    if await ProjectRepository(db).get(project_id) is None:
+        raise NotFoundError("no such project")
+    # The place may be a room or a thread, or already deleted; what it must not
+    # be is a place of some other project wearing this project's path.
+    place = await TopicRepository(db).get(place_id) or await TaskService(db).get(
+        place_id
+    )
+    if place is not None and place.project_id != project_id:
+        raise NotFoundError("no such place in this project")
+    allowed = await _device_ran_place(service, device, project_id, place_id)
+    # Every read is done. Release the transaction before the body streams in:
+    # an upload can take minutes, and a session held open across it would sit
+    # `idle in transaction` on the topic tables for that long (#356).
+    await db.commit()
+    if not allowed:
+        raise ForbiddenError("this machine did not run that place")
+    try:
+        stored = await transcripts.store(project_id, place_id, request.stream())
+    except transcripts.ArchiveTooLarge as exc:
+        raise BaseError(413, str(exc)) from exc
+    except transcripts.NotAnArchive as exc:
+        raise BadRequestError(str(exc)) from exc
+    logger.info(
+        "transcripts stored: project=%s place=%s device=%s file=%s size=%d sha256=%s",
+        project_id,
+        place_id,
+        device.device_id,
+        stored.path.name,
+        stored.size,
+        stored.sha256,
+    )
+    return {"file": stored.path.name, "size": stored.size, "sha256": stored.sha256}
 
 
 # --- 现场 viewer: a browser watches a device screen's real terminal, and can type

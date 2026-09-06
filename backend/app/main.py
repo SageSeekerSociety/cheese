@@ -359,6 +359,9 @@ _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
     ),
     ("POST", re.compile(r"^/projects/(?P<project>[^/]+)/memory$")),
     ("POST", re.compile(r"^/projects/(?P<project>[^/]+)/memory/search$")),
+    # 记忆整理: the topic is the turn that is SPEAKING; which pools it may
+    # reorganize is derived from it server-side (memory/dream.py::dream_pools).
+    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/memory/dream$")),
     # Notification creation is NOT here: humans post there too (Bearer), which
     # this gate cannot see. The route enforces its own credential check via
     # ActorResolver.require_verified_caller — same tokens accepted, plus Bearer.

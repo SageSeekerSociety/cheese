@@ -11,7 +11,7 @@ The block tree remains the source of truth; memory is a fast-recall projection.
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import ColumnElement, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -45,6 +45,17 @@ MEMORY_INJECTION_CHAR_BUDGET = 20000
 # fetched rows, so this bounds the work; pools are ~150 facts today, so it does
 # not bite. Anything past it is still counted as omitted, never silently gone.
 MEMORY_RANK_CANDIDATES = 500
+
+
+def live_entries() -> ColumnElement[bool]:
+    """The one clause every read of ``memory_entries`` must carry.
+
+    记忆整理 retires facts instead of deleting them (see MemoryDream), so the
+    table holds rows that are deliberately no longer part of the memory. A read
+    that forgets this filter does not fail — it quietly reinstates every fact
+    芝士 ever decided was wrong, which is worse than never having organized.
+    """
+    return MemoryEntry.retired_at.is_(None)
 
 
 class MemoryStore(Protocol):
@@ -210,6 +221,7 @@ class DbMemoryStore:
             .where(
                 MemoryEntry.scope == scope,
                 MemoryEntry.scope_id == scope_id,
+                live_entries(),
             )
             .order_by(MemoryEntry.created_at.desc())
             .limit(limit)
@@ -224,6 +236,7 @@ class DbMemoryStore:
                 MemoryEntry.scope == scope,
                 MemoryEntry.scope_id == scope_id,
                 MemoryEntry.layer == MemoryLayer.core,
+                live_entries(),
             )
             .order_by(MemoryEntry.created_at)
         )
@@ -253,6 +266,7 @@ class DbMemoryStore:
                 MemoryEntry.scope == scope,
                 MemoryEntry.scope_id == scope_id,
                 MemoryEntry.layer == MemoryLayer.fact,
+                live_entries(),
             )
             .order_by(MemoryEntry.created_at.desc())
             .limit(limit)
@@ -284,7 +298,11 @@ class DbMemoryStore:
         stmt = (
             select(func.count())
             .select_from(MemoryEntry)
-            .where(MemoryEntry.scope == scope, MemoryEntry.scope_id == scope_id)
+            .where(
+                MemoryEntry.scope == scope,
+                MemoryEntry.scope_id == scope_id,
+                live_entries(),
+            )
         )
         return int(await self._session.scalar(stmt) or 0)
 
@@ -322,6 +340,7 @@ class DbMemoryStore:
                 MemoryEntry.scope == scope,
                 MemoryEntry.scope_id == scope_id,
                 matches,
+                live_entries(),
             )
             .order_by(MemoryEntry.created_at.desc())
             .limit(max(limit * _CANDIDATE_FACTOR, _MIN_CANDIDATES))

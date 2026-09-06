@@ -245,6 +245,16 @@ async def app_proxy_http(
             response.headers.append(name, value)
     if media_type:
         response.headers["content-type"] = media_type
+    # Assignment, not append: the app may have sent one of its own, and a
+    # response carrying this header twice is rejected outright. The frame is
+    # sandboxed without `allow-same-origin`, so the browser gives it an opaque
+    # origin and stamps `Origin: null` on everything it fetches — including
+    # `<script type="module">`, which unlike a classic script tag is always
+    # fetched in CORS mode. Absent this header the browser discards a perfectly
+    # good 200 on arrival and a module-script app never runs a line. Opening it
+    # wide costs nothing: an opaque origin holds no cookie and no storage to
+    # leak, so there is nothing here the sandbox was not already withholding.
+    response.headers["access-control-allow-origin"] = "*"
     return proxy.attach_cookie(
         response, request, cookie_name=COOKIE_NAME, cookie_path=_prefix(topic_id)
     )
