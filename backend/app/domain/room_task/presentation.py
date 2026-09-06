@@ -176,6 +176,14 @@ class TaskFacts:
     last_signal_at: datetime | None
     accepted_at: datetime | None
     card: CardFacts | None
+    #: 有没有分身在做这条活（`Task.subagent_id`）。
+    has_worker: bool = False
+    #: 那个分身活在**房间的**会话里，所以房间的屏幕没了，它一定也没了 —— 这一位
+    #: 是跑轮次的进程当下的事实（`ChatService.has_live_screen`），不是一列时间戳，
+    #: 所以它得从外面喂进来（这一层不碰 I/O）。
+    room_screen_live: bool = True
+    #: 结论已经回流、正等房间结算。分身是干完了在等人，不是断了。
+    conclusion_pending: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,6 +210,9 @@ def facts_for_task(
     task: Task,
     card: "AcceptCard | None" = None,
     last_block_at: datetime | None = None,
+    *,
+    room_screen_live: bool = True,
+    conclusion_pending: bool = False,
 ) -> TaskFacts:
     """把一行 `Task`（加上它的卡、加上它最后一次说话的时间）折成这层要读的事实。
 
@@ -217,6 +228,9 @@ def facts_for_task(
         last_signal_at=max(signals) if signals else None,
         accepted_at=task.accepted_at,
         card=facts_for_card(card),
+        has_worker=bool(task.subagent_id),
+        room_screen_live=room_screen_live,
+        conclusion_pending=conclusion_pending,
     )
 
 
@@ -310,6 +324,20 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
     """
     if facts.accepted_at is not None:
         return _show(Done.accepted)
+
+    # 分身做的活，「还在不在」有两个答案，先问屏幕：那个分身住在房间的会话里，
+    # 房间的屏幕没了它一定也没了 —— 它自己不会来说一声，而没有这一问，一条活会
+    # 永远转圈。屏幕还在，就退回问它自己最近有没有动静。
+    #
+    # 结论已经回流的不算失联：那是干完了在等房间结算，不是断了。
+    if (
+        facts.has_worker
+        and facts.status == TaskStatus.open
+        and not facts.conclusion_pending
+    ):
+        if not facts.room_screen_live or _lost_signal(facts.last_signal_at, now=now):
+            return _show(Building.lost)
+        return _show(Building.running)
 
     if facts.residency == Residency.running:
         if _lost_signal(facts.last_signal_at, now=now):

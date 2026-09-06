@@ -246,6 +246,11 @@ class TaskService:
                 f"这个分身正在做「{held.title}」，一个分身同时只做一条活"
             )
         task.subagent_id = subagent_id
+        # A worker starting IS this work starting, and this is the signal the
+        # board falls back on before the worker has said anything: without it a
+        # thread reads 失联 for the whole gap between being claimed and its first
+        # tool call, which is the busiest moment it has.
+        task.last_turn_at = datetime.now(UTC)
         await self._session.flush()
         return task
 

@@ -64,6 +64,21 @@ class ConclusionCardRepository:
         )
         return (await self._session.scalars(stmt)).first()
 
+    async def live_task_ids(self, task_ids: list[uuid.UUID]) -> set[uuid.UUID]:
+        """Which of these threads have a card still awaiting a verdict.
+
+        The board's question, asked of a whole page of threads at once: a thread
+        whose conclusion is already filed is finished and waiting on the room,
+        not out of contact, however long it has been quiet.
+        """
+        if not task_ids:
+            return set()
+        stmt = select(ConclusionCard.task_id).where(
+            ConclusionCard.task_id.in_(task_ids),
+            ConclusionCard.status.in_(LIVE_STATES),
+        )
+        return {tid for tid in (await self._session.scalars(stmt)).all() if tid}
+
     async def list_for_place(self, place_id: uuid.UUID) -> list[ConclusionCard]:
         """Cards produced BY this place, newest first.
 
