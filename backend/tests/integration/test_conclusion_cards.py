@@ -4,11 +4,11 @@ The behaviour under test is 默认采信: a sub-topic's conclusion gets a card, 
 the card settles itself unless somebody spends a turn saying otherwise. So most
 of these tests assert what happens when NOBODY does anything.
 
-Timing note: filing a card over HTTP (`POST /return-conclusion`) also wakes the
-parent, and that digest turn ending is exactly what auto-accepts the card — so a
-test that needs a card to STAY open files it through the service instead of the
-route. That is not a shortcut around the API: `return_conclusion` is the same
-call the route makes, minus the wake-up the test doesn't want.
+Who files it is the room: a worker is a 分身 inside the room's session, with no
+place of its own to file from, so the room reports the conclusion for it
+(`POST /topics/{room}/tasks/{task}/conclude`) after it has read what came back.
+Nothing is woken by that — the room is the caller and is already running the turn
+that would be woken, and it is that turn's ending that auto-accepts the card.
 """
 
 import asyncio
@@ -31,6 +31,13 @@ def _topic(client, project_id: str, title: str = "大话题") -> dict:
     return client.post(
         "/topics", json={"project_id": project_id, "title": title}
     ).json()["data"]
+
+
+def _conclude(client, room_id: str, task_id: str, conclusion: str):
+    """结论回流，由房间替它的活报上来 —— 那条活自己没有会话，也就没有 token。"""
+    return client.post(
+        f"/topics/{room_id}/tasks/{task_id}/conclude", json={"conclusion": conclusion}
+    )
 
 
 def _split(client, parent_id: str, title: str) -> dict:
@@ -84,11 +91,8 @@ def test_conclude_files_a_card_without_touching_the_three_old_side_effects(clien
     parent = _topic(client, p["id"])
     sub = _split(client, parent["id"], "实现数据清洗")
 
-    r = client.post(
-        f"/topics/{sub['id']}/return-conclusion",
-        json={"conclusion": "数据清洗完成，去重后剩 8000 条"},
-    )
-    assert r.status_code == 200
+    r = _conclude(client, parent["id"], sub["id"], "数据清洗完成，去重后剩 8000 条")
+    assert r.status_code == 200, r.text
     _wait_work_idle()
 
     # 1) the card (new)
@@ -117,10 +121,8 @@ def test_conclude_to_an_archived_parent_files_no_card(client):
     sub = _split(client, parent["id"], "子活")
     client.post(f"/topics/{parent['id']}/archive", json={})
 
-    r = client.post(
-        f"/topics/{sub['id']}/return-conclusion", json={"conclusion": "做完了"}
-    )
-    assert r.status_code == 200
+    r = _conclude(client, parent["id"], sub["id"], "做完了")
+    assert r.status_code == 200, r.text
     _wait_work_idle()
     assert _cards(client, sub["id"]) == []
 
@@ -128,22 +130,26 @@ def test_conclude_to_an_archived_parent_files_no_card(client):
 # --- 机制①: 轮结束自动采信 --------------------------------------------------
 
 
-def test_turn_end_auto_accepts_the_card_and_archives_the_subtopic(client):
-    """默认采信的主路径：父话题消化完那一轮结束，卡自动 accepted、子话题归档。
+def test_turn_end_auto_accepts_the_card_and_closes_the_thread(client):
+    """默认采信的主路径：房间那一轮结束，卡自动 accepted、那条活收起。
     没有任何人点过任何东西。"""
     p = _project(client)
     parent = _topic(client, p["id"])
     sub = _split(client, parent["id"], "查一个数")
+    card = _file_card(client, sub["id"], "查到了：42")
+    assert card["status"] == ConclusionStatus.open
 
+    # 房间跑一轮 —— 现实里就是它报完结论那一轮，这里直接跟它说句话来跑。
     client.post(
-        f"/topics/{sub['id']}/return-conclusion", json={"conclusion": "查到了：42"}
+        f"/topics/{parent['id']}/comments",
+        json={"author": "user-1", "content": "看一下"},
     )
     _wait_work_idle()
 
-    card = _cards(client, sub["id"])[0]
-    assert card["status"] == ConclusionStatus.accepted
-    assert card["settled_by"] == "system", "自动采信要记在平台头上，不是某个人"
-    assert card["settled_at"] is not None
+    settled = _cards(client, sub["id"])[0]
+    assert settled["status"] == ConclusionStatus.accepted
+    assert settled["settled_by"] == "system", "自动采信要记在平台头上，不是某个人"
+    assert settled["settled_at"] is not None
     assert _topic_status(client, sub["id"]) == "closed", "采信即收起"
 
 

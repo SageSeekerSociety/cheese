@@ -14,12 +14,12 @@ Nothing removed either. Measured on the dev box on 2026-09-03: 373 worktrees
 (141 GB), 118 of them for archived topics and 219 for topics no longer in the
 database at all; 162 homes (162 GB), 46 archived and 85 unknown.
 
-Archive itself still removes neither. `retire_room_storage` runs
-at archive time, from `TopicService`, and only closes the room's screen on its
-device: an archive is reversible
-(`POST /{topic_id}/unarchive`), and for `topic_home_retention_days` the
-worktree and the home stay so that the work comes back with its session intact
-rather than from an empty checkout of the branch. Best-effort by design —
+Archive itself still removes neither. `retire_room_storage` runs at archive
+time, from `TopicService`, and only closes the room's screen on its device: an
+archive is reversible (`POST /{topic_id}/unarchive`), and for
+`topic_home_retention_days` the worktree and the home stay so that the work
+comes back with its session intact rather than from an empty checkout of the
+branch. Best-effort by design —
 nothing here may fail an archive, which is a fact about the place and not about
 its machine.
 

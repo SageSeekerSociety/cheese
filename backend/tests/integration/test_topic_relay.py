@@ -1,15 +1,19 @@
-"""上下传话 (`POST /topics/{id}/tell`, `cheese tell`).
+"""房间给它派出的活留话 (`POST /topics/{id}/tell`, `cheese tell`).
 
-What was broken and is under test here: the room → running-thread direction
-had no working channel at all. `POST /topics/{id}/comments` — the only thing that
-looked like one — summons **only when the commenter is human**, so a parent's
-芝士 wrote a row and woke nobody, and that route is not in
+One direction, and nothing is woken. The worker doing that thread is a 分身
+inside this very session, which the room reaches with its own tooling — waking a
+place for it would mean raising a container for the shape threads stopped
+having. What this channel is for is the RECORD: what the room told its worker
+lands where the work is, which is the only place the person watching that thread
+can read it.
+
+Why not `POST /topics/{id}/comments`: it summons **only when the commenter is
+human**, so an agent wrote a row and nothing happened, and that route is not in
 `app.main._CHEESE_WRITE_PATHS` either, so an agent's call never reached the
 per-turn token gate (a missing entry admits silently; it does not 401).
 
-So every test here asserts one of three things: the message lands, the receiver
-is really WOKEN (the stub agent saw a prompt containing it), and the edge is the
-only path open.
+So every test here asserts one of three things: the message lands, NOTHING is
+woken by it, and the room→its-own-thread edge is the only path open.
 """
 
 import uuid
@@ -52,30 +56,40 @@ def _blocks(client, topic_id: str) -> list[dict]:
 # --- 父 → 直接子: 落地 + 真的叫醒 -------------------------------------------
 
 
-def test_parent_tells_child_and_the_child_is_woken(client, stub_hooks):
-    """The whole point: the message reaches the child's timeline AND a turn runs
-    there with the text in its prompt."""
+def _record_screens(stub_hooks) -> list[str]:
+    """每一次「起一块屏幕」的 topic id。起屏幕就是起容器，这是唯一看得见它的地方。"""
+    seen: list[str] = []
+    original = stub_hooks.ensure_ready
+
+    async def _spy(**kw):
+        seen.append(str(kw.get("topic_id")))
+        return await original(**kw)
+
+    stub_hooks.ensure_ready = _spy
+    return seen
+
+
+def test_a_room_leaves_a_note_on_its_thread_and_wakes_nobody(client, stub_hooks):
+    """留话落在那条活的时间线上，而**没有任何东西被叫醒**。
+
+    做那条活的分身就在房间自己的会话里，房间直接给它发消息就是了；朝那条活开一轮，
+    平台就得为它起一整个容器 —— 正是「一条活 = 房间会话里的一个分身」拆掉的东西。
+    """
     p = _project(client)
     parent = _topic(client, p["id"])
     sub = _split(client, parent["id"], "数据清洗")
 
+    screens = _record_screens(stub_hooks)
     r = _tell(client, parent["id"], sub["id"], "口径改了：只算活跃用户")
     assert r.status_code == 200
     data = r.json()["data"]
-    assert data["direction"] == "to_child"
-    assert data["delivery"] == "woke"
     assert data["target_topic_id"] == sub["id"]
+    assert data["target_title"] == "数据清洗"
     wait_work_idle()
 
     contents = [b["content"] for b in _blocks(client, sub["id"])]
     assert any("口径改了：只算活跃用户" in c for c in contents)
-    # 叫醒: the agent actually got the text, tagged as a platform instruction.
-    assert stub_hooks.last_prompt is not None
-    assert "口径改了：只算活跃用户" in stub_hooks.last_prompt
-    assert "【平台】" in stub_hooks.last_prompt
-    # …and it is told the relay OVERRIDES the one-shot brief, which is the whole
-    # reason this channel exists.
-    assert "以这条为准" in stub_hooks.last_prompt
+    assert screens == [], f"留话起了屏幕——这是在复活容器：{screens}"
 
 
 def test_relayed_block_is_authored_by_the_receiving_room(client):
@@ -98,43 +112,6 @@ def test_relayed_block_is_authored_by_the_receiving_room(client):
     assert parent["id"] in (block.get("refs") or [])
     # The room is named in the block so the thread can see where it came from.
     assert "房间追加" in block["content"]
-
-
-def test_child_tells_parent(client, stub_hooks):
-    """The other allowed direction. Distinct from `conclude`: no card, no
-    settlement — it is a question or a mid-flight finding."""
-    p = _project(client)
-    parent = _topic(client, p["id"])
-    sub = _split(client, parent["id"], "子活")
-
-    r = _tell(client, sub["id"], parent["id"], "发现简报里那条前提不成立")
-    assert r.status_code == 200
-    assert r.json()["data"]["direction"] == "to_parent"
-    wait_work_idle()
-
-    assert any(
-        "发现简报里那条前提不成立" in b["content"]
-        for b in _blocks(client, parent["id"])
-    )
-    assert "发现简报里那条前提不成立" in (stub_hooks.last_prompt or "")
-    assert "支线" in (stub_hooks.last_prompt or "")
-
-
-def test_a_thread_can_address_its_room_as_parent(client):
-    """回话不该先要求查到房间叫什么 —— `cheese tell parent "..."`."""
-    p = _project(client)
-    parent = _topic(client, p["id"], "上面那个房间")
-    sub = _split(client, parent["id"], "子活")
-
-    r = _tell(client, sub["id"], "parent", "问一句：口径按哪版？")
-    assert r.status_code == 200
-    assert r.json()["data"]["target_topic_id"] == parent["id"]
-    wait_work_idle()
-
-    # A ROOM has nothing above it to answer — plain answer, not a confusing 404.
-    r2 = _tell(client, parent["id"], "parent", "x")
-    assert r2.status_code == 422
-    assert "没有可以回话的地方" in r2.json()["message"]
 
 
 def test_target_can_be_a_title_or_a_ref_token(client):
@@ -167,7 +144,7 @@ def test_siblings_cannot_tell_each_other(client):
 
     r = _tell(client, a["id"], b["id"], "偷偷说句话")
     assert r.status_code == 422
-    assert "上下关系" in r.json()["message"]
+    assert "一条活" in r.json()["message"]
     # Nothing landed in B either — a refused relay must not leave a message.
     assert not any("偷偷说句话" in blk["content"] for blk in _blocks(client, b["id"]))
 
@@ -212,7 +189,7 @@ def test_missing_topic_is_404_and_a_stranger_topic_says_why(client):
     r = _tell(client, parent["id"], other["id"], "x")
     assert r.status_code == 422
     # 说清为什么，否则调用方会以为自己打错了 id 并原样重试。
-    assert "上下关系" in r.json()["message"]
+    assert "不归你" in r.json()["message"]
 
 
 def test_unknown_title_lists_the_reachable_topics(client):
@@ -291,11 +268,11 @@ def test_a_closed_thread_can_still_be_told_something(client):
 
     r = _tell(client, parent["id"], sub["id"], "还有一件事")
     assert r.status_code == 200
-    assert r.json()["data"]["delivery"] != "archived"
+    assert any("还有一件事" in b["content"] for b in _blocks(client, sub["id"]))
 
 
-def test_a_thread_in_an_archived_room_is_not_woken_and_says_so(client):
-    """The room is the work面 — freezing it freezes what is inside it."""
+def test_a_thread_in_an_archived_room_still_takes_the_note(client):
+    """归档冻的是工作面，不是记录：留话仍然写得进去，只是本来也没人会被叫醒。"""
     p = _project(client)
     parent = _topic(client, p["id"])
     sub = _split(client, parent["id"], "房间要归档了")
@@ -304,4 +281,4 @@ def test_a_thread_in_an_archived_room_is_not_woken_and_says_so(client):
 
     r = _tell(client, parent["id"], sub["id"], "还有一件事")
     assert r.status_code == 200
-    assert r.json()["data"]["delivery"] == "archived"
+    assert any("还有一件事" in b["content"] for b in _blocks(client, sub["id"]))

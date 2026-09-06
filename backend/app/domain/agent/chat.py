@@ -3981,8 +3981,7 @@ class ChatService:
                 None
                 if is_private
                 else resolve_stage(
-                    is_room=not place.is_thread,
-                    # 完事了 = 这条支线被收起，或者这个房间被人归档。两种「结束」
+                    # 完事了 = 这条活被收起，或者这个房间被人归档。两种「结束」
                     # 各有各的词，但对「该给哪段说明」来说是同一件事。
                     finished=(
                         place.task.status == TaskStatus.closed

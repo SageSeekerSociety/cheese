@@ -158,6 +158,16 @@ def test_a_room_names_its_own_thread(client):
 
     tasks = client.get(f"/topics/{room['id']}/tasks").json()["data"]["data"]
     assert [t["title"] for t in tasks if t["id"] == thread["id"]] == ["拆导入"]
+    assert client.get(f"/topics/{room['id']}").json()["data"]["title"] == "讨论", (
+        "给一条活起名字改掉了整个房间的名字"
+    )
+
+    # 人从侧栏改名走的是活自己的地址（浏览器带的是人的凭证，不是按地点签的
+    # per-turn token，所以够得着）——改的也只是这条活。
+    renamed = client.post(f"/topics/{thread['id']}/title", json={"title": "导入"})
+    assert renamed.status_code == 200
+    assert renamed.json()["data"]["title"] == "导入"
+    assert client.get(f"/topics/{room['id']}").json()["data"]["title"] == "讨论"
 
     # 一条活自己起不了名字，别的房间的活也够不着。
     assert (
@@ -337,7 +347,7 @@ def test_split_without_brief_still_seeds_doc(client):
     assert "大话题" in doc["content"]
 
 
-def test_split_and_return_conclusion(client):
+def test_split_and_conclude(client):
     p = _project(client)
     topic = client.post(
         "/topics", json={"project_id": p["id"], "title": "大话题"}
@@ -360,27 +370,17 @@ def test_split_and_return_conclusion(client):
     tasks = client.get(f"/topics/{topic['id']}/tasks").json()["data"]["data"]
     assert any(t["id"] == sub["id"] for t in tasks)
 
-    # Conclusion flows back to the parent topic.
+    # The conclusion reaches the room — filed BY the room, for the worker it
+    # raised: that worker is a 分身 in the room's own session and has no place
+    # of its own to file from.
     r = client.post(
-        f"/topics/{sub['id']}/return-conclusion",
+        f"/topics/{topic['id']}/tasks/{sub['id']}/conclude",
         json={"conclusion": "数据清洗完成，去重后剩 8000 条"},
     )
-    assert r.status_code == 200
+    assert r.status_code == 200, r.text
     _wait_work_idle()
     parent_blocks = client.get(f"/topics/{topic['id']}/blocks").json()["data"]["data"]
     assert any("数据清洗完成" in b["content"] for b in parent_blocks)
-
-    # …and the parent is WOKEN to digest it (subagent return leg): the parent
-    # 芝士 runs a turn of its own, so an AI message follows the conclusion.
-    concl_i = next(
-        i for i, b in enumerate(parent_blocks) if "数据清洗完成" in b["content"]
-    )
-    later_ai = [
-        b
-        for b in parent_blocks[concl_i + 1 :]
-        if b["kind"] == "message" and b["author_type"] == "ai"
-    ]
-    assert later_ai, "父话题没有被结论回流唤醒"
 
     # C4: the conclusion is also woven into the parent's living doc …
     doc = client.get(f"/topics/{topic['id']}/doc").json()["data"]
@@ -391,11 +391,14 @@ def test_split_and_return_conclusion(client):
     assert any("实现数据清洗" in n["title"] for n in notifs)
 
 
-def test_return_conclusion_on_root_topic_fails(client):
+def test_concluding_something_that_is_not_a_thread_fails(client):
+    """房间没有可以回流的上级——它就是那个上级。"""
     p = _project(client)
     root_id = _project_root(client, p["id"])
-    r = client.post(f"/topics/{root_id}/return-conclusion", json={"conclusion": "x"})
-    assert r.status_code == 422
+    r = client.post(
+        f"/topics/{root_id}/tasks/{root_id}/conclude", json={"conclusion": "x"}
+    )
+    assert r.status_code == 404
 
 
 def _project_root(client, project_id) -> str:

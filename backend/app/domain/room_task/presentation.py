@@ -164,7 +164,7 @@ class CardFacts:
 class TaskFacts:
     status: str
     #: 最后一次有东西确认这条活还在动。见 `LOST_SIGNAL_AFTER`：优先是它最后一个
-    #: block 的时间，没说过话就退回这一轮是什么时候开的。
+    #: block 的时间，没说过话就退回它是什么时候被认领的。
     last_signal_at: datetime | None
     accepted_at: datetime | None
     card: CardFacts | None

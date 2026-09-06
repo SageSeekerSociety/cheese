@@ -181,6 +181,7 @@ class InProcessBroker:
                     self._active.pop(channel, None)
                     self._buffer.pop(channel, None)
                     self._last_activity_at.pop(channel, None)
+
         for q in list(self._subs.get(channel, ())):
             q.put_nowait(frame)
 
@@ -604,30 +605,6 @@ class AgentWorkRunner:
             await self._broker.publish(
                 channel, {"type": "user_block", "block": payload}
             )
-        thread = await chat_service.thread_at(topic_id)
-        if summon and thread is not None:
-            # 人对着一条活说话。The message stays where it was typed, but a thread
-            # has no session to hand it to — the worker doing it is a 分身 inside
-            # the room's session, and the room is the only thing that can reach
-            # it. Waking the thread's own id instead would raise a container for
-            # the shape threads stopped having.
-            from app.domain.agent.chat import thread_relay_prompt
-
-            self.submit_kickoff(
-                chat_service,
-                thread.room_id,
-                prompt=thread_relay_prompt(
-                    task_id=thread.task_id,
-                    task_title=thread.title,
-                    author=author,
-                    message=f"说：{content}",
-                ),
-            )
-            # No turn started HERE, so this channel is not about to produce one:
-            # say so, or the person watching the thread waits on a spinner that
-            # belongs to the room's screen.
-            await self._broker.publish(channel, {"type": "done"})
-            return turn_id
         if not summon:
             # 没 @ 不等于没说 (spec §7.1 所有消息 AI 都会收到). An unsummoned
             # message is meant to be picked up by the pending window the next
@@ -659,17 +636,22 @@ class AgentWorkRunner:
             await self._broker.publish(channel, {"type": "done"})
             return turn_id
 
+        # Spawned with NOTHING awaited between here and the durable write above.
+        # This request belongs to a socket that may already be closing — the
+        # person hit send and navigated away — and an await in front of the
+        # spawn is a window where the ASGI task is cancelled with the message
+        # persisted and no work ever started. Whatever the work turns out to be,
+        # including "this place is a thread, so wake its room instead", is
+        # decided INSIDE the task.
         task = asyncio.create_task(
-            self._run(
+            self._run_summoned(
                 chat_service,
                 topic_id,
                 turn_id,
                 author=author,
                 content=content,
-                summon=True,
                 reply_to=reply_to,
                 attachments=attachments,
-                continuation_id=turn_id,
                 provision_actor=provision_actor,
                 landed_user_block_id=user_block_id,
                 landed_user_block_ids=user_block_ids,
@@ -679,6 +661,62 @@ class AgentWorkRunner:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return turn_id
+
+    async def _run_summoned(
+        self,
+        chat_service,
+        topic_id: uuid.UUID,
+        turn_id: uuid.UUID,
+        *,
+        author: str,
+        content: str,
+        reply_to: str | None,
+        attachments: list[dict] | None,
+        provision_actor: Actor | None,
+        landed_user_block_id: uuid.UUID,
+        landed_user_block_ids: list[uuid.UUID],
+        live_delivery_expected: bool,
+    ) -> None:
+        """Run the turn this message summoned — or hand it to whoever can.
+
+        A THREAD cannot run one: the worker doing it is a 分身 inside its room's
+        session, so the thread has no session of its own and addressing its id
+        would raise a whole container for the shape threads stopped having. The
+        message stays where it was typed; the ROOM is woken to relay it.
+        """
+        thread = await chat_service.thread_at(topic_id)
+        if thread is not None:
+            from app.domain.agent.chat import thread_relay_prompt
+
+            self.submit_kickoff(
+                chat_service,
+                thread.room_id,
+                prompt=thread_relay_prompt(
+                    task_id=thread.task_id,
+                    task_title=thread.title,
+                    author=author,
+                    message=f"说：{content}",
+                ),
+            )
+            # No turn is starting on THIS channel: say so, or the person watching
+            # the thread waits on a spinner that belongs to the room's screen.
+            await self._broker.publish(str(topic_id), {"type": "done"})
+            return
+        await self._run(
+            chat_service,
+            topic_id,
+            turn_id,
+            author=author,
+            content=content,
+            summon=True,
+            reply_to=reply_to,
+            attachments=attachments,
+            continuation_id=turn_id,
+            provision_actor=provision_actor,
+            landed_user_block_id=landed_user_block_id,
+            landed_user_block_ids=landed_user_block_ids,
+            live_delivery_expected=live_delivery_expected,
+        )
 
     def submit_kickoff(
         self, chat_service, topic_id: uuid.UUID, *, prompt: str | None = None
