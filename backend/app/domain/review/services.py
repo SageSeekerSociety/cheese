@@ -1270,9 +1270,9 @@ class AcceptService:
                     # exc is either GitHubPrError (GitHub's own response body,
                     # capped at 300 chars) or a ValidationError from a git
                     # push failure (the token travels via an env-var
-                    # credential helper, never argv/URL — see _token_push_env
+                    # credential helper, never argv/URL — see _token_git_env
                     # — so git's stderr can't contain it either); safe to
-                    # surface verbatim, same as the push_back() note below.
+                    # surface verbatim.
                     # A workflow-permission rejection lands here too now: its
                     # ℹ️ "known permanent limitation" sentinel is deleted. On
                     # the App path these cards just work (the App has held
@@ -1379,41 +1379,13 @@ class AcceptService:
         card.status = AcceptStatus.accepted
         card.decided_by = decided_by
         card.decided_at = now
-        # 采纳即上线: propagate the merge to the upstream repo. The outcome is
-        # RECORDED on the card — a push that only landed a side branch (or failed
-        # outright) used to be swallowed here, so the accept looked complete while
-        # nothing reached the upstream and no one could tell why.
-        if merged.get("merged"):
-            note = ""
-            try:
-                pushed = await asyncio.to_thread(
-                    ws.push_back, topic.project_id, topic.id
-                )
-            except Exception as exc:  # noqa: BLE001 — never fail the accept itself
-                note = f"上游回推失败：{exc}"[:2000]
-            else:
-                mode = pushed.get("mode")
-                if mode == "upstream":
-                    note = f"已合并并推送到上游 {pushed.get('target')}"
-                elif mode == "branch":
-                    why = (pushed.get("reason") or "").strip()
-                    note = (
-                        f"上游 {pushed.get('target')} 未能直接推送，"
-                        f"已推分支 {pushed.get('branch')} 待合并"
-                        + (f"（{why[-200:]}）" if why else "")
-                    )[:2000]
-                elif mode == "blocked":
-                    note = str(pushed.get("reason") or "")[:2000]
-                elif mode == "none":
-                    note = str(pushed.get("reason") or "")[:2000]
-            notes.record(card, None, note)
-            _annotate_pr_degrade(card, pr_degrade_reason)
-        else:
-            # noop (nothing to merge, e.g. a discussion-only topic) still
-            # deserves the degrade reason — the two-phase attempt happened
-            # and fell back, even though there's no push outcome to report.
-            notes.clear(card)
-            _annotate_pr_degrade(card, pr_degrade_reason)
+        # The merge into the platform's own repo is where this accept ends:
+        # nothing is pushed anywhere (#718) — the platform holds no credential
+        # for a remote it is not bound to, and a project on the App forge never
+        # takes this path. A noop merge (a discussion-only topic) still deserves
+        # the degrade reason — the two-phase attempt happened and fell back.
+        notes.clear(card)
+        _annotate_pr_degrade(card, pr_degrade_reason)
         if unbound_note:
             # 平台即 forge (#363): 如实标注，而不是让这张卡看起来像绕过了 PR。
             notes.annotate(card, unbound_note)
@@ -1686,7 +1658,7 @@ class AcceptService:
         """Push the topic branch, open a NEW real PR, and hand the rest to the
         periodic pr poll (SchedulerService.poll_open_prs / advance_pr_card) —
         this call does NOT wait for CI. Topic stays
-        active; no merge_topic()/push_back()/archive here (拍板 decision 3:
+        active; no merge_topic()/archive here (拍板 decision 3:
         archive gates on the PR *and* its triggered deploy both succeeding).
         Distinct from `_accept_via_pr` below (#188 §5.1), which merges a PR
         that ALREADY exists on the card rather than opening a new one."""
@@ -3447,7 +3419,8 @@ class AcceptService:
             # first so the materialized conflict matches what GitHub sees.
             sync_failure_note = ""
             try:
-                await asyncio.to_thread(ws.sync_upstream, topic.project_id)
+                read, _ = await tokens.installation_token()
+                await asyncio.to_thread(ws.sync_upstream, topic.project_id, token=read)
             except Exception as sync_exc:  # noqa: BLE001 — conflict flow still works on a stale base
                 logger.exception(
                     "sync_upstream after merge refusal failed for %s", topic.id
@@ -3598,10 +3571,18 @@ class AcceptService:
         """Post-merge bookkeeping shared by the PR path: sync the platform's
         main down from upstream (the merge happened THERE), then mark the topic
         delivered — delivered, not archived (#442 decision 1)."""
+        from app.domain.agent.github_app import github_app_read_token_for_project
         from app.domain.workspace import service as ws
 
         try:
-            synced = await asyncio.to_thread(ws.sync_upstream, topic.project_id)
+            # The merge happened on GitHub as the App, so the pull-down reads
+            # as the App too — a private repo answers to nothing else.
+            token = await github_app_read_token_for_project(
+                topic.project_id, self._session
+            )
+            synced = await asyncio.to_thread(
+                ws.sync_upstream, topic.project_id, token=token
+            )
             if not synced.get("synced"):
                 note += f"；本地同步待补：{synced.get('reason', '')}"
                 # Say what to DO about it. The merge landed upstream, so this

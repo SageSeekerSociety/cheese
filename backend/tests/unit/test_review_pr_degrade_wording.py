@@ -99,12 +99,9 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
 
 def _stub_local_merge(monkeypatch) -> None:
     """The direct-merge path the accept degrades onto — succeeds, so the note
-    ends up as "<degrade prefix>；已合并并推送到上游 origin/main"."""
+    is the degrade prefix and nothing else."""
     monkeypatch.setattr(
         ws, "merge_topic", lambda *_a: {"merged": True, "commit": "abc"}
-    )
-    monkeypatch.setattr(
-        ws, "push_back", lambda *_a: {"mode": "upstream", "target": "origin/main"}
     )
     monkeypatch.setattr(
         webhook_service, "post_with_retries", AsyncMock(return_value=True)
@@ -163,7 +160,9 @@ async def test_all_failures_land_on_the_same_stopped_state(
     assert card.note_code is NoteCode.pr_skipped
     assert card.note.startswith("未走 PR 采纳（GitHub 侧调用失败：")
     assert fragment in card.note
-    assert "已合并并推送到上游 origin/main" in card.note
+    # The degrade reason is the whole note: the local merge is where this
+    # accept ends, and nothing was pushed anywhere to report on.
+    assert "；" not in card.note
 
 
 @pytest.mark.anyio

@@ -15,6 +15,7 @@ from sqlalchemy import func, or_, select
 
 from app.core.config import settings
 from app.domain.agent.chat import ChatService
+from app.domain.agent.github_app import github_app_read_token_for_project
 from app.domain.block.models import AuthorType, Block
 from app.domain.memory.dream import DREAM_PROMPT, latest_dream, open_dream
 from app.domain.project.repositories import ProjectRepository
@@ -292,7 +293,14 @@ class SchedulerService:
             try:
                 if await asyncio.to_thread(ws.get_upstream, project.id) is None:
                     continue  # no upstream linked — nothing to keep current
-                result = await asyncio.to_thread(ws.sync_upstream, project.id)
+                # A bound project fetches as the App; an unbound one fetches
+                # with no credential, so a private upstream it is not bound to
+                # fails here and is logged — never read on somebody else's key.
+                async with self._sessions() as session:
+                    token = await github_app_read_token_for_project(project.id, session)
+                result = await asyncio.to_thread(
+                    ws.sync_upstream, project.id, token=token
+                )
             except Exception as exc:  # noqa: BLE001 — one project must not stop the rest
                 errors.append(f"{project.id}: {exc}")
                 logger.exception("upstream sync failed for project %s", project.id)

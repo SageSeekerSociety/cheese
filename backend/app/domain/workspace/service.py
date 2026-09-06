@@ -23,12 +23,10 @@ import uuid
 from collections.abc import Iterator
 from pathlib import Path
 
-from app.core.background import spawn
 from app.core.config import settings
 from app.core.errors import ConflictError, ValidationError
 from app.domain.agent.platform_failures import WORKSPACE_VCS_PERMS_CODE
 from app.domain.workspace import identity as identity_mod
-from app.domain.workspace.dogfood_notices import watch_dogfood_push
 from app.domain.workspace.textfile import (
     MAX_TEXT_BYTES,
     content_version,
@@ -1612,9 +1610,15 @@ def _fast_forward_base(project_id: uuid.UUID, repo: Path, base: str, ref: str) -
     }
 
 
-def sync_upstream(project_id: uuid.UUID) -> dict:
+def sync_upstream(project_id: uuid.UUID, *, token: str | None = None) -> dict:
     """同步上游: bring the project's base branch up to the upstream's default
     branch.
+
+    `token` is the platform App's installation token when the project is bound
+    to GitHub, and the fetch authenticates with that and nothing else. An
+    unbound project fetches with no credential at all: a private upstream it
+    is not bound to fails here, visibly, rather than being read on a key the
+    platform cannot account for.
 
     **For a bound project the base branch is a MIRROR of the upstream's default
     branch, not a branch of its own.** That is the whole design, and getting it
@@ -1636,7 +1640,13 @@ def sync_upstream(project_id: uuid.UUID) -> dict:
     if get_upstream(project_id) is None:
         return {"synced": False, "reason": "未关联上游仓库"}
     try:
-        _git(repo, "fetch", UPSTREAM_REMOTE, timeout=120)
+        _git(
+            repo,
+            "fetch",
+            UPSTREAM_REMOTE,
+            timeout=120,
+            env=_token_git_env(token) if token else None,
+        )
         ref = _upstream_ref(repo)
     except ValidationError as exc:
         return {"synced": False, "reason": str(exc)}
@@ -1777,109 +1787,17 @@ def upstream_default_branch(repo: Path) -> str | None:
     return None
 
 
-def push_back(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
-    """采纳即上线: propagate an accepted merge to the upstream repo.
-
-    采纳 IS the merge — the topic branch is already merged into the project's
-    base by the time we get here — so the upstream should receive THAT merge,
-    fast-forward, not a side branch waiting for someone to decide again. Landing
-    it must never need cheese-specific setup in the target repo (the whole point
-    of "import a repo and it just works").
-
-    Order:
-      1. fast-forward the upstream's own default branch (never forced — a
-         rejected push means the upstream moved or protects the branch, which is
-         information, not something to overwrite);
-      2. if that is refused, fall back to pushing ``dogfood/<topic>`` so the work
-         is never stuck on our side, and say so — the caller surfaces it instead
-         of leaving the user to wonder why nothing shipped.
-
-    Auth comes from the HOST's git credentials, never from the DB. A local-path
-    upstream additionally runs its ``scripts/on-dogfood-push.sh`` DETACHED
-    (operator-trusted only for local paths)."""
-    repo = ensure_repo(project_id)
-    url = get_upstream(project_id)
-    if not url:
-        return {"pushed": False, "mode": "none", "reason": "无上游，跳过回推"}
-    base = _base_branch(repo)
-    branch = f"dogfood/{topic_id.hex[:8]}"
-    target = upstream_default_branch(repo) or base
-    if not url.startswith("/"):
-        # Take the upstream's new commits FIRST. A fast-forward push is refused
-        # whenever the upstream moved since the project was imported — i.e. on any
-        # repo with other contributors — and every accept would silently degrade
-        # to a side branch (observed live: "remote contains work that you do not
-        # have locally"). Syncing here makes landing the normal outcome and keeps
-        # the merge semantics identical to 同步上游 (conflicts abort cleanly).
-        synced = sync_upstream(project_id)
-        if not synced.get("synced"):
-            return {
-                "pushed": False,
-                "mode": "blocked",
-                "target": target,
-                "reason": f"上游同步失败，未回推：{synced.get('reason', '')}",
-            }
-        # 120s: the first remote push negotiates history (the remote already has
-        # upstream's objects, so the delta stays small — but be safe).
-        try:
-            _git(repo, "push", UPSTREAM_REMOTE, f"{base}:{target}", timeout=120)
-            return {"pushed": True, "mode": "upstream", "target": target}
-        except ValidationError as exc:
-            reason = str(exc)[-400:]
-            _git(repo, "push", "-f", UPSTREAM_REMOTE, f"{base}:{branch}", timeout=120)
-            return {
-                "pushed": True,
-                "mode": "branch",
-                "branch": branch,
-                "target": target,
-                "reason": reason,
-            }
-    # Local-path upstream: keep the branch + hook flow (the hook merges/deploys).
-    # -f: re-accepting (after revoke / a follow-up round) moves the same branch.
-    _git(repo, "push", "-f", UPSTREAM_REMOTE, f"{base}:{branch}", timeout=120)
-    hook = Path(url) / "scripts" / "on-dogfood-push.sh"
-    hook_started = False
-    if hook.is_file() and os.access(hook, os.X_OK):
-        log = Path(url) / "tmp_dogfood_push.log"
-        # The log is shared across every push-back run for this project (and a
-        # re-accept can reuse the same branch name), so grepping it for our
-        # branch would risk picking up a stale prior run. Recording the byte
-        # offset before we start pins the watcher to exactly this run's output.
-        log_offset = log.stat().st_size if log.exists() else 0
-        with open(log, "a") as out:
-            proc = subprocess.Popen(  # noqa: S603 — operator-trusted local repo hook
-                [str(hook), branch],
-                cwd=url,
-                stdout=out,
-                stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL,
-                start_new_session=True,  # survives our own redeploy
-            )
-        hook_started = True
-        # Report the eventual result back into the topic timeline without
-        # making this call wait for it (accept() must return immediately).
-        # `spawn` holds a strong reference (asyncio keeps only a weak one) and
-        # is a no-op with no running loop, e.g. sync tests/scripts. This watcher
-        # outlives a whole subprocess, so it is precisely the shape that can be
-        # collected mid-await, taking the topic's push result with it.
-        spawn(
-            watch_dogfood_push(topic_id, proc, log, log_offset, branch),
-            name=f"dogfood push watch topic={topic_id}",
-        )
-    return {"pushed": True, "mode": "branch", "branch": branch, "hook": hook_started}
-
-
-def _token_push_env(token: str) -> dict[str, str]:
-    """Subprocess env that authenticates one git push with a GitHub token.
+def _token_git_env(token: str) -> dict[str, str]:
+    """Subprocess env that authenticates one git push or fetch with a GitHub
+    token.
 
     The token travels via env var into an inline credential helper — never argv
-    (visible in ps), never disk. The helper list is reset first: the container
-    wires a store-file helper through GIT_CONFIG_* (compose), and letting it run
-    first would push with the host credential instead of the token's identity.
+    (visible in ps), never disk. The helper list is reset first so that nothing
+    configured elsewhere (a helper in the backend's persistent HOME, say) can
+    answer before this one and act as some other identity.
     """
     helper = (
-        "!f() { echo username=x-access-token; "
-        'echo "password=$CHEESE_GIT_PUSH_TOKEN"; }; f'
+        '!f() { echo username=x-access-token; echo "password=$CHEESE_GIT_TOKEN"; }; f'
     )
     return {
         **os.environ,
@@ -1888,7 +1806,7 @@ def _token_push_env(token: str) -> dict[str, str]:
         "GIT_CONFIG_VALUE_0": "",
         "GIT_CONFIG_KEY_1": "credential.helper",
         "GIT_CONFIG_VALUE_1": helper,
-        "CHEESE_GIT_PUSH_TOKEN": token,
+        "CHEESE_GIT_TOKEN": token,
     }
 
 
@@ -1911,7 +1829,7 @@ def push_topic_branch(project_id: uuid.UUID, topic_id: uuid.UUID, token: str) ->
         UPSTREAM_REMOTE,
         f"{branch}:{branch}",
         timeout=120,
-        env=_token_push_env(token),
+        env=_token_git_env(token),
     )
     return branch
 
@@ -2148,13 +2066,11 @@ def push_topic_branch_for_github_pr(
     """两阶段采纳 (PR迭代式): push the topic's OWN branch (not the base) to the
     project's connected GitHub repo under `remote_branch`, authenticated as
     the approving human's own token — never the App's, since attribution is
-    the point (see the PR trailer). Distinct from push_back(), which pushes
-    the ALREADY-MERGED base branch via the host's own git credentials and the
-    `upstream` remote; this instead prepares a branch for review, using
+    the point (see the PR trailer). This prepares a branch for review, using
     whichever repo #192 connected the project to (not necessarily the same
     remote `push_topic_branch` above pushes to).
 
-    Auth reuses `_token_push_env` (credential helper via env var, never argv)
+    Auth reuses `_token_git_env` (credential helper via env var, never argv)
     rather than embedding the token in the push URL. Raises ValidationError on
     any git failure (bad/expired token, network, GitHub outage) — the caller
     treats that as "mechanism unavailable" and degrades to the old
@@ -2175,7 +2091,7 @@ def push_topic_branch_for_github_pr(
     if not _branch_exists(repo_path, branch):
         raise ValidationError("话题还没有可推送的分支")
     url = _github_push_url(owner, repo)
-    env = _token_push_env(token)
+    env = _token_git_env(token)
     refspec = f"{branch}:refs/heads/{remote_branch}"
     try:
         _git(repo_path, "push", url, refspec, timeout=120, env=env)

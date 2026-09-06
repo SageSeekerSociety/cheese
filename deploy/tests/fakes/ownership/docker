@@ -47,18 +47,10 @@ done
 case "$mount" in
   /target)
     printf 'HANDOVER user=%s path=%s\n' "$user" "$host" >> "$LOG"
+    # The chown container dying on the box, with the tree already half-moved.
+    if [ "${OWNERSHIP_HANDOVER_FAILS:-0}" = 1 ]; then exit 1; fi
     OWNERSHIP_CHOWN_LOG="$LOG" PATH="$HERE/inner:$PATH" \
       sh -c "${script//\/target/$host}"
-    ;;
-  /secret)
-    # A real chown needs root; record the intent so a test can prove the secret
-    # was (or was not) handed over, and that its mode was never touched.
-    printf 'SECRET-CHOWN user=%s path=%s\n' "$user" "$host" >> "$LOG"
-    ;;
-  /probe)
-    printf 'PROBE user=%s path=%s\n' "$user" "$host" >> "$LOG"
-    if [ "${OWNERSHIP_PROBE_FAILS:-0}" = 1 ]; then exit 1; fi
-    [ -r "$host" ] || exit 1
     ;;
 esac
 exit 0

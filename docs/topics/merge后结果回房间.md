@@ -15,9 +15,9 @@
 1. `ws.merge_topic()` 抛异常 → 失败通知，`raise ValidationError`。
 2. 合并冲突（`conflicts` 非空）→ 失败通知（含冲突原因），card 转 `conflict`，正常 return。
 3. 非冲突的其他合并失败（`noop` 不为真）→ 失败通知，`raise ValidationError`。
-4. 合并成功（含 noop 直接可验收）→ 成功通知，复用已算好的 `card.note`（push 结果）。
+4. 合并成功（含 noop 直接可验收）→ 成功通知，复用已算好的 `card.note`。
 
-**为什么改成 fire-and-forget**：最初实现是 `await post_with_retries(...)`。`post_with_retries` 失败会重试 3 次（0s/5s/30s，最坏 35s）——集成测试里一撞就是 35 秒卡在采纳请求上，暴露出这个设计问题：写一条房间通知不该让采纳者的 HTTP 响应等一个失败重试。改成 `asyncio.create_task` 调度、不等待，跟 `workspace/service.py` 里 `watch_dogfood_push` 的既有写法一致。单测里对应加了 `await asyncio.sleep(0)`（"give the loop one tick"）再断言，抄的是 `test_push_back.py::test_local_upstream_hook_schedules_a_result_watcher` 的写法。
+**为什么改成 fire-and-forget**：最初实现是 `await post_with_retries(...)`。`post_with_retries` 失败会重试 3 次（0s/5s/30s，最坏 35s）——集成测试里一撞就是 35 秒卡在采纳请求上，暴露出这个设计问题：写一条房间通知不该让采纳者的 HTTP 响应等一个失败重试。改成 `asyncio.create_task` 调度、不等待。单测里对应加了 `await asyncio.sleep(0)`（"give the loop one tick"）再断言。
 
 ## 单测（`backend/tests/unit/test_review_acceptance_merge_failure.py`）
 
