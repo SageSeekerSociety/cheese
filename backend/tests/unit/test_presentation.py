@@ -83,6 +83,33 @@ TASK_CASES = [
         Column.building,
         "失联",
     ),
+    # 一条活由房间会话里的一个分身做，所以「它还在不在」有两个答案，先问屏幕。
+    (
+        "分身在做，刚说过话",
+        task(has_worker=True, last_signal_at=JUST_NOW),
+        Column.building,
+        "运行中",
+    ),
+    # 屏幕没了，那个分身一定也没了 —— 它住在房间的会话里，而它不会来说一声。
+    (
+        "分身所在的屏幕没了",
+        task(has_worker=True, last_signal_at=JUST_NOW, room_screen_live=False),
+        Column.building,
+        "失联",
+    ),
+    (
+        "屏幕还在，但分身早就没动静了",
+        task(has_worker=True, last_signal_at=LONG_AGO),
+        Column.building,
+        "失联",
+    ),
+    # 干完了在等房间结算，不是断了 —— 这一条安静得理直气壮。
+    (
+        "分身交了结论，等房间结算",
+        task(has_worker=True, last_signal_at=LONG_AGO, conclusion_pending=True),
+        Column.building,
+        "空闲",
+    ),
     (
         "闸门在跑",
         task(card=card(AcceptStatus.pending_gate)),
@@ -291,6 +318,29 @@ def test_every_phrase_is_reachable():
 
     every = {p for phrases in COLUMN_PHRASES.values() for p in phrases}
     assert reached == every
+
+
+def test_a_worker_that_stopped_reporting_is_not_a_worker_that_finished():
+    """分身报完成不是活干完了 —— 一个分身可以报好几次完成（把长命令丢进自己的后台
+    再停下来等也算一次），所以看板绝不能因为它安静下来就把这条活翻成「已收工」。
+    只有收工（`TaskStatus.closed`）或者已交付才是终态。"""
+    quiet = task(has_worker=True, last_signal_at=LONG_AGO)
+    shown = task_presentation(quiet, now=NOW)
+    assert shown.column is Column.building, "断了联系不等于干完了"
+    assert shown.display_status == "失联"
+
+    gone = task_presentation(
+        task(has_worker=True, last_signal_at=JUST_NOW, room_screen_live=False), now=NOW
+    )
+    assert gone.column is Column.building
+
+
+def test_a_finished_thread_still_reads_as_finished_with_a_worker_on_it():
+    """反过来也得成立：绑过分身不能盖掉真正的终态。"""
+    closed = task(has_worker=True, status=TaskStatus.closed, last_signal_at=LONG_AGO)
+    assert task_presentation(closed, now=NOW).display_status == "已收工"
+    delivered = task(has_worker=True, accepted_at=JUST_NOW, last_signal_at=LONG_AGO)
+    assert task_presentation(delivered, now=NOW).display_status == "已采纳"
 
 
 def test_it_reads_nothing_but_the_facts_it_was_given():
