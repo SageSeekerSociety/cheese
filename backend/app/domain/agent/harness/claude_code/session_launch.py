@@ -23,10 +23,10 @@ The three files are not belt-and-braces:
 - ``.claude.json`` pre-accepts the first-launch dialogs. With
   ``CLAUDE_CONFIG_DIR`` set, claude reads AND writes its config under THAT
   directory and never falls back to ``$HOME`` (verified on the device path), so
-  an image that bakes the gates into ``$HOME`` does not help: the onboarding
-  dialog eats the first prompt, the pane never reaches ``❯``, and the turn dies
-  at the ready handshake with nothing saying why. The trust entry names the
-  session's OWN cwd for the same reason — a baked file cannot know it.
+  an image that bakes the gates into ``$HOME`` does not help: the fresh session
+  comes up showing an onboarding dialog instead of taking input, and nothing
+  says why. The trust entry names the session's OWN cwd for the same reason — a
+  baked file cannot know it.
 - the system prompt file, which ``--append-system-prompt-file`` points at.
 
 All three are read ONCE, at launch: a session that is merely reused keeps what
@@ -35,12 +35,9 @@ for the NEXT fresh session — a container rebuild, a crash — and a stale prom
 served to that one is the failure this prevents.
 """
 
-import asyncio
 import json
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
 
 from app.domain.agent import clone
 from app.domain.agent.harness import CLAUDE_CODE
@@ -96,11 +93,14 @@ def hooks_settings(extra_stop: list[str] | None = None) -> dict:
         "permissions": {"deny": list(DISALLOWED_TOOLS)},
         "hooks": {
             "SessionStart": plain,
-            # The delivery receipt. We inject a prompt by typing it into the
-            # terminal, and typing has no return value: tmux confirms the bytes
-            # reached the pane and nothing confirms a prompt box read them. This
-            # hook fires for pasted input exactly as for a human's keystrokes,
-            # so its arrival is the proof that the message became a user turn.
+            # The consumption receipt. A prompt reaches the session over its
+            # rendezvous socket, and that protocol has no positive ack: a frame
+            # that was written and not refused has entered the queue, and nothing
+            # on that channel says it was read. This hook fires when the session
+            # takes a queued text as a user turn, so its arrival is the proof.
+            # Not every build fires it for every consumption — see the note in
+            # hooks_substrate's `send` about what 2.1.224 does with a text
+            # delivered while a tool is running.
             "UserPromptSubmit": plain,
             "PreToolUse": tool_matched,
             "PostToolUse": tool_matched,
@@ -224,103 +224,6 @@ class ClaudeLaunch:
             # has to look at the transcript through the mount.
             transcripts_at=place.state_at,
         )
-
-
-# How long a fresh `claude` gets to draw its input box, and how often to look.
-# A cold start on a new container is the slow case (the launcher's first-run
-# gates, then the TUI's own boot); past this the screen is not coming up and the
-# turn ends with a clean error instead of hanging.
-READY_TIMEOUT_S = 45.0
-READY_POLL_S = 0.4
-
-
-def input_box_ready(screen_text: str) -> bool:
-    """True when a captured screen shows Claude Code's input box.
-
-    The ``❯`` prompt is the ONLY signal that this TUI is ready to be typed at,
-    and typing before it appears loses the prompt into a boot-time modal. Pure,
-    so it costs no container to test.
-    """
-    return "❯" in screen_text
-
-
-async def wait_for_input_box(capture: Callable[[], Awaitable[str | None]]) -> bool:
-    """Poll a screen until claude's input box shows, or give up (就绪握手).
-
-    The transport supplies the reading; how long a claude takes to come up, and
-    what "up" looks like, are this side's.
-    """
-    deadline = asyncio.get_event_loop().time() + READY_TIMEOUT_S
-    while asyncio.get_event_loop().time() < deadline:
-        screen_text = await capture()
-        if screen_text is not None and input_box_ready(screen_text):
-            return True
-        await asyncio.sleep(READY_POLL_S)
-    return False
-
-
-class ScreenHost[ScreenT](Protocol):
-    """What a transport must be able to do to a screen for a claude to live on
-    it. Six verbs, none of which mention Claude Code — the policy that sequences
-    them (``ensure_claude``) is the part that does.
-
-    Parameterised by whatever the transport calls one screen — a tmux pane here,
-    a device binding there. All six verbs take the SAME handle, and saying so is
-    the difference between a host that satisfies this and one that merely has
-    six methods of the right names.
-    """
-
-    async def session_exists(self, screen: ScreenT) -> bool:
-        """Is there still a session here at all?"""
-        ...
-
-    async def session_deaf(self, screen: ScreenT) -> bool:
-        """Can this session still reach us? A live one that cannot is worse than
-        none: it works perfectly and reports nothing."""
-        ...
-
-    async def retire_session(self, screen: ScreenT) -> None:
-        """Take this session down, and say so — its conversation goes with it."""
-        ...
-
-    async def start_session(self, screen: ScreenT, launch: LaunchSpec) -> None:
-        """Bring a fresh session up running ``launch``."""
-        ...
-
-    async def reclaim_session(self, screen: ScreenT) -> None:
-        """Make a session that was left running usable again."""
-        ...
-
-    async def capture_session(self, screen: ScreenT) -> str | None:
-        """What the screen currently shows, or None if it cannot be read."""
-        ...
-
-
-async def ensure_claude[ScreenT](
-    host: ScreenHost[ScreenT], screen: ScreenT, launch: LaunchSpec
-) -> bool:
-    """Have a claude on this screen, ready to be typed at. False = it never came
-    up in time.
-
-    A session that already exists is REUSED — it is the conversation's
-    continuity, and restarting it throws that away — but only if it can still
-    report. A claude reads its wiring once at exec and never again, so a session
-    whose reporting path has since died is a process that works perfectly and
-    tells nobody: cheaper to lose its memory than to run turns nobody can see.
-
-    The input-box wait happens on both paths, not just the fresh one. A reused
-    session can be mid-render (a previous turn's output still painting), and the
-    first thing done to it either way is typing.
-    """
-    if await host.session_exists(screen):
-        if await host.session_deaf(screen):
-            await host.retire_session(screen)
-            await host.start_session(screen, launch)
-        else:
-            await host.reclaim_session(screen)
-    else:
-        await host.start_session(screen, launch)
-    return await wait_for_input_box(lambda: host.capture_session(screen))
 
 
 def harness_of(env: dict[str, str]) -> str:
