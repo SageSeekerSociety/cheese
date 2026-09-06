@@ -91,11 +91,11 @@
 - **存在来路不明的晚到 SubagentStop**：会话 Stop 之后才到、agent_id 与真分身不同、agent_type 为空、last_assistant_message 是提示词碎片（疑似 Claude Code 内部工具 agent）。**所以任何按 SubagentStop 落结论/落卡的逻辑必须只认平台绑定过的 agent_id，来路不明的一律不落。**
 - 晚于 Stop 到达的 SubagentStop 今天会掉进 hooks_substrate.py:1227 的 platform_unsolicited 内存轮次——T3 的活证据。
 
-**T2 任务绑定分身 + split 切换（进行中）**：`tasks` 加 `subagent_id` 列（迁移）；新路由 bind（只有房间能调、只认自己房间的 open 任务、同房间内 agent_id 不得重复绑定）；`cheese split` 不再起屏幕/kickoff/占驻留槽，改为建 task 行 + 返回 id + 提示房间芝士自己 spawn 分身后 `cheese bind`；房间 hook 流里带绑定 agent_id 的事件按绑定归到该任务的时间线（blocks 打 task_id）；SubagentStop 只对绑定 id 记录成任务时间线上的事件（**不自动落结论**——见 T1 实测第二条）；新增 `cheese conclude-task <task_id> "<结论>"`，由房间在收到完成通知、验过货之后显式走现有 return_conclusion 流程开结论卡。split 路径上随之死掉的代码（对任务的 submit_kickoff、驻留槽 admit）同阶段删除。
+**T2 任务绑定分身 + split 切换（✅ 完成）**：已合入分支（HEAD be2f15937，20 文件 +1272/-107，全绿：unit 3637 passed、integration 578 passed、迁移单头检查过）。落地要点：`tasks.subagent_id` 列 + `(room_id, subagent_id)` 索引；bind 路由五条校验齐全（含幂等重绑）；split 不再 kickoff/占槽（旧代码直接删除，返回值去掉队列字段）；带绑定 agent_id 的事件归到任务时间线（实时帧发活自己的频道）；`cheese conclude-task` 由房间显式落结论开卡。三个定下来的规则：**未绑定分身的工具事件照旧记房间（别丢跑动），野 SubagentStart/Stop 一个字不落**（不对称是故意的——野 Stop 实测是提示词碎片，落了等于替陌生人贴半截话）；归属查询走 TaskService 新薄壳（不跨域摸 repository）；收工的任务其 agent_id 立即停止接事件。
 
-**T3 轮次与收尸认新形态**：`platform_unsolicited` 轮次落 `agent_turns` 行（新 reason）、记用量、结卡；#689 的 unread 闸门和 PROMPT_UNDELIVERED 不误伤通知唤起的轮次；presentation 给绑定了分身的任务算「失联」（房间屏幕死了或 SubagentStop 永不到）；完成通知非终态（同一分身可多次报完成）；晚到的来路不明 SubagentStop 的归宿要明确。
+**T3 轮次与收尸认新形态（进行中）**：①**need-evidence 打回改道（头号，T2 点名的雷）**：`routes/conclusions.py` 打回今天会 `submit_kickoff` 去起那条活自己的会话——活已没有会话，这会复活一个刚删掉形态的容器；改为唤醒房间转达（删旧路，不留分支）。②`platform_unsolicited` 轮次转正：落 `agent_turns` 行（自启型、不可重投）、记用量、结卡、消费待读，收尸能收但不重投。③失联态：绑定了分身的任务，房间屏幕死了或该 agent_id 长时间无事件 → presentation 判「失联」，不许永远转圈。④完成通知非终态钉测试。
 
-**T4 收尾清扫**：人在任务视图留言 → 唤醒房间转达（SendMessage 续跑分身）；`cheese tell` 对分身任务的语义重定义或删除；旧每任务屏幕路径的残余大扫除（retire_thread_storage 对任务、ghost sweep、device_launch 的任务分支、residency 机制去留）。
+**T4 收尾清扫**：人在任务视图留言 → 唤醒房间转达（SendMessage 续跑分身）；`cheese tell` 对分身任务的语义重定义或删除；旧每任务屏幕路径的残余大扫除（retire_thread_storage 对任务、ghost sweep、device_launch 的任务分支、residency 机制去留）；分身的 TaskCreate/TaskUpdate 仍写进房间清单的归属问题（T2 确认非新回归，改动前就如此）。
 
 ### 设计依据与风险
 
@@ -106,6 +106,6 @@
 - [x] 三条待核结论全部实测核实
 - [x] 设计评估 + 拍板
 - [x] T1 hooks 认分身事件（含拼装层补丁与三条实测新事实，已完成）
-- [ ] T2 任务绑定分身 + split 切换（子任务进行中）
-- [ ] T3 轮次与收尸认新形态
+- [x] T2 任务绑定分身 + split 切换（已完成）
+- [ ] T3 轮次与收尸认新形态（子任务进行中）
 - [ ] T4 收尾清扫（转达路 + 旧路径残余）
