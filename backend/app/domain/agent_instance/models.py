@@ -17,7 +17,7 @@ exists to undo.
 
 import uuid
 
-from sqlalchemy import ForeignKey, String, UniqueConstraint
+from sqlalchemy import Boolean, ForeignKey, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -42,3 +42,9 @@ class AgentInstance(UuidPk, Timestamps, Base):
     # what every project got before types existed.
     type_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     display_name: Mapped[str] = mapped_column(String(64), default="")
+    # Retiring an agent cannot delete this row: the memory pool is keyed by
+    # ``handle`` and the rooms already working with it point at its id, so
+    # dropping the row would strand both. It stays, and stops being offered.
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )

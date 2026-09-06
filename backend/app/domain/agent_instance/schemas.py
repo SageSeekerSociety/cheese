@@ -13,6 +13,19 @@ class AgentInstanceCreate(BaseModel):
     display_name: str = Field(default="", max_length=64)
 
 
+class AgentInstanceUpdate(BaseModel):
+    """Rename an agent, or put it in another type.
+
+    Both fields are optional and told apart from an explicit null by
+    ``model_fields_set`` — ``type_name: null`` is a real value here
+    (「通用（不指定）」), so reading an absent field as null would strip the type
+    off every agent whose name somebody edited.
+    """
+
+    display_name: str | None = Field(default=None, max_length=64)
+    type_name: str | None = Field(default=None, max_length=64)
+
+
 class AgentInstanceOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -26,6 +39,9 @@ class AgentInstanceOut(BaseModel):
     # False for the implicit 芝士 a project has before anyone configured one:
     # it resolves and it owns a memory pool, but there is no row to edit.
     configured: bool = True
+    # False = retired. Still listed, still resolvable by the rooms already on
+    # it, still owns its memory — just not on offer for new work.
+    is_active: bool = True
     created_at: datetime | None = None
 
 

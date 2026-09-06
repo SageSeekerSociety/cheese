@@ -45,6 +45,7 @@ def periodic_jobs(
         finalize_expired_aggregations,
     )
     from app.domain.task.deadline_scheduler import sweep_expired_deadlines
+    from app.domain.topic.retire import sweep_retired_storage
     from app.domain.usage.subscription_ingest import ingest_once
 
     usage_log = settings.subscription_usage_log.strip()
@@ -137,5 +138,15 @@ def periodic_jobs(
             "task deadline sweep",
             settings.task_deadline_sweep_interval_s,
             lambda: sweep_expired_deadlines(sessions),
+        ),
+        # Archive takes nothing off disk: a place's worktree here and its home
+        # on the device stay for the retention so an un-archive resumes with
+        # its session. This is what removes them after that — transcripts
+        # stored first — and at once for places no longer in the database
+        # (topic/retire.py). Disk, not data: the branch stays.
+        PeriodicRunner(
+            "topic storage sweep",
+            settings.topic_storage_sweep_interval_s,
+            lambda: sweep_retired_storage(sessions),
         ),
     ]

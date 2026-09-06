@@ -246,7 +246,7 @@ async def test_resume_turn_still_speaks_as_the_platform(client, tmp_path):
     )
     await settle_turn(svc, topic_id)
 
-    # 再来一轮没人说话的续跑：pending 必然是空的。
+    # 再来一轮没人说话的重发：pending 必然是空的。
     await asyncio.wait_for(
         _drain(
             svc.converse(
