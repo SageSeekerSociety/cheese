@@ -1545,3 +1545,63 @@ async def test_a_turn_cut_by_its_ceiling_still_ends_its_stream(db_factory):
         runner.submit(_NeverFinishes(), topic, author="u", content="hi", summon=True)
         f = await _next_frame(q, "done", timeout=3)
     assert f["type"] == "done"
+
+
+# --- 上限量的是「多久没有进展」，不是「跑了多久」 --------------------------
+#
+# 一个干大重构的 agent 和一个陷在打印循环里的会话，按经过的时间完全一样，按
+# 「有没有调过工具」立刻就分开了。下面两条是这句话的两面。
+
+
+@pytest.mark.anyio
+async def test_a_turn_that_keeps_calling_tools_outlives_its_ceiling(db_factory):
+    """每隔一小会儿调一次工具的一轮，总时长可以远超上限而不被砍。"""
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker, turn_timeout_s=5.0)
+
+    class _KeepsWorking:
+        session_factory = db_factory
+
+        async def converse(self, **_):
+            yield {"type": "turn_ceiling", "seconds": 0.3}
+            yield {"type": "prompt_delivered"}
+            # 四轮各 0.2 秒：总共 0.8 秒，是上限的两倍多，但从没有 0.3 秒
+            # 里一次工具都不调。
+            for _ in range(4):
+                yield {"type": "tool", "name": "Read"}
+                await asyncio.sleep(0.2)
+            yield {"type": "done"}
+
+    topic = await a_topic(db_factory)
+    async with broker.subscribe(str(topic)) as q:
+        runner.submit(_KeepsWorking(), topic, author="u", content="hi", summon=True)
+        f = await _next_frame(q, "done", timeout=5)
+    assert f["type"] == "done"
+
+
+@pytest.mark.anyio
+async def test_a_turn_that_only_produces_output_is_still_cut(db_factory):
+    """反过来：一直吐字、一次工具都不调的会话必须还是被拦下来。
+
+    它是这道闸真正要挡的那个，而且任何「有没有动静」的判据都拦不住它，因为它
+    一直有动静。
+    """
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker, turn_timeout_s=5.0)
+
+    class _OnlyTalks:
+        session_factory = db_factory
+
+        async def converse(self, **_):
+            yield {"type": "turn_ceiling", "seconds": 0.3}
+            yield {"type": "prompt_delivered"}
+            for _ in range(40):
+                yield {"type": "assistant_block", "text": "还在说"}
+                await asyncio.sleep(0.05)
+            yield {"type": "done"}
+
+    topic = await a_topic(db_factory)
+    async with broker.subscribe(str(topic)) as q:
+        runner.submit(_OnlyTalks(), topic, author="u", content="hi", summon=True)
+        f = await _next_frame(q, "error", timeout=5)
+    assert "超时" in f["message"]

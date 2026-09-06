@@ -295,6 +295,7 @@ def build_compute_pool(cloud_channel: "Channel | None" = None) -> ComputePool:
             channel,
             idle_suspect_s=settings.agent_idle_suspect_s,
             hard_ceiling_s=settings.agent_turn_hard_ceiling_s,
+            session_ceiling_s=settings.agent_session_ceiling_s,
         )
 
     channels: list[Channel] = [DeviceChannel()]
