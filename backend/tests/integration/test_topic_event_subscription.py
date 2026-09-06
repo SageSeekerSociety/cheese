@@ -416,6 +416,97 @@ async def test_session_initiated_work_is_persisted_and_broadcast(
     assert subscription.consumer_task.done()
 
 
+async def test_a_subagents_boundaries_pass_through_the_room_untouched(
+    client, tmp_path
+) -> None:
+    """一个会话里同时有几个工人干活时，房间该看到的东西一点没变。
+
+    分身的起止是给平台看的归属信息，不是房间里的一条动静：它们不落库、不广播、
+    也不点亮「正在处理」。会话自己说的话、分身发出的工具调用照旧落地——分身的
+    工具钩子本来就一直混在这条流里，只是从今天起带上了它是谁。
+    """
+    factory = client.test_factory
+    project_id, topic_id = await _seed_topic(factory)
+    router = HookRouter()
+    provider = ClaudeCodeRuntime(_IdleChannel(), router=router)
+    ChatService(
+        session_factory=factory,
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+        compute=ComputePool([provider], provider.name),
+    )
+    await provider.ensure_subscription(project_id, topic_id)
+    provider._live[topic_id] = "screen"
+
+    broker = get_broker()
+    async with broker.subscribe(str(topic_id)) as room:
+        assert router.push(
+            str(topic_id),
+            {
+                "hook_event_name": "SubagentStart",
+                "agent_id": "worker-1",
+                "agent_type": "general-purpose",
+                "session_id": "session-subagent",
+                "_eid": "subagent-start-1",
+            },
+        )
+        assert router.push(
+            str(topic_id),
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Bash",
+                "tool_input": {"command": "rg TODO"},
+                "agent_id": "worker-1",
+                "agent_type": "general-purpose",
+                "_eid": "subagent-tool-1",
+            },
+        )
+        assert router.push(
+            str(topic_id),
+            {
+                "hook_event_name": "SubagentStop",
+                "agent_id": "worker-1",
+                "agent_type": "general-purpose",
+                "last_assistant_message": "分身查完了",
+                "agent_transcript_path": "/home/u/.claude/projects/w/sub.jsonl",
+                "_eid": "subagent-stop-1",
+            },
+        )
+        assert router.push(
+            str(topic_id),
+            {
+                "hook_event_name": "Stop",
+                "last_assistant_message": "会话答完了",
+                "session_id": "session-subagent",
+                "_eid": "stop-subagent-1",
+            },
+        )
+        frames = [await asyncio.wait_for(room.get(), 1) for _ in range(5)]
+
+    kinds = [frame["type"] for frame in frames]
+    assert kinds == [
+        "turn_started",
+        "event_block",
+        "assistant_block",
+        "done",
+        "turn_finished",
+    ]
+    assert frames[1]["block"]["meta"]["eid"] == "subagent-tool-1"
+    assert frames[2]["block"]["content"] == "会话答完了"
+
+    async with factory() as session:
+        rows = await BlockRepository(session).list_for_topic(topic_id)
+    # 分身的收尾话没有变成第二条 AI 发言：它今天只是被认出来，还没有归属可写。
+    assert [
+        row.content
+        for row in rows
+        if row.kind == BlockKind.message and row.author_type == AuthorType.ai
+    ] == ["会话答完了"]
+    assert "分身查完了" not in [row.content for row in rows]
+
+    await provider._close_topic(topic_id)
+
+
 async def test_late_hook_opens_fresh_unsolicited_work(client, tmp_path) -> None:
     factory = client.test_factory
     project_id, topic_id = await _seed_topic(factory)

@@ -1108,6 +1108,25 @@ def _provider_with_ledger():
                 "tool_response": "x",
             },
         ),
+        # 分身的起止说的是「会话里多了/少了一个工人」，不是「会话正在答」。
+        # 而且分身跨得过轮次边界：它可以在会话早就停下之后才结束，那时候不会再
+        # 有任何 Stop 来关掉这个标记。
+        (
+            "SubagentStart",
+            {
+                "hook_event_name": "SubagentStart",
+                "agent_id": "w1",
+                "agent_type": "general-purpose",
+            },
+        ),
+        (
+            "SubagentStop",
+            {
+                "hook_event_name": "SubagentStop",
+                "agent_id": "w1",
+                "last_assistant_message": "查完了",
+            },
+        ),
     ],
 )
 async def test_a_hook_that_is_not_the_session_working_opens_nothing(label, hook):

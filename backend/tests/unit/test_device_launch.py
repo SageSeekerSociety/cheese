@@ -15,7 +15,15 @@ def test_hooks_settings_wire_command_hook_to_forwarder():
     s = device_launch.hooks_settings()
     assert s["skipDangerousModePermissionPrompt"] is True
     # Every perception hook forwards via the `cheese-hook` COMMAND hook.
-    events = ("SessionStart", "PreToolUse", "PostToolUse", "MessageDisplay", "Stop")
+    events = (
+        "SessionStart",
+        "PreToolUse",
+        "PostToolUse",
+        "MessageDisplay",
+        "SubagentStart",
+        "SubagentStop",
+        "Stop",
+    )
     for event in events:
         entry = s["hooks"][event][0]
         assert entry["hooks"][0] == {"type": "command", "command": "cheese-hook"}
