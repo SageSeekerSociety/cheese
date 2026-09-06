@@ -1782,6 +1782,21 @@ class AgentWorkRunner:
             # Every other backend never emits this frame, so their behaviour here
             # is byte-for-byte unchanged.
             loop_start = asyncio.get_running_loop().time()
+            # When the turn itself began, filled in by `prompt_delivered` below.
+            # `loop_start` is not that moment: preparing the database, choosing a
+            # backend and attaching the screen all happen after it.
+            turn_start: float | None = None
+            # Past `turn_start + ceiling_s` the turn is RECORDED as long, and
+            # nothing else: the ceiling stopped being a deadline. Elapsed time
+            # cannot tell an agent three hours into a refactor from a session
+            # that is stuck, and the harness monitor now carries three checks
+            # that each catch a specific way of being stuck (a process gone,
+            # output with no tool call, an injected message never read). What a
+            # wall clock alone could still end here is a turn that is working
+            # and has not finished. So the only deadline this wrap keeps is the
+            # cold-start fuse below, which asks a different question.
+            ceiling_crossed = False
+
             # 冷启动看门狗: until the model has said ANYTHING, the wrap runs on a
             # much shorter fuse than the turn ceiling.
             #
@@ -1824,7 +1839,12 @@ class AgentWorkRunner:
                 fuse_deadline = loop_start + min(first_output_fuse_s, self._timeout)
             else:
                 fuse_deadline = None
-            async with asyncio.timeout(self._timeout) as turn_deadline:
+            # No deadline until the fuse asks for one. `self._timeout` used to
+            # be the starting value, standing in for a ceiling the backend had
+            # not declared yet; the ceiling is recorded now, never scheduled, so
+            # a wrap that started at `self._timeout` would cut every turn whose
+            # fuse is disabled at exactly that mark, with nothing to say why.
+            async with asyncio.timeout(None) as turn_deadline:
                 if fuse_deadline is not None:
                     turn_deadline.reschedule(fuse_deadline)
                 turn_frames = (
@@ -1860,32 +1880,55 @@ class AgentWorkRunner:
                     # call persists no Block, so without this a turn legitimately
                     # grinding through tools looks identical to a wedged one.
                     self._last_frame_at[str(turn_id)] = time.monotonic()
+                    # Measured from `turn_start` when the backend told us when
+                    # the turn began, and from `loop_start` when it did not: a
+                    # recorded fact must not depend on an optional frame.
+                    ceiling_base = loop_start if turn_start is None else turn_start
+                    if (
+                        not ceiling_crossed
+                        and asyncio.get_running_loop().time()
+                        >= ceiling_base + ceiling_s
+                    ):
+                        ceiling_crossed = True
+                        rec["ceiling_crossed_s"] = round(
+                            asyncio.get_running_loop().time() - ceiling_base
+                        )
+                        logger.warning(
+                            "turn %s is past its %ss ceiling and still going — "
+                            "recorded, not ended (topic %s)",
+                            turn_id,
+                            round(ceiling_s),
+                            topic_id,
+                        )
                     if kind == "prompt_delivered":
                         # The transport accepted the write. Stamp the durable
                         # registry NOW: if this process dies a moment later, the
                         # sweep reads a fact instead of guessing from side
                         # effects that may not exist yet.
                         await _stamp_delivery(chat_service.session_factory, turn_id)
+                        # The turn starts HERE, so the ceiling does too. Both
+                        # clocks finally have a real base, and whichever comes
+                        # first wins: the fuse still asks "did anything ever
+                        # start" from `loop_start`, which is what makes the setup
+                        # window its business, and the ceiling now asks "has this
+                        # run too long" from the moment there was something to
+                        # run.
+                        turn_start = asyncio.get_running_loop().time()
                         continue
                     if kind == "turn_ceiling":
                         ceiling_s = float(frame.get("seconds", self._timeout))
                         # `topic_work()` reads this so `cheese status` reports the
                         # backend's REAL ceiling, not the generic outer default.
                         rec["ceiling_s"] = ceiling_s
-                        if fuse_deadline is None:
-                            turn_deadline.reschedule(loop_start + max(0.0, ceiling_s))
-                        else:
-                            # Still silent, so the fuse keeps its say: the deadline
-                            # is whichever of the two comes FIRST. A backend that
-                            # declares a ceiling shorter than the fuse still gets
-                            # cut at its own ceiling; one that declares 900s does
-                            # not thereby buy 900 seconds of silence — that is
-                            # exactly the failure the fuse exists to cut short,
-                            # and this frame is emitted before the container is
-                            # touched, so it cannot vouch for anything being up.
-                            fuse_deadline = loop_start + max(
-                                0.0, min(ceiling_s, first_output_fuse_s)
-                            )
+                        # The frame's only remaining job here: it is emitted before
+                        # the container is touched, so the generic default that
+                        # truncated the fuse (`min(first_output_fuse_s,
+                        # self._timeout)` above) was standing in for a ceiling
+                        # nobody had declared. Now one is declared, the fuse gets
+                        # its own full length back. The ceiling itself is recorded
+                        # against `turn_start`, never scheduled.
+                        if fuse_deadline is not None:
+                            fuse_deadline = loop_start + max(0.0, first_output_fuse_s)
                             turn_deadline.reschedule(fuse_deadline)
                         continue
                     if not lifecycle["started"] and not lifecycle["session_owned"]:
@@ -1906,7 +1949,7 @@ class AgentWorkRunner:
                         # its real ceiling and retire the cold-start fuse.
                         if fuse_deadline is not None:
                             fuse_deadline = None
-                            turn_deadline.reschedule(loop_start + max(0.0, ceiling_s))
+                            turn_deadline.reschedule(None)
                     if kind == "tool":
                         rec["tools"] += 1
                     if kind == "error":
@@ -1969,6 +2012,12 @@ class AgentWorkRunner:
                     "persisted": False,
                 },
             )
+            # Ends the stream, for the reason spelled out on the timeout path.
+            # `turn_finished` does not cover this: `_run` publishes it only when
+            # `lifecycle["started"]` is set, and a turn the sweep tears down
+            # before its first frame never announced itself, so a subscriber
+            # would be left reading until its own timeout.
+            await self._broker.publish(channel, {"type": "done"})
             # The on-disk registry entry is deliberately left alone: whoever
             # cancelled us owns it (the sweep already claimed it; a shutdown
             # wants startup to find and resume it).
@@ -1983,7 +2032,6 @@ class AgentWorkRunner:
             # `turn_ceiling` frame may have raised this well above
             # `self._timeout`, so logging the base default here would be
             # misleading about what actually elapsed before the cut.
-            effective_ceiling_s = round(rec.get("ceiling_s") or self._timeout)
             # Two different failures share this handler, and telling them apart is
             # the whole point of the cold-start fuse — it decides which message
             # the room gets. "Ran a long time and wedged" is a turn problem, and
@@ -1993,9 +2041,16 @@ class AgentWorkRunner:
             # Neither is retried — a person picks it up (a wedged turn re-runs
             # into the same dead machine, and an environment that never came up
             # needs someone to look).
+            # Only the cold-start fuse raises this now: the ceiling is recorded
+            # rather than scheduled, so a turn that produced output has no
+            # deadline left to hit. Kept as a check rather than assumed, so a
+            # future deadline added above cannot silently borrow the fuse's
+            # wording.
             never_started = bool(
                 rec["first_output_s"] is None and self._first_output_timeout_s
             )
+            if not never_started:
+                raise
             # Meta for the posted event: only the credential-expired case carries a
             # platform_error classification the frontend can render; the two generic
             # branches stay a plain system event, exactly as before.
@@ -2018,7 +2073,7 @@ class AgentWorkRunner:
                 rec["detail"] = "subscription credential expired"
                 text = SUBSCRIPTION_CREDENTIAL_EXPIRED.content
                 fuse_meta = SUBSCRIPTION_CREDENTIAL_EXPIRED.meta
-            elif never_started:
+            else:
                 logger.error(
                     "turn %s produced no output within %ss for topic %s; "
                     "treating as a substrate failure (tools=%s)",
@@ -2050,31 +2105,6 @@ class AgentWorkRunner:
                     ),
                     detail_label="常见原因",
                 )
-            else:
-                logger.warning(
-                    "turn %s timed out (>%ss, elapsed %ss) for topic %s; interrupted",
-                    turn_id,
-                    effective_ceiling_s,
-                    rec["duration_s"],
-                    topic_id,
-                )
-                text = (
-                    f"芝士这轮超时被中断了"
-                    f"（{effective_ceiling_s}秒的上限），平台不会自动重试。"
-                )
-                timeout_meta = notice(
-                    EVENT_TURN_TIMEOUT,
-                    severity=SEVERITY_WARN,
-                    # 平台不再自动重试 —— 要有人看一眼、或重新 @ 它。
-                    who=WHO_HUMAN,
-                    detail=(
-                        f"上限 {effective_ceiling_s} 秒，实际跑了约 "
-                        f"{rec['duration_s']} 秒，可能卡在某步。"
-                        "已完成的改动都在；平台不会自动重试 —— 需要继续的话，"
-                        "有人看一眼后重新 @ 芝士，它会从断点接着做。"
-                    ),
-                    detail_label="详细说明",
-                )
             block = None
             try:
                 # `fuse_meta` (订阅凭据已过期) 优先：它带 code，下面的 error_frame
@@ -2096,6 +2126,15 @@ class AgentWorkRunner:
             if fuse_meta is not None:
                 error_frame["code"] = SUBSCRIPTION_CREDENTIAL_EXPIRED.code
             await self._broker.publish(channel, error_frame)
+            # End the stream. `chat` publishes `done` on the paths it owns, and
+            # this one cut its generator off mid-flight, so without this nothing
+            # does: a subscriber waiting for the turn to end instead waits out
+            # its own read timeout, which is how a squeezed ceiling became a
+            # 300-second hang in CI rather than a fast failure. `turn_finished`
+            # is no substitute, being published only for a turn that got far
+            # enough to announce itself, which a turn cut down during setup
+            # never did.
+            await self._broker.publish(channel, {"type": "done"})
             # No auto-retry, whatever the timeout was. A credential-dead turn
             # only burns the fuse again against the same expired credential
             # (#388's "对自己的失败没有记忆") and self-heals on the next human
@@ -2109,6 +2148,8 @@ class AgentWorkRunner:
             await self._broker.publish(
                 channel, {"type": "error", "message": exc.message}
             )
+            # Ends the stream, for the reason spelled out on the timeout path.
+            await self._broker.publish(channel, {"type": "done"})
         except Exception as exc:  # noqa: BLE001 — surface runtime failures (spec H4)
             rec["status"] = "crashed"
             rec["duration_s"] = round(time.monotonic() - t0, 1)
@@ -2157,6 +2198,8 @@ class AgentWorkRunner:
             if platform_failure is not None:
                 error_frame["code"] = platform_failure.code
             await self._broker.publish(channel, error_frame)
+            # Ends the stream, for the reason spelled out on the timeout path.
+            await self._broker.publish(channel, {"type": "done"})
             # An unnamed failure is a bug signal, not a transience signal, so the
             # platform does not repeat it — the event above already handed the
             # topic to a person (#574, and the 2026-09-04 room flood). A recovery

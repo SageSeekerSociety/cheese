@@ -1376,13 +1376,18 @@ class ChatService:
         self._compute = compute
         self._compute.bind_events(self._consume_hook_event, self._set_hook_activity)
         self._compute.bind_receipts(self.confirm_prompt_receipt)
+        self._compute.bind_unread_probe(self.oldest_unread_at)
         # Mid-turn messages whose write the transport accepted but whose
         # UserPromptSubmit receipt has not arrived yet (#539 decision A):
         # topic → [(injected text, block ids, consuming turn)]. The receipt
         # stamps them consumed; until then they stay pending, so a session
         # death replays them (宁可重复不可丢失).
+        # The loop clock reading is the fourth field, and it is what
+        # `oldest_unread_at` reports: how long something has been waiting is a
+        # different question from whether it was written, and only the first one
+        # can tell a session that stopped reading from one that is busy.
         self._pending_receipts: dict[
-            uuid.UUID, list[tuple[str, list[uuid.UUID], uuid.UUID]]
+            uuid.UUID, list[tuple[str, list[uuid.UUID], uuid.UUID, float]]
         ] = {}
         # Per-project ExecutionProfile (model + provider). None → always the
         # agent's built-in default (tests / single-profile deploys).
@@ -1665,7 +1670,12 @@ class ChatService:
         # (confirm_prompt_receipt). Until then the message stays pending, so a
         # session death replays it — 宁可重复不可丢失.
         pending = self._pending_receipts.setdefault(topic_id, [])
-        entry = (line, list(user_block_ids), consuming_turn_id)
+        entry = (
+            line,
+            list(user_block_ids),
+            consuming_turn_id,
+            asyncio.get_running_loop().time(),
+        )
         pending.append(entry)
         del pending[:-16]  # a dead session must not grow this forever
         try:
@@ -1713,6 +1723,22 @@ class ChatService:
             )
             return False
 
+    def oldest_unread_at(self, topic_id: uuid.UUID) -> float | None:
+        """When the longest-waiting unconsumed injection into this topic was
+        written, on the loop clock, or None when nothing is waiting.
+
+        The mirror of `confirm_prompt_receipt`: that one clears an entry when
+        the session proves it read the text, this one reports what is left. A
+        session that has stopped reading keeps every other liveness signal
+        looking healthy, because those all watch what it PRODUCES, and it can
+        produce output forever with its input queue frozen. What it cannot do is
+        answer anybody, so this is the check that has a person behind it.
+        """
+        pending = self._pending_receipts.get(topic_id)
+        if not pending:
+            return None
+        return min(entry[3] for entry in pending)
+
     async def confirm_prompt_receipt(self, topic_id: uuid.UUID, prompt: str) -> None:
         """A UserPromptSubmit receipt from the topic's screen: the session
         consumed an input. If it is one we injected mid-turn, stamp its blocks
@@ -1724,7 +1750,7 @@ class ChatService:
         if not pending:
             return
         for entry in pending:
-            text, block_ids, consuming_turn_id = entry
+            text, block_ids, consuming_turn_id, _written_at = entry
             if prompt == text or (text and prompt.startswith(text)):
                 pending.remove(entry)
                 try:
@@ -4114,14 +4140,13 @@ class ChatService:
             # failure mode this counter exists to expose.
             await session.commit()
             replay_notice = _replay_notice(replay_n, pending)
-            # turn 活跃度检测: the hooks-driven backends (remote
-            # device) run hooks_substrate's two-layer idle-suspect + hard-ceiling
-            # loop and manage their own inner ceiling (which can be hours), so the
-            # outer wall-clock wrap (runtime.py) must be told their REAL ceiling via
-            # a `turn_ceiling` frame instead of killing them at the generic
-            # `agent_turn_timeout_s`. The SDK / remote-cheesed backends have no such
-            # signal and keep the generic default. Without this the device's own
-            # two-layer fix is dead on arrival — the outer guard still kills at 900s.
+            # turn 活跃度检测: the device channel runs hooks_substrate's two-layer
+            # idle-suspect + hard-ceiling loop and manages its own inner ceiling
+            # (which can be hours), so the outer wall-clock wrap (runtime.py) must
+            # be told the REAL ceiling via a `turn_ceiling` frame instead of
+            # killing the turn at the generic `agent_turn_timeout_s`. Without this
+            # the device's own two-layer fix is dead on arrival — the outer guard
+            # still kills at 900s.
             if topic.compute_profile is None:
                 # v4 affinity red line: materialize the effective target BEFORE
                 # the first provider call. A later team-default/sticky change must

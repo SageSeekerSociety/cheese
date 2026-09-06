@@ -23,6 +23,10 @@ Event mapping:
   SubagentStop{agent_id, last_assistant_message, agent_transcript_path}
                                           → AgentSubagentStop
   Stop{last_assistant_message, ...}       → AgentResult (ends the turn stream)
+  StopFailure{error, last_assistant_message}
+                                          → AgentResult(is_error=True) (ends it too:
+                                            Claude Code fires this instead of Stop
+                                            when the API refused the turn)
 
 One session can have several workers going at once — a subagent's hooks come up
 the same pipe as the session's own, tagged with ``agent_id`` (see ``_agent_id``).
@@ -272,6 +276,30 @@ def translate_hook(hook: dict) -> AgentEvent | None:
             agent_type=_agent_type(hook),
         )
 
+    if event == "StopFailure":
+        # Fired INSTEAD of Stop when the turn ends on an API error, after Claude
+        # Code's own retries ran out (10 attempts over ~3 minutes for a 429,
+        # measured on 2.1.224). Without this branch the turn never ends from
+        # the platform's side.
+        #
+        # No failure_code, on purpose. `error` is Claude Code's reading of the
+        # status, and it is not reliable for what the room needs to say: a 429
+        # from our own metering proxy (budget spent) arrives as
+        # `authentication_failed`, because a repeated 429 from a custom gateway
+        # looks like a bad key to it. So the room line is left to the text
+        # path (`_turn_failure_notice`), and the error kind rides along inside
+        # the text where the out-of-credit markers can still see `billing`.
+        sid = hook.get("session_id")
+        kind = str(hook.get("error") or "unknown")
+        said = str(hook.get("last_assistant_message") or "").strip()
+        text = f"{said}（{kind}）" if said else f"AI 服务拒绝了请求（{kind}）"
+        return AgentResult(
+            text=text,
+            session_id=str(sid) if sid else None,
+            is_error=True,
+            errors=[kind],
+        )
+
     # Any unmapped event: nothing to surface.
     return None
 
@@ -308,14 +336,15 @@ class MessageAssembler:
     across the message's flushes), ``index`` (increments per flush), ``final``
     (exactly one flush per message), and ``delta`` (the new lines, newlines
     included — concatenating deltas in index order reconstructs the message
-    verbatim). Verified against 2.1.224, the pinned device version, and 2.1.233.
+    verbatim). Verified against 2.1.224, 2.1.233, and 2.1.261 (the pinned device
+    version).
 
     Persisting each flush as its own chat message is what split one reply into
     several bubbles — and what then defeated every whole-text dedup downstream,
     because the Stop hook's ``last_assistant_message`` never matches a fragment,
-    so the full text landed AGAIN next to its own pieces. The SDK backend fixed
-    the same shape in #170 by buffering fragments to a semantic boundary; this
-    is the hooks-path equivalent, with ``final`` as the boundary.
+    so the full text landed AGAIN next to its own pieces. #170 fixed the same
+    shape once before by buffering fragments to a semantic boundary; this does
+    the same with ``final`` as the boundary.
 
     Also absorbs at-least-once redelivery: a flush re-POSTed after a lost ack
     arrives with the same (message_id, index) and is dropped, whether its

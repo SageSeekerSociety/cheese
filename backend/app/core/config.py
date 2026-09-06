@@ -183,10 +183,36 @@ class Settings(BaseSettings):
     # — a long foreground command with no interim hook must not look identical to a
     # dead screen.
     agent_idle_suspect_s: float = 300.0
-    # Unconditional backstop for both hooks backends regardless of activity — guards
-    # against a pathological "looks active but never converges" turn (a tool
-    # retrying forever, a genuine infinite loop that keeps printing).
+    # The wall-clock mark past which a turn is recorded as long. A metric, not
+    # a gate: crossing it is logged once by the harness monitor and written to
+    # the turn record (`ceiling_crossed_s`), and nothing ends. With the three
+    # gates in place (the process probe past idle-suspect, output with no
+    # progress, an unread injection), what a wall clock alone could still end
+    # is a turn that is working and has not finished, which is not a fault. One
+    # number for both layers: the monitor reads it directly and the outer wrap
+    # in runtime.py receives it via the `turn_ceiling` frame.
     agent_turn_hard_ceiling_s: float = 10800.0
+    # How long a message we injected may sit unconsumed before the session is
+    # called unable to read. On a different axis from the two above: those watch
+    # what a session PRODUCES, and a session that has stopped reading goes on
+    # producing, so neither of them ever fires for it. This one only exists
+    # while something is actually waiting, which makes it the narrower check and
+    # the one with a person behind it.
+    #
+    # Sized against the longest legitimate reason a message goes unread, which
+    # is a single long tool call: input is taken at tool boundaries, so a
+    # 20-minute command legitimately holds a message that long. This is not a
+    # responsiveness target. Ending the turn on this verdict replays the pending
+    # message into the next one, so the cost of firing is a restart, not a loss.
+    agent_unread_grace_s: float = 1800.0
+    # How long a session may keep producing output with no tool call and no
+    # ending before it is called stuck. This is the gate for a loop: a session
+    # that talks and never acts keeps every other signal healthy, because the
+    # idle check sees hooks arriving and the process probe sees a live process.
+    # A long foreground command does not trip it, since it emits no output
+    # while it runs. Sized for the longest honest stretch of pure writing, a
+    # document drafted with no tool call in between.
+    agent_no_progress_s: float = 1800.0
 
     # RETIRED (2026-08-10). Used to name a HOST directory holding a `cheese` CLI
     # to mount over the image's baked copy — but nothing kept that checkout in

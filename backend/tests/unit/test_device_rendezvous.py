@@ -87,7 +87,11 @@ def test_launcher_refuses_an_old_claude_instead_of_falling_back():
     # The failure must be an exit, not a warning: a silent downgrade to pasting
     # is the exact behaviour this replaced.
     assert "exit 1" in script
-    assert "claude install stable" in script  # and it says how to fix it
+    # And before judging what the machine has, it places the platform's pin
+    # itself, from the same route enrollment uses — so a machine enrolled under
+    # an older pin heals at its next launch instead of needing a re-provision.
+    assert "/connector/claude/" in script
+    assert "is older than" in script
 
 
 def test_version_floor_compares_semver_the_right_way_round():
@@ -102,8 +106,9 @@ def test_version_floor_compares_semver_the_right_way_round():
     cases = {
         "2.1.220": False,  # the version the dev box was stuck on
         "2.1.223": False,
-        "2.1.224": True,  # the floor itself
-        "2.1.233": True,
+        "2.1.224": False,  # the old floor: reads a mid-tool prompt, no receipt
+        "2.1.233": False,
+        "2.1.261": True,  # the floor itself
         "2.2.0": True,
         "3.0.1": True,
         "2.0.99": False,
