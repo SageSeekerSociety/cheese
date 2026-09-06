@@ -258,7 +258,8 @@ class MessageAssembler:
     across the message's flushes), ``index`` (increments per flush), ``final``
     (exactly one flush per message), and ``delta`` (the new lines, newlines
     included — concatenating deltas in index order reconstructs the message
-    verbatim). Verified against 2.1.224, the pinned device version, and 2.1.233.
+    verbatim). Verified against 2.1.224, 2.1.233, and 2.1.261 (the pinned device
+    version).
 
     Persisting each flush as its own chat message is what split one reply into
     several bubbles — and what then defeated every whole-text dedup downstream,

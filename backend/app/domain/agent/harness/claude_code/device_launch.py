@@ -55,8 +55,8 @@ _CHEESE_HOOK_SCRIPT = CHEESE_HOOK_SCRIPT
 #
 # Raising these is a deliberate act: re-run cli/e2e (CHEESE_RV=1) against the
 # new build first, because "it launched" is not evidence the frames still work.
-CLAUDE_PINNED_VERSION = "2.1.224"
-CLAUDE_MIN_VERSION = "2.1.224"
+CLAUDE_PINNED_VERSION = "2.1.261"
+CLAUDE_MIN_VERSION = "2.1.261"
 
 # CLAUDE_BASE_CMD starts with the bare word `claude`; the launcher resolves a
 # specific binary (pin, then ~/.local/bin, then PATH) and needs only the flags.
@@ -917,12 +917,51 @@ fi
 # nobody the wiser). Exiting non-zero surfaces as a screen setup error on the
 # turn, which is the honest outcome.
 #
-# The binary is pinned to a verified build when the device has it: this is
-# undocumented private surface and the frames DID move between 2.1.220 and
-# 2.1.224, so "whatever `claude` resolves to today" is not a basis for a
-# delivery path. PATH is the fallback, still gated by the floor.
+# The binary is pinned to a verified build: this is undocumented private
+# surface and the frames DID move between 2.1.220 and 2.1.224, so "whatever
+# `claude` resolves to today" is not a basis for a delivery path. PATH is the
+# fallback, still gated by the floor.
+#
+# The pin is PLACED here when it is missing, from the platform — the same
+# unauthenticated route enrollment downloads from — so a pin bump reaches a
+# machine enrolled under the previous pin at its next launch, with no
+# re-provisioning and no owner action. Before this, bumping the pin left every
+# already-enrolled cloud machine with no binary at all: enrollment installs only
+# versions/<pin> (deliberately no symlink), and nothing else on that machine
+# has a claude. Non-fatal: the chain below still runs, and the floor check
+# still refuses a build that is too old. A screen created without CHEESE_API
+# skips this and behaves as before.
+_pin="$REAL_HOME/.local/share/claude/versions/{CLAUDE_PINNED_VERSION}"
+if [ ! -x "$_pin" ] && [ -n "${{CHEESE_API:-}}" ]; then
+  case "$(uname -m)" in
+    x86_64|amd64) _carch=x64 ;;
+    aarch64|arm64) _carch=arm64 ;;
+    *) _carch="" ;;
+  esac
+  if [ -n "$_carch" ]; then
+    if [ "$(uname -s)" = "Linux" ]; then
+      if ldd /bin/ls 2>&1 | grep -q musl; then
+        _cplat="linux-$_carch-musl"
+      else
+        _cplat="linux-$_carch"
+      fi
+    else
+      _cplat="darwin-$_carch"
+    fi
+    mkdir -p "$(dirname "$_pin")"
+    if curl -fsSL --retry 3 --retry-delay 2 -m 300 \\
+        "${{CHEESE_API%/}}/connector/claude/{CLAUDE_PINNED_VERSION}/$_cplat/claude" \\
+        -o "$_pin.new" && [ -s "$_pin.new" ]; then
+      chmod +x "$_pin.new" && mv "$_pin.new" "$_pin"
+    else
+      rm -f "$_pin.new"
+      echo "cheese-launch: could not fetch claude {CLAUDE_PINNED_VERSION} for \\
+$_cplat from the platform; trying what the machine has" >&2
+    fi
+  fi
+fi
 CLAUDE_BIN=""
-for _c in "$REAL_HOME/.local/share/claude/versions/{CLAUDE_PINNED_VERSION}" \\
+for _c in "$_pin" \\
           "$REAL_HOME/.local/bin/claude"; do
   if [ -x "$_c" ]; then CLAUDE_BIN="$_c"; break; fi
 done
@@ -935,8 +974,8 @@ CLAUDE_V="$("$CLAUDE_BIN" --version 2>/dev/null | head -n 1 | awk '{{print $1}}'
 if [ -z "$CLAUDE_V" ] || [ "$(printf '%s\\n%s\\n' "{CLAUDE_MIN_VERSION}" "$CLAUDE_V" \\
     | sort -V | head -n 1)" != "{CLAUDE_MIN_VERSION}" ]; then
   echo "cheese-launch: claude ${{CLAUDE_V:-unknown}} at $CLAUDE_BIN is older than \\
-{CLAUDE_MIN_VERSION}; prompt delivery needs the rendezvous socket. Upgrade with \\
-\\`claude install stable\\`." >&2
+{CLAUDE_MIN_VERSION}, and the platform's pinned build is not at $_pin; prompt \\
+delivery needs the rendezvous socket of a newer claude." >&2
   exit 1
 fi
 # One token per topic, on disk rather than in the env: an ADOPTED claude keeps
