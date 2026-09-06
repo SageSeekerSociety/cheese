@@ -84,7 +84,7 @@
 
 ### 分阶段拆活（顺序做，共用房间分支 topic/80027df3）
 
-**T1 hooks 认分身事件（已拆出）**：注册 SubagentStart/SubagentStop；翻译层新增两种事件并把 agent_id/agent_type 带到现有事件上；消费端不崩、不误开活动指示。纯地基，不改任何行为语义。
+**T1 hooks 认分身事件（已完成，待补一处）**：已合入分支（daf331bd1 实现 + 6a255c5db 测试，+452 行，全绿：unit 3630 passed、相关 integration 232 passed、ruff/pyright 干净）。落地要点：SubagentStart/SubagentStop 已注册（SubagentStop 特意不挂 cheese-sync——分身停下不是轮次停下，挂了会一轮推好几次半成品）；新事件类型 AgentSubagentStart/Stop；AgentToolUse/AgentToolResult/AgentMessage/AgentResult 四种事件带 agent_id/agent_type（缺省 None）；消费端零改动（四处分发全是非穷尽 if/elif，新类型自然落空）。**待补**：流式发言的拼装层（MessageAssembler）会丢 agent_id，已打回补证（给 _PendingMessage 加两字段 + 实测分身发言是否走 MessageDisplay），补完重递结论卡。
 
 **T2 任务绑定分身 + split 的分身模式**：`tasks` 加 agent 绑定（agent_id 列或绑定表）；`cheese split` 增加分身模式（建 task 行、返回 id，房间芝士自己 spawn 分身后用新的 `cheese bind` 上报 agent_id）；带 agent_id 的事件按绑定归到任务时间线；SubagentStop 的 last_assistant_message 自动落为任务结论并开结论卡；need-evidence 唤醒房间转达（SendMessage 续跑分身）。旧的每任务起屏幕路径在本阶段末删除（CLAUDE.md：采用替代即删除被替代者）。
 
@@ -98,6 +98,6 @@
 
 - [x] 三条待核结论全部实测核实
 - [x] 设计评估 + 拍板
-- [ ] T1 hooks 认分身事件（子任务进行中）
-- [ ] T2 任务绑定分身 + split 分身模式
+- [x] T1 hooks 认分身事件（代码已合入分支；只剩拼装层 agent_id 一处补丁，已打回支线补）
+- [ ] T2 任务绑定分身 + split 分身模式（T1 重递结论后拆出）
 - [ ] T3 轮次与收尸认新形态
