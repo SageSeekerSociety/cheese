@@ -2,7 +2,7 @@
 
 ## 目标
 
-@wangchangxin 发来一张表，列了三条关于「分身」（Claude Code 后台 subagent）的待核结论，涉及平台要不要按 agent_id 归卡、插话机制、跨轮次收尸。逐条实测核实，给出证据。
+<@wangchangxin> 发来一张表，列了三条关于「分身」（Claude Code 后台 subagent）的待核结论，涉及平台要不要按 agent_id 归卡、插话机制、跨轮次收尸。逐条实测核实，给出证据。
 
 ## 结论总览（2026-09-06 实测，claude 2.1.224，本平台沙箱内）
 
@@ -48,7 +48,7 @@
 
 ## 设计评估（更新版）：话题=单独沙箱，任务=分身
 
-@wangchangxin 提的最终形态：**隔离的粒度放在话题（一话题一沙箱），并行的粒度放在任务（一任务一分身）**。评估：赞成。
+<@wangchangxin> 提的最终形态：**隔离的粒度放在话题（一话题一沙箱），并行的粒度放在任务（一任务一分身）**。评估：赞成。
 
 - 这等于把现有「支线」机制"半个话题"的中间态整个删掉：没有独立 token（403 那批权限配错消失）、没有独立工作区（被拆丢提交、每支线重下依赖占重活道消失）、没有分支要合（共用分支互相覆盖消失）、conclude/tell 自制通道换成原生消息。「只有主话题才能递卡」这条一直没实现的规则在此结构下自动成立。
 - 三个要提前设计的点：
@@ -61,7 +61,7 @@
 
 ### 初版评估（保留背景）
 
-@wangchangxin 问：所以就把任务改成 subagent？评估结论：**把「支线/split」这层执行机制换成分身，方向成立；房间/话题这层保留，按活的大小分流。**
+<@wangchangxin> 问：所以就把任务改成 subagent？评估结论：**把「支线/split」这层执行机制换成分身，方向成立；房间/话题这层保留，按活的大小分流。**
 
 分身解掉的旧痛点：简报单向改不了（→可插话）；支线沙箱搭建贵且坑多——重 clone、重装依赖、共用分支互相覆盖、uv 缓存按话题重复（→分身直接用房间现成工作区）；过程黑盒（→hooks 按 agent_id 归卡）。
 
@@ -73,7 +73,7 @@
 
 改造清单（图中两条 + 实测补一条）：hook 接收端按 agent_id 归卡；轮次机制认「通知唤起的轮次」；**完成通知≠终态**（同一分身可多次报完成，收尸别拿第一条当结束）；#708 钉 2.1.261。
 
-## 实施方案（@wangchangxin 已拍板「去做」，2026-09-06）
+## 实施方案（<@wangchangxin> 已拍板「去做」，2026-09-06）
 
 ### 现状摸底结论（两轮代码勘察，关键事实）
 
@@ -84,11 +84,18 @@
 
 ### 分阶段拆活（顺序做，共用房间分支 topic/80027df3）
 
-**T1 hooks 认分身事件（已完成，待补一处）**：已合入分支（daf331bd1 实现 + 6a255c5db 测试，+452 行，全绿：unit 3630 passed、相关 integration 232 passed、ruff/pyright 干净）。落地要点：SubagentStart/SubagentStop 已注册（SubagentStop 特意不挂 cheese-sync——分身停下不是轮次停下，挂了会一轮推好几次半成品）；新事件类型 AgentSubagentStart/Stop；AgentToolUse/AgentToolResult/AgentMessage/AgentResult 四种事件带 agent_id/agent_type（缺省 None）；消费端零改动（四处分发全是非穷尽 if/elif，新类型自然落空）。**待补**：流式发言的拼装层（MessageAssembler）会丢 agent_id，已打回补证（给 _PendingMessage 加两字段 + 实测分身发言是否走 MessageDisplay），补完重递结论卡。
+**T1 hooks 认分身事件（✅ 完成）**：已合入分支（daf331bd1 + 6a255c5db + 7f2d9d074，全绿：unit 3634 passed、相关 integration 232 passed、ruff/pyright 干净）。落地要点：SubagentStart/SubagentStop 已注册（SubagentStop 特意不挂 cheese-sync——分身停下不是轮次停下）；新事件类型 AgentSubagentStart/Stop；AgentToolUse/AgentToolResult/AgentMessage/AgentResult 带 agent_id/agent_type（缺省 None）；拼装层（_PendingMessage）也穿透了 id；消费端零改动。
 
-**T2 任务绑定分身 + split 的分身模式**：`tasks` 加 agent 绑定（agent_id 列或绑定表）；`cheese split` 增加分身模式（建 task 行、返回 id，房间芝士自己 spawn 分身后用新的 `cheese bind` 上报 agent_id）；带 agent_id 的事件按绑定归到任务时间线；SubagentStop 的 last_assistant_message 自动落为任务结论并开结论卡；need-evidence 唤醒房间转达（SendMessage 续跑分身）。旧的每任务起屏幕路径在本阶段末删除（CLAUDE.md：采用替代即删除被替代者）。
+**T1 顺带实测出的三个关键事实（各复现两次，直接约束 T2/T3 设计）：**
+- **分身自己的发言完全不产生 MessageDisplay**——它的话只出现在 SubagentStop.last_assistant_message 里。拼装层穿透属于防御性保留（防 Claude Code 未来悄悄改行为）。
+- **存在来路不明的晚到 SubagentStop**：会话 Stop 之后才到、agent_id 与真分身不同、agent_type 为空、last_assistant_message 是提示词碎片（疑似 Claude Code 内部工具 agent）。**所以任何按 SubagentStop 落结论/落卡的逻辑必须只认平台绑定过的 agent_id，来路不明的一律不落。**
+- 晚于 Stop 到达的 SubagentStop 今天会掉进 hooks_substrate.py:1227 的 platform_unsolicited 内存轮次——T3 的活证据。
 
-**T3 轮次与收尸认新形态**：`platform_unsolicited` 轮次落 `agent_turns` 行（新 reason）、记用量、结卡；#689 的 unread 闸门和 PROMPT_UNDELIVERED 不误伤通知唤起的轮次；presentation 给绑定了分身的任务算「失联」（房间屏幕死了或 SubagentStop 永不到）；完成通知非终态（同一分身可多次报完成）。
+**T2 任务绑定分身 + split 切换（进行中）**：`tasks` 加 `subagent_id` 列（迁移）；新路由 bind（只有房间能调、只认自己房间的 open 任务、同房间内 agent_id 不得重复绑定）；`cheese split` 不再起屏幕/kickoff/占驻留槽，改为建 task 行 + 返回 id + 提示房间芝士自己 spawn 分身后 `cheese bind`；房间 hook 流里带绑定 agent_id 的事件按绑定归到该任务的时间线（blocks 打 task_id）；SubagentStop 只对绑定 id 记录成任务时间线上的事件（**不自动落结论**——见 T1 实测第二条）；新增 `cheese conclude-task <task_id> "<结论>"`，由房间在收到完成通知、验过货之后显式走现有 return_conclusion 流程开结论卡。split 路径上随之死掉的代码（对任务的 submit_kickoff、驻留槽 admit）同阶段删除。
+
+**T3 轮次与收尸认新形态**：`platform_unsolicited` 轮次落 `agent_turns` 行（新 reason）、记用量、结卡；#689 的 unread 闸门和 PROMPT_UNDELIVERED 不误伤通知唤起的轮次；presentation 给绑定了分身的任务算「失联」（房间屏幕死了或 SubagentStop 永不到）；完成通知非终态（同一分身可多次报完成）；晚到的来路不明 SubagentStop 的归宿要明确。
+
+**T4 收尾清扫**：人在任务视图留言 → 唤醒房间转达（SendMessage 续跑分身）；`cheese tell` 对分身任务的语义重定义或删除；旧每任务屏幕路径的残余大扫除（retire_thread_storage 对任务、ghost sweep、device_launch 的任务分支、residency 机制去留）。
 
 ### 设计依据与风险
 
@@ -98,6 +105,7 @@
 
 - [x] 三条待核结论全部实测核实
 - [x] 设计评估 + 拍板
-- [x] T1 hooks 认分身事件（代码已合入分支；只剩拼装层 agent_id 一处补丁，已打回支线补）
-- [ ] T2 任务绑定分身 + split 分身模式（T1 重递结论后拆出）
+- [x] T1 hooks 认分身事件（含拼装层补丁与三条实测新事实，已完成）
+- [ ] T2 任务绑定分身 + split 切换（子任务进行中）
 - [ ] T3 轮次与收尸认新形态
+- [ ] T4 收尾清扫（转达路 + 旧路径残余）
