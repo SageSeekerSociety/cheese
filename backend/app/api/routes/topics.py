@@ -75,6 +75,7 @@ from app.domain.topic.repositories import SortOrder, TopicSortField
 from app.domain.topic.schemas import (
     BackgroundTaskDoneIn,
     BackgroundTaskIn,
+    BindSubagentIn,
     CheckResultIn,
     ClaimIn,
     ConclusionIn,
@@ -508,6 +509,38 @@ async def list_room_tasks(
             }
         )
     return ok(page(items, len(items)))
+
+
+@router.post("/{topic_id}/tasks/{task_id}/bind")
+async def bind_task_subagent(
+    topic_id: uuid.UUID,
+    task_id: uuid.UUID,
+    body: BindSubagentIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """认领: the room says which worker in its session is doing this thread.
+
+    The one new thing a room has to tell the platform under 任务=分身. A worker
+    id is minted inside the container when the worker starts, so nothing handed
+    out at dispatch could name it — the room spawns one and reports back, and
+    only then can the platform tell that worker's events from its own.
+
+    ONLY the room may call it. A thread's token names the thread, so the scope
+    check below refuses one anyway; the explicit refusal is here because "the
+    caller is the room" is a rule worth failing loudly on rather than by a
+    coincidence of ids.
+    """
+    place = await TopicService(db).place_or_404(topic_id)
+    if place.is_thread:
+        raise ValidationError("认领分身是房间的事，一条活自己认领不了")
+    await _actor_in_place(resolver, place)
+    task = await TaskService(db).bind_subagent(
+        room_id=place.room_id, task_id=task_id, subagent_id=body.agent_id
+    )
+    out = TaskOut.model_validate(task).model_dump(mode="json")
+    await db.commit()
+    return ok(out)
 
 
 @router.get("/{topic_id}/trees")

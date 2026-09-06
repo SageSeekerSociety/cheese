@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.domain.block.models import Block
 from app.domain.room_task.models import (
     FILE_LOCK_TTL,
@@ -203,6 +204,40 @@ class TaskService:
         """Stamp the thread with when its device home's transcripts reached
         the platform (topic/retire.py). False when no thread has this id."""
         return await self._repo.mark_transcripts_archived(task_id, at)
+
+    async def bind_subagent(
+        self, *, room_id: uuid.UUID, task_id: uuid.UUID, subagent_id: str
+    ) -> Task:
+        """Say which worker in *room_id*'s session is doing *task_id*.
+
+        The room spawns a worker and then reports the id it got, because the id
+        does not exist until the worker does — nothing the platform hands out
+        in advance could name it. Everything downstream keys off this: without
+        the binding a worker's events are indistinguishable from the room's own.
+
+        Refuses rather than overwrites when the id is already doing other work
+        in this room. Reassigning it would not move the work, it would silently
+        re-address the events of a worker still running — the first thread would
+        stop receiving its own tool calls and never say why.
+        """
+        subagent_id = subagent_id.strip()
+        if not subagent_id:
+            raise ValidationError("要绑定的分身 id 是空的")
+        task = await self._repo.get(task_id)
+        if task is None or task.room_id != room_id:
+            # Same answer for "no such task" and "someone else's task": which of
+            # the two it is, is exactly what a caller poking at ids wants told.
+            raise NotFoundError("这个房间里没有这条活")
+        if task.status is not TaskStatus.open:
+            raise ConflictError("这条活已经收了，不能再绑分身")
+        held = await self._repo.open_by_subagent(room_id, subagent_id)
+        if held is not None and held.id != task.id:
+            raise ConflictError(
+                f"这个分身正在做「{held.title}」，一个分身同时只做一条活"
+            )
+        task.subagent_id = subagent_id
+        await self._session.flush()
+        return task
 
     async def open_thread(
         self,

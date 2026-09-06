@@ -123,6 +123,12 @@ class ConclusionIn(BaseModel):
     conclusion: str = Field(min_length=1)
 
 
+class BindSubagentIn(BaseModel):
+    """认领: which worker in this room's session is doing this piece of work."""
+
+    agent_id: str = Field(min_length=1, max_length=64)
+
+
 class RelayIn(BaseModel):
     """母子传话 (`cheese tell`): one message across the parent/child edge.
 
