@@ -644,7 +644,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    ps.add_argument("title", help="这条支线的标题,≤12 字最好")
+    ps.add_argument("title", help="这条活的标题,≤12 字最好")
     ps.add_argument(
         "--paths",
         nargs="+",
@@ -997,19 +997,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     pcc = sub.add_parser(
         "conclusion",
-        help="结算支线回流上来的结论卡（不结算=默认采信，本轮结束自动生效）",
+        help="结算一条活回流上来的结论卡（不结算=默认采信，本轮结束自动生效）",
         description=(
-            "结算支线回流上来的结论卡。**不结算也会生效**——本轮结束时还开着的卡"
+            "结算一条活回流上来的结论卡。**不结算也会生效**——本轮结束时还开着的卡"
             "自动采信，另有 30 分钟绝对超时兜底,所以「什么都不做」等于同意。\n"
-            "只有你要改变默认结果时才用它: need-evidence 让那条支线补一条证据"
-            "(要付一整轮,且每张卡最多打回 1 次), escalate 是要人拍板。"
+            "只有你要改变默认结果时才用它: need-evidence 让那条活补一条证据"
+            "(要付一整轮转达,且每张卡最多打回 1 次), escalate 是要人拍板。"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     pcc.add_argument(
         "action",
         choices=["accept", "need-evidence", "escalate"],
-        help="accept=采信(可不做,默认就会采信) / need-evidence=让那条支线补一条证据 / escalate=要人拍板",
+        help="accept=采信(可不做,默认就会采信) / need-evidence=让那条活补一条证据 / escalate=要人拍板",
     )
     pcc.add_argument("card", help="结论卡 id（消化提示里带着）")
     pcc.add_argument(
@@ -1346,8 +1346,8 @@ def main() -> None:
         _call("POST", f"/topics/{topic}/conclusion-cards/{a.card}/{a.action}", body)
         print(
             {
-                "accept": "已采信该结论，那条支线收起。",
-                "need-evidence": "已让那条支线补证据（它会被叫醒一轮）。",
+                "accept": "已采信该结论，那条活收起。",
+                "need-evidence": "已打回补证据（房间会被叫醒一轮去转达）。",
                 "escalate": "已升级，等人拍板。",
             }[a.action]
         )

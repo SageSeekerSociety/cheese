@@ -3,16 +3,10 @@
  * 派活的入口本来就是 API（芝士自己拆的活占绝大多数），所以布景走 API；**断言全在
  * 界面上**，因为这里要钉的正是「派出去之后，人看不看得见、点不点得进去」。
  *
- * 这一层能钉的只有这些。阶段 5 另外两件事 —— 排队/出队的圆环、封口期提示 —— 在
- * e2e 里做不出可靠的布景，原因是环境本身：
- *
- *   - 槽位是**正在跑的轮次**占住的，不是「活还开着」占住的。e2e 环境没有 agent
- *     镜像，kickoff 三秒就失败、槽位自己放开，队列根本排不起来，写出来就是一条
- *     看运气的测试。排队/出队钉在 tests/integration/test_task_threads.py —— 那里
- *     能直接摆出 residency，是确定的。
- *   - 封口要 `x-cheese-token`（每轮次令牌）。这是对的：封口是芝士的动作，浏览器
- *     里的人本来就不该能递卡。封口期提示钉在 TaskProgress.seal.spec.ts 和
- *     tests/integration/test_tree_sealing_and_quick_check.py。
+ * 这一层能钉的只有这些。封口期提示在 e2e 里做不出布景：封口要 `x-cheese-token`
+ * （每轮次令牌），而这是对的——封口是芝士的动作，浏览器里的人本来就不该能递卡。
+ * 它钉在 TaskProgress.seal.spec.ts 和
+ * tests/integration/test_tree_sealing_and_quick_check.py。
  */
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
