@@ -555,8 +555,30 @@ if [ -n "${CHEESE_GIT_REMOTE:-}" ]; then
     # `2>/dev/null || true` made that indistinguishable from success.
     CHEESE_WS_TMP="$CHEESE_WORK.clone.$$"
     rm -rf "$CHEESE_WS_TMP"
-    CHEESE_WS_ERR="$(git -c http.extraHeader="X-Cheese-Token: $CHEESE_TOKEN" \
-      clone -q --no-checkout "$CHEESE_GIT_REMOTE" "$CHEESE_WS_TMP" 2>&1)" || true
+    # A shallow, single-branch clone: the tip of one branch, never the project's
+    # whole history. A device only clones and pushes its own topic tree — every
+    # history-dependent operation (diff, merge-base, 采纳's merge) runs on the
+    # platform's full repo, not here — so the tip is all a workspace needs, and
+    # fetching it is O(one commit) rather than O(every topic branch this project
+    # has ever opened). A full clone of an active project's proxy is minutes and
+    # hundreds of MB of history the agent never reads; this is seconds.
+    cheese_ws_clone() {
+      git -c http.extraHeader="X-Cheese-Token: $CHEESE_TOKEN" clone -q \
+        --no-checkout --depth 1 "$@" "$CHEESE_GIT_REMOTE" "$CHEESE_WS_TMP" 2>&1
+    }
+    # The topic branch first: a resumed topic, or one a fileless device already
+    # pushed to, carries commits that are the only copy of that work, and
+    # --branch fetches exactly them. A brand-NEW topic has no branch on the
+    # server yet — the device is the one that creates it (from the base tip) and
+    # pushes it later — so that clone fails with "Remote branch not found" and
+    # git removes the half-made directory. Fall back to a shallow clone of the
+    # default branch, from whose HEAD cheese_ws_adopt synthesizes the topic
+    # branch, exactly as the old full clone did.
+    CHEESE_WS_ERR="$(cheese_ws_clone --single-branch --branch "$CHEESE_WS_BRANCH")" || true
+    if [ ! -d "$CHEESE_WS_TMP/.git" ]; then
+      rm -rf "$CHEESE_WS_TMP"
+      CHEESE_WS_ERR="$(cheese_ws_clone)" || true
+    fi
     if [ -d "$CHEESE_WS_TMP/.git" ] \
        && mv "$CHEESE_WS_TMP/.git" "$CHEESE_WORK/.git" 2>/dev/null; then
       cheese_ws_adopt \
