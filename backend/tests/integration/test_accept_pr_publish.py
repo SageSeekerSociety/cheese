@@ -174,6 +174,9 @@ def pr_world(monkeypatch):
 
     monkeypatch.setattr(ws, "merge_topic", _local_merge)
     monkeypatch.setattr(ws, "prepare_conflict_resolution", lambda pid, tid: ["a.py"])
+    # 递卡在绑定项目上会探测树分支（有活才有卡）；这个 world 里项目是绑定的
+    # （App tokens + GitHub upstream），默认让分支存在，个别测试自己覆盖成 False。
+    monkeypatch.setattr(ws, "topic_branch_exists", lambda pid, tid: True)
     _ = review_services  # imported for proximity; accept() resolves ws at call time
     return recorded
 
@@ -397,16 +400,28 @@ def _enable_app_pr(monkeypatch) -> None:
     monkeypatch.setattr(ws, "upstream_default_branch", lambda repo, **_: "main")
 
 
-def test_discussion_topic_on_bound_project_accepts_without_forge_label(
+def test_legacy_discussion_card_on_bound_project_accepts_without_forge_label(
     client, pr_world, monkeypatch
 ):
-    """绑定了 GitHub 的项目里的讨论型话题：没有分支、没有可进 PR 的改动——
-    本地合并 no-op 完成采纳，什么都没绕过，也不该戴「未接 GitHub」的标。"""
+    """绑定了 GitHub 的项目里的存量纯讨论卡（change_subject 为 NULL，递于
+    subject 必填之前）：没有分支、没有交付主张——本地合并 no-op 完成采纳，
+    什么都没绕过，也不该戴「未接 GitHub」的标。（带交付主张的卡在同样的
+    分支缺失下必须停下——见 test_accept_pr.py 的回归用例。）"""
+    from app.domain.review.repositories import AcceptCardRepository
     from app.domain.workspace import service as ws
 
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)
+
+    async def _strip_subject() -> None:
+        async with client.test_factory() as session:
+            card = await AcceptCardRepository(session).get(uuid.UUID(cid))
+            assert card is not None
+            card.change_subject = None
+            await session.commit()
+
+    asyncio.run(_strip_subject())
     _enable_app_pr(monkeypatch)
     monkeypatch.setattr(ws, "topic_branch_exists", lambda pid_, tid_: False)
 
