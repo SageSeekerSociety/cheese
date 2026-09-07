@@ -183,8 +183,8 @@ async def test_the_human_driving_the_turn_is_reported(db_factory):
     ],
 )
 async def test_only_a_real_person_is_reported_as_the_driver(db_factory, author):
-    """Gate verdicts, scheduled wake-ups, `cheese await` reports and conflict
-    nudges all run as `system`; a 分身 working on its own initiative runs as
+    """Gate verdicts, scheduled wake-ups and conflict nudges all run as
+    `system`; a 分身 working on its own initiative runs as
     itself. None of them may become a room's owner — `seed()` refuses to make 芝士
     an owner, so a room seeded from one lands ownerless and nobody can manage its
     roster. The caller falls back to the ladder it had instead."""

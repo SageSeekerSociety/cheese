@@ -317,19 +317,14 @@ register_all_permissions()
 # not follow a route that moves. #370 step 2 flattened the 2.0 prefix and every
 # one of them stopped matching, which does not fail: it silently opens the
 # cheese write-surface to anyone who can reach the port. The suite caught it
-# (test_project_agent_credential, test_ask_options, test_await_wake,
-# test_memory_search all went from "refused" to "allowed"), which is the only
+# (test_project_agent_credential, test_ask_options and test_memory_search all
+# went from "refused" to "allowed"), which is the only
 # reason to say it out loud here: a gate defined by strings has to be moved by
 # hand whenever the strings it names do.
 _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/webhook-token$")),
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/ask$")),
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/decision$")),
-    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/background-task$")),
-    (
-        "POST",
-        re.compile(r"^/topics/(?P<topic>[^/]+)/background-task/[^/]+/done$"),
-    ),
     # 留话给一条活: the scoping id is the SENDER (the room whose turn is talking);
     # the receiver is in the body and is checked against the threads that room
     # dispatched — this gate can only prove "some agent of this project", because
