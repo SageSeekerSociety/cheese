@@ -29,13 +29,19 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-# DIAGNOSTIC for the CI tail hang (three runs since #721 went silent after the
+# DIAGNOSTIC for the CI tail hang (four runs since #721 went silent after the
 # last progress line until the 20-minute ceiling; no test named). Every pytest
-# process — the controller and each xdist worker — prints all of its thread
-# stacks to stderr 11 minutes after this import. A green run finishes in ~6,
-# so this fires only on the hang, and names where each process is stuck —
-# including a stall after the last test, which no per-test timeout can see.
-faulthandler.dump_traceback_later(11 * 60, repeat=False, file=sys.stderr, exit=False)
+# process — the controller and each xdist worker — dumps all of its thread
+# stacks 11 minutes after this import into its own file under /tmp, which the
+# workflow prints after the run even when the job is cancelled. A file, not
+# stderr: pytest's fd capture already owns fd 2 by the time this runs, so
+# anything written there vanishes with the capture buffer. A green run finishes
+# in ~6 minutes, so this fires only on the hang.
+if os.environ.get("CI"):
+    _hang_dump = open(f"/tmp/pytest-hang-{os.getpid()}.txt", "w")  # noqa: SIM115
+    faulthandler.dump_traceback_later(
+        11 * 60, repeat=False, file=_hang_dump, exit=False
+    )
 
 # Strip inherited git env. When the suite runs from the pre-commit HOOK it executes
 # DURING `git commit`, which exports GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE for
