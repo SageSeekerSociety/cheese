@@ -98,6 +98,14 @@ class PullRequestStatus:
     #: would announce a conflict on every freshly-pushed PR, and treating it as
     #: True would silently drop a real one.
     mergeable: bool | None = None
+    #: GitHub REST's `mergeable_state` — the lowercase twin of GraphQL's
+    #: `mergeStateStatus` (clean/unstable/blocked/behind/dirty/draft/unknown/
+    #: has_hooks…). Kept RAW on purpose: the verdict a card shows is computed
+    #: in one place (`merge_state.compute_merge_state`, #718), and this field
+    #: is that function's input, not a judgement of its own. None = the
+    #: payload didn't carry it (fake/older payload) — distinct from the
+    #: string "unknown", which is GitHub saying it hasn't computed one yet.
+    mergeable_state: str | None = None
     #: How many INLINE review comments the PR carries, from the PR payload
     #: itself. The poller uses it to decide whether the extra request that
     #: lists those comments is worth making — most ticks it is 0.
@@ -191,6 +199,42 @@ def _parse_github_time(raw: object) -> datetime | None:
     except ValueError:
         return None
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+def parse_pull_request_status(data: dict) -> PullRequestStatus:
+    """One REST PR payload → `PullRequestStatus`, shared by BOTH read paths
+    (`HttpxGitHubPrClient.pull_request_status` and `GitHubPRClient.pr_status`).
+
+    Extracted (#718) so the two clients cannot drift on the subtle fields:
+    the three-valued `mergeable`, the merged-gated `merge_commit_sha`, and
+    `mergeable_state` all encode traps documented on `PullRequestStatus`."""
+    merged = bool(data.get("merged"))
+    mergeable = data.get("mergeable")
+    mergeable_state = data.get("mergeable_state")
+    review_comments = data.get("review_comments")
+    return PullRequestStatus(
+        head_sha=data["head"]["sha"],
+        head_ref=str(data["head"].get("ref") or ""),
+        state=str(data.get("state") or ""),
+        merged=merged,
+        # Anything that isn't a real bool stays None — "GitHub hasn't said
+        # yet" and "GitHub said no" must not collapse (see the field).
+        mergeable=mergeable if isinstance(mergeable, bool) else None,
+        # Raw and lowercased, absent stays None — never collapsed into
+        # "unknown", which is a value GitHub actually sends (see the field).
+        mergeable_state=(
+            mergeable_state.lower()
+            if isinstance(mergeable_state, str) and mergeable_state
+            else None
+        ),
+        review_comment_count=(
+            review_comments if isinstance(review_comments, int) else 0
+        ),
+        # Gated on `merged` on purpose — see PullRequestStatus's docstring
+        # for what this field holds on an unmerged PR.
+        merge_commit_sha=(data.get("merge_commit_sha") or None) if merged else None,
+        merged_at=_parse_github_time(data.get("merged_at")) if merged else None,
+    )
 
 
 class GitHubPrClient(Protocol):
@@ -814,26 +858,7 @@ class HttpxGitHubPrClient:
             raise GitHubPrError(
                 f"GitHub 拒绝查 PR 状态（HTTP {resp.status_code}）：{resp.text[:300]}"
             )
-        data = resp.json()
-        merged = bool(data.get("merged"))
-        mergeable = data.get("mergeable")
-        review_comments = data.get("review_comments")
-        return PullRequestStatus(
-            head_sha=data["head"]["sha"],
-            head_ref=str(data["head"].get("ref") or ""),
-            state=str(data.get("state") or ""),
-            merged=merged,
-            # Anything that isn't a real bool stays None — "GitHub hasn't said
-            # yet" and "GitHub said no" must not collapse (see the field).
-            mergeable=mergeable if isinstance(mergeable, bool) else None,
-            review_comment_count=(
-                review_comments if isinstance(review_comments, int) else 0
-            ),
-            # Gated on `merged` on purpose — see PullRequestStatus's docstring
-            # for what this field holds on an unmerged PR.
-            merge_commit_sha=(data.get("merge_commit_sha") or None) if merged else None,
-            merged_at=_parse_github_time(data.get("merged_at")) if merged else None,
-        )
+        return parse_pull_request_status(resp.json())
 
     async def merge_pull_request(
         self,
@@ -1424,6 +1449,16 @@ class GitHubPRClient:
                 f"PR read failed (HTTP {resp.status_code}): {resp.text[:300]}"
             )
         return resp.json()
+
+    async def pr_status(self, number: int) -> PullRequestStatus:
+        """`pr_view`, parsed — the structured twin of the raw dict.
+
+        Exists (#718) so this lane's callers get `mergeable_state`, the
+        three-valued `mergeable` and the merged-gated `merge_commit_sha`
+        through the SAME parser as the poller lane
+        (`parse_pull_request_status`), instead of each caller sniffing the
+        raw json ad hoc."""
+        return parse_pull_request_status(await self.pr_view(number))
 
     @_as_pr_error
     async def merge_pr(self, number: int, *, title: str, message: str) -> dict:
