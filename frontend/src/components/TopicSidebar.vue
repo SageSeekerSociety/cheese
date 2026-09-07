@@ -6,9 +6,11 @@ import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { listProjectAgents } from '../api'
+import { columnDotStyle } from '../lib/board'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '../lib/topicTitle'
 import {
   ancestorPathIds,
+  isMyTopic,
   loadExpandedTopics,
   loadOthersGroupOpen,
   partitionByRelevance,
@@ -93,7 +95,7 @@ const route = useRoute()
 
 const projectPages = [
   { key: 'overview', label: '总览', icon: 'mdi-view-agenda-outline' },
-  { key: 'workspace-running', label: '在跑的活', icon: 'mdi-play-circle-outline' },
+  { key: 'workspace-running', label: '看板', icon: 'mdi-view-column-outline' },
   { key: 'calendar', label: '日历', icon: 'mdi-calendar-outline' },
   { key: 'project-agents', label: 'AI 队友', icon: 'mdi-robot-outline' },
 ] as const
@@ -128,9 +130,10 @@ async function loadProjectAgents(pid: string | null | undefined) {
 }
 watch(() => props.selectedProjectId, loadProjectAgents, { immediate: true })
 
-// 默认那个排第一 —— 常用路径是「点开、点第一项」，不用在列表里找。
+// 默认那个排第一 —— 常用路径是「点开、点第一项」，不用在列表里找。已停用的
+// 不列：这个菜单是在给一个还没建的话题挑队友，正是停用要挡住的那件事。
 const newTopicAgents = computed(() =>
-  [...projectAgents.value].sort((a, b) => Number(b.is_default) - Number(a.is_default))
+  projectAgents.value.filter((a) => a.is_active !== false).sort((a, b) => Number(b.is_default) - Number(a.is_default))
 )
 
 // ----- Topic tree -----
@@ -148,39 +151,15 @@ function inferKind(t: Topic): string {
   return t.parent_id ? 'topic' : 'root'
 }
 
-// 边栏画的是「房间 → 房间里派出去的活」这棵树。活是 `tasks` 表的一行，不是话题，
-// 但它照样要看得见——一件活看不见，房间就会照着自己那份清单把它又做一遍。
-// 「分身」是改造前的残留标签，现在永远取不到了。
+// 边栏画的是房间。房间里派出去的活是**卡**，不是地点，看得见的地方是那个房间的
+// 看板（总览那一格）和项目级那块板 —— 一行一个房间，一件活不再占一行。
 const KIND_BADGE: Record<string, string> = {
   root: '全局',
   topic: '话题',
-  thread: '任务',
 }
 
 function kindLabel(t: Topic): string {
   return KIND_BADGE[inferKind(t)] ?? '话题'
-}
-
-/** 这一行是一件活，不是一个房间。 */
-function isThreadRow(t: Topic): boolean {
-  return t.kind === 'thread'
-}
-
-/** 一件活现在骑在哪个 PR 上 —— 「交付」这一段在树上唯一看得见的东西。 */
-function prLabel(t: Topic): string | null {
-  const n = t.card?.pr_number
-  return typeof n === 'number' ? `#${n}` : null
-}
-
-/** 一件活的交付走到哪了。没有卡 = 还在做，什么都不显示。 */
-function cardLabel(t: Topic): string | null {
-  const status = t.card?.status
-  if (!status) return null
-  if (status === 'pending') return '待验收'
-  if (status === 'pr_open') return '等 CI'
-  if (status === 'accepted') return '已采纳'
-  if (status === 'rejected') return '被打回'
-  return null
 }
 
 // Status: only show when notable (archived / draft); active is implicit. Shown
@@ -188,9 +167,6 @@ function cardLabel(t: Topic): string | null {
 function statusBadge(status: string): string | null {
   if (status === 'archived') return '已归档'
   if (status === 'draft') return '草稿'
-  // 支线只有 open / closed。收工了要说出来，不然一条做完的活在树上和在跑的
-  // 长得一模一样。
-  if (status === 'closed') return '已完成'
   return null
 }
 
@@ -237,7 +213,25 @@ const tree = computed<TreeRow[]>(() => {
 // 「已归档」 group at the bottom (newest archived first) — like Feishu's
 // folded conversations. Non-archived children of an archived parent stay in
 // the active list (their work isn't done).
-const activeTree = computed<TreeRow[]>(() => tree.value.filter((r) => r.topic.status !== 'archived'))
+//
+// 但**活跟着它的房间走**：活只有 open/closed，没有「已归档」这个状态，所以房间
+// 子话题有自己的归档状态：父话题归了、它还活着，那份活儿没做完，照旧留在活跃
+// 列表里——只是父行没了，深度提到 0，免得被画到隔壁那棵树底下。
+const activeTree = computed<TreeRow[]>(() => {
+  // 深度按**留下来的那个父行**重新算，不沿用原树的：拍平的树里深度就是父子关系
+  // 本身，中间少一层就得少一层缩进，否则缩进指着一行不存在的父行。
+  const depths = new Map<string, number>()
+  const rows: TreeRow[] = []
+  for (const row of tree.value) {
+    if (row.topic.status === 'archived') continue
+    const parentId = row.topic.parent_id
+    const parentDepth = parentId ? depths.get(parentId) : undefined
+    const depth = parentDepth === undefined ? 0 : parentDepth + 1
+    depths.set(row.topic.id, depth)
+    rows.push(depth === row.depth ? row : { topic: row.topic, depth })
+  }
+  return rows
+})
 const archivedRows = computed<Topic[]>(() =>
   props.topics
     .filter((t) => t.status === 'archived' && inferKind(t) !== 'root')
@@ -343,7 +337,8 @@ function awaitsOf(id: string): boolean {
 //
 // 两组的**行是同一种形态**：同一段模板渲染，所以树形缩进、竖向引导线、16px 状态
 // 槽、未读角标、hover 的 ⋯ 一个不少。折叠组只是把一批行收起来，不是换一种行。
-const grouped = computed(() => partitionByRelevance(activeTree.value))
+//
+const grouped = computed(() => partitionByRelevance(activeTree.value, isMyTopic))
 
 function rowsOf(rows: readonly FlatRow<Topic>[]) {
   return visibleRows(rows, {
@@ -698,12 +693,6 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                     <span v-else-if="row.topic.running" class="row-slot">
                       <span class="running-dot" title="芝士正在这个话题里工作" />
                     </span>
-                    <!-- 一件活不是一个地方。缩进说的是「它在这个房间里」，这颗
-                         记号说的是「这一行是一件活」——两者缺一，树上就分不出
-                         「房间」和「房间里在做的事」。 -->
-                    <span v-else-if="isThreadRow(row.topic)" class="row-slot">
-                      <v-icon size="13" class="thread-mark">mdi-call-split</v-icon>
-                    </span>
                     <span v-else class="row-slot" />
                   </template>
                   <v-list-item-title class="d-flex align-center topic-title">
@@ -722,6 +711,16 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                       @blur="saveRename(row.topic)"
                     />
                     <template v-else>
+                      <!-- 「该谁动」的色点，和看板上那一列同一个颜色、同一个形状
+                           （`lib/board.ts` 是唯一的来源）。侧栏和看板对不上的话，
+                           人就得在两块屏幕之间自己做一次翻译。
+                           后端没给 `presentation` 就不画——不在前端另算一个顶上。 -->
+                      <span
+                        v-if="row.topic.presentation"
+                        class="board-dot"
+                        :style="columnDotStyle(row.topic.presentation.column)"
+                        :title="row.topic.presentation.display_status"
+                      />
                       <span class="text-truncate" :class="{ 'title-unread': row.unreadTotal > 0 }">{{
                         row.topic.title
                       }}</span>
@@ -738,14 +737,6 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                       >
                         <span class="status-dot status-dot--warn" />
                         {{ statusBadge(row.topic.status) }}
-                      </span>
-                      <!-- 交付：这件活骑在哪个 PR 上，走到哪一步了。房间的交付是整条
-                           分支一张卡，不在树上；一件活的卡才挂在它自己这一行。 -->
-                      <span v-if="prLabel(row.topic)" class="thread-pr ms-2" :title="cardLabel(row.topic) ?? '已开 PR'">
-                        {{ prLabel(row.topic) }}
-                      </span>
-                      <span v-else-if="cardLabel(row.topic)" class="thread-card ms-2">
-                        {{ cardLabel(row.topic) }}
                       </span>
                     </template>
                   </v-list-item-title>
@@ -1117,16 +1108,16 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   color: var(--muted) !important;
 }
 
-/* 一件活骑的 PR。数字本身就是它要说的全部，所以是最轻的一档字，不抢标题。 */
-.thread-pr,
-.thread-card {
+/* 「该谁动」的色点。颜色和形状由 `lib/board.ts` 一处给出（内联样式），这里只管
+   尺寸和位置 —— scoped 样式进不了别的组件，颜色写在这儿就意味着看板和房间总览
+   各有一份，而这颗点存在的全部意义就是三处说的是同一件事。 */
+.board-dot {
   flex: none;
-  font-size: 12px;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-.thread-mark {
-  color: var(--faint);
+  width: 8px;
+  height: 8px;
+  margin-inline-end: 6px;
+  border-radius: 50%;
+  border: 2px solid var(--faint);
 }
 .topic-status {
   font-size: 11.5px;

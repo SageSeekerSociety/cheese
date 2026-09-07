@@ -3,16 +3,10 @@
  * 派活的入口本来就是 API（芝士自己拆的活占绝大多数），所以布景走 API；**断言全在
  * 界面上**，因为这里要钉的正是「派出去之后，人看不看得见、点不点得进去」。
  *
- * 这一层能钉的只有这些。阶段 5 另外两件事 —— 排队/出队的圆环、封口期提示 —— 在
- * e2e 里做不出可靠的布景，原因是环境本身：
- *
- *   - 槽位是**正在跑的轮次**占住的，不是「活还开着」占住的。e2e 环境没有 agent
- *     镜像，kickoff 三秒就失败、槽位自己放开，队列根本排不起来，写出来就是一条
- *     看运气的测试。排队/出队钉在 tests/integration/test_task_threads.py —— 那里
- *     能直接摆出 residency，是确定的。
- *   - 封口要 `x-cheese-token`（每轮次令牌）。这是对的：封口是芝士的动作，浏览器
- *     里的人本来就不该能递卡。封口期提示钉在 TaskProgress.seal.spec.ts 和
- *     tests/integration/test_tree_sealing_and_quick_check.py。
+ * 这一层能钉的只有这些。封口期提示在 e2e 里做不出布景：封口要 `x-cheese-token`
+ * （每轮次令牌），而这是对的——封口是芝士的动作，浏览器里的人本来就不该能递卡。
+ * 它钉在 TaskProgress.seal.spec.ts 和
+ * tests/integration/test_tree_sealing_and_quick_check.py。
  */
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
@@ -59,28 +53,34 @@ test.describe('房间里派出去的活', () => {
     await expect(progress.locator('.task-progress__tally')).toContainText('2 件');
     await expect(progress.getByText(`第一件事 ${stamp}`)).toBeVisible();
     await expect(progress.getByText(`第二件事 ${stamp}`)).toBeVisible();
-    // 每条活带一个状态圆环。不断言是哪个状态：这一条钉的是「有没有」，
-    // 具体哪个状态由 lib/taskRing.spec.ts 逐条钉。
-    await expect(progress.locator('.task-row .ring')).toHaveCount(2);
+    // 每条活带一个状态圆点。不断言是哪个状态：这一条钉的是「有没有」，
+    // 具体哪个状态由 lib/board.spec.ts 逐条钉。
+    await expect(progress.locator('.task-row .board-dot')).toHaveCount(2);
 
-    // 点条目进这条活自己的 chat 页 —— 总览里的一行必须是个入口，不然它只是一张表。
+    // 点条目就地展开这张卡 —— 总览里的一行必须是个入口，不然它只是一张表。
+    // 卡不是地点：地址留在房间上，卡的 id 进 query（T6 起）。
     await progress.getByText(`第一件事 ${stamp}`).click();
-    await expect(page).toHaveURL(new RegExp(`/topics/${first.id}`));
+    await expect(page).toHaveURL(new RegExp(`/topics/${roomId}\\?.*card=${first.id}`));
+    await expect(page.locator('.panel-card')).toBeVisible();
   });
 
-  test('侧栏的「在跑的活」是一直在的入口，进去是整个项目的视角', async ({ page }) => {
+  test('侧栏的「看板」是一直在的入口，进去是整个项目的视角', async ({ page }) => {
     const stamp = Date.now();
     const roomId = await freshRoom(page, `跨房间 ${stamp}`);
     await dispatch(page, roomId, `跨房间的活 ${stamp}`);
 
     // 从侧栏那条常驻入口进去，而不是直接敲地址：这一条要钉的一半正是「找得到」。
-    await page.locator('.pinned-row').filter({ hasText: '在跑的活' }).first().click();
+    await page.locator('.pinned-row').filter({ hasText: '看板' }).first().click();
+    // 路由名和路径仍是 running：改地址会打断所有已经发出去的链接，改的只是这块
+    // 界面叫什么。
     await expect(page).toHaveURL(/\/projects\/[0-9a-f-]{36}\/running/);
 
-    const view = page.locator('.running-work');
-    await expect(view.getByRole('heading', { name: '在跑的活' })).toBeVisible();
-    // 这一页只答「现在有什么在动」。没有在动的时候它得说清楚闲着的去哪儿找了，
-    // 否则一张空表读起来就是「这个项目没活」——而项目里可能有几百条。
-    await expect(view).toContainText(/在跑|没有在动的活/);
+    const view = page.locator('.board');
+    await expect(view.getByRole('heading', { name: '看板' })).toBeVisible();
+    // 板是按列排的，列本身要在 —— 这一页从一张平表变成看板，列就是那个变化。
+    await expect(view.locator('.board-col')).not.toHaveCount(0);
+    // 板要答的是「该谁动」，所以它得说出各列各有几件；一件都没有的时候要明说，
+    // 否则一块空板读起来就是「这个项目没活」——而项目里可能有几百条。
+    await expect(view).toContainText(/施工中|交付中|等你|暂无派出去的活/);
   });
 });

@@ -54,14 +54,18 @@ export const workspaceRoutes: RouteRecordRaw = {
       meta: { hideTabs: true, backTo: 'workspace-project', barSlot: true },
     },
     {
-      // 在跑的活: 跨房间的一张表。房间总览答的是「这个房间在干什么」，而一个项目
-      // 有上百个房间——「现在整个项目有什么在跑」得一个个点进去才知道，于是没人
-      // 知道。桌面上侧栏常驻，手机上它是页面栈的一层，← 回话题列表。
+      // 看板: 跨房间的一块板，按「该谁动」分列。房间总览答的是「这个房间在干什么」，
+      // 而一个项目有上百个房间——「现在整个项目有什么在跑、有什么在等我」得一个个
+      // 点进去才知道，于是没人知道。桌面上侧栏常驻，手机上它是页面栈的一层，← 回
+      // 话题列表。
+      //
+      // 路由名和路径还是 running：改地址会把所有已经发出去的链接打断，而这一页答的
+      // 仍然是同一个问题——名字换了，位置没换。
       name: 'workspace-running',
       path: 'running',
       component: () => import('@/views/workspace/RunningWorkView.vue'),
       props: true,
-      meta: { title: '在跑的活', hideTabs: true, backTo: 'workspace-project' },
+      meta: { title: '看板', hideTabs: true, backTo: 'workspace-project' },
     },
     {
       name: 'workspace-dm',

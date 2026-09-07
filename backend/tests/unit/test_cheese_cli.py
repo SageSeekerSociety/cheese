@@ -193,155 +193,92 @@ def test_format_status_renders_near_ceiling_state():
     assert "接近硬顶" in out
 
 
-# --- cheese await: 后台跑长任务，跑完平台叫醒本话题 ---------------------------
+# --- cheese check: 跑一遍快检，结果记到这棵树上 -------------------------------
 
 
-def test_await_registers_then_forks_and_returns_immediately(monkeypatch, tmp_path):
-    """`cheese await` must not block — that's the whole point. It registers the
-    command, hands the wake token to a detached child, and returns."""
-    import subprocess
+def _no_lane(monkeypatch, cli):
+    """No heavy lane in these tests — they are about the command, not the lock."""
+    monkeypatch.setattr(cli, "_wait_for_heavy_lane", lambda timeout_s: False)
 
+
+def test_check_runs_the_command_and_reports_what_it_said(monkeypatch, capsys):
     cli = _load()
+    _no_lane(monkeypatch, cli)
     monkeypatch.setattr(cli, "TOPIC", "topic-1")
-    monkeypatch.setenv("HOME", str(tmp_path))
-    calls: list[tuple] = []
+    reported: dict = {}
     monkeypatch.setattr(
         cli,
-        "_call",
-        lambda m, p, b=None, **kw: (
-            calls.append((m, p, b)),
-            {
-                "data": {
-                    "task_id": "task-9",
-                    "wake_token": "wake-tok",
-                    "label": "全量检查",
-                }
-            },
-        )[1],
-    )
-    spawned: dict = {}
-
-    def fake_popen(argv, **kw):
-        spawned["argv"] = argv
-        spawned["kw"] = kw
-        return object()
-
-    monkeypatch.setattr(subprocess, "Popen", fake_popen)
-    monkeypatch.setattr(
-        cli.sys,
-        "argv",
-        ["cheese", "await", "bash check.sh", "--label", "全量检查", "--timeout", "900"],
-    )
-    cli.main()
-
-    method, path, body = calls[0]
-    assert (method, path) == ("POST", "/topics/topic-1/background-task")
-    assert body["command"] == "bash check.sh"
-    assert body["label"] == "全量检查"
-    assert body["timeout_s"] == 900
-
-    assert spawned["argv"][2] == "__await-child"
-    assert spawned["argv"][3] == "task-9"
-    assert spawned["argv"][4] == "bash check.sh"
-    # The wake token rides in the env, never on a world-readable argv.
-    assert spawned["kw"]["env"]["CHEESE_AWAIT_TOKEN"] == "wake-tok"
-    assert "wake-tok" not in " ".join(str(x) for x in spawned["argv"])
-    # Detached, so it outlives the shell AND the turn that spawned it.
-    assert spawned["kw"]["start_new_session"] is True
-
-
-def test_await_log_lives_outside_the_worktree(monkeypatch, tmp_path):
-    """These logs must never be committed with the topic's work."""
-    cli = _load()
-    # An agent sandbox EXPORTS this (the platform points it at the session
-    # mount), and it outranks the HOME-derived path this test is about — so
-    # without clearing it the test passes in CI and fails in every sandbox,
-    # which is exactly where the suite is run from most.
-    monkeypatch.delenv("CHEESE_AWAIT_LOGS", raising=False)
-    monkeypatch.setenv("HOME", str(tmp_path))
-    path = cli._await_log_path("run-1")
-    assert path.startswith(str(tmp_path))
-    assert path.endswith("run-1.log")
-
-
-def test_await_child_reports_exit_code_and_output_tail(monkeypatch, tmp_path):
-    cli = _load()
-    log = str(tmp_path / "run.log")
-    reported: dict = {}
-    monkeypatch.setattr(
-        cli, "_await_report", lambda task_id, **kw: reported.update(id=task_id, **kw)
+        "_report_check_result",
+        lambda ok, exit_code, tail: reported.update(
+            ok=ok, exit_code=exit_code, tail=tail
+        ),
     )
 
-    cli._await_child("task-9", "echo 'hello from the build'; exit 7", log, 30)
+    code = cli._run_check("echo 'hello from the build'; exit 7", 30)
 
-    assert reported["id"] == "task-9"
+    assert code == 7
+    assert reported["ok"] is False
     assert reported["exit_code"] == 7
     assert "hello from the build" in reported["tail"]
-    assert reported["duration_s"] >= 0
-    # The full output is on disk for the agent to go read.
-    assert "hello from the build" in open(log, encoding="utf-8").read()
+    # The output reaches the caller too — it ran in the foreground, so the agent
+    # reading this terminal is the one who needs it.
+    assert "hello from the build" in capsys.readouterr().out
 
 
-def test_await_child_kills_and_reports_124_on_timeout(monkeypatch, tmp_path):
+def test_check_kills_and_reports_124_on_timeout(monkeypatch):
+    """超时算失败: a quick check whose whole value is speed cannot report
+    "inconclusive" after quietly outgrowing its budget."""
     cli = _load()
-    log = str(tmp_path / "run.log")
+    _no_lane(monkeypatch, cli)
+    monkeypatch.setattr(cli, "TOPIC", "topic-1")
     reported: dict = {}
     monkeypatch.setattr(
-        cli, "_await_report", lambda task_id, **kw: reported.update(**kw)
+        cli,
+        "_report_check_result",
+        lambda ok, exit_code, tail: reported.update(ok=ok, exit_code=exit_code),
     )
 
-    cli._await_child("task-9", "sleep 30", log, 1)
+    import time
 
-    assert reported["exit_code"] == 124
-    assert reported["duration_s"] < 15  # killed at the ceiling, not waited out
+    started = time.time()
+    assert cli._run_check("sleep 30", 1) == 124
+    assert time.time() - started < 15  # killed at the ceiling, not waited out
+    assert reported == {"ok": False, "exit_code": 124}
 
 
-def test_await_child_reports_even_when_the_command_cannot_run(monkeypatch, tmp_path):
-    """A child that dies quietly is a topic that never wakes up — the exact bug
-    this path exists to remove. Report something, always."""
+def test_check_reports_even_when_the_command_cannot_run(monkeypatch):
+    """A check that dies quietly is a red light nobody sees — the whole reason
+    the result is filed at all. Report something, always."""
     cli = _load()
-    log = str(tmp_path / "run.log")
+    _no_lane(monkeypatch, cli)
+    monkeypatch.setattr(cli, "TOPIC", "topic-1")
     reported: dict = {}
     monkeypatch.setattr(
-        cli, "_await_report", lambda task_id, **kw: reported.update(**kw)
+        cli,
+        "_report_check_result",
+        lambda ok, exit_code, tail: reported.update(
+            ok=ok, exit_code=exit_code, tail=tail
+        ),
     )
 
-    cli._await_child("task-9", "definitely-not-a-real-command-xyz", log, 30)
-
-    assert reported["exit_code"] != 0
+    assert cli._run_check("definitely-not-a-real-command-xyz", 30) != 0
+    assert reported["ok"] is False
     assert reported["tail"]
 
 
-def test_await_report_retries_before_giving_up(monkeypatch, tmp_path):
+def test_check_gives_the_heavy_lane_back_however_it_ended(monkeypatch):
+    """A lane held by a process that has finished is worse than the collision it
+    prevents."""
     cli = _load()
-    monkeypatch.setattr(cli, "_AWAIT_RETRY_DELAYS", (0, 0, 0))
-    attempts = []
+    monkeypatch.setattr(cli, "TOPIC", "topic-1")
+    monkeypatch.setattr(cli, "_wait_for_heavy_lane", lambda timeout_s: True)
+    monkeypatch.setattr(cli, "_report_check_result", lambda *a, **kw: None)
+    released: list[int] = []
+    monkeypatch.setattr(cli, "_release_heavy_lane", lambda: released.append(1))
 
-    def flaky(req, timeout=None):
-        attempts.append(req)
-        if len(attempts) < 3:
-            raise OSError("backend restarting")
+    cli._run_check("exit 3", 30)
 
-        class _R:
-            def read(self):
-                return b"{}"
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *a):
-                return False
-
-        return _R()
-
-    monkeypatch.setattr(cli.urllib.request, "urlopen", flaky)
-    monkeypatch.setenv("CHEESE_TOPIC", "topic-1")
-    monkeypatch.setenv("CHEESE_AWAIT_TOKEN", "wake-tok")
-
-    cli._await_report("task-9", exit_code=0, tail="ok", duration_s=1.0)
-
-    assert len(attempts) == 3
-    assert attempts[-1].get_header("X-cheese-token") == "wake-tok"
+    assert released == [1]
 
 
 # --- the self-describing layer -------------------------------------------
@@ -449,36 +386,6 @@ def test_every_argument_says_what_it_takes():
                 if not (action.help or "").strip():
                     undocumented.append(f"{label}:{action.dest}")
     assert not undocumented, f"arguments with no help=: {undocumented}"
-
-
-def test_await_log_goes_where_the_platform_points_it(monkeypatch, tmp_path):
-    """The log of a multi-hour command has to outlive the container that ran it,
-    so the provider hands the CLI a path inside the host-backed session mount."""
-    cli = _load()
-    monkeypatch.setenv("CHEESE_AWAIT_LOGS", str(tmp_path / "cheese-await"))
-    path = Path(cli._await_log_path("1754900000-42"))
-    assert path.parent == tmp_path / "cheese-await"
-    assert path.parent.is_dir()  # created, so the child can open the file
-
-
-def test_await_log_finds_the_session_mount_on_its_own(monkeypatch, tmp_path):
-    """A container from before the env var was added still gets the durable spot:
-    ~/.claude IS the mount."""
-    cli = _load()
-    monkeypatch.delenv("CHEESE_AWAIT_LOGS", raising=False)
-    monkeypatch.setenv("HOME", str(tmp_path))
-    (tmp_path / ".claude").mkdir()
-    logs = Path(cli._await_log_path("r")).parent
-    assert logs == tmp_path / ".claude" / "cheese-await"
-
-
-def test_await_log_falls_back_when_there_is_no_session_mount(monkeypatch, tmp_path):
-    """Outside a topic container there is nothing durable to write to — run the
-    command anyway rather than refusing over where its log lands."""
-    cli = _load()
-    monkeypatch.delenv("CHEESE_AWAIT_LOGS", raising=False)
-    monkeypatch.setenv("HOME", str(tmp_path))
-    assert Path(cli._await_log_path("r")).parent == tmp_path / ".cheese" / "await"
 
 
 class _FakeHTTPResponse:

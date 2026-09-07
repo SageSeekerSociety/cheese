@@ -88,8 +88,8 @@ EVENT_ROOM_MERGE: Final = "room_merge"
 EVENT_CONCLUSION_SETTLED: Final = "conclusion_settled"
 #: 话题的 Cloud 机器还在创建，这条消息先留着。
 EVENT_MACHINE_PROVISIONING: Final = "machine_provisioning"
-#: 话题绑定的机器连着失败，平台暂停向它派活（可能还换了一台）。
-EVENT_HOST_SWAP: Final = "host_swap"
+#: 话题绑定的机器连着失败，平台暂停向它派活；话题留在原机器上等人处理。
+EVENT_HOST_FAILURE: Final = "host_failure"
 #: 结论结算了，但这个话题的归档欠着 —— 它还挂着一张没决议的验收卡。
 EVENT_ARCHIVE_DEFERRED: Final = "archive_deferred"
 #: 人点了采纳，改动交给了 CI（或 PR 已开），等检查。
@@ -108,8 +108,12 @@ EVENT_FORCE_MERGED: Final = "force_merged"
 EVENT_MIGRATION_COLLISION: Final = "migration_collision"
 #: 同一批消息反复被重投进轮次，前面几次都没跑完。
 EVENT_PROMPT_REPLAYED: Final = "prompt_replayed"
+#: 有人在 PR 上留了评审意见 / 要求改动 —— 芝士要去改，不是等着。
+EVENT_PR_REVIEW: Final = "pr_review"
+#: PR 和它的 base 分支冲突了，GitHub 合不了。
+EVENT_PR_CONFLICT: Final = "pr_conflict"
 #: 本模块新增的全部类别码。`platform_error` / `backend_error` / `frontend_error`
-#: / `host_swap` / `action` 是别处已有的，不在这里重复登记。
+#: / `host_failure` / `action` 是别处已有的，不在这里重复登记。
 EVENT_TYPES: Final = frozenset(
     {
         EVENT_CI_FAILED,
@@ -133,7 +137,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_ROOM_MERGE,
         EVENT_CONCLUSION_SETTLED,
         EVENT_MACHINE_PROVISIONING,
-        EVENT_HOST_SWAP,
+        EVENT_HOST_FAILURE,
         EVENT_ACCEPT_AUTHORIZED,
         EVENT_ACCEPT_DONE,
         EVENT_ACCEPT_STOPPED,
@@ -142,6 +146,8 @@ EVENT_TYPES: Final = frozenset(
         EVENT_FORCE_MERGED,
         EVENT_MIGRATION_COLLISION,
         EVENT_PROMPT_REPLAYED,
+        EVENT_PR_REVIEW,
+        EVENT_PR_CONFLICT,
     }
 )
 

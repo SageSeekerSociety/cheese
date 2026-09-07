@@ -11,6 +11,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     DateTime,
     Enum,
     ForeignKey,
@@ -147,7 +148,7 @@ class AcceptCard(UuidPk, Timestamps, Base):
     # or by AcceptService._accept_via_pr (the two-phase flow, triggered when a
     # human clicks accept and the approver has a usable connected GitHub
     # token — see review/services.py). Either way, a card WITH a pr_number
-    # rides a PR; one without falls back to the local merge + push_back path
+    # rides a PR; one without falls back to the local merge path
     # — every card is self-describing, so flag flips and GitHub outages never
     # strand one.
     pr_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -176,6 +177,18 @@ class AcceptCard(UuidPk, Timestamps, Base):
     # the deploy workflow it triggered before the topic can finally archive.
     pr_merged_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+    # PR 回流的去重账本 (review/pr_signals.py)：每一类回流（CI 失败 / 评审意见 /
+    # 合并冲突）各记「发到哪个内容签名」和「发过几轮」。
+    #
+    # 为什么是一列而不是内存：这本账要活过后端重启。签名只活在进程里的话，一次
+    # 重启就把所有在飞的 PR 重新叫一遍 —— 每张卡一条重复的「CI 挂了」，而 CI 一
+    # 个字都没变。
+    #
+    # 为什么是 JSON 而不是几个列：它整本一起读、一起写，而且类别还会加（今天三
+    # 类）。加一类不该等于一次迁移。
+    nudge_state: Mapped[dict] = mapped_column(
+        JSON, nullable=False, default=dict, server_default="{}"
     )
 
 

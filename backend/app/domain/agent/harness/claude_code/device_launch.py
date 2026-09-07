@@ -55,8 +55,8 @@ _CHEESE_HOOK_SCRIPT = CHEESE_HOOK_SCRIPT
 #
 # Raising these is a deliberate act: re-run cli/e2e (CHEESE_RV=1) against the
 # new build first, because "it launched" is not evidence the frames still work.
-CLAUDE_PINNED_VERSION = "2.1.224"
-CLAUDE_MIN_VERSION = "2.1.224"
+CLAUDE_PINNED_VERSION = "2.1.261"
+CLAUDE_MIN_VERSION = "2.1.261"
 
 # CLAUDE_BASE_CMD starts with the bare word `claude`; the launcher resolves a
 # specific binary (pin, then ~/.local/bin, then PATH) and needs only the flags.
@@ -325,9 +325,44 @@ echo down
 # Adopt-if-alive for the same reason the drainer does: a screen is reused across
 # turns, and a second helper on the same port would exit immediately, leaving
 # whichever one won holding a token file the other launch had already replaced.
+#
+# `nohup`, and the LISTEN check below, are what make the reuse path actually
+# heal. Measured 2026-08-30 on the dev box: fifteen topics whose helper was gone
+# and whose `claude` had been dialling a dead port for days — one of them re-@'d
+# four times in three hours with not one reply. Their `cheese-tunnel.log` said
+# `tunnel listening` at the timestamp of the last launch, so the launcher HAD run
+# and this script HAD started a helper; the helper simply did not outlive the
+# `tmux new-window` the reuse branch starts it from. That window's command is
+# this script, this script backgrounds the helper and returns, and the window's
+# process group is torn down the moment it does — SIGHUP, and the port is dead
+# again before the turn it was started for reaches the model. `nohup` is what
+# makes the helper outlive the window that bore it; the direct call in the CREATE
+# branch never noticed, because there the process that returns is the one that
+# goes on to be `claude`.
+#
+# The adopt test is the port, not the pid, for the reason DEVICE_TUNNEL_PROBE
+# gives: `claude` connects to a port, and ConnectionRefused is exactly "nothing
+# is listening there". A recorded pid that is alive proves only that SOME process
+# holds that number — after a reboot, or on a box that has burnt through the pid
+# space, that is a coincidence, and adopting on it leaves the port dead for the
+# life of the screen with nothing anywhere reporting a fault.
 CHEESE_TUNNEL_UP = """#!/bin/sh
 PIDF="$HOME/.claude/cheese-tunnel.pid"
 STAMPF="$HOME/.claude/cheese-tunnel.stamp"
+# Is anything answering on the port `claude` was pointed at? python3 rather than
+# bash's /dev/tcp for the same reason the readiness wait below uses it: /bin/sh
+# is dash on the machine images and dash has no /dev/tcp.
+tunnel_listening() {
+  python3 - "$CHEESE_TUNNEL_PORT" <<'PROBEPY'
+import socket, sys
+
+try:
+    socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=0.5).close()
+except OSError:
+    raise SystemExit(1)
+raise SystemExit(0)
+PROBEPY
+}
 # Adopt a live helper ONLY if it is running the helper we just wrote. The
 # launcher rewrites cheese-tunnel.py on every launch, so a shipped fix would
 # otherwise never reach a machine whose helper is still alive — it would keep
@@ -336,14 +371,15 @@ WANT="$(cksum "$HOME/.claude/cheese-tunnel.py" 2>/dev/null | cut -d" " -f1)"
 HAVE="$(cat "$STAMPF" 2>/dev/null || true)"
 PID="$(cat "$PIDF" 2>/dev/null || true)"
 if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
-  if [ -n "$WANT" ] && [ "$WANT" = "$HAVE" ]; then
+  if [ -n "$WANT" ] && [ "$WANT" = "$HAVE" ] && tunnel_listening; then
     exit 0
   fi
-  # Different code: retire it. In-flight turns see one connection reset, which
-  # claude retries; a permanently stale helper does not heal at all.
+  # Different code, or a pid that is alive without the port being served:
+  # retire it. In-flight turns see one connection reset, which claude retries;
+  # a permanently stale helper does not heal at all.
   kill "$PID" 2>/dev/null || true
 fi
-python3 "$HOME/.claude/cheese-tunnel.py" \\
+nohup python3 "$HOME/.claude/cheese-tunnel.py" \\
   --port "$CHEESE_TUNNEL_PORT" --url "$CHEESE_TUNNEL_URL" \\
   --token-file "$HOME/.claude/cheese-tunnel.token" \\
   >"$HOME/.claude/cheese-tunnel.log" 2>&1 &
@@ -881,12 +917,51 @@ fi
 # nobody the wiser). Exiting non-zero surfaces as a screen setup error on the
 # turn, which is the honest outcome.
 #
-# The binary is pinned to a verified build when the device has it: this is
-# undocumented private surface and the frames DID move between 2.1.220 and
-# 2.1.224, so "whatever `claude` resolves to today" is not a basis for a
-# delivery path. PATH is the fallback, still gated by the floor.
+# The binary is pinned to a verified build: this is undocumented private
+# surface and the frames DID move between 2.1.220 and 2.1.224, so "whatever
+# `claude` resolves to today" is not a basis for a delivery path. PATH is the
+# fallback, still gated by the floor.
+#
+# The pin is PLACED here when it is missing, from the platform — the same
+# unauthenticated route enrollment downloads from — so a pin bump reaches a
+# machine enrolled under the previous pin at its next launch, with no
+# re-provisioning and no owner action. Before this, bumping the pin left every
+# already-enrolled cloud machine with no binary at all: enrollment installs only
+# versions/<pin> (deliberately no symlink), and nothing else on that machine
+# has a claude. Non-fatal: the chain below still runs, and the floor check
+# still refuses a build that is too old. A screen created without CHEESE_API
+# skips this and behaves as before.
+_pin="$REAL_HOME/.local/share/claude/versions/{CLAUDE_PINNED_VERSION}"
+if [ ! -x "$_pin" ] && [ -n "${{CHEESE_API:-}}" ]; then
+  case "$(uname -m)" in
+    x86_64|amd64) _carch=x64 ;;
+    aarch64|arm64) _carch=arm64 ;;
+    *) _carch="" ;;
+  esac
+  if [ -n "$_carch" ]; then
+    if [ "$(uname -s)" = "Linux" ]; then
+      if ldd /bin/ls 2>&1 | grep -q musl; then
+        _cplat="linux-$_carch-musl"
+      else
+        _cplat="linux-$_carch"
+      fi
+    else
+      _cplat="darwin-$_carch"
+    fi
+    mkdir -p "$(dirname "$_pin")"
+    if curl -fsSL --retry 3 --retry-delay 2 -m 300 \\
+        "${{CHEESE_API%/}}/connector/claude/{CLAUDE_PINNED_VERSION}/$_cplat/claude" \\
+        -o "$_pin.new" && [ -s "$_pin.new" ]; then
+      chmod +x "$_pin.new" && mv "$_pin.new" "$_pin"
+    else
+      rm -f "$_pin.new"
+      echo "cheese-launch: could not fetch claude {CLAUDE_PINNED_VERSION} for \\
+$_cplat from the platform; trying what the machine has" >&2
+    fi
+  fi
+fi
 CLAUDE_BIN=""
-for _c in "$REAL_HOME/.local/share/claude/versions/{CLAUDE_PINNED_VERSION}" \\
+for _c in "$_pin" \\
           "$REAL_HOME/.local/bin/claude"; do
   if [ -x "$_c" ]; then CLAUDE_BIN="$_c"; break; fi
 done
@@ -899,8 +974,8 @@ CLAUDE_V="$("$CLAUDE_BIN" --version 2>/dev/null | head -n 1 | awk '{{print $1}}'
 if [ -z "$CLAUDE_V" ] || [ "$(printf '%s\\n%s\\n' "{CLAUDE_MIN_VERSION}" "$CLAUDE_V" \\
     | sort -V | head -n 1)" != "{CLAUDE_MIN_VERSION}" ]; then
   echo "cheese-launch: claude ${{CLAUDE_V:-unknown}} at $CLAUDE_BIN is older than \\
-{CLAUDE_MIN_VERSION}; prompt delivery needs the rendezvous socket. Upgrade with \\
-\\`claude install stable\\`." >&2
+{CLAUDE_MIN_VERSION}, and the platform's pinned build is not at $_pin; prompt \\
+delivery needs the rendezvous socket of a newer claude." >&2
   exit 1
 fi
 # One token per topic, on disk rather than in the env: an ADOPTED claude keeps
@@ -921,6 +996,44 @@ if [ -n "${{CHEESE_RV_TOKEN_FILE:-}}" ]; then
 fi
 CLAUDE="\\"$CLAUDE_BIN\\"{CLAUDE_BASE_ARGS}"
 [ -n "$CLAUDE_MODEL" ] && CLAUDE="$CLAUDE --model $CLAUDE_MODEL"
+# 上一段对话接在哪儿。A screen is retired and reopened for reasons that have
+# nothing to do with the conversation — an expired credential, a `claude` that
+# died, a tunnel helper that went away — and the transcript of what was said
+# outlives every one of them, sitting right here on this machine's disk. Without
+# this the fresh `claude` starts from nothing and the topic loses its memory of
+# its own turns each time.
+#
+# THE DECISION IS MADE HERE, on the machine, because this is where the file is.
+# `--resume` pointed at a transcript that is not there does not degrade — claude
+# exits and the pane never draws an input box — so it has to be guarded, and the
+# backend cannot do the guarding: the device is behind NAT and its
+# $CLAUDE_CONFIG_DIR is not a path the backend can stat. (That is also why the
+# in-process `build_session_launch` guard, which reads the transcript through a
+# shared mount, was never reachable from this transport.)
+#
+# Only the CREATE branch below can use it: an adopted session already carries a
+# running conversation, and $CLAUDE goes unread there.
+RESUMEF="$HOME/.claude/cheese-resume.attempt"
+RESUME_TRIED="$(cat "$RESUMEF" 2>/dev/null || true)"
+# Consumed on read, always. The stamp says "the last launch asked to resume THIS
+# id and we never saw that session live again" — a transcript claude cannot read
+# would otherwise kill the pane, get the session retired for a dead pane, and be
+# resumed again on the relaunch, forever. Consuming it costs at most one lost
+# continuation and cannot become a wedge: the very next launch starts clean.
+# A resume that WORKED clears it just as well, because the run that adopts that
+# live session reads the stamp and writes nothing back.
+rm -f "$RESUMEF"
+if [ -n "${{CHEESE_RESUME_SESSION:-}}" ] \\
+  && [ "$RESUME_TRIED" != "$CHEESE_RESUME_SESSION" ]; then
+  # Any project slug: the filename is a uuid, so it identifies the session on its
+  # own, and a transcript written under an older cwd is still this conversation.
+  for _t in "$CLAUDE_CONFIG_DIR"/projects/*/"$CHEESE_RESUME_SESSION.jsonl"; do
+    [ -s "$_t" ] || continue
+    CLAUDE="$CLAUDE --resume $CHEESE_RESUME_SESSION"
+    printf '%s\\n' "$CHEESE_RESUME_SESSION" > "$RESUMEF" 2>/dev/null || true
+    break
+  done
+fi
 # The platform system prompt (written next to settings.json above). The path is
 # embedded QUOTED so both consumers survive a home dir with spaces: the tmux
 # branch re-parses $CLAUDE through sh -c, the exec branch through eval.
@@ -1028,12 +1141,15 @@ if command -v tmux >/dev/null 2>&1; then
     # (connector restart, crashed loop), and claude keeps pointing at that dead
     # loopback port — every turn then fails looking exactly like a stalled model.
     # `cheese-tunnel-up` adopts a live one and starts a new one otherwise.
+    #
+    # No tether here, unlike the drainer's window. The drainer needs one because
+    # it RUNS in that window and would hold the session open after claude died;
+    # this window only starts a helper that now (`nohup`) outlives it and exits
+    # straight away, so there is nothing left to pin the session down.
     if [ -n "${{CHEESE_TUNNEL_URL:-}}" ]; then
-      TETHER="$(atmux list-panes -s -t "$SESSION" -F '#{{pane_pid}}' \\
-        2>/dev/null | head -n 1)"
       atmux new-window -d -t "$SESSION" -n cheese-tunnel \\
         "CHEESE_TUNNEL_URL=$CHEESE_TUNNEL_URL CHEESE_TUNNEL_PORT=$CHEESE_TUNNEL_PORT \\
-         CHEESE_TUNNEL_TETHER=$TETHER exec sh \\"$HOME/.claude/cheese-tunnel-up\\"" \\
+         exec sh \\"$HOME/.claude/cheese-tunnel-up\\"" \\
         || true
     fi
     # A preview declared on an earlier turn outlives the helper that carried it
@@ -1183,6 +1299,7 @@ def build_screen_launch(
     home_dir: str,
     work_dir: str,
     model: str | None = None,
+    resume_session_id: str | None = None,
     extra_env: dict[str, str] | None = None,
     api_base: str | None = None,
     cli_url: str | None = None,
@@ -1213,9 +1330,24 @@ def build_screen_launch(
         "CHEESE_TOKEN": hook_token,
         "CHEESE_HOME": home_dir,
         "CHEESE_WORK": work_dir,
+        # Work is a subagent of the room's session, so these two are the shape
+        # of the room itself. Depth 1: a piece of work does not split further —
+        # its own children would be invisible to the platform (nothing binds
+        # them to a card) and unaddressable by a person. Concurrency 4: how
+        # many pieces of work a room runs at once; they share one worktree, so
+        # the ceiling is about how much simultaneous editing of one tree stays
+        # comprehensible, not about machine capacity.
+        "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "1",
+        "CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS": "4",
     }
     if model:
         env["CLAUDE_MODEL"] = model
+    if resume_session_id:
+        # An OFFER, not an instruction: the launcher takes it only if the
+        # transcript is on that machine's disk (see the script). Carried on the
+        # env for the same reason the tunnel vars are — a remote launch is built
+        # entirely out of `extra_env`, and there is no other channel into it.
+        env["CHEESE_RESUME_SESSION"] = resume_session_id
     # Platform-action CLI wiring: the `cheese` script reads these (X-Cheese-Token =
     # CHEESE_TOKEN, the SAME scoped token the hook forwarder uses).
     if cli_url:

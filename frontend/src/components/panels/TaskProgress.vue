@@ -1,28 +1,27 @@
 <script setup lang="ts">
-// 派出去的活 —— 房间总览最上面那一段：这个房间下面有哪些活，各自处在哪一格。
+// 看板 —— 房间总览最上面那一段：这个房间下面有哪些活，各自轮到谁动。
 //
 // 它取代了原来那个独立的「任务」tab。合并的理由不是省一个 tab：文档和这份清单
 // 回答的是同一个问题的两半——「这个房间在干什么」——而分成两格意味着看完一半得
 // 先想起来还有另一半。现在文档接在它下面，一屏就是全部。
 //
-// 每行一条活：状态圆环 +「第 N 件：做什么」+ 小字写 subagent 和负责人。圆环显示
-// 状态不显示百分比（`lib/taskRing.ts` 说明了为什么没有百分比可显示）。
+// 和项目那块板是同一套列、同一套短语（`lib/board.ts`），只是范围缩到一个房间，而且
+// 列是竖着堆的不是并排的——这里只有一条窄栏的宽度，并排三列一列放不下一张卡。列的
+// 顺序和名字与那边一字不差：同一个词在两个地方指同一件事，人才不用在脑子里翻译。
 //
-// 「已交付 / 已关闭未交付」分两段列，因为它们不是同一件事：一条已交付的活是这个
-// 房间的产出，一条关掉却什么都没交付的活是被放弃的——混在一起看不出这个房间到底
-// 交出去了多少。
-import type { Block, RoomTask, RoomTree, Topic } from '../../cx_types'
+// 每行一条活：色点 +「第 N 件：做什么」+ 小字写状态短语和负责人。屏幕上每一个状态
+// 词都是后端算好的 `presentation.display_status`，这一段一个都不推。
+import type { Block, BoardColumn, RoomTask, RoomTree, Topic } from '../../cx_types'
 
 import { computed, ref, watch } from 'vue'
 
 import { listRoomTasks, listRoomTrees } from '../../api'
-import { roomIdOf } from '../../lib/place'
+import { BOARD_COLUMNS, columnDotStyle, columnLabel, compareTasks } from '../../lib/board'
 import { relTime } from '../../lib/relTime'
-import { ringRank, taskRing } from '../../lib/taskRing'
 
 const props = withDefaults(
   defineProps<{
-    /** 当前打开的地点。是支线时列的仍然是**它所在房间**的活（包括它自己）。 */
+    /** 当前打开的房间。 */
     topic: Topic | null
     /** 这一段在屏幕上。折叠起来的时候不去拉。 */
     active?: boolean
@@ -33,7 +32,7 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{
-  (e: 'open-topic', topicId: string): void
+  (e: 'open-card', taskId: string): void
   (e: 'count', n: number): void
 }>()
 
@@ -45,6 +44,8 @@ const loading = ref(false)
 const errorMsg = ref<string | null>(null)
 // 默认展开：你打开一个房间的第一个问题就是「现在有什么在动」，折起来等于不答。
 const open = ref(true)
+// 已完成默认折起来。件数写在按钮上，所以折起来不等于藏起来。
+const showDone = ref(false)
 
 async function load() {
   const place = props.topic
@@ -52,8 +53,7 @@ async function load() {
     rows.value = []
     return
   }
-  // 活挂在房间上，所以问的永远是房间——在一条支线里打开它，看到的是它的同伴。
-  const roomId = roomIdOf(place)
+  const roomId = place.id
   loading.value = true
   errorMsg.value = null
   try {
@@ -61,20 +61,20 @@ async function load() {
     // 历史都吐回来，而一个跑久了的房间有近两百条活。这里只要每条最新的那一块，
     // 用来说「最后活动」。
     const payload = await listRoomTasks(roomId, { limit: 1 })
-    if (props.topic && roomIdOf(props.topic) === roomId) {
+    if (props.topic?.id === roomId) {
       rows.value = payload.data
       emit('count', payload.data.length)
     }
   } catch {
     errorMsg.value = '任务列表加载失败'
   } finally {
-    if (props.topic && roomIdOf(props.topic) === roomId) loading.value = false
+    if (props.topic?.id === roomId) loading.value = false
   }
   // 这一批封没封口，是另一个问题，也是另一条请求 —— 它失败了不该把整份清单变成
   // 一句「加载失败」，所以拿不到就当没有提示，清单照常。
   try {
     const batches = await listRoomTrees(roomId)
-    if (props.topic && roomIdOf(props.topic) === roomId) trees.value = batches.data
+    if (props.topic?.id === roomId) trees.value = batches.data
   } catch {
     trees.value = []
   }
@@ -104,23 +104,35 @@ const numberOf = computed(() => {
   return new Map(byBirth.map((r, i) => [r.id, i + 1]))
 })
 
+/** 新动过的排前面，同一时刻的按 id 定序 —— 少了后面这一半，两条同秒的活谁在前面
+ *  取决于响应里的数组顺序，于是这一段会在两次刷新之间自己跳。排序用的时间是「最后
+ *  活动」，和行上显示的那个时间是同一个，不然看起来就是排错了。 */
 function sortRows(list: ThreadRow[]): ThreadRow[] {
-  return [...list].sort((a, b) => {
-    const rank = ringRank(taskRing(a).state) - ringRank(taskRing(b).state)
-    if (rank !== 0) return rank
-    return Date.parse(lastActivity(b) ?? '') - Date.parse(lastActivity(a) ?? '')
-  })
+  return [...list].sort((a, b) =>
+    compareTasks({ id: a.id, updated_at: lastActivity(a) }, { id: b.id, updated_at: lastActivity(b) })
+  )
 }
 
-/** 还在这个房间手上的活 —— 在跑、排队、等验收、闲着。 */
-const live = computed(() => sortRows(rows.value.filter((r) => !r.accepted_at && r.status !== 'closed')))
-/** 交出去了的。 */
-const delivered = computed(() => sortRows(rows.value.filter((r) => r.accepted_at)))
-/** 关掉了，什么都没交付。 */
-const abandoned = computed(() => sortRows(rows.value.filter((r) => !r.accepted_at && r.status === 'closed')))
+const byColumn = computed(() => {
+  const buckets = new Map<BoardColumn, ThreadRow[]>()
+  for (const row of rows.value) {
+    const key = row.presentation.column
+    const list = buckets.get(key)
+    if (list) list.push(row)
+    else buckets.set(key, [row])
+  }
+  return buckets
+})
 
-const runningCount = computed(() => rows.value.filter((r) => taskRing(r).state === 'running').length)
-const queuedCount = computed(() => rows.value.filter((r) => taskRing(r).state === 'queued').length)
+function inColumn(column: BoardColumn): ThreadRow[] {
+  return sortRows(byColumn.value.get(column) ?? [])
+}
+
+/** 已完成收在最底下、折起来 —— 和项目那块板同一个处理。「已采纳」和「已收工」的
+ *  区别没有丢：它们在同一列里是两个不同的短语，展开就看得见。 */
+const doneRows = computed(() => inColumn('done'))
+/** 这个房间此刻有几件在等人。它排在标题旁边，因为这是打开一个房间最该先看到的数。 */
+const needsYouCount = computed(() => (byColumn.value.get('needs_you') ?? []).length)
 
 // ---- 封口期 ----
 // 一棵树 = 一个分支 = 一个 PR = 一批活。递卡的那一刻这一批封口，房间开下一棵接着
@@ -200,11 +212,10 @@ const hiddenBatches = computed(() => batches.value.length - shownBatches.value.l
   <section class="task-progress">
     <button type="button" class="task-progress__head" :aria-expanded="open" @click="open = !open">
       <v-icon size="16">{{ open ? 'mdi-chevron-down' : 'mdi-chevron-right' }}</v-icon>
-      <span class="task-progress__title t-body">派出去的活</span>
+      <span class="task-progress__title t-body">看板</span>
       <span class="task-progress__tally t-meta">
         <template v-if="rows.length">
-          {{ rows.length }} 件<template v-if="runningCount">，{{ runningCount }} 件在跑</template>
-          <template v-if="queuedCount">，{{ queuedCount }} 件排队</template>
+          {{ rows.length }} 件<template v-if="needsYouCount">，{{ needsYouCount }} 件等你</template>
         </template>
       </span>
     </button>
@@ -275,69 +286,67 @@ const hiddenBatches = computed(() => batches.value.length - shownBatches.value.l
       <div v-else-if="errorMsg" class="px-3 py-2 t-body c-muted">{{ errorMsg }}</div>
 
       <div v-else-if="!rows.length" class="px-3 py-2">
-        <div class="t-meta c-muted">还没有派出去的活</div>
+        <div class="t-meta c-muted">暂无派出去的活</div>
       </div>
 
       <template v-else>
-        <ul class="task-progress__list">
-          <li v-for="row in live" :key="row.id">
-            <button
-              type="button"
-              class="task-row"
-              :class="{ 'task-row--here': row.id === topic?.id }"
-              @click="emit('open-topic', row.id)"
-            >
-              <!-- 圆环：一个纯色环，颜色就是状态。不画百分比——一件活没有分母。 -->
-              <span class="ring" :class="taskRing(row).cls" :title="taskRing(row).label" aria-hidden="true" />
-              <span class="task-row__text">
-                <span class="task-row__line1 t-body"> 第 {{ numberOf.get(row.id) }} 件：{{ row.title }}</span>
-                <span class="task-row__line2 t-meta">
-                  <span class="task-row__state">{{ taskRing(row).label }}</span>
-                  <span class="task-row__sep">·</span>
-                  <span v-if="row.owner_handle">{{ row.owner_handle }}</span>
-                  <span v-else class="c-faint">暂无负责人</span>
-                  <span class="task-row__sep">·</span>
-                  <span>{{ relTime(lastActivity(row)) }}</span>
-                  <span v-if="row.id === topic?.id" class="task-row__here-tag">你在这</span>
-                </span>
-              </span>
-            </button>
-          </li>
-        </ul>
-
-        <!-- 已交付 / 已关闭未交付分开：一条交出去了的活是这个房间的产出，一条
-             关掉却什么都没交付的是被放弃的。混在一起看不出交了多少。 -->
-        <template
-          v-for="group in [
-            { key: 'delivered', label: '已交付', list: delivered },
-            { key: 'abandoned', label: '已关闭 · 未交付', list: abandoned },
-          ]"
-          :key="group.key"
-        >
-          <template v-if="group.list.length">
-            <div class="task-progress__group t-meta">{{ group.label }}（{{ group.list.length }}）</div>
-            <ul class="task-progress__list">
-              <li v-for="row in group.list" :key="row.id">
-                <button
-                  type="button"
-                  class="task-row task-row--done"
-                  :class="{ 'task-row--here': row.id === topic?.id }"
-                  @click="emit('open-topic', row.id)"
-                >
-                  <span class="ring" :class="taskRing(row).cls" :title="taskRing(row).label" aria-hidden="true" />
-                  <span class="task-row__text">
-                    <span class="task-row__line1 t-body"> 第 {{ numberOf.get(row.id) }} 件：{{ row.title }}</span>
-                    <span class="task-row__line2 t-meta">
-                      <span class="task-row__state">{{ taskRing(row).label }}</span>
-                      <span class="task-row__sep">·</span>
-                      <span v-if="row.owner_handle">{{ row.owner_handle }}</span>
-                      <span v-else class="c-faint">暂无负责人</span>
-                    </span>
+        <!-- 三列竖着堆。空的那一列也留着列头和 0：整段消失会让这一段在两次刷新之
+             间跳，而「等你」在哪个位置本身就是信息，不该取决于它此刻有没有东西。 -->
+        <template v-for="col in BOARD_COLUMNS" :key="col.key">
+          <div class="task-progress__group t-meta" :data-column="col.key">
+            <span class="board-dot" :style="columnDotStyle(col.key)" aria-hidden="true" />
+            <span>{{ col.label }}</span>
+            <span class="task-progress__group-count">{{ inColumn(col.key).length }}</span>
+          </div>
+          <ul class="task-progress__list">
+            <li v-for="row in inColumn(col.key)" :key="row.id">
+              <button type="button" class="task-row" @click="emit('open-card', row.id)">
+                <span class="board-dot" :style="columnDotStyle(row.presentation.column)" aria-hidden="true" />
+                <span class="task-row__text">
+                  <span class="task-row__line1 t-body"> 第 {{ numberOf.get(row.id) }} 件：{{ row.title }}</span>
+                  <span class="task-row__line2 t-meta">
+                    <span class="task-row__state">{{ row.presentation.display_status }}</span>
+                    <span class="task-row__sep">·</span>
+                    <span v-if="row.owner_handle">{{ row.owner_handle }}</span>
+                    <span v-else class="c-faint">暂无负责人</span>
+                    <span class="task-row__sep">·</span>
+                    <span>{{ relTime(lastActivity(row)) }}</span>
                   </span>
-                </button>
-              </li>
-            </ul>
-          </template>
+                </span>
+              </button>
+            </li>
+          </ul>
+        </template>
+
+        <!-- 已完成收在最底下、折起来。「已采纳」和「已收工」的区别没有丢：它们在
+             这一列里是两个不同的短语，展开就看得见。 -->
+        <template v-if="doneRows.length">
+          <button
+            type="button"
+            class="task-progress__group task-progress__group--fold t-meta"
+            :aria-expanded="showDone"
+            @click="showDone = !showDone"
+          >
+            <v-icon size="14">{{ showDone ? 'mdi-chevron-down' : 'mdi-chevron-right' }}</v-icon>
+            <span>{{ columnLabel('done') }}</span>
+            <span class="task-progress__group-count">{{ doneRows.length }}</span>
+          </button>
+          <ul v-if="showDone" class="task-progress__list">
+            <li v-for="row in doneRows" :key="row.id">
+              <button type="button" class="task-row task-row--done" @click="emit('open-card', row.id)">
+                <span class="board-dot" :style="columnDotStyle(row.presentation.column)" aria-hidden="true" />
+                <span class="task-row__text">
+                  <span class="task-row__line1 t-body"> 第 {{ numberOf.get(row.id) }} 件：{{ row.title }}</span>
+                  <span class="task-row__line2 t-meta">
+                    <span class="task-row__state">{{ row.presentation.display_status }}</span>
+                    <span class="task-row__sep">·</span>
+                    <span v-if="row.owner_handle">{{ row.owner_handle }}</span>
+                    <span v-else class="c-faint">暂无负责人</span>
+                  </span>
+                </span>
+              </button>
+            </li>
+          </ul>
         </template>
       </template>
     </div>
@@ -381,8 +390,24 @@ const hiddenBatches = computed(() => batches.value.length - shownBatches.value.l
   color: var(--muted);
 }
 .task-progress__group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
   padding: 8px 12px 2px;
   color: var(--faint);
+}
+.task-progress__group--fold {
+  padding-bottom: 6px;
+  text-align: left;
+  cursor: pointer;
+}
+.task-progress__group--fold:hover {
+  color: var(--muted);
+}
+/* 计数右对齐。一列有几件是这一段最有用的信息之一，不是装饰。 */
+.task-progress__group-count {
+  margin-left: auto;
 }
 .task-progress__list {
   list-style: none;
@@ -400,10 +425,6 @@ const hiddenBatches = computed(() => batches.value.length - shownBatches.value.l
   cursor: pointer;
 }
 .task-row:hover {
-  background: var(--fill);
-}
-/* 你正在看的那条。不是选中态（这一段不是导航），只是「这行就是你」。 */
-.task-row--here {
   background: var(--fill);
 }
 /* 做完了的那两组压低一档，但不隐藏：它们是这个房间交出去了什么的记录。 */
@@ -471,7 +492,24 @@ a.batch-row__pr:hover {
   color: var(--ink);
 }
 
-/* 圆环：状态就是颜色。在跑的那一格转，因为「在跑」是唯一一个此刻还在变的状态。 */
+/* 色点：颜色和形状都由 `lib/board.ts` 一处给出（内联样式），这里只管尺寸 ——
+   scoped 样式进不了别的组件，颜色写在这儿就意味着看板和侧栏各有一份。 */
+.board-dot {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  margin-top: 5px;
+  border-radius: 50%;
+  border: 2px solid var(--faint);
+}
+/* 列头上那个点不跟着行走基线。 */
+.task-progress__group .board-dot {
+  margin-top: 0;
+}
+
+/* 批次的圆环。批次不是看板的一列——它答的是「我写的东西进哪个 PR」，另一个问题，
+   所以是另一套点。还在收活的是空心的（东西还能往里放），封了口的是黄的（CI 在看
+   它，别再动），合了的是实心的（已经落地）。 */
 .ring {
   flex: 0 0 auto;
   width: 12px;
@@ -480,31 +518,6 @@ a.batch-row__pr:hover {
   border-radius: 50%;
   border: 2px solid var(--faint);
 }
-.ring--running {
-  border-color: var(--ok);
-  border-right-color: transparent;
-  animation: ring-spin 1.1s linear infinite;
-}
-.ring--queued {
-  border-color: var(--warn);
-  border-style: dotted;
-}
-.ring--reviewing {
-  border-color: var(--warn);
-}
-.ring--delivered {
-  border-color: var(--ok);
-  background: var(--ok);
-}
-.ring--closed {
-  border-color: var(--faint);
-  background: var(--faint);
-}
-.ring--idle {
-  border-color: var(--faint);
-}
-/* 批次的点：还在收活的是空心的（东西还能往里放），封了口的是黄的（CI 在看它，
-   别再动），合了的是实心的（已经落地）。 */
 .ring--batch-open {
   border-color: var(--ok);
 }
@@ -514,17 +527,5 @@ a.batch-row__pr:hover {
 .ring--batch-merged {
   border-color: var(--ok);
   background: var(--ok);
-}
-@keyframes ring-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-/* 有人把动效关了就别转 —— 状态靠颜色也说得清。 */
-@media (prefers-reduced-motion: reduce) {
-  .ring--running {
-    animation: none;
-    border-right-color: var(--ok);
-  }
 }
 </style>

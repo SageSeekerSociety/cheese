@@ -266,6 +266,25 @@ async def github_app_tokens_for_project(
     return _tokens_for_installation(installation.installation_id)
 
 
+async def github_app_read_token_for_project(
+    project_id: uuid.UUID, session: AsyncSession
+) -> str | None:
+    """A read-capable installation token for `project_id`'s repo, or None when
+    there is no installation to mint from.
+
+    This is what a fetch of the project's upstream authenticates with: the
+    App's own identity for a bound project, nothing at all for an unbound one
+    — there is no third credential. "Read" is the full installation grant, the
+    same mint a sandbox receives; the named write set (`write_token`) is for
+    pushing and merging.
+    """
+    tokens = await github_app_tokens_for_project(project_id, session)
+    if tokens is None:
+        return None
+    token, _expires_at = await tokens.installation_token()
+    return token
+
+
 def _settings_app_jwt() -> str | None:
     """A 10-minute App JWT from the platform credential, or None when the App
     is not configured. App-level endpoints (``/app/installations``) take this

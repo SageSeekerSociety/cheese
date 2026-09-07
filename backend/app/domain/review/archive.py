@@ -83,12 +83,13 @@ async def close_cards_for_archived_topic(
     topic_title: str,
     by: str,
 ) -> list[AcceptCard]:
-    """终结 `topic_id` 上所有非终态的验收卡。返回被改动的卡。
+    """终结这个房间里所有非终态的验收卡（房间自己的，和它的卡上挂着的）。返回被
+    改动的卡。
 
     幂等：终态的卡不会被再动一次，所以重复归档（或先归档再取消归档再归档）
     不会重复写 note、重复发通知。调用方负责 flush/commit。
     """
-    cards = await AcceptCardRepository(session).list_for_topic(topic_id)
+    cards = await AcceptCardRepository(session).list_everywhere_in_room(topic_id)
     now = datetime.now(UTC)
     changed: list[AcceptCard] = []
     stranded: list[AcceptCard] = []

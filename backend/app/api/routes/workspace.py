@@ -156,10 +156,14 @@ async def topic_work_summary(
 
     ``has_run`` is the topic's captured session, not its message count: 现场
     shows what 芝士 did, and a room where only people talked has no 现场 to open.
+
+    ``changed_files`` belongs to the TREE, not to the room: 一棵树 = 一个分支 =
+    一个 PR = 一批活, so the diff is what the room's whole current batch has
+    written. ``topic_changed_files`` resolves the room to its tree.
     """
     await ProjectService(db).get_or_404(project_id)
-    await TopicService(db).get_or_404(topic_id)
-    paths = ws.topic_changed_files(project_id, topic_id)
-    # 跑过没有 = 这里有没有哪个 agent 留下过会话。
-    has_run = await AgentSessionService(db).has_run(topic_id)
+    place = await TopicService(db).place_or_404(topic_id)
+    paths = ws.topic_changed_files(project_id, place.room_id)
+    # 跑过没有 = 这个地点有没有哪个 agent 留下过会话。
+    has_run = await AgentSessionService(db).has_run(place.room_id)
     return ok({"changed_files": paths, "has_run": has_run})

@@ -137,6 +137,12 @@ class Topic(UuidPk, Timestamps, Base):
     archived_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # When the raw Claude session files from this topic's device home last
+    # reached the platform (topic/transcripts.py). Null until they have; a home
+    # is only deleted after this is set or when it never ran a session.
+    transcripts_archived_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class TopicReadState(UuidPk, Timestamps, Base):

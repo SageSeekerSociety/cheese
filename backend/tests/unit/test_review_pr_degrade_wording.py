@@ -54,6 +54,7 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
         decided_at=None,
         note="",
         note_code=None,
+        nudge_state={},
         rebase_count=0,
         # No PR riding this card yet — accept tries to OPEN one, and it is that
         # attempt which degrades.
@@ -98,12 +99,9 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
 
 def _stub_local_merge(monkeypatch) -> None:
     """The direct-merge path the accept degrades onto — succeeds, so the note
-    ends up as "<degrade prefix>；已合并并推送到上游 origin/main"."""
+    is the degrade prefix and nothing else."""
     monkeypatch.setattr(
         ws, "merge_topic", lambda *_a: {"merged": True, "commit": "abc"}
-    )
-    monkeypatch.setattr(
-        ws, "push_back", lambda *_a: {"mode": "upstream", "target": "origin/main"}
     )
     monkeypatch.setattr(
         webhook_service, "post_with_retries", AsyncMock(return_value=True)
@@ -162,12 +160,14 @@ async def test_all_failures_land_on_the_same_stopped_state(
     assert card.note_code is NoteCode.pr_skipped
     assert card.note.startswith("未走 PR 采纳（GitHub 侧调用失败：")
     assert fragment in card.note
-    assert "已合并并推送到上游 origin/main" in card.note
+    # The degrade reason is the whole note: the local merge is where this
+    # accept ends, and nothing was pushed anywhere to report on.
+    assert "；" not in card.note
 
 
 @pytest.mark.anyio
 async def test_degraded_card_never_reaches_the_pr_poller(monkeypatch):
-    """`_nudge_pr_fix` only ever runs for `pr_open` cards, and a card carrying a
+    """The PR nudges only ever run for `pr_open` cards, and a card carrying a
     degrade note is `accepted`. Drive the poller with such a card and it must do
     nothing at all — no note rewrite, no 芝士 summon."""
     service, card, _topic = _accept_service()
@@ -191,26 +191,24 @@ async def test_nudge_dedup_still_suppresses_a_repeat_ci_failure():
     service, card, topic = _accept_service()
     runner = MagicMock()
 
-    service._nudge_pr_fix(
-        card=card,
-        topic=topic,
-        tail="pytest failed",
-        stage="CI",
-        chat_service=MagicMock(),
-        runner=runner,
-    )
+    def _tick() -> None:
+        nudge = service._ci_nudge(
+            card=card, tail="pytest failed", stage="CI", owner="acme", repo="widgets"
+        )
+        service._dispatch_nudges(
+            card=card,
+            topic=topic,
+            pending=[nudge] if nudge is not None else [],
+            chat_service=MagicMock(),
+            runner=runner,
+        )
+
+    _tick()
     first_note = card.note
     assert card.note_code is NoteCode.checks_failed
     assert runner.submit.call_count == 1
 
-    service._nudge_pr_fix(
-        card=card,
-        topic=topic,
-        tail="pytest failed",
-        stage="CI",
-        chat_service=MagicMock(),
-        runner=runner,
-    )
+    _tick()
 
     assert card.note == first_note
     assert runner.submit.call_count == 1

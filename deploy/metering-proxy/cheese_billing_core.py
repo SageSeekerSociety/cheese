@@ -85,25 +85,67 @@ def verify_scoped_token(
     return claims
 
 
-def usage_from_sse(body: bytes) -> tuple[dict, str]:
-    """Merge the usage block out of a streamed response: Anthropic puts input
-    tokens on message_start and the output count on message_delta, so neither
-    event alone is the turn's cost."""
-    usage: dict = {}
-    model = ""
-    for raw in body.split(b"\n"):
+class StreamingUsageExtractor:
+    """Scrape a turn's usage/model out of an SSE response WITHOUT holding the
+    whole body. Feed raw chunks as they pass through the proxy; only a single
+    partial line is ever retained, so memory stays O(one SSE line) no matter how
+    long the stream runs. Read ``.usage``/``.model`` after ``close()``.
+
+    Anthropic puts input tokens on message_start and the output count on
+    message_delta, so the usage is merged across events — neither alone is the
+    turn's cost."""
+
+    def __init__(self) -> None:
+        self._buf = b""
+        self.usage: dict = {}
+        self.model = ""
+
+    # A usage-bearing SSE line is well under 1 KiB; nothing we meter is remotely
+    # this large. The cap only guarantees the O(one line) memory bound survives
+    # malformed, newline-less input — a real line is never dropped by it.
+    _MAX_LINE = 1 << 20
+
+    def feed(self, chunk: bytes) -> None:
+        if not chunk:
+            return
+        self._buf += chunk
+        # Consume complete lines; keep the trailing partial for the next chunk.
+        *lines, self._buf = self._buf.split(b"\n")
+        for raw in lines:
+            self._consume(raw)
+        if len(self._buf) > self._MAX_LINE:
+            # No newline in a megabyte: not a usage event, and not worth holding.
+            self._buf = b""
+
+    def close(self) -> None:
+        if self._buf:
+            self._consume(self._buf)
+            self._buf = b""
+
+    def _consume(self, raw: bytes) -> None:
         if not raw.startswith(b"data: "):
-            continue
+            return
         try:
             evt = json.loads(raw[6:])
         except json.JSONDecodeError:
-            continue
+            return
         msg = evt.get("message") or {}
-        model = model or msg.get("model", "")
+        self.model = self.model or msg.get("model", "")
         for src in (msg.get("usage"), evt.get("usage")):
             if isinstance(src, dict):
-                usage.update({k: v for k, v in src.items() if isinstance(v, int)})
-    return usage, model
+                self.usage.update(
+                    {k: v for k, v in src.items() if isinstance(v, int)}
+                )
+
+
+def usage_from_sse(body: bytes) -> tuple[dict, str]:
+    """Merge the usage block out of a fully-buffered streamed response. Kept for
+    the non-streaming callers (and the unit suite); the live proxy path scrapes
+    usage incrementally via StreamingUsageExtractor instead of buffering."""
+    ex = StreamingUsageExtractor()
+    ex.feed(body)
+    ex.close()
+    return ex.usage, ex.model
 
 
 class Meter:
@@ -241,6 +283,15 @@ class AdmissionGate:
     this project. Fail-open therefore has a direction — an unreachable control
     plane falls back to the subscription, the destination this proxy has always
     had, rather than to a gateway whose per-project key it would not have.
+
+    Cached per (project, topic), not per project. The budget half of the answer
+    is the project's, but the ``upstream`` half names ONE machine — the one that
+    topic's turns run on — and a project's topics can be spread over several. A
+    project-wide key hands the second topic the first one's machine identity for
+    the rest of the window, and ccproxy only honours a machine's ticket over that
+    machine's own connection, so the turn either 401s at the far edge or is
+    billed to the wrong machine. The extra key costs one admission call per topic
+    per window, which is what the endpoint was already sized for.
     """
 
     def __init__(
@@ -255,14 +306,15 @@ class AdmissionGate:
         self._timeout = timeout_s
         self._post = post  # test seam
         self._lock = threading.Lock()
-        self._cache: dict[str, tuple[float, Verdict]] = {}
+        self._cache: dict[tuple[str, str], tuple[float, Verdict]] = {}
 
-    def check(self, project_id: str, bearer: str) -> Verdict:
+    def check(self, project_id: str, topic_id: str, bearer: str) -> Verdict:
         if not self._url or not project_id:
             return Verdict(True, "admission not configured")
+        key = (project_id, topic_id)
         now = time.time()
         with self._lock:
-            hit = self._cache.get(project_id)
+            hit = self._cache.get(key)
             if hit and now - hit[0] < self._cache_s:
                 return hit[1]
         try:
@@ -270,5 +322,13 @@ class AdmissionGate:
         except (urllib.error.URLError, OSError, ValueError, json.JSONDecodeError):
             return Verdict(True, "admission unreachable (fail-open)")
         with self._lock:
-            self._cache[project_id] = (now, verdict)
+            # Drop what has expired instead of letting it pile up. Keyed by
+            # project alone this was one entry per project and effectively
+            # bounded; keyed by topic it is one per topic ever served, which on a
+            # box carrying hundreds of them is a slow leak — in a process that
+            # has already been OOM-killed once (#654). The sweep is O(entries
+            # still inside the window) and only runs on a miss.
+            cutoff = now - self._cache_s
+            self._cache = {k: v for k, v in self._cache.items() if v[0] >= cutoff}
+            self._cache[key] = (now, verdict)
         return verdict

@@ -282,9 +282,23 @@ def test_relevance_costs_three_queries_whatever_the_project_size(client, sql_log
     assert len(_seen_by(client, big, "alice")) == 13
     big_log = list(sql_log)
 
-    for table in ("topic_memberships", "accept_cards", "alerts"):
+    for table in ("topic_memberships", "alerts"):
         assert _reads(small_log, table) == 1, table
         assert _reads(big_log, table) == 1, table
+    # `accept_cards` is read TWICE, and the two reads ask different questions
+    # that no single scan answers:
+    #   - relevance wants "any card here that ever named this viewer" —
+    #     every status, because being named is a lasting relationship
+    #     (`reviewer_topic_ids`);
+    #   - the board wants "the undecided card on this room" — every reviewer,
+    #     only live statuses (`_live_room_cards`).
+    # Folding them into one scan means dropping both filters and pulling every
+    # card on every listed topic back into Python, which is MORE rows, not
+    # fewer round trips. Two is still constant — which is the requirement this
+    # test exists for, and the assertion below is what actually enforces it.
+    for table in ("accept_cards",):
+        assert _reads(small_log, table) == 2, table
+        assert _reads(big_log, table) == 2, table
     # And nothing else in the endpoint grew either: twelve times the rows, the
     # same number of round trips.
     assert len(big_log) == len(small_log)

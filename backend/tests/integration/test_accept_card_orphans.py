@@ -212,9 +212,9 @@ def test_archiving_revokes_a_pending_card(client):
 def test_cascade_archive_closes_the_work_and_settles_the_card_delivering_it(client):
     """归档是级联的（房间带走里面的活），而收卡必须和它同一趟。
 
-    卡是房间的（一张卡交付整棵树 = 房间里那一批活），支线自己递不了。所以级联要
-    收的不是「每条支线各自那张」，而是**房间这一张**——它正要交付的恰恰是被这次
-    归档关掉的那些活。漏收就留下一张没人能再动的孤儿卡：它所在的地方已经冻住了。
+    卡是房间的（一张卡交付整棵树 = 房间里那一批活），一件活自己递不了。所以级联要
+    收的不是「每件活各自那张」，而是**房间这一张**——它正要交付的恰恰是被这次归档
+    关掉的那些活。漏收就留下一张没人能再动的孤儿卡：它所在的地方已经冻住了。
     """
     pid = _make_project(client)
     room = _make_topic(client, pid, "房间")
@@ -226,7 +226,8 @@ def test_cascade_archive_closes_the_work_and_settles_the_card_delivering_it(clie
 
     _archive(client, room, by="bob")
 
-    assert _topic(client, thread)["status"] == "closed"
+    cards = client.get(f"/topics/{room}/tasks").json()["data"]["data"]
+    assert [c["status"] for c in cards if c["id"] == thread] == ["closed"]
     assert _cards(client, room)[0]["status"] == "revoked"
 
 
@@ -288,8 +289,8 @@ def test_poller_skips_archived_topics_even_for_a_card_it_never_closed(
 def test_poll_pause_note_does_not_swallow_a_later_ci_failure(client, monkeypatch):
     """A 的核心回归。
 
-    token 失效 → note 变成 `⚠️ 轮询暂停…`；token 恢复后 CI 红了，修复前
-    `_nudge_pr_fix` 的 `startswith("⚠️")` 会误命中去重：不发消息、不改 note、
+    token 失效 → note 变成 `⚠️ 轮询暂停…`；token 恢复后 CI 红了，修复前那条
+    `startswith("⚠️")` 的去重会误命中：不发消息、不改 note、
     不留痕，芝士永远不知道要修，而唯一的逃生口（pr_head_sha 变化）又需要先有人
     推新提交——死锁。现在必须正常通知。
     """

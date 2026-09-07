@@ -26,9 +26,23 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from app.domain.agent import device_link
+from app.domain.agent import connector_build, device_link
 
 logger = logging.getLogger(__name__)
+
+
+class DeviceOffline(RuntimeError):
+    """The device has no live link, so a frame to it would go nowhere.
+
+    Raised by the awaited calls (``exec``) instead of letting them wait out
+    their timeout: ``HubDevice.send`` drops a frame to a device with no
+    transport, and a caller that then waits 35s and reports "the connector
+    did not answer" has described the opposite of what happened."""
+
+    def __init__(self, device_id: str) -> None:
+        super().__init__(f"device {device_id} is offline")
+        self.device_id = device_id
+
 
 PROTOCOL_VERSION = device_link.PROTOCOL_VERSION
 
@@ -78,7 +92,20 @@ class HubScreen:
 class HubDevice:
     device_id: str
     transport: DeviceTransport | None = None
+    # What a person calls this machine, as the connector route knows it at attach
+    # time. Kept here so a failure on the link can name the machine without a
+    # database read on a path that is already failing.
+    name: str = ""
     proto: int | None = None
+    # What the connector said about itself in `hello`: the sha256 of its own
+    # executable and the `<os>-<arch>` it was built for. Both empty from a
+    # connector built before it announced either.
+    build: str = ""
+    target: str = ""
+    # Whether this CONNECTION has already been told to update itself. Reset on
+    # every attach, so a machine whose self-update failed is told again the next
+    # time it dials in rather than once and never again.
+    update_pushed: bool = False
     # Last time the device sent any frame (hello/heartbeat/…). A liveness signal for
     # ops/UX: `is_online` already tracks the socket; this dates the last contact so a
     # future reaper can distinguish a wedged-but-connected device from a healthy one.
@@ -114,9 +141,14 @@ class DeviceHub:
 
     # -- device connection -------------------------------------------------
 
-    async def attach_device(self, device_id: str, transport: DeviceTransport) -> None:
+    async def attach_device(
+        self, device_id: str, transport: DeviceTransport, *, name: str = ""
+    ) -> None:
         device = self._device(device_id)
         device.transport = transport
+        if name:
+            device.name = name
+        device.update_pushed = False
         await device.send(device_link.welcome())
 
     async def detach_device(self, device_id: str, transport: DeviceTransport) -> None:
@@ -138,6 +170,18 @@ class DeviceHub:
 
     def online_device_ids(self) -> list[str]:
         return [d.device_id for d in self._devices.values() if d.transport is not None]
+
+    def device_name(self, device_id: str) -> str:
+        """The machine's name as announced at attach, or its id when unknown."""
+        device = self._devices.get(device_id)
+        return device.name if device is not None and device.name else device_id
+
+    def last_seen_age(self, device_id: str) -> float | None:
+        """Seconds since the device last sent any frame; None when it never has."""
+        device = self._devices.get(device_id)
+        if device is None or not device.last_seen:
+            return None
+        return asyncio.get_event_loop().time() - device.last_seen
 
     # -- screens (server -> device) ----------------------------------------
 
@@ -364,8 +408,13 @@ class DeviceHub:
         timeout: float = 60,
         stdin: str | None = None,
     ) -> dict[str, Any]:
-        """One-shot command on the device → ``{stdout, stderr, exit, truncated}``."""
+        """One-shot command on the device → ``{stdout, stderr, exit, truncated}``.
+
+        Raises ``DeviceOffline`` at once when the device has no link, rather than
+        sending into the void and timing out ``timeout``+5s later."""
         device = self._device(device_id)
+        if device.transport is None:
+            raise DeviceOffline(device_id)
         device.exec_seq += 1
         eid = f"e{device.exec_seq}"
         fut: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
@@ -440,8 +489,11 @@ class DeviceHub:
 
         if msg.t == "hello":
             device.proto = msg.v
+            device.build = msg.build
+            device.target = msg.target
             if device.proto not in (None, PROTOCOL_VERSION):
                 self._on_version_skew(device_id, device.proto)
+            await self._update_if_stale(device, msg)
             return
         if msg.t == "session.error":
             # The device could not start (or attach) this screen. There is no
@@ -504,6 +556,48 @@ class DeviceHub:
         if screen is None:
             raise KeyError(f"no screen {sid!r} on device {device_id!r}")
         return screen
+
+    async def _update_if_stale(
+        self, device: HubDevice, msg: device_link.LinkMsg
+    ) -> None:
+        """Tell a machine whose connector is not the one we serve to replace it.
+
+        Nothing else closes the gap between what the server sends and what the
+        far end can receive. A connector drops a frame it does not recognise
+        without answering it, so drift surfaces as a timeout somewhere
+        unrelated — an image that never arrived, a call that never returned —
+        and no error anywhere names a version. Left to a person to notice, a
+        machine stays behind for as long as nobody looks: one ran a build from
+        the day before ``file.put`` merged for two weeks, and every image
+        attached to any topic on it was staged into a twenty-second silence.
+
+        Only ever on a definite answer. A connector that identifies itself but
+        whose bytes we cannot compare is left alone — telling it to update on a
+        half-answer would re-exec the machine on every reconnect and never
+        converge, which is worse than the drift.
+        """
+        if device.update_pushed:
+            return
+        if msg.build or msg.target:
+            if not (msg.build and msg.target):
+                return
+            served = await asyncio.to_thread(connector_build.served_digest, msg.target)
+            if served is None or served == msg.build:
+                return
+        elif not await asyncio.to_thread(connector_build.has_any_build):
+            # It says nothing about itself, so it predates saying anything and
+            # is old by construction — but only tell it to fetch a build if we
+            # have one to give it.
+            return
+        device.update_pushed = True
+        logger.warning(
+            "device %s runs connector build %s for %s, not the one we serve — "
+            "pushing self-update",
+            device.device_id,
+            msg.build or "<unreported>",
+            msg.target or "<unreported>",
+        )
+        await device.send(device_link.update())
 
     # Overridable seam for logging/metrics; a no-op by default.
     def _on_version_skew(self, device_id: str, proto: int | None) -> None:

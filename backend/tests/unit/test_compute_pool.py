@@ -78,6 +78,9 @@ class _FakeBackend:
     def bind_receipts(self, consumer) -> None:
         return None
 
+    def bind_unread_probe(self, probe) -> None:
+        self.unread_probe = probe
+
     def holds(self, topic_id: uuid.UUID) -> bool:
         return False
 

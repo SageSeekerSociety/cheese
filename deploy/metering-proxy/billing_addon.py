@@ -47,7 +47,7 @@ Two listeners, one addon: containers arrive on the reverse listener (steered by
 HTTPS_PROXY — no root, no docker, so no --add-host for them). The regular
 listener demands the scoped token as Proxy-Authorization before it relays
 anything and MITMs only the Anthropic names; either way every request that
-reaches the `request` hook below is handled identically.
+reaches the `requestheaders` hook below is handled identically.
 
 Config (env): CHEESE_USAGE_LOG, CHEESE_INJECT_TOKEN, CHEESE_TOKEN_CAP,
 CHEESE_CAP_WINDOW_S, CHEESE_UPSTREAM_VIA, CHEESE_SCOPED_SECRET,
@@ -72,8 +72,8 @@ from cheese_billing_core import (  # noqa: E402
     GATEWAY,
     AdmissionGate,
     Meter,
+    StreamingUsageExtractor,
     proxy_basic_password,
-    usage_from_sse,
     verify_scoped_token,
 )
 
@@ -290,6 +290,33 @@ def _route_to_gateway(flow: http.HTTPFlow, key: str) -> bool:
 
 
 def _refuse(flow: http.HTTPFlow, status: int, kind: str, message: str) -> None:
+    """Answer this request here, and take back the streaming decision.
+
+    Setting a response and streaming the request body are mutually exclusive in
+    mitmproxy: once the `requestheaders` hook returns, a flow with `stream` set
+    goes to `start_request_stream`, which raises `NotImplementedError("Can't set
+    a response and enable streaming at the same time.")` — and that kills the
+    whole connection instead of delivering the refusal. Only a request that
+    CARRIES A BODY reaches that branch, which is what made this so hard to see:
+    every refusal of a GET was delivered normally while every refused
+    `POST /v1/messages` crashed the proxy, so the caller waited out its timeout
+    and reported a hung platform rather than the reason it was refused. Measured
+    on the dev box: 68 refused message turns over 48h, zero 503s delivered, 350
+    crashes.
+
+    Clearing the flag here rather than at each refusal site is deliberate. There
+    are eight of them across `requestheaders` and more will be added; a rule that
+    lives at the one point all of them go through cannot be forgotten by the
+    ninth. (`http_connect` answers 407 without coming through here, and does not
+    need to: a CONNECT has no body, so it never reaches the streaming branch.)
+
+    The cost is that a refused request's body is buffered instead of streamed
+    (mitmproxy offers no third option — a response is delivered only from the
+    buffering path). That is not the #654 leak coming back: nothing is forwarded
+    and nothing is held for the length of a turn, the body is consumed and
+    dropped as soon as the refusal goes out.
+    """
+    flow.request.stream = False
     flow.response = http.Response.make(
         status,
         json.dumps(
@@ -378,7 +405,18 @@ def tls_clienthello(data: tls.ClientHelloData) -> None:
         data.ignore_connection = True
 
 
-async def request(flow: http.HTTPFlow) -> None:
+async def requestheaders(flow: http.HTTPFlow) -> None:
+    # Runs at HEADER time, before the body arrives — and everything below reads
+    # only headers/metadata, never the request body — so the request body can be
+    # streamed straight through (flow.request.stream, set once the host is
+    # allowed) instead of being buffered whole in RAM. A long agent turn re-POSTs
+    # its entire grown conversation as the request body every turn; buffering
+    # that (together with the response) is what OOM-kills this proxy on long
+    # runs, after which the client just sees a refused connection until it
+    # restarts. Refusals still work, but they must go through `_refuse` — a
+    # refusal and a streamed body cannot both stand, and that is where the flag
+    # is taken back.
+
     # Multi-host by SNI: the sandbox --add-hosts api.anthropic.com AND the login
     # hosts (console.anthropic.com, platform.claude.com) to this one proxy, so
     # interactive Claude Code's login/refresh also gets the real token injected.
@@ -405,6 +443,13 @@ async def request(flow: http.HTTPFlow) -> None:
         )
         return
 
+    # Host is allowed and we intend to forward: stream the body rather than
+    # buffer it. A path below may still refuse, and refusing TAKES THIS BACK —
+    # see `_refuse`, which is where the two decisions are reconciled. They are
+    # not independent: leaving the flag on while setting a response is a fatal
+    # error in mitmproxy, not a harmless contradiction.
+    flow.request.stream = True
+
     via = _via()
     if via is not None:
         flow.server_conn.via = via
@@ -420,12 +465,16 @@ async def request(flow: http.HTTPFlow) -> None:
     # opened by whichever request comes first, and Claude Code's startup
     # api/oauth/profile check beats the first turn to it — so the identity that
     # connection authenticates as has to be settled by then, or the turn's own
-    # ticket goes out over the wrong one. Cheap: verdicts are cached per project.
+    # ticket goes out over the wrong one. Cheap: verdicts are cached per
+    # (project, topic) — the topic is part of the answer, not just of the
+    # question, because the identity it resolves belongs to that topic's machine.
     verdict = None
     if project_id and ADMISSION_URL:
         # Off-loop: urllib blocks, and one slow admission call must not stall
         # every other flow through the proxy.
-        verdict = await asyncio.to_thread(ADMISSION.check, project_id, bearer)
+        verdict = await asyncio.to_thread(
+            ADMISSION.check, project_id, topic_id, bearer
+        )
 
     if is_messages:
         if SCOPED_SECRET and not ALLOW_HEADER_ATTR and not project_id:
@@ -570,21 +619,58 @@ async def request(flow: http.HTTPFlow) -> None:
     flow.request.headers["authorization"] = f"Bearer {token}"
 
 
+def responseheaders(flow: http.HTTPFlow) -> None:
+    """Stream the response body through instead of buffering it whole. A turn's
+    SSE response is otherwise held in RAM for the ENTIRE turn while it buffers,
+    which — together with the buffered request — is what OOM-kills this proxy on
+    long runs (the client then sees a refused connection until it restarts).
+
+    Metering is preserved: for a streamed message turn the usage is scraped from
+    the SSE incrementally by a StreamingUsageExtractor as chunks pass through, so
+    no full body is ever materialised. A non-streaming JSON message (small, and
+    not held for the turn's duration) is left buffered so response() can meter it
+    the simple way. Everything else just streams straight through."""
+    resp = flow.response
+    if resp is None:
+        return
+    is_message_200 = "/v1/messages" in flow.request.path and resp.status_code == 200
+    if is_message_200 and "event-stream" in resp.headers.get("content-type", ""):
+        project_id, topic_id = flow.metadata.get("cheese_attr") or ("", "")
+        extractor = StreamingUsageExtractor()
+
+        def tee(chunk: bytes) -> bytes:
+            if chunk:
+                extractor.feed(chunk)
+            else:  # end-of-stream sentinel
+                extractor.close()
+                if extractor.usage:
+                    METER.record(
+                        project_id, topic_id, extractor.usage, extractor.model
+                    )
+            return chunk
+
+        resp.stream = tee
+    elif is_message_200:
+        # Non-streaming JSON message: leave buffered for response() to meter.
+        return
+    else:
+        resp.stream = True
+
+
 def response(flow: http.HTTPFlow) -> None:
+    # SSE turns are metered incrementally in the responseheaders streaming tee;
+    # the only body still buffered here is a non-streaming JSON message.
     if "/v1/messages" not in flow.request.path or not flow.response:
         return
     if flow.response.status_code != 200:
         return
+    if "event-stream" in flow.response.headers.get("content-type", ""):
+        return
     project_id, topic_id = flow.metadata.get("cheese_attr") or ("", "")
-    body = flow.response.raw_content or b""
-    ctype = flow.response.headers.get("content-type", "")
-    if "event-stream" in ctype:
-        usage, model = usage_from_sse(body)
-    else:
-        try:
-            payload = json.loads(body)
-        except (json.JSONDecodeError, ValueError):
-            return
-        usage, model = payload.get("usage", {}), payload.get("model", "")
+    try:
+        payload = json.loads(flow.response.raw_content or b"")
+    except (json.JSONDecodeError, ValueError):
+        return
+    usage, model = payload.get("usage", {}), payload.get("model", "")
     if usage:
         METER.record(project_id, topic_id, usage, model)

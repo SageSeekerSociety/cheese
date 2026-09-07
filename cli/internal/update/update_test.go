@@ -1,6 +1,11 @@
 package update
 
-import "testing"
+import (
+	"crypto/sha256"
+	"fmt"
+	"os"
+	"testing"
+)
 
 func TestPlatformDir(t *testing.T) {
 	cases := []struct {
@@ -66,5 +71,34 @@ func TestBinaryURL(t *testing.T) {
 func TestBinaryURLBadBase(t *testing.T) {
 	if _, err := binaryURL("not-a-url", "linux-amd64"); err == nil {
 		t.Error("expected error for base without host")
+	}
+}
+
+// The digest a connector announces must be the digest of the very bytes on
+// disk — that identity is what lets the server decide the machine is running
+// something other than what it serves, and an update installs a build by
+// renaming exactly those bytes into place.
+func TestSelfDigestIsTheHashOfTheRunningBinary(t *testing.T) {
+	got, err := SelfDigest()
+	if err != nil {
+		t.Fatalf("SelfDigest error: %v", err)
+	}
+	self, err := SelfPath()
+	if err != nil {
+		t.Fatalf("SelfPath error: %v", err)
+	}
+	raw, err := os.ReadFile(self)
+	if err != nil {
+		t.Fatalf("read %s: %v", self, err)
+	}
+	want := fmt.Sprintf("%x", sha256.Sum256(raw))
+	if got != want {
+		t.Errorf("SelfDigest() = %q, want %q", got, want)
+	}
+	// Stable: two calls on an unchanged binary must not disagree, or every
+	// reconnect would look like a different build and force an update.
+	again, err := SelfDigest()
+	if err != nil || again != got {
+		t.Errorf("SelfDigest() second call = %q (err %v), want %q", again, err, got)
 	}
 }

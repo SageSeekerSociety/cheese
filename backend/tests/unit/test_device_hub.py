@@ -1,9 +1,13 @@
 """DeviceHub: the server end of the link.Msg protocol (I/O-free, fake transports)."""
 
 import base64
+import hashlib
 import uuid
 
-from app.domain.agent.device_hub import DeviceHub
+import pytest
+
+from app.domain.agent import connector_build
+from app.domain.agent.device_hub import DeviceHub, DeviceOffline
 
 
 class FakeDeviceTransport:
@@ -51,6 +55,30 @@ async def test_open_screen_sends_session_create_and_registers_token():
     # The screen is discoverable by its token (attribution) and by sid.
     assert hub.screen_by_token(screen.token) is screen
     assert hub.screen(screen.sid) is screen
+
+
+async def test_exec_on_an_offline_device_fails_at_once_instead_of_timing_out():
+    hub = DeviceHub()
+    with pytest.raises(DeviceOffline):
+        await hub.exec("never-attached", ["true"], timeout=1)
+    t = FakeDeviceTransport()
+    await hub.attach_device("dev1", t)
+    await hub.detach_device("dev1", t)
+    with pytest.raises(DeviceOffline):
+        await hub.exec("dev1", ["true"], timeout=1)
+    assert t.sent == [{"t": "welcome", "v": 1}], "nothing was sent into the void"
+
+
+async def test_the_hub_can_name_a_machine_and_date_its_last_frame():
+    hub = DeviceHub()
+    assert hub.device_name("dev1") == "dev1", "unknown machines answer to their id"
+    assert hub.last_seen_age("dev1") is None
+    await hub.attach_device("dev1", FakeDeviceTransport(), name="andy 的笔记本")
+    assert hub.device_name("dev1") == "andy 的笔记本"
+    assert hub.last_seen_age("dev1") is None, "attached, but it has not spoken yet"
+    await hub.on_device_message("dev1", {"t": "heartbeat"})
+    age = hub.last_seen_age("dev1")
+    assert age is not None and 0 <= age < 1
 
 
 async def test_hello_version_skew_is_flagged_not_fatal():
@@ -251,3 +279,100 @@ async def test_session_error_is_logged_with_its_reason(caplog):
         screen.sid in r.getMessage() and "terminal: spawn boom" in r.getMessage()
         for r in caplog.records
     )
+
+
+# --- connector staleness -------------------------------------------------------
+# A connector drops a frame it does not recognise without answering it, so a
+# machine left behind by a compatibly-added capability looks healthy right up
+# until something times out somewhere unrelated. `hello` is the only moment the
+# server can see which binary it is talking to, and `update` is the only frame
+# old enough that every build understands it.
+
+
+def _publish(tmp_path, target: str, payload: bytes) -> str:
+    binary = tmp_path / target / "cheesehost"
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    binary.write_bytes(payload)
+    return hashlib.sha256(payload).hexdigest()
+
+
+async def test_connector_that_names_no_build_is_told_to_update(tmp_path, monkeypatch):
+    monkeypatch.setattr(connector_build, "dist_dir", lambda: tmp_path)
+    _publish(tmp_path, "linux-amd64", b"current build")
+    hub = DeviceHub()
+    t = FakeDeviceTransport()
+    await hub.attach_device("dev1", t)
+    await hub.on_device_message("dev1", {"t": "hello", "v": 1})
+    assert t.sent[-1] == {"t": "update"}
+
+
+async def test_connector_that_names_no_build_is_left_alone_with_nothing_to_serve(
+    tmp_path, monkeypatch
+):
+    """Telling a machine to fetch a build we do not have costs it a failed
+    download on every reconnect and fixes nothing."""
+    monkeypatch.setattr(connector_build, "dist_dir", lambda: tmp_path)
+    hub = DeviceHub()
+    t = FakeDeviceTransport()
+    await hub.attach_device("dev1", t)
+    await hub.on_device_message("dev1", {"t": "hello", "v": 1})
+    assert t.sent == [{"t": "welcome", "v": 1}]
+
+
+async def test_connector_running_our_bytes_is_left_alone(tmp_path, monkeypatch):
+    monkeypatch.setattr(connector_build, "dist_dir", lambda: tmp_path)
+    digest = _publish(tmp_path, "linux-amd64", b"current build")
+    hub = DeviceHub()
+    t = FakeDeviceTransport()
+    await hub.attach_device("dev1", t)
+    await hub.on_device_message(
+        "dev1", {"t": "hello", "v": 1, "build": digest, "target": "linux-amd64"}
+    )
+    assert t.sent == [{"t": "welcome", "v": 1}]
+
+
+async def test_connector_running_other_bytes_is_told_to_update(tmp_path, monkeypatch):
+    monkeypatch.setattr(connector_build, "dist_dir", lambda: tmp_path)
+    _publish(tmp_path, "linux-amd64", b"current build")
+    hub = DeviceHub()
+    t = FakeDeviceTransport()
+    await hub.attach_device("dev1", t)
+    await hub.on_device_message(
+        "dev1", {"t": "hello", "v": 1, "build": "d" * 64, "target": "linux-amd64"}
+    )
+    assert t.sent[-1] == {"t": "update"}
+
+
+async def test_connector_that_cannot_hash_itself_is_left_alone(tmp_path, monkeypatch):
+    """It named a platform, so it is new enough to be identified; without a
+    digest there is nothing to compare. Updating on that half-answer would
+    re-exec the machine on every reconnect and never converge."""
+    monkeypatch.setattr(connector_build, "dist_dir", lambda: tmp_path)
+    _publish(tmp_path, "linux-amd64", b"current build")
+    hub = DeviceHub()
+    t = FakeDeviceTransport()
+    await hub.attach_device("dev1", t)
+    await hub.on_device_message("dev1", {"t": "hello", "v": 1, "target": "linux-amd64"})
+    assert t.sent == [{"t": "welcome", "v": 1}]
+
+
+async def test_update_is_pushed_once_per_connection_and_again_on_reconnect(
+    tmp_path, monkeypatch
+):
+    """A self-update that fails leaves the machine on the build it has. Saying so
+    once per connection retries at the machine's own reconnect cadence instead of
+    on every frame of a connection where the answer cannot change."""
+    monkeypatch.setattr(connector_build, "dist_dir", lambda: tmp_path)
+    _publish(tmp_path, "linux-amd64", b"current build")
+    hub = DeviceHub()
+    t = FakeDeviceTransport()
+    await hub.attach_device("dev1", t)
+    await hub.on_device_message("dev1", {"t": "hello", "v": 1})
+    await hub.on_device_message("dev1", {"t": "hello", "v": 1})
+    assert [m for m in t.sent if m["t"] == "update"] == [{"t": "update"}]
+
+    await hub.detach_device("dev1", t)
+    t2 = FakeDeviceTransport()
+    await hub.attach_device("dev1", t2)
+    await hub.on_device_message("dev1", {"t": "hello", "v": 1})
+    assert t2.sent[-1] == {"t": "update"}

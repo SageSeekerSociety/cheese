@@ -15,6 +15,7 @@ picked the right facts is the real model's job.
 """
 
 import asyncio
+import gc
 import time
 import uuid
 
@@ -50,12 +51,11 @@ async def _wait_extractions(timeout: float = _EXTRACTION_TIMEOUT_S) -> None:
 
 
 async def _shutdown() -> None:
-    from openviking import AsyncOpenViking
-
     from app.domain.memory.openviking_store import get_runtime
 
+    # The runtime's close() undoes everything client() set up, including the
+    # two openviking singletons its own reset() leaves behind — see there.
     await get_runtime().close()
-    await AsyncOpenViking.reset()
 
 
 @pytest.fixture
@@ -77,6 +77,18 @@ def openviking_on_fake_endpoint(tmp_path, monkeypatch):
         # under test is dimension-agnostic.
         monkeypatch.setattr(settings, "openviking_embedding_dimension", 256)
         yield server
+    # Collect the model clients HERE, in a sync teardown with no event loop
+    # running — not "later, whenever". `_shutdown()` has made them unreferenced
+    # (see `_OpenVikingRuntime.close`), but they sit in reference cycles, so
+    # only cyclic GC frees them, and openai's `AsyncHttpxClientWrapper.__del__`
+    # then does `asyncio.get_running_loop().create_task(self.aclose())` against
+    # a socket bound to the queue worker's dead loop. Inside a later test that
+    # is `Event loop is closed` landing on that test (#693 — a different victim
+    # every time). With no loop running, `get_running_loop()` raises inside the
+    # `__del__`, its `except Exception: pass` swallows it, and the sockets are
+    # simply dropped. Measured 2026-09-05 with tmp/queued-input-probe/gc_probe.py:
+    # 3 and 7 such clients alive after these two tests on main, 0 after this.
+    gc.collect()
 
 
 async def test_openviking_round_trip_without_a_key(openviking_on_fake_endpoint):

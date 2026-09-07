@@ -5,13 +5,14 @@
 // 同一个问题的两半——「这个房间在干什么」——而分成两格意味着看完一半得先想起来
 // 还有另一半，于是大多数人只看文档，房间里有几条活在跑就没人知道。
 //
-// 打开一条支线时，上面那段列的仍然是**它所在房间**的全部活（`TaskProgress` 自己
-// 问的就是房间），下面的文档换成这条支线自己的——「右边总览只显示这条 task 自己
-// 的文档」。文档由 `PanelDoc` 按地点 id 取，所以这里不用做什么。
+// 点开看板上的一张卡就在这一格里往下钻一层：整段换成那张卡（`PanelCard`），左上角
+// 一个「看板」退回来。地址里的 `?card=` 说的就是这一层，所以它是一条能发给别人的
+// 链接 —— 而不是「跳到一个新地点」：一件活不是地点。
 import type { Topic } from '../../cx_types'
 
 import { ref } from 'vue'
 
+import PanelCard from './PanelCard.vue'
 import PanelDoc from './PanelDoc.vue'
 import TaskProgress from './TaskProgress.vue'
 
@@ -22,12 +23,15 @@ const props = withDefaults(
     topicList?: Topic[]
     active?: boolean
     refreshTick?: number
+    /** 地址里的 `?card=` —— 非空就是在看这一张卡，而不是看板加文档。 */
+    openCardId?: string | null
   }>(),
-  { topicList: () => [], active: false, refreshTick: 0 }
+  { topicList: () => [], active: false, refreshTick: 0, openCardId: null }
 )
 
 const emit = defineEmits<{
   (e: 'open-topic', topicId: string): void
+  (e: 'open-card', taskId: string | null): void
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string): void
 }>()
@@ -44,22 +48,32 @@ defineExpose({
 
 <template>
   <div class="panel-overview">
-    <TaskProgress
-      :topic="props.topic"
+    <PanelCard
+      v-if="props.openCardId"
+      :room-id="props.topic?.id ?? null"
+      :card-id="props.openCardId"
       :active="props.active"
       :refresh-tick="props.refreshTick"
-      @open-topic="emit('open-topic', $event)"
+      @back="emit('open-card', null)"
     />
-    <PanelDoc
-      ref="docRef"
-      class="panel-overview__doc"
-      :topic="props.topic"
-      :activity-tick="props.activityTick"
-      :topic-list="props.topicList"
-      @open-topic="emit('open-topic', $event)"
-      @mention-click="emit('mention-click', $event)"
-      @open-file="emit('open-file', $event)"
-    />
+    <template v-else>
+      <TaskProgress
+        :topic="props.topic"
+        :active="props.active"
+        :refresh-tick="props.refreshTick"
+        @open-card="emit('open-card', $event)"
+      />
+      <PanelDoc
+        ref="docRef"
+        class="panel-overview__doc"
+        :topic="props.topic"
+        :activity-tick="props.activityTick"
+        :topic-list="props.topicList"
+        @open-topic="emit('open-topic', $event)"
+        @mention-click="emit('mention-click', $event)"
+        @open-file="emit('open-file', $event)"
+      />
+    </template>
   </div>
 </template>
 

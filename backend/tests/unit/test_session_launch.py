@@ -1,90 +1,16 @@
-"""一块屏幕上什么时候可以接着用原来那个 claude，什么时候必须重开。
+"""claude 开机前要在盘上看到什么，以及 hooks 接线长什么样。
 
-The policy lives above the transport seam because every clause of it is about
-Claude Code — it reports through hooks, it reads its wiring once at exec, it
-draws an input box before it will take typing — and none is about tmux or
-about a link to someone's laptop. A transport supplies the six verbs; this is
-the order they go in.
+Every clause here is about Claude Code — which files it reads exactly once at
+exec, which hooks are its sense organs, which tool no user here can answer —
+and none is about a transport. A channel takes the resulting ``LaunchSpec`` and
+does its own delivery with it.
 """
 
 import pytest
 
-from app.domain.agent.harness.claude_code import (
-    ensure_claude,
-    hooks_settings,
-    session_launch,
-)
-from app.domain.agent.harness.launch import LaunchSpec
+from app.domain.agent.harness.claude_code import hooks_settings, session_launch
 
 pytestmark = pytest.mark.anyio
-
-LAUNCH = LaunchSpec(command="claude", env={}, files=())
-
-
-class _Host:
-    """A screen that records what was done to it, in order."""
-
-    def __init__(self, *, exists: bool, deaf: bool = False, comes_up: bool = True):
-        self._exists = exists
-        self._deaf = deaf
-        self._comes_up = comes_up
-        self.did: list[str] = []
-
-    async def session_exists(self, screen):
-        return self._exists
-
-    async def session_deaf(self, screen):
-        return self._deaf
-
-    async def retire_session(self, screen):
-        self.did.append("retire")
-
-    async def start_session(self, screen, launch):
-        self.did.append(f"start:{launch.command}")
-
-    async def reclaim_session(self, screen):
-        self.did.append("reclaim")
-
-    async def capture_session(self, screen):
-        self.did.append("look")
-        return "❯ " if self._comes_up else "still booting"
-
-
-async def test_a_live_session_is_reused_because_it_is_the_conversation():
-    """Restarting throws away everything the topic said to it. A session that
-    can still report is worth keeping even when it is mid-render."""
-    host = _Host(exists=True)
-    assert await ensure_claude(host, "screen", LAUNCH) is True
-    assert host.did == ["reclaim", "look"]
-
-
-async def test_a_session_that_can_no_longer_report_is_replaced_not_reused():
-    """The worst state is a claude that works perfectly and tells nobody: its
-    turns run to the ceiling having been observed doing nothing. Losing the
-    conversation is the cheaper half of that trade — and the retirement has to
-    come first, so the topic hears about it before a fresh session appears."""
-    host = _Host(exists=True, deaf=True)
-    assert await ensure_claude(host, "screen", LAUNCH) is True
-    assert host.did == ["retire", "start:claude", "look"]
-
-
-async def test_no_session_is_simply_started():
-    host = _Host(exists=False)
-    assert await ensure_claude(host, "screen", LAUNCH) is True
-    assert host.did == ["start:claude", "look"]
-    # Nothing was retired: there was nothing there, and retiring a session that
-    # does not exist would announce a lost conversation to a topic that has none.
-    assert "retire" not in host.did
-
-
-async def test_a_screen_that_never_shows_its_input_box_is_not_ready(monkeypatch):
-    """Typing before the box paints loses the prompt into a boot-time modal, so
-    "started" is not "ready" — the caller has to be able to tell them apart."""
-    monkeypatch.setattr(session_launch, "READY_TIMEOUT_S", 0.05)
-    monkeypatch.setattr(session_launch, "READY_POLL_S", 0.01)
-    host = _Host(exists=False, comes_up=False)
-    assert await ensure_claude(host, "screen", LAUNCH) is False
-    assert host.did[0] == "start:claude"
 
 
 def test_the_launch_names_the_files_claude_reads_before_it_starts():
@@ -130,11 +56,26 @@ def test_hooks_settings_wire_every_perception_hook_to_the_forwarder():
         "PreToolUse",
         "PostToolUse",
         "MessageDisplay",
+        # A subagent is a second worker inside the same session. Without these
+        # two the room gets its tool calls mixed into the session's own stream
+        # with nothing saying whose they are, and never gets what it concluded.
+        "SubagentStart",
+        "SubagentStop",
         "Stop",
     )
     for event in names:
         entry = s["hooks"][event][0]
         assert entry["hooks"][0] == {"type": "command", "command": "cheese-hook"}
+
+
+def test_a_subagent_finishing_does_not_hand_the_tree_back():
+    """`extra_stop`（cheese-sync）是「这一轮完了，把机器上的活推回去」。分身停下
+    不是轮次停下——会话还在干，往往紧接着再派一个。挂上去就会一轮推好几次，
+    而且每次推的都是一棵还没写完的树。"""
+    s = hooks_settings(["cheese-sync"])
+    assert s["hooks"]["SubagentStop"][0]["hooks"] == [
+        {"type": "command", "command": "cheese-hook"}
+    ]
 
 
 def test_hooks_settings_deny_the_tool_no_user_can_answer():

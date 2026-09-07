@@ -174,7 +174,9 @@ def pr_world(monkeypatch):
     monkeypatch.setattr(
         ws,
         "sync_upstream",
-        lambda pid: recorded["syncs"].append(pid) or {"synced": True, "commits": 1},
+        lambda pid, token=None: (
+            recorded["syncs"].append(pid) or {"synced": True, "commits": 1}
+        ),
     )
 
     def _local_merge(pid, tid):
@@ -319,7 +321,7 @@ def test_pr_conflict_sync_upstream_failure_visible_in_note(
     正常冲突一模一样，没人知道冲突可能建立在陈旧的 base 上。"""
     from app.domain.workspace import service as ws
 
-    def failing_sync(_project_id):
+    def failing_sync(_project_id, token=None):
         raise RuntimeError("network unreachable")
 
     monkeypatch.setattr(ws, "sync_upstream", failing_sync)
@@ -585,7 +587,7 @@ def _enable_app_pr(monkeypatch) -> None:
     monkeypatch.setattr(pr_publish, "GitHubPRClient", _FakeClient)
     monkeypatch.setattr(ws, "topic_branch_exists", lambda pid, tid: True)
     monkeypatch.setattr(ws, "ensure_repo", lambda pid: Path("."))
-    monkeypatch.setattr(ws, "upstream_default_branch", lambda repo: "main")
+    monkeypatch.setattr(ws, "upstream_default_branch", lambda repo, **_: "main")
 
 
 def test_discussion_topic_on_bound_project_accepts_without_forge_label(
@@ -651,6 +653,50 @@ def test_unbound_project_local_merge_is_legitimate_and_labelled(
     assert [c for c in _FakeClient.calls if c[0] in ("open_pr", "merge")] == []
     assert pr_world["local_merges"] != []  # the only accept such a project has
     assert client.get(f"/topics/{tid}").json()["data"]["accepted_by"] == "alice"
+
+
+def test_unbound_project_with_github_upstream_pushes_nothing(
+    client, pr_world, monkeypatch
+):
+    """A GitHub https upstream and no App installation (#718): the platform is
+    the forge, so the merge lands in the platform's repo and not one git push
+    or fetch runs against GitHub — there is no credential it could run with.
+    The card says so, in the forge's words, once."""
+    from app.domain.agent import github_app
+    from app.domain.workspace import service as ws
+
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid)
+    _enable_app_pr(monkeypatch)
+
+    async def _no_tokens(_pid, _session):
+        return None
+
+    monkeypatch.setattr(github_app, "github_app_tokens_for_project", _no_tokens)
+    # A real merge this time (the default pr_world merge is a no-op), so the
+    # push-back step actually runs and can be watched.
+    monkeypatch.setattr(
+        ws, "merge_topic", lambda pid_, tid_: {"merged": True, "commit": "abc"}
+    )
+    monkeypatch.setattr(ws, "_base_branch", lambda repo: "main")
+    git_calls: list[tuple] = []
+    monkeypatch.setattr(
+        ws, "_git", lambda repo, *args, **kw: git_calls.append(args) or ""
+    )
+
+    r = client.post(
+        f"/accept-cards/{cid}/accept",
+        json={"decided_by": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200
+    card = r.json()["data"]
+    assert card["status"] == "accepted"
+    assert [a for a in git_calls if a[0] in ("push", "fetch")] == []
+    assert [c for c in _FakeClient.calls if c[0] in ("open_pr", "merge")] == []
+    assert card["note"].startswith("ℹ️ 本项目未接 GitHub")
+    assert card["note"].count("未接 GitHub") == 1
 
 
 # ---- forge 说没过就不合，405 如实转译 ----------------------------------------

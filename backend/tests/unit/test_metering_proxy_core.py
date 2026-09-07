@@ -107,6 +107,40 @@ def test_sse_usage_merges_start_and_delta():
     assert usage["output_tokens"] == 42
 
 
+def test_streaming_extractor_matches_the_buffered_parse_across_chunk_splits():
+    """The live proxy scrapes usage incrementally as chunks pass through, so
+    feeding a body in arbitrary fragments must yield exactly what parsing the
+    whole body would — including when a split lands mid-line."""
+    body = b"\n".join(
+        [
+            b'data: {"type":"message_start","message":{"model":"claude-opus-5",'
+            b'"usage":{"input_tokens":7,"cache_read_input_tokens":100,'
+            b'"cache_creation_input_tokens":3,"output_tokens":1}}}',
+            b'data: {"type":"content_block_delta"}',
+            b'data: {"type":"message_delta","usage":{"output_tokens":42}}',
+            b"data: [DONE]",
+        ]
+    )
+    want_usage, want_model = core.usage_from_sse(body)
+
+    for step in (1, 7, 13, 500):  # byte-at-a-time up to whole-body
+        ex = core.StreamingUsageExtractor()
+        for i in range(0, len(body), step):
+            ex.feed(body[i : i + step])
+        ex.close()
+        assert (ex.usage, ex.model) == (want_usage, want_model), f"step={step}"
+    assert want_usage["output_tokens"] == 42 and want_usage["input_tokens"] == 7
+
+
+def test_streaming_extractor_stays_bounded_on_newlineless_input():
+    """A pathological stream with no line breaks must not grow the buffer without
+    limit — the O(one line) memory bound is what keeps this proxy from OOMing."""
+    ex = core.StreamingUsageExtractor()
+    for _ in range(64):
+        ex.feed(b"x" * (1 << 20))  # 64 MiB total, no newline ever
+    assert len(ex._buf) <= (1 << 20)
+
+
 def test_meter_records_and_caps_over_the_window(tmp_path):
     meter = core.Meter(tmp_path / "usage.jsonl", cap_window_s=3600)
     meter.record("p1", "t1", {"input_tokens": 60, "output_tokens": 40}, "m")
@@ -132,7 +166,7 @@ def test_admission_verdict_carries_the_supply_decision():
         return core.Verdict(True, "ok", pool=core.GATEWAY, key="sk-virt-1")
 
     gate = core.AdmissionGate("http://backend/llm/admission", post=gateway_post)
-    v = gate.check("p1", "tok")
+    v = gate.check("p1", "t1", "tok")
     assert v.allow and v.pool == core.GATEWAY and v.key == "sk-virt-1"
 
 
@@ -205,19 +239,70 @@ def test_admission_gate_caches_and_fails_open():
         return core.Verdict(False, "budget spent: 5.0000 of 5.0000")
 
     gate = core.AdmissionGate("http://backend/llm/admission", post=fake_post)
-    first = gate.check("p1", "tok")
+    first = gate.check("p1", "t1", "tok")
     assert first.allow is False and "5.0000" in first.reason
-    assert gate.check("p1", "tok").allow is False
+    assert gate.check("p1", "t1", "tok").allow is False
     assert len(calls) == 1  # second answer came from the cache
 
     def broken_post(url, bearer, timeout_s):
         raise OSError("backend down")
 
     open_gate = core.AdmissionGate("http://backend/llm/admission", post=broken_post)
-    v = open_gate.check("p2", "tok")
+    v = open_gate.check("p2", "t1", "tok")
     assert v.allow is True and "fail-open" in v.reason
     # Fail-open has a direction: never guess a gateway we have no key for.
     assert v.pool == core.SUBSCRIPTION
 
     # Not configured → always allow, no calls.
-    assert core.AdmissionGate("", post=fake_post).check("p3", "tok").allow is True
+    assert core.AdmissionGate("", post=fake_post).check("p3", "t1", "tok").allow is True
+
+
+def test_one_topics_machine_identity_is_never_served_to_another():
+    """Two topics of ONE project, on two different machines — the ordinary shape
+    of a project that leased more than one box.
+
+    The budget half of an admission answer is the project's, but the identity
+    half names a single machine, and ccproxy only honours a machine's ticket
+    over that machine's own connection. So a verdict cached per project hands
+    the second topic the first one's identity for the rest of the window: the
+    turn is authenticated as a machine it is not, which the far edge answers
+    with a 401 that names nothing, and whatever does get through is billed to
+    the wrong machine.
+    """
+    identities = {"t-alpha": "m516:pw516", "t-beta": "m784:pw784"}
+    asked: list[str] = []
+
+    def post(url, bearer, timeout_s):
+        asked.append(bearer)
+        return core.Verdict(True, "ok", upstream=identities[bearer])
+
+    gate = core.AdmissionGate("http://backend/llm/admission", post=post)
+
+    # The bearer is the per-topic scoped token, so it stands in for the topic.
+    assert gate.check("p1", "t-alpha", "t-alpha").upstream == "m516:pw516"
+    assert gate.check("p1", "t-beta", "t-beta").upstream == "m784:pw784"
+    assert asked == ["t-alpha", "t-beta"]
+
+    # Still cached — per topic, which is the point. Neither answer moved.
+    assert gate.check("p1", "t-alpha", "t-alpha").upstream == "m516:pw516"
+    assert gate.check("p1", "t-beta", "t-beta").upstream == "m784:pw784"
+    assert len(asked) == 2
+
+
+def test_the_verdict_cache_does_not_grow_for_every_topic_ever_served():
+    """One entry per topic ever served would be a slow leak in a proxy that runs
+    for weeks and has already been OOM-killed once. An entry past its window is
+    no longer an answer to anything, so it goes."""
+    gate = core.AdmissionGate(
+        "http://backend/llm/admission",
+        cache_s=0.01,
+        post=lambda url, bearer, timeout_s: core.Verdict(True, "ok"),
+    )
+    for i in range(50):
+        gate.check("p1", f"t{i}", "tok")
+        time.sleep(0.001)
+
+    time.sleep(0.05)
+    gate.check("p1", "t-last", "tok")
+
+    assert len(gate._cache) == 1, "expired verdicts were kept"

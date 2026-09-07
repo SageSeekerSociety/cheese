@@ -172,7 +172,9 @@ onMounted(load)
 }
 .market-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  /* See NodeBoard: without min(), 260px is a floor the grid keeps even in a
+     narrower column, and the board overflows rather than reflowing. */
+  grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr));
   gap: 14px;
 }
 .pool-card {

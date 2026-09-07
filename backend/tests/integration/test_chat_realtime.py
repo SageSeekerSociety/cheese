@@ -224,7 +224,7 @@ async def test_a_failed_turn_says_what_failed_and_never_speaks_as_cheese(
     meta = block.meta
     assert meta["event_type"] == "turn_failed"
     assert meta["severity"] == "error"
-    # 没有自动续跑，得有人再 @ 它。
+    # 平台不自动重试，得有人再 @ 它。
     assert meta["who"] == "human"
     assert "session limit" in meta["detail"]
     assert meta["detail_label"] == "详细说明"

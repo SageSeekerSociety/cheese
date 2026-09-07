@@ -47,9 +47,13 @@ export interface Topic {
   // 哪个 AI 队友在这个话题里工作。null = 跟着项目的默认走（不是「没有」），
   // 所以换了项目默认，这个话题也跟着换。
   agent_instance_id?: string | null
-  // 只有 kind='thread' 的地点有：这件活当前骑的那张验收卡 / PR。房间的交付是
-  // 整条分支一张卡，不挂在这里。
-  card?: ThreadCard | null
+  // 这个房间在看板那套词里处在哪一列。侧栏房间行的色点读它。
+  //
+  // 和上面 `running` / `awaits_me` / `i_participate` 一样是「只有 list/get 话题时
+  // 才带」的字段——`Topic` 同时也是私聊和项目本体的形状，那些地方没有列可言。所以
+  // 拿不到就**不画点**，而不是退回前端自己算一个：一旦有了退路，两个算法会同时活
+  // 着，而屏幕上那个颜色是哪一个算出来的，谁也说不清。
+  presentation?: Presentation
 }
 
 export type AuthorType = 'human' | 'ai' | 'system'
@@ -141,14 +145,14 @@ export interface RoomTask {
   room_id: string
   title: string
   status: string
-  // 它此刻占没占着这个房间四个槽位里的一个，和从什么时候开始等的。和 `status`
-  // 是两个问题：四条都 open 的房间可能三条在跑一条排队，也可能全都闲着。
-  residency?: 'running' | 'idle'
-  queued_at?: string | null
   owner_handle?: string | null
   created_by?: string | null
-  agent_instance_id?: string | null
   branch_name?: string | null
+  // 派它出去时说的那份要求，和分身交回来的那句话。两样都住在卡上：简报以前存在
+  // 「活自己的实况文档」里，而做活的分身拿的是房间的 token，够不着那个地址，
+  // 于是那份文档从播种那一刻起就再没人改过。
+  brief?: string
+  conclusion?: string | null
   // 它干在哪一批上。一棵树 = 一个分支 = 一个 PR = 一批活，所以这是「我这条活最后
   // 会从哪个 PR 出去」的答案，也是总览把活和 PR 对上的唯一依据。
   tree_id?: string | null
@@ -163,6 +167,32 @@ export interface RoomTask {
   // /topics/{id}/tasks`）都带它——「等人验收」也是安静的，没有它就和「闲着」
   // 在屏幕上长得一模一样。
   card?: ThreadCard | null
+  // 这条活在看板上落哪一列、卡上写哪句话。**必有字段，不是可选的**：状态从今往后
+  // 只在后端算一次，前端没有一条退回本地推导的路——留一条兜底路，两个算法就会同时
+  // 存在，而且谁也说不清屏幕上那个词是哪一个算出来的。
+  presentation: Presentation
+}
+
+/** 看板的一列。判据是「**该谁动**」，不是「事情进行到哪一步」——同一个客观事实，
+ *  下一步在平台手上还是在人手上，落在不同的列里。
+ *
+ *    building   施工中 —— 还没递出交付
+ *    delivering 交付中 —— 下一步在平台/芝士手上
+ *    needs_you  等你   —— 下一步在人手上
+ *    done       已完成 —— 已采纳，或已收工且没交付
+ *    archived   已归档 —— 房间才有；活不归档
+ */
+export type BoardColumn = 'building' | 'delivering' | 'needs_you' | 'done' | 'archived'
+
+/** 后端算好的呈现，前端照抄。
+ *
+ *  `display_status` 已经是可以直接显示的中文，**前端不再做第二张映射表**——这正是
+ *  这个字段存在的理由。同一个客观事实（比如快检红了）在不同的列里是不同的话：平台
+ *  自己在修时是「修复检查」，等人拍板时是「检查未通过」，所以短语属于列，一列只会
+ *  产出属于它自己的那几个词。前端再映射一次，两边就会各说各的。 */
+export interface Presentation {
+  column: BoardColumn
+  display_status: string
 }
 
 /** 一批活 —— 一棵树 = 一个分支 = 一个 PR。房间封口一批、开下一批，所以一个房间
@@ -900,5 +930,8 @@ export interface ProjectAgent {
   is_default: boolean
   // False = it resolves and owns a memory pool, but there is no row to edit.
   configured: boolean
+  // False = 已停用. Still listed and still working in the topics that already
+  // have it — just not offered when picking an agent for new work.
+  is_active: boolean
   created_at?: string | null
 }

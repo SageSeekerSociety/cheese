@@ -12,26 +12,23 @@ by scripts/build-connector.sh from the main repo's cli/). A target with no built
 binary 404s until a build runs — the endpoint degrades, never crashes.
 """
 
-import re
-from pathlib import Path
-
 from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 
 from app.core.config import settings
+from app.domain.agent import connector_build
 from app.domain.machine import claude_dist
 
 router = APIRouter(prefix="/connector", tags=["connector"])
 
 # Only these <os>-<arch> pairs are served; the path is validated against this
-# set so a request can never escape the dist dir.
-_TARGETS = {"darwin-arm64", "darwin-amd64", "linux-arm64", "linux-amd64"}
-_TARGET_RE = re.compile(r"^(darwin|linux)-(amd64|arm64)$")
-
-
-def _dist_dir() -> Path:
-    # backend/connector-dist relative to this file (app/api/routes/installer.py).
-    return Path(__file__).resolve().parents[3] / "connector-dist"
+# set so a request can never escape the dist dir. They come from
+# `connector_build`, which hashes the very same files to decide whether a
+# connected machine is running them — one list, so the two can never disagree
+# about what a target is.
+_TARGETS = connector_build.TARGETS
+_TARGET_RE = connector_build.TARGET_RE
+_dist_dir = connector_build.dist_dir
 
 
 def _origin(request: Request) -> str:
@@ -170,10 +167,10 @@ async def download_claude(version: str, platform: str) -> Response:
 async def download_binary(target: str) -> Response:
     if not _TARGET_RE.match(target) or target not in _TARGETS:
         return PlainTextResponse("unknown target", status_code=404)
-    binary = _dist_dir() / target / "cheesehost"
-    if not binary.is_file():
+    binary = connector_build.binary_path(target)
+    if binary is None:
         return PlainTextResponse(
-            "binary not built for this target — run scripts/build-connector.sh",
+            "binary not built for this target — run backend/scripts/build-connector.sh",
             status_code=404,
         )
     return FileResponse(

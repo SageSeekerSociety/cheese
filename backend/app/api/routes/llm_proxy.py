@@ -123,6 +123,21 @@ async def admission(
         limit=None if summary["unlimited"] else summary["credits_total"],
     )
     decision = decide(state)
+    if not decision.allow:
+        # Tell the room NOW, from the place that actually knows why (#715) —
+        # rather than let Claude Code retry ten times into a `StopFailure` it
+        # reads as a bad API key. `t` is the PLACE claim (room or thread); a
+        # token minted without one (project-wide capabilities) has nothing to
+        # tell, and a place with no turn running is the turn-start refusal
+        # path's job, not this one's.
+        place = claims.get("t")
+        if isinstance(place, str) and place:
+            try:
+                place_uuid = uuid.UUID(place)
+            except ValueError:
+                place_uuid = None
+            if place_uuid is not None:
+                await chat.note_credits_refusal(place_uuid)
 
     # The supply decision rides along with the admission answer: the proxy has
     # to ask before every turn anyway, and one round trip that says both "may
@@ -147,18 +162,22 @@ async def admission(
         # relaying a machine's OWN ticket only works from that machine's
         # identity — carrying it here is what lets the proxy forward the ticket
         # untouched instead of holding a credential to swap in. Absent (an
-        # unpinned topic, a machine enrolled before this was recorded) means
+        # unpinned room, a machine enrolled before this was recorded) means
         # "use the deployment-wide identity", i.e. exactly today's behaviour.
-        topic = claims.get("t")
-        if isinstance(topic, str) and topic:
+        #
+        # The claim is a PLACE id, not necessarily a room's: a thread's per-turn
+        # token carries the thread's own id, and the repository is what turns
+        # that back into the room whose machine the thread runs on.
+        place = claims.get("t")
+        if isinstance(place, str) and place:
             try:
-                topic_uuid = uuid.UUID(topic)
+                place_uuid = uuid.UUID(place)
             except ValueError:
-                topic_uuid = None
-            if topic_uuid is not None:
+                place_uuid = None
+            if place_uuid is not None:
                 upstream = await ProjectMachineRepository(
                     db
-                ).ccproxy_upstream_for_topic(topic_uuid)
+                ).ccproxy_upstream_for_place(place_uuid)
                 if upstream:
                     supply["upstream"] = upstream
 

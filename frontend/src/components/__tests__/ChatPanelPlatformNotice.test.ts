@@ -391,10 +391,12 @@ describe('向后兼容：库里存量的老事件一个都不能变样', () => {
   })
 
   it('有 event_type 但没有 detail 的事件，还是那条淡行（不硬塞进折叠框）', async () => {
-    const { container } = mountRoom([event('', '这轮换了一台机器继续跑', { event_type: 'host_swap', who: 'platform' })])
+    const { container } = mountRoom([
+      event('', '机器「dev-box」连续失败，已暂停派活', { event_type: 'host_failure', who: 'human' }),
+    ])
     await flush()
 
-    expect(container.querySelector('.im-event')!.textContent).toContain('这轮换了一台机器继续跑')
+    expect(container.querySelector('.im-event')!.textContent).toContain('机器「dev-box」连续失败，已暂停派活')
     expect(container.querySelector('[data-testid="platform-notice"]')).toBeNull()
   })
 

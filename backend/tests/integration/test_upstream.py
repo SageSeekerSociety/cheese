@@ -133,18 +133,15 @@ def test_unlink_upstream(client, tmp_path):
     assert client.get(f"/projects/{pid}/upstream").json()["data"]["url"] is None
 
 
-def test_accept_pushes_back_and_fires_hook(client, tmp_path):
-    """采纳即上线: accepting a topic pushes the merged base branch to a local
-    upstream as dogfood/<topic> and runs the repo's on-dogfood-push.sh hook."""
-    import time
+def test_accept_leaves_the_upstream_untouched(client, tmp_path):
+    """Accepting merges into the platform's own repo and stops there (#718):
+    the linked upstream receives no branch and no commit."""
     import uuid as _uuid
 
     up = _make_upstream(tmp_path)
-    marker = up / "hook-ran.txt"
-    hook = up / "scripts" / "on-dogfood-push.sh"
-    hook.parent.mkdir()
-    hook.write_text('#!/bin/sh\necho "$1" > hook-ran.txt\n')
-    hook.chmod(0o755)
+    before = subprocess.run(
+        ["git", "-C", str(up), "for-each-ref"], capture_output=True, text=True
+    ).stdout
 
     pid = _project(client)
     client.put(f"/projects/{pid}/upstream", json={"url": str(up)})
@@ -152,9 +149,6 @@ def test_accept_pushes_back_and_fires_hook(client, tmp_path):
         "/topics", json={"project_id": pid, "title": "T", "created_by": "u"}
     )
     tid = r.json()["data"]["id"]
-
-    # Simulate a turn's edit, committed and pushed by the machine that made it,
-    # then run the accept flow end-to-end.
     puid, tuid = _uuid.UUID(pid), _uuid.UUID(tid)
     machine_commits(puid, tuid, {"work.txt": "accepted work\n"})
 
@@ -173,19 +167,15 @@ def test_accept_pushes_back_and_fires_hook(client, tmp_path):
     )
     assert r.status_code == 200
 
-    branch = f"dogfood/{tuid.hex[:8]}"
-    out = subprocess.run(
-        ["git", "-C", str(up), "show", f"{branch}:work.txt"],
-        capture_output=True,
-        text=True,
-    )
-    assert out.returncode == 0 and "accepted work" in out.stdout
-    # The detached hook runs asynchronously — give it a moment.
-    for _ in range(30):
-        if marker.exists():
-            break
-        time.sleep(0.1)
-    assert marker.read_text().strip() == branch
+    # The merge landed on the platform's base …
+    from app.domain.workspace import service as ws
+
+    assert ws.read_file(puid, "work.txt") == "accepted work\n"
+    # … and the upstream is exactly as it was: no dogfood/<topic>, no new ref.
+    after = subprocess.run(
+        ["git", "-C", str(up), "for-each-ref"], capture_output=True, text=True
+    ).stdout
+    assert after == before
 
 
 def test_accept_conflict_is_a_state_not_a_lie(client):
@@ -351,16 +341,18 @@ def test_sync_conflict_dispatches_cheese_at_the_materialized_merge(client, tmp_p
     assert d["synced"] is False and d["conflicts"] == ["hello.txt"]
     # …and now there is somewhere to go.
     assert d["dispatched"]["files"] == ["hello.txt"]
-    tid = d["dispatched"]["topic_id"]
+    tid = d["dispatched"]["task_id"]
+    room = d["dispatched"]["room_id"]
 
     # The work is real, carries the conflict in its workspace, and hangs in the
     # caller's 1:1 room rather than polluting the project's topic list.
     #
-    # Read AS alice: it is a thread in a private room, and reading a thread is
-    # authorized against the room it lives in — which is the point of a private
-    # room. An anonymous read used to pass because the work was its own topic
-    # and the private-ness stopped at the parent.
-    t = client.get(f"/topics/{tid}", headers=_owner(client, "alice")).json()["data"]
+    # Read AS alice, and THROUGH the room: a card is not a place, and reading
+    # one is authorized against the room it lives in — which is the point of a
+    # private room.
+    t = client.get(
+        f"/topics/{room}/tasks/{tid}", headers=_owner(client, "alice")
+    ).json()["data"]
     assert t["title"] == "解决同步上游冲突"
     body = (ws.topic_worktree(puid, _uuid.UUID(tid)) / "hello.txt").read_text()
     assert "<<<<<<<" in body
@@ -381,7 +373,12 @@ def test_sync_conflict_dispatches_cheese_at_the_materialized_merge(client, tmp_p
     # a race — it passed locally and failed in CI on the very first run.
     from app.domain.workspace.upstream_conflict import _prompt
 
-    assert "验收卡" in _prompt(["hello.txt"])
+    prompt = _prompt(["hello.txt"], _uuid.UUID(tid))
+    assert "验收卡" in prompt
+    # 提示词是发给**房间**的：解冲突是一条活，而一条活是房间会话里的一个分身，
+    # 它没有自己的会话可以叫醒。所以这段话得说清是哪条活、以及起完分身要 bind。
+    assert tid in prompt, "不给 task id，房间没法把分身绑到这条活上"
+    assert "cheese bind" in prompt
 
 
 def test_second_sync_reuses_the_open_resolution_task(client, tmp_path):
@@ -408,19 +405,19 @@ def test_second_sync_reuses_the_open_resolution_task(client, tmp_path):
     ]["dispatched"]
 
     # 芝士 has started resolving — this content must survive a second press.
-    wt = ws.topic_worktree(_uuid.UUID(pid), _uuid.UUID(first["topic_id"]))
+    wt = ws.topic_worktree(_uuid.UUID(pid), _uuid.UUID(first["task_id"]))
     (wt / "hello.txt").write_text("half-resolved by 芝士\n")
 
     second = client.post(f"/projects/{pid}/upstream/sync", headers=headers).json()[
         "data"
     ]["dispatched"]
-    assert second["topic_id"] == first["topic_id"] and second["reused"] is True
+    assert second["task_id"] == first["task_id"] and second["reused"] is True
     assert (wt / "hello.txt").read_text() == "half-resolved by 芝士\n"
 
 
 @pytest.mark.anyio
 async def test_scheduler_syncs_linked_upstreams_with_nobody_pressing_the_button(
-    client, tmp_path
+    client, tmp_path, monkeypatch
 ):
     """自动同步上游: the platform pulls upstream on its own interval.
 
@@ -444,12 +441,249 @@ async def test_scheduler_syncs_linked_upstreams_with_nobody_pressing_the_button(
         workspace_root=str(tmp_path / "ws"),
         compute=stub_compute(),
     )
+    seen_tokens: list[str | None] = []
+    real_sync = ws.sync_upstream
+
+    def spy(pid_, *, token=None):
+        seen_tokens.append(token)
+        return real_sync(pid_, token=token)
+
+    monkeypatch.setattr(ws, "sync_upstream", spy)
     result = await SchedulerService(chat_service=chat).sync_upstreams()
 
     assert result["errors"] == []
     assert result["synced"] >= 1
     # Not just a status: the upstream's content is really on the project's base.
     assert ws.read_file(_uuid.UUID(pid), "hello.txt") == "hi from upstream\n"
+    # No installation → no credential: an unbound project's fetch carries none.
+    assert seen_tokens == [None]
+
+
+class _AppReadTokens:
+    """Stands in for the App's minter on a bound project."""
+
+    async def installation_token(self) -> tuple[str, str]:
+        return "ghs_read", "2099-01-01T00:00:00+00:00"
+
+
+def _bind_to_app(monkeypatch) -> list[str | None]:
+    """The project has an App installation; returns the tokens each
+    sync_upstream call was handed, while the real sync still runs."""
+    from app.domain.agent import github_app
+    from app.domain.workspace import service as ws
+
+    async def _tokens(_pid, _session):
+        return _AppReadTokens()
+
+    monkeypatch.setattr(github_app, "github_app_tokens_for_project", _tokens)
+    seen: list[str | None] = []
+    real_sync = ws.sync_upstream
+
+    def spy(pid_, *, token=None):
+        seen.append(token)
+        return real_sync(pid_, token=token)
+
+    monkeypatch.setattr(ws, "sync_upstream", spy)
+    return seen
+
+
+@pytest.mark.anyio
+async def test_scheduler_fetches_a_bound_project_as_the_app(
+    client, tmp_path, monkeypatch
+):
+    """A project the App is installed on fetches its upstream with the App's
+    own token — the only credential the platform has for it (#718). The
+    upstream here is a local repo, which proves the credential env does not get
+    in the way of a fetch that needs none."""
+    import uuid as _uuid
+
+    from app.domain.agent.chat import ChatService
+    from app.domain.scheduler.service import SchedulerService
+    from app.domain.workspace import service as ws
+
+    up = _make_upstream(tmp_path)
+    pid = _project(client)
+    client.put(f"/projects/{pid}/upstream", json={"url": str(up)})
+    seen = _bind_to_app(monkeypatch)
+
+    chat = ChatService(
+        session_factory=client.test_factory,
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+        compute=stub_compute(),
+    )
+    result = await SchedulerService(chat_service=chat).sync_upstreams()
+
+    assert result["errors"] == []
+    assert seen == ["ghs_read"]
+    assert ws.read_file(_uuid.UUID(pid), "hello.txt") == "hi from upstream\n"
+
+
+def test_manual_sync_fetches_a_bound_project_as_the_app(client, tmp_path, monkeypatch):
+    """The 同步上游 button takes the same credential path as the loop."""
+    up = _make_upstream(tmp_path)
+    pid = _project(client)
+    client.put(f"/projects/{pid}/upstream", json={"url": str(up)})
+    seen = _bind_to_app(monkeypatch)
+
+    r = client.post(f"/projects/{pid}/upstream/sync")
+    assert r.status_code == 200 and r.json()["data"]["synced"] is True
+    assert seen == ["ghs_read"]
+
+
+def _fetch_env(monkeypatch, tmp_path, *, token: str | None, via=None) -> dict:
+    """The env the upstream fetch ran with. The caller (`sync_upstream` unless
+    `via` names another) is cut short right after the fetch — the credential is
+    the whole question here."""
+    import uuid as _uuid
+
+    from app.core.errors import ValidationError
+    from app.domain.workspace import service as ws
+
+    fetches: list[dict] = []
+
+    def fake_git(repo, *args, timeout=20, env=None):
+        if args[0] == "fetch":
+            fetches.append(dict(env or {}))
+            return ""
+        raise ValidationError("stop after the fetch")
+
+    monkeypatch.setattr(ws, "ensure_repo", lambda pid: tmp_path)
+    monkeypatch.setattr(
+        ws, "get_upstream", lambda pid: "https://github.com/acme/widgets"
+    )
+    monkeypatch.setattr(ws, "_git", fake_git)
+    if via is None:
+        ws.sync_upstream(_uuid.uuid4(), token=token)
+    else:
+        with pytest.raises(ValidationError):
+            via(_uuid.uuid4(), _uuid.uuid4(), token=token)
+    (env,) = fetches
+    return env
+
+
+def _credential_helpers(env: dict) -> list[str]:
+    count = int(env.get("GIT_CONFIG_COUNT", "0"))
+    return [
+        env[f"GIT_CONFIG_VALUE_{i}"]
+        for i in range(count)
+        if env.get(f"GIT_CONFIG_KEY_{i}") == "credential.helper"
+    ]
+
+
+def test_bound_fetch_authenticates_through_the_env_and_nothing_on_disk(
+    monkeypatch, tmp_path
+):
+    """The token reaches git through a credential helper wired in the env:
+    never on argv, never a store file, and whatever helper the environment
+    might already carry is reset so it cannot answer first."""
+    env = _fetch_env(monkeypatch, tmp_path, token="ghs_read")
+    helpers = _credential_helpers(env)
+    assert helpers and helpers[0] == "", "the inherited helper list is reset"
+    assert any(h for h in helpers), "an inline helper is configured"
+    assert not any(h.startswith("store") for h in helpers)
+    assert "ghs_read" in env.values()
+
+
+def test_unbound_fetch_carries_no_credential(monkeypatch, tmp_path):
+    env = _fetch_env(monkeypatch, tmp_path, token=None)
+    assert _credential_helpers(env) == []
+    assert "credential.helper" not in env.values()
+
+
+def _trunk_lookup(
+    monkeypatch, tmp_path, *, token: str | None
+) -> tuple[str | None, dict]:
+    """What the PR-open path learns the upstream's trunk is called, and the env
+    the `ls-remote` that asked ran with."""
+    from app.domain.workspace import service as ws
+
+    asked: list[dict] = []
+
+    def fake_git(repo, *args, timeout=20, env=None):
+        assert args[0] == "ls-remote"
+        asked.append(dict(env or {}))
+        return "ref: refs/heads/trunk\tHEAD\n0123abcd\tHEAD\n"
+
+    monkeypatch.setattr(ws, "_git", fake_git)
+    name = ws.upstream_default_branch(tmp_path, token=token)
+    (env,) = asked
+    return name, env
+
+
+def test_a_bound_project_asks_its_upstream_for_the_trunk_name_as_the_app(
+    monkeypatch, tmp_path
+):
+    """Opening a PR asks the upstream what its trunk is called; a private
+    upstream answers only the App, so the question carries the App's token."""
+    name, env = _trunk_lookup(monkeypatch, tmp_path, token="ghs_read")
+    assert name == "trunk"
+    assert "ghs_read" in env.values()
+    assert any(h for h in _credential_helpers(env))
+
+
+def test_an_unbound_trunk_lookup_carries_no_credential(monkeypatch, tmp_path):
+    name, env = _trunk_lookup(monkeypatch, tmp_path, token=None)
+    assert name == "trunk"
+    assert _credential_helpers(env) == []
+
+
+def test_materializing_a_conflict_refetches_with_the_same_credential(
+    monkeypatch, tmp_path
+):
+    """The re-fetch that materializes a sync conflict reads the upstream the way
+    the sync did: as the App when bound, with nothing when not."""
+    from app.domain.workspace import service as ws
+
+    via = ws.prepare_upstream_conflict_resolution
+    bound = _fetch_env(monkeypatch, tmp_path, token="ghs_read", via=via)
+    assert "ghs_read" in bound.values()
+    assert any(h for h in _credential_helpers(bound))
+    unbound = _fetch_env(monkeypatch, tmp_path, token=None, via=via)
+    assert _credential_helpers(unbound) == []
+
+
+def test_conflict_handoff_fetches_a_bound_project_as_the_app(
+    client, tmp_path, monkeypatch
+):
+    """A conflicting 同步上游 on a bound project hands 芝士 a materialized merge
+    that was fetched as the App — the only credential the platform holds for a
+    private upstream, and the one the sync itself just used."""
+    import uuid as _uuid
+
+    from app.domain.workspace import service as ws
+
+    up = _make_upstream(tmp_path)
+    pid = _project(client)
+    puid = _uuid.UUID(pid)
+    repo = ws.ensure_repo(puid)
+    (repo / "hello.txt").write_text("local version\n")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "-m", "local hello"], check=True
+    )
+    client.put(f"/projects/{pid}/upstream", json={"url": str(up)})
+    sync_tokens = _bind_to_app(monkeypatch)
+    handoff_tokens: list[str | None] = []
+    real_prepare = ws.prepare_upstream_conflict_resolution
+
+    def spy(pid_, tid_, *, token=None):
+        handoff_tokens.append(token)
+        return real_prepare(pid_, tid_, token=token)
+
+    monkeypatch.setattr(ws, "prepare_upstream_conflict_resolution", spy)
+
+    d = client.post(
+        f"/projects/{pid}/upstream/sync", headers=_owner(client, "alice")
+    ).json()["data"]
+
+    assert d["conflicts"] == ["hello.txt"]
+    assert d["dispatched"]["files"] == ["hello.txt"]
+    assert sync_tokens == ["ghs_read"] and handoff_tokens == ["ghs_read"]
+    body = (
+        ws.topic_worktree(puid, _uuid.UUID(d["dispatched"]["task_id"])) / "hello.txt"
+    ).read_text()
+    assert "local version" in body and "hi from upstream" in body
 
 
 @pytest.mark.anyio

@@ -281,13 +281,12 @@ async def test_a_coauthor_without_a_github_account_is_simply_not_credited(monkey
 
 
 def test_session_sidecars_share_one_base_directory(tmp_path, monkeypatch):
-    """The identity file sits beside the await logs and the hook spool; three
-    definitions of "this topic's session dir" is how they drift apart."""
+    """The identity file sits beside the hook spool; two definitions of "this
+    topic's session dir" is how they drift apart."""
     from app.domain.workspace import service as ws
 
     monkeypatch.setattr(identity.settings, "workspace_root", str(tmp_path))
     pid, tid = _ids()
     base = identity.session_dir(pid, tid)
     assert ws.spool_dir(pid, tid).parent == base
-    assert ws.await_log_dir(pid, tid).parent == base
     assert identity.identity_path(pid, tid).parent == base

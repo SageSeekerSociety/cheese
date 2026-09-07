@@ -32,7 +32,7 @@
 
 - 他们 `cheeselets/claude.js`：正则匹配屏幕尾部推断 busy/idle/choices，注释满是
   "verified against real v2.1.x screens"——TUI 改版即碎。
-- 我们 tmux/hooks 后端（已建，`ClaudeCodeRuntime` + `TmuxChannel`）：Claude Code hooks 吐结构化 JSON
+- 我们的 hooks 后端（已建，`ClaudeCodeRuntime`）：Claude Code hooks 吐结构化 JSON
   （SessionStart/PreToolUse/MessageDisplay/Stop → AgentEvent），连控制态都不猜。
 - **融合时用我们的 hooks 感知替换他们的读屏**，消除他们最大脆弱点。这也让 self-hosted 更稳
   （hooks 在任何机器一致，读屏依赖具体 TUI 版本）。
@@ -177,24 +177,23 @@ cli js 暴露面 + 服务端下发 cheeselet；hook 接线（SessionStart/PreToo
   check topic → mint token → register 队列 → `ensure_ready` + `send_prompt`（transport）→
   drain → unregister。`ScreenSetupError` 是 setup 失败→错误结果的**唯一**出口。
 - ✅ **组合替代继承**：那一份流程现在住在 `ClaudeCodeRuntime` 里，它**持有**一条
-  `Channel`（`TmuxChannel` 本地 docker/tmux、`DeviceChannel` 远程 link.Msg、
-  `CloudChannel` 租来的机器）。channel 只答两件事：把屏幕开起来、把字送进去；订阅、
+  `Channel`（`DeviceChannel` 远程 link.Msg、`CloudChannel` 租来的机器；本地的
+  `TmuxChannel` 已随 #630 于 2026-08-28 删除）。channel 只答两件事：把屏幕开起来、把字
+  送进去；订阅、
   活跃度、spool、收据全在缝的上面写一次。原来是基类，于是每条传输各带一份，第二个
   harness 得按传输数写 M×N 份；现在是 M+N。
 - ✅ **launch 也过了缝**：`session_launch.build_session_launch` 交出一份 `LaunchSpec`
   ——跑哪条命令、claude 自己读哪几个 env、开机前盘上得有哪三个文件（hooks settings、
-  首启闸门、system prompt）。tmux channel 给路径、拿结果、按自己的方式落地（写进
-  mount、`-e` 传 env、`new-session` 跑命令），不再自己拼 `--append-system-prompt-file`
-  / `--resume` / `--model`。和 device 那边 `build_screen_launch` 对称。
+  首启闸门、system prompt）。channel 给路径、拿结果、按自己的方式落地，不再自己拼
+  `--append-system-prompt-file` / `--resume` / `--model`。和 device 那边
+  `build_screen_launch` 对称。
   故意**不**和 `build_launch_script` 合并：装到别人机器上的启动脚本和隔壁容器里的一条
   命令本来就不是一回事，要消掉的 M×N 是订阅/活跃度/spool/收据那套机器，不是 launch 细节。
-- ✅ **复用策略也过了缝**：`ensure_claude` 决定「一块屏幕上什么时候还能接着用原来那个
-  claude」——在的就复用（它就是对话本身），但只在它还报得回来的前提下；报不回来的一律
-  退役重开；两条路都要等到输入框（❯）出现才算就绪。tmux channel 只提供六个动词
-  （`session_exists` / `session_deaf` / `retire_session` / `start_session` /
-  `reclaim_session` / `capture_session`），一句 claude 的事都不知道。
-  device 侧**不**并进来：它的三道闸（凭据过期 / claude 死了 / 隧道助手没了）是另一种
-  机器的另一组问题，硬套一份编排正是要避免的过度统一。
+- **复用策略**：住在 device channel 的 `ensure_ready` 里——屏幕在且凭据没过期、进程活着、
+  隧道助手还在就复用（它就是对话本身），三道闸任一不过就退役重开。「就绪」的判据是
+  rendezvous socket 开始接受连接（连接器的 `dialWhenReady`），不是屏幕上画出 ❯：prompt
+  不再敲进终端，所以输入框画没画出来与投递无关。曾经的 `ensure_claude`（等 ❯ 的那份
+  复用编排）随本地 channel 一起删除。
 - ✅ **池子长出第二个轴，平台不再说 Claude Code 的话**：`ComputePool` 从「按机器」变成
   「按 (机器, harness)」——机器选不到会退回默认，harness 选不到**直接拒绝**（跑成别的
   agent 比不跑更糟）。`bind_*` / `holds` / `recover` / `replay` / `backlog` 都进了
@@ -217,14 +216,12 @@ cli js 暴露面 + 服务端下发 cheeselet；hook 接线（SessionStart/PreToo
   mint token + 占用 hook 队列**之前**发生（恢复重构前顺序，杜绝"跑不了的 turn 驱逐活 turn 队列/
   扩大陈旧 hook 窗口"），device 的设备解析也在此完成并传递给 `ensure_ready`（不解析两次）。
   +1 单测锁定"precheck 失败绝不碰 router"。review 另记 3 个**重构前就存在**的原有隐患
-  （tmux 送 prompt 不查 rc→静默挂到超时；setup 失败被当 transient 重试 3 次；`images` 参数
-  两个 hooks 后端都静默忽略）——非回归，留待后续。
+  （setup 失败被当 transient 重试 3 次；`images` 参数两个 hooks 后端都静默忽略）——非回归，
+  留待后续。
 
-**为什么不做"平台容器经 connector dial-out 自动入册 / 拆 tmux provider"（原设想的更激进一步）**：
-那会把 Go connector 常驻 + 设备入册塞进我们**自己**的容器,给本地路径**增加**复杂度——与"复杂性
-太高"的初衷相反。本地(docker/tmux)与远程(link.Msg)的 transport 差异是**不可约的**(怎么够到一台
-本地容器 vs 一台 NAT 后的远程机器本就不同)。正解是**一套流程 + 两个瘦 transport 子类**,而非强行
-让本地也走拨出。故 tmux 不"拆",它就是本地 transport 子类;dial-out 是远程 transport 的事。
+**本地 transport：已删除（2026-08-28，#630）。** 平台不再自带机器，一轮活只跑在别人的机器上
+（device / cloud），所以「本地容器 vs 远程机器」这一对 transport 不再存在，也就没有「拆不拆
+tmux provider」的问题。今天有几种机器、一轮活怎么分配到其中一台，见 `docs/where-a-turn-runs.md`。
 
 ## 8.5 仓库收敛（接入主 repo cheese-backend-py）
 

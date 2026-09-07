@@ -5,6 +5,7 @@ import logging
 import re
 import uuid
 from dataclasses import asdict
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
@@ -20,8 +21,17 @@ from app.api.deps import (
 from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
-from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.core.errors import (
+    ForbiddenError,
+    GatewayUnavailableError,
+    NotFoundError,
+    ValidationError,
+)
 from app.domain.agent.chat import ChatService
+from app.domain.agent.github_app import (
+    GitHubAppError,
+    github_app_read_token_for_project,
+)
 from app.domain.agent.market import (
     COMPUTE_CLOUD,
     compute_default_name,
@@ -32,9 +42,11 @@ from app.domain.agent.market import (
 )
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.runtime import AgentWorkRunner
+from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.schemas import (
     AgentInstanceCreate,
     AgentInstanceOut,
+    AgentInstanceUpdate,
     ProjectDefaultAgentIn,
 )
 from app.domain.agent_instance.services import (
@@ -51,7 +63,7 @@ from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.machine.services import MachineService
 from app.domain.membership.repositories import MemberRepository
 from app.domain.memory.models import MemoryScope
-from app.domain.project.models import ProjectRole
+from app.domain.project.models import Project, ProjectRole
 from app.domain.project.repositories import ProjectRepository
 from app.domain.project.schemas import (
     ProjectCreate,
@@ -59,6 +71,7 @@ from app.domain.project.schemas import (
 )
 from app.domain.project.services import ProjectService
 from app.domain.review.repositories import AcceptCardRepository
+from app.domain.room_task import presentation
 from app.domain.room_task.place import Place
 from app.domain.room_task.repositories import TaskRepository
 from app.domain.room_task.schemas import TaskOut
@@ -224,8 +237,30 @@ async def get_project(project_id: uuid.UUID, db: DbSession) -> dict:
     return ok(ProjectOut.model_validate(project).model_dump(mode="json"))
 
 
+def _holds_the_default(project: Project, row: AgentInstance) -> bool:
+    """Whether this row is what a new topic in the project gets.
+
+    Two ways to be it, and both have to be checked in every place that reports
+    it or the same agent comes back ``is_default`` from one route and not from
+    another: the project points at it, or it IS the project's 芝士 — same
+    handle, therefore the same memory pool — which holds the default even
+    before anything points at it. A retired row holds nothing.
+    """
+    if row.id == project.default_agent_instance_id:
+        return True
+    return (
+        project.default_agent_instance_id is None
+        and row.is_active
+        and row.handle == IMPLICIT_DEFAULT.handle
+    )
+
+
 def _agent_out(
-    project_id: uuid.UUID, agent: ResolvedAgent, *, is_default: bool
+    project_id: uuid.UUID,
+    agent: ResolvedAgent,
+    *,
+    is_default: bool,
+    is_active: bool = True,
 ) -> dict:
     return AgentInstanceOut(
         id=agent.instance_id,
@@ -235,6 +270,7 @@ def _agent_out(
         display_name=agent.display_name,
         is_default=is_default,
         configured=agent.instance_id is not None,
+        is_active=is_active,
     ).model_dump(mode="json")
 
 
@@ -255,14 +291,8 @@ async def list_project_agents(project_id: uuid.UUID, db: DbSession) -> dict:
         _agent_out(
             project_id,
             AgentInstanceService.resolved(row),
-            # A row under the implicit handle IS the project's 芝士 — same
-            # handle, therefore the same memory pool — so it holds the default
-            # even before anything points at it.
-            is_default=row.id == project.default_agent_instance_id
-            or (
-                project.default_agent_instance_id is None
-                and row.handle == IMPLICIT_DEFAULT.handle
-            ),
+            is_default=_holds_the_default(project, row),
+            is_active=row.is_active,
         )
         for row in rows
     ]
@@ -292,6 +322,56 @@ async def create_project_agent(
             project_id, AgentInstanceService.resolved(instance), is_default=False
         )
     )
+
+
+@router.put("/{project_id}/agents/{agent_id}")
+async def update_project_agent(
+    project_id: uuid.UUID,
+    agent_id: uuid.UUID,
+    body: AgentInstanceUpdate,
+    db: DbSession,
+) -> dict:
+    """Rename an agent, or put it in another type.
+
+    ``handle`` is not editable and is not accepted here: it keys the memory
+    pool, so changing it would hand the agent an empty one and orphan
+    everything it had learned in this project.
+    """
+    project = await ProjectService(db).get_or_404(project_id)
+    service = AgentInstanceService(db)
+    instance = await service.get_in_project(project_id=project_id, instance_id=agent_id)
+    fields = body.model_fields_set
+    if "display_name" in fields and body.display_name is not None:
+        await service.rename(instance, body.display_name)
+    if "type_name" in fields:
+        await service.set_type(instance, body.type_name)
+    await db.flush()
+    return ok(
+        _agent_out(
+            project_id,
+            AgentInstanceService.resolved(instance),
+            is_default=_holds_the_default(project, instance),
+            is_active=instance.is_active,
+        )
+    )
+
+
+@router.delete("/{project_id}/agents/{agent_id}")
+async def deactivate_project_agent(
+    project_id: uuid.UUID, agent_id: uuid.UUID, db: DbSession
+) -> dict:
+    """Retire an agent — not a delete.
+
+    The rooms already working with it carry on and its memory is kept; it just
+    stops being offered for new work. The response says ``deleted`` because
+    that is the shape a DELETE returns everywhere here, not because a row went
+    away.
+    """
+    project = await ProjectService(db).get_or_404(project_id)
+    service = AgentInstanceService(db)
+    instance = await service.get_in_project(project_id=project_id, instance_id=agent_id)
+    await service.deactivate(project, instance)
+    return ok({"deleted": True})
 
 
 @router.put("/{project_id}/default-agent")
@@ -333,7 +413,11 @@ async def list_decisions(project_id: uuid.UUID, db: DbSession) -> dict:
 
 
 @router.get("/{project_id}/tasks")
-async def list_project_tasks(project_id: uuid.UUID, db: DbSession) -> dict:
+async def list_project_tasks(
+    project_id: uuid.UUID,
+    db: DbSession,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+) -> dict:
     """Every thread in the project, each with the card it currently rides on.
 
     The rail draws rooms and the work inside them, so it needs both halves at
@@ -345,16 +429,41 @@ async def list_project_tasks(project_id: uuid.UUID, db: DbSession) -> dict:
     can show — where the work stands and the PR it rides on. Null for a thread
     that has not been filed for acceptance, which is most of them while the work
     is still going.
+
+    `presentation` is the board's answer for that row — which column it is in
+    and the one phrase to print on it — derived here rather than in the client,
+    so every client gives the same answer (`room_task/presentation.py`). Two
+    round trips still: it is computed from the two batches already fetched.
     """
     await ProjectService(db).get_or_404(project_id)
     tasks = await TaskRepository(db).list_for_project(project_id)
-    cards = await AcceptCardRepository(db).latest_by_task([t.id for t in tasks])
+    task_ids = [t.id for t in tasks]
+    cards = await AcceptCardRepository(db).latest_by_task(task_ids)
+    # 每条活最后一次说话是什么时候 —— 看板判「失联」的心跳。第三次批查询，走的是
+    # blocks 上那条 (task_id, created_at) 的部分索引，不是每条活一次。
+    beats = await TaskRepository(db).last_block_at_for_tasks(task_ids)
+    # 一次，给全部行用同一个「现在几点」：逐行取 now 会让同一批数据里两条本该
+    # 一样的活分到不同格子，而那种差别没人再能复现。
+    now = datetime.now(UTC)
+    # 分身住在它房间的会话里，所以这一位按房间问，一个房间只问一次（内存里的
+    # 当下事实，不走库）。
+    live_rooms = {t.room_id: chat.has_live_screen(t.room_id) for t in tasks}
     items = []
     for task in tasks:
         card = cards.get(task.id)
+        shown = presentation.task_presentation(
+            presentation.facts_for_task(
+                task,
+                card,
+                beats.get(task.id),
+                room_screen_live=live_rooms[task.room_id],
+            ),
+            now=now,
+        )
         items.append(
             {
                 **TaskOut.model_validate(task).model_dump(mode="json"),
+                "presentation": shown.as_dict(),
                 "card": None
                 if card is None
                 else {
@@ -389,12 +498,8 @@ async def _authorized_memory_topic(
     place = await TopicService(db).place_or_404(topic_id)
     if place.project_id != project_id:
         raise ForbiddenError("这个话题不属于 URL 中的项目")
-    # Two different ids on purpose. A per-turn token is scoped to the PLACE it
-    # was minted for, so that is what identity is checked against — handing it
-    # the room would read a thread's token as out-of-scope and erase its author.
-    # Access, though, is the room's roster: threads do not have one.
     actor = await resolver.resolve(
-        fallback_handle=None, topic_id=place.id, project_id=project_id
+        fallback_handle=None, topic_id=place.room_id, project_id=project_id
     )
     await resolver.authorize_topic(actor, project_id=project_id, topic_id=place.room_id)
     return place
@@ -409,16 +514,11 @@ async def _agent_memory_scope(
     one project keeps one pool, which is the whole point of an instance owning
     its memory. Returns ``None`` when no usable place was supplied, so the
     caller falls back to the shared project pool.
-
-    A thread is asked about its own row: it was handed the room's agent when
-    the work went out, so what it learns lands in the pool the room reads back
-    — which is the entire reason the room dispatched it.
     """
     if place is None:
         return None
     project = await ProjectService(db).get_or_404(project_id)
-    owner = place.task if place.task is not None else place.room
-    agent = await AgentInstanceService(db).for_topic(owner, project)
+    agent = await AgentInstanceService(db).for_topic(place.room, project)
     return memory_pool(project_id, agent)
 
 
@@ -935,7 +1035,13 @@ async def sync_project_upstream(
     so that report is a starting point instead of a dead end (spec §6.3, same
     contract as 采纳冲突 in routes/accept.py)."""
     await ProjectService(db).get_or_404(project_id)
-    result = await asyncio.to_thread(ws.sync_upstream, project_id)
+    # The App's token for a bound project, nothing for an unbound one: the
+    # fetch runs on the platform's own identity or on none.
+    try:
+        token = await github_app_read_token_for_project(project_id, db)
+    except GitHubAppError as exc:
+        raise GatewayUnavailableError(str(exc)) from exc
+    result = await asyncio.to_thread(ws.sync_upstream, project_id, token=token)
     if result.get("synced") or not result.get("conflicts"):
         return ok(result)
     # Anonymous callers get the old behaviour: with no handle there is no 1:1

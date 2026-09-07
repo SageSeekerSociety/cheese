@@ -79,8 +79,7 @@ def _patch_notify(monkeypatch) -> AsyncMock:
 async def _drain_notify() -> None:
     """accept() schedules the notify via asyncio.create_task (fire-and-forget,
     it must not block the accepter's response on a room post) — give the loop
-    one tick to actually run it before asserting, same idiom as
-    test_push_back.py's watch_dogfood_push scheduling test."""
+    one tick to actually run it before asserting."""
     await asyncio.sleep(0)
 
 
@@ -200,16 +199,11 @@ async def test_explicit_merge_noop_remains_acceptable(monkeypatch, reason):
 
 
 @pytest.mark.anyio
-async def test_successful_merge_notifies_room_with_push_status(monkeypatch):
+async def test_successful_merge_notifies_room(monkeypatch):
     service, card, topic = _accept_service()
     notify = _patch_notify(monkeypatch)
     monkeypatch.setattr(
         ws, "merge_topic", lambda *_args: {"merged": True, "commit": "abc123"}
-    )
-    monkeypatch.setattr(
-        ws,
-        "push_back",
-        lambda *_args: {"mode": "upstream", "target": "origin/main"},
     )
 
     returned = await service.accept(card_id=card.id, decided_by="alice")
@@ -225,5 +219,5 @@ async def test_successful_merge_notifies_room_with_push_status(monkeypatch):
     _, kwargs = notify.await_args
     assert kwargs["source"] == "accept"
     assert kwargs["meta"]["severity"] == "info"
-    # 推送去向是交付说明的一部分，收进展开区，不占房间那一行。
-    assert "origin/main" in kwargs["meta"]["detail"]
+    # 合进平台仓库就是终点：交付说明里没有任何「推到哪里去了」。
+    assert "推送" not in kwargs["meta"]["detail"]

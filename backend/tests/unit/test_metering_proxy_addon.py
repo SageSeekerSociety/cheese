@@ -123,7 +123,7 @@ def test_missing_injector_fails_closed_with_503(monkeypatch, tmp_path):
     mod = _load_addon(monkeypatch, tmp_path, inject=None)
     flow = _make_flow(caller_bearer="scoped.caller.token")
 
-    asyncio.run(mod.request(flow))
+    asyncio.run(mod.requestheaders(flow))
 
     assert flow.response is not None, "must short-circuit, not forward"
     assert flow.response.status_code == 503
@@ -136,7 +136,7 @@ def test_empty_injector_also_fails_closed(monkeypatch, tmp_path):
     mod = _load_addon(monkeypatch, tmp_path, inject="   \n")
     flow = _make_flow()
 
-    asyncio.run(mod.request(flow))
+    asyncio.run(mod.requestheaders(flow))
 
     assert flow.response is not None and flow.response.status_code == 503
 
@@ -148,7 +148,7 @@ def test_present_injector_is_swapped_in(monkeypatch, tmp_path):
     flow = _make_flow(caller_bearer="scoped.caller.token")
     flow.request.headers["x-api-key"] = "stale-key"
 
-    asyncio.run(mod.request(flow))
+    asyncio.run(mod.requestheaders(flow))
 
     assert flow.response is None, "a served request must not be refused"
     assert flow.request.headers["authorization"] == "Bearer sk-ant-oat01-REALTOKEN"
@@ -191,7 +191,7 @@ def _with_admission(mod, monkeypatch, upstream: str | None):
     )
     monkeypatch.setattr(mod, "ADMISSION_URL", "http://control-plane.invalid/admission")
     monkeypatch.setattr(
-        mod, "ADMISSION", SimpleNamespace(check=lambda project, bearer: verdict)
+        mod, "ADMISSION", SimpleNamespace(check=lambda project, topic, bearer: verdict)
     )
     return verdict
 
@@ -207,7 +207,7 @@ def test_a_machine_with_its_own_identity_keeps_its_own_ticket(monkeypatch, tmp_p
     flow = _make_flow(caller_bearer=_scoped_token(secret))
     ticket = flow.request.headers["authorization"]
 
-    asyncio.run(mod.request(flow))
+    asyncio.run(mod.requestheaders(flow))
 
     assert flow.response is None
     assert flow.request.headers["authorization"] == ticket, "ticket was rewritten"
@@ -223,7 +223,7 @@ def test_the_upstream_hop_authenticates_as_that_same_machine(monkeypatch, tmp_pa
     )
     _with_admission(mod, monkeypatch, "m516:pw516")
     monkeypatch.setattr(mod, "UPSTREAM_AUTH", "m161:pw161")
-    asyncio.run(mod.request(_make_flow(caller_bearer=_scoped_token(secret))))
+    asyncio.run(mod.requestheaders(_make_flow(caller_bearer=_scoped_token(secret))))
 
     connect = SimpleNamespace(
         request=SimpleNamespace(headers={}),
@@ -249,7 +249,7 @@ def test_traffic_the_control_plane_cannot_place_keeps_todays_behaviour(
     monkeypatch.setattr(mod, "UPSTREAM_AUTH", "m161:pw161")
     flow = _make_flow(caller_bearer=_scoped_token(secret))
 
-    asyncio.run(mod.request(flow))
+    asyncio.run(mod.requestheaders(flow))
 
     assert flow.request.headers["authorization"] == "Bearer sk-ant-oat01-PLATFORM"
 
@@ -270,7 +270,7 @@ def test_a_closed_connection_stops_pinning_an_identity(monkeypatch, tmp_path):
         monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
     )
     _with_admission(mod, monkeypatch, "m516:pw516")
-    asyncio.run(mod.request(_make_flow(caller_bearer=_scoped_token(secret))))
+    asyncio.run(mod.requestheaders(_make_flow(caller_bearer=_scoped_token(secret))))
     assert mod._UPSTREAM_BY_CLIENT
 
     mod.client_disconnected(SimpleNamespace(id="client-1"))
@@ -563,7 +563,7 @@ def test_an_unplaceable_machine_is_refused_rather_than_billed_to_the_platform(
     )
     flow = _machine_flow(conn="c1")
 
-    asyncio.run(mod.request(flow))
+    asyncio.run(mod.requestheaders(flow))
 
     assert flow.response is not None and flow.response.status_code == 503
     assert flow.request.headers["authorization"] == "Bearer sk-ant-oat01-machine-ticket"
@@ -581,7 +581,7 @@ def test_a_scoped_caller_with_no_admission_still_gets_the_platform_credential(
     )
     flow = _make_flow(caller_bearer=_scoped_token(secret))
 
-    asyncio.run(mod.request(flow))
+    asyncio.run(mod.requestheaders(flow))
 
     assert flow.response is None
     assert flow.request.headers["authorization"] == "Bearer sk-ant-oat01-PLATFORM"
@@ -604,7 +604,7 @@ def test_an_exhausted_budget_says_budget_not_misconfiguration(monkeypatch, tmp_p
     )
     flow = _machine_flow(conn="c1")
 
-    asyncio.run(mod.request(flow))
+    asyncio.run(mod.requestheaders(flow))
 
     assert flow.response is not None and flow.response.status_code == 429
     assert b"budget" in flow.response.content
@@ -630,7 +630,211 @@ def test_a_request_with_no_bearer_is_not_treated_as_carrying_its_own(
     del flow.request.headers["authorization"]
     flow.request.path = "/api/event_logging/v2/batch"
 
-    asyncio.run(mod.request(flow))
+    asyncio.run(mod.requestheaders(flow))
 
     assert flow.response is None, "telemetry must not be refused"
     assert flow.request.headers["authorization"] == "Bearer sk-ant-oat01-PLATFORM"
+
+
+def _make_response(status_code=200, content_type="text/event-stream"):
+    from mitmproxy import http
+
+    resp = http.Response.make(status_code=status_code, content=b"", headers={})
+    resp.headers = {"content-type": content_type}
+    return resp
+
+
+def test_a_streamed_message_is_metered_through_the_response_tee(monkeypatch, tmp_path):
+    """The response body is no longer buffered whole (that is what OOM-kills the
+    proxy on long turns); it streams through a tee that scrapes usage from the
+    SSE incrementally. Driving that tee must still land the turn on the meter."""
+    mod = _load_addon(monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM")
+
+    flow = _make_flow()
+    flow.metadata["cheese_attr"] = ("proj-x", "topic-y")
+    flow.response = _make_response()
+
+    mod.responseheaders(flow)
+    assert callable(flow.response.stream), "the SSE response must be streamed"
+
+    body = b"\n".join(
+        [
+            b'data: {"type":"message_start","message":{"model":"claude-opus-5",'
+            b'"usage":{"input_tokens":10,"output_tokens":1}}}',
+            b'data: {"type":"message_delta","usage":{"output_tokens":90}}',
+            b"",
+        ]
+    )
+    # Chunks pass through unchanged, and the end-of-stream sentinel records.
+    assert mod.METER.used() == 0
+    for i in range(0, len(body), 5):
+        chunk = body[i : i + 5]
+        assert flow.response.stream(chunk) == chunk
+    flow.response.stream(b"")  # sentinel
+
+    assert mod.METER.used() == 100  # 10 input + 90 output
+
+
+def test_a_non_message_response_streams_without_metering(monkeypatch, tmp_path):
+    """Everything that is not a metered message turn still streams (so nothing
+    is buffered) but must not touch the meter."""
+    mod = _load_addon(monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM")
+
+    flow = _make_flow(path="/api/oauth/profile")
+    flow.response = _make_response(content_type="application/json")
+
+    mod.responseheaders(flow)
+
+    assert flow.response.stream is True
+    assert mod.METER.used() == 0
+
+
+# --- a refusal has to REACH the caller --------------------------------------
+# The proxy streams the request body straight through (#654: buffering a long
+# turn's grown conversation is what OOM-killed it). Streaming and answering
+# locally are mutually exclusive in mitmproxy, and a refusal that forgets to
+# take the streaming decision back does not degrade — it kills the connection,
+# so the caller waits out its own timeout and never learns why it was refused.
+# Measured on the dev box over 48h: 68 refused message turns, zero refusals
+# delivered, 350 crashes, and a client that retried into the same wall forever.
+
+
+def _mitmproxy_takes_over(flow, *, request_has_body: bool = True) -> None:
+    """What mitmproxy does with the flow once `requestheaders` returns.
+
+    Transcribed from mitmproxy 12.1.2 (`HttpStream.state_wait_for_request_headers`
+    → `start_request_stream`): a request that still has a body to come is handed
+    to the streaming path whenever `flow.request.stream` is set, and that path
+    raises outright if a response has already been produced.
+
+    The body condition is the whole reason this hid for so long — `stream and
+    not event.end_stream` — so a refused GET was always delivered and a refused
+    `POST /v1/messages` never was.
+    """
+    if getattr(flow.request, "stream", False) and request_has_body:
+        if flow.response is not None:
+            raise NotImplementedError(
+                "Can't set a response and enable streaming at the same time."
+            )
+
+
+def _refusals_of_a_message_turn(monkeypatch, tmp_path):
+    """Every way `requestheaders` refuses a POST /v1/messages, each built the way
+    a box actually produces it. Yields (what it is, addon module, flow)."""
+    secret = "s3cr3t"
+
+    # The one seen in production: a machine carrying its own ccproxy ticket that
+    # the control plane could not place on an identity.
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
+    )
+    mod.http_connect(
+        _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
+    )
+    yield "a machine with no identity to send it as", mod, _machine_flow(conn="c1")
+
+    # The same caller, refused by its project's balance instead.
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
+    )
+    verdict = _with_admission(mod, monkeypatch, None)
+    verdict.allow = False
+    verdict.reason = "budget spent: 10.0000 of 10.0000"
+    mod.http_connect(
+        _connect_flow_on("c2", _basic(_scoped_token(secret, project="p9")))
+    )
+    yield "an exhausted project budget", mod, _machine_flow(conn="c2")
+
+    # A caller that cannot prove which project to bill.
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
+    )
+    yield "an unattributable caller", mod, _make_flow(caller_bearer="not-a-token")
+
+    # A box whose own subscription credential is missing. Its own directory:
+    # `inject=None` means "write nothing", so sharing one with the cases above
+    # would leave THEIR token file sitting there and this box would be fine.
+    mod = _load_addon(
+        monkeypatch, tmp_path / "bare-box", inject=None, scoped_secret=secret
+    )
+    yield (
+        "no platform credential on the box",
+        mod,
+        _make_flow(caller_bearer=_scoped_token(secret)),
+    )
+
+    # A gateway project on a deployment with no pool to send it to.
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
+    )
+    verdict = _with_admission(mod, monkeypatch, None)
+    verdict.pool = "gateway"
+    verdict.key = None
+    yield (
+        "a gateway project with no route",
+        mod,
+        _make_flow(caller_bearer=_scoped_token(secret)),
+    )
+
+
+def test_every_refusal_of_a_message_turn_reaches_the_caller(monkeypatch, tmp_path):
+    """The refusal is the product here: each of these exists to tell somebody
+    exactly what went wrong (which budget, which missing credential, which piece
+    of the box is unconfigured). A refusal that kills the connection instead
+    reports none of it — the caller sees a hung platform, and the operator sees
+    a crash log naming mitmproxy rather than the cause."""
+    for what, mod, flow in _refusals_of_a_message_turn(monkeypatch, tmp_path):
+        asyncio.run(mod.requestheaders(flow))
+
+        assert flow.response is not None, f"{what}: nothing refused it"
+        try:
+            _mitmproxy_takes_over(flow)
+        except NotImplementedError as exc:
+            raise AssertionError(
+                f"{what}: refused with {flow.response.status_code}, but the "
+                f"refusal never reaches the caller — {exc}"
+            ) from exc
+
+
+def _forwards_of_a_message_turn(monkeypatch, tmp_path):
+    """Every way `requestheaders` lets a POST /v1/messages through.
+    Yields (what it is, addon module, flow)."""
+    secret = "s3cr3t"
+
+    # SWAP: a scoped caller gets the platform's credential.
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
+    )
+    yield "the swap path", mod, _make_flow(caller_bearer=_scoped_token(secret))
+
+    # PASS THROUGH: an enrolled machine keeps its own ticket.
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
+    )
+    _with_admission(mod, monkeypatch, "m516:pw516")
+    mod.http_connect(
+        _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
+    )
+    yield "the pass-through path", mod, _machine_flow(conn="c1")
+
+    # GATEWAY: the request is re-aimed at the API-key pool and forwarded there.
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
+    )
+    verdict = _with_admission(mod, monkeypatch, None)
+    verdict.pool = "gateway"
+    verdict.key = "sk-virtual-key"
+    monkeypatch.setattr(mod, "GATEWAY_BASE", "http://litellm.invalid:4000")
+    yield "the gateway path", mod, _make_flow(caller_bearer=_scoped_token(secret))
+
+
+def test_every_forwarded_message_turn_still_streams_its_body(monkeypatch, tmp_path):
+    """The other half of the same decision, and the reason the refusal fix must
+    not be "stop streaming". A long agent turn re-POSTs its entire grown
+    conversation every turn; buffering that whole is what OOM-kills this proxy
+    (#654), and it comes back the moment ONE forwarding path stops streaming."""
+    for what, mod, flow in _forwards_of_a_message_turn(monkeypatch, tmp_path):
+        asyncio.run(mod.requestheaders(flow))
+
+        assert flow.response is None, f"{what}: was refused, not forwarded"
+        assert flow.request.stream is True, f"{what}: forwards a buffered body"

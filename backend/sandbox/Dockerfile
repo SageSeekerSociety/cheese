@@ -59,7 +59,7 @@ RUN ARCH="$(dpkg --print-architecture)" \
 # to enrolled devices — an unpinned install means a rebuild for any unrelated
 # reason can change the agent runtime under a topic, and that a container and a
 # device running "the same" turn are not running the same thing.
-ARG CLAUDE_CODE_VERSION=2.1.224
+ARG CLAUDE_CODE_VERSION=2.1.261
 RUN --mount=type=cache,target=/root/.npm \
     npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" && claude --version
 
