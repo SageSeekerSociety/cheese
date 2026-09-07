@@ -19,11 +19,19 @@ Event mapping:
                                             assembled from its line-batch
                                             flushes; see the class docstring)
   PostToolUse{tool_name, tool_response}   → AgentToolResult (subagents only)
+  SubagentStart{agent_id, agent_type}     → AgentSubagentStart
+  SubagentStop{agent_id, last_assistant_message, agent_transcript_path}
+                                          → AgentSubagentStop
   Stop{last_assistant_message, ...}       → AgentResult (ends the turn stream)
   StopFailure{error, last_assistant_message}
                                           → AgentResult(is_error=True) (ends it too:
                                             Claude Code fires this instead of Stop
                                             when the API refused the turn)
+
+One session can have several workers going at once — a subagent's hooks come up
+the same pipe as the session's own, tagged with ``agent_id`` (see ``_agent_id``).
+Every event above carries that tag when the payload had one, so a reader can tell
+whose work it is looking at instead of one interleaved stream from nobody.
 """
 
 import asyncio
@@ -36,6 +44,8 @@ from app.domain.agent.service import (
     AgentMessage,
     AgentResult,
     AgentSessionInfo,
+    AgentSubagentStart,
+    AgentSubagentStop,
     AgentToolResult,
     AgentToolUse,
     AgentUsage,
@@ -61,6 +71,27 @@ def _flush_time(hook: dict) -> datetime:
 # question and never the answer. Both names are live — `Task` is the older CLI's
 # name for `Agent` and either can arrive depending on the box's image age.
 _SUBAGENT_TOOLS = {"Task", "Agent"}
+
+
+def _agent_id(hook: dict) -> str | None:
+    """WHICH worker inside the session produced this hook — a subagent's id, or
+    None for the session's own thread.
+
+    The main thread's payloads do not carry the key at all (verified against
+    2.1.224: a subagent's PreToolUse/PostToolUse carry `agent_id` and
+    `agent_type`, the spawner's carry neither), so absence IS the answer rather
+    than a gap: nothing has to be reconciled to decide an event belongs to the
+    session. A blank value is read as absent for the same reason — an id that
+    identifies nobody cannot attribute anything.
+    """
+    value = hook.get("agent_id")
+    return value.strip() or None if isinstance(value, str) else None
+
+
+def _agent_type(hook: dict) -> str | None:
+    """The subagent kind (`general-purpose`, a custom agent's name…), or None."""
+    value = hook.get("agent_type")
+    return value.strip() or None if isinstance(value, str) else None
 
 
 def _hook_event_name(hook: dict) -> str:
@@ -117,6 +148,35 @@ def translate_hook(hook: dict) -> AgentEvent | None:
         sid = hook.get("session_id")
         return AgentSessionInfo(session_id=str(sid)) if sid else None
 
+    if event == "SubagentStart":
+        # No id, no event: everything downstream of this exists to attribute
+        # later hooks to a worker, and an unnamed worker cannot be told apart
+        # from the session — announcing one would put work on the room's
+        # timeline under a name nothing else will ever match.
+        agent_id = _agent_id(hook)
+        if agent_id is None:
+            return None
+        sid = hook.get("session_id")
+        return AgentSubagentStart(
+            agent_id=agent_id,
+            agent_type=_agent_type(hook) or "",
+            session_id=str(sid) if sid else None,
+        )
+
+    if event == "SubagentStop":
+        agent_id = _agent_id(hook)
+        if agent_id is None:
+            return None
+        path = hook.get("agent_transcript_path")
+        sid = hook.get("session_id")
+        return AgentSubagentStop(
+            agent_id=agent_id,
+            text=str(hook.get("last_assistant_message") or ""),
+            agent_type=_agent_type(hook) or "",
+            transcript_path=str(path) if path else None,
+            session_id=str(sid) if sid else None,
+        )
+
     if event == "PreToolUse":
         tool_input = hook.get("tool_input")
         eid = hook.get("_eid")
@@ -124,6 +184,8 @@ def translate_hook(hook: dict) -> AgentEvent | None:
             name=str(hook.get("tool_name") or ""),
             input=tool_input if isinstance(tool_input, dict) else {},
             eid=eid if isinstance(eid, str) else None,
+            agent_id=_agent_id(hook),
+            agent_type=_agent_type(hook),
         )
 
     if event == "PostToolUse":
@@ -147,6 +209,8 @@ def translate_hook(hook: dict) -> AgentEvent | None:
                 else ""
             ),
             eid=eid if isinstance(eid, str) else None,
+            agent_id=_agent_id(hook),
+            agent_type=_agent_type(hook),
         )
 
     if event == "MessageDisplay":
@@ -157,7 +221,12 @@ def translate_hook(hook: dict) -> AgentEvent | None:
         text = hook.get("delta")
         if isinstance(text, str) and text.strip():
             eid = hook.get("_eid")
-            return AgentMessage(text=text, eid=eid if isinstance(eid, str) else None)
+            return AgentMessage(
+                text=text,
+                eid=eid if isinstance(eid, str) else None,
+                agent_id=_agent_id(hook),
+                agent_type=_agent_type(hook),
+            )
         return None
 
     if event == "CheeseSync":
@@ -203,6 +272,8 @@ def translate_hook(hook: dict) -> AgentEvent | None:
             text=str(hook.get("last_assistant_message") or ""),
             session_id=str(sid) if sid else None,
             usage=_usage_from_hook(hook),
+            agent_id=_agent_id(hook),
+            agent_type=_agent_type(hook),
         )
 
     if event == "StopFailure":
@@ -240,6 +311,13 @@ class _PendingMessage:
     deltas: dict[int, str] = field(default_factory=dict)
     eids: dict[int, str | None] = field(default_factory=dict)
     final_index: int | None = None
+    #: Which worker is saying this. Taken from the first flush that names one
+    #: and then left alone: the flushes of ONE message all come from the same
+    #: thread, so a later flush can only repeat it — while a payload that omits
+    #: the key must not erase what an earlier one established, or a message
+    #: assembled out of order would come out belonging to nobody.
+    agent_id: str | None = None
+    agent_type: str | None = None
     #: When the first flush of this message arrived — the moment 芝士 started
     #: saying it, which is where it belongs in the timeline. Assembly finishes
     #: later (a message is only known to be whole once something after it
@@ -306,7 +384,14 @@ class MessageAssembler:
         ):
             if not text.strip():
                 return None
-            return AgentMessage(text=text, eid=eid, eids=(eid,) if eid else (), at=at)
+            return AgentMessage(
+                text=text,
+                eid=eid,
+                eids=(eid,) if eid else (),
+                at=at,
+                agent_id=_agent_id(hook),
+                agent_type=_agent_type(hook),
+            )
         if message_id in self._done:
             return None
         pending = self._pending.setdefault(message_id, _PendingMessage())
@@ -314,6 +399,23 @@ class MessageAssembler:
             return None
         pending.deltas[index] = text
         pending.eids[index] = eid
+        # The tag has to survive assembly, not just translation: this is the
+        # path a streamed message actually takes, and a whole reply that comes
+        # out of it unattributed is one no reader can file under the worker who
+        # said it.
+        #
+        # Measured on 2.1.224, twice (a nested claude in tmux with every hook
+        # logged): a subagent's own answer produces NO MessageDisplay at all —
+        # this stream carries only the main thread's display, and the
+        # subagent's whole reply reached us solely as
+        # SubagentStop.last_assistant_message. So nothing arrives here tagged
+        # today. It stays because the cost is two fields and the failure it
+        # prevents is silent: whoever changes that in Claude Code will not come
+        # and tell us, and an untagged reply is indistinguishable from one the
+        # session said itself.
+        if pending.agent_id is None:
+            pending.agent_id = _agent_id(hook)
+            pending.agent_type = _agent_type(hook)
         # Earliest wins: flushes can arrive out of order (a retried spool file
         # lands after later ones), and what this records is when the message
         # STARTED, not which flush happened to be handled first.
@@ -384,6 +486,8 @@ class MessageAssembler:
             eid=eids[0] if eids else None,
             eids=eids,
             at=pending.started_at,
+            agent_id=pending.agent_id,
+            agent_type=pending.agent_type,
         )
 
 

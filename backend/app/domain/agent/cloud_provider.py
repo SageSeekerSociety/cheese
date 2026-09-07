@@ -13,7 +13,6 @@ from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
-from app.domain.room_task.place import room_and_task
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,9 +43,9 @@ class CloudChannel(DeviceChannel):
     asks which of the two a turn is on in order to answer THAT is asking the
     wrong question.
 
-    The machine is the ROOM's. A thread in a Cloud room runs on its room's
-    machine — see ``_room_of`` — with a screen and an agent identity of its own,
-    exactly as it does on an enrolled device.
+    The machine is the ROOM's, and a room is the only thing that runs a turn:
+    work inside a room is a 分身 in that room's own session, on that room's
+    machine.
     """
 
     name = "cloud"
@@ -87,27 +86,6 @@ class CloudChannel(DeviceChannel):
             factory = async_session_factory
         return factory()
 
-    async def _room_of(self, topic_id: uuid.UUID) -> uuid.UUID:
-        """The room whose machine a turn at *topic_id* runs on.
-
-        A Cloud lease is the ROOM's: ``project_machines.topic_id`` is a foreign
-        key into ``topics``, and a thread is a ``tasks`` row, so a thread cannot
-        hold a lease and asking the machine service for "this topic's machine"
-        with a thread id is a 404 on every turn the thread ever tries. The
-        machine, and the pin that records it, are therefore resolved through
-        the room. What stays the thread's own is its agent identity
-        (``ensure_topic_agent_user`` in ``_resolve_device_agent``) and its
-        screen on that machine (``DeviceChannel`` keys screens by the id it is
-        handed) — the same split #660 drew for the session pointer.
-
-        An id that names neither a task nor a topic comes back as itself, so a
-        genuinely missing topic still fails where it always did, in the
-        machine service, with the message that names it.
-        """
-        async with self._sessions() as session:
-            room_id, _ = await room_and_task(session, topic_id)
-        return room_id
-
     async def prepare_topic(
         self,
         *,
@@ -116,7 +94,7 @@ class CloudChannel(DeviceChannel):
         actor: Actor | None = None,
     ) -> tuple[bool, str]:
         """Provision/poll before ChatService counts a prompt delivery attempt."""
-        lease = await self._ensure_topic_cloud(await self._room_of(topic_id), actor)
+        lease = await self._ensure_topic_cloud(topic_id, actor)
         if lease.project_id != project_id:
             raise ScreenSetupError("topic cloud machine belongs to another project")
         if lease.error:
@@ -134,8 +112,7 @@ class CloudChannel(DeviceChannel):
     async def _resolve_device_agent(
         self, project_id: uuid.UUID, topic_id: uuid.UUID
     ) -> tuple[str, int, str] | None:
-        room_id = await self._room_of(topic_id)
-        lease = await self._read_topic_cloud(room_id)
+        lease = await self._read_topic_cloud(topic_id)
         if lease is None or lease.project_id != project_id:
             raise ScreenSetupError("本话题没有自己的 Cloud 机器")
         if lease.device_id is None or not self._hub.is_online(lease.device_id):
@@ -145,24 +122,16 @@ class CloudChannel(DeviceChannel):
             endpoint = await devices.get_device(lease.device_id)
             if endpoint is None or endpoint.supply is not Supply.cloud:
                 raise ScreenSetupError("本话题的 Cloud 机器没有有效的云端连接器")
-            # The pin is the ROOM's too, not one per thread. On an enrolled
-            # device a thread pins itself (`resolve_pinned_device`) because any
-            # device of the project would do and the pin is what stops it
-            # drifting; here the room's lease already fixes the machine, and a
-            # pin per thread would be a second record of the same fact that
-            # nothing releases — `release_topic_machine` drops the room's — so
-            # after the next machine every thread would fail the check below.
-            binding = await devices.topic_binding(room_id)
+            binding = await devices.topic_binding(topic_id)
             if binding is not None and binding.device_id != lease.device_id:
                 raise ScreenSetupError(
                     "Cloud 话题已绑定到别的端点；拒绝借用另一话题的机器"
                 )
             if binding is None:
                 await devices.bind_topic_device(
-                    room_id, lease.device_id, visibility=Visibility.host
+                    topic_id, lease.device_id, visibility=Visibility.host
                 )
-            # THIS place's 分身, thread or room: the identity a thread's session
-            # is recorded and resumed under (#660).
+            # 这个房间的 agent 身份：它的会话就是以这个身份记录和恢复的 (#660)。
             agent = await IdentityService(session).ensure_topic_agent_user(topic_id)
             await session.commit()
             return lease.device_id, agent.id, agent.username

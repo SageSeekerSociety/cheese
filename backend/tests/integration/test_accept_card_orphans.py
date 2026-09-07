@@ -212,9 +212,9 @@ def test_archiving_revokes_a_pending_card(client):
 def test_cascade_archive_closes_the_work_and_settles_the_card_delivering_it(client):
     """归档是级联的（房间带走里面的活），而收卡必须和它同一趟。
 
-    卡是房间的（一张卡交付整棵树 = 房间里那一批活），支线自己递不了。所以级联要
-    收的不是「每条支线各自那张」，而是**房间这一张**——它正要交付的恰恰是被这次
-    归档关掉的那些活。漏收就留下一张没人能再动的孤儿卡：它所在的地方已经冻住了。
+    卡是房间的（一张卡交付整棵树 = 房间里那一批活），一件活自己递不了。所以级联要
+    收的不是「每件活各自那张」，而是**房间这一张**——它正要交付的恰恰是被这次归档
+    关掉的那些活。漏收就留下一张没人能再动的孤儿卡：它所在的地方已经冻住了。
     """
     pid = _make_project(client)
     room = _make_topic(client, pid, "房间")
@@ -226,7 +226,8 @@ def test_cascade_archive_closes_the_work_and_settles_the_card_delivering_it(clie
 
     _archive(client, room, by="bob")
 
-    assert _topic(client, thread)["status"] == "closed"
+    cards = client.get(f"/topics/{room}/tasks").json()["data"]["data"]
+    assert [c["status"] for c in cards if c["id"] == thread] == ["closed"]
     assert _cards(client, room)[0]["status"] == "revoked"
 
 

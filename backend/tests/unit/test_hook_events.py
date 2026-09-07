@@ -14,6 +14,9 @@ from app.domain.agent.service import (
     AgentMessage,
     AgentResult,
     AgentSessionInfo,
+    AgentSubagentStart,
+    AgentSubagentStop,
+    AgentToolResult,
     AgentToolUse,
 )
 
@@ -101,8 +104,140 @@ def test_stop_reads_usage_when_present():
 
 
 def test_unknown_event_is_dropped():
-    assert translate_hook({"hook_event_name": "SubagentStop"}) is None
+    assert translate_hook({"hook_event_name": "PreCompact"}) is None
     assert translate_hook({}) is None
+
+
+# --- subagents: one session, several workers -------------------------------
+#
+# Payload shapes below are the ones a real claude sends (2.1.224), field for
+# field. A hook we mis-read is not a crash — it is a subagent's work quietly
+# filed under the wrong worker, or under nobody.
+
+_SUBAGENT_START = {
+    "hook_event_name": "SubagentStart",
+    "agent_id": "a8a5aea3b68767861",
+    "agent_type": "general-purpose",
+    "cwd": "/work",
+    "prompt_id": "p1",
+    "session_id": "s1",
+    "transcript_path": "/home/u/.claude/projects/w/s1.jsonl",
+}
+
+_SUBAGENT_STOP = {
+    "hook_event_name": "SubagentStop",
+    "agent_id": "a8a5aea3b68767861",
+    "agent_transcript_path": "/home/u/.claude/projects/w/sub.jsonl",
+    "agent_type": "general-purpose",
+    "background_tasks": [],
+    "cwd": "/work",
+    "effort": "high",
+    "last_assistant_message": "查完了：三条结论都成立。",
+    "permission_mode": "bypassPermissions",
+    "prompt_id": "p1",
+    "session_id": "s1",
+    "stop_hook_active": False,
+    "transcript_path": "/home/u/.claude/projects/w/s1.jsonl",
+}
+
+
+def test_subagent_start_names_the_worker():
+    ev = translate_hook(_SUBAGENT_START)
+    assert isinstance(ev, AgentSubagentStart)
+    assert ev.agent_id == "a8a5aea3b68767861"
+    assert ev.agent_type == "general-purpose"
+    assert ev.session_id == "s1"
+
+
+def test_subagent_stop_carries_the_answer_home():
+    """一个分身的收尾话只到派它的那个线程，跟着容器的 transcript 一起没。
+    平台唯一能拿到它的时刻就是这条钩子。"""
+    ev = translate_hook(_SUBAGENT_STOP)
+    assert isinstance(ev, AgentSubagentStop)
+    assert ev.agent_id == "a8a5aea3b68767861"
+    assert ev.text == "查完了：三条结论都成立。"
+    assert ev.agent_type == "general-purpose"
+    assert ev.transcript_path == "/home/u/.claude/projects/w/sub.jsonl"
+    assert ev.session_id == "s1"
+
+
+def test_subagent_stop_with_nothing_said_is_still_an_event():
+    """分身可以一句话不说就交回来——事件照发，因为「它停了」本身就是要知道的。"""
+    ev = translate_hook({**_SUBAGENT_STOP, "last_assistant_message": ""})
+    assert isinstance(ev, AgentSubagentStop)
+    assert ev.text == ""
+
+
+@pytest.mark.parametrize("event_name", ["SubagentStart", "SubagentStop"])
+@pytest.mark.parametrize("bad_id", [None, "", "   "])
+def test_a_subagent_with_no_id_is_dropped(event_name, bad_id):
+    """没有 id 的分身事件不能放行：整套机制就是靠 id 把后面的钩子归到某个工人
+    头上，而一个没名字的工人和会话本身分不开——放行等于把活记在一个再也对不上
+    的名字底下。"""
+    hook = {"hook_event_name": event_name}
+    if bad_id is not None:
+        hook["agent_id"] = bad_id
+    assert translate_hook(hook) is None
+
+
+def test_the_main_thread_is_the_absence_of_an_id():
+    """主线程的钩子根本没有 agent_id 这个 key（不是 null，是没有），所以
+    「没有 id」就是「会话自己」——不需要再去别处对账。"""
+    ev = translate_hook(
+        {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {}}
+    )
+    assert isinstance(ev, AgentToolUse)
+    assert ev.agent_id is None
+    assert ev.agent_type is None
+
+
+def test_tool_use_from_a_subagent_says_whose_it_is():
+    ev = translate_hook(
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": "ls"},
+            "agent_id": "a8a5aea3b68767861",
+            "agent_type": "Explore",
+        }
+    )
+    assert isinstance(ev, AgentToolUse)
+    assert (ev.agent_id, ev.agent_type) == ("a8a5aea3b68767861", "Explore")
+
+
+def test_tool_result_from_a_subagent_says_whose_it_is():
+    """分身自己也能再派分身；id 说的是「谁派的这一次」，也就是发出这条工具调用
+    的那个线程。"""
+    ev = translate_hook(
+        {
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Task",
+            "tool_response": "done",
+            "agent_id": "outer-agent",
+            "agent_type": "general-purpose",
+        }
+    )
+    assert isinstance(ev, AgentToolResult)
+    assert (ev.agent_id, ev.agent_type) == ("outer-agent", "general-purpose")
+
+
+def test_message_and_stop_from_a_subagent_say_whose_they_are():
+    message = translate_hook(
+        {"hook_event_name": "MessageDisplay", "delta": "干完了", "agent_id": "w1"}
+    )
+    assert isinstance(message, AgentMessage)
+    assert message.agent_id == "w1"
+
+    result = translate_hook(
+        {
+            "hook_event_name": "Stop",
+            "last_assistant_message": "ok",
+            "agent_id": "w1",
+            "agent_type": "general-purpose",
+        }
+    )
+    assert isinstance(result, AgentResult)
+    assert (result.agent_id, result.agent_type) == ("w1", "general-purpose")
 
 
 def test_camelcase_event_name_alias():
@@ -176,6 +311,56 @@ def test_multi_flush_message_coalesces_into_one_event():
     assert ev.text == "line 1\nline 2\nline 3\nline 4"
     assert ev.eid == "e0"
     assert ev.eids == ("e0", "e1", "e2")
+
+
+def test_a_streamed_message_still_says_which_worker_said_it():
+    """流式拼装是分身发言真正走的那条路——`translate_hook` 那条分支只在没有
+    flush 字段的老 payload 上生效。标签必须穿过拼装层活下来，否则整条回复出来
+    的时候没有主语，按 agent_id 归卡就永远漏掉分身说的话。"""
+    asm = MessageAssembler()
+    sub = {"agent_id": "worker-1", "agent_type": "general-purpose"}
+    assert asm.add({**_flush("m1", 0, "查到三处\n", eid="e0"), **sub}) is None
+    ev = asm.add({**_flush("m1", 1, "都在同一个文件里", final=True, eid="e1"), **sub})
+    assert isinstance(ev, AgentMessage)
+    assert ev.text == "查到三处\n都在同一个文件里"
+    assert (ev.agent_id, ev.agent_type) == ("worker-1", "general-purpose")
+
+
+def test_a_streamed_message_from_the_session_itself_has_no_worker():
+    asm = MessageAssembler()
+    assert asm.add(_flush("m1", 0, "先看代码。\n", eid="e0")) is None
+    ev = asm.add(_flush("m1", 1, "再跑测试。", final=True, eid="e1"))
+    assert isinstance(ev, AgentMessage)
+    assert (ev.agent_id, ev.agent_type) == (None, None)
+
+
+def test_a_later_flush_cannot_unname_the_worker():
+    """乱序到达是常态（补录的 spool 文件会落在后面的 flush 之后）。第一条报出
+    名字的 flush 说了算，后面缺这个 key 的 flush 不能把它抹掉——否则同一条消息
+    归谁，取决于哪条 flush 碰巧先被处理。"""
+    asm = MessageAssembler()
+    named = {"agent_id": "worker-1", "agent_type": "general-purpose"}
+    assert asm.add({**_flush("m1", 0, "前半句 ", eid="e0"), **named}) is None
+    ev = asm.add(_flush("m1", 1, "后半句", final=True, eid="e1"))
+    assert isinstance(ev, AgentMessage)
+    assert ev.agent_id == "worker-1"
+
+
+def test_a_drained_partial_keeps_the_worker_it_belonged_to():
+    """屏幕死在一句话中间时，拼装器把收到的部分倒出来——倒出来的东西同样要
+    带着它是谁说的。"""
+    asm = MessageAssembler()
+    asm.add(
+        {
+            **_flush("m1", 0, "只说了一半", eid="e0"),
+            "agent_id": "worker-1",
+            "agent_type": "Explore",
+        }
+    )
+    drained = asm.drain()
+    assert [(m.text, m.agent_id, m.agent_type) for m in drained] == [
+        ("只说了一半", "worker-1", "Explore")
+    ]
 
 
 def test_single_flush_final_message_passes_through():

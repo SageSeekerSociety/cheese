@@ -1,25 +1,13 @@
-"""一条跑过的支线，必须说得出自己跑过。
+"""一个房间跑过一轮，必须说得出自己跑过 —— 「现场」全靠这一个布尔值决定出不出。
 
-「现场」这一格由 `work-summary` 的 `has_run` 决定，而 `has_run` 问的是「这个地点
-有没有哪个 agent 留下过会话行」。读侧从一开始就是按**地点**算的
-（`AgentSessionRepository` 自己把一个 id 解析成 (房间, 支线) 两半）；坏的是
-**写侧** —— 一轮结束时保存会话指针的那段先按 id 去 `topics` 表捞一行，而支线不在
-那张表里，于是拿到 None，整段 remember 被安静地跳过。所以线上一条跑了几小时、
-几百个 block 的支线，`has_run` 仍然是 `False`。
-
-每条用例都**跑一轮真的活**：stub 只负责一块屏幕本来就该提供的东西（那几个 hook），
-组装、归属、收尾全是生产那条路。刻意不直接往 `agent_sessions` 里塞行 —— 塞行测的
-是读侧，而读侧本来就是好的。
+`has_run` 问的是「这个地点有没有哪个 agent 留下过会话行」，而地点只有房间：它派
+出去的每一件活都是这一个会话里的一个分身，不另开会话，也没有自己的 `--resume`。
 
 同一行代码还带着第二个用途：`resume_token`。`--resume` 只在**冷启动**时用得上
 （`build_session_launch` 那道守卫：tmux 会话本身就是一个普通话题的连续性），所以
-写侧被跳过的后果不是「每轮都失忆」，而是**屏幕一旦被回收，这条支线就接不回自己那
+写侧被跳过的后果不是「每轮都失忆」，而是**屏幕一旦被回收，这个房间就接不回自己那
 段对话** —— 尽管 transcript 就躺在它自己的 session 目录里。这里用「第二轮冷启动
 时拿到的 resume 指针」来钉它，因为那正是唯一用得上它的时刻。
-
-两种支线在这里是分开的，因为它们证的事不一样：`/split` 派出去的活**当场就会被
-自动踢一轮**（spec §8.4 分身异步工作），所以它复现的是线上那个症状本身；而
-`open_thread` 建出来的是一条**谁都没跑过**的活，用来挡住「无脑返回 True」。
 """
 
 import asyncio
@@ -64,11 +52,18 @@ def _room(client) -> tuple[str, str]:
 
 
 def _dispatched(client, room_id: str, title: str = "一件活") -> str:
-    """派出去的一条活 —— 派出即开跑，所以等它跑完再问。"""
+    """派出去的一条活。派活不跑任何东西，所以它出来时是安静的。"""
     r = client.post(f"/topics/{room_id}/split", json={"title": title})
     assert r.status_code == 200, r.text
     wait_work_idle()
     return r.json()["data"]["id"]
+
+
+def _worked(client, tmp_path, room_id: str, title: str = "一件活") -> str:
+    """一条派出去、并且真的跑过一轮的活。"""
+    thread = _dispatched(client, room_id, title)
+    _turn(client, _service(client, tmp_path, _Screen()), thread)
+    return thread
 
 
 def _dormant(client, project_id: str, room_id: str, title: str = "没跑过的") -> str:
@@ -83,7 +78,6 @@ def _dormant(client, project_id: str, room_id: str, title: str = "没跑过的")
                 title=title,
                 owner_handle="alice",
                 created_by="alice",
-                agent_instance_id=None,
             )
             made["id"] = str(task.id)
             await s.commit()
@@ -127,39 +121,30 @@ def _has_run(client, project_id: str, place_id: str, bearer) -> bool:
 # --- has_run：这一格该不该摆出来 ---------------------------------------------
 
 
-def test_a_dispatched_thread_says_it_has_run(client, bearer):
-    """派出去、跑过一轮的活要说自己跑过 —— 「现场」全靠这一个布尔值决定出不出。
-
-    走的是真实派活那条路（`/split` 当场踢一轮），因为那正是线上那条支线的处境。
-    """
-    pid, room = _room(client)
-    thread = _dispatched(client, room)
-
-    assert _has_run(client, pid, thread, bearer) is True
-
-
-def test_an_untouched_sibling_still_says_it_has_not(client, bearer):
-    """同房间另一条谁都没跑过的活，不能被兄弟带成「跑过」。
-
-    没有这一条，一个无脑返回 True 的修法也能过上面那条。
-    """
-    pid, room = _room(client)
-    _dispatched(client, room, "跑过的")
-    idle = _dormant(client, pid, room)
-
-    assert _has_run(client, pid, idle, bearer) is False
-
-
-def test_a_threads_turn_does_not_make_its_room_look_run(client, bearer):
-    """支线跑过，房间自己没跑过 —— 两个地点，两条会话。"""
+def test_a_freshly_opened_room_has_not_run(client, bearer):
+    """一步都还没走的房间说自己没跑过 —— 派活本身不算跑过一轮。"""
     pid, room = _room(client)
     _dispatched(client, room)
 
     assert _has_run(client, pid, room, bearer) is False
 
 
-def test_a_room_still_records_its_own_turn(client, tmp_path, bearer):
-    """房间那条路本来就是好的，修支线不能把它弄坏。"""
+def test_a_card_is_not_asked_whether_it_has_run(client, bearer):
+    """卡不是地点，这个问题对它不成立 —— 问了是 404，不是 False。
+
+    False 会更糟：那读起来像「这条活闲着」，而事实是这个问题问错了对象。
+    """
+    pid, room = _room(client)
+    card = _dispatched(client, room)
+
+    r = client.get(
+        f"/projects/{pid}/topics/{card}/work-summary", headers=bearer("alice")
+    )
+    assert r.status_code == 404
+
+
+def test_a_room_records_its_own_turn(client, tmp_path, bearer):
+    """跑完一轮，写侧要真的记下这个房间的会话。"""
     pid, room = _room(client)
 
     _turn(client, _service(client, tmp_path, _Screen()), room)
@@ -170,19 +155,18 @@ def test_a_room_still_records_its_own_turn(client, tmp_path, bearer):
 # --- resume：屏幕被回收之后，这段对话还接不接得回去 ---------------------------
 
 
-def test_a_threads_next_cold_start_resumes_the_conversation_it_had(client, tmp_path):
+def test_the_next_cold_start_resumes_the_conversation_it_had(client, tmp_path):
     """第二次冷启动必须被告知「接着上一段」。
 
-    `--resume` 只在冷启动时用得上，所以这就是支线丢没丢过对话的判据：写侧被跳过
-    时，第二轮拿到的是 None —— 一段全新的对话，尽管 transcript 就在那儿。
+    `--resume` 只在冷启动时用得上，所以这就是丢没丢过对话的判据：写侧被跳过时，
+    第二轮拿到的是 None —— 一段全新的对话，尽管 transcript 就在那儿。
     """
-    pid, room = _room(client)
-    thread = _dormant(client, pid, room, "两轮的活")
-    screen = _Screen("s-thread-1")
+    _pid, room = _room(client)
+    screen = _Screen("s-room-1")
     svc = _service(client, tmp_path, screen)
 
-    _turn(client, svc, thread, "第一轮")
-    _turn(client, svc, thread, "第二轮")
+    _turn(client, svc, room, "第一轮")
+    _turn(client, svc, room, "第二轮")
 
     assert screen.resume_asked[0] is None, "第一轮无可接续，这是对的"
-    assert screen.resume_asked[1:] == ["s-thread-1"], screen.resume_asked
+    assert screen.resume_asked[1:] == ["s-room-1"], screen.resume_asked

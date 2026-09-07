@@ -61,12 +61,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.comments.services", "app.domain.user.repositories"),
         ("app.domain.discussion.services", "app.domain.user.repositories"),
         ("app.domain.groups.services", "app.domain.user.repositories"),
-        # --- conclusion ---
-        # 这个领域在本工作区的 base 里还不存在（沙箱同步不了上游），两条是照 CI 在
-        # 更新的 main 上报的原样入账的存量债，不是本轮新欠的。副作用：在缺 conclusion
-        # 的旧 base 上跑，棘轮会把这两行报成"陈行"——那是 checkout 落后，不是债还完了。
-        ("app.domain.conclusion.services", "app.domain.block.repositories"),
-        ("app.domain.conclusion.services", "app.domain.topic.repositories"),
         # --- alert ---
         ("app.domain.alert.services", "app.domain.block.repositories"),
         ("app.domain.alert.services", "app.domain.project.repositories"),

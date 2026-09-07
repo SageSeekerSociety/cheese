@@ -9,7 +9,6 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent.models import AgentTurn
-from app.domain.room_task.place import room_and_task
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,23 +56,22 @@ class AgentTurnRepository:
         is_resume: bool,
         resendable: bool,
         started_at: datetime,
+        delivered_at: datetime | None = None,
     ) -> None:
-        # `topic_id` is the id of the PLACE this turn runs in, which may be a
-        # thread. Resolved here rather than by every caller: the runtime addresses
-        # a place by one id everywhere else, and this is one of the few tables
-        # that has to store both halves.
-        room_id, task_id = await room_and_task(self._session, topic_id)
+        # `delivered_at` is for a turn that has no 投喂 phase to stamp later — it
+        # is born delivered or it is born unclosable. Everything the platform
+        # feeds leaves it None and stamps it when the transport accepts.
         self._session.add(
             AgentTurn(
                 id=turn_id,
-                topic_id=room_id,
-                task_id=task_id,
+                topic_id=topic_id,
                 continuation_id=continuation_id,
                 author=author,
                 content=content,
                 is_resume=is_resume,
                 resendable=resendable,
                 started_at=started_at,
+                delivered_at=delivered_at,
             )
         )
 
@@ -123,18 +121,17 @@ class AgentTurnRepository:
         Admission only ever has the place a caller claims to run in, never a
         turn id (a scoped token carries `t`, never `turn_id`) — this is how it
         finds the interval that place names, so a credits refusal can be
-        stamped on the turn it actually refused. Matches `close_for_topic`'s
-        room/thread scoping: a room and each of its threads run independent
-        turns, so a place must never answer for the other's.
+        stamped on the turn it actually refused.
+
+        The room's OWN line, which is where every turn now runs; the rows a
+        thread left behind before work stopped being a place are excluded by
+        the same clause that used to select them.
         """
-        room_id, task_id = await room_and_task(self._session, topic_id)
         stmt = (
             select(AgentTurn.id)
             .where(
-                AgentTurn.topic_id == room_id,
-                AgentTurn.task_id.is_(None)
-                if task_id is None
-                else AgentTurn.task_id == task_id,
+                AgentTurn.topic_id == topic_id,
+                AgentTurn.task_id.is_(None),
                 AgentTurn.stopped_at.is_(None),
             )
             .order_by(AgentTurn.started_at.desc())
@@ -169,18 +166,14 @@ class AgentTurnRepository:
         invisible to every future sweep — the silent death this table exists to
         end. Its own coroutine closes it by id, delivered or not.
         """
-        room_id, task_id = await room_and_task(self._session, topic_id)
         result = await self._session.execute(
             update(AgentTurn)
             .where(
-                AgentTurn.topic_id == room_id,
-                # Scoped to the THREAD when there is one. A room and each of its
-                # threads run their own sessions, so a Stop from one of them must
-                # not close the intervals of the others — which is exactly what
-                # matching on the room alone would do.
-                AgentTurn.task_id.is_(None)
-                if task_id is None
-                else AgentTurn.task_id == task_id,
+                AgentTurn.topic_id == topic_id,
+                # The room's own line. A Stop is the room's session finishing,
+                # and the intervals a thread left behind when work was still a
+                # place are not this session's to close.
+                AgentTurn.task_id.is_(None),
                 AgentTurn.stopped_at.is_(None),
                 AgentTurn.delivered_at.is_not(None),
             )

@@ -41,9 +41,7 @@ import type {
   UserProfile,
   WorkspaceFile,
 } from './cx_types'
-import type { PlacePayload } from './lib/place'
 
-import { isThreadPayload } from './lib/place'
 import { TOPIC_TITLE_MAX_LENGTH } from './lib/topicTitle'
 
 export { TOPIC_TITLE_MAX_LENGTH }
@@ -615,8 +613,10 @@ export function unarchiveTopic(topicId: string, by: string): Promise<Topic> {
 // 把一条消息升级成它自己的地点 (eval A1)。`blockId` 是那条消息的 block id。
 // 房间里的消息升级出来的是一条**支线**；私聊里的升级出来的是一个真房间——私聊
 // 不在话题树里，支线在那儿没人打得开。所以回答有两种形状。
-export function upgradeBlock(blockId: string, createdBy: string): Promise<PlacePayload> {
-  return request<PlacePayload>(`/blocks/${encodeURIComponent(blockId)}/upgrade`, {
+/** 升级一条消息。房间里的消息变成这个房间的一张**卡**（回来的是 RoomTask），
+ *  私聊里的变成一个新房间（回来的是 Topic）。 */
+export function upgradeBlock(blockId: string, createdBy: string): Promise<Topic | RoomTask> {
+  return request<Topic | RoomTask>(`/blocks/${encodeURIComponent(blockId)}/upgrade`, {
     method: 'POST',
     body: JSON.stringify({ created_by: createdBy }),
   })
@@ -1303,17 +1303,33 @@ export function removeTopicMember(topicId: string, handle: string, actor: string
   )
 }
 
-// 一个 id 指向一个「地点」——房间答 Topic，支线答 RoomTask (lib/place.ts)。
-// 打开一条支线只有这一条路：侧栏那份列表只查 topics 表，支线从来不在里面。
-export function getPlace(placeId: string): Promise<PlacePayload> {
-  return request<PlacePayload>(`/topics/${encodeURIComponent(placeId)}`)
+// 一个 id 指向一个房间。**卡不是地点**：拿卡的 id 问这条接口是 404，卡走
+// `getRoomTask`（房间的地址 + 卡的 id）。
+export function getTopic(topicId: string): Promise<Topic> {
+  return request<Topic>(`/topics/${encodeURIComponent(topicId)}`)
 }
 
-// Re-fetch a single ROOM (after accept it becomes archived). Null for a thread:
-// the caller patches a row in the rail's list, and threads have no row there.
-export async function getTopic(topicId: string): Promise<Topic | null> {
-  const place = await getPlace(topicId)
-  return isThreadPayload(place) ? null : place
+/** 一张卡，连着它自己的对话。`limit` 只截对话，卡本身照常整份回来。 */
+export function getRoomTask(
+  roomId: string,
+  taskId: string,
+  opts?: { limit?: number }
+): Promise<RoomTask & { blocks: Block[] }> {
+  const q = new URLSearchParams()
+  if (opts?.limit != null) q.set('limit', String(opts.limit))
+  const query = q.toString() ? `?${q.toString()}` : ''
+  return request<RoomTask & { blocks: Block[] }>(
+    `/topics/${encodeURIComponent(roomId)}/tasks/${encodeURIComponent(taskId)}${query}`
+  )
+}
+
+/** 在一张卡下面说话。落在这条活的时间线上，房间被叫来转达 —— 做这条活的分身住在
+ *  房间的会话里，只有房间的芝士递得到话。 */
+export function sayOnRoomTask(roomId: string, taskId: string, content: string, author: string): Promise<Block> {
+  return request<Block>(`/topics/${encodeURIComponent(roomId)}/tasks/${encodeURIComponent(taskId)}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({ content, author }),
+  })
 }
 
 // ---- 日历 / 里程碑 (§7.2) ----

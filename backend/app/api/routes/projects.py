@@ -413,7 +413,11 @@ async def list_decisions(project_id: uuid.UUID, db: DbSession) -> dict:
 
 
 @router.get("/{project_id}/tasks")
-async def list_project_tasks(project_id: uuid.UUID, db: DbSession) -> dict:
+async def list_project_tasks(
+    project_id: uuid.UUID,
+    db: DbSession,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+) -> dict:
     """Every thread in the project, each with the card it currently rides on.
 
     The rail draws rooms and the work inside them, so it needs both halves at
@@ -441,11 +445,20 @@ async def list_project_tasks(project_id: uuid.UUID, db: DbSession) -> dict:
     # 一次，给全部行用同一个「现在几点」：逐行取 now 会让同一批数据里两条本该
     # 一样的活分到不同格子，而那种差别没人再能复现。
     now = datetime.now(UTC)
+    # 分身住在它房间的会话里，所以这一位按房间问，一个房间只问一次（内存里的
+    # 当下事实，不走库）。
+    live_rooms = {t.room_id: chat.has_live_screen(t.room_id) for t in tasks}
     items = []
     for task in tasks:
         card = cards.get(task.id)
         shown = presentation.task_presentation(
-            presentation.facts_for_task(task, card, beats.get(task.id)), now=now
+            presentation.facts_for_task(
+                task,
+                card,
+                beats.get(task.id),
+                room_screen_live=live_rooms[task.room_id],
+            ),
+            now=now,
         )
         items.append(
             {
@@ -485,12 +498,8 @@ async def _authorized_memory_topic(
     place = await TopicService(db).place_or_404(topic_id)
     if place.project_id != project_id:
         raise ForbiddenError("这个话题不属于 URL 中的项目")
-    # Two different ids on purpose. A per-turn token is scoped to the PLACE it
-    # was minted for, so that is what identity is checked against — handing it
-    # the room would read a thread's token as out-of-scope and erase its author.
-    # Access, though, is the room's roster: threads do not have one.
     actor = await resolver.resolve(
-        fallback_handle=None, topic_id=place.id, project_id=project_id
+        fallback_handle=None, topic_id=place.room_id, project_id=project_id
     )
     await resolver.authorize_topic(actor, project_id=project_id, topic_id=place.room_id)
     return place
@@ -505,16 +514,11 @@ async def _agent_memory_scope(
     one project keeps one pool, which is the whole point of an instance owning
     its memory. Returns ``None`` when no usable place was supplied, so the
     caller falls back to the shared project pool.
-
-    A thread is asked about its own row: it was handed the room's agent when
-    the work went out, so what it learns lands in the pool the room reads back
-    — which is the entire reason the room dispatched it.
     """
     if place is None:
         return None
     project = await ProjectService(db).get_or_404(project_id)
-    owner = place.task if place.task is not None else place.room
-    agent = await AgentInstanceService(db).for_topic(owner, project)
+    agent = await AgentInstanceService(db).for_topic(place.room, project)
     return memory_pool(project_id, agent)
 
 

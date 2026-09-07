@@ -2182,13 +2182,6 @@ def session_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     spool = d / "cheese-spool"
     spool.mkdir(parents=True, exist_ok=True)
     _loosen(str(spool), 0o777)
-    # Same treatment for `cheese await`'s output logs: they live in the session
-    # mount (not the container's own filesystem) so a multi-hour command's output
-    # outlives the container that ran it, and not in the worktree so it never
-    # reaches a commit.
-    awaited = d / "cheese-await"
-    awaited.mkdir(parents=True, exist_ok=True)
-    _loosen(str(awaited), 0o777)
     skills_dst = d / "skills"
     if _SKILL_SRC.is_dir():
         shutil.copytree(_SKILL_SRC, skills_dst, dirs_exist_ok=True)
@@ -2242,15 +2235,6 @@ def spool_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     mounts to /home/node/.claude), and the backend reconciles from it. Mirrors
     session_dir's base so both sides agree on ONE location."""
     return identity_mod.session_dir(project_id, topic_id) / "cheese-spool"
-
-
-def await_log_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
-    """Host path of the topic's `cheese await` output logs. The container writes
-    here via CHEESE_AWAIT_LOGS=/home/node/.claude/cheese-await (the session dir
-    mounts to /home/node/.claude), so the output of a command that runs for hours
-    survives the container being rebuilt under it. Mirrors spool_dir's base so
-    both sides agree on ONE location."""
-    return identity_mod.session_dir(project_id, topic_id) / "cheese-await"
 
 
 # `docker info` costs ~50ms, and the answer changes only when someone starts or

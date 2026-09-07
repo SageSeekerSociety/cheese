@@ -105,6 +105,18 @@ def hooks_settings(extra_stop: list[str] | None = None) -> dict:
             "PreToolUse": tool_matched,
             "PostToolUse": tool_matched,
             "MessageDisplay": plain,
+            # A subagent's own boundaries. Its tool calls already arrive through
+            # PreToolUse/PostToolUse above (those fire inside a subagent exactly
+            # as on the main thread) — what they cannot say is that a worker
+            # started, or which of several is speaking, because the room sees
+            # one undifferentiated stream. These two carry that: the id to
+            # attribute the rest by, and the closing message, which otherwise
+            # reaches only the thread that spawned it.
+            "SubagentStart": plain,
+            # NOT part of `stop_hooks`: those hand a machine's work back at TURN
+            # end, and a subagent finishing is not the turn finishing — the
+            # session keeps working, and often spawns another.
+            "SubagentStop": plain,
             "Stop": [{"hooks": stop_hooks}],
             # The turn that ends because the API refused it. Claude Code fires
             # this INSTEAD of `Stop` (measured on 2.1.224 and 2.1.260, in `-p`

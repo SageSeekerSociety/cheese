@@ -63,7 +63,7 @@ async function onArchiveTopic(topicId: string) {
     :width="store.railWidth"
     :projects="store.projects"
     :selected-project-id="store.projectId"
-    :topics="store.tree"
+    :topics="store.topics"
     :selected-topic-id="activeTopicId"
     :loading-topics="store.loadingTopics"
     :private-active="activeDmPeer === 'cheese'"

@@ -40,7 +40,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from app.domain.review.notes import NoteCode, NoteLevel, note_level
-from app.domain.room_task.models import Residency, Task, TaskStatus
+from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic, TopicStatus
 
 if TYPE_CHECKING:
@@ -53,14 +53,9 @@ if TYPE_CHECKING:
 #: 条活上实测，轮内间隔中位数 8 秒、p90 34 秒。10 分钟是 p90 的十几倍，一段安静的
 #: 工具活动撑不到它；而一条真的停住的活，10 分钟就在看板上现形，不用等两小时。
 #:
-#: 为什么不能拿 `Task.last_turn_at` 当信号：它只在一轮**开始**时盖一次，跑起来之
-#: 后不再刷新（见 `ResidencyService.touch` 的调用点），所以按它算，宽限期必须长过
-#: 最长的一轮，否则正在干活的活会被说成失联。它只作兜底 —— 一条刚开跑、还没来得
-#: 及说第一句话的活，靠的是它。
-#:
-#: 也刻意不等于清理幽灵槽位的那个门槛（`GHOST_RESIDENCY_AFTER`，2 小时）：那一步
-#: 会**放掉别人的槽位**，早一步是破坏性的；这里只是在屏幕上说一句话，说早了改回来
-#: 就是了。两种代价不一样，所以两个数不该是同一个。
+#: 为什么不能拿 `Task.last_turn_at` 当信号：它只在**认领分身**那一刻盖一次，之后
+#: 不再刷新，所以按它算，宽限期必须长过最长的一条活。它只作兜底 —— 一条刚被认领、
+#: 还没来得及说第一句话的活，靠的是它。
 LOST_SIGNAL_AFTER = timedelta(minutes=10)
 
 
@@ -78,7 +73,6 @@ class Building(enum.StrEnum):
     """还没递出交付。"""
 
     running = "运行中"
-    queued = "排队中"
     idle = "空闲"
     #: 房间才有：还没开工。活没有草稿态。
     draft = "草稿"
@@ -169,13 +163,21 @@ class CardFacts:
 @dataclass(frozen=True, slots=True)
 class TaskFacts:
     status: str
-    residency: str
-    queued_at: datetime | None
     #: 最后一次有东西确认这条活还在动。见 `LOST_SIGNAL_AFTER`：优先是它最后一个
-    #: block 的时间，没说过话就退回这一轮是什么时候开的。
+    #: block 的时间，没说过话就退回它是什么时候被认领的。
     last_signal_at: datetime | None
     accepted_at: datetime | None
     card: CardFacts | None
+    #: 有没有分身在做这条活（`Task.subagent_id`）。
+    has_worker: bool = False
+    #: 那个分身活在**房间的**会话里，所以房间的屏幕没了，它一定也没了 —— 这一位
+    #: 是跑轮次的进程当下的事实（`ChatService.has_live_screen`），不是一列时间戳，
+    #: 所以它得从外面喂进来（这一层不碰 I/O）。
+    room_screen_live: bool = True
+    #: 分身已经交回过一句结论（`Task.conclusion`）。它是干完了在等房间收卡，
+    #: 不是断了 —— 但它也可能只是把一条长命令停在后台就先交了一次话，所以这一位
+    #: 只用来解释安静，从不用来说这条活结束了。
+    has_conclusion: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,21 +204,24 @@ def facts_for_task(
     task: Task,
     card: "AcceptCard | None" = None,
     last_block_at: datetime | None = None,
+    *,
+    room_screen_live: bool = True,
 ) -> TaskFacts:
     """把一行 `Task`（加上它的卡、加上它最后一次说话的时间）折成这层要读的事实。
 
-    两个信号取晚的那个，因为它们各自会缺：一条刚开跑、还没说第一句话的活只有
-    `last_turn_at`；一条跑了很久的活，`last_turn_at` 停在开跑那一刻，真正在动的
+    两个信号取晚的那个，因为它们各自会缺：一条刚被认领、还没说第一句话的活只有
+    `last_turn_at`；一条干了很久的活，`last_turn_at` 停在认领那一刻，真正在动的
     证据在 block 上。取晚的 = 「有任何一个东西确认过它还活着」。
     """
     signals = [t for t in (last_block_at, task.last_turn_at) if t is not None]
     return TaskFacts(
         status=str(task.status),
-        residency=str(task.residency),
-        queued_at=task.queued_at,
         last_signal_at=max(signals) if signals else None,
         accepted_at=task.accepted_at,
         card=facts_for_card(card),
+        has_worker=bool(task.subagent_id),
+        room_screen_live=room_screen_live,
+        has_conclusion=bool(task.conclusion),
     )
 
 
@@ -311,9 +316,18 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
     if facts.accepted_at is not None:
         return _show(Done.accepted)
 
-    if facts.residency == Residency.running:
-        if _lost_signal(facts.last_signal_at, now=now):
-            return _show(Building.lost)
+    # 有分身在做这条活。它住在**房间的**会话里，所以「它还在不在」有两个答案，
+    # 先问屏幕：房间的屏幕没了，它一定也没了 —— 而它自己不会来说一声。
+    #
+    # 已经交回过结论的不算在内：那是干完了在等房间收卡，不是还在做。
+    worker_on_it = (
+        facts.has_worker
+        and facts.status == TaskStatus.open
+        and not facts.has_conclusion
+    )
+    alive = facts.room_screen_live and not _lost_signal(facts.last_signal_at, now=now)
+    # 规矩 2：在跑压过纸面。
+    if worker_on_it and alive:
         return _show(Building.running)
 
     if facts.card is not None:
@@ -321,8 +335,13 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
         if shown is not None:
             return shown
 
-    if facts.queued_at is not None:
-        return _show(Building.queued)
+    # 说自己有人在做，却没有任何东西确认过 —— **在卡说完之后才轮到这一句**。一条
+    # 递了卡、安静地等人验收的活，安静得理直气壮：它不是断了联系，它在等你。分身
+    # 干完活并不会把 `subagent_id` 抹掉，所以抢在卡前面说，等于把每一条等验收的活
+    # 都误报成失联。
+    if worker_on_it:
+        return _show(Building.lost)
+
     # 放在最后：一条已交付的活即使关掉了，它首先是已交付的（规矩 1 已经拦了它）。
     if facts.status == TaskStatus.closed:
         return _show(Done.closed)

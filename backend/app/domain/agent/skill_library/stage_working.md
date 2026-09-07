@@ -1,11 +1,11 @@
 ---
 name: stage-working
 title: 阶段·干活
-scenarios: [stage:working]
+scenarios: [stage:delegating]
 description: 一件事正在做——开工检查、怎么真跑测试、什么时候递卡、采纳者 token 通道
 ---
 
-# 当前阶段：这件事正在做（还没递卡）
+# 交付：这批活还没递卡
 
 ## 开工第一件事
 

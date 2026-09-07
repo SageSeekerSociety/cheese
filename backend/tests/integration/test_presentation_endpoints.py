@@ -12,13 +12,17 @@ from datetime import UTC, datetime, timedelta
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.project.models import Project
 from app.domain.review.models import AcceptCard, AcceptStatus
-from app.domain.room_task.models import Residency, Task, WorkTree
+from app.domain.room_task.models import Task, WorkTree
 from app.domain.room_task.presentation import LOST_SIGNAL_AFTER
 from app.domain.topic.models import Topic, TopicKind
 
 
-def _seeded(client) -> dict[str, str]:
-    """一个房间，三条活：在跑的、等人验收的、说在跑但早就没动静的。"""
+def _seeded(client, stub_hooks=None) -> dict[str, str]:
+    """一个房间，四条活：分身在做的、等人验收的、有分身但早就没动静的、还在说话的。
+
+    传了 `stub_hooks` 就顺带把这个房间的屏幕点亮 —— 分身住在房间的会话里，房间的
+    屏幕没了它一定也没了，所以「有分身在做」这一格只有屏幕活着时才成立。
+    """
     ids: dict[str, str] = {}
 
     async def _seed() -> None:
@@ -38,7 +42,7 @@ def _seeded(client) -> dict[str, str]:
                 room_id=room.id,
                 tree_id=tree.id,
                 title="在跑的活",
-                residency=Residency.running,
+                subagent_id="agent-running",
                 last_turn_at=datetime.now(UTC),
             )
             waiting = Task(
@@ -52,17 +56,17 @@ def _seeded(client) -> dict[str, str]:
                 room_id=room.id,
                 tree_id=tree.id,
                 title="失联的活",
-                residency=Residency.running,
+                subagent_id="agent-lost",
                 last_turn_at=datetime.now(UTC) - LOST_SIGNAL_AFTER - timedelta(hours=1),
             )
-            # 说在跑、开跑时间也早就过期了，但它刚说过话 —— block 才是心跳，
-            # last_turn_at 只在一轮开始时盖一次。
+            # 有分身、认领时间也早就过期了，但它刚说过话 —— block 才是心跳，
+            # last_turn_at 只在认领那一刻盖一次。
             talking = Task(
                 project_id=project.id,
                 room_id=room.id,
                 tree_id=tree.id,
                 title="还在说话的活",
-                residency=Residency.running,
+                subagent_id="agent-talking",
                 last_turn_at=datetime.now(UTC) - LOST_SIGNAL_AFTER - timedelta(hours=1),
             )
             s.add_all([running, waiting, lost, talking])
@@ -103,11 +107,13 @@ def _seeded(client) -> dict[str, str]:
             await s.commit()
 
     asyncio.run(_seed())
+    if stub_hooks is not None:
+        stub_hooks.runtime._live[uuid.UUID(ids["room"])] = "screen"
     return ids
 
 
-def test_the_project_task_list_carries_the_board_cell(client):
-    ids = _seeded(client)
+def test_the_project_task_list_carries_the_board_cell(client, stub_hooks):
+    ids = _seeded(client, stub_hooks)
     rows = client.get(f"/projects/{ids['project']}/tasks").json()["data"]["data"]
     by_id = {r["id"]: r for r in rows}
 
@@ -115,26 +121,26 @@ def test_the_project_task_list_carries_the_board_cell(client):
         "column": "building",
         "display_status": "运行中",
     }
-    # 安静，但等的是人 —— 光看 residency 和「空闲」一模一样，而这两者意味着相反的
+    # 安静，但等的是人 —— 光看 open/closed 和「空闲」一模一样，而这两者意味着相反的
     # 下一步（去验收 vs 去催）。
     assert by_id[ids["waiting"]]["presentation"] == {
         "column": "needs_you",
         "display_status": "等待验收",
     }
-    # 说在跑，但没有任何东西最近确认过 —— 今天前端没有这一格。
+    # 说有分身在做，但没有任何东西最近确认过 —— 今天前端没有这一格。
     assert by_id[ids["lost"]]["presentation"] == {
         "column": "building",
         "display_status": "失联",
     }
-    # 同样一个过期的 last_turn_at，但它刚落了一个 block：心跳压过开跑时间。
+    # 同样一个过期的 last_turn_at，但它刚落了一个 block：心跳压过认领时间。
     assert by_id[ids["talking"]]["presentation"] == {
         "column": "building",
         "display_status": "运行中",
     }
 
 
-def test_a_room_and_its_threads_agree_with_the_project_list(client):
-    ids = _seeded(client)
+def test_a_room_and_its_threads_agree_with_the_project_list(client, stub_hooks):
+    ids = _seeded(client, stub_hooks)
     project_rows = client.get(f"/projects/{ids['project']}/tasks").json()["data"][
         "data"
     ]
@@ -143,8 +149,12 @@ def test_a_room_and_its_threads_agree_with_the_project_list(client):
     room_rows = client.get(f"/topics/{ids['room']}/tasks").json()["data"]["data"]
     from_room = {r["id"]: r["presentation"] for r in room_rows}
 
-    from_header = {
-        task_id: client.get(f"/topics/{task_id}").json()["data"]["presentation"]
+    # 单开一张卡看到的那一格，和它在两份清单里显示的必须是同一句话 —— 同一个函数
+    # 算的，所以深链接进来和从看板点进来不可能给出两种说法。
+    from_card = {
+        task_id: client.get(f"/topics/{ids['room']}/tasks/{task_id}").json()["data"][
+            "presentation"
+        ]
         for task_id in (
             ids["running"],
             ids["waiting"],
@@ -154,7 +164,7 @@ def test_a_room_and_its_threads_agree_with_the_project_list(client):
     }
 
     assert from_room == from_project
-    assert from_header == from_project
+    assert from_card == from_project
 
 
 def test_a_room_carries_its_own_board_cell(client):

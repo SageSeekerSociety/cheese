@@ -101,7 +101,7 @@ def names_a_person(handle: str | None) -> bool:
 
     Attribution needs this: a handle that reaches it may be a real person, the
     ``anonymous`` sentinel, ``system`` (every platform-initiated turn — gate
-    verdicts, scheduled wake-ups, ``cheese await`` reports), or 芝士 / one of her
+    verdicts, scheduled wake-ups), or 芝士 / one of her
     per-topic 分身. Only the first may become a topic's owner or be credited on
     a commit; the rest must fall through to whatever the caller's fallback is.
 

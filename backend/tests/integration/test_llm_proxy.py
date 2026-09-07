@@ -506,32 +506,24 @@ async def _room_with_a_thread(client, project_id: str) -> tuple[str, str]:
             title="一件活",
             owner_handle="alice",
             created_by="alice",
-            agent_instance_id=None,
         )
         thread_id = str(task.id)
         await session.commit()
     return room_id, thread_id
 
 
-async def test_admission_places_a_threads_turn_on_its_rooms_machine(
-    client, monkeypatch
-):
-    """A thread's per-turn token carries the THREAD's id; the machine pin is the
-    ROOM's (`bind_topic_device` binds nothing else, and a thread runs on its
-    room's machine — #702). So this lookup came back empty for every thread on
-    an enrolled machine.
+async def test_admission_names_the_machine_the_room_is_pinned_to(client, monkeypatch):
+    """一轮跑在哪台机器上，是**房间**的 pin 说了算 —— 一个房间一块屏幕，它派出去
+    的每一个分身都跑在那一台上，所以没有第二个 pin 可查。
 
-    Empty is not the harmless "use the deployment-wide identity" it is for a
-    room. A caller carrying its own ccproxy ticket is REFUSED when no identity
-    is resolved, rather than billed to the platform — so every thread turn on an
-    enrolled machine was refused, and the refusal crashed the proxy on its way
-    out, which is what reached the user as a request timeout.
+    查不到不是「无所谓」：带着自己 ccproxy 票的调用方在解析不出身份时会被**拒绝**，
+    而不是记到平台账上。所以这个查询答错一次，那台机器上的每一轮都被拒。
     """
     from app.core.config import settings as app_settings
 
     monkeypatch.setattr(app_settings, "subscription_enabled", True)
     pid = _make_project(client)
-    room_id, thread_id = await _room_with_a_thread(client, pid)
+    room_id, _card_id = await _room_with_a_thread(client, pid)
     await _pin_topic_to_machine(
         client,
         project_id=pid,
@@ -540,73 +532,26 @@ async def test_admission_places_a_threads_turn_on_its_rooms_machine(
         upstream="m784:pw784",
     )
 
-    def _supply(place_id: str) -> dict:
-        headers = {
-            "Authorization": "Bearer "
-            + mint_scoped_token(project_id=pid, topic_id=place_id)
-        }
-        return client.post("/llm/admission", headers=headers).json()["data"]["supply"]
-
-    assert _supply(thread_id)["upstream"] == "m784:pw784"
-    # The room's own turns must be unaffected — the thread is resolved THROUGH
-    # the room, not instead of it.
-    assert _supply(room_id)["upstream"] == "m784:pw784"
-
-
-async def test_admission_still_names_nothing_for_a_place_that_owns_no_machine(
-    client, monkeypatch
-):
-    """Resolving a thread to its room must not invent an identity. A room with
-    no pin, and a thread in it, both still mean "use the deployment-wide one" —
-    the behaviour every unplaced turn has today."""
-    from app.core.config import settings as app_settings
-
-    monkeypatch.setattr(app_settings, "subscription_enabled", True)
-    pid = _make_project(client)
-    room_id, thread_id = await _room_with_a_thread(client, pid)
-
-    for place_id in (room_id, thread_id):
-        headers = {
-            "Authorization": "Bearer "
-            + mint_scoped_token(project_id=pid, topic_id=place_id)
-        }
-        body = client.post("/llm/admission", headers=headers).json()["data"]
-        assert "upstream" not in body["supply"]
-
-
-async def test_a_thread_with_its_own_pin_is_not_answered_from_its_room(
-    client, monkeypatch
-):
-    """The other direction, and the reason the room is a FALLBACK and not the
-    answer. On a self-hosted device the resolver pins whatever place it is given,
-    so a thread pins itself — and two threads of one room can land on two
-    different boxes. Resolving a thread through its room would then name a
-    machine its turns do not run on, which is the same wrong-identity failure
-    read backwards: ccproxy only honours a ticket over its own machine's
-    connection."""
-    from app.core.config import settings as app_settings
-
-    monkeypatch.setattr(app_settings, "subscription_enabled", True)
-    pid = _make_project(client)
-    room_id, thread_id = await _room_with_a_thread(client, pid)
-    await _pin_topic_to_machine(
-        client,
-        project_id=pid,
-        topic_id=uuid.UUID(room_id),
-        machine_id=800,
-        upstream="m800:pw800",
-    )
-    await _pin_topic_to_self_hosted_device(
-        client,
-        topic_id=uuid.UUID(thread_id),
-        device_id="the-threads-own-box",
-        upstream="m801:pw801",
-    )
-
     headers = {
-        "Authorization": "Bearer "
-        + mint_scoped_token(project_id=pid, topic_id=thread_id)
+        "Authorization": "Bearer " + mint_scoped_token(project_id=pid, topic_id=room_id)
     }
     body = client.post("/llm/admission", headers=headers).json()["data"]
 
-    assert body["supply"]["upstream"] == "m801:pw801"
+    assert body["supply"]["upstream"] == "m784:pw784"
+
+
+async def test_admission_still_names_nothing_for_a_room_that_owns_no_machine(
+    client, monkeypatch
+):
+    """没 pin 过的房间还是「用部署级那一个」—— 今天每一轮没落位的都是这样。"""
+    from app.core.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "subscription_enabled", True)
+    pid = _make_project(client)
+    room_id, _card_id = await _room_with_a_thread(client, pid)
+
+    headers = {
+        "Authorization": "Bearer " + mint_scoped_token(project_id=pid, topic_id=room_id)
+    }
+    body = client.post("/llm/admission", headers=headers).json()["data"]
+    assert "upstream" not in body["supply"]

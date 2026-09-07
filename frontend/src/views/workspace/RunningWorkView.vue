@@ -99,10 +99,13 @@ const tally = computed(() =>
   ].filter((t) => t.n > 0)
 )
 
+// 打开一张卡 = 打开**它所在的房间**，然后在总览那一格钻进这张卡。一件活不是
+// 地点：做它的分身住在房间的会话里，没有自己的地址。
 function openTask(task: RoomTask) {
   void router.push({
     name: 'workspace-topic',
-    params: { projectId: props.projectId, topicId: task.id },
+    params: { projectId: props.projectId, topicId: task.room_id },
+    query: { tab: 'overview', card: task.id },
   })
 }
 </script>

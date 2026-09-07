@@ -110,7 +110,6 @@ def _jobs():
         sync_upstreams=_noop,
         sweep_orphan_turns=_noop,
         sweep_abandoned_gates=_noop,
-        sweep_conclusion_cards=_noop,
     )
     return periodic_jobs(
         scheduler=scheduler,

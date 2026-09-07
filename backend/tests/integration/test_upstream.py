@@ -341,16 +341,18 @@ def test_sync_conflict_dispatches_cheese_at_the_materialized_merge(client, tmp_p
     assert d["synced"] is False and d["conflicts"] == ["hello.txt"]
     # …and now there is somewhere to go.
     assert d["dispatched"]["files"] == ["hello.txt"]
-    tid = d["dispatched"]["topic_id"]
+    tid = d["dispatched"]["task_id"]
+    room = d["dispatched"]["room_id"]
 
     # The work is real, carries the conflict in its workspace, and hangs in the
     # caller's 1:1 room rather than polluting the project's topic list.
     #
-    # Read AS alice: it is a thread in a private room, and reading a thread is
-    # authorized against the room it lives in — which is the point of a private
-    # room. An anonymous read used to pass because the work was its own topic
-    # and the private-ness stopped at the parent.
-    t = client.get(f"/topics/{tid}", headers=_owner(client, "alice")).json()["data"]
+    # Read AS alice, and THROUGH the room: a card is not a place, and reading
+    # one is authorized against the room it lives in — which is the point of a
+    # private room.
+    t = client.get(
+        f"/topics/{room}/tasks/{tid}", headers=_owner(client, "alice")
+    ).json()["data"]
     assert t["title"] == "解决同步上游冲突"
     body = (ws.topic_worktree(puid, _uuid.UUID(tid)) / "hello.txt").read_text()
     assert "<<<<<<<" in body
@@ -371,7 +373,12 @@ def test_sync_conflict_dispatches_cheese_at_the_materialized_merge(client, tmp_p
     # a race — it passed locally and failed in CI on the very first run.
     from app.domain.workspace.upstream_conflict import _prompt
 
-    assert "验收卡" in _prompt(["hello.txt"])
+    prompt = _prompt(["hello.txt"], _uuid.UUID(tid))
+    assert "验收卡" in prompt
+    # 提示词是发给**房间**的：解冲突是一条活，而一条活是房间会话里的一个分身，
+    # 它没有自己的会话可以叫醒。所以这段话得说清是哪条活、以及起完分身要 bind。
+    assert tid in prompt, "不给 task id，房间没法把分身绑到这条活上"
+    assert "cheese bind" in prompt
 
 
 def test_second_sync_reuses_the_open_resolution_task(client, tmp_path):
@@ -398,13 +405,13 @@ def test_second_sync_reuses_the_open_resolution_task(client, tmp_path):
     ]["dispatched"]
 
     # 芝士 has started resolving — this content must survive a second press.
-    wt = ws.topic_worktree(_uuid.UUID(pid), _uuid.UUID(first["topic_id"]))
+    wt = ws.topic_worktree(_uuid.UUID(pid), _uuid.UUID(first["task_id"]))
     (wt / "hello.txt").write_text("half-resolved by 芝士\n")
 
     second = client.post(f"/projects/{pid}/upstream/sync", headers=headers).json()[
         "data"
     ]["dispatched"]
-    assert second["topic_id"] == first["topic_id"] and second["reused"] is True
+    assert second["task_id"] == first["task_id"] and second["reused"] is True
     assert (wt / "hello.txt").read_text() == "half-resolved by 芝士\n"
 
 
@@ -674,7 +681,7 @@ def test_conflict_handoff_fetches_a_bound_project_as_the_app(
     assert d["dispatched"]["files"] == ["hello.txt"]
     assert sync_tokens == ["ghs_read"] and handoff_tokens == ["ghs_read"]
     body = (
-        ws.topic_worktree(puid, _uuid.UUID(d["dispatched"]["topic_id"])) / "hello.txt"
+        ws.topic_worktree(puid, _uuid.UUID(d["dispatched"]["task_id"])) / "hello.txt"
     ).read_text()
     assert "local version" in body and "hi from upstream" in body
 

@@ -438,7 +438,6 @@ async def test_sweep_removes_leftovers_and_keeps_live_places(
             title="收了",
             owner_handle=None,
             created_by="u",
-            agent_instance_id=None,
         )
         going = await tasks.open_thread(
             project_id=project.id,
@@ -446,7 +445,6 @@ async def test_sweep_removes_leftovers_and_keeps_live_places(
             title="还在",
             owner_handle=None,
             created_by="u",
-            agent_instance_id=None,
         )
         await session.execute(
             update(Task)
