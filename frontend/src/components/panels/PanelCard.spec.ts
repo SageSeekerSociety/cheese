@@ -4,6 +4,10 @@
  * 一轮。所以这份用例钉的是「卡按卡渲染」——标题、状态词、简报、结论、它自己的
  * 对话，全部从 `/topics/{room}/tasks/{card}` 那一份载荷来，状态词一个字不推。
  */
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import type { Component } from 'vue'
 import type { Block, RoomTask } from '@/cx_types'
 
@@ -119,5 +123,17 @@ describe('一张卡按卡渲染', () => {
     await waitFor(() => getByText('接口分页'))
     await fireEvent.click(getByText('看板'))
     expect(emitted().back).toBeTruthy()
+  })
+})
+
+// 简报可以是几千字（fulu 报告过撑爆面板）：块内必须自滚，不许把整个面板撑高。
+// 源码断言钉住这条约束——它是 CSS，挂载测试量不到布局。
+describe('简报块自己滚动', () => {
+  it('block-body 带着 max-height 和 overflow-y', () => {
+    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'PanelCard.vue'), 'utf8')
+    const block = src.slice(src.indexOf('.panel-card__block-body'))
+    const rule = block.slice(0, block.indexOf('}'))
+    expect(rule).toContain('max-height')
+    expect(rule).toContain('overflow-y: auto')
   })
 })
