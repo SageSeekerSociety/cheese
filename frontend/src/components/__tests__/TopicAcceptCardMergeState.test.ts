@@ -5,8 +5,8 @@
  *
  *   1. clean 画绿勾、采纳亮；非 clean 的 GitHub lane 卡采纳灰，红了哪个检查
  *      在卡上看得见；
- *   2. 平台 lane（没绑 GitHub，who 恒 human）的采纳从不按状态灰——那里的采纳
- *      纯粹是人的判断；
+ *   2. 平台 lane（没绑 GitHub，who 恒 human）的卡直接是 CLEAN（#363 拍板：
+ *      没有检查可读），画绿勾，采纳从不按状态灰——那里的采纳纯粹是人的判断；
  *   3. 绿了自动合的开关只在项目允许、且卡停在 blocked/behind 时出现，已布防
  *      的卡写明是谁开的，点开关打的是 auto-merge 端点。
  */
@@ -68,7 +68,11 @@ function card(over: Partial<AcceptCard>): AcceptCard {
     approvals_required: 1,
     pr_number: null,
     pr_url: null,
-    merge_state: mergeState({}),
+    // 平台 lane 的常态（#363 拍板）：没有检查可读，后端直接下发 clean。
+    merge_state: mergeState({
+      state: 'clean',
+      reasons: [{ kind: 'no_obstacle', checks: [], detail: '可以合并' }],
+    }),
     auto_merge: { allowed: false, armed_by: null, armed_at: null },
     ...over,
   } as AcceptCard
@@ -205,12 +209,13 @@ describe('卡上的状态直接用合并态', () => {
 })
 
 describe('平台 lane：采纳纯粹是人的判断', () => {
-  it('没有信号也恒可点，且不画一行「未知」吓人', async () => {
+  it('未绑项目的卡直接是 CLEAN：绿勾 + 可以合并，采纳亮（#363 拍板）', async () => {
     const { container } = await mountWith([card({})])
 
+    expect(container.textContent).toContain('可以合并')
+    expect(container.querySelector('.mdi-check-circle')).toBeTruthy()
     expect(acceptButton(container).disabled).toBe(false)
     expect(container.textContent).not.toContain('状态更新中')
-    expect(container.textContent).not.toContain('可以合并')
   })
 
   it('上次合并撞了冲突的卡照样能点重试', async () => {

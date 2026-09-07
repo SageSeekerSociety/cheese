@@ -649,9 +649,10 @@ class AcceptService:
         )
         data["approvals_required"] = approvals_required_of(project)
         # 卡上的状态＝合并态 (#718)。骑 PR 的卡读轮询器的镜像（还没镜像过 =
-        # unknown，下一拍收敛）；未绑 GitHub 的项目 (#363) 用本地判定 —— 唯一的
-        # 信号是「上次合并撞没撞冲突」（conflict 状态），没有信号就如实说
-        # unknown，但那里的采纳本来就纯粹是人的判断，who 恒为 human。
+        # unknown，下一拍收敛）；未绑 GitHub 的项目 (#363 拍板) 分支保护默认
+        # 关、没有检查可读，卡直接是 CLEAN —— 唯一会推翻它的信号是「上次合并
+        # 撞了冲突」（conflict 状态）→ dirty。who 恒为 human：那里的采纳本来
+        # 就纯粹是人的判断。
         if card.pr_number is not None:
             mirror = card.merge_state if isinstance(card.merge_state, dict) else None
             data["merge_state"] = mirror or {
@@ -670,9 +671,7 @@ class AcceptService:
             }
         else:
             local = merge_state.local_merge_state(
-                conflicts_with_trunk=(
-                    True if card.status == AcceptStatus.conflict else None
-                )
+                conflicts_with_trunk=(card.status == AcceptStatus.conflict)
             )
             data["merge_state"] = {
                 "state": local.state,
@@ -942,10 +941,25 @@ class AcceptService:
         # conflict must never silently archive the topic while the work is
         # stranded on its branch (that shipped a lie once): the card moves to
         # `conflict`, 芝士 gets dispatched to resolve, a human retries.
+        #
+        # The platform forge squashes (#363), same shape as the GitHub lane's
+        # product: one commit, the card's subject and body, the pr_text
+        # trailers, authored by the requester (committer stays 芝士). The
+        # message and author are resolved HERE because merge_topic has no DB
+        # session to read the card or the roster with.
         from app.domain.workspace import service as ws
 
+        who = await identity.attribution(self._session, topic, task_id=card.task_id)
         try:
-            merged = await asyncio.to_thread(ws.merge_topic, topic.project_id, topic.id)
+            merged = await asyncio.to_thread(
+                ws.merge_topic,
+                topic.project_id,
+                topic.id,
+                message=pr_text.local_merge_commit_message(
+                    topic, decided_by, card, who
+                ),
+                author=who.author,
+            )
         except Exception as exc:  # noqa: BLE001 — surface, don't invent success
             logger.exception(
                 "accept merge raised for project=%s topic=%s",

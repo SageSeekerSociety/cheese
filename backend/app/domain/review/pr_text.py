@@ -43,11 +43,14 @@ def pr_trailers(
     topic: Topic,
     decided_by: str,
     who: identity.Attribution | None = None,
+    card: AcceptCard | None = None,
 ) -> str:
     """Who this change belongs to, in the machine-readable form git and GitHub
     both already understand. Requested-by = 话题归属的真人
     (`identity.requester_handle`), Reviewed-by = 批准人 (AcceptCard.decided_by),
-    Cheese-Topic = the room it came out of.
+    Cheese-Topic = the room it came out of, Cheese-Card = the accept card that
+    delivered it (#189) — the room says where it was made, the card says which
+    delivery of that room's work this commit is.
 
     `who` is resolved by the caller (`identity.attribution`) because it needs a DB
     session and this module is pure — as ONE object, so the requester and the
@@ -75,6 +78,8 @@ def pr_trailers(
         # claim a review that has not happened.
         lines.append(f"Reviewed-by: {decided_by}")
     lines.append(f"Cheese-Topic: {topic.id}")
+    if card is not None:
+        lines.append(f"Cheese-Card: {card.id}")
     coauthors = who.coauthors if who else ()
     credited = [line for line in map(identity.coauthored_by, coauthors) if line]
     if credited:
@@ -96,7 +101,7 @@ def pr_body(
     body a reviewer needs is the WHY, which is why `change_body` exists."""
     body = (getattr(card, "change_body", None) or "").strip() if card else ""
     parts = [body] if body else []
-    parts.append(pr_trailers(topic, decided_by, who))
+    parts.append(pr_trailers(topic, decided_by, who, card))
     return "\n\n".join(parts)
 
 
@@ -116,3 +121,18 @@ def merge_commit_message(
     in `merge_commit_title`; repeating it here would put it in the commit
     twice."""
     return pr_body(topic, decided_by, card, who)
+
+
+def local_merge_commit_message(
+    topic: Topic,
+    decided_by: str,
+    card: AcceptCard | None = None,
+    who: identity.Attribution | None = None,
+) -> str:
+    """The WHOLE commit message for the platform forge's squash (#363): subject,
+    blank line, then the same body the GitHub lane writes. One string because the
+    local merge takes one `-m`, and no `(#N)` because there is no PR whose number
+    it could truthfully cite."""
+    return "\n\n".join(
+        [change_subject(card, topic), pr_body(topic, decided_by, card, who)]
+    )

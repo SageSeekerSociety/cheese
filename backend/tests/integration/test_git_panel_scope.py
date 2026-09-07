@@ -16,6 +16,8 @@ from app.domain.identity.handles import CHEESE_HANDLE
 from app.domain.workspace import service as ws
 from tests.machine_work import machine_commits
 
+_MSG = "chore: land the branch under test\n\nRequested-by: alice"
+
 
 def _mkproject(client) -> uuid.UUID:
     resp = client.post("/projects", json={"name": "P", "owner_handle": "alice"}).json()
@@ -91,7 +93,7 @@ def test_topic_log_excludes_other_topics_commits(client):
     pid = _mkproject(client)
     mine, theirs = uuid.uuid4(), uuid.uuid4()
     _turn(pid, theirs, "theirs.py", "x = 1\n", "别的话题的提交")
-    assert ws.merge_topic(pid, theirs)["merged"] is True
+    assert ws.merge_topic(pid, theirs, message=_MSG)["merged"] is True
     _turn(pid, mine, "mine.py", "y = 2\n", "我的提交")
 
     messages = [c["message"] for c in _log(client, pid, topic=mine)]
@@ -105,7 +107,7 @@ def test_topic_with_no_commits_shows_none_not_the_projects(client):
     pid = _mkproject(client)
     busy, fresh = uuid.uuid4(), uuid.uuid4()
     _turn(pid, busy, "busy.py", "z = 3\n", "主干上的提交")
-    assert ws.merge_topic(pid, busy)["merged"] is True
+    assert ws.merge_topic(pid, busy, message=_MSG)["merged"] is True
 
     assert _log(client, pid, topic=fresh) == []
     assert _diff(client, pid, topic=fresh) == ""
@@ -131,7 +133,7 @@ def test_work_summary_excludes_other_topics_work(client):
     pid = _mkproject(client)
     mine, theirs = _mktopic(client, pid), _mktopic(client, pid)
     _turn(pid, theirs, "theirs.py", "x = 1\n", "别的话题的提交")
-    assert ws.merge_topic(pid, theirs)["merged"] is True
+    assert ws.merge_topic(pid, theirs, message=_MSG)["merged"] is True
     _turn(pid, mine, "mine.py", "y = 2\n", "我的提交")
 
     assert _summary(client, pid, mine)["changed_files"] == ["mine.py"]
@@ -163,6 +165,6 @@ def test_project_log_still_available_without_a_topic(client):
     pid = _mkproject(client)
     tid = uuid.uuid4()
     _turn(pid, tid, "c.py", "w = 4\n", "会被采纳的提交")
-    assert ws.merge_topic(pid, tid)["merged"] is True
+    assert ws.merge_topic(pid, tid, message=_MSG)["merged"] is True
 
     assert len(_log(client, pid)) >= 1
