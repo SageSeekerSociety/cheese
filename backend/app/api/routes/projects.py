@@ -122,7 +122,7 @@ async def resource_limits(db: DbSession) -> dict:
     """Creation defaults, available before a project exists."""
     return ok(
         {
-            "max_machines_per_project": await get_machine_limit(db),
+            "max_machines_per_team": await get_machine_limit(db),
             "max_concurrent_turns": settings.max_concurrent_turns,
         }
     )

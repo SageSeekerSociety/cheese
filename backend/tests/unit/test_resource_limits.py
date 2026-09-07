@@ -23,7 +23,7 @@ def test_creation_limits_follow_configuration(monkeypatch):
         response = client.get("/projects/resource-limits")
     assert response.status_code == 200
     assert response.json()["data"] == {
-        "max_machines_per_project": 7,
+        "max_machines_per_team": 7,
         "max_concurrent_turns": 5,
     }
 
@@ -32,18 +32,30 @@ def test_creation_limits_follow_configuration(monkeypatch):
 async def test_machine_listing_includes_the_enforced_quota(monkeypatch):
     from app.api.routes import machines
 
+    project_id = uuid.uuid4()
     service = SimpleNamespace(
         list_for_project=AsyncMock(return_value=[]),
-        quota_machines=AsyncMock(return_value=[object(), object()]),
+        quota_team_id=AsyncMock(return_value=1),
+        quota_machines=AsyncMock(
+            return_value=[
+                SimpleNamespace(project_id=project_id),
+                SimpleNamespace(project_id=uuid.uuid4()),
+            ]
+        ),
     )
     monkeypatch.setattr(machines, "_service", lambda db: service)
     monkeypatch.setattr(machines, "_require_project_access", AsyncMock())
     response = await machines.list_machines(
-        uuid.uuid4(),
+        project_id,
         SimpleNamespace(commit=AsyncMock(), scalar=AsyncMock(return_value=7)),
         None,
     )
-    assert response["data"]["quota"] == {"used": 2, "limit": 7}
+    assert response["data"]["quota"] == {
+        "team_id": 1,
+        "used": 2,
+        "limit": 7,
+        "project_used": 1,
+    }
 
 
 @pytest.mark.anyio

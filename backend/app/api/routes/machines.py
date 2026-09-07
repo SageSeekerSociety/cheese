@@ -67,13 +67,14 @@ async def _require_project_access(
     if project is None:
         raise NotFoundError("Project not found")
 
-    if project.team_id is not None:
+    team_id = await ProjectRepository(db).team_for_project(project_id)
+    if team_id is not None:
         if actor.user_id is None:
             raise AuthenticationRequiredError(
                 "A current user credential is required to manage team compute"
             )
         teams = TeamRepository(db)
-        if not await teams.is_team_member(project.team_id, actor.user_id):
+        if not await teams.is_team_member(team_id, actor.user_id):
             raise NotFoundError("Project not found")
         return actor
 
@@ -99,15 +100,18 @@ async def list_machines(
     service = _service(db)
     machines = await service.list_for_project(project_id)
     items = [MachineOut.model_validate(m).model_dump(mode="json") for m in machines]
-    used = len(await service.quota_machines(project_id))
-    limit = await get_machine_limit(db)
+    team_id = await service.quota_team_id(project_id)
+    counted = await service.quota_machines(team_id)
+    limit = await get_machine_limit(db, team_id)
     await db.commit()
     return ok(
         {
             **page(items, len(items)),
             "quota": {
-                "used": used,
+                "team_id": team_id,
+                "used": len(counted),
                 "limit": limit,
+                "project_used": sum(m.project_id == project_id for m in counted),
             },
         }
     )

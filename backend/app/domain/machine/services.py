@@ -122,9 +122,10 @@ class MachineService:
         project = await self._projects.get(project_id)
         if project is None:
             raise NotFoundError("Project not found")
-        if project.team_id is not None:
+        team_id = await self._projects.team_for_project(project_id)
+        if team_id is not None:
             await self.require_team_create_authority(
-                project.team_id, actor, conceal_nonmember=True
+                team_id, actor, conceal_nonmember=True
             )
             return
         # Legacy team-less project. An outsider must not learn that it exists, let
@@ -191,6 +192,8 @@ class MachineService:
         if project is None:
             raise NotFoundError("project not found")
 
+        team_id = await self.quota_team_id(project_id)
+        await self._repo.lock_team_quota(team_id)
         offering = await self._pick_offering()
 
         def clamp(value: int | None, default: int, lo: str, hi: str) -> int:
@@ -213,19 +216,15 @@ class MachineService:
             ),
         }
 
-        # Only machines that still exist count. A destroyed one lingers as a row
-        # until a later read confirms MicroCloud has forgotten it, and counting
-        # those would make a project's slots impossible to reclaim — delete then
-        # create would be refused for a machine that is already gone.
-        existing = await self.quota_machines(project_id)
-        limit = await get_machine_limit(self._session)
+        existing = await self.quota_machines(team_id)
+        limit = await get_machine_limit(self._session, team_id)
         if len(existing) >= limit:
             raise ValidationError(
-                "this project already has "
-                f"{limit} machine(s); "
-                "delete one before provisioning another"
+                f"团队云虚拟机已使用 {len(existing)} / {limit} 台，"
+                "请先释放不再使用的机器"
             )
-        hostname = derive_hostname(project.name, project_id, len(existing) + 1)
+        project_used = sum(m.project_id == project_id for m in existing)
+        hostname = derive_hostname(project.name, project_id, project_used + 1)
 
         customer_id, account_id = await self._ensure_account(project_id)
         user = login_user or settings.microcloud_login_user
@@ -293,11 +292,11 @@ class MachineService:
     async def ensure_topic_machine(
         self, topic_id: uuid.UUID, *, actor: Actor | None = None
     ) -> ProjectMachine:
-        """Return/create one locked lease; the project lock serializes quota."""
+        """Return/create one locked lease; admission also locks the team's quota."""
         from app.domain.topic.services import TopicService
 
         topic = await TopicService(self._session).get_or_404(topic_id)
-        await self._repo.lock_provisioning(topic.project_id, topic_id)
+        await self._repo.lock_topic(topic_id)
         # The archive path takes the same topic lock. Re-read after waiting so a
         # first turn cannot provision from the stale pre-lock `active` state.
         await self._session.refresh(topic)
@@ -454,11 +453,22 @@ class MachineService:
             seen_at=datetime.now(UTC),
         )
 
-    async def quota_machines(self, project_id: uuid.UUID) -> list[ProjectMachine]:
+    async def quota_team_id(self, project_id: uuid.UUID) -> int:
+        project = await self._projects.get(project_id)
+        if project is None:
+            raise NotFoundError("project not found")
+        team_id = project.team_id
+        if team_id is None:
+            team_id = await self._projects.team_for_project(project_id)
+        if team_id is None:
+            raise ValidationError("请先将项目关联到团队，再分配云资源")
+        return team_id
+
+    async def quota_machines(self, team_id: int) -> list[ProjectMachine]:
         """Inventory counted by both admission and the allocation notice."""
         return [
             m
-            for m in await self._repo.list_for_project(project_id)
+            for m in await self._repo.list_for_team(team_id)
             if m.status not in GONE and m.released_at is None
         ]
 

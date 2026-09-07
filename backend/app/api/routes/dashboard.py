@@ -8,8 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
 from app.api.response import ok
+from app.api.routes.machines import _require_project_access
+from app.core.config import settings
 from app.core.db import get_db
 from app.domain.dashboard.services import DashboardService
+from app.domain.project.repositories import ProjectRepository
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
 
 router = APIRouter(prefix="", tags=["dashboard"])
@@ -65,12 +68,16 @@ async def project_usage(project_id: uuid.UUID, db: DbSession) -> dict:
 
 
 @router.get("/projects/{project_id}/credits")
-async def project_credits(project_id: uuid.UUID, db: DbSession) -> dict:
-    """算力额度 (spec §9.1): grant balance for the project. A project with no
-    grants (no linked institutional task) is unlimited (spec §4 自治)."""
+async def project_credits(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """Credits this project can spend from its team's pool and restricted grants."""
+    await _require_project_access(project_id, db, resolver, mutate=False)
     summary = await ComputeGrantRepository(db).summary(project_id)
     return ok(
         {
+            "team_id": await ProjectRepository(db).team_for_project(project_id),
+            "tokens_per_credit": settings.compute_credit_tokens,
             "unlimited": summary["unlimited"],
             "credits_total": summary["credits_total"],
             "credits_used": summary["credits_used"],
@@ -78,6 +85,7 @@ async def project_credits(project_id: uuid.UUID, db: DbSession) -> dict:
             "grants": [
                 {
                     "id": str(g.id),
+                    "project_id": str(g.project_id) if g.project_id else None,
                     # An int 赛题 id since #370 — it used to be a uuid, which is
                     # why this was stringified. Sending "7" for 7 would make the
                     # client's own id comparisons quietly fail.

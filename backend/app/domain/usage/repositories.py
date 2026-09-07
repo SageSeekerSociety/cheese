@@ -2,9 +2,10 @@
 
 import uuid
 
-from sqlalchemy import case, func, select, update
+from sqlalchemy import and_, case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.project.repositories import ProjectRepository
 from app.domain.usage.models import ComputeGrant, ResourceUsage
 
 
@@ -128,6 +129,7 @@ class ComputeGrantRepository:
         credits_total: float,
     ) -> ComputeGrant:
         row = ComputeGrant(
+            team_id=await ProjectRepository(self._session).team_for_project(project_id),
             project_id=project_id,
             source_task_id=source_task_id,
             credits_total=credits_total,
@@ -136,17 +138,69 @@ class ComputeGrantRepository:
         await self._session.flush()
         return row
 
-    async def list_for_project(self, project_id: uuid.UUID) -> list[ComputeGrant]:
-        stmt = (
+    async def grant_team(self, team_id: int, credits_total: float) -> ComputeGrant:
+        import math
+
+        if not math.isfinite(credits_total) or credits_total <= 0:
+            raise ValueError("credits must be finite and positive")
+        row = ComputeGrant(
+            team_id=team_id,
+            project_id=None,
+            source_task_id=None,
+            credits_total=credits_total,
+        )
+        self._session.add(row)
+        await self._session.flush()
+        return row
+
+    async def list_for_team(self, team_id: int) -> list[ComputeGrant]:
+        from app.domain.project.services import ProjectService
+
+        projects = await ProjectService(self._session).list_for_team(team_id)
+        result = await self._session.execute(
             select(ComputeGrant)
-            .where(ComputeGrant.project_id == project_id)
+            .where(
+                or_(
+                    ComputeGrant.team_id == team_id,
+                    ComputeGrant.project_id.in_([p.id for p in projects]),
+                )
+            )
             .order_by(ComputeGrant.created_at, ComputeGrant.id)
         )
+        return list(result.scalars())
+
+    async def list_for_project(
+        self, project_id: uuid.UUID, *, lock: bool = False
+    ) -> list[ComputeGrant]:
+        team_id = await ProjectRepository(self._session).team_for_project(project_id)
+        eligible = ComputeGrant.project_id == project_id
+        if team_id is not None:
+            eligible = or_(
+                eligible,
+                and_(
+                    ComputeGrant.team_id == team_id, ComputeGrant.project_id.is_(None)
+                ),
+            )
+        stmt = (
+            select(ComputeGrant)
+            .where(eligible)
+            # Spend earmarked credits before the pool other projects rely on.
+            .order_by(
+                ComputeGrant.project_id.is_(None),
+                ComputeGrant.created_at,
+                ComputeGrant.id,
+            )
+        )
+        if lock:
+            stmt = stmt.with_for_update().execution_options(populate_existing=True)
         return list((await self._session.execute(stmt)).scalars())
 
     async def summary(self, project_id: uuid.UUID) -> dict:
-        """Balance for a project. No grants at all = unlimited (spec §4: an
-        unlinked, self-governing project is never metered)."""
+        """Team credits this project may spend, including its restricted grants.
+
+        No applicable grant preserves the deployment's unmetered default.
+        An exhausted team grant still exists, so new projects cannot bypass it.
+        """
         grants = await self.list_for_project(project_id)
         total = sum(g.credits_total for g in grants)
         used = sum(g.credits_used for g in grants)
@@ -159,13 +213,13 @@ class ComputeGrantRepository:
         }
 
     async def consume(self, project_id: uuid.UUID, credits: float) -> float:
-        """Deduct `credits` across the project's grants, oldest first. Any
+        """Deduct `credits` from eligible team/project grants. Any
         residual beyond all totals lands on the newest grant (credits_used may
         exceed credits_total) so recorded consumption stays truthful. Returns
         the amount deducted (0.0 when the project has no grants = unlimited)."""
         if credits <= 0:
             return 0.0
-        grants = await self.list_for_project(project_id)
+        grants = await self.list_for_project(project_id, lock=True)
         if not grants:
             return 0.0
 

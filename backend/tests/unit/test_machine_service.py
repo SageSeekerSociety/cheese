@@ -146,7 +146,7 @@ class FakeRepo:
     async def lock_topic(self, _topic_id):
         return None
 
-    async def lock_provisioning(self, _project_id, _topic_id):
+    async def lock_team_quota(self, _team_id):
         return None
 
     async def get_active_for_topic(self, topic_id):
@@ -165,6 +165,9 @@ class FakeRepo:
 
     async def list_for_project(self, project_id):
         return [r for r in self.rows if r.project_id == project_id]
+
+    async def list_for_team(self, _team_id):
+        return self.rows
 
     async def list_ai_mode_mismatch(self, desired, limit):
         return [
@@ -234,7 +237,7 @@ def build_service(client=None, project=_UNSET, repo=None):
     service._repo = repo or FakeRepo()
     service._devices = FakeDevices()
     if project is _UNSET:
-        project = SimpleNamespace(id=uuid.uuid4(), name="Cheese 自建")
+        project = SimpleNamespace(id=uuid.uuid4(), name="Cheese 自建", team_id=1)
     service._projects = SimpleNamespace(get=_returning(project))
     return service
 
@@ -383,14 +386,14 @@ async def test_ensure_topic_machine_without_authority_provisions_nothing(monkeyp
     assert client.customers == {}
 
 
-async def test_topic_machines_share_the_project_quota(monkeypatch):
+async def test_topic_machines_share_the_team_quota(monkeypatch):
     from app.domain.topic.models import TopicStatus
 
     client = FakeMicroCloud()
     project_id = uuid.uuid4()
     service = build_service(
         client,
-        project=SimpleNamespace(id=project_id, name="Quota", team_id=None),
+        project=SimpleNamespace(id=project_id, name="Quota", team_id=1),
     )
     topics = {
         topic_id: SimpleNamespace(
@@ -425,7 +428,7 @@ async def test_topic_machines_share_the_project_quota(monkeypatch):
 
     for topic_id in list(topics)[:2]:
         await service.ensure_topic_machine(topic_id, actor=actor)
-    with pytest.raises(ValidationError, match="already has 2 machine"):
+    with pytest.raises(ValidationError, match="2 / 2"):
         await service.ensure_topic_machine(list(topics)[2], actor=actor)
 
     assert len(client.created) == 2
@@ -464,7 +467,7 @@ async def test_provision_uses_updated_limit_without_rebuilding_service(runtime_l
     assert service._client.deleted == []
 
 
-async def test_provision_refuses_past_the_per_project_ceiling():
+async def test_provision_refuses_past_the_team_ceiling():
 
     client = FakeMicroCloud()
     service = build_service(client)

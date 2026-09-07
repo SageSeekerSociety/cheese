@@ -16,21 +16,21 @@ function mount() {
 
 describe('resource limits before project creation', () => {
   it('shows deployment values and distinguishes concurrency from inventory', async () => {
-    vi.mocked(getResourceLimits).mockResolvedValue({ max_machines_per_project: 7, max_concurrent_turns: 5 })
+    vi.mocked(getResourceLimits).mockResolvedValue({ max_machines_per_team: 7, max_concurrent_turns: 5 })
     const view = mount()
     expect(await view.findByText('项目数量：当前未设置上限')).toBeTruthy()
     expect(view.getByText(/最多同时运行 5 个 AI 任务，超出后排队/)).toBeTruthy()
-    expect(view.getByText(/每个项目最多 7 台/)).toBeTruthy()
+    expect(view.getByText(/团队默认共享 7 台名额/)).toBeTruthy()
   })
 
   it('offers retry without inventing limits when the request fails', async () => {
     vi.mocked(getResourceLimits)
       .mockRejectedValueOnce(new Error('offline'))
-      .mockResolvedValueOnce({ max_machines_per_project: 3, max_concurrent_turns: 4 })
+      .mockResolvedValueOnce({ max_machines_per_team: 3, max_concurrent_turns: 4 })
     const view = mount()
     expect(await view.findByText('资源限制加载失败')).toBeTruthy()
-    expect(view.queryByText(/每个项目最多/)).toBeNull()
+    expect(view.queryByText(/团队默认共享/)).toBeNull()
     await fireEvent.click(view.getByRole('button', { name: '重试' }))
-    expect(await view.findByText(/每个项目最多 3 台/)).toBeTruthy()
+    expect(await view.findByText(/团队默认共享 3 台名额/)).toBeTruthy()
   })
 })

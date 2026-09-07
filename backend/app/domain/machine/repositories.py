@@ -72,27 +72,13 @@ class ProjectMachineRepository:
     async def get(self, machine_row_id: uuid.UUID) -> ProjectMachine | None:
         return await self._session.get(ProjectMachine, machine_row_id)
 
-    async def lock_provisioning(
-        self, project_id: uuid.UUID, topic_id: uuid.UUID
-    ) -> None:
-        """Serialize paid creates for a project before calling MicroCloud.
-
-        The partial unique index is the durable invariant for one active row per
-        topic. This transaction lock closes the earlier external side-effect race:
-        two requests must not both create a VM and only then discover the index.
-        Project scope also makes the existing per-project quota concurrency-safe.
-        """
+    async def lock_team_quota(self, team_id: int) -> None:
+        """Hold the team's last slot through the provider call and DB commit."""
         await self._session.execute(
             text(
                 "SELECT pg_advisory_xact_lock(hashtextextended(CAST(:key AS text), 0))"
             ),
-            {"key": f"cloud-project:{project_id}"},
-        )
-        await self._session.execute(
-            text(
-                "SELECT pg_advisory_xact_lock(hashtextextended(CAST(:key AS text), 0))"
-            ),
-            {"key": f"cloud-topic:{topic_id}"},
+            {"key": f"cloud-team:{team_id}"},
         )
 
     async def lock_topic(self, topic_id: uuid.UUID) -> None:
@@ -153,6 +139,18 @@ class ProjectMachineRepository:
             select(ProjectMachine)
             .where(ProjectMachine.project_id == project_id)
             .order_by(ProjectMachine.created_at)
+        )
+        return list(result.scalars())
+
+    async def list_for_team(self, team_id: int) -> list[ProjectMachine]:
+        from app.domain.project.services import ProjectService
+
+        # Personal teams also own their pre-team projects, as on the project list.
+        projects = await ProjectService(self._session).list_for_team(team_id)
+        result = await self._session.execute(
+            select(ProjectMachine).where(
+                ProjectMachine.project_id.in_([p.id for p in projects])
+            )
         )
         return list(result.scalars())
 

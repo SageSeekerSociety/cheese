@@ -697,14 +697,17 @@ export interface MarketNodes {
 // One credit grant (issued when the project linked an institutional task).
 export interface ComputeGrantRow {
   id: string
-  source_task_id: string | null
+  project_id: string | null
+  source_task_id: number | null
   credits_total: number
   credits_used: number
   created_at: string
 }
 
-// GET /projects/{id}/credits — unlimited=true means no grants (自治项目).
+// Shared team grants plus credits restricted to the requesting project.
 export interface ProjectCredits {
+  team_id: number | null
+  tokens_per_credit: number
   unlimited: boolean
   credits_total: number
   credits_used: number

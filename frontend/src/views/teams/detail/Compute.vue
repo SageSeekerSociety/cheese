@@ -2,7 +2,7 @@
 // Team compute is the ownership surface from execution-architecture v4:
 // platform cloud machines and self-hosted nodes live in one team pool; projects
 // only provide billing/audit attribution, while a topic chooses the actual target.
-import type { MachineQuota } from '@/api'
+import type { TeamResourceQuotas } from '@/api'
 import type { ComputeProfiles, MyDevice, Project, ProjectMachine } from '@/cx_types'
 
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -11,6 +11,7 @@ import { useRoute } from 'vue-router'
 import {
   createProjectMachine,
   deleteProjectMachine,
+  getTeamResourceQuotas,
   listMyDevices,
   listProjectMachines,
   listProjects,
@@ -32,8 +33,11 @@ const devices = ref<MyDevice[]>([])
 const myDevices = ref<MyDevice[]>([])
 const projects = ref<Project[]>([])
 const cloudMachines = ref<CloudMachine[]>([])
-const quotas = ref<Record<string, MachineQuota>>({})
-const selectedQuota = computed(() => (selectedProject.value ? quotas.value[selectedProject.value] : undefined))
+const quotas = ref<TeamResourceQuotas | null>(null)
+const selectedQuota = computed(() => quotas.value?.machines)
+const selectedProjectUsage = computed(
+  () => quotas.value?.projects.find((project) => project.id === selectedProject.value)?.machines_used ?? 0
+)
 const quotaFull = computed(() => Boolean(selectedQuota.value && selectedQuota.value.used >= selectedQuota.value.limit))
 const teamCompute = ref<ComputeProfiles | null>(null)
 const loading = ref(false)
@@ -93,7 +97,6 @@ async function loadCloud() {
     projects.value.map(async (project) => {
       try {
         const result = await listProjectMachines(project.id)
-        quotas.value[project.id] = result.quota
         return result.data.map((machine) => ({ ...machine, projectName: project.name }))
       } catch (cause) {
         const message = errorMessage(cause, '加载云算力失败')
@@ -107,11 +110,14 @@ async function loadCloud() {
   )
   cloudConfigured.value = configured
   cloudMachines.value = batches.flat()
+  quotas.value = await getTeamResourceQuotas(teamId.value)
 }
 
 async function load() {
   loading.value = true
   error.value = null
+  quotas.value = null
+  selectedProject.value = null
   try {
     const [teamDevices, mine, profile, projectList] = await Promise.all([
       listTeamDevices(teamId.value),
@@ -266,6 +272,58 @@ onBeforeUnmount(() => {
     </div>
 
     <template v-else>
+      <section v-if="quotas" class="compute-section mb-7">
+        <h3 class="text-subtitle-1 font-weight-medium mb-3">配额与用量</h3>
+        <v-row>
+          <v-col cols="12" md="6">
+            <v-card variant="outlined" rounded="lg" class="pa-4 fill-height">
+              <div class="text-body-2 mb-2">团队云虚拟机</div>
+              <div class="text-h6">{{ quotas.machines.used }} / {{ quotas.machines.limit }} 台</div>
+              <v-progress-linear
+                class="my-3"
+                :model-value="Math.min(100, (quotas.machines.used / quotas.machines.limit) * 100)"
+                :color="quotaFull ? 'warning' : 'primary'"
+              />
+              <div class="text-caption text-medium-emphasis">所有项目共享；停止机器仍占用名额，释放后归还</div>
+            </v-card>
+          </v-col>
+          <v-col cols="12" md="6">
+            <v-card variant="outlined" rounded="lg" class="pa-4 fill-height">
+              <div class="text-body-2 mb-2">团队 tokens 额度</div>
+              <div v-if="quotas.credits.unlimited" class="text-h6">未设置上限</div>
+              <template v-else>
+                <div class="text-h6">剩余 {{ quotas.credits.credits_remaining.toLocaleString() }} 额度</div>
+                <div class="text-body-2 my-2">
+                  已使用 {{ quotas.credits.credits_used.toLocaleString() }} /
+                  {{ quotas.credits.credits_total.toLocaleString() }} 额度
+                </div>
+              </template>
+              <div class="text-caption text-medium-emphasis mt-2">
+                所有项目共享；1 额度 = {{ quotas.credits.tokens_per_credit.toLocaleString() }} tokens，使用后扣减
+              </div>
+            </v-card>
+          </v-col>
+        </v-row>
+        <p class="text-caption text-medium-emphasis mt-3 mb-2">额度由平台或发放方调整；机构定向额度仅供指定项目使用</p>
+        <v-table v-if="quotas.projects.length" density="comfortable">
+          <thead>
+            <tr>
+              <th>项目</th>
+              <th>占用云机器</th>
+              <th>累计 tokens</th>
+              <th>定向额度剩余</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="project in quotas.projects" :key="project.id">
+              <td>{{ project.name }}</td>
+              <td>{{ project.machines_used }} 台</td>
+              <td>{{ project.total_tokens.toLocaleString() }}</td>
+              <td>{{ project.restricted_credits_remaining.toLocaleString() }}</td>
+            </tr>
+          </tbody>
+        </v-table>
+      </section>
       <section class="compute-section mb-7">
         <div class="section-heading mb-3">
           <div>
@@ -489,11 +547,15 @@ onBeforeUnmount(() => {
             density="compact"
             class="mb-3"
           >
-            该项目云虚拟机已使用 {{ selectedQuota.used }} / {{ selectedQuota.limit }} 台
-            <div>名额按所选项目计算；停止机器不会腾出名额</div>
+            团队云虚拟机已使用 {{ selectedQuota.used }} / {{ selectedQuota.limit }} 台
+            <div>本项目占用 {{ selectedProjectUsage }} 台；团队内所有项目共享名额</div>
+            <div v-if="!quotaFull">
+              本次创建后，团队占用 {{ selectedQuota.used + 1 }} / {{ selectedQuota.limit }} 台
+            </div>
+            <div>停止机器不会腾出名额，释放后归还</div>
             <div v-if="quotaFull">已达到上限，请先释放不再使用的机器</div>
           </v-alert>
-          <div v-else class="text-body-2 text-medium-emphasis mb-3">暂未获取该项目的资源用量，请刷新后重试</div>
+          <div v-else class="text-body-2 text-medium-emphasis mb-3">暂未获取团队资源用量，请刷新后重试</div>
           <v-row dense>
             <v-col cols="4"
               ><v-text-field v-model.number="cores" type="number" min="1" label="CPU 核" variant="outlined"

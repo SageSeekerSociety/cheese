@@ -23,7 +23,9 @@ from app.domain.agent.market import (
     compute_selectable,
 )
 from app.domain.identity.actor import Actor
+from app.domain.machine.limits import get_machine_limit
 from app.domain.machine.services import MachineService
+from app.domain.project.services import ProjectService
 from app.domain.team.membership_services import TeamMembershipService
 from app.domain.team.models import (
     ApplicationStatus,
@@ -36,11 +38,13 @@ from app.domain.team.repositories import (
     TeamRepository,
 )
 from app.domain.team.services import TeamService
+from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
 from app.domain.user.repositories import UserProfileRepository, UserRepository
 
 # Number of admin / member examples to surface alongside the count, mirroring
 # the Kotlin TeamService implementation (PageRequest.of(0, 3)).
 _TEAM_EXAMPLES_LIMIT = 3
+
 
 # ── Request Models ────────────────────────────────────────────────────────────
 
@@ -502,6 +506,58 @@ async def get_team(
                 users_map=users_map,
                 profiles_map=profiles_map,
             )
+        },
+    }
+
+
+@router.get("/{teamId}/resource-quotas", summary="Query Team Resource Quotas")
+async def get_team_resource_quotas(
+    team_id: Annotated[int, Path(ge=1, alias="teamId")],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
+) -> dict:
+    repo = TeamRepository(db)
+    if not await repo.get_by_id(team_id) or not await repo.is_team_member(
+        team_id, auth_user.user_id
+    ):
+        raise NotFoundError("Resource team not found")
+    machines = await MachineService(db).quota_machines(team_id)
+    grants = await ComputeGrantRepository(db).list_for_team(team_id)
+    shared = [g for g in grants if g.project_id is None]
+    total = sum(g.credits_total for g in shared)
+    used = sum(g.credits_used for g in shared)
+    projects = await ProjectService(db).list_for_team(team_id)
+    usage = UsageRepository(db)
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {
+            "team_id": team_id,
+            "machines": {
+                "used": len(machines),
+                "limit": await get_machine_limit(db, team_id),
+            },
+            "credits": {
+                "unlimited": not shared,
+                "credits_total": total,
+                "credits_used": used,
+                "credits_remaining": total - used,
+                "tokens_per_credit": settings.compute_credit_tokens,
+            },
+            "projects": [
+                {
+                    "id": str(p.id),
+                    "name": p.name,
+                    "machines_used": sum(m.project_id == p.id for m in machines),
+                    "total_tokens": (await usage.for_project(p.id))["total_tokens"],
+                    "restricted_credits_remaining": sum(
+                        g.credits_total - g.credits_used
+                        for g in grants
+                        if g.project_id == p.id
+                    ),
+                }
+                for p in projects
+            ],
         },
     }
 
