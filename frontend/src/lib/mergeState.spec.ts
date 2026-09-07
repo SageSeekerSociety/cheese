@@ -1,4 +1,4 @@
-import type { MergeStateInfo, MergeWho, MergeStateWord } from '../cx_types'
+import type { MergeStateInfo, MergeStateWord, MergeWho } from '../cx_types'
 
 import { describe, expect, it } from 'vitest'
 
@@ -64,6 +64,8 @@ describe('visibleReasons', () => {
         { kind: 'required_check_failed', checks: ['test'], detail: '必跑检查未通过' },
       ],
     })
-    expect(visibleReasons(info)).toEqual([{ kind: 'required_check_failed', checks: ['test'], detail: '必跑检查未通过' }])
+    expect(visibleReasons(info)).toEqual([
+      { kind: 'required_check_failed', checks: ['test'], detail: '必跑检查未通过' },
+    ])
   })
 })
