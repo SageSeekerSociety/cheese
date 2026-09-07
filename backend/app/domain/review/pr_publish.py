@@ -37,13 +37,11 @@ _TASKS: set[asyncio.Task] = set()
 
 
 def enabled() -> bool:
-    """Cheap pre-check: the flag is on and the App is configured at all. The
-    per-project eligibility (which installation, upstream is a GitHub https
-    remote) is resolved in the task itself — it needs the DB and a subprocess."""
-    return (
-        bool(settings.accept_via_pr)
-        and bool(settings.github_app_id)
-        and bool(settings.github_app_private_key_path)
+    """Cheap pre-check: the GitHub App is configured at all. The per-project
+    eligibility (which installation, upstream is a GitHub https remote) is
+    resolved in the task itself — it needs the DB and a subprocess."""
+    return bool(settings.github_app_id) and bool(
+        settings.github_app_private_key_path
     )
 
 

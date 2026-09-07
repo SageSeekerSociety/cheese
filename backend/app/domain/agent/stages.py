@@ -31,10 +31,8 @@ class TopicStage(enum.StrEnum):
     delegating = "delegating"
     # 机器闸门在跑 / 刚红。
     gate = "gate"
-    # 闸门过了，卡在等人采纳。
+    # 卡在等人采纳（PR 已在递卡时开出，采纳即当场合并，#718）。
     awaiting = "awaiting"
-    # 两阶段采纳：PR 已开，采纳人的 token 通道已打开，还在迭代。
-    pr_open = "pr_open"
     # 采纳时撞上合并冲突，等芝士解决。
     conflict = "conflict"
     # 已合并归档。
@@ -49,19 +47,16 @@ _CARD_STAGE = {
     AcceptStatus.gate_failed: TopicStage.gate,
     AcceptStatus.gate_blocked: TopicStage.gate,
     AcceptStatus.pending_gate: TopicStage.gate,
-    AcceptStatus.pr_open: TopicStage.pr_open,
     AcceptStatus.pending: TopicStage.awaiting,
 }
 
 # 同时存在多张 open 卡时，谁说了算。越靠前越「需要芝士现在动手」：冲突和红闸门
-# 是在等芝士干活，pr_open 是通道开着还能干活，pending 只是在等人——所以等人的
-# 排最后。
+# 是在等芝士干活，pending 只是在等人——所以等人的排最后。
 _CARD_PRECEDENCE = (
     AcceptStatus.conflict,
     AcceptStatus.gate_failed,
     AcceptStatus.gate_blocked,
     AcceptStatus.pending_gate,
-    AcceptStatus.pr_open,
     AcceptStatus.pending,
 )
 

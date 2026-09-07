@@ -157,10 +157,6 @@ class AcceptCard(UuidPk, Timestamps, Base):
     # human's look and the merge makes GitHub answer 409 instead of merging a
     # commit nobody saw.
     pr_head_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    # 人类授权动作前移 (2026-08-10) 的授权基线。#718 撤销授权语义：合并带 head
-    # sha（GitHub 409 拦漂移）+ 新提交作废采纳取代了「冻结基线 + 漂移比对」。
-    # 列在授权路径删除的同一刀里退场。
-    pr_authorized_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # None: not merged. Set: when the PR merged (by the accept click, by the
     # armed auto-merge, or by a human on GitHub directly).
     pr_merged_at: Mapped[datetime | None] = mapped_column(

@@ -1,26 +1,13 @@
-"""GitHub PR clients for PR-based accept — two mechanisms live here side by
-side (2026-08-09):
+"""GitHub PR clients for PR-based accept — two client shapes live here:
 
-- `GitHubPRClient` (capital PR) — #188 §5.1's original design. Auth is the
-  cheesex-app installation token (write mint for pull/merge, read-only mint
-  for check runs); a PR is opened fire-and-forget by `review/pr_publish.py`
-  when a card turns pending (behind `settings.accept_via_pr`, off by
-  default), and `AcceptService._accept_via_pr` merges it synchronously when
-  a human clicks accept.
+- `GitHubPRClient` (capital PR) — bound to one repo + `GitHubAppTokens`
+  (write mint for push/open, read-only mint for check runs). Used by
+  `review/pr_publish.py` to open the card's PR fire-and-forget when the card
+  is filed.
 - `GitHubPrClient` (lowercase pr) Protocol + `HttpxGitHubPrClient` — the
-  两阶段采纳 (PR迭代式, 2026-08-09) design. Auth is the APPROVING HUMAN's own
-  connected GitHub token (attribution matters — see the PR trailer); a PR is
-  opened when accept() is clicked and tracked asynchronously by the
-  scheduler's poller through CI, merge, and the deploy workflow it triggers,
-  before the topic finally archives.
-
-Both are real, live code paths — see `AcceptService.accept()` for how they're
-tried in order (an already-PR'd card is never re-published; a PR-less one
-tries opening a fresh one via the human's token, then falls back to a local
-merge). Not implemented here: opening the App's own write-scoped token for
-the 两阶段采纳 flow — per 2026-08-09 拍板 that flow deliberately uses the
-approver's own token instead, so `GitHubAppTokens`'s write-mint stays solely
-`GitHubPRClient`'s concern.
+  token-per-call client the accept click and the scheduler's poller drive:
+  PR status, raw check runs, compares, merge (with the head-sha guard,
+  #718), update-branch.
 """
 
 import functools
@@ -41,12 +28,11 @@ from app.domain.review.pr_signals import ReviewSignal
 
 logger = logging.getLogger(__name__)
 
-#: `no_checks` (人类授权动作前移, 2026-08-10) is NOT a flavour of success: it
-#: means "no workflow will ever produce a check for this ref" (every workflow's
-#: `paths-ignore` skipped it). The zero-check deadlock fix still holds — the
-#: poller stops waiting — but a ref nothing checked has never had its tests
-#: run, so it does not get the machine's免人 auto-merge. See
-#: `_resolve_zero_checks` here and `_authorization_exception` in services.py.
+#: `no_checks` is NOT a flavour of success: it means "no workflow will ever
+#: produce a check for this ref" (every workflow's `paths-ignore` skipped it).
+#: The zero-check deadlock fix still holds — the reader stops waiting — but a
+#: ref nothing checked has never had its tests run, and the wording must not
+#: claim otherwise. See `_resolve_zero_checks`.
 CheckState = Literal["pending", "success", "failure", "no_checks"]
 
 

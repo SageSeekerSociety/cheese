@@ -63,6 +63,9 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
     service._projects.get.return_value = project
     service._machines = AsyncMock()
     service._enforce_protocol = AsyncMock()
+    # Unbound project: the platform is the forge and the local merge is the
+    # accept (#363) — the lane under test here.
+    service._github_bound = AsyncMock(return_value=False)
     return service, card, topic
 
 

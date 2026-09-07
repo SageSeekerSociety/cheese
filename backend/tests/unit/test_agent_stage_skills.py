@@ -45,7 +45,6 @@ def test_finished_work_is_merged():
         (AcceptStatus.pending_gate, TopicStage.gate),
         (AcceptStatus.gate_failed, TopicStage.gate),
         (AcceptStatus.pending, TopicStage.awaiting),
-        (AcceptStatus.pr_open, TopicStage.pr_open),
         (AcceptStatus.conflict, TopicStage.conflict),
     ],
 )
@@ -55,7 +54,7 @@ def test_open_card_drives_the_stage(card_status, expected):
 
 def test_a_room_holding_an_open_card_reports_the_card_stage():
     """卡状态比话题形态更具体：房间里真有一张活卡时，说卡的事。"""
-    assert _stage(cards=[AcceptStatus.pr_open]) is TopicStage.pr_open
+    assert _stage(cards=[AcceptStatus.pending]) is TopicStage.awaiting
 
 
 def test_needs_my_hands_wins_over_waiting_on_a_human():
@@ -65,9 +64,6 @@ def test_needs_my_hands_wins_over_waiting_on_a_human():
     )
     assert _stage(cards=[AcceptStatus.pending, AcceptStatus.conflict]) is (
         TopicStage.conflict
-    )
-    assert _stage(cards=[AcceptStatus.pr_open, AcceptStatus.pending]) is (
-        TopicStage.pr_open
     )
 
 
@@ -131,9 +127,10 @@ def test_the_pre_card_stage_covers_when_to_hand_off_and_the_approver_token():
     assert "cheese ask" in guide  # GitHub 账号校验回环
 
 
-def test_pr_open_stage_tells_the_agent_to_just_keep_committing():
-    guide = load_scenario(stage_scenario(TopicStage.pr_open))
-    assert "本分支" in guide
+def test_awaiting_stage_tells_the_agent_how_prs_move_now():
+    guide = load_scenario(stage_scenario(TopicStage.awaiting))
+    assert "push-fix" in guide  # 提交不会自己上 PR，得说怎么上
+    assert "只读" in guide  # 为什么不能自己碰 GitHub
 
 
 # --- 注入进 system prompt ---------------------------------------------------
@@ -148,16 +145,6 @@ def test_stage_guide_lands_in_the_system_prompt():
 def test_no_stage_guide_adds_no_section():
     prompt = build_prompt("base", "", None, [])
     assert "当前阶段的操作说明" not in prompt
-
-
-# --- pr_open 的盲飞防护回归 -------------------------------------------------
-
-
-def test_pr_open_is_an_open_card_status_with_a_hint():
-    """卡进入 PR 迭代后，芝士必须在 turn-meta 里看得到——否则它不知道
-    自己已经有了一条通往 GitHub 的通道。"""
-    assert AcceptStatus.pr_open in _OPEN_CARD_STATUSES
-    assert AcceptStatus.pr_open in _OPEN_CARD_HINTS
 
 
 def test_every_open_card_status_has_a_hint():

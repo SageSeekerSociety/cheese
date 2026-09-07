@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.review.models import AcceptApproval, AcceptCard, AcceptStatus
@@ -55,6 +55,14 @@ class AcceptCardRepository:
             return
         self._session.add(
             AcceptApproval(card_id=card_id, approver_handle=approver_handle)
+        )
+        await self._session.flush()
+
+    async def clear_approvals(self, card_id: uuid.UUID) -> None:
+        """新提交作废已有的采纳 (#718, dismiss_stale): drop every vote this
+        card has collected — they were cast on a head that no longer exists."""
+        await self._session.execute(
+            delete(AcceptApproval).where(AcceptApproval.card_id == card_id)
         )
         await self._session.flush()
 
@@ -212,7 +220,7 @@ class AcceptCardRepository:
         with the topic (it stays yours after you accept it), while *pending* is
         the transient "this is on your desk right now". `pending` alone is the
         waiting state — a card in `pending_gate`/`gate_failed`/`conflict` is
-        with 芝士, and one in `pr_open`/`accepted` has already been decided.
+        with 芝士, and an `accepted` one has already been decided.
         """
         if not topic_ids:
             return {}
@@ -299,22 +307,24 @@ class AcceptCardRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
-    async def list_pr_open_on_active_topics(self) -> list[AcceptCard]:
-        """两阶段采纳 (PR迭代式): every card the PR/deploy poller may advance.
+    async def list_awaiting_merge_on_active_topics(self) -> list[AcceptCard]:
+        """Every card the merge-state poller mirrors (#718): pending, riding a
+        PR, on a topic still alive.
 
         孤儿卡修复 (2026-08-10): the topic's status is part of the predicate, not
         just the card's. Without the join this returned cards on ARCHIVED topics
-        too, and the poller kept driving them every 60s with the approver's
-        GitHub token — pushing branches and merging PRs for work nobody is
-        tracking any more. `TopicService._archive_one` now closes those cards at
-        archive time; this join is the second lock, covering rows that predate
-        the fix or arrive by some future archive path.
+        too, and the poller kept driving them every 60s with GitHub credentials
+        — for work nobody is tracking any more. `TopicService._archive_one`
+        closes those cards at archive time; this join is the second lock,
+        covering rows that predate the fix or arrive by some future archive
+        path.
         """
         stmt = (
             select(AcceptCard)
             .join(Topic, Topic.id == AcceptCard.topic_id)
             .where(
-                AcceptCard.status == AcceptStatus.pr_open,
+                AcceptCard.status == AcceptStatus.pending,
+                AcceptCard.pr_number.is_not(None),
                 Topic.status != TopicStatus.archived,
             )
         )

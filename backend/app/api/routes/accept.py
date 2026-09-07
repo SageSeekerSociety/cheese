@@ -34,6 +34,7 @@ from app.domain.review.schemas import (
     AcceptCardCreate,
     AcceptDecision,
     ApprovalCreate,
+    AutoMergeDecision,
     ForceMergeDecision,
     RejectDecision,
     VoidDecision,
@@ -308,7 +309,7 @@ async def void_card(
 ) -> dict:
     """人工作废一张未决的验收卡 (pending_gate 孤儿卡出口, 2026-08-11).
 
-    这是 `pending_gate` / `conflict` / `pr_open` 唯一的人工出口——那三个状态被
+    这是 `pending_gate` / `conflict` 唯一的人工出口——这两个状态被
     accept / reject / revoke / reassign 四条路由全部拒绝，而 `create_card` 又因为
     它们拒绝再建新卡，于是整个话题递不出卡。作废把卡置为终态解开这个死锁。
 
@@ -355,6 +356,30 @@ async def merge_card_anyway(
     svc = AcceptService(db)
     card = await svc.merge_despite_checks(
         card_id=card_id, decided_by=actor.handle, reason=body.reason
+    )
+    return ok(await svc.describe(card))
+
+
+@router.post("/accept-cards/{card_id}/auto-merge")
+async def set_auto_merge(
+    card_id: uuid.UUID,
+    body: AutoMergeDecision,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """绿了自动合 (#718)：验收人在 BLOCKED / BEHIND 时布防，规则满足时平台以
+    布防人的名义合并；新提交作废采纳（dismiss_stale）同样解除布防。
+
+    授权类动作：actor 只来自 session token，路由**故意不进**
+    `_CHEESE_WRITE_PATHS`（同 void / merge-anyway），真正拦住芝士的是登录校验加
+    `AcceptService.arm_auto_merge` 里的 `_forbid_ai`。
+    """
+    actor = await resolver.resolve(fallback_handle=None)
+    if not actor.authenticated:
+        raise AuthenticationRequiredError("需要登录才能设置自动合并")
+    svc = AcceptService(db)
+    card = await svc.arm_auto_merge(
+        card_id=card_id, decided_by=actor.handle, enabled=body.enabled
     )
     return ok(await svc.describe(card))
 
