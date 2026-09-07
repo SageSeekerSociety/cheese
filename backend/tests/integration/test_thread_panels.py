@@ -136,8 +136,15 @@ async def test_a_rooms_site_does_not_swallow_its_threads(client):
     await _event(client.test_factory, pid, room, "房间里跑的")
     await _event(client.test_factory, pid, thread, "这条支线跑的")
 
-    shown = client.get(f"/topics/{room}/transcript").json()["data"]["data"]
-    assert [b["content"] for b in shown] == ["房间里跑的"]
+    shown = [
+        b["content"]
+        for b in client.get(f"/topics/{room}/transcript").json()["data"]["data"]
+    ]
+    assert "房间里跑的" in shown
+    assert "这条支线跑的" not in shown
+    # 派出这条活是**房间自己**做的动作，所以它在房间的现场里 —— 那条活在里面干的
+    # 每一件事都不在。
+    assert any("派出一条活" in c for c in shown)
 
 
 @pytest.mark.anyio

@@ -66,10 +66,11 @@ def test_upgrade_block_to_topic(client):
     # tree — work does not nest, so there is no tree left to be in.
     assert new_topic["room_id"] == topic["id"]
 
-    # The upgraded block IS the task: preset verbatim as the new topic's doc.
-    doc = client.get(f"/topics/{new_topic['id']}/doc").json()["data"]
-    assert doc is not None
-    assert "我们要不要单独做一个数据清洗的模块" in doc["content"]
+    # The upgraded block IS the task statement, kept verbatim on the card —
+    # the same place a dispatched brief goes.
+    listed = client.get(f"/topics/{topic['id']}/tasks").json()["data"]["data"]
+    card = next(t for t in listed if t["id"] == new_topic["id"])
+    assert "我们要不要单独做一个数据清洗的模块" in card["brief"]
 
     # The ROOM is what runs a turn: a thread is a 分身 in the room's session and
     # has no session of its own, so the thread starts with nothing said in it.
@@ -337,9 +338,10 @@ def test_split_records_the_brief_on_the_card_and_starts_nobody(client):
     assert [b for b in blocks if b["kind"] == "message"] == []
 
 
-def test_split_without_brief_still_seeds_doc(client):
-    # A human split from the UI carries no brief: the child still gets a doc
-    # (source + parent snapshot + an explicit "no brief" notice).
+def test_split_without_a_brief_leaves_the_brief_empty(client):
+    # A human split from the UI carries no brief, and the card says so by being
+    # empty rather than by carrying a paragraph explaining that it is empty.
+    # The title and the room are the whole statement of the work in that case.
     p = _project(client)
     topic = client.post(
         "/topics", json={"project_id": p["id"], "title": "大话题"}
@@ -348,10 +350,8 @@ def test_split_without_brief_still_seeds_doc(client):
         "data"
     ]
     _wait_work_idle()
-    doc = client.get(f"/topics/{sub['id']}/doc").json()["data"]
-    assert doc is not None
-    assert "拆分时没有附说明" in doc["content"]
-    assert "大话题" in doc["content"]
+    assert sub["brief"] == ""
+    assert client.get(f"/topics/{sub['id']}/doc").json()["data"] is None
 
 
 def test_split_and_conclude(client):
@@ -377,29 +377,26 @@ def test_split_and_conclude(client):
     tasks = client.get(f"/topics/{topic['id']}/tasks").json()["data"]["data"]
     assert any(t["id"] == sub["id"] for t in tasks)
 
-    # The conclusion reaches the room — filed BY the room, for the worker it
-    # raised: that worker is a 分身 in the room's own session and has no place
-    # of its own to file from.
+    # 收卡 is said BY the room about the worker it raised: that worker is a 分身
+    # in the room's own session and has no place of its own to file from.
     r = client.post(
         f"/topics/{topic['id']}/tasks/{sub['id']}/conclude",
         json={"conclusion": "数据清洗完成，去重后剩 8000 条"},
     )
     assert r.status_code == 200, r.text
     _wait_work_idle()
-    parent_blocks = client.get(f"/topics/{topic['id']}/blocks").json()["data"]["data"]
-    assert any("数据清洗完成" in b["content"] for b in parent_blocks)
+    closed = r.json()["data"]
+    assert closed["status"] == "closed"
+    assert closed["conclusion"] == "数据清洗完成，去重后剩 8000 条"
 
-    # C4: the conclusion is also woven into the parent's living doc …
+    # 结论住在卡上, so the room's own living doc is not rewritten behind its back
+    # — the room keeps its doc, the way every other place does.
     doc = client.get(f"/topics/{topic['id']}/doc").json()["data"]
-    assert doc is not None and "数据清洗完成" in doc["content"]
-    assert "支线结论" in doc["content"]
-    # … and the coordinator (本体) is notified.
-    notifs = client.get(f"/projects/{p['id']}/alerts").json()["data"]["data"]
-    assert any("实现数据清洗" in n["title"] for n in notifs)
+    assert doc is None or "数据清洗完成" not in doc["content"]
 
 
 def test_concluding_something_that_is_not_a_thread_fails(client):
-    """房间没有可以回流的上级——它就是那个上级。"""
+    """房间不是活,收不了自己。"""
     p = _project(client)
     root_id = _project_root(client, p["id"])
     r = client.post(
