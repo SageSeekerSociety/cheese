@@ -470,7 +470,7 @@ def app_world(client, monkeypatch):
 
     monkeypatch.setattr(ws, "push_topic_branch_for_github_pr", _repush)
 
-    def _local_merge(pid, tid):
+    def _local_merge(pid, tid, **_kwargs):
         recorded["local_merges"].append(tid)
         return {"merged": True, "commit": "local-merge-sha"}
 

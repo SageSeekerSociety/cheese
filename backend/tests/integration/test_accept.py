@@ -452,3 +452,26 @@ def test_conflict_card_reads_dirty(client):
     card = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"][0]
     assert card["merge_state"]["state"] == "dirty"
     assert card["merge_state"]["who"] == "human"
+
+    # The conflicted accept already materialized the merge (markers committed
+    # on the branch) and dispatched 芝士 — resolving is an ordinary commit in
+    # the topic worktree, and the retry then squashes cleanly.
+    wt = ws.topic_worktree(uuid.UUID(pid), uuid.UUID(tid))
+    assert "<<<<<<<" in (wt / "f.txt").read_text(encoding="utf-8")
+    (wt / "f.txt").write_text("resolved version\n", encoding="utf-8")
+    for args in (
+        ["add", "-A"],
+        ["-c", "user.name=芝士", "-c", "user.email=c@z.l", "commit", "-q", "-m", "fix"],
+    ):
+        subprocess.run(["git", *args], cwd=wt, check=True, capture_output=True)
+
+    r = client.post(
+        f"/accept-cards/{cid}/accept",
+        json={"decided_by": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200
+    assert r.json()["data"]["status"] == "accepted"
+    assert "resolved version" in ws.read_file(uuid.UUID(pid), "f.txt")
+    parents = _main_log(pid, "%P").split()
+    assert len(parents) == 1  # the retry still lands ONE squash commit
