@@ -1439,3 +1439,33 @@ class TestGetOAuthState:
         result = await svc.get_oauth_state("state-token")
 
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# The sign-in provider list
+# ---------------------------------------------------------------------------
+
+
+class TestSignInProviderList:
+    def test_the_account_link_provider_is_never_offered_as_a_way_to_sign_in(self):
+        # Both providers are enabled and fully configured, exactly as a
+        # deployment that supports RUC sign-in AND GitHub account linking is.
+        svc, _repo = _make_service()
+        with patch("app.domain.oauth.services.settings") as mock_settings:
+            mock_settings.oauth_enabled_providers = "ruc,github_app"
+            mock_settings.oauth_ruc_client_id = "ruc-cid"
+            mock_settings.oauth_ruc_client_secret = "ruc-sec"
+            mock_settings.oauth_ruc_redirect_url = (
+                "https://example.com/api/users/auth/oauth/callback/ruc"
+            )
+            mock_settings.oauth_github_app_client_id = "app-cid"
+            mock_settings.oauth_github_app_client_secret = "app-sec"
+            mock_settings.oauth_github_app_redirect_url = (
+                "https://example.com/api/users/me/github-account/callback"
+            )
+            offered = svc.get_providers_config()
+            # Linking still resolves it; only the sign-in list leaves it out.
+            link_provider = svc.get_provider("github_app")
+
+        assert [p["id"] for p in offered] == ["ruc"]
+        assert isinstance(link_provider, GitHubProvider)

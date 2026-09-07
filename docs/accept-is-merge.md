@@ -156,11 +156,14 @@ closed and 芝士 files a new one.
 merged there → `merged` here; closed there → `closed` here, the topic stays
 active and 芝士 is told.
 
-**A project with no connected forge.** The card is created `open_failed` with
-that reason, and 采纳 falls back to the local merge that exists today. This is
-a degraded mode and is labelled as one on the card — not a silent second-class
-path. A self-hosted checker that reports into the same interface is the way out,
-and is out of scope here.
+**A project with no connected forge.** The platform is its forge (#363): 采纳
+merges the topic branch into the platform's own repo, and the change stays
+there — nothing is pushed to any remote, because the platform holds no
+credential of its own for one (the App's tokens belong to bound projects). The
+card says so in so many words (`PLATFORM_FORGE_NOTE`, `review/forge.py`), so an
+unbound accept and a bound project that skipped its PR never look alike. This
+is not a degraded mode; it is a repository with no CI configured, where
+accepting is a human decision.
 
 **Which checks must pass.** In principle, whichever ones the forge requires —
 but on a free-plan private repository the forge cannot be *told* to require any

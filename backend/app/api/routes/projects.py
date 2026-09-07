@@ -21,8 +21,17 @@ from app.api.deps import (
 from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
-from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.core.errors import (
+    ForbiddenError,
+    GatewayUnavailableError,
+    NotFoundError,
+    ValidationError,
+)
 from app.domain.agent.chat import ChatService
+from app.domain.agent.github_app import (
+    GitHubAppError,
+    github_app_read_token_for_project,
+)
 from app.domain.agent.market import (
     COMPUTE_CLOUD,
     compute_default_name,
@@ -1039,7 +1048,13 @@ async def sync_project_upstream(
     so that report is a starting point instead of a dead end (spec §6.3, same
     contract as 采纳冲突 in routes/accept.py)."""
     await ProjectService(db).get_or_404(project_id)
-    result = await asyncio.to_thread(ws.sync_upstream, project_id)
+    # The App's token for a bound project, nothing for an unbound one: the
+    # fetch runs on the platform's own identity or on none.
+    try:
+        token = await github_app_read_token_for_project(project_id, db)
+    except GitHubAppError as exc:
+        raise GatewayUnavailableError(str(exc)) from exc
+    result = await asyncio.to_thread(ws.sync_upstream, project_id, token=token)
     if result.get("synced") or not result.get("conflicts"):
         return ok(result)
     # Anonymous callers get the old behaviour: with no handle there is no 1:1

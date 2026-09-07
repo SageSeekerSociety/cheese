@@ -148,7 +148,7 @@ class AcceptCard(UuidPk, Timestamps, Base):
     # or by AcceptService._accept_via_pr (the two-phase flow, triggered when a
     # human clicks accept and the approver has a usable connected GitHub
     # token — see review/services.py). Either way, a card WITH a pr_number
-    # rides a PR; one without falls back to the local merge + push_back path
+    # rides a PR; one without falls back to the local merge path
     # — every card is self-describing, so flag flips and GitHub outages never
     # strand one.
     pr_number: Mapped[int | None] = mapped_column(Integer, nullable=True)

@@ -543,8 +543,10 @@ async def test_failed_turn_fails_loud_and_does_not_resume(db_factory):
         runner.submit(svc, topic, author="u", content="hi", summon=True)
         error = await _next_frame(q, "error")
 
-    # Give any (erroneously) scheduled follow-up turn a chance to fire.
-    await asyncio.sleep(0.05)
+    # Let the turn's own tail finish (settling conclusion cards, closing the
+    # interval) and give any (erroneously) scheduled follow-up turn a chance
+    # to fire — deterministically, rather than guessing a sleep is long enough.
+    await runner.drain()
     assert len(svc.calls) == 1, "a crashed turn must not be re-run"
     text, meta = svc.events[0]
     assert error["message"] == text
@@ -590,7 +592,8 @@ async def test_a_resent_turn_that_crashes_also_fails_loud(db_factory):
         )
         error = await _next_frame(queue, "error")
 
-    await asyncio.sleep(0.05)
+    # Let the turn's own tail finish before asserting nothing chained another.
+    await runner.drain()
     assert svc.calls == 1, "a crashed re-sent turn must not chain another turn"
     text, meta = svc.events[-1]
     assert meta["who"] == "human"
@@ -716,6 +719,16 @@ async def test_periodic_sweep_claims_turn_killed_without_a_restart(
     assert await open_turn_ids(db_factory) == {live}
     assert dead is not None
     assert await runner.sweep_orphans(_Chat()) == 0
+
+    # `_park_a_task` stands in for a turn this process is still running — the
+    # sweep must not touch it, which the assertions above just confirmed. It
+    # never finishes on its own, so this test must end it itself rather than
+    # returning with it still going.
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
 
 
 @pytest.mark.anyio
@@ -1506,8 +1519,10 @@ async def test_a_timeout_hands_to_a_human_without_retrying(db_factory):
         await asyncio.sleep(0.005)
         if any(meta.get("who") == "human" for _, meta in svc.events):
             break
-    # Nothing must sneak a second turn in after the timeout event lands.
-    await asyncio.sleep(0.05)
+    # Nothing must sneak a second turn in after the timeout event lands, and
+    # the turn's own tail (settling conclusion cards, closing the interval)
+    # must finish before this test returns.
+    await runner.drain()
 
     assert len(svc.calls) == 1, (
         f"超时自动跑了 {len(svc.calls)} 轮 —— 超时那条路径也不该自动重跑"
@@ -1549,6 +1564,9 @@ async def test_a_slow_setup_does_not_spend_the_ceiling_before_the_turn_starts(
     async with broker.subscribe(str(topic)) as q:
         runner.submit(_SlowSetup(), topic, author="u", content="hi", summon=True)
         f = await _next_frame(q, "done", timeout=3)
+    # "done" is published before the turn's own tail (settling conclusion
+    # cards, closing the interval) runs — wait for that too before returning.
+    await runner.drain()
     assert f["type"] == "done"
 
 

@@ -95,6 +95,59 @@ class AgentTurnRepository:
             .values(delivered_at=at)
         )
 
+    async def mark_credits_refused(self, turn_id: uuid.UUID, at: datetime) -> bool:
+        """Stamp that admission refused this turn for spent credits (#715).
+
+        First-writer-wins: admission is asked again for the SAME refusal (the
+        proxy caches a verdict for 30s, Claude Code retries ten times), and only
+        the call that actually flips the column should trigger the one-time room
+        notice — which is exactly what the returned bool tells the caller. A
+        second call for an already-stamped turn returns False and changes
+        nothing.
+        """
+        result = await self._session.execute(
+            update(AgentTurn)
+            .where(AgentTurn.id == turn_id, AgentTurn.credits_refused_at.is_(None))
+            .values(credits_refused_at=at)
+        )
+        # UPDATE returns a CursorResult, which has rowcount at runtime.
+        return (result.rowcount or 0) > 0  # type: ignore[attr-defined]
+
+    async def credits_refused(self, turn_id: uuid.UUID) -> bool:
+        """Was this turn ever stamped refused-for-credits? What the turn's own
+        end (`StopFailure`) reads to decide whose wording the room gets."""
+        value = (
+            await self._session.execute(
+                select(AgentTurn.credits_refused_at).where(AgentTurn.id == turn_id)
+            )
+        ).scalar_one_or_none()
+        return value is not None
+
+    async def open_turn_id_for_topic(self, topic_id: uuid.UUID) -> uuid.UUID | None:
+        """The still-running turn at this PLACE, if there is one.
+
+        Admission only ever has the place a caller claims to run in, never a
+        turn id (a scoped token carries `t`, never `turn_id`) — this is how it
+        finds the interval that place names, so a credits refusal can be
+        stamped on the turn it actually refused. Matches `close_for_topic`'s
+        room/thread scoping: a room and each of its threads run independent
+        turns, so a place must never answer for the other's.
+        """
+        room_id, task_id = await room_and_task(self._session, topic_id)
+        stmt = (
+            select(AgentTurn.id)
+            .where(
+                AgentTurn.topic_id == room_id,
+                AgentTurn.task_id.is_(None)
+                if task_id is None
+                else AgentTurn.task_id == task_id,
+                AgentTurn.stopped_at.is_(None),
+            )
+            .order_by(AgentTurn.started_at.desc())
+            .limit(1)
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
     async def close(self, turn_ids: Iterable[uuid.UUID], at: datetime) -> None:
         """End these intervals. Closing is not deleting — the ids stay readable
         next to the blocks that carry them."""

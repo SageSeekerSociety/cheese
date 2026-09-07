@@ -32,7 +32,7 @@
 
 - 他们 `cheeselets/claude.js`：正则匹配屏幕尾部推断 busy/idle/choices，注释满是
   "verified against real v2.1.x screens"——TUI 改版即碎。
-- 我们 tmux/hooks 后端（已建，`ClaudeCodeRuntime` + `TmuxChannel`）：Claude Code hooks 吐结构化 JSON
+- 我们的 hooks 后端（已建，`ClaudeCodeRuntime`）：Claude Code hooks 吐结构化 JSON
   （SessionStart/PreToolUse/MessageDisplay/Stop → AgentEvent），连控制态都不猜。
 - **融合时用我们的 hooks 感知替换他们的读屏**，消除他们最大脆弱点。这也让 self-hosted 更稳
   （hooks 在任何机器一致，读屏依赖具体 TUI 版本）。
@@ -216,8 +216,8 @@ cli js 暴露面 + 服务端下发 cheeselet；hook 接线（SessionStart/PreToo
   mint token + 占用 hook 队列**之前**发生（恢复重构前顺序，杜绝"跑不了的 turn 驱逐活 turn 队列/
   扩大陈旧 hook 窗口"），device 的设备解析也在此完成并传递给 `ensure_ready`（不解析两次）。
   +1 单测锁定"precheck 失败绝不碰 router"。review 另记 3 个**重构前就存在**的原有隐患
-  （tmux 送 prompt 不查 rc→静默挂到超时；setup 失败被当 transient 重试 3 次；`images` 参数
-  两个 hooks 后端都静默忽略）——非回归，留待后续。
+  （setup 失败被当 transient 重试 3 次；`images` 参数两个 hooks 后端都静默忽略）——非回归，
+  留待后续。
 
 **本地 transport：已删除（2026-08-28，#630）。** 平台不再自带机器，一轮活只跑在别人的机器上
 （device / cloud），所以「本地容器 vs 远程机器」这一对 transport 不再存在，也就没有「拆不拆

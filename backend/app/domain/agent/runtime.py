@@ -325,6 +325,27 @@ class AgentWorkRunner:
         redeploy can drain (wait for running turns) instead of killing them."""
         return max(len(self._tasks), self._broker.active_count())
 
+    async def drain(self, timeout_s: float = 5.0) -> None:
+        """Wait for every task this runner still has in flight — a turn, a
+        slot hold, a slot release — instead of a caller guessing how long the
+        tail takes.
+
+        A turn's own coroutine keeps running after it has published its last
+        frame (settling conclusion cards, closing the interval; see the tail of
+        `_execute`), so a test that only waits for that frame and then returns
+        races it: the per-test event loop closes under the still-running task,
+        which freezes it mid-transaction holding a DB lock the next test's
+        TRUNCATE then waits on. Awaiting this instead is what a test ends on.
+
+        Best-effort: on timeout this just stops waiting rather than raising —
+        it is on the caller to decide what that means (a test's own teardown
+        check is what turns a task still pending here into a named failure).
+        """
+        pending = {t for t in (self._tasks | self._holds_in_flight) if not t.done()}
+        if not pending:
+            return
+        await asyncio.wait(pending, timeout=timeout_s)
+
     def topic_work(self, topic_id: uuid.UUID) -> dict | None:
         """Latest lifecycle record for this topic. `ceiling_s` is this turn's
         effective absolute ceiling (`self._timeout`, or the channel's own hard
