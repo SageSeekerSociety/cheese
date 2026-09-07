@@ -1,0 +1,42 @@
+/* Rendered markdown (`.md-content`) — the rules that keep a block of content
+   from making its column wider than the column.
+ *
+ * These live here, once, because `.md-content` is styled in three components
+ * (ChatPanel, ProjectDocsView, OverviewView) and the three drifted: only the
+ * chat pane ever got a table rule, so a table of file paths pushed the project
+ * docs and the project summary sideways until the whole panel scrolled. Typography
+ * — size, spacing, colour — stays in each component, because those differ on
+ * purpose. "Wide content scrolls inside its own box" does not.
+ *
+ * Every selector here is deliberately unscoped: a component's `:deep(table)`
+ * compiles to `.md-content[data-v-x] table`, so the scope id only ever lands on
+ * `.md-content` itself. One global copy reaches all three faces and cannot go
+ * stale in two of them.
+ */
+
+/* A markdown table is the common case, and it cannot wrap: cells holding file
+   paths or code spans have no break opportunity, so the table takes its natural
+   width and carries the column with it. Turning the table into a block lets
+   `max-width` cap it at the column and `overflow-x` give it its own scrollbar. */
+.md-content table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+/* Same bargain for a code block: keep the long line, scroll to reach it. */
+.md-content pre {
+  overflow-x: auto;
+}
+
+/* An image arrives at whatever pixel size it was authored at. */
+.md-content img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* A bare URL is one unbreakable word and is routinely longer than the column. */
+.md-content a {
+  overflow-wrap: anywhere;
+}

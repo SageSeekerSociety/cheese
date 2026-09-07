@@ -1002,6 +1002,8 @@ def test_a_closed_unmerged_pr_notes_once_and_the_poller_idles(client, app_world)
     card = _cards(client, tid)[0]
     assert card["status"] == "pending"
     assert "关闭" in card["note"] and "没有合并" in card["note"]
+    # 出口要点名「作废」——那是这张卡在界面上唯一走得通的门 (2026-09-01)。
+    assert "作废" in card["note"]
     assert fake.merge_calls == []
 
     note = card["note"]

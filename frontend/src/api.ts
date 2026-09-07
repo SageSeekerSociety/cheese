@@ -1256,6 +1256,28 @@ export function mergeCardAnyway(cardId: string, reason: string): Promise<AcceptC
   })
 }
 
+// 作废验收卡: the only human exit out of an undecided card that must not be
+// accepted — a `conflict` retry that should not continue, a pending card whose
+// PR someone closed on GitHub. accept / reject / revoke / reassign all refuse
+// `conflict`, and a live card is itself what stops the topic filing a new one,
+// so without this call a room that reaches it can never deliver again. It puts
+// the card in a terminal state, which is deliberately NOT the same as 放行:
+// 重新递卡 is the way back.
+//
+// `void` also takes `pending_gate`, but nothing on screen needs to: nothing
+// mints that status any more, and `gate_sweep.condemn` ages the rows written
+// before the gate retired into `gate_failed`, which does not block a new card.
+//
+// No `decided_by`: 作废 is an authorising action like 采纳/放行, so who did it
+// comes from the session server-side and never from the body. 芝士 is refused
+// outright.
+export function voidAcceptCard(cardId: string, note: string): Promise<AcceptCard> {
+  return request<AcceptCard>(`/accept-cards/${encodeURIComponent(cardId)}/void`, {
+    method: 'POST',
+    body: JSON.stringify({ note }),
+  })
+}
+
 // 绿了自动合 (#718): arm/disarm auto-merge on a pending card. Reviewer-side
 // switch, only meaningful on a project with auto_merge_allowed; the actor is
 // the session user server-side, and 新提交作废采纳 disarms it again.

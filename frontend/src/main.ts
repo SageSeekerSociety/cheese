@@ -8,6 +8,7 @@ import 'editorjs-latex/dist/editorjs-latex.bundle.css'
 import 'katex/dist/katex.min.css'
 import '@/styles/content.scss'
 import '@/styles/fonts.css'
+import '@/styles/md-content.css'
 
 import 'dayjs/locale/zh-cn'
 import 'wc-waterfall'

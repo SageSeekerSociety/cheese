@@ -340,7 +340,9 @@ watch([kind, () => props.projectId], load)
   background: var(--fill);
 }
 
-/* Rendered markdown (mirrors OverviewView's .md-content). */
+/* Rendered markdown. Typography only — the rules that stop wide content
+   widening the column are shared with the other `.md-content` faces and live in
+   `@/styles/md-content.css`. */
 .md-content {
   font-size: 0.95rem;
   line-height: 1.7;
@@ -395,7 +397,6 @@ watch([kind, () => props.projectId], load)
   background: var(--fill);
   padding: 10px 12px;
   border-radius: 8px;
-  overflow-x: auto;
 }
 .md-content :deep(blockquote) {
   margin: 6px 0;

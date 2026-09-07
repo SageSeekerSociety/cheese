@@ -38,6 +38,7 @@ import {
   revokeCard,
   setAutoMerge,
 } from '@/api'
+import TopicAcceptCardVoid from '@/components/TopicAcceptCardVoid.vue'
 import { columnDotStyle } from '@/lib/board'
 import { mergeBadgeOf, visibleReasons } from '@/lib/mergeState'
 import { noteTone } from '@/lib/noteTone'
@@ -282,6 +283,12 @@ async function onForceMerge() {
   } finally {
     acceptBusy.value = false
   }
+}
+
+// 作废后卡进终态，这个框整个消失（不再匹配任何一张卡），话题回到可以
+// 重新递卡的状态——所以跟采纳/放行一样，卡列表和侧栏那一行都要重新拉。
+async function onVoided() {
+  await Promise.all([loadAcceptCard(), store.refreshTopicRow(props.topicId)])
 }
 
 // 绿了自动合 (#718)：布防/解除都打同一个端点，布防人由后端从会话认定。
@@ -667,6 +674,10 @@ defineExpose({ reload: loadAcceptCard })
           />
           <v-btn variant="outlined" class="btn-secondary" :loading="acceptBusy" @click="onRejectCard"> 确认退回 </v-btn>
         </div>
+        <!-- 作废: 退回把卡交还给芝士去改，作废是结束这张卡本身。`conflict` 上
+             尤其需要它——那个状态下退回和改派都是拒绝的，重试采纳又只会再撞一次
+             同一个冲突。 -->
+        <TopicAcceptCardVoid :card="pendingCard" :disabled="acceptBusy" @voided="onVoided" />
       </div>
     </v-card>
 

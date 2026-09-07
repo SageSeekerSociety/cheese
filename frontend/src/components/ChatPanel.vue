@@ -2662,7 +2662,9 @@ details.sys-row > summary::-webkit-details-marker {
     opacity: 0;
   }
 }
-/* Rendered markdown for 芝士's replies (v-html → :deep). */
+/* Rendered markdown for 芝士's replies (v-html → :deep). Typography only —
+   the rules that stop wide content widening the column are shared by all three
+   `.md-content` faces and live in `@/styles/md-content.css`. */
 .md-content {
   font-size: 0.9rem;
   line-height: 1.6;
@@ -2694,21 +2696,12 @@ details.sys-row > summary::-webkit-details-marker {
 .md-content :deep(a) {
   color: var(--accent-ink);
   text-decoration: none;
-  overflow-wrap: anywhere;
 }
 .md-content :deep(a:hover) {
   text-decoration: underline;
 }
 .md-content :deep(img) {
-  max-width: 100%;
-  height: auto;
   border-radius: 8px;
-}
-.md-content :deep(table) {
-  display: block;
-  width: max-content;
-  max-width: 100%;
-  overflow-x: auto;
 }
 .md-content :deep(code) {
   font-family: var(--font-mono);
@@ -2721,7 +2714,6 @@ details.sys-row > summary::-webkit-details-marker {
   background: var(--fill);
   padding: 11px 13px;
   border-radius: 8px;
-  overflow-x: auto;
 }
 .md-content :deep(pre) code {
   background: none;
