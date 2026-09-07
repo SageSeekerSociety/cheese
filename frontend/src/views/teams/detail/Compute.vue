@@ -2,6 +2,7 @@
 // Team compute is the ownership surface from execution-architecture v4:
 // platform cloud machines and self-hosted nodes live in one team pool; projects
 // only provide billing/audit attribution, while a topic chooses the actual target.
+import type { MachineQuota } from '@/api'
 import type { ComputeProfiles, MyDevice, Project, ProjectMachine } from '@/cx_types'
 
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -31,6 +32,9 @@ const devices = ref<MyDevice[]>([])
 const myDevices = ref<MyDevice[]>([])
 const projects = ref<Project[]>([])
 const cloudMachines = ref<CloudMachine[]>([])
+const quotas = ref<Record<string, MachineQuota>>({})
+const selectedQuota = computed(() => (selectedProject.value ? quotas.value[selectedProject.value] : undefined))
+const quotaFull = computed(() => Boolean(selectedQuota.value && selectedQuota.value.used >= selectedQuota.value.limit))
 const teamCompute = ref<ComputeProfiles | null>(null)
 const loading = ref(false)
 const error = ref<string | null>(null)
@@ -89,6 +93,7 @@ async function loadCloud() {
     projects.value.map(async (project) => {
       try {
         const result = await listProjectMachines(project.id)
+        quotas.value[project.id] = result.quota
         return result.data.map((machine) => ({ ...machine, projectName: project.name }))
       } catch (cause) {
         const message = errorMessage(cause, '加载云算力失败')
@@ -188,7 +193,7 @@ async function removeMachine(device: MyDevice) {
 }
 
 async function provisionCloud() {
-  if (!selectedProject.value || creating.value) return
+  if (!selectedProject.value || creating.value || !selectedQuota.value || quotaFull.value) return
   creating.value = true
   error.value = null
   try {
@@ -477,6 +482,18 @@ onBeforeUnmount(() => {
             variant="outlined"
             density="comfortable"
           />
+          <v-alert
+            v-if="selectedQuota"
+            :type="quotaFull ? 'warning' : 'info'"
+            variant="tonal"
+            density="compact"
+            class="mb-3"
+          >
+            该项目云虚拟机已使用 {{ selectedQuota.used }} / {{ selectedQuota.limit }} 台
+            <div>名额按所选项目计算；停止机器不会腾出名额</div>
+            <div v-if="quotaFull">已达到上限，请先释放不再使用的机器</div>
+          </v-alert>
+          <div v-else class="text-body-2 text-medium-emphasis mb-3">暂未获取该项目的资源用量，请刷新后重试</div>
           <v-row dense>
             <v-col cols="4"
               ><v-text-field v-model.number="cores" type="number" min="1" label="CPU 核" variant="outlined"
@@ -498,7 +515,12 @@ onBeforeUnmount(() => {
         <v-card-actions class="px-5 pb-5">
           <v-spacer />
           <v-btn variant="text" :disabled="creating" @click="createDialog = false">取消</v-btn>
-          <v-btn color="primary" variant="flat" :loading="creating" :disabled="!selectedProject" @click="provisionCloud"
+          <v-btn
+            color="primary"
+            variant="flat"
+            :loading="creating"
+            :disabled="!selectedProject || !selectedQuota || quotaFull"
+            @click="provisionCloud"
             >确认开通</v-btn
           >
         </v-card-actions>

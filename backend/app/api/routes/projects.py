@@ -116,6 +116,17 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 Registry = Annotated[ProfileRegistry, Depends(get_profile_registry)]
 
 
+@router.get("/resource-limits")
+async def resource_limits() -> dict:
+    """Creation defaults, available before a project exists."""
+    return ok(
+        {
+            "max_machines_per_project": settings.microcloud_max_machines_per_project,
+            "max_concurrent_turns": settings.max_concurrent_turns,
+        }
+    )
+
+
 @router.post("")
 async def create_project(
     body: ProjectCreate, db: DbSession, resolver: ActorResolverDep

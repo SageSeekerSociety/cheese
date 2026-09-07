@@ -216,11 +216,7 @@ class MachineService:
         # until a later read confirms MicroCloud has forgotten it, and counting
         # those would make a project's slots impossible to reclaim — delete then
         # create would be refused for a machine that is already gone.
-        existing = [
-            m
-            for m in await self._repo.list_for_project(project_id)
-            if m.status not in GONE and m.released_at is None
-        ]
+        existing = await self.quota_machines(project_id)
         if len(existing) >= settings.microcloud_max_machines_per_project:
             raise ValidationError(
                 "this project already has "
@@ -455,6 +451,14 @@ class MachineService:
             ai_status=_as_ai_status(remote.get("aiStatus")),
             seen_at=datetime.now(UTC),
         )
+
+    async def quota_machines(self, project_id: uuid.UUID) -> list[ProjectMachine]:
+        """Inventory counted by both admission and the allocation notice."""
+        return [
+            m
+            for m in await self._repo.list_for_project(project_id)
+            if m.status not in GONE and m.released_at is None
+        ]
 
     async def list_for_project(self, project_id: uuid.UUID) -> list[ProjectMachine]:
         machines = await self._repo.list_for_project(project_id)

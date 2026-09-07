@@ -239,6 +239,23 @@ def _returning(value):
     return _get
 
 
+async def test_quota_counts_stopped_and_deleting_but_not_released_machines():
+    service = build_service()
+    project_id = uuid.uuid4()
+    for status in MachineStatus:
+        await service._repo.add(project_id=project_id, status=status)
+    await service._repo.add(
+        project_id=project_id,
+        status=MachineStatus.running,
+        released_at=datetime.now(UTC),
+    )
+    counted = await service.quota_machines(project_id)
+    assert {machine.status for machine in counted} == set(MachineStatus) - {
+        MachineStatus.deleted
+    }
+    assert len(counted) == len(MachineStatus) - 1
+
+
 async def test_provision_clamps_a_spec_the_offering_cannot_honour():
     client = FakeMicroCloud()
     service = build_service(client)

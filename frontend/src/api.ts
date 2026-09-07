@@ -668,7 +668,23 @@ export function setComputeProfile(projectId: string, profile: string): Promise<{
 
 // MicroCloud machines are billed/audited through one project but enroll into that
 // project's team compute pool. The browser never receives provider credentials.
-export function listProjectMachines(projectId: string): Promise<ListPayload<import('./cx_types').ProjectMachine>> {
+export interface ResourceLimits {
+  max_machines_per_project: number
+  max_concurrent_turns: number
+}
+
+export function getResourceLimits(): Promise<ResourceLimits> {
+  return request('/projects/resource-limits')
+}
+
+export interface MachineQuota {
+  used: number
+  limit: number
+}
+
+export function listProjectMachines(
+  projectId: string
+): Promise<ListPayload<import('./cx_types').ProjectMachine> & { quota: MachineQuota }> {
   return request(`/projects/${encodeURIComponent(projectId)}/machines`)
 }
 
