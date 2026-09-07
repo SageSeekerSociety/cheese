@@ -181,9 +181,8 @@ class RoomLock(UuidPk, Timestamps, Base):
     Deliberately narrow, and the two kinds are enforced differently — which is
     worth knowing before trusting either:
 
-    - `heavy` is REAL. Test runs, dependency installs and dev servers go through
-      `cheese await`, which is the platform's own code, so the lane can simply
-      be held there.
+    - `heavy` is REAL. `cheese check` takes it around the project's quick check,
+      which is the platform's own code, so the lane can simply be held there.
     - `file` is ADVISORY. An agent's `Write` is its harness's tool, not ours; we
       cannot stand in front of it. What this offers is a way for an agent about
       to overwrite a whole file to find out that somebody else is already doing

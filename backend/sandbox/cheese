@@ -22,7 +22,7 @@
   cheese conclude-task <task_id>            # 收掉这条活(说它结束了)
   cheese tell "数据清洗" "口径改了,按新的来"    # 在那条活上留一句话(不叫醒任何人)
   cheese milestone "中期汇报" --due 2026-06-20
-  cheese await "bash .claude/scripts/check.sh --full"  # 后台跑;跑完平台叫醒本话题
+  cheese check                              # 跑一遍项目的快检(结果记到验收卡上)
   cheese status                             # 平台状态快照(本轮运行状态/验收卡/闸门输出/水位)
   cheese artifact report.html               # 把产物设为本话题当前预览(进预览窗口)
   cheese serve 5173 "Vue dev server"        # 应用起在 127.0.0.1:5173 后,设为预览
@@ -105,9 +105,9 @@ def _doc_version_path(topic: str) -> str:
     claiming to be based on it, which is the exact overwrite the version exists
     to stop.
 
-    Lives on the session mount (host-backed, survives a container rebuild) next
-    to the await logs, for the same reason: a rebuild mid-turn must not turn a
-    read the agent really did into a read the CLI has forgotten.
+    Lives on the session mount (host-backed, survives a container rebuild): a
+    rebuild mid-turn must not turn a read the agent really did into a read the
+    CLI has forgotten.
     """
     home = os.environ.get("HOME") or "/tmp"
     session = os.path.join(home, ".claude")
@@ -279,109 +279,26 @@ def _format_status(d: dict) -> str:
     return "\n".join(lines)
 
 
-# --- await: 后台跑长任务，跑完平台自动叫醒本话题 -------------------------------
+# --- check: 跑一遍项目的快检，结果记到这棵树上 -------------------------------
 #
-# Why this exists: ending a turn to "wait for" a background command used to
-# freeze the topic — nothing on the platform starts a new turn when a detached
-# process exits. `cheese await` registers the command with the platform, runs it
-# in a detached child here in the sandbox (where the venv/toolchain is warm), and
-# the child reports the exit code + output tail back when it finishes; the
-# platform lands that in the timeline and wakes the topic.
-#
-# The reporting token comes from registration, NOT from CHEESE_TOKEN: the
-# container's own token expires in an hour and these tasks are longer than that.
+# It runs HERE, in the foreground, and that is the whole mechanism. There used
+# to be a `cheese await` that registered a command with the platform, forked a
+# detached child and had the platform wake the topic when it exited — a second
+# way to run something in the background, built because a turn used to end when
+# the agent stopped typing. It does not any more: the harness has background
+# tasks of its own and tells the agent when one finishes. So a long check goes
+# in the agent's own background, and this stays a command that runs and reports.
 
-_AWAIT_TAIL_BYTES = 4000
-# Same cadence the backend uses for its own at-least-once deliveries.
-_AWAIT_RETRY_DELAYS = (0, 5, 30)
-
-
-def _await_log_path(run_id: str) -> str:
-    """Where a backgrounded command's full output goes.
-
-    Two things it must not be. NOT the worktree — these logs would be committed
-    with the topic's work (a full check run's output is megabytes of it). And NOT
-    the container's own filesystem, which is where they used to go: `await` exists
-    FOR commands that run for hours, which is exactly long enough to be caught by
-    a container rebuild, and a rebuild took the log with it — the run's only
-    evidence, gone (measured 2026-08-11).
-
-    The session mount is both: host-backed (it is what carries --resume state and
-    the hook spool across rebuilds) and outside the worktree."""
-    log_dir = os.environ.get("CHEESE_AWAIT_LOGS") or ""
-    if not log_dir:
-        home = os.environ.get("HOME") or "/tmp"
-        session = os.path.join(home, ".claude")
-        # The container-local fallback is for a CLI run with no session mount at
-        # all; losing the log beats refusing to run the command.
-        log_dir = (
-            os.path.join(session, "cheese-await")
-            if os.path.isdir(session)
-            else os.path.join(home, ".cheese", "await")
-        )
-    os.makedirs(log_dir, exist_ok=True)
-    return os.path.join(log_dir, f"{run_id}.log")
-
-
-def _await_start(
-    command: str, label: str, timeout_s: int, as_check: bool = False
-) -> None:
-    """Register the command, fork the detached runner, and return immediately."""
-    import subprocess
-    import time
-
-    topic = _need("CHEESE_TOPIC", TOPIC)
-    run_id = f"{int(time.time())}-{os.getpid()}"
-    log_path = _await_log_path(run_id)
-    data = _call(
-        "POST",
-        f"/topics/{topic}/background-task",
-        {
-            "command": command,
-            "label": label,
-            "timeout_s": timeout_s,
-            "log_path": log_path,
-        },
-    ).get("data", {})
-    task_id = data.get("task_id", "")
-
-    child_env = dict(os.environ)
-    # Via env, not argv: the wake token has a long life and `ps` is world-readable.
-    child_env["CHEESE_AWAIT_TOKEN"] = data.get("wake_token", "")
-    subprocess.Popen(  # noqa: S603 — our own script, fixed argv
-        [
-            sys.executable,
-            os.path.abspath(__file__),
-            "__await-child",
-            task_id,
-            command,
-            log_path,
-            str(timeout_s),
-            "check" if as_check else "run",
-        ],
-        env=child_env,
-        cwd=os.getcwd(),
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        # Its own session, so it outlives this shell AND the turn that spawned it.
-        start_new_session=True,
-    )
-    print(
-        f"[cheese] 已在后台开跑：{data.get('label') or command}\n"
-        f"  完整输出: {log_path}\n"
-        f"  跑完平台会自动叫醒本话题，并带上退出码和输出尾巴——"
-        f"你可以安心结束本轮，不用干等（上限 {timeout_s}s）。"
-    )
+_CHECK_TAIL_BYTES = 4000
 
 
 def _wait_for_heavy_lane(timeout_s: int) -> bool:
     """Hold the room's single heavy lane, waiting for it if someone else has it.
 
-    Waiting is right HERE and wrong in a turn: `cheese await` already returned,
-    so nothing is blocked on this — the topic gets woken when the command ends,
-    whenever that is. Inside a turn the same wait would burn a whole turn's
-    compute standing still.
+    Tests, dependency installs and dev servers fight over the machine — ports,
+    the database, one shared venv — not over the tree, so no amount of care
+    about which files you touch helps. Waiting is affordable because the caller
+    is expected to have put this in its own background task.
 
     Gives up after a share of the command's own timeout rather than forever: a
     command that never gets the lane should report that it did not run, not sit
@@ -415,70 +332,60 @@ def _release_heavy_lane() -> None:
         pass
 
 
-def _await_child(
-    task_id: str, command: str, log_path: str, timeout_s: int, mode: str = "run"
-) -> None:
-    """The detached runner: run the command, then report how it ended.
-
-    Never raises past this frame — a crash here is a topic that never wakes up,
-    which is the exact failure this whole path exists to remove."""
+def _run_check(command: str, timeout_s: int) -> int:
+    """Run the project's quick check, report the verdict, return its exit code."""
     import signal
     import subprocess
+    import tempfile
     import time
 
     started = time.time()
     exit_code = -1
-    held_heavy = False
+    held_heavy = _wait_for_heavy_lane(timeout_s)
+    log = tempfile.NamedTemporaryFile(  # noqa: SIM115 — closed in the finally below
+        prefix="cheese-check-", suffix=".log", delete=False
+    )
     try:
-        # 重活一次只跑一个: test runs, dependency installs and dev servers fight
-        # over the machine — ports, the database, one shared venv — not over the
-        # tree, so no amount of care about which files you touch helps. This is
-        # the one lock the platform can really enforce, because THIS code is the
-        # platform's; waiting here costs nothing, since the turn that asked for
-        # it already ended.
-        held_heavy = _wait_for_heavy_lane(timeout_s)
-        with open(log_path, "wb") as log:
-            proc = subprocess.Popen(  # noqa: S602 — the agent's own command, by design
-                ["bash", "-lc", command],
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL,
-                start_new_session=True,
-            )
+        proc = subprocess.Popen(  # noqa: S602 — the project's own check command
+            ["bash", "-lc", command],
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        try:
+            exit_code = proc.wait(timeout=timeout_s)
+        except subprocess.TimeoutExpired:
+            # Kill the whole process group: a test runner's children would
+            # otherwise survive and keep writing to the log.
             try:
-                exit_code = proc.wait(timeout=timeout_s)
-            except subprocess.TimeoutExpired:
-                # Kill the whole process group: a build/test runner's children
-                # would otherwise survive and keep writing to the log.
-                try:
-                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-                except OSError:
-                    proc.kill()
-                proc.wait()
-                exit_code = 124  # `timeout(1)`'s convention
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except OSError:
+                proc.kill()
+            proc.wait()
+            exit_code = 124  # `timeout(1)`'s convention
     except Exception as e:  # noqa: BLE001 — report the failure, never vanish
-        with open(log_path, "a", encoding="utf-8") as log:
-            log.write(f"\n[cheese await] 命令无法执行: {e}\n")
+        log.write(f"\n[cheese check] 命令无法执行: {e}\n".encode())
     finally:
+        log.close()
         # Give the lane back however this ended. A lane held by a process that
         # died is the one failure worse than the collision it prevents — though
-        # the lock's own expiry (30 minutes) is the backstop that keeps even
-        # that bounded.
+        # the lock's own expiry (30 minutes) is the backstop.
         if held_heavy:
             _release_heavy_lane()
 
-    tail = _await_tail(log_path)
-    if mode == "check":
-        # 超时算失败: a quick check's whole value is the speed, and one that
-        # quietly grew past its budget and reported "inconclusive" would rot
-        # into a second full CI. 124 is what the timeout path above records.
-        _report_check_result(exit_code == 0, exit_code, tail)
-    _await_report(
-        task_id,
-        exit_code=exit_code,
-        tail=tail,
-        duration_s=time.time() - started,
+    tail = _check_tail(log.name)
+    # 超时算失败: a quick check's whole value is the speed, and one that quietly
+    # grew past its budget and reported "inconclusive" would rot into a second
+    # full CI.
+    _report_check_result(exit_code == 0, exit_code, tail)
+    print(tail)
+    head = "通过" if exit_code == 0 else ("超时" if exit_code == 124 else "失败")
+    print(
+        f"\n[cheese] 快检{head}（exit {exit_code}，{time.time() - started:.0f}s）。"
+        f"结果已记到本地点这棵树上，验收卡上看得见。完整输出：{log.name}"
     )
+    return exit_code
 
 
 def _report_check_result(ok: bool, exit_code: int, tail: str) -> None:
@@ -499,41 +406,14 @@ def _report_check_result(ok: bool, exit_code: int, tail: str) -> None:
         pass
 
 
-def _await_tail(log_path: str) -> str:
+def _check_tail(log_path: str) -> str:
     try:
         with open(log_path, "rb") as f:
             f.seek(0, os.SEEK_END)
-            f.seek(max(0, f.tell() - _AWAIT_TAIL_BYTES))
+            f.seek(max(0, f.tell() - _CHECK_TAIL_BYTES))
             return f.read().decode(errors="replace")
     except OSError as e:
         return f"（读不到输出日志 {log_path}: {e}）"
-
-
-def _await_report(
-    task_id: str, *, exit_code: int, tail: str, duration_s: float
-) -> None:
-    """POST the result, retrying — a dropped report is a frozen topic."""
-    import time
-
-    topic = os.environ.get("CHEESE_TOPIC", "")
-    token = os.environ.get("CHEESE_AWAIT_TOKEN", "")
-    url = f"{API}/topics/{topic}/background-task/{task_id}/done"
-    body = json.dumps(
-        {"exit_code": exit_code, "tail": tail, "duration_s": duration_s}
-    ).encode()
-    for delay in _AWAIT_RETRY_DELAYS:
-        if delay:
-            time.sleep(delay)
-        req = urllib.request.Request(url, data=body, method="POST")
-        req.add_header("Content-Type", "application/json")
-        if token:
-            req.add_header("X-Cheese-Token", token)
-        try:
-            with urllib.request.urlopen(req, timeout=30) as r:
-                r.read()
-            return
-        except Exception:  # noqa: BLE001 — retry, then give up quietly
-            continue
 
 
 def _print_api_index() -> None:
@@ -707,33 +587,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--conclusion", default="", help="覆盖分身交回的那句话(默认保留它的)"
     )
 
-    paw = sub.add_parser(
-        "await",
-        help="把长命令丢到后台跑；跑完平台自动叫醒本话题并带上退出码+输出尾巴",
-        description=(
-            "要等几分钟以上的命令一律走它:全量检查、构建、长跑脚本。\n"
-            "\n"
-            "命令在后台跑,本命令立刻返回。跑完平台会自动开一轮新的把你叫醒,"
-            "带上退出码、耗时和输出尾巴。\n"
-            "**丢给它之后就可以放心结束本轮**——别为了等它而干等或反复轮询,"
-            "那会把话题冻死。"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    paw.add_argument("command", help="要跑的命令，如 'bash .claude/scripts/check.sh'")
-    paw.add_argument("--label", default="", help="一句话说明在跑什么（唤醒时会显示）")
-    paw.add_argument(
-        "--timeout", type=int, default=3600, help="秒，超时会被杀掉并按退出码 124 回报"
-    )
-
-    # Internal: the detached child _await_start forks. Not for humans/agents.
-    pawc = sub.add_parser("__await-child")
-    pawc.add_argument("task_id")
-    pawc.add_argument("command")
-    pawc.add_argument("log_path")
-    pawc.add_argument("timeout_s", type=int)
-    pawc.add_argument("mode", nargs="?", default="run", choices=["run", "check"])
-
     sub.add_parser(
         "push-fix",
         help="把工作区现在的样子推到本话题正在等 CI 的那个 PR 上",
@@ -755,9 +608,10 @@ def build_parser() -> argparse.ArgumentParser:
             "跑项目配置的那条快检命令,结果记到本地点这棵树上,验收卡上看得见。\n\n"
             "它**不是闸门**:红了照样能递卡,照样能采纳——决定权在 PR 上的真 CI\n"
             "(#296)。它存在的意义是让红灯**被看见**:结果没人看的检查,没人会跑。\n\n"
-            "跑在你自己的沙箱里,走 `cheese await`,所以:占用的是本房间那条重活\n"
-            "车道(不会和别人的测试抢端口/数据库),**不占 CI runner**,并且本轮\n"
-            "立刻返回——跑完平台自动叫醒你。\n\n"
+            "跑在你自己的沙箱里,占用的是本房间那条重活车道(不会和别人的测试抢\n"
+            "端口/数据库),**不占 CI runner**。它在前台跑到完,退出码就是快检的\n"
+            "退出码——要几分钟以上,把这条命令丢进你自己 harness 的后台任务里,\n"
+            "跑完它会通知你。\n\n"
             "**超时算失败**。快检的全部价值就是快;一条慢慢长过预算、还报「没结论」\n"
             "的检查,会烂成第二个全量 CI。"
         ),
@@ -791,8 +645,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="整块覆盖某个文件、或跑重活之前,先占住",
         description=(
             "本房间有两把锁,**强制程度不一样,用之前要知道**:\n\n"
-            "  heavy —— **真的拦得住**。跑测试、装依赖、起 dev server 都走\n"
-            "    `cheese await`,那是平台自己的代码,所以能真的排队。\n"
+            "  heavy —— **真的拦得住**。`cheese check` 自己就走它,那是平台自己的\n"
+            "    代码,所以能真的排队;你手跑测试/装依赖之前也自己占一下。\n"
             "  file  —— **只是提醒**。你的 Write 工具是你自己 harness 的,平台拦不住。\n"
             "    它的作用是:你要整块覆盖一个文件之前,能知道别人是不是正在覆盖它。\n\n"
             "两把锁都**不等待**:占不到就直接告诉你是谁占着,你可以改用 Edit、\n"
@@ -1178,10 +1032,6 @@ def main() -> None:
             {"conclusion": a.conclusion},
         )["data"]
         print(f"「{r['title']}」收了。结论：{(r.get('conclusion') or '（没有留话）')}")
-    elif a.cmd == "await":
-        _await_start(a.command, a.label, a.timeout)
-    elif a.cmd == "__await-child":
-        _await_child(a.task_id, a.command, a.log_path, a.timeout_s, a.mode)
     elif a.cmd == "check":
         proj = _need("CHEESE_PROJECT", PROJECT)
         gate = _call("GET", f"/projects/{proj}/quality-gate").get("data") or {}
@@ -1192,12 +1042,8 @@ def main() -> None:
                 "没有东西可跑。"
             )
         else:
-            _await_start(cmd, "快检", a.timeout, as_check=True)
-            print(
-                f"快检已经在后台跑起来了(预算 {a.timeout} 秒,超了算失败)。"
-                "跑完平台会叫醒本话题并带上结果,同时记到验收卡上。"
-                "本轮不用等它。"
-            )
+            print(f"[cheese] 跑快检：{cmd}（预算 {a.timeout} 秒，超了算失败）")
+            sys.exit(_run_check(cmd, a.timeout))
     elif a.cmd == "claim":
         topic = _need("CHEESE_TOPIC", TOPIC)
         r = _call("POST", f"/topics/{topic}/claim", {"paths": a.paths})["data"]

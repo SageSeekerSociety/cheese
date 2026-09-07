@@ -22,8 +22,6 @@ from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import NotFoundError, ValidationError
-from app.core.sandbox_auth import mint_scoped_token
-from app.domain.agent import awaited_tasks
 from app.domain.agent.chat import (
     ChatService,
     thread_relay_prompt,
@@ -72,12 +70,10 @@ from app.domain.room_task.services import (
 )
 from app.domain.team.repositories import TeamRepository
 from app.domain.topic.doc_change import summarize_doc_change
-from app.domain.topic.models import Topic, TopicStatus
+from app.domain.topic.models import Topic
 from app.domain.topic.relay import TopicRelayService
 from app.domain.topic.repositories import SortOrder, TopicSortField
 from app.domain.topic.schemas import (
-    BackgroundTaskDoneIn,
-    BackgroundTaskIn,
     BindSubagentIn,
     CheckResultIn,
     ClaimIn,
@@ -853,16 +849,14 @@ async def topic_status(
     await _actor_in_place(resolver, place)
     # 盲飞防护 is asked BY whoever is flying, and that is usually a thread —
     # so the snapshot has to describe the place asked about, not the room it
-    # happens to sit in. Turn state, background tasks and cards are all keyed
-    # by place already; only this handler could not name one.
+    # happens to sit in. Turn state and cards are keyed by place already; only
+    # this handler could not name one.
     cards = await AcceptCardRepository(db).list_for_topic(topic_id)
     credits = await ComputeGrantRepository(db).summary(place.project_id)
     turn = runner.topic_work(topic_id)
-    background = awaited_tasks.status_snapshot(topic_id)
     stall = await topics.stall_signal(
         topic_id,
         live_turn=runner.live_work_for_topic(topic_id),
-        background_tasks=len(background["tasks"]),
     )
     return ok(
         {
@@ -880,7 +874,6 @@ async def topic_status(
             "turn": turn,
             "stall": stall,
             "cards": [_card_snapshot(c) for c in cards],
-            "background": background,
             "platform": {
                 "active_turns": runner.active_work_count(),
                 "queued_turns": runner.project_queue_depth(place.project_id),
@@ -1401,71 +1394,6 @@ async def mint_webhook_token(topic_id: uuid.UUID, db: DbSession) -> dict:
     )
     await db.commit()
     return ok({"token": token})
-
-
-@router.post("/{topic_id}/background-task")
-async def register_background_task(
-    topic_id: uuid.UUID, body: BackgroundTaskIn, db: DbSession
-) -> dict:
-    """`cheese await` announces a command it is about to run in its own sandbox.
-
-    Returns the task id plus a wake token that outlives the container's own
-    CHEESE_TOKEN (1h) — these tasks routinely run longer than that, and a result
-    that 401s at the finish line is exactly the frozen topic this path exists to
-    prevent."""
-    place = await TopicService(db).place_or_404(topic_id)
-    # 归档后工作面定格: freezing the room freezes the threads in it, so a
-    # thread's long command is refused with the room it belongs to.
-    if place.room.status == TopicStatus.archived:
-        raise ValidationError("话题已归档，不再受理后台任务")
-    task = awaited_tasks.register(
-        project_id=place.project_id,
-        # The place, so the result wakes whoever is waiting on it.
-        topic_id=topic_id,
-        command=body.command,
-        label=body.label,
-        timeout_s=body.timeout_s,
-        log_path=body.log_path,
-    )
-    return ok(
-        {
-            "task_id": str(task.id),
-            "wake_token": mint_scoped_token(
-                project_id=str(place.project_id),
-                topic_id=str(topic_id),
-                # Cover the whole run plus an hour of slack for a slow report.
-                ttl_s=task.timeout_s + 3600,
-            ),
-            "label": task.label,
-        }
-    )
-
-
-@router.post("/{topic_id}/background-task/{task_id}/done")
-async def finish_background_task(
-    topic_id: uuid.UUID,
-    task_id: uuid.UUID,
-    body: BackgroundTaskDoneIn,
-    chat: Annotated[ChatService, Depends(get_chat_service)],
-    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
-) -> dict:
-    """The backgrounded command exited — land its result and (guards permitting)
-    wake the topic. Reached by the detached child `cheese await` forked, carrying
-    the wake token from registration."""
-    task = awaited_tasks.get(task_id)
-    if task is None or task.topic_id != topic_id:
-        raise NotFoundError("这个后台任务不存在或已经回报过了")
-    return ok(
-        await awaited_tasks.report(
-            chat.session_factory,
-            chat,
-            runner,
-            task=task,
-            exit_code=body.exit_code,
-            tail=body.tail,
-            duration_s=body.duration_s,
-        )
-    )
 
 
 @router.post("/{topic_id}/decision")

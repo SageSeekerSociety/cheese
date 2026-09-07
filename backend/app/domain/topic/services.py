@@ -469,7 +469,6 @@ class TopicService:
         topic_id: uuid.UUID,
         *,
         live_turn: dict | None,
-        background_tasks: int = 0,
         threshold_s: float | None = None,
     ) -> dict:
         """Is this topic sitting on a turn that died? A queryable verdict.
@@ -487,9 +486,7 @@ class TopicService:
 
         1. **No heartbeat.** `live_turn` is what the runner is really executing
            for this topic (frames, tool calls included — activity the DB never
-           sees). Present and recently framed ⇒ alive, full stop. Registered
-           background commands (`cheese await`) count the same way: the agent
-           declared it is waiting on something long, so silence is expected.
+           sees). Present and recently framed ⇒ alive, full stop.
         2. **The timeline stops mid-action.** The newest block is a tool action
            by 芝士 — the shape a turn leaves when it is cut off between doing
            something and reporting it. A turn that ends properly leaves a
@@ -522,9 +519,8 @@ class TopicService:
             "silent_for_s": silent_for_s,
             "last_block": _stall_block_summary(last),
             "live_turn": live_turn,
-            "background_tasks": background_tasks,
         }
-        if alive or background_tasks > 0:
+        if alive:
             return signal
         if last is None or silent_for_s is None or silent_for_s <= threshold_s:
             return signal

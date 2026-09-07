@@ -412,7 +412,7 @@ class AgentWorkRunner:
         None covers three cases the caller must treat identically — fall back to
         whatever it did before: no turn of ours is running; the turn was started
         by the platform itself (`author="system"` — gate verdicts, scheduled
-        wake-ups, `cheese await` reports, conflict nudges); or it was started by
+        wake-ups, conflict nudges); or it was started by
         a 分身 working autonomously. Only a real person's handle comes back."""
         rec = self._current_turn_record(topic_id)
         author = rec.get("author") if rec is not None else None
