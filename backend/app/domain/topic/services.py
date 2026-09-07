@@ -742,19 +742,6 @@ class TopicService:
             raise ValidationError("话题已归档（工作面冻结），请从结论升级成新话题")
 
         project = await self._projects.get(block.project_id)
-        # Parent doc snapshot only from a real room — never copy a private
-        # chat's doc into a public place.
-        parent_doc = (
-            None if parent.is_private else await self._blocks.doc_root(parent.id)
-        )
-        brief = _brief_doc(
-            child_title=PLACEHOLDER_TITLE,
-            parent_title=parent.title,
-            brief=None,
-            parent_doc=parent_doc.content if parent_doc else None,
-            created_by=created_by,
-            source_block=block.content,
-        )
 
         if not parent.is_private:
             task = await TaskService(self._session).open_thread(
@@ -775,11 +762,24 @@ class TopicService:
                 agent_instance_id=parent.agent_instance_id,
             )
             task.upgraded_from_block_id = block.id
+            # 升级来的活，任务陈述就是那条消息本身 —— stored on the card, the
+            # same place a dispatched brief goes.
+            task.brief = block.content
             await self._blocks.set_upgraded_to_place(block, task_id=task.id)
-            await self._seed_brief_doc(parent, brief, task_id=task.id)
+            await self._card_block(parent, task)
             return Place(room=parent, task=task), True
 
         # 私聊不是话题树的父节点 (spec §1).
+        # A private chat's doc is never copied into a public place, so the new
+        # room's brief carries the upgraded message and nothing else.
+        brief = _brief_doc(
+            child_title=PLACEHOLDER_TITLE,
+            parent_title=parent.title,
+            brief=None,
+            parent_doc=None,
+            created_by=created_by,
+            source_block=block.content,
+        )
         root_id = project.root_topic_id if project else None
         new_room = await self._repo.add(
             project_id=block.project_id,
@@ -809,28 +809,55 @@ class TopicService:
         await self._seed_brief_doc(new_room, brief)
         return Place(room=new_room), True
 
-    async def _seed_brief_doc(
-        self, topic: Topic, content: str, *, task_id: uuid.UUID | None = None
-    ) -> None:
-        """Preset a newborn place's living doc with its task brief. Author is
+    async def _seed_brief_doc(self, topic: Topic, content: str) -> None:
+        """Preset a newborn ROOM's living doc with its task brief. Author is
         `system`: the platform assembled it from existing text — nothing here
-        speaks as 芝士 (the 分身's kickoff turn writes the real opening).
+        speaks as 芝士 (the room's kickoff turn writes the real opening).
 
-        `task_id` is what makes this the THREAD's document rather than a second
-        document in the room. Both levels exist on purpose — the room's is the
-        shared picture, the thread's is this one piece of work's brief and then
-        its status — and they are told apart by exactly this key.
+        A room only. A piece of work used to get one of these too, and it was
+        the one document on the platform nobody could maintain: the worker doing
+        the work is a subagent holding the ROOM's token, which cannot reach a
+        thread's document address at all. So the brief froze at the moment of
+        dispatch and stayed there while the work moved on. A brief belongs on
+        the card (`Task.brief`), where being unchangeable is the point.
         """
         doc = await self._blocks.add(
             project_id=topic.project_id,
             topic_id=topic.id,
-            task_id=task_id,
             author="system",
             author_type=AuthorType.system,
             content=content,
             kind=BlockKind.doc,
         )
         await self._sync_doc_nodes(doc, content)
+
+    async def _card_block(self, room: Topic, task: Task) -> Block:
+        """那张卡 —— the room's timeline says a piece of work went out from here.
+
+        This is the edge #184 asked for and #314 had to work around: dispatch
+        wrote nothing at all on the main line, so the frontend derived a marker
+        from the thread's `room_id` + `created_at` and could only ever say
+        "something was dispatched around now". A block can say which one.
+
+        The task id rides in `meta`, and the STATUS does not: a block is a fixed
+        record of a moment, and a piece of work that reads `running` forever
+        after it finished is worse than no status at all. Whoever renders this
+        reads the live row (`GET /topics/{id}/tasks`) for that, which is also
+        where the derived markers get theirs — one answer, not two.
+        """
+        return await self._blocks.add(
+            project_id=room.project_id,
+            topic_id=room.id,
+            # The ROOM's main line: the whole point is that the room sees the
+            # work leave. Filing it on the thread would put it exactly where
+            # everyone not doing the work is not looking.
+            task_id=None,
+            author="system",
+            author_type=AuthorType.system,
+            content=f"派出一条活：{task.title}",
+            kind=BlockKind.event,
+            meta={"platform": True, "action": "split", "task_id": str(task.id)},
+        )
 
     async def dispatch_task(
         self,
@@ -927,18 +954,12 @@ class TopicService:
             # only one of the two. A claim that was refused simply is not
             # recorded — the thread still exists and can narrow it and try again.
             await ClaimService(self._session).claim(task, paths)
-        room_doc = await self._blocks.doc_root(room.id)
-        await self._seed_brief_doc(
-            room,
-            _brief_doc(
-                child_title=title,
-                parent_title=room.title,
-                brief=brief,
-                parent_doc=room_doc.content if room_doc else None,
-                created_by=created_by,
-            ),
-            task_id=task.id,
-        )
+        # 简报进卡, not into a document of its own — see `_seed_brief_doc` for
+        # why the document could not be kept up to date. The worker gets these
+        # same words a second way, in the prompt the room hands its subagent;
+        # this copy is the record of what was asked for.
+        task.brief = (brief or "").strip()
+        await self._card_block(room, task)
         return task
 
     async def clone_from(

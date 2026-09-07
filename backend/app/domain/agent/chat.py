@@ -1118,14 +1118,14 @@ def thread_relay_prompt(
 def thread_upgraded_prompt(*, task_id: uuid.UUID, source_message: str) -> str:
     """The ROOM's wake-up instruction when one of its messages became a thread.
 
-    Addressed to the room for the same reason 补证据 is: a thread is a 分身 inside
-    the room's own session and has no session to wake. The platform writes the
-    row and its brief doc; raising the worker is the room's, and so is naming the
+    Addressed to the room because a thread is a 分身 inside the room's own
+    session and has no session to wake. The platform writes the row, its card
+    block and its brief; raising the worker is the room's, and so is naming the
     thread — it is created untitled and nothing else is in a position to name it.
     """
     return (
         f"你把一条消息升级成了这个房间里的一条活（task id `{task_id}`）。"
-        "平台已经把它的任务简报文档建好了，简报正文就是被升级的那段话：\n\n"
+        "被升级的那段话就是它的简报，平台已经记在卡上了：\n\n"
         f"---\n{source_message}\n---\n\n"
         "接下来是你的事：\n"
         f'1. `cheese title "<≤12 字的标题>" --task {task_id}`——它现在还叫「新话题」，'
