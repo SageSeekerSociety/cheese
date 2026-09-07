@@ -498,12 +498,8 @@ async def _authorized_memory_topic(
     place = await TopicService(db).place_or_404(topic_id)
     if place.project_id != project_id:
         raise ForbiddenError("这个话题不属于 URL 中的项目")
-    # Two different ids on purpose. A per-turn token is scoped to the PLACE it
-    # was minted for, so that is what identity is checked against — handing it
-    # the room would read a thread's token as out-of-scope and erase its author.
-    # Access, though, is the room's roster: threads do not have one.
     actor = await resolver.resolve(
-        fallback_handle=None, topic_id=place.id, project_id=project_id
+        fallback_handle=None, topic_id=place.room_id, project_id=project_id
     )
     await resolver.authorize_topic(actor, project_id=project_id, topic_id=place.room_id)
     return place
@@ -518,16 +514,11 @@ async def _agent_memory_scope(
     one project keeps one pool, which is the whole point of an instance owning
     its memory. Returns ``None`` when no usable place was supplied, so the
     caller falls back to the shared project pool.
-
-    A thread is asked about its own row: it was handed the room's agent when
-    the work went out, so what it learns lands in the pool the room reads back
-    — which is the entire reason the room dispatched it.
     """
     if place is None:
         return None
     project = await ProjectService(db).get_or_404(project_id)
-    owner = place.task if place.task is not None else place.room
-    agent = await AgentInstanceService(db).for_topic(owner, project)
+    agent = await AgentInstanceService(db).for_topic(place.room, project)
     return memory_pool(project_id, agent)
 
 

@@ -660,14 +660,14 @@ class AgentWorkRunner:
         # This request belongs to a socket that may already be closing — the
         # person hit send and navigated away — and an await in front of the
         # spawn is a window where the ASGI task is cancelled with the message
-        # persisted and no work ever started. Whatever the work turns out to be,
-        # including "this place is a thread, so wake its room instead", is
-        # decided INSIDE the task.
+        # persisted and no work ever started.
         task = asyncio.create_task(
-            self._run_summoned(
+            self._run(
                 chat_service,
                 topic_id,
                 turn_id,
+                summon=True,
+                continuation_id=turn_id,
                 author=author,
                 content=content,
                 reply_to=reply_to,
@@ -681,71 +681,6 @@ class AgentWorkRunner:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return turn_id
-
-    async def _run_summoned(
-        self,
-        chat_service,
-        topic_id: uuid.UUID,
-        turn_id: uuid.UUID,
-        *,
-        author: str,
-        content: str,
-        reply_to: str | None,
-        attachments: list[dict] | None,
-        provision_actor: Actor | None,
-        landed_user_block_id: uuid.UUID,
-        landed_user_block_ids: list[uuid.UUID],
-        live_delivery_expected: bool,
-    ) -> None:
-        """Run the turn this message summoned — or hand it to whoever can.
-
-        A THREAD cannot run one: the worker doing it is a 分身 inside its room's
-        session, so the thread has no session of its own and addressing its id
-        would raise a whole container for the shape threads stopped having. The
-        message stays where it was typed; the ROOM is woken to relay it.
-        """
-        try:
-            thread = await chat_service.thread_at(topic_id)
-        except Exception:  # noqa: BLE001 — a lookup must not eat the message
-            # Nothing retrieves an exception from a spawned task, so an unlucky
-            # read here would end as a line at garbage-collection time with the
-            # person still waiting. Falling through runs the turn, which is what
-            # happened before this question was asked at all — and a turn is the
-            # thing that reports its own failures.
-            logger.exception("could not tell whether %s is a thread", topic_id)
-            thread = None
-        if thread is not None:
-            from app.domain.agent.chat import thread_relay_prompt
-
-            self.submit_kickoff(
-                chat_service,
-                thread.room_id,
-                prompt=thread_relay_prompt(
-                    task_id=thread.task_id,
-                    task_title=thread.title,
-                    author=author,
-                    message=f"说：{content}",
-                ),
-            )
-            # No turn is starting on THIS channel: say so, or the person watching
-            # the thread waits on a spinner that belongs to the room's screen.
-            await self._broker.publish(str(topic_id), {"type": "done"})
-            return
-        await self._run(
-            chat_service,
-            topic_id,
-            turn_id,
-            author=author,
-            content=content,
-            summon=True,
-            reply_to=reply_to,
-            attachments=attachments,
-            continuation_id=turn_id,
-            provision_actor=provision_actor,
-            landed_user_block_id=landed_user_block_id,
-            landed_user_block_ids=landed_user_block_ids,
-            live_delivery_expected=live_delivery_expected,
-        )
 
     def submit_kickoff(
         self, chat_service, topic_id: uuid.UUID, *, prompt: str | None = None

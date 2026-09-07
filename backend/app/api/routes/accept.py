@@ -12,7 +12,7 @@ from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service, get_work_runner
 from app.api.response import ok, page
 from app.core.db import get_db
-from app.core.errors import AuthenticationRequiredError, BaseError, ValidationError
+from app.core.errors import AuthenticationRequiredError, BaseError
 from app.domain.agent.chat import ChatService
 from app.domain.agent.github_app import github_app_tokens_for_project
 from app.domain.agent.platform_notices import (
@@ -39,7 +39,6 @@ from app.domain.review.schemas import (
     VoidDecision,
 )
 from app.domain.review.services import AcceptService
-from app.domain.room_task.place import PlaceResolver
 from app.domain.workspace import service as ws
 
 logger = logging.getLogger("cheesex.accept")
@@ -47,26 +46,6 @@ logger = logging.getLogger("cheesex.accept")
 router = APIRouter(prefix="", tags=["accept"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
-
-#: Refusal for a thread trying to file its room's card.
-#:
-#: 一棵树 = 一个分支 = 一个 PR = 一批活, and the batch belongs to the room: filing
-#: seals the tree, which is the room saying "this lot is done" — not a sentence
-#: one sibling gets to say for the others. A thread that files anyway seals a
-#: branch its siblings are still writing to, and the PR flies with their
-#: half-finished work on it.
-#:
-#: Long on purpose, like `_MISSING_SUBJECT` in the service: the reader is an
-#: agent one step away from doing something else, and "不允许" alone leaves it
-#: with no idea what. `cheese conclude` is the whole answer.
-_THREAD_CANNOT_FILE = (
-    "递卡是房间的事，一条支线递不了。\n"
-    "一棵树=一个分支=一个 PR=一批活，而这批活是整个房间的：递卡会把分支封口开 PR，"
-    "而你的兄弟支线还在往同一条分支上写，它们没做完的东西会跟着这个 PR 一起飞出去。\n"
-    "你要做的是把结论交回房间，由房间统一递卡：\n"
-    '  cheese conclude "<做了什么、故意没做什么、哪些结论没核实>"\n'
-    "改动照常提交到工作区就行，它和兄弟们的改动在同一条分支上，房间递卡时一起带走。"
-)
 
 
 @router.post("/topics/{topic_id}/accept-card")
@@ -76,17 +55,6 @@ async def create_accept_card(
     db: DbSession,
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
-    # 递卡是房间的事 —— before anything else, and before the service gets as far
-    # as checking the subject. A thread is not being told its paperwork is
-    # wrong, it is being told this is not its job; leading with the subject
-    # would send it away to fix one and walk straight back into the same wall.
-    #
-    # An id that names nothing falls through on purpose: "no such topic" is the
-    # service's 404 to give, and answering it here with "you are not a room"
-    # would be a worse sentence about a different problem.
-    place = await PlaceResolver(db).resolve(topic_id)
-    if place is not None and place.is_thread:
-        raise ValidationError(_THREAD_CANNOT_FILE)
     svc = AcceptService(db)
     card = await svc.create_card(
         topic_id=topic_id,

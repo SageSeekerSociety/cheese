@@ -16,7 +16,6 @@ from app.domain.machine.models import (
     MachineStatus,
     ProjectMachine,
 )
-from app.domain.room_task.place import room_and_task
 
 
 class ProjectMachineRepository:
@@ -356,13 +355,7 @@ class ProjectMachineRepository:
         Every one of those means "use the deployment-wide identity", which is
         the behaviour those turns have today.
         """
-        pinned = await self._upstream_of_pinned_device(place_id)
-        if pinned:
-            return pinned
-        room_id, task_id = await room_and_task(self._session, place_id)
-        if task_id is None:
-            return None
-        return await self._upstream_of_pinned_device(room_id)
+        return await self._upstream_of_pinned_device(place_id)
 
     async def _upstream_of_pinned_device(self, topic_id: uuid.UUID) -> str | None:
         """The ccproxy identity behind one `device_topic` pin, from whichever of
