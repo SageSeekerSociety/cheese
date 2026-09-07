@@ -238,6 +238,9 @@ async function send() {
 .panel-card__block-body {
   color: var(--ink);
   white-space: pre-wrap;
+  /* 简报可以是几千字：块内自滚，别把整个面板撑到时间线不可达 */
+  max-height: 40vh;
+  overflow-y: auto;
 }
 .panel-card__timeline {
   flex: 1 1 auto;
