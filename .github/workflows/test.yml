@@ -361,11 +361,6 @@ jobs:
             docker tag mirror.gcr.io/library/python:3.12-slim python:3.12-slim
           fi
 
-      # DIAGNOSTIC (CI tail hang): the runners are persistent, so a dump left by
-      # an earlier attempt must not be mistaken for this one's.
-      - name: Clear stale hang dumps
-        run: rm -f /tmp/pytest-hang-*.txt
-
       - name: Run tests
         env:
           DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/cheese_test
@@ -398,17 +393,6 @@ jobs:
         run: >-
           uv run pytest tests/ -n auto --dist worksteal
           --tb=short -k "not kotlin" --durations=20
-
-      # DIAGNOSTIC (CI tail hang): what every pytest process was doing 11
-      # minutes in — written by tests/conftest.py, only present on a hang.
-      - name: Hung pytest stacks
-        if: always()
-        run: |
-          for f in /tmp/pytest-hang-*.txt; do
-            [ -s "$f" ] || continue
-            echo "=== $f"; cat "$f"
-          done
-          rm -f /tmp/pytest-hang-*.txt
 
       # Every run's postgres service container leaves a volume behind, and
       # nothing ever removed them: 57 had accumulated to 19GB and filled the
