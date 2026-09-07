@@ -4,6 +4,9 @@
 话都只有一条路——落在活的时间线上（人看的是那儿），把房间叫醒去转达（能动手的只有
 它）。这个文件钉住那条路的两个方向：人从界面上留言，以及房间用 `cheese tell` 回话。
 
+留言走的是房间的地址（`POST /topics/{room}/tasks/{card}/messages`）——活没有自己的
+地址，也没有为它签的 token。
+
 反过来的证据一样重要：**没有任何一条路会拿活的 id 去开一轮**。开一轮就是起一块屏幕，
 起屏幕就是起一整个容器——正是「一条活 = 房间会话里的一个分身」拆掉的东西。
 """
@@ -56,6 +59,19 @@ def _blocks(client, place_id: str) -> list[dict]:
     return client.get(f"/topics/{place_id}/blocks").json()["data"]["data"]
 
 
+def _card_blocks(client, room_id: str, task_id: str) -> list[dict]:
+    r = client.get(f"/topics/{room_id}/tasks/{task_id}")
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["blocks"]
+
+
+def _say_on_card(client, room_id: str, task_id: str, content: str):
+    return client.post(
+        f"/topics/{room_id}/tasks/{task_id}/messages",
+        json={"content": content, "author": "user-1"},
+    )
+
+
 def test_writing_on_a_thread_wakes_the_room_to_relay_it(client, stub_hooks):
     p = _project(client)
     room = _room(client, p["id"])
@@ -63,15 +79,13 @@ def test_writing_on_a_thread_wakes_the_room_to_relay_it(client, stub_hooks):
     _wait_work_idle()
 
     screens = _record_screens(stub_hooks)
-    before = len(_blocks(client, thread["id"]))
-    with client.websocket_connect(chat_ws_url(thread["id"], "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "这条先别做了", "summon": True})
-        frames = _drain_until_done(ws)
+    before = len(_card_blocks(client, room["id"], thread["id"]))
+    r = _say_on_card(client, room["id"], thread["id"], "这条先别做了")
+    assert r.status_code == 200, r.text
     _wait_work_idle()
 
     # 说的话落在人说话的地方。
-    assert [f for f in frames if f["type"] == "user_block"], frames
-    said = [b["content"] for b in _blocks(client, thread["id"])]
+    said = [b["content"] for b in _card_blocks(client, room["id"], thread["id"])]
     assert len(said) > before
     assert "这条先别做了" in said
 
@@ -84,8 +98,12 @@ def test_writing_on_a_thread_wakes_the_room_to_relay_it(client, stub_hooks):
     assert "子活" in prompt
 
 
-def test_a_thread_says_done_rather_than_spinning(client, stub_hooks):
-    """界面上不能一直转圈：这一轮不在这条活上跑，就得当场说完了。"""
+def test_a_card_has_no_chat_socket_of_its_own(client, stub_hooks):
+    """对着活的 id 连聊天通道 —— 那不是一个地点，连不上。
+
+    这不是一条被特意加上的拒绝：聊天通道认的是房间，活的 id 名下没有房间，所以
+    它自然连不上。人要在卡下面说话，走的是那张卡的地址。
+    """
     p = _project(client)
     room = _room(client, p["id"])
     thread = _thread(client, room["id"])
@@ -94,12 +112,8 @@ def test_a_thread_says_done_rather_than_spinning(client, stub_hooks):
     with client.websocket_connect(chat_ws_url(thread["id"], "user-1")) as ws:
         ws.send_json({"type": "message", "content": "进度怎么样", "summon": True})
         frames = _drain_until_done(ws)
-    _wait_work_idle()
 
-    assert frames[-1]["type"] == "done"
-    assert not [f for f in frames if f["type"] == "assistant_block"], (
-        "这条活自己答了——它没有会话，这答案只能来自一个刚被起出来的容器"
-    )
+    assert frames[-1]["type"] == "error", frames
 
 
 def test_a_room_still_answers_on_its_own_line(client, stub_hooks):

@@ -53,6 +53,13 @@ def _blocks(client, topic_id: str) -> list[dict]:
     return client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
 
 
+def _card_blocks(client, room_id: str, task_id: str) -> list[dict]:
+    """一张卡自己的时间线 —— 卡不是地点，读它要经过它所在的房间。"""
+    r = client.get(f"/topics/{room_id}/tasks/{task_id}")
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["blocks"]
+
+
 # --- 父 → 直接子: 落地 + 真的叫醒 -------------------------------------------
 
 
@@ -87,7 +94,7 @@ def test_a_room_leaves_a_note_on_its_thread_and_wakes_nobody(client, stub_hooks)
     assert data["target_title"] == "数据清洗"
     wait_work_idle()
 
-    contents = [b["content"] for b in _blocks(client, sub["id"])]
+    contents = [b["content"] for b in _card_blocks(client, parent["id"], sub["id"])]
     assert any("口径改了：只算活跃用户" in c for c in contents)
     assert screens == [], f"留话起了屏幕——这是在复活容器：{screens}"
 
@@ -103,7 +110,7 @@ def test_relayed_block_is_authored_by_the_receiving_room(client):
     wait_work_idle()
 
     relayed = [
-        b for b in _blocks(client, sub["id"]) if "顺带看下 B 方案" in b["content"]
+        b for b in _card_blocks(client, parent["id"], sub["id"]) if "顺带看下 B 方案" in b["content"]
     ]
     assert len(relayed) == 1
     block = relayed[0]
@@ -134,19 +141,20 @@ def test_target_can_be_a_title_or_a_ref_token(client):
 # --- 方向限制: 只有父子这条边 -----------------------------------------------
 
 
-def test_siblings_cannot_tell_each_other(client):
-    """同一个房间里的两条支线之间发不通 —— a general place-to-place mailbox is
-    the end of place-level isolation."""
+def test_a_card_cannot_be_the_sender(client):
+    """留话是**房间**对它派出的活说的。一张卡说不出话——它不是地点，那个 id 上
+    没有房间，所以连不到这条路的入口。"""
     p = _project(client)
     parent = _topic(client, p["id"])
     a = _split(client, parent["id"], "支线A")
     b = _split(client, parent["id"], "支线B")
 
-    r = _tell(client, a["id"], b["id"], "偷偷说句话")
-    assert r.status_code == 422
-    assert "一条活" in r.json()["message"]
+    assert _tell(client, a["id"], b["id"], "偷偷说句话").status_code == 404
     # Nothing landed in B either — a refused relay must not leave a message.
-    assert not any("偷偷说句话" in blk["content"] for blk in _blocks(client, b["id"]))
+    assert not any(
+        "偷偷说句话" in blk["content"]
+        for blk in _card_blocks(client, parent["id"], b["id"])
+    )
 
 
 def test_unrelated_topics_cannot_tell_each_other(client):
@@ -160,24 +168,18 @@ def test_unrelated_topics_cannot_tell_each_other(client):
     assert not any("喂" in blk["content"] for blk in _blocks(client, two["id"]))
 
 
-def test_splitting_from_a_thread_makes_a_sibling_not_a_child(client):
-    """Work does not nest, so there is no third level to be two levels down.
+def test_a_card_cannot_split_out_more_work(client):
+    """派活是房间的动作。一张卡派不出活，因为派活要一个地点的地址，而卡没有。
 
-    Splitting from inside a piece of work puts the new work in the SAME room —
-    it is that room's to reach, and the thread it was split from cannot reach it
-    any more than any other sibling can.
+    这不是一条新规矩，是同一条规矩的另一面：一批活共用一棵树，谁往里加活是房间
+    说了算。
     """
     p = _project(client)
     room = _topic(client, p["id"])
     first = _split(client, room["id"], "第一件活")
-    second = _split(client, first["id"], "干着干着发现的第二件活")
 
-    assert second["room_id"] == room["id"]
-    # The room reaches it directly...
-    assert _tell(client, room["id"], second["id"], "正常说话").status_code == 200
-    wait_work_idle()
-    # ...and the thread it came out of does not.
-    assert _tell(client, first["id"], second["id"], "偷偷说句话").status_code == 422
+    r = client.post(f"/topics/{first['id']}/split", json={"title": "再来一件"})
+    assert r.status_code == 404
 
 
 def test_missing_topic_is_404_and_a_stranger_topic_says_why(client):
@@ -188,8 +190,15 @@ def test_missing_topic_is_404_and_a_stranger_topic_says_why(client):
     other = _topic(client, p["id"], "别人的话题")
     r = _tell(client, parent["id"], other["id"], "x")
     assert r.status_code == 422
-    # 说清为什么，否则调用方会以为自己打错了 id 并原样重试。
-    assert "不归你" in r.json()["message"]
+    # 说清为什么，否则调用方会以为自己打错了 id 并原样重试。房间的 id 尤其要说，
+    # 因为它是一个**看起来最像**能收留话的东西。
+    assert "房间" in r.json()["message"]
+
+    stranger_room = _topic(client, p["id"], "别人的房间")
+    theirs = _split(client, stranger_room["id"], "别人的活")
+    refused = _tell(client, parent["id"], theirs["id"], "x")
+    assert refused.status_code == 422
+    assert "不归你" in refused.json()["message"]
 
 
 def test_unknown_title_lists_the_reachable_topics(client):
@@ -268,7 +277,7 @@ def test_a_closed_thread_can_still_be_told_something(client):
 
     r = _tell(client, parent["id"], sub["id"], "还有一件事")
     assert r.status_code == 200
-    assert any("还有一件事" in b["content"] for b in _blocks(client, sub["id"]))
+    assert any("还有一件事" in b["content"] for b in _card_blocks(client, parent["id"], sub["id"]))
 
 
 def test_a_thread_in_an_archived_room_still_takes_the_note(client):
@@ -281,4 +290,4 @@ def test_a_thread_in_an_archived_room_still_takes_the_note(client):
 
     r = _tell(client, parent["id"], sub["id"], "还有一件事")
     assert r.status_code == 200
-    assert any("还有一件事" in b["content"] for b in _blocks(client, sub["id"]))
+    assert any("还有一件事" in b["content"] for b in _card_blocks(client, parent["id"], sub["id"]))
