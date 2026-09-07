@@ -758,24 +758,28 @@ async def set_compute_profile(
     return ok({"current": name})
 
 
-# --- Subscription model: which Claude model this project's subscription turns
-# use (parallel to the compute pool). Only relevant when the subscription path is
-# deployed; otherwise the listing is informational. -----------------------------
+# --- Project default model, scoped to the project's resolved supply. ---
 
 
 @router.get("/{project_id}/model-profiles")
 async def list_model_profiles(project_id: uuid.UUID, db: DbSession) -> dict:
-    """Claude models this project may select for subscription turns, plus the
-    current selection. Default = Sonnet 5 (balanced / saves the subscription's
-    quota)."""
+    """Only offer Claude model choices when this project uses the subscription."""
+    from app.domain.agent.supply import SUBSCRIPTION, resolve_pool
+
     project = await ProjectRepository(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
+    supply = resolve_pool(
+        project.settings, subscription_enabled=settings.subscription_enabled
+    )
+    if supply != SUBSCRIPTION:
+        return ok({"supply": supply, "current": None, "profiles": []})
     current = (project.settings or {}).get(
         "subscription_model"
     ) or subscription_model_default()
     return ok(
         {
+            "supply": supply,
             "current": current,
             "profiles": [asdict(v) for v in subscription_model_listings()],
         }
@@ -785,9 +789,18 @@ async def list_model_profiles(project_id: uuid.UUID, db: DbSession) -> dict:
 @router.put("/{project_id}/model-profile")
 async def set_model_profile(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
     """Set the project's subscription model. Only a known model id is accepted."""
+    from app.domain.agent.supply import SUBSCRIPTION, resolve_pool
+
     project = await ProjectRepository(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
+    if (
+        resolve_pool(
+            project.settings, subscription_enabled=settings.subscription_enabled
+        )
+        != SUBSCRIPTION
+    ):
+        raise ValidationError("当前项目使用平台模型池，无法选择 Claude 订阅模型")
     name = (body.get("profile") or "").strip() or subscription_model_default()
     if name not in subscription_model_ids():
         raise ValidationError(f"模型 {name!r} 不可选")

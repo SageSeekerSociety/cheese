@@ -735,6 +735,12 @@ export interface ComputeProfiles {
   profiles: PoolListing[]
 }
 
+export interface ModelProfiles {
+  supply: 'subscription' | 'gateway'
+  current: string | null
+  profiles: (Omit<PoolListing, 'kind'> & { kind: 'model' })[]
+}
+
 export type ProjectMachineStatus =
   | 'provisioning'
   | 'starting'

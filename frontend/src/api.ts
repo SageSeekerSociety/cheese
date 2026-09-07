@@ -21,6 +21,7 @@ import type {
   MarketPools,
   MemberSummary,
   MilestoneFull,
+  ModelProfiles,
   OAuthConnectionInfo,
   PrChecks,
   PreviewInfo,
@@ -691,10 +692,9 @@ export function deleteProjectMachine(
   })
 }
 
-// 订阅模型: the project's current Claude model + the ones it may select. Same
-// shape as compute pools; a project picks Sonnet 5 (default) or Opus 5.
-export function getModelProfiles(projectId: string): Promise<ComputeProfiles> {
-  return request<ComputeProfiles>(`/projects/${encodeURIComponent(projectId)}/model-profiles`)
+// Model choices follow the project's resolved supply.
+export function getModelProfiles(projectId: string): Promise<ModelProfiles> {
+  return request<ModelProfiles>(`/projects/${encodeURIComponent(projectId)}/model-profiles`)
 }
 export function setModelProfile(projectId: string, profile: string): Promise<{ current: string }> {
   return request(`/projects/${encodeURIComponent(projectId)}/model-profile`, {

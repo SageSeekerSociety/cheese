@@ -3,9 +3,8 @@ import type {
   AgentType,
   BranchProtection,
   BranchProtectionPatch,
-  ComputeProfiles,
-  ExecProfiles,
   GithubConnection,
+  ModelProfiles,
   OAuthConnectionInfo,
   ProjectMemberRow,
   SandboxImageInfo,
@@ -20,7 +19,6 @@ import {
   createAgentType,
   deleteOAuthConnection,
   getBranchProtection,
-  getExecutionProfiles,
   getGithubAccountAuthorizeUrl,
   getGithubConnection,
   getModelProfiles,
@@ -32,7 +30,6 @@ import {
   listProjectAgents,
   listProjectMembers,
   setBranchProtection,
-  setExecutionProfile,
   setModelProfile,
   setProjectAgentType,
   setSandboxImage,
@@ -56,13 +53,11 @@ const router = useRouter()
 const route = useRoute()
 
 const projectName = ref('')
-const ai = ref<ExecProfiles | null>(null)
-const model = ref<ComputeProfiles | null>(null)
+const model = ref<ModelProfiles | null>(null)
 const savingModel = ref<string | null>(null)
 const loading = ref(false)
 const error = ref<string | null>(null)
 const env = ref<SandboxImageInfo | null>(null)
-const savingAi = ref<string | null>(null)
 // '' is the sentinel for the default-image row (image null); a real image key otherwise.
 const savingEnv = ref<string | null>(null)
 // 上游仓库: the linked repo URL as edited, plus save/sync state and last result.
@@ -304,21 +299,12 @@ async function submitNewRole() {
   }
 }
 
-const TIER_LABEL: Record<string, string> = {
-  default: '默认',
-  included: '包含',
-  testing: '内测',
-  byo: '自带',
-  premium: '增值',
-}
-
 async function load() {
   loading.value = true
   error.value = null
   try {
-    const [proj, execP, modelP, envP, upP, typesP, agentsP, ghP] = await Promise.all([
+    const [proj, modelP, envP, upP, typesP, agentsP, ghP] = await Promise.all([
       getProject(props.projectId),
-      getExecutionProfiles(props.projectId),
       getModelProfiles(props.projectId),
       getSandboxImage(props.projectId),
       getUpstream(props.projectId),
@@ -327,7 +313,6 @@ async function load() {
       getGithubConnection(props.projectId),
     ])
     projectName.value = proj.name
-    ai.value = execP
     model.value = modelP
     env.value = envP
     upstreamSaved.value = upP.url
@@ -339,19 +324,6 @@ async function load() {
     error.value = e instanceof Error ? e.message : '加载设置失败'
   } finally {
     loading.value = false
-  }
-}
-
-async function pickAi(name: string) {
-  if (!ai.value || ai.value.current === name) return
-  savingAi.value = name
-  try {
-    const r = await setExecutionProfile(props.projectId, name)
-    ai.value = { ...ai.value, current: r.current }
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : '切换 AI 池失败'
-  } finally {
-    savingAi.value = null
   }
 }
 
@@ -562,46 +534,16 @@ watch(
           </div>
         </section>
 
-        <!-- AI 模型池 -->
-        <section class="page-section">
+        <!-- Project default model -->
+        <section v-if="model" class="page-section">
           <div class="page-section-head">
             <v-icon size="14" class="c-faint">mdi-brain</v-icon>
-            <span class="page-section-title">AI 模型池</span>
+            <span class="page-section-title">项目默认模型</span>
           </div>
           <div class="page-section-body">
-            <button
-              v-for="p in ai?.profiles ?? []"
-              :key="p.name"
-              type="button"
-              class="pool-row"
-              :class="{ 'pool-row--active': ai?.current === p.name }"
-              :disabled="savingAi !== null"
-              @click="pickAi(p.name)"
-            >
-              <span class="pool-radio" :class="{ 'pool-radio--on': ai?.current === p.name }" />
-              <div class="pool-main">
-                <div class="pool-title">
-                  {{ p.label }}
-                  <span class="pool-tier">{{ TIER_LABEL[p.tier] ?? p.tier }}</span>
-                </div>
-                <div class="pool-sub c-muted">模型 {{ p.model }}</div>
-              </div>
-              <v-progress-circular v-if="savingAi === p.name" indeterminate size="16" width="2" color="primary" />
-              <span v-else-if="ai?.current === p.name" class="pool-current">使用中</span>
-            </button>
-          </div>
-        </section>
-
-        <!-- 模型 -->
-        <section v-if="(model?.profiles?.length ?? 0) > 0" class="page-section">
-          <div class="page-section-head">
-            <v-icon size="14" class="c-faint">mdi-brain</v-icon>
-            <span class="page-section-title">模型</span>
-          </div>
-          <div class="page-section-body">
-            <p class="t-body c-muted mb-2" style="font-size: 0.82rem">
-              芝士在这个项目里用哪个 Claude 模型。默认 <strong>Sonnet 5</strong>（均衡、最省额度）；复杂项目可切换到
-              <strong>Opus 5</strong>（更强，但消耗额度更快）。
+            <p v-if="model.supply === 'gateway'" class="t-body c-muted mb-2">当前使用平台模型池，模型由平台统一配置</p>
+            <p v-else class="t-body c-muted mb-2">
+              当前使用 Claude 订阅。以下选择作为项目默认模型；专家角色单独指定模型时，优先使用角色的模型
             </p>
             <button
               v-for="p in model?.profiles ?? []"
@@ -621,7 +563,7 @@ watch(
                 <div class="pool-sub c-muted">{{ p.description }}</div>
               </div>
               <v-progress-circular v-if="savingModel === p.id" indeterminate size="16" width="2" color="primary" />
-              <span v-else-if="model?.current === p.id" class="pool-current">使用中</span>
+              <span v-else-if="model?.current === p.id" class="pool-current">已设置为默认</span>
             </button>
           </div>
         </section>

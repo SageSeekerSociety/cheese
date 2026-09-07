@@ -5,6 +5,12 @@ explicit opt-in. The default must carry NO --model flag — that is the proven p
 (the subscription's own default), and pinning a name it doesn't serve fails a turn.
 """
 
+import uuid
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import pytest
+
 from app.domain.agent.market import (
     subscription_model_alias,
     subscription_model_default,
@@ -44,3 +50,45 @@ def test_listing_shows_both_with_sonnet_default():
     assert listings["opus-4.8"].default is False
     assert all(p.available for p in listings.values())
     assert listings["sonnet"].kind == "model"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("enabled", "supply", "expected"),
+    [
+        (True, None, "subscription"),
+        (False, None, "gateway"),
+        (True, "gateway", "gateway"),
+        (False, "subscription", "subscription"),
+    ],
+)
+async def test_project_model_choices_follow_supply(
+    monkeypatch, enabled, supply, expected
+):
+    from app.api.routes import projects
+    from app.core.errors import ValidationError
+
+    project = SimpleNamespace(settings={"subscription_model": "opus", "supply": supply})
+    monkeypatch.setattr(projects.settings, "subscription_enabled", enabled)
+    monkeypatch.setattr(
+        projects.ProjectRepository, "get", AsyncMock(return_value=project)
+    )
+    db = AsyncMock()
+    project_id = uuid.uuid4()
+
+    listing = (await projects.list_model_profiles(project_id, db))["data"]
+    assert listing["supply"] == expected
+    if expected == "gateway":
+        assert listing["current"] is None
+        assert listing["profiles"] == []
+        with pytest.raises(ValidationError):
+            await projects.set_model_profile(project_id, {"profile": "fable"}, db)
+        assert project.settings["subscription_model"] == "opus"
+        db.flush.assert_not_awaited()
+    else:
+        assert listing["current"] == "opus"
+        assert "opus" in {p["id"] for p in listing["profiles"]}
+        await projects.set_model_profile(project_id, {"profile": "fable"}, db)
+        updated = (await projects.list_model_profiles(project_id, db))["data"]
+        assert updated["current"] == "fable"
+        db.flush.assert_awaited_once()
