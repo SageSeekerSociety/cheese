@@ -299,14 +299,6 @@ _MISSING_SUBJECT = (
 #: here is the one overlap a machine can judge on its own (#314).
 _ALEMBIC_VERSIONS_DIR = "alembic/versions/"
 
-#: 一条活只能被交付一次 (#189)。Declaring work an accepted card already claimed
-#: would put the same task on two changes in permanent history, and an audit
-#: reading `git log` would find one piece of work apparently written twice.
-_ALREADY_DELIVERED = (
-    "「{title}」已经由另一张采纳过的卡交付了（{subject}）。"
-    "一条活只署名在写出它的那次交付上——这次要署名的是本批新写的活。"
-)
-
 #: 声明了一条本房间没有的活。Almost always a copy-pasted id from another room's
 #: 简报; naming the room is what makes that visible instead of "not found".
 _NOT_THIS_ROOMS_WORK = (
@@ -576,15 +568,29 @@ class AcceptService:
         and the commits cannot be asked either, since inside the sandbox they
         are all authored by the requester and co-authored by the model.
 
-        Two things ARE checkable, and both are checked rather than trusted,
+        Exactly ONE thing is checkable, and it is checked rather than trusted,
         because a wrong `Cheese-Task:` is permanent and reads exactly like a
-        right one:
+        right one: **the work belongs to THIS room**. A pasted id from another
+        room's brief would otherwise credit that room's worker on this change.
 
-        - the work belongs to THIS room. A pasted id from another room's brief
-          would otherwise credit that room's worker on this change;
-        - no accepted card claimed it already. One piece of work is delivered
-          once; the same task on two changes would have an audit reading
-          `git log` find it apparently written twice.
+        **为什么没有防重复。** 这里曾经还拦一条：「这条活被某张已采纳的卡声明过
+        了」。它跟本仓写明的语义直接冲突 —— `TaskStatus` 的 docstring 说 a task
+        can be delivered and still open (someone keeps pushing to the same
+        branch)。连续交付是既有语义：一条活参与上一批、之后继续写代码、真实地写
+        进下一批，是长命房间的常态，那条校验会把这条**真实**的声明拒掉。同一条
+        活出现在两次交付的历史里不是错误，它确实写了两批的代码。
+
+        剩下唯一算得上「同一批被署了两次」的形状，也不需要一条校验来防：
+        - 一次请求里报两遍 —— 下面的 `dict.fromkeys` 去重，它跟报一遍说的是同
+          一件事；
+        - 一棵树上两张卡各报一次 —— 一张卡采纳后树就 merged，`ensure_open` 给下
+          一批开的是新树，所以「同一棵树的第二张卡」只在前一张 **rejected /
+          voided** 之后才存在（`_CARD_BLOCKS_NEW_CARD` 只拦非终态）。那两种前一
+          张卡都没有交付过任何东西，重递并重报正是补救的路，拦它才是错的。
+
+        「重复署名却没有新贡献」是另一回事，而平台判不了它：能被机器判定的只有
+        分支上有没有新提交，那道闸已经在 `_NOTHING_TO_DELIVER`。再发明一条近似
+        规则，只会重新开始拒真放假。
 
         What is deliberately NOT checked is whether the work "looks finished" —
         a closed thread can have delivered nothing and an open one can have
@@ -592,30 +598,18 @@ class AcceptService:
         declarations while still admitting false ones.
 
         Empty in, empty out, and no inference: an undeclared delivery lands with
-        no `Cheese-Task:` line at all.
+        no `Cheese-Task:` line at all. One card naming the same work twice is
+        deduped rather than refused — it says nothing different from naming it
+        once.
         """
         wanted = list(dict.fromkeys(task_ids))
         if not wanted:
             return []
         in_room = await TaskService(self._session).list_in_room(topic.id)
-        mine = {t.id: t for t in in_room}
+        mine = {t.id for t in in_room}
         for task_id in wanted:
             if task_id not in mine:
                 raise ValidationError(_NOT_THIS_ROOMS_WORK.format(task_id=task_id))
-        claimed: dict[str, AcceptCard] = {}
-        for card in await self._repo.list_everywhere_in_room(topic.id):
-            if card.status is AcceptStatus.accepted:
-                for one in card.delivered_task_ids or []:
-                    claimed.setdefault(one, card)
-        for task_id in wanted:
-            prior = claimed.get(str(task_id))
-            if prior is not None:
-                raise ValidationError(
-                    _ALREADY_DELIVERED.format(
-                        title=mine[task_id].title,
-                        subject=prior.change_subject or prior.id,
-                    )
-                )
         return wanted
 
     async def _warn_about_a_second_pending_migration(self, topic: Topic) -> None:

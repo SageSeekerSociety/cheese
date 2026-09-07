@@ -321,9 +321,9 @@ def test_unreadable_work_costs_the_trailers_and_not_the_merge(client, monkeypatc
 
 # --- What the declaration is checked against ------------------------------
 #
-# Only two things about a claim are checkable at all, and both are checked
-# rather than trusted: a wrong `Cheese-Task:` is permanent, and it reads exactly
-# like a right one.
+# Exactly one thing about a claim is checkable at all, and it is checked rather
+# than trusted: a wrong `Cheese-Task:` is permanent, and it reads exactly like a
+# right one.
 
 
 def test_work_from_another_room_cannot_be_signed_onto_this_change(client):
@@ -340,16 +340,65 @@ def test_work_from_another_room_cannot_be_signed_onto_this_change(client):
     assert theirs in r.json()["message"]
 
 
-def test_work_an_accepted_card_already_delivered_cannot_be_claimed_twice(client):
-    """One piece of work is delivered once. Claiming it again would put the same
-    task on two commits, and whoever reads the history later finds one piece of
-    work apparently written twice."""
+def test_work_that_keeps_going_is_named_on_every_batch_it_wrote(client):
+    """交付过 ≠ 做完了：一条活可以交付过而仍然开着（`TaskStatus`），继续往同一条
+    分支推，真实地写进下一批。它在两次交付的历史里各出现一次是**真实情况**，
+    拒掉第二次就是拒掉一条真的贡献声明。"""
     pid = _project(client)
     room = _room(client, pid)
-    mine = _dispatch(client, room, "只交付一次的活")
-    _batch(client, pid, room, "feat: deliver it once", [mine])
+    kept_going = _dispatch(client, room, "两批都写了的活")
+    _bind(client, room, kept_going, "aaaa0000aaaa0000a")
 
-    machine_commits(uuid.UUID(pid), uuid.UUID(room), {"b.txt": "two\n"})
-    r = _file_card(client, room, "feat: deliver it twice", [mine])
-    assert r.status_code == 422, r.text
-    assert "只交付一次的活" in r.json()["message"]
+    first = _batch(client, pid, room, "feat: the first half", [kept_going])
+    _next_batch(client, pid, room)
+    second = _batch(client, pid, room, "feat: the second half", [kept_going])
+
+    line = f"Cheese-Task: {kept_going} aaaa0000aaaa0000a 两批都写了的活"
+    assert line in first
+    assert line in second
+
+
+def test_the_only_way_to_add_a_claim_to_a_filed_card_is_void_and_refile(client):
+    """递卡时忘了 `--task`，声明就补不上这张卡 —— `create_card` 拒绝在同一棵树上
+    再递一张，而 `pending` 卡上没有任何改声明的入口。唯一走得通的补救是**人**
+    把卡作废，房间再带着声明重递（芝士自己点不了作废：`_forbid_ai`）。
+
+    CLI 的提示照着这条路写，所以这条路必须真的走得通。"""
+    pid = _project(client)
+    room = _room(client, pid)
+    mine = _dispatch(client, room, "递卡时忘了报的活")
+    _bind(client, room, mine, "cccc2222cccc2222c")
+    machine_commits(uuid.UUID(pid), uuid.UUID(room), {"c.txt": "three\n"})
+
+    forgot = _deliver(client, room, "feat: land without naming who wrote it", [])
+    # 补声明的两条想当然的路都是死路：直接重递被互斥挡住。
+    assert (
+        _file_card(client, room, "feat: name them after all", [mine]).status_code == 422
+    )
+
+    r = client.post(
+        f"/accept-cards/{forgot['id']}/void",
+        json={"note": "忘了报活，重递"},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200, r.text
+
+    card = _deliver(client, room, "feat: name them after all", [mine])
+    _accept(client, card["id"])
+    assert f"Cheese-Task: {mine} cccc2222cccc2222c 递卡时忘了报的活" in _landed_body(
+        pid
+    )
+
+
+def test_naming_the_same_work_twice_on_one_card_writes_one_trailer(client):
+    """同一张卡里把一条活报两遍不是两份贡献，也不值得拒 —— 它跟报一遍说的是同
+    一件事，去重即可。"""
+    pid = _project(client)
+    room = _room(client, pid)
+    once = _dispatch(client, room, "被报了两遍的活")
+    _bind(client, room, once, "bbbb1111bbbb1111b")
+
+    body = _batch(client, pid, room, "feat: name it twice", [once, once])
+
+    line = f"Cheese-Task: {once} bbbb1111bbbb1111b 被报了两遍的活"
+    assert body.count(line) == 1
