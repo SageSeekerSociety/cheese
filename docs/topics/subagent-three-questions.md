@@ -107,7 +107,11 @@
 - 文档栏顶部状态区（前端）：这台机器没有 pnpm/node_modules，留给能跑前端检查的环境单独做。
 - SubagentStop 触发条件（实测）：任何分身（含 Claude Code 内部工具 agent）一轮跑完就发；同一分身可多次；常迟到于会话 Stop。规则：取绑定 id 的最后一条。
 
-### T6 范围（进行中）：任务彻底不是地点
+### T6 任务彻底不是地点（✅ 完成，系列收官）
+
+T6 落地（HEAD a9766162b，82 文件 +1682/-2634）：任务 id 当话题地址一律 404（place 只剩房间，place_or_404 全部 38 处调用面核过）；tasks.agent_instance_id 删除；前端按卡渲染（PanelCard，状态词只用后端 presentation），threadAsPlace 适配层整个删除；死标签/过期文案 grep 归零；存量旧卡照常渲染有测试。途中抓出两个真 bug（归档把卡 id 当话题 id 写块致 500 + 归档漏收卡上的孤儿 pr_open 卡；解冲突派活返回不可用地址），并保住了 claim 中途追加（新 /tasks/{task}/claim）。前后端全套绿（后端 unit 3585/integration 全量 1788 唯一红是既有环境项；前端 vue-tsc 0/vitest 780/eslint 0）。
+
+**系列终态（T1–T6 + 合 main 终版验证）**：PR #714，任务=房间时间线上的一张卡，由房间芝士的原生后台分身来做；每任务的身份/会话/屏幕/克隆/驻留槽/结论卡/await/tell 自制通道全部退役。终版树（含 main 最新 #723-#725）验证：unit 3586 全过、相关 integration 555 全过、ruff/pyright 零告警。
 
 PlaceResolver 的 tasks 半边、/topics/{任务id} 地址空间、tasks.agent_instance_id 身份字段拆除；前端任务视图改为按卡渲染（这台机器 corepack pnpm 可用，前端检查能跑）；顺带清 T4/T5 登记的死标签与过期文案（create_subtopic/return_conclusion 工具标签、accept-request 帮助文本、cx_types 的 residency?/queued_at?）；文档栏顶部状态区一并做。存量 268 条旧任务按「归成历史卡」处理，不做原地转换迁移。
 
