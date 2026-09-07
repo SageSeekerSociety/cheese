@@ -105,11 +105,18 @@ const platformLane = computed(() => {
   const card = pendingCard.value
   return !!card && card.merge_state.who === 'human' && card.pr_number === null
 })
-// GitHub lane 非 clean 时按钮灰掉，title 说明为什么（后端反正会 422 拒绝）。
+// 按钮亮不亮，跟后端的采纳闸门是同一条线（domain/review/merge_state.py +
+// services.py）：`clean` 与 `unstable` 后端会合，按钮就亮；`blocked` /
+// `behind` / `dirty` / `unknown` 后端会 422 拒，按钮就灰，title 说明为什么。
+// unstable 是「有检查没过，但没有一个在必跑名单上」——它可以合，而红了哪个检查
+// 照样念在按钮上方的依据行里（mergeReasons），亮着不等于不说。
+// 灰之前按住的那半条路（人工放行）也用这个判断，两个入口不许对「现在能不能合」
+// 有两种看法。
+const MERGEABLE_STATES = ['clean', 'unstable']
 const acceptBlockedTitle = computed<string | null>(() => {
   const card = pendingCard.value
   if (!card || platformLane.value) return null
-  if (card.merge_state.state === 'clean') return null
+  if (MERGEABLE_STATES.includes(card.merge_state.state)) return null
   const why = mergeReasons.value.map((r) => r.detail).filter(Boolean)
   return ['现在采纳不会合并', ...why].join('：')
 })
@@ -242,13 +249,16 @@ async function onAcceptCard() {
   if (!card) return
   acceptBusy.value = true
   try {
-    const updated = await acceptCard(card.id, AUTHOR)
+    const updated = await acceptCard(card.id, AUTHOR, card.merge_state.head_sha)
     if (updated.status === 'conflict') {
       store.error = '采纳时出现合并冲突，本次未合并。芝士正在解决，完成后可重试采纳。'
     }
     await Promise.all([loadAcceptCard(), store.refreshTopicRow(props.topicId)])
   } catch (e) {
     store.reportError(e, '采纳失败')
+    // 被拒的原因可能正是「你看到的版本已过时」——那就把屏幕换成新的那一版，
+    // 否则人只能对着同一张旧卡再点一次，再被拒一次。
+    await loadAcceptCard(true)
   } finally {
     acceptBusy.value = false
   }
@@ -273,12 +283,13 @@ async function onForceMerge() {
   if (!card) return
   acceptBusy.value = true
   try {
-    await mergeCardAnyway(card.id, forceMergeReason.value)
+    await mergeCardAnyway(card.id, forceMergeReason.value, card.merge_state.head_sha)
     showForceMergeInput.value = false
     forceMergeReason.value = ''
     await Promise.all([loadAcceptCard(), store.refreshTopicRow(props.topicId)])
   } catch (e) {
     store.reportError(e, '人工放行失败')
+    await loadAcceptCard(true) // 见 onAcceptCard：过时的那一版要换掉
   } finally {
     acceptBusy.value = false
   }
@@ -290,10 +301,11 @@ async function onToggleAutoMerge(enabled: unknown) {
   if (!card) return
   acceptBusy.value = true
   try {
-    await setAutoMerge(card.id, !!enabled)
+    await setAutoMerge(card.id, !!enabled, card.merge_state.head_sha)
     await loadAcceptCard(true)
   } catch (e) {
     store.reportError(e, '设置自动合并失败')
+    await loadAcceptCard(true) // 见 onAcceptCard：过时的那一版要换掉
   } finally {
     acceptBusy.value = false
   }
@@ -571,8 +583,9 @@ defineExpose({ reload: loadAcceptCard })
           >
             去验收
           </v-btn>
-          <!-- 采纳 = 当场合并 (#718)：GitHub lane 只在 clean 亮（后端反正会拒），
-               为什么灰写在 title 里；平台 lane 的采纳纯是人的判断，从不按状态灰。 -->
+          <!-- 采纳 = 当场合并 (#718)：GitHub lane 亮在后端会合的那两档（clean /
+               unstable），为什么灰写在 title 里；平台 lane 的采纳纯是人的判断，
+               从不按状态灰。 -->
           <span :title="acceptBlockedTitle ?? undefined">
             <v-btn
               color="success"
