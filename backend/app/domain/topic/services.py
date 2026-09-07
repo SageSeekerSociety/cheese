@@ -1170,24 +1170,3 @@ class TopicService:
             kind=BlockKind.message,
             refs=[str(sender.id)],
         )
-
-    async def close_thread(self, *, task_id: uuid.UUID, conclusion: str | None) -> Task:
-        """收卡 —— the room says one of its pieces of work is over.
-
-        Nothing else can say it. The worker's own stops mean "handed something
-        back", never "done": it stops when it parks a long command and stops
-        again when that command finishes, and every one of those already wrote
-        itself onto the card (`TaskService.record_conclusion`). The room is the
-        only party that has read what came back AND folded the changes into its
-        branch, so closing is its call and it is made explicitly.
-
-        `conclusion` overrides the worker's last word when the room knows better
-        — the last thing a worker said is sometimes a fragment. None keeps it.
-        """
-        place = await self.place_or_404(task_id)
-        task = place.task
-        if task is None:
-            raise ValidationError("这是房间，不是一件活——房间不用收卡")
-        return await TaskService(self._session).close_thread(
-            task, conclusion=conclusion
-        )

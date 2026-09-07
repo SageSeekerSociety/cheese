@@ -621,12 +621,12 @@ async def conclude_task(
     `conclusion` is optional: given, it overwrites the worker's last word (which
     is sometimes the fragment above); omitted, that last word stands.
     """
-    service = TopicService(db)
-    place = await service.place_or_404(topic_id)
+    place = await TopicService(db).place_or_404(topic_id)
     if place.is_thread:
         raise ValidationError("这是房间收它的活，一条活自己收不了")
     await _actor_in_place(resolver, place)
-    task = await TaskService(db).get(task_id)
+    tasks = TaskService(db)
+    task = await tasks.get(task_id)
     if task is None or task.room_id != place.room_id:
         raise NotFoundError("这个房间里没有这条活")
     # Friendly "@名字/@话题名" → structured tokens, same as every other write
@@ -639,7 +639,7 @@ async def conclude_task(
         if text
         else None
     )
-    task = await service.close_thread(task_id=task_id, conclusion=conclusion)
+    task = await tasks.close_thread(task, conclusion=conclusion)
     out = TaskOut.model_validate(task).model_dump(mode="json")
     await db.commit()
     return ok(out)
