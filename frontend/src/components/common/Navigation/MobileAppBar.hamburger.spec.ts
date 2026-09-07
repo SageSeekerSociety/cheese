@@ -56,7 +56,7 @@ describe('手机顶栏的汉堡', () => {
     const { container, pinia } = await mountAt('/spaces/s1')
     const button = hamburger(container)
     expect(button).toBeTruthy()
-    expect(container.textContent).toContain('返回上一级')
+    expect(container.querySelector('a[aria-label="返回上一级"]')).toBeTruthy()
 
     await fireEvent.click(button!)
     expect(useNavigationStore(pinia).isSecondaryDrawerOpen).toBe(true)

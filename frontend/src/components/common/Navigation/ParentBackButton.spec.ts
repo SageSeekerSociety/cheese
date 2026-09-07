@@ -2,7 +2,7 @@ import type { RouteRecordRaw } from 'vue-router'
 
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
-import { VBtn } from 'vuetify/components'
+import { VBtn, VIcon } from 'vuetify/components'
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -33,7 +33,7 @@ async function open(path: string) {
   await router.push(path)
   await router.isReady()
   const view = render(ParentBackButton, {
-    global: { plugins: [router, createVuetify({ components: { VBtn } })] },
+    global: { plugins: [router, createVuetify({ components: { VBtn, VIcon } })] },
   })
   return { router, ...view }
 }
@@ -59,6 +59,8 @@ describe('返回上一级', () => {
     const { router, getByRole } = await open(path)
     const link = getByRole('link', { name: '返回上一级' })
     expect(link.getAttribute('href')).toBe(parent)
+    expect(link.textContent).not.toContain('返回上一级')
+    expect(link.getAttribute('title')).toBe('返回上一级')
     await fireEvent.click(link)
     await waitFor(() => expect(router.currentRoute.value.path).toBe(parent))
   })

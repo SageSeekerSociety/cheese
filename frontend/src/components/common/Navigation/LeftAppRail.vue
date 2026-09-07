@@ -134,7 +134,9 @@
         </v-card-text>
       </v-card>
     </v-menu>
-    <v-btn v-else to="/account/signin" variant="tonal" color="primary" prepend-icon="mdi-account">登录</v-btn>
+    <v-btn v-else to="/account/signin" variant="text" color="on-surface-variant" width="48" height="32" min-width="0">
+      登录
+    </v-btn>
   </v-navigation-drawer>
 </template>
 

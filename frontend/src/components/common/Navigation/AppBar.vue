@@ -18,8 +18,17 @@
         transition="scale-transition"
       >
         <template #activator="{ props }">
-          <v-btn icon position="relative" v-bind="props" color="text" size="x-small" variant="plain">
-            <v-icon size="20">mdi-bell</v-icon>
+          <v-btn
+            icon
+            position="relative"
+            v-bind="props"
+            color="on-surface-variant"
+            :size="28"
+            variant="text"
+            aria-label="通知"
+            title="通知"
+          >
+            <v-icon size="18">mdi-bell</v-icon>
             <v-badge
               v-if="unreadNotificationsCount > 0"
               color="error"
@@ -32,8 +41,8 @@
         </template>
         <notification-panel @update-count="updateUnreadCount" />
       </v-menu>
-      <v-btn v-else icon class="me-4" disabled>
-        <v-icon>mdi-bell</v-icon>
+      <v-btn v-else icon :size="28" variant="text" color="on-surface-variant" aria-label="通知" disabled>
+        <v-icon size="18">mdi-bell</v-icon>
       </v-btn>
     </div>
   </v-system-bar>
