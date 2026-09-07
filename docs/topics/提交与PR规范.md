@@ -8,7 +8,7 @@
 
 1. **「芝士 edits」「同步上游 → main」「PR 快照」不是 AI 写的**，是后端硬编码的中文模板。散在 `<&backend/app/domain/workspace/service.py>`、`<&backend/app/domain/agent/awaited_tasks.py>`、`<&backend/app/domain/agent/harness/claude_code/device_launch.py>`。
 2. **提交关联不上 GitHub 账号**：所有提交的作者都写死成 `芝士 <cheese@zhishi.local>`，这个邮箱不属于任何 GitHub 账号，所以显示成灰色无头像的名字。
-3. **PR 关联不上账号**：当前主路径（`accept_via_pr`）用平台 GitHub App 的 token 开 PR，GitHub 就把 PR 算在 bot 名下。PR 标题直接拿话题标题（中文房间名），正文写的是「验收人/路由理由」这类平台内部信息。
+3. **PR 关联不上账号**：主路径用平台 GitHub App 的 token 开 PR，GitHub 就把 PR 算在 bot 名下。PR 标题直接拿话题标题（中文房间名），正文写的是「验收人/路由理由」这类平台内部信息。
 4. **一个 PR 里几十条提交，不是每轮快照，是同步上游**（@彭文博 发现）。实测：PR #488 的 40 条里 39 条是 `同步上游 upstream/main → main`；#483 是 39/42，#454 是 33/34，#422 是 27/37。本仓自己的 local `main` 比 `upstream/main` 多 **41 条**这种提交，而两边的文件树**一个字节都不差**。
 
    根因：`ensure_repo` 给 local main 造了一个合成的 `init` 提交，于是 local main 和 GitHub 的 main 是**两段无关历史**，`sync_upstream` 只能 `merge --no-ff`——每次 tick 造一个只存在于本地的合并提交，没有任何东西清理它们。话题分支是从 local main 切出来的，于是把这一整摞都带进了自己的 PR。
@@ -54,7 +54,7 @@
 
 方向：**一个话题一个提交，每轮 amend 进去**，逐轮粒度留给 `jj op log` 和平台时间线。PR 分支现在就已经是 `--force-with-lease` 强推，改写历史不额外增加成本。
 
-**动手前必须先确认的一件事**：`pr_authorized_sha`（人类授权动作前移）冻的是点采纳那一刻的 commit SHA，之后拿当前 head 跟它对 diff 来卡超范围的改动。改成 amend 后那个 SHA 在强推后远端不可达，GitHub compare 可能解析不了。**那个安全阀比干净的历史值钱**，要么先验证它还能工作，要么把锚点换成 tree hash。未拍板，未动手。
+**动手前必须先确认的一件事**：#718 之后守住「合的是人看到的那份」的是 merge API 的 `sha` 参数加「新提交作废采纳」（dismiss_stale）——两者都以 PR 的 head SHA 为锚。改成每轮 amend + 强推后，head SHA 每轮都变，等价于每轮作废一次已有批准；这是不是可接受的验收体验，要先拍板。未拍板，未动手。
 
 ## 边界（先说清楚）
 

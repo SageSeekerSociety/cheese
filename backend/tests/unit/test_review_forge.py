@@ -32,10 +32,8 @@ async def _explodes(_: uuid.UUID) -> bool:
 
 
 @pytest.mark.anyio
-async def test_app_on_and_project_bound_is_the_app_forge() -> None:
-    got = await forge_mod.resolve(
-        project_id=_pid(), app_owns_prs=True, is_github_bound=_bound
-    )
+async def test_a_bound_project_is_the_app_forge() -> None:
+    got = await forge_mod.resolve(project_id=_pid(), is_github_bound=_bound)
 
     assert got.kind is forge_mod.ForgeKind.github_app
     # The #362 rule: a PR is the only way in, and a PR-path failure stops the
@@ -46,10 +44,8 @@ async def test_app_on_and_project_bound_is_the_app_forge() -> None:
 
 
 @pytest.mark.anyio
-async def test_app_on_but_project_unbound_is_the_platform_forge() -> None:
-    got = await forge_mod.resolve(
-        project_id=_pid(), app_owns_prs=True, is_github_bound=_unbound
-    )
+async def test_an_unbound_project_is_the_platform_forge() -> None:
+    got = await forge_mod.resolve(project_id=_pid(), is_github_bound=_unbound)
 
     assert got.kind is forge_mod.ForgeKind.platform
     # The local merge is this project's accept, not a fallback from a failed one.
@@ -62,23 +58,6 @@ async def test_app_on_but_project_unbound_is_the_platform_forge() -> None:
 
 
 @pytest.mark.anyio
-async def test_app_off_is_the_personal_token_forge_whatever_the_binding() -> None:
-    """The pre-#296 world is kept deliberately, and the binding is not consulted.
-
-    `_bound` here would raise the lane to github_app if it were asked; the point
-    is that with the App mechanism off it must not be.
-    """
-    got = await forge_mod.resolve(
-        project_id=_pid(), app_owns_prs=False, is_github_bound=_bound
-    )
-
-    assert got.kind is forge_mod.ForgeKind.github_user
-    # This lane may degrade to a local merge — that is its documented behaviour.
-    assert got.requires_pr is False
-    assert got.note == ""
-
-
-@pytest.mark.anyio
 async def test_an_undeterminable_binding_stops_the_accept() -> None:
     """Fails closed, because the wrong guess is the one that pushes to main.
 
@@ -86,9 +65,7 @@ async def test_an_undeterminable_binding_stops_the_accept() -> None:
     down the local merge — exactly #362, arrived at by a different route.
     """
     with pytest.raises(ValidationError) as caught:
-        await forge_mod.resolve(
-            project_id=_pid(), app_owns_prs=True, is_github_bound=_explodes
-        )
+        await forge_mod.resolve(project_id=_pid(), is_github_bound=_explodes)
 
     assert "无法判定" in str(caught.value)
 

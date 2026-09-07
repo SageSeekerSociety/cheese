@@ -402,6 +402,42 @@ async def test_merge_409_reports_reason_too():
 
 
 @pytest.mark.anyio
+async def test_merge_sends_the_sha_the_human_saw_and_flags_a_409_as_stale_head():
+    # 合的是人看到的那个 commit (#718): the click passes the card's head as
+    # `sha`; GitHub answering 409 means the head moved under the human, and
+    # the caller must refresh the card rather than treat it as a plain refusal.
+    seen: list[httpx.Request] = []
+    result = await _merge(
+        _merge_route(
+            httpx.Response(409, json={"message": "Head branch was modified"}), seen
+        ),
+        sha="feedface",
+    )
+
+    assert json.loads(seen[0].content)["sha"] == "feedface"
+    assert result.sha is None
+    assert result.stale_head is True
+
+
+@pytest.mark.anyio
+async def test_merge_405_is_not_flagged_as_stale_head():
+    result = await _merge(
+        _merge_route(httpx.Response(405, json={"message": "not mergeable"})),
+        sha="feedface",
+    )
+
+    assert result.stale_head is False
+
+
+@pytest.mark.anyio
+async def test_merge_without_sha_sends_no_sha_field():
+    seen: list[httpx.Request] = []
+    await _merge(_merge_route(httpx.Response(200, json={"sha": "abc"}), seen))
+
+    assert "sha" not in json.loads(seen[0].content)
+
+
+@pytest.mark.anyio
 async def test_merge_refusal_without_json_body_still_reports_something():
     result = await _merge(_merge_route(httpx.Response(405, text="nope")))
 
@@ -721,3 +757,57 @@ async def test_workflow_run_jobs_keeps_step_conclusions():
     ]
     assert [c for _, c in jobs[0].steps] == ["success", "skipped", "skipped"]
     assert jobs[1].steps == []
+
+
+# ---- list_check_runs: raw runs for the merge-state verdict (#718) ----------
+
+
+@pytest.mark.anyio
+async def test_list_check_runs_returns_raw_runs_untranslated():
+    runs = [
+        {"name": "test", "status": "completed", "conclusion": "failure"},
+        {"name": "lint", "status": "in_progress", "conclusion": None},
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/commits/abc/check-runs")
+        return _check_runs_response(runs)
+
+    got = await _client(handler).list_check_runs(
+        owner="acme", repo="widgets", ref="abc", token="t"
+    )
+
+    assert [(r["name"], r["status"], r["conclusion"]) for r in got] == [
+        ("test", "completed", "failure"),
+        ("lint", "in_progress", None),
+    ]
+
+
+@pytest.mark.anyio
+async def test_list_check_runs_http_failure_raises():
+    with pytest.raises(GitHubPrError):
+        await _client(lambda request: httpx.Response(403, text="no")).list_check_runs(
+            owner="acme", repo="widgets", ref="abc", token="t"
+        )
+
+
+# ---- pull_request_status: the draft flag (#718) ----------------------------
+
+
+@pytest.mark.anyio
+async def test_status_carries_githubs_own_draft_flag():
+    payload = {
+        "head": {"sha": "abc", "ref": "topic/x"},
+        "state": "open",
+        "merged": False,
+        "draft": True,
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=payload)
+
+    status = await _client(handler).pull_request_status(
+        owner="acme", repo="widgets", number=7, token="t"
+    )
+
+    assert status.draft is True

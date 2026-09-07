@@ -11,7 +11,7 @@
 
 CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓库，里面用**话题**组织工作，
 **芝士**（AI 队友，本体协调 + 分身干活）**在隔离沙箱容器里**（一个房间一个容器，房间里每个话题一个 tmux 会话）用原生工具干活、用 `cheese` CLI 改平台状态，**文档是状态、对话是过程**，
-**采纳即归档即 merge**。后端 FastAPI + PostgreSQL，前端 Vue 3 + Vuetify，AI 走 `claude-agent-sdk`
+**采纳＝当场 merge（不归档，归档是人的另一个动作）**。后端 FastAPI + PostgreSQL，前端 Vue 3 + Vuetify，AI 走 `claude-agent-sdk`
 路由到智谱 GLM。
 
 ---
@@ -48,7 +48,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 ### 1.3 话题生命周期
 
 `TopicStatus`：`active`（进行中）/ `archived`（已归档）/ `draft`（草稿）。
-**采纳即归档，归档即工作面冻结**（spec §6.3）：归档房间禁止派活、禁止改文档、禁止升级块、禁止写文件、禁止再递验收卡（Batch A/G/J 在 split / edit_doc / upgrade / write_file / create_card 五处统一加守卫）。
+**归档即工作面冻结**（spec §6.3；采纳不再顺手归档，#442 决定 1）：归档房间禁止派活、禁止改文档、禁止升级块、禁止写文件、禁止再递验收卡（Batch A/G/J 在 split / edit_doc / upgrade / write_file / create_card 五处统一加守卫）。
 
 ### 1.4 项目 = git 仓库
 

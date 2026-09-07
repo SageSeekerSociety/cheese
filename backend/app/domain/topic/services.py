@@ -612,8 +612,8 @@ class TopicService:
         await self._release_cloud_machine(topic.id)
         await self._retire_storage(topic)
         # 孤儿卡修复 (2026-08-10): 归档必须同时终结这个话题上还没决议的验收卡。
-        # 一张 `pr_open` 的卡不是"停着"——轮询器每 60 秒还在用当初批准人的
-        # GitHub token 推进它。去向与理由见 review/archive.py 的模块 docstring。
+        # 一张骑着 PR 的卡不是"停着"——轮询器每 60 秒还在拿 GitHub 凭据跟进它。
+        # 去向与理由见 review/archive.py 的模块 docstring。
         from app.domain.review.archive import close_cards_for_archived_topic
 
         await close_cards_for_archived_topic(

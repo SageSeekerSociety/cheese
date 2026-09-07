@@ -45,7 +45,7 @@ def _make_card(client, topic_id: str, reviewer: str = "alice") -> dict:
 
 def _require(client, project_id: str, n: int) -> None:
     r = client.put(
-        f"/projects/{project_id}/quality-gate", json={"approvals_required": n}
+        f"/projects/{project_id}/branch-protection", json={"approvals_required": n}
     )
     assert r.status_code == 200
 

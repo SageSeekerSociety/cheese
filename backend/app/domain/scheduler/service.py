@@ -324,11 +324,11 @@ class SchedulerService:
         return {"synced": synced, "dispatched": dispatched, "errors": errors}
 
     async def poll_open_prs(self) -> dict:
-        """两阶段采纳 (PR迭代式, 2026-08-09): advance every pr_open accept card
-        one step — see AcceptService.advance_pr_card for the actual state
-        machine (check PR CI → merge → check deploy workflow → archive).
-        One DB transaction per card so one card's failure can't roll back
-        another's progress."""
+        """合并态轮询 (#718): advance every pending card that rides a PR one
+        step — mirror its merge state, send the events the 「谁的活」 table
+        names, and merge an armed auto-merge card whose rules are satisfied
+        (AcceptService.advance_pr_card). One DB transaction per card so one
+        card's failure can't roll back another's progress."""
         from app.api.deps import get_work_runner
         from app.domain.review.services import AcceptService
 

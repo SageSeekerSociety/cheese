@@ -670,14 +670,13 @@ _OPEN_CARD_STATUSES = (
     AcceptStatus.gate_failed,
     AcceptStatus.gate_blocked,
     AcceptStatus.conflict,
-    # 两阶段采纳: `pr_open` 是 open 状态里最容易被漏掉的一个 —— 卡被采纳了但
-    # 话题没归档、容器没停、活还没干完。不在这里就等于芝士在 PR 迭代期间
-    # 完全收不到"你现在有一条通往 GitHub 的通道"这个事实。
-    AcceptStatus.pr_open,
 )
 
 _OPEN_CARD_HINTS = {
-    AcceptStatus.pending: "闸门已过，等 {reviewer} 采纳",
+    AcceptStatus.pending: (
+        "等 {reviewer} 采纳——采纳即当场合并；改动提交在本分支上，"
+        "要让 PR 立刻看到用 `cheese push-fix`"
+    ),
     AcceptStatus.pending_gate: "闸门检查进行中",
     AcceptStatus.gate_failed: (
         "闸门检查未过——用 `cheese status` 看失败输出，修复后重新递卡"
@@ -687,10 +686,6 @@ _OPEN_CARD_HINTS = {
         "把检查环境弄起来再重新递卡"
     ),
     AcceptStatus.conflict: "采纳时发现合并冲突，待处理",
-    AcceptStatus.pr_open: (
-        "已被 {reviewer} 采纳并开出 PR，正在等 CI——继续在本分支提交即可，"
-        "平台会自动重推到 PR"
-    ),
 }
 
 

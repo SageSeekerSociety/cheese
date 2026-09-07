@@ -81,49 +81,45 @@
 
 ## 2. 审批流程（从做完到进 main）
 
-### 2.1 现在实际跑的这一条
+### 2.1 现在实际跑的这一条（#718：采纳就是合并）
 
 ```
 芝士自己把检查跑绿（这是干活的一部分，平台不替你跑）
-  → cheese accept-request <人> --subject '...'   递验收卡，卡直接是 pending
-     → 人在卡上点「采纳」＝ 授权，不是合并：推分支、开 PR，卡进 pr_open，话题不归档、容器不停
-        → GitHub Actions 按 .github/workflows 跑真 CI
-           → 轮询器每 60 秒过四道阀，全过才调 GitHub 合并 API
-              → 合并成功 → 卡进 accepted，给房间和这条支线各盖一个交付戳
+  → cheese accept-request <人> --subject '...'   递验收卡，卡直接是 pending，平台随手开 PR
+     → GitHub Actions 按 .github/workflows 跑真 CI
+        → 轮询器每 60 秒把合并态镜像到卡上（CLEAN/UNSTABLE/BLOCKED/BEHIND/DIRTY），
+          按「谁的活」表发事件（红了叫芝士、落后平台自己换基、绿了通知验收人）
+           → 人在卡上点「采纳」＝ 当场调合并 API，合的是卡面显示的那个 commit
+             （merge API 带 sha；head 变了 GitHub 409 → 卡刷新、票作废，人重看）
+              → 合并成功 → 卡进 accepted，本地 base 同步下来，给房间和这条支线各盖交付戳
                 （`accepted_by`/`accepted_at`），结果回房间。**话题不归档**
 ```
 
+「只在绿的时候合」由**分支保护规则**执行，按项目配置
+（`PUT /projects/{id}/branch-protection`：必跑检查名单可带路径域、strict 追平、
+新提交作废采纳默认开、绿了自动合、人工放行名单、批准人数）。GitHub 自己开了保护的
+项目直接听 GitHub（405 就是被拦住）；判定不了的（free 计划私有仓）平台按同一套规则补位，
+判定只有一处：`merge_state.compute_merge_state`，点击时和轮询时都调它。
+
 **用谁的凭据推、以及失败了怎么办，由「forge」一次性决定**
-（<&backend/app/domain/review/forge.py>，三选一，不再是几个布尔值在调用点交叉）：
+（<&backend/app/domain/review/forge.py>，二选一）：
 
 | forge | 什么时候 | 用什么推 | 失败了 |
 |---|---|---|---|
 | `github_app` | 接了平台 GitHub App **且**上游是 GitHub | App 自己的 write token | **停下**，绝不退回本地合并 |
-| `github_user` | 部署把 App 机制关了 | **采纳人自己连接的** token | 拿不到就降级成本地合并（#296 之前的老行为，故意保留） |
 | `platform` | 项目根本没接 GitHub | 什么都不推：平台自己的裸仓库就是权威 main，合进去就是终点，GitHub 上不动一个字节（平台手里也没有能推它的凭据） | 本地合并**不是降级**，是这个项目唯一合法的采纳（#363），卡上有一条 note 说明 |
 
-分清这三条很重要：#362 就是一个接了 GitHub 的项目，采纳掉进了本地合并、直接推进 main，
+分清这两条很重要：#362 就是一个接了 GitHub 的项目，采纳掉进了本地合并、直接推进 main，
 没 PR 也没 CI，一天里发生两次。判不出绑定状态时这里**报错而不是猜**——猜错的那一边会推进 main。
 
-四道阀（都在 `_advance_pr_checks`，<&backend/app/domain/review/services.py>）：
-
-1. **必跑检查名单**：`accept_required_check_names`，默认 `test:backend/**;.github/workflows/test.yml`。
-   名单里的检查**没出现 = 还在等，不算通过**。名字后面挂的路径是"对哪些改动才要求它"——
-   纯前端 PR 不该等一个只在 `backend/**` 触发的 `test`。等超过 30 分钟不会自动放行，而是**回来找人**。
-2. **绿必须绿在当前基线上**：分支落后 main 就自动调 GitHub 的 update-branch 换基，等新一轮 CI；
-   连换 3 次还追不上就交给人。防的是"两个各自绿在旧基上的 PR 合起来是红的"。
-3. **授权范围没漂移**：人点采纳那一刻的 commit 被冻结成 `pr_authorized_sha`；之后芝士推的每个修复
-   都会跟 head 一起动。合并前比对两次的文件清单，新提交越界（比如多碰了迁移、prod 配置）就回来找人。
-4. **目标不是 prod**：合进 prod 永远要人自己点，机器不代劳。另外「没有任何 CI 真的跑过这次改动」
-   同样不享受免人自动合并。
-
-### 2.2 人在这条流程里的三个动作
+### 2.2 人在这条流程里的几个动作
 
 | 动作 | 接口 | 含义 |
 |---|---|---|
-| 采纳 | `POST /accept-cards/{id}/accept` | **授权**："以我的名义送进 CI，全绿且没越界就合" |
-| 人工放行 | `POST /accept-cards/{id}/merge-anyway` | 明知没全绿也要合。默认拒绝、显式放行，署名留痕 |
-| 作废 | `POST /accept-cards/{id}/void` | 把卡片推进终态，解开 `pr_open`/`conflict` 卡死。**不是放行** |
+| 采纳 | `POST /accept-cards/{id}/accept` | **当场合并**卡面显示的那个 commit；规则没满足直接拒绝 |
+| 绿了自动合 | `POST /accept-cards/{id}/auto-merge` | 验收人在 BLOCKED/BEHIND 时布防；规则满足平台以布防人的名义合并。新提交作废布防 |
+| 人工放行 | `POST /accept-cards/{id}/merge-anyway` | 明知没全绿也要合。默认拒绝、显式放行，署名留痕；准入是项目的 override 名单（默认 owner+lead） |
+| 作废 | `POST /accept-cards/{id}/void` | 把卡片推进终态，解开 `conflict` 等卡死。**不是放行** |
 
 三条都要登录，且都由 `_forbid_ai` 挡住芝士——协作模式下 **AI 不能验收自己做的东西**（spec §4.4 硬规则）。
 撤销采纳（`revoke`）只有原采纳人或项目组长能做，它**只清交付戳**（话题回到「还没交付过」，因此又能递卡），
@@ -136,7 +132,7 @@
 
 - `create_card()` 现在**总是**把卡建成 `pending`，不再进 `pending_gate`。
 - <&backend/app/api/routes/accept.py> 里已经没有 `gate.dispatch` 调用，只剩 `pr_publish.dispatch`。
-- `project.settings.check_command` 这个字段还在（设置页还能改），但**没有任何代码会去跑它**。
+- `project.settings.check_command` 已随 #718 删除：质量闸门的设置项不复存在，芝士该跑什么检查看仓库自己的约定。
 - 只有 `gate_sweep` 还在跑，作用是清理退休前留在库里的历史 `pending_gate` 行。
 
 设计理由（<&docs/accept-is-merge.md>）：一张卡就是一个 PR 的视图，**判断改动好不好是 PR 上的真 CI 的事，
@@ -147,15 +143,6 @@
 ---
 
 ## 3. 文档与代码不一致的地方（按重要性排）
-
-① **`cheese accept-request` 的帮助文本还在讲闸门**（<&backend/sandbox/cheese>）：
-"配了质量闸门的项目，递卡后平台会自动跑一遍检查，红了卡片会被打回"。**这条已经不成立了。**
-危害是实打实的：agent 读到它会以为递卡后还有一道检查兜底，于是不自己跑测试就递卡——而现在递卡
-直接开 PR，第一次真检查发生在 GitHub 上。**建议改掉这段帮助文本。**
-
-② **`docs/accept-is-merge.md` 的「Card states」那张表从没实现**。文档设计的是
-`opening/checks_pending/checks_failed/ready/merged/closed`，实际跑的是
-`pending → pr_open → accepted`。文档开头的 Status 段自己承认了这一点，但表还在正文里，容易被当成现状读。
 
 ③ **"房间不带分支、不走验收卡"这条约定本身被推翻了，不再是差异**。
 现在的形状恰恰相反：**开 PR 的就是房间**（一个房间一条分支一个 PR），一条支线的提交在它的结论

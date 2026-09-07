@@ -5,6 +5,9 @@ import type {
   AgentType,
   ApiEnvelope,
   Block,
+  BranchProtection,
+  BranchProtectionPatch,
+  BranchProtectionRules,
   ChatAttachment,
   ComputeProfiles,
   Contributions,
@@ -866,6 +869,18 @@ export function syncUpstream(projectId: string): Promise<UpstreamSyncResult> {
   })
 }
 
+// 分支保护 (#718): 平台侧的合并规则。GET 附带只读的 merge_method 和
+// github_protection；PUT 是 partial-update，body 里出现哪个键就改哪个。
+export function getBranchProtection(projectId: string): Promise<BranchProtection> {
+  return request<BranchProtection>(`/projects/${encodeURIComponent(projectId)}/branch-protection`)
+}
+export function setBranchProtection(projectId: string, patch: BranchProtectionPatch): Promise<BranchProtectionRules> {
+  return request(`/projects/${encodeURIComponent(projectId)}/branch-protection`, {
+    method: 'PUT',
+    body: JSON.stringify(patch),
+  })
+}
+
 // GitHub App install flow (#192).
 export function getGithubConnection(projectId: string): Promise<GithubConnection> {
   return request(`/projects/${encodeURIComponent(projectId)}/github/connection`)
@@ -1228,16 +1243,26 @@ export function revokeCard(cardId: string, decidedBy: string): Promise<AcceptCar
   })
 }
 
-// 人工放行 (App 采纳等 CI 再合): merge a pr_open card's PR even though its
-// checks are not all green. The platform never does this on its own —红着合
-// 有时候是对的，不能接受的是没有人做过这个决定。So the actor is taken from the
-// session server-side (never the body) and the card records who / when / what
-// the checks said / why. Only the reviewer, the authorizer, or an owner/lead
-// may call it, and 芝士 is refused outright.
+// 人工放行 (#718): merge a pending card's PR even though its merge state is
+// not clean. The platform never does this on its own —红着合有时候是对的，
+// 不能接受的是没有人做过这个决定。So the actor is taken from the session
+// server-side (never the body) and the card records who / when / what the
+// checks said / why. Only the project's override list (owner/lead when
+// unconfigured) may call it, and 芝士 is refused outright.
 export function mergeCardAnyway(cardId: string, reason: string): Promise<AcceptCard> {
   return request<AcceptCard>(`/accept-cards/${encodeURIComponent(cardId)}/merge-anyway`, {
     method: 'POST',
     body: JSON.stringify({ reason }),
+  })
+}
+
+// 绿了自动合 (#718): arm/disarm auto-merge on a pending card. Reviewer-side
+// switch, only meaningful on a project with auto_merge_allowed; the actor is
+// the session user server-side, and 新提交作废采纳 disarms it again.
+export function setAutoMerge(cardId: string, enabled: boolean): Promise<AcceptCard> {
+  return request<AcceptCard>(`/accept-cards/${encodeURIComponent(cardId)}/auto-merge`, {
+    method: 'POST',
+    body: JSON.stringify({ enabled }),
   })
 }
 

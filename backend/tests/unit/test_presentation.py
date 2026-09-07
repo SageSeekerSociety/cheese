@@ -49,7 +49,7 @@ def room(**kw) -> RoomFacts:
 
 
 def card(status: AcceptStatus, **kw) -> CardFacts:
-    base = {"note_code": None, "pr_merged_at": None}
+    base = {"note_code": None, "merge_state_word": None, "merge_who": None}
     return CardFacts(status=status, **{**base, **kw})
 
 
@@ -111,54 +111,87 @@ TASK_CASES = [
         Column.delivering,
         "检查运行中",
     ),
+    # 等采纳的卡按合并态镜像的「谁的活」分列 (#718)。
     (
-        "PR 开着等 CI",
-        task(card=card(AcceptStatus.pr_open)),
+        "CI 在跑",
+        task(
+            card=card(AcceptStatus.pending, merge_state_word="unstable", merge_who="ci")
+        ),
         Column.delivering,
         "等待检查",
     ),
     # 同一个「CI 红了」，平台已经派芝士去修 → 平台在推，不该催人。
     (
         "芝士在修 CI",
-        task(card=card(AcceptStatus.pr_open, note_code=NoteCode.checks_failed)),
+        task(card=card(AcceptStatus.pending, note_code=NoteCode.checks_failed)),
         Column.delivering,
         "修复检查",
     ),
     (
-        "合并冲突，芝士在解",
-        task(card=card(AcceptStatus.pr_open, note_code=NoteCode.merge_conflict)),
+        "合并态说检查红了（还没叫芝士）",
+        task(
+            card=card(
+                AcceptStatus.pending, merge_state_word="blocked", merge_who="agent"
+            )
+        ),
+        Column.delivering,
+        "修复检查",
+    ),
+    (
+        "和 main 冲突，芝士来解",
+        task(
+            card=card(AcceptStatus.pending, merge_state_word="dirty", merge_who="agent")
+        ),
         Column.delivering,
         "解决冲突",
     ),
     (
-        "PR 合了，等落地",
-        task(card=card(AcceptStatus.pr_open, pr_merged_at=JUST_NOW)),
+        "落后基线，平台在更新分支",
+        task(
+            card=card(
+                AcceptStatus.pending, merge_state_word="behind", merge_who="platform"
+            )
+        ),
         Column.delivering,
-        "等待合并",
+        "平台更新分支",
+    ),
+    (
+        "合并冲突，芝士在解",
+        task(card=card(AcceptStatus.pending, note_code=NoteCode.merge_conflict)),
+        Column.delivering,
+        "解决冲突",
     ),
     ("等人采纳", task(card=card(AcceptStatus.pending)), Column.needs_you, "等待验收"),
+    (
+        "绿了等人采纳",
+        task(
+            card=card(AcceptStatus.pending, merge_state_word="clean", merge_who="human")
+        ),
+        Column.needs_you,
+        "等待验收",
+    ),
     # 同一个「CI 红了」，但芝士推不上去修 —— PR 上的红是旧的，没人能清掉它。
     (
         "修不上去的 CI",
-        task(card=card(AcceptStatus.pr_open, note_code=NoteCode.repush_failed)),
+        task(card=card(AcceptStatus.pending, note_code=NoteCode.repush_failed)),
         Column.needs_you,
         "检查未通过",
     ),
     (
         "分叉了推不动",
-        task(card=card(AcceptStatus.pr_open, note_code=NoteCode.repush_diverged)),
+        task(card=card(AcceptStatus.pending, note_code=NoteCode.repush_diverged)),
         Column.needs_you,
         "检查未通过",
     ),
     (
         "GitHub 拒绝合并",
-        task(card=card(AcceptStatus.pr_open, note_code=NoteCode.merge_refused)),
+        task(card=card(AcceptStatus.pending, note_code=NoteCode.merge_refused)),
         Column.needs_you,
         "交付被退回",
     ),
     (
         "PR 被人关掉了",
-        task(card=card(AcceptStatus.pr_open, note_code=NoteCode.pr_closed_unmerged)),
+        task(card=card(AcceptStatus.pending, note_code=NoteCode.pr_closed_unmerged)),
         Column.needs_you,
         "交付被退回",
     ),
@@ -344,7 +377,6 @@ def test_a_thread_waiting_on_a_person_is_not_out_of_contact():
     for status in (
         AcceptStatus.pending,
         AcceptStatus.pending_gate,
-        AcceptStatus.pr_open,
         AcceptStatus.conflict,
     ):
         quiet = task(

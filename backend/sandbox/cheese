@@ -22,7 +22,6 @@
   cheese conclude-task <task_id>            # 收掉这条活(说它结束了)
   cheese tell "数据清洗" "口径改了,按新的来"    # 在那条活上留一句话(不叫醒任何人)
   cheese milestone "中期汇报" --due 2026-06-20
-  cheese check                              # 跑一遍项目的快检(结果记到验收卡上)
   cheese status                             # 平台状态快照(本轮运行状态/验收卡/闸门输出/水位)
   cheese artifact report.html               # 把产物设为本话题当前预览(进预览窗口)
   cheese serve 5173 "Vue dev server"        # 应用起在 127.0.0.1:5173 后,设为预览
@@ -279,143 +278,6 @@ def _format_status(d: dict) -> str:
     return "\n".join(lines)
 
 
-# --- check: 跑一遍项目的快检，结果记到这棵树上 -------------------------------
-#
-# It runs HERE, in the foreground, and that is the whole mechanism. There used
-# to be a `cheese await` that registered a command with the platform, forked a
-# detached child and had the platform wake the topic when it exited — a second
-# way to run something in the background, built because a turn used to end when
-# the agent stopped typing. It does not any more: the harness has background
-# tasks of its own and tells the agent when one finishes. So a long check goes
-# in the agent's own background, and this stays a command that runs and reports.
-
-_CHECK_TAIL_BYTES = 4000
-
-
-def _wait_for_heavy_lane(timeout_s: int) -> bool:
-    """Hold the room's single heavy lane, waiting for it if someone else has it.
-
-    Tests, dependency installs and dev servers fight over the machine — ports,
-    the database, one shared venv — not over the tree, so no amount of care
-    about which files you touch helps. Waiting is affordable because the caller
-    is expected to have put this in its own background task.
-
-    Gives up after a share of the command's own timeout rather than forever: a
-    command that never gets the lane should report that it did not run, not sit
-    invisible until someone goes looking.
-    """
-    import time as _time
-
-    topic = TOPIC
-    if not topic:
-        return False
-    deadline = _time.time() + max(60, min(timeout_s, 1800))
-    while _time.time() < deadline:
-        try:
-            r = _call(
-                "POST", f"/topics/{topic}/lock", {"kind": "heavy", "resource": ""}
-            )["data"]
-        except SystemExit:
-            return False  # the platform said no; running anyway beats not running
-        if r.get("acquired"):
-            return True
-        _time.sleep(5)
-    return False
-
-
-def _release_heavy_lane() -> None:
-    if not TOPIC:
-        return
-    try:
-        _call("POST", f"/topics/{TOPIC}/unlock", {"kind": "heavy", "resource": ""})
-    except SystemExit:
-        pass
-
-
-def _run_check(command: str, timeout_s: int) -> int:
-    """Run the project's quick check, report the verdict, return its exit code."""
-    import signal
-    import subprocess
-    import tempfile
-    import time
-
-    started = time.time()
-    exit_code = -1
-    held_heavy = _wait_for_heavy_lane(timeout_s)
-    log = tempfile.NamedTemporaryFile(  # noqa: SIM115 — closed in the finally below
-        prefix="cheese-check-", suffix=".log", delete=False
-    )
-    try:
-        proc = subprocess.Popen(  # noqa: S602 — the project's own check command
-            ["bash", "-lc", command],
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            stdin=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-        try:
-            exit_code = proc.wait(timeout=timeout_s)
-        except subprocess.TimeoutExpired:
-            # Kill the whole process group: a test runner's children would
-            # otherwise survive and keep writing to the log.
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            except OSError:
-                proc.kill()
-            proc.wait()
-            exit_code = 124  # `timeout(1)`'s convention
-    except Exception as e:  # noqa: BLE001 — report the failure, never vanish
-        log.write(f"\n[cheese check] 命令无法执行: {e}\n".encode())
-    finally:
-        log.close()
-        # Give the lane back however this ended. A lane held by a process that
-        # died is the one failure worse than the collision it prevents — though
-        # the lock's own expiry (30 minutes) is the backstop.
-        if held_heavy:
-            _release_heavy_lane()
-
-    tail = _check_tail(log.name)
-    # 超时算失败: a quick check's whole value is the speed, and one that quietly
-    # grew past its budget and reported "inconclusive" would rot into a second
-    # full CI.
-    _report_check_result(exit_code == 0, exit_code, tail)
-    print(tail)
-    head = "通过" if exit_code == 0 else ("超时" if exit_code == 124 else "失败")
-    print(
-        f"\n[cheese] 快检{head}（exit {exit_code}，{time.time() - started:.0f}s）。"
-        f"结果已记到本地点这棵树上，验收卡上看得见。完整输出：{log.name}"
-    )
-    return exit_code
-
-
-def _report_check_result(ok: bool, exit_code: int, tail: str) -> None:
-    """Put the result where the person about to accept will see it.
-
-    Not a gate — nothing reads it to decide anything. It is on the card because
-    a check whose result goes nowhere is a check nobody bothers to run."""
-    if not TOPIC:
-        return
-    head = "通过" if ok else ("超时" if exit_code == 124 else f"失败(exit {exit_code})")
-    try:
-        _call(
-            "POST",
-            f"/topics/{TOPIC}/check-result",
-            {"ok": ok, "detail": f"{head}\n{tail[-1500:]}"},
-        )
-    except SystemExit:
-        pass
-
-
-def _check_tail(log_path: str) -> str:
-    try:
-        with open(log_path, "rb") as f:
-            f.seek(0, os.SEEK_END)
-            f.seek(max(0, f.tell() - _CHECK_TAIL_BYTES))
-            return f.read().decode(errors="replace")
-    except OSError as e:
-        return f"（读不到输出日志 {log_path}: {e}）"
-
-
 def _print_api_index() -> None:
     """List available operations from our FastAPI /openapi.json (like Restish,
     but built from OUR live spec). Lets `cheese api` self-describe what raw calls
@@ -601,28 +463,6 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
-    pcheck = sub.add_parser(
-        "check",
-        help="跑一遍项目的快检(在自己的沙箱里,不占 CI runner)",
-        description=(
-            "跑项目配置的那条快检命令,结果记到本地点这棵树上,验收卡上看得见。\n\n"
-            "它**不是闸门**:红了照样能递卡,照样能采纳——决定权在 PR 上的真 CI\n"
-            "(#296)。它存在的意义是让红灯**被看见**:结果没人看的检查,没人会跑。\n\n"
-            "跑在你自己的沙箱里,占用的是本房间那条重活车道(不会和别人的测试抢\n"
-            "端口/数据库),**不占 CI runner**。它在前台跑到完,退出码就是快检的\n"
-            "退出码——要几分钟以上,把这条命令丢进你自己 harness 的后台任务里,\n"
-            "跑完它会通知你。\n\n"
-            "**超时算失败**。快检的全部价值就是快;一条慢慢长过预算、还报「没结论」\n"
-            "的检查,会烂成第二个全量 CI。"
-        ),
-    )
-    pcheck.add_argument(
-        "--timeout",
-        type=int,
-        default=90,
-        help="时间预算(秒),超了算失败。默认 90",
-    )
-
     pclaim = sub.add_parser(
         "claim",
         help="声明这条活要碰哪些路径(可以中途追加)",
@@ -653,8 +493,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="整块覆盖某个文件、或跑重活之前,先占住",
         description=(
             "本房间有两把锁,**强制程度不一样,用之前要知道**:\n\n"
-            "  heavy —— **真的拦得住**。`cheese check` 自己就走它,那是平台自己的\n"
-            "    代码,所以能真的排队;你手跑测试/装依赖之前也自己占一下。\n"
+            "  heavy —— **真的拦得住**,能真的排队;你手跑测试/装依赖/起 dev server\n"
+            "    之前自己占一下,跑完还回去。\n"
             "  file  —— **只是提醒**。你的 Write 工具是你自己 harness 的,平台拦不住。\n"
             "    它的作用是:你要整块覆盖一个文件之前,能知道别人是不是正在覆盖它。\n\n"
             "两把锁都**不等待**:占不到就直接告诉你是谁占着,你可以改用 Edit、\n"
@@ -811,7 +651,8 @@ def build_parser() -> argparse.ArgumentParser:
             "开 PR。所以派出去的活不是各递各的卡——分身干完把结论交回来,你用\n"
             "`cheese conclude-task` 替它落一条,攒够了整个房间递一次。\n"
             "\n"
-            "检查第一次真跑起来是在 PR 的 Actions 上,那已经是采纳之后的事了。"
+            "递卡就开 PR,真检查(GitHub Actions)在人采纳**之前**就开始跑;满足项目\n"
+            "分支保护规则后,人点采纳=当场合并他看到的那个 commit。\n"
             "所以**递卡前自己把测试跑绿**,跑不动的照实说是环境限制。\n"
             "\n"
             "**--subject 就是这次改动留在 git 历史里的那一行**,必填。递卡会开 PR,采纳会把\n"
@@ -1038,18 +879,6 @@ def main() -> None:
             {"conclusion": a.conclusion},
         )["data"]
         print(f"「{r['title']}」收了。结论：{(r.get('conclusion') or '（没有留话）')}")
-    elif a.cmd == "check":
-        proj = _need("CHEESE_PROJECT", PROJECT)
-        gate = _call("GET", f"/projects/{proj}/quality-gate").get("data") or {}
-        cmd = (gate.get("check_command") or "").strip()
-        if not cmd:
-            print(
-                "这个项目没配快检命令(quality-gate 的 check_command 是空的),"
-                "没有东西可跑。"
-            )
-        else:
-            print(f"[cheese] 跑快检：{cmd}（预算 {a.timeout} 秒，超了算失败）")
-            sys.exit(_run_check(cmd, a.timeout))
     elif a.cmd == "claim":
         topic = _need("CHEESE_TOPIC", TOPIC)
         # 替一条活声明时走 /tasks/<id>/claim:那条会被记下来,房间自己那条只查不记

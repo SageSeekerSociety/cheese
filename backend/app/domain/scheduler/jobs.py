@@ -58,7 +58,7 @@ def periodic_jobs(
             settings.sandbox_reap_interval_seconds,
             lambda: scheduler.reap_idle_device_screens(settings.sandbox_idle_hours),
         ),
-        # 两阶段采纳 (PR迭代式, 2026-08-09): advances pr_open accept cards — PR CI
+        # 合并态轮询 (#718): mirrors pending PR cards' merge state — PR CI
         # → merge → deploy workflow → archive.
         PeriodicRunner(
             "pr poll", settings.accept_pr_poll_interval_s, scheduler.poll_open_prs

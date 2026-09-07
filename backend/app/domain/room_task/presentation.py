@@ -87,10 +87,11 @@ class Delivering(enum.StrEnum):
     gate_running = "检查运行中"
     awaiting_checks = "等待检查"
     fixing_checks = "修复检查"
-    #: 采纳时撞了合并冲突，芝士已经被派去解 —— 今天 `NoteCode.merge_conflict`
-    #: 就在写（review/services.py 两处），所以这一格是点得亮的，不是空契约。
+    #: 撞了合并冲突，芝士已经被派去解 —— `NoteCode.merge_conflict` 在写，
+    #: 合并态 DIRTY 也落在这里，所以这一格是点得亮的，不是空契约。
     resolving_conflict = "解决冲突"
-    awaiting_merge = "等待合并"
+    #: 合并态 BEHIND（strict）：平台自己在 update-branch，人不用动。
+    updating_branch = "平台更新分支"
 
 
 class NeedsYou(enum.StrEnum):
@@ -157,7 +158,11 @@ class CardFacts:
     status: str
     #: 卡停在什么上。文案在 `note` 里，判断只看码 —— `review/notes.py` 的规矩。
     note_code: NoteCode | None = None
-    pr_merged_at: datetime | None = None
+    #: 合并态镜像（#718，`AcceptCard.merge_state`）里的 state / who —— 等采纳的
+    #: 卡靠它们分列：CI 在跑是 delivering，检查红了是芝士在修，也是 delivering，
+    #: CLEAN 才真的在等人。None = 还没镜像过（或这张卡不骑 PR）。
+    merge_state_word: str | None = None
+    merge_who: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,10 +198,14 @@ class RoomFacts:
 def facts_for_card(card: "AcceptCard | None") -> CardFacts | None:
     if card is None:
         return None
+    mirror = card.merge_state if isinstance(card.merge_state, dict) else {}
+    state_word = mirror.get("state")
+    who = mirror.get("who")
     return CardFacts(
         status=str(card.status),
         note_code=card.note_code,
-        pr_merged_at=card.pr_merged_at,
+        merge_state_word=state_word if isinstance(state_word, str) else None,
+        merge_who=who if isinstance(who, str) else None,
     )
 
 
@@ -262,8 +271,8 @@ def _is_stuck(code: NoteCode | None) -> bool:
 def _card_presentation(card: CardFacts) -> Presentation | None:
     """这张卡此刻把这条活摆在哪一格。None = 它已经不说话了。
 
-    先读码再读 status，因为码说的是「卡停在什么上」，比 status 具体：一张 `pr_open`
-    的卡带着 `repush_failed`，说的是「PR 上那个红是旧的、芝士推不上新的去清它」，
+    先读码再读 status，因为码说的是「卡停在什么上」，比 status 具体：一张卡带着
+    `repush_failed`，说的是「PR 上那个红是旧的、芝士推不上新的去清它」，
     不是「还在等 CI」。
     """
     if card.status in _SETTLED_CARD:
@@ -272,7 +281,7 @@ def _card_presentation(card: CardFacts) -> Presentation | None:
     # 平台已经把这个红交回给芝士去修 —— 下一步在芝士手上，别去催人。
     if card.note_code is NoteCode.checks_failed:
         return _show(Delivering.fixing_checks)
-    # 采纳时撞了冲突，芝士被派去解；解完由人重试采纳，但此刻在推的是平台。
+    # 撞了冲突，芝士被派去解；解完由人重试采纳，但此刻在推的是平台。
     if card.note_code is NoteCode.merge_conflict:
         return _show(Delivering.resolving_conflict)
     # 芝士的修复推不上 GitHub / 本地分支和 PR 分支分叉了：PR 上的红清不掉，而且
@@ -288,14 +297,21 @@ def _card_presentation(card: CardFacts) -> Presentation | None:
     if card.status == "pending_gate":
         return _show(Delivering.gate_running)
     if card.status == "pending":
-        return _show(NeedsYou.awaiting_review)
+        # 等采纳的卡按「谁的活」分列 (#718，合并态镜像)：CI 在跑 / 检查红了 /
+        # 平台在换基，都不是在等人；CLEAN（或还没镜像）才真的把球放在人手上。
+        match card.merge_who:
+            case "agent":
+                if card.merge_state_word == "dirty":
+                    return _show(Delivering.resolving_conflict)
+                return _show(Delivering.fixing_checks)
+            case "platform" if card.merge_state_word == "behind":
+                return _show(Delivering.updating_branch)
+            case "ci":
+                return _show(Delivering.awaiting_checks)
+            case _:
+                return _show(NeedsYou.awaiting_review)
     if card.status == "conflict":
         return _show(NeedsYou.bounced)
-    if card.status == "pr_open":
-        # 合过了，等落地；否则 PR 开着等检查。
-        if card.pr_merged_at is not None:
-            return _show(Delivering.awaiting_merge)
-        return _show(Delivering.awaiting_checks)
     # 认不出来的状态不冒充答案 —— 让调用方的其余判据接着说。
     return None
 
