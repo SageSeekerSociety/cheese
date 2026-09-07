@@ -54,6 +54,18 @@ function card(over: Partial<AcceptCard>): AcceptCard {
     gate_output: '',
     approvals: [],
     approvals_required: 1,
+    pr_number: null,
+    pr_url: null,
+    // #718 起卡面必带的两块：合并态与自动合并（后端算好随卡下发，模板直接取）。
+    merge_state: {
+      state: 'unknown',
+      who: 'human',
+      reasons: [{ kind: 'no_signal', checks: [], detail: '还没有信号' }],
+      head_sha: null,
+      checked_at: null,
+      since: null,
+    },
+    auto_merge: { allowed: false, armed_by: null, armed_at: null },
     ...over,
   } as AcceptCard
 }
