@@ -287,9 +287,9 @@ def test_upgrade_from_private_chat_lands_under_root(client):
     assert "父话题当时还没有实况文档" in doc["content"]
 
 
-def test_split_seeds_the_brief_doc_and_starts_nobody(client):
-    # 派活带简报: the thread is born with a task-brief living doc (splitter's
-    # brief + parent-doc snapshot) — and with NOBODY on it. The worker is the
+def test_split_records_the_brief_on_the_card_and_starts_nobody(client):
+    # 派活带简报: the brief is on the CARD, and the room's own timeline says the
+    # work went out. The thread is born with NOBODY on it — the worker is the
     # caller's to spawn in its own session and to bind; a thread that has just
     # been dispatched is legitimately empty and silent, and reading that as a
     # failed dispatch is the mistake this asserts against.
@@ -316,12 +316,19 @@ def test_split_seeds_the_brief_doc_and_starts_nobody(client):
     ).json()["data"]
     _wait_work_idle()
 
-    # The brief IS the thread's living doc, parent doc copied verbatim below it.
-    doc = client.get(f"/topics/{sub['id']}/doc").json()["data"]
-    assert doc is not None
-    assert "把 10 万条借阅日志去重" in doc["content"]
-    assert "给校园二手书平台做推荐" in doc["content"]
-    assert "推荐系统" in doc["content"]  # source: parent title
+    # 简报进卡. Not a document of its own: the worker is a subagent holding the
+    # ROOM's token and cannot reach a thread's doc address, so a document there
+    # would freeze at dispatch and never be corrected.
+    assert sub["brief"] == "把 10 万条借阅日志去重、去空值，产出干净数据集"
+    assert sub["conclusion"] is None
+    assert client.get(f"/topics/{sub['id']}/doc").json()["data"] is None
+
+    # 那张卡: the ROOM's main line says a piece of work left, and names which.
+    room_blocks = client.get(f"/topics/{topic['id']}/blocks").json()["data"]["data"]
+    cards = [b for b in room_blocks if (b.get("meta") or {}).get("action") == "split"]
+    assert len(cards) == 1
+    assert cards[0]["meta"]["task_id"] == sub["id"]
+    assert "清洗数据" in cards[0]["content"]
 
     # 没人做，也没有套话开场白。The platform raises nothing on its own, and it
     # does not write an opening in 芝士's voice either — 语义内容必须由 AI 生成.

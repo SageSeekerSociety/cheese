@@ -78,10 +78,10 @@ TASK_CASES = [
         Column.building,
         "失联",
     ),
-    # 干完了在等房间结算，不是断了 —— 这一条安静得理直气壮。
+    # 干完了在等房间收卡，不是断了 —— 这一条安静得理直气壮。
     (
-        "分身交了结论，等房间结算",
-        task(has_worker=True, last_signal_at=LONG_AGO, conclusion_pending=True),
+        "分身交了结论，等房间收卡",
+        task(has_worker=True, last_signal_at=LONG_AGO, has_conclusion=True),
         Column.building,
         "空闲",
     ),

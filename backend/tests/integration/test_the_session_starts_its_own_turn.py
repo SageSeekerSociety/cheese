@@ -2,8 +2,8 @@
 
 分身跑完会给它的会话发一条完成通知，会话据此醒过来接着干。那一轮谁也没有请求：
 没有提示词，没有人在等，所以它过去连一行 `agent_turns` 都没有 —— 于是它是唯一一
-种任何收尸都看不见的轮次，而它的 Stop 落完消息就什么也不做了：不入账、不结卡、
-不出变更摘要。
+种任何收尸都看不见的轮次，而它的 Stop 落完消息就什么也不做了：不入账，不出变更
+摘要。
 
 这些测试钉的就是「它现在也是一轮」，以及它**不是**什么：只有会话在产出才开一行，
 一条来路不明的分身完成通知开不了。
@@ -16,9 +16,6 @@ from sqlalchemy import select
 
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.runtime import AgentWorkRunner
-from app.domain.conclusion.models import ConclusionStatus
-from app.domain.conclusion.repositories import ConclusionCardRepository
-from app.domain.topic.services import TopicService
 from app.domain.usage.models import ResourceUsage
 from tests.conftest import wait_work_idle as _wait_work_idle
 from tests.integration.conftest import chat_ws_url
@@ -74,33 +71,6 @@ def _wait_for(client, topic_id: str, fn, *, tries: int = 200):
     return fn()
 
 
-def _file_a_card(client, room_id: str, title: str) -> str:
-    """一条活 + 一张等房间结算的结论卡。"""
-    task = client.post(f"/topics/{room_id}/split", json={"title": title}).json()["data"]
-
-    async def _run() -> str:
-        async with client.test_factory() as session:
-            _, card = await TopicService(session).return_conclusion(
-                subtopic_id=uuid.UUID(task["id"]), conclusion="做完了"
-            )
-            assert card is not None
-            card_id = str(card.id)
-            await session.commit()
-            return card_id
-
-    return asyncio.run(_run())
-
-
-def _card_status(client, card_id: str) -> str:
-    async def _run() -> str:
-        async with client.test_factory() as session:
-            card = await ConclusionCardRepository(session).get(uuid.UUID(card_id))
-            assert card is not None
-            return str(card.status)
-
-    return asyncio.run(_run())
-
-
 def test_the_session_working_on_its_own_opens_an_interval(client, stub_hooks):
     """会话在没人喂它的情况下开始产出 —— 那一刻起它就是一轮，有自己那一行。"""
     _project_id, room_id = _room(client)
@@ -132,13 +102,10 @@ def test_the_session_working_on_its_own_opens_an_interval(client, stub_hooks):
 
 
 def test_a_self_started_turn_is_accounted_for_when_it_stops(client, stub_hooks):
-    """它的 Stop 要走完一轮该走的全套：用量入账，还欠着的结论卡跟着结算。"""
+    """它烧掉的算力要跟别的轮次一样入账 —— 一轮不记账，配额就是漏的。"""
     _project_id, room_id = _room(client)
     _one_ordinary_turn(client, room_id)
     before = {row.id for row in _turns(client, room_id)}
-    # 卡要在这一轮**开始之前**就存在 —— 结算只认它开跑时就已经在的那些。
-    card_id = _file_a_card(client, room_id, "子活")
-    assert _card_status(client, card_id) == ConclusionStatus.open
 
     stub_hooks.uses(uuid.UUID(room_id), "Bash", command="ls")
     rows = _wait_for(
@@ -160,12 +127,6 @@ def test_a_self_started_turn_is_accounted_for_when_it_stops(client, stub_hooks):
 
     metered = _wait_for(client, room_id, lambda: asyncio.run(_usage()))
     assert len(metered) == 1, "自启轮次烧的算力没有入账"
-    settled = _wait_for(
-        client,
-        room_id,
-        lambda: _card_status(client, card_id) == ConclusionStatus.accepted,
-    )
-    assert settled, "这一轮结束了，欠着的结论卡却没结算"
 
 
 def test_a_stray_worker_report_opens_nothing(client, stub_hooks):
