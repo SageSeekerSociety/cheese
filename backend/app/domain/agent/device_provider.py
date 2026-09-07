@@ -16,7 +16,9 @@ Per request:
   5. let the device commit and push its own worktree back over git smart-HTTP.
 """
 
+import asyncio
 import hashlib
+import json
 import logging
 import time
 import uuid
@@ -367,6 +369,37 @@ def device_home_dir(project_id: uuid.UUID, place_id: uuid.UUID) -> str:
     return f"{DEVICE_HOME_ROOT}/{project_id}/{place_id}"
 
 
+async def environment_status(
+    hub: DeviceHub,
+    device_id: str,
+    project_id: uuid.UUID,
+    topic_id: uuid.UUID,
+    *,
+    action: str = "status",
+) -> dict:
+    home = device_home_dir(project_id, topic_id)
+    reset_marker = (
+        'mkdir -p "$HOME/.claude"; touch "$HOME/.claude/environment-restart"; '
+        if action == "reset"
+        else ""
+    )
+    result = await hub.exec(
+        device_id,
+        [
+            "sh",
+            "-c",
+            f'export HOME="{home}"; '
+            'if [ -f "$HOME/.claude/cheese-environment.py" ]; then '
+            f'python3 "$HOME/.claude/cheese-environment.py" {action} || exit $?; '
+            "else printf '%s' '{\"state\":\"pending\"}'; fi; " + reset_marker,
+        ],
+        timeout=10,
+    )
+    if result.get("exit") != 0:
+        raise ScreenSetupError("无法读取机器上的环境准备状态")
+    return json.loads(result.get("stdout") or '{"state":"pending"}')
+
+
 class DeviceChannel(Channel):
     """The REMOTE channel: a screen on a user's enrolled machine, opened over
     the frozen link.Msg link (DeviceHub). The screen is a ``HubScreen``.
@@ -694,6 +727,12 @@ class DeviceChannel(Channel):
         (``confirm_alive``); an explicitly dead one is closed and reopened under a
         fresh sid the connector must Spawn, rather than reasserted into a corpse."""
         existing = self._existing_screen(device_id, topic_id)
+        if existing is not None and (env or {}).get("CHEESE_ENVIRONMENT"):
+            status = await environment_status(
+                self._hub, device_id, project_id, topic_id
+            )
+            if status["state"] == "preparing":
+                return existing
         if existing is not None and self._credential_is_stale(existing):
             # #388 缺陷二: the screen is still alive, but the credential its `claude`
             # was LAUNCHED with has expired (or is within the retire margin). That
@@ -969,6 +1008,12 @@ class DeviceChannel(Channel):
         assert isinstance(precheck, tuple)  # from our precheck
         device_id, agent_user_id, agent_handle = precheck
         try:
+            before = (
+                await environment_status(self._hub, device_id, project_id, topic_id)
+                if (env or {}).get("CHEESE_ENVIRONMENT")
+                else {}
+            )
+            prior_screen = self._existing_screen(device_id, topic_id)
             screen = await self._ensure_screen(
                 device_id=device_id,
                 agent_user_id=agent_user_id,
@@ -980,6 +1025,45 @@ class DeviceChannel(Channel):
                 launch=launch,
             )
             self._subscription_devices[topic_id] = device_id
+            if (env or {}).get("CHEESE_ENVIRONMENT"):
+                # A process started before this feature keeps its environment
+                # until its next restart; it has no preparation receipt yet.
+                if before.get("state") == "pending" and screen is prior_screen:
+                    return screen
+                try:
+                    start_deadline = time.monotonic() + 60
+                    async with asyncio.timeout(3660):
+                        while True:
+                            status = await environment_status(
+                                self._hub, device_id, project_id, topic_id
+                            )
+                            if status["state"] == "ready":
+                                break
+                            if (
+                                status["state"] == "pending"
+                                or status.get("attempt") == before.get("attempt")
+                                and before.get("state") != "preparing"
+                            ) and time.monotonic() >= start_deadline:
+                                raise ScreenSetupError(
+                                    "环境执行器未启动，请查看房间终端"
+                                )
+                            if status["state"] == "failed" and (
+                                before.get("state") == "preparing"
+                                or status.get("attempt") != before.get("attempt")
+                            ):
+                                reason = status.get("error", "脚本执行失败")
+                                raise ScreenSetupError(
+                                    f"环境准备失败：{reason}。"
+                                    "请在项目设置中查看日志并重试。"
+                                )
+                            await asyncio.sleep(2)
+                except asyncio.CancelledError:
+                    await asyncio.shield(
+                        environment_status(
+                            self._hub, device_id, project_id, topic_id, action="cancel"
+                        )
+                    )
+                    raise
             return screen
         except Exception as exc:  # noqa: BLE001 — any setup failure ends the turn
             # str(exc) is EMPTY for a bare TimeoutError — the failure that used to

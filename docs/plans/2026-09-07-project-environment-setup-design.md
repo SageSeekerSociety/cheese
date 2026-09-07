@@ -1,6 +1,6 @@
 # Project environment setup across machine modes
 
-Status: accepted direction; implementation pending.
+Status: implemented for the shared Cloud and Hosted Machine launch path; Hosted Sandbox and filesystem snapshots remain unavailable. Local tests cover scripts, tmux reuse, configuration access, and migration. Deployment on real Cloud and Hosted Machine installations remains unverified.
 
 ## Scope
 
@@ -29,11 +29,13 @@ The boundary is established before either user script runs and remains in force 
 
 Both scripts run as explicit Bash subprocesses from the checkout root, with the same HOME, PATH conventions, environment variables, and execution identity as the agent. Shell exports do not propagate to later stages. Persistent variables belong in project configuration; tools installed under the room's local bin directory are added to PATH by the launcher. Scripts must tolerate reruns after interruption. Empty scripts succeed without spawning an installer.
 
-Initialization installs reusable tools. Workspace startup synchronizes dependencies for the checked-out branch and starts required services. For this repository, startup can run `uv sync --frozen` in backend and `npm ci` in frontend. The platform does not infer dependency freshness from an unchanged initialization script.
+Initialization installs reusable tools. Workspace startup synchronizes dependencies for the checked-out branch and starts required services. For this repository, startup can run `uv sync --frozen` in backend and `pnpm install --frozen-lockfile` in frontend. The platform does not infer dependency freshness from an unchanged initialization script.
 
 A Bash interface does not translate Linux package commands into macOS commands. Platform defaults use portable installation paths; custom scripts can inspect the OS when required. Unsupported commands fail visibly without changing the selected machine or its permissions.
 
 ## Revisions and caching
+
+Processes already running when this feature is deployed continue until their next restart. They have no preparation receipt, so settings show them as pending. Applying a configuration takes effect on the next agent start and preserves the room's files.
 
 Store both scripts and variables in project settings as a versioned environment configuration. New rooms use the latest revision. Existing rooms retain their revision until an explicit apply action at an idle boundary; saving project settings never changes an active room. Applying a revision preserves the checkout and uncommitted files, reruns initialization, then runs workspace startup. It does not promise to undo earlier script side effects on a retained machine.
 

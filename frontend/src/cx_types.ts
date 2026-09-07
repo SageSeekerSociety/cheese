@@ -815,16 +815,26 @@ export interface TopicComputeProfile {
   visibility: TopicComputeVisibility
 }
 
-// GET /projects/{id}/sandbox-image (spec §9.1 environment): which image runs the
-// project's agent. current=null → using the pool default base image.
-export interface SandboxImageOption {
-  image: string
-  label: string
+export interface EnvironmentConfig {
+  setup_script: string
+  startup_script: string
+  variables: Record<string, string>
+  revision: string
 }
-export interface SandboxImageInfo {
-  current: string | null
-  default: string
-  options: SandboxImageOption[]
+export interface ProjectEnvironmentInfo {
+  config: EnvironmentConfig
+  can_edit: boolean
+  rooms: { id: string; title: string; revision: string | null }[]
+}
+export interface EnvironmentStatus {
+  state: 'pending' | 'preparing' | 'ready' | 'failed' | 'offline'
+  stage?: string
+  log?: string
+  error?: string
+  exit_code?: number | null
+  pinned_revision?: string | null
+  started_at?: string
+  finished_at?: string | null
 }
 
 // 当前用户 (Phase 0 极简登录): what /users/login returns and what we keep locally.
