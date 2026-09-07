@@ -37,14 +37,10 @@ _TASKS: set[asyncio.Task] = set()
 
 
 def enabled() -> bool:
-    """Cheap pre-check: the flag is on and the App is configured at all. The
-    per-project eligibility (which installation, upstream is a GitHub https
-    remote) is resolved in the task itself — it needs the DB and a subprocess."""
-    return (
-        bool(settings.accept_via_pr)
-        and bool(settings.github_app_id)
-        and bool(settings.github_app_private_key_path)
-    )
+    """Cheap pre-check: the GitHub App is configured at all. The per-project
+    eligibility (which installation, upstream is a GitHub https remote) is
+    resolved in the task itself — it needs the DB and a subprocess."""
+    return bool(settings.github_app_id) and bool(settings.github_app_private_key_path)
 
 
 def dispatch(
@@ -137,7 +133,7 @@ async def open_pr_for_card(
     branch = await asyncio.to_thread(ws.push_topic_branch, project_id, topic_id, token)
     base = (
         await asyncio.to_thread(
-            lambda: ws.upstream_default_branch(ws.ensure_repo(project_id))
+            lambda: ws.upstream_default_branch(ws.ensure_repo(project_id), token=token)
         )
         or ws.DEFAULT_BRANCH
     )
@@ -178,14 +174,10 @@ async def _requester_token(session: AsyncSession, topic_id: uuid.UUID) -> str | 
     from app.domain.workspace import identity
 
     try:
-        # `topic_id` is a place id: a card is usually a thread's, and the human
-        # it belongs to is on the thread, not on the room's roster.
         place = await PlaceResolver(session).resolve(topic_id)
         if place is None:
             return None
-        handle = await identity.requester_handle(
-            session, place.room, task_id=place.task_id
-        )
+        handle = await identity.requester_handle(session, place.room)
         if not handle:
             return None
         return await get_github_user_token_for_handle(session, handle)
@@ -223,7 +215,7 @@ async def _pr_text(
     if place is None:
         return branch, f"Cheese-Topic: {topic_id}"
     topic = place.room
-    who = await identity.attribution(session, topic, task_id=place.task_id)
+    who = await identity.attribution(session, topic)
     # No approver yet — the PR opens when the card is FILED, and 采纳 is what
     # merges it. `Reviewed-by` is written onto the squash commit at merge time,
     # by whoever actually clicks.

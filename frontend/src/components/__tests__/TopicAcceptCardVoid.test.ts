@@ -1,9 +1,9 @@
 /** 作废这张卡：一张走不下去的验收卡，界面上唯一的出口。
  *
- * `conflict` 和 `pr_open` 被 accept / reject / revoke / reassign 四条路由全部
- * 拒绝，而一张活着的卡本身又让话题递不出下一张——所以踩中其中任何一个，整个房间
- * 从此交付不了。后端的 `void` 从 2026-08-11 就在，界面上一直没有任何东西调它
- * （真实案例：PR #545 被人工关闭，卡永久停在 `pr_open`）。
+ * `conflict` 被 accept / reject / revoke / reassign 四条路由全部拒绝，而一张
+ * 活着的卡本身又让话题递不出下一张——所以一次不该继续的采纳（冲突不值得解、
+ * 或卡骑着的 PR 被人在 GitHub 上关掉了），整个房间从此交付不了。后端的 `void`
+ * 从 2026-08-11 就在，界面上一直没有任何东西调它。
  *
  * 这里断言的是人在屏幕上能做到什么：活着的状态下这条出口都点得到，点下去带着
  * 理由走的是 `void`，后端拒绝时它说的原因要能被看见。
@@ -84,7 +84,6 @@ describe('每一张还活着的卡都点得到作废', () => {
   it.each([
     ['待采纳', 'pending'],
     ['合并冲突', 'conflict'],
-    ['交付中', 'pr_open'],
   ])('%s 的卡上有作废入口', async (_label, status) => {
     const { getByText } = await mountWith([
       card({ status: status as AcceptCard['status'], decided_by: 'alice', pr_number: 545, pr_url: 'https://x/545' }),
@@ -111,7 +110,7 @@ describe('点下去会发生什么', () => {
   })
 
   it('说清后果：卡到此为止，话题可以重新递卡', async () => {
-    const { container, getByText } = await mountWith([card({ status: 'pr_open', decided_by: 'alice' })])
+    const { container, getByText } = await mountWith([card({ status: 'conflict' })])
 
     await fireEvent.click(getByText('作废这张卡'))
     await flush()
@@ -122,7 +121,7 @@ describe('点下去会发生什么', () => {
 
   it('卡骑着一个 PR 的时候，说明平台不会替你关掉它', async () => {
     const { container, getByText } = await mountWith([
-      card({ status: 'pr_open', decided_by: 'alice', pr_number: 545, pr_url: 'https://x/545' }),
+      card({ status: 'pending', pr_number: 545, pr_url: 'https://x/545' }),
     ])
 
     await fireEvent.click(getByText('作废这张卡'))
@@ -132,8 +131,8 @@ describe('点下去会发生什么', () => {
   })
 
   it('作废成功后这个框整个消失，话题回到能重新递卡的样子', async () => {
-    const { container, getByText } = await mountWith([card({ status: 'pr_open', decided_by: 'alice' })])
-    expect(container.textContent).toContain('交付中')
+    const { container, getByText } = await mountWith([card({ status: 'pending' })])
+    expect(container.textContent).toContain('作废这张卡')
 
     getAcceptCards.mockResolvedValue({ data: [card({ status: 'revoked' })], has_more: false })
     await fireEvent.click(getByText('作废这张卡'))
@@ -141,7 +140,6 @@ describe('点下去会发生什么', () => {
     await fireEvent.click(getByText('确认作废'))
     await flush()
 
-    expect(container.textContent).not.toContain('交付中')
     expect(container.textContent).not.toContain('作废这张卡')
   })
 

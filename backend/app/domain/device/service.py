@@ -295,11 +295,6 @@ class DeviceService:
     async def list_devices_for_project(self, project_id: uuid.UUID) -> list[Device]:
         return await self._repo.list_devices_by_project(project_id)
 
-    async def list_cloud_devices_for_project(
-        self, project_id: uuid.UUID
-    ) -> list[Device]:
-        return await self._repo.list_cloud_devices_by_project(project_id)
-
     async def project_has_online_device(
         self, project_id: uuid.UUID, is_online: Callable[[str], bool]
     ) -> bool:
@@ -341,15 +336,17 @@ class DeviceService:
         await self._repo.bind_topic_device(topic_id, device_id, visibility)
 
     async def release_topic_device(self, topic_id: uuid.UUID, *, reason: str) -> None:
-        """Drop a topic's pin so it can be re-pinned to another machine (#186 换身体).
+        """Drop a topic's pin.
 
         This is the ONLY sanctioned way past ``bind_topic_device``'s write-once rule,
         and it is deliberately a separate, reason-carrying call rather than a
         loosening of the resolver: a pin that can be overwritten silently is exactly
         the original drift bug, where a topic woke up on a different machine with an
-        empty work tree and nobody could tell. Before the first turn, the compute
-        picker may use it to replace an explicit choice; after work starts, the
-        caller must also make the move visible in the room — see ``agent.host_swap``.
+        empty work tree and nobody could tell. Its callers are the compute picker
+        replacing an explicit choice BEFORE the first turn, and the machine domain
+        letting go of a Cloud machine it is destroying. Nothing releases a pin in
+        order to move a running topic elsewhere — a machine judged dead is named
+        in the room and waited for (``agent.host_failure``).
         """
         logger.warning("releasing topic %s device pin: %s", topic_id, reason)
         await self._repo.release_topic_device(topic_id)
@@ -409,17 +406,6 @@ class DeviceService:
         """The project's machines that are online AND not quarantined — the pool a
         turn may actually be placed on."""
         devices = await self.list_devices_for_project(project_id)
-        online = [d for d in devices if is_online(d.device_id)]
-        if not online:
-            return []
-        health = await self._repo.list_host_health([d.device_id for d in online])
-        now = self._now()
-        return [d for d in online if not is_quarantined(health.get(d.device_id), now)]
-
-    async def healthy_cloud_devices_for_project(
-        self, project_id: uuid.UUID, is_online: Callable[[str], bool]
-    ) -> list[Device]:
-        devices = await self.list_cloud_devices_for_project(project_id)
         online = [d for d in devices if is_online(d.device_id)]
         if not online:
             return []

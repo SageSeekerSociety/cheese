@@ -18,26 +18,21 @@ from app.domain.agent.stages import TopicStage, resolve_stage, stage_scenario
 from app.domain.review.models import AcceptStatus
 
 
-def _stage(is_room=False, finished=False, cards=()) -> TopicStage:
-    return resolve_stage(is_room=is_room, finished=finished, card_statuses=cards)
+def _stage(finished=False, cards=()) -> TopicStage:
+    return resolve_stage(finished=finished, card_statuses=cards)
 
 
 # --- 阶段判定 ---------------------------------------------------------------
 
 
-def test_room_without_cards_is_delegating():
-    assert _stage(is_room=True) is TopicStage.delegating
+def test_a_place_with_no_card_is_delegating():
+    """派活和干活是同一段：跑轮次的只有房间，它同时在做这两件事。
 
-
-def test_work_without_cards_is_working():
-    """The question is room-or-work, and `topics.kind` stopped answering it.
-
-    A piece of work is a thread now, so every `topics` row says "room". Deriving
-    the stage from that column would hand every 分身 the 拆活 guide and send it
-    to split the work it was dispatched to do — silently, since nothing about a
-    wrong prompt section raises.
+    分开注入过一次，那是每条活各有一个会话的时候。现在一条活是房间会话里的一个
+    分身，没有 system prompt 可注入，而房间在派活时读不到该怎么交付——递卡、
+    采纳者 token 这些它非知道不可的东西，就落在没人拿得到的那一段里。
     """
-    assert _stage(is_room=False) is TopicStage.working
+    assert _stage() is TopicStage.delegating
 
 
 def test_finished_work_is_merged():
@@ -50,7 +45,6 @@ def test_finished_work_is_merged():
         (AcceptStatus.pending_gate, TopicStage.gate),
         (AcceptStatus.gate_failed, TopicStage.gate),
         (AcceptStatus.pending, TopicStage.awaiting),
-        (AcceptStatus.pr_open, TopicStage.pr_open),
         (AcceptStatus.conflict, TopicStage.conflict),
     ],
 )
@@ -60,7 +54,7 @@ def test_open_card_drives_the_stage(card_status, expected):
 
 def test_a_room_holding_an_open_card_reports_the_card_stage():
     """卡状态比话题形态更具体：房间里真有一张活卡时，说卡的事。"""
-    assert _stage(is_room=True, cards=[AcceptStatus.pr_open]) is TopicStage.pr_open
+    assert _stage(cards=[AcceptStatus.pending]) is TopicStage.awaiting
 
 
 def test_needs_my_hands_wins_over_waiting_on_a_human():
@@ -70,9 +64,6 @@ def test_needs_my_hands_wins_over_waiting_on_a_human():
     )
     assert _stage(cards=[AcceptStatus.pending, AcceptStatus.conflict]) is (
         TopicStage.conflict
-    )
-    assert _stage(cards=[AcceptStatus.pr_open, AcceptStatus.pending]) is (
-        TopicStage.pr_open
     )
 
 
@@ -88,9 +79,13 @@ def test_every_stage_resolves_to_a_non_empty_guide(stage):
 
 @pytest.mark.parametrize("stage", list(TopicStage))
 def test_stage_guides_stay_small(stage):
-    """渐进式披露的意义就在于每段都小；现有 skill 上限 ~3.7KB，留一倍余量。"""
+    """渐进式披露的意义就在于每段都小。
+
+    上限比单份 skill 宽，因为「还没递卡」那一段是两份拼的——派活和交付本来就是
+    房间同时在做的两件事，分开注入等于让它读不到其中一件。
+    """
     guide = load_scenario(stage_scenario(stage))
-    assert len(guide.encode()) < 8000, f"stage {stage} guide is too fat"
+    assert len(guide.encode()) < 12000, f"stage {stage} guide is too fat"
 
 
 def test_scenario_selection_uses_the_frontmatter_field():
@@ -100,14 +95,13 @@ def test_scenario_selection_uses_the_frontmatter_field():
     assert "accept-routing" not in skills_for_scenario(stage_scenario(TopicStage.gate))
 
 
-def test_one_skill_can_serve_several_stages():
-    """多对多是选 scenario 而不是硬编码名字列表的理由。"""
-    serving = [
-        stage
-        for stage in TopicStage
-        if "parent-link" in skills_for_scenario(stage_scenario(stage))
-    ]
-    assert len(serving) > 1
+def test_one_scenario_can_be_served_by_several_skills():
+    """多对多是选 scenario 而不是硬编码名字列表的理由。
+
+    「还没递卡」这一段是两份 skill 拼出来的——派活怎么派，以及这批活怎么交付。
+    """
+    serving = skills_for_scenario(stage_scenario(TopicStage.delegating))
+    assert {"stage-delegating", "stage-working"} <= set(serving), serving
 
 
 def test_unknown_scenario_is_empty_not_an_error():
@@ -122,20 +116,21 @@ def test_every_stage_skill_is_registered_by_name():
             assert name in known
 
 
-# --- 两条硬要求的内容真的在 working 阶段里 ----------------------------------
+# --- 两条硬要求的内容真的在「还没递卡」这一段里 ------------------------------
 
 
-def test_working_stage_covers_when_to_hand_off_and_the_approver_token():
-    """简报硬要求：这两条读完就得知道该怎么做，不能散落在别处。"""
-    guide = load_scenario(stage_scenario(TopicStage.working))
+def test_the_pre_card_stage_covers_when_to_hand_off_and_the_github_channel():
+    """这几条读完就得知道该怎么做，不能散落在别处。"""
+    guide = load_scenario(stage_scenario(TopicStage.delegating))
     assert "accept-request" in guide  # 怎么递
     assert "只读" in guide  # 为什么自己推不了
-    assert "cheese ask" in guide  # GitHub 账号校验回环
+    assert "push-fix" in guide  # 递卡之后改动怎么上 PR（#718）
 
 
-def test_pr_open_stage_tells_the_agent_to_just_keep_committing():
-    guide = load_scenario(stage_scenario(TopicStage.pr_open))
-    assert "本分支" in guide
+def test_awaiting_stage_tells_the_agent_how_prs_move_now():
+    guide = load_scenario(stage_scenario(TopicStage.awaiting))
+    assert "push-fix" in guide  # 提交不会自己上 PR，得说怎么上
+    assert "只读" in guide  # 为什么不能自己碰 GitHub
 
 
 # --- 注入进 system prompt ---------------------------------------------------
@@ -150,16 +145,6 @@ def test_stage_guide_lands_in_the_system_prompt():
 def test_no_stage_guide_adds_no_section():
     prompt = build_prompt("base", "", None, [])
     assert "当前阶段的操作说明" not in prompt
-
-
-# --- pr_open 的盲飞防护回归 -------------------------------------------------
-
-
-def test_pr_open_is_an_open_card_status_with_a_hint():
-    """卡进入 PR 迭代后，芝士必须在 turn-meta 里看得到——否则它不知道
-    自己已经有了一条通往 GitHub 的通道。"""
-    assert AcceptStatus.pr_open in _OPEN_CARD_STATUSES
-    assert AcceptStatus.pr_open in _OPEN_CARD_HINTS
 
 
 def test_every_open_card_status_has_a_hint():

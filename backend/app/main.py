@@ -9,13 +9,10 @@ a top-level ``router`` is included. This lets domains be added without editing
 this file.
 """
 
-# dogfood loop: accepted on cheesex, deployed to dev (2026-07-18)
-
 import importlib
 import logging
 import pkgutil
 import re
-import uuid
 
 # (logging is configured right after imports — see basicConfig below.)
 from collections.abc import Callable
@@ -43,7 +40,6 @@ from app.core.sandbox_auth import (
 from app.core.work_context import current_work_id, parse_work_id
 from app.core.ws_diagnostics import LogRefusedWebSockets
 from app.domain import backend_log  # module import: tests swap the intake singleton
-from app.domain.agent.platform_notices import SEVERITY_INFO, WHO_PLATFORM
 from app.domain.agent_credential.services import ProjectAgentCredentialService
 
 # Observable (可观测性军规): structlog + contextvars — every line timestamped,
@@ -163,44 +159,17 @@ async def lifespan(_: FastAPI):
     except Exception:  # noqa: BLE001 — never block startup
         get_logger("cheesex.runtime").exception("startup gate sweep failed")
 
+    from app.api.deps import get_cloud_wakeup
     from app.core.db import async_session_factory
-    from app.domain.agent.device_hub import device_hub
-    from app.domain.agent.runtime import get_broker
     from app.domain.machine.runner import MachineEnrollmentSweeper
     from app.domain.scheduler.jobs import periodic_jobs
-
-    async def resume_ready_cloud_topics(
-        ready: list[tuple[uuid.UUID, str]],
-    ) -> None:
-        chat = get_chat_service()
-        topic_ids = [
-            topic_id for topic_id, device_id in ready if device_hub.is_online(device_id)
-        ]
-        for topic_id in await chat.cloud_waiting_topics(topic_ids):
-            get_work_runner().submit_kickoff(
-                chat,
-                topic_id,
-                prompt="Cloud machine is ready; continue the pending input.",
-            )
-            block = await chat.post_system_event(
-                topic_id,
-                "Cloud 机器已接入，正在继续刚才的消息",
-                meta={
-                    "event_type": "cloud_provisioning",
-                    "state": "ready",
-                    "severity": SEVERITY_INFO,
-                    "who": WHO_PLATFORM,
-                },
-            )
-            if block is not None:
-                await get_broker().publish(
-                    str(topic_id), {"type": "event_block", "block": block}
-                )
 
     jobs = periodic_jobs(
         scheduler=scheduler,
         machines=MachineEnrollmentSweeper(
-            async_session_factory, on_ready=resume_ready_cloud_topics
+            async_session_factory,
+            on_ready=get_cloud_wakeup().wake,
+            on_failed=get_cloud_wakeup().report_failures,
         ),
         sessions=async_session_factory,
     )
@@ -348,24 +317,18 @@ register_all_permissions()
 # not follow a route that moves. #370 step 2 flattened the 2.0 prefix and every
 # one of them stopped matching, which does not fail: it silently opens the
 # cheese write-surface to anyone who can reach the port. The suite caught it
-# (test_project_agent_credential, test_ask_options, test_await_wake,
-# test_memory_search all went from "refused" to "allowed"), which is the only
+# (test_project_agent_credential, test_ask_options and test_memory_search all
+# went from "refused" to "allowed"), which is the only
 # reason to say it out loud here: a gate defined by strings has to be moved by
 # hand whenever the strings it names do.
 _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/webhook-token$")),
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/ask$")),
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/decision$")),
-    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/background-task$")),
-    (
-        "POST",
-        re.compile(r"^/topics/(?P<topic>[^/]+)/background-task/[^/]+/done$"),
-    ),
-    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/return-conclusion$")),
-    # 母子传话: the scoping id is the SENDER (whose turn is talking); the receiver
-    # is in the body and is checked against the parent/child edge by
-    # `TopicRelayService.direction` — this gate can only prove "some agent of this
-    # project", because a project-scoped credential reaches every topic of it.
+    # 留话给一条活: the scoping id is the SENDER (the room whose turn is talking);
+    # the receiver is in the body and is checked against the threads that room
+    # dispatched — this gate can only prove "some agent of this project", because
+    # a project-scoped credential reaches every topic of it.
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/tell$")),
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/accept-card$")),
     # 重推是意图，不是定时器: the poller stopped committing on a timer, so this
@@ -377,17 +340,11 @@ _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/check-result$")),
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/lock$")),
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/unlock$")),
-    # 结论卡: settled by the PARENT during its own turn, so the scoping id in
-    # the URL is the receiver, not the sub-topic that produced the card.
-    (
-        "POST",
-        re.compile(
-            r"^/topics/(?P<topic>[^/]+)/conclusion-cards/[^/]+/"
-            r"(accept|need-evidence|escalate)$"
-        ),
-    ),
     ("POST", re.compile(r"^/projects/(?P<project>[^/]+)/memory$")),
     ("POST", re.compile(r"^/projects/(?P<project>[^/]+)/memory/search$")),
+    # 记忆整理: the topic is the turn that is SPEAKING; which pools it may
+    # reorganize is derived from it server-side (memory/dream.py::dream_pools).
+    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/memory/dream$")),
     # Notification creation is NOT here: humans post there too (Bearer), which
     # this gate cannot see. The route enforces its own credential check via
     # ActorResolver.require_verified_caller — same tokens accepted, plus Bearer.

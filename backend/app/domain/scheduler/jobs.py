@@ -45,6 +45,7 @@ def periodic_jobs(
         finalize_expired_aggregations,
     )
     from app.domain.task.deadline_scheduler import sweep_expired_deadlines
+    from app.domain.topic.retire import sweep_retired_storage
     from app.domain.usage.subscription_ingest import ingest_once
 
     usage_log = settings.subscription_usage_log.strip()
@@ -57,7 +58,7 @@ def periodic_jobs(
             settings.sandbox_reap_interval_seconds,
             lambda: scheduler.reap_idle_device_screens(settings.sandbox_idle_hours),
         ),
-        # 两阶段采纳 (PR迭代式, 2026-08-09): advances pr_open accept cards — PR CI
+        # 合并态轮询 (#718): mirrors pending PR cards' merge state — PR CI
         # → merge → deploy workflow → archive.
         PeriodicRunner(
             "pr poll", settings.accept_pr_poll_interval_s, scheduler.poll_open_prs
@@ -85,14 +86,6 @@ def periodic_jobs(
             "gate sweep",
             settings.gate_sweep_interval_s,
             scheduler.sweep_abandoned_gates,
-        ),
-        # 结论卡·阶段一: 默认采信 must happen even when the parent's digest turn
-        # never runs (queued behind a wedged turn, refused on credits, killed by
-        # a deploy). This sweeps cards past their 30-minute absolute deadline.
-        PeriodicRunner(
-            "conclusion sweep",
-            settings.conclusion_sweep_interval_s,
-            scheduler.sweep_conclusion_cards,
         ),
         # Enrolling provisioned machines is platform plumbing, so it runs on its
         # own interval rather than the AI scheduler's — see machine/runner.py.
@@ -137,5 +130,15 @@ def periodic_jobs(
             "task deadline sweep",
             settings.task_deadline_sweep_interval_s,
             lambda: sweep_expired_deadlines(sessions),
+        ),
+        # Archive takes nothing off disk: a place's worktree here and its home
+        # on the device stay for the retention so an un-archive resumes with
+        # its session. This is what removes them after that — transcripts
+        # stored first — and at once for places no longer in the database
+        # (topic/retire.py). Disk, not data: the branch stays.
+        PeriodicRunner(
+            "topic storage sweep",
+            settings.topic_storage_sweep_interval_s,
+            lambda: sweep_retired_storage(sessions),
         ),
     ]

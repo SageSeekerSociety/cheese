@@ -1,13 +1,21 @@
 <script setup lang="ts">
 // 成果待采纳框 (eval C5/A3): the box at the end of the conversation timeline,
 // GitHub's merge box in shape. It has five mutually exclusive faces — 闸门未通过
-// / 闸门未能执行 / 待采纳 / 交付中 / 已采纳 — and each of them says a different
-// thing about who is waiting on whom.
+// / 闸门未能执行 / 待采纳 / 已采纳等合并 / 已采纳 — and each of them says a
+// different thing about who is waiting on whom.
 //
 // The first two are read-only history. 采纳即合并 (#296, stage 1) retired the
 // machine gate, so nothing files a card into a gate state any more; rows written
 // before that still carry it and still have to render (see
-// backend/app/domain/review/gate.py).
+// backend/app/domain/review/gate.py). 已采纳等合并 (`pr_open`) is history too:
+// #718 made accept merge on the spot, nothing writes the status any more and
+// the stock was migrated back to pending — the face only covers stray relics.
+//
+// 待采纳 wears the merge state (#718): the card's word IS the backend's
+// `merge_state` verdict, the dot next to it says whose move it is (the board's
+// 该谁动 dot language), and the accept button lights only when clicking it
+// would actually merge — except on the platform lane, where accepting is
+// purely a human judgment.
 //
 // It owns its own data (the card list, the PR-checks poll) rather than taking
 // them as props: everything here is about this one topic's cards and nothing
@@ -28,9 +36,12 @@ import {
   reassignCard,
   rejectCard,
   revokeCard,
+  setAutoMerge,
 } from '@/api'
 import TopicAcceptCardVoid from '@/components/TopicAcceptCardVoid.vue'
-import { deliveryNoteTone, deliveryStageOf } from '@/lib/deliveryStage'
+import { columnDotStyle } from '@/lib/board'
+import { mergeBadgeOf, visibleReasons } from '@/lib/mergeState'
+import { noteTone } from '@/lib/noteTone'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -50,7 +61,7 @@ const loaded = ref(false)
 const acceptBusy = ref(false)
 const rejectNote = ref('')
 const showRejectInput = ref(false)
-// 人工放行 (App 采纳等 CI 再合): 明知检查没全绿仍合并。默认拒绝、显式放行，所以
+// 人工放行 (#718): 明知合并态不是 clean 仍合并。默认拒绝、显式放行，所以
 // 它藏在一个要先展开、再填理由的小表单后面——不是一个可以顺手点到的按钮。
 const showForceMergeInput = ref(false)
 const forceMergeReason = ref('')
@@ -64,22 +75,54 @@ const pendingCard = computed<AcceptCard | null>(
 // The accepted card on an archived topic — its presence lets us offer 撤回采纳.
 const acceptedCard = computed<AcceptCard | null>(() => acceptCards.value.find((c) => c.status === 'accepted') ?? null)
 
-// 交付进度 (两阶段采纳, 2026-08-09): the human already clicked 采纳 and the PR is
-// open — CI and the merge run for hours after that. Without this branch the whole
-// merge box vanishes the moment someone accepts, and nothing on screen says the
-// delivery is still in flight. Read-only: the decision was already made, nobody
-// should be asked to click a second time.
+// 已采纳等合并 (`pr_open`, #718 退役): 历史状态。采纳现在当场合并，什么都不再
+// 写这个状态，存量卡也已迁回 pending —— 这张脸和闸门那两张一样，只为库里的
+// 极端残留兜底，只读。
 const deliveringCard = computed<AcceptCard | null>(() => acceptCards.value.find((c) => c.status === 'pr_open') ?? null)
-// 步骤由后端下发（`card.stages`）——哪些步骤存在取决于项目的 forge，浏览器看不见。
-// 这里只把它们配上文案，见 lib/deliveryStage.ts。
-const deliveryStage = computed(() => (deliveringCard.value ? deliveryStageOf(deliveringCard.value) : null))
-// 交付途中后端把阶段信息/故障写在卡的 note 上（CI 红了、GitHub 拒绝合并、轮询用的
-// token 失效），那是这些事唯一露头的地方，照原样显示。
-const deliveryNote = computed(() => {
-  const card = deliveringCard.value
+// 后端把途中的阶段信息/故障写在卡的 note 上（PR 有新提交、GitHub 拒绝合并、
+// 凭据失效），那是这些事唯一露头的地方，照原样显示。轻重由 note_level 定。
+const cardNote = (card: AcceptCard | null) => {
   if (!card) return null
-  const tone = deliveryNoteTone(card)
+  const tone = noteTone(card)
   return tone ? { text: card.note, tone } : null
+}
+const deliveryNote = computed(() => cardNote(deliveringCard.value))
+// 待采纳卡上的同一条 note（比如「PR 有新提交，之前看到的版本已过时」）。冲突卡
+// 的 note 已经在冲突说明里念过了，不再重复。
+const pendingNote = computed(() =>
+  pendingCard.value && pendingCard.value.status !== 'conflict' ? cardNote(pendingCard.value) : null
+)
+
+// 卡上的状态 = 合并态 (#718)：词和「谁的活」的圈都是后端算好的，这里只翻译
+// （lib/mergeState.ts）。冲突卡的标题已经说了「芝士处理中」，不再画第二行。
+const mergeBadge = computed(() => {
+  const card = pendingCard.value
+  if (!card || card.status === 'conflict') return null
+  return mergeBadgeOf(card.merge_state)
+})
+const mergeReasons = computed(() => (pendingCard.value ? visibleReasons(pendingCard.value.merge_state) : []))
+// 平台 lane (#363)：没绑 GitHub 的项目，采纳纯粹是人的判断，按钮从不按状态灰。
+const platformLane = computed(() => {
+  const card = pendingCard.value
+  return !!card && card.merge_state.who === 'human' && card.pr_number === null
+})
+// GitHub lane 非 clean 时按钮灰掉，title 说明为什么（后端反正会 422 拒绝）。
+const acceptBlockedTitle = computed<string | null>(() => {
+  const card = pendingCard.value
+  if (!card || platformLane.value) return null
+  if (card.merge_state.state === 'clean') return null
+  const why = mergeReasons.value.map((r) => r.detail).filter(Boolean)
+  return ['现在采纳不会合并', ...why].join('：')
+})
+
+// 绿了自动合 (#718)：项目允许、且卡正停在 blocked/behind（规则还没满足）时才有
+// 这个开关；已布防的开关一直可见，好让人解除。
+const autoMergeArmedBy = computed(() => pendingCard.value?.auto_merge.armed_by ?? null)
+const autoMergeVisible = computed(() => {
+  const card = pendingCard.value
+  if (!card || !card.auto_merge.allowed) return false
+  const state = card.merge_state.state
+  return state === 'blocked' || state === 'behind' || !!card.auto_merge.armed_by
 })
 
 // 机器闸门 (eval C2, 已退役): a card left in a gate state by the mechanism that
@@ -202,7 +245,7 @@ async function onAcceptCard() {
   try {
     const updated = await acceptCard(card.id, AUTHOR)
     if (updated.status === 'conflict') {
-      store.error = '采纳时出现合并冲突，本次未归档。芝士正在解决，完成后可重试采纳。'
+      store.error = '采纳时出现合并冲突，本次未合并。芝士正在解决，完成后可重试采纳。'
     }
     await Promise.all([loadAcceptCard(), store.refreshTopicRow(props.topicId)])
   } catch (e) {
@@ -227,7 +270,7 @@ async function onRevokeCard() {
 }
 
 async function onForceMerge() {
-  const card = deliveringCard.value
+  const card = pendingCard.value
   if (!card) return
   acceptBusy.value = true
   try {
@@ -242,10 +285,25 @@ async function onForceMerge() {
   }
 }
 
-// 作废后卡进终态，这个框整个消失（`hasBox` 不再匹配任何一张卡），话题回到可以
+// 作废后卡进终态，这个框整个消失（不再匹配任何一张卡），话题回到可以
 // 重新递卡的状态——所以跟采纳/放行一样，卡列表和侧栏那一行都要重新拉。
 async function onVoided() {
   await Promise.all([loadAcceptCard(), store.refreshTopicRow(props.topicId)])
+}
+
+// 绿了自动合 (#718)：布防/解除都打同一个端点，布防人由后端从会话认定。
+async function onToggleAutoMerge(enabled: unknown) {
+  const card = pendingCard.value
+  if (!card) return
+  acceptBusy.value = true
+  try {
+    await setAutoMerge(card.id, !!enabled)
+    await loadAcceptCard(true)
+  } catch (e) {
+    store.reportError(e, '设置自动合并失败')
+  } finally {
+    acceptBusy.value = false
+  }
 }
 
 async function onRejectCard() {
@@ -352,6 +410,32 @@ defineExpose({ reload: loadAcceptCard })
         <div v-if="pendingCard.status === 'conflict'" class="text-caption text-medium-emphasis mb-2">
           {{ pendingCard.note || '采纳时出现合并冲突，芝士正在解决。' }}
           它完成后可重试采纳。
+        </div>
+        <!-- 合并态 (#718): 状态词 + 「谁的活」的圈。词和 who 都是后端算好下发的，
+             圈用看板「该谁动」的点语言（同一个问题在整套界面里只有一种颜色）。
+             clean 画绿勾不画圈 —— 绿勾本身就是记号。 -->
+        <div v-if="mergeBadge" class="d-flex align-center ga-2 text-body-2 mb-1">
+          <v-icon v-if="pendingCard.merge_state.state === 'clean'" color="success" size="16">mdi-check-circle</v-icon>
+          <span v-else class="board-dot" :style="columnDotStyle(mergeBadge.column)" aria-hidden="true" />
+          <span>{{ mergeBadge.label }}</span>
+        </div>
+        <!-- 结论的依据：红了哪个检查要能看见。 -->
+        <div
+          v-for="(r, i) in mergeReasons"
+          :key="i"
+          class="d-flex align-center flex-wrap ga-1 text-caption text-medium-emphasis mb-1"
+        >
+          <span>{{ r.detail }}</span>
+          <code v-for="chk in r.checks" :key="chk" class="text-caption">{{ chk }}</code>
+        </div>
+        <!-- 后端写在卡上的 note（比如「PR 有新提交，之前看到的版本已过时」）。 -->
+        <div
+          v-if="pendingNote"
+          class="d-flex align-start ga-1 text-caption mb-2"
+          :class="pendingNote.tone === 'error' ? 'text-error' : 'text-medium-emphasis'"
+        >
+          <v-icon v-if="pendingNote.tone === 'error'" icon="mdi-alert-circle-outline" size="14" class="mt-1" />
+          <span>{{ pendingNote.text }}</span>
         </div>
         <div class="d-flex align-center flex-wrap ga-1 text-body-2 mb-1">
           <span>等</span>
@@ -494,16 +578,20 @@ defineExpose({ reload: loadAcceptCard })
           >
             去验收
           </v-btn>
-          <v-btn
-            color="success"
-            variant="flat"
-            :loading="acceptBusy"
-            :disabled="acceptBusy"
-            prepend-icon="mdi-check"
-            @click="onAcceptCard"
-          >
-            {{ pendingCard.status === 'conflict' ? '重试采纳' : '采纳并归档' }}
-          </v-btn>
+          <!-- 采纳 = 当场合并 (#718)：GitHub lane 只在 clean 亮（后端反正会拒），
+               为什么灰写在 title 里；平台 lane 的采纳纯是人的判断，从不按状态灰。 -->
+          <span :title="acceptBlockedTitle ?? undefined">
+            <v-btn
+              color="success"
+              variant="flat"
+              :loading="acceptBusy"
+              :disabled="acceptBusy || !!acceptBlockedTitle"
+              prepend-icon="mdi-check"
+              @click="onAcceptCard"
+            >
+              {{ pendingCard.status === 'conflict' ? '重试采纳' : '采纳' }}
+            </v-btn>
+          </span>
           <v-btn
             variant="text"
             :disabled="acceptBusy"
@@ -512,6 +600,68 @@ defineExpose({ reload: loadAcceptCard })
           >
             退回
           </v-btn>
+        </div>
+        <!-- 绿了自动合 (#718)：项目允许、规则还没满足时才有；布防人由后端认定。 -->
+        <div v-if="autoMergeVisible" class="d-flex align-center flex-wrap ga-2 mt-2">
+          <v-switch
+            :model-value="!!autoMergeArmedBy"
+            color="success"
+            density="compact"
+            hide-details
+            :disabled="acceptBusy"
+            label="通过后自动合并"
+            @update:model-value="onToggleAutoMerge"
+          />
+          <span v-if="autoMergeArmedBy" class="text-caption text-medium-emphasis">
+            由 @{{ autoMergeArmedBy }} 开启
+          </span>
+        </div>
+        <!--
+          人工放行 (#718)：明知合并态不是 clean 仍合并。平台自己永远不走这条路——
+          红着合有时候是对的（CI 抽风、与本次改动无关的既有失败），不能接受的是
+          没有人做过这个决定。所以它默认收起、要填理由，点下去在卡上留名。
+        -->
+        <div v-if="pendingCard.pr_number && acceptBlockedTitle" class="mt-2">
+          <v-btn
+            v-if="!showForceMergeInput"
+            size="small"
+            variant="text"
+            class="text-medium-emphasis"
+            prepend-icon="mdi-alert-decagram-outline"
+            @click="showForceMergeInput = true"
+          >
+            人工放行并合并
+          </v-btn>
+          <template v-else>
+            <div class="text-caption text-medium-emphasis mb-1">
+              在检查未全部通过的情况下强制合并。平台会记录操作人、时间和当时的检查状态。
+            </div>
+            <v-textarea
+              v-model="forceMergeReason"
+              label="理由"
+              rows="2"
+              auto-grow
+              density="compact"
+              variant="outlined"
+              hide-details
+              class="mb-2"
+            />
+            <div class="d-flex ga-2">
+              <v-btn
+                size="small"
+                color="warning"
+                variant="flat"
+                :loading="acceptBusy"
+                :disabled="acceptBusy"
+                @click="onForceMerge"
+              >
+                确认放行并合并
+              </v-btn>
+              <v-btn size="small" variant="text" :disabled="acceptBusy" @click="showForceMergeInput = false">
+                取消
+              </v-btn>
+            </div>
+          </template>
         </div>
         <div v-if="showRejectInput" class="d-flex align-end ga-2 mt-3">
           <v-text-field
@@ -531,33 +681,17 @@ defineExpose({ reload: loadAcceptCard })
       </div>
     </v-card>
 
-    <!-- 交付进度: 人已经点过采纳，剩下的（检查、合并——具体几步由项目的 forge
-         决定，后端下发）是机器在跑，要跑几小时。这一段本身不问人任何事——授权已经
-         给过了，不该再问第二次；底下两个按钮都不是重问，而是这次交付走不下去的时候
-         人唯一能改变它的两个方向：放行合并，或者作废。 -->
+    <!-- 已采纳等合并 (`pr_open`, #718 退役): 历史卡的兜底脸，参考闸门那两张的
+         处理——只读、不转圈（转圈是在说平台此刻正跑着什么，而平台什么也没跑）。
+         采纳现在当场合并，这个状态不会再有新卡进来。 -->
     <v-card v-else-if="deliveringCard" variant="outlined" class="merge-box mt-2">
       <div class="pa-3">
         <div class="d-flex align-center ga-2 mb-1">
-          <v-progress-circular indeterminate size="18" width="2" />
-          <span class="t-title">交付中 · {{ deliveryStage?.title }}</span>
+          <v-icon color="warning" size="19">mdi-history</v-icon>
+          <span class="t-title">已采纳，未完成合并</span>
         </div>
         <div class="text-caption text-medium-emphasis mb-2">
-          已由 <strong>@{{ deliveringCard.decided_by }}</strong> 采纳，{{ deliveryStage?.hint }}
-        </div>
-        <!-- 阶段条：人点完之后走到哪一步了 -->
-        <div class="d-flex align-center flex-wrap ga-1 text-caption mb-2">
-          <template v-for="(step, i) in deliveryStage?.steps ?? []" :key="step.key">
-            <v-icon v-if="i > 0" size="13" class="text-disabled">mdi-chevron-right</v-icon>
-            <span
-              class="d-flex align-center ga-1"
-              :class="step.state === 'todo' ? 'text-disabled' : 'text-medium-emphasis'"
-            >
-              <v-progress-circular v-if="step.state === 'active'" indeterminate size="13" width="2" />
-              <v-icon v-else-if="step.state === 'done'" color="success" size="14">mdi-check-circle</v-icon>
-              <v-icon v-else size="14">mdi-circle-outline</v-icon>
-              {{ step.label }}
-            </span>
-          </template>
+          已由 <strong>@{{ deliveringCard.decided_by }}</strong> 采纳，但合并没有完成。这是一张旧卡，需要人工处理
         </div>
         <!-- 后端把故障写在卡的 note 上，这是它唯一露头的地方。轻重由后端下发的
              note_level 决定，不是从文案开头那个字符猜的 —— 所以这里画一个真的图
@@ -610,66 +744,15 @@ defineExpose({ reload: loadAcceptCard })
             <span v-if="chk.status !== 'completed'">进行中</span>
           </div>
         </div>
-        <!--
-          人工放行：明知检查没全绿仍合并。平台自己永远不走这条路——红着合
-          有时候是对的（CI 抽风、与本次改动无关的既有失败），不能接受的是
-          没有人做过这个决定。所以它默认收起、要填理由，点下去在卡上留名。
-        -->
-        <div class="mt-3">
-          <v-btn
-            v-if="!showForceMergeInput"
-            size="small"
-            variant="text"
-            class="text-medium-emphasis"
-            prepend-icon="mdi-alert-decagram-outline"
-            @click="showForceMergeInput = true"
-          >
-            人工放行并合并
-          </v-btn>
-          <template v-else>
-            <div class="text-caption text-medium-emphasis mb-1">
-              在检查未全部通过的情况下强制合并。平台会记录操作人、时间和当时的检查状态。
-            </div>
-            <v-textarea
-              v-model="forceMergeReason"
-              label="理由"
-              rows="2"
-              auto-grow
-              density="compact"
-              variant="outlined"
-              hide-details
-              class="mb-2"
-            />
-            <div class="d-flex ga-2">
-              <v-btn
-                size="small"
-                color="warning"
-                variant="flat"
-                :loading="acceptBusy"
-                :disabled="acceptBusy"
-                @click="onForceMerge"
-              >
-                确认放行并合并
-              </v-btn>
-              <v-btn size="small" variant="text" :disabled="acceptBusy" @click="showForceMergeInput = false">
-                取消
-              </v-btn>
-            </div>
-          </template>
-        </div>
-        <!-- 作废: 放行是「合了它」，作废是「不合了」。没有第二条出口的时候这个盒子
-             就是死路——PR 被人关掉之后放行也会停下（GitHub 不接受合并一个已关闭
-             的 PR），而这张卡还活着，话题就再也递不出下一张。 -->
-        <TopicAcceptCardVoid :card="deliveringCard" :disabled="acceptBusy" @voided="onVoided" />
       </div>
     </v-card>
 
-    <!-- Archived (accepted) topic: 采纳可撤销 (spec §6.3). -->
+    <!-- Accepted topic: 采纳可撤销 (spec §6.3). -->
     <v-card v-else-if="acceptedCard" variant="outlined" class="merge-box mt-2">
       <div class="pa-3">
         <div class="d-flex align-center ga-2 mb-1">
           <v-icon color="success" size="19">mdi-check-circle-outline</v-icon>
-          <span class="t-title">已采纳并归档</span>
+          <span class="t-title">已采纳</span>
         </div>
         <div class="text-body-2 c-muted mb-3">
           由 <strong>@{{ acceptedCard.decided_by }}</strong> 采纳
@@ -717,5 +800,14 @@ defineExpose({ reload: loadAcceptCard })
   border: 1px solid var(--line-2);
   color: var(--text);
   background: var(--surface);
+}
+/* 「谁的活」的圈。形状和颜色都由 `lib/board.ts` 一处给出（内联样式），这里只管
+   尺寸 —— scoped 样式进不了别的组件，颜色写在这儿就意味着卡和看板各有一份。 */
+.board-dot {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--faint);
 }
 </style>

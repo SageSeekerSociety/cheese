@@ -45,10 +45,6 @@ class ForgeKind(enum.StrEnum):
     #: The platform's GitHub App owns PR creation and merging (#296). The
     #: project has an installation AND a GitHub https upstream.
     github_app = "github_app"
-    #: The App mechanism is off for this deployment, so the two-phase path uses
-    #: the approver's own connected token — and degrades to a local merge when
-    #: that is unavailable, which is the pre-#296 behaviour, kept deliberately.
-    github_user = "github_user"
     #: No GitHub at all: the platform's bare repo is the authoritative main and
     #: the local merge is this project's one legitimate accept (#363) — not a
     #: degrade, which is why it carries a note saying so.
@@ -87,20 +83,20 @@ class Forge:
 async def resolve(
     *,
     project_id: uuid.UUID,
-    app_owns_prs: bool,
     is_github_bound: Callable[[uuid.UUID], Awaitable[bool]],
 ) -> Forge:
     """Pick the forge for this project's accept.
 
     ``is_github_bound`` is injected so the decision is testable without a
     database, a GitHub App or a workspace — the three things that made the old
-    inline crossing effectively untestable.
+    inline crossing effectively untestable. A deployment with no App
+    configured answers "not bound" for every project, so it lands on the
+    platform forge (#718 deleted the personal-token lane that used to catch
+    that case).
 
     Fails CLOSED: if the binding cannot be determined, this raises rather than
     guessing, because the wrong guess is the one that pushes to main.
     """
-    if not app_owns_prs:
-        return Forge(ForgeKind.github_user)
     try:
         bound = await is_github_bound(project_id)
     except Exception as exc:  # noqa: BLE001 — cannot pick a lane blind

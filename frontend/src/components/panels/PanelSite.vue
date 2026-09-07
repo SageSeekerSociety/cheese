@@ -210,12 +210,10 @@ function fmtTime(iso: string): string {
 // 施工现场 tool-event lines: backend stores "verb\npreview"; legacy rows are
 // "🔧 toolname". Split into the action verb and an optional argument preview.
 const LEGACY_VERB: Record<string, string> = {
-  create_subtopic: '拆出子话题',
   update_doc: '更新文档',
   remember: '记入记忆',
   notify: '发送通知',
   request_accept: '提交验收卡',
-  return_conclusion: '回传结论',
   pin_milestone: '添加里程碑',
   write_file: '写入文件',
   record_decision: '记录决策',

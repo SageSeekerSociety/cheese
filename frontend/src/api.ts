@@ -5,6 +5,9 @@ import type {
   AgentType,
   ApiEnvelope,
   Block,
+  BranchProtection,
+  BranchProtectionPatch,
+  BranchProtectionRules,
   ChatAttachment,
   ComputeProfiles,
   Contributions,
@@ -41,9 +44,7 @@ import type {
   UserProfile,
   WorkspaceFile,
 } from './cx_types'
-import type { PlacePayload } from './lib/place'
 
-import { isThreadPayload } from './lib/place'
 import { TOPIC_TITLE_MAX_LENGTH } from './lib/topicTitle'
 
 export { TOPIC_TITLE_MAX_LENGTH }
@@ -615,8 +616,10 @@ export function unarchiveTopic(topicId: string, by: string): Promise<Topic> {
 // 把一条消息升级成它自己的地点 (eval A1)。`blockId` 是那条消息的 block id。
 // 房间里的消息升级出来的是一条**支线**；私聊里的升级出来的是一个真房间——私聊
 // 不在话题树里，支线在那儿没人打得开。所以回答有两种形状。
-export function upgradeBlock(blockId: string, createdBy: string): Promise<PlacePayload> {
-  return request<PlacePayload>(`/blocks/${encodeURIComponent(blockId)}/upgrade`, {
+/** 升级一条消息。房间里的消息变成这个房间的一张**卡**（回来的是 RoomTask），
+ *  私聊里的变成一个新房间（回来的是 Topic）。 */
+export function upgradeBlock(blockId: string, createdBy: string): Promise<Topic | RoomTask> {
+  return request<Topic | RoomTask>(`/blocks/${encodeURIComponent(blockId)}/upgrade`, {
     method: 'POST',
     body: JSON.stringify({ created_by: createdBy }),
   })
@@ -863,6 +866,18 @@ export function setUpstream(projectId: string, url: string): Promise<UpstreamInf
 export function syncUpstream(projectId: string): Promise<UpstreamSyncResult> {
   return request(`/projects/${encodeURIComponent(projectId)}/upstream/sync`, {
     method: 'POST',
+  })
+}
+
+// 分支保护 (#718): 平台侧的合并规则。GET 附带只读的 merge_method 和
+// github_protection；PUT 是 partial-update，body 里出现哪个键就改哪个。
+export function getBranchProtection(projectId: string): Promise<BranchProtection> {
+  return request<BranchProtection>(`/projects/${encodeURIComponent(projectId)}/branch-protection`)
+}
+export function setBranchProtection(projectId: string, patch: BranchProtectionPatch): Promise<BranchProtectionRules> {
+  return request(`/projects/${encodeURIComponent(projectId)}/branch-protection`, {
+    method: 'PUT',
+    body: JSON.stringify(patch),
   })
 }
 
@@ -1228,12 +1243,12 @@ export function revokeCard(cardId: string, decidedBy: string): Promise<AcceptCar
   })
 }
 
-// 人工放行 (App 采纳等 CI 再合): merge a pr_open card's PR even though its
-// checks are not all green. The platform never does this on its own —红着合
-// 有时候是对的，不能接受的是没有人做过这个决定。So the actor is taken from the
-// session server-side (never the body) and the card records who / when / what
-// the checks said / why. Only the reviewer, the authorizer, or an owner/lead
-// may call it, and 芝士 is refused outright.
+// 人工放行 (#718): merge a pending card's PR even though its merge state is
+// not clean. The platform never does this on its own —红着合有时候是对的，
+// 不能接受的是没有人做过这个决定。So the actor is taken from the session
+// server-side (never the body) and the card records who / when / what the
+// checks said / why. Only the project's override list (owner/lead when
+// unconfigured) may call it, and 芝士 is refused outright.
 export function mergeCardAnyway(cardId: string, reason: string): Promise<AcceptCard> {
   return request<AcceptCard>(`/accept-cards/${encodeURIComponent(cardId)}/merge-anyway`, {
     method: 'POST',
@@ -1241,12 +1256,13 @@ export function mergeCardAnyway(cardId: string, reason: string): Promise<AcceptC
   })
 }
 
-// 作废验收卡: the only human exit out of `conflict` / `pr_open`. Both are
-// refused by accept / reject / revoke / reassign alike, and a live card is
-// itself what stops the topic filing a new one — so without this call a room
-// that reaches either can never deliver again (真实案例: PR #545 被人工关闭后卡
-// 永久停在 pr_open). It puts the card in a terminal state, which is deliberately
-// NOT the same as 放行: 重新递卡 is the way back.
+// 作废验收卡: the only human exit out of an undecided card that must not be
+// accepted — a `conflict` retry that should not continue, a pending card whose
+// PR someone closed on GitHub. accept / reject / revoke / reassign all refuse
+// `conflict`, and a live card is itself what stops the topic filing a new one,
+// so without this call a room that reaches it can never deliver again. It puts
+// the card in a terminal state, which is deliberately NOT the same as 放行:
+// 重新递卡 is the way back.
 //
 // `void` also takes `pending_gate`, but nothing on screen needs to: nothing
 // mints that status any more, and `gate_sweep.condemn` ages the rows written
@@ -1259,6 +1275,16 @@ export function voidAcceptCard(cardId: string, note: string): Promise<AcceptCard
   return request<AcceptCard>(`/accept-cards/${encodeURIComponent(cardId)}/void`, {
     method: 'POST',
     body: JSON.stringify({ note }),
+  })
+}
+
+// 绿了自动合 (#718): arm/disarm auto-merge on a pending card. Reviewer-side
+// switch, only meaningful on a project with auto_merge_allowed; the actor is
+// the session user server-side, and 新提交作废采纳 disarms it again.
+export function setAutoMerge(cardId: string, enabled: boolean): Promise<AcceptCard> {
+  return request<AcceptCard>(`/accept-cards/${encodeURIComponent(cardId)}/auto-merge`, {
+    method: 'POST',
+    body: JSON.stringify({ enabled }),
   })
 }
 
@@ -1324,17 +1350,33 @@ export function removeTopicMember(topicId: string, handle: string, actor: string
   )
 }
 
-// 一个 id 指向一个「地点」——房间答 Topic，支线答 RoomTask (lib/place.ts)。
-// 打开一条支线只有这一条路：侧栏那份列表只查 topics 表，支线从来不在里面。
-export function getPlace(placeId: string): Promise<PlacePayload> {
-  return request<PlacePayload>(`/topics/${encodeURIComponent(placeId)}`)
+// 一个 id 指向一个房间。**卡不是地点**：拿卡的 id 问这条接口是 404，卡走
+// `getRoomTask`（房间的地址 + 卡的 id）。
+export function getTopic(topicId: string): Promise<Topic> {
+  return request<Topic>(`/topics/${encodeURIComponent(topicId)}`)
 }
 
-// Re-fetch a single ROOM (after accept it becomes archived). Null for a thread:
-// the caller patches a row in the rail's list, and threads have no row there.
-export async function getTopic(topicId: string): Promise<Topic | null> {
-  const place = await getPlace(topicId)
-  return isThreadPayload(place) ? null : place
+/** 一张卡，连着它自己的对话。`limit` 只截对话，卡本身照常整份回来。 */
+export function getRoomTask(
+  roomId: string,
+  taskId: string,
+  opts?: { limit?: number }
+): Promise<RoomTask & { blocks: Block[] }> {
+  const q = new URLSearchParams()
+  if (opts?.limit != null) q.set('limit', String(opts.limit))
+  const query = q.toString() ? `?${q.toString()}` : ''
+  return request<RoomTask & { blocks: Block[] }>(
+    `/topics/${encodeURIComponent(roomId)}/tasks/${encodeURIComponent(taskId)}${query}`
+  )
+}
+
+/** 在一张卡下面说话。落在这条活的时间线上，房间被叫来转达 —— 做这条活的分身住在
+ *  房间的会话里，只有房间的芝士递得到话。 */
+export function sayOnRoomTask(roomId: string, taskId: string, content: string, author: string): Promise<Block> {
+  return request<Block>(`/topics/${encodeURIComponent(roomId)}/tasks/${encodeURIComponent(taskId)}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({ content, author }),
+  })
 }
 
 // ---- 日历 / 里程碑 (§7.2) ----

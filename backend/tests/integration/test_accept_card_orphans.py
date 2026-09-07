@@ -1,14 +1,13 @@
-"""孤儿卡 / note 串台 / 递卡互斥 —— 三条运行时缺陷的功能测试 (2026-08-10).
+"""孤儿卡 / 轮询暂停 / 递卡互斥 —— 归档与轮询交界处的功能测试。
 
 全部走 HTTP，断言的是**外部可观察的行为**（卡的状态、note、话题里的消息、
-通知、轮询器动没动 GitHub），不看源码结构。
+轮询器动没动 GitHub），不看源码结构。
 
-- **B 孤儿卡**：话题归档后，`pr_open` 的卡必须停止被轮询推进——修复前
-  `poll_open_prs` 只按卡的 status 选行，归档话题上的卡每 60 秒还在用批准人的
-  GitHub token 推分支 / 合 PR。这里的判据就是"轮询器有没有再打 GitHub"。
-- **A note 串台**：`⚠️ 轮询暂停` 不能再让真正的 CI 失败通知误命中去重；
-  而 `⚠️ 平台自动重推失败` 的优先级是**有意**的，必须保留。
-- **C 递卡互斥**：交付途中（`pr_open`）或卡在冲突时，不能再递第二张卡。
+- **孤儿卡**：话题归档后，骑着 PR 的卡必须停止被轮询跟进——修复前
+  `poll_open_prs` 只按卡的 status 选行，归档话题上的卡每 60 秒还在被拿着
+  GitHub 凭据跟进。这里的判据就是"轮询器有没有再打 GitHub"。
+- **轮询暂停**：凭据失效时卡面要说清原因，且不能吞掉之后真正的 CI 失败。
+- **递卡互斥**：已有未决的卡（等采纳 / 卡在冲突）时，不能再递第二张。
 """
 
 import asyncio
@@ -17,12 +16,29 @@ import uuid
 from tests.conftest import wait_work_idle
 from tests.integration.conftest import room_text, session_auth_headers
 
-# Reuse the 两阶段采纳 harness instead of rebuilding it — see
+# Reuse the #718 App-lane harness instead of rebuilding it — see
 # .claude/rules/backend-tests.md.
 from tests.integration.test_accept_pr import (
-    _pr_ready,
-    _reset_client,
+    _cards,
+    _make_card_response,
+    _poll,
+    _ready_card,
 )
+from tests.integration.test_accept_pr import (
+    app_world as _app_world_fixture,
+)
+
+app_world = _app_world_fixture
+
+
+def _topic(client, topic_id: str) -> dict:
+    return client.get(f"/topics/{topic_id}").json()["data"]
+
+
+def _archive(client, topic_id: str, by: str = "bob") -> dict:
+    r = client.post(f"/topics/{topic_id}/archive", json={"by": by})
+    assert r.status_code == 200, r.text
+    return r.json()["data"]
 
 
 def _make_project(client) -> str:
@@ -35,170 +51,60 @@ def _make_topic(client, project_id: str, title: str = "做一个东西") -> str:
     ).json()["data"]["id"]
 
 
-def _make_card(client, topic_id: str, reviewer: str = "alice"):
-    return client.post(
-        f"/topics/{topic_id}/accept-card",
-        json={
-            "change_subject": "chore(test): file an accept card",
-            "reviewer_handle": reviewer,
-            "routing_reason": "最懂",
-        },
-    )
-
-
-def _cards(client, topic_id: str) -> list[dict]:
-    return client.get(f"/topics/{topic_id}/accept-card").json()["data"]["data"]
-
-
-def _topic(client, topic_id: str) -> dict:
-    return client.get(f"/topics/{topic_id}").json()["data"]
-
-
-def _poll(client) -> dict:
-    r = client.post("/admin/scheduler/poll-open-prs")
-    assert r.status_code == 200
-    return r.json()["data"]
-
-
-def _archive(client, topic_id: str, by: str = "bob") -> dict:
-    r = client.post(f"/topics/{topic_id}/archive", json={"by": by})
-    assert r.status_code == 200, r.text
-    return r.json()["data"]
-
-
-def _accept(client, card_id: str, handle: str = "alice") -> dict:
-    r = client.post(
-        f"/accept-cards/{card_id}/accept",
-        json={"decided_by": handle},
-        headers=session_auth_headers(handle),
-    )
-    assert r.status_code == 200, r.text
-    return r.json()["data"]
-
-
-def _open_pr_card(client, monkeypatch, *, title: str = "做一个东西"):
-    """A topic whose card is `pr_open` — a human accepted, the PR is up."""
-    fake = _pr_ready(client, monkeypatch)
-    pid = _make_project(client)
-    tid = _make_topic(client, pid, title)
-    cid = _make_card(client, tid).json()["data"]["id"]
-    accepted = _accept(client, cid)
-    assert accepted["status"] == "pr_open"
-    return fake, pid, tid, cid, accepted
-
-
 # --------------------------------------------------------------------------
-# B: 孤儿卡不是"停着"，是"还在动"
+# 孤儿卡不是"停着"，是"还在被跟进"
 # --------------------------------------------------------------------------
 
 
-def test_archiving_a_topic_stops_the_poller_from_driving_its_pr(client, monkeypatch):
-    """核心回归：归档后，轮询器绝不能再拿批准人的 token 去动这张卡的 PR。
+def test_archiving_a_topic_stops_the_poller_from_touching_its_pr(client, app_world):
+    """核心回归：归档后，轮询器绝不能再拿 GitHub 凭据去碰这张卡的 PR。"""
+    fake = app_world["fake"]
+    _pid, tid, _cid, number, head_sha = _ready_card(client, app_world)
+    fake.check_state_by_sha[head_sha] = ("success", "全绿")
 
-    判据是行为，不是状态字段：把 PR 的 CI 设成绿（修复前这会让下一轮轮询直接
-    调用 merge_pull_request 把 PR 合进 main），然后归档，再轮询——GitHub 侧
-    必须一次调用都没有。
-    """
-    fake, _pid, tid, _cid, accepted = _open_pr_card(client, monkeypatch)
-    try:
-        number = accepted["pr_number"]
-        fake.check_state_by_sha[fake.prs[number]["head_sha"]] = ("success", "全绿")
+    _archive(client, tid)
 
-        _archive(client, tid)
-
-        result = _poll(client)
-        assert result["cards_checked"] == 0
-        assert result["errors"] == []
-        # 修复前这里会有一次真实的合并调用 —— 把已归档话题的 PR 合进 main。
-        assert fake.merge_calls == []
-    finally:
-        _reset_client()
+    fake.status_calls.clear()
+    result = _poll(client)
+    assert result["cards_checked"] == 0
+    assert result["errors"] == []
+    assert fake.status_calls == []  # GitHub 一次都没被打
+    assert fake.merge_calls == []
 
 
-def test_archiving_a_stage_one_card_revokes_it_and_leaves_the_pr_open(
-    client, monkeypatch
+def test_archiving_a_card_riding_an_open_pr_revokes_it_and_leaves_the_pr(
+    client, app_world
 ):
-    """第一阶段（PR 未合并）+ 人工归档 = 撤销授权、停止推进，但不替人关 PR。
+    """骑着未合并 PR 的卡 + 人工归档 = 撤销、停止跟进，但不替人关 PR。
 
-    产品判断（见 review/archive.py 的 docstring）：归档的人未必是当初授权开 PR
-    的人，用别人的 token 去关别人名下的 PR 是把"借来的钥匙"问题又用了一次。
-    代价是 PR 会留在 GitHub 上，所以留痕和通知是这条选择的必要配套——这里一并断言。
+    产品判断（review/archive.py 的 docstring）：PR 开着是惰性的，关掉却可能
+    丢掉一段人本来打算手动合并的工作。代价是 PR 会留在 GitHub 上，所以留痕
+    是这条选择的必要配套——这里一并断言。
     """
-    fake, pid, tid, _cid, accepted = _open_pr_card(client, monkeypatch)
-    try:
-        number = accepted["pr_number"]
-        _archive(client, tid, by="bob")
+    fake = app_world["fake"]
+    _pid, tid, _cid, number, _head = _ready_card(client, app_world)
 
-        card = _cards(client, tid)[0]
-        assert card["status"] == "revoked"
-        assert f"#{number}" in card["note"]
-        assert "未合并" in card["note"]
-        # 授权来源不能被归档动作抹掉。
-        assert card["decided_by"] == "alice"
+    _archive(client, tid, by="bob")
 
-        # 平台没有去动 GitHub 上那个 PR（没关、没合）。
-        assert fake.merge_calls == []
-        assert fake.prs[number]["head_sha"]  # PR 还在，状态未被平台改写
+    card = _cards(client, tid)[0]
+    assert card["status"] == "revoked"
+    assert f"#{number}" in card["note"]
+    assert "未合并" in card["note"]
 
-        # 留痕：话题里有一条系统消息说清 PR 被放手了。
-        blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
-        contents = room_text(blocks)
-        assert f"停止推进 PR #{number}" in contents
+    # 平台没有去动 GitHub 上那个 PR（没关、没合）。
+    assert fake.merge_calls == []
+    assert fake.prs[number]["state"] == "open"
 
-        # 通知：强提醒发给当初授权的人（alice），而不是归档的人（bob）。
-        def _titles(handle: str) -> list[str]:
-            notifs = client.get(
-                f"/projects/{pid}/alerts",
-                headers=session_auth_headers(handle),
-            ).json()["data"]["data"]
-            return [n["title"] for n in notifs]
-
-        assert any(f"PR #{number} 还开着" in x for x in _titles("alice"))
-        assert not any(f"PR #{number} 还开着" in x for x in _titles("bob"))
-    finally:
-        _reset_client()
-
-
-def test_archiving_a_merged_card_settles_it_as_accepted(client, monkeypatch):
-    """一张 `pr_open` 但 PR 已合并的卡被归档 = 收尾成 accepted，不是撤销。
-
-    自 #206 起合并即终态，所以这个状态只在两个窄窗口里存在：合并与下一次轮询之
-    间，以及本次改动之前就停在"已合并等部署"的老卡。它不再由轮询产生，所以这里
-    直接把卡摆成那个状态——测的是 archive 这条兜底路径本身。
-    """
-    fake, _pid, tid, cid, accepted = _open_pr_card(client, monkeypatch)
-    try:
-        # 直接改库摆出那个窄状态——它不再由任何代码路径产生，正是本测试的前提。
-        from datetime import UTC, datetime
-
-        from app.domain.review.models import AcceptCard
-
-        async def _mark_merged() -> None:
-            async with client.test_factory() as s:
-                card = await s.get(AcceptCard, uuid.UUID(cid))
-                assert card is not None
-                card.pr_merged_at = datetime.now(UTC)
-                await s.commit()
-
-        asyncio.run(_mark_merged())
-        assert _cards(client, tid)[0]["status"] == "pr_open"
-
-        _archive(client, tid, by="bob")
-
-        card = _cards(client, tid)[0]
-        assert card["status"] == "accepted"
-        assert "已合并" in card["note"]
-        # 卡已终结，轮询不该再碰它。
-        assert _poll(client)["cards_checked"] == 0
-    finally:
-        _reset_client()
+    # 留痕：话题里有一条系统消息说清 PR 被放手了。
+    blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
+    assert f"停止跟进 PR #{number}" in room_text(blocks)
 
 
 def test_archiving_revokes_a_pending_card(client):
     """最常见的一种：卡还等着人点，话题先被归档了。"""
     pid = _make_project(client)
     tid = _make_topic(client, pid)
-    _make_card(client, tid)
+    _make_card_response(client, tid)
     assert _cards(client, tid)[0]["status"] == "pending"
 
     _archive(client, tid, by="bob")
@@ -210,23 +116,19 @@ def test_archiving_revokes_a_pending_card(client):
 
 
 def test_cascade_archive_closes_the_work_and_settles_the_card_delivering_it(client):
-    """归档是级联的（房间带走里面的活），而收卡必须和它同一趟。
-
-    卡是房间的（一张卡交付整棵树 = 房间里那一批活），支线自己递不了。所以级联要
-    收的不是「每条支线各自那张」，而是**房间这一张**——它正要交付的恰恰是被这次
-    归档关掉的那些活。漏收就留下一张没人能再动的孤儿卡：它所在的地方已经冻住了。
-    """
+    """归档是级联的（房间带走里面的活），而收卡必须和它同一趟。"""
     pid = _make_project(client)
     room = _make_topic(client, pid, "房间")
     thread = client.post(f"/topics/{room}/split", json={"title": "一件活"}).json()[
         "data"
     ]["id"]
-    _make_card(client, room)
+    _make_card_response(client, room)
     assert _cards(client, room)[0]["status"] == "pending"
 
     _archive(client, room, by="bob")
 
-    assert _topic(client, thread)["status"] == "closed"
+    cards = client.get(f"/topics/{room}/tasks").json()["data"]["data"]
+    assert [c["status"] for c in cards if c["id"] == thread] == ["closed"]
     assert _cards(client, room)[0]["status"] == "revoked"
 
 
@@ -234,7 +136,7 @@ def test_archiving_does_not_touch_already_settled_cards(client):
     """幂等 + 不越权：终态的卡（这里是 rejected）不会被归档改写。"""
     pid = _make_project(client)
     tid = _make_topic(client, pid)
-    cid = _make_card(client, tid).json()["data"]["id"]
+    cid = _make_card_response(client, tid).json()["data"]["id"]
     r = client.post(
         f"/accept-cards/{cid}/reject",
         json={"decided_by": "alice", "note": "先不收"},
@@ -253,194 +155,106 @@ def test_archiving_does_not_touch_already_settled_cards(client):
 
 
 def test_poller_skips_archived_topics_even_for_a_card_it_never_closed(
-    client, monkeypatch
+    client, app_world
 ):
     """第二道锁：直接把话题状态改成 archived（绕过归档流程，模拟历史遗留行），
     轮询器仍然不能碰这张卡。"""
-    fake, _pid, tid, _cid, accepted = _open_pr_card(client, monkeypatch)
-    try:
-        number = accepted["pr_number"]
-        fake.check_state_by_sha[fake.prs[number]["head_sha"]] = ("success", "全绿")
+    fake = app_world["fake"]
+    _pid, tid, _cid, number, head_sha = _ready_card(client, app_world)
+    fake.check_state_by_sha[head_sha] = ("success", "全绿")
 
-        # 绕过 TopicService.archive，直接改库——正是那 6 张存量卡的形状。
-        from app.domain.topic.models import Topic, TopicStatus
+    from app.domain.topic.models import Topic, TopicStatus
 
-        async def _force_archive() -> None:
-            async with client.test_factory() as s:
-                topic = await s.get(Topic, uuid.UUID(tid))
-                assert topic is not None
-                topic.status = TopicStatus.archived
-                await s.commit()
+    async def _force_archive() -> None:
+        async with client.test_factory() as s:
+            topic = await s.get(Topic, uuid.UUID(tid))
+            assert topic is not None
+            topic.status = TopicStatus.archived
+            await s.commit()
 
-        asyncio.run(_force_archive())
+    asyncio.run(_force_archive())
 
-        assert _poll(client)["cards_checked"] == 0
-        assert fake.merge_calls == []
-    finally:
-        _reset_client()
+    fake.status_calls.clear()
+    assert _poll(client)["cards_checked"] == 0
+    assert fake.status_calls == []
 
 
 # --------------------------------------------------------------------------
-# A: note 前缀串台吞掉 CI 失败通知
+# 轮询暂停：凭据没了要说清，且不吞后面的 CI 失败
 # --------------------------------------------------------------------------
 
 
-def test_poll_pause_note_does_not_swallow_a_later_ci_failure(client, monkeypatch):
-    """A 的核心回归。
+def _flaky_app_tokens(monkeypatch):
+    """让平台 App 凭据可开关地失效（None = 拿不到）。"""
+    from app.domain.agent import github_app
+    from tests.integration.test_accept_pr import _FakeTokens
 
-    token 失效 → note 变成 `⚠️ 轮询暂停…`；token 恢复后 CI 红了，修复前那条
-    `startswith("⚠️")` 的去重会误命中：不发消息、不改 note、
-    不留痕，芝士永远不知道要修，而唯一的逃生口（pr_head_sha 变化）又需要先有人
-    推新提交——死锁。现在必须正常通知。
-    """
-    fake = _pr_ready(client, monkeypatch)
-    holder: dict = {"reason": None}
+    holder: dict = {"broken": False}
 
-    async def fake_token(_session, h, *, provider_id="github_app"):
-        if h == "alice" and holder["reason"] is None:
-            return "test-token", None
-        return None, holder["reason"] or "not_connected"
+    async def tokens_for_project(_project_id, _session):
+        return None if holder["broken"] else _FakeTokens()
 
-    monkeypatch.setattr(
-        "app.domain.oauth.services.get_github_user_token_for_handle_with_reason",
-        fake_token,
-    )
-    try:
-        pid = _make_project(client)
-        tid = _make_topic(client, pid)
-        cid = _make_card(client, tid).json()["data"]["id"]
-        accepted = _accept(client, cid)
-        number = accepted["pr_number"]
-
-        # 1) token 失效 → 轮询暂停留在 note 上
-        holder["reason"] = "undecryptable"
-        _poll(client)
-        assert "轮询暂停" in _cards(client, tid)[0]["note"]
-
-        # 2) token 恢复，同一个 commit 的 CI 红了
-        holder["reason"] = None
-        fake.check_state_by_sha[fake.prs[number]["head_sha"]] = (
-            "failure",
-            "pytest: 7 failed",
-        )
-        _poll(client)
-        wait_work_idle()
-
-        # 芝士必须被叫到，note 必须换成 CI 失败
-        blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
-        contents = room_text(blocks)
-        assert "pytest: 7 failed" in contents
-        note = _cards(client, tid)[0]["note"]
-        assert "CI 检查未通过" in note
-        assert "轮询暂停" not in note
-    finally:
-        _reset_client()
+    monkeypatch.setattr(github_app, "github_app_tokens_for_project", tokens_for_project)
+    return holder
 
 
-def test_poll_pause_note_is_cleared_once_the_token_works_again(client, monkeypatch):
-    """暂停说明必须自愈：token 一恢复，那句"轮询暂停"就不该继续挂在卡上骗人。"""
-    _pr_ready(client, monkeypatch)
-    holder: dict = {"reason": None}
+def test_poll_pause_note_does_not_swallow_a_later_ci_failure(
+    client, app_world, monkeypatch
+):
+    """凭据失效 → note 变成「轮询暂停」；恢复后 CI 红了，必须正常通知 —— 修复前
+    `startswith("⚠️")` 的去重会把它吞掉，芝士永远不知道要修。"""
+    fake = app_world["fake"]
+    _pid, tid, _cid, number, head_sha = _ready_card(client, app_world)
+    holder = _flaky_app_tokens(monkeypatch)
 
-    async def fake_token(_session, h, *, provider_id="github_app"):
-        if h == "alice" and holder["reason"] is None:
-            return "test-token", None
-        return None, holder["reason"] or "not_connected"
+    holder["broken"] = True
+    _poll(client)
+    assert "轮询暂停" in _cards(client, tid)[0]["note"]
 
-    monkeypatch.setattr(
-        "app.domain.oauth.services.get_github_user_token_for_handle_with_reason",
-        fake_token,
-    )
-    try:
-        pid = _make_project(client)
-        tid = _make_topic(client, pid)
-        cid = _make_card(client, tid).json()["data"]["id"]
-        _accept(client, cid)
+    holder["broken"] = False
+    fake.check_state_by_sha[head_sha] = ("failure", "pytest: 7 failed")
+    _poll(client)
+    wait_work_idle()
 
-        holder["reason"] = "expired_no_refresh"
-        _poll(client)
-        assert "轮询暂停" in _cards(client, tid)[0]["note"]
-
-        holder["reason"] = None  # 重新连了账号
-        _poll(client)  # CI 还在跑（fake 默认 pending）
-        note = _cards(client, tid)[0]["note"]
-        assert "轮询暂停" not in note  # 骗人的那句没了
-        # 取而代之的是如实描述当下的那句：还在等 CI（App 采纳等 CI 再合）。
-        assert note.startswith("等检查")
-        assert _cards(client, tid)[0]["status"] == "pr_open"
-    finally:
-        _reset_client()
+    blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
+    assert "pytest: 7 failed" in room_text(blocks)
+    note = _cards(client, tid)[0]["note"]
+    assert "轮询暂停" not in note
 
 
-def test_repush_failure_still_outranks_a_ci_failure(client, monkeypatch):
-    """有意保留的优先级（docs/topics/诊断信息搬上验收卡.md §优先级说明）：
-    重推失败意味着芝士的修复根本没到 GitHub，比"旧 commit 上的陈年 CI 失败"
-    更值得展示——A 的修复不能把这条一起改掉。"""
-    fake = _pr_ready(client, monkeypatch, patch_local_head=False)
-    try:
-        pid = _make_project(client)
-        tid = _make_topic(client, pid)
-        cid = _make_card(client, tid).json()["data"]["id"]
-        accepted = _accept(client, cid)
-        number = accepted["pr_number"]
+def test_poll_pause_note_is_cleared_once_the_credentials_work_again(
+    client, app_world, monkeypatch
+):
+    """暂停说明必须自愈：凭据一恢复，那句"轮询暂停"就不该继续挂在卡上骗人。"""
+    _pid, tid, _cid, _number, head_sha = _ready_card(client, app_world)
+    holder = _flaky_app_tokens(monkeypatch)
 
-        # 本地分支动了 → 平台要重推；让重推失败。
-        from app.core.errors import ValidationError
-        from app.domain.review.services import AcceptService
-        from app.domain.workspace import service as ws
+    holder["broken"] = True
+    _poll(client)
+    assert "轮询暂停" in _cards(client, tid)[0]["note"]
 
-        monkeypatch.setattr(
-            AcceptService,
-            "_local_topic_branch_head",
-            lambda _self, _p, _t: "local-head-moved",
-        )
-        # 采纳即合并 (#296) 加了「快进不了就不推」的前置判断，靠真的
-        # `git merge-base` 判祖先。这里用的是假 sha，判不出祖先关系会走到「分叉」
-        # 分支而不是真去推。本用例要测的是**推送失败**那条 note 的优先级，所以
-        # 让快进判断放行，push 才会被调用并抛错。
-        monkeypatch.setattr(
-            AcceptService, "_remote_head_ff_from_local", lambda *_a, **_k: True
-        )
-
-        def boom(*_a, **_k):
-            # 与生产同一种失败：push 失败抛 ValidationError（见 ws.push_*）。
-            raise ValidationError("push rejected by remote")
-
-        monkeypatch.setattr(ws, "push_topic_branch_for_github_pr", boom)
-
-        # 同一轮里 CI 也是红的。
-        fake.check_state_by_sha[fake.prs[number]["head_sha"]] = (
-            "failure",
-            "pytest: 2 failed",
-        )
-        _poll(client)
-        wait_work_idle()
-
-        note = _cards(client, tid)[0]["note"]
-        assert note.startswith("平台自动重推失败")
-    finally:
-        _reset_client()
+    holder["broken"] = False
+    _poll(client)  # CI 还在跑（fake 默认 pending）
+    card = _cards(client, tid)[0]
+    assert "轮询暂停" not in (card["note"] or "")
+    assert card["status"] == "pending"
+    # 等待本身不再占 note：卡面状态由合并态镜像说（#718）。
+    assert card["merge_state"]["state"] in ("unstable", "clean", "unknown")
 
 
 # --------------------------------------------------------------------------
-# C: 递卡互斥漏了 pr_open / conflict
+# 递卡互斥
 # --------------------------------------------------------------------------
 
 
-def test_cannot_hand_a_second_card_while_the_first_is_delivering(client, monkeypatch):
-    """C 的核心回归：交付途中（PR 在跑）再递一张卡必须被拒。
+def test_cannot_hand_a_second_card_while_one_awaits_accept(client, app_world):
+    """已有一张等采纳的卡（骑着 PR）时再递一张必须被拒 —— 一棵树一个 PR。"""
+    _pid, tid, _cid, _number, _head = _ready_card(client, app_world)
 
-    修复前两张卡会并存，而前端只认最新那张——旧卡连同它正在跑的 PR 一起从界面
-    消失。
-    """
-    _fake, _pid, tid, _cid, _accepted = _open_pr_card(client, monkeypatch)
-    try:
-        r = _make_card(client, tid, reviewer="bob")
-        assert r.status_code == 422, r.text
-        assert "交付中" in r.json()["message"]
-        assert len(_cards(client, tid)) == 1
-    finally:
-        _reset_client()
+    r = _make_card_response(client, tid, reviewer="bob")
+    assert r.status_code == 422, r.text
+    assert "已有待处理的验收卡" in r.json()["message"]
+    assert len(_cards(client, tid)) == 1
 
 
 def test_cannot_hand_a_second_card_while_the_first_is_in_conflict(client, monkeypatch):
@@ -449,7 +263,7 @@ def test_cannot_hand_a_second_card_while_the_first_is_in_conflict(client, monkey
 
     pid = _make_project(client)
     tid = _make_topic(client, pid)
-    cid = _make_card(client, tid).json()["data"]["id"]
+    cid = _make_card_response(client, tid).json()["data"]["id"]
 
     monkeypatch.setattr(
         ws,
@@ -464,34 +278,24 @@ def test_cannot_hand_a_second_card_while_the_first_is_in_conflict(client, monkey
     assert r.status_code == 200, r.text
     assert _cards(client, tid)[0]["status"] == "conflict"
 
-    r = _make_card(client, tid, reviewer="bob")
+    r = _make_card_response(client, tid, reviewer="bob")
     assert r.status_code == 422, r.text
     assert "冲突" in r.json()["message"]
     assert len(_cards(client, tid)) == 1
 
 
-def test_the_refusal_tells_you_how_to_get_unstuck(client, monkeypatch):
+def test_the_conflict_refusal_tells_you_how_to_get_unstuck(client, monkeypatch):
     """被互斥挡住的时候，拒绝语要给出那条走得通的路。
 
-    「不能再递一张」对一张还在动的卡是对的；对一张再也动不了的卡（PR 被人关掉、
-    冲突不打算解了）它就是死路——而读拒绝语的往往是芝士，它会照着那句话继续等
-    一个永远不来的结果。所以两条拒绝语都得点名「作废」。
+    「解决冲突后重试采纳」对一次还打算继续的采纳是对的；对一次不该继续的采纳
+    它就是死路——而读拒绝语的往往是芝士，它会照着那句话继续等一个永远不来的
+    结果。所以这条拒绝语得点名「作废」。
     """
-    _fake, _pid, tid, _cid, _accepted = _open_pr_card(client, monkeypatch)
-    try:
-        message = _make_card(client, tid, reviewer="bob").json()["message"]
-        assert "作废" in message
-    finally:
-        _reset_client()
-
-
-def test_the_conflict_refusal_tells_you_how_to_get_unstuck(client, monkeypatch):
-    """同上，冲突那条：解冲突不是唯一出路，不解也得有出路。"""
     from app.domain.workspace import service as ws
 
     pid = _make_project(client)
     tid = _make_topic(client, pid)
-    cid = _make_card(client, tid).json()["data"]["id"]
+    cid = _make_card_response(client, tid).json()["data"]["id"]
 
     monkeypatch.setattr(
         ws,
@@ -505,16 +309,15 @@ def test_the_conflict_refusal_tells_you_how_to_get_unstuck(client, monkeypatch):
     )
     assert _cards(client, tid)[0]["status"] == "conflict"
 
-    assert "作废" in _make_card(client, tid, reviewer="bob").json()["message"]
+    assert "作废" in _make_card_response(client, tid, reviewer="bob").json()["message"]
 
 
-def test_a_failed_gate_still_allows_re_handing_a_card(client, monkeypatch):
-    """反向保护：闸门红了卡就作废，修完重新递卡是设计好的流程，不能被互斥挡住。"""
+def test_a_failed_gate_still_allows_re_handing_a_card(client):
+    """反向保护：历史 gate_failed 卡不挡新递卡。"""
     pid = _make_project(client)
     tid = _make_topic(client, pid)
-    cid = _make_card(client, tid).json()["data"]["id"]
+    cid = _make_card_response(client, tid).json()["data"]["id"]
 
-    # 直接把这张卡结算成 gate_failed（跳过真正跑 check_command）。
     from app.domain.review.models import AcceptCard, AcceptStatus
 
     async def _fail_gate() -> None:
@@ -526,6 +329,6 @@ def test_a_failed_gate_still_allows_re_handing_a_card(client, monkeypatch):
 
     asyncio.run(_fail_gate())
 
-    r = _make_card(client, tid, reviewer="bob")
+    r = _make_card_response(client, tid, reviewer="bob")
     assert r.status_code == 200, r.text
     assert len(_cards(client, tid)) == 2

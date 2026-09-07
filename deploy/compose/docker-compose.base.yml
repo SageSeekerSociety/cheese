@@ -32,11 +32,6 @@ services:
       # Uploads live OUTSIDE any release/image, on a host path bind-mounted below,
       # so deploys never touch them (the 赛题 PDFs on prod).
       - STORAGE_LOCAL_PATH=/data/uploads
-      # Wire git (inside the container) to the mounted credential store — env
-      # config needs no image change and applies to every git the backend runs.
-      - GIT_CONFIG_COUNT=1
-      - GIT_CONFIG_KEY_0=credential.helper
-      - GIT_CONFIG_VALUE_0=store --file /data/git-credentials
       # The image's app user has HOME=/nonexistent; git needs a writable,
       # PERSISTENT home. Backed by a host path so its global config and the
       # repo-trust records survive redeploys.
@@ -48,6 +43,11 @@ services:
       # Set here rather than in backend/.env because the value is a CONTAINER
       # path that only makes sense together with the bind mount below.
       - OPENVIKING_DATA_DIR=/data/viking
+      # Raw Claude session files shipped from device homes before the home is
+      # deleted (topic/retire.py): one tar.gz per place per upload, and the
+      # only copy once the home is gone. A container path like the one above,
+      # paired with the bind mount below.
+      - TRANSCRIPTS_DIR=/data/transcripts
       # Agent containers are siblings spawned through docker.sock, not compose
       # services. Pin them to this deployment's sha so a floating/local alias
       # cannot disappear or drift independently of the backend.
@@ -58,18 +58,23 @@ services:
       # Platform workspaces (project git repos / topic worktrees / sessions)
       # must OUTLIVE container recreations — without this bind every deploy
       # erased them (they lived in the container FS). Required for the fused
-      # platform features (topics/芝士) and the self-hosting dogfood loop.
+      # platform features (topics/芝士).
       - ${WORKSPACES_HOST_PATH:-/home/nictheboy/cheese-workspaces}:/app/.workspaces
-      # Git credentials for the platform's upstream-sync / push_back against
-      # private GitHub repos: a host-side store file (chmod 600, NOT in git).
-      # Default /dev/null = feature off (git prompts fail cleanly).
-      - ${GIT_CREDENTIALS_FILE:-/dev/null}:/data/git-credentials:ro
       - ${APPHOME_HOST_PATH:-/home/nictheboy/cheese-app-home}:/data/apphome
       # Everything the openviking memory backend remembers. Mounted
       # unconditionally: on MEMORY_BACKEND=db the directory just stays empty,
       # and having it already in place is what makes flipping the backend a
       # one-line env change instead of a deploy edit.
       - ${VIKING_HOST_PATH:-/home/nictheboy/cheese-viking}:/data/viking
+      # The transcript archives (TRANSCRIPTS_DIR above). Mounted so they
+      # outlive the container: nothing else holds them.
+      - ${TRANSCRIPTS_HOST_PATH:-/home/nictheboy/cheese-transcripts}:/data/transcripts
+      # The claude binaries the backend serves to machines it enrols. It fetches
+      # each version once from the vendor and caches it under connector-dist,
+      # which is image content — so every deploy threw the cache away and the
+      # next enrolment re-downloaded ~40MB inside its own timeout (a dev box
+      # deploys many times a day, so in practice every enrolment paid).
+      - ${CLAUDE_CACHE_HOST_PATH:-/home/nictheboy/cheese-claude-cache}:/app/connector-dist/claude-cache
     # Bind 0.0.0.0, NOT 127.0.0.1: the ghg edge (APISIX) reaches these boxes from
     # a SEPARATE host (192.168.16.13) and proxies straight to the backend on :8081
     # and the frontend on :8080 — a localhost-only bind would be unreachable from
@@ -77,6 +82,11 @@ services:
     # inbound. (etrip is public and uses its OWN compose, not this one.)
     ports:
       - "0.0.0.0:${BACKEND_PORT:-8081}:8081"
+    # tini as PID 1, so orphans get reaped. The git the backend runs is waited on,
+    # but git's own children outlive it and reparent to PID 1 — and uvicorn never
+    # waits on a process it did not start. Without this they pile up as zombies:
+    # 77 `git` after 17 hours on dev (2026-09-01). They cost PIDs, not fds.
+    init: true
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8081/healthz"]
       interval: 15s
@@ -129,6 +139,14 @@ services:
       # prod (RUC) needs its WS-edge override (https://119pve.ghg.org.cn) because
       # the cheese.ruc.edu.cn edge strips WebSocket Upgrade; set per box.
       - VITE_CONNECTOR_WS_BASE=${VITE_CONNECTOR_WS_BASE:-}
+      # Where this nginx forwards /api and /connector. The default is the
+      # compose backend. A box that deploys without downtime sets it (in
+      # ops/deploy.env) to host.docker.internal:8081, the host nginx that
+      # deploy-docker.sh moves between backends during a rollout.
+      - API_UPSTREAM=${API_UPSTREAM:-backend:8081}
+    # Lets API_UPSTREAM name the host; unused otherwise.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     # The ghg edge proxies the SPA to the box on :8080; also publish :80 so direct
     # in-net access and any :80 probe keep working (bare-metal exposed both). Both
     # are overridable so a parallel validation run can use alt ports without

@@ -47,9 +47,6 @@ export interface Topic {
   // 哪个 AI 队友在这个话题里工作。null = 跟着项目的默认走（不是「没有」），
   // 所以换了项目默认，这个话题也跟着换。
   agent_instance_id?: string | null
-  // 只有 kind='thread' 的地点有：这件活当前骑的那张验收卡 / PR。房间的交付是
-  // 整条分支一张卡，不挂在这里。
-  card?: ThreadCard | null
   // 这个房间在看板那套词里处在哪一列。侧栏房间行的色点读它。
   //
   // 和上面 `running` / `awaits_me` / `i_participate` 一样是「只有 list/get 话题时
@@ -148,14 +145,14 @@ export interface RoomTask {
   room_id: string
   title: string
   status: string
-  // 它此刻占没占着这个房间四个槽位里的一个，和从什么时候开始等的。和 `status`
-  // 是两个问题：四条都 open 的房间可能三条在跑一条排队，也可能全都闲着。
-  residency?: 'running' | 'idle'
-  queued_at?: string | null
   owner_handle?: string | null
   created_by?: string | null
-  agent_instance_id?: string | null
   branch_name?: string | null
+  // 派它出去时说的那份要求，和分身交回来的那句话。两样都住在卡上：简报以前存在
+  // 「活自己的实况文档」里，而做活的分身拿的是房间的 token，够不着那个地址，
+  // 于是那份文档从播种那一刻起就再没人改过。
+  brief?: string
+  conclusion?: string | null
   // 它干在哪一批上。一棵树 = 一个分支 = 一个 PR = 一批活，所以这是「我这条活最后
   // 会从哪个 PR 出去」的答案，也是总览把活和 PR 对上的唯一依据。
   tree_id?: string | null
@@ -522,16 +519,44 @@ export type AcceptStatus =
   | 'gate_failed'
   // 闸门没跑成：检查没能在门禁环境里跑起来，对代码没有结论（不是「未通过」）。
   | 'gate_blocked'
-  // 两阶段采纳 (PR迭代式, 2026-08-09): the human already accepted; the PR is
-  // open and the machine stretch (CI → merge → deploy) is still running.
+  // 两阶段采纳 (2026-08-16 → #718 退役): 历史状态。采纳回到「点一下就是合并」
+  // 之后不再有卡进入它，存量卡也已迁回 pending —— 这里留着只为极端残留兜底。
   | 'pr_open'
   | string
 
-// GET /topics/{id}/accept-card (list, newest first).
-export interface DeliveryStep {
-  key: string
-  label: string
-  state: 'done' | 'active' | 'todo'
+// 合并态 (#718): the card's status IS the merge state. Computed server-side
+// (backend domain/review/merge_state.py) — the browser never derives it, it
+// only puts words and a dot next to what the backend said.
+export type MergeStateWord = 'clean' | 'unstable' | 'blocked' | 'behind' | 'dirty' | 'unknown'
+
+// 谁的活 (#718 的表格): who moves next. `human` + no PR = the platform lane,
+// where accepting is purely a human judgment and never gated by the state.
+export type MergeWho = 'ci' | 'agent' | 'platform' | 'human'
+
+export interface MergeReason {
+  kind: string
+  // The check names involved, ready for the card face (红了哪个要能看见).
+  checks: string[]
+  detail: string
+}
+
+export interface MergeStateInfo {
+  state: MergeStateWord
+  who: MergeWho
+  // At least one entry server-side; the basis for the verdict.
+  reasons: MergeReason[]
+  head_sha: string | null
+  checked_at: string | null
+  since: string | null
+}
+
+// 绿了自动合 (#718): only meaningful when the project allows it; armed by a
+// reviewer while the card is blocked/behind, merged by the platform when the
+// rules are met.
+export interface AutoMergeInfo {
+  allowed: boolean
+  armed_by: string | null
+  armed_at: string | null
 }
 
 export interface AcceptCard {
@@ -562,11 +587,10 @@ export interface AcceptCard {
   // platform opened one (flag-gated, best-effort).
   pr_number: number | null
   pr_url: string | null
-  // 交付进度: the steps THIS project has, sent by the backend. Whether a
-  // project has external checks is a property of its forge, which the browser
-  // cannot see — so the chain is no longer derived here. Empty whenever there
-  // is no machine work in flight, which is most of the time.
-  stages: DeliveryStep[]
+  // 合并态 (#718): what stands between this card and the trunk, and whose move
+  // it is. Always present — a platform-lane card carries who="human".
+  merge_state: MergeStateInfo
+  auto_merge: AutoMergeInfo
   // 两阶段采纳 (PR迭代式) only: which repo the PR lives in and the commit CI is
   // being queried against.
   pr_repo: string | null
@@ -834,6 +858,37 @@ export interface GithubConnection {
   account?: string
 }
 
+// 分支保护 (#718): 平台侧的合并规则，照 GitHub 分支保护那一页配置。
+// GitHub 能判定的听 GitHub，判定不了的平台按这份配置补位。
+export interface RequiredCheck {
+  name: string
+  // 相对仓库根的 glob；缺省/为空 = 每个 PR 都要求这条检查。
+  paths?: string[]
+}
+// 可写的规则本体。PUT partial-update：body 里出现哪个键就改哪个，返回值也是这一块。
+export interface BranchProtectionRules {
+  required_checks: RequiredCheck[]
+  strict: boolean
+  dismiss_stale: boolean
+  auto_merge_allowed: boolean
+  // null = 未配置：默认由项目 owner 和 lead 放行。
+  override_handles: string[] | null
+  approvals_required: number
+  // '' = 未指定。
+  default_reviewer: string
+}
+export type BranchProtectionPatch = Partial<BranchProtectionRules>
+// GET 额外带两块只读附注，说明 GitHub 那一侧的现实。
+export interface BranchProtection extends BranchProtectionRules {
+  // 绑定 GitHub 的项目从仓库设置读；未绑定固定 'squash'。只读。
+  merge_method: string
+  github_protection: {
+    enforced: boolean
+    status: 'unbound' | 'enforced' | 'none' | 'unknown'
+    detail?: string | null
+  }
+}
+
 // A user's OAuth/App connections — GET /users/{userId}/oauth/connections
 // (list_user_connections). login/tokenExpires/hasRefreshToken (2026-08-09) are
 // token-health metadata only; the raw access token is never sent to the client.
@@ -933,5 +988,8 @@ export interface ProjectAgent {
   is_default: boolean
   // False = it resolves and owns a memory pool, but there is no row to edit.
   configured: boolean
+  // False = 已停用. Still listed and still working in the topics that already
+  // have it — just not offered when picking an agent for new work.
+  is_active: boolean
   created_at?: string | null
 }

@@ -1,11 +1,12 @@
 <script setup lang="ts">
 // 作废这张卡: the human exit out of a card that can no longer move.
 //
-// `conflict` and `pr_open` are refused by accept / reject / revoke / reassign
-// alike, and a live card is itself what stops the topic filing a new one — so a
-// room that reaches either can never deliver again. 真实案例: PR #545 被人工关闭
-// 后卡永久停在 pr_open，界面上一个能点的东西都没有。The backend has had the exit
-// since 2026-08-11; until now nothing on screen called it.
+// `conflict` is refused by accept / reject / revoke / reassign alike, and a
+// live card is itself what stops the topic filing a new one — so a room whose
+// accept must NOT continue (the conflict is not worth resolving, or someone
+// closed the card's PR on GitHub) can never deliver again without this. The
+// backend has had the exit since 2026-08-11; until now nothing on screen
+// called it.
 //
 // The third status `void` takes, `pending_gate`, deliberately gets no face here:
 // nothing mints it since the machine gate retired, and `gate_sweep.condemn`

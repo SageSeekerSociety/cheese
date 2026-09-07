@@ -21,6 +21,7 @@ from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.identity.actor import Actor
 from app.domain.machine.models import AiStatus, MachineStatus, ProjectMachine
 from app.domain.machine.services import MachineService
+from app.domain.machine.wakeup import WAKE_NOTICE, WAKE_PROMPT, CloudWakeup
 from app.domain.scheduler.service import SchedulerService
 
 __all__ = [
@@ -30,6 +31,7 @@ __all__ = [
     "get_profile_registry",
     "get_broker",
     "get_work_runner",
+    "get_cloud_wakeup",
     "project_device_online",
     "team_device_online",
 ]
@@ -92,10 +94,6 @@ async def _read_topic_cloud(topic_id: uuid.UUID) -> CloudLease | None:
         return None if machine is None else _cloud_lease(machine)
 
 
-async def _replace_topic_cloud(topic_id: uuid.UUID, session: AsyncSession) -> None:
-    await MachineService(session).replace_topic_machine(topic_id)
-
-
 @lru_cache
 def get_chat_service() -> ChatService:
     # Gateway admin client (L1/L2 — defined in `app.domain.agent.gateway`): only
@@ -120,7 +118,70 @@ def get_chat_service() -> ChatService:
         profiles=get_profile_registry(),
         compute=build_compute_pool(cloud_channel=cloud),
         gateway=gateway,
-        replace_cloud_machine=_replace_topic_cloud,
+    )
+
+
+@lru_cache
+def get_cloud_wakeup() -> CloudWakeup:
+    """The one object that starts a Cloud topic's held turn — asked by the
+    enrollment sweep and by the connector route (see machine/wakeup.py)."""
+    from app.domain.agent.platform_notices import SEVERITY_INFO, WHO_PLATFORM
+
+    chat = get_chat_service()
+
+    async def ready_leases(device_id: str) -> list[tuple[uuid.UUID, str]]:
+        async with async_session_factory() as session:
+            return await MachineService(session).ready_topic_devices(device_id)
+
+    async def kickoff(topic_id: uuid.UUID) -> None:
+        get_work_runner().submit_kickoff(chat, topic_id, prompt=WAKE_PROMPT)
+
+    async def announce(topic_id: uuid.UUID) -> None:
+        block = await chat.post_system_event(
+            topic_id,
+            WAKE_NOTICE,
+            meta={
+                "event_type": "cloud_provisioning",
+                "state": "ready",
+                "severity": SEVERITY_INFO,
+                "who": WHO_PLATFORM,
+            },
+        )
+        if block is not None:
+            await get_broker().publish(
+                str(topic_id), {"type": "event_block", "block": block}
+            )
+
+    async def announce_failure(topic_id: uuid.UUID, text: str) -> None:
+        from app.domain.agent.platform_notices import SEVERITY_ERROR, WHO_HUMAN
+
+        block = await chat.post_system_event(
+            topic_id,
+            text,
+            meta={
+                "event_type": "cloud_provisioning",
+                "state": "failed",
+                "severity": SEVERITY_ERROR,
+                "who": WHO_HUMAN,
+                "detail": (
+                    "这条消息还留着，但平台不会自动换一台机器。"
+                    "在项目的算力页看这台机器的状态，处理后再 @芝士。"
+                ),
+                "detail_label": "接下来",
+            },
+        )
+        if block is not None:
+            await get_broker().publish(
+                str(topic_id), {"type": "event_block", "block": block}
+            )
+
+    return CloudWakeup(
+        ready_leases=ready_leases,
+        waiting_topics=chat.cloud_waiting_topics,
+        kickoff=kickoff,
+        announce=announce,
+        is_online=device_hub.is_online,
+        announce_failure=announce_failure,
     )
 
 
@@ -144,5 +205,4 @@ def get_work_runner() -> AgentWorkRunner:
         turn_timeout_s=settings.agent_turn_timeout_s,
         first_output_timeout_s=settings.agent_first_output_timeout_s,
         credential_expiry_of=topic_credential_expiry,
-        replace_cloud_machine=_replace_topic_cloud,
     )

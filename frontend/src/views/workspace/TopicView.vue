@@ -10,7 +10,6 @@ import { usePageTitle } from '@/composables/usePageTitle'
 
 import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
-import { isThread, roomIdOf } from '@/lib/place'
 import { formatToolAction, isPlatformAction, toolLabel } from '@/lib/toolLabels'
 import { topicPhase } from '@/lib/topicState'
 import { myHandle } from '@/me'
@@ -45,23 +44,24 @@ function onPanelTab(key: string) {
   void router.replace({ query: { ...route.query, tab: key } })
 }
 
+// 看板上点开的那张卡。**一件活不是地点**：做它的分身住在这个房间的会话里，所以
+// 打开一张卡不离开房间，只是总览那一格往下钻一层——地址里记的就是这一层，于是
+// 「你看一下这条活」是一条能发出去的链接。
+const openCardId = computed(() => {
+  const q = route.query.card
+  return typeof q === 'string' && q ? q : null
+})
+function onOpenCard(taskId: string | null) {
+  if (openCardId.value === taskId) return
+  // push，不是 replace：往下钻一层是「去了一个地方」，浏览器的返回该退回看板。
+  const query = { ...route.query, tab: 'overview', card: taskId ?? undefined }
+  void router.push({ query })
+}
+
 const AUTHOR = myHandle()
 
-// URL 里的这个 id 指向一个「地点」——房间，或者房间里的一条支线 (lib/place.ts)。
-//
-// 这里以前只在 `store.topics` 里找，而那张表来自 `GET /topics?project_id=`，只查
-// topics 表：**支线永远不在里面**。于是点房间时间线上那条「已派出《X》」，或者刚
-// 把一条消息升级成一件活，跳过去看到的是「这个话题不存在」——一个完全好使的 id，
-// 一个空状态。
-//
-// 修的方向不是把支线塞进那张表（侧栏只列房间是设计，塞进去等于每条支线在侧栏长
-// 一行，正是这次改造要省掉的成本），而是：**在列表里找不到就直接去问这个 id**。
+// URL 里的这个 id 指向一个房间。列表里没有就直接去问它——深链接、刷新，都走这条路。
 const selectedTopic = computed<Topic | null>(() => store.placeById(props.topicId))
-const room = computed<Topic | null>(() => {
-  const place = selectedTopic.value
-  if (!place || !isThread(place)) return null
-  return store.topics.find((t) => t.id === roomIdOf(place)) ?? null
-})
 
 // 手机顶栏写的是当前页的标题，而这一页的标题是话题名——路由上没有，只有打开了
 // 才知道。桌面顶栏不显示它，但浏览器标签页同样受益。
@@ -76,8 +76,7 @@ watch(
 )
 onUnmounted(() => clearDynamicTitle('workspace-topic'))
 // The list is still on its way, so "not found" is not yet a fact. Neither is it
-// one while this id is being asked about directly — that is the path a thread
-// always takes, so without the third clause opening one flashes 「不存在」 first.
+// one while this id is being asked about directly — the path a deep link takes.
 const resolving = computed(
   () =>
     !selectedTopic.value && (store.loadingTopics || store.topics.length === 0 || store.isResolvingPlace(props.topicId))
@@ -252,18 +251,19 @@ function handleToolUsed(name: string, input?: Record<string, unknown>) {
   })
   if (name === 'update_doc') {
     activityTick.value += 1
-  } else if (name === 'create_subtopic') {
-    void store.refreshTopics()
   } else if (name === 'request_accept') {
     // 芝士 递出验收卡: refresh the banner so it shows up immediately.
     chatColumn.value?.reloadAccept()
   }
 }
 
-// ⤴ 升级为话题 from a message bubble (eval A1).
+// ⤴ 升级 from a message bubble (eval A1). 房间里的消息变成这个房间的一张卡，
+// 私聊里的变成一个新房间——两种落点，两种去处。
 async function handleUpgradeMessage(messageId: string) {
   const upgraded = await store.upgradeMessage(messageId)
-  if (upgraded) openTopic(upgraded.id)
+  if (!upgraded) return
+  if (upgraded.kind === 'card') onOpenCard(upgraded.id)
+  else openTopic(upgraded.id)
 }
 
 // Everything topic-scoped resets when the URL names a different topic.
@@ -302,7 +302,6 @@ watch(
       <!-- 一条话题头部，横跨对话和工作面板 -->
       <TopicHeader
         :topic="selectedTopic"
-        :room="room"
         :phase="phase"
         :members="store.members"
         :me="AUTHOR"
@@ -346,7 +345,9 @@ watch(
           :tab="panelTab"
           :phase="phase"
           :with-chat="!mdAndUp"
+          :open-card-id="openCardId"
           @open-topic="openTopic"
+          @open-card="onOpenCard"
           @mention-click="handleMentionClick"
           @update:tab="onPanelTab"
         >

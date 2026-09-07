@@ -7,9 +7,9 @@ no auth of its own — any trusted in-process caller (the HTTP route after it
 verifies, or a future internal caller like the merge-result-back-to-room card)
 invokes it directly.
 
-Delivery retry mirrors app.domain.workspace.dogfood_notices — a dropped inbound
-webhook is a silent hole in the topic's timeline (CI results, deploy outcomes),
-so a transient DB failure is retried before giving up.
+Delivery is retried (0s, 5s, 30s) before giving up — a dropped inbound webhook
+is a silent hole in the topic's timeline (CI results, deploy outcomes), so a
+transient DB failure must not be the end of it.
 """
 
 import asyncio

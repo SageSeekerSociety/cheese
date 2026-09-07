@@ -208,12 +208,13 @@ onMounted(load)
             <div class="d-flex align-center ga-2">
               <span class="t-title">{{ a.display_name || a.handle }}</span>
               <v-chip v-if="a.is_default" size="x-small" color="primary" variant="tonal">默认</v-chip>
+              <v-chip v-if="a.is_active === false" size="x-small" variant="tonal">已停用</v-chip>
             </div>
             <div class="t-meta c-muted">@{{ a.handle }} · {{ subtitleOf(a) }}</div>
           </div>
           <v-spacer />
           <v-btn
-            v-if="!a.is_default"
+            v-if="!a.is_default && a.is_active !== false"
             variant="text"
             size="small"
             :loading="settingDefault === agentKey(a)"
@@ -223,7 +224,14 @@ onMounted(load)
             设为默认
           </v-btn>
           <v-btn variant="text" size="small" @click="openEdit(a)">编辑</v-btn>
-          <v-btn variant="text" size="small" color="error" :disabled="!a.id" @click="deactivateTarget = a">
+          <v-btn
+            v-if="a.is_active !== false"
+            variant="text"
+            size="small"
+            color="error"
+            :disabled="!a.id"
+            @click="deactivateTarget = a"
+          >
             停用
           </v-btn>
         </div>

@@ -134,7 +134,7 @@ async def can_manage_project_members(
     access control — ``authorize_topic_access`` lets *any* project member into
     *every* topic of the project — so honoring a merely *claimed* handle would
     let an anonymous caller write itself into the roster and read the whole
-    project. Same reasoning as ``require_quality_gate_admin``: a credential is
+    project. Same reasoning as ``require_project_steward``: a credential is
     必要 for the writes that decide who else gets in.
 
     Agents are refused as well, even holding a valid scoped token: a 分身 must

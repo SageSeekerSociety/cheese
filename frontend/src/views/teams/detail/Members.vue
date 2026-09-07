@@ -20,7 +20,7 @@
           <v-form @submit.prevent="confirmInvite">
             <v-card title="邀请成员">
               <v-card-text>
-                <div class="text-caption mb-2">当前只支持通过 UID 邀请成员</div>
+                <div class="text-caption mb-2">当前只支持通过 UID 邀请，UID 在对方的头像菜单里</div>
                 <v-text-field
                   v-model.number="inviteUidInput"
                   label="UID"

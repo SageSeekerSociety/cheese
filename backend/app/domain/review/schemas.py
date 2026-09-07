@@ -40,12 +40,19 @@ class VoidDecision(BaseModel):
 
 
 class ForceMergeDecision(BaseModel):
-    """人工放行 (App 采纳等 CI 再合)。No `decided_by`, same reason as 作废: this
-    is an authorization action and the signature is the entire point — the
-    actor comes from the session token only, never from the body, or "谁明知红
-    仍合并" would be whatever the caller typed."""
+    """人工放行。No `decided_by`, same reason as 作废: this is an authorization
+    action and the signature is the entire point — the actor comes from the
+    session token only, never from the body, or "谁明知红仍合并" would be
+    whatever the caller typed."""
 
     reason: str = Field(default="", max_length=2000)
+
+
+class AutoMergeDecision(BaseModel):
+    """绿了自动合 (#718) 的开关。Actor 同样只来自 session token：布防等于提前
+    采纳，布防人是谁必须由平台认定。"""
+
+    enabled: bool
 
 
 class ApprovalCreate(BaseModel):
@@ -78,9 +85,9 @@ class AcceptCardOut(BaseModel):
     gate_started_at: datetime | None = None
     gate_passed_at: datetime | None = None
     gate_output: str = ""
-    # PR-based accept (#188 §5.1): the real GitHub PR this card rides on.
-    # pr_repo/pr_head_sha/pr_merged_at are 两阶段采纳 (PR迭代式) only, populated
-    # while status == pr_open — see models.AcceptCard for the full story.
+    # PR-based accept (#188 §5.1 → #718): the real GitHub PR this card rides
+    # on. pr_head_sha is the head the card shows — the commit an accept click
+    # will merge; see models.AcceptCard.
     pr_number: int | None = None
     pr_url: str | None = None
     pr_repo: str | None = None

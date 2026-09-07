@@ -63,15 +63,6 @@ class InMemoryDeviceRepository:
             if d.device_id in self._hosted_device_ids and project_id in d.project_ids
         ]
 
-    async def list_cloud_devices_by_project(
-        self, project_id: uuid.UUID
-    ) -> list[Device]:
-        return [
-            d
-            for d in self._devices.values()
-            if d.supply is Supply.cloud and project_id in d.project_ids
-        ]
-
     async def list_devices_by_team(self, team_id: int) -> list[Device]:
         return [
             d

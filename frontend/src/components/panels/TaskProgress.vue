@@ -17,12 +17,11 @@ import { computed, ref, watch } from 'vue'
 
 import { listRoomTasks, listRoomTrees } from '../../api'
 import { BOARD_COLUMNS, columnDotStyle, columnLabel, compareTasks } from '../../lib/board'
-import { roomIdOf } from '../../lib/place'
 import { relTime } from '../../lib/relTime'
 
 const props = withDefaults(
   defineProps<{
-    /** 当前打开的地点。是支线时列的仍然是**它所在房间**的活（包括它自己）。 */
+    /** 当前打开的房间。 */
     topic: Topic | null
     /** 这一段在屏幕上。折叠起来的时候不去拉。 */
     active?: boolean
@@ -33,7 +32,7 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{
-  (e: 'open-topic', topicId: string): void
+  (e: 'open-card', taskId: string): void
   (e: 'count', n: number): void
 }>()
 
@@ -54,8 +53,7 @@ async function load() {
     rows.value = []
     return
   }
-  // 活挂在房间上，所以问的永远是房间——在一条支线里打开它，看到的是它的同伴。
-  const roomId = roomIdOf(place)
+  const roomId = place.id
   loading.value = true
   errorMsg.value = null
   try {
@@ -63,20 +61,20 @@ async function load() {
     // 历史都吐回来，而一个跑久了的房间有近两百条活。这里只要每条最新的那一块，
     // 用来说「最后活动」。
     const payload = await listRoomTasks(roomId, { limit: 1 })
-    if (props.topic && roomIdOf(props.topic) === roomId) {
+    if (props.topic?.id === roomId) {
       rows.value = payload.data
       emit('count', payload.data.length)
     }
   } catch {
     errorMsg.value = '任务列表加载失败'
   } finally {
-    if (props.topic && roomIdOf(props.topic) === roomId) loading.value = false
+    if (props.topic?.id === roomId) loading.value = false
   }
   // 这一批封没封口，是另一个问题，也是另一条请求 —— 它失败了不该把整份清单变成
   // 一句「加载失败」，所以拿不到就当没有提示，清单照常。
   try {
     const batches = await listRoomTrees(roomId)
-    if (props.topic && roomIdOf(props.topic) === roomId) trees.value = batches.data
+    if (props.topic?.id === roomId) trees.value = batches.data
   } catch {
     trees.value = []
   }
@@ -302,12 +300,7 @@ const hiddenBatches = computed(() => batches.value.length - shownBatches.value.l
           </div>
           <ul class="task-progress__list">
             <li v-for="row in inColumn(col.key)" :key="row.id">
-              <button
-                type="button"
-                class="task-row"
-                :class="{ 'task-row--here': row.id === topic?.id }"
-                @click="emit('open-topic', row.id)"
-              >
+              <button type="button" class="task-row" @click="emit('open-card', row.id)">
                 <span class="board-dot" :style="columnDotStyle(row.presentation.column)" aria-hidden="true" />
                 <span class="task-row__text">
                   <span class="task-row__line1 t-body"> 第 {{ numberOf.get(row.id) }} 件：{{ row.title }}</span>
@@ -318,7 +311,6 @@ const hiddenBatches = computed(() => batches.value.length - shownBatches.value.l
                     <span v-else class="c-faint">暂无负责人</span>
                     <span class="task-row__sep">·</span>
                     <span>{{ relTime(lastActivity(row)) }}</span>
-                    <span v-if="row.id === topic?.id" class="task-row__here-tag">你在这</span>
                   </span>
                 </span>
               </button>
@@ -341,12 +333,7 @@ const hiddenBatches = computed(() => batches.value.length - shownBatches.value.l
           </button>
           <ul v-if="showDone" class="task-progress__list">
             <li v-for="row in doneRows" :key="row.id">
-              <button
-                type="button"
-                class="task-row task-row--done"
-                :class="{ 'task-row--here': row.id === topic?.id }"
-                @click="emit('open-topic', row.id)"
-              >
+              <button type="button" class="task-row task-row--done" @click="emit('open-card', row.id)">
                 <span class="board-dot" :style="columnDotStyle(row.presentation.column)" aria-hidden="true" />
                 <span class="task-row__text">
                   <span class="task-row__line1 t-body"> 第 {{ numberOf.get(row.id) }} 件：{{ row.title }}</span>
@@ -438,10 +425,6 @@ const hiddenBatches = computed(() => batches.value.length - shownBatches.value.l
   cursor: pointer;
 }
 .task-row:hover {
-  background: var(--fill);
-}
-/* 你正在看的那条。不是选中态（这一段不是导航），只是「这行就是你」。 */
-.task-row--here {
   background: var(--fill);
 }
 /* 做完了的那两组压低一档，但不隐藏：它们是这个房间交出去了什么的记录。 */

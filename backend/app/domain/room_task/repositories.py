@@ -4,11 +4,16 @@ those threads work on."""
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.models import Block, BlockKind
-from app.domain.room_task.models import Residency, Task, TreeStatus, WorkTree
+from app.domain.room_task.models import (
+    Task,
+    TaskStatus,
+    TreeStatus,
+    WorkTree,
+)
 
 
 class WorkTreeRepository:
@@ -39,6 +44,12 @@ class WorkTreeRepository:
             .where(WorkTree.room_id == room_id)
             .order_by(WorkTree.created_at, WorkTree.id)
         )
+        return list((await self._session.scalars(stmt)).all())
+
+    async def list_for_project(self, project_id: uuid.UUID) -> list[WorkTree]:
+        """Every tree of every room in the project — the set whose directories
+        the storage sweep may find on disk."""
+        stmt = select(WorkTree).where(WorkTree.project_id == project_id)
         return list((await self._session.scalars(stmt)).all())
 
     async def add(
@@ -96,6 +107,17 @@ class TaskRepository:
     async def get(self, task_id: uuid.UUID) -> Task | None:
         return await self._session.get(Task, task_id)
 
+    async def mark_transcripts_archived(self, task_id: uuid.UUID, at: datetime) -> bool:
+        """Record that the thread's raw session files reached the platform.
+        False when no thread has this id."""
+        stamped = await self._session.execute(
+            update(Task)
+            .where(Task.id == task_id)
+            .values(transcripts_archived_at=at)
+            .returning(Task.id)
+        )
+        return stamped.scalar() is not None
+
     async def add(
         self,
         *,
@@ -105,7 +127,6 @@ class TaskRepository:
         title: str,
         owner_handle: str | None,
         created_by: str | None,
-        agent_instance_id: uuid.UUID | None,
     ) -> Task:
         """A new thread in *room_id*, working on *tree_id*.
 
@@ -121,62 +142,34 @@ class TaskRepository:
             title=title,
             owner_handle=owner_handle,
             created_by=created_by,
-            agent_instance_id=agent_instance_id,
         )
         self._session.add(task)
         await self._session.flush()
         return task
 
-    async def count_resident(self, room_id: uuid.UUID) -> int:
-        """How many of this room's slots are in use right now."""
-        stmt = (
-            select(func.count())
-            .select_from(Task)
-            .where(Task.room_id == room_id, Task.residency == Residency.running)
-        )
-        return int((await self._session.scalar(stmt)) or 0)
+    async def open_by_subagent(
+        self, room_id: uuid.UUID, subagent_id: str
+    ) -> Task | None:
+        """The open thread in *room_id* this worker is doing, if any.
 
-    async def next_queued(self, room_id: uuid.UUID) -> Task | None:
-        """The queued task that has been waiting longest, if any."""
+        `open` is part of the question, not a filter on the answer: a worker id
+        is only meaningful while the work is live, and a finished thread that
+        kept its id would silently swallow the events of whatever came after it.
+
+        Newest first so that even if a stale binding somehow survived, the
+        events land on the work that is actually going on.
+        """
         stmt = (
             select(Task)
-            .where(Task.room_id == room_id, Task.queued_at.is_not(None))
-            .order_by(Task.queued_at, Task.id)
+            .where(
+                Task.room_id == room_id,
+                Task.subagent_id == subagent_id,
+                Task.status == TaskStatus.open,
+            )
+            .order_by(Task.created_at.desc(), Task.id)
             .limit(1)
         )
         return (await self._session.scalars(stmt)).first()
-
-    async def list_queued(self, room_id: uuid.UUID) -> list[Task]:
-        """Everything waiting for a slot in this room, longest wait first."""
-        stmt = (
-            select(Task)
-            .where(Task.room_id == room_id, Task.queued_at.is_not(None))
-            .order_by(Task.queued_at, Task.id)
-        )
-        return list((await self._session.scalars(stmt)).all())
-
-    async def list_resident(self, room_id: uuid.UUID) -> list[Task]:
-        """Who is holding this room's slots — so a full room can say WHO."""
-        stmt = (
-            select(Task)
-            .where(Task.room_id == room_id, Task.residency == Residency.running)
-            .order_by(Task.last_turn_at, Task.id)
-        )
-        return list((await self._session.scalars(stmt)).all())
-
-    async def list_stale_resident(self, older_than: datetime) -> list[Task]:
-        """Tasks marked running whose last turn is too old to still be going.
-
-        A backend that dies mid-turn leaves the row saying `running` forever,
-        and that row holds a slot nobody can see or free. Materialised residency
-        is the price of surviving a restart; this is the other half of it.
-        """
-        stmt = select(Task).where(
-            Task.residency == Residency.running,
-            Task.last_turn_at.is_not(None),
-            Task.last_turn_at < older_than,
-        )
-        return list((await self._session.scalars(stmt)).all())
 
     async def list_for_room(self, room_id: uuid.UUID) -> list[Task]:
         """This room's threads, oldest first.

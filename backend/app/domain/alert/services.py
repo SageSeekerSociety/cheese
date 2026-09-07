@@ -13,7 +13,6 @@ from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.project.repositories import ProjectRepository
-from app.domain.room_task.place import room_and_task
 
 _VALID_FEEDBACK = {"up", "down"}
 
@@ -38,22 +37,6 @@ class AlertService:
     ) -> Alert:
         if await self._projects.get(project_id) is None:
             raise NotFoundError("Project not found")
-        # `topic_id` arrives naming a PLACE, which may be a thread — that is how
-        # the whole platform addresses one, and `cheese notify` sends whatever
-        # place the agent is working in. This column is a foreign key onto
-        # `topics`, so a thread's id is not a row here: it used to be, and the
-        # migration that turned work into `tasks` deleted it. Passing it through
-        # was an integrity error surfacing as a bare 500 — every `cheese notify`
-        # from a dispatched thread failed, with nothing on screen saying why.
-        #
-        # The room is the honest answer for a pointer: an alert says WHERE to go
-        # look, and a thread lives in exactly one room. Naming the thread itself
-        # would need a `task_id` column of its own.
-        room_id, _ = (
-            (None, None)
-            if topic_id is None
-            else await room_and_task(self._session, topic_id)
-        )
         return await self._repo.add(
             project_id=project_id,
             level=level,
@@ -61,7 +44,7 @@ class AlertService:
             title=title,
             body=body,
             target_handle=target_handle,
-            topic_id=room_id,
+            topic_id=topic_id,
             payload=payload,
         )
 

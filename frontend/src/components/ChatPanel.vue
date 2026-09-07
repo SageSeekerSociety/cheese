@@ -69,7 +69,6 @@ import {
 import { usePendingAttachments } from '../lib/attachments'
 import { cachedWindow, setCachedWindow } from '../lib/blockCache'
 import { mergeRefreshedTail, PAGE_SIZE, prependOlder, scrollTopAfterPrepend, shouldLoadOlder } from '../lib/blockPaging'
-import { roomIdOf } from '../lib/place'
 import { collapseNotices } from '../lib/platformNotice'
 import {
   coalesceSplitFencedCodeBlocks,
@@ -189,12 +188,10 @@ async function loadRoster() {
     roomMembers.value = []
     return
   }
-  // 名册是**房间**的，永远只有这一份：支线没有自己的名册（`/members` 对它 404），
-  // 而在一条支线里 @ 谁，问的仍然是「这个房间里有谁」。
-  const id = roomIdOf(place)
+  const id = place.id
   try {
     const payload = await listTopicMembers(id)
-    if (props.topic && roomIdOf(props.topic) === id) roomMembers.value = payload.data
+    if (props.topic?.id === id) roomMembers.value = payload.data
   } catch {
     // 名单拉不到就说出来：@ 补全会缺人（包括芝士）。静默的话，表现是「@ 不出
     // 芝士」，而屏幕上没有任何东西说明为什么。

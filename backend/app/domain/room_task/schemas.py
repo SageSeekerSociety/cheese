@@ -5,7 +5,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
-from app.domain.room_task.models import Residency, TaskStatus
+from app.domain.room_task.models import TaskStatus
 
 
 class PresentationOut(BaseModel):
@@ -30,25 +30,25 @@ class TaskOut(BaseModel):
     room_id: uuid.UUID
     title: str
     status: TaskStatus
-    # Is it using one of its room's four slots right now, and since when has it
-    # been waiting for one. Separate from `status` on purpose (see `Residency`),
-    # and both are here because "在跑 / 排队中 / 闲着" is the first thing anyone
-    # opening a room wants to know and nothing else on this object answers it.
-    residency: Residency
-    queued_at: datetime | None = None
     # 唯一的主. A room answers this with a roster; a task with one handle.
     owner_handle: str | None = None
     created_by: str | None = None
-    agent_instance_id: uuid.UUID | None = None
     # 这条活在哪棵树上干 — many tasks share one, and that tree is the batch
     # that opens one PR. A task has no branch of its own any more.
     tree_id: uuid.UUID
+    # 哪个分身在做它. NULL = 还没有分身认领——派活写下这一行，绑定发生在房间
+    # 真的起了一个分身之后，中间这段时间是正常状态，不是错误。
+    subagent_id: str | None = None
     # Delivery, which is NOT the same question as `status` — work can be
     # delivered and still open, or closed with nothing delivered.
     accepted_by: str | None = None
     accepted_at: datetime | None = None
     closed_at: datetime | None = None
     upgraded_from_block_id: uuid.UUID | None = None
+    # 派它出去时说的那份简报，和分身交回来的最后一句话。写在卡上而不是一份文档
+    # 里：做这条活的分身拿的是房间的 token，够不着一份属于活自己的文档。
+    brief: str = ""
+    conclusion: str | None = None
     created_at: datetime
     updated_at: datetime
     # 看板上这一格。派生的，所以和 TopicOut 的 `running` 一样：只有明确去算它的

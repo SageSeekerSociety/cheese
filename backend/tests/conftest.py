@@ -24,6 +24,7 @@ from collections.abc import Callable, Iterator
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -495,12 +496,50 @@ def client(_pg_schema, stub_hooks: StubChannel, tmp_path) -> Iterator[TestClient
 
 
 async def _truncate_all(engine) -> None:
-    """Wipe every table for a clean per-test slate (fast; keeps the schema)."""
+    """Wipe every table for a clean per-test slate (fast; keeps the schema).
+
+    TRUNCATE takes an exclusive lock on every table, so a session some earlier
+    test left ``idle in transaction`` — holding no more than a share lock on one
+    of them — makes it wait, and the server's ``lock_timeout`` is 0, so it waits
+    forever. That used to surface as a 300 s pytest-timeout on the NEXT test's
+    setup, then on the one after that, and the report named the victims and
+    never the session holding the lock (see #693's sibling: the hang on
+    ``test_runtime``/``test_work_continuation`` in CI, 2026-09-05). So the wait
+    is bounded here, and when it runs out the error says who is in the way.
+    """
     tables = ", ".join(f'"{t.name}"' for t in Base.metadata.sorted_tables)
     if not tables:
         return
-    async with engine.begin() as conn:
-        await conn.exec_driver_sql(f"TRUNCATE {tables} RESTART IDENTITY CASCADE")
+    try:
+        async with engine.begin() as conn:
+            await conn.exec_driver_sql("SET LOCAL lock_timeout = '20s'")
+            await conn.exec_driver_sql(f"TRUNCATE {tables} RESTART IDENTITY CASCADE")
+    except DBAPIError as exc:
+        if "lock timeout" not in str(exc).lower():
+            raise
+        # The connection that timed out is done for (aborted transaction), so
+        # the look-around runs on a fresh one.
+        async with engine.connect() as probe:
+            rows = await probe.exec_driver_sql(
+                "select pid, state, now()-xact_start as xact_age,"
+                " now()-state_change as since_change, left(query, 200) as query"
+                " from pg_stat_activity"
+                " where datname = current_database() and pid <> pg_backend_pid()"
+                "   and state <> 'idle'"
+                " order by xact_start"
+            )
+            others = [dict(r._mapping) for r in rows]
+        lines = "\n".join(
+            f"  pid={r['pid']} state={r['state']!r} xact_age={r['xact_age']}"
+            f" since_change={r['since_change']}\n    query: {r['query']}"
+            for r in others
+        )
+        raise RuntimeError(
+            "TRUNCATE waited 20 s for a table lock. Another session on this"
+            " worker's client database still holds one — most likely a test that"
+            " left a transaction open. Sessions on the database right now:\n"
+            + (lines or "  (none — the blocker went away as this was raised)")
+        ) from exc
 
 
 async def _admin_recreate_db(db_name: str) -> None:
@@ -676,6 +715,75 @@ def _needs_db(request: pytest.FixtureRequest) -> bool:
     )
 
 
+async def _terminate_open_transactions(db_name: str) -> list[dict]:
+    """Sessions left ``idle in transaction`` on ``db_name``, each terminated
+    after being recorded. Runs on the maintenance database so it can see and
+    end them regardless of which loop created them."""
+    import asyncpg
+
+    dsn = _PG_BASE.replace("+asyncpg", "") + "/postgres"
+    conn = await asyncpg.connect(dsn, timeout=10)
+    try:
+        rows = await conn.fetch(
+            "select pid, now()-xact_start as xact_age, left(query, 200) as query"
+            " from pg_stat_activity"
+            " where datname = $1 and backend_type = 'client backend'"
+            "   and state = 'idle in transaction'",
+            db_name,
+        )
+        found = [dict(r) for r in rows]
+        for r in found:
+            await conn.execute("select pg_terminate_backend($1)", r["pid"])
+        return found
+    finally:
+        await conn.close()
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_teardown(item: pytest.Item):
+    """After a client-DB test has torn down, no session of ours may still be
+    inside a transaction on that database.
+
+    One left open holds locks the next test's TRUNCATE needs (see
+    ``_truncate_all``), and it is invisible from there: the report names the
+    test that waited, never the one that leaked. Checking at the leaker's own
+    teardown is what pins it, so a leak fails HERE, on the test that made it,
+    with the statement it was running. The session is terminated too, so the
+    rest of the run is not held hostage to a bug already reported.
+
+    Only the client database (``_c``): it is truncate-isolated, so any open
+    transaction there once the test is over is a leak by definition. The
+    integration database uses a session-long connection with per-test rollback,
+    where a transaction between tests can be the harness itself. ``client``,
+    ``python_client`` and ``db_factory`` all sit on this same database (all
+    three build their engine on ``TEST_DATABASE_URL``), so all three name it
+    here — ``db_factory``'s own teardown check (see the fixture) is meant to
+    catch a leak first, by cancelling the task that holds it; this is the
+    backstop for whatever gets past that.
+
+    Cost: one connection to the maintenance DB per client-DB test, a few ms.
+    """
+    yield
+    names = getattr(item, "fixturenames", ())
+    if not ({"client", "python_client", "db_factory"} & set(names)):
+        return
+    leaked = asyncio.run(_terminate_open_transactions(_CLIENT_DB_NAME))
+    if leaked:
+        details = "\n".join(
+            f"  pid={r['pid']} open for {r['xact_age']}\n"
+            f"    last statement: {r['query']}"
+            for r in leaked
+        )
+        pytest.fail(
+            f"{item.nodeid} left {len(leaked)} transaction(s) open on"
+            f" {_CLIENT_DB_NAME} after its fixtures tore down (terminated now)."
+            " Whatever opened them never committed, rolled back, or closed —"
+            " usually a session held by a task that outlived the test's event"
+            " loop:\n" + details,
+            pytrace=False,
+        )
+
+
 @pytest.fixture(autouse=True)
 def _pg_schema_gate(request: pytest.FixtureRequest) -> None:
     """Provision the DB schema for the tests that need it — and only those.
@@ -711,6 +819,69 @@ def _pg_schema():
     yield
 
 
+def _is_anyio_runner_plumbing(task: asyncio.Task) -> bool:
+    """Whether ``task`` is anyio's own pytest-runner machinery, not test work.
+
+    Every async fixture step (this teardown included) is driven through
+    ``anyio.pytest_plugin``'s ``TestRunner._call_in_runner_task``: the caller
+    wraps itself in a task via ``run_until_complete`` and suspends on
+    ``await future``, and that future only resolves once THIS very coroutine
+    returns — so that caller task is always still "pending" by construction
+    at the exact moment this check runs, for every fixture and test, leak or
+    not. It is identified by where its code lives (anyio's own package),
+    not by name, since it is the same bound method regardless of which
+    fixture or test it is currently ferrying.
+    """
+    code = getattr(task.get_coro(), "cr_code", None)
+    filename = getattr(code, "co_filename", "") or ""
+    return f"{os.sep}anyio{os.sep}" in filename
+
+
+async def _fail_on_background_work(label: str) -> None:
+    """Refuse to let a test return while something it started is still running.
+
+    A test that submits work onto a runner (``AgentWorkRunner.submit``) and
+    returns without waiting for it races the per-test event loop's own
+    teardown: whatever task is still going gets frozen mid-await the moment
+    the loop closes under it — mid a DB transaction, most dangerously, holding
+    a lock the next test's ``TRUNCATE`` then waits on (see
+    ``pytest_runtest_teardown`` above, which is the backstop for whatever gets
+    past this).
+
+    So: wait briefly (a turn's tail is milliseconds), and if anything is still
+    pending, cancel it — cancelling on the still-live loop is what makes the
+    leak impossible, since an ``async with session_factory()`` that gets
+    cancelled rolls back and closes right here rather than freezing — then
+    fail loudly naming every offending coroutine, instead of letting the next
+    test silently inherit the lock.
+    """
+    current = asyncio.current_task()
+    pending = {
+        t
+        for t in asyncio.all_tasks()
+        if t is not current and not t.done() and not _is_anyio_runner_plumbing(t)
+    }
+    if not pending:
+        return
+    _, still_pending = await asyncio.wait(pending, timeout=2.0)
+    if not still_pending:
+        return
+    offenders = sorted(t.get_coro().__qualname__ for t in still_pending)
+    for t in still_pending:
+        t.cancel()
+    # Give the cancellation itself a moment to actually unwind (rollback +
+    # close) before the caller's next teardown step (disposing the engine
+    # these tasks' sessions borrow connections from).
+    await asyncio.wait(still_pending, timeout=2.0)
+    pytest.fail(
+        f"{label} returned with background work still running: "
+        + ", ".join(offenders)
+        + ". A test must not return while a runner's turn task is still"
+        " going — await `runner.drain()` before returning.",
+        pytrace=False,
+    )
+
+
 @pytest.fixture
 async def db_factory(_pg_schema):
     """A truncated database and a session factory over it — no app around it.
@@ -723,6 +894,7 @@ async def db_factory(_pg_schema):
     engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
     await _truncate_all(engine)
     yield async_sessionmaker(engine, expire_on_commit=False)
+    await _fail_on_background_work("db_factory")
     await engine.dispose()
 
 
@@ -788,6 +960,7 @@ async def python_client(
         yield c
 
     app.dependency_overrides.clear()
+    await _fail_on_background_work("python_client")
     await engine.dispose()
 
 

@@ -17,7 +17,7 @@ from app.domain.agent.harness.claude_code.hooks_substrate import ClaudeCodeRunti
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent.service import AgentMessage, AgentResult, AgentSessionInfo
 from app.domain.device.repository import TopicDevice
-from app.domain.device.supply import Visibility
+from app.domain.device.supply import Supply, Visibility
 
 
 @pytest.fixture(autouse=True)
@@ -53,6 +53,12 @@ class FakeHub:
 
     def all_online_screens(self) -> list[HubScreen]:
         return list(self.opened)
+
+    def device_name(self, device_id: str) -> str:
+        return "andy 的笔记本" if device_id == "dev1" else device_id
+
+    def last_seen_age(self, device_id: str) -> float | None:
+        return 3.0 if device_id == "dev1" else None
 
     async def open_screen(self, device_id, command, **kw) -> HubScreen:
         screen = HubScreen(
@@ -202,6 +208,11 @@ async def test_restart_recovery_uses_durable_topic_pins(monkeypatch):
             return None
 
     class Service:
+        async def get_device(self, device_id):
+            # An enrolled box: this channel's to recover. A Cloud machine here
+            # would belong to the Cloud channel instead.
+            return SimpleNamespace(device_id=device_id, supply=Supply.self_hosted)
+
         async def list_topic_bindings(self, device_id):
             assert device_id == "dev1"
             return [
@@ -233,6 +244,81 @@ async def test_restart_recovery_uses_durable_topic_pins(monkeypatch):
 
     await provider.drop_device_subscriptions("dev1")
     assert router.push(str(topic_id), {"hook_event_name": "Stop"}) is False
+
+
+async def test_a_hook_delivered_live_and_again_by_replay_is_consumed_once(
+    monkeypatch, tmp_path
+):
+    """The same hook reaches the consumer twice on a reconnect: out of the spool
+    (replay) and live over /sandbox/hooks. Measured 2026-09-02 on dev (topic
+    0f139cd7): the flush landed once by event id, but the Stop's second copy
+    arrived in a fresh attribution that had never seen the flush, so the reply
+    was posted again. One hook is consumed once, whichever copy comes first."""
+    from app.domain.agent.harness.claude_code import event_spool, hooks_substrate
+
+    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
+    spool = tmp_path / "spool"
+    monkeypatch.setattr(hooks_substrate.ws, "spool_dir", lambda _p, _t: spool)
+
+    class Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get(self, _model, key):
+            if key == topic_id:
+                return SimpleNamespace(id=topic_id, project_id=project_id)
+            return None
+
+    class Service:
+        async def get_device(self, device_id):
+            return SimpleNamespace(device_id=device_id, supply=Supply.self_hosted)
+
+        async def list_topic_bindings(self, device_id):
+            return [
+                TopicDevice(
+                    topic_id=topic_id, device_id=device_id, visibility=Visibility.host
+                )
+            ]
+
+    monkeypatch.setattr(
+        "app.domain.agent.device_provider.sql_device_service",
+        lambda _session: Service(),
+    )
+    router = HookRouter()
+    channel = DeviceChannel(
+        hub=FakeHub(),  # type: ignore[arg-type]
+        session_factory=Session,  # type: ignore[arg-type]
+    )
+    provider = ClaudeCodeRuntime(channel, router=router)
+    landed: list[tuple[object, bool]] = []
+
+    async def consumer(_p, _t, _work, event, _eid, result_text_seen, _unsolicited):
+        landed.append((event, result_text_seen))
+
+    provider.bind_events(consumer)
+
+    flush = {"hook_event_name": "MessageDisplay", "delta": "ok", "_eid": "e-flush"}
+    stop = {"hook_event_name": "Stop", "last_assistant_message": "ok", "_eid": "e-stop"}
+    event_spool.append(spool, "e-flush", flush)
+    event_spool.append(spool, "e-stop", stop)
+
+    recovered = await provider.recover("dev1")
+    await provider.replay(recovered[0], known_texts=set())
+    # The live copy of the Stop, arriving after the replay already consumed it.
+    router.push(str(topic_id), dict(stop))
+    await provider._subscriptions[topic_id].sink.queue.join()
+
+    said = [
+        (type(event).__name__, seen)
+        for event, seen in landed
+        if isinstance(event, AgentMessage | AgentResult)
+    ]
+    assert ("AgentMessage", False) in said
+    assert [s for s in said if s == ("AgentResult", False)] == [], said
+    assert sum(1 for name, _ in said if name == "AgentMessage") == 1
 
 
 async def test_second_turn_reasserts_the_screen_instead_of_trusting_the_registry():
@@ -526,6 +612,40 @@ async def test_launch_script_ships_as_a_file_never_as_tmux_argv():
     command = hub.opened[0].command
     assert sum(len(part) for part in command) < 1024
     assert f"$HOME/.cheese/launch/{topic_id}.sh" in command[-1]
+
+
+async def test_a_connector_that_never_answers_the_launcher_is_named_in_the_error():
+    """The room used to read 「device 后端启动失败：TimeoutError」 — no step, no
+    machine, nothing about the link (2026-08-29, machine 477). The line has to
+    say which step, which machine, and what the connector looked like."""
+
+    class SilentHub(FakeHub):
+        async def exec(self, device_id, argv, *, stdin=None, **kw) -> dict:
+            self.execs.append((argv, stdin))
+            if stdin is not None:  # the launcher ship is the one exec with input
+                raise TimeoutError
+            return {"stdout": "", "stderr": "", "exit": 0, "truncated": False}
+
+    hub = SilentHub()
+    provider = _provider(hub, HookRouter(), uuid.uuid4())
+    events = [
+        e
+        async for e in provider.run_turn(
+            project_id=uuid.uuid4(),
+            topic_id=uuid.uuid4(),
+            prompt="hi",
+            system_prompt="",
+            resume_session_id=None,
+        )
+    ]
+    assert len(events) == 1 and isinstance(events[0], AgentResult)
+    assert events[0].is_error
+    text = events[0].text
+    assert "写启动脚本" in text, text
+    assert "andy 的笔记本" in text and "dev1" in text, text
+    assert "没有应答" in text and "最近一帧是 3 秒前" in text, text
+    assert "TimeoutError" not in text, "the exception class is not a reason"
+    assert not hub.opened, "no screen is opened on a machine that did not answer"
 
 
 async def test_no_topic_is_a_clean_error():

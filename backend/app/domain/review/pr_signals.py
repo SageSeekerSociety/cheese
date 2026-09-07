@@ -70,6 +70,10 @@ class NudgeKind(enum.StrEnum):
     review = "review"
     #: PR 和它的 base 分支冲突了，GitHub 合不了。
     conflict = "conflict"
+    #: PR 满足合并规则了（CLEAN）—— 发给验收人的那条，同一个 head 只说一次。
+    #: （「采纳被作废」不占一类：批准被清掉这件事一个 head 只会发生一次，
+    #: 事件天然不重复。）
+    ready = "ready"
 
 
 @dataclass(frozen=True)

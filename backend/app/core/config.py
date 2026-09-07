@@ -162,9 +162,10 @@ class Settings(BaseSettings):
     # backend (no activity signal exists there), plus the generic outer default
     # any backend keeps until it signals its own ceiling. The hooks-driven
     # backends no longer use this for their
-    # effective timeout: they run the two-layer idle-suspect / hard-ceiling loop
-    # (agent_idle_suspect_s / agent_turn_hard_ceiling_s below) and reschedule the
-    # outer wrap to their own ceiling (turn 活跃度检测, 2026-08-09).
+    # effective timeout: they run the liveness loop the settings below describe
+    # (idle-suspect then a process probe, no-progress, unread grace; the ceiling
+    # only records) and hand the outer wrap their own ceiling through the
+    # `turn_ceiling` frame.
     agent_turn_timeout_s: float = 900.0
     # 冷启动看门狗: a turn that has emitted no assistant text and made no tool
     # call within this many seconds is declared dead, whatever its ceiling says.
@@ -183,10 +184,36 @@ class Settings(BaseSettings):
     # — a long foreground command with no interim hook must not look identical to a
     # dead screen.
     agent_idle_suspect_s: float = 300.0
-    # Unconditional backstop for both hooks backends regardless of activity — guards
-    # against a pathological "looks active but never converges" turn (a tool
-    # retrying forever, a genuine infinite loop that keeps printing).
+    # The wall-clock mark past which a turn is recorded as long. A metric, not
+    # a gate: crossing it is logged once by the harness monitor and written to
+    # the turn record (`ceiling_crossed_s`), and nothing ends. With the three
+    # gates in place (the process probe past idle-suspect, output with no
+    # progress, an unread injection), what a wall clock alone could still end
+    # is a turn that is working and has not finished, which is not a fault. One
+    # number for both layers: the monitor reads it directly and the outer wrap
+    # in runtime.py receives it via the `turn_ceiling` frame.
     agent_turn_hard_ceiling_s: float = 10800.0
+    # How long a message we injected may sit unconsumed before the session is
+    # called unable to read. On a different axis from the two above: those watch
+    # what a session PRODUCES, and a session that has stopped reading goes on
+    # producing, so neither of them ever fires for it. This one only exists
+    # while something is actually waiting, which makes it the narrower check and
+    # the one with a person behind it.
+    #
+    # Sized against the longest legitimate reason a message goes unread, which
+    # is a single long tool call: input is taken at tool boundaries, so a
+    # 20-minute command legitimately holds a message that long. This is not a
+    # responsiveness target. Ending the turn on this verdict replays the pending
+    # message into the next one, so the cost of firing is a restart, not a loss.
+    agent_unread_grace_s: float = 1800.0
+    # How long a session may keep producing output with no tool call and no
+    # ending before it is called stuck. This is the gate for a loop: a session
+    # that talks and never acts keeps every other signal healthy, because the
+    # idle check sees hooks arriving and the process probe sees a live process.
+    # A long foreground command does not trip it, since it emits no output
+    # while it runs. Sized for the longest honest stretch of pure writing, a
+    # document drafted with no tool call in between.
+    agent_no_progress_s: float = 1800.0
 
     # RETIRED (2026-08-10). Used to name a HOST directory holding a `cheese` CLI
     # to mount over the image's baked copy — but nothing kept that checkout in
@@ -295,10 +322,10 @@ class Settings(BaseSettings):
     microcloud_tenant_secret: str = ""
     microcloud_timeout_s: float = 30.0
     # The machine's built-in AI channel (the tenant console's →ccproxy button).
-    # MicroCloud provisions new machines on newapi, whose default routes to a
-    # cheap non-Claude model; the operator guidance is ccproxy. Provision
-    # switches right after create, and the enrollment sweep reconciles any
-    # machine that slipped through. "" = leave whatever MicroCloud defaults to.
+    # Sent in the create call (micro-cloud#78), so the machine is born on it;
+    # the enrollment sweep still switches any machine that came up on another
+    # channel — MicroCloud's default without the field is newapi, whose default
+    # routes to a cheap non-Claude model. "" = leave whatever MicroCloud does.
     microcloud_ai_mode: str = "ccproxy"
     # Pin a specific granted offering (machine type + zone + template); 0 = take
     # the first active one, which is right while a tenant is granted exactly one.
@@ -309,6 +336,13 @@ class Settings(BaseSettings):
     microcloud_default_memory_mb: int = 4096
     microcloud_default_disk_gb: int = 20
     microcloud_login_user: str = "cheese"
+    # An operator's SSH public key, authorised on every machine the platform
+    # opens, next to the one-shot bootstrap key. That key is erased the moment
+    # enrollment succeeds, so without this nobody can read a Cloud machine's
+    # connector journal afterwards — which is why the 2026-08-29 failure on
+    # machine 477 was never diagnosed. Platform-provisioned machines only: a
+    # self-hosted box is someone else's and never gets a key of ours.
+    microcloud_operator_ssh_pubkey: str = ""
     # The billing project's fund account, and the balance kept in it. MicroCloud
     # bills compute against this; 0 disables top-ups (an operator funds it by hand).
     microcloud_account_name: str = "compute"
@@ -322,9 +356,14 @@ class Settings(BaseSettings):
     # (which happened, and also consumed the per-project limit).
     microcloud_reconcile_interval_s: float = 120.0
     # How often to sweep for machines that came up and still need enrolling as
-    # devices. Its own switch, NOT the project scheduler's: that one spends model
-    # budget on 定期巡检 and ships off, and machines must not depend on it.
-    machine_enroll_interval_seconds: int = 60
+    # devices (and switching to the AI channel above). Its own switch, NOT the
+    # project scheduler's: that one spends model budget on 定期巡检 and ships
+    # off, and machines must not depend on it. Ten seconds, not sixty: a Cloud
+    # topic's first turn crosses this clock twice (running → switch the AI
+    # channel, ready → enroll), and at 60s a person waited up to two minutes on
+    # a timer for a machine that was already there. A tick with nothing
+    # unsettled is three cheap queries.
+    machine_enroll_interval_seconds: int = 10
 
     # --- ccproxy tenant realm: one revocable ticket per device (#420) ---
     # Cheese is one ccproxy tenant (micro-teams/ccproxy). Registering a device
@@ -339,13 +378,6 @@ class Settings(BaseSettings):
 
     # --- Agent sandbox (spec §9.1: 每话题在隔离容器里跑 claude + 原生工具) ---
     sandbox_image: str = "cheesex-agent-sandbox:latest"
-    # Machine quality gates use a disposable sibling container and never the
-    # backend process. Keep this explicit so operators can ship a test-toolchain
-    # image without granting the gate Docker socket or backend credentials.
-    quality_gate_image: str = "cheesex-agent-sandbox:latest"
-    quality_gate_memory_mb: int = 2048
-    quality_gate_cpus: float = 2.0
-    quality_gate_pids_limit: int = 512
     # Base URL the in-container `cheese` CLI calls back to (host → backend).
     # The app ROOT, with no `/api`. The in-container `cheese` CLI reaches the
     # backend port DIRECTLY (no gateway, so nothing strips a prefix), and since
@@ -448,6 +480,32 @@ class Settings(BaseSettings):
     # so that is the normal case.
     sandbox_reap_interval_seconds: int = 3600
     sandbox_idle_hours: float = 8
+    # Archive takes nothing off disk (topic/retire.py): a finished place's git
+    # worktree on this box and its isolated home on the device that ran it stay
+    # for `topic_home_retention_days`, and this sweep is what removes them after
+    # that — and at once for places no longer in the database (dev box,
+    # 2026-09-03: 141 GB of worktrees and 162 GB of homes, most of them for
+    # places long gone). 0 disables it.
+    topic_storage_sweep_interval_s: int = 3600
+    # How long after archive the sweep leaves a place's worktree and home
+    # alone. Archive itself removes neither: it is reversible, and this is the
+    # window in which somebody un-archives to pick the work back up with its
+    # session intact rather than from an empty checkout of the branch. A grace
+    # period, not a safety net: a home is only ever deleted after its raw
+    # Claude session files have been stored under `transcripts_dir`, so what
+    # expires here is the convenience of resuming in place.
+    topic_home_retention_days: float = 30
+    # Where the platform keeps the raw Claude session files of every place that
+    # ran on a device — `.claude/projects/**/*.jsonl` and `.claude/todos` from
+    # the device home, as `<project>/<place>/<utc timestamp>.tar.gz`, one file
+    # per upload and never overwritten. The room's conversation is in the
+    # `blocks` table; these are the agent's own transcripts, and this is their
+    # only copy once the home is gone. On a deployment it must be a persistent
+    # mount (compose: /data/transcripts), like the memory tree.
+    transcripts_dir: str = "./.transcripts"
+    # The most one upload may carry. A device that sends more gets 413 and
+    # keeps its home; the sweep says so every tick until somebody looks.
+    transcripts_max_bytes: int = 512 * 1024 * 1024
     # Seconds between orphan sweeps (AgentWorkRunner.sweep_orphans). On by default,
     # unlike the heartbeat above: it consumes no model calls unless it actually
     # finds a killed turn, and its whole purpose is catching the case where
@@ -471,6 +529,30 @@ class Settings(BaseSettings):
     # L0/L1/L2 levels, semantic search, LLM extraction). Fully local storage;
     # needs an OpenAI-compatible chat + embedding endpoint for extraction/vectors.
     memory_backend: str = "db"
+
+    # --- 记忆整理 dreaming (issue #187 step 4, domain/memory/dream.py) ---
+    # Before an idle sandbox is destroyed, 芝士 gets one turn to reread the
+    # topic and organize what it learned into the project's memory pools.
+    #
+    # OFF by default, and the default is the honest one. This spends model
+    # budget on a background trigger, which is the exact shape of the thing this
+    # repo parked once already (SchedulerService.tick): a clock cannot tell
+    # "there is something worth saying" from "say something". What makes this
+    # different is that the trigger is a real event — the screen is about to be
+    # closed, so this is the last moment anything CAN be checked against the
+    # workspace — not that the cost went away. Turning it on costs roughly one
+    # agent turn per organized topic, and no more than
+    # `dream_max_per_sweep` of them per sweep.
+    dream_enabled: bool = False
+    # How many topics one sweep may organize. A sweep that finds thirty idle
+    # screens must not start thirty turns at once; the rest are picked up an
+    # hour later, and nothing is lost because those screens were not closed
+    # either.
+    dream_max_per_sweep: int = 1
+    # Below this many blocks a topic is not worth a turn — a three-message
+    # topic has nothing in it that reading the transcript later would not give.
+    dream_min_blocks: int = 20
+
     # Local storage root for the embedded OpenViking instance (AGFS + vectors).
     openviking_data_dir: str = "./.viking"
     # OpenAI-compatible endpoints OpenViking uses internally. These are separate
@@ -515,36 +597,6 @@ class Settings(BaseSettings):
     # deployment can have many connected repos, each with its own
     # installation_id.
     github_app_slug: str = "cheesex-app"
-    # 采纳即合并 (docs/accept-is-merge.md #296, staged rollout): submitting an
-    # accept card opens a real PR with the App's installation token; 采纳 merges
-    # that PR via the API. On by default as of stage 1 — the App owns PR
-    # creation, so the accept path never opens a competing PR while this is on
-    # (see AcceptService.accept). Submission-side only — accept dispatches on the
-    # card's stored pr_number, so flipping this never strands a card, and a
-    # deployment can still switch it off via .env (dev override) if needed.
-    accept_via_pr: bool = True
-    # Tier-2 semantics for the accept poller (#468): check names that must have
-    # APPEARED (and be green) before the poller may merge. Absence is pending,
-    # never pass — #465 merged on a run where `test` was never triggered and
-    # everything visible was skipped/green. Comma-separated; empty disables.
-    #
-    # Each entry may carry the diff scope that makes it required:
-    # `name:glob;glob` (globs are GitHub's path-filter syntax — `**` crosses
-    # directories, `*` does not). A bare name is required unconditionally.
-    # **Mirror the workflow's own `paths:` filter here.** `test` lives in
-    # .github/workflows/test.yml, which only triggers on `backend/**` — so on a
-    # frontend-only PR that check never appears, and demanding it unconditionally
-    # is an infinite wait, not a safety valve (2026-08-16: #483/#485/#486 sat
-    # fully green until a human merged them by hand). Getting the scope too
-    # NARROW is the mild failure: a check that does run still has to go green,
-    # because `check_state` sees it — only the not-yet-created window reopens.
-    accept_required_check_names: str = "test:backend/**;.github/workflows/test.yml"
-    # Backstop for the roster above: how long a required check may stay MISSING
-    # before the card stops waiting and asks a human. Waiting with no timeout is
-    # how a renamed/disabled workflow — or an Actions billing lapse, which this
-    # org had on 2026-08-13 — turns into a card that hangs forever with nobody
-    # told. The exit is 交给人, never an auto-merge. 0 disables (wait forever).
-    accept_required_check_grace_minutes: int = 30
 
     # --- 闸门孤儿卡扫底 (2026-08-11) ---
     # How often to look for `pending_gate` cards nobody will ever settle (the
@@ -576,11 +628,6 @@ class Settings(BaseSettings):
     notification_finalize_interval_s: int = 60
     notification_email_drain_interval_s: int = 60
     task_deadline_sweep_interval_s: int = 900
-    # --- 结论卡 (2026-08-11) ---
-    # How often open conclusion cards past their absolute deadline are swept and
-    # auto-accepted. Backstop for the turn-end hook: 默认采信 must not depend on
-    # the parent's digest turn ever running. 0 disables the loop (tests).
-    conclusion_sweep_interval_s: int = 60
     # merge_method for the auto-merge (GitHub: merge | squash | rebase). MUST
     # be one the target repo actually allows — GitHub answers 405 forever for
     # a disabled one, which is exactly how 两阶段采纳 shipped never having

@@ -77,7 +77,7 @@ func claudeBinary(t *testing.T) string {
 }
 
 // Must track device_launch.CLAUDE_PINNED_VERSION.
-const pinnedVersion = "2.1.224"
+const pinnedVersion = "2.1.261"
 
 type rvFixture struct {
 	client    *rendezvous.Client

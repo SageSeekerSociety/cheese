@@ -61,7 +61,6 @@ def test_a_sealed_tree_does_not_take_new_work_and_the_next_one_does(client):
                 title="第一批的活",
                 owner_handle="alice",
                 created_by="alice",
-                agent_instance_id=None,
             )
             await trees.seal(first)
             await s.commit()
@@ -72,7 +71,6 @@ def test_a_sealed_tree_does_not_take_new_work_and_the_next_one_does(client):
                 title="封口之后派的活",
                 owner_handle="alice",
                 created_by="alice",
-                agent_instance_id=None,
             )
             await s.commit()
             seen["first_tree"] = first.id
@@ -105,7 +103,6 @@ def test_a_sealed_tree_keeps_the_batch_that_produced_it(client):
                 title="活",
                 owner_handle="alice",
                 created_by="alice",
-                agent_instance_id=None,
             )
             await trees.seal(tree)
             await trees.mark_merged(tree)
@@ -138,7 +135,6 @@ def test_many_tasks_share_one_tree(client):
                         title=f"活 {i}",
                         owner_handle="alice",
                         created_by="alice",
-                        agent_instance_id=None,
                     )
                 )
             await s.commit()
@@ -188,7 +184,6 @@ def test_a_red_quick_check_does_not_stop_anything(client):
                 title="红着也照样派的活",
                 owner_handle="alice",
                 created_by="alice",
-                agent_instance_id=None,
             )
             await s.commit()
             seen["dispatched_onto"] = task.tree_id
