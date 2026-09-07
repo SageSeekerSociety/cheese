@@ -280,6 +280,149 @@ async def test_a_coauthor_without_a_github_account_is_simply_not_credited(monkey
     assert who.coauthors == ()
 
 
+# --- The machines: which 分身 did which piece of work in this delivery (#189) ---
+#
+# A commit's human trailers cannot answer that, and neither can `Co-authored-by:
+# Claude Fable 5`, which every Claude Code commit anywhere carries. The batch
+# behind a delivery is a tree's worth of task rows, so this reads them.
+
+
+def _task(subagent_id: str | None, title: str, tree_id: uuid.UUID) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=uuid.uuid4(),
+        subagent_id=subagent_id,
+        title=title,
+        tree_id=tree_id,
+        owner_handle=None,
+        created_by=None,
+    )
+
+
+def _batch(monkeypatch, tree, tasks):
+    """Stand in for the room's trees. `tree` is the room's writable tree (or an
+    exception, or None); `tasks` is what sits on it."""
+    from app.domain.room_task.services import WorkTreeService
+
+    async def _current(_self, _room_id):
+        if isinstance(tree, BaseException):
+            raise tree
+        return tree
+
+    async def _tasks_on(_self, tree_id):
+        if isinstance(tasks, BaseException):
+            raise tasks
+        return [t for t in tasks if t.tree_id == tree_id]
+
+    monkeypatch.setattr(WorkTreeService, "current", _current)
+    monkeypatch.setattr(WorkTreeService, "tasks_on", _tasks_on)
+
+
+def _threads(monkeypatch, rows: dict):
+    from app.domain.room_task.services import TaskService
+
+    async def _get(_self, task_id):
+        return rows.get(task_id)
+
+    monkeypatch.setattr(TaskService, "get", _get)
+
+
+@pytest.mark.anyio
+async def test_a_room_card_carries_the_whole_batch_on_its_tree(monkeypatch):
+    """一棵树 = 一个分支 = 一个 PR = 一批活: the squash collapses the branch into
+    one commit, so every worker that wrote to that tree is in it."""
+    tree = SimpleNamespace(id=uuid.uuid4())
+    rows = [
+        _task("ac2c038d44616a2f2", "补 trailer", tree.id),
+        _task("9f1b7c22e0d341a80", "修 flaky", tree.id),
+    ]
+    _batch(monkeypatch, tree, rows)
+    _roster_owner(monkeypatch, "alice")
+    _connected(monkeypatch, {"alice": ("583231", "alice")})
+
+    who = await identity.attribution(None, _topic("alice"))
+    assert who.tasks == (
+        identity.WorkItem(rows[0].id, "ac2c038d44616a2f2", "补 trailer"),
+        identity.WorkItem(rows[1].id, "9f1b7c22e0d341a80", "修 flaky"),
+    )
+
+
+@pytest.mark.anyio
+async def test_a_card_filed_for_one_task_still_names_its_siblings(monkeypatch):
+    """The whole branch lands, not just the task the card was filed against —
+    crediting one worker for a batch several of them produced would be a lie the
+    history keeps forever."""
+    tree, other = uuid.uuid4(), uuid.uuid4()
+    mine = _task("ac2c038d44616a2f2", "补 trailer", tree)
+    sibling = _task("9f1b7c22e0d341a80", "修 flaky", tree)
+    elsewhere = _task("0000000000000000", "别的树上的活", other)
+    _batch(monkeypatch, None, [mine, sibling, elsewhere])
+    _threads(monkeypatch, {mine.id: mine})
+    _roster_owner(monkeypatch, "alice")
+    _connected(monkeypatch, {"alice": ("583231", "alice")})
+
+    who = await identity.attribution(None, _topic("alice"), task_id=mine.id)
+    assert [t.task_id for t in who.tasks] == [mine.id, sibling.id]
+
+
+@pytest.mark.anyio
+async def test_work_nobody_was_bound_to_keeps_its_place_in_the_batch(monkeypatch):
+    """`subagent_id` is NULL until a worker is bound, and a task can be delivered
+    without one. Dropping the row would make the batch in the commit smaller than
+    the batch that landed."""
+    tree = SimpleNamespace(id=uuid.uuid4())
+    rows = [_task(None, "人自己动手改的", tree.id)]
+    _batch(monkeypatch, tree, rows)
+    _roster_owner(monkeypatch, "alice")
+    _connected(monkeypatch, {"alice": ("583231", "alice")})
+
+    who = await identity.attribution(None, _topic("alice"))
+    assert who.tasks == (identity.WorkItem(rows[0].id, None, "人自己动手改的"),)
+
+
+@pytest.mark.anyio
+async def test_a_delivery_with_no_tree_at_all_names_no_work(monkeypatch):
+    """A room from before trees existed still delivers."""
+    _batch(monkeypatch, None, [])
+    _threads(monkeypatch, {})
+    _roster_owner(monkeypatch, "alice")
+    _connected(monkeypatch, {"alice": ("583231", "alice")})
+
+    assert (await identity.attribution(None, _topic("alice"))).tasks == ()
+    assert (
+        await identity.attribution(None, _topic("alice"), task_id=uuid.uuid4())
+    ).tasks == ()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "broken",
+    [
+        pytest.param("tree", id="the_rooms_tree_could_not_be_read"),
+        pytest.param("tasks", id="the_batch_on_the_tree_could_not_be_read"),
+    ],
+)
+async def test_unreadable_work_costs_the_trailers_and_nothing_else(monkeypatch, broken):
+    """Same rule as every other part of attribution: a trailer is not worth
+    failing a merge, and one broken lookup must not take the rest with it — the
+    person who asked still gets their credit."""
+    blew_up = RuntimeError("tasks unreadable")
+    tree = SimpleNamespace(id=uuid.uuid4())
+    _batch(
+        monkeypatch,
+        blew_up if broken == "tree" else tree,
+        blew_up if broken == "tasks" else [],
+    )
+    _roster_owner(monkeypatch, "alice")
+    _connected(monkeypatch, {"alice": ("583231", "alice")})
+
+    who = await identity.attribution(None, _topic("alice"))
+    assert who.tasks == ()
+    assert who.handle == "alice"
+    assert who.author == identity.GitIdentity(
+        "alice", "583231+alice@users.noreply.github.com"
+    )
+
+
 def test_session_sidecars_share_one_base_directory(tmp_path, monkeypatch):
     """The identity file sits beside the hook spool; two definitions of "this
     topic's session dir" is how they drift apart."""

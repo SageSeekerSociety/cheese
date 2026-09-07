@@ -16,10 +16,11 @@ matches on, which is why the login alone is not enough.
 
 Who this names: the human the topic BELONGS TO — its roster owner, see
 `requester_handle`. They are the one accountable for the change; the agent typed
-it. That the agent typed it is not hidden — every such commit rides a PR whose
-body carries `Cheese-Topic:` and whose subject 芝士 wrote, and the platform's own
-commits (repo init, upstream merges) keep the 芝士 identity because nobody asked
-for those.
+it. That the agent typed it is not hidden, and not left to be inferred either:
+the delivery commit carries `Cheese-Agent:` (which 分身) and one `Cheese-Task:`
+per piece of work in the batch (which worker inside it), resolved by
+`work_items`. The platform's own commits (repo init, upstream merges) keep the
+芝士 identity because nobody asked for those.
 
 Accountable is not the same as sole contributor. A room can change hands — one
 person opens it, it stalls, someone else picks it up and the sub-topics split out
@@ -68,15 +69,36 @@ CHEESE_IDENTITY = GitIdentity(CHEESE_NAME, CHEESE_EMAIL)
 
 
 @dataclass(frozen=True)
+class WorkItem:
+    """One piece of work that went into a delivery — a `tasks` row and the 分身
+    that did it.
+
+    A commit's `Co-authored-by` names people; this names MACHINES, which is a
+    different question and needs a different answer. `Claude Fable 5` is on every
+    commit any Claude Code writes anywhere, so it cannot tell you which worker in
+    which room typed this one. `subagent_id` can: it is the id Claude Code minted
+    for that worker inside the room's session, the same string the room's hook
+    events carry, so a line of `git log` and a thread in the room name the same
+    machine."""
+
+    task_id: uuid.UUID
+    #: NULL while nobody has claimed the work — a task row exists from the moment
+    #: it is dispatched and the worker is bound a moment later, so a delivered
+    #: task can honestly have none.
+    subagent_id: str | None
+    title: str
+
+
+@dataclass(frozen=True)
 class Attribution:
     """Who a change belongs to, as the PR body and the squash commit say it.
 
-    One object rather than three loose values because the three are only correct
+    One object rather than four loose values because they are only correct
     together: `coauthors` means "credited, and not `author`", so a caller that
     took them from different resolutions could name the same person twice or lose
-    a credit. Every field may be empty — nobody on the roster, or nobody with a
-    GitHub account to link to — and that is a normal, silent degrade, never a
-    reason to fail a merge."""
+    a credit. Every field may be empty — nobody on the roster, nobody with a
+    GitHub account to link to, no work rows behind the delivery — and that is a
+    normal, silent degrade, never a reason to fail a merge."""
 
     #: `Requested-by:`, the git author of the branch's commits, and the account
     #: the PR is opened under. See `requester_handle`.
@@ -85,6 +107,8 @@ class Attribution:
     author: GitIdentity | None
     #: `Co-authored-by:`, one line each. See `coauthor_handles`.
     coauthors: tuple[GitIdentity, ...] = ()
+    #: `Cheese-Task:`, one line each. See `work_items`.
+    tasks: tuple[WorkItem, ...] = ()
 
 
 __all__ = [
@@ -93,6 +117,7 @@ __all__ = [
     "CHEESE_NAME",
     "Attribution",
     "GitIdentity",
+    "WorkItem",
     "attribution",
     "coauthor_handles",
     "coauthored_by",
@@ -105,6 +130,7 @@ __all__ = [
     "resolve_for_handle",
     "session_dir",
     "sync_for_topic",
+    "work_items",
 ]
 
 
@@ -263,16 +289,62 @@ async def coauthor_handles(
     return [owner]
 
 
+async def work_items(
+    session: Any, topic: "Topic", *, task_id: uuid.UUID | None = None
+) -> tuple[WorkItem, ...]:
+    """Every piece of work this delivery carries, oldest first.
+
+    一棵树 = 一个分支 = 一个 PR = 一批活, so the unit is the TREE and not the
+    task: squash-merging collapses the whole branch into one commit, and every
+    task that wrote to that branch is in it whether or not it is the one the card
+    was filed against. Listing only the card's own task would credit one worker
+    for a batch several of them produced.
+
+    Which tree: the card's task says so directly, and a card filed for the room
+    itself has no task, so the room's writable tree is the answer — a room takes
+    work into exactly one tree at a time, and a tree stays that way until its
+    delivery lands.
+
+    Empty is an ordinary answer: a room from before tasks existed has none, and a
+    delivery whose work cannot be read degrades to "no such trailers" rather than
+    taking the merge down with it.
+    """
+    tree_id = await _delivered_tree(session, topic, task_id)
+    if tree_id is None:
+        return ()
+    from app.domain.room_task.services import WorkTreeService
+
+    return tuple(
+        WorkItem(task.id, task.subagent_id or None, task.title or "")
+        for task in await WorkTreeService(session).tasks_on(tree_id)
+    )
+
+
+async def _delivered_tree(
+    session: Any, topic: "Topic", task_id: uuid.UUID | None
+) -> uuid.UUID | None:
+    if task_id is not None:
+        thread = await _thread(session, task_id)
+        return thread.tree_id if thread is not None else None
+    from app.domain.room_task.services import WorkTreeService
+
+    tree = await WorkTreeService(session).current(topic.id)
+    return tree.id if tree is not None else None
+
+
 async def attribution(
     session: Any, topic: "Topic", *, task_id: uuid.UUID | None = None
 ) -> "Attribution":
     """Everything a PR body and a squash commit need to say about who a change
     belongs to, resolved in ONE place.
 
-    The three answers are correlated — a co-author is defined as "credited but not
+    The human answers are correlated — a co-author is defined as "credited but not
     the author" — so they are resolved together rather than at each call site;
     that is how the PR-opening path and the three merge paths are kept from
-    disagreeing about the same change.
+    disagreeing about the same change. `tasks` rides along for the same reason:
+    `pr_text` is pure, so anything needing a session has to arrive already
+    resolved, and one object means the humans and the machines behind a change
+    cannot come from two different reads of it.
 
     Best-effort, and each part fails on its own: attribution must never take a
     merge down, but one broken lookup must not cost more than it has to either —
@@ -301,7 +373,14 @@ async def attribution(
         logger.warning(
             "could not resolve co-authors for topic %s", topic.id, exc_info=True
         )
-    return Attribution(handle, author, tuple(coauthors))
+    tasks: tuple[WorkItem, ...] = ()
+    try:
+        tasks = await work_items(session, topic, task_id=task_id)
+    except Exception:  # noqa: BLE001 — same rule again: a trailer, not a gate
+        logger.warning(
+            "could not resolve the work behind topic %s", topic.id, exc_info=True
+        )
+    return Attribution(handle, author, tuple(coauthors), tasks)
 
 
 async def _identity_of(session: Any, handle: str | None) -> GitIdentity | None:

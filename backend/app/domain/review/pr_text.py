@@ -8,10 +8,39 @@ Chinese room name here, `采纳 topic/8f3a… → main (#7)` there, "验收人�
 a body.
 """
 
+from app.domain.identity.handles import topic_agent_handle
 from app.domain.review import commit_message
 from app.domain.review.models import AcceptCard
 from app.domain.topic.models import Topic
 from app.domain.workspace import identity
+
+#: What `Cheese-Task:` writes where a 分身 id would go, for work no worker was
+#: ever bound to. A placeholder rather than a shorter line, so every one of these
+#: trailers has the same three fields and can be split on whitespace twice.
+NO_SUBAGENT = "-"
+
+#: How much of a task's title a trailer carries. Titles run to 300 characters and
+#: a commit message is read in an 80-column terminal; the id and the 分身 in front
+#: of it are what identify the work, the title is there to be recognised.
+MAX_TASK_TITLE = 120
+
+
+def task_trailer(item: identity.WorkItem) -> str:
+    """One `Cheese-Task:` line — which piece of work, and which 分身 did it.
+
+    Squashed onto one line, always. A trailer block ends at the first line that
+    is not a trailer, so a newline inside a task's title would not merely look
+    untidy: it would cut every trailer after it out of the block git and GitHub
+    read, and a title chosen to contain `Requested-by: someone` would forge one.
+    Titles come from whoever dispatched the work, so this is the boundary where
+    that stops being possible."""
+    title = " ".join(item.title.split())
+    if len(title) > MAX_TASK_TITLE:
+        title = f"{title[: MAX_TASK_TITLE - 1]}…"
+    # No spaces in the id either: it is the second of three whitespace-separated
+    # fields, so one would silently push the title into the 分身's place.
+    subagent = "".join((item.subagent_id or "").split()) or NO_SUBAGENT
+    return f"Cheese-Task: {item.task_id} {subagent} {title}".rstrip()
 
 
 def fallback_subject(topic: Topic) -> str:
@@ -52,6 +81,20 @@ def pr_trailers(
     delivered it (#189) — the room says where it was made, the card says which
     delivery of that room's work this commit is.
 
+    `Cheese-Agent` and `Cheese-Task` answer the other half of #189: WHICH 芝士
+    wrote this. Nothing else in the commit can say — the git author is the human
+    the work belongs to, and `Co-authored-by: Claude Fable 5` is on every commit
+    Claude Code writes for anyone, anywhere, so between them a reader learns who
+    asked and what model typed, and nothing about which instance of this platform
+    did it or which piece of work it was. `Cheese-Agent` is the room's 分身
+    handle, the same name it posts under and holds a token as; `Cheese-Task` is
+    one line per piece of work in the batch, naming the worker that did it.
+
+    The agent handle is derived here rather than passed in because it is a pure
+    function of the room (`topic_agent_handle`) — routing it through the caller's
+    DB resolution would only create a way for the line to go missing. The task
+    lines cannot be: they are rows, so they arrive on `who`.
+
     `who` is resolved by the caller (`identity.attribution`) because it needs a DB
     session and this module is pure — as ONE object, so the requester and the
     co-authors cannot come from two different resolutions and name the same person
@@ -80,6 +123,8 @@ def pr_trailers(
     lines.append(f"Cheese-Topic: {topic.id}")
     if card is not None:
         lines.append(f"Cheese-Card: {card.id}")
+    lines.append(f"Cheese-Agent: {topic_agent_handle(topic.id)}")
+    lines.extend(task_trailer(item) for item in (who.tasks if who else ()))
     coauthors = who.coauthors if who else ()
     credited = [line for line in map(identity.coauthored_by, coauthors) if line]
     if credited:
