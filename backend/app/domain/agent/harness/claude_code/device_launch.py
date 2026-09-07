@@ -555,8 +555,37 @@ if [ -n "${CHEESE_GIT_REMOTE:-}" ]; then
     # `2>/dev/null || true` made that indistinguishable from success.
     CHEESE_WS_TMP="$CHEESE_WORK.clone.$$"
     rm -rf "$CHEESE_WS_TMP"
-    CHEESE_WS_ERR="$(git -c http.extraHeader="X-Cheese-Token: $CHEESE_TOKEN" \
-      clone -q --no-checkout "$CHEESE_GIT_REMOTE" "$CHEESE_WS_TMP" 2>&1)" || true
+    # A shallow, single-branch clone: the tip of one branch, never the project's
+    # whole history. A device only clones and pushes its own topic tree — every
+    # history-dependent operation (diff, merge-base, 采纳's merge) runs on the
+    # platform's full repo, not here — so the tip is all a workspace needs, and
+    # fetching it is O(one commit) rather than O(every topic branch this project
+    # has ever opened). A full clone of an active project's proxy is minutes and
+    # hundreds of MB of history the agent never reads; this is seconds.
+    cheese_ws_git() {
+      git -c http.extraHeader="X-Cheese-Token: $CHEESE_TOKEN" "$@"
+    }
+    # WHICH branch to clone is decided by asking the server whether the topic
+    # branch is there yet — not by cloning it and falling back on failure. The
+    # difference matters: a resumed topic, or one a fileless device already
+    # pushed to, carries commits on its branch that are the only checkout of that
+    # work, and a transient clone failure must be REPORTED, never quietly
+    # answered by checking out the base branch instead — that would hand the
+    # agent a stale tree and let its next push clobber or diverge from the real
+    # tip. So: clone the topic branch only when it provably exists; otherwise
+    # (a brand-NEW topic, whose branch the device itself creates from the base
+    # tip and pushes later) clone the default branch and let cheese_ws_adopt
+    # synthesize the topic branch from its HEAD, exactly as the old full clone
+    # did. Either way it is one branch, one commit deep.
+    if cheese_ws_git ls-remote --exit-code --heads \
+         "$CHEESE_GIT_REMOTE" "$CHEESE_WS_BRANCH" >/dev/null 2>&1; then
+      CHEESE_WS_ERR="$(cheese_ws_git clone -q --no-checkout --depth 1 \
+        --single-branch --branch "$CHEESE_WS_BRANCH" \
+        "$CHEESE_GIT_REMOTE" "$CHEESE_WS_TMP" 2>&1)" || true
+    else
+      CHEESE_WS_ERR="$(cheese_ws_git clone -q --no-checkout --depth 1 \
+        "$CHEESE_GIT_REMOTE" "$CHEESE_WS_TMP" 2>&1)" || true
+    fi
     if [ -d "$CHEESE_WS_TMP/.git" ] \
        && mv "$CHEESE_WS_TMP/.git" "$CHEESE_WORK/.git" 2>/dev/null; then
       cheese_ws_adopt \

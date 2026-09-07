@@ -611,9 +611,15 @@ func (h *Host) dropRendezvous(s *sess) {
 	}
 }
 
-// rvTokenWait bounds the wait below. A var, not a const, so a test does not
-// have to spend it.
-var rvTokenWait = 20 * time.Second
+// rvTokenWait bounds the wait below. The token file is written on the launcher's
+// way to exec'ing claude — necessarily BEFORE the socket claude then binds — so
+// this window must be at least rvDialWindow, never a fraction of it. It was 20s
+// against a 120s socket window: a first prompt for a cold screen gave up on the
+// token six times sooner than it would have waited for the socket, and a new
+// topic whose workspace was still coming up died at ~20s every time. The wait
+// now covers a full cold start (workspace bring-up + node + TUI mount) with
+// margin. A var, not a const, so a test does not have to spend it.
+var rvTokenWait = 180 * time.Second
 
 // serveCall answers one server->screen call. `prompt` is the only thing a screen
 // can be asked to do, and it goes over the rendezvous socket the launcher armed.
