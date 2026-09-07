@@ -27,6 +27,7 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent.chat import ChatService
+from app.domain.agent.github_app import github_app_read_token_for_project
 from app.domain.agent.platform_notices import (
     EVENT_UPSTREAM_CONFLICT,
     SEVERITY_WARN,
@@ -99,8 +100,11 @@ async def dispatch(
         return None
 
     try:
+        # A bound project's upstream is read as the App, here as in the sync
+        # that found the conflict; an unbound one fetches with no credential.
+        token = await github_app_read_token_for_project(project_id, db)
         files = await asyncio.to_thread(
-            ws.prepare_upstream_conflict_resolution, project_id, task.id
+            ws.prepare_upstream_conflict_resolution, project_id, task.id, token=token
         )
     except Exception:  # noqa: BLE001 — as above, plus: do not strand the task
         logger.exception(

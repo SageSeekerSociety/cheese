@@ -1692,11 +1692,16 @@ def prepare_conflict_resolution(
 
 
 def prepare_upstream_conflict_resolution(
-    project_id: uuid.UUID, topic_id: uuid.UUID
+    project_id: uuid.UUID, topic_id: uuid.UUID, *, token: str | None = None
 ) -> list[str]:
     """同步上游冲突 → 派芝士解决的前置。Same contract as
     `prepare_conflict_resolution`, but the side being merged in is the UPSTREAM
     branch rather than the project's base.
+
+    `token` is the same credential `sync_upstream` fetches with: the App's
+    installation token for a bound project, nothing for an unbound one. The
+    conflict this materializes was found by a fetch that used it, and the
+    re-fetch here reads the same private upstream.
 
     Why this exists at all: `sync_upstream` aborts cleanly on conflict and
     reports — which is the right thing for the shared repo, but on its own it is
@@ -1710,7 +1715,13 @@ def prepare_upstream_conflict_resolution(
     repo = ensure_repo(project_id)
     # A commit id rather than a ref name: `upstream/main` means nothing inside
     # the worktree until it fetches, and a raw sha needs no name at all.
-    _git(repo, "fetch", UPSTREAM_REMOTE, timeout=120)
+    _git(
+        repo,
+        "fetch",
+        UPSTREAM_REMOTE,
+        timeout=120,
+        env=_token_git_env(token) if token else None,
+    )
     return _materialize_conflicts(
         project_id, topic_id, _git(repo, "rev-parse", _upstream_ref(repo))
     )
