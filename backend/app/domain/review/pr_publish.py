@@ -137,7 +137,7 @@ async def open_pr_for_card(
     branch = await asyncio.to_thread(ws.push_topic_branch, project_id, topic_id, token)
     base = (
         await asyncio.to_thread(
-            lambda: ws.upstream_default_branch(ws.ensure_repo(project_id))
+            lambda: ws.upstream_default_branch(ws.ensure_repo(project_id), token=token)
         )
         or ws.DEFAULT_BRANCH
     )

@@ -1784,11 +1784,23 @@ def _materialize_conflicts(
     return files
 
 
-def upstream_default_branch(repo: Path) -> str | None:
+def upstream_default_branch(repo: Path, *, token: str | None = None) -> str | None:
     """The upstream's own default branch (what its HEAD points at), so a push
-    lands where that repo actually keeps its trunk instead of a guessed name."""
+    lands where that repo actually keeps its trunk instead of a guessed name.
+
+    `token` is the App's installation token for a bound project: a private
+    upstream answers `ls-remote` to nothing else, and without it the caller
+    falls back to guessing `main`."""
     try:
-        out = _git(repo, "ls-remote", "--symref", UPSTREAM_REMOTE, "HEAD", timeout=60)
+        out = _git(
+            repo,
+            "ls-remote",
+            "--symref",
+            UPSTREAM_REMOTE,
+            "HEAD",
+            timeout=60,
+            env=_token_git_env(token) if token else None,
+        )
     except ValidationError:
         return None
     for line in out.splitlines():
