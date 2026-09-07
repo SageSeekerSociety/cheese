@@ -187,7 +187,9 @@ async def accept_card(
     if not actor.authenticated:
         raise AuthenticationRequiredError("需要登录才能采纳验收卡")
     svc = AcceptService(db)
-    card = await svc.accept(card_id=card_id, decided_by=actor.handle)
+    card = await svc.accept(
+        card_id=card_id, decided_by=actor.handle, head_sha=body.head_sha
+    )
     if card.status == AcceptStatus.conflict:
         # 冲突不采纳 (spec §6.3): 芝士 first. Materialize the conflicted merge in
         # the topic's workspace, then dispatch a resolve turn. The reviewer
@@ -355,7 +357,10 @@ async def merge_card_anyway(
         raise AuthenticationRequiredError("需要登录才能人工放行合并")
     svc = AcceptService(db)
     card = await svc.merge_despite_checks(
-        card_id=card_id, decided_by=actor.handle, reason=body.reason
+        card_id=card_id,
+        decided_by=actor.handle,
+        reason=body.reason,
+        head_sha=body.head_sha,
     )
     return ok(await svc.describe(card))
 
@@ -379,7 +384,10 @@ async def set_auto_merge(
         raise AuthenticationRequiredError("需要登录才能设置自动合并")
     svc = AcceptService(db)
     card = await svc.arm_auto_merge(
-        card_id=card_id, decided_by=actor.handle, enabled=body.enabled
+        card_id=card_id,
+        decided_by=actor.handle,
+        enabled=body.enabled,
+        head_sha=body.head_sha,
     )
     return ok(await svc.describe(card))
 

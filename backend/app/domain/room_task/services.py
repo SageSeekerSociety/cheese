@@ -27,6 +27,8 @@ class WorkTreeService:
     def __init__(self, session: AsyncSession):
         self._session = session
         self._repo = WorkTreeRepository(session)
+        #: Did the last :meth:`ensure_open` start a new batch? See its docstring.
+        self.started_a_batch = False
 
     async def get(self, tree_id: uuid.UUID) -> WorkTree | None:
         return await self._repo.get(tree_id)
@@ -50,10 +52,18 @@ class WorkTreeService:
         worktree directory, container workdir and tmux session are
         byte-for-byte the names they already had (migration `b8e2f4a90d33`).
         Later trees get fresh ids, and therefore fresh branches.
+
+        ``started_a_batch`` on the way out says whether this call CREATED the
+        tree. It exists because starting a batch lands in two places that
+        cannot roll back together — this row, and the marker `bind_tree`
+        writes below — so a caller that might raise afterwards has to know it
+        is now holding a fact the disk already believes, and make it durable
+        (:meth:`AcceptService.create_card` is the one that does).
         """
         from app.domain.workspace import service as ws
 
         current = await self._repo.open_tree_for_room(room_id)
+        self.started_a_batch = current is None
         if current is None:
             first = not await self._repo.list_for_room(room_id)
             current = await self._repo.add(

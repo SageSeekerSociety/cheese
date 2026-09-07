@@ -57,10 +57,38 @@ def _make_card(client, topic_id: str, reviewer: str = "alice") -> str:
     return r.json()["data"]["id"]
 
 
-def _accept(client, card_id: str, handle: str = "alice"):
+#: "whatever this card shows right now" —— 默认的点击是刚看过卡再点的那种。
+#: 传一个具体的 sha 就是「浏览器里那张卡停在这一版」，TOCTOU 的用例靠它。
+JUST_LOOKED = object()
+
+
+def _rendered_head(client, card_id: str) -> str | None:
+    """浏览器渲染这张卡时卡面上的 head（payload 的 `merge_state.head_sha`）。
+
+    三个会触发合并的入口都要求请求声明它，所以测试的默认调用也照做——不然每个
+    用例都在测「不带 sha 的老客户端」，而那条路本来就该被拒。"""
+    from app.domain.review.repositories import AcceptCardRepository
+
+    async def _do() -> str | None:
+        async with client.test_factory() as s:
+            card = await AcceptCardRepository(s).get(_uuid.UUID(card_id))
+            assert card is not None
+            return card.pr_head_sha
+
+    return asyncio.run(_do())
+
+
+def _seen(client, card_id: str, head_sha) -> str | None:
+    return _rendered_head(client, card_id) if head_sha is JUST_LOOKED else head_sha
+
+
+def _accept(client, card_id: str, handle: str = "alice", *, head_sha=JUST_LOOKED):
     return client.post(
         f"/accept-cards/{card_id}/accept",
-        json={"decided_by": handle},
+        json={
+            "decided_by": handle,
+            "head_sha": _seen(client, card_id, head_sha),
+        },
         headers=session_auth_headers(handle),
     )
 
@@ -79,15 +107,28 @@ def _merge_anyway(client, card_id: str, handle: str | None = None, **kw):
         headers = session_auth_headers(handle)
     return client.post(
         f"/accept-cards/{card_id}/merge-anyway",
-        json={"reason": kw.pop("reason", "")},
+        json={
+            "reason": kw.pop("reason", ""),
+            "head_sha": _seen(client, card_id, kw.pop("head_sha", JUST_LOOKED)),
+        },
         headers=headers or {},
     )
 
 
-def _arm(client, card_id: str, handle: str, *, enabled: bool = True):
+def _arm(
+    client,
+    card_id: str,
+    handle: str,
+    *,
+    enabled: bool = True,
+    head_sha=JUST_LOOKED,
+):
     return client.post(
         f"/accept-cards/{card_id}/auto-merge",
-        json={"enabled": enabled},
+        json={
+            "enabled": enabled,
+            "head_sha": _seen(client, card_id, head_sha),
+        },
         headers=session_auth_headers(handle),
     )
 
@@ -592,6 +633,71 @@ def test_accept_is_refused_while_a_required_check_has_not_reported(client, app_w
     assert fake.merge_calls == []
 
 
+def _running(name: str) -> dict:
+    return {"name": name, "status": "in_progress", "conclusion": None}
+
+
+def _passed(name: str) -> dict:
+    return {"name": name, "status": "completed", "conclusion": "success"}
+
+
+def test_accept_is_refused_while_a_required_check_is_still_running(client, app_world):
+    """洞②：必跑检查**还在跑**时点采纳，必须被拒。
+
+    在跑的检查没有结论，而没有结论不是通过——这跟「必跑检查缺席」是同一句判词
+    （#465/#468）。判成 unstable 时它会落进采纳闸门的放行集合
+    `("clean", "unstable")`，于是配了必跑检查、test 还 in_progress 的 PR 照样
+    合得掉：绿勾替一段还没被跑过的代码背了书。"""
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    _protect(client, pid, required_checks=[{"name": "test", "paths": ["backend/**"]}])
+    fake.files_by_sha[head_sha] = [("modified", "backend/app/main.py")]
+    fake.check_runs_by_sha[head_sha] = [_running("test")]
+
+    r = _accept(client, cid)
+
+    assert r.status_code == 422, r.text
+    assert "不能采纳" in r.json()["message"]
+    assert "test" in r.json()["message"]
+    assert fake.merge_calls == []
+    assert _cards(client, tid)[0]["status"] == "pending"
+
+    # 跑完并且绿了，同一次点击照常合。
+    fake.check_runs_by_sha[head_sha] = [_passed("test")]
+    r = _accept(client, cid)
+    assert r.status_code == 200, r.text
+    assert [m["sha"] for m in fake.merge_calls] == [head_sha]
+
+
+def test_an_armed_card_waits_out_a_running_required_check(client, app_world):
+    """洞②的轮询这条路，以及**布防与执行是两件事**（#718）：
+
+    必跑检查在跑 = blocked，而「通过后自动合并」这个开关本来就只在 BLOCKED /
+    BEHIND 出现——所以 blocked 不能拒绝布防。要挡住的是执行侧：布防之后、检查
+    通过之前，轮询器一次都不许调 merge。"""
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    _protect(client, pid, auto_merge_allowed=True, required_checks=[{"name": "test"}])
+    fake.check_runs_by_sha[head_sha] = [_running("test")]
+    _poll(client)
+    assert _cards(client, tid)[0]["merge_state"]["state"] == "blocked"
+
+    assert _arm(client, cid, "alice").status_code == 200  # blocked 照样能布防
+
+    _poll(client)
+    _poll(client)
+    assert fake.merge_calls == []  # 没绿，一次都不合
+    assert _cards(client, tid)[0]["status"] == "pending"
+
+    fake.check_runs_by_sha[head_sha] = [_passed("test")]
+    _poll(client)
+
+    card = _cards(client, tid)[0]
+    assert card["status"] == "accepted"
+    assert card["decided_by"] == "alice"
+    assert [m["sha"] for m in fake.merge_calls] == [head_sha]
+
+
 def test_an_unlisted_red_check_does_not_block_the_accept(client, app_world):
     """UNSTABLE（红的不在必跑名单，或名单为空）像 GitHub 一样可合 —— 名单不再是
     平台默认值（#640：要求被托管仓库先加我们点名的检查才配被采纳，是被否掉的）。"""
@@ -619,6 +725,110 @@ def test_a_scoped_required_check_the_diff_cannot_trigger_is_not_required(
     r = _accept(client, cid)
     assert r.status_code == 200, r.text
     assert r.json()["data"]["status"] == "accepted"
+
+
+# ------------- 合的是人看到的那个 commit：轮询器在渲染与点击之间刷了卡 -------
+#
+# `_refresh_stale_card` 那条（下面几个用例）管的是「点击时现读 GitHub 发现 head
+# 变了」。这一节管的是更早也更常见的一种：**轮询器已经把卡刷到新 head 了**，
+# 数据库里干干净净，只有浏览器里那一份还停在旧版本。旧路径拿数据库里的 head 当
+# merge 参数，于是这条路上合进去的是验收人从没看过的代码，而 dismiss_stale 拦
+# 不住它——那条只清批准票，采纳本身就是一票。
+
+
+def _stale_click_setup(client, app_world, *, number: int = 7):
+    """(tid, cid, seen, live)：卡面镜像过 A，轮询器又把它刷成了 B。
+
+    `seen` 是浏览器渲染那一刻卡上的 head（A），`live` 是卡现在的 head（B）。"""
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world, number=number)
+    fake.check_state_by_sha[head_sha] = ("success", "全绿")
+    _poll(client)
+    seen = _cards(client, tid)[0]["merge_state"]["head_sha"]
+    assert seen == head_sha  # 这就是人在屏幕上看到的那一版
+
+    live = fake.push_new_commit(number)  # 芝士又推了
+    fake.check_state_by_sha[live] = ("success", "新的也全绿")
+    _poll(client)  # 轮询器把卡刷成新 head
+    assert _cards(client, tid)[0]["pr_head_sha"] == live
+    return pid, tid, cid, number, seen, live
+
+
+def test_accepting_the_version_you_looked_at_refuses_once_the_card_moved_on(
+    client, app_world
+):
+    """洞①（andylizf 独立复现）：读 A → 轮询刷成 B → 带着 A 点采纳。
+
+    旧路径只收 decided_by，合并 API 拿的是**数据库里的** B —— 用户点的是「我看
+    过的这一版可以」，落地的却是一段他没看过的代码。"""
+    fake = app_world["fake"]
+    _pid, tid, cid, _number, seen, live = _stale_click_setup(client, app_world)
+
+    r = _accept(client, cid, head_sha=seen)
+
+    assert r.status_code == 422, r.text
+    assert "过时" in r.json()["message"]
+    assert fake.merge_calls == []  # B 一次都没被合
+    assert _cards(client, tid)[0]["status"] == "pending"
+
+    # 重新看过（拿到 B）再点，才合，而且合的就是 B。
+    assert _accept(client, cid).status_code == 200
+    assert [m["sha"] for m in fake.merge_calls] == [live]
+
+
+def test_force_merging_the_version_you_looked_at_refuses_once_the_card_moved_on(
+    client, app_world
+):
+    """洞①的人工放行入口：签字的人要为**一段具体的代码**背书。屏幕上那一版
+    已经不在了的时候，这个签名会落到别的东西上。"""
+    fake = app_world["fake"]
+    pid, tid, cid, _number, seen, live = _stale_click_setup(client, app_world)
+    _protect(client, pid, required_checks=[{"name": "nope"}])  # 正门关着
+
+    r = _merge_anyway(client, cid, "alice", reason="CI 挂了", head_sha=seen)
+
+    assert r.status_code == 422, r.text
+    assert "过时" in r.json()["message"]
+    assert fake.merge_calls == []
+    assert _cards(client, tid)[0]["status"] == "pending"
+
+    r = _merge_anyway(client, cid, "alice", reason="CI 挂了")
+    assert r.status_code == 200, r.text
+    assert [m["sha"] for m in fake.merge_calls] == [live]
+
+
+def test_arming_auto_merge_on_the_version_you_looked_at_refuses_too(client, app_world):
+    """洞①的布防入口：布防就是提前采纳，替一段没人看过的代码预先按同意，跟
+    当场合并它是同一件事。
+
+    拒的理由只有「旧 SHA」一个 —— 拿着**当前**那一版布防照样成立，哪怕合并态
+    正卡在 blocked（这个开关本来就只在 BLOCKED / BEHIND 出现）。"""
+    pid, tid, cid, _number, seen, _live = _stale_click_setup(client, app_world)
+    _protect(client, pid, auto_merge_allowed=True, required_checks=[{"name": "nope"}])
+    _poll(client)  # 让卡面照新规则重算：必跑检查没报到 → blocked
+    assert _cards(client, tid)[0]["merge_state"]["state"] == "blocked"
+
+    r = _arm(client, cid, "alice", head_sha=seen)
+
+    assert r.status_code == 422, r.text
+    assert "过时" in r.json()["message"]
+    assert _cards(client, tid)[0]["auto_merge"]["armed_by"] is None
+
+    assert _arm(client, cid, "alice").status_code == 200
+    assert _cards(client, tid)[0]["auto_merge"]["armed_by"] == "alice"
+
+
+def test_disarming_never_needs_a_fresh_look(client, app_world):
+    """解除布防不声明看过哪一版也行：撤销自己的同意什么都不会合并，为它加一道
+    「先重新看过」的闸，只会让人被自己的旧布防困住。"""
+    pid, tid, cid, _number, seen, _live = _stale_click_setup(client, app_world)
+    _protect(client, pid, auto_merge_allowed=True)
+    assert _arm(client, cid, "alice").status_code == 200
+
+    r = _arm(client, cid, "alice", enabled=False, head_sha=seen)
+
+    assert r.status_code == 200, r.text
+    assert _cards(client, tid)[0]["auto_merge"]["armed_by"] is None
 
 
 def test_head_moved_since_the_reviewer_looked_refreshes_instead_of_merging(
@@ -812,6 +1022,112 @@ def test_filing_a_card_on_a_branchless_tree_is_refused(client, app_world, monkey
     # 说清该推哪条分支（本话题的树分支）。
     assert f"topic/{_uuid.UUID(tid).hex[:8]}" in r.json()["message"]
     assert _cards(client, tid) == []
+
+
+# ---- 空树拒卡：报出来的分支名必须是下一次还找得到的那条 ---------------------
+#
+# 递卡在没有开着的树时会现场开一批新的，然后空树守卫可能把这次递卡拒掉。开一批
+# 活落在两个地方：`work_trees` 的行（可回滚）和磁盘上「这个房间写哪棵树」的映射
+# （不可回滚）。422 只回滚数据库，房间于是指着一棵不存在的树，而下一次递卡又开
+# 一棵新的、报出**另一个**分支名——照着推永远白推（房间 2026-09-08 实测）。
+
+
+def _named_branch(message: str) -> str:
+    """错误信息里点名的那条分支。"""
+    import re
+
+    found = re.search(r"topic/[0-9a-f]{8}", message)
+    assert found is not None, message
+    return found.group(0)
+
+
+def _room_open_tree_branch(client, topic_id: str) -> str | None:
+    """数据库这一层说的「这个房间正在写哪棵树」，翻成分支名。"""
+    from app.domain.room_task.repositories import WorkTreeRepository
+    from app.domain.workspace import service as ws
+
+    async def _do() -> str | None:
+        async with client.test_factory() as s:
+            tree = await WorkTreeRepository(s).open_tree_for_room(_uuid.UUID(topic_id))
+            return None if tree is None else ws.branch_for_tree(tree.id)
+
+    return asyncio.run(_do())
+
+
+def _branch_of_record(client, topic_id: str) -> str:
+    """磁盘这一层说的同一件事（`tree_for_place` → 分支名）。两层必须一致。"""
+    from app.domain.workspace import service as ws
+
+    return ws.branch_for_tree(ws.tree_for_place(_uuid.UUID(topic_id)))
+
+
+def _only_these_branches_exist(monkeypatch, pushed: set[str]) -> None:
+    """「分支存在」= 有人往它上面推过东西。芝士推一条就往 `pushed` 里加一条。"""
+    from app.domain.workspace import service as ws
+
+    def _exists(_project_id, topic_id) -> bool:
+        return ws.branch_for_tree(ws.tree_for_place(topic_id)) in pushed
+
+    monkeypatch.setattr(ws, "topic_branch_exists", _exists)
+
+
+def test_a_delivery_after_the_last_batch_merged_keeps_the_tree_it_named(
+    client, app_world, monkeypatch
+):
+    """房间 2026-09-08 实测的那一刀：上一批已经合并（房间没有开着的树）→ 再递
+    卡时现场开新一批 → 空树守卫 422 → 回滚把刚开的那棵树一起烧掉。
+
+    钉的是两层一致：拒卡之后，数据库里那棵开着的树、磁盘上的房间映射、错误信息
+    里点名的分支，说的必须是同一条。"""
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    fake.check_state_by_sha[head_sha] = ("success", "全绿")
+    assert _accept(client, cid).status_code == 200  # 上一批落地，树 merged
+    assert _room_open_tree_branch(client, tid) is None
+
+    pushed: set[str] = set()  # 新一批的分支上还什么都没有
+    _only_these_branches_exist(monkeypatch, pushed)
+
+    r = _make_card_response(client, tid)
+
+    assert r.status_code == 422, r.text
+    assert "没有任何提交" in r.json()["message"]
+    named = _named_branch(r.json()["message"])
+    # 被拒之后，那棵树还在，而且三层说的是同一条分支。
+    assert _room_open_tree_branch(client, tid) == named
+    assert _branch_of_record(client, tid) == named
+    # 而且它确实是新一批，不是上一批那条。
+    assert named != f"topic/{_uuid.UUID(tid).hex[:8]}"
+
+    pushed.add(named)  # 照着报的分支推提交
+    r = _make_card_response(client, tid)
+    assert r.status_code == 200, r.text
+
+
+def test_two_refused_cards_name_the_same_branch_and_pushing_to_it_works(
+    client, app_world, monkeypatch
+):
+    """连续两次空树拒卡，报的分支名必须一致——不然「把提交推上 X 后再递卡」
+    这句指引本身就是假的。照着它推完，第三次递卡成功。"""
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    fake.check_state_by_sha[head_sha] = ("success", "全绿")
+    assert _accept(client, cid).status_code == 200
+
+    pushed: set[str] = set()
+    _only_these_branches_exist(monkeypatch, pushed)
+
+    first = _make_card_response(client, tid)
+    second = _make_card_response(client, tid)
+
+    assert first.status_code == 422 and second.status_code == 422
+    named = _named_branch(first.json()["message"])
+    assert _named_branch(second.json()["message"]) == named
+
+    pushed.add(named)
+    third = _make_card_response(client, tid)
+    assert third.status_code == 200, third.text
+    assert _cards(client, tid)[0]["status"] == "pending"
 
 
 def test_github_unreachable_at_accept_stops_and_keeps_the_pr_on_the_card(

@@ -21,8 +21,19 @@ class AcceptCardCreate(BaseModel):
     change_body: str | None = None
 
 
+#: 合的是**人看到的**那个 commit：每个会触发合并的写入口都带上前端渲染这张卡
+#: 时卡面显示的 head sha（`merge_state.head_sha`）。它不是给服务端「用哪个 sha
+#: 合并」的建议，而是给它「我看的是哪一版」的声明——服务端拿它和卡当前的
+#: `pr_head_sha` 对；不一致就是「你看的那版已经不在了」，请求被拒、人重新看过
+#: 再点。没有它的话，轮询器在渲染和点击之间把卡刷到新 head，点下去合的就是一
+#: 段没有人看过的代码。None 是合法值：卡还没被轮询器镜像过 head（刚递的卡）、
+#: 或者根本不骑 PR（平台 lane）时，卡面显示的就是「没有 sha」。
+_SEEN_HEAD_FIELD = Field(default=None, max_length=64)
+
+
 class AcceptDecision(BaseModel):
     decided_by: str = Field(min_length=1, max_length=64)
+    head_sha: str | None = _SEEN_HEAD_FIELD
 
 
 class RejectDecision(BaseModel):
@@ -46,6 +57,7 @@ class ForceMergeDecision(BaseModel):
     whatever the caller typed."""
 
     reason: str = Field(default="", max_length=2000)
+    head_sha: str | None = _SEEN_HEAD_FIELD
 
 
 class AutoMergeDecision(BaseModel):
@@ -53,6 +65,7 @@ class AutoMergeDecision(BaseModel):
     采纳，布防人是谁必须由平台认定。"""
 
     enabled: bool
+    head_sha: str | None = _SEEN_HEAD_FIELD
 
 
 class ApprovalCreate(BaseModel):
