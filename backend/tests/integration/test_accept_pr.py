@@ -739,7 +739,7 @@ def _branchless_noop_merge(app_world, monkeypatch) -> None:
     当成功吞掉的（2026-09-07 卡 40be3e1a）。"""
     from app.domain.workspace import service as ws
 
-    def _noop(pid, tid):
+    def _noop(pid, tid, **_kwargs):
         app_world["local_merges"].append(tid)
         return {"merged": False, "noop": True, "reason": "no topic branch"}
 
