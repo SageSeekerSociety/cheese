@@ -519,16 +519,44 @@ export type AcceptStatus =
   | 'gate_failed'
   // 闸门没跑成：检查没能在门禁环境里跑起来，对代码没有结论（不是「未通过」）。
   | 'gate_blocked'
-  // 两阶段采纳 (PR迭代式, 2026-08-09): the human already accepted; the PR is
-  // open and the machine stretch (CI → merge → deploy) is still running.
+  // 两阶段采纳 (2026-08-16 → #718 退役): 历史状态。采纳回到「点一下就是合并」
+  // 之后不再有卡进入它，存量卡也已迁回 pending —— 这里留着只为极端残留兜底。
   | 'pr_open'
   | string
 
-// GET /topics/{id}/accept-card (list, newest first).
-export interface DeliveryStep {
-  key: string
-  label: string
-  state: 'done' | 'active' | 'todo'
+// 合并态 (#718): the card's status IS the merge state. Computed server-side
+// (backend domain/review/merge_state.py) — the browser never derives it, it
+// only puts words and a dot next to what the backend said.
+export type MergeStateWord = 'clean' | 'unstable' | 'blocked' | 'behind' | 'dirty' | 'unknown'
+
+// 谁的活 (#718 的表格): who moves next. `human` + no PR = the platform lane,
+// where accepting is purely a human judgment and never gated by the state.
+export type MergeWho = 'ci' | 'agent' | 'platform' | 'human'
+
+export interface MergeReason {
+  kind: string
+  // The check names involved, ready for the card face (红了哪个要能看见).
+  checks: string[]
+  detail: string
+}
+
+export interface MergeStateInfo {
+  state: MergeStateWord
+  who: MergeWho
+  // At least one entry server-side; the basis for the verdict.
+  reasons: MergeReason[]
+  head_sha: string | null
+  checked_at: string | null
+  since: string | null
+}
+
+// 绿了自动合 (#718): only meaningful when the project allows it; armed by a
+// reviewer while the card is blocked/behind, merged by the platform when the
+// rules are met.
+export interface AutoMergeInfo {
+  allowed: boolean
+  armed_by: string | null
+  armed_at: string | null
 }
 
 export interface AcceptCard {
@@ -559,11 +587,10 @@ export interface AcceptCard {
   // platform opened one (flag-gated, best-effort).
   pr_number: number | null
   pr_url: string | null
-  // 交付进度: the steps THIS project has, sent by the backend. Whether a
-  // project has external checks is a property of its forge, which the browser
-  // cannot see — so the chain is no longer derived here. Empty whenever there
-  // is no machine work in flight, which is most of the time.
-  stages: DeliveryStep[]
+  // 合并态 (#718): what stands between this card and the trunk, and whose move
+  // it is. Always present — a platform-lane card carries who="human".
+  merge_state: MergeStateInfo
+  auto_merge: AutoMergeInfo
   // 两阶段采纳 (PR迭代式) only: which repo the PR lives in and the commit CI is
   // being queried against.
   pr_repo: string | null
