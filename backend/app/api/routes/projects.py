@@ -59,7 +59,6 @@ from app.domain.agent_instance.services import (
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
-from app.domain.conclusion.repositories import ConclusionCardRepository
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.machine.services import MachineService
 from app.domain.membership.repositories import MemberRepository
@@ -443,8 +442,6 @@ async def list_project_tasks(
     # 每条活最后一次说话是什么时候 —— 看板判「失联」的心跳。第三次批查询，走的是
     # blocks 上那条 (task_id, created_at) 的部分索引，不是每条活一次。
     beats = await TaskRepository(db).last_block_at_for_tasks(task_ids)
-    # 结论已经回流、还等着房间结算的那几条 —— 它们安静是因为干完了，不是断了。
-    pending = await ConclusionCardRepository(db).live_task_ids(task_ids)
     # 一次，给全部行用同一个「现在几点」：逐行取 now 会让同一批数据里两条本该
     # 一样的活分到不同格子，而那种差别没人再能复现。
     now = datetime.now(UTC)
@@ -460,7 +457,6 @@ async def list_project_tasks(
                 card,
                 beats.get(task.id),
                 room_screen_live=live_rooms[task.room_id],
-                conclusion_pending=task.id in pending,
             ),
             now=now,
         )

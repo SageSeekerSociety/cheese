@@ -181,9 +181,8 @@ class RoomLock(UuidPk, Timestamps, Base):
     Deliberately narrow, and the two kinds are enforced differently — which is
     worth knowing before trusting either:
 
-    - `heavy` is REAL. Test runs, dependency installs and dev servers go through
-      `cheese await`, which is the platform's own code, so the lane can simply
-      be held there.
+    - `heavy` is REAL. `cheese check` takes it around the project's quick check,
+      which is the platform's own code, so the lane can simply be held there.
     - `file` is ADVISORY. An agent's `Write` is its harness's tool, not ours; we
       cannot stand in front of it. What this offers is a way for an agent about
       to overwrite a whole file to find out that somebody else is already doing
@@ -288,6 +287,23 @@ class Task(UuidPk, Timestamps, Base):
     last_turn_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+    # 简报原文, written once when the work is dispatched and never edited —
+    # a brief is a statement of what was asked for, and one that could be
+    # rewritten afterwards would stop being evidence of that.
+    #
+    # It lives on the row rather than in a document of its own because the
+    # document had no maintainer: work is a subagent holding the room's token,
+    # which cannot reach a thread's doc address at all, so what got seeded at
+    # dispatch stayed frozen there forever while the real state moved on.
+    brief: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # 分身交回来的最后一句话 —— `SubagentStop.last_assistant_message`, written
+    # by the platform every time a bound worker hands something back, each one
+    # overwriting the last. A worker reports finished more than once (parking a
+    # long command counts), so the newest is the only one worth keeping and no
+    # single one of them means the work is over. What ends it is the room
+    # closing the card, after reading this.
+    conclusion: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # 这条活说它要碰哪些路径。Mutable on purpose: a brief is written once and
     # cannot be changed, but a claim always grows — work reaches a file nobody

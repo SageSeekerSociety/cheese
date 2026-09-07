@@ -665,11 +665,6 @@ class Settings(BaseSettings):
     notification_finalize_interval_s: int = 60
     notification_email_drain_interval_s: int = 60
     task_deadline_sweep_interval_s: int = 900
-    # --- 结论卡 (2026-08-11) ---
-    # How often open conclusion cards past their absolute deadline are swept and
-    # auto-accepted. Backstop for the turn-end hook: 默认采信 must not depend on
-    # the parent's digest turn ever running. 0 disables the loop (tests).
-    conclusion_sweep_interval_s: int = 60
     # merge_method for the auto-merge (GitHub: merge | squash | rebase). MUST
     # be one the target repo actually allows — GitHub answers 405 forever for
     # a disabled one, which is exactly how 两阶段采纳 shipped never having

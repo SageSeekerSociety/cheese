@@ -157,6 +157,44 @@ class TaskService:
         await self._session.flush()
         return task
 
+    async def record_conclusion(self, task: Task, conclusion: str) -> Task:
+        """分身交回来的那句话，落在卡上 —— overwriting whatever was there.
+
+        Called for every `SubagentStop` from a BOUND worker, and a worker stops
+        more than once: parking a long command in its own background reads as
+        finishing, and it stops again when it resumes and finishes for real. So
+        the last one is the only one worth keeping, and none of them is allowed
+        to close anything — the room decides the work is done, after reading
+        this (`cheese conclude-task`).
+        """
+        task.conclusion = conclusion
+        await self._session.flush()
+        return task
+
+    async def close_thread(self, task: Task, *, conclusion: str | None = None) -> Task:
+        """收卡 —— the room says this piece of work is over.
+
+        The room is the only thing that can say it. It read what the worker
+        handed back, folded the changes into its branch, and is the one place
+        holding both halves; the platform sees a worker stop and cannot tell
+        that from a worker pausing.
+
+        `conclusion` overrides what the worker's last stop left, for the case
+        where what came back was a fragment (a parked command's "running the
+        tests…") and the room knows the real answer. Absent, the worker keeps
+        the last word.
+
+        Idempotent: closing a closed thread keeps the first `closed_at` — the
+        moment it stopped being live is a fact, not a re-statement of intent.
+        """
+        if conclusion is not None:
+            task.conclusion = conclusion
+        if task.status is not TaskStatus.closed:
+            task.status = TaskStatus.closed
+            task.closed_at = datetime.now(UTC)
+        await self._session.flush()
+        return task
+
     async def open_thread(
         self,
         *,

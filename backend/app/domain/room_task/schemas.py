@@ -46,6 +46,10 @@ class TaskOut(BaseModel):
     accepted_at: datetime | None = None
     closed_at: datetime | None = None
     upgraded_from_block_id: uuid.UUID | None = None
+    # 派它出去时说的那份简报，和分身交回来的最后一句话。写在卡上而不是一份文档
+    # 里：做这条活的分身拿的是房间的 token，够不着一份属于活自己的文档。
+    brief: str = ""
+    conclusion: str | None = None
     created_at: datetime
     updated_at: datetime
     # 看板上这一格。派生的，所以和 TopicOut 的 `running` 一样：只有明确去算它的

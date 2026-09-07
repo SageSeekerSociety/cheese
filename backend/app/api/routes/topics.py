@@ -22,8 +22,6 @@ from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import NotFoundError, ValidationError
-from app.core.sandbox_auth import mint_scoped_token
-from app.domain.agent import awaited_tasks
 from app.domain.agent.chat import (
     ChatService,
     thread_relay_prompt,
@@ -48,7 +46,6 @@ from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
-from app.domain.conclusion.repositories import ConclusionCardRepository
 from app.domain.device.supply import Visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.idempotency import store as idem
@@ -73,12 +70,10 @@ from app.domain.room_task.services import (
 )
 from app.domain.team.repositories import TeamRepository
 from app.domain.topic.doc_change import summarize_doc_change
-from app.domain.topic.models import Topic, TopicStatus
+from app.domain.topic.models import Topic
 from app.domain.topic.relay import TopicRelayService
 from app.domain.topic.repositories import SortOrder, TopicSortField
 from app.domain.topic.schemas import (
-    BackgroundTaskDoneIn,
-    BackgroundTaskIn,
     BindSubagentIn,
     CheckResultIn,
     ClaimIn,
@@ -351,7 +346,6 @@ async def get_topic(
         # 算的，所以深链接进来和从侧栏点进来不可能给出两种说法。
         cards = await AcceptCardRepository(db).latest_by_task([place.task.id])
         beats = await TaskRepository(db).last_block_at_for_tasks([place.task.id])
-        pending = await ConclusionCardRepository(db).live_task_ids([place.task.id])
         out = TaskOut.model_validate(place.task).model_dump(mode="json")
         out["presentation"] = presentation.task_presentation(
             presentation.facts_for_task(
@@ -361,7 +355,6 @@ async def get_topic(
                 # 做这条活的分身住在房间的会话里 —— 屏幕没了它就没了，而它不会来
                 # 说一声。这一位是内存里的当下事实，不是库里的一列。
                 room_screen_live=chat.has_live_screen(place.room_id),
-                conclusion_pending=place.task.id in pending,
             ),
             now=datetime.now(UTC),
         ).as_dict()
@@ -496,7 +489,6 @@ async def list_room_tasks(
     thread_ids = [t.id for t, _ in threads]
     cards = await AcceptCardRepository(db).latest_by_task(thread_ids)
     beats = await TaskRepository(db).last_block_at_for_tasks(thread_ids)
-    pending = await ConclusionCardRepository(db).live_task_ids(thread_ids)
     # One answer for the whole room: every thread's worker lives in this room's
     # one session, so the screen is alive for all of them or for none.
     screen_live = chat.has_live_screen(topic_id)
@@ -514,7 +506,6 @@ async def list_room_tasks(
                         card,
                         beats.get(task.id),
                         room_screen_live=screen_live,
-                        conclusion_pending=task.id in pending,
                     ),
                     now=now,
                 ).as_dict(),
@@ -612,44 +603,45 @@ async def conclude_task(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """结论回流, said by the ROOM about one of its threads.
+    """收卡, said by the ROOM about one of its threads.
 
-    A worker inside the room's session has no token and no place of its own to
-    call `/return-conclusion` from, so the room files the conclusion for it —
-    after it has read what came back and satisfied itself the work is done.
+    The worker's conclusion is already on the card: the platform writes it there
+    on every `SubagentStop` from a bound worker. This is the other half — the
+    room saying the work is over — and it is deliberately a separate act, done
+    by hand.
 
-    Deliberately NOT automatic on the worker's Stop. A worker reports finished
-    more than once (parking a long command counts as finishing), and Stops
-    arrive from workers the platform never bound — measured on 2.1.224: after
-    the session's own Stop, with an unknown id, an empty type and a fragment of
-    a prompt as their closing message. Filing a conclusion off either of those
-    would open a card for work that is not done, or for work nobody dispatched.
+    It has to be. A worker reports finished more than once (parking a long
+    command in its own background counts as finishing), and stops arrive from
+    workers the platform never bound — measured on 2.1.224: after the session's
+    own Stop, with an unknown id, an empty type and a fragment of a prompt as
+    their closing message. Closing on either of those would collapse work that
+    is still going. Only the room has read what came back and folded the changes
+    into its branch, so only the room can say.
 
-    No wake, unlike `/return-conclusion`: the room is the caller and is already
-    running the turn that would be woken. The card still has its own deadline,
-    so nothing waits on a turn that never comes.
+    `conclusion` is optional: given, it overwrites the worker's last word (which
+    is sometimes the fragment above); omitted, that last word stands.
     """
-    service = TopicService(db)
-    place = await service.place_or_404(topic_id)
+    place = await TopicService(db).place_or_404(topic_id)
     if place.is_thread:
-        raise ValidationError("这是房间替它的活回流结论，一条活自己回流不了")
+        raise ValidationError("这是房间收它的活，一条活自己收不了")
     await _actor_in_place(resolver, place)
-    task = await TaskService(db).get(task_id)
+    tasks = TaskService(db)
+    task = await tasks.get(task_id)
     if task is None or task.room_id != place.room_id:
         raise NotFoundError("这个房间里没有这条活")
-    # Friendly "@名字/@话题名" → structured tokens BEFORE it lands in the room,
-    # same as the thread's own path: chips render and notifications fire there.
-    conclusion = await canonicalize_refs(
-        db, place.project_id, body.conclusion, exclude_topic_id=place.room_id
+    # Friendly "@名字/@话题名" → structured tokens, same as every other write
+    # path that lands text a person will read.
+    text = (body.conclusion or "").strip()
+    conclusion = (
+        await canonicalize_refs(
+            db, place.project_id, text, exclude_topic_id=place.room_id
+        )
+        if text
+        else None
     )
-    block, _ = await service.return_conclusion(
-        subtopic_id=task_id, conclusion=conclusion
-    )
-    out = BlockOut.model_validate(block).model_dump(mode="json")
+    task = await tasks.close_thread(task, conclusion=conclusion)
+    out = TaskOut.model_validate(task).model_dump(mode="json")
     await db.commit()
-    await get_broker().publish(
-        str(place.room_id), {"type": "assistant_block", "block": out}
-    )
     return ok(out)
 
 
@@ -857,16 +849,14 @@ async def topic_status(
     await _actor_in_place(resolver, place)
     # 盲飞防护 is asked BY whoever is flying, and that is usually a thread —
     # so the snapshot has to describe the place asked about, not the room it
-    # happens to sit in. Turn state, background tasks and cards are all keyed
-    # by place already; only this handler could not name one.
+    # happens to sit in. Turn state and cards are keyed by place already; only
+    # this handler could not name one.
     cards = await AcceptCardRepository(db).list_for_topic(topic_id)
     credits = await ComputeGrantRepository(db).summary(place.project_id)
     turn = runner.topic_work(topic_id)
-    background = awaited_tasks.status_snapshot(topic_id)
     stall = await topics.stall_signal(
         topic_id,
         live_turn=runner.live_work_for_topic(topic_id),
-        background_tasks=len(background["tasks"]),
     )
     return ok(
         {
@@ -884,7 +874,6 @@ async def topic_status(
             "turn": turn,
             "stall": stall,
             "cards": [_card_snapshot(c) for c in cards],
-            "background": background,
             "platform": {
                 "active_turns": runner.active_work_count(),
                 "queued_turns": runner.project_queue_depth(place.project_id),
@@ -1405,71 +1394,6 @@ async def mint_webhook_token(topic_id: uuid.UUID, db: DbSession) -> dict:
     )
     await db.commit()
     return ok({"token": token})
-
-
-@router.post("/{topic_id}/background-task")
-async def register_background_task(
-    topic_id: uuid.UUID, body: BackgroundTaskIn, db: DbSession
-) -> dict:
-    """`cheese await` announces a command it is about to run in its own sandbox.
-
-    Returns the task id plus a wake token that outlives the container's own
-    CHEESE_TOKEN (1h) — these tasks routinely run longer than that, and a result
-    that 401s at the finish line is exactly the frozen topic this path exists to
-    prevent."""
-    place = await TopicService(db).place_or_404(topic_id)
-    # 归档后工作面定格: freezing the room freezes the threads in it, so a
-    # thread's long command is refused with the room it belongs to.
-    if place.room.status == TopicStatus.archived:
-        raise ValidationError("话题已归档，不再受理后台任务")
-    task = awaited_tasks.register(
-        project_id=place.project_id,
-        # The place, so the result wakes whoever is waiting on it.
-        topic_id=topic_id,
-        command=body.command,
-        label=body.label,
-        timeout_s=body.timeout_s,
-        log_path=body.log_path,
-    )
-    return ok(
-        {
-            "task_id": str(task.id),
-            "wake_token": mint_scoped_token(
-                project_id=str(place.project_id),
-                topic_id=str(topic_id),
-                # Cover the whole run plus an hour of slack for a slow report.
-                ttl_s=task.timeout_s + 3600,
-            ),
-            "label": task.label,
-        }
-    )
-
-
-@router.post("/{topic_id}/background-task/{task_id}/done")
-async def finish_background_task(
-    topic_id: uuid.UUID,
-    task_id: uuid.UUID,
-    body: BackgroundTaskDoneIn,
-    chat: Annotated[ChatService, Depends(get_chat_service)],
-    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
-) -> dict:
-    """The backgrounded command exited — land its result and (guards permitting)
-    wake the topic. Reached by the detached child `cheese await` forked, carrying
-    the wake token from registration."""
-    task = awaited_tasks.get(task_id)
-    if task is None or task.topic_id != topic_id:
-        raise NotFoundError("这个后台任务不存在或已经回报过了")
-    return ok(
-        await awaited_tasks.report(
-            chat.session_factory,
-            chat,
-            runner,
-            task=task,
-            exit_code=body.exit_code,
-            tail=body.tail,
-            duration_s=body.duration_s,
-        )
-    )
 
 
 @router.post("/{topic_id}/decision")

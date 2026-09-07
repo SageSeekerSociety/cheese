@@ -174,8 +174,10 @@ class TaskFacts:
     #: 是跑轮次的进程当下的事实（`ChatService.has_live_screen`），不是一列时间戳，
     #: 所以它得从外面喂进来（这一层不碰 I/O）。
     room_screen_live: bool = True
-    #: 结论已经回流、正等房间结算。分身是干完了在等人，不是断了。
-    conclusion_pending: bool = False
+    #: 分身已经交回过一句结论（`Task.conclusion`）。它是干完了在等房间收卡，
+    #: 不是断了 —— 但它也可能只是把一条长命令停在后台就先交了一次话，所以这一位
+    #: 只用来解释安静，从不用来说这条活结束了。
+    has_conclusion: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,7 +206,6 @@ def facts_for_task(
     last_block_at: datetime | None = None,
     *,
     room_screen_live: bool = True,
-    conclusion_pending: bool = False,
 ) -> TaskFacts:
     """把一行 `Task`（加上它的卡、加上它最后一次说话的时间）折成这层要读的事实。
 
@@ -220,7 +221,7 @@ def facts_for_task(
         card=facts_for_card(card),
         has_worker=bool(task.subagent_id),
         room_screen_live=room_screen_live,
-        conclusion_pending=conclusion_pending,
+        has_conclusion=bool(task.conclusion),
     )
 
 
@@ -318,11 +319,11 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
     # 有分身在做这条活。它住在**房间的**会话里，所以「它还在不在」有两个答案，
     # 先问屏幕：房间的屏幕没了，它一定也没了 —— 而它自己不会来说一声。
     #
-    # 结论已经回流的不算在内：那是干完了在等房间结算，不是还在做。
+    # 已经交回过结论的不算在内：那是干完了在等房间收卡，不是还在做。
     worker_on_it = (
         facts.has_worker
         and facts.status == TaskStatus.open
-        and not facts.conclusion_pending
+        and not facts.has_conclusion
     )
     alive = facts.room_screen_live and not _lost_signal(facts.last_signal_at, now=now)
     # 规矩 2：在跑压过纸面。

@@ -65,18 +65,31 @@ def test_bind_posts_the_worker_id_to_the_thread(monkeypatch, capsys):
     assert "worker-1" in capsys.readouterr().out
 
 
-def test_conclude_task_names_the_thread_it_is_about(monkeypatch):
-    """URL 里带 task id：结论是替**某一条活**落的，不是房间自己说的。"""
+def test_conclude_task_names_the_thread_it_is_about(monkeypatch, capsys):
+    """URL 里带 task id：收的是**某一条活**，不是房间自己。默认不带结论——分身
+    停下时平台已经把它的话写在卡上了。"""
     calls = _run(
         monkeypatch,
-        ["conclude-task", _TASK, "分页改成 cursor"],
-        {"id": "block-1", "content": "分页改成 cursor"},
+        ["conclude-task", _TASK],
+        {"id": _TASK, "title": "查一下分页", "conclusion": "分页改成 cursor"},
     )
 
     assert calls == [
-        (
-            "POST",
-            f"/topics/{_ROOM}/tasks/{_TASK}/conclude",
-            {"conclusion": "分页改成 cursor"},
-        )
+        ("POST", f"/topics/{_ROOM}/tasks/{_TASK}/conclude", {"conclusion": ""})
     ]
+    assert "分页改成 cursor" in capsys.readouterr().out
+
+
+def test_conclude_task_can_overwrite_what_the_worker_left(monkeypatch):
+    """分身最后那句话是个半截时，房间说了算。"""
+    calls = _run(
+        monkeypatch,
+        ["conclude-task", _TASK, "--conclusion", "分页改成 cursor，旧接口没动"],
+        {
+            "id": _TASK,
+            "title": "查一下分页",
+            "conclusion": "分页改成 cursor，旧接口没动",
+        },
+    )
+
+    assert calls[0][2] == {"conclusion": "分页改成 cursor，旧接口没动"}

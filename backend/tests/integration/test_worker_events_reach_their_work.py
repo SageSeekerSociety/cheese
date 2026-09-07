@@ -227,13 +227,16 @@ async def test_a_workers_closing_message_is_kept_in_full(client, tmp_path) -> No
     await provider._close_topic(room_id)
 
 
-async def test_a_stop_does_not_conclude_the_work(client, tmp_path) -> None:
+async def test_a_stop_records_a_conclusion_without_ending_the_work(
+    client, tmp_path
+) -> None:
     """完成通知 ≠ 活干完了。
 
     One worker reports finished more than once — putting a long command in its
     own background and standing by counts as finishing, and resuming produces
-    another Stop later. So a Stop must not open a conclusion card or close the
-    thread; the room decides that after reading what came back.
+    another Stop later. Each writes itself onto the card as the conclusion, the
+    later one over the earlier; none of them closes the thread. The room decides
+    that, after reading what came back.
     """
     factory = client.test_factory
     project_id, room_id = await _seed_room(factory)
@@ -261,12 +264,12 @@ async def test_a_stop_does_not_conclude_the_work(client, tmp_path) -> None:
     assert said == ["先歇一下", "接着跑完了"]
 
     async with factory() as session:
-        from app.domain.conclusion.repositories import ConclusionCardRepository
         from app.domain.room_task.models import TaskStatus
 
-        assert await ConclusionCardRepository(session).live_for_task(task_id) is None
         task = await TaskService(session).get(task_id)
         assert task is not None
+        # 取最后一条：早先那句「先歇一下」不是答案。
+        assert task.conclusion == "接着跑完了"
         assert task.status is TaskStatus.open
 
     await provider._close_topic(room_id)

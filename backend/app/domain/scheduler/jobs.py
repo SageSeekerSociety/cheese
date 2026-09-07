@@ -87,14 +87,6 @@ def periodic_jobs(
             settings.gate_sweep_interval_s,
             scheduler.sweep_abandoned_gates,
         ),
-        # 结论卡·阶段一: 默认采信 must happen even when the parent's digest turn
-        # never runs (queued behind a wedged turn, refused on credits, killed by
-        # a deploy). This sweeps cards past their 30-minute absolute deadline.
-        PeriodicRunner(
-            "conclusion sweep",
-            settings.conclusion_sweep_interval_s,
-            scheduler.sweep_conclusion_cards,
-        ),
         # Enrolling provisioned machines is platform plumbing, so it runs on its
         # own interval rather than the AI scheduler's — see machine/runner.py.
         PeriodicRunner(

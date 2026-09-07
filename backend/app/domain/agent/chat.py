@@ -1118,14 +1118,14 @@ def thread_relay_prompt(
 def thread_upgraded_prompt(*, task_id: uuid.UUID, source_message: str) -> str:
     """The ROOM's wake-up instruction when one of its messages became a thread.
 
-    Addressed to the room for the same reason 补证据 is: a thread is a 分身 inside
-    the room's own session and has no session to wake. The platform writes the
-    row and its brief doc; raising the worker is the room's, and so is naming the
+    Addressed to the room because a thread is a 分身 inside the room's own
+    session and has no session to wake. The platform writes the row, its card
+    block and its brief; raising the worker is the room's, and so is naming the
     thread — it is created untitled and nothing else is in a position to name it.
     """
     return (
         f"你把一条消息升级成了这个房间里的一条活（task id `{task_id}`）。"
-        "平台已经把它的任务简报文档建好了，简报正文就是被升级的那段话：\n\n"
+        "被升级的那段话就是它的简报，平台已经记在卡上了：\n\n"
         f"---\n{source_message}\n---\n\n"
         "接下来是你的事：\n"
         f'1. `cheese title "<≤12 字的标题>" --task {task_id}`——它现在还叫「新话题」，'
@@ -2613,18 +2613,6 @@ class ChatService:
                 user_text=state.user_text,
                 assistant_text=result.text,
             )
-            try:
-                from app.domain.conclusion.services import settle_turn_cards
-
-                await settle_turn_cards(
-                    self._sessions,
-                    state.topic_id,
-                    turn_started_at=state.started_at,
-                )
-            except Exception:  # noqa: BLE001 — periodic settlement is the backstop
-                logger.exception(
-                    "conclusion settle failed for topic %s", state.topic_id
-                )
         return action_frames
 
     async def post_user_message(
@@ -3170,6 +3158,12 @@ class ChatService:
             meta = {"event_type": "subagent_stop"}
             if event.transcript_path:
                 meta["transcript_path"] = event.transcript_path
+            # 结论落在卡上, overwriting the previous stop's — the newest is what
+            # the room reads when it decides whether the work is done. Only for
+            # a worker the platform bound (`task_id` is that check, above), so
+            # the fragments Claude Code's own internal agents stop with never
+            # become anybody's conclusion.
+            await self._record_conclusion(task_id, event.text.strip())
         meta["agent_id"] = event.agent_id
         if event.agent_type:
             meta["agent_type"] = event.agent_type
@@ -3187,6 +3181,19 @@ class ChatService:
             # back is the whole reason anybody opens the thread.
             in_room=True,
         )
+
+    async def _record_conclusion(self, task_id: uuid.UUID, text: str) -> None:
+        from app.domain.room_task.services import TaskService
+
+        if not text:
+            return
+        async with self._sessions() as session:
+            tasks = TaskService(session)
+            task = await tasks.get(task_id)
+            if task is None:
+                return
+            await tasks.record_conclusion(task, text)
+            await session.commit()
 
     async def _turn_changeset(
         self,
