@@ -213,11 +213,13 @@ def test_a_topic_can_be_created_with_its_own_agent(client):
     assert agent["inherited"] is False
 
 
-def test_work_split_out_of_a_room_goes_out_under_the_same_agent(client):
+def test_work_split_out_of_a_room_learns_into_the_rooms_pool(client):
     """This is the loop the split exists for: whatever the 分身 learns doing the
     work lands in the SAME pool the room reads, so the room has it afterwards.
-    A child that fell back to the project's default would be a different agent
-    and a different memory."""
+
+    没有第二个 agent 要解析 —— 做这条活的分身跑在房间那一个会话里，它就是房间的
+    agent 在干活。所以「这条活归谁」不是一个问题，「它学到的东西进谁的池子」才是。
+    """
     pid = _project(client)
     reviewer = _add_agent(client, pid, handle="reviewer")
     room = _topic(client, pid, "review room")
@@ -228,12 +230,10 @@ def test_work_split_out_of_a_room_goes_out_under_the_same_agent(client):
         json={"title": "拆出来的活", "created_by": "u"},
     )
     assert r.status_code == 200, r.text
-    child = r.json()["data"]["id"]
+    # 一张卡问不出 agent 来：它不是地点。
+    assert client.get(f"/topics/{r.json()['data']['id']}/agent").status_code == 404
 
-    assert client.get(f"/topics/{child}/agent").json()["data"]["handle"] == "reviewer"
-
-    # And what the child learns is readable from the room that dispatched it.
-    _remember(client, pid, child, "分身查出来的事")
+    _remember(client, pid, room, "分身查出来的事")
     assert [h["abstract"] for h in _recall(client, pid, room, "查出来")] == [
         "分身查出来的事"
     ]

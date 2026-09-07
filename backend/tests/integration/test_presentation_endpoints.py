@@ -149,8 +149,12 @@ def test_a_room_and_its_threads_agree_with_the_project_list(client, stub_hooks):
     room_rows = client.get(f"/topics/{ids['room']}/tasks").json()["data"]["data"]
     from_room = {r["id"]: r["presentation"] for r in room_rows}
 
-    from_header = {
-        task_id: client.get(f"/topics/{task_id}").json()["data"]["presentation"]
+    # 单开一张卡看到的那一格，和它在两份清单里显示的必须是同一句话 —— 同一个函数
+    # 算的，所以深链接进来和从看板点进来不可能给出两种说法。
+    from_card = {
+        task_id: client.get(f"/topics/{ids['room']}/tasks/{task_id}").json()["data"][
+            "presentation"
+        ]
         for task_id in (
             ids["running"],
             ids["waiting"],
@@ -160,7 +164,7 @@ def test_a_room_and_its_threads_agree_with_the_project_list(client, stub_hooks):
     }
 
     assert from_room == from_project
-    assert from_header == from_project
+    assert from_card == from_project
 
 
 def test_a_room_carries_its_own_board_cell(client):
