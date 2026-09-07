@@ -33,10 +33,22 @@ from tests.conftest import wait_work_idle
 # 复用 PR 采纳那套 fake GitHub 装置 —— 本文件测的是同一条真实路径的另一端
 # （房间里落下什么块），没有理由再造一套。
 from tests.integration.test_accept_pr import (
-    _accept_to_pr_open,
+    _arm,
     _poll,
-    _reset_client,
+    _protect,
+    _ready_card,
 )
+from tests.integration.test_accept_pr import (
+    app_world as _app_world_fixture,
+)
+
+app_world = _app_world_fixture
+
+
+def _pr_card(client, app_world):
+    """(fake, tid, cid, number)：一张等采纳、骑着 PR 的卡（#718）。"""
+    _pid, tid, cid, number, _head = _ready_card(client, app_world)
+    return app_world["fake"], tid, cid, number
 
 
 def _blocks(client, topic_id: str) -> list[dict]:
@@ -88,73 +100,67 @@ def _assert_is_a_platform_notice(
 
 
 def test_ci_failure_lands_as_one_line_event_not_a_fake_human_message(
-    client, monkeypatch
+    client, app_world
 ):
     """CI 播报以前是一条 `author_type=human`、作者叫 "system" 的聊天消息，正文
     最多 4000 字符。现在：房间里**没有**新的人类消息，只有一行系统事件，日志
     一字不差躺在 `meta.detail` 里。"""
-    fake, tid, number = _accept_to_pr_open(client, monkeypatch)
-    try:
-        # 一段超过截断上限的日志尾巴，才能同时验"截断上限没被偷偷改小"和"没丢"。
-        log = "".join(
-            f"FAILED tests/test_thing.py::test_case_{i} - AssertionError\n"
-            for i in range(200)
-        )
-        assert len(log) > _NUDGE_TAIL_LIMIT
+    fake, tid, _cid, number = _pr_card(client, app_world)
+    # 一段超过截断上限的日志尾巴，才能同时验"截断上限没被偷偷改小"和"没丢"。
+    log = "".join(
+        f"FAILED tests/test_thing.py::test_case_{i} - AssertionError\n"
+        for i in range(200)
+    )
+    assert len(log) > _NUDGE_TAIL_LIMIT
 
-        before = {b["id"] for b in _blocks(client, tid)}
-        fake.check_state_by_sha[fake.prs[number]["head_sha"]] = ("failure", log)
+    before = {b["id"] for b in _blocks(client, tid)}
+    fake.check_state_by_sha[fake.prs[number]["head_sha"]] = ("failure", log)
 
-        _poll(client)
-        event = _wait_for_event(client, tid, "ci_failed")
+    _poll(client)
+    event = _wait_for_event(client, tid, "ci_failed")
 
-        fresh = [b for b in _blocks(client, tid) if b["id"] not in before]
-        # ① 核心：房间里没有多出任何一条"人"说的话。
-        assert [b for b in fresh if b["author_type"] == "human"] == [], (
-            "平台又伪装成人在房间里发言了"
-        )
+    fresh = [b for b in _blocks(client, tid) if b["id"] not in before]
+    # ① 核心：房间里没有多出任何一条"人"说的话。
+    assert [b for b in fresh if b["author_type"] == "human"] == [], (
+        "平台又伪装成人在房间里发言了"
+    )
 
-        # ② 一行人话。
-        _assert_is_a_platform_notice(
-            event, event_type="ci_failed", severity="error", who="cheese"
-        )
-        assert f"#{number}" in event["content"]
+    # ② 一行人话。
+    _assert_is_a_platform_notice(
+        event, event_type="ci_failed", severity="error", who="cheese"
+    )
+    assert f"#{number}" in event["content"]
 
-        # ③ 信息不能丢：日志一字不差取得回来，截断上限还是原来那个。
-        assert event["meta"]["detail"] == log[:_NUDGE_TAIL_LIMIT]
-        assert event["meta"]["detail_label"] == "CI 日志"
-        # ④ 而它确实不在房间的正文里 —— 这才是"收起来"。
-        assert "AssertionError" not in event["content"]
-        assert all("AssertionError" not in (b.get("content") or "") for b in fresh)
-    finally:
-        _reset_client()
+    # ③ 信息不能丢：日志一字不差取得回来，截断上限还是原来那个。
+    assert event["meta"]["detail"] == log[:_NUDGE_TAIL_LIMIT]
+    assert event["meta"]["detail_label"] == "CI 日志"
+    # ④ 而它确实不在房间的正文里 —— 这才是"收起来"。
+    assert "AssertionError" not in event["content"]
+    assert all("AssertionError" not in (b.get("content") or "") for b in fresh)
 
 
 def test_ci_failure_still_hands_the_agent_the_whole_instruction(
-    client, monkeypatch, stub_hooks
+    client, app_world, stub_hooks
 ):
     """改的是**房间里显示什么**，不是**芝士收到什么**：整段指令（日志 + 怎么读
     全文 + 该干什么）照旧作为 prompt 送到芝士手上。"""
-    fake, tid, number = _accept_to_pr_open(client, monkeypatch)
-    try:
-        fake.check_state_by_sha[fake.prs[number]["head_sha"]] = (
-            "failure",
-            "pytest: 3 failed",
-        )
-        _poll(client)
-        _wait_for_event(client, tid, "ci_failed")
-        wait_work_idle()
+    fake, tid, _cid, number = _pr_card(client, app_world)
+    fake.check_state_by_sha[fake.prs[number]["head_sha"]] = (
+        "failure",
+        "pytest: 3 failed",
+    )
+    _poll(client)
+    _wait_for_event(client, tid, "ci_failed")
+    wait_work_idle()
 
-        prompt = stub_hooks.last_prompt or ""
-        assert "pytest: 3 failed" in prompt
-        # 芝士推不了 GitHub，指令必须说清楚是平台代推（2026-08-09 的回归）。
-        assert "推送新 commit" not in prompt
-        assert "平台会自动把新提交同步到这个 PR" in prompt
-        # 要看全文得自己铸只读 token —— 这两句是芝士唯一能读到这条路的地方。
-        assert "cheese gh-token" in prompt
-        assert "repos/acme/widgets/actions/jobs/" in prompt
-    finally:
-        _reset_client()
+    prompt = stub_hooks.last_prompt or ""
+    assert "pytest: 3 failed" in prompt
+    # 芝士推不了 GitHub，指令必须说清楚是平台代推（2026-08-09 的回归）。
+    assert "推送新 commit" not in prompt
+    assert "平台会自动把新提交同步到这个 PR" in prompt
+    # 要看全文得自己铸只读 token —— 这两句是芝士唯一能读到这条路的地方。
+    assert "cheese gh-token" in prompt
+    assert "repos/acme/widgets/actions/jobs/" in prompt
 
 
 # --------------------------------------------------------------------------
@@ -162,27 +168,28 @@ def test_ci_failure_still_hands_the_agent_the_whole_instruction(
 # --------------------------------------------------------------------------
 
 
-def test_merge_refused_lands_as_one_line_event(client, monkeypatch):
-    fake, tid, number = _accept_to_pr_open(client, monkeypatch)
-    try:
-        reason = "HTTP 405：Merge commits are not allowed on this repository"
-        fake.check_state_by_sha[fake.prs[number]["head_sha"]] = ("success", "全部通过")
-        fake.merge_blocked_by_number[number] = reason
+def test_merge_refused_lands_as_one_line_event(client, app_world):
+    # #718：轮询器只替 armed 的卡调合并 API，所以「全绿但被拒」出现在布防之后。
+    fake, tid, cid, number = _pr_card(client, app_world)
+    pid = client.get(f"/topics/{tid}").json()["data"]["project_id"]
+    _protect(client, pid, auto_merge_allowed=True)
+    assert _arm(client, cid, "alice").status_code == 200
+    reason = "HTTP 405：Merge commits are not allowed on this repository"
+    fake.check_state_by_sha[fake.prs[number]["head_sha"]] = ("success", "全部通过")
+    fake.merge_blocked_by_number[number] = reason
 
-        before = {b["id"] for b in _blocks(client, tid)}
-        _poll(client)
-        event = _wait_for_event(client, tid, "merge_refused")
+    before = {b["id"] for b in _blocks(client, tid)}
+    _poll(client)
+    event = _wait_for_event(client, tid, "merge_refused")
 
-        fresh = [b for b in _blocks(client, tid) if b["id"] not in before]
-        assert [b for b in fresh if b["author_type"] == "human"] == []
-        _assert_is_a_platform_notice(
-            event, event_type="merge_refused", severity="error", who="cheese"
-        )
-        # GitHub 的原话原样收在展开区里，不是摘要。
-        assert event["meta"]["detail"] == reason
-        assert "405" not in event["content"]
-    finally:
-        _reset_client()
+    fresh = [b for b in _blocks(client, tid) if b["id"] not in before]
+    assert [b for b in fresh if b["author_type"] == "human"] == []
+    _assert_is_a_platform_notice(
+        event, event_type="merge_refused", severity="error", who="cheese"
+    )
+    # GitHub 的原话原样收在展开区里，不是摘要。
+    assert event["meta"]["detail"] == reason
+    assert "405" not in event["content"]
 
 
 # --------------------------------------------------------------------------

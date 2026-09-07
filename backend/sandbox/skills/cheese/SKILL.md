@@ -87,7 +87,7 @@ description: 在 CheeseX(知是)平台里改"平台状态"时用。代码/文件
 | `cheese conclude-task <task_id> [--conclusion "<结论>"]` | 分身报完成、**你验过货、改动也整合进分支之后**,收掉这条活。分身自己交回的那句话平台已经记在卡上了,不用抄一遍(`--conclusion` 只在它最后那句是半截时用来覆盖)。不自动收:一个分身可以报好几次完成(把长命令丢进自己的后台再停下等也算一次),完成信号不等于活干完了 |
 | `cheese ask "<问题>" --option A --option B [--option C]` | 对话里发**带按钮的选项问题**;用户点一下就是答案(自动带回你下一轮)。要用户拍板时优先用它,别让人打字 |
 | `cheese notify --title "<标题>" [--body "..."] [--level silent\|light\|strong] [--kind change_alert\|decision_request] [--to <handle>] [--options "A\|B"]` | 发通知;决策请求带 `--options` 让人一键拍板 |
-| `cheese accept-request <handle> "<理由>" --subject "<提交标题>" [--body "<为什么>"]` | 成果做完,把验收卡递给某个具体的人。一棵树=一个分支=一个 PR=**一批**活,而这批活是整个房间的——递卡把分支封口开 PR。所以派出去的活不各递各的卡:分身干完把结论交回来,你用 `cheese conclude-task` 替它落一条,攒够了整个房间递一次。**`--subject` 必填**:平台是 squash 合并,整个话题最后塌成**一个 commit**,而它的标题就是这里写的这句(同时也是 PR 标题)。格式走 Conventional Commits(`fix(scope): 描述`),后端会当场校验(类型前缀、≤72 字、结尾无句号、不能是中文),不合格直接打回——所以别写话题名,那在 `git log` 里等于没写。`--body` 只在标题说不清时写,讲**为什么**(根因、为何是这个改法),不要罗列改了哪些文件 |
+| `cheese accept-request <handle> "<理由>" --subject "<提交标题>" [--body "<为什么>"]` | 成果做完,把验收卡递给某个具体的人。一棵树=一个分支=一个 PR=**一批**活,而这批活是整个房间的——递卡开 PR,真检查在人采纳之前就开始跑,采纳=当场合并。所以派出去的活不各递各的卡:分身干完把结论交回来,你用 `cheese conclude-task` 替它落一条,攒够了整个房间递一次。**`--subject` 必填**:平台是 squash 合并,整个话题最后塌成**一个 commit**,而它的标题就是这里写的这句(同时也是 PR 标题)。格式走 Conventional Commits(`fix(scope): 描述`),后端会当场校验(类型前缀、≤72 字、结尾无句号、不能是中文),不合格直接打回——所以别写话题名,那在 `git log` 里等于没写。`--body` 只在标题说不清时写,讲**为什么**(根因、为何是这个改法),不要罗列改了哪些文件 |
 
 
 > 递卡前按**这个仓库自己的约定**（README/CONTRIBUTING/CI 配置写的那套 lint 和测试）先把检查跑绿——决定权在 PR 上的真 CI，红着递卡就是多一个来回。
