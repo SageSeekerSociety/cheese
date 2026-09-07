@@ -865,6 +865,9 @@ class DeviceChannel(Channel):
             ):
                 merged.pop(k, None)
             merged.update(sub.env)
+            if connect_proxy_url:
+                # The meter accepts model hosts, not package registries.
+                merged["CHEESE_MODEL_PROXY"] = "1"
             if via_tunnel:
                 # Read by the launch script: it writes the helper and the token
                 # file, and starts the helper before `claude`. Carried on the env

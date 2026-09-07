@@ -104,6 +104,12 @@ def run(config, directory, command):
     environment["PATH"] = (
         str(Path.home() / ".local/bin") + os.pathsep + environment["PATH"]
     )
+    model_proxy = environment.pop("CHEESE_MODEL_PROXY", "")
+    script_environment = dict(environment)
+    if model_proxy:
+        # This proxy admits only model service hosts. Package downloads use
+        # ordinary machine egress; the agent retains its metered model route.
+        script_environment.pop("HTTPS_PROXY", None)
     receipt = directory / "initialized.json"
     initialized = json.loads(receipt.read_text()) if receipt.exists() else None
     with (directory / log_name).open("a", buffering=1) as log:
@@ -135,7 +141,7 @@ def run(config, directory, command):
                     child = subprocess.Popen(
                         ["bash", "-e", str(script)],
                         cwd=work,
-                        env=environment,
+                        env=script_environment,
                         stdout=log,
                         stderr=subprocess.STDOUT,
                         start_new_session=True,

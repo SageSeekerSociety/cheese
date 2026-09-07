@@ -22,7 +22,7 @@ SETUP = r"""set -euo pipefail
 mkdir -p "$HOME/.local/bin"
 if [ "$(uv --version 2>/dev/null || true)" != "uv 0.12.10" ]; then
   curl -fsSL https://astral.sh/uv/0.12.10/install.sh -o "$HOME/.local/uv-install.sh"
-  UV_NO_MODIFY_PATH=1 sh "$HOME/.local/uv-install.sh"
+  UV_INSTALL_DIR="$HOME/.local/bin" UV_NO_MODIFY_PATH=1 sh "$HOME/.local/uv-install.sh"
 fi
 if [ "$(node --version 2>/dev/null || true)" != "v22.14.0" ]; then
   case "$(uname -s)" in Darwin) platform=darwin;; Linux) platform=linux;; *) exit 1;; esac

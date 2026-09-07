@@ -113,6 +113,31 @@ def test_variables_reach_both_scripts_and_agent_without_shell_expansion(tmp_path
     assert not (tmp_path / "work/injected").exists()
 
 
+@pytest.mark.parametrize("model_proxy", [False, True])
+def test_installers_do_not_route_downloads_through_the_model_meter(
+    tmp_path, monkeypatch, model_proxy
+):
+    monkeypatch.setenv("HTTPS_PROXY", "http://model-only.invalid:8444")
+    if model_proxy:
+        monkeypatch.setenv("CHEESE_MODEL_PROXY", "1")
+    else:
+        monkeypatch.delenv("CHEESE_MODEL_PROXY", raising=False)
+    config = EnvironmentConfig(
+        setup_script='printf "%s" "${HTTPS_PROXY:-}" > setup-proxy',
+        startup_script='printf "%s" "${HTTPS_PROXY:-}" > startup-proxy',
+    )
+    process = launch(
+        tmp_path, config, ["bash", "-c", 'printf "%s" "$HTTPS_PROXY" > agent-proxy']
+    )
+    assert process.wait(timeout=5) == 0
+    expected = "" if model_proxy else "http://model-only.invalid:8444"
+    assert (tmp_path / "work/setup-proxy").read_text() == expected
+    assert (tmp_path / "work/startup-proxy").read_text() == expected
+    assert (
+        tmp_path / "work/agent-proxy"
+    ).read_text() == "http://model-only.invalid:8444"
+
+
 def test_cancel_terminates_child_and_rejects_concurrent_installation(tmp_path):
     config = EnvironmentConfig(setup_script="sleep 60 &\necho $! > child-pid\nwait")
     process = launch(tmp_path, config)
