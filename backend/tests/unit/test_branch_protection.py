@@ -7,6 +7,7 @@ either, and 403 is its everyday answer, not an error: a free-plan private repo
 """
 
 import json
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -19,11 +20,14 @@ from app.domain.project.protection import (
 )
 
 
-class _FakeProject:
+def _project(settings: Any):
     """Only ``settings`` is read; a stand-in avoids a mapped instance."""
 
-    def __init__(self, settings):
-        self.settings = settings
+    class _FakeProject:
+        def __init__(self) -> None:
+            self.settings = settings
+
+    return cast(Any, _FakeProject())
 
 
 # --- Read side ------------------------------------------------------------
@@ -31,7 +35,7 @@ class _FakeProject:
 
 def test_defaults_when_nothing_is_configured():
     assert branch_protection_of(None) == BranchProtection()
-    bp = branch_protection_of(_FakeProject(None))
+    bp = branch_protection_of(_project(None))
     assert bp.required_checks == ()
     assert bp.strict is False
     assert bp.dismiss_stale is True  # GitHub 默认相反：这里推代码的是芝士
@@ -43,7 +47,7 @@ def test_defaults_when_nothing_is_configured():
 
 def test_reads_a_configured_policy():
     bp = branch_protection_of(
-        _FakeProject(
+        _project(
             {
                 "approvals_required": 2,
                 "branch_protection": {
@@ -71,7 +75,7 @@ def test_reads_a_configured_policy():
 def test_a_malformed_stored_value_never_raises():
     """Field-by-field fallback: one bad key must not take the others down."""
     bp = branch_protection_of(
-        _FakeProject(
+        _project(
             {
                 "approvals_required": "many",
                 "branch_protection": {
@@ -92,7 +96,7 @@ def test_a_malformed_stored_value_never_raises():
     assert bp.override_handles is None  # wrong shape = unconfigured
     assert bp.approvals_required == 1
 
-    assert branch_protection_of(_FakeProject({"branch_protection": "zzz"})) == (
+    assert branch_protection_of(_project({"branch_protection": "zzz"})) == (
         BranchProtection()
     )
 

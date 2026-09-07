@@ -211,7 +211,7 @@ def _require_bool(value: object, *, key: str) -> bool:
 def apply_branch_protection_update(stored: object, body: dict) -> dict:
     """Partial-update the stored ``branch_protection`` dict from a PUT body.
 
-    Only the keys present in ``body`` change (quality-gate 旧例的语义)。
+    Only the keys present in ``body`` change (partial-update 语义)。
     ``override_handles: null`` 和空的 ``default_reviewer`` 把键删掉——回到缺省，
     而不是存一个「显式空」。Raises ``ValueError`` (message is user-facing).
     """
@@ -327,9 +327,7 @@ async def github_repo_snapshot(
             # No positive signal. 404s are a definitive "nothing is on"; a 403
             # anywhere means GitHub refused to say (free plan / token scope).
             if prot.status_code == 404 and rules.status_code in (200, 404):
-                return merge_method, GitHubProtection(
-                    "none", "GitHub 侧未开启分支保护"
-                )
+                return merge_method, GitHubProtection("none", "GitHub 侧未开启分支保护")
             return merge_method, GitHubProtection(
                 "unknown",
                 f"GitHub 没有回答（protection HTTP {prot.status_code}，"

@@ -64,7 +64,7 @@ def test_defaults_match_the_github_page_with_dismiss_stale_inverted(client):
         assert data[key] == expected, key
 
 
-# --- Partial update (quality-gate 旧例的语义) ------------------------------
+# --- Partial update: only the keys present in the body change --------------
 
 
 def test_partial_update_touches_only_the_keys_present(client):
