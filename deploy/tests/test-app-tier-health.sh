@@ -11,8 +11,8 @@ FAKE_BIN="$ROOT/deploy/tests/fakes/app-tier"
 # reason nor permission to create — so every deploy in this file gets one
 # inside the test tree. Exported once rather than per case: a future test that
 # forgets it would not fail here, it would fail on someone's machine.
-export VIKING_HOST_PATH="$ROOT/tmp/viking-$$"
-trap 'rm -rf "$ROOT/tmp/viking-$$"' EXIT
+export VIKING_HOST_PATH="$ROOT/.tmp/viking-$$"
+trap 'rm -rf "$ROOT/.tmp/viking-$$"' EXIT
 
 fail() {
   echo "FAIL: $*" >&2
@@ -370,7 +370,7 @@ log_line() { grep -n -- "$2" "$1" 2>/dev/null | head -n 1 | cut -d: -f1 || true;
 new_ownership_run_dir() {
   mkdir -p "$ROOT/.tmp"
   local dir
-  dir="$(mktemp -d "$ROOT/tmp/ownership-order.XXXXXX")"
+  dir="$(mktemp -d "$ROOT/.tmp/ownership-order.XXXXXX")"
   # viking is deliberately NOT created: the deploy script makes it, and these
   # tests are the only place that would notice if it stopped.
   mkdir -p "$dir/workspaces" "$dir/uploads" "$dir/apphome"
