@@ -86,7 +86,7 @@ def _github_world(monkeypatch, *, connected: dict[str, tuple[str, str]]) -> None
     )
     monkeypatch.setattr(ws, "topic_branch_exists", lambda pid, tid: True)
     monkeypatch.setattr(ws, "ensure_repo", lambda pid: Path("."))
-    monkeypatch.setattr(ws, "upstream_default_branch", lambda repo: "main")
+    monkeypatch.setattr(ws, "upstream_default_branch", lambda repo, **_: "main")
 
 
 def _driving(monkeypatch, handle: str | None):

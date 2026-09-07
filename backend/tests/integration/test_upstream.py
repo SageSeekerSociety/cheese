@@ -584,6 +584,43 @@ def test_unbound_fetch_carries_no_credential(monkeypatch, tmp_path):
     assert "credential.helper" not in env.values()
 
 
+def _trunk_lookup(
+    monkeypatch, tmp_path, *, token: str | None
+) -> tuple[str | None, dict]:
+    """What the PR-open path learns the upstream's trunk is called, and the env
+    the `ls-remote` that asked ran with."""
+    from app.domain.workspace import service as ws
+
+    asked: list[dict] = []
+
+    def fake_git(repo, *args, timeout=20, env=None):
+        assert args[0] == "ls-remote"
+        asked.append(dict(env or {}))
+        return "ref: refs/heads/trunk\tHEAD\n0123abcd\tHEAD\n"
+
+    monkeypatch.setattr(ws, "_git", fake_git)
+    name = ws.upstream_default_branch(tmp_path, token=token)
+    (env,) = asked
+    return name, env
+
+
+def test_a_bound_project_asks_its_upstream_for_the_trunk_name_as_the_app(
+    monkeypatch, tmp_path
+):
+    """Opening a PR asks the upstream what its trunk is called; a private
+    upstream answers only the App, so the question carries the App's token."""
+    name, env = _trunk_lookup(monkeypatch, tmp_path, token="ghs_read")
+    assert name == "trunk"
+    assert "ghs_read" in env.values()
+    assert any(h for h in _credential_helpers(env))
+
+
+def test_an_unbound_trunk_lookup_carries_no_credential(monkeypatch, tmp_path):
+    name, env = _trunk_lookup(monkeypatch, tmp_path, token=None)
+    assert name == "trunk"
+    assert _credential_helpers(env) == []
+
+
 def test_materializing_a_conflict_refetches_with_the_same_credential(
     monkeypatch, tmp_path
 ):
