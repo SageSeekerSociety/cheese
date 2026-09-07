@@ -98,10 +98,14 @@ class AcceptCard(UuidPk, Timestamps, Base):
     # joined THEN; which branch its code ends up on is decided when the room
     # files a card, and a room that keeps working across two batches makes those
     # two different answers. Enumerating the delivering tree's members therefore
-    # credits whoever happened to be sitting on that tree, which on a real
-    # delivery (2026-09-08) meant three tasks that contributed nothing to a PR
-    # being named on it while the task that actually wrote it was named on the
-    # previous one. Nor can the commits be asked: every commit in the sandbox is
+    # credits whoever happened to be sitting on that tree: run it over this
+    # project's own room/task/tree data as of 2026-09-08 and one delivery comes
+    # out wrong in both directions — three tasks that contributed nothing named
+    # on a PR, and the task that actually wrote it named on the previous one.
+    # (Nothing in this repository's history carries a wrong trailer; the
+    # trailers did not exist when those PRs merged. What is wrong is the
+    # inference, measured against real data before it could write anything.)
+    # Nor can the commits be asked: every commit in the sandbox is
     # authored by the requester and co-authored by the model, so the range says
     # nothing about which 分身 typed it.
     #

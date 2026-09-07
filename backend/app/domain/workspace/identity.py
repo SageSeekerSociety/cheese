@@ -297,10 +297,11 @@ async def work_items(session: Any, card: Any) -> tuple[WorkItem, ...]:
     the card delivered. That is wrong whenever a room works across two batches,
     which is the ordinary case. A task's tree is fixed when `cheese split` runs
     and records which batch was open THEN; which branch its code goes out on is
-    decided when the room files a card. Measured on this project's own history
-    (2026-09-08), one delivery would have been signed by three tasks that
-    contributed nothing to it, while the task that actually wrote it was signed
-    onto the previous delivery — wrong in both directions at once.
+    decided when the room files a card. Run that inference over this project's
+    own room/task/tree data as of 2026-09-08 and one delivery comes out wrong in
+    both directions at once: it would be signed by three tasks that contributed
+    nothing to it, while the task that actually wrote it would be signed onto
+    the previous delivery.
 
     No fallback, deliberately. A card that declares nothing produces no
     `Cheese-Task:` line, and falling back to the tree "just for those" would

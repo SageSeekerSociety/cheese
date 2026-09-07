@@ -4,9 +4,13 @@
 delivered. A task joins a tree when `cheese split` runs; its code lands on
 whichever branch is open when the room files a card. A room that keeps working
 across two batches makes those two different answers, and then the trailers are
-wrong in both directions at once — measured on this project's own history
-(2026-09-08): one PR was signed by three tasks that contributed nothing to it,
-while the task that actually wrote it was signed onto the previous PR.
+wrong in both directions at once. Run that inference over this project's own
+room/task/tree data as of 2026-09-08 and it gets both directions wrong on one
+delivery: it would sign that PR with three tasks that contributed nothing to it,
+while signing the task that actually wrote it onto the previous PR. Nothing was
+ever mis-signed in this repository's history — the trailers did not exist yet
+when those PRs merged, which is why the algorithm is being replaced before it
+writes anything permanent rather than after.
 
 Nothing the platform can see fixes that. Commits inside the sandbox are authored
 by the requester and co-authored by the model, so a commit range cannot say
