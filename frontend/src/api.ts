@@ -5,6 +5,9 @@ import type {
   AgentType,
   ApiEnvelope,
   Block,
+  BranchProtection,
+  BranchProtectionPatch,
+  BranchProtectionRules,
   ChatAttachment,
   ComputeProfiles,
   Contributions,
@@ -863,6 +866,18 @@ export function setUpstream(projectId: string, url: string): Promise<UpstreamInf
 export function syncUpstream(projectId: string): Promise<UpstreamSyncResult> {
   return request(`/projects/${encodeURIComponent(projectId)}/upstream/sync`, {
     method: 'POST',
+  })
+}
+
+// 分支保护 (#718): 平台侧的合并规则。GET 附带只读的 merge_method 和
+// github_protection；PUT 是 partial-update，body 里出现哪个键就改哪个。
+export function getBranchProtection(projectId: string): Promise<BranchProtection> {
+  return request<BranchProtection>(`/projects/${encodeURIComponent(projectId)}/branch-protection`)
+}
+export function setBranchProtection(projectId: string, patch: BranchProtectionPatch): Promise<BranchProtectionRules> {
+  return request(`/projects/${encodeURIComponent(projectId)}/branch-protection`, {
+    method: 'PUT',
+    body: JSON.stringify(patch),
   })
 }
 
