@@ -12,6 +12,7 @@ from app.domain.review.merge_state import (
     RequiredCheck,
     compute_merge_state,
     local_merge_state,
+    whose_move,
 )
 
 
@@ -485,3 +486,104 @@ def test_every_verdict_carries_at_least_one_reason():
     verdicts.append(local_merge_state(conflicts_with_trunk=None))
 
     assert all(v.reasons for v in verdicts)
+
+
+# ---- whose_move：「谁的活」那张表（issue #718 卡上的小圈）--------------------
+
+
+class TestWhoseMove:
+    def _verdict(self, **kwargs) -> MergeVerdict:
+        return compute_merge_state(**kwargs)
+
+    def test_clean_is_the_humans_move(self):
+        v = self._verdict(github_mergeable_state="clean", github_mergeable=True)
+        assert whose_move(v) == "human"
+
+    def test_dirty_is_the_agents_move(self):
+        v = self._verdict(github_mergeable_state="dirty", github_mergeable=False)
+        assert whose_move(v) == "agent"
+
+    def test_behind_is_the_platforms_move(self):
+        v = self._verdict(
+            github_mergeable_state="unstable",
+            github_mergeable=True,
+            strict=True,
+            base_ancestry="behind",
+        )
+        assert v.state == "behind"
+        assert whose_move(v) == "platform"
+
+    def test_ci_running_is_nobodys_summon(self):
+        v = self._verdict(
+            github_mergeable_state="unstable",
+            github_mergeable=True,
+            check_runs=[_running("test")],
+            required_checks=[RequiredCheck(name="test")],
+        )
+        assert v.state == "unstable"
+        assert whose_move(v) == "ci"
+
+    def test_required_check_red_summons_the_agent(self):
+        v = self._verdict(
+            github_mergeable_state="unstable",
+            github_mergeable=True,
+            check_runs=[_red("test")],
+            required_checks=[RequiredCheck(name="test")],
+        )
+        assert v.state == "blocked"
+        assert whose_move(v) == "agent"
+
+    def test_unlisted_red_check_still_summons_the_agent(self):
+        # UNSTABLE 检查红了（不在必跑名单）→「芝士处理中」，即便可采纳。
+        v = self._verdict(
+            github_mergeable_state="unstable",
+            github_mergeable=True,
+            check_runs=[_red("style")],
+        )
+        assert v.state == "unstable"
+        assert whose_move(v) == "agent"
+
+    def test_required_check_missing_waits_on_ci(self):
+        v = self._verdict(
+            github_mergeable_state="unstable",
+            github_mergeable=True,
+            check_runs=[],
+            required_checks=[RequiredCheck(name="test")],
+        )
+        assert v.state == "blocked"
+        assert whose_move(v) == "ci"
+
+    def test_draft_is_the_agents_move(self):
+        v = self._verdict(
+            github_mergeable_state=None, github_mergeable=None, draft=True
+        )
+        assert v.state == "blocked"
+        assert whose_move(v) == "agent"
+
+    def test_passthrough_blocked_with_no_detail_goes_to_the_human(self):
+        v = self._verdict(
+            github_mergeable_state="blocked",
+            github_mergeable=True,
+            github_enforces=True,
+        )
+        assert whose_move(v) == "human"
+
+    def test_passthrough_blocked_with_a_red_check_goes_to_the_agent(self):
+        v = self._verdict(
+            github_mergeable_state="blocked",
+            github_mergeable=True,
+            github_enforces=True,
+            check_runs=[_red("test")],
+        )
+        assert whose_move(v) == "agent"
+
+    def test_unknown_is_the_platforms_wait(self):
+        v = self._verdict(github_mergeable_state=None, github_mergeable=None)
+        assert v.state == "unknown"
+        assert whose_move(v) == "platform"
+
+    def test_local_conflict_is_the_agents_move(self):
+        assert whose_move(local_merge_state(conflicts_with_trunk=True)) == "agent"
+
+    def test_local_clean_is_the_humans_move(self):
+        assert whose_move(local_merge_state(conflicts_with_trunk=False)) == "human"

@@ -424,6 +424,47 @@ def compute_merge_state(
             )
 
 
+#: 「谁的活」（issue #718 的表格）：非 CLEAN 的卡上，状态词旁边标出谁在处理。
+#: ``ci`` = 等 CI 跑完，不用叫任何人；``agent`` = 芝士处理中（检查红了/冲突/
+#: 还是 draft）；``platform`` = 平台自己会动（update-branch、下一轮重读）；
+#: ``human`` = 等人（可采纳，或机器给不出下一步）。
+Who = Literal["ci", "agent", "platform", "human"]
+
+
+def whose_move(verdict: MergeVerdict) -> Who:
+    """这个合并态下，下一步在谁手上 —— issue #718「卡上的小圈」那张表。
+
+    纯映射，只读 verdict：
+
+    - clean → human（绿勾，采纳亮，通知验收人）；
+    - dirty → agent（芝士把 main 合进来解冲突）；
+    - behind → platform（平台 update-branch；撞冲突下一轮变 dirty 才转 agent）；
+    - unstable / blocked → 按 reasons 分：有红检查 → agent；只是必跑检查
+      没报到或 CI 在跑 → ci；draft → agent（活还没做完）；只剩 GitHub 的
+      裁决而看不出细节 → human（机器不猜）；
+    - unknown → platform（GitHub 还没算完，下一轮自然收敛，谁都不用动）。
+
+    「必跑检查没报到超过宽限期转人」是调用方的事——宽限期要时钟，这里是纯函数。
+    """
+    match verdict.state:
+        case "clean":
+            return "human"
+        case "dirty":
+            return "agent"
+        case "behind":
+            return "platform"
+        case "unknown":
+            return "platform"
+    kinds = {r.kind for r in verdict.reasons}
+    if kinds & {"required_check_failed", "check_failed"}:
+        return "agent"
+    if kinds & {"required_check_missing", "ci_running"}:
+        return "ci"
+    if "draft" in kinds:
+        return "agent"
+    return "human"
+
+
 def local_merge_state(*, conflicts_with_trunk: bool | None) -> MergeVerdict:
     """未绑 GitHub 的项目（平台即 forge，#363）的合并态。
 

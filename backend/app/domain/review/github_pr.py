@@ -110,6 +110,11 @@ class PullRequestStatus:
     #: itself. The poller uses it to decide whether the extra request that
     #: lists those comments is worth making — most ticks it is 0.
     review_comment_count: int = 0
+    #: GitHub's own `draft` flag. `mergeable_state == "draft"` usually says the
+    #: same thing, but the two are separate fields in the payload and the
+    #: verdict must be draft-blocked when EITHER says so
+    #: (`merge_state.compute_merge_state` takes both).
+    draft: bool = False
 
 
 @dataclass
@@ -121,10 +126,17 @@ class MergeResult:
     GitHub refused (405/409). The refusal MUST carry a reason: returning a
     bare None here is what hid the squash-only bug for half a day (405 on a
     disabled merge_method never clears, so "just retry next tick" looped
-    forever with nothing written anywhere)."""
+    forever with nothing written anywhere).
+
+    `stale_head` is the 409 half told apart from the 405 half (#718): the
+    merge was called with the `sha` the human saw, and GitHub answered 409 —
+    the head moved under them (or the base conflicts). The accept path treats
+    it as "refresh the card and ask the human to look again", which is a
+    different instruction from a 405's "GitHub is refusing this merge"."""
 
     sha: str | None = None
     blocked_reason: str | None = None
+    stale_head: bool = False
 
 
 @dataclass
@@ -230,6 +242,7 @@ def parse_pull_request_status(data: dict) -> PullRequestStatus:
         review_comment_count=(
             review_comments if isinstance(review_comments, int) else 0
         ),
+        draft=bool(data.get("draft")),
         # Gated on `merged` on purpose — see PullRequestStatus's docstring
         # for what this field holds on an unmerged PR.
         merge_commit_sha=(data.get("merge_commit_sha") or None) if merged else None,
@@ -325,13 +338,30 @@ class GitHubPrClient(Protocol):
         token: str,
         commit_title: str | None = None,
         commit_message: str | None = None,
+        sha: str | None = None,
     ) -> MergeResult:
         """Merge the PR. `commit_title`/`commit_message` are GitHub's two
         squash-commit fields (title line / body) — see the caller in
         `review/services.py` for why both are passed explicitly.
 
+        `sha` is the merge API's own guard (#718): "SHA that pull request
+        head must match to allow merge". Callers pass the head the human
+        actually saw, so a push that lands between the click and the merge
+        makes GitHub answer 409 (`stale_head` on the result) instead of
+        merging a commit nobody looked at.
+
         Returns the merge commit SHA on success, else a `blocked_reason` the
-        poller surfaces on the card — never a silent "try again later"."""
+        caller surfaces on the card — never a silent "try again later"."""
+        ...
+
+    async def list_check_runs(
+        self, *, owner: str, repo: str, ref: str, token: str
+    ) -> list[dict]:
+        """The raw check-runs on `ref`, one dict per run with at least
+        `name` / `status` / `conclusion` — the input
+        `merge_state.compute_merge_state` reads. Distinct from `check_state`,
+        which collapses them into one verdict and fetches failure logs; this
+        one translates nothing."""
         ...
 
     async def workflow_run_state(
@@ -869,6 +899,7 @@ class HttpxGitHubPrClient:
         token: str,
         commit_title: str | None = None,
         commit_message: str | None = None,
+        sha: str | None = None,
     ) -> MergeResult:
         method = self._merge_method or settings.accept_pr_merge_method
         body: dict = {"merge_method": method}
@@ -876,6 +907,10 @@ class HttpxGitHubPrClient:
             body["commit_title"] = commit_title
         if commit_message:
             body["commit_message"] = commit_message
+        if sha:
+            # 合的是人看到的那个 commit (#718): GitHub 409s when the PR head no
+            # longer matches, instead of merging whatever is there now.
+            body["sha"] = sha
         async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
             resp = await client.put(
                 f"{self._api_base}/repos/{owner}/{repo}/pulls/{number}/merge",
@@ -888,14 +923,35 @@ class HttpxGitHubPrClient:
             # 405 = GitHub REFUSED the merge, and NOT only for transient
             # reasons: a merge_method the repo disabled (this repo is
             # squash-only) refuses forever, as do draft PRs and unsatisfied
-            # branch protection. 409 = the head moved under us / conflict.
-            # Both are safe to retry next poll, so this is not a
-            # GitHubPrError — but the reason travels with it so the poller
+            # branch protection. 409 = the head moved from the `sha` the
+            # caller vouched for (or the base conflicts) — the "refresh and
+            # look again" case, flagged as `stale_head`. Neither is a
+            # GitHubPrError: the reason travels with the result so the caller
             # can put it on the card instead of retrying blind.
-            return MergeResult(blocked_reason=_github_message(resp))
+            return MergeResult(
+                blocked_reason=_github_message(resp),
+                stale_head=resp.status_code == 409,
+            )
         raise GitHubPrError(
             f"GitHub 拒绝合并 PR（HTTP {resp.status_code}）：{resp.text[:300]}"
         )
+
+    async def list_check_runs(
+        self, *, owner: str, repo: str, ref: str, token: str
+    ) -> list[dict]:
+        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+            resp = await client.get(
+                f"{self._api_base}/repos/{owner}/{repo}/commits/{ref}/check-runs",
+                headers=self._headers(token),
+                params={"per_page": 100},
+            )
+        if resp.status_code != 200:
+            raise GitHubPrError(
+                f"GitHub 拒绝列出 check-runs（HTTP {resp.status_code}）："
+                f"{resp.text[:300]}"
+            )
+        runs = resp.json().get("check_runs") or []
+        return [run for run in runs if isinstance(run, dict)]
 
     async def workflow_run_state(
         self, *, owner: str, repo: str, workflow_file: str, head_sha: str, token: str
