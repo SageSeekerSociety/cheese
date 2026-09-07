@@ -132,7 +132,7 @@
 
 - `create_card()` 现在**总是**把卡建成 `pending`，不再进 `pending_gate`。
 - <&backend/app/api/routes/accept.py> 里已经没有 `gate.dispatch` 调用，只剩 `pr_publish.dispatch`。
-- `project.settings.check_command` 这个字段还在（设置页还能改），但**没有任何代码会去跑它**。
+- `project.settings.check_command` 已随 #718 删除：质量闸门的设置项不复存在，芝士该跑什么检查看仓库自己的约定。
 - 只有 `gate_sweep` 还在跑，作用是清理退休前留在库里的历史 `pending_gate` 行。
 
 设计理由（<&docs/accept-is-merge.md>）：一张卡就是一个 PR 的视图，**判断改动好不好是 PR 上的真 CI 的事，
