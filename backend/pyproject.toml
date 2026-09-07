@@ -134,6 +134,11 @@ testpaths = ["tests"]
 # It applies locally too, deliberately: the same silence is just as unreadable
 # on a laptop, and pytest-timeout stands down on its own under a debugger.
 timeout = 300
+# A signal can interrupt anyio's run_until_complete without cancelling the
+# async test. Fixture teardown then queues behind that still-running test and
+# hangs before the timeout report reaches CI. Dump the stack and exit the
+# worker instead; xdist reports the crashed test and runs the remaining work.
+timeout_method = "thread"
 
 [tool.uv.workspace]
 members = [

@@ -18,6 +18,7 @@ from app.domain.agent.harness.claude_code.hooks_substrate import (
     Channel,
     ClaudeCodeRuntime,
     ScreenSetupError,
+    SessionActivity,
     WorkAttribution,
     monitor_session_activity,
 )
@@ -1059,6 +1060,56 @@ class _AliveScreen(Channel):
 
     async def send_prompt(self, screen, prompt):
         return True
+
+
+async def test_cancelling_a_consumer_during_activity_cleanup_stops_it():
+    """Cancellation during a child's cleanup must not restart the hook loop."""
+    router = HookRouter()
+    provider = ClaudeCodeRuntime(_AliveScreen(), router=router)
+    reported = []
+
+    async def on_activity(_project, _topic, _work, active):
+        reported.append(active)
+
+    provider.bind_activity(on_activity)
+    project_id, topic_id = _uuid.uuid4(), _uuid.uuid4()
+    subscription = await provider.ensure_subscription(project_id, topic_id)
+    child_started = asyncio.Event()
+    child_stopping = asyncio.Event()
+    release_child = asyncio.Event()
+
+    async def slow_activity_cleanup():
+        child_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            child_stopping.set()
+            await release_child.wait()
+
+    child = asyncio.create_task(slow_activity_cleanup())
+    subscription.activity = SessionActivity(
+        work_id=_uuid.uuid4(), queue=asyncio.Queue(), ready=True, task=child
+    )
+    consumer = subscription.consumer_task
+    assert consumer is not None
+    try:
+        await asyncio.wait_for(child_started.wait(), timeout=1)
+        router.push(
+            str(topic_id),
+            {"hook_event_name": "Stop", "last_assistant_message": "done"},
+        )
+        await asyncio.wait_for(child_stopping.wait(), timeout=1)
+        consumer.cancel()
+        done, _ = await asyncio.wait({consumer}, timeout=1)
+        assert consumer in done, "cancelled consumer went back to waiting for hooks"
+        assert consumer.cancelled()
+        assert reported == [False]
+    finally:
+        release_child.set()
+        for task in (consumer, child):
+            task.cancel()
+        await asyncio.gather(consumer, child, return_exceptions=True)
+        await provider._close_topic(topic_id)
 
 
 async def test_every_turn_reported_started_is_also_reported_finished():

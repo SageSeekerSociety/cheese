@@ -1597,20 +1597,29 @@ class ClaudeCodeRuntime:
         if clear_work:
             subscription.current_work = None
         task = activity.task
-        if task is not None and task is not asyncio.current_task():
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-        consumer = self._activity_consumer
-        if consumer is not None:
-            await consumer(
-                subscription.project_id,
-                subscription.topic_id,
-                activity.work_id,
-                False,
-            )
+        try:
+            if task is not None and task is not asyncio.current_task():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    # Awaiting the child also forwards cancellation of this caller.
+                    # Swallow only the child's cancellation, or the hook consumer
+                    # resumes its queue loop after close() has asked it to stop.
+                    current = asyncio.current_task()
+                    if current is not None and current.cancelling():
+                        raise
+        finally:
+            # Activity was retired above; its observer must see that even when
+            # cancellation interrupts the wait for the child.
+            consumer = self._activity_consumer
+            if consumer is not None:
+                await consumer(
+                    subscription.project_id,
+                    subscription.topic_id,
+                    activity.work_id,
+                    False,
+                )
 
     async def _watch_session_activity(
         self,

@@ -13,7 +13,6 @@ stamps the turn it refused (`credits_refused_at`) the moment it happens, and the
 turn's own end reads that stamp back to decide whose wording the room gets.
 """
 
-import asyncio
 import uuid
 from datetime import UTC, datetime
 
@@ -89,22 +88,9 @@ async def _run_stop_failure(
     ):
         pass
     await settle_turn(chat, topic_id)
-    # The hook subscription's consumer task otherwise outlives this test: the
-    # ~40 other tests that hand a screen around go through `client`/
-    # `python_client`, whose own teardown retires it; this one builds a
-    # `ChatService` straight on `db_factory`, with nothing else to do that.
-    # `runtime.close()` would also do this, but it routes through the session-
-    # activity watchdog teardown (`_end_session_activity`/
-    # `_watch_session_activity`), which under full-suite load has been seen to
-    # hang; the consumer task is a plain `while True: await queue.get()` loop
-    # with no such risk, so retire exactly that.
-    subscription = screen.runtime._subscriptions.get(topic_id)
-    if subscription is not None and subscription.consumer_task is not None:
-        subscription.consumer_task.cancel()
-        try:
-            await subscription.consumer_task
-        except asyncio.CancelledError:
-            pass
+    # This test owns the runtime, so close its activity and subscription too.
+    # settle_turn() only waits for the chat work to finish.
+    await screen.runtime._close_topic(topic_id)
 
 
 async def _system_event_lines(factory, topic_id: uuid.UUID) -> list[str]:
