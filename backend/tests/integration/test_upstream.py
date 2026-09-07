@@ -341,16 +341,18 @@ def test_sync_conflict_dispatches_cheese_at_the_materialized_merge(client, tmp_p
     assert d["synced"] is False and d["conflicts"] == ["hello.txt"]
     # …and now there is somewhere to go.
     assert d["dispatched"]["files"] == ["hello.txt"]
-    tid = d["dispatched"]["topic_id"]
+    tid = d["dispatched"]["task_id"]
+    room = d["dispatched"]["room_id"]
 
     # The work is real, carries the conflict in its workspace, and hangs in the
     # caller's 1:1 room rather than polluting the project's topic list.
     #
-    # Read AS alice: it is a thread in a private room, and reading a thread is
-    # authorized against the room it lives in — which is the point of a private
-    # room. An anonymous read used to pass because the work was its own topic
-    # and the private-ness stopped at the parent.
-    t = client.get(f"/topics/{tid}", headers=_owner(client, "alice")).json()["data"]
+    # Read AS alice, and THROUGH the room: a card is not a place, and reading
+    # one is authorized against the room it lives in — which is the point of a
+    # private room.
+    t = client.get(
+        f"/topics/{room}/tasks/{tid}", headers=_owner(client, "alice")
+    ).json()["data"]
     assert t["title"] == "解决同步上游冲突"
     body = (ws.topic_worktree(puid, _uuid.UUID(tid)) / "hello.txt").read_text()
     assert "<<<<<<<" in body
@@ -403,13 +405,13 @@ def test_second_sync_reuses_the_open_resolution_task(client, tmp_path):
     ]["dispatched"]
 
     # 芝士 has started resolving — this content must survive a second press.
-    wt = ws.topic_worktree(_uuid.UUID(pid), _uuid.UUID(first["topic_id"]))
+    wt = ws.topic_worktree(_uuid.UUID(pid), _uuid.UUID(first["task_id"]))
     (wt / "hello.txt").write_text("half-resolved by 芝士\n")
 
     second = client.post(f"/projects/{pid}/upstream/sync", headers=headers).json()[
         "data"
     ]["dispatched"]
-    assert second["topic_id"] == first["topic_id"] and second["reused"] is True
+    assert second["task_id"] == first["task_id"] and second["reused"] is True
     assert (wt / "hello.txt").read_text() == "half-resolved by 芝士\n"
 
 

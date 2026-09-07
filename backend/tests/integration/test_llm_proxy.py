@@ -512,9 +512,7 @@ async def _room_with_a_thread(client, project_id: str) -> tuple[str, str]:
     return room_id, thread_id
 
 
-async def test_admission_names_the_machine_the_room_is_pinned_to(
-    client, monkeypatch
-):
+async def test_admission_names_the_machine_the_room_is_pinned_to(client, monkeypatch):
     """一轮跑在哪台机器上，是**房间**的 pin 说了算 —— 一个房间一块屏幕，它派出去
     的每一个分身都跑在那一台上，所以没有第二个 pin 可查。
 

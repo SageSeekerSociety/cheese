@@ -209,18 +209,16 @@ def test_archive_cascades_to_the_work_in_the_room(client):
         f"/topics/{parent}/split", json={"title": "子2", "created_by": "u"}
     ).json()["data"]["id"]
     wait_work_idle()
-    g = client.post(
-        f"/topics/{c1}/split", json={"title": "孙", "created_by": "u"}
-    ).json()["data"]["id"]
-    wait_work_idle()
 
     r = client.post(f"/topics/{parent}/archive", json={"by": "u"})
     assert r.status_code == 200
     assert client.get(f"/topics/{parent}").json()["data"]["status"] == "archived"
-    # 孙 was split from inside 子1, which opens a SIBLING thread in the same
-    # room — so all three are the room's, and all three go when it does.
-    for tid in (c1, c2, g):
-        assert client.get(f"/topics/{tid}").json()["data"]["status"] == "closed", tid
-    # The cascaded thread records why it went.
-    blocks = client.get(f"/topics/{c1}/blocks").json()["data"]["data"]
-    assert any("随父话题" in (b.get("content") or "") for b in blocks)
+
+    cards = {
+        c["id"]: c for c in client.get(f"/topics/{parent}/tasks").json()["data"]["data"]
+    }
+    for tid in (c1, c2):
+        assert cards[tid]["status"] == "closed", tid
+    # The cascaded card records why it went — on its own timeline, so whoever
+    # opens it later sees why the work stopped mid-sentence.
+    assert any("随父话题" in (b.get("content") or "") for b in cards[c1]["blocks"])

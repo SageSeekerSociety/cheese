@@ -109,9 +109,8 @@ def test_relayed_block_is_authored_by_the_receiving_room(client):
     _tell(client, parent["id"], sub["id"], "顺带看下 B 方案")
     wait_work_idle()
 
-    relayed = [
-        b for b in _card_blocks(client, parent["id"], sub["id"]) if "顺带看下 B 方案" in b["content"]
-    ]
+    on_card = _card_blocks(client, parent["id"], sub["id"])
+    relayed = [b for b in on_card if "顺带看下 B 方案" in b["content"]]
     assert len(relayed) == 1
     block = relayed[0]
     assert block["author_type"] == "ai"
@@ -277,7 +276,8 @@ def test_a_closed_thread_can_still_be_told_something(client):
 
     r = _tell(client, parent["id"], sub["id"], "还有一件事")
     assert r.status_code == 200
-    assert any("还有一件事" in b["content"] for b in _card_blocks(client, parent["id"], sub["id"]))
+    on_card = _card_blocks(client, parent["id"], sub["id"])
+    assert any("还有一件事" in b["content"] for b in on_card)
 
 
 def test_a_thread_in_an_archived_room_still_takes_the_note(client):
@@ -290,4 +290,5 @@ def test_a_thread_in_an_archived_room_still_takes_the_note(client):
 
     r = _tell(client, parent["id"], sub["id"], "还有一件事")
     assert r.status_code == 200
-    assert any("还有一件事" in b["content"] for b in _card_blocks(client, parent["id"], sub["id"]))
+    on_card = _card_blocks(client, parent["id"], sub["id"])
+    assert any("还有一件事" in b["content"] for b in on_card)

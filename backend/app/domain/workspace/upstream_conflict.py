@@ -93,7 +93,12 @@ async def dispatch(
                 open_one.title == RESOLUTION_TITLE
                 and open_one.status == TaskStatus.open
             ):
-                return {"topic_id": str(open_one.id), "files": [], "reused": True}
+                return {
+                    "room_id": str(room.id),
+                    "task_id": str(open_one.id),
+                    "files": [],
+                    "reused": True,
+                }
         # A thread carries the branch, the workspace and the accept card, which
         # is exactly what resolving a conflict needs — and it does not cost the
         # private room a second room to hold it.
@@ -139,4 +144,5 @@ async def dispatch(
             detail_label="冲突文件",
         ),
     )
-    return {"topic_id": str(task.id), "files": files}
+    # 房间和卡两半都给：卡不是地址，界面要打开它得先知道它挂在哪个房间。
+    return {"room_id": str(room.id), "task_id": str(task.id), "files": files}
