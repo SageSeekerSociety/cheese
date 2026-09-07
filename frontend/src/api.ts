@@ -1325,16 +1325,11 @@ export function getRoomTask(
 
 /** 在一张卡下面说话。落在这条活的时间线上，房间被叫来转达 —— 做这条活的分身住在
  *  房间的会话里，只有房间的芝士递得到话。 */
-export function sayOnRoomTask(
-  roomId: string,
-  taskId: string,
-  content: string,
-  author: string
-): Promise<Block> {
-  return request<Block>(
-    `/topics/${encodeURIComponent(roomId)}/tasks/${encodeURIComponent(taskId)}/messages`,
-    { method: 'POST', body: JSON.stringify({ content, author }) }
-  )
+export function sayOnRoomTask(roomId: string, taskId: string, content: string, author: string): Promise<Block> {
+  return request<Block>(`/topics/${encodeURIComponent(roomId)}/tasks/${encodeURIComponent(taskId)}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({ content, author }),
+  })
 }
 
 // ---- 日历 / 里程碑 (§7.2) ----

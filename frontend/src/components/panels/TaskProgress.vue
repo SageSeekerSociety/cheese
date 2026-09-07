@@ -300,11 +300,7 @@ const hiddenBatches = computed(() => batches.value.length - shownBatches.value.l
           </div>
           <ul class="task-progress__list">
             <li v-for="row in inColumn(col.key)" :key="row.id">
-              <button
-                type="button"
-                class="task-row"
-                @click="emit('open-card', row.id)"
-              >
+              <button type="button" class="task-row" @click="emit('open-card', row.id)">
                 <span class="board-dot" :style="columnDotStyle(row.presentation.column)" aria-hidden="true" />
                 <span class="task-row__text">
                   <span class="task-row__line1 t-body"> 第 {{ numberOf.get(row.id) }} 件：{{ row.title }}</span>
@@ -337,11 +333,7 @@ const hiddenBatches = computed(() => batches.value.length - shownBatches.value.l
           </button>
           <ul v-if="showDone" class="task-progress__list">
             <li v-for="row in doneRows" :key="row.id">
-              <button
-                type="button"
-                class="task-row task-row--done"
-                @click="emit('open-card', row.id)"
-              >
+              <button type="button" class="task-row task-row--done" @click="emit('open-card', row.id)">
                 <span class="board-dot" :style="columnDotStyle(row.presentation.column)" aria-hidden="true" />
                 <span class="task-row__text">
                   <span class="task-row__line1 t-body"> 第 {{ numberOf.get(row.id) }} 件：{{ row.title }}</span>

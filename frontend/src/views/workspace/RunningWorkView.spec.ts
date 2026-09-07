@@ -257,13 +257,16 @@ describe('卡片上的其余几行', () => {
     await findByText('暂无负责人')
   })
 
-  it('点一张卡就打开那件活', async () => {
+  it('点一张卡就打开它所在的房间，并钻进这张卡', async () => {
+    // 一件活不是地点：做它的分身住在房间的会话里。所以地址是房间的，卡在 query
+    // 上——「你看一下这条活」因此还是一条能发出去的链接。
     const { container } = mount()
     await waitFor(() => expect(container.querySelector('.board-card')).not.toBeNull())
     await fireEvent.click(container.querySelector('.board-card') as HTMLElement)
     expect(push).toHaveBeenCalledWith({
       name: 'workspace-topic',
-      params: { projectId: 'p1', topicId: 'task-1' },
+      params: { projectId: 'p1', topicId: 'room-1' },
+      query: { tab: 'overview', card: 'task-1' },
     })
   })
 })

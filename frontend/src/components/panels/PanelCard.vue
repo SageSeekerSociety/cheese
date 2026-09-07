@@ -82,9 +82,7 @@ watch(
 const dotStyle = computed(() => (card.value ? columnDotStyle(card.value.presentation.column) : {}))
 
 /** 对话里值得显示的块。事件（工具调用）留给「现场」，这里只放说过的话。 */
-const said = computed(() =>
-  (card.value?.blocks ?? []).filter((b) => b.kind === 'message' && (b.content || '').trim())
-)
+const said = computed(() => (card.value?.blocks ?? []).filter((b) => b.kind === 'message' && (b.content || '').trim()))
 
 async function send() {
   const room = props.roomId
@@ -173,9 +171,7 @@ async function send() {
           placeholder="在这条活下面说点什么（房间会转达给它）"
           :disabled="sending"
         />
-        <button type="submit" class="panel-card__send t-meta" :disabled="sending || !draft.trim()">
-          发送
-        </button>
+        <button type="submit" class="panel-card__send t-meta" :disabled="sending || !draft.trim()">发送</button>
       </form>
     </template>
   </section>

@@ -7,10 +7,10 @@ import {
   archiveTopic,
   createTopic,
   getPrivateUnread,
+  getTopic,
   getTopicUnread,
   listProjectMembers,
   listProjects,
-  getTopic,
   listTopics,
   markTopicRead,
   setTopicTitle,
@@ -333,9 +333,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
 
   /** 升级出来的东西：房间里的消息变成这个房间的一张**卡**，私聊里的变成一个新
    *  房间。调用方要据此决定去哪儿——钻进那张卡，还是跳进那个房间。 */
-  async function upgradeMessage(
-    messageId: string
-  ): Promise<{ kind: 'card' | 'room'; id: string } | null> {
+  async function upgradeMessage(messageId: string): Promise<{ kind: 'card' | 'room'; id: string } | null> {
     try {
       const made = await upgradeBlock(messageId, myHandle())
       await refreshTopics()
