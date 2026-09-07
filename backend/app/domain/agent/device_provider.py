@@ -76,6 +76,15 @@ DeviceResolver = Callable[
 ]
 
 
+class EnvironmentPreparationError(ScreenSetupError):
+    def __init__(self, status: dict):
+        self.environment_status = status
+        super().__init__(
+            "环境准备失败，芝士还没有开始处理这条消息。",
+            failure_code="environment_preparation_failed",
+        )
+
+
 def _git_author(project_id: uuid.UUID, topic_id: uuid.UUID) -> tuple[str, str] | None:
     """Who this topic's commits belong to, for a machine that owns its own tree
     and commits with plain git. None → the launcher's 芝士 default."""
@@ -1042,6 +1051,12 @@ class DeviceChannel(Channel):
                             )
                             if status["state"] == "ready":
                                 break
+                            if status["state"] == "stopped" and status.get(
+                                "attempt"
+                            ) != before.get("attempt"):
+                                raise ScreenSetupError(
+                                    "环境已准备完成，但芝士启动后退出，请查看房间终端"
+                                )
                             if (
                                 status["state"] == "pending"
                                 or status.get("attempt") == before.get("attempt")
@@ -1054,11 +1069,7 @@ class DeviceChannel(Channel):
                                 before.get("state") == "preparing"
                                 or status.get("attempt") != before.get("attempt")
                             ):
-                                reason = status.get("error", "脚本执行失败")
-                                raise ScreenSetupError(
-                                    f"环境准备失败：{reason}。"
-                                    "请在项目设置中查看日志并重试。"
-                                )
+                                raise EnvironmentPreparationError(status)
                             await asyncio.sleep(2)
                 except asyncio.CancelledError:
                     await asyncio.shield(
@@ -1068,6 +1079,8 @@ class DeviceChannel(Channel):
                     )
                     raise
             return screen
+        except EnvironmentPreparationError:
+            raise
         except Exception as exc:  # noqa: BLE001 — any setup failure ends the turn
             # str(exc) is EMPTY for a bare TimeoutError — the failure that used to
             # reach the room as 「device 后端启动失败：」 with nothing after the

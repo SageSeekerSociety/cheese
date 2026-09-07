@@ -683,7 +683,12 @@ class AgentWorkRunner:
         return turn_id
 
     def submit_kickoff(
-        self, chat_service, topic_id: uuid.UUID, *, prompt: str | None = None
+        self,
+        chat_service,
+        topic_id: uuid.UUID,
+        *,
+        prompt: str | None = None,
+        turn_id: uuid.UUID | None = None,
     ) -> uuid.UUID:
         """A platform-event turn (spec §8.4): 分身自动开工 after a split/upgrade
         (default prompt), or the parent digesting a returned conclusion (custom
@@ -693,7 +698,7 @@ class AgentWorkRunner:
         # Imported here, not at module scope: chat imports this module back.
         from app.domain.agent.chat import KICKOFF_PROMPT
 
-        turn_id = uuid.uuid4()
+        turn_id = turn_id or uuid.uuid4()
         frames = chat_service.kickoff(topic_id=topic_id, turn_id=turn_id, prompt=prompt)
         task = asyncio.create_task(
             self._run(
@@ -709,11 +714,19 @@ class AgentWorkRunner:
                 content=prompt or KICKOFF_PROMPT,
                 summon=True,
                 frames=frames,
-            )
+            ),
+            name=f"kickoff:{turn_id}",
         )
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return turn_id
+
+    def kickoff_pending(self, turn_id: uuid.UUID) -> bool:
+        """Include admission queueing before the durable turn interval opens."""
+        return any(
+            not task.done() and task.get_name() == f"kickoff:{turn_id}"
+            for task in self._tasks
+        )
 
     #: The author on an interval the SESSION opened for itself. Deliberately not
     #: "system": a platform-event turn is one the platform asked for and could

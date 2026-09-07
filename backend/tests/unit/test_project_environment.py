@@ -44,6 +44,38 @@ def wait_for(path):
     assert path.exists()
 
 
+def test_finished_agent_is_stopped_not_failed_preparation(tmp_path):
+    process = launch(tmp_path, EnvironmentConfig())
+    assert process.wait(timeout=5) == 0
+    result = environment_runner.read_status(tmp_path / "home/.cheese-environment")
+    assert result["state"] == "stopped"
+    assert "error" not in result
+
+
+def test_dead_installer_is_failed_preparation(tmp_path):
+    import signal
+
+    process = launch(
+        tmp_path,
+        EnvironmentConfig(setup_script="echo $$ > installer-pid\nexec sleep 30"),
+    )
+    path = tmp_path / "home/.cheese-environment/status.json"
+    child = tmp_path / "work/installer-pid"
+    try:
+        wait_for(child)
+        process.kill()
+        process.wait(timeout=5)
+        result = environment_runner.read_status(path.parent)
+        assert result["state"] == "failed"
+        assert result["error"] == "preparation process exited"
+    finally:
+        if child.exists():
+            os.killpg(int(child.read_text()), signal.SIGTERM)
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+
+
 def test_revision_tracks_both_scripts_and_variables():
     a = EnvironmentConfig(variables={"A": "1", "B": "2"})
     b = EnvironmentConfig(variables={"B": "2", "A": "1"})

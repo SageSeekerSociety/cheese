@@ -41,7 +41,14 @@ def read_status(directory: Path) -> dict:
     data = json.loads(path.read_text())
     if data["state"] in ("preparing", "ready"):
         if process_identity(data["pid"]) != data["process_identity"]:
-            data = {**data, "state": "failed", "error": "environment process exited"}
+            if data["state"] == "ready":
+                data = {**data, "state": "stopped"}
+            else:
+                data = {
+                    **data,
+                    "state": "failed",
+                    "error": "preparation process exited",
+                }
     if "log_file" not in data:
         return data
     log_path = directory / data["log_file"]

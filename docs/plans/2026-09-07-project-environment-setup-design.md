@@ -47,7 +47,9 @@ Snapshots retain files, not live services. Workspace startup therefore runs even
 
 ## Failure reporting
 
-The UI reports preparing, ready, or failed, with the stage, pinned revision, timestamps, exit status, and a persistent log. Start the log before running the script. Failed setup prevents ordinary task delivery and offers log inspection and explicit retry. Do not print the injected variable dictionary into logs. Project variables are non-secret values. Credential integration must use an existing scoped credential facility where available; this design does not claim that arbitrary project secrets are already supported.
+The UI reports preparing, ready, stopped, or failed, with the stage, pinned revision, timestamps, exit status, and a persistent log. Start the log before running the script. Failed setup prevents ordinary task delivery and creates a recovery event for the overview agent. Overview uses the base environment without project scripts or variables, so project setup cannot block diagnosis. Its scoped API can inspect the affected room, revise only that room's configuration, and restart it once per incident. The restart retains pending user messages. A repeated failure stops automatic dispatch; a human apply action closes the incident. Overview can record the assistance it needs without restarting. Project defaults and other rooms are unchanged by a repair.
+
+Do not print the injected variable dictionary into logs. Project variables are ordinary configuration visible to project members and the agent; arbitrary project secret storage is not implemented. The interface explains this visibility beside the variables.
 
 Cancellation terminates the script and its children. A disconnected backend must reconcile the existing attempt before starting another. Preparation status is distinct from machine-online status and agent-turn progress.
 

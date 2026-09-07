@@ -48,7 +48,7 @@ function mount() {
 
 it('saves multiline values without applying a revision to an existing room', async () => {
   const view = mount()
-  await fireEvent.click(await view.findByRole('button', { name: '保存环境' }))
+  await fireEvent.click(await view.findByRole('button', { name: '保存配置' }))
   await waitFor(() =>
     expect(api.saveProjectEnvironment).toHaveBeenCalledWith('p', {
       setup_script: config.setup_script,
@@ -57,14 +57,14 @@ it('saves multiline values without applying a revision to an existing room', asy
     })
   )
   expect(api.applyRoomEnvironment).not.toHaveBeenCalled()
-  expect(await view.findByText('已保存。新房间使用此配置；已有房间保持当前版本。')).toBeTruthy()
+  expect(await view.findByText('已保存。新房间使用这份配置；已有房间保持当前版本。')).toBeTruthy()
 })
 
 it('renders logs as text and applies only after the explicit action', async () => {
   const view = mount()
   expect(await view.findByText('<script>literal output</script>')).toBeTruthy()
   expect(view.container.querySelector('script')).toBeNull()
-  await fireEvent.click(await view.findByRole('button', { name: '下次启动应用已保存配置' }))
+  await fireEvent.click(await view.findByRole('button', { name: '下次启动时应用' }))
   await waitFor(() => expect(api.applyRoomEnvironment).toHaveBeenCalledWith('p', 'r', true))
 })
 
@@ -72,7 +72,7 @@ it('lets a member inspect configuration without edit controls', async () => {
   api.getProjectEnvironment.mockResolvedValue({ config, can_edit: false, rooms: [] })
   const view = mount()
   await view.findByDisplayValue('echo setup')
-  expect(view.queryByRole('button', { name: '保存环境' })).toBeNull()
+  expect(view.queryByRole('button', { name: '保存配置' })).toBeNull()
   expect(view.queryByRole('button', { name: '添加变量' })).toBeNull()
   expect(view.getByDisplayValue('echo setup').hasAttribute('readonly')).toBe(true)
 })

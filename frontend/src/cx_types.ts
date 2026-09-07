@@ -827,7 +827,9 @@ export interface ProjectEnvironmentInfo {
   rooms: { id: string; title: string; revision: string | null }[]
 }
 export interface EnvironmentStatus {
-  state: 'pending' | 'preparing' | 'ready' | 'failed' | 'offline'
+  busy?: boolean
+  state: 'pending' | 'preparing' | 'ready' | 'stopped' | 'failed' | 'offline'
+  recovery_state?: 'requested' | 'retrying' | 'needs_help' | 'closed' | null
   stage?: string
   log?: string
   error?: string

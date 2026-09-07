@@ -89,7 +89,7 @@ from app.domain.memory.models import MemoryScope
 from app.domain.memory.store import RecallResult, memory_store, recall_pools
 from app.domain.mentions import expand_mention_names
 from app.domain.milestone.repositories import MilestoneRepository
-from app.domain.project.environment import pin_environment
+from app.domain.project.environment import EnvironmentConfig, pin_environment
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
@@ -3535,7 +3535,12 @@ class ChatService:
             if topic_id is not None and project is not None:
                 topic = await TopicRepository(session).get(topic_id)
                 if topic is not None:
-                    environment = await pin_environment(session, project_id, topic_id)
+                    # Overview coordinates repairs even when project setup fails.
+                    environment = (
+                        EnvironmentConfig().snapshot()
+                        if topic.kind == TopicKind.root
+                        else await pin_environment(session, project_id, topic_id)
+                    )
                     agents = AgentInstanceService(session)
                     agent_model = await agents.model(
                         await agents.for_topic(topic, project)
@@ -4361,6 +4366,11 @@ class ChatService:
                 False,
                 False,
             )
+            status = getattr(exc, "environment_status", None)
+            if status is not None:
+                from app.domain.project.environment_recovery import report_failure
+
+                await report_failure(self, project_id, topic_id, status)
             return
         # Internal frame: `send` returned, so the transport accepted
         # the write — which IS delivery (#563, per #487's contract that a
@@ -4371,6 +4381,11 @@ class ChatService:
         # and so calls a prompt that landed two seconds earlier undelivered
         # and re-sends it. Nothing but the runtime acts on this, so it never
         # reaches the broker.
+        from app.domain.project.environment_recovery import close_recovery
+
+        async with self._sessions() as session:
+            await close_recovery(session, topic_id)
+            await session.commit()
         yield {"type": "prompt_delivered"}
         if ready is False:
             marked_work_id = marked_work_ids[-1] if marked_work_ids else turn_id
