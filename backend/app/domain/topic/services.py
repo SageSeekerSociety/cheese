@@ -1171,9 +1171,7 @@ class TopicService:
             refs=[str(sender.id)],
         )
 
-    async def close_thread(
-        self, *, task_id: uuid.UUID, conclusion: str | None
-    ) -> Task:
+    async def close_thread(self, *, task_id: uuid.UUID, conclusion: str | None) -> Task:
         """收卡 —— the room says one of its pieces of work is over.
 
         Nothing else can say it. The worker's own stops mean "handed something
