@@ -29,6 +29,7 @@ from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
 from app.domain.machine import enrollment
+from app.domain.machine.limits import get_machine_limit
 from app.domain.machine.microcloud import MicroCloudClient, MicroCloudError
 from app.domain.machine.models import (
     AI_TRANSITIONAL,
@@ -217,10 +218,11 @@ class MachineService:
         # those would make a project's slots impossible to reclaim — delete then
         # create would be refused for a machine that is already gone.
         existing = await self.quota_machines(project_id)
-        if len(existing) >= settings.microcloud_max_machines_per_project:
+        limit = await get_machine_limit(self._session)
+        if len(existing) >= limit:
             raise ValidationError(
                 "this project already has "
-                f"{settings.microcloud_max_machines_per_project} machine(s); "
+                f"{limit} machine(s); "
                 "delete one before provisioning another"
             )
         hostname = derive_hostname(project.name, project_id, len(existing) + 1)

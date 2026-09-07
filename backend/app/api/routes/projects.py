@@ -60,6 +60,7 @@ from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.identity.handles import looks_like_agent_handle
+from app.domain.machine.limits import get_machine_limit
 from app.domain.machine.services import MachineService
 from app.domain.membership.repositories import MemberRepository
 from app.domain.memory.models import MemoryScope
@@ -117,11 +118,11 @@ Registry = Annotated[ProfileRegistry, Depends(get_profile_registry)]
 
 
 @router.get("/resource-limits")
-async def resource_limits() -> dict:
+async def resource_limits(db: DbSession) -> dict:
     """Creation defaults, available before a project exists."""
     return ok(
         {
-            "max_machines_per_project": settings.microcloud_max_machines_per_project,
+            "max_machines_per_project": await get_machine_limit(db),
             "max_concurrent_turns": settings.max_concurrent_turns,
         }
     )

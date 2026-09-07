@@ -27,6 +27,13 @@ from app.domain.machine.services import MachineService, customer_ref, derive_hos
 pytestmark = pytest.mark.anyio
 
 
+@pytest.fixture(autouse=True)
+def runtime_limit(monkeypatch):
+    limit = AsyncMock(return_value=2)
+    monkeypatch.setattr("app.domain.machine.services.get_machine_limit", limit)
+    return limit
+
+
 OFFERING = {
     "id": 1,
     "status": "active",
@@ -377,7 +384,6 @@ async def test_ensure_topic_machine_without_authority_provisions_nothing(monkeyp
 
 
 async def test_topic_machines_share_the_project_quota(monkeypatch):
-    from app.core.config import settings
     from app.domain.topic.models import TopicStatus
 
     client = FakeMicroCloud()
@@ -412,7 +418,6 @@ async def test_topic_machines_share_the_project_quota(monkeypatch):
             return SimpleNamespace(id=41)
 
     service._session = _Session()
-    monkeypatch.setattr(settings, "microcloud_max_machines_per_project", 2)
     monkeypatch.setattr("app.domain.topic.services.TopicService", _Topics)
     monkeypatch.setattr("app.domain.machine.services.IdentityService", _Identities)
     monkeypatch.setattr(service, "require_create_authority", AsyncMock())
@@ -442,14 +447,30 @@ async def test_provision_reuses_the_projects_existing_account():
     )
 
 
+async def test_provision_uses_updated_limit_without_rebuilding_service(runtime_limit):
+    service = build_service()
+    project_id = uuid.uuid4()
+    runtime_limit.return_value = 50
+    for _ in range(50):
+        await service.provision(project_id=project_id, requested_by="owner")
+    with pytest.raises(ValidationError):
+        await service.provision(project_id=project_id, requested_by="owner")
+    runtime_limit.return_value = 51
+    await service.provision(project_id=project_id, requested_by="owner")
+    runtime_limit.return_value = 49
+    with pytest.raises(ValidationError):
+        await service.provision(project_id=project_id, requested_by="owner")
+    assert len(service._client.created) == 51
+    assert service._client.deleted == []
+
+
 async def test_provision_refuses_past_the_per_project_ceiling():
-    from app.core.config import settings
 
     client = FakeMicroCloud()
     service = build_service(client)
     project_id = uuid.uuid4()
 
-    for _ in range(settings.microcloud_max_machines_per_project):
+    for _ in range(2):
         await service.provision(project_id=project_id, requested_by="andy")
 
     with pytest.raises(ValidationError):
@@ -692,14 +713,13 @@ async def test_a_destroyed_machine_stops_occupying_the_projects_slot():
     unreclaimable: the delete returned 200 and the next create was refused for a
     machine that no longer existed.
     """
-    from app.core.config import settings
 
     client = FakeMicroCloud()
     service = build_service(client)
     project_id = uuid.uuid4()
 
     made = []
-    for _ in range(settings.microcloud_max_machines_per_project):
+    for _ in range(2):
         made.append(await service.provision(project_id=project_id, requested_by="andy"))
 
     with pytest.raises(ValidationError):

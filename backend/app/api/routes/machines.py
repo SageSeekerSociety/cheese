@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
 from app.api.response import ok, page
-from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -16,6 +15,7 @@ from app.core.errors import (
     ValidationError,
 )
 from app.domain.identity.actor import Actor
+from app.domain.machine.limits import get_machine_limit
 from app.domain.machine.microcloud import MicroCloudError
 from app.domain.machine.models import MachineStatus
 from app.domain.machine.schemas import MachineCreate, MachineOut
@@ -100,13 +100,14 @@ async def list_machines(
     machines = await service.list_for_project(project_id)
     items = [MachineOut.model_validate(m).model_dump(mode="json") for m in machines]
     used = len(await service.quota_machines(project_id))
+    limit = await get_machine_limit(db)
     await db.commit()
     return ok(
         {
             **page(items, len(items)),
             "quota": {
                 "used": used,
-                "limit": settings.microcloud_max_machines_per_project,
+                "limit": limit,
             },
         }
     )
