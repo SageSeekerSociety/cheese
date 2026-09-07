@@ -115,9 +115,7 @@ TASK_CASES = [
     (
         "CI 在跑",
         task(
-            card=card(
-                AcceptStatus.pending, merge_state_word="unstable", merge_who="ci"
-            )
+            card=card(AcceptStatus.pending, merge_state_word="unstable", merge_who="ci")
         ),
         Column.delivering,
         "等待检查",
@@ -142,9 +140,7 @@ TASK_CASES = [
     (
         "和 main 冲突，芝士来解",
         task(
-            card=card(
-                AcceptStatus.pending, merge_state_word="dirty", merge_who="agent"
-            )
+            card=card(AcceptStatus.pending, merge_state_word="dirty", merge_who="agent")
         ),
         Column.delivering,
         "解决冲突",
@@ -169,9 +165,7 @@ TASK_CASES = [
     (
         "绿了等人采纳",
         task(
-            card=card(
-                AcceptStatus.pending, merge_state_word="clean", merge_who="human"
-            )
+            card=card(AcceptStatus.pending, merge_state_word="clean", merge_who="human")
         ),
         Column.needs_you,
         "等待验收",

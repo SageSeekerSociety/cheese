@@ -171,9 +171,7 @@ class AcceptCard(UuidPk, Timestamps, Base):
     # 绿了自动合 (#718，GitHub auto-merge 的对应物；项目开了 auto_merge_allowed
     # 才可用)：布防不是决议 —— 卡留在 pending，规则满足时轮询器以布防人的名义
     # 合并并把布防人的那票算进去；新提交作废采纳（dismiss_stale）同样解除布防。
-    auto_merge_armed_by: Mapped[str | None] = mapped_column(
-        String(64), nullable=True
-    )
+    auto_merge_armed_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     auto_merge_armed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

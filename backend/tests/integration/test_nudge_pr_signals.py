@@ -35,6 +35,7 @@ def _authorized(client, app_world) -> tuple[str, str, int, str]:
     _pid, tid, cid, number, head_sha = _ready_card(client, app_world)
     return tid, cid, number, head_sha
 
+
 #: 复用「接了平台 GitHub App、卡停在 pr_open 等 CI」那个世界 —— 生产上这条链路
 #: 就跑在它上面。重新包一次而不是直接 import 那个 fixture：直接 import 会让它在
 #: 本模块里既是导入名又是 fixture 名，读起来像一次意外的覆盖。
@@ -383,9 +384,7 @@ def test_a_repush_failure_still_outranks_a_ci_failure(client, app_world):
     assert _cards(client, tid)[0]["note"] == "平台自动重推失败"
 
 
-def test_a_green_but_conflicted_pr_summons_the_agent_not_the_merge(
-    client, app_world
-):
+def test_a_green_but_conflicted_pr_summons_the_agent_not_the_merge(client, app_world):
     """检查全绿但和 main 冲突（DIRTY）：#718 的表把它派给芝士 —— 冲突事件到
     做活的 agent，而轮询器不去替人调那次注定 409 的合并。"""
     fake = app_world["fake"]

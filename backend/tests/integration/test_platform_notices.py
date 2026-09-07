@@ -99,9 +99,7 @@ def _assert_is_a_platform_notice(
 # --------------------------------------------------------------------------
 
 
-def test_ci_failure_lands_as_one_line_event_not_a_fake_human_message(
-    client, app_world
-):
+def test_ci_failure_lands_as_one_line_event_not_a_fake_human_message(client, app_world):
     """CI 播报以前是一条 `author_type=human`、作者叫 "system" 的聊天消息，正文
     最多 4000 字符。现在：房间里**没有**新的人类消息，只有一行系统事件，日志
     一字不差躺在 `meta.detail` 里。"""

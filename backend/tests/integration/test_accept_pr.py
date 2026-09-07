@@ -278,9 +278,7 @@ class FakeGitHubPrClient:
             mergeable_state=self._derived_mergeable_state(number),
             draft=self.draft_by_number.get(number, False),
             review_comment_count=sum(
-                1
-                for s in self.reviews_by_number.get(number, [])
-                if s.kind == "comment"
+                1 for s in self.reviews_by_number.get(number, []) if s.kind == "comment"
             ),
         )
 
@@ -449,9 +447,7 @@ def app_world(client, monkeypatch):
     # 房间通知（fire-and-forget 的 _notify_merge_result）写库走模块级
     # async_session_factory —— 测试 harness 把它绑在另一个库上，这里指回
     # 本测试的库，房间文本才断言得到。
-    monkeypatch.setattr(
-        review_services, "async_session_factory", client.test_factory
-    )
+    monkeypatch.setattr(review_services, "async_session_factory", client.test_factory)
 
     monkeypatch.setattr(ws, "get_upstream", lambda pid: f"https://github.com/{REPO}")
     monkeypatch.setattr(ws, "topic_branch_exists", lambda pid, tid: True)
@@ -616,9 +612,7 @@ def test_a_scoped_required_check_the_diff_cannot_trigger_is_not_required(
     不是「还没跑」。"""
     fake = app_world["fake"]
     pid, tid, cid, number, head_sha = _ready_card(client, app_world)
-    _protect(
-        client, pid, required_checks=[{"name": "test", "paths": ["backend/**"]}]
-    )
+    _protect(client, pid, required_checks=[{"name": "test", "paths": ["backend/**"]}])
     fake.check_runs_by_sha[head_sha] = []
     fake.files_by_sha[head_sha] = [("modified", "frontend/src/App.vue")]
 
@@ -725,9 +719,7 @@ def test_a_prless_card_gets_its_pr_opened_at_accept_then_merges(client, app_worl
     assert app_world["local_merges"] == []
 
 
-def test_discussion_topic_needs_no_pr_and_still_accepts(
-    client, app_world, monkeypatch
-):
+def test_discussion_topic_needs_no_pr_and_still_accepts(client, app_world, monkeypatch):
     from app.domain.workspace import service as ws
 
     monkeypatch.setattr(ws, "topic_branch_exists", lambda pid, tid: False)
@@ -871,9 +863,7 @@ def test_poll_clean_notifies_the_reviewer_once_per_head(client, app_world):
     assert text.count("等 alice 采纳") == first + 1
 
 
-def test_poll_red_checks_nudge_cheese_once_with_the_logs(
-    client, app_world, stub_hooks
-):
+def test_poll_red_checks_nudge_cheese_once_with_the_logs(client, app_world, stub_hooks):
     fake = app_world["fake"]
     pid, tid, cid, number, head_sha = _ready_card(client, app_world)
     fake.check_state_by_sha[head_sha] = ("failure", "pytest: 3 failed")
@@ -899,9 +889,7 @@ def test_poll_red_checks_nudge_cheese_once_with_the_logs(
     assert "pytest: 1 failed now" in _room(client, tid)
 
 
-def test_a_new_commit_dismisses_approvals_and_the_reviewer_is_told(
-    client, app_world
-):
+def test_a_new_commit_dismisses_approvals_and_the_reviewer_is_told(client, app_world):
     fake = app_world["fake"]
     pid, tid, cid, number, head_sha = _ready_card(client, app_world)
     fake.check_state_by_sha[head_sha] = ("success", "全绿")
@@ -1076,9 +1064,7 @@ def test_arming_needs_the_project_setting_and_the_reviewer(client, app_world):
 def test_an_armed_card_merges_when_the_rules_turn_green(client, app_world):
     fake = app_world["fake"]
     pid, tid, cid, number, head_sha = _ready_card(client, app_world)
-    _protect(
-        client, pid, auto_merge_allowed=True, required_checks=[{"name": "test"}]
-    )
+    _protect(client, pid, auto_merge_allowed=True, required_checks=[{"name": "test"}])
     fake.check_state_by_sha[head_sha] = ("failure", "pytest: 1 failed")
     assert _arm(client, cid, "alice").status_code == 200
 
@@ -1200,9 +1186,7 @@ def test_merge_anyway_admission_follows_the_override_roster(client, app_world):
     assert r.json()["data"]["status"] == "accepted"
 
 
-def test_merge_anyway_on_a_green_pr_is_not_recorded_as_knowingly_red(
-    client, app_world
-):
+def test_merge_anyway_on_a_green_pr_is_not_recorded_as_knowingly_red(client, app_world):
     """PR #520 的教训：当时全绿就写全绿，别往历史里写一条没发生过的决定。"""
     fake = app_world["fake"]
     pid, tid, cid, number, head_sha = _ready_card(client, app_world)
@@ -1372,9 +1356,7 @@ def test_remote_head_ff_from_local_reads_real_git_ancestry(client):
     assert svc._remote_head_ff_from_local(puid, "0" * 40, head2) is False
 
 
-def test_an_unreadable_verdict_stops_the_accept_instead_of_guessing(
-    client, app_world
-):
+def test_an_unreadable_verdict_stops_the_accept_instead_of_guessing(client, app_world):
     """读不到检查/合并态不是绿：点击可见地停下、可重试——绝不落本地合并，
     也绝不当作可合。"""
     fake = app_world["fake"]

@@ -40,9 +40,7 @@ def enabled() -> bool:
     """Cheap pre-check: the GitHub App is configured at all. The per-project
     eligibility (which installation, upstream is a GitHub https remote) is
     resolved in the task itself — it needs the DB and a subprocess."""
-    return bool(settings.github_app_id) and bool(
-        settings.github_app_private_key_path
-    )
+    return bool(settings.github_app_id) and bool(settings.github_app_private_key_path)
 
 
 def dispatch(

@@ -194,9 +194,7 @@ def _flaky_app_tokens(monkeypatch):
     async def tokens_for_project(_project_id, _session):
         return None if holder["broken"] else _FakeTokens()
 
-    monkeypatch.setattr(
-        github_app, "github_app_tokens_for_project", tokens_for_project
-    )
+    monkeypatch.setattr(github_app, "github_app_tokens_for_project", tokens_for_project)
     return holder
 
 

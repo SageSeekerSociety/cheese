@@ -1982,7 +1982,11 @@ class AcceptService:
             # BEHIND（strict 才出现）→ 平台自己 update-branch；撞冲突的话
             # 下一拍这个 PR 就是 dirty，冲突事件自然转给 agent。
             await self._update_behind_branch(
-                card=card, topic=topic, owner=owner, repo=repo, creds=creds,
+                card=card,
+                topic=topic,
+                owner=owner,
+                repo=repo,
+                creds=creds,
                 client=client,
             )
             return
@@ -2003,8 +2007,14 @@ class AcceptService:
         await self._session.flush()
 
     async def _update_behind_branch(
-        self, *, card: AcceptCard, topic: Topic, owner: str, repo: str,
-        creds: _GitHubCredentials, client,
+        self,
+        *,
+        card: AcceptCard,
+        topic: Topic,
+        owner: str,
+        repo: str,
+        creds: _GitHubCredentials,
+        client,
     ) -> None:
         """BEHIND is the platform's move: GitHub's Update branch, capped.
 
@@ -2089,8 +2099,7 @@ class AcceptService:
                 severity=SEVERITY_INFO,
                 who=WHO_HUMAN,
                 detail=(
-                    "这个 PR 满足项目的合并规则，采纳即当场合并。\n"
-                    f"{card.pr_url or ''}"
+                    f"这个 PR 满足项目的合并规则，采纳即当场合并。\n{card.pr_url or ''}"
                 ),
                 detail_label="下一步",
             ),
