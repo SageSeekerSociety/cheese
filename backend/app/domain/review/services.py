@@ -94,6 +94,12 @@ _ACCEPT_PR_OPEN_FAILED_PREFIX = "采纳未完成：开不出 PR"
 #: 卡上有 PR 但此刻推进不了（GitHub 不可达 / PR 被关闭未合并 / …）。绑定 GitHub
 #: 的项目采纳只通过合并 PR 完成 (#363)——这类失败停下亮出来，永不落 local merge。
 _ACCEPT_PR_STALLED_PREFIX = "采纳未完成：PR 未能合并"
+#: 卡带着交付主张（change_subject 非空），树的分支上却没有任何提交。2026-09-07
+#: 卡 40be3e1a：改动被推到了别的分支，树分支从未存在，`open_pr_for_card` 把它
+#: 当成讨论话题返回 None，采纳落进本地合并 no-op——卡标成 accepted，人以为交付
+#: 完成，而改动没有合进任何地方。主张交付却无从交付的采纳必须停下；只有真正的
+#: 存量讨论卡（change_subject 为 NULL，递于 subject 必填之前）才允许 no-op 采纳。
+_ACCEPT_NO_BRANCH_PREFIX = "采纳未完成：这棵树的分支上没有任何提交"
 
 #: pending_gate 孤儿卡 (2026-08-11). 判死的卡和检查真红了的卡都落在 `gate_failed`
 #: 上，但对芝士意味着完全相反的下一步——「没跑完」= 原样重递，「没通过」= 去修
@@ -442,6 +448,30 @@ class AcceptService:
         )
         if blocking is not None:
             raise ValidationError(_BLOCKED_BY_CARD_MESSAGES[blocking.status])
+        # 有活才有卡：这张卡带的 change_subject 是交付主张，绑定 GitHub 的项目
+        # 会拿它去开 PR，而 PR 要有分支可骑。树的分支不存在时 PR 开不出来，本地
+        # 合并也是 no-op——2026-09-07 卡 40be3e1a 就这样被标成 accepted，而改动
+        # 其实被推到了别的分支，没有合进任何地方。在递卡这一刻就拒绝，并点名该
+        # 推哪条分支。Best-effort：绑定状态或分支探测出错不拦递卡——采纳路径上
+        # 的 `_stop_accept_no_branch` 才是硬闸门（那边判定不了会 fail closed）。
+        from app.domain.workspace import service as ws
+
+        try:
+            tree_branch_missing = await self._github_bound(
+                topic.project_id
+            ) and not await asyncio.to_thread(
+                ws.topic_branch_exists, topic.project_id, topic_id
+            )
+        except Exception:  # noqa: BLE001 — 判定不了不拦递卡
+            tree_branch_missing = False
+        if tree_branch_missing:
+            branch = await asyncio.to_thread(
+                lambda: ws.branch_for_tree(ws.tree_for_place(topic_id))
+            )
+            raise ValidationError(
+                f"这棵树的分支（{branch}）上没有任何提交，没有东西可以交付。"
+                f"改动可能被提交到了别的分支——把提交推上 {branch} 后再递卡。"
+            )
         # Nothing to deliver is a fact about the branch, so ask the branch. It
         # used to be inferred from "this topic already had a card accepted",
         # which is true only until somebody commits again — and rooms do, that
@@ -450,8 +480,6 @@ class AcceptService:
         # (nothing was ever written) and the PR path already reports it with
         # the detail this check cannot see.
         if any(c.status == AcceptStatus.accepted for c in existing):
-            from app.domain.workspace import service as ws
-
             has_new = await asyncio.to_thread(
                 ws.has_undelivered_commits, topic.project_id, topic_id
             )
@@ -924,9 +952,13 @@ class AcceptService:
         #     the local merge (#362/#363). Accepting MERGES, here and now
         #     (#718): the merge-state rules already said the button may light,
         #     and the merge API is called with the head the human saw.
-        #     The one PR-less case that legitimately proceeds is a
-        #     discussion-only topic with no branch, where the local merge
-        #     no-ops and bypasses nothing.
+        #     The one PR-less case that legitimately proceeds is a legacy card
+        #     with no delivery claim (change_subject IS NULL, filed before
+        #     subjects were required) on a branchless topic, where the local
+        #     merge no-ops and bypasses nothing. A card that DOES claim a
+        #     change but has no tree branch to carry it stops instead
+        #     (2026-09-07, 卡 40be3e1a: the work sat on another branch and
+        #     "accepted" merged nothing at all).
         #   - the platform forge (unbound): the local merge IS this project's
         #     accept (#363), and `forge.note` says so on the card so it can
         #     never read as a bound project that skipped its PR.
@@ -936,6 +968,8 @@ class AcceptService:
                 await self._publish_pr_for_accept(card, topic)
             if card.pr_number is not None:
                 return await self._merge_pr_for_accept(card, topic, decided_by)
+            if (card.change_subject or "").strip():
+                await self._stop_accept_no_branch(card, topic)
         unbound_note = forge.note
 
         # 采纳 = merge (spec §6.3) — and the merge DECIDES the outcome. A
@@ -2746,6 +2780,54 @@ class AcceptService:
         )
         raise ValidationError(f"采纳未完成：PR 未能合并（{why}）。处理后重试采纳")
 
+    async def _stop_accept_no_branch(self, card: AcceptCard, topic: Topic) -> NoReturn:
+        """带交付主张的卡开不出 PR，因为这棵树的分支上没有任何提交（2026-09-07
+        卡 40be3e1a：改动被推到了别的分支）。旧路径把 `open_pr_for_card` 的 None
+        当「纯讨论话题」落进本地合并 no-op——卡标成 accepted，人以为交付完成，而
+        改动没有合进任何地方。主张交付却无从交付：停下，把该推哪条分支写在卡上，
+        推上后重试采纳。
+
+        Same rollback-first dance as `_stop_accept_pr_unavailable`, same reason:
+        the note is written on its own connection and must never queue behind a
+        row lock this doomed transaction still holds. Everything the note and
+        notification need is read while the instances are live, before the
+        rollback expires them."""
+        from app.domain.workspace import service as ws
+
+        card_id = card.id
+        subject = (card.change_subject or "").strip()
+        branch = await asyncio.to_thread(
+            lambda: ws.branch_for_tree(ws.tree_for_place(topic.id))
+        )
+        note = (
+            f"{_ACCEPT_NO_BRANCH_PREFIX}（{branch}），开不出能承载"
+            f"「{subject}」的 PR。改动可能被提交到了别的分支——"
+            f"把提交推上 {branch} 后重试采纳。"
+        )
+        self._notify_merge_result(
+            topic,
+            "采纳未完成：树上没有可交付的提交",
+            meta=notice(
+                EVENT_ACCEPT_STOPPED,
+                severity=SEVERITY_ERROR,
+                who=WHO_HUMAN,
+                detail=(
+                    f"这张卡主张交付「{subject}」，但这棵树的分支（{branch}）上"
+                    "没有任何提交：开不出 PR，也没有东西可以合并。改动可能在"
+                    f"别的分支上；把提交推上 {branch} 后重试采纳。"
+                ),
+                detail_label="为什么停下",
+            ),
+        )
+        await self._session.rollback()
+        await self._note_outside_accept_txn(
+            card_id, notes.NoteCode.accept_no_branch, note
+        )
+        raise ValidationError(
+            f"采纳未完成：这棵树的分支（{branch}）上没有任何提交，无法开 PR。"
+            f"改动可能在别的分支上；把提交推上 {branch} 后重试采纳"
+        )
+
     async def _publish_pr_for_accept(self, card: AcceptCard, topic: Topic) -> None:
         """无 PR 卡在采纳现场补开 App PR（#296 stage 1 的生产回归修复）.
 
@@ -2769,8 +2851,11 @@ class AcceptService:
         request back — the card must keep the PR it now rides, or the next
         attempt would look PR-less again. `open_pr_for_card` can still return
         None (its own not-applicable checks); with the caller pre-checking
-        `_github_bound`, in practice that means a discussion-only topic with
-        no branch — the card is left untouched and the local merge no-ops.
+        `_github_bound`, in practice that means a topic with no tree branch.
+        The card is left untouched, and the CALLER decides what a branchless
+        topic means: a legacy card with no delivery claim proceeds into the
+        no-op local merge, while a card claiming a change stops the accept
+        (`_stop_accept_no_branch` — 2026-09-07 卡 40be3e1a).
         When opening the PR FAILS, the accept STOPS: the reason is persisted
         on the card outside this transaction, the room is told, and
         ValidationError surfaces to the caller. Silently direct-pushing main

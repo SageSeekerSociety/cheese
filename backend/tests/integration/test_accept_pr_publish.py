@@ -344,8 +344,18 @@ def test_pr_checks_survives_a_failure_outside_the_github_calls(client, monkeypat
     assert r.json()["data"]["available"] is False
 
 
-def test_prless_card_never_touches_github(client, pr_world):
-    """App 机制关着（默认测试世界）：无 PR 卡照旧走本地合并，不碰 GitHub。"""
+def test_prless_card_never_touches_github(client, pr_world, monkeypatch):
+    """App 机制关着（项目没有任何 App 安装 → 未绑定）：无 PR 卡走本地合并，
+    不碰 GitHub。pr_world 默认给了假 App tokens（绑定态），这里显式还原成
+    「没有安装」——绑定态下一张开不出 PR 的交付卡如今会停下（见
+    test_accept_pr.py 的 branchless 回归用例），而这个测试要说的是另一件事：
+    真正没接 App 的项目，本地合并就是它的采纳，GitHub 一次都不该被碰。"""
+    from app.domain.agent import github_app
+
+    async def _no_tokens(_pid, _session):
+        return None
+
+    monkeypatch.setattr(github_app, "github_app_tokens_for_project", _no_tokens)
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)  # no PR seeded
