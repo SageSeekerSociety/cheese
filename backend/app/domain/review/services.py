@@ -1290,13 +1290,16 @@ class AcceptService:
         client,
         status: "PullRequestStatus",
         ref: str,
-    ) -> tuple[MergeVerdict, Who, "BranchProtection", bool]:
+    ) -> tuple[MergeVerdict, Who, "BranchProtection", bool, list[merge_state.CheckRun]]:
         """The one merge-state computation (#718): gather this PR's raw
         signals and hand them to `merge_state.compute_merge_state`. Click-time
         and poll-time both come through here — the judgment exists once.
 
         Returns (verdict, whose move it is, the project's protection policy,
-        whether GitHub itself is enforcing protection)."""
+        whether GitHub itself is enforcing protection, the raw check runs —
+        the poller's event table reads facts the verdict may have folded away:
+        a conflicted PR is `dirty` no matter what its checks say, but a red
+        check on it is still 芝士's to fix and must still reach it)."""
         from app.domain.project.protection import branch_protection_of
         from app.domain.workspace import service as ws
 
@@ -1358,7 +1361,7 @@ class AcceptService:
             github_enforces=enforces,
             draft=status.draft,
         )
-        return verdict, whose_move(verdict), protection, enforces
+        return verdict, whose_move(verdict), protection, enforces, runs
 
     def _write_merge_mirror(
         self, card: AcceptCard, verdict: MergeVerdict, who: Who, head_sha: str
@@ -1460,7 +1463,7 @@ class AcceptService:
                 f"PR #{number} 的 head 在你查看后变了，卡已刷新 —— 请重新看过再采纳"
             )
 
-        verdict, who, protection, enforces = await self._pr_verdict(
+        verdict, who, protection, enforces, _runs = await self._pr_verdict(
             card=card,
             topic=topic,
             owner=owner,
@@ -1561,31 +1564,39 @@ class AcceptService:
         approvals cleared (when the project dismisses stale accepts), and the
         auto-merge arm disarmed.
 
-        Written OUTSIDE the accept transaction (its caller is about to raise,
-        which rolls that transaction back — same pattern as
-        `_note_outside_accept_txn`)."""
+        Written OUTSIDE the accept transaction (its caller is about to raise).
+        **Rolls the request transaction back first**, for the same reason as
+        `_stop_accept_pr_unavailable`: this request may already hold a row
+        lock on the very card the fresh session is about to write, and two
+        connections on one row with one waiting on the other is a hang, not a
+        refresh. Every attribute needed later is read before the rollback
+        (expired attributes reload with sync IO an AsyncSession cannot do)."""
         from app.domain.project.protection import branch_protection_of
 
-        project = await self._projects.get(topic.project_id)
-        dismiss = branch_protection_of(project).dismiss_stale
         card_id = card.id
+        number = card.pr_number
+        project_id = topic.project_id
+        await self._session.rollback()
         try:
             factory = async_sessionmaker(self._session.bind, expire_on_commit=False)
             async with factory() as session:
-                fresh = await AcceptCardRepository(session).get(card_id)
+                project = await ProjectRepository(session).get(project_id)
+                dismiss = branch_protection_of(project).dismiss_stale
+                repo = AcceptCardRepository(session)
+                fresh = await repo.get(card_id)
                 if fresh is None:
                     return
                 if live_head:
                     fresh.pr_head_sha = live_head
                 fresh.merge_state = None  # mirrored for the old head — stale
                 if dismiss:
-                    await AcceptCardRepository(session).clear_approvals(card_id)
+                    await repo.clear_approvals(card_id)
                     fresh.auto_merge_armed_by = None
                     fresh.auto_merge_armed_at = None
                 notes.record(
                     fresh,
                     None,
-                    f"PR #{fresh.pr_number} 有新提交，之前看到的版本已过时"
+                    f"PR #{number} 有新提交，之前看到的版本已过时"
                     + ("；已有的批准一并作废" if dismiss else "")
                     + "，请重新查看后再采纳",
                 )
@@ -1854,7 +1865,7 @@ class AcceptService:
             card.pr_head_sha = live
             await self._session.flush()
 
-        verdict, who, protection, enforces = await self._pr_verdict(
+        verdict, who, protection, enforces, runs = await self._pr_verdict(
             card=card,
             topic=topic,
             owner=owner,
@@ -1874,7 +1885,15 @@ class AcceptService:
         pending: list[pr_signals.PendingNudge] = []
         deferred: Exception | None = None
         kinds = {r.kind for r in verdict.reasons}
-        if kinds & {"required_check_failed", "check_failed"}:
+        # 红检查按 runs 本身判，不按 verdict 的 reasons：一个和 main 冲突的 PR
+        # 的 verdict 是 dirty（冲突最优先），但它上面的红检查照样是芝士要修的
+        # 事 —— 三件事互不蕴含，谁都不许把别人吞掉（pr_signals 的规矩）。
+        has_red_check = any(
+            r.conclusion in ("failure", "timed_out", "cancelled", "action_required")
+            for r in runs
+            if r.status == "completed"
+        )
+        if has_red_check or kinds & {"required_check_failed", "check_failed"}:
             # 检查红了 → 事件到做活的 agent，带哪个检查红、日志怎么取。
             # `check_state` 是取失败详情（job 链接 + 日志片段）的那条路。
             try:
@@ -1982,11 +2001,10 @@ class AcceptService:
         绿必须绿在当前基线上（strict）。各自绿在旧基上的两个 PR 相加可以是红
         的。换基后 head 变化，下一轮从新 CI 重新等起；反复换基追不上 main 就
         叫人（上限 3，芝士推新提交时清零 —— `_repush_if_local_head_moved`）。"""
-        del topic  # _note_needs_human wants it; kept for signature symmetry
         if card.rebase_count >= 3:
             self._note_needs_human(
                 card=card,
-                topic=await self._topic_or_404(card.topic_id),
+                topic=topic,
                 reason=(
                     "分支反复落后于 main（已自动换基 3 次仍未赶上）——"
                     "main 移动太快或换基没生效，请人工处理"
