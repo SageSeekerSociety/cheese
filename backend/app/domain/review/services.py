@@ -155,6 +155,20 @@ def _stale_view_message(pr_number: int | None, action: str) -> str:
     return f"{where}有新提交，你看到的版本已过时 —— 请重新看过再{action}"
 
 
+def _never_shown_message(pr_number: int | None, action: str) -> str:
+    """「卡面还没显示过任何版本」—— PR 上的卡，`pr_head_sha` 还是空的。
+
+    这不是「没有版本可以过时」，而是**还不知道要合什么**：卡刚递上来、轮询器
+    还没镜像过 head，屏幕上那张卡从来没写出过一个 sha，所以点下去只能拿现读
+    GitHub 的 head 去合 —— 一个从未在任何界面上出现过的 commit。卡先刷新到当前
+    head（`_refresh_stale_card`），人重新看一眼，那一版才算被看过。"""
+    where = f"PR #{pr_number} " if pr_number is not None else ""
+    return (
+        f"{where}的卡还没显示过任何版本（刚递上来，还没读到 PR 的 head），"
+        f"卡已刷新 —— 请重新看过再{action}"
+    )
+
+
 #: How much of the failure detail rides in the nudge message. The detail is
 #: already bounded per job upstream (`github_pr._failure_detail`); this is the
 #: backstop that keeps a pathological payload from flooding the topic.
@@ -946,8 +960,9 @@ class AcceptService:
         项目要先开 `auto_merge_allowed`。解除给同一个人加布防人自己。
 
         布防等于提前采纳，所以它跟采纳一样要声明「我看的是哪一版」
-        （`_seen_head`）：屏幕上那版已经过时的话，布防就是替一段没人看过的代码
-        预先按下同意。**这跟合并态是不是 blocked 无关**——这个开关本来就只在
+        （`_seen_head_or_refresh`）：屏幕上那版已经过时、或者卡面还没显示过任何
+        版本的话，布防就是替一段没人看过的代码预先按下同意。
+        **这跟合并态是不是 blocked 无关**——这个开关本来就只在
         BLOCKED / BEHIND 出现，规则没满足正是布防的前提，拒的理由只有「旧 SHA」
         一个。解除布防不需要看过任何版本：撤销自己的同意什么都不会合并。
         """
@@ -967,7 +982,7 @@ class AcceptService:
         if decided_by not in allowed:
             raise ForbiddenError("只有这张卡的验收人能设置自动合并")
         if enabled:
-            self._seen_head(card, head_sha, "布防")
+            await self._seen_head_or_refresh(card, topic, head_sha, "布防")
             card.auto_merge_armed_by = decided_by
             card.auto_merge_armed_at = datetime.now(UTC)
         else:
@@ -1019,10 +1034,12 @@ class AcceptService:
         看过**的代码 (`advance_pr_card` 每 60s 跑一次，这个窗口天天都在)。
         `dismiss_stale` 保护不了它，那条只清批准票，而采纳本身就是一票。
 
-        None 与 None 相等，这是对的而不是漏洞：卡还没被镜像过 head（刚递的卡）
-        或者根本不骑 PR（平台 lane）时，卡面显示的就是「没有 sha」，没有哪一版
-        可以过时。反过来，卡上有 head 而请求什么都不带（老客户端）就是不相等，
-        照样拒——不带 sha 不是绕过这道闸的方式。
+        None 与 None 相等只在**没有 GitHub PR 的那条 lane 上**成立：卡面显示的
+        就是「没有 sha」，合的是 diff 视图展示的那条分支本身，没有哪一版可以过
+        时。骑着 PR 的卡不是这样——那种情况下「卡上没有 sha」意味着还不知道要合
+        哪个 commit，`_seen_head_or_refresh` 在进这里之前就把它拦下了。反过来，
+        卡上有 head 而请求什么都不带（老客户端）就是不相等，照样拒——不带 sha
+        不是绕过这道闸的方式。
 
         返回值是**请求带的**那个 sha，调用方拿它去调合并 API：GitHub 的 sha
         参数会在点击瞬间再拦一次漂移（409）。
@@ -1031,6 +1048,60 @@ class AcceptService:
         if seen != (card.pr_head_sha or None):
             raise ValidationError(_stale_view_message(card.pr_number, action))
         return seen
+
+    async def _seen_head_or_refresh(
+        self, card: AcceptCard, topic: Topic, head_sha: str | None, action: str
+    ) -> str | None:
+        """`_seen_head`，外加「PR 上的卡必须先有过一个展示出来的 head」这道闸。
+
+        骑着 PR 的卡在 `pr_head_sha` 还是空的时候（刚递上来、轮询器 60s 才跑一
+        次），卡面从未写出过任何 sha。此时放行等于让下游拿**现读 GitHub** 的
+        head 去合，而那个 commit 从来没有在任何界面上显示过——采纳、人工放行、
+        自动合布防三个入口都会走到那里，是同一个洞。
+
+        所以这不是「没有版本可以过时」，是「还不知道要合什么」：把当前 head 镜像
+        到卡上，让人重新看一眼，看过的那一版才谈得上被采纳。没有 PR 的本地 lane
+        不进这道闸——那条路合的就是 diff 视图展示的分支本身。
+        """
+        if card.pr_number is not None and not (card.pr_head_sha or "").strip():
+            await self._refresh_never_shown_card(card, topic, action)
+        return self._seen_head(card, head_sha, action)
+
+    async def _refresh_never_shown_card(
+        self, card: AcceptCard, topic: Topic, action: str
+    ) -> NoReturn:
+        """把 PR 当前的 head 镜像到一张从没显示过 sha 的卡上，然后要求重看。
+
+        读 head 是尽力而为：读不到就刷新一张没有 head 的卡（轮询器下一跳会补
+        上），但**绝不**因此放行——放行的前提是人看过某一版，读不到 head 恰恰
+        说明没有任何一版可看。"""
+        from app.domain.review import github_pr
+
+        number = card.pr_number
+        assert number is not None  # PR lane only; the caller checked
+        live = ""
+        creds, why = await self._app_credentials(topic)
+        if creds is None:
+            logger.warning("card %s: no credentials to read PR head (%s)", card.id, why)
+        else:
+            try:
+                owner, repo = await self._pr_repo_of(card, topic)
+                live = await github_pr.default_client().pull_request_head_sha(
+                    owner=owner, repo=repo, number=number, token=creds.read
+                )
+            except Exception as exc:  # noqa: BLE001 — refuse anyway; refresh with what we have
+                logger.warning("card %s: first-look head read failed: %s", card.id, exc)
+        await self._refresh_stale_card(
+            card,
+            topic,
+            live_head=live,
+            action=action,
+            headline=(
+                f"PR #{number} 的 head 还没镜像到卡上，卡面没显示过任何版本；"
+                "已刷新到当前 head"
+            ),
+        )
+        raise ValidationError(_never_shown_message(number, action))
 
     async def accept(
         self, *, card_id: uuid.UUID, decided_by: str, head_sha: str | None = None
@@ -1050,10 +1121,10 @@ class AcceptService:
         # decided_by is the caller's verified actor handle, never body-trusted.
         if decided_by != card.reviewer_handle:
             raise ForbiddenError("你不是这张验收卡指定的验收人，无权采纳")
-        # 合的是人看到的那个 commit：屏幕上那一版还在，才谈得上采纳它。
-        seen_head = self._seen_head(card, head_sha, "采纳")
-
         topic = await self._topic_or_404(card.topic_id)
+        # 合的是人看到的那个 commit：屏幕上那一版还在，才谈得上采纳它。
+        seen_head = await self._seen_head_or_refresh(card, topic, head_sha, "采纳")
+
         # 归档会连带终结这个话题上还没决议的卡 (review/archive.py)，所以这里通常
         # 走不到；留着是为了兜住"归档与采纳同时发生"的竞态。重复采纳本身由上面的
         # 卡状态闸门挡（一张卡只能 accepted 一次），不再依赖话题被归档。
@@ -1648,9 +1719,12 @@ class AcceptService:
                 card, topic, f"PR #{number} 已在 GitHub 被关闭但未合并"
             )
 
-        # 合的是人看到的那个 commit：浏览器渲染时卡面上的 head。渲染时卡面就
-        # 没有 sha 的（刚递、轮询器没来得及镜像）没有「人看到的另一个版本」，
-        # 以当前 head 为准。
+        # 合的是人看到的那个 commit：浏览器渲染时卡面上的 head。
+        #
+        # `seen_head` 为空只剩一种来路：点击时这张卡还**没有 PR**，PR 是刚才
+        # `_publish_pr_for_accept` 就地开的，它骑的正是人在 diff 视图里看的那条
+        # 分支。已经骑着 PR 的卡进不到这里没有 sha —— `_seen_head_or_refresh`
+        # 会先把 head 镜像上卡再要求重看。
         seen = seen_head or status.head_sha
         if status.head_sha != seen:
             await self._refresh_stale_card(card, topic, live_head=status.head_sha)
@@ -1759,7 +1833,13 @@ class AcceptService:
         return card
 
     async def _refresh_stale_card(
-        self, card: AcceptCard, topic: Topic, *, live_head: str
+        self,
+        card: AcceptCard,
+        topic: Topic,
+        *,
+        live_head: str,
+        action: str = "采纳",
+        headline: str | None = None,
     ) -> None:
         """新提交作废已有的采纳 (#718, dismiss_stale — GitHub 的「Dismiss stale
         pull request approvals」，这里默认开): the head moved out from under
@@ -1799,9 +1879,9 @@ class AcceptService:
                 notes.record(
                     fresh,
                     None,
-                    f"PR #{number} 有新提交，之前看到的版本已过时"
+                    (headline or f"PR #{number} 有新提交，之前看到的版本已过时")
                     + ("；已有的批准一并作废" if dismiss else "")
-                    + "，请重新查看后再采纳",
+                    + f"，请重新查看后再{action}",
                 )
                 await session.commit()
         except Exception:  # noqa: BLE001 — the raise this accompanies must fire
@@ -3184,8 +3264,9 @@ class AcceptService:
         过那个中间件），真正拦住芝士的是这里的 `_forbid_ai` 加路由上的登录校验。
 
         放行**放的是规则，不是眼睛**：它跟采纳一样要声明「我看的是哪一版」
-        （`_seen_head`）。签字的人要为一段具体的代码背书，屏幕上那版已经不在了
-        的时候，这个签名就落到了别的东西上。
+        （`_seen_head_or_refresh`）。签字的人要为一段具体的代码背书，屏幕上那版
+        已经不在了、或者卡面压根没显示过任何版本的时候，这个签名就落到了别的东西
+        上。
         """
         from app.domain.project.protection import branch_protection_of
 
@@ -3215,7 +3296,10 @@ class AcceptService:
                 "只有项目分支保护的人工放行名单里的人能放行"
                 "（未配置名单时是项目 owner / 组长）"
             )
-        seen_head = self._seen_head(card, head_sha, "放行")
+        # 骑着 PR 的卡在这里必然带着一个被展示过的 sha：卡面从没显示过 head 的
+        # （刚递、轮询器还没镜像）会被刷新并要求重看，而不是拿现读的 head 去合。
+        seen_head = await self._seen_head_or_refresh(card, topic, head_sha, "放行")
+        assert seen_head is not None  # PR lane; the guard above rules None out
 
         creds, why = await self._pr_poll_credentials(card, topic)
         if creds is None:
@@ -3225,13 +3309,6 @@ class AcceptService:
 
         owner, repo = await self._pr_repo_of(card, topic)
         client = github_pr.default_client()
-        if seen_head is None:
-            # 卡面渲染时就没有 sha（轮询器还没镜像过）—— 没有哪一版被看过，
-            # 以今天的 head 为准，放行合的还是它。
-            seen_head = await client.pull_request_head_sha(
-                owner=owner, repo=repo, number=card.pr_number, token=creds.read
-            )
-            card.pr_head_sha = seen_head
         # 留痕用，不是门禁：读一次「此刻检查是什么状态」，读不到也照样放行。
         state: str | None = None
         try:
@@ -3262,7 +3339,7 @@ class AcceptService:
             sha=seen_head,
         )
         if result.stale_head:
-            await self._refresh_stale_card(card, topic, live_head="")
+            await self._refresh_stale_card(card, topic, live_head="", action="放行")
             raise ValidationError(
                 f"PR #{number} 的 head 在放行瞬间变了（GitHub 409），卡已刷新 —— "
                 "请重新看过再放行"

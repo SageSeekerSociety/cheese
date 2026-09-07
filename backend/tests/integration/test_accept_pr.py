@@ -529,9 +529,21 @@ def app_world(client, monkeypatch):
         github_pr.set_default_client(None)
 
 
-def _give_card_a_pr(client, app_world, topic_id: str, card_id: str, number: int = 7):
+def _give_card_a_pr(
+    client,
+    app_world,
+    topic_id: str,
+    card_id: str,
+    number: int = 7,
+    *,
+    mirrored: bool = True,
+):
     """把卡做成「递卡时 PR 就已经开好了」的样子 —— 生产上的常态（`pr_publish`
-    在递卡时 fire-and-forget 开 PR）。返回 PR 的 head sha。"""
+    在递卡时 fire-and-forget 开 PR）。返回 PR 的 head sha。
+
+    `mirrored=True` 是轮询器已经跑过一跳、head 写在卡上、卡面因此显示得出一个
+    sha 的常态。`mirrored=False` 是刚递上来的那 60 秒：PR 有了，卡面还是空的，
+    人没有任何一版可看。"""
     branch = f"topic/{_uuid.UUID(topic_id).hex[:8]}"
     head_sha = app_world["fake"].seed_pr(number, head=branch)
 
@@ -543,6 +555,8 @@ def _give_card_a_pr(client, app_world, topic_id: str, card_id: str, number: int 
             assert card is not None
             card.pr_number = number
             card.pr_url = f"https://github.com/{REPO}/pull/{number}"
+            if mirrored:
+                card.pr_head_sha = head_sha
             await s.commit()
 
     asyncio.run(_do())
@@ -550,13 +564,18 @@ def _give_card_a_pr(client, app_world, topic_id: str, card_id: str, number: int 
 
 
 def _ready_card(
-    client, app_world, *, reviewer: str = "alice", number: int = 7
+    client,
+    app_world,
+    *,
+    reviewer: str = "alice",
+    number: int = 7,
+    mirrored: bool = True,
 ) -> tuple[str, str, str, int, str]:
     """(pid, tid, cid, number, head_sha): a pending card riding a PR."""
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid, reviewer)
-    head_sha = _give_card_a_pr(client, app_world, tid, cid, number)
+    head_sha = _give_card_a_pr(client, app_world, tid, cid, number, mirrored=mirrored)
     return pid, tid, cid, number, head_sha
 
 
@@ -829,6 +848,90 @@ def test_disarming_never_needs_a_fresh_look(client, app_world):
 
     assert r.status_code == 200, r.text
     assert _cards(client, tid)[0]["auto_merge"]["armed_by"] is None
+
+
+# ---- 卡面从没显示过任何版本（刚递上来的 PR 卡） ---------------------------
+#
+# 上面那一节的前提是「卡面显示过某个 sha」。刚递上来的卡还没有：轮询器 60s 才跑
+# 一跳，`pr_head_sha` 在那之前一直是空的，前端因此送上来一个空的 head。
+# 「卡上没有 sha」在 PR 这条 lane 上不是「没有版本可以过时」，而是**还不知道要合
+# 什么** —— 放行等于拿现读 GitHub 的 head 去合一个从未在任何界面上出现过的
+# commit。三个入口都是这样，所以三个入口都要先把 head 镜像上卡、让人重新看。
+
+
+def _never_mirrored(client, app_world, *, number: int = 7):
+    """(pid, tid, cid, number, live)：PR 开好了，轮询器一跳都还没跑过。"""
+    fake = app_world["fake"]
+    pid, tid, cid, number, live = _ready_card(
+        client, app_world, number=number, mirrored=False
+    )
+    fake.check_state_by_sha[live] = ("success", "全绿")
+    assert _cards(client, tid)[0]["pr_head_sha"] is None  # 卡面上没有任何一版
+    assert _cards(client, tid)[0]["merge_state"]["head_sha"] is None
+    return pid, tid, cid, number, live
+
+
+def test_accepting_a_card_that_never_showed_a_version_refreshes_instead(
+    client, app_world
+):
+    """刚递的卡上点采纳：不合，把当前 head 镜像上卡并要求重看。
+
+    合下去的会是 GitHub 现在的 head，而它从来没有在验收人的屏幕上出现过 ——
+    「我看过的这一版可以」这句话根本没有主语。"""
+    fake = app_world["fake"]
+    _pid, tid, cid, _number, live = _never_mirrored(client, app_world)
+
+    r = _accept(client, cid)  # 卡面没 sha ⇒ 请求也带不出 sha
+
+    assert r.status_code == 422, r.text
+    assert fake.merge_calls == []
+    card = _cards(client, tid)[0]
+    assert card["status"] == "pending"
+    assert card["pr_head_sha"] == live  # 卡已经刷新到当前 head
+    assert "重新看过" in r.json()["message"]
+
+    # 重新看过（这下卡面有 sha 了）再点，才合，合的就是那一版。
+    assert _accept(client, cid).status_code == 200
+    assert [m["sha"] for m in fake.merge_calls] == [live]
+
+
+def test_force_merging_a_card_that_never_showed_a_version_refreshes_instead(
+    client, app_world
+):
+    """人工放行的同一个洞：签字的人手上得先有一段具体的代码。"""
+    fake = app_world["fake"]
+    pid, tid, cid, _number, live = _never_mirrored(client, app_world)
+    _protect(client, pid, required_checks=[{"name": "nope"}])  # 正门关着
+
+    r = _merge_anyway(client, cid, "alice", reason="CI 挂了")
+
+    assert r.status_code == 422, r.text
+    assert fake.merge_calls == []
+    assert _cards(client, tid)[0]["pr_head_sha"] == live
+    assert "重新看过" in r.json()["message"]
+
+    r = _merge_anyway(client, cid, "alice", reason="CI 挂了")
+    assert r.status_code == 200, r.text
+    assert [m["sha"] for m in fake.merge_calls] == [live]
+
+
+def test_arming_auto_merge_on_a_card_that_never_showed_a_version_refreshes_instead(
+    client, app_world
+):
+    """布防的同一个洞：布防是提前采纳，机器晚一点合的还是这个没人看过的
+    commit。"""
+    pid, tid, cid, _number, live = _never_mirrored(client, app_world)
+    _protect(client, pid, auto_merge_allowed=True, required_checks=[{"name": "nope"}])
+
+    r = _arm(client, cid, "alice")
+
+    assert r.status_code == 422, r.text
+    assert _cards(client, tid)[0]["auto_merge"]["armed_by"] is None
+    assert _cards(client, tid)[0]["pr_head_sha"] == live
+    assert "重新看过" in r.json()["message"]
+
+    assert _arm(client, cid, "alice").status_code == 200
+    assert _cards(client, tid)[0]["auto_merge"]["armed_by"] == "alice"
 
 
 def test_head_moved_since_the_reviewer_looked_refreshes_instead_of_merging(
