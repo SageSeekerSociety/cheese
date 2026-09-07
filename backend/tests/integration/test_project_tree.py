@@ -74,7 +74,7 @@ def test_upgrade_block_to_topic(client):
 
     # The ROOM is what runs a turn: a thread is a 分身 in the room's session and
     # has no session of its own, so the thread starts with nothing said in it.
-    msgs = _messages(client, new_topic["id"])
+    msgs = _card_messages(client, topic["id"], new_topic["id"])
     assert not msgs, f"这条活自己跑了一轮——它没有会话，这是在起容器：{msgs}"
     room_msgs = _messages(client, topic["id"])
     assert room_msgs and room_msgs[-1]["author_type"] == "ai"
@@ -89,9 +89,16 @@ def test_upgrade_block_to_topic(client):
     assert len(_messages(client, topic["id"])) == len(room_msgs)
 
 
-def _messages(client, place_id: str) -> list[dict]:
-    blocks = client.get(f"/topics/{place_id}/blocks").json()["data"]["data"]
+def _messages(client, room_id: str) -> list[dict]:
+    blocks = client.get(f"/topics/{room_id}/blocks").json()["data"]["data"]
     return [b for b in blocks if b["kind"] == "message"]
+
+
+def _card_messages(client, room_id: str, task_id: str) -> list[dict]:
+    """一张卡上说过的话 —— 经过它所在的房间读，卡不是地点。"""
+    r = client.get(f"/topics/{room_id}/tasks/{task_id}")
+    assert r.status_code == 200, r.text
+    return [b for b in r.json()["data"]["blocks"] if b["kind"] == "message"]
 
 
 def _record_screens(stub_hooks) -> list[str]:
@@ -163,20 +170,21 @@ def test_a_room_names_its_own_thread(client):
         "给一条活起名字改掉了整个房间的名字"
     )
 
-    # 人从侧栏改名走的是活自己的地址（浏览器带的是人的凭证，不是按地点签的
-    # per-turn token，所以够得着）——改的也只是这条活。
-    renamed = client.post(f"/topics/{thread['id']}/title", json={"title": "导入"})
+    # 人改名走的是同一条路 —— 活没有第二个地址，所以人和芝士说的是同一句话。
+    renamed = client.post(
+        f"/topics/{room['id']}/tasks/{thread['id']}/title", json={"title": "导入"}
+    )
     assert renamed.status_code == 200
     assert renamed.json()["data"]["title"] == "导入"
     assert client.get(f"/topics/{room['id']}").json()["data"]["title"] == "讨论"
 
-    # 一条活自己起不了名字，别的房间的活也够不着。
+    # 拿活的 id 当房间的地址走不通：那个 id 名下没有地点。
     assert (
         client.post(
             f"/topics/{thread['id']}/tasks/{thread['id']}/title",
             json={"title": "自己来"},
         ).status_code
-        == 422
+        == 404
     )
     assert (
         client.post(
@@ -322,7 +330,8 @@ def test_split_records_the_brief_on_the_card_and_starts_nobody(client):
     # would freeze at dispatch and never be corrected.
     assert sub["brief"] == "把 10 万条借阅日志去重、去空值，产出干净数据集"
     assert sub["conclusion"] is None
-    assert client.get(f"/topics/{sub['id']}/doc").json()["data"] is None
+    # 活没有文档地址可言 —— 它不是地点。
+    assert client.get(f"/topics/{sub['id']}/doc").status_code == 404
 
     # 那张卡: the ROOM's main line says a piece of work left, and names which.
     room_blocks = client.get(f"/topics/{topic['id']}/blocks").json()["data"]["data"]
@@ -334,8 +343,7 @@ def test_split_records_the_brief_on_the_card_and_starts_nobody(client):
     # 没人做，也没有套话开场白。The platform raises nothing on its own, and it
     # does not write an opening in 芝士's voice either — 语义内容必须由 AI 生成.
     assert sub["subagent_id"] is None
-    blocks = client.get(f"/topics/{sub['id']}/blocks").json()["data"]["data"]
-    assert [b for b in blocks if b["kind"] == "message"] == []
+    assert _card_messages(client, topic["id"], sub["id"]) == []
 
 
 def test_split_without_a_brief_leaves_the_brief_empty(client):
@@ -351,7 +359,7 @@ def test_split_without_a_brief_leaves_the_brief_empty(client):
     ]
     _wait_work_idle()
     assert sub["brief"] == ""
-    assert client.get(f"/topics/{sub['id']}/doc").json()["data"] is None
+    assert client.get(f"/topics/{sub['id']}/doc").status_code == 404
 
 
 def test_split_and_conclude(client):

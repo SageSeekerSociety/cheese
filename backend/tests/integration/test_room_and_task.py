@@ -56,6 +56,13 @@ def _status(client, topic_id: str) -> str:
     return client.get(f"/topics/{topic_id}").json()["data"]["status"]
 
 
+def _card_status(client, room_id: str, task_id: str) -> str:
+    """一张卡的状态 —— 经过它所在的房间读，因为卡不是地点。"""
+    r = client.get(f"/topics/{room_id}/tasks/{task_id}")
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["status"]
+
+
 def test_work_inside_a_room_is_a_thread_not_a_nested_room(client):
     project_id = _project(client)
     room_id = _room(client, project_id)
@@ -92,7 +99,7 @@ def test_accepting_the_batch_leaves_the_room_and_its_work_open(client):
 
     _accept(client, room_id)
 
-    assert _status(client, task["id"]) == "open"
+    assert _card_status(client, room_id, task["id"]) == "open"
     assert _status(client, room_id) == "active"
 
 
@@ -105,10 +112,10 @@ def test_a_room_takes_a_second_task_after_the_first_is_accepted(client):
     first = _task(client, project_id, room_id, "修登录")
     _accept(client, room_id)
     second = _task(client, project_id, room_id, "加导出")
-    assert _status(client, first["id"]) == "open"
+    assert _card_status(client, room_id, first["id"]) == "open"
 
     assert second["room_id"] == room_id
-    assert _status(client, second["id"]) == "open"
+    assert _card_status(client, room_id, second["id"]) == "open"
     assert _status(client, room_id) == "active"
 
 
@@ -127,4 +134,4 @@ def test_archiving_the_room_still_takes_its_tasks(client):
     assert r.status_code == 200
 
     assert _status(client, room_id) == "archived"
-    assert _status(client, task["id"]) == "closed"
+    assert _card_status(client, room_id, task["id"]) == "closed"

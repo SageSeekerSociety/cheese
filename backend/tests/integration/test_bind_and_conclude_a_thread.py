@@ -151,8 +151,12 @@ def test_an_outsider_cannot_bind(client):
     assert r.status_code == 403
 
 
-def test_a_thread_cannot_bind_or_conclude_itself(client):
-    """认领和收卡都是房间的事:活自己说了不算,它就是被评价的那一方。"""
+def test_a_card_cannot_bind_or_conclude_itself(client):
+    """认领和收卡都是房间的事:活自己说了不算,它就是被评价的那一方。
+
+    这两条路的第一段是房间的地址,而一张卡不是地点,所以它连入口都走不到 —— 404,
+    不是一条判出来的拒绝。
+    """
     _, room_id = _room(client)
     task = _split(client, room_id)
 
@@ -161,7 +165,7 @@ def test_a_thread_cannot_bind_or_conclude_itself(client):
         (f"/topics/{task['id']}/tasks/{task['id']}/conclude", {"conclusion": "做完了"}),
     ):
         r = client.post(path, json=body, headers=_bearer("alice"))
-        assert r.status_code in (403, 422), (path, r.status_code, r.text)
+        assert r.status_code == 404, (path, r.status_code, r.text)
 
 
 def test_the_room_closing_a_card_is_what_ends_the_work(client):
@@ -313,8 +317,8 @@ def test_a_worker_reporting_in_is_not_the_work_finishing(client, stub_hooks):
     _pump(client, room_id)
 
     blocks = client.get(
-        f"/topics/{task['id']}/blocks", headers=_bearer("alice")
-    ).json()["data"]["data"]
+        f"/topics/{room_id}/tasks/{task['id']}", headers=_bearer("alice")
+    ).json()["data"]["blocks"]
     assert any("我这边跑完了" in b["content"] for b in blocks), (
         "分身的收尾话没落到这条活上"
     )
