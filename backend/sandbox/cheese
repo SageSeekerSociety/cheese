@@ -635,10 +635,18 @@ def build_parser() -> argparse.ArgumentParser:
             "  · 同一个**文件**被两条活声明 → 拒绝(这是唯一没有别的防线的情况)\n"
             "  · **目录**重叠 → 只警告(两条活都在 backend/app/domain/review/ 底下很正常)\n\n"
             "是追加,不是替换:活干着干着会碰到没预料到的文件,再 claim 一次就行。\n"
-            "简报里写路径没用——简报写完就改不了,而声明必然要长。"
+            "简报里写路径没用——简报写完就改不了,而声明必然要长。\n\n"
+            "不带 --task 就是房间自己声明:照样告诉你撞了谁,但**不记下来**——声明记在\n"
+            "卡上,房间没有卡。替一个分身声明就带上 --task <task id>,那一条会被记住,\n"
+            "别的活才看得见它。"
         ),
     )
     pclaim.add_argument("paths", nargs="+", help="路径,结尾带 / 表示目录")
+    pclaim.add_argument(
+        "--task",
+        default=None,
+        help="替这条活(而不是房间自己)声明,填 task id——只有这样才会被记下来",
+    )
 
     plock = sub.add_parser(
         "lock",
@@ -803,10 +811,8 @@ def build_parser() -> argparse.ArgumentParser:
             "开 PR。所以派出去的活不是各递各的卡——分身干完把结论交回来,你用\n"
             "`cheese conclude-task` 替它落一条,攒够了整个房间递一次。\n"
             "\n"
-            "配了质量闸门的项目,递卡后平台会自动跑一遍检查,红了卡片会被打回、"
-            "根本到不了验收人手上。**递卡前先自己把检查跑绿**,省一个来回。\n"
-            "闸门跑在另一个容器里,只和你共享 /work,$HOME 不一样——所以「我这儿是绿的」"
-            "不等于闸门那儿是绿的。\n"
+            "检查第一次真跑起来是在 PR 的 Actions 上,那已经是采纳之后的事了。"
+            "所以**递卡前自己把测试跑绿**,跑不动的照实说是环境限制。\n"
             "\n"
             "**--subject 就是这次改动留在 git 历史里的那一行**,必填。递卡会开 PR,采纳会把\n"
             "整个分支压成一个提交,标题用的就是它。不给就递不出去——后端会当场打回并告诉你\n"
@@ -1046,14 +1052,24 @@ def main() -> None:
             sys.exit(_run_check(cmd, a.timeout))
     elif a.cmd == "claim":
         topic = _need("CHEESE_TOPIC", TOPIC)
-        r = _call("POST", f"/topics/{topic}/claim", {"paths": a.paths})["data"]
+        # 替一条活声明时走 /tasks/<id>/claim:那条会被记下来,房间自己那条只查不记
+        # (声明记在卡上,房间没有卡)。两条都走房间的地址——这一轮的 token 是按房间
+        # 签的,活没有自己的地址。
+        path = (
+            f"/topics/{topic}/tasks/{a.task}/claim"
+            if a.task
+            else f"/topics/{topic}/claim"
+        )
+        r = _call("POST", path, {"paths": a.paths})["data"]
         if r.get("refusals"):
             print("这些路径没能声明:")
             for line in r["refusals"]:
                 print(f"  ✗ {line}")
             print("把范围缩窄一点,或者等对方先做完。")
-        else:
+        elif a.task:
             print(f"已声明:{'、'.join(r.get('claimed') or a.paths)}")
+        else:
+            print(f"没撞上别人:{'、'.join(a.paths)}(房间自己的声明不记录)")
         for line in r.get("warnings") or []:
             print(f"  ⚠ {line}")
     elif a.cmd == "lock":

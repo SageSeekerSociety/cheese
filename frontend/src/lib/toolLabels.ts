@@ -4,12 +4,10 @@
 
 export const TOOL_LABELS: Record<string, string> = {
   // cheese platform actions
-  create_subtopic: '派出一条支线',
   update_doc: '更新文档',
   remember: '记入项目记忆',
   notify: '发送通知',
   request_accept: '提交验收卡',
-  return_conclusion: '回传结论',
   pin_milestone: '添加里程碑',
   write_file: '写入文件',
   record_decision: '记录决策',
@@ -50,12 +48,10 @@ const PREVIEW_ARG: Record<string, string> = {
   NotebookEdit: 'notebook_path',
   Skill: 'skill',
   ToolSearch: 'query',
-  create_subtopic: 'title',
   update_doc: 'content',
   remember: 'fact',
   notify: 'title',
   request_accept: 'reviewer_handle',
-  return_conclusion: 'conclusion',
   pin_milestone: 'title',
   write_file: 'path',
   record_decision: 'decision',
@@ -73,12 +69,10 @@ export function toolLabel(name: string): string {
 // The cheese platform tools by their SHORT (mcp__cheese__-stripped) names, as
 // they arrive in live tool events and persisted meta.tool.
 const PLATFORM_TOOLS = new Set([
-  'create_subtopic',
   'update_doc',
   'remember',
   'notify',
   'request_accept',
-  'return_conclusion',
   'pin_milestone',
   'write_file',
   'record_decision',

@@ -47,9 +47,6 @@ export interface Topic {
   // 哪个 AI 队友在这个话题里工作。null = 跟着项目的默认走（不是「没有」），
   // 所以换了项目默认，这个话题也跟着换。
   agent_instance_id?: string | null
-  // 只有 kind='thread' 的地点有：这件活当前骑的那张验收卡 / PR。房间的交付是
-  // 整条分支一张卡，不挂在这里。
-  card?: ThreadCard | null
   // 这个房间在看板那套词里处在哪一列。侧栏房间行的色点读它。
   //
   // 和上面 `running` / `awaits_me` / `i_participate` 一样是「只有 list/get 话题时
@@ -148,14 +145,14 @@ export interface RoomTask {
   room_id: string
   title: string
   status: string
-  // 它此刻占没占着这个房间四个槽位里的一个，和从什么时候开始等的。和 `status`
-  // 是两个问题：四条都 open 的房间可能三条在跑一条排队，也可能全都闲着。
-  residency?: 'running' | 'idle'
-  queued_at?: string | null
   owner_handle?: string | null
   created_by?: string | null
-  agent_instance_id?: string | null
   branch_name?: string | null
+  // 派它出去时说的那份要求，和分身交回来的那句话。两样都住在卡上：简报以前存在
+  // 「活自己的实况文档」里，而做活的分身拿的是房间的 token，够不着那个地址，
+  // 于是那份文档从播种那一刻起就再没人改过。
+  brief?: string
+  conclusion?: string | null
   // 它干在哪一批上。一棵树 = 一个分支 = 一个 PR = 一批活，所以这是「我这条活最后
   // 会从哪个 PR 出去」的答案，也是总览把活和 PR 对上的唯一依据。
   tree_id?: string | null

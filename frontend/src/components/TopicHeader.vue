@@ -21,14 +21,11 @@ import { useDisplay } from 'vuetify'
 import { getProjectUsage, getTopicUsage } from '@/api'
 import TopicComputePicker from '@/components/TopicComputePicker.vue'
 import TopicMembers from '@/components/TopicMembers.vue'
-import { isThread } from '@/lib/place'
 import { topicPhaseBadge, topicShortId, topicStateBadge } from '@/lib/topicState'
 import { costLabel, costNote, fmtNum } from '@/lib/usageFormat'
 
 const props = defineProps<{
   topic: Topic
-  /** 打开的是一条支线时，它所在的房间——头部据此说「你在哪」。房间自己打开时为 null。 */
-  room?: Topic | null
   /** 话题此刻处在哪一段 — 施工中 / 待验收 / 交付中 / 已采纳, computed above this
    * component because it folds together the topic's status, its live turn and
    * its accept card. Absent (私聊 / 项目本体) falls back to the status alone. */
@@ -56,11 +53,6 @@ const state = computed(() => (props.phase ? topicPhaseBadge(props.phase) : topic
 const shortId = computed(() => topicShortId(props.topic.id))
 // 项目本体 is not a work topic — it has no id badge and no roster.
 const isWorkTopic = computed(() => props.topic.kind !== 'root')
-// 打开的是房间里的一条支线。两个控件对它没有意义，而且各错各的：
-// 名册（支线没有自己的名册，`/members` 对它 404，房间那份也不是它的），
-// 算力（首轮就锁死在房间上，支线改不了）。渲染出来只会是空的或者答非所问。
-const isThreadPlace = computed(() => isThread(props.topic))
-
 // ---- 用量 popover (was the 资源 drawer) ----
 const usageOpen = ref(false)
 const usageLoading = ref(false)
@@ -107,19 +99,6 @@ watch(
        所以这里不再自己画一个。 -->
   <Teleport to="#app-bar-slot" :disabled="mdAndUp">
     <div class="topic-header" :class="{ 'topic-header--bar': !mdAndUp }">
-      <!-- 支线在侧栏里没有行，所以头部是唯一能说明「你在哪个房间」的地方；
-           点它回房间，也是从一条支线走回去的唯一入口。 -->
-      <button
-        v-if="isThreadPlace && room"
-        type="button"
-        class="topic-header__room t-meta"
-        :title="`回到 ${room.title}`"
-        @click="emit('open-topic', room.id)"
-      >
-        <v-icon size="13">mdi-call-split</v-icon>
-        <span class="topic-header__room-name">{{ room.title }}</span>
-        <span class="topic-header__room-sep">/</span>
-      </button>
       <!-- 手机上标题独占一行，编号和状态退到下面那条小字：横着平铺的话，标题在
          390px 上只剩七个字，而它才是你要看的那个。桌面上宽度够，一行摆开更快读。 -->
       <div class="topic-header__text">
@@ -145,12 +124,12 @@ watch(
       <!-- 算力：这个话题的轮次在哪儿跑。它以前住在输入区的动作行里，可那一行是
            「这条消息」的动作，而算力发完第一条就锁死了——是话题的属性，属于这一行。
            手机上这一行没有它的位置，它浮在对话上方（TopicChatColumn）。 -->
-      <TopicComputePicker v-if="mdAndUp && isWorkTopic && !isThreadPlace" :key="topic.id" :topic-id="topic.id" />
+      <TopicComputePicker v-if="mdAndUp && isWorkTopic" :key="topic.id" :topic-id="topic.id" />
 
       <!-- 群聊感 (fusion-design §3): the roster, as a normal child of this row.
            芝士也在这份名册里（带 Agent 标），换 AI 队友就在它那一行上。 -->
       <TopicMembers
-        v-if="isWorkTopic && !isThreadPlace"
+        v-if="isWorkTopic"
         :topic-id="topic.id"
         :project-id="topic.project_id"
         :project-members="members"
@@ -176,7 +155,7 @@ watch(
           <div v-else class="pa-3">
             <div
               v-for="row in [
-                { label: isThreadPlace ? '这件活' : '本话题', u: topicUsage },
+                { label: '本话题', u: topicUsage },
                 { label: '全项目', u: projectUsage },
               ]"
               :key="row.label"
@@ -249,30 +228,6 @@ watch(
   padding: 0;
   background: none;
   border-bottom: 0;
-}
-/* 房间名坐在标题左边，是「你在哪」而不是标题的一部分——所以它压到 --muted，
-   宽度也让给标题（房间名可以截，正在看的那件活的标题不该截）。 */
-.topic-header__room {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: 30%;
-  color: var(--muted);
-  cursor: pointer;
-}
-.topic-header__room:hover {
-  color: var(--ink);
-}
-.topic-header__room-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.topic-header__room-sep {
-  flex: none;
-  color: var(--faint);
 }
 .topic-header__text {
   display: flex;

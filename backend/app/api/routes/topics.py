@@ -58,7 +58,7 @@ from app.domain.review import archive
 from app.domain.review.models import AcceptCard
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task import presentation
-from app.domain.room_task.models import LockKind, Task
+from app.domain.room_task.models import LockKind
 from app.domain.room_task.place import Place
 from app.domain.room_task.repositories import TaskRepository
 from app.domain.room_task.schemas import TaskOut

@@ -42,7 +42,6 @@ function task(over: Partial<RoomTask> = {}): RoomTask {
     room_id: 'room-1',
     title: '查一下分页接口',
     status: 'open',
-    residency: 'idle',
     owner_handle: 'ligan',
     created_at: '2026-08-23T01:00:00Z',
     updated_at: '2026-08-23T01:00:00Z',

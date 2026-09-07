@@ -249,23 +249,19 @@ def _persisted_eids(blocks: list[Block]) -> set[str]:
 # plus a short preview of its most telling argument. Stored in the event block as
 # "verb\npreview" (preview omitted when empty).
 _TOOL_VERB = {
-    "create_subtopic": "派出一条支线",
     "update_doc": "更新文档",
     "remember": "记入记忆",
     "notify": "发送通知",
     "request_accept": "递出验收卡",
-    "return_conclusion": "回流结论",
     "pin_milestone": "钉里程碑",
     "write_file": "写文件",
     "record_decision": "记录决策",
 }
 _TOOL_ARG = {
-    "create_subtopic": "title",
     "update_doc": "content",
     "remember": "fact",
     "notify": "title",
     "request_accept": "reviewer_handle",
-    "return_conclusion": "conclusion",
     "pin_milestone": "title",
     "write_file": "path",
     "record_decision": "decision",

@@ -151,39 +151,15 @@ function inferKind(t: Topic): string {
   return t.parent_id ? 'topic' : 'root'
 }
 
-// 边栏画的是「房间 → 房间里派出去的活」这棵树。活是 `tasks` 表的一行，不是话题，
-// 但它照样要看得见——一件活看不见，房间就会照着自己那份清单把它又做一遍。
-// 「分身」是改造前的残留标签，现在永远取不到了。
+// 边栏画的是房间。房间里派出去的活是**卡**，不是地点，看得见的地方是那个房间的
+// 看板（总览那一格）和项目级那块板 —— 一行一个房间，一件活不再占一行。
 const KIND_BADGE: Record<string, string> = {
   root: '全局',
   topic: '话题',
-  thread: '任务',
 }
 
 function kindLabel(t: Topic): string {
   return KIND_BADGE[inferKind(t)] ?? '话题'
-}
-
-/** 这一行是一件活，不是一个房间。 */
-function isThreadRow(t: Topic): boolean {
-  return t.kind === 'thread'
-}
-
-/** 一件活现在骑在哪个 PR 上 —— 「交付」这一段在树上唯一看得见的东西。 */
-function prLabel(t: Topic): string | null {
-  const n = t.card?.pr_number
-  return typeof n === 'number' ? `#${n}` : null
-}
-
-/** 一件活的交付走到哪了。没有卡 = 还在做，什么都不显示。 */
-function cardLabel(t: Topic): string | null {
-  const status = t.card?.status
-  if (!status) return null
-  if (status === 'pending') return '待验收'
-  if (status === 'pr_open') return '等 CI'
-  if (status === 'accepted') return '已采纳'
-  if (status === 'rejected') return '被打回'
-  return null
 }
 
 // Status: only show when notable (archived / draft); active is implicit. Shown
@@ -191,9 +167,6 @@ function cardLabel(t: Topic): string | null {
 function statusBadge(status: string): string | null {
   if (status === 'archived') return '已归档'
   if (status === 'draft') return '草稿'
-  // 支线只有 open / closed。收工了要说出来，不然一条做完的活在树上和在跑的
-  // 长得一模一样。
-  if (status === 'closed') return '已完成'
   return null
 }
 
@@ -242,14 +215,8 @@ const tree = computed<TreeRow[]>(() => {
 // the active list (their work isn't done).
 //
 // 但**活跟着它的房间走**：活只有 open/closed，没有「已归档」这个状态，所以房间
-// 归档时活这一行自己一个字都不变。不显式把它拿掉，房间那一行走了、挂在它下面的
-// 活却全留在活跃列表里——而拍平的树是按 depth 认父子的（见 lib/topicTree 的
-// buildNodes），于是这些活会挂到前面最近的那个房间下面，画进一个跟它毫无关系的
-// 房间，或者干脆摊在顶层。同理，房间不在这份列表里（私聊里派出去的活、房间已经
-// 不在了）的活也没有能挂的地方。要看归档房间里的活，点进那个房间。
-//
-// 子话题不一样，它有自己的归档状态：父话题归了、它还活着，那份活儿没做完，照旧
-// 留在活跃列表里——只是父行没了，深度提到 0，免得被画到隔壁那棵树底下。
+// 子话题有自己的归档状态：父话题归了、它还活着，那份活儿没做完，照旧留在活跃
+// 列表里——只是父行没了，深度提到 0，免得被画到隔壁那棵树底下。
 const activeTree = computed<TreeRow[]>(() => {
   // 深度按**留下来的那个父行**重新算，不沿用原树的：拍平的树里深度就是父子关系
   // 本身，中间少一层就得少一层缩进，否则缩进指着一行不存在的父行。
@@ -259,8 +226,6 @@ const activeTree = computed<TreeRow[]>(() => {
     if (row.topic.status === 'archived') continue
     const parentId = row.topic.parent_id
     const parentDepth = parentId ? depths.get(parentId) : undefined
-    // 房间那一行不在了，活就没有能挂的地方。
-    if (parentDepth === undefined && isThreadRow(row.topic)) continue
     const depth = parentDepth === undefined ? 0 : parentDepth + 1
     depths.set(row.topic.id, depth)
     rows.push(depth === row.depth ? row : { topic: row.topic, depth })
@@ -373,11 +338,7 @@ function awaitsOf(id: string): boolean {
 // 两组的**行是同一种形态**：同一段模板渲染，所以树形缩进、竖向引导线、16px 状态
 // 槽、未读角标、hover 的 ⋯ 一个不少。折叠组只是把一批行收起来，不是换一种行。
 //
-// 一件活不参与这个判定：它身上根本没有 `i_participate`（那是房间的字段，见
-// lib/place.ts 里合成地点时给了哪些），而判定把"字段缺失"当相关——于是**任何派
-// 过活的房间都会被它自己的活顶进「我参与的」**，哪怕后端明说这个房间与我无关。
-// 相关不相关由房间回答，活跟着它的房间走：房间上去了，它派出去的活跟着上去。
-const grouped = computed(() => partitionByRelevance(activeTree.value, (t) => !isThreadRow(t) && isMyTopic(t)))
+const grouped = computed(() => partitionByRelevance(activeTree.value, isMyTopic))
 
 function rowsOf(rows: readonly FlatRow<Topic>[]) {
   return visibleRows(rows, {
@@ -732,12 +693,6 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                     <span v-else-if="row.topic.running" class="row-slot">
                       <span class="running-dot" title="芝士正在这个话题里工作" />
                     </span>
-                    <!-- 一件活不是一个地方。缩进说的是「它在这个房间里」，这颗
-                         记号说的是「这一行是一件活」——两者缺一，树上就分不出
-                         「房间」和「房间里在做的事」。 -->
-                    <span v-else-if="isThreadRow(row.topic)" class="row-slot">
-                      <v-icon size="13" class="thread-mark">mdi-call-split</v-icon>
-                    </span>
                     <span v-else class="row-slot" />
                   </template>
                   <v-list-item-title class="d-flex align-center topic-title">
@@ -782,14 +737,6 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                       >
                         <span class="status-dot status-dot--warn" />
                         {{ statusBadge(row.topic.status) }}
-                      </span>
-                      <!-- 交付：这件活骑在哪个 PR 上，走到哪一步了。房间的交付是整条
-                           分支一张卡，不在树上；一件活的卡才挂在它自己这一行。 -->
-                      <span v-if="prLabel(row.topic)" class="thread-pr ms-2" :title="cardLabel(row.topic) ?? '已开 PR'">
-                        {{ prLabel(row.topic) }}
-                      </span>
-                      <span v-else-if="cardLabel(row.topic)" class="thread-card ms-2">
-                        {{ cardLabel(row.topic) }}
                       </span>
                     </template>
                   </v-list-item-title>
@@ -1161,17 +1108,6 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   color: var(--muted) !important;
 }
 
-/* 一件活骑的 PR。数字本身就是它要说的全部，所以是最轻的一档字，不抢标题。 */
-.thread-pr,
-.thread-card {
-  flex: none;
-  font-size: 12px;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-.thread-mark {
-  color: var(--faint);
-}
 /* 「该谁动」的色点。颜色和形状由 `lib/board.ts` 一处给出（内联样式），这里只管
    尺寸和位置 —— scoped 样式进不了别的组件，颜色写在这儿就意味着看板和房间总览
    各有一份，而这颗点存在的全部意义就是三处说的是同一件事。 */
