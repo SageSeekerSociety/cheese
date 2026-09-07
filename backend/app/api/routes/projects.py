@@ -64,7 +64,18 @@ from app.domain.machine.services import MachineService
 from app.domain.membership.repositories import MemberRepository
 from app.domain.memory.models import MemoryScope
 from app.domain.project.models import Project, ProjectRole
-from app.domain.project.repositories import ProjectRepository
+from app.domain.project.protection import (
+    BRANCH_PROTECTION_KEY,
+    GITHUB_UNBOUND,
+    BranchProtection,
+    apply_branch_protection_update,
+    branch_protection_of,
+    github_repo_snapshot,
+)
+from app.domain.project.repositories import (
+    ProjectGitInstallationRepository,
+    ProjectRepository,
+)
 from app.domain.project.schemas import (
     ProjectCreate,
     ProjectOut,
@@ -103,8 +114,6 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 Registry = Annotated[ProfileRegistry, Depends(get_profile_registry)]
-
-QUALITY_GATE_COMMAND_MAX_CHARS = 4096
 
 
 @router.post("")
@@ -919,72 +928,105 @@ async def set_project_owner(
     return ok(ProjectOut.model_validate(project).model_dump(mode="json"))
 
 
-# --- Quality gate (spec §4.4/§9, eval C2): 平台硬门 configuration -------------
+# --- Branch protection (issue #718): 平台侧的分支保护规则 ---------------------
 
 
-async def require_quality_gate_admin(
-    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> None:
-    """Only a verified human project owner/lead may configure executable policy."""
-    await require_project_steward(project_id, db, resolver)
+def _branch_protection_payload(bp: BranchProtection) -> dict:
+    return {
+        "required_checks": [
+            {"name": c.name, "paths": list(c.paths)} for c in bp.required_checks
+        ],
+        "strict": bp.strict,
+        "dismiss_stale": bp.dismiss_stale,
+        "auto_merge_allowed": bp.auto_merge_allowed,
+        # None = unconfigured: the project's owner and leads may override.
+        "override_handles": (
+            list(bp.override_handles) if bp.override_handles is not None else None
+        ),
+        "approvals_required": bp.approvals_required,
+        "default_reviewer": bp.default_reviewer,
+    }
 
 
-@router.get("/{project_id}/quality-gate")
-async def get_quality_gate(project_id: uuid.UUID, db: DbSession) -> dict:
-    """The project's 硬门 settings: `check_command` and `approvals_required`
-    (distinct approvals an accept needs; default 1).
+@router.get("/{project_id}/branch-protection")
+async def get_branch_protection(project_id: uuid.UUID, db: DbSession) -> dict:
+    """The project's branch-protection rules (issue #718), GitHub 那一页的顺序。
 
-    `check_command` is no longer a PLATFORM gate. #296 retired that: a card is
-    the view of a PR, and the real CI on that PR is what decides whether a
-    change is good — not a private check the platform runs before a reviewer
-    ever sees the card.
-
-    It is now the agent's own quick check, which `cheese check` runs in the
-    agent's sandbox, on the room's heavy lane, costing no CI runner. The result
-    is recorded on the tree and shown on the card. It still gates nothing: red
-    does not stop a card being filed or accepted. What it does is make a red
-    check VISIBLE to the person about to accept, which is the half that was
-    missing — a check whose result goes nowhere is a check nobody runs.
-
-    `approvals_required` is unaffected."""
-    from app.domain.review.services import approvals_required_of, check_command_of
-
+    平台补位 GitHub 判定不了的部分，所以规则存在这里；两块只读附注说明 GitHub
+    那一侧的现实：``merge_method``（绑定项目从仓库设置读，未绑定固定 squash）和
+    ``github_protection``（GitHub 自己开没开保护 —— 开了的话设置页把同名规则灰
+    掉，两处都能改就是两套配置）。GitHub 查询失败一律降级成 unknown，绝不 500。
+    """
     project = await ProjectRepository(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
+    bp = branch_protection_of(project)
+    installation = await ProjectGitInstallationRepository(db).get_by_project(project_id)
+    if installation is None:
+        merge_method, gh = "squash", GITHUB_UNBOUND
+    else:
+        token: str | None = None
+        try:
+            token = await github_app_read_token_for_project(project_id, db)
+        except Exception:  # noqa: BLE001 — display-only: degrade, never 500
+            logger.warning(
+                "branch-protection: token mint failed project=%s",
+                project_id,
+                exc_info=True,
+            )
+        merge_method, gh = await github_repo_snapshot(installation.repo, token)
     return ok(
         {
-            "check_command": check_command_of(project) or "",
-            "approvals_required": approvals_required_of(project),
+            **_branch_protection_payload(bp),
+            "merge_method": merge_method,
+            "github_protection": {
+                "enforced": gh.enforced,
+                "status": gh.status,
+                "detail": gh.detail,
+            },
         }
     )
 
 
-@router.put(
-    "/{project_id}/quality-gate",
-    dependencies=[Depends(require_quality_gate_admin)],
+_BRANCH_PROTECTION_KEYS = (
+    "required_checks",
+    "strict",
+    "dismiss_stale",
+    "auto_merge_allowed",
+    "override_handles",
+    "default_reviewer",
 )
-async def set_quality_gate(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
-    """Update 硬门 settings. Only the keys present in the body change; an empty
-    check_command removes the gate."""
-    from app.domain.review.services import approvals_required_of, check_command_of
 
+
+@router.put(
+    "/{project_id}/branch-protection",
+    dependencies=[Depends(require_project_steward)],
+)
+async def set_branch_protection(
+    project_id: uuid.UUID, body: dict, db: DbSession
+) -> dict:
+    """Update branch-protection rules. Only the keys present in the body change.
+
+    ``approvals_required`` predates this block and stays at
+    ``settings["approvals_required"]`` — read and written here, never moved,
+    never dual-written. Writes need a verified human owner/lead: an agent that
+    could loosen the rules judging its own merges has a review bypass.
+    """
     project = await ProjectRepository(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
     new_settings = {**(project.settings or {})}
-    if "check_command" in body:
-        command = str(body.get("check_command") or "").strip()
-        if "\x00" in command:
-            raise ValidationError("check_command 不能包含 NUL 字节")
-        if len(command) > QUALITY_GATE_COMMAND_MAX_CHARS:
-            raise ValidationError(
-                f"check_command 不能超过 {QUALITY_GATE_COMMAND_MAX_CHARS} 个字符"
+    if any(key in body for key in _BRANCH_PROTECTION_KEYS):
+        try:
+            updated = apply_branch_protection_update(
+                new_settings.get(BRANCH_PROTECTION_KEY), body
             )
-        if command:
-            new_settings["check_command"] = command
+        except ValueError as e:
+            raise ValidationError(str(e)) from None
+        if updated:
+            new_settings[BRANCH_PROTECTION_KEY] = updated
         else:
-            new_settings.pop("check_command", None)
+            new_settings.pop(BRANCH_PROTECTION_KEY, None)  # all defaults again
     if "approvals_required" in body:
         try:
             required = int(body.get("approvals_required") or 0)
@@ -995,12 +1037,7 @@ async def set_quality_gate(project_id: uuid.UUID, body: dict, db: DbSession) -> 
         new_settings["approvals_required"] = required
     project.settings = new_settings
     await db.flush()
-    return ok(
-        {
-            "check_command": check_command_of(project) or "",
-            "approvals_required": approvals_required_of(project),
-        }
-    )
+    return ok(_branch_protection_payload(branch_protection_of(project)))
 
 
 @router.get("/{project_id}/upstream")

@@ -587,30 +587,14 @@ def _force_merge_verdict(state: str | None) -> str:
 
 def approvals_required_of(project: Project | None) -> int:
     """主分支保护 (spec §4.4): distinct approvals an accept needs. Default 1 —
-    the accepter's own accept counts, so unconfigured projects are unchanged."""
-    if project is None:
-        return 1
-    try:
-        return max(1, int((project.settings or {}).get("approvals_required") or 1))
-    except (TypeError, ValueError):
-        return 1
+    the accepter's own accept counts, so unconfigured projects are unchanged.
 
-
-def check_command_of(project: Project | None) -> str | None:
-    """The project's stored `check_command`, or None.
-
-    采纳即合并退役闸门 (docs/accept-is-merge.md #296, stage 1): this setting no
-    longer gates anything. The platform used to run it in the topic workspace
-    before a card reached the reviewer; that whole mechanism is retired — a
-    repository declares its checks in `.github/workflows`, the forge runs them,
-    and the card mirrors the forge's result. The value is still stored and read
-    back (the settings endpoint round-trips it, and a later stage clears it)
-    but nothing consumes it to produce a green card any more.
+    The canonical read lives with the rest of the branch-protection policy
+    (issue #718); this is that read, importable where review code already is.
     """
-    if project is None:
-        return None
-    cmd = str((project.settings or {}).get("check_command") or "").strip()
-    return cmd or None
+    from app.domain.project.protection import branch_protection_of
+
+    return branch_protection_of(project).approvals_required
 
 
 class AcceptService:
