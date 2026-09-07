@@ -119,12 +119,12 @@ def test_every_stage_skill_is_registered_by_name():
 # --- 两条硬要求的内容真的在「还没递卡」这一段里 ------------------------------
 
 
-def test_the_pre_card_stage_covers_when_to_hand_off_and_the_approver_token():
-    """简报硬要求：这两条读完就得知道该怎么做，不能散落在别处。"""
+def test_the_pre_card_stage_covers_when_to_hand_off_and_the_github_channel():
+    """这几条读完就得知道该怎么做，不能散落在别处。"""
     guide = load_scenario(stage_scenario(TopicStage.delegating))
     assert "accept-request" in guide  # 怎么递
     assert "只读" in guide  # 为什么自己推不了
-    assert "cheese ask" in guide  # GitHub 账号校验回环
+    assert "push-fix" in guide  # 递卡之后改动怎么上 PR（#718）
 
 
 def test_awaiting_stage_tells_the_agent_how_prs_move_now():
