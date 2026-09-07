@@ -60,6 +60,9 @@ class NoteCode(enum.StrEnum):
     pr_open_failed = "pr_open_failed"
     #: 采纳现场补开 PR 失败，采纳已停下。
     accept_pr_open_failed = "accept_pr_open_failed"
+    #: 卡带着交付主张，树的分支上却没有任何提交（改动可能在别的分支上），
+    #: 采纳已停下。
+    accept_no_branch = "accept_no_branch"
     #: 卡上有 PR，但此刻推进不了。
     accept_pr_stalled = "accept_pr_stalled"
     #: 采纳时合并冲突，已派芝士解决。
@@ -97,6 +100,7 @@ _STUCK = frozenset(
         NoteCode.pr_closed_unmerged,
         NoteCode.pr_open_failed,
         NoteCode.accept_pr_open_failed,
+        NoteCode.accept_no_branch,
         NoteCode.accept_pr_stalled,
         NoteCode.merge_conflict,
         NoteCode.gate_abandoned,
