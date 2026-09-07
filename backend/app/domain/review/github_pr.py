@@ -312,7 +312,7 @@ class GitHubPrClient(Protocol):
         already merged it. The poller reads this first thing every tick: a PR
         merged by hand on GitHub is invisible to every other signal here (its
         checks can be red, its branch unpushable), and without noticing it the
-        card sits at `pr_open` forever."""
+        card waits forever."""
         ...
 
     async def merge_pull_request(

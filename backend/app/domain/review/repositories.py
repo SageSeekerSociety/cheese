@@ -89,8 +89,8 @@ class AcceptCardRepository:
         Cards filed before trees existed carry `tree_id IS NULL`, and the
         backfill (migration `e4c9a2f60b18`) deliberately left it that way for
         every card whose tree was never created — there was no honest value to
-        invent. They are still real: a `pr_open` one from that era is driving a
-        live PR. Anything scoped to a tree has to ask for them separately or
+        invent. They are still real: one from that era can be riding a live
+        PR. Anything scoped to a tree has to ask for them separately or
         pretend they are not there.
         """
         stmt = (
@@ -123,8 +123,8 @@ class AcceptCardRepository:
         The room's own set (`list_for_topic`) is the answer to "do I have a
         card". This is the answer to "what is still open in here", which is a
         different question and has to include what a piece of work filed back
-        when work was a place: an unsettled `pr_open` row is one the poller
-        keeps pushing, and archiving the room is exactly when that must stop.
+        when work was a place: an unsettled row riding a PR is one the poller
+        keeps following, and archiving the room is exactly when that must stop.
         """
         stmt = (
             select(AcceptCard)
