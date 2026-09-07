@@ -934,6 +934,42 @@ def test_arming_auto_merge_on_a_card_that_never_showed_a_version_refreshes_inste
     assert _cards(client, tid)[0]["auto_merge"]["armed_by"] == "alice"
 
 
+def test_a_pr_opened_at_accept_time_is_kept_but_not_merged_this_click(
+    client, app_world
+):
+    """卡还没有 PR、采纳时才现开的那条路（fire-and-forget 失败或还在飞），走的是
+    同一条约束。
+
+    「人看的是同一条分支」不等于「同一个 commit」：浏览器从来没有声明过它渲染的
+    diff 是哪个 sha，而分身边干边推是常态，所以现开的 PR 的 head 照样可能是没人
+    看过的那个。开 PR 本身留着（有价值的副作用，下次采纳就有 head 可比），这一次
+    不合。"""
+    fake = app_world["fake"]
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid, "alice")
+    assert _cards(client, tid)[0]["pr_number"] is None
+
+    r = _accept(client, cid)
+
+    assert r.status_code == 422, r.text
+    assert "重新看过" in r.json()["message"]
+    assert fake.merge_calls == []  # GitHub 上一次都没合
+    assert app_world["local_merges"] == []  # 也没有绕开 PR 本地合
+    assert len(app_world["opened"]) == 1  # PR 开出来了，而且留着
+    number = app_world["opened"][0]["number"]
+    card = _cards(client, tid)[0]
+    assert card["status"] == "pending"
+    assert card["pr_number"] == number
+    assert card["pr_head_sha"] == fake.prs[number]["head_sha"]
+
+    # 重新看过（卡面这下有 sha 了）再点，才合，合的就是那一版。
+    fake.check_state_by_sha[card["pr_head_sha"]] = ("success", "全绿")
+    assert _accept(client, cid).status_code == 200, "重看之后应当能采纳"
+    assert [m["sha"] for m in fake.merge_calls] == [card["pr_head_sha"]]
+    assert len(app_world["opened"]) == 1  # 没有第二个 PR
+
+
 def test_head_moved_since_the_reviewer_looked_refreshes_instead_of_merging(
     client, app_world
 ):
@@ -1013,23 +1049,6 @@ def test_click_405_surfaces_githubs_reason_and_stops(client, app_world):
     assert "Merge commits are not allowed" in r.json()["message"]
     assert _cards(client, tid)[0]["status"] == "pending"
     assert _topic(client, tid)["accepted_at"] is None
-
-
-def test_a_prless_card_gets_its_pr_opened_at_accept_then_merges(client, app_world):
-    """fire-and-forget 的开 PR 失败/未落时，点击现场补开，然后照常当场合并。"""
-    fake = app_world["fake"]
-    pid = _make_project(client)
-    tid = _make_topic(client, pid)
-    cid = _make_card(client, tid)  # no PR recorded
-
-    r = _accept(client, cid)
-    assert r.status_code == 200, r.text
-    card = r.json()["data"]
-    assert card["status"] == "accepted"
-    assert card["pr_number"] == 21  # opened by the App opener at accept time
-    assert len(app_world["opened"]) == 1
-    assert [m["number"] for m in fake.merge_calls] == [21]
-    assert app_world["local_merges"] == []
 
 
 def _strip_delivery_claim(client, card_id: str) -> None:

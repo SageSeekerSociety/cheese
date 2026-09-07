@@ -1157,9 +1157,13 @@ class AcceptService:
         #     without one — a fire-and-forget publish that failed or is still
         #     in flight — gets its PR opened right here, and ANY failure on the
         #     PR path stops the accept visibly rather than falling through to
-        #     the local merge (#362/#363). Accepting MERGES, here and now
-        #     (#718): the merge-state rules already said the button may light,
-        #     and the merge API is called with the head the human saw.
+        #     the local merge (#362/#363). Opening it does NOT merge it this
+        #     click: the card never showed a head, so nothing on screen names
+        #     the commit that would land. The PR stays (it is the useful half),
+        #     its head goes onto the card, and the next click has something to
+        #     match. Accepting MERGES, here and now (#718) for every card that
+        #     already rode a PR: the merge-state rules said the button may
+        #     light, and the merge API is called with the head the human saw.
         #     The one PR-less case that legitimately proceeds is a legacy card
         #     with no delivery claim (change_subject IS NULL, filed before
         #     subjects were required) on a branchless topic, where the local
@@ -1174,7 +1178,16 @@ class AcceptService:
         if forge.requires_pr:
             if card.pr_number is None:
                 await self._publish_pr_for_accept(card, topic)
+                if card.pr_number is not None:
+                    # PR 是这一秒才开出来的：卡面在此之前没有、现在也还没有一个
+                    # 被展示过的 head。「人看的是同一条分支」不等于「同一个
+                    # commit」—— 浏览器从来没有声明过它渲染的 diff 是哪个 sha，
+                    # 而分身边干边推是常态。所以这次不合，PR 留着（开 PR 是有价
+                    # 值的副作用，下次采纳就有 head 可比），head 镜像上卡，人重
+                    # 新看过再点。
+                    await self._refresh_never_shown_card(card, topic, "采纳")
             if card.pr_number is not None:
+                assert seen_head is not None  # the guard above rules None out
                 return await self._merge_pr_for_accept(
                     card, topic, decided_by, seen_head=seen_head
                 )
@@ -1655,7 +1668,7 @@ class AcceptService:
         topic: Topic,
         decided_by: str,
         *,
-        seen_head: str | None,
+        seen_head: str,
     ) -> AcceptCard:
         """App forge: 采纳 = 当场调合并 API，合的是人看到的那个 commit (#718).
 
@@ -1667,9 +1680,11 @@ class AcceptService:
 
         The merge call carries the head the human saw — `seen_head`, the sha
         the BROWSER rendered, already checked against the card by
-        `_seen_head`. Any push that landed after their look — before the click
-        (live head differs) or during it (GitHub answers 409) — refreshes the
-        card instead of merging: head updated, approvals cleared when the
+        `_seen_head_or_refresh`, and never anything else: there is no "just
+        read the live head" fallback, because a live head is by definition one
+        no screen has shown. Any push that landed after their look — before the
+        click (live head differs) or during it (GitHub answers 409) — refreshes
+        the card instead of merging: head updated, approvals cleared when the
         project dismisses stale accepts, and the human asked to look again.
         #422's whole authorize-then-drift apparatus is replaced by this one API
         parameter plus dismiss-stale.
@@ -1719,13 +1734,10 @@ class AcceptService:
                 card, topic, f"PR #{number} 已在 GitHub 被关闭但未合并"
             )
 
-        # 合的是人看到的那个 commit：浏览器渲染时卡面上的 head。
-        #
-        # `seen_head` 为空只剩一种来路：点击时这张卡还**没有 PR**，PR 是刚才
-        # `_publish_pr_for_accept` 就地开的，它骑的正是人在 diff 视图里看的那条
-        # 分支。已经骑着 PR 的卡进不到这里没有 sha —— `_seen_head_or_refresh`
-        # 会先把 head 镜像上卡再要求重看。
-        seen = seen_head or status.head_sha
+        # 合的是人看到的那个 commit：浏览器渲染时卡面上的 head，一个字都不兜底。
+        # GitHub 上的合并永远不用「现取的 head」——那种 commit 没有在任何界面上
+        # 出现过（`_seen_head_or_refresh` 是这条规矩的入口闸）。
+        seen = seen_head
         if status.head_sha != seen:
             await self._refresh_stale_card(card, topic, live_head=status.head_sha)
             raise ValidationError(
