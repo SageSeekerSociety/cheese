@@ -46,6 +46,7 @@ def test_build_screen_launch_shapes_command_and_env():
     # Self-contained launcher: writes settings + forwarder, spools+drains hooks, then
     # hosts claude in a persistent tmux session (direct exec if tmux is absent).
     assert 'cat > "$HOME/.claude/settings.json"' in script
+    assert '"enableArtifact": false' in script
     assert "cheese-hook" in script
     # The binary is resolved (pin → ~/.local/bin → PATH) rather than taken from
     # PATH blindly, so the flags ride on $CLAUDE_BIN.
