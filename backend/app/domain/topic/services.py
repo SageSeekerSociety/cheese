@@ -20,7 +20,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.errors import ConflictError, NotFoundError, ValidationError
-from app.core.text import markdown_preview
 from app.domain.agent import clone
 from app.domain.agent_instance.services import (
     IMPLICIT_DEFAULT,
@@ -28,13 +27,10 @@ from app.domain.agent_instance.services import (
     ResolvedAgent,
 )
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.alert.models import AlertKind, AlertLevel
 from app.domain.alert.services import AlertService
 from app.domain.block.doc_tree import markdown_to_nodes
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
-from app.domain.conclusion.models import ConclusionCard
-from app.domain.conclusion.services import ConclusionCardService
 from app.domain.identity.handles import looks_like_agent_handle, names_a_person
 from app.domain.membership.services import MemberService
 from app.domain.project.models import ProjectRole
@@ -1113,37 +1109,6 @@ class TopicService:
         )
         return doc
 
-    async def _append_conclusion_section(
-        self, *, topic_id: uuid.UUID, section: str, author: str
-    ) -> None:
-        """Append a section to a topic's living doc.
-
-        There is no partial write of this doc: appending means reading the whole
-        thing and setting the whole thing back, based on the version that read
-        returned. So a person saving the same doc in the same second turns this
-        into a conflict — re-read and re-append rather than let it through, and
-        rather than drop it. The 分身 that produced this conclusion is finished;
-        nothing is going to retry it by hand.
-        """
-        for _ in range(3):
-            root = await self._blocks.doc_root(topic_id)
-            existing = root.content.strip() if root and root.content else ""
-            try:
-                await self.edit_doc(
-                    topic_id=topic_id,
-                    content=f"{existing}\n\n{section}" if existing else section,
-                    author=author,
-                    expected_version=root.doc_version if root else 0,
-                )
-                return
-            except ConflictError:
-                continue
-        logger.warning(
-            "conclusion section not appended to topic %s: the living doc kept "
-            "moving under it",
-            topic_id,
-        )
-
     async def _sync_doc_nodes(self, root: Block, content: str) -> None:
         """Reconcile the living doc's node tree (B1) with `content` via a
         block-level diff so unchanged nodes keep their ids (anchors survive an
@@ -1210,68 +1175,25 @@ class TopicService:
             refs=[str(sender.id)],
         )
 
-    async def return_conclusion(
-        self, *, subtopic_id: uuid.UUID, conclusion: str
-    ) -> tuple[Block, ConclusionCard | None]:
-        """结论回流 (spec §6.1 / eval C4): a sub-topic's (分身) conclusion flows
-        back to its parent (本体) three ways — a referencing message in the
-        conversation, woven into the parent's living doc (so 分身 stay consistent
-        via the doc, spec §8.4), and a change-alert so the coordinator is notified.
+    async def close_thread(
+        self, *, task_id: uuid.UUID, conclusion: str | None
+    ) -> Task:
+        """收卡 —— the room says one of its pieces of work is over.
 
-        结论卡·阶段一 (purely additive): a 4th thing now happens — an ``open``
-        conclusion card is filed for the parent to settle, which is what finally
-        gives 回流 a receipt, a status and idempotency. The three side effects
-        above are UNCHANGED; nothing about the old flow depends on the card.
+        Nothing else can say it. The worker's own stops mean "handed something
+        back", never "done": it stops when it parks a long command and stops
+        again when that command finishes, and every one of those already wrote
+        itself onto the card (`TaskService.record_conclusion`). The room is the
+        only party that has read what came back AND folded the changes into its
+        branch, so closing is its call and it is made explicitly.
+
+        `conclusion` overrides the worker's last word when the room knows better
+        — the last thing a worker said is sometimes a fragment. None keeps it.
         """
-        place = await self.place_or_404(subtopic_id)
-        sub = place.task
-        if sub is None:
-            raise ValidationError("这是房间，不是一件活——房间没有可以回流的上级")
-        room = place.room
-
-        # 1) Conversation: a message on the ROOM's main line referencing the
-        # thread. Authored by the room's 芝士 — the conclusion lands in that room,
-        # and a message from someone who is not in it reads as a ghost.
-        #
-        # `task_id=None` is the load-bearing part: the whole point of concluding
-        # is that the room sees it, and writing it into the thread would leave it
-        # exactly where everyone who was not doing the work already was not looking.
-        room_agent = await self._members.resolve_agent_handle(room.id)
-        block = await self._blocks.add(
-            project_id=sub.project_id,
-            topic_id=room.id,
-            task_id=None,
-            author=room_agent,
-            author_type=AuthorType.ai,
-            content=f"【支线结论｜{sub.title}】\n{conclusion}",
-            kind=BlockKind.message,
-            refs=[str(sub.id)],
+        place = await self.place_or_404(task_id)
+        task = place.task
+        if task is None:
+            raise ValidationError("这是房间，不是一件活——房间不用收卡")
+        return await TaskService(self._session).close_thread(
+            task, conclusion=conclusion
         )
-
-        # 2) Living doc: append the conclusion as a section (unless frozen, §6.3).
-        if room.status != TopicStatus.archived:
-            await self._append_conclusion_section(
-                topic_id=room.id,
-                section=f"## 支线结论：{sub.title}\n{conclusion}",
-                author=room_agent,
-            )
-
-        # 3) Notify 本体 (the coordinator) that the 分身 finished.
-        await AlertService(self._session).create(
-            project_id=sub.project_id,
-            level=AlertLevel.light,
-            kind=AlertKind.change_alert,
-            title=f"「{sub.title}」已完成",
-            body=markdown_preview(conclusion, 200),
-            topic_id=room.id,
-        )
-
-        # 4) 结论卡: the receipt. Opening it can't fail the 回流 — a room that
-        # was already archived has no turn left to settle a card, so it gets the
-        # three side effects above and no card.
-        card = None
-        if room.status != TopicStatus.archived:
-            card = await ConclusionCardService(self._session).open_for_conclusion(
-                sub=sub, room=room, conclusion=conclusion
-            )
-        return block, card

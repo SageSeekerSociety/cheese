@@ -48,7 +48,6 @@ from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
-from app.domain.conclusion.repositories import ConclusionCardRepository
 from app.domain.device.supply import Visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.idempotency import store as idem
@@ -351,7 +350,6 @@ async def get_topic(
         # 算的，所以深链接进来和从侧栏点进来不可能给出两种说法。
         cards = await AcceptCardRepository(db).latest_by_task([place.task.id])
         beats = await TaskRepository(db).last_block_at_for_tasks([place.task.id])
-        pending = await ConclusionCardRepository(db).live_task_ids([place.task.id])
         out = TaskOut.model_validate(place.task).model_dump(mode="json")
         out["presentation"] = presentation.task_presentation(
             presentation.facts_for_task(
@@ -361,7 +359,6 @@ async def get_topic(
                 # 做这条活的分身住在房间的会话里 —— 屏幕没了它就没了，而它不会来
                 # 说一声。这一位是内存里的当下事实，不是库里的一列。
                 room_screen_live=chat.has_live_screen(place.room_id),
-                conclusion_pending=place.task.id in pending,
             ),
             now=datetime.now(UTC),
         ).as_dict()
@@ -496,7 +493,6 @@ async def list_room_tasks(
     thread_ids = [t.id for t, _ in threads]
     cards = await AcceptCardRepository(db).latest_by_task(thread_ids)
     beats = await TaskRepository(db).last_block_at_for_tasks(thread_ids)
-    pending = await ConclusionCardRepository(db).live_task_ids(thread_ids)
     # One answer for the whole room: every thread's worker lives in this room's
     # one session, so the screen is alive for all of them or for none.
     screen_live = chat.has_live_screen(topic_id)
@@ -514,7 +510,6 @@ async def list_room_tasks(
                         card,
                         beats.get(task.id),
                         room_screen_live=screen_live,
-                        conclusion_pending=task.id in pending,
                     ),
                     now=now,
                 ).as_dict(),
@@ -612,44 +607,45 @@ async def conclude_task(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """结论回流, said by the ROOM about one of its threads.
+    """收卡, said by the ROOM about one of its threads.
 
-    A worker inside the room's session has no token and no place of its own to
-    call `/return-conclusion` from, so the room files the conclusion for it —
-    after it has read what came back and satisfied itself the work is done.
+    The worker's conclusion is already on the card: the platform writes it there
+    on every `SubagentStop` from a bound worker. This is the other half — the
+    room saying the work is over — and it is deliberately a separate act, done
+    by hand.
 
-    Deliberately NOT automatic on the worker's Stop. A worker reports finished
-    more than once (parking a long command counts as finishing), and Stops
-    arrive from workers the platform never bound — measured on 2.1.224: after
-    the session's own Stop, with an unknown id, an empty type and a fragment of
-    a prompt as their closing message. Filing a conclusion off either of those
-    would open a card for work that is not done, or for work nobody dispatched.
+    It has to be. A worker reports finished more than once (parking a long
+    command in its own background counts as finishing), and stops arrive from
+    workers the platform never bound — measured on 2.1.224: after the session's
+    own Stop, with an unknown id, an empty type and a fragment of a prompt as
+    their closing message. Closing on either of those would collapse work that
+    is still going. Only the room has read what came back and folded the changes
+    into its branch, so only the room can say.
 
-    No wake, unlike `/return-conclusion`: the room is the caller and is already
-    running the turn that would be woken. The card still has its own deadline,
-    so nothing waits on a turn that never comes.
+    `conclusion` is optional: given, it overwrites the worker's last word (which
+    is sometimes the fragment above); omitted, that last word stands.
     """
     service = TopicService(db)
     place = await service.place_or_404(topic_id)
     if place.is_thread:
-        raise ValidationError("这是房间替它的活回流结论，一条活自己回流不了")
+        raise ValidationError("这是房间收它的活，一条活自己收不了")
     await _actor_in_place(resolver, place)
     task = await TaskService(db).get(task_id)
     if task is None or task.room_id != place.room_id:
         raise NotFoundError("这个房间里没有这条活")
-    # Friendly "@名字/@话题名" → structured tokens BEFORE it lands in the room,
-    # same as the thread's own path: chips render and notifications fire there.
-    conclusion = await canonicalize_refs(
-        db, place.project_id, body.conclusion, exclude_topic_id=place.room_id
+    # Friendly "@名字/@话题名" → structured tokens, same as every other write
+    # path that lands text a person will read.
+    text = (body.conclusion or "").strip()
+    conclusion = (
+        await canonicalize_refs(
+            db, place.project_id, text, exclude_topic_id=place.room_id
+        )
+        if text
+        else None
     )
-    block, _ = await service.return_conclusion(
-        subtopic_id=task_id, conclusion=conclusion
-    )
-    out = BlockOut.model_validate(block).model_dump(mode="json")
+    task = await service.close_thread(task_id=task_id, conclusion=conclusion)
+    out = TaskOut.model_validate(task).model_dump(mode="json")
     await db.commit()
-    await get_broker().publish(
-        str(place.room_id), {"type": "assistant_block", "block": out}
-    )
     return ok(out)
 
 

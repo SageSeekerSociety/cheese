@@ -120,7 +120,10 @@ class LockIn(BaseModel):
 
 
 class ConclusionIn(BaseModel):
-    conclusion: str = Field(min_length=1)
+    """收卡. Empty means "the worker's last word stands" — the platform already
+    wrote it on the card, so the room usually has nothing to add."""
+
+    conclusion: str = ""
 
 
 class BindSubagentIn(BaseModel):

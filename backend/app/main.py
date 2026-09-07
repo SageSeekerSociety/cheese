@@ -345,15 +345,6 @@ _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/check-result$")),
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/lock$")),
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/unlock$")),
-    # 结论卡: settled by the PARENT during its own turn, so the scoping id in
-    # the URL is the receiver, not the sub-topic that produced the card.
-    (
-        "POST",
-        re.compile(
-            r"^/topics/(?P<topic>[^/]+)/conclusion-cards/[^/]+/"
-            r"(accept|need-evidence|escalate)$"
-        ),
-    ),
     ("POST", re.compile(r"^/projects/(?P<project>[^/]+)/memory$")),
     ("POST", re.compile(r"^/projects/(?P<project>[^/]+)/memory/search$")),
     # 记忆整理: the topic is the turn that is SPEAKING; which pools it may

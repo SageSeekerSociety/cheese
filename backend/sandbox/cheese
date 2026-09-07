@@ -19,7 +19,7 @@
   cheese recall "技术选型"          # 按需检索记忆(关键词检索)
   cheese notify --title "看下" --to mentor-1 --level strong --kind decision_request --options "A|B"
   cheese accept-request mentor-1 "中期验收"  # 递验收卡
-  cheese conclude-task <task_id> "原型完成,Recall@10=0.18"  # 替一条活落结论
+  cheese conclude-task <task_id>            # 收掉这条活(说它结束了)
   cheese tell "数据清洗" "口径改了,按新的来"    # 在那条活上留一句话(不叫醒任何人)
   cheese milestone "中期汇报" --due 2026-06-20
   cheese await "bash .claude/scripts/check.sh --full"  # 后台跑;跑完平台叫醒本话题
@@ -685,13 +685,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     pct = sub.add_parser(
         "conclude-task",
-        help="替房间里的一条活回流结论(开结论卡)",
+        help="收掉房间里的一条活(说它结束了)",
         description=(
-            "分身报完成、你验过货之后,由你把它的结论落成一张结论卡。\n"
+            "分身报完成、你验过货、改动也整合进分支之后,由你说一句「这条活结束了」。\n"
             "\n"
-            "为什么不是分身报完成就自动落:一个分身可以报好几次完成(它把长命令丢进\n"
-            "自己的后台再停下来等,也算一次完成),而且还会收到来路不明的完成通知。\n"
-            "所以「完成」是给你看的信号,不是结论——**验过再落**。\n"
+            "分身自己交回来的那句话平台已经记在卡上了,不用你抄一遍。要写\n"
+            "`--conclusion` 的只有一种情况:它最后那句话是个半截(比如「测试跑起来了」),\n"
+            "而你知道真正的结论是什么。\n"
+            "\n"
+            "为什么不是分身报完成就自动收:一个分身可以报好几次完成(它把长命令丢进\n"
+            "自己的后台再停下来等,也算一次),而且还会收到来路不明的完成通知。\n"
+            "所以「完成」是给你看的信号,不是终点——**验过再收**。\n"
             "\n"
             "结论写摘要不写流水账。值钱的三样:做了什么、查出来但故意没做的(以及\n"
             "为什么)、哪些结论没核实。"
@@ -699,7 +703,9 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     pct.add_argument("task_id", help="这条活的 id")
-    pct.add_argument("conclusion", help="结论摘要,给房间看的")
+    pct.add_argument(
+        "--conclusion", default="", help="覆盖分身交回的那句话(默认保留它的)"
+    )
 
     paw = sub.add_parser(
         "await",
@@ -995,27 +1001,6 @@ def build_parser() -> argparse.ArgumentParser:
     pt.add_argument("target", help="哪条活: id、<#id> 或标题")
     pt.add_argument("message", help="要说的话")
 
-    pcc = sub.add_parser(
-        "conclusion",
-        help="结算一条活回流上来的结论卡（不结算=默认采信，本轮结束自动生效）",
-        description=(
-            "结算一条活回流上来的结论卡。**不结算也会生效**——本轮结束时还开着的卡"
-            "自动采信，另有 30 分钟绝对超时兜底,所以「什么都不做」等于同意。\n"
-            "只有你要改变默认结果时才用它: need-evidence 让那条活补一条证据"
-            "(要付一整轮转达,且每张卡最多打回 1 次), escalate 是要人拍板。"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    pcc.add_argument(
-        "action",
-        choices=["accept", "need-evidence", "escalate"],
-        help="accept=采信(可不做,默认就会采信) / need-evidence=让那条活补一条证据 / escalate=要人拍板",
-    )
-    pcc.add_argument("card", help="结论卡 id（消化提示里带着）")
-    pcc.add_argument(
-        "reason", nargs="?", default="", help="need-evidence/escalate 必填：要补什么/要谁拍什么板"
-    )
-
     pm = sub.add_parser(
         "milestone",
         help="钉里程碑",
@@ -1187,12 +1172,12 @@ def main() -> None:
         print(f"「{r['title']}」现在归分身 {r['subagent_id']}，它干的事会记到这条活上。")
     elif a.cmd == "conclude-task":
         topic = _need("CHEESE_TOPIC", TOPIC)
-        _call(
+        r = _call(
             "POST",
             f"/topics/{topic}/tasks/{a.task_id}/conclude",
             {"conclusion": a.conclusion},
-        )
-        print("结论已回流本房间，结论卡已开出。")
+        )["data"]
+        print(f"「{r['title']}」收了。结论：{(r.get('conclusion') or '（没有留话）')}")
     elif a.cmd == "await":
         _await_start(a.command, a.label, a.timeout)
     elif a.cmd == "__await-child":
@@ -1332,24 +1317,6 @@ def main() -> None:
         print(
             f"已写在「{where}」上。**没有人被叫醒**——做这条活的分身在你自己的"
             "会话里，要它动就直接给它发消息。"
-        )
-    elif a.cmd == "conclusion":
-        # 路由挂在父话题下：per-turn token 按 URL 里的 topic 校验作用域，而结算
-        # 这一步是父话题在自己那一轮做的，所以 CHEESE_TOPIC 就是收方。
-        topic = _need("CHEESE_TOPIC", TOPIC)
-        if a.action in ("need-evidence", "escalate") and not a.reason.strip():
-            print(f"[cheese] {a.action} 必须写理由", file=sys.stderr)
-            sys.exit(2)
-        body = {"decided_by": AUTHOR}
-        if a.reason:
-            body["reason"] = a.reason
-        _call("POST", f"/topics/{topic}/conclusion-cards/{a.card}/{a.action}", body)
-        print(
-            {
-                "accept": "已采信该结论，那条活收起。",
-                "need-evidence": "已打回补证据（房间会被叫醒一轮去转达）。",
-                "escalate": "已升级，等人拍板。",
-            }[a.action]
         )
     elif a.cmd == "milestone":
         proj = _need("CHEESE_PROJECT", PROJECT)

@@ -2246,28 +2246,6 @@ class AgentWorkRunner:
                         verdict.message,
                         meta=verdict.event_meta,
                     )
-        if not lifecycle["session_owned"]:
-            # 结论卡·阶段一 (机制①): this topic's turn ended and any conclusion
-            # card it was handed is still open → 默认采信. THE place to put this
-            # is here: transport-independent, so SDK/tmux/device backends all
-            # get it. Best-effort: the 30-minute sweeper is the backstop, and
-            # nothing here may break the turn.
-            try:
-                from datetime import UTC, datetime
-
-                from app.domain.conclusion.services import settle_turn_cards
-
-                settled = await settle_turn_cards(
-                    chat_service.session_factory,
-                    topic_id,
-                    turn_started_at=datetime.fromtimestamp(rec["started_at"], UTC),
-                )
-                if settled:
-                    logger.info(
-                        "turn end: auto-accepted %d conclusion card(s)", settled
-                    )
-            except Exception:  # noqa: BLE001 — a turn must never fail on this
-                logger.exception("conclusion settle failed for topic %s", topic_id)
         # The interval ends here. Closing, not deleting: this turn's id is on
         # every block it produced, and an interval erased at its end is one
         # nobody can ask about afterwards.
