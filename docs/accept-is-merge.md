@@ -4,10 +4,6 @@ Status: implemented (#296 → #422 → #718). The gate is retired, the personal-
 path is deleted, and since #718 accepting merges **on the spot** — #422's
 authorize-then-poll default is withdrawn, with its signed escape hatch kept.
 
-Supersedes constraint 4 of `docs/topics/两阶段采纳-PR迭代式实现.md` (the
-pre-accept internal gate): once the PR opens before acceptance, real CI
-occupies the slot the gate was holding.
-
 ## The one sentence
 
 A card is the platform's view of a pull request, and accepting it calls the
