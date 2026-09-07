@@ -719,19 +719,99 @@ def test_a_prless_card_gets_its_pr_opened_at_accept_then_merges(client, app_worl
     assert app_world["local_merges"] == []
 
 
-def test_discussion_topic_needs_no_pr_and_still_accepts(client, app_world, monkeypatch):
+def _strip_delivery_claim(client, card_id: str) -> None:
+    """把卡还原成 change_subject 出现之前递的存量卡（真正的纯讨论卡）。现在的
+    递卡路径必填 subject，所以只能落库后抹掉。"""
+    from app.domain.review.repositories import AcceptCardRepository
+
+    async def _do() -> None:
+        async with client.test_factory() as s:
+            card = await AcceptCardRepository(s).get(_uuid.UUID(card_id))
+            assert card is not None
+            card.change_subject = None
+            await s.commit()
+
+    asyncio.run(_do())
+
+
+def _branchless_noop_merge(app_world, monkeypatch) -> None:
+    """树的分支不存在时 `ws.merge_topic` 真实的返回值——旧路径正是把这个 no-op
+    当成功吞掉的（2026-09-07 卡 40be3e1a）。"""
     from app.domain.workspace import service as ws
 
-    monkeypatch.setattr(ws, "topic_branch_exists", lambda pid, tid: False)
+    def _noop(pid, tid):
+        app_world["local_merges"].append(tid)
+        return {"merged": False, "noop": True, "reason": "no topic branch"}
+
+    monkeypatch.setattr(ws, "merge_topic", _noop)
+
+
+def test_a_delivery_claim_on_a_branchless_tree_stops_the_accept(
+    client, app_world, monkeypatch
+):
+    """回归（2026-09-07 卡 40be3e1a）：绑定项目 + 树分支缺失 + 卡带交付主张。
+    改动被推到了别的分支，树的分支从未存在——开不出 PR，本地合并是 no-op，
+    旧路径把卡标成 accepted，而改动没有合进任何地方。现在必须停下、原因落卡。"""
+    from app.domain.workspace import service as ws
+
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid)  # 递卡时分支还在（app_world 默认 True）
+    # 采纳时分支没了/从未推上树：改动在别的分支上。
+    monkeypatch.setattr(ws, "topic_branch_exists", lambda pid_, tid_: False)
+    _branchless_noop_merge(app_world, monkeypatch)
+
+    r = _accept(client, cid)
+    assert r.status_code == 422, r.text
+    assert "没有任何提交" in r.json()["message"]
+
+    card = _cards(client, tid)[0]
+    assert card["status"] == "pending"  # 不落 accepted
+    assert "没有任何提交" in card["note"]  # 原因写在卡上
+    assert card["note_level"] == "error"
+    assert app_world["opened"] == []  # 没开 PR
+    assert app_world["fake"].merge_calls == []  # 没合 PR
+    assert app_world["local_merges"] == []  # 本地合并一次都没发生
+    assert _topic(client, tid)["accepted_at"] is None
+
+
+def test_a_legacy_discussion_card_still_accepts_on_a_branchless_tree(
+    client, app_world, monkeypatch
+):
+    """真正的纯讨论卡（存量、无 change_subject）不误伤：没有交付主张，no-op
+    本地合并什么都没绕过，采纳照常完成。"""
+    from app.domain.workspace import service as ws
+
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)
+    _strip_delivery_claim(client, cid)
+    monkeypatch.setattr(ws, "topic_branch_exists", lambda pid_, tid_: False)
+    _branchless_noop_merge(app_world, monkeypatch)
 
     r = _accept(client, cid)
     assert r.status_code == 200, r.text
     assert r.json()["data"]["status"] == "accepted"
     assert app_world["fake"].merge_calls == []
     assert app_world["opened"] == []
+    assert app_world["local_merges"] == [_uuid.UUID(tid)]  # noop merge，无绕过
+
+
+def test_filing_a_card_on_a_branchless_tree_is_refused(client, app_world, monkeypatch):
+    """有活才有卡：绑定项目上树的分支不存在时，递卡当场被拒，错误信息点名
+    该推哪条分支——而不是等到采纳时才发现无从交付。"""
+    from app.domain.workspace import service as ws
+
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    monkeypatch.setattr(ws, "topic_branch_exists", lambda pid_, tid_: False)
+
+    r = _make_card_response(client, tid)
+    assert r.status_code == 422, r.text
+    assert "没有任何提交" in r.json()["message"]
+    # 说清该推哪条分支（本话题的树分支）。
+    assert f"topic/{_uuid.UUID(tid).hex[:8]}" in r.json()["message"]
+    assert _cards(client, tid) == []
 
 
 def test_github_unreachable_at_accept_stops_and_keeps_the_pr_on_the_card(
