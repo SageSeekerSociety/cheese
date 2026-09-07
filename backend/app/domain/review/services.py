@@ -274,6 +274,21 @@ _MISSING_SUBJECT = (
 #: here is the one overlap a machine can judge on its own (#314).
 _ALEMBIC_VERSIONS_DIR = "alembic/versions/"
 
+#: 一条活只能被交付一次 (#189)。Declaring work an accepted card already claimed
+#: would put the same task on two changes in permanent history, and an audit
+#: reading `git log` would find one piece of work apparently written twice.
+_ALREADY_DELIVERED = (
+    "「{title}」已经由另一张采纳过的卡交付了（{subject}）。"
+    "一条活只署名在写出它的那次交付上——这次要署名的是本批新写的活。"
+)
+
+#: 声明了一条本房间没有的活。Almost always a copy-pasted id from another room's
+#: 简报; naming the room is what makes that visible instead of "not found".
+_NOT_THIS_ROOMS_WORK = (
+    "这个房间里没有活 {task_id}。--task 只认本房间派出的活的 id"
+    "（`cheese split` 当时打印的那个）。"
+)
+
 
 #: 人工放行时「当时检查是什么状态」对应的那半句话。以前它是写死的「明知检查未
 #: 全绿仍合并」，而放行的常见场景之一恰恰是检查**已经全绿**、平台却还没合（比如
@@ -394,6 +409,7 @@ class AcceptService:
         routing_reason: str = "",
         change_subject: str | None = None,
         change_body: str | None = None,
+        task_ids: list[uuid.UUID] | None = None,
     ) -> AcceptCard:
         topic = await self._topic_or_404(topic_id)
         # Before anything else touches the DB: a missing or malformed subject is
@@ -416,6 +432,11 @@ class AcceptService:
         # (#442 decision 1) —— 那一半由下面的 `accepted` 卡挡着。
         if topic.status == TopicStatus.archived:
             raise ValidationError("话题已归档，不能再递验收卡")
+        # Whose work this is, as the room says (#189). Checked here — before a
+        # tree is opened or a row is written — because a bad id is the filer's
+        # to fix in the same breath, and because what it ends up as is a line in
+        # permanent history.
+        delivered = await self._declared_work(topic, task_ids or [])
         # One card at a time, not a broadcast (spec §4.4): re-route / wait
         # instead of stacking a new one.
         #
@@ -501,9 +522,64 @@ class AcceptService:
             status=AcceptStatus.pending,
             change_subject=change_subject,
             change_body=(change_body or None),
+            delivered_task_ids=delivered,
         )
         await self._warn_about_a_second_pending_migration(topic)
         return card
+
+    async def _declared_work(
+        self, topic: Topic, task_ids: list[uuid.UUID]
+    ) -> list[uuid.UUID]:
+        """The work this delivery says it carries, validated (#189).
+
+        The room declares it, because the room is the only party that knows.
+        The platform cannot derive it: a task's `tree_id` records which batch
+        was open when `cheese split` ran, not where its code eventually landed,
+        so the tree's membership names whoever happened to be sitting on it —
+        and the commits cannot be asked either, since inside the sandbox they
+        are all authored by the requester and co-authored by the model.
+
+        Two things ARE checkable, and both are checked rather than trusted,
+        because a wrong `Cheese-Task:` is permanent and reads exactly like a
+        right one:
+
+        - the work belongs to THIS room. A pasted id from another room's brief
+          would otherwise credit that room's worker on this change;
+        - no accepted card claimed it already. One piece of work is delivered
+          once; the same task on two changes would have an audit reading
+          `git log` find it apparently written twice.
+
+        What is deliberately NOT checked is whether the work "looks finished" —
+        a closed thread can have delivered nothing and an open one can have
+        written the whole change, so any such rule would reject true
+        declarations while still admitting false ones.
+
+        Empty in, empty out, and no inference: an undeclared delivery lands with
+        no `Cheese-Task:` line at all.
+        """
+        wanted = list(dict.fromkeys(task_ids))
+        if not wanted:
+            return []
+        in_room = await TaskService(self._session).list_in_room(topic.id)
+        mine = {t.id: t for t in in_room}
+        for task_id in wanted:
+            if task_id not in mine:
+                raise ValidationError(_NOT_THIS_ROOMS_WORK.format(task_id=task_id))
+        claimed: dict[str, AcceptCard] = {}
+        for card in await self._repo.list_everywhere_in_room(topic.id):
+            if card.status is AcceptStatus.accepted:
+                for one in card.delivered_task_ids or []:
+                    claimed.setdefault(one, card)
+        for task_id in wanted:
+            prior = claimed.get(str(task_id))
+            if prior is not None:
+                raise ValidationError(
+                    _ALREADY_DELIVERED.format(
+                        title=mine[task_id].title,
+                        subject=prior.change_subject or prior.id,
+                    )
+                )
+        return wanted
 
     async def _warn_about_a_second_pending_migration(self, topic: Topic) -> None:
         """两张未决卡各带一个新迁移 → 在房间里说一声 (#314).
@@ -983,7 +1059,7 @@ class AcceptService:
         # session to read the card or the roster with.
         from app.domain.workspace import service as ws
 
-        who = await identity.attribution(self._session, topic, task_id=card.task_id)
+        who = await identity.attribution(self._session, topic, card=card)
         try:
             merged = await asyncio.to_thread(
                 ws.merge_topic,
@@ -1543,9 +1619,7 @@ class AcceptService:
                 f"现在不能采纳（合并态：{verdict.state}）：{detail or '规则未满足'}"
             )
 
-        attribution = await identity.attribution(
-            self._session, topic, task_id=card.task_id
-        )
+        attribution = await identity.attribution(self._session, topic, card=card)
         result = await client.merge_pull_request(
             owner=owner,
             repo=repo,
@@ -2207,9 +2281,7 @@ class AcceptService:
             )
             await self._session.flush()
             return
-        attribution = await identity.attribution(
-            self._session, topic, task_id=card.task_id
-        )
+        attribution = await identity.attribution(self._session, topic, card=card)
         result = await client.merge_pull_request(
             owner=owner,
             repo=repo,
@@ -3096,7 +3168,7 @@ class AcceptService:
         verdict = _force_merge_verdict(state)
 
         number = card.pr_number
-        who = await identity.attribution(self._session, topic, task_id=card.task_id)
+        who = await identity.attribution(self._session, topic, card=card)
         result = await client.merge_pull_request(
             owner=owner,
             repo=repo,

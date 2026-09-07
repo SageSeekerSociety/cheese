@@ -18,9 +18,9 @@ Who this names: the human the topic BELONGS TO — its roster owner, see
 `requester_handle`. They are the one accountable for the change; the agent typed
 it. That the agent typed it is not hidden, and not left to be inferred either:
 the delivery commit carries `Cheese-Agent:` (which 分身) and one `Cheese-Task:`
-per piece of work in the batch (which worker inside it), resolved by
-`work_items`. The platform's own commits (repo init, upstream merges) keep the
-芝士 identity because nobody asked for those.
+per piece of work the card declares it delivers (which worker inside it),
+resolved by `work_items`. The platform's own commits (repo init, upstream
+merges) keep the 芝士 identity because nobody asked for those.
 
 Accountable is not the same as sole contributor. A room can change hands — one
 person opens it, it stalls, someone else picks it up and the sub-topics split out
@@ -289,54 +289,66 @@ async def coauthor_handles(
     return [owner]
 
 
-async def work_items(
-    session: Any, topic: "Topic", *, task_id: uuid.UUID | None = None
-) -> tuple[WorkItem, ...]:
-    """Every piece of work this delivery carries, oldest first.
+async def work_items(session: Any, card: Any) -> tuple[WorkItem, ...]:
+    """Every piece of work this delivery carries, oldest first — read from what
+    the card DECLARES (`AcceptCard.delivered_task_ids`), and from nowhere else.
 
-    一棵树 = 一个分支 = 一个 PR = 一批活, so the unit is the TREE and not the
-    task: squash-merging collapses the whole branch into one commit, and every
-    task that wrote to that branch is in it whether or not it is the one the card
-    was filed against. Listing only the card's own task would credit one worker
-    for a batch several of them produced.
+    It used to be derived: the batch was taken to be the membership of the tree
+    the card delivered. That is wrong whenever a room works across two batches,
+    which is the ordinary case. A task's tree is fixed when `cheese split` runs
+    and records which batch was open THEN; which branch its code goes out on is
+    decided when the room files a card. Measured on this project's own history
+    (2026-09-08), one delivery would have been signed by three tasks that
+    contributed nothing to it, while the task that actually wrote it was signed
+    onto the previous delivery — wrong in both directions at once.
 
-    Which tree: the card's task says so directly, and a card filed for the room
-    itself has no task, so the room's writable tree is the answer — a room takes
-    work into exactly one tree at a time, and a tree stays that way until its
-    delivery lands.
+    No fallback, deliberately. A card that declares nothing produces no
+    `Cheese-Task:` line, and falling back to the tree "just for those" would
+    quietly restore exactly the wrong answers this replaced. An audit believes a
+    trailer; a wrong name is worse than a missing one.
 
-    Empty is an ordinary answer: a room from before tasks existed has none, and a
-    delivery whose work cannot be read degrades to "no such trailers" rather than
-    taking the merge down with it.
+    Empty is an ordinary answer and never an error: a room that dispatched no
+    work has none, a card filed before this existed has none, and a batch that
+    cannot be read degrades to "no such trailers" rather than taking the merge
+    down with it.
     """
-    tree_id = await _delivered_tree(session, topic, task_id)
-    if tree_id is None:
+    declared = [
+        parsed
+        for parsed in (_as_uuid(raw) for raw in getattr(card, "delivered_task_ids", []))
+        if parsed is not None
+    ]
+    if not declared:
         return ()
-    from app.domain.room_task.services import WorkTreeService
+    from app.domain.room_task.services import TaskService
 
     return tuple(
         WorkItem(task.id, task.subagent_id or None, task.title or "")
-        for task in await WorkTreeService(session).tasks_on(tree_id)
+        for task in await TaskService(session).list_by_ids(declared)
     )
 
 
-async def _delivered_tree(
-    session: Any, topic: "Topic", task_id: uuid.UUID | None
-) -> uuid.UUID | None:
-    if task_id is not None:
-        thread = await _thread(session, task_id)
-        return thread.tree_id if thread is not None else None
-    from app.domain.room_task.services import WorkTreeService
-
-    tree = await WorkTreeService(session).current(topic.id)
-    return tree.id if tree is not None else None
+def _as_uuid(raw: Any) -> uuid.UUID | None:
+    """A declared id, or None when the column holds something that is not one.
+    JSON has no uuid type, so what comes back is whatever was written."""
+    if isinstance(raw, uuid.UUID):
+        return raw
+    try:
+        return uuid.UUID(str(raw))
+    except (ValueError, AttributeError, TypeError):
+        return None
 
 
 async def attribution(
-    session: Any, topic: "Topic", *, task_id: uuid.UUID | None = None
+    session: Any, topic: "Topic", *, card: Any = None
 ) -> "Attribution":
     """Everything a PR body and a squash commit need to say about who a change
     belongs to, resolved in ONE place.
+
+    Takes the CARD rather than a thread id: the card is what a delivery IS, and
+    it carries both halves of the answer — the thread it was filed for (whose
+    owner the change belongs to) and the work it declares it delivers (which 分身
+    wrote it). Passing them separately is how a caller ends up resolving the
+    humans from one card and the machines from another.
 
     The human answers are correlated — a co-author is defined as "credited but not
     the author" — so they are resolved together rather than at each call site;
@@ -350,6 +362,7 @@ async def attribution(
     merge down, but one broken lookup must not cost more than it has to either —
     losing `Requested-by:` because a co-author's account could not be read would
     make the credit the trailer exists for the thing that destroys it."""
+    task_id = getattr(card, "task_id", None)
     handle: str | None = None
     try:
         handle = await requester_handle(session, topic, task_id=task_id)
@@ -375,7 +388,7 @@ async def attribution(
         )
     tasks: tuple[WorkItem, ...] = ()
     try:
-        tasks = await work_items(session, topic, task_id=task_id)
+        tasks = await work_items(session, card)
     except Exception:  # noqa: BLE001 — same rule again: a trailer, not a gate
         logger.warning(
             "could not resolve the work behind topic %s", topic.id, exc_info=True

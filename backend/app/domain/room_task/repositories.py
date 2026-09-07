@@ -171,6 +171,17 @@ class TaskRepository:
         )
         return (await self._session.scalars(stmt)).first()
 
+    async def list_by_ids(self, task_ids: list[uuid.UUID]) -> list[Task]:
+        """These threads, oldest first. Ids that name nothing are simply absent
+        — the caller (`Cheese-Task:`) has a list somebody wrote down, and a row
+        that has since been deleted is a line it cannot write, not an error."""
+        if not task_ids:
+            return []
+        stmt = (
+            select(Task).where(Task.id.in_(task_ids)).order_by(Task.created_at, Task.id)
+        )
+        return list((await self._session.scalars(stmt)).all())
+
     async def list_for_room(self, room_id: uuid.UUID) -> list[Task]:
         """This room's threads, oldest first.
 

@@ -19,6 +19,17 @@ class AcceptCardCreate(BaseModel):
     # so that message — not `Field required` — is what comes back.
     change_subject: str | None = Field(default=None, max_length=255)
     change_body: str | None = None
+    # 这批交付是哪几条活干出来的 (#189) — the room naming the work whose code is
+    # actually in this change, which is the one thing about a delivery the
+    # platform cannot see for itself. Becomes `Cheese-Task:` in permanent
+    # history, so an id that does not belong to this room, or that an already
+    # accepted card claimed, is refused rather than written.
+    #
+    # Empty by default and empty is allowed: nothing is inferred from silence,
+    # because every inference available ("on the delivering tree", "not yet
+    # claimed") proves only that a task row exists — not that its code is here.
+    # An undeclared delivery lands with no `Cheese-Task:` line, which is honest.
+    task_ids: list[uuid.UUID] = Field(default_factory=list)
 
 
 class AcceptDecision(BaseModel):

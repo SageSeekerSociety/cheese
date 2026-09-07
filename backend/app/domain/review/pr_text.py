@@ -88,7 +88,9 @@ def pr_trailers(
     asked and what model typed, and nothing about which instance of this platform
     did it or which piece of work it was. `Cheese-Agent` is the room's 分身
     handle, the same name it posts under and holds a token as; `Cheese-Task` is
-    one line per piece of work in the batch, naming the worker that did it.
+    one line per piece of work the card DECLARED it delivers, naming the worker
+    that did it — a card that declared none writes none, because a name that is
+    merely plausible is worse in permanent history than no name at all.
 
     The agent handle is derived here rather than passed in because it is a pure
     function of the room (`topic_agent_handle`) — routing it through the caller's
