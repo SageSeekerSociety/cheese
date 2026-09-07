@@ -470,7 +470,7 @@ def app_world(client, monkeypatch):
 
     monkeypatch.setattr(ws, "push_topic_branch_for_github_pr", _repush)
 
-    def _local_merge(pid, tid):
+    def _local_merge(pid, tid, **_kwargs):
         recorded["local_merges"].append(tid)
         return {"merged": True, "commit": "local-merge-sha"}
 
@@ -739,7 +739,7 @@ def _branchless_noop_merge(app_world, monkeypatch) -> None:
     当成功吞掉的（2026-09-07 卡 40be3e1a）。"""
     from app.domain.workspace import service as ws
 
-    def _noop(pid, tid):
+    def _noop(pid, tid, **_kwargs):
         app_world["local_merges"].append(tid)
         return {"merged": False, "noop": True, "reason": "no topic branch"}
 

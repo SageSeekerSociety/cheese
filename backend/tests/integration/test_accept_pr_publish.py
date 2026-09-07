@@ -168,7 +168,7 @@ def pr_world(monkeypatch):
         ),
     )
 
-    def _local_merge(pid, tid):
+    def _local_merge(pid, tid, **_kwargs):
         recorded["local_merges"].append(tid)
         return {"merged": False, "noop": True, "reason": "no topic branch"}
 
@@ -509,7 +509,7 @@ def test_unbound_project_with_github_upstream_pushes_nothing(
     # A real merge this time (the default pr_world merge is a no-op), so the
     # push-back step actually runs and can be watched.
     monkeypatch.setattr(
-        ws, "merge_topic", lambda pid_, tid_: {"merged": True, "commit": "abc"}
+        ws, "merge_topic", lambda pid_, tid_, **_kw: {"merged": True, "commit": "abc"}
     )
     monkeypatch.setattr(ws, "_base_branch", lambda repo: "main")
     git_calls: list[tuple] = []

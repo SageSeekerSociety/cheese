@@ -104,3 +104,57 @@ def test_the_body_and_the_squash_commit_cannot_disagree():
     assert "Requested-by: bob" in commit
     assert "Reviewed-by: carol" in commit
     assert "Co-authored-by: Alice <583231+alice@users.noreply.github.com>" in commit
+
+
+def _card(**over) -> "object":
+    from app.domain.review.models import AcceptCard
+
+    defaults = {
+        "id": uuid.uuid4(),
+        "change_subject": "feat: deliver the thing",
+        "change_body": "Because it was asked for.",
+    }
+    defaults.update(over)
+    return AcceptCard(**defaults)
+
+
+def test_the_card_that_delivered_the_change_is_a_trailer_too():
+    """#189: `Cheese-Topic` says which room the change came out of; `Cheese-Card`
+    says which delivery of that room's work this is. Both lanes write it — the
+    GitHub squash body and the platform forge's local squash share this
+    builder, so asserting it once covers both."""
+    topic = _topic("bob")
+    card = _card()
+    trailers = pr_text.pr_trailers(topic, "carol", None, card)
+    assert f"Cheese-Topic: {topic.id}" in trailers
+    assert f"Cheese-Card: {card.id}" in trailers
+    assert f"Cheese-Card: {card.id}" in pr_text.pr_body(topic, "carol", card)
+    assert f"Cheese-Card: {card.id}" in pr_text.merge_commit_message(
+        topic, "carol", card
+    )
+
+
+def test_no_card_no_cheese_card_line():
+    """A caller with no card (the legacy subject-less history) must not write a
+    trailer pointing at nothing."""
+    assert "Cheese-Card" not in pr_text.pr_trailers(_topic("bob"), "carol")
+
+
+def test_local_merge_commit_message_is_subject_body_then_trailers():
+    """The platform forge's squash (#363) takes ONE message: the card's subject
+    on the first line, then the same body the GitHub lane writes — no `(#N)`,
+    because there is no PR to cite."""
+    topic = _topic("bob")
+    card = _card()
+    msg = pr_text.local_merge_commit_message(
+        topic, "carol", card, identity.Attribution("alice", ALICE)
+    )
+    assert msg.splitlines()[0] == "feat: deliver the thing"
+    assert "Because it was asked for." in msg
+    assert "Requested-by: alice" in msg
+    assert "Reviewed-by: carol" in msg
+    assert f"Cheese-Topic: {topic.id}" in msg
+    assert f"Cheese-Card: {card.id}" in msg
+    assert msg == "feat: deliver the thing\n\n" + pr_text.pr_body(
+        topic, "carol", card, identity.Attribution("alice", ALICE)
+    )
