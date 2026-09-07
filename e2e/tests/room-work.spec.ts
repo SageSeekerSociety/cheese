@@ -57,9 +57,11 @@ test.describe('房间里派出去的活', () => {
     // 具体哪个状态由 lib/board.spec.ts 逐条钉。
     await expect(progress.locator('.task-row .board-dot')).toHaveCount(2);
 
-    // 点条目进这条活自己的 chat 页 —— 总览里的一行必须是个入口，不然它只是一张表。
+    // 点条目就地展开这张卡 —— 总览里的一行必须是个入口，不然它只是一张表。
+    // 卡不是地点：地址留在房间上，卡的 id 进 query（T6 起）。
     await progress.getByText(`第一件事 ${stamp}`).click();
-    await expect(page).toHaveURL(new RegExp(`/topics/${first.id}`));
+    await expect(page).toHaveURL(new RegExp(`/topics/${roomId}\\?.*card=${first.id}`));
+    await expect(page.locator('.panel-card')).toBeVisible();
   });
 
   test('侧栏的「看板」是一直在的入口，进去是整个项目的视角', async ({ page }) => {

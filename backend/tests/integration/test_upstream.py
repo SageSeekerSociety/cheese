@@ -681,7 +681,7 @@ def test_conflict_handoff_fetches_a_bound_project_as_the_app(
     assert d["dispatched"]["files"] == ["hello.txt"]
     assert sync_tokens == ["ghs_read"] and handoff_tokens == ["ghs_read"]
     body = (
-        ws.topic_worktree(puid, _uuid.UUID(d["dispatched"]["topic_id"])) / "hello.txt"
+        ws.topic_worktree(puid, _uuid.UUID(d["dispatched"]["task_id"])) / "hello.txt"
     ).read_text()
     assert "local version" in body and "hi from upstream" in body
 
