@@ -327,8 +327,7 @@ class AgentWorkRunner:
 
     async def drain(self, timeout_s: float = 5.0) -> None:
         """Wait for every task this runner still has in flight — a turn, a
-        slot hold, a slot release — instead of a caller guessing how long the
-        tail takes.
+        follow-up wake — instead of a caller guessing how long the tail takes.
 
         A turn's own coroutine keeps running after it has published its last
         frame (settling conclusion cards, closing the interval; see the tail of
@@ -341,7 +340,7 @@ class AgentWorkRunner:
         it is on the caller to decide what that means (a test's own teardown
         check is what turns a task still pending here into a named failure).
         """
-        pending = {t for t in (self._tasks | self._holds_in_flight) if not t.done()}
+        pending = {t for t in self._tasks if not t.done()}
         if not pending:
             return
         await asyncio.wait(pending, timeout=timeout_s)
