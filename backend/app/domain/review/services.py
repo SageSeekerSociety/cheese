@@ -1463,16 +1463,26 @@ class AcceptService:
                 f"PR #{number} 的 head 在你查看后变了，卡已刷新 —— 请重新看过再采纳"
             )
 
-        verdict, who, protection, enforces, _runs = await self._pr_verdict(
-            card=card,
-            topic=topic,
-            owner=owner,
-            repo=repo,
-            creds=creds,
-            client=client,
-            status=status,
-            ref=seen,
-        )
+        try:
+            verdict, who, protection, enforces, _runs = await self._pr_verdict(
+                card=card,
+                topic=topic,
+                owner=owner,
+                repo=repo,
+                creds=creds,
+                client=client,
+                status=status,
+                ref=seen,
+            )
+        except Exception as exc:  # noqa: BLE001 — stop visibly; never guess green
+            logger.warning(
+                "cannot compute merge state for PR #%s at accept time: %s",
+                number,
+                exc,
+            )
+            await self._stop_accept_pr_unavailable(
+                card, topic, f"PR #{number} 合并态读取失败：{exc}"[:300]
+            )
         self._write_merge_mirror(card, verdict, who, seen)
         # GitHub enforcing → its merge API is the gate (405 = blocked, 如实转
         # 译). Platform enforcing → only clean, or unstable whose reds are not

@@ -40,8 +40,8 @@ def _make_topic(client, project_id: str) -> str:
     return r.json()["data"]["id"]
 
 
-def _make_card(client, topic_id: str, reviewer: str = "alice") -> str:
-    r = client.post(
+def _make_card_response(client, topic_id: str, reviewer: str = "alice"):
+    return client.post(
         f"/topics/{topic_id}/accept-card",
         json={
             "change_subject": "chore(test): file an accept card",
@@ -49,6 +49,10 @@ def _make_card(client, topic_id: str, reviewer: str = "alice") -> str:
             "routing_reason": "最懂",
         },
     )
+
+
+def _make_card(client, topic_id: str, reviewer: str = "alice") -> str:
+    r = _make_card_response(client, topic_id, reviewer)
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
@@ -1366,3 +1370,42 @@ def test_remote_head_ff_from_local_reads_real_git_ancestry(client):
     assert svc._remote_head_ff_from_local(puid, head1, head2) is True
     assert svc._remote_head_ff_from_local(puid, head2, head1) is False
     assert svc._remote_head_ff_from_local(puid, "0" * 40, head2) is False
+
+
+def test_an_unreadable_verdict_stops_the_accept_instead_of_guessing(
+    client, app_world
+):
+    """读不到检查/合并态不是绿：点击可见地停下、可重试——绝不落本地合并，
+    也绝不当作可合。"""
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    fake.check_state_error = RuntimeError("check-runs read failed (HTTP 500)")
+
+    r = _accept(client, cid)
+    assert r.status_code == 422, r.text
+    assert "采纳未完成" in r.json()["message"]
+    assert fake.merge_calls == []
+    assert app_world["local_merges"] == []
+    assert _cards(client, tid)[0]["status"] == "pending"
+
+
+def test_a_failed_post_merge_sync_is_annotated_not_fatal(
+    client, app_world, monkeypatch
+):
+    """合完同步本地 base 失败不能吞掉采纳本身——合并已是事实，卡如实带上
+    「本地同步待补」。"""
+    from app.domain.workspace import service as ws
+
+    def _sync_fails(_pid, token=None):
+        raise RuntimeError("fetch upstream failed")
+
+    monkeypatch.setattr(ws, "sync_upstream", _sync_fails)
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    fake.check_state_by_sha[head_sha] = ("success", "全绿")
+
+    r = _accept(client, cid)
+    assert r.status_code == 200, r.text
+    card = r.json()["data"]
+    assert card["status"] == "accepted"
+    assert "本地同步待补" in card["note"]
