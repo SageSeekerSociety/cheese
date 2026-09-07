@@ -127,7 +127,6 @@ class TaskRepository:
         title: str,
         owner_handle: str | None,
         created_by: str | None,
-        agent_instance_id: uuid.UUID | None,
     ) -> Task:
         """A new thread in *room_id*, working on *tree_id*.
 
@@ -143,7 +142,6 @@ class TaskRepository:
             title=title,
             owner_handle=owner_handle,
             created_by=created_by,
-            agent_instance_id=agent_instance_id,
         )
         self._session.add(task)
         await self._session.flush()

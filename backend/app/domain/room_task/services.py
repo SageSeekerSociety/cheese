@@ -203,7 +203,6 @@ class TaskService:
         title: str,
         owner_handle: str | None,
         created_by: str | None,
-        agent_instance_id: uuid.UUID | None,
     ) -> Task:
         """Open a new thread of work in a room, on the room's current tree.
 
@@ -228,7 +227,6 @@ class TaskService:
             title=title,
             owner_handle=owner_handle,
             created_by=created_by,
-            agent_instance_id=agent_instance_id,
         )
         # A thread writes to its room's tree, with its siblings. Without this the
         # workspace layer would fall back to "the tree named by the place's own
@@ -261,6 +259,19 @@ class TaskService:
             blocks = conversations.get(task.id, [])
             out.append((task, blocks[-limit:] if limit is not None else blocks))
         return out
+
+    async def blocks_for_thread(
+        self, task_id: uuid.UUID, *, limit: int | None = None
+    ) -> list[Block]:
+        """One card's conversation, oldest first, newest *limit* blocks.
+
+        The single-card counterpart of `threads_for_room`: opening one card
+        must not fan out over every other card's history to reach it, and a
+        long-lived room holds close to two hundred of them.
+        """
+        conversations = await self._repo.conversations_for_tasks([task_id])
+        blocks = conversations.get(task_id, [])
+        return blocks[-limit:] if limit is not None else blocks
 
 
 class ClaimService:

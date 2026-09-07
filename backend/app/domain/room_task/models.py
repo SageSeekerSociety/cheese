@@ -10,7 +10,7 @@ still alive?".
 What a task owns, and the room does not:
 
 - a single owner (`owner_handle`) — not a roster,
-- the agent doing it (`agent_instance_id`),
+- the 分身 doing it (`subagent_id`),
 - one thread of conversation — every `Block` whose `task_id` is this row,
 - a delivery: `accepted_by` / `accepted_at`.
 
@@ -249,13 +249,6 @@ class Task(UuidPk, Timestamps, Base):
     # has an owner, and that difference is the point of the split.
     owner_handle: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    # WHICH agent works here. NULL = the project's default, same meaning as on a
-    # topic, so a task nobody pinned an agent to follows the project.
-    agent_instance_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("agent_instances.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
     # 这条活在哪棵树上干. Many tasks share one tree — 一棵树 = 一个分支 =
     # 一个 PR = 一批活 — so this is what says which batch the work belongs to,
     # and it is the only place a task's files live. NOT NULL: a task with no

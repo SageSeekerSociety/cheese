@@ -174,7 +174,7 @@ async def set_topic_agent(
     return ok(_topic_agent_payload(topic, agent))
 
 
-def _topic_agent_payload(topic: Topic | Task, agent: ResolvedAgent) -> dict:
+def _topic_agent_payload(topic: Topic, agent: ResolvedAgent) -> dict:
     return {
         "topic_id": str(topic.id),
         "instance_id": str(agent.instance_id) if agent.instance_id else None,
@@ -484,6 +484,125 @@ async def list_room_tasks(
     return ok(page(items, len(items)))
 
 
+@router.get("/{topic_id}/tasks/{task_id}")
+async def get_room_task(
+    topic_id: uuid.UUID,
+    task_id: uuid.UUID,
+    db: DbSession,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+    resolver: ActorResolverDep,
+    limit: Annotated[int | None, Query(ge=1, le=500)] = None,
+) -> dict:
+    """One card, with its conversation — the same shape `/tasks` lists.
+
+    Through the room, because a card is not a place: `GET /topics/{card}` is a
+    404 by construction, and the person reading a card is standing in the room
+    it belongs to anyway.
+
+    `limit` caps the timeline at its newest N blocks; with none it comes back
+    whole. Same default as `/blocks` and for the same reason — an invented
+    window truncates an agent reading history with no way to notice.
+    """
+    place = await TopicService(db).place_or_404(topic_id)
+    await _actor_in_place(resolver, place)
+    tasks = TaskService(db)
+    task = await tasks.get(task_id)
+    if task is None or task.room_id != place.room_id:
+        raise NotFoundError("这个房间里没有这条活")
+    blocks = await tasks.blocks_for_thread(task_id, limit=limit)
+    cards = await AcceptCardRepository(db).latest_by_task([task.id])
+    beats = await TaskRepository(db).last_block_at_for_tasks([task.id])
+    out = TaskOut.model_validate(task).model_dump(mode="json")
+    # 看板那一格，和它在列表里显示的是同一句话——同一个函数算的，所以深链接进来
+    # 和从看板点进来不可能给出两种说法。
+    out["presentation"] = presentation.task_presentation(
+        presentation.facts_for_task(
+            task,
+            cards.get(task.id),
+            beats.get(task.id),
+            # 做这条活的分身住在房间的会话里 —— 屏幕没了它就没了，而它不会来说
+            # 一声。这一位是内存里的当下事实，不是库里的一列。
+            room_screen_live=chat.has_live_screen(place.room_id),
+        ),
+        now=datetime.now(UTC),
+    ).as_dict()
+    out["blocks"] = [BlockOut.model_validate(b).model_dump(mode="json") for b in blocks]
+    return ok(out)
+
+
+@router.post("/{topic_id}/tasks/{task_id}/messages")
+async def say_on_task(
+    topic_id: uuid.UUID,
+    task_id: uuid.UUID,
+    body: dict,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
+) -> dict:
+    """在一张卡下面说话 —— 落在这条活的时间线上，房间被叫来转达。
+
+    A person watching a card cannot reach the 分身 doing it: that worker lives
+    inside the room's session and only the room's 芝士 can pass it a message.
+    So this lands what was said WHERE THE WORK IS, and wakes the ROOM to act on
+    it. Nothing is woken on the card — there is no session there to wake.
+
+    Through the room's id for the same reason `/bind` and `/title` are: a card
+    is not a place, so it has no address of its own and no token scoped to it.
+    """
+    place = await TopicService(db).place_or_404(topic_id)
+    task = await TaskService(db).get(task_id)
+    if task is None or task.room_id != place.room_id:
+        raise NotFoundError("这个房间里没有这条活")
+    content = (body.get("content") or "").strip()
+    if not content:
+        raise ValidationError("消息内容不能为空")
+    actor = await resolver.resolve(
+        fallback_handle=body.get("author"),
+        topic_id=place.room_id,
+        project_id=place.project_id,
+    )
+    await resolver.authorize_topic(
+        actor, project_id=place.project_id, topic_id=place.room_id
+    )
+    content = await canonicalize_refs(
+        db, place.project_id, content, exclude_topic_id=place.room_id
+    )
+    block = await BlockRepository(db).add(
+        project_id=place.project_id,
+        topic_id=place.room_id,
+        task_id=task.id,
+        author=actor.handle,
+        author_type=AuthorType.ai if actor.is_agent else AuthorType.human,
+        content=content,
+        kind=BlockKind.message,
+    )
+    payload = BlockOut.model_validate(block).model_dump(mode="json")
+    # Visible before the turn that reads it — same ordering as the doc comment.
+    await db.commit()
+    # 卡下的实时帧走这条活自己的频道，因为块落在这条活上：发给房间的话，看着房间
+    # 的人会看见一条刷新之后就搬走了的消息。
+    await get_broker().publish(
+        str(task.id), {"type": "assistant_block", "block": payload}
+    )
+    if not actor.is_agent:
+        runner.submit(
+            chat,
+            place.room_id,
+            author="system",
+            content=thread_relay_prompt(
+                task_id=task.id,
+                task_title=task.title,
+                author=actor.handle,
+                message=f"说：{content}",
+            ),
+            summon=True,
+            nudge_event=f"{actor.handle} 在一条活上说话了，芝士来转达",
+            provision_actor=actor,
+        )
+    return ok(payload)
+
+
 @router.post("/{topic_id}/tasks/{task_id}/bind")
 async def bind_task_subagent(
     topic_id: uuid.UUID,
@@ -683,9 +802,7 @@ async def topic_transcript(
         ):
             raise NotFoundError("游标事件不存在")
     if limit is None:
-        site = [
-            b for b in await repo.list_for_topic(place.room_id) if b.kind in kinds
-        ]
+        site = [b for b in await repo.list_for_topic(place.room_id) if b.kind in kinds]
         has_more = False
     else:
         result = await repo.page_for_topic(
@@ -882,11 +999,7 @@ async def add_comment(
         node = await repo.get(uuid.UUID(anchor))
         # `task_id` too: a card's blocks sit under the same `topic_id`, so
         # checking only the room would let a comment anchor onto one of them.
-        if (
-            node is None
-            or node.topic_id != place.room_id
-            or node.task_id is not None
-        ):
+        if node is None or node.topic_id != place.room_id or node.task_id is not None:
             raise ValidationError("锚点不是本话题的文档块")
         reply_to = node.id
     # B4 Feishu-style: the exact selected span, kept for display next to the
@@ -1364,7 +1477,9 @@ async def set_title(
     """
     place = await TopicService(db).place_or_404(topic_id)
     actor = await resolver.resolve(
-        fallback_handle=body.get("by"), topic_id=place.room_id, project_id=place.project_id
+        fallback_handle=body.get("by"),
+        topic_id=place.room_id,
+        project_id=place.project_id,
     )
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
@@ -1633,6 +1748,7 @@ async def take_room_lock(
         room_id=place.room_id,
         kind=LockKind(body.kind),
         resource=body.resource or "",
+        holder_task_id=None,
     )
     await db.commit()
     return ok({"acquired": acquired, "reason": reason})
@@ -1651,6 +1767,7 @@ async def release_room_lock(
         room_id=place.room_id,
         kind=LockKind(body.kind),
         resource=body.resource or "",
+        holder_task_id=None,
     )
     await db.commit()
     return ok({"released": released})

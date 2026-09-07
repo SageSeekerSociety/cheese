@@ -178,14 +178,10 @@ async def _requester_token(session: AsyncSession, topic_id: uuid.UUID) -> str | 
     from app.domain.workspace import identity
 
     try:
-        # `topic_id` is a place id: a card is usually a thread's, and the human
-        # it belongs to is on the thread, not on the room's roster.
         place = await PlaceResolver(session).resolve(topic_id)
         if place is None:
             return None
-        handle = await identity.requester_handle(
-            session, place.room, task_id=place.task_id
-        )
+        handle = await identity.requester_handle(session, place.room)
         if not handle:
             return None
         return await get_github_user_token_for_handle(session, handle)
@@ -223,7 +219,7 @@ async def _pr_text(
     if place is None:
         return branch, f"Cheese-Topic: {topic_id}"
     topic = place.room
-    who = await identity.attribution(session, topic, task_id=place.task_id)
+    who = await identity.attribution(session, topic)
     # No approver yet — the PR opens when the card is FILED, and 采纳 is what
     # merges it. `Reviewed-by` is written onto the squash commit at merge time,
     # by whoever actually clicks.

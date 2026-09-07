@@ -91,7 +91,6 @@ from app.domain.milestone.repositories import MilestoneRepository
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
-from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.team.repositories import TeamRepository
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
@@ -3858,9 +3857,7 @@ class ChatService:
             is_private = topic.is_private
             private_owner = topic.private_owner
             acting_agent = await self._agent_handle(session, topic.id)
-            doc_root = (
-                None if is_private else await blocks.doc_root(place.room_id)
-            )
+            doc_root = None if is_private else await blocks.doc_root(place.room_id)
             doc_text = doc_root.content if doc_root else None
             # Memory is retrieved against what this turn is actually about —
             # newest message first, since a turn is usually about the thing
