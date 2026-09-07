@@ -113,6 +113,27 @@ class TaskService:
     async def get(self, task_id: uuid.UUID) -> Task | None:
         return await self._repo.get(task_id)
 
+    async def list_in_room(self, room_id: uuid.UUID) -> list[Task]:
+        """Every piece of work this room has dispatched, oldest first.
+
+        The rows only — `threads_for_room` is the same set with each thread's
+        conversation attached, and a caller that wants to know *which work
+        exists* should not pay for every block ever written in the room to find
+        out.
+        """
+        return await self._repo.list_for_room(room_id)
+
+    async def list_by_ids(self, task_ids: list[uuid.UUID]) -> list[Task]:
+        """These rows, oldest first, silently skipping ids that name nothing.
+
+        Ordered by the table and not by the argument, so that a set of ids
+        always renders in one fixed order however it was assembled — the caller
+        is `Cheese-Task:`, and trailer order that depended on the order someone
+        typed `--task` would make two identical declarations produce two
+        different commit messages.
+        """
+        return await self._repo.list_by_ids(task_ids)
+
     async def mark_transcripts_archived(self, task_id: uuid.UUID, at: datetime) -> bool:
         """Stamp the thread with when its device home's transcripts reached
         the platform (topic/retire.py). False when no thread has this id."""
