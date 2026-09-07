@@ -93,7 +93,6 @@ def _dormant(client, project_id: str, room_id: str, title: str = "没跑过的")
                 title=title,
                 owner_handle="alice",
                 created_by="alice",
-                agent_instance_id=None,
             )
             made["id"] = str(task.id)
             await s.commit()

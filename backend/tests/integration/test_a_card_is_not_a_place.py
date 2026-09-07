@@ -98,7 +98,7 @@ def test_saying_something_on_a_card_lands_on_the_card(client):
     said = client.get(f"/topics/{room_id}/tasks/{card['id']}").json()["data"]["blocks"]
     assert [b["content"] for b in said] == ["这条先别动 routes"]
     # 房间主线上没有这句话。
-    room_line = client.get(f"/topics/{room_id}/blocks").json()["data"]
+    room_line = client.get(f"/topics/{room_id}/blocks").json()["data"]["data"]
     assert all("这条先别动 routes" not in b["content"] for b in room_line)
 
 
@@ -168,7 +168,7 @@ def test_a_card_that_kept_its_old_topic_id_still_renders(client):
     client.portal.call(_seed)
     room_id = ids["room"]
 
-    listed = client.get(f"/topics/{room_id}/tasks").json()["data"]
+    listed = client.get(f"/topics/{room_id}/tasks").json()["data"]["data"]
     assert [t["id"] for t in listed] == [str(inherited_id)]
     assert listed[0]["presentation"]["display_status"]
 

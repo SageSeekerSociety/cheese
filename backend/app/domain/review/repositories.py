@@ -109,6 +109,22 @@ class AcceptCardRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
+    async def list_everywhere_in_room(self, topic_id: uuid.UUID) -> list[AcceptCard]:
+        """Every card filed anywhere in this room — its own and its cards'.
+
+        The room's own set (`list_for_topic`) is the answer to "do I have a
+        card". This is the answer to "what is still open in here", which is a
+        different question and has to include what a piece of work filed back
+        when work was a place: an unsettled `pr_open` row is one the poller
+        keeps pushing, and archiving the room is exactly when that must stop.
+        """
+        stmt = (
+            select(AcceptCard)
+            .where(AcceptCard.topic_id == topic_id)
+            .order_by(AcceptCard.created_at.desc())
+        )
+        return list((await self._session.scalars(stmt)).all())
+
     async def latest_by_task(
         self, task_ids: list[uuid.UUID]
     ) -> dict[uuid.UUID, AcceptCard]:

@@ -506,7 +506,6 @@ async def _room_with_a_thread(client, project_id: str) -> tuple[str, str]:
             title="一件活",
             owner_handle="alice",
             created_by="alice",
-            agent_instance_id=None,
         )
         thread_id = str(task.id)
         await session.commit()

@@ -585,22 +585,17 @@ class TopicService:
             # thread later sees work that simply ended mid-sentence.
             await self._blocks.add(
                 project_id=thread.project_id,
-                topic_id=thread.id,
+                topic_id=topic.id,
+                task_id=thread.id,
                 author=by,
                 author_type=AuthorType.system,
                 content=f"随父话题「{topic.title}」一同归档",
                 kind=BlockKind.event,
                 meta={"platform": True},
             )
-            from app.domain.review.archive import close_cards_for_archived_topic
-
-            await close_cards_for_archived_topic(
-                self._session,
-                topic_id=thread.id,
-                project_id=thread.project_id,
-                topic_title=thread.title,
-                by=by,
-            )
+        # 卡上还开着的验收卡由 `_archive_one` 一并收：它们和房间自己的卡挂在同一
+        # 个房间上，一次问清比每条活问一次少一半的往返，也不会漏掉一条活被收工
+        # 之后才归档的房间。
         children = await self._repo.list_children(topic.id)
         for child in children:
             if child.status == TopicStatus.archived:
