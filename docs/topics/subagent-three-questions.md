@@ -97,6 +97,8 @@
 
 **T4 收尾清扫（✅ 完成）**：已合入分支（HEAD 00f9d5e00，46 文件 +1052/-3274，迁移 e4a92b1c7d30；整棵 tests/ 5501 passed，唯一失败是既有的 test_market_api 环境项）。落地要点：①升级出活唤醒房间起分身（升级出房间照旧）；②对活的留言/文档评论一律转达房间，活的 id 上零轮次；③relay 只剩「房间给活留字条」，活侧入口（return-conclusion、cheese conclude、支线守卫死代码）全删；④全 app 17 个开轮次调用点逐一审计，另抓两颗简报外的雷（解冲突派活、文档评论）一并改道；cloud_provider 的活 id 归一化删除（留着会藏 bug）；**驻留槽整套删除**（写入方 T2 后已归零，前端生产代码不读）；⑤分身 todo 归活自己的频道（各 agent 任务编号都从 1 数，混单会互相改写勾选）。顺手修了两个真 bug：**平台指令会被待读消息挤掉且不重发**（影响已上线的打回机制，触发条件只是有人不 @ 芝士说过话；已修并加回归）；消息落库与开轮次之间的 socket 关闭窗口（先 create_task 再判断）。过期文档同 PR 清理（parent_link 删除、stage_delegating 重写、不可达的 stage_working 并入）。新增一条复核过的 API：房间给活起名（`cheese title --task`——升级出的活否则永远叫「新话题」）。
 
+**T5 按 #713 补账并删结论卡（✅ 完成）**：已合入分支（HEAD 454a91029，50 文件 +682/-3733，迁移 a1c4e7b09f36 真库双向验证）。落地要点：分身深度=1/并发=4 两个上限进屏幕环境；split 往房间主线写卡 block（meta.task_id）；卡带 brief/conclusion 两列，活不再播种文档；**结论卡机制全域归零**（含轮末默认采信、60 秒扫描、归档推迟三件套），绑定 SubagentStop 直写 conclusion（最后一条胜、野 id 不落），conclude-task=房间收卡；**cheese await 全删**，cheese check 前台同步跑、长活走 agent 原生后台。收卡不再有贴消息/改文档/发 alert 三副作用（结论住在卡上）。全绿：unit 3590/0 失败、integration 选段 532/0、静态零告警。
+
 ### 与 issue #713 的对齐（2026-09-06 <@wangchangxin> 裁决：分歧按 #713 来，欠的补）
 
 - **结论卡整套删除**（conclude/need-evidence/escalate/默认采信/60 秒扫描）：绑定分身的 SubagentStop 直接把 last_assistant_message 写进卡的结论字段（取最后一条、只认绑定 id——野 Stop 门禁保留，这是实测补给 #713 的安全条件），房间整合改动后收卡。→ T5
@@ -104,6 +106,10 @@
 - **任务不再是地点补完全程**：PlaceResolver 的 tasks 半边、/topics/{任务id} 地址空间、任务的 agent 身份字段。→ T6
 - 文档栏顶部状态区（前端）：这台机器没有 pnpm/node_modules，留给能跑前端检查的环境单独做。
 - SubagentStop 触发条件（实测）：任何分身（含 Claude Code 内部工具 agent）一轮跑完就发；同一分身可多次；常迟到于会话 Stop。规则：取绑定 id 的最后一条。
+
+### T6 范围（进行中）：任务彻底不是地点
+
+PlaceResolver 的 tasks 半边、/topics/{任务id} 地址空间、tasks.agent_instance_id 身份字段拆除；前端任务视图改为按卡渲染（这台机器 corepack pnpm 可用，前端检查能跑）；顺带清 T4/T5 登记的死标签与过期文案（create_subtopic/return_conclusion 工具标签、accept-request 帮助文本、cx_types 的 residency?/queued_at?）；文档栏顶部状态区一并做。存量 268 条旧任务按「归成历史卡」处理，不做原地转换迁移。
 
 ### 遗留台账（T1–T4 都没做、留给后续的）
 
