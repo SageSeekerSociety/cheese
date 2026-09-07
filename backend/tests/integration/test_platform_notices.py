@@ -17,8 +17,8 @@ author_type=system`，前端一行灰字）。另一条更糟：`runner.submit(a
 
 ## 为什么闸门那两条不走 HTTP
 
-`review/gate.py` 的 runner 已随 `采纳即合并`（#296）退役，连同它的
-`run_check_command` 与那两条话术的用例一起删掉了 —— 没有任何代码路径还会产生
+`review/gate.py` 的 runner 已随 `采纳即合并`（#296）整个退役（#718 又删掉了
+配置它的设置），话术的用例也一起删了 —— 没有任何代码路径还会产生
 `gate_failed` / `gate_blocked`，也就没有话术可钉。这两个状态仍留在卡片枚举和前端
 里，因为历史行带着它们，得渲染得出来。
 """

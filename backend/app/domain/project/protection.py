@@ -122,6 +122,10 @@ def branch_protection_of(project: Project | None) -> BranchProtection:
     if isinstance(raw_overrides, list):
         overrides = tuple(str(h).strip() for h in raw_overrides if str(h).strip())
 
+    reviewer = raw.get("default_reviewer")
+    if not isinstance(reviewer, str):
+        reviewer = ""
+
     return BranchProtection(
         required_checks=tuple(checks),
         strict=bool(raw.get("strict", False)),
@@ -129,7 +133,7 @@ def branch_protection_of(project: Project | None) -> BranchProtection:
         auto_merge_allowed=bool(raw.get("auto_merge_allowed", False)),
         override_handles=overrides,
         approvals_required=_approvals_required(settings),
-        default_reviewer=str(raw.get("default_reviewer") or "").strip(),
+        default_reviewer=reviewer.strip(),
     )
 
 

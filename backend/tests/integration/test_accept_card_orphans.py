@@ -477,7 +477,7 @@ def test_a_failed_gate_still_allows_re_handing_a_card(client, monkeypatch):
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid).json()["data"]["id"]
 
-    # 直接把这张卡结算成 gate_failed（跳过真正跑 check_command）。
+    # 直接把这张卡写成历史遗留的 gate_failed（没有代码路径再产生它）。
     from app.domain.review.models import AcceptCard, AcceptStatus
 
     async def _fail_gate() -> None:

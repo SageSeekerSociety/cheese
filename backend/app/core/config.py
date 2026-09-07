@@ -378,13 +378,6 @@ class Settings(BaseSettings):
 
     # --- Agent sandbox (spec §9.1: 每话题在隔离容器里跑 claude + 原生工具) ---
     sandbox_image: str = "cheesex-agent-sandbox:latest"
-    # Machine quality gates use a disposable sibling container and never the
-    # backend process. Keep this explicit so operators can ship a test-toolchain
-    # image without granting the gate Docker socket or backend credentials.
-    quality_gate_image: str = "cheesex-agent-sandbox:latest"
-    quality_gate_memory_mb: int = 2048
-    quality_gate_cpus: float = 2.0
-    quality_gate_pids_limit: int = 512
     # Base URL the in-container `cheese` CLI calls back to (host → backend).
     # The app ROOT, with no `/api`. The in-container `cheese` CLI reaches the
     # backend port DIRECTLY (no gateway, so nothing strips a prefix), and since
