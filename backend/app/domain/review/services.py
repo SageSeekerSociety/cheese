@@ -441,9 +441,21 @@ class AcceptService:
         # 一棵树一个 PR: the thing that may not happen twice at once is two PRs
         # on ONE branch. Asking the room instead would refuse a second batch its
         # own PR, which is precisely what a second tree exists to allow.
-        tree = await WorkTreeService(self._session).ensure_open(
-            project_id=topic.project_id, room_id=topic.id
-        )
+        trees = WorkTreeService(self._session)
+        tree = await trees.ensure_open(project_id=topic.project_id, room_id=topic.id)
+        if trees.started_a_batch:
+            # 开一批活落在两个地方，而它们不能一起回滚：`work_trees` 的行，和
+            # `ws.bind_tree` 在磁盘上写的「这个房间写哪棵树」。这个方法底下还有
+            # 好几道会 raise 的闸（空树守卫首当其冲），raise 走的是请求事务的
+            # 回滚 —— 行没了，映射还在，房间从此指着一棵不存在的树。
+            #
+            # 而那道空树守卫恰恰要**点名一条分支**让人把提交推上去。它报的名字
+            # 来自刚开的这棵树，422 又把这棵树烧掉，下次递卡开的是另一棵、报的
+            # 是另一个名字 —— 照着推永远白推（房间 2026-09-08 实测）。
+            #
+            # 所以这一行先落地，跟这次递卡成不成没有关系。它本来就与递卡无关：
+            # 房间开着一棵空树是每两批活之间的常态，而磁盘已经这么认为了。
+            await self._session.commit()
         # Plus this place's tree-less cards. A card filed before trees existed
         # kept `tree_id IS NULL` wherever the backfill had no honest value to
         # give it, so asking the tree alone makes a live card from that era

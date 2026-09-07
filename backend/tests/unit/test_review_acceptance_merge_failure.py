@@ -30,6 +30,9 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
         # No PR riding this card — accept takes the local merge path.
         pr_number=None,
         pr_url=None,
+        # 合的是人看到的那个 commit：采纳会核对请求声明的 head 与卡上的。平台
+        # lane 的卡从来没有 head，两边都是 None —— 「没有哪一版可以过时」。
+        pr_head_sha=None,
     )
     topic = SimpleNamespace(
         id=card.topic_id,

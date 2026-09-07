@@ -797,9 +797,7 @@ def test_force_merging_the_version_you_looked_at_refuses_once_the_card_moved_on(
     assert [m["sha"] for m in fake.merge_calls] == [live]
 
 
-def test_arming_auto_merge_on_the_version_you_looked_at_refuses_too(
-    client, app_world
-):
+def test_arming_auto_merge_on_the_version_you_looked_at_refuses_too(client, app_world):
     """洞①的布防入口：布防就是提前采纳，替一段没人看过的代码预先按同意，跟
     当场合并它是同一件事。
 

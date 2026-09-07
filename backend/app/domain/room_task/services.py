@@ -5,7 +5,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.domain.block.models import Block
@@ -27,6 +27,8 @@ class WorkTreeService:
     def __init__(self, session: AsyncSession):
         self._session = session
         self._repo = WorkTreeRepository(session)
+        #: Did the last :meth:`ensure_open` start a new batch? See its docstring.
+        self.started_a_batch = False
 
     async def get(self, tree_id: uuid.UUID) -> WorkTree | None:
         return await self._repo.get(tree_id)
@@ -50,57 +52,29 @@ class WorkTreeService:
         worktree directory, container workdir and tmux session are
         byte-for-byte the names they already had (migration `b8e2f4a90d33`).
         Later trees get fresh ids, and therefore fresh branches.
+
+        ``started_a_batch`` on the way out says whether this call CREATED the
+        tree. It exists because starting a batch lands in two places that
+        cannot roll back together — this row, and the marker `bind_tree`
+        writes below — so a caller that might raise afterwards has to know it
+        is now holding a fact the disk already believes, and make it durable
+        (:meth:`AcceptService.create_card` is the one that does).
         """
         from app.domain.workspace import service as ws
 
         current = await self._repo.open_tree_for_room(room_id)
+        self.started_a_batch = current is None
         if current is None:
             first = not await self._repo.list_for_room(room_id)
-            tree_id = await self._start_batch_durably(
+            current = await self._repo.add(
                 project_id=project_id,
                 room_id=room_id,
                 tree_id=room_id if first else None,
             )
-            current = await self._repo.get(tree_id)
-            if current is None:  # pragma: no cover — committed a line ago
-                raise ConflictError("这个房间的新一批活没能开起来，请重试")
         # The workspace layer is sync and DB-free, so it cannot ask which tree a
         # room is on. Tell it — same arrangement `bind_room` uses for boxes.
         ws.bind_tree(room_id, current.id)
         return current
-
-    async def _start_batch_durably(
-        self, *, project_id: uuid.UUID, room_id: uuid.UUID, tree_id: uuid.UUID | None
-    ) -> uuid.UUID:
-        """Write the room's next tree on its OWN connection, and commit it there.
-
-        Starting a batch lands in two places that cannot roll back together:
-        this row, and the marker `ws.bind_tree` writes so the sync workspace
-        layer knows which tree the room writes to. The row is transactional and
-        the file is not — so a caller that raises afterwards takes the row with
-        it and leaves the marker behind, pointing the room at a tree that no
-        longer exists.
-
-        That is not a tidiness problem. 递卡 on a room whose last batch already
-        merged starts a batch and then hits the empty-branch guard, which
-        refuses with "push your commits to topic/xxxxxxxx" — a branch named
-        after the tree the refusal just destroyed. The next attempt starts
-        another tree and names a DIFFERENT branch, so following the instruction
-        can never work, and the two layers disagree the whole time (2026-09-08).
-
-        So the row goes in first and stays in, independent of what the caller
-        does next. An open tree with nothing on it is what every room has
-        between batches anyway — the cost is nothing, and it is exactly the
-        fact the disk is about to record.
-        """
-        factory = async_sessionmaker(self._session.bind, expire_on_commit=False)
-        async with factory() as session:
-            tree = await WorkTreeRepository(session).add(
-                project_id=project_id, room_id=room_id, tree_id=tree_id
-            )
-            new_id = tree.id
-            await session.commit()
-        return new_id
 
     async def seal(self, tree: WorkTree) -> WorkTree:
         return await self._repo.seal(tree)
