@@ -113,7 +113,12 @@ def _batch(client, pid: str, room: str, subject: str, tasks: list[str]) -> str:
     machine_commits(uuid.UUID(pid), uuid.UUID(room), {name: subject})
     card = _deliver(client, room, subject, tasks)
     _accept(client, card["id"])
-    return _landed_body(pid)
+    landed = _landed_body(pid)
+    # The commit THIS delivery produced, not whatever was on main already: a
+    # second batch that quietly merged nothing would otherwise be checked
+    # against the first one's trailers and pass for the wrong reason.
+    assert landed.splitlines()[0] == subject, landed
+    return landed
 
 
 def test_the_landed_commit_names_the_agent_and_every_worker_declared(client):
@@ -147,6 +152,33 @@ def test_the_landed_commit_names_the_agent_and_every_worker_declared(client):
 # is right only for a room that dispatches nothing and delivers once.
 
 
+def _next_batch(client, pid: str, room: str) -> None:
+    """The batch that just went out is closed and the room starts the next one.
+
+    What an accept on a GitHub-bound project does to the tree it merged
+    (`AcceptService._mark_cards_tree_merged`), reached here directly because the
+    unbound lane these tests run on has no PR to merge. The state it leaves is
+    the ordinary one for every room that has delivered and kept working: the
+    task rows sit on a tree that is finished, and the next batch of code is
+    written somewhere else entirely.
+    """
+    from app.domain.room_task.services import WorkTreeService
+
+    async def _roll() -> None:
+        async with client.test_factory() as s:
+            trees = WorkTreeService(s)
+            landed = await trees.current(uuid.UUID(room))
+            assert landed is not None
+            await trees.mark_merged(landed)
+            fresh = await trees.ensure_open(
+                project_id=uuid.UUID(pid), room_id=uuid.UUID(room)
+            )
+            assert fresh.id != landed.id
+            await s.commit()
+
+    client.portal.call(_roll)
+
+
 def _two_batches(client) -> tuple[str, str, str, str]:
     """A room that delivers twice: `earlier`'s code goes out in the first batch,
     `later`'s in the second. Both are dispatched up front, so both hang on the
@@ -161,12 +193,13 @@ def _two_batches(client) -> tuple[str, str, str, str]:
 
 
 def test_work_delivered_in_a_later_batch_is_named_on_that_batch(client):
-    """The task rides a tree that merged batches ago; its code is in THIS one.
+    """The task rides a tree that finished batches ago; its code is in THIS one.
     Enumerating the delivering tree misses it entirely — its tree is not this
     tree — and the 分身 that wrote the change vanishes from the history."""
     pid, room, earlier, later = _two_batches(client)
 
     _batch(client, pid, room, "feat: the first batch", [earlier])
+    _next_batch(client, pid, room)
     second = _batch(client, pid, room, "feat: the second batch", [later])
 
     assert f"Cheese-Task: {later} bbbb1111bbbb1111b 代码走下一批的活" in second
