@@ -1330,6 +1330,15 @@ def build_screen_launch(
         "CHEESE_TOKEN": hook_token,
         "CHEESE_HOME": home_dir,
         "CHEESE_WORK": work_dir,
+        # Work is a subagent of the room's session, so these two are the shape
+        # of the room itself. Depth 1: a piece of work does not split further —
+        # its own children would be invisible to the platform (nothing binds
+        # them to a card) and unaddressable by a person. Concurrency 4: how
+        # many pieces of work a room runs at once; they share one worktree, so
+        # the ceiling is about how much simultaneous editing of one tree stays
+        # comprehensible, not about machine capacity.
+        "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "1",
+        "CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS": "4",
     }
     if model:
         env["CLAUDE_MODEL"] = model

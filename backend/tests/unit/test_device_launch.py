@@ -73,6 +73,22 @@ def test_build_screen_launch_shapes_command_and_env():
     assert "CHEESE_CLAUDE_GATES" not in env
 
 
+def test_the_room_bounds_how_deep_and_how_wide_its_work_can_go():
+    # A piece of work IS a subagent of the room's session, so the room's two
+    # structural limits are these env vars and nothing else enforces them.
+    _, env = device_launch.build_screen_launch(
+        hook_url="http://h/sandbox/hooks/T",
+        hook_token="tok",
+        home_dir="/dev/home",
+        work_dir="/dev/work",
+    )
+    # Work does not split further: a grandchild binds to no card and no person
+    # can address it.
+    assert env["CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH"] == "1"
+    # How many pieces of work a room runs at once, sharing one worktree.
+    assert env["CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS"] == "4"
+
+
 def test_forwarder_posts_hook_json_with_token():
     script = device_launch.build_launch_script()
     assert "X-Cheese-Token: $CHEESE_TOKEN" in script
