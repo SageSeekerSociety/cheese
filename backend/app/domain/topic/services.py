@@ -1129,9 +1129,8 @@ class TopicService:
         Lives here, not in `relay.py`, for one reason: writing a Block from
         another domain's repository is the debt `tests/unit/test_domain_import_
         guard.py` ratchets down, and this service already carries that exemption.
-        Same authorship rule as `return_conclusion` below — the RECEIVING room's
-        芝士 is the author, because a message from someone who is not on that
-        roster reads as a ghost; `refs` links back to the sender.
+        The ROOM's 芝士 is the author: a message from someone who is not on the
+        roster reads as a ghost. `refs` links back to the sender.
         """
         author = await self._members.resolve_agent_handle(target.room_id)
         return await self._blocks.add(
