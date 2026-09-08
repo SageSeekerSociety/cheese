@@ -204,6 +204,56 @@ func TestWrongTokenIsRefusedAtDial(t *testing.T) {
 	}
 }
 
+func TestInitialPromptArrivesBeforeHandshakeWaitEnds(t *testing.T) {
+	s := newFakeSession(t, "tok")
+	s.start(t)
+	done := make(chan error, 1)
+	go func() {
+		c, err := Dial(context.Background(), s.path, "tok", Options{InitialPrompt: "first"})
+		if c != nil {
+			c.Close()
+		}
+		done <- err
+	}()
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for len(s.replies()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	got := s.replies()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != "first" {
+		t.Fatalf("first prompt waited for handshake: %v", got)
+	}
+	frames := s.frames()
+	if len(frames) != 2 || frames[0].Auth != "tok" || frames[1].Type != TypeReply {
+		t.Fatalf("want authentication followed by exactly one prompt, got %v", frames)
+	}
+}
+
+func TestInitialPromptRejectionFailsDial(t *testing.T) {
+	for _, badToken := range []bool{false, true} {
+		t.Run(fmt.Sprintf("bad-token=%v", badToken), func(t *testing.T) {
+			s := newFakeSession(t, "tok")
+			s.rejectReplies = !badToken
+			s.start(t)
+			token := "tok"
+			if badToken {
+				token = "wrong"
+			}
+			c, err := Dial(context.Background(), s.path, token, Options{InitialPrompt: "first"})
+			if c != nil {
+				c.Close()
+				t.Fatal("rejected initial delivery returned a client")
+			}
+			if !errors.Is(err, ErrRejected) {
+				t.Fatalf("want ErrRejected, got %v", err)
+			}
+		})
+	}
+}
+
 func TestRejectedReplyIsReportedNotSwallowed(t *testing.T) {
 	s := newFakeSession(t, "tok")
 	s.rejectReplies = true

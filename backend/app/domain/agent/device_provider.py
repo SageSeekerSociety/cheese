@@ -717,6 +717,7 @@ class DeviceChannel(Channel):
         token: str,
         env: dict[str, str] | None,
         launch: LaunchPlan,
+        environment_before: dict | None = None,
     ) -> HubScreen:
         """Reuse the topic's screen on the device, or open a fresh one running
         ``claude`` with our hooks (the device-side launcher creates its home/work dirs
@@ -739,9 +740,11 @@ class DeviceChannel(Channel):
         fresh sid the connector must Spawn, rather than reasserted into a corpse."""
         existing = self._existing_screen(device_id, topic_id)
         if existing is not None and (env or {}).get("CHEESE_ENVIRONMENT"):
-            status = await environment_status(
-                self._hub, device_id, project_id, topic_id
-            )
+            status = environment_before
+            if status is None:
+                status = await environment_status(
+                    self._hub, device_id, project_id, topic_id
+                )
             if status["state"] == "preparing":
                 return existing
         configuration = (env or {}).get("CHEESE_AGENT_CONFIG", "")
@@ -1046,12 +1049,18 @@ class DeviceChannel(Channel):
                 token=token,
                 env=env,
                 launch=launch,
+                environment_before=before,
             )
             self._subscription_devices[topic_id] = device_id
             if (env or {}).get("CHEESE_ENVIRONMENT"):
                 # A process started before this feature keeps its environment
                 # until its next restart; it has no preparation receipt yet.
-                if before.get("state") == "pending" and screen is prior_screen:
+                # Reasserting a live screen does not rerun its environment. A new
+                # screen must still wait for its own preparation attempt below.
+                if (
+                    before.get("state") in {"pending", "ready"}
+                    and screen is prior_screen
+                ):
                     return screen
                 try:
                     polling_started = time.monotonic()
