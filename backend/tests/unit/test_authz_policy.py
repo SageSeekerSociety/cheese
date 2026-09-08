@@ -24,19 +24,15 @@ def _actor(via: str, handle: str = "u", is_agent: bool = False) -> Actor:
     return Actor(handle=handle, user_id=None, is_agent=is_agent, via=via)
 
 
-def _adapters(*, role=None, roster=True, project_member=False):
+def _adapters(*, role=None, project_member=False):
     async def topic_role(_tid, _handle):
         return role
-
-    async def roster_exists(_tid):
-        return roster
 
     async def is_project_member(_pid, _handle):
         return project_member
 
     return dict(
         topic_role=topic_role,
-        roster_exists=roster_exists,
         is_project_member=is_project_member,
     )
 
@@ -51,13 +47,20 @@ async def _access(actor, *, is_private=False, **adapters):
     )
 
 
-async def test_handle_fallback_is_permissive():
-    # Pre-token callers keep working even if they're not members.
-    assert await _access(_actor("handle"), role=None, project_member=False) is True
+async def test_claimed_identity_does_not_grant_access():
+    assert not await _access(
+        _actor("handle"), role=TopicRole.member, project_member=True
+    )
 
 
-async def test_agent_always_allowed():
-    assert await _access(_actor("cheese", is_agent=True), project_member=False) is True
+@pytest.mark.parametrize(
+    "via,is_agent", [("token", False), ("token", True), ("cheese", True)]
+)
+async def test_membership_grants_and_revokes_access_equally(via, is_agent):
+    actor = _actor(via, is_agent=is_agent)
+    assert await _access(actor, role=TopicRole.member)
+    assert await _access(actor, project_member=True)
+    assert not await _access(actor, project_member=False)
 
 
 async def test_token_member_of_topic_allowed():
@@ -69,17 +72,11 @@ async def test_token_project_member_allowed():
 
 
 async def test_token_outsider_on_rostered_topic_denied():
-    assert (
-        await _access(_actor("token"), role=None, roster=True, project_member=False)
-        is False
-    )
+    assert await _access(_actor("token"), role=None, project_member=False) is False
 
 
-async def test_token_on_rosterless_legacy_topic_allowed():
-    assert (
-        await _access(_actor("token"), role=None, roster=False, project_member=False)
-        is True
-    )
+async def test_missing_membership_never_grants_access():
+    assert await _access(_actor("token"), role=None, project_member=False) is False
 
 
 async def test_private_topic_allows_only_authenticated_roster_members():
@@ -253,10 +250,12 @@ async def test_claimed_handle_may_not_manage_members():
     assert await _may_manage(_actor("handle", "anonymous")) is False
 
 
-async def test_agent_may_not_manage_members():
-    # 芝士 promoting a member to lead through this surface is what exposed the
-    # missing check; a 分身 asks a human instead — even holding a lead role.
-    assert await _may_manage(_actor("cheese", "cheese", is_agent=True)) is False
-    assert not await _may_manage(
-        _actor("token", "cheese", is_agent=True), roles={"cheese": ProjectRole.lead}
-    )
+@pytest.mark.parametrize(
+    "via,is_agent", [("token", False), ("token", True), ("cheese", True)]
+)
+async def test_management_uses_roles_for_people_and_agents(via, is_agent):
+    actor = _actor(via, "participant", is_agent=is_agent)
+    assert not await _may_manage(actor)
+    assert not await _may_manage(actor, roles={"participant": ProjectRole.member})
+    assert await _may_manage(actor, roles={"participant": ProjectRole.lead})
+    assert await _may_manage(actor, owner="participant")

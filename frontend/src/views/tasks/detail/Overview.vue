@@ -398,6 +398,7 @@
               <v-icon start>mdi-plus</v-icon>
               从这道赛题创建项目
             </v-btn>
+            <ResourceLimitsNotice />
           </v-card-text>
         </v-card>
 
@@ -452,6 +453,7 @@ import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 // not the 1.0 team-project that shares the word.
 import { listProjectsForTask } from '@/api'
 import { MarkdownRenderer } from '@/components/chat/services/markdownRenderer'
+import ResourceLimitsNotice from '@/components/ResourceLimitsNotice.vue'
 import { TaskParticipationInfo } from '@/network/api/tasks/types'
 import AccountService from '@/services/account'
 

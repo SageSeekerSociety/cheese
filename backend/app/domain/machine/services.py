@@ -23,12 +23,14 @@ from app.core.errors import (
     NotFoundError,
     ValidationError,
 )
+from app.domain.agent.compute_configs import room_choice
 from app.domain.device.ccproxy_tenant import CcproxyTenantError
 from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
 from app.domain.machine import enrollment
+from app.domain.machine.limits import get_machine_limit
 from app.domain.machine.microcloud import MicroCloudClient, MicroCloudError
 from app.domain.machine.models import (
     AI_TRANSITIONAL,
@@ -98,7 +100,7 @@ class MachineService:
         self, team_id: int, actor: Actor, *, conceal_nonmember: bool = False
     ) -> None:
         """Apply the paid machine-create rule to a team-scoped Cloud choice."""
-        if actor.via != "token" or actor.is_agent or actor.user_id is None:
+        if not actor.authenticated or actor.user_id is None:
             raise AuthenticationRequiredError("Login required to create cloud machines")
         teams = team_service(self._session)
         if not await teams.is_team_member(team_id, actor.user_id):
@@ -116,14 +118,15 @@ class MachineService:
         self, project_id: uuid.UUID, actor: Actor
     ) -> None:
         """The one authorization rule for every path that can create a billed VM."""
-        if actor.via != "token" or actor.is_agent:
+        if not actor.authenticated:
             raise AuthenticationRequiredError("Login required to create cloud machines")
         project = await self._projects.get(project_id)
         if project is None:
             raise NotFoundError("Project not found")
-        if project.team_id is not None:
+        team_id = await self._projects.team_for_project(project_id)
+        if team_id is not None:
             await self.require_team_create_authority(
-                project.team_id, actor, conceal_nonmember=True
+                team_id, actor, conceal_nonmember=True
             )
             return
         # Legacy team-less project. An outsider must not learn that it exists, let
@@ -137,6 +140,22 @@ class MachineService:
             if not any(m.user_handle == actor.handle for m in roster):
                 raise NotFoundError("Project not found")
         await members.require_manager(project_id, actor)
+
+    async def require_use_authority(self, project_id: uuid.UUID, actor: Actor) -> None:
+        """Team membership authorizes room execution within the team's quota."""
+        if actor.via != "token" or actor.is_agent or actor.user_id is None:
+            raise AuthenticationRequiredError("Login required to use cloud compute")
+        project = await self._projects.get(project_id)
+        if project is None:
+            raise NotFoundError("Project not found")
+        team_id = await self._projects.team_for_project(project_id)
+        if team_id is not None:
+            if not await team_service(self._session).is_team_member(
+                team_id, actor.user_id
+            ):
+                raise ForbiddenError("只有团队成员可以使用团队云额度")
+        else:
+            await MemberService(self._session).require_manager(project_id, actor)
 
     async def _pick_offering(self) -> dict:
         offerings = await self._client.list_offerings()
@@ -190,11 +209,17 @@ class MachineService:
         if project is None:
             raise NotFoundError("project not found")
 
+        team_id = await self.quota_team_id(project_id)
+        await self._repo.lock_team_quota(team_id)
         offering = await self._pick_offering()
 
         def clamp(value: int | None, default: int, lo: str, hi: str) -> int:
             # The allowed range is per-offering, so a spec is only meaningful
             # against the offering we actually landed on.
+            if value is not None and not int(offering[lo]) <= value <= int(
+                offering[hi]
+            ):
+                raise ValidationError("所选云配置超出当前供应范围，请选择其他配置")
             return max(int(offering[lo]), min(int(offering[hi]), int(value or default)))
 
         spec = {
@@ -212,22 +237,15 @@ class MachineService:
             ),
         }
 
-        # Only machines that still exist count. A destroyed one lingers as a row
-        # until a later read confirms MicroCloud has forgotten it, and counting
-        # those would make a project's slots impossible to reclaim — delete then
-        # create would be refused for a machine that is already gone.
-        existing = [
-            m
-            for m in await self._repo.list_for_project(project_id)
-            if m.status not in GONE and m.released_at is None
-        ]
-        if len(existing) >= settings.microcloud_max_machines_per_project:
+        existing = await self.quota_machines(team_id)
+        limit = await get_machine_limit(self._session, team_id)
+        if len(existing) >= limit:
             raise ValidationError(
-                "this project already has "
-                f"{settings.microcloud_max_machines_per_project} machine(s); "
-                "delete one before provisioning another"
+                f"团队云虚拟机已使用 {len(existing)} / {limit} 台，"
+                "请先释放不再使用的机器"
             )
-        hostname = derive_hostname(project.name, project_id, len(existing) + 1)
+        project_used = sum(m.project_id == project_id for m in existing)
+        hostname = derive_hostname(project.name, project_id, project_used + 1)
 
         customer_id, account_id = await self._ensure_account(project_id)
         user = login_user or settings.microcloud_login_user
@@ -295,11 +313,11 @@ class MachineService:
     async def ensure_topic_machine(
         self, topic_id: uuid.UUID, *, actor: Actor | None = None
     ) -> ProjectMachine:
-        """Return/create one locked lease; the project lock serializes quota."""
+        """Return/create one locked lease; admission also locks the team's quota."""
         from app.domain.topic.services import TopicService
 
         topic = await TopicService(self._session).get_or_404(topic_id)
-        await self._repo.lock_provisioning(topic.project_id, topic_id)
+        await self._repo.lock_topic(topic_id)
         # The archive path takes the same topic lock. Re-read after waiting so a
         # first turn cannot provision from the stale pre-lock `active` state.
         await self._session.refresh(topic)
@@ -318,17 +336,25 @@ class MachineService:
             raise AuthenticationRequiredError(
                 "Cloud provisioning requires an authorized human caller"
             )
-        await self.require_create_authority(topic.project_id, actor)
+        await self.require_use_authority(topic.project_id, actor)
 
         project = await self._projects.get(topic.project_id)
         if project is None:
             raise NotFoundError("project not found")
+        choice = room_choice(topic, project.settings)
+        if choice.profile != "cloud":
+            raise ValidationError("当前房间未选择云端配置")
+        topic.compute_config = choice.model_dump()
+        topic.compute_profile = "cloud"
         agent = await IdentityService(self._session).ensure_topic_agent_user(topic_id)
         return await self.provision(
             project_id=topic.project_id,
             topic_id=topic_id,
             requested_by=actor.handle,
             owner_user_id=agent.id,
+            cores=choice.cores,
+            memory_mb=choice.memory_mb,
+            disk_gb=choice.disk_gb,
         )
 
     async def topic_machine(self, topic_id: uuid.UUID) -> ProjectMachine | None:
@@ -455,6 +481,25 @@ class MachineService:
             ai_status=_as_ai_status(remote.get("aiStatus")),
             seen_at=datetime.now(UTC),
         )
+
+    async def quota_team_id(self, project_id: uuid.UUID) -> int:
+        project = await self._projects.get(project_id)
+        if project is None:
+            raise NotFoundError("project not found")
+        team_id = project.team_id
+        if team_id is None:
+            team_id = await self._projects.team_for_project(project_id)
+        if team_id is None:
+            raise ValidationError("请先将项目关联到团队，再分配云资源")
+        return team_id
+
+    async def quota_machines(self, team_id: int) -> list[ProjectMachine]:
+        """Inventory counted by both admission and the allocation notice."""
+        return [
+            m
+            for m in await self._repo.list_for_team(team_id)
+            if m.status not in GONE and m.released_at is None
+        ]
 
     async def list_for_project(self, project_id: uuid.UUID) -> list[ProjectMachine]:
         machines = await self._repo.list_for_project(project_id)

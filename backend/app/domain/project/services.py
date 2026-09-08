@@ -59,6 +59,7 @@ class ProjectService:
             await self._accept_task_protocol(project, external_task_id)
         if agent_type:
             await self._set_agent_type(project, agent_type)
+        await AgentInstanceService(self._session).materialize_default(project)
         root = await self._topics.add(
             project_id=project.id,
             title=f"{name} · 项目总览",
@@ -151,6 +152,10 @@ class ProjectService:
         """
         return await self._repo.get(project_id)
 
+    async def team_for_project(self, project_id: uuid.UUID) -> int | None:
+        """Resolve quota ownership, including older personal-team projects."""
+        return await self._repo.team_for_project(project_id)
+
     async def get_or_404(self, project_id: uuid.UUID) -> Project:
         project = await self.get(project_id)
         if project is None:
@@ -185,8 +190,8 @@ class ProjectService:
         Resolves the terms from the 赛题's 项目集 (with the 赛题's own override,
         option (c)) and does the two things accepting a protocol means: inherit
         the default expert role when the project has none, and issue the 资源包's
-        compute credits. A project with NO grant stays unmetered — spec §4 项目
-        自治 — so an unlinked project is untouched by all of this.
+        compute credits restricted to this project. Shared team grants are
+        managed separately and remain available to unlinked projects too.
 
         Best-effort: a 赛题 that has gone missing, or one whose 项目集 offers
         nothing, leaves the project exactly as it was. Creating a project must

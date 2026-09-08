@@ -57,7 +57,7 @@ const restMilestones = computed(() => {
   })
 })
 
-// ---- 算力额度 (spec §9.1): grant balance; unlimited when no linked task ----
+// Credits available to this project from shared and restricted grants.
 const credits = ref<ProjectCredits | null>(null)
 const creditsUsedPct = computed<number>(() => {
   const c = credits.value
@@ -298,20 +298,20 @@ onMounted(load)
             </section>
           </v-col>
 
-          <!-- 算力额度 (spec §9.1): 机构发放的额度余量; 无挂靠 = 不限额 -->
+          <!-- Shared team balance plus this project's restricted grants. -->
           <v-col cols="12" md="6">
             <section class="page-section">
               <div class="page-section-head">
-                <span class="page-section-title">算力额度</span>
+                <span class="page-section-title">可用 tokens 额度</span>
                 <v-spacer />
                 <span v-if="credits && !credits.unlimited" class="ln-num text-medium-emphasis">
-                  1 额度 = 1 万 tokens
+                  1 额度 = {{ credits.tokens_per_credit.toLocaleString() }} tokens
                 </span>
               </div>
               <div class="page-section-body">
                 <div v-if="!credits" class="text-medium-emphasis text-body-2 py-2">暂无额度信息</div>
                 <div v-else-if="credits.unlimited" class="text-medium-emphasis text-body-2 py-2">
-                  不限额 · 未挂靠机构任务的自治项目
+                  当前未设置额度上限
                 </div>
                 <template v-else>
                   <div class="credit-remaining" :class="{ 'credit-remaining--empty': creditsExhausted }">
@@ -326,17 +326,17 @@ onMounted(load)
                     />
                   </div>
                   <div class="ln-row">
-                    <span class="ln-row-title">已用 / 共发放</span>
+                    <span class="ln-row-title">已使用 / 共发放</span>
                     <v-spacer />
                     <span class="ln-num">
                       {{ fmtCredits(credits.credits_used) }} / {{ fmtCredits(credits.credits_total) }}
                     </span>
                   </div>
                   <div v-if="creditsExhausted" class="credit-exhausted mt-1">
-                    额度已用完，芝士将无法继续运行，请联系机构续充
+                    额度已用完，请联系团队管理员或额度发放方补充
                   </div>
                   <div v-else class="text-caption text-medium-emphasis mt-2">
-                    来自 {{ credits.grants.length }} 笔机构发放，按发放顺序扣减
+                    包含团队共享额度与本项目定向额度；优先使用定向额度
                   </div>
                 </template>
               </div>

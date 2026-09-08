@@ -318,7 +318,12 @@ export interface TopicMemberRow {
   topic_id: string
   member_handle: string
   role: 'owner' | 'admin' | 'member'
+  // 芝士那一行上，这是**这个房间现在交给的那个队友**的名字（换队友就跟着变），
+  // 不是座位账号的昵称 —— 座位昵称是建号时写死的常量，永远是「芝士」。
   name?: string
+  // 这个人**自己挑的**头像素材 id，同 ProjectMemberRow.avatar_id：没挑过就是
+  // null，画彩色首字母。别拿它去取 /avatars/default。
+  avatar_id?: number | null
   agent?: boolean
   created_at: string
 }
@@ -697,14 +702,17 @@ export interface MarketNodes {
 // One credit grant (issued when the project linked an institutional task).
 export interface ComputeGrantRow {
   id: string
-  source_task_id: string | null
+  project_id: string | null
+  source_task_id: number | null
   credits_total: number
   credits_used: number
   created_at: string
 }
 
-// GET /projects/{id}/credits — unlimited=true means no grants (自治项目).
+// Shared team grants plus credits restricted to the requesting project.
 export interface ProjectCredits {
+  team_id: number | null
+  tokens_per_credit: number
   unlimited: boolean
   credits_total: number
   credits_used: number
@@ -715,20 +723,6 @@ export interface ProjectCredits {
 // ---- 题目匹配市场 (spec §13 阶段 6: Space 发布题目, 团队应征) ----
 
 // A selectable AI execution profile (GET /projects/{id}/execution-profiles).
-export interface ExecProfileOption {
-  name: string
-  label: string
-  tier: string
-  model: string
-  available: boolean
-}
-
-// GET /projects/{id}/execution-profiles
-export interface ExecProfiles {
-  current: string
-  profiles: ExecProfileOption[]
-}
-
 // GET /projects/{id}/compute-profiles
 export interface ComputeProfiles {
   current: string
@@ -798,19 +792,20 @@ export interface TopicComputeDevice {
 }
 
 // GET /topics/{id}/compute-profile — a topic's session-level compute选择 (v4).
-// `current` is effective (topic → project sticky → team default → platform);
+// `current` is effective (room choice → project default → deployment default);
 // `locked` freezes the picker once the topic has run (session started);
-// `inherited` = still following project/team/platform defaults (no own choice yet);
-// `sticky` = project sticky if present, otherwise the team/platform default;
+// `inherited` = still following the project default (no own choice yet);
 // `device_id` is the self-hosted machine pinned to this topic, or null while
 // 「系统挑一台」still waits for the first turn to choose one.
 export interface TopicComputeProfile {
+  choice: ComputeChoice
+  project_default: ComputeChoice
+  favorites: ComputeChoice[]
   current: string
   device_id: string | null
   devices: TopicComputeDevice[]
   locked: boolean
   inherited: boolean
-  sticky: string
   profiles: PoolListing[]
   visibility: TopicComputeVisibility
 }
@@ -837,6 +832,23 @@ export interface EnvironmentStatus {
   pinned_revision?: string | null
   started_at?: string
   finished_at?: string | null
+}
+
+export interface ComputeChoice {
+  name: string
+  profile: 'cloud' | 'device'
+  device_id: string | null
+  cores: number | null
+  memory_mb: number | null
+  disk_gb: number | null
+}
+
+export interface ProjectComputeConfigs {
+  default: ComputeChoice
+  favorites: ComputeChoice[]
+  can_manage: boolean
+  devices: TopicComputeDevice[]
+  cloud_available: boolean
 }
 
 // 当前用户 (Phase 0 极简登录): what /users/login returns and what we keep locally.
@@ -959,16 +971,7 @@ export interface DeviceApproval {
 
 // ---- AI 队友 (agent 类型与实例) ----
 //
-// Three layers, three lifetimes (docs/topics/room-task-agent-session-设计方案.md
-// §12): a TYPE is 出厂设置 and belongs to no project; an INSTANCE is that type
-// working inside one project, and it owns the memory it accumulated there; a
-// session is where one conversation got to and may be thrown away.
-//
-// So "how this agent behaves" (system prompt, skills, MCP, model, effort,
-// harness) is on the TYPE, and "who it is here" (name, handle, memory) is on the
-// INSTANCE. The management page shows both, which is why it reads two endpoints.
-
-// GET /agent-types — presets merged with the project's custom types.
+// GET /agent-types: built-in starting configurations for new agents.
 export interface AgentType {
   name: string
   title: string
@@ -988,8 +991,18 @@ export interface AgentType {
 }
 
 // GET /projects/{id}/agents — one agent working in this project.
+export interface AgentConfiguration {
+  body: string
+  model: string
+  harness: string
+  skills: string[]
+  mcp_servers: string[]
+  effort: string | null
+}
+
 export interface ProjectAgent {
-  // Null for the implicit 芝士 a project has before anyone configured one.
+  configuration: AgentConfiguration
+  // Current project rosters always return saved IDs; nullable for older clients.
   id: string | null
   project_id: string
   // The memory pool key inside the project (`{project}:{handle}`).
@@ -998,7 +1011,7 @@ export interface ProjectAgent {
   display_name: string
   // What a new topic in this project gets.
   is_default: boolean
-  // False = it resolves and owns a memory pool, but there is no row to edit.
+  // Retained for older clients; current project roster entries are always saved.
   configured: boolean
   // False = 已停用. Still listed and still working in the topics that already
   // have it — just not offered when picking an agent for new work.

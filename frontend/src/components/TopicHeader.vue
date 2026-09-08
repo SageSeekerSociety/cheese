@@ -41,6 +41,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'toggle-focus'): void
   (e: 'open-topic', topicId: string): void
+  // 这个话题换了 AI 队友。对话栏要重拉名册——它显示的 AI 名字来自那份名册。
+  (e: 'agent-swapped'): void
 }>()
 
 const { mdAndUp } = useDisplay()
@@ -97,7 +99,9 @@ watch(
        手机上只有一条顶栏，从不卸载：话题页自己再画一条，两条横条交替出现的时候
        v-main 的 padding 会滑一下，整页跟着抖。← 由顶栏按路由的 backTo 出，
        所以这里不再自己画一个。 -->
-  <Teleport to="#app-bar-slot" :disabled="mdAndUp">
+  <!-- The mobile target is absent on desktop. Remount at the breakpoint so
+       Teleport resolves it after App has rendered the new mobile bar. -->
+  <Teleport :key="String(mdAndUp)" to="#app-bar-slot" :disabled="mdAndUp" defer>
     <div class="topic-header" :class="{ 'topic-header--bar': !mdAndUp }">
       <!-- 手机上标题独占一行，编号和状态退到下面那条小字：横着平铺的话，标题在
          390px 上只剩七个字，而它才是你要看的那个。桌面上宽度够，一行摆开更快读。 -->
@@ -134,6 +138,7 @@ watch(
         :project-id="topic.project_id"
         :project-members="members"
         :me="me"
+        @agent-swapped="emit('agent-swapped')"
       />
 
       <!-- 用量: was the 资源 drawer. -->

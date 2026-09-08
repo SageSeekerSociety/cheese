@@ -16,7 +16,7 @@ member has, and refused where a member is refused.
 import uuid
 
 from app.core.sandbox_auth import mint_project_agent_credential, mint_scoped_token
-from app.domain.identity.handles import looks_like_agent_handle, topic_agent_handle
+from app.domain.identity.handles import topic_agent_handle
 from tests.conftest import seed_user
 
 # --- helpers ------------------------------------------------------------------
@@ -52,7 +52,23 @@ def _issue(client, project_id: str, headers: dict[str, str], **body) -> dict:
 def _issued_token(client, project_id: str, owner: str = "alice") -> str:
     r = _issue(client, project_id, _steward(client, owner))
     assert r.status_code == 200, r.text
+    # This fixture explicitly grants ordinary project membership. Issuing a
+    # credential itself does not grant a role (covered by test_agent_role_parity).
+    handle = r.json()["data"]["agent_handle"]
+    members = client.get(f"/projects/{project_id}/members").json()["data"]["data"]
+    if not any(m["user_handle"] == handle for m in members):
+        added = client.post(
+            f"/projects/{project_id}/members",
+            json={"user_handle": handle},
+            headers=_steward(client, owner),
+        )
+        assert added.status_code == 200, added.text
     return r.json()["data"]["token"]
+
+
+def _project_agent(client, project_id: str) -> str:
+    project = client.get(f"/projects/{project_id}").json()["data"]
+    return topic_agent_handle(uuid.UUID(project["root_topic_id"]))
 
 
 def _cred(token: str) -> dict[str, str]:
@@ -89,8 +105,10 @@ def _acts_as_cheese(client, project_id: str, token: str) -> bool:
     working long after it stopped.
     """
     tid = _topic(client, project_id, title="probe", by="alice")
-    author = _write_doc(client, tid, token).json()["data"]["author"]
-    return author == topic_agent_handle(uuid.UUID(tid))
+    response = _write_doc(client, tid, token)
+    return response.status_code == 200 and response.json()["data"][
+        "author"
+    ] == _project_agent(client, project_id)
 
 
 # --- 签发 ----------------------------------------------------------------------
@@ -134,13 +152,12 @@ def test_only_the_owner_or_a_lead_may_issue(client):
     assert _issue(client, pid, _steward(client, "mallory")).status_code == 403
 
 
-def test_an_agent_credential_cannot_issue_another_one(client):
-    """Otherwise revoking would not end the access — it would just be the
-    previous key on a keyring the agent still holds."""
+def test_member_agent_cannot_issue_another_credential(client):
+    """Issuance requires an explicitly assigned management role."""
     pid = _project(client, "alice")
     token = _issued_token(client, pid)
     r = client.post(f"/projects/{pid}/agent-credential", json={}, headers=_cred(token))
-    assert r.status_code == 401
+    assert r.status_code == 403
 
 
 def test_an_absurd_lifetime_is_refused(client):
@@ -166,9 +183,7 @@ def test_one_credential_works_in_every_topic_of_its_project(client):
     for tid in (first, second):
         r = _write_doc(client, tid, token, content=f"# doc {tid}")
         assert r.status_code == 200, r.text
-        # One credential, but each write is attributed to the room it landed in
-        # — the credential names no 分身, so the room says who acted.
-        assert r.json()["data"]["author"] == topic_agent_handle(uuid.UUID(tid))
+        assert r.json()["data"]["author"] == _project_agent(client, pid)
 
 
 def test_a_credential_is_refused_in_another_project(client):
@@ -192,11 +207,7 @@ def test_a_forged_credential_is_not_a_credential(client):
     tid = _topic(client, pid, title="T", by="alice")
     forged = f"cxpa_{uuid.uuid4().hex}.{uuid.uuid4().hex}"
 
-    # Not authenticated at all: the write falls back to the pre-token path and
-    # never lands as 芝士.
-    author = _write_doc(client, tid, forged).json()["data"]["author"]
-    assert author != topic_agent_handle(uuid.UUID(tid))
-    assert not looks_like_agent_handle(author)
+    assert _write_doc(client, tid, forged).status_code == 401
     gated = client.post(
         f"/topics/{tid}/decision", json={"decision": "x"}, headers=_cred(forged)
     )
@@ -300,9 +311,7 @@ def test_it_reaches_the_project_level_write_surface(client):
 
 
 def test_the_gate_still_refuses_another_project_s_credential(client):
-    """Widening the gate must not have flattened it. These routes have no
-    authorization behind them — the gate IS the check — so a credential from
-    another project has to die here."""
+    """Both route authorization and the execution gate enforce project scope."""
     mine = _project(client, "alice")
     theirs = _project(client, "bob")
     token = _issued_token(client, mine)
@@ -313,7 +322,7 @@ def test_the_gate_still_refuses_another_project_s_credential(client):
         json={"decision": "x"},
         headers=_cred(token),
     )
-    assert topic_level.status_code == 401
+    assert topic_level.status_code == 403
 
     project_level = client.post(
         f"/projects/{theirs}/milestones",
@@ -341,24 +350,12 @@ def test_it_is_a_member_not_a_lead(client):
 # --- 留痕 ----------------------------------------------------------------------
 
 
-def test_what_it_writes_is_filed_under_the_rooms_own_agent(client):
-    """Not under the person who issued it, not under ``anonymous``, and not
-    under the platform-wide ``cheese`` — that handle now names ONE agent, the
-    project's default, which owns a memory pool. Filing every credential write
-    there would put work the default agent never did under its name. A
-    project-wide credential names no 分身 of its own, so the ROOM answers: the
-    same 分身 a per-turn token in that room would have named.
-
-    The conversation event the platform emits alongside says 芝士 rather than a
-    mention chip, because the writer is recognised as the agent it is.
-
-    Both the document and decision record ``author_type=ai``. The document's
-    edit event remains a system notice and records the editor type separately.
-    """
+def test_what_it_writes_is_filed_under_the_fixed_project_agent(client):
+    """Writes use the credential-bound agent; edit notices retain its AI identity."""
     pid = _project(client, "alice")
     token = _issued_token(client, pid)
     tid = _topic(client, pid, title="T", by="alice")
-    room_agent = topic_agent_handle(uuid.UUID(tid))
+    room_agent = _project_agent(client, pid)
 
     doc = _write_doc(client, tid, token)
     assert doc.status_code == 200, doc.text

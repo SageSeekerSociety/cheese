@@ -280,7 +280,9 @@ def test_void_requires_a_logged_in_human(client):
 
     # 芝士拿着**作用域内**的 token 也不行。作废是授权类动作，只给人。
     r = _void(
-        client, card_id, headers={"X-Cheese-Token": mint_scoped_token(project_id=pid)}
+        client,
+        card_id,
+        headers={"X-Cheese-Token": mint_scoped_token(project_id=pid, topic_id=tid)},
     )
     assert r.status_code == 422, r.text
     assert "AI" in r.json()["message"]

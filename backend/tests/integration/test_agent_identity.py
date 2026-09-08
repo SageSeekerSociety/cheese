@@ -86,9 +86,13 @@ def test_ai_blocks_follow_the_rooms_agent_not_a_fixed_handle(client):
     r = client.post(
         f"/topics/{topic_id}/members",
         json={"handle": "ops", "role": "member", "actor": "alice"},
+        headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200
-    r = client.delete(f"/topics/{topic_id}/members/{_own_agent(topic_id)}?actor=alice")
+    r = client.delete(
+        f"/topics/{topic_id}/members/{_own_agent(topic_id)}?actor=alice",
+        headers=session_auth_headers("alice"),
+    )
     assert r.status_code == 200
 
     _turn(client, topic_id)
@@ -103,8 +107,12 @@ def test_the_summon_receipt_carries_the_same_agent(client):
     client.post(
         f"/topics/{topic_id}/members",
         json={"handle": "ops", "role": "member", "actor": "alice"},
+        headers=session_auth_headers("alice"),
     )
-    client.delete(f"/topics/{topic_id}/members/{_own_agent(topic_id)}?actor=alice")
+    client.delete(
+        f"/topics/{topic_id}/members/{_own_agent(topic_id)}?actor=alice",
+        headers=session_auth_headers("alice"),
+    )
 
     frames = _turn(client, topic_id)
     ack = next(f for f in frames if f["type"] == "reaction")
@@ -117,8 +125,12 @@ def _swap_agent(client, topic_id: str, handle: str) -> None:
     client.post(
         f"/topics/{topic_id}/members",
         json={"handle": handle, "role": "member", "actor": "alice"},
+        headers=session_auth_headers("alice"),
     )
-    client.delete(f"/topics/{topic_id}/members/{_own_agent(topic_id)}?actor=alice")
+    client.delete(
+        f"/topics/{topic_id}/members/{_own_agent(topic_id)}?actor=alice",
+        headers=session_auth_headers("alice"),
+    )
 
 
 def _remember(client, project_id: str, topic_id: str, fact: str) -> None:
@@ -216,6 +228,7 @@ def test_naming_an_agent_notifies_it_while_a_broadcast_does_not(client, bearer):
     client.post(
         f"/topics/{topic_id}/members",
         json={"handle": "ops", "role": "member", "actor": "alice"},
+        headers=session_auth_headers("alice"),
     )
 
     _post_without_summon(client, topic_id, "<@all> 大家看一下", author="alice")
@@ -231,6 +244,7 @@ def test_human_members_are_not_mistaken_for_agents(client):
     client.post(
         f"/topics/{topic_id}/members",
         json={"handle": "bob", "role": "member", "actor": "alice"},
+        headers=session_auth_headers("alice"),
     )
     _turn(client, topic_id)
     assert _ai_authors(client, topic_id) == {_own_agent(topic_id)}

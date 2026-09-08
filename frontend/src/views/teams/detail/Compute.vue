@@ -2,7 +2,8 @@
 // Team compute is the ownership surface from execution-architecture v4:
 // platform cloud machines and self-hosted nodes live in one team pool; projects
 // only provide billing/audit attribution, while a topic chooses the actual target.
-import type { ComputeProfiles, MyDevice, Project, ProjectMachine } from '@/cx_types'
+import type { TeamResourceQuotas } from '@/api'
+import type { MyDevice, Project, ProjectMachine } from '@/cx_types'
 
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
@@ -10,6 +11,7 @@ import { useRoute } from 'vue-router'
 import {
   createProjectMachine,
   deleteProjectMachine,
+  getTeamResourceQuotas,
   listMyDevices,
   listProjectMachines,
   listProjects,
@@ -18,7 +20,6 @@ import {
   unregisterDeviceFromTeam,
 } from '@/api'
 import { teamDataInjectionKey } from '@/keys'
-import { TeamsApi } from '@/network/api/teams'
 
 type CloudMachine = ProjectMachine & { projectName: string }
 
@@ -31,11 +32,15 @@ const devices = ref<MyDevice[]>([])
 const myDevices = ref<MyDevice[]>([])
 const projects = ref<Project[]>([])
 const cloudMachines = ref<CloudMachine[]>([])
-const teamCompute = ref<ComputeProfiles | null>(null)
+const quotas = ref<TeamResourceQuotas | null>(null)
+const selectedQuota = computed(() => quotas.value?.machines)
+const selectedProjectUsage = computed(
+  () => quotas.value?.projects.find((project) => project.id === selectedProject.value)?.machines_used ?? 0
+)
+const quotaFull = computed(() => Boolean(selectedQuota.value && selectedQuota.value.used >= selectedQuota.value.limit))
 const loading = ref(false)
 const error = ref<string | null>(null)
 const busy = ref<string | null>(null)
-const savingDefault = ref<string | null>(null)
 const cloudConfigured = ref(true)
 
 const createDialog = ref(false)
@@ -102,21 +107,22 @@ async function loadCloud() {
   )
   cloudConfigured.value = configured
   cloudMachines.value = batches.flat()
+  quotas.value = await getTeamResourceQuotas(teamId.value)
 }
 
 async function load() {
   loading.value = true
   error.value = null
+  quotas.value = null
+  selectedProject.value = null
   try {
-    const [teamDevices, mine, profile, projectList] = await Promise.all([
+    const [teamDevices, mine, projectList] = await Promise.all([
       listTeamDevices(teamId.value),
       listMyDevices().catch(() => ({ devices: [] })),
-      TeamsApi.getComputeProfile(teamId.value),
       listProjects(teamId.value),
     ])
     devices.value = teamDevices.devices
     myDevices.value = mine.devices
-    teamCompute.value = profile.data
     projects.value = projectList.data
     selectedProject.value = selectedProject.value ?? projects.value[0]?.id ?? null
     await loadCloud()
@@ -131,8 +137,6 @@ async function load() {
 async function refreshCloud() {
   try {
     await loadCloud()
-    const profile = await TeamsApi.getComputeProfile(teamId.value)
-    teamCompute.value = profile.data
   } catch (cause) {
     error.value = errorMessage(cause, '刷新云算力状态失败')
   } finally {
@@ -144,20 +148,6 @@ function schedulePoll() {
   if (pollTimer) clearTimeout(pollTimer)
   pollTimer = null
   if (cloudMoving.value) pollTimer = setTimeout(refreshCloud, 5000)
-}
-
-async function pickDefault(profileId: string) {
-  if (!canManage.value || savingDefault.value || teamCompute.value?.current === profileId) return
-  savingDefault.value = profileId
-  error.value = null
-  try {
-    const response = await TeamsApi.setComputeProfile(teamId.value, profileId)
-    if (teamCompute.value) teamCompute.value = { ...teamCompute.value, current: response.data.current }
-  } catch (cause) {
-    error.value = errorMessage(cause, '修改团队默认算力失败')
-  } finally {
-    savingDefault.value = null
-  }
 }
 
 async function addMachine(device: MyDevice) {
@@ -188,7 +178,7 @@ async function removeMachine(device: MyDevice) {
 }
 
 async function provisionCloud() {
-  if (!selectedProject.value || creating.value) return
+  if (!selectedProject.value || creating.value || !selectedQuota.value || quotaFull.value) return
   creating.value = true
   error.value = null
   try {
@@ -236,7 +226,7 @@ onBeforeUnmount(() => {
       <div>
         <h2 class="text-h6 font-weight-medium mb-1">算力</h2>
         <p class="text-body-2 text-medium-emphasis mb-0">
-          团队统一管理云机器和自有设备。新话题沿用上次选择，第一条消息发出后锁定到该算力。
+          团队统一管理云额度和自有设备。项目设置默认与常用配置，房间可直接使用。
         </p>
       </div>
       <v-spacer />
@@ -261,39 +251,57 @@ onBeforeUnmount(() => {
     </div>
 
     <template v-else>
-      <section class="compute-section mb-7">
-        <div class="section-heading mb-3">
-          <div>
-            <h3 class="text-subtitle-1 font-weight-medium">团队默认</h3>
-            <p class="text-caption text-medium-emphasis mb-0">项目第一次开话题时从这里开始；之后自动记住上次选择。</p>
-          </div>
-          <v-chip v-if="!canManage" size="small" variant="tonal">仅管理员可修改</v-chip>
-        </div>
-        <div class="profile-grid">
-          <button
-            v-for="profile in teamCompute?.profiles ?? []"
-            :key="profile.id"
-            type="button"
-            class="profile-card"
-            :class="{
-              'profile-card--active': teamCompute?.current === profile.id,
-              'profile-card--off': !profile.available,
-            }"
-            :disabled="!canManage || !profile.available || savingDefault !== null"
-            @click="pickDefault(profile.id)"
-          >
-            <v-icon size="20">{{
-              profile.id === 'device' ? 'mdi-laptop' : profile.id === 'gpu' ? 'mdi-expansion-card' : 'mdi-server'
-            }}</v-icon>
-            <span class="profile-copy">
-              <span class="profile-title">{{ profile.label }}</span>
-              <span class="profile-description">{{ profile.description }}</span>
-            </span>
-            <v-progress-circular v-if="savingDefault === profile.id" indeterminate size="16" width="2" />
-            <v-icon v-else-if="teamCompute?.current === profile.id" size="18" color="primary">mdi-check-circle</v-icon>
-            <span v-else-if="!profile.available" class="text-caption text-medium-emphasis">暂不可用</span>
-          </button>
-        </div>
+      <section v-if="quotas" class="compute-section mb-7">
+        <h3 class="text-subtitle-1 font-weight-medium mb-3">配额与用量</h3>
+        <v-row>
+          <v-col cols="12" md="6">
+            <v-card variant="outlined" rounded="lg" class="pa-4 fill-height">
+              <div class="text-body-2 mb-2">团队云虚拟机</div>
+              <div class="text-h6">{{ quotas.machines.used }} / {{ quotas.machines.limit }} 台</div>
+              <v-progress-linear
+                class="my-3"
+                :model-value="Math.min(100, (quotas.machines.used / quotas.machines.limit) * 100)"
+                :color="quotaFull ? 'warning' : 'primary'"
+              />
+              <div class="text-caption text-medium-emphasis">所有项目共享；停止机器仍占用名额，释放后归还</div>
+            </v-card>
+          </v-col>
+          <v-col cols="12" md="6">
+            <v-card variant="outlined" rounded="lg" class="pa-4 fill-height">
+              <div class="text-body-2 mb-2">团队 tokens 额度</div>
+              <div v-if="quotas.credits.unlimited" class="text-h6">未设置上限</div>
+              <template v-else>
+                <div class="text-h6">剩余 {{ quotas.credits.credits_remaining.toLocaleString() }} 额度</div>
+                <div class="text-body-2 my-2">
+                  已使用 {{ quotas.credits.credits_used.toLocaleString() }} /
+                  {{ quotas.credits.credits_total.toLocaleString() }} 额度
+                </div>
+              </template>
+              <div class="text-caption text-medium-emphasis mt-2">
+                所有项目共享；1 额度 = {{ quotas.credits.tokens_per_credit.toLocaleString() }} tokens，使用后扣减
+              </div>
+            </v-card>
+          </v-col>
+        </v-row>
+        <p class="text-caption text-medium-emphasis mt-3 mb-2">额度由平台或发放方调整；机构定向额度仅供指定项目使用</p>
+        <v-table v-if="quotas.projects.length" density="comfortable">
+          <thead>
+            <tr>
+              <th>项目</th>
+              <th>占用云机器</th>
+              <th>累计 tokens</th>
+              <th>定向额度剩余</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="project in quotas.projects" :key="project.id">
+              <td>{{ project.name }}</td>
+              <td>{{ project.machines_used }} 台</td>
+              <td>{{ project.total_tokens.toLocaleString() }}</td>
+              <td>{{ project.restricted_credits_remaining.toLocaleString() }}</td>
+            </tr>
+          </tbody>
+        </v-table>
       </section>
 
       <section class="compute-section mb-7">
@@ -477,6 +485,22 @@ onBeforeUnmount(() => {
             variant="outlined"
             density="comfortable"
           />
+          <v-alert
+            v-if="selectedQuota"
+            :type="quotaFull ? 'warning' : 'info'"
+            variant="tonal"
+            density="compact"
+            class="mb-3"
+          >
+            团队云虚拟机已使用 {{ selectedQuota.used }} / {{ selectedQuota.limit }} 台
+            <div>本项目占用 {{ selectedProjectUsage }} 台；团队内所有项目共享名额</div>
+            <div v-if="!quotaFull">
+              本次创建后，团队占用 {{ selectedQuota.used + 1 }} / {{ selectedQuota.limit }} 台
+            </div>
+            <div>停止机器不会腾出名额，释放后归还</div>
+            <div v-if="quotaFull">已达到上限，请先释放不再使用的机器</div>
+          </v-alert>
+          <div v-else class="text-body-2 text-medium-emphasis mb-3">暂未获取团队资源用量，请刷新后重试</div>
           <v-row dense>
             <v-col cols="4"
               ><v-text-field v-model.number="cores" type="number" min="1" label="CPU 核" variant="outlined"
@@ -498,7 +522,12 @@ onBeforeUnmount(() => {
         <v-card-actions class="px-5 pb-5">
           <v-spacer />
           <v-btn variant="text" :disabled="creating" @click="createDialog = false">取消</v-btn>
-          <v-btn color="primary" variant="flat" :loading="creating" :disabled="!selectedProject" @click="provisionCloud"
+          <v-btn
+            color="primary"
+            variant="flat"
+            :loading="creating"
+            :disabled="!selectedProject || !selectedQuota || quotaFull"
+            @click="provisionCloud"
             >确认开通</v-btn
           >
         </v-card-actions>

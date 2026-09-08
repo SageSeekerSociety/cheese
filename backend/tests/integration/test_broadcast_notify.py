@@ -16,6 +16,7 @@ def _add(client, tid: str, handle: str, actor: str = "alice") -> None:
     r = client.post(
         f"/topics/{tid}/members",
         json={"handle": handle, "role": "member", "actor": actor},
+        headers=session_auth_headers(actor),
     )
     assert r.status_code == 200
 

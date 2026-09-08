@@ -95,6 +95,7 @@ def test_a_roster_member_participates(client):
     r = client.post(
         f"/topics/{tid}/members",
         json={"handle": "bob", "role": "member", "actor": "alice"},
+        headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200, r.text
 

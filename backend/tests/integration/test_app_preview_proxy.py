@@ -190,6 +190,19 @@ def test_root_absolute_asset_urls_are_moved_onto_the_proxy_prefix(client):
     assert 'href="//x/y"' in body, "protocol-relative URLs must be left alone"
 
 
+def test_an_app_configured_with_the_preview_base_keeps_its_asset_urls(client):
+    _project, topic = _project_topic(client)
+    token = _login(client, "alice")
+    base = f"/api/topics/{topic['id']}/app"
+    html = f'<script src="{base}/src/main.js"></script>'.encode()
+    machine = FakeMachine(html).attach(uuid.UUID(topic["id"]))
+    try:
+        response = client.get(f"/topics/{topic['id']}/app/?token={token}")
+    finally:
+        machine.detach()
+    assert response.content == html
+
+
 def test_the_app_page_leaves_a_cookie_scoped_to_its_own_path(client):
     """Assets and HMR are fetched by the page itself and carry no query string."""
     _project, topic = _project_topic(client)

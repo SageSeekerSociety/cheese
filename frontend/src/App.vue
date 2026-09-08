@@ -41,6 +41,7 @@
         <v-card-title class="text-h6 font-weight-bold pb-1">新建项目</v-card-title>
         <v-card-text class="pb-2">
           <p v-if="sourceTask" class="t-body c-muted mb-3">来自赛题：{{ sourceTask.name }}</p>
+          <ResourceLimitsNotice v-if="newProjectDialog" />
           <v-text-field
             v-model="newProjectName"
             label="项目名称"
@@ -127,6 +128,7 @@ import AppBar from '@/components/common/Navigation/AppBar.vue'
 import MobileAppBar from '@/components/common/Navigation/MobileAppBar.vue'
 import OfflineBanner from '@/components/common/OfflineBanner.vue'
 import VersionBadge from '@/components/common/VersionBadge.vue'
+import ResourceLimitsNotice from '@/components/ResourceLimitsNotice.vue'
 import { trackKeyboardInset } from '@/lib/keyboardInset'
 import { loadCachedProjects, saveCachedProjects } from '@/lib/projectCache'
 import { myHandle } from '@/me'
