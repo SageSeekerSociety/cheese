@@ -82,14 +82,29 @@
 
 **顺带修掉一处会误导操作的过期文档**：<&docs/infrastructure.md> 顶部环境表里 dev/prod 的 Stack 列写着 `bare-metal (systemd + local .venv)`，而实际跑的是 Docker 容器（同一份文档下一节自己就这么说）。照那行上机会去找根本不存在的 systemd 服务。已改。
 
+## 部署这一步为什么失败（2026-09-08，房间在机器上验的）
+
+<@maxiaoyu> 上机跑了 `deploy/deploy-docker.sh`，两次都停在 `error from registry: denied`。
+
+**根因**：这台机器平时不保持 ghcr 登录，只在 workflow 运行期间临时登、跑完登出。
+
+**为什么 local-image 模式救不了**（房间上一轮给的步骤③有这个缺陷，已改）：`DEPLOY_APP_IMAGE_SOURCE=local` 只覆盖 backend/frontend 两个 app 镜像；agent 运行时镜像是通过 docker.sock 按需启动的，compose 管不了，脚本无条件 `docker pull "$SANDBOX_IMAGE"`，而这个分支由 subscription overlay 自动打开。所以 local 模式只是把同一个 denied 推迟一步。
+
+**正解**：GitHub → Actions → **Deploy (dev/test box)** → Run workflow → `main`。它自己会 `docker login ghcr.io`，跑在就装在这台机器上的 self-hosted runner（`cheese-dev-env1`，在线）上，读的是同一份 `.env`。两个前置房间已验过：`main` 的 HEAD 就是在跑的 `addd224`（不会顺带升版本），且最新提交非纯文档（不会被 `Skip docs-only commits` 静默跳过）。
+
+**别用 `AGENT_RUNTIME_IMAGES_REQUIRED=false` 绕过 sandbox 那步**：同一个代码块还负责建 image-retainer 容器，是它挡住下次 `docker image prune -a` 回收沙箱镜像——跳过会重演 2026-08-10「Agent 运行组件暂时缺失」那次全挂。
+
+**失败是干净的**：pull 阶段就退出了，没走到重建容器和跑迁移，线上仍是完好的 `addd224`。
+
 ## 还差什么（谁做）
 
 | # | 事 | 谁 | 状态 |
 |---|---|---|---|
-| 0 | 上机把 `DREAM_ENABLED=true` 写进 `backend/.env` 并重部当前 sha | **必须人**（芝士上不了机器） | **四个前置房间已在真机核实全部就位**，见下方「dreaming 这一步的前置核实」；操作步骤在 <&docs/infrastructure.md> 的「Turning on 记忆整理 / dreaming」一节 |
+| 0 | 上机把 `DREAM_ENABLED=true` 写进 `backend/.env` 并重部当前 sha | **必须人** | **做了一半，线上未生效**：`.env` 第 153 行已加（09-08 UTC 09:15，备份 `.env.bak-20260908-021522`），但重部因 ghcr 未登录失败，容器仍是 UTC 08:44 那个、环境里无 `DREAM_*`。**下一步：GitHub 上 dispatch `Deploy (dev/test box)`** |
 | 1 | 让这把智谱 key 真的能用：**给账号充值 / 买资源包**（key 本身有效，缺的是余额），充值前建议先轮换 | **必须人**（采购） | **进了一半**：key 09-08 已拿到，实测 429 余额不足，仍卡着 3 |
 | 2 | ~~在 GitHub 上点一次 re-run，把 #582 那两条环境性 CI 红刷掉~~ | — | **已完成**：09-03 `acae0ed29` 把两条 CI 修复和 #582 一起合并了，不用再单独重跑 |
 | 3 | 上机改 `backend/.env` 三行（`MEMORY_BACKEND`/两把 key）、重部当前 sha、跑迁移脚本 | **必须人**（芝士上不了机器） | 依赖 1；步骤见 <&docs/infrastructure.md> |
+| 3b | 在 dev 机器上装 `cheese-viking-backup.timer` | **必须人** | **未做，房间已确认**：`systemctl` 里只有 `cheese-db-backup.timer`，viking 那条不存在。翻 `MEMORY_BACKEND` 之前必须先装，否则那个目录就是一个没有备份的新数据库 |
 | 4 | 房间递一张验收卡，带走备份线 + 端点自检（共用分支，只能递一张） | 芝士 | 等端点自检 conclude |
 | 5 | ~~#582 评审合并~~ | — | **已完成**，见上方「一句话」 |
 | 6 | 「进度层」那条边 | — | 归 #184，不在本 issue |
@@ -99,6 +114,7 @@
 ## 一条贯穿始终的平台风险（不属于 #187，但吃掉了这轮的工）
 
 端点自检那条支线的工作区被平台**整个重建两次**，两次都发生在「写完文件」和「push」之间那几分钟：`.git` 连同提交一起被换掉，`git status` 全程显示干净、无任何提示。`commit` 不构成保护，**只有 push 出去的才算存在**。现在所有支线的简报都写死「每写完一个文件就 add + commit + push，中间不插任何别的工具调用」。是否单独开一条支线追这个触发条件，问题已递给 <@caisongyang>，尚未回复。
+
 
 
 
