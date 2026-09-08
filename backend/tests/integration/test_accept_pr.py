@@ -2354,7 +2354,7 @@ def test_correcting_the_card_rewrites_the_pr_and_the_commit_that_lands(
     assert patch["title"] == "fix(accept): say what the review said"
     assert "评审指出原来那句话与事实不符。" in patch["body"]
     # 而且 trailer 仍然是平台写的，不是 GitHub 文本框里能改的东西。
-    assert f"Cheese-Topic: {tid}" in patch["body"]
+    assert f"/topics/{tid}" in patch["body"]
 
     assert _accept(client, cid).status_code == 200
     [merge] = fake.merge_calls
