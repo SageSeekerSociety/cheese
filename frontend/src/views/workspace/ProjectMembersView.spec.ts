@@ -13,7 +13,9 @@ import * as directives from 'vuetify/directives'
 import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const addProjectMember = vi.fn()
+const inviteProjectMember = vi.fn()
+const listProjectInvitations = vi.fn()
+const revokeInvitation = vi.fn()
 const updateProjectMemberRole = vi.fn()
 const removeProjectMember = vi.fn()
 const listProjectAgents = vi.fn()
@@ -22,7 +24,9 @@ vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
   return {
     ...actual,
-    addProjectMember: (...a: unknown[]) => addProjectMember(...a),
+    inviteProjectMember: (...a: unknown[]) => inviteProjectMember(...a),
+    listProjectInvitations: (...a: unknown[]) => listProjectInvitations(...a),
+    revokeInvitation: (...a: unknown[]) => revokeInvitation(...a),
     updateProjectMemberRole: (...a: unknown[]) => updateProjectMemberRole(...a),
     removeProjectMember: (...a: unknown[]) => removeProjectMember(...a),
     listProjectAgents: (...a: unknown[]) => listProjectAgents(...a),
@@ -32,8 +36,17 @@ vi.mock('@/api', async () => {
 const push = vi.fn()
 vi.mock('vue-router', () => ({ useRouter: () => ({ push, replace: vi.fn() }), useRoute: () => ({ query: {} }) }))
 
+// 邀请那一步要按 uid 查人，走的是 1.0 那层的 /users/{id}。整个 network 模块拉进来
+// 会连带把真的 router 建起来（它在模块作用域里 createRouter），和上面这个 mock 打架。
+const getUserInfo = vi.fn()
+vi.mock('@/network/api/users', () => ({ UserApi: { getUserInfo: (...a: unknown[]) => getUserInfo(...a) } }))
+
 let meHandle = 'alice'
-vi.mock('@/me', () => ({ myHandle: () => meHandle }))
+vi.mock('@/me', () => ({
+  myHandle: () => meHandle,
+  // 名册表里没有所有者，页面得自己补那一行，名字从这里来。
+  me: { value: { handle: 'alice', name: '爱丽丝' } },
+}))
 
 const refreshMembers = vi.fn()
 let members: ProjectMemberRow[] = []
@@ -87,13 +100,16 @@ beforeAll(() => {
 beforeEach(() => {
   push.mockReset()
   refreshMembers.mockReset()
-  addProjectMember.mockReset().mockResolvedValue({})
+  inviteProjectMember.mockReset().mockResolvedValue({})
+  listProjectInvitations.mockReset().mockResolvedValue({ data: [], total: 0 })
+  revokeInvitation.mockReset().mockResolvedValue({})
   updateProjectMemberRole.mockReset().mockResolvedValue({})
   removeProjectMember.mockReset().mockResolvedValue({ deleted: true })
   listProjectAgents
     .mockReset()
     .mockResolvedValue({ data: [{ handle: 'cheese-x', display_name: '芝士', is_default: true }] })
   privateUnreadMap = {}
+  getUserInfo.mockReset().mockResolvedValue({ data: { user: { id: 1024, username: 'zhangheng', nickname: '张衡' } } })
   meHandle = 'alice'
   members = [
     member({ user_handle: 'alice', name: '爱丽丝', role: 'lead' }),
@@ -180,12 +196,48 @@ describe('成员页', () => {
     await waitFor(() => expect(removeProjectMember).toHaveBeenCalledWith('p1', 'ligan'))
   })
 
-  it('邀请带上选的角色，handle 前多打一个 @ 也认', async () => {
+  // 邀请按 uid，不按 handle：uid 抄得准（就在个人主页地址里），而 handle 打错一个
+  // 字母的后果是「查无此人」还是「加错了人」全看运气。所以这一组守的是「按下按钮
+  // 之前，人已经看见自己要加的是谁」。
+  it('填 uid → 先查出这个人是谁，再把他的 handle 交给后端', async () => {
     const { getByText } = mount()
     await fireEvent.click(getByText('邀请成员'))
-    await fireEvent.update(await screen.findByLabelText('handle'), '@zhangheng')
+    await fireEvent.update(await screen.findByLabelText('uid'), '1024')
+    // 查到的人要显示出来给人确认
+    expect(await screen.findByText('张衡')).toBeTruthy()
+    expect(getUserInfo).toHaveBeenCalledWith(1024)
     await fireEvent.click(await screen.findByRole('button', { name: '邀请' }))
-    await waitFor(() => expect(addProjectMember).toHaveBeenCalledWith('p1', 'zhangheng', 'member'))
+    // 后端认的是 handle，uid 只是人这边好抄的那个号；而且发出去的是**邀请**，
+    // 不是直接把人放上名册——那正是这个功能的意义。
+    await waitFor(() => expect(inviteProjectMember).toHaveBeenCalledWith('p1', 'zhangheng', 'member'))
+  })
+
+  it('查无此人 → 说出来，并且按钮按不下去', async () => {
+    getUserInfo.mockRejectedValue(new Error('404'))
+    const { getByText } = mount()
+    await fireEvent.click(getByText('邀请成员'))
+    await fireEvent.update(await screen.findByLabelText('uid'), '999999')
+    expect(await screen.findByText(/找不到 uid 999999/)).toBeTruthy()
+    const btn = await screen.findByRole('button', { name: '邀请' })
+    expect(btn.hasAttribute('disabled')).toBe(true)
+    await fireEvent.click(btn)
+    expect(inviteProjectMember).not.toHaveBeenCalled()
+  })
+
+  it('这个人已经在项目里 → 说出来，不让再邀一次', async () => {
+    getUserInfo.mockResolvedValue({ data: { user: { id: 7, username: 'ligan', nickname: '李干' } } })
+    const { getByText } = mount()
+    await fireEvent.click(getByText('邀请成员'))
+    await fireEvent.update(await screen.findByLabelText('uid'), '7')
+    expect(await screen.findByText('已经在项目里')).toBeTruthy()
+    expect((await screen.findByRole('button', { name: '邀请' })).hasAttribute('disabled')).toBe(true)
+  })
+
+  it('还没查到人之前按不下去——空邀请是个必定失败的请求', async () => {
+    const { getByText } = mount()
+    await fireEvent.click(getByText('邀请成员'))
+    expect((await screen.findByRole('button', { name: '邀请' })).hasAttribute('disabled')).toBe(true)
+    expect(getUserInfo).not.toHaveBeenCalled()
   })
 })
 
@@ -228,5 +280,69 @@ describe('成员页：私聊未读', () => {
     )
     expect(agentRow).toBeTruthy()
     expect(agentRow?.querySelector('[aria-label="私聊"]')).toBeNull()
+  })
+})
+
+// 邀请发出去之后，邀请方看得见自己在等谁。看不见的话，「我到底邀没邀过他」只能靠
+// 记性——而重复邀请会被后端拒掉，人却不知道为什么。
+describe('成员页：等待接受', () => {
+  const pending = {
+    id: 'inv-1',
+    project_id: 'p1',
+    invitee_handle: 'zhangheng',
+    inviter_handle: 'alice',
+    role: 'lead',
+    status: 'pending' as const,
+    created_at: '2026-09-08T00:00:00Z',
+    responded_at: null,
+  }
+
+  it('待答复的邀请单独一段，不混进名册', async () => {
+    listProjectInvitations.mockResolvedValue({ data: [pending], total: 1 })
+    const { container } = mount()
+    await waitFor(() => expect(groupTitles(container)).toContain('等待接受 · 1'))
+    // 他还不是成员，所以不能出现在角色分组里
+    expect(() => rowFor(container, 'zhangheng')).toThrow()
+  })
+
+  it('组长能把发出去的邀请撤回来', async () => {
+    listProjectInvitations.mockResolvedValue({ data: [pending], total: 1 })
+    const { container } = mount()
+    await waitFor(() => expect(groupTitles(container)).toContain('等待接受 · 1'))
+    await fireEvent.click(await screen.findByRole('button', { name: '撤回' }))
+    await waitFor(() => expect(revokeInvitation).toHaveBeenCalledWith('inv-1'))
+  })
+
+  it('普通成员看不到撤回', async () => {
+    meHandle = 'ligan'
+    listProjectInvitations.mockResolvedValue({ data: [pending], total: 1 })
+    const { container } = mount()
+    await waitFor(() => expect(groupTitles(container)).toContain('等待接受 · 1'))
+    expect(container.textContent).not.toContain('撤回')
+  })
+})
+
+// 名册表里存的是**除所有者以外**的人（这个仓里所有者记在 Project.owner_handle
+// 上）。这一组守的是界面把他补出来——不补的话，一个刚建好的项目会对着它的主人说
+// 「还没有成员」，而他正是唯一确定在这儿的那个人。
+describe('成员页：所有者不在名册表里，但必须在页面上', () => {
+  it('名册为空的新项目，页面上仍然有所有者那一行', () => {
+    members = []
+    const { container } = mount()
+    expect(container.textContent).toContain('@alice')
+    expect(container.textContent).toContain('所有者')
+    expect(container.textContent).not.toContain('还没有成员')
+  })
+
+  it('他也在角色分组里——不是浮在名单外面的一行', () => {
+    members = []
+    const { container } = mount()
+    expect(groupTitles(container)).toContain('组长 · 1')
+  })
+
+  it('名册表里真有他的时候不画第二行', () => {
+    members = [member({ user_handle: 'alice', name: '爱丽丝', role: 'lead' })]
+    const { container } = mount()
+    expect(container.querySelectorAll('.member-row').length).toBe(1)
   })
 })

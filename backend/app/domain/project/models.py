@@ -112,6 +112,53 @@ class ProjectMember(UuidPk, Timestamps, Base):
     )
 
 
+class InvitationStatus(enum.StrEnum):
+    pending = "pending"
+    accepted = "accepted"
+    declined = "declined"
+    revoked = "revoked"  # 邀请的人反悔了
+
+
+class ProjectInvitation(UuidPk, Timestamps, Base):
+    """一张「请你加入这个项目」的邀请，等对方回答。
+
+    加人为什么不再是一步到位：进了项目就看得见这个项目的**全部话题**，那是别人
+    的工作内容，不该由邀请方单方面决定谁能看。所以名册上多了一个中间状态——邀请
+    发出去了，但人还没进来。
+
+    答复过的邀请**留着不删**：这一行是「谁在什么时候把谁拉进来的」的唯一记录，删
+    掉之后，一个突然出现在名册上的人就没有来处了。
+    """
+
+    __tablename__ = "project_invitations"
+    __table_args__ = (
+        # 同一个人在同一个项目里只能有一张**待答复**的邀请。约束落在
+        # (project, invitee, status) 上而不是 (project, invitee)：拒绝过之后必须
+        # 还能再邀一次，而部分索引在 SQLite 上不通用，所以用这个三元组——
+        # 一张 pending 加任意多张已答复的，正好是要允许的形状。
+        UniqueConstraint(
+            "project_id", "invitee_handle", "status", name="uq_project_invitation"
+        ),
+    )
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    invitee_handle: Mapped[str] = mapped_column(String(64), index=True)
+    inviter_handle: Mapped[str] = mapped_column(String(64))
+    role: Mapped[ProjectRole] = mapped_column(
+        Enum(ProjectRole, native_enum=False, length=16),
+        default=ProjectRole.member,
+    )
+    status: Mapped[InvitationStatus] = mapped_column(
+        Enum(InvitationStatus, native_enum=False, length=16),
+        default=InvitationStatus.pending,
+    )
+    responded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
 class ProjectGitInstallation(UuidPk, Timestamps, Base):
     """One project's connected cheesex-app GitHub App installation (#192).
 
