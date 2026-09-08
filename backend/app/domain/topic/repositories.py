@@ -4,7 +4,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Literal
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import Select, and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import (
     ColumnElement,
@@ -113,24 +113,68 @@ class TopicRepository:
         filters the flat list, so a kept topic's parent may be filtered out;
         callers that rebuild the tree should not combine it with the filter.
         """
+        stmt = self._project_topics_stmt(
+            project_id, sort=sort, order=order, active_since=active_since
+        )
+        return list((await self._session.scalars(stmt)).all())
+
+    def _project_topics_stmt(
+        self,
+        project_id: uuid.UUID,
+        *,
+        sort: TopicSortField | None,
+        order: SortOrder,
+        active_since: datetime | None,
+    ) -> Select[tuple[Topic]]:
+        """The one definition of "this project's topic tree, flat, in order".
+
+        Shared so ``list_for_project`` and ``list_for_project_with_activity``
+        cannot drift into filtering or ordering the same list differently.
+        """
         # Private chats are not part of the topic tree.
         stmt = select(Topic).where(
             Topic.project_id == project_id, Topic.is_private.is_(False)
         )
         if active_since is not None:
             stmt = stmt.where(_last_activity() >= active_since)
-        stmt = stmt.order_by(_order_by(sort, order))
-        return list((await self._session.scalars(stmt)).all())
+        return stmt.order_by(_order_by(sort, order))
+
+    async def list_for_project_with_activity(
+        self,
+        project_id: uuid.UUID,
+        *,
+        sort: TopicSortField | None = None,
+        order: SortOrder = "asc",
+        active_since: datetime | None = None,
+    ) -> list[tuple[Topic, datetime]]:
+        """The same list, each row paired with its 最后活动时间 — in ONE query.
+
+        The list endpoint needs both, and asking for them separately made the
+        database derive ``_last_activity`` twice over the same topics: once to
+        sort by it, once to report it. Selecting it alongside the rows it
+        already sorted costs nothing extra, because it is the expression the
+        ORDER BY evaluates anyway.
+
+        Separate from ``list_for_project`` rather than replacing it: that one's
+        ``list[Topic]`` is what mentions, the agent's context builders and the
+        dashboard want, and none of them look at last activity.
+        """
+        stmt = self._project_topics_stmt(
+            project_id, sort=sort, order=order, active_since=active_since
+        ).add_columns(_last_activity())
+        rows = (await self._session.execute(stmt)).all()
+        return [(topic, last) for topic, last in rows]
 
     async def last_activity_for_topics(
         self, topic_ids: list[uuid.UUID]
     ) -> dict[uuid.UUID, datetime]:
         """{topic_id: last activity} for a batch of topics, in ONE query.
 
-        Kept off ``list_for_project`` so its return type stays ``list[Topic]``
-        for the callers that only want the rows (mentions, the agent's context
-        builders, the dashboard); the list endpoint joins the two by id, the
-        same way it joins the unread counts.
+        For callers holding topics they did not get from
+        ``list_for_project_with_activity`` — a single room's header opened by
+        deep link, which has one topic and no list to have derived it with.
+        A caller that is about to list a project's topics should use that
+        method instead and get both from one query.
         """
         if not topic_ids:
             return {}

@@ -7,6 +7,7 @@ import { useRoute, useRouter } from 'vue-router'
 
 import { listProjectAgents } from '../api'
 import { columnDotStyle } from '../lib/board'
+import { cancelPrefetch, prefetchOnHover } from '../lib/routePrefetch'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '../lib/topicTitle'
 import {
   ancestorPathIds,
@@ -55,6 +56,10 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'select-topic', id: string): void
+  // 指针停在一行上：让父组件（拥有这一行的路由的那个）顺手把它预热了。点这一行
+  // 会发生什么由 select-topic 的接收方决定，所以「提前准备什么」也归它。
+  (e: 'hover-topic', id: string): void
+  (e: 'leave-topic'): void
   (e: 'create-topic', title: string, agentInstanceId?: string | null): void
   // 归档去向: manual archive / unarchive from the row's ⋯ actions.
   (e: 'archive-topic', id: string): void
@@ -103,6 +108,12 @@ const projectPages = [
 function openProjectPage(name: string) {
   if (!props.selectedProjectId) return
   router.push({ name, params: { projectId: props.selectedProjectId } })
+}
+// 谁负责 push，谁负责预热：指针停住的时候把这个页面的代码先下下来，等真按下去时
+// 只剩下拉数据那一段。
+function hoverProjectPage(name: string) {
+  if (!props.selectedProjectId) return
+  prefetchOnHover({ router, to: { name, params: { projectId: props.selectedProjectId } } })
 }
 
 // 换项目落在项目地址本身，而不是它的某个话题：哪个话题该开着是那个项目的事
@@ -569,6 +580,8 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
               :class="{ 'is-active': rootTopic.id === selectedTopicId }"
               :style="ROW_INDENT"
               @click="emit('select-topic', rootTopic.id)"
+              @mouseenter="emit('hover-topic', rootTopic.id)"
+              @mouseleave="emit('leave-topic')"
             >
               <template #prepend>
                 <!-- 置顶行的槽住的是它自己的图标：# / 总览 / 日历 三个各不相同，
@@ -597,6 +610,8 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
               :class="{ 'is-active': route.name === p.key }"
               :style="ROW_INDENT"
               @click="openProjectPage(p.key)"
+              @mouseenter="hoverProjectPage(p.key)"
+              @mouseleave="cancelPrefetch()"
             >
               <template #prepend>
                 <span class="row-slot">
@@ -691,6 +706,8 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                     '--guide-x': 16 + (row.depth - 1) * 20 + 'px',
                   }"
                   @click="emit('select-topic', row.topic.id)"
+                  @mouseenter="emit('hover-topic', row.topic.id)"
+                  @mouseleave="emit('leave-topic')"
                 >
                   <!-- 干净行：左边只有一个 16px 槽（状态，或顶替它的折叠开关），
                        身份靠标题本身，种类标签不要（缩进表达层级），操作 hover 才浮现。
@@ -845,6 +862,8 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                 class="topic-row topic-row--archived"
                 :class="{ 'is-active': t.id === selectedTopicId }"
                 @click="emit('select-topic', t.id)"
+                @mouseenter="emit('hover-topic', t.id)"
+                @mouseleave="emit('leave-topic')"
               >
                 <template #prepend>
                   <v-icon size="16" class="me-1 c-faint" icon="mdi-archive-outline" />

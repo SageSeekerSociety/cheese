@@ -44,7 +44,38 @@ export default defineConfig({
       custom: { families: [], preload: false },
     }),
     prismjsPlugin({
-      languages: 'all',
+      // The list is what this product's code blocks actually contain — agent
+      // output and repository snippets — not what Prism offers. **Adding a
+      // grammar is a bundle decision**: `'all'` meant 297 grammars in a 569 KB
+      // chunk that every service-worker install downloaded, for languages no
+      // session here will ever emit. Anything not listed renders as
+      // unhighlighted plain text, which is the accepted trade — do not add a
+      // fallback loader; add the grammar and take the bytes knowingly.
+      //
+      // Dependencies resolve themselves (babel-plugin-prismjs runs Prism's own
+      // dependency loader), so this is top-level languages only: `markup`
+      // covers html/xml/svg, `bash` covers sh/shell, `typescript` covers ts.
+      // `vue` is not a Prism grammar at all — a ```vue block degrades to plain
+      // text and there is nothing to add for it.
+      languages: [
+        'markup',
+        'css',
+        'javascript',
+        'typescript',
+        'jsx',
+        'tsx',
+        'python',
+        'go',
+        'rust',
+        'bash',
+        'json',
+        'yaml',
+        'toml',
+        'sql',
+        'markdown',
+        'diff',
+        'docker',
+      ],
       // 配置行号插件
       plugins: ['line-numbers', 'copy-to-clipboard'],
       // 主题名
@@ -109,17 +140,30 @@ export default defineConfig({
         // huge, view-specific chunks that exceed even this are NOT precached;
         // the /assets/ runtime cache below picks them up on first online visit
         // instead, so precache stays bounded.
-        globPatterns: ['**/*.{js,css,html,svg,woff,woff2,ico,png,webmanifest}'],
-        // The Monaco language workers (editor/json/html/css/ts.worker-*.js, up
-        // to ~7 MB each) are the biggest chunks in the bundle and are purely
-        // optional — they load only inside the code editor, which is not part
-        // of the shell. Keep them OUT of precache (that is "别缓存到爆"); the
+        //
+        // `.woff` is deliberately absent while `.woff2` stays. Both formats of
+        // the same faces ship (MDI 574 KB + 394 KB, plus 20 KaTeX pairs) and no
+        // browser fetches both — the `.woff` @font-face entry is the fallback
+        // for engines with no woff2. The thing doing this precaching IS the
+        // service worker, and every SW-capable engine already had woff2 by then
+        // (Chrome 40 vs 36, Firefox 44 vs 39, Safari 11.1 vs 10, Edge 17 vs 14),
+        // so a browser that would use the `.woff` never reaches this cache at
+        // all. The files stay in dist and stay fetchable; what is gone is the
+        // unconditional download of a second copy of every face.
+        globPatterns: ['**/*.{js,css,html,svg,woff2,ico,png,webmanifest}'],
+        // Monaco is not part of the app shell: it loads only when a code panel
+        // opens. Its language workers (editor/json/html/css/ts.worker-*.js, up
+        // to ~7 MB each) were already excluded, but `monaco-*.js` — the editor
+        // itself, 4.13 MB — has no "worker-" in its name, so the size cap below
+        // waved it through and every install downloaded it. Same reason, same
+        // treatment: keep both OUT of precache (that is "别缓存到爆"); the
         // /assets/ runtime cache below picks them up on first online use.
-        globIgnores: ['**/*.worker-*.js'],
+        globIgnores: ['**/*.worker-*.js', '**/monaco-*.js'],
         // Raised from the 2 MiB default so the shell-critical `vendor` chunk
         // (~5 MB) is precached — leaving it out is exactly the "离线白屏" the
-        // spec warns against. The only files bigger than this are the Monaco
-        // workers, already excluded above.
+        // spec warns against. Do NOT tune this number to drop one specific
+        // chunk — it is a blanket rule and would take unrelated chunks with it.
+        // Anything that should not be precached goes in `globIgnores` by name.
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         cleanupOutdatedCaches: true,
         // Take control of open pages as soon as a new SW activates. With

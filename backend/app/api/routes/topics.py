@@ -277,11 +277,10 @@ async def list_topics(
     actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     service = TopicService(db)
-    topics, total = await service.list_for_project(
+    topics, last_activity, total = await service.list_for_project(
         project_id, sort=sort, order=order, active_since=active_since
     )
     running_ids = runner.running_topic_ids()
-    last_activity = await service.last_activity_for_topics([t.id for t in topics])
     relevance = await service.relevance_for_topics(topics, _viewer(actor))
     cards = await _live_room_cards(db, [t.id for t in topics])
     # 一次，给整页用同一个「现在几点」——见 list_project_tasks 里同一行的理由。

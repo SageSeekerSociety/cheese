@@ -2,6 +2,7 @@ import type { User } from '@/types/users'
 
 import { computed, ref } from 'vue'
 
+import { clearPageCache } from '@/lib/pageCache'
 import { UserApi } from '@/network/api/users'
 import { BusinessError } from '@/network/types/error'
 
@@ -162,6 +163,9 @@ export class AccountService {
     if (typeof caches !== 'undefined') {
       void caches.delete('cheese-api-get').catch(() => {})
     }
+    // 同理，页面缓存住在内存里，退出登录不清就还在：下一个人打开总览会先看到上
+    // 一个人的项目名，然后才被后台刷新盖掉——那一眼已经泄露了。
+    clearPageCache()
   }
 }
 
