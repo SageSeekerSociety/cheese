@@ -387,13 +387,21 @@ class TopicService:
         sort: TopicSortField | None = None,
         order: SortOrder = "asc",
         active_since: datetime | None = None,
-    ) -> tuple[list[Topic], int]:
-        topics = await self._repo.list_for_project(
+    ) -> tuple[list[Topic], dict[uuid.UUID, datetime], int]:
+        """The project's topics, their 最后活动时间, and the total.
+
+        Activity comes back with the rows because the query that ordered them
+        already derived it; fetching it separately made the database compute
+        the same correlated subquery over the same topics twice.
+        """
+        rows = await self._repo.list_for_project_with_activity(
             project_id,
             sort=sort,
             order=order,
             active_since=_as_utc(active_since),
         )
+        topics = [topic for topic, _ in rows]
+        last_activity = {topic.id: last for topic, last in rows}
         # `total` counts what the caller got: a filtered page whose total still
         # said "all topics" would tell a paging client to keep asking for rows
         # that do not exist.
@@ -402,7 +410,7 @@ class TopicService:
             if active_since is not None
             else await self._repo.count_for_project(project_id)
         )
-        return topics, total
+        return topics, last_activity, total
 
     async def last_activity_for_topics(
         self, topic_ids: list[uuid.UUID]
