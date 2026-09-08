@@ -361,7 +361,7 @@ describe('向后兼容：库里存量的老事件一个都不能变样', () => {
     const { container } = mountRoom([
       event('', '芝士 编辑了文档', {
         action: 'doc',
-        detail: '--- 修改前\n+++ 修改后\n@@ -1 +1 @@\n-&nbsp;\n+调查安排',
+        detail: '--- 修改前\n+++ 修改后\n@@ -1 +1 @@\n <!-- PLAN -->\n 未修改的说明\n-&nbsp;\n+调查安排',
       }),
     ])
     await flush()
@@ -370,6 +370,8 @@ describe('向后兼容：库里存量的老事件一个都不能变样', () => {
     expect(diff.querySelectorAll('.doc-edit-line')).toHaveLength(1)
     expect(diff.textContent).toContain('调查安排')
     expect(diff.textContent).not.toContain('&nbsp;')
+    expect(diff.textContent).not.toContain('PLAN')
+    expect(diff.textContent).not.toContain('未修改的说明')
     expect(diff.textContent).not.toContain('@@')
   })
 

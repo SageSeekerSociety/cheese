@@ -1567,7 +1567,7 @@ onBeforeUnmount(() => {
                 <div v-if="notice.resource === 'doc'" class="doc-edit-diff" aria-label="文档修改对比">
                   <template v-for="(line, index) in parseDiffLines(notice.detail)" :key="index">
                     <div
-                      v-if="line.kind !== 'meta' && line.kind !== 'hunk' && docDiffText(line.text)"
+                      v-if="(line.kind === 'add' || line.kind === 'del') && docDiffText(line.text)"
                       class="doc-edit-line"
                       :class="`doc-edit-line--${line.kind}`"
                       :aria-label="line.kind === 'add' ? '新增' : line.kind === 'del' ? '删除' : undefined"
