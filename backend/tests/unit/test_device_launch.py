@@ -84,10 +84,6 @@ def test_build_screen_launch_shapes_command_and_env():
     assert 'SESSION="cheese_$(printf' in script
     assert 'new-session -d -s "$SESSION" -c "$CHEESE_WORK"' in script
     assert "CHEESE_HOOK_SPOOL" in script
-    # The drainer deletes only on DURABLE acceptance (code:200 = live delivery or
-    # server-side parking), with a 24h age cap for an unreachable backend.
-    assert '"code":200' in script
-    assert "-mmin +1440" in script
     # Env carries the hook wiring, home/work, model, and the gateway var.
     assert env["CHEESE_HOOK_URL"] == "http://h/sandbox/hooks/T"
     assert env["CHEESE_TOKEN"] == "scoped-tok"
@@ -226,8 +222,6 @@ def test_adopt_rerun_revives_a_dead_drainer_but_never_doubles_a_live_one():
     assert 'kill -0 "$DRAIN_PID"' in script
     assert 'tmux new-window -d -t "$SESSION" -n cheese-drain' in script
     assert "CHEESE_DRAIN_TETHER=$TETHER" in script
-    # The loop honors the tether, so the revived window closes when claude goes.
-    assert 'kill -0 "$CHEESE_DRAIN_TETHER"' in _drain_body()
 
 
 def test_drainer_config_is_rewritten_each_launch_and_read_each_pass():
@@ -244,11 +238,6 @@ def test_drainer_config_is_rewritten_each_launch_and_read_each_pass():
         'CHEESE_TOKEN="$CHEESE_TOKEN"',
     ):
         assert line in script
-    body = _drain_body()
-    assert '. "$0.env"' in body
-    assert body.index("while true") < body.index('. "$0.env"'), (
-        "the config must be sourced inside the loop, not once at startup"
-    )
 
 
 def test_no_tmux_branch_keeps_the_drainer_in_claudes_own_tree():
@@ -297,14 +286,66 @@ def test_drainer_delivers_the_spool_and_deletes_only_on_code_200(tmp_path):
         proc.wait(timeout=5)
 
 
-def test_drainer_keeps_an_unacknowledged_event(tmp_path):
-    drain, spool, env = _write_drainer(tmp_path, curl_response='{"code":500}')
+@pytest.mark.parametrize("response", ['{"code":500}', '{"code":2000}', "invalid"])
+def test_drainer_keeps_an_unacknowledged_event(tmp_path, response):
+    drain, spool, env = _write_drainer(tmp_path, curl_response=response)
     event = spool / "1700000000.ev1"
     event.write_text('{"hook_event_name":"Stop"}')
     proc = subprocess.Popen(["sh", str(drain)], env=env)
     try:
         time.sleep(1.0)  # a couple of passes
         assert event.exists(), "an unacknowledged event must stay spooled"
+    finally:
+        proc.terminate()
+        proc.wait(timeout=5)
+
+
+def test_running_drainer_uses_rotated_delivery_configuration(tmp_path):
+    drain, spool, env = _write_drainer(tmp_path, curl_response='{"code":200}')
+    calls = tmp_path / "calls"
+    (tmp_path / "bin/curl").write_text(
+        f'#!/bin/sh\nprintf "%s\\n" "$@" >> "{calls}"\necho \'{{"code":200}}\'\n'
+    )
+    proc = subprocess.Popen(["sh", str(drain)], env=env)
+    try:
+        for token in ("first-token", "rotated-token"):
+            staged = tmp_path / "config.new"
+            staged.write_text(
+                f'CHEESE_HOOK_SPOOL="{spool}"\n'
+                f'CHEESE_HOOK_URL="http://backend.test/{token}"\n'
+                f'CHEESE_TOKEN="{token}"\n'
+            )
+            staged.replace(tmp_path / "cheese-drain.env")
+            event = spool / f"0000000000000000001.{token}"
+            event.write_text("{}")
+            deadline = time.monotonic() + 5
+            while event.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert not event.exists()
+            assert f"X-Cheese-Token: {token}" in calls.read_text()
+            assert f"http://backend.test/{token}" in calls.read_text()
+    finally:
+        proc.terminate()
+        proc.wait(timeout=5)
+
+
+def test_drainer_prunes_expired_events_without_resetting_sequence(tmp_path):
+    drain, spool, env = _write_drainer(tmp_path, curl_response='{"code":500}')
+    expired = [spool / "0000000000000000001.old", spool / ".n0000000000000000001"]
+    sequence = spool / ".seq"
+    for path in [*expired, sequence]:
+        path.write_text("1")
+        os.utime(path, (time.time() - 90000, time.time() - 90000))
+    fresh = spool / "0000000000000000002.fresh"
+    fresh.write_text("{}")
+    proc = subprocess.Popen(["sh", str(drain)], env=env)
+    try:
+        deadline = time.monotonic() + 5
+        while any(path.exists() for path in expired) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert all(not path.exists() for path in expired)
+        assert fresh.exists()
+        assert sequence.read_text() == "1"
     finally:
         proc.terminate()
         proc.wait(timeout=5)

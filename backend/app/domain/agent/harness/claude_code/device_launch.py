@@ -26,6 +26,7 @@ from pathlib import Path
 # this module's launcher and its callers build on it.
 from app.core.config import GATEWAY_MOUNT
 from app.domain.agent import environment_runner, machine_tunnel, preview_tunnel
+from app.domain.agent.harness.claude_code import event_drain
 from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD
 from app.domain.agent.harness.claude_code.hooks_substrate import CHEESE_HOOK_SCRIPT
 from app.domain.agent.harness.claude_code.session_launch import hooks_settings
@@ -465,34 +466,9 @@ printf '%s\\n' "$WANT" > "$STAMPF"
 """
 
 
-CHEESE_DRAIN_SCRIPT = """#!/bin/sh
-echo $$ > "$0.pid" 2>/dev/null || true
-while true; do
-  if [ -n "$CHEESE_DRAIN_TETHER" ] && ! kill -0 "$CHEESE_DRAIN_TETHER" 2>/dev/null
-  then
-    exit 0
-  fi
-  [ -r "$0.env" ] || { sleep 5; continue; }
-  . "$0.env"
-  [ -n "$CHEESE_HOOK_SPOOL" ] || { sleep 5; continue; }
-  for f in "$CHEESE_HOOK_SPOOL"/[0-9]*; do
-    [ -e "$f" ] || continue
-    resp="$(curl -s -m 10 -X POST -H 'Content-Type: application/json' \\
-      -H "X-Cheese-Token: $CHEESE_TOKEN" -H "X-Cheese-Event-Id: ${f##*.}" \\
-      --data-binary @"$f" "$CHEESE_HOOK_URL" 2>/dev/null)"
-    # Deleting the ONLY copy, so only on the backend's word that it wrote the
-    # event to its own disk — which is what a 200 from /sandbox/hooks means.
-    case "$resp" in *'"code":200'*) rm -f "$f";; esac
-  done
-  # Retention, NOT a wildcard: `.seq` is the spool's sequence hint, and reaping
-  # it would send the next event's name back to 1 — sorting it before everything
-  # still waiting to be sent. Events and their claim files age out; bookkeeping
-  # does not.
-  find "$CHEESE_HOOK_SPOOL" -type f \\( -name '[0-9]*' -o -name '.n[0-9]*' \\) \\
-    -mmin +1440 -delete 2>/dev/null
-  sleep 1
-done
-"""
+def build_drain_script() -> str:
+    source = Path(event_drain.__file__).read_text(encoding="utf-8")
+    return "#!/bin/sh\nexec python3 - \"$0\" <<'PY'\n" + source + "\nPY\n"
 
 
 # Bringing a device's workspace up, kept out of the launcher's f-string (and
@@ -732,7 +708,7 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
     sync_script = CHEESE_SYNC_SCRIPT
     workspace_bringup = CHEESE_WORKSPACE_BRINGUP
     settings_reconcile = CHEESE_SETTINGS_RECONCILE
-    drain_script = CHEESE_DRAIN_SCRIPT
+    drain_script = build_drain_script()
     cli_source = (Path(__file__).resolve().parents[5] / "sandbox" / "cheese").read_text(
         encoding="utf-8"
     )
