@@ -226,9 +226,16 @@
 /* 视口高度：dvh，减掉软键盘盖住的那一截。
    `vh` 在手机上是地址栏**展开时**的高度，所以 100vh 总比看得见的那块高一截，
    页面底部（底栏、输入框）被顶到屏幕外面。`dvh` 修的是地址栏那一半；键盘那一半
-   浏览器不报进任何 CSS 单位里，只报在 visualViewport 上——见 lib/keyboardInset.ts。
-   `--keyboard-inset` 没有键盘时是 0px，所以桌面上这条等于 min-height: 100dvh。 */
+   Safari 不报进任何 CSS 单位里，只报在 visualViewport 上——见 lib/keyboardInset.ts。
+   （Chrome 走 index.html 里的 `interactive-widget=resizes-content`，布局视口自己
+   就缩了，于是那个变量是 0px，两条路加起来不会减两次。）
+
+   写 `height` 而不是只写 `min-height`：下限管不住比它高的内容——内容一撑，整个
+   外壳就跟着长回键盘底下去，减法白做。定高还让底下那一串 `h-100`/`fill-height`
+   有个确定的百分比基准，输入框才真的跟着抬起来。
+   没有键盘时 `--keyboard-inset` 是 0px，所以桌面上这条等于 height: 100dvh。 */
 .v-application__wrap {
+  height: calc(100dvh - var(--keyboard-inset, 0px));
   min-height: calc(100dvh - var(--keyboard-inset, 0px));
 }
 
