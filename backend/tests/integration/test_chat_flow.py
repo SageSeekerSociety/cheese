@@ -69,8 +69,7 @@ def test_blocks_empty_then_populated_after_chat(client):
 
     types = [f["type"] for f in frames]
     # Slack-style: no token deltas — the platform ✅-acks the summoning message,
-    # announces the working turn (正在思考 for every open client), then 芝士's
-    # reply lands as one complete message block.
+    # announces the working turn, then retains terminal output in activity.
     #
     # `turn_started` twice, for the same turn: the platform says it when the
     # turn opens, and the session says it again when it actually picks the work
@@ -84,7 +83,6 @@ def test_blocks_empty_then_populated_after_chat(client):
         "reaction",
         "turn_started",
         "event_block",
-        "assistant_block",
         "done",
     ]
 
@@ -92,7 +90,7 @@ def test_blocks_empty_then_populated_after_chat(client):
     agent = topic_agent_handle(uuid.UUID(topic_id))
     assert ack["reactions"] == [{"emoji": "✅", "count": 1, "authors": [agent]}]
 
-    assistant = next(f for f in frames if f["type"] == "assistant_block")["block"]
+    assistant = next(f for f in frames if f["type"] == "event_block")["block"]
     assert assistant["content"] == "Hello world"
     assert assistant["author_type"] == "ai"
 
@@ -103,13 +101,13 @@ def test_blocks_empty_then_populated_after_chat(client):
     # block. A later exact receipt replaces it with the consuming turn id.
     assert user["meta"]["consumed_turn"] is None
 
-    # Progress remains in the activity log; only Stop publishes a chat reply.
+    # Neither displayed text nor Stop publishes a chat message.
     r = client.get(f"/topics/{topic_id}/blocks")
     blocks = r.json()["data"]["data"]
-    assert [b["author_type"] for b in blocks] == ["human", "ai", "ai"]
+    assert [b["author_type"] for b in blocks] == ["human", "ai"]
     assert blocks[1]["meta"]["progress"] is True
     assert blocks[1]["meta"]["in_room"] is False
-    assert blocks[2]["kind"] == "message"
+    assert not any(b["author_type"] == "ai" and b["kind"] == "message" for b in blocks)
     assert blocks[0]["meta"]["consumed_turn"]
 
 

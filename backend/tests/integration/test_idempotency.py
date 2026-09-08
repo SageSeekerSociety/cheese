@@ -127,7 +127,8 @@ def test_message_is_not_posted_twice_under_one_continuation(client, tmp_path):
             .select_from(Block)
             .where(
                 Block.topic_id == uuid.UUID(tid),
-                Block.kind == BlockKind.message,
+                Block.kind == BlockKind.event,
+                Block.meta["progress"].as_boolean().is_(True),
                 Block.content == text,
             ),
         )
@@ -168,7 +169,8 @@ def test_kickoff_message_is_not_posted_twice_under_one_turn(client, tmp_path):
             .select_from(Block)
             .where(
                 Block.topic_id == uuid.UUID(tid),
-                Block.kind == BlockKind.message,
+                Block.kind == BlockKind.event,
+                Block.meta["progress"].as_boolean().is_(True),
                 Block.content == text,
             ),
         )
@@ -215,7 +217,8 @@ def test_message_dedup_does_not_leak_across_continuations(client, tmp_path):
             .select_from(Block)
             .where(
                 Block.topic_id == uuid.UUID(tid),
-                Block.kind == BlockKind.message,
+                Block.kind == BlockKind.event,
+                Block.meta["progress"].as_boolean().is_(True),
                 Block.content == text,
             ),
         )

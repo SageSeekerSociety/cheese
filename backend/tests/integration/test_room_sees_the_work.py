@@ -244,8 +244,10 @@ def test_a_broken_workspace_never_fails_the_turn(client, monkeypatch):
         for b in _transcript(client, topic_id)
         if (b.get("meta") or {}).get("changeset")
     ]
-    # The turn itself still landed 芝士's reply.
+    # The turn still records terminal output even when the workspace is broken.
     assert any(
-        b["kind"] == "message" and b["author_type"] == "ai"
+        b["kind"] == "event"
+        and b["author_type"] == "ai"
+        and (b.get("meta") or {}).get("progress")
         for b in _blocks(client, topic_id)
     )

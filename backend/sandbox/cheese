@@ -39,6 +39,7 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
+import uuid
 
 API = os.environ.get("CHEESE_API", "http://host.docker.internal:8099").rstrip("/")
 PROJECT = os.environ.get("CHEESE_PROJECT", "")
@@ -331,6 +332,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="打印源码指纹,用来核对本容器里的 CLI 是不是后端那一份",
     )
     sub = p.add_subparsers(dest="cmd", required=True)
+
+    pchat = sub.add_parser(
+        "chat",
+        help="主动向当前聊天发送消息",
+        description="用 send 发布用户可见消息。普通输出和最终答复只留在执行现场。",
+    )
+    chatsub = pchat.add_subparsers(dest="chatcmd", required=True)
+    psend = chatsub.add_parser("send", help="发布消息；普通输出不会自动进入聊天")
+    psend.add_argument("content", nargs="?", help="要发送的消息")
+    psend.add_argument("--file", help="从 UTF-8 文件读取；- 表示标准输入")
+    psend.add_argument("--reply-to", help="回复当前聊天中的消息 ID")
+    psend.add_argument("--request-id", type=uuid.UUID, help="重试时沿用同一个请求 ID")
 
     pd = sub.add_parser(
         "doc",
@@ -852,7 +865,30 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     a = build_parser().parse_args()
 
-    if a.cmd == "doc" and a.doccmd == "set":
+    if a.cmd == "chat" and a.chatcmd == "send":
+        topic = _need("CHEESE_TOPIC", TOPIC)
+        if (a.content is None) == (a.file is None):
+            raise SystemExit("请提供消息正文或 --file，二选一。")
+        if a.file == "-":
+            content = sys.stdin.read()
+        elif a.file:
+            with open(a.file, encoding="utf-8") as source:
+                content = source.read()
+        else:
+            content = a.content
+        if not content.strip():
+            raise SystemExit("消息不能为空。")
+        request_id = str(a.request_id or uuid.uuid4())
+        print(
+            f"[cheese] request_id={request_id}；重试请带 --request-id {request_id}",
+            file=sys.stderr,
+        )
+        body = {"content": content, "request_id": request_id}
+        if a.reply_to:
+            body["reply_to"] = a.reply_to
+        result = _call("POST", f"/topics/{topic}/messages", body)
+        print(json.dumps(result["data"], ensure_ascii=False))
+    elif a.cmd == "doc" and a.doccmd == "set":
         topic = _need("CHEESE_TOPIC", TOPIC)
         with open(a.file, encoding="utf-8") as f:
             content = f.read()

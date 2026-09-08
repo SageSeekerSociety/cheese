@@ -11,6 +11,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Query, UploadFile
 from fastapi.responses import Response
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
@@ -23,7 +24,7 @@ from app.api.deps import (
 from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
-from app.core.errors import NotFoundError, ValidationError
+from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.domain.agent.chat import (
     ChatService,
     thread_relay_prompt,
@@ -1350,6 +1351,68 @@ async def set_topic_compute_profile(
             "inherited": False,
         }
     )
+
+
+class ChatPublishIn(BaseModel):
+    content: str = Field(min_length=1, max_length=100000)
+    request_id: uuid.UUID
+    reply_to: uuid.UUID | None = None
+
+
+@router.post("/{topic_id}/messages", operation_id="chat-publish")
+async def publish_chat_message(
+    topic_id: uuid.UUID,
+    body: ChatPublishIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+) -> dict:
+    """Publish an agent-authored message without starting a model turn."""
+    place = await TopicService(db).place_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=place.room_id, project_id=place.project_id
+    )
+    if not actor.authenticated or not actor.is_agent:
+        raise ForbiddenError("An authenticated agent must publish this message")
+    await resolver.authorize_topic(
+        actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
+    )
+    content = body.content.strip()
+    if not content:
+        raise ValidationError("content must not be blank")
+    if body.reply_to is not None:
+        parent = await BlockRepository(db).get(body.reply_to)
+        if (
+            parent is None
+            or parent.topic_id != place.room_id
+            or parent.task_id is not None
+        ):
+            raise ValidationError("reply_to must belong to this conversation")
+    content = await canonicalize_refs(
+        db, place.project_id, content, exclude_topic_id=place.room_id
+    )
+    # The input request can finish while its terminal session is still working.
+    runner = get_work_runner()
+    work = runner.live_work_for_topic(place.room_id)
+    turn_id = uuid.UUID(work["turn_id"]) if work is not None else None
+    payload = await chat._persist_assistant_message(
+        project_id=place.project_id,
+        topic_id=place.room_id,
+        text=content,
+        turn_id=turn_id,
+        reply_to=body.reply_to,
+        roster=None,
+        topic_refs=[],
+        publish=True,
+        author=actor.handle,
+        publication_id=str(body.request_id),
+    )
+    await get_broker().publish(
+        str(topic_id), {"type": "assistant_block", "block": payload}
+    )
+    if turn_id is not None:
+        runner.note_session_output(turn_id, tool=False)
+    return ok(payload)
 
 
 @router.post("/{topic_id}/ask")

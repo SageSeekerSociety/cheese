@@ -85,6 +85,7 @@ import { avatarColor, avatarInitial } from '../utils/avatar'
 import { getAvatarUrl } from '../utils/materials'
 
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
+import AgentControls from './AgentControls.vue'
 import CheeseAvatar from './CheeseAvatar.vue'
 import DispatchedMarker from './DispatchedMarker.vue'
 import TimelineMark from './TimelineMark.vue'
@@ -1890,6 +1891,7 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Built-in composer (private chat / standalone use). -->
+      <AgentControls v-if="topic" :topic-id="topic.id" :active="true" questions-only />
       <template v-if="showComposer">
         <div
           class="composer pa-2 px-3"
