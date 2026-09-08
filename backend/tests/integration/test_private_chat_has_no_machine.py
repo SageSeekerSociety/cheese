@@ -47,23 +47,17 @@ def _service(factory, tmp_path, screen: StubChannel) -> ChatService:
     )
 
 
-def _with_gateway_env(svc: ChatService) -> None:
-    """让这一轮拿到一份「后端够得着」的模型环境。
+def _with_gateway(svc: ChatService) -> None:
+    """这个部署上网关是配好的（真实部署里这一步会铸出项目自己的虚拟 key）。
 
-    真实部署里这份 env 来自项目的虚拟网关 key；测试里只要它长得像有凭据就够了，
-    因为出口本身是被替掉的。
+    出口本身在每条用例里被替掉，所以这里只需要它「有」。
     """
 
-    async def fake(*a, **kw):
-        return {
-            "model": "claude-x",
-            "env": {
-                "ANTHROPIC_BASE_URL": "http://gw:4000",
-                "ANTHROPIC_AUTH_TOKEN": "sk-test",
-            },
-        }, "gateway"
+    async def route(project_id):
+        del project_id
+        return ("http://gw:4000", "sk-test")
 
-    svc._model_kwargs = fake  # type: ignore[method-assign]
+    svc._plain_chat_route = route  # type: ignore[method-assign]
 
 
 async def _private_topic(factory) -> tuple[uuid.UUID, uuid.UUID]:
@@ -112,7 +106,7 @@ async def test_a_private_chat_never_touches_a_machine(client, tmp_path, monkeypa
     factory = client.test_factory  # type: ignore[attr-defined]
     screen = CountingScreen()
     svc = _service(factory, tmp_path, screen)
-    _with_gateway_env(svc)
+    _with_gateway(svc)
 
     asked: list[dict] = []
 
@@ -171,22 +165,21 @@ async def test_the_room_still_runs_on_a_machine(client, tmp_path, monkeypatch):
     assert screen.prompts, "房间那一轮应该被送进会话"
 
 
-async def test_no_backend_credential_is_said_out_loud(client, tmp_path, monkeypatch):
-    """走订阅的部署上后端没有凭据。这不是故障，但必须有人话——沉默的私聊和坏掉的
-    私聊在房间里长得一模一样。"""
+async def test_without_a_gateway_the_dm_falls_back_to_a_machine(
+    client, tmp_path, monkeypatch
+):
+    """走订阅（或压根没配网关）的部署上，后端手里没有可用凭据。
+
+    那种情况下私聊**退回去照旧占一台机器**，而不是报错——不占机器是优化，不是
+    承诺，一间答不上话的私聊比一台被占着的机器糟得多。这一条守的就是这个兜底：
+    它塌了的表现是所有这类部署上的私聊集体失声。
+    """
     factory = client.test_factory  # type: ignore[attr-defined]
-    svc = _service(factory, tmp_path, CountingScreen())
+    screen = CountingScreen()
+    svc = _service(factory, tmp_path, screen)  # 不给它网关
 
-    async def no_credential(*a, **kw):
-        return {
-            "model": "claude-x",
-            "env": {"CLAUDE_CODE_OAUTH_TOKEN": "oauth"},
-        }, "native"
-
-    svc._model_kwargs = no_credential  # type: ignore[method-assign]
-
-    async def never(**kwargs):  # pragma: no cover - 没凭据就不该发出去
-        raise AssertionError("没有凭据时不该真的去调模型")
+    async def never(**kwargs):  # pragma: no cover - 没出口就不该走轻路
+        raise AssertionError("没有出口时不该走轻路")
 
     monkeypatch.setattr(plain_chat, "ask", never)
 
@@ -197,8 +190,9 @@ async def test_no_backend_credential_is_said_out_loud(client, tmp_path, monkeypa
         pass
     await settle_turn(svc, topic_id)
 
+    assert screen.prompts, "没有出口时私聊应该退回会话那条路"
     said = await _everything_said(factory, topic_id)
-    assert "凭据" in said, said
+    assert "机器上的回答" in said, said
 
 
 async def test_history_goes_with_every_call(client, tmp_path, monkeypatch):
@@ -206,7 +200,7 @@ async def test_history_goes_with_every_call(client, tmp_path, monkeypatch):
     表现是芝士每一句都像第一次见到你。"""
     factory = client.test_factory  # type: ignore[attr-defined]
     svc = _service(factory, tmp_path, CountingScreen())
-    _with_gateway_env(svc)
+    _with_gateway(svc)
 
     seen: list[list[dict]] = []
 

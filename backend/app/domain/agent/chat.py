@@ -3856,6 +3856,8 @@ class ChatService:
             ]
 
             is_private = topic.is_private
+            # 这一轮走不走「不占机器」那条路。私聊默认走，走不通再退回机器。
+            is_plain = True
             private_owner = topic.private_owner
             acting_agent = await self._agent_handle(session, topic.id)
             doc_root = None if is_private else await blocks.doc_root(place.room_id)
@@ -3963,8 +3965,15 @@ class ChatService:
             # Cloud 的部署上就是一台云主机）。执行那一半据此改走 plain_chat：
             # 后端自己向模型问一次。代价是明写的，也是选定的——私聊里的芝士
             # **没有任何工具**，读不了文件、跑不了命令，要它干活得去开话题。
+            #
+            # 但要先问一句这条路走不走得通：它要后端手里有出口和凭据，而走订阅的
+            # 部署没有（订阅凭据是机器上的 OAuth token）。走不通就照旧占一台机器。
+            # **不占机器是优化，不是承诺**——一间坏掉的私聊比一台被占着的机器糟
+            # 得多。
             provider: ComputeProvider | None = None
-            if not is_private:
+            if is_private and await self._plain_chat_route(project_id) is None:
+                is_plain = False
+            if not (is_private and is_plain):
                 # Resolve the room choice, then the explicit project default.
                 compute_id = _resolve_compute_id(
                     project.settings if project else None,
@@ -4237,24 +4246,20 @@ class ChatService:
                 else None
             ),
         )
-        # Compute: a provider owns the per-topic sandbox + execution (spec §9.1).
-        # In a private chat, `cheese remember` targets the owner's personal memory
-        # (spec §8.4). The provider runs a plain model turn when no Docker (tests).
-        model_kwargs, route = await self._model_kwargs(
-            project_id, provider, topic_id, agent=prepared.agent
-        )
-        # 私聊在这里岔开：没有机器、没有会话、没有工具，后端自己问一次模型，把
-        # 回答当成这一轮的最终结果交给同一个消费口。落库、推帧、结算、记忆抽取因此
-        # 全部照旧——这条路换掉的只是「谁来产生那段文字」。
-        if is_private:
+        # 这一轮没有机器 ⇒ 私聊走 plain_chat：后端自己问一次模型，把回答当成这一轮
+        # 的最终结果交给**同一个**消费口。落库、推帧、结算、记忆抽取因此全部照旧，
+        # 换掉的只是「谁产生了那段文字」。
+        #
+        # 岔在 `_model_kwargs` **之前**，因为那个函数按项目选的池给模型名：走订阅
+        # 时它给的是只有机器上那条链认识的别名，拿去问网关必然 404。
+        if provider is None:
             await self._run_plain_chat(
                 project_id=project_id,
                 topic_id=topic_id,
                 turn_id=turn_id,
                 user_block_id=user_block_id,
                 system_prompt=system_prompt,
-                model_kwargs=model_kwargs,
-                route=route,
+                agent=prepared.agent,
                 pending_ids=pending_ids,
                 prompt_text=prompt_text,
                 private_owner=private_owner,
@@ -4265,6 +4270,12 @@ class ChatService:
             yield {"type": "prompt_delivered"}
             return
 
+        # Compute: a provider owns the per-topic sandbox + execution (spec §9.1).
+        # In a private chat, `cheese remember` targets the owner's personal memory
+        # (spec §8.4). The provider runs a plain model turn when no Docker (tests).
+        model_kwargs, route = await self._model_kwargs(
+            project_id, provider, topic_id, agent=prepared.agent
+        )
         # Remembered for the turns this session starts by itself. A route is a
         # fact about where a SESSION's traffic goes, not about one prompt, and a
         # self-started turn has no prompt to resolve it from — it rides the same
@@ -4492,6 +4503,32 @@ class ChatService:
             messages.pop(0)
         return messages
 
+    async def _plain_chat_route(self, project_id: uuid.UUID) -> tuple[str, str] | None:
+        """私聊那条路的出口 (base_url, key)，没有就 None。
+
+        只认网关，**不看项目选的是哪个池**。这是刻意的：订阅那条路的凭据是机器上的
+        OAuth token，后端手里根本没有；而私聊要的从来不是一台机器上的 Claude Code，
+        只是一次模型调用。凭据仍是项目自己的虚拟 key，所以这条路和沙箱那条路计费在
+        同一个口子上。
+
+        网关没配的部署上返回 None，私聊就退回去照旧占一台机器——不占机器是优化，
+        不是承诺。
+        """
+        from app.domain.agent import plain_chat
+
+        if self._gateway is None:
+            return None
+        env = await self._gateway_project_env(project_id)
+        if not env:
+            return None
+        key = env.get("ANTHROPIC_AUTH_TOKEN")
+        base = settings.anthropic_base_url
+        if not isinstance(key, str) or not isinstance(base, str):
+            return None
+        return plain_chat.route_from_env(
+            {"ANTHROPIC_BASE_URL": base, "ANTHROPIC_AUTH_TOKEN": key}
+        )
+
     async def _run_plain_chat(
         self,
         *,
@@ -4500,8 +4537,7 @@ class ChatService:
         turn_id: uuid.UUID,
         user_block_id: uuid.UUID | None,
         system_prompt: str,
-        model_kwargs: dict,
-        route: str,
+        agent: ResolvedAgent,
         pending_ids: list[uuid.UUID],
         prompt_text: str,
         private_owner: str | None,
@@ -4525,7 +4561,8 @@ class ChatService:
             roster=[],
             topic_refs=[],
             continuation_id=continuation_id,
-            route=route,
+            # 这条路只从网关走，所以用量也从网关那边结（同沙箱那条路）。
+            route="gateway",
             is_private=True,
             private_owner=private_owner,
             acting_agent=acting_agent,
@@ -4535,21 +4572,23 @@ class ChatService:
         )
         self._hook_work[(topic_id, turn_id)] = state
 
-        target = plain_chat.route_from_env(model_kwargs.get("env"))
         try:
+            target = await self._plain_chat_route(project_id)
             if target is None:
-                # 走订阅的部署会落到这里，而且这不是故障：订阅的凭据是机器上的
-                # OAuth token，后端手里根本没有。说清楚，而不是拿一个空 Bearer 去
-                # 撞 401 —— 那种失败会被读成「模型出问题了」。
+                # 组装那一半刚问过同一句并据此跳过了机器，所以到这里还没有出口，
+                # 说明网关在这两步之间掉了。说清楚，而不是拿一个空 Bearer 去撞
+                # 401——那种失败会被读成「模型出问题了」。
                 raise plain_chat.PlainChatUnavailable(
-                    "这个部署的模型出口没有给后端可用的凭据（走订阅时凭据只在机器上），"
-                    "私聊这条不占机器的路暂时用不了"
+                    "模型出口刚刚还在，现在拿不到项目的网关凭据了，这一轮没有发出去"
                 )
             base_url, api_key = target
+            # 模型名直接取队友自己配的那个，不经 `_model_kwargs`：走订阅的项目在那
+            # 里会被换成一个只有机器上那条链认识的别名，拿去问网关必然 404。
+            config = AgentConfiguration.model_validate(agent.configuration)
             reply = await plain_chat.ask(
                 base_url=base_url,
                 api_key=api_key,
-                model=str(model_kwargs.get("model") or ""),
+                model=config.model,
                 system_prompt=system_prompt,
                 messages=await self._plain_chat_messages(topic_id, prompt_text),
             )
