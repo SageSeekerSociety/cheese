@@ -35,6 +35,56 @@ async function openSettings() {
 }
 
 describe('project settings', () => {
+  it.each([true, false])('reflects GitHub protection in the rendered controls (enforced=%s)', async (enforced) => {
+    vi.mocked(api.getBranchProtection).mockResolvedValue({
+      required_checks: [],
+      strict: false,
+      dismiss_stale: true,
+      auto_merge_allowed: false,
+      override_handles: null,
+      approvals_required: 1,
+      default_reviewer: '',
+      merge_method: 'squash',
+      github_protection: { enforced, status: enforced ? 'enforced' : 'none' },
+    })
+    vi.mocked(api.listProjectMembers).mockResolvedValue({ data: [], total: 0 })
+    const wrapper = await openSettings()
+    try {
+      await vi.waitFor(() => expect(wrapper.element.textContent).toContain('暂无必须通过的检查'))
+      expect(wrapper.element.textContent?.includes('GitHub 已在执行以下规则')).toBe(enforced)
+      const fields = (label: string) => {
+        const row = [...wrapper.element.querySelectorAll('.bp-row')].find(
+          (element) => element.querySelector('.bp-label')?.textContent === label
+        )
+        expect(row, label).toBeDefined()
+        const inputs = [...row!.querySelectorAll<HTMLInputElement>('input')]
+        expect(inputs.length, label).toBeGreaterThan(0)
+        return inputs
+      }
+      for (const label of [
+        '合并前必须通过的检查',
+        '合并前分支必须跟上 main',
+        '新提交作废已有的采纳',
+        '人工放行的人',
+        '需要几个人批准',
+      ]) {
+        expect(
+          fields(label).every((input) => input.disabled),
+          label
+        ).toBe(enforced)
+      }
+      for (const label of ['允许自动合并', '任务默认 reviewer']) {
+        expect(
+          fields(label).every((input) => !input.disabled),
+          label
+        ).toBe(true)
+      }
+      expect(api.setBranchProtection).not.toHaveBeenCalled()
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
   it('does not offer project-wide model or role controls', async () => {
     const wrapper = await openSettings()
     expect(wrapper.element.textContent).toContain('运行环境')

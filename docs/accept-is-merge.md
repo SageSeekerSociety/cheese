@@ -85,8 +85,9 @@ ledger.
 
 ### The poller does three things
 
-`SchedulerService.poll_open_prs` → `AcceptService.advance_pr_card`, for every
-pending card riding a PR on an active topic:
+`SchedulerService.poll_open_prs` → `AcceptService.advance_pr_card` observes
+pending PR cards and the latest returned card for each active batch. A pending
+resubmission takes priority over an older return.
 
 1. **Mirror** the merge state onto the card (and reconcile: merged on GitHub →
    accepted here; closed unmerged → say so and idle; a moved head → dismiss
@@ -112,9 +113,11 @@ what PR iteration is. The workspace's commits reach the PR on demand (`cheese
 push-fix`); the poller never pushes on a timer (a 60-second pusher raced the
 agent and cancelled its own CI runs).
 
-**Someone acts on GitHub directly.** The poller reconciles rather than fights:
-merged there → accepted here; closed there → the card says so, the topic stays
-active, and a human reopens or voids.
+**Someone acts on GitHub directly.** If a pending delivery is merged on GitHub,
+the poller accepts it in Cheese. If a returned delivery is merged on GitHub,
+the poller closes the batch and synchronizes local main while preserving the
+return, its reviewer and its reviewed revision. A PR closed without merging
+stays unaccepted.
 
 **A project with no connected forge.** The platform is its forge (#363): 采纳
 merges the topic branch into the platform's own repo, and the change stays
@@ -122,11 +125,18 @@ there — nothing is pushed to any remote. The card says so in so many words
 (`PLATFORM_FORGE_NOTE`, `review/forge.py`). This is not a degraded mode; it is
 a repository with no CI configured, where accepting is a human decision.
 
+Providers in `review/forge.py` declare whether they report checks and implement
+acceptance, proposal-head refresh, polling and signed override. `AcceptService`
+applies shared actor, vote and viewed-revision guards, then calls the selected
+provider. GitHub uses its existing PR operations; the platform provider squashes
+locally without external checks. Adding a provider requires an implementation
+and a binding without changing the shared acceptance entry points.
+
 **Which checks must pass.** Whichever ones the project's own branch protection
 names (`required_checks`, each optionally scoped to the paths that make it
 required — a workflow with a `paths:` filter is legitimately absent on a diff
 it cannot trigger, #470). The roster defaults to empty: requiring hosted repos
-to add checks we name was rejected in #640. This repo configures
+to add checks we name was rejected in #640. The required configuration for this repo is
 `test:backend/**`. A required check that has not reported, or has reported and
 is still running, is `BLOCKED` — 没有结论不是通过 (#465/#468), and a check that
 has not finished has no conclusion. One missing past the grace goes to a human,

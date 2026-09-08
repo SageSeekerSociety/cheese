@@ -859,7 +859,7 @@ class AcceptService:
         data["approvals"] = await self._repo.list_approver_handles(card.id)
         topic = await self._topic_or_404(card.topic_id)
         project = await self._projects.get(topic.project_id)
-        forge = await self._resolve_forge(topic.project_id)
+        forge = await self._resolve_forge(topic.project_id, card=card)
         data["has_external_checks"] = forge.has_external_checks
         data["approvals_required"] = approvals_required_of(project)
         # External checks stay unknown until the PR has a mirrored state.
@@ -1153,6 +1153,12 @@ class AcceptService:
     async def _refresh_never_shown_card(
         self, card: AcceptCard, topic: Topic, action: str
     ) -> NoReturn:
+        forge = await self._resolve_forge(topic.project_id, card=card)
+        await forge.refresh_unseen_head(self, card, topic, action)
+
+    async def _refresh_github_unseen_head(
+        self, card: AcceptCard, topic: Topic, action: str
+    ) -> NoReturn:
         """把 PR 当前的 head 镜像到一张从没显示过 sha 的卡上，然后要求重看。
 
         读 head 是尽力而为：读不到就刷新一张没有 head 的卡（轮询器下一跳会补
@@ -1233,50 +1239,49 @@ class AcceptService:
                 f"批准人数不足，还差 {required - votes} 票（{votes}/{required}）"
             )
 
-        # 采纳 = merging the topic branch into the project's authoritative main,
-        # wherever that main lives. WHERE is the forge (app.domain.review.forge):
-        #
-        #   - the App forge (bound project): a PR is the only way in. A card
-        #     without one — a fire-and-forget publish that failed or is still
-        #     in flight — gets its PR opened right here, and ANY failure on the
-        #     PR path stops the accept visibly rather than falling through to
-        #     the local merge (#362/#363). Opening it does NOT merge it this
-        #     click: the card never showed a head, so nothing on screen names
-        #     the commit that would land. The PR stays (it is the useful half),
-        #     its head goes onto the card, and the next click has something to
-        #     match. Accepting MERGES, here and now (#718) for every card that
-        #     already rode a PR: the merge-state rules said the button may
-        #     light, and the merge API is called with the head the human saw.
-        #     The one PR-less case that legitimately proceeds is a legacy card
-        #     with no delivery claim (change_subject IS NULL, filed before
-        #     subjects were required) on a branchless topic, where the local
-        #     merge no-ops and bypasses nothing. A card that DOES claim a
-        #     change but has no tree branch to carry it stops instead
-        #     (2026-09-07, 卡 40be3e1a: the work sat on another branch and
-        #     "accepted" merged nothing at all).
-        #   - the platform forge (unbound): the local merge IS this project's
-        #     accept (#363), and `forge.note` says so on the card so it can
-        #     never read as a bound project that skipped its PR.
-        forge = await self._resolve_forge(topic.project_id)
-        if forge.requires_pr:
-            if card.pr_number is None:
-                await self._publish_pr_for_accept(card, topic)
-                if card.pr_number is not None:
-                    # PR 是这一秒才开出来的：卡面在此之前没有、现在也还没有一个
-                    # 被展示过的 head。「人看的是同一条分支」不等于「同一个
-                    # commit」—— 浏览器从来没有声明过它渲染的 diff 是哪个 sha，
-                    # 而分身边干边推是常态。所以这次不合，PR 留着（开 PR 是有价
-                    # 值的副作用，下次采纳就有 head 可比），head 镜像上卡，人重
-                    # 新看过再点。
-                    await self._refresh_never_shown_card(card, topic, "采纳")
+        forge = await self._resolve_forge(topic.project_id, card=card)
+        return await forge.accept(self, card, topic, decided_by, seen_head=seen_head)
+
+    async def _accept_github(
+        self,
+        card: AcceptCard,
+        topic: Topic,
+        decided_by: str,
+        *,
+        seen_head: str | None,
+    ) -> AcceptCard:
+        """GitHub proposals never fall back to a local merge after a failure."""
+        if card.pr_number is None:
+            await self._publish_pr_for_accept(card, topic)
             if card.pr_number is not None:
-                assert seen_head is not None  # the guard above rules None out
-                return await self._merge_pr_for_accept(
-                    card, topic, decided_by, seen_head=seen_head
-                )
-            if (card.change_subject or "").strip():
-                await self._stop_accept_no_branch(card, topic)
-        unbound_note = forge.note
+                # PR 是这一秒才开出来的：卡面在此之前没有、现在也还没有一个
+                # 被展示过的 head。「人看的是同一条分支」不等于「同一个
+                # commit」—— 浏览器从来没有声明过它渲染的 diff 是哪个 sha，
+                # 而分身边干边推是常态。所以这次不合，PR 留着（开 PR 是有价
+                # 值的副作用，下次采纳就有 head 可比），head 镜像上卡，人重
+                # 新看过再点。
+                await self._refresh_never_shown_card(card, topic, "采纳")
+        if card.pr_number is not None:
+            assert seen_head is not None  # the guard above rules None out
+            return await self._merge_pr_for_accept(
+                card, topic, decided_by, seen_head=seen_head
+            )
+        if (card.change_subject or "").strip():
+            await self._stop_accept_no_branch(card, topic)
+        # A legacy discussion without a branch has no change to merge.
+        return await self._accept_platform(card, topic, decided_by, note="")
+
+    async def _accept_platform(
+        self,
+        card: AcceptCard,
+        topic: Topic,
+        decided_by: str,
+        *,
+        note: str,
+    ) -> AcceptCard:
+        """Squash into the platform repository and record the delivery."""
+        card_id = card.id
+        unbound_note = note
 
         # 采纳 = merge (spec §6.3) — and the merge DECIDES the outcome. A
         # conflict must never silently archive the topic while the work is
@@ -2042,6 +2047,17 @@ class AcceptService:
             ):
                 return
         topic = await self._topic_or_404(card.topic_id)
+        forge = await self._resolve_forge(topic.project_id, card=card)
+        await forge.poll(self, card, topic, chat_service=chat_service, runner=runner)
+
+    async def _advance_github_card(
+        self,
+        card: AcceptCard,
+        topic: Topic,
+        *,
+        chat_service,
+        runner,
+    ) -> None:
         try:
             owner, repo = await self._pr_repo_of(card, topic)
         except Exception as exc:  # noqa: BLE001 — pause this tick, retry next
@@ -3293,12 +3309,15 @@ class AcceptService:
             return f"；本地同步待补：{exc}"
         return ""
 
-    async def _resolve_forge(self, project_id: uuid.UUID) -> "forge_mod.Forge":
+    async def _resolve_forge(
+        self, project_id: uuid.UUID, *, card: AcceptCard | None = None
+    ) -> "forge_mod.Forge":
         """Which forge this project's accept goes through — the one place the
         lane is decided (see app.domain.review.forge)."""
         return await forge_mod.resolve(
             project_id=project_id,
             is_github_bound=self._github_bound,
+            proposal_url=card.pr_url if card is not None else None,
         )
 
     async def _github_bound(self, project_id: uuid.UUID) -> bool:
@@ -3653,6 +3672,21 @@ class AcceptService:
         seen_head = await self._seen_head_or_refresh(card, topic, head_sha, "放行")
         assert seen_head is not None  # PR lane; the guard above rules None out
 
+        forge = await self._resolve_forge(topic.project_id, card=card)
+        return await forge.merge_despite_checks(
+            self, card, topic, decided_by, seen_head=seen_head, reason=reason
+        )
+
+    async def _override_github_checks(
+        self,
+        card: AcceptCard,
+        topic: Topic,
+        decided_by: str,
+        *,
+        seen_head: str,
+        reason: str,
+    ) -> AcceptCard:
+        assert card.pr_number is not None  # The shared override entry requires a PR.
         creds, why = await self._pr_poll_credentials(card, topic)
         if creds is None:
             raise ValidationError(f"暂时拿不到合并这个 PR 用的 GitHub 凭据（{why}）")
