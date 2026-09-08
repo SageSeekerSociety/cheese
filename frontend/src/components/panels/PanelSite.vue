@@ -12,6 +12,7 @@ import { getTerminal, getTranscript, SITE_PAGE_SIZE } from '../../api'
 import { countLines, isLongSiteEntry, shouldFollowTail, shouldKeepPinning, SITE_CLAMP_LINES } from '../../lib/siteLog'
 import { isPlatformEvent, summarizeActions, toolLabel } from '../../lib/toolLabels'
 import CheeseAvatar from '../CheeseAvatar.vue'
+import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 import DeviceLiveViewer from '../DeviceLiveViewer.vue'
 
 const props = withDefaults(
@@ -244,9 +245,7 @@ function eventPlatform(b: Block): boolean {
 
 <template>
   <div ref="scrollRef" class="panel-site" @scroll="onSiteScroll">
-    <div v-if="loading" class="d-flex justify-center py-8">
-      <v-progress-circular indeterminate color="primary" size="28" />
-    </div>
+    <LoadingSkeleton v-if="loading" variant="entry" :rows="5" class="pa-3" />
     <v-alert v-else-if="errorMsg" type="error" density="compact" class="ma-4">
       {{ errorMsg }}
     </v-alert>
@@ -288,7 +287,8 @@ function eventPlatform(b: Block): boolean {
           </div>
           <!-- 芝士 speaks — shown as a person, with avatar (like the chat) -->
           <div v-else class="site-msg">
-            <CheeseAvatar :size="26" class="site-msg__av" />
+            <!-- 头像上的字取的是这个房间当前那个队友的名字，和它右边写的名字同一个来源。 -->
+            <CheeseAvatar :size="26" :name="agentName" class="site-msg__av" />
             <div class="site-msg__main">
               <div class="site-msg__meta">
                 <span class="site-msg__name">{{ authorLabel(b) }}</span>

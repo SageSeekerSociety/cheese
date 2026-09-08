@@ -12,6 +12,7 @@ import { addTopicMember, listTopicMembers, removeTopicMember, updateTopicMemberR
 import { avatarColor, avatarInitial } from '../utils/avatar'
 import { getAvatarUrl } from '../utils/materials'
 
+import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import TopicAgentPicker from './TopicAgentPicker.vue'
 
 const props = defineProps<{
@@ -192,7 +193,7 @@ function onAgentSwapped() {
 
       <div v-if="error" class="roster__error">{{ error }}</div>
 
-      <div v-if="loading" class="roster__empty">加载中…</div>
+      <LoadingSkeleton v-if="loading" variant="roster" />
       <ul v-else class="roster__list">
         <li v-for="m in members" :key="m.id" class="roster__item">
           <span v-if="m.agent" class="roster__avatar roster__avatar--agent">{{ initial(agentName) }}</span>

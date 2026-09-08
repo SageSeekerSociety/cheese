@@ -82,6 +82,7 @@ import { myHandle } from '../me'
 import { avatarColor, avatarInitial } from '../utils/avatar'
 import { getAvatarUrl } from '../utils/materials'
 
+import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import CheeseAvatar from './CheeseAvatar.vue'
 import DispatchedMarker from './DispatchedMarker.vue'
 import TimelineMark from './TimelineMark.vue'
@@ -1409,7 +1410,7 @@ onBeforeUnmount(() => {
         <!-- Single wrapper so a ResizeObserver can watch the timeline's total
              content height (rows + streaming bubble + timeline-end slot). -->
         <div ref="contentRef">
-          <div v-if="loadingHistory" class="text-medium-emphasis text-body-2 px-4 py-2">加载聊天记录…</div>
+          <LoadingSkeleton v-if="loadingHistory" variant="chat" />
 
           <!-- Paging back through history. The row is always rendered while
                older blocks exist so the timeline's top edge does not change
