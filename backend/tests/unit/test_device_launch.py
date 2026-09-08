@@ -1441,7 +1441,8 @@ def test_a_machine_that_never_previews_anything_runs_no_helper(tmp_path):
     assert not (tmp_path / ".claude/cheese-preview.pid").exists()
 
 
-def test_declaring_a_port_writes_it_on_the_machine(tmp_path):
+@pytest.mark.parametrize("base", ["", "/api/topics/example/app"])
+def test_declaring_a_port_writes_it_on_the_machine(tmp_path, base):
     """`cheese serve` hands the port to this script and to nothing else. The
     file it lands in is the only address the helper will ever dial, so nothing
     the platform sends can move it — the whole reason the port is not a field on
@@ -1455,10 +1456,11 @@ def test_declaring_a_port_writes_it_on_the_machine(tmp_path):
             device_launch.CHEESE_PREVIEW_UP + "\n",
             "cheese-preview-up",
             "5173",
+            base,
         ],
         env={"HOME": str(tmp_path), "PATH": os.environ["PATH"]},
         capture_output=True,
         text=True,
     )
     assert result.returncode == 0, result.stderr
-    assert (tmp_path / ".claude/cheese-preview.port").read_text().strip() == "5173"
+    assert (tmp_path / ".claude/cheese-preview.port").read_text() == f"5173\n{base}\n"
