@@ -67,6 +67,9 @@ jobs:
       - name: App-tier deploy contract
         run: bash deploy/tests/test-app-tier-health.sh
 
+      - name: Cloud control connection lifecycle
+        run: python3 deploy/tests/test_cloud_control.py
+
       - name: Workspace ownership handover
         run: bash deploy/tests/test-workspace-ownership.sh
 
