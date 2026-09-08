@@ -1194,9 +1194,7 @@ def test_the_tunnel_password_stays_the_scoped_token():
     start = script.index("<<TUNNELTOK\n") + len("<<TUNNELTOK\n")
     written = script[start : script.index("\nTUNNELTOK", start)]
 
-    import subprocess
-
-    for connect, expected in [("place-rc-token", "place-rc-token"), ("", "hook-token")]:
+    for connect in ["place-rc-token", ""]:
         result = subprocess.run(
             ["/bin/bash", "-c", "cat <<EOF\n" + written + "\nEOF"],
             env={
@@ -1208,7 +1206,7 @@ def test_the_tunnel_password_stays_the_scoped_token():
             capture_output=True,
             text=True,
         )
-        assert result.stdout.strip() == expected
+        assert result.stdout.strip() == connect
 
 
 def test_a_changed_machine_ticket_retires_the_session_that_baked_the_old_one():

@@ -882,9 +882,9 @@ if [ -n "${{CHEESE_TUNNEL_URL:-}}" ]; then
 {tunnel_helper}TUNNELPY
   # Use the place-scoped CONNECT credential, including its RC claim. The hook
   # token can have project scope; the machine OAuth ticket is never a tunnel
-  # credential. Older non-RC launches still supply only CHEESE_TOKEN.
+  # credential. A missing CONNECT token must not fall back to either one.
   cat > "$HOME/.claude/cheese-tunnel.token.tmp" <<TUNNELTOK
-${{CHEESE_CONNECT_TOKEN:-$CHEESE_TOKEN}}
+$CHEESE_CONNECT_TOKEN
 TUNNELTOK
   chmod 600 "$HOME/.claude/cheese-tunnel.token.tmp"
   mv "$HOME/.claude/cheese-tunnel.token.tmp" "$HOME/.claude/cheese-tunnel.token"
