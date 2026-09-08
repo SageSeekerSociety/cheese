@@ -23,6 +23,7 @@ volume. Everything else (R2 upload, verify, off-site) is shared.
 | `r2-upload.py` (off-site DB dump copy to R2) | on the box, `~/ops/r2-upload.py` | each DB backup, right after local verify |
 | `r2-sync-uploads.py` (incremental mirror of `uploads/` to R2) | on the box, `~/ops/r2-sync-uploads.py` (`cheese-uploads-mirror.timer`) | hourly, :30 |
 | `viking-backup.sh` (tar of the openviking memory tree + verify + prune + off-site) | on the box, `~/ops/viking-backup.sh` (`cheese-viking-backup.timer`) | every 6h, :15 |
+| `r2-sync-uploads.py` again, over the transcript archives (already `.tar.gz`, so mirrored as they are) | on the box, same script (`cheese-transcripts-mirror.timer`, `UPLOADS_PREFIX=transcripts`) | hourly, :45 |
 | Backup freshness alert | `.github/workflows/backup-freshness.yml`, on-box runner | daily; fails if last backup > 26h |
 | Box-down alert | `.github/workflows/box-uptime.yml`, GitHub-hosted | hourly; fails if the box's runner is offline |
 
