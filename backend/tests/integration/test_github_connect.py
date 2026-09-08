@@ -8,11 +8,15 @@ the install URL when nothing matches. GitHub itself is faked at the module
 seams; the tests assert what the route DOES, not HTTP details.
 """
 
+import pytest
+
 from tests.integration.conftest import session_auth_headers
+
+pytestmark = pytest.mark.usefixtures("github_binding_user")
 
 
 def _make_project(client) -> str:
-    r = client.post("/projects", json={"name": "P"})
+    r = client.post("/projects", json={"name": "P", "owner_handle": "alice"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
@@ -30,16 +34,16 @@ def _github_world(
 
     calls: dict[str, int] = {"list": 0, "repos": 0}
 
-    async def _fake_list():
+    async def _fake_list(_token):
         calls["list"] += 1
         return installations
 
-    async def _fake_repos(installation_id: int):
+    async def _fake_repos(_token, installation_id: int):
         calls["repos"] += 1
         return repos_by_installation.get(installation_id, [])
 
-    monkeypatch.setattr(github_install, "list_app_installations", _fake_list)
-    monkeypatch.setattr(github_install, "fetch_installation_repos", _fake_repos)
+    monkeypatch.setattr(github_install, "list_user_installations", _fake_list)
+    monkeypatch.setattr(github_install, "fetch_user_installation_repos", _fake_repos)
     monkeypatch.setattr(ws, "get_upstream", lambda pid: upstream)
     return calls
 
@@ -50,7 +54,13 @@ def test_connect_uses_the_existing_installation(client, monkeypatch):
         upstream="https://github.com/acme/widgets.git",
         installations=[{"id": 77}],
         repos_by_installation={
-            77: [{"full_name": "acme/widgets", "owner": {"login": "acme"}}]
+            77: [
+                {
+                    "full_name": "acme/widgets",
+                    "owner": {"login": "acme"},
+                    "permissions": {"push": True},
+                }
+            ]
         },
     )
     pid = _make_project(client)
@@ -64,7 +74,9 @@ def test_connect_uses_the_existing_installation(client, monkeypatch):
     assert data["repo"] == "acme/widgets"
 
     # The connection is recorded — the status endpoint sees it too.
-    conn = client.get(f"/projects/{pid}/github/connection").json()["data"]
+    conn = client.get(
+        f"/projects/{pid}/github/connection", headers=session_auth_headers("alice")
+    ).json()["data"]
     assert conn == {"connected": True, "repo": "acme/widgets", "account": "acme"}
 
 
@@ -109,7 +121,13 @@ def test_connect_is_idempotent_once_connected(client, monkeypatch):
         upstream="https://github.com/acme/widgets.git",
         installations=[{"id": 77}],
         repos_by_installation={
-            77: [{"full_name": "acme/widgets", "owner": {"login": "acme"}}]
+            77: [
+                {
+                    "full_name": "acme/widgets",
+                    "owner": {"login": "acme"},
+                    "permissions": {"push": True},
+                }
+            ]
         },
     )
     pid = _make_project(client)

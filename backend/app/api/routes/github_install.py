@@ -1,18 +1,7 @@
-"""GitHub App install flow (#192): connect a project to a repo via cheesex-app.
+"""Connect projects through a manager's verified GitHub App installation access.
 
-Two routes:
-- ``GET /api/projects/{project_id}/github/install-url`` — the frontend calls
-  this to get the ``github.com/apps/<slug>/installations/new`` URL to send
-  the browser to, carrying a signed ``state`` that proves which project
-  asked (``app.core.github_install_state``).
-- ``GET /github/app/callback`` — GitHub's setup_url redirect target once the
-  human finishes installing (or cancels/requests approval). Verifies
-  ``state``, looks up which repo(s) the installation covers, upserts the
-  connection, and bounces back to the frontend project settings page.
-
-The callback path is root-mounted (not under /api) because it is dictated by
-the App's global setup_url config, not something the frontend can address
-per-project — GitHub does not parameterize it.
+The setup URL's installation_id is caller-controlled. The signed state identifies
+who started the flow; GitHub's user-token API proves which repos they can connect.
 """
 
 import asyncio
@@ -28,54 +17,132 @@ from app.api.auth import ActorResolverDep
 from app.api.response import ok
 from app.core.config import settings
 from app.core.db import get_db
-from app.core.errors import AuthenticationRequiredError, ConflictError
-from app.core.github_install_state import mint_install_state, verify_install_state
+from app.core.errors import (
+    AuthenticationRequiredError,
+    ConflictError,
+    ForbiddenError,
+    GatewayUnavailableError,
+    InternalServerError,
+)
+from app.core.github_install_state import (
+    INSTALL_TTL_S,
+    mint_install_state,
+    verify_install_state,
+)
+from app.core.single_use_state import SingleUseUnavailableError, claim, reserve
 from app.domain.agent.github_app import (
     GitHubAppError,
-    fetch_installation_repos,
-    list_app_installations,
+    fetch_user_installation_repos,
+    list_user_installations,
 )
+from app.domain.identity.actor import Actor
+from app.domain.membership.services import MemberService
+from app.domain.oauth.repositories import OAuthConnectionRepository
+from app.domain.oauth.services import OAuthService
 from app.domain.project.repositories import (
     ProjectGitInstallationRepository,
     ProjectRepository,
 )
 from app.domain.project.services import ProjectService
 from app.domain.review.github_pr import parse_github_repo
+from app.domain.user.repositories import UserRepository
 from app.domain.workspace import service as ws
 
 logger = logging.getLogger(__name__)
-
 router = APIRouter(tags=["github"])
-
-# frontend/src/router/index.ts: project-settings is /projects/:projectId/settings
+_INSTALL_SCOPE = "github_install"
 _SETTINGS_ROUTE = "/projects/{project_id}/settings"
 
 
 def _settings_redirect(project_id: uuid.UUID | None, **query: str) -> RedirectResponse:
-    path = (
-        _SETTINGS_ROUTE.format(project_id=project_id) if project_id is not None else "/"
-    )
+    path = _SETTINGS_ROUTE.format(project_id=project_id) if project_id else "/"
     url = f"{settings.frontend_url}{path}"
     if query:
         url = f"{url}?{urlencode(query)}"
     return RedirectResponse(url, status_code=302)
 
 
+async def _manager(
+    project_id: uuid.UUID, resolver: ActorResolverDep, db: AsyncSession
+) -> Actor:
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    if not actor.authenticated:
+        raise AuthenticationRequiredError("需要登录才能连接 GitHub 仓库")
+    await ProjectService(db).get_or_404(project_id)
+    try:
+        await MemberService(db).require_manager(project_id, actor)
+    except ForbiddenError:
+        raise ForbiddenError("只有项目 owner / lead 能连接 GitHub 仓库") from None
+    return actor
+
+
+async def _user_token(db: AsyncSession, actor: Actor) -> tuple[int, str]:
+    user = await UserRepository(db).get_by_username(actor.handle)
+    token = (
+        await OAuthService(OAuthConnectionRepository(db)).get_github_user_token(user.id)
+        if user
+        else None
+    )
+    if user is None or token is None:
+        raise ForbiddenError("请先在项目设置中连接或重新连接 GitHub 账号，再连接仓库")
+    return user.id, token
+
+
+async def _install_url(project_id: uuid.UUID, actor: Actor, user_id: int) -> str:
+    state = mint_install_state(project_id, user_id=user_id, handle=actor.handle)
+    claims = verify_install_state(state)
+    assert claims is not None
+    try:
+        await reserve(_INSTALL_SCOPE, claims.jti, ttl_s=INSTALL_TTL_S)
+    except SingleUseUnavailableError:
+        raise InternalServerError("暂时无法发起 GitHub 仓库连接，请稍后重试") from None
+    return f"https://github.com/apps/{settings.github_app_slug}/installations/new?state={state}"
+
+
+async def _upstream_repo(project_id: uuid.UUID) -> str | None:
+    upstream = await asyncio.to_thread(ws.get_upstream, project_id)
+    parsed = parse_github_repo(upstream) if upstream else None
+    return f"{parsed[0]}/{parsed[1]}".lower() if parsed else None
+
+
+def _writable(repo: dict) -> bool:
+    # A read-only collaborator must not acquire the App's write access by binding.
+    permissions = repo.get("permissions") or {}
+    return permissions.get("push") is True or permissions.get("admin") is True
+
+
+async def _connect(
+    db: AsyncSession, project_id: uuid.UUID, installation_id: int, repo: dict
+) -> dict:
+    await ProjectGitInstallationRepository(db).upsert(
+        project_id=project_id,
+        installation_id=installation_id,
+        repo=repo["full_name"],
+        account=repo["owner"]["login"],
+    )
+    return {
+        "connected": True,
+        "repo": repo["full_name"],
+        "account": repo["owner"]["login"],
+    }
+
+
 @router.get("/projects/{project_id}/github/connection")
 async def get_github_connection(
-    project_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    project_id: uuid.UUID,
+    resolver: ActorResolverDep,
+    db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """The repo this project is currently connected to, if any."""
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    if not actor.authenticated:
+        raise AuthenticationRequiredError("需要登录才能查看 GitHub 连接")
     await ProjectService(db).get_or_404(project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     installation = await ProjectGitInstallationRepository(db).get_by_project(project_id)
     if installation is None:
         return ok({"connected": False})
     return ok(
-        {
-            "connected": True,
-            "repo": installation.repo,
-            "account": installation.account,
-        }
+        {"connected": True, "repo": installation.repo, "account": installation.account}
     )
 
 
@@ -85,86 +152,49 @@ async def connect_github_repo(
     resolver: ActorResolverDep,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Connect via an EXISTING installation when one already covers the
-    project's upstream repo; otherwise hand back the install URL.
-
-    GitHub's ``installations/new`` page dead-ends when the App is already
-    installed on the org — it shows the installation settings page and never
-    fires the setup_url callback, so the signed state is lost and the
-    connection is never recorded. The frontend therefore calls this first,
-    and only bounces the browser to GitHub when it answers
-    ``{connected: false}``.
-    """
-    actor = await resolver.resolve(fallback_handle=None)
-    if not actor.authenticated:
-        raise AuthenticationRequiredError("需要登录才能连接 GitHub 仓库")
-    await ProjectService(db).get_or_404(project_id)
-
-    # Idempotent: already connected → answer with what we have.
+    actor = await _manager(project_id, resolver, db)
     existing = await ProjectGitInstallationRepository(db).get_by_project(project_id)
-    if existing is not None:
+    if existing:
         return ok(
-            {
-                "connected": True,
-                "repo": existing.repo,
-                "account": existing.account,
-            }
+            {"connected": True, "repo": existing.repo, "account": existing.account}
         )
-
-    upstream = await asyncio.to_thread(ws.get_upstream, project_id)
-    parsed = parse_github_repo(upstream) if upstream else None
-    if parsed is not None:
-        target = f"{parsed[0]}/{parsed[1]}".lower()
+    user_id, token = await _user_token(db, actor)
+    target = await _upstream_repo(project_id)
+    if target:
         try:
-            installations = await list_app_installations()
-        except GitHubAppError:
-            installations = []  # App unconfigured / GitHub down → install-url path
-        for inst in installations:
-            try:
-                repos = await fetch_installation_repos(inst["id"])
-            except GitHubAppError:
-                continue
-            for repo in repos:
-                if str(repo.get("full_name", "")).lower() != target:
-                    continue
-                # ConflictError (installation bound to another project)
-                # propagates: that genuinely needs a human decision.
-                await ProjectGitInstallationRepository(db).upsert(
-                    project_id=project_id,
-                    installation_id=inst["id"],
-                    repo=repo["full_name"],
-                    account=repo["owner"]["login"],
-                )
-                return ok(
-                    {
-                        "connected": True,
-                        "repo": repo["full_name"],
-                        "account": repo["owner"]["login"],
-                    }
-                )
-
-    # No existing installation covers the upstream (or no GitHub upstream at
-    # all) — fall back to the interactive install flow.
-    state = mint_install_state(project_id)
-    url = (
-        f"https://github.com/apps/{settings.github_app_slug}/installations/new"
-        f"?state={state}"
+            for installation in await list_user_installations(token):
+                for repo in await fetch_user_installation_repos(
+                    token, installation["id"]
+                ):
+                    if str(repo.get("full_name", "")).lower() == target:
+                        if not _writable(repo):
+                            raise ForbiddenError(
+                                "连接仓库需要你的 GitHub 账号对该仓库有写入权限"
+                            )
+                        return ok(
+                            await _connect(db, project_id, installation["id"], repo)
+                        )
+        except GitHubAppError as exc:
+            raise GatewayUnavailableError(
+                "无法验证 GitHub 仓库访问权限，请重新连接 GitHub 账号后重试"
+            ) from exc
+    return ok(
+        {
+            "connected": False,
+            "install_url": await _install_url(project_id, actor, user_id),
+        }
     )
-    return ok({"connected": False, "install_url": url})
 
 
 @router.get("/projects/{project_id}/github/install-url")
 async def get_github_install_url(
-    project_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    project_id: uuid.UUID,
+    resolver: ActorResolverDep,
+    db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Where to send the browser to install cheesex-app for this project."""
-    await ProjectService(db).get_or_404(project_id)
-    state = mint_install_state(project_id)
-    url = (
-        f"https://github.com/apps/{settings.github_app_slug}/installations/new"
-        f"?state={state}"
-    )
-    return ok({"url": url})
+    actor = await _manager(project_id, resolver, db)
+    user_id, _ = await _user_token(db, actor)
+    return ok({"url": await _install_url(project_id, actor, user_id)})
 
 
 @router.get("/github/app/callback")
@@ -174,61 +204,66 @@ async def github_app_install_callback(
     state: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> RedirectResponse:
-    project_id = verify_install_state(state) if state else None
-    if project_id is None:
+    claims = verify_install_state(state) if state else None
+    if claims is None:
         return _settings_redirect(None, github_install="error", reason="invalid_state")
+    project_id = claims.project_id
 
-    if setup_action == "request":
-        # A non-admin org member requested the install; an admin still has to
-        # approve it on GitHub's side before an installation_id exists.
-        return _settings_redirect(project_id, github_install="pending")
-
-    if not installation_id:
-        return _settings_redirect(
-            project_id, github_install="error", reason="missing_installation_id"
-        )
+    def failure(reason: str) -> RedirectResponse:
+        return _settings_redirect(project_id, github_install="error", reason=reason)
 
     try:
+        if not await claim(_INSTALL_SCOPE, claims.jti):
+            return _settings_redirect(
+                None, github_install="error", reason="invalid_state"
+            )
         project = await ProjectRepository(db).get(project_id)
         if project is None:
-            return _settings_redirect(
-                project_id, github_install="error", reason="project_not_found"
-            )
-
-        repos = await fetch_installation_repos(installation_id)
-        if not repos:
-            return _settings_redirect(
-                project_id, github_install="error", reason="no_accessible_repos"
-            )
-        repo = repos[0]
-
-        await ProjectGitInstallationRepository(db).upsert(
-            project_id=project_id,
-            installation_id=installation_id,
-            repo=repo["full_name"],
-            account=repo["owner"]["login"],
+            return failure("project_not_found")
+        user = await UserRepository(db).get_by_id(claims.user_id)
+        if user is None or user.username != claims.handle:
+            return failure("access_denied")
+        actor = Actor(
+            handle=user.username, user_id=user.id, is_agent=False, via="token"
         )
+        await MemberService(db).require_manager(project_id, actor)
+        if setup_action == "request":
+            return _settings_redirect(project_id, github_install="pending")
+        if not installation_id:
+            return failure("missing_installation_id")
+        _, token = await _user_token(db, actor)
+        # A setup URL is not proof that this installation belongs to the caller.
+        repos = await fetch_user_installation_repos(token, installation_id)
+        if not repos:
+            return failure("no_accessible_repos")
+        target = await _upstream_repo(project_id)
+        if target:
+            repo = next(
+                (r for r in repos if str(r.get("full_name", "")).lower() == target),
+                None,
+            )
+            if repo is None:
+                return failure("upstream_not_accessible")
+        elif len(repos) == 1:
+            repo = repos[0]
+        else:
+            return failure("repository_selection_required")
+        if not _writable(repo):
+            return failure("repository_write_required")
+        await _connect(db, project_id, installation_id, repo)
+    except ForbiddenError:
+        return failure("access_denied")
     except ConflictError:
         await db.rollback()
-        return _settings_redirect(
-            project_id, github_install="error", reason="installation_conflict"
-        )
+        return failure("installation_conflict")
     except GitHubAppError:
-        await db.rollback()
-        logger.warning(
-            "github install callback: could not list repos for installation %s",
-            installation_id,
-        )
-        return _settings_redirect(
-            project_id, github_install="error", reason="github_error"
-        )
+        return failure("github_error")
+    except SingleUseUnavailableError:
+        return failure("internal_error")
     except Exception:
         await db.rollback()
         logger.exception("github install callback failed for project %s", project_id)
-        return _settings_redirect(
-            project_id, github_install="error", reason="internal_error"
-        )
-
+        return failure("internal_error")
     return _settings_redirect(
         project_id, github_install="success", repo=repo["full_name"]
     )
