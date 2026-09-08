@@ -4,7 +4,7 @@
 能看。所以名册上多了一个中间状态：邀请发出去了，人还没进来。
 
 Revision ID: c1f4a9b73d20
-Revises: b7e4d21c9a06
+Revises: f8c1a9073e62
 """
 
 import sqlalchemy as sa
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "c1f4a9b73d20"
-down_revision = "b7e4d21c9a06"
+down_revision = "f8c1a9073e62"
 branch_labels = None
 depends_on = None
 

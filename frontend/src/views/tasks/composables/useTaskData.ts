@@ -47,7 +47,7 @@ export function useTaskData() {
         },
         {
           title: truncateString(taskData.value?.name, 12),
-          to: { name: 'TasksDetail', params: { taskId: taskData.value?.id } },
+          to: { name: 'TasksDetail', params: { spaceId: taskData.value.space.id, taskId: taskData.value.id } },
         },
       ]
     }

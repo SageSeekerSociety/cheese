@@ -228,7 +228,7 @@ print("ok (ticket extracted)")
 # precise even with several screens on one machine.
 #
 # Prints exactly one of `alive` / `dead` / `unknown`. The caller treats ONLY an
-# explicit `dead` as fatal; `unknown` (no /proc, an unreadable environ) and any
+# explicit `dead` as fatal; `unknown` (unsupported process metadata) and any
 # exec error are read conservatively as alive, so a probe hiccup never false-kills.
 DEVICE_ALIVE_PROBE = r"""topic="${CHEESE_ALIVE_TOPIC:-}"
 [ -n "$topic" ] || { echo unknown; exit 0; }
@@ -246,8 +246,21 @@ if [ -d /proc ] && [ -r /proc/self/environ ]; then
   # /proc was readable but no live `claude` carries this topic → its process is gone.
   echo dead; exit 0
 fi
-# No /proc (non-Linux) or an unreadable environ: no per-topic view, so never assert
-# death — report unknown and let the caller keep the turn alive to the hard ceiling.
+# macOS has no /proc. Read the environment of candidate Claude processes via
+# ps, without emitting it: a dead Mac session must not be adopted on retry.
+if [ "$(uname -s)" = Darwin ]; then
+  processes="$(ps -axo pid=,comm= 2>/dev/null)" || { echo unknown; exit 0; }
+  pids="$(printf '%s\n' "$processes" | awk '
+    $2 == "claude" || $0 ~ /\/claude\/versions\// || $0 ~ /\/claude$/ {print $1}')"
+  for pid in $pids; do
+    if ps eww -p "$pid" -o command= 2>/dev/null \
+      | grep -Eq "(^| )CHEESE_TOPIC=$topic( |$)"; then
+      echo alive; exit 0
+    fi
+  done
+  echo dead; exit 0
+fi
+# No supported per-topic view: keep an uncertain session alive.
 echo unknown
 """
 

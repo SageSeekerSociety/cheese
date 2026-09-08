@@ -383,11 +383,14 @@ async def test_session_initiated_work_is_persisted_and_broadcast(
             },
         )
         started_frame = await asyncio.wait_for(room.get(), 1)
+        progress_frame = await asyncio.wait_for(room.get(), 1)
         message_frame = await asyncio.wait_for(room.get(), 1)
         done_frame = await asyncio.wait_for(room.get(), 1)
         finished_frame = await asyncio.wait_for(room.get(), 1)
 
     assert started_frame["type"] == "turn_started"
+    assert progress_frame["type"] == "event_block"
+    assert progress_frame["block"]["meta"]["in_room"] is False
     assert message_frame["type"] == "assistant_block"
     assert done_frame == {"type": "done"}
     assert finished_frame == {
@@ -397,7 +400,7 @@ async def test_session_initiated_work_is_persisted_and_broadcast(
     block = message_frame["block"]
     assert block["turn_id"] is not None
     assert block["meta"] == {
-        "eid": "message-autonomous-1",
+        "eid": "stop-autonomous-1",
         "platform_unsolicited": True,
     }
 
@@ -469,8 +472,13 @@ async def test_an_all_english_message_lands_but_stays_out_of_the_room(
             },
         )
         await asyncio.wait_for(room.get(), 1)  # turn_started
+        progress_frame = await asyncio.wait_for(room.get(), 1)
         message_frame = await asyncio.wait_for(room.get(), 1)
 
+    assert progress_frame["type"] == "event_block"
+    assert progress_frame["block"]["content"] == "Now the tests:"
+    assert progress_frame["block"]["meta"]["in_room"] is False
+    assert progress_frame["block"]["meta"]["progress"] is True
     assert message_frame["type"] == "assistant_block"
     assert message_frame["block"]["meta"]["in_room"] is False
 
@@ -659,11 +667,14 @@ async def test_late_hook_opens_fresh_unsolicited_work(client, tmp_path) -> None:
             },
         )
         started = await asyncio.wait_for(room.get(), 1)
+        progress = await asyncio.wait_for(room.get(), 1)
         frame = await asyncio.wait_for(room.get(), 1)
         assert await asyncio.wait_for(room.get(), 1) == {"type": "done"}
         finished = await asyncio.wait_for(room.get(), 1)
 
     assert started["type"] == "turn_started"
+    assert progress["type"] == "event_block"
+    assert progress["block"]["meta"]["in_room"] is False
     assert frame["type"] == "assistant_block"
     assert finished == {
         "type": "turn_finished",
@@ -711,18 +722,21 @@ async def test_restart_reattaches_and_replays_spooled_hooks(
     async with broker.subscribe(str(topic_id)) as room:
         assert await service.recover_sessions() == 1
         started = await asyncio.wait_for(room.get(), 1)
+        progress = await asyncio.wait_for(room.get(), 1)
         message = await asyncio.wait_for(room.get(), 1)
         assert await asyncio.wait_for(room.get(), 1) == {"type": "done"}
         finished = await asyncio.wait_for(room.get(), 1)
 
     assert started["type"] == "turn_started"
+    assert progress["type"] == "event_block"
+    assert progress["block"]["meta"]["in_room"] is False
     assert message["type"] == "assistant_block"
     assert finished == {
         "type": "turn_finished",
         "turn_id": started["turn_id"],
     }
     assert message["block"]["meta"] == {
-        "eid": "restart-message-1",
+        "eid": "restart-stop-1",
         "platform_unsolicited": True,
     }
     # Replayed to the end. The files stay for their retention window; what says
@@ -788,9 +802,11 @@ async def test_a_deploy_does_not_interrupt_a_turn_that_is_already_running(
     assert await runner.resume_orphans(service) == 0
     async with factory() as session:
         blocks = await BlockRepository(session).list_for_topic(topic_id)
-    assert [b.content for b in blocks if b.author_type == AuthorType.ai] == [
-        "跑绿了，收工"
-    ]
+    assert [
+        b.content
+        for b in blocks
+        if b.author_type == AuthorType.ai and b.kind == BlockKind.message
+    ] == ["跑绿了，收工"]
     # Nothing was announced — from the room's side the deploy did not happen.
     assert [b for b in blocks if b.author_type == AuthorType.system] == []
     # And the Stop closed the books on the interval the dead process opened.
@@ -954,10 +970,11 @@ async def test_session_timeout_retires_activity_but_keeps_subscription(
                 "_eid": "late-after-timeout-stop",
             },
         )
-        late_frames = [await asyncio.wait_for(room.get(), 1) for _ in range(4)]
+        late_frames = [await asyncio.wait_for(room.get(), 1) for _ in range(5)]
 
     assert [frame["type"] for frame in late_frames] == [
         "turn_started",
+        "event_block",
         "assistant_block",
         "done",
         "turn_finished",

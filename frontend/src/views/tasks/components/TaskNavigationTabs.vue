@@ -2,7 +2,7 @@
   <v-tabs v-model="model" show-arrows slider-color="primary" bg-color="transparent">
     <v-tab
       :value="'overview'"
-      :to="{ name: 'TasksDetail', params: { taskId: taskData.id }, query: $route.query }"
+      :to="{ name: 'TasksDetail', params: { spaceId: taskData.space?.id, taskId: taskData.id }, query: $route.query }"
       exact
     >
       <v-icon start>mdi-information-outline</v-icon>
@@ -12,7 +12,11 @@
     <v-tab
       v-if="isCreator || isAdmin"
       :value="'participants'"
-      :to="{ name: 'TasksParticipants', params: { taskId: taskData.id }, query: $route.query }"
+      :to="{
+        name: 'TasksParticipants',
+        params: { spaceId: taskData.space?.id, taskId: taskData.id },
+        query: $route.query,
+      }"
     >
       <v-icon start>mdi-account-group</v-icon>
       参与者
@@ -21,7 +25,11 @@
     <v-tab
       v-if="taskData.joined && taskData.submittable"
       :value="'submissions'"
-      :to="{ name: 'TasksSubmissions', params: { taskId: taskData.id }, query: $route.query }"
+      :to="{
+        name: 'TasksSubmissions',
+        params: { spaceId: taskData.space?.id, taskId: taskData.id },
+        query: $route.query,
+      }"
     >
       <v-icon start>mdi-tray-full</v-icon>
       提交记录
@@ -30,13 +38,16 @@
     <v-tab
       v-if="taskData.joined && taskData.submittable"
       :value="'submit'"
-      :to="{ name: 'TasksSubmit', params: { taskId: taskData.id }, query: $route.query }"
+      :to="{ name: 'TasksSubmit', params: { spaceId: taskData.space?.id, taskId: taskData.id }, query: $route.query }"
     >
       <v-icon start>mdi-upload</v-icon>
       提交
     </v-tab>
 
-    <v-tab :value="'ai-advice'" :to="{ name: 'TasksAIAdvice', params: { taskId: taskData.id }, query: $route.query }">
+    <v-tab
+      :value="'ai-advice'"
+      :to="{ name: 'TasksAIAdvice', params: { spaceId: taskData.space?.id, taskId: taskData.id }, query: $route.query }"
+    >
       <v-icon start>mdi-robot</v-icon>
       启星研导
     </v-tab>

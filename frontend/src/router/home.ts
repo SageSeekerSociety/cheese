@@ -18,8 +18,23 @@ export default {
       name: 'HomeDefault',
       meta: {
         title: '首页',
+        publicLanding: true,
       },
-      redirect: { name: 'HomeSpaces' },
+      component: () => import('@/views/home/Landing.vue'),
+      beforeEnter: async () => {
+        // AccountService's API client imports the router; load it after route construction.
+        const { default: AccountService } = await import('@/services/account')
+        return AccountService.loggedIn ? { name: 'HomeSpaces' } : true
+      },
+    },
+    {
+      path: 'about',
+      name: 'About',
+      meta: {
+        title: '了解知是',
+        publicLanding: true,
+      },
+      component: () => import('@/views/home/Landing.vue'),
     },
     {
       path: 'spaces',

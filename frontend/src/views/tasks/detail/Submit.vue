@@ -32,7 +32,10 @@
           <template #text>
             <p>该赛题不允许重复提交，您已经提交过作品。</p>
             <div class="mt-2">
-              <v-btn color="primary" variant="text" :to="{ name: 'TasksSubmissions', params: { taskId: taskData.id } }"
+              <v-btn
+                color="primary"
+                variant="text"
+                :to="{ name: 'TasksSubmissions', params: { spaceId: taskData.space?.id, taskId: taskData.id } }"
                 >查看我的提交记录</v-btn
               >
             </div>
@@ -445,7 +448,7 @@ const submitTask = async () => {
     // 跳转到提交记录页面
     router.push({
       name: 'TasksSubmissions',
-      params: { taskId: props.taskData.id },
+      params: { spaceId: props.taskData.space?.id, taskId: props.taskData.id },
     })
   } catch (error) {
     toast.error(`提交失败: ${error instanceof Error ? error.message : '未知错误'}`)

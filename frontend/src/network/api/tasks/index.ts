@@ -174,6 +174,16 @@ export namespace TasksApi {
       data,
     })
 
+  export const join = (taskId: number, data: AddTaskParticipantRequestData, teamId?: number) =>
+    NewApiInstance.request<{
+      participant: TaskMembership
+      project: { id: string; name: string; root_topic_id: string; team_id: number }
+    }>({
+      url: `/tasks/${taskId}/participations/${teamId === undefined ? 'user' : 'team'}`,
+      method: 'POST',
+      data: teamId === undefined ? data : { ...data, teamId },
+    })
+
   // 获取可参与任务的队伍列表
   export const getTaskTeams = (
     taskId: number,

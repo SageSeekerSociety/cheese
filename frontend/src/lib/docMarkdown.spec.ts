@@ -41,6 +41,16 @@ function expectClean(md: string) {
 }
 
 describe('normalizeMarkdown tolerances', () => {
+  it('allows equivalent emphasis around links and escaped literal punctuation', () => {
+    expectClean('**[官方资料](https://example.org)**')
+    expectClean('**[作者。** _论文题名_](https://example.org)')
+  })
+
+  it('still rejects lost link destinations, emphasis and raw HTML', () => {
+    expect(compareRoundTrip('[资料](https://example.org)', '[资料](https://different.org)').clean).toBe(false)
+    expect(compareRoundTrip('**资料**', '资料').clean).toBe(false)
+    expect(compareRoundTrip('<img src="diagram.png">', '').clean).toBe(false)
+  })
   it('collapses blank-line runs and trailing whitespace', () => {
     expect(normalizeMarkdown('a  \n\n\n\nb\n')).toBe('a\n\nb')
   })
@@ -69,6 +79,18 @@ describe('normalizeMarkdown tolerances', () => {
 })
 
 describe('round-trip corpus', () => {
+  it('preserves standalone HTML comments around editable prose', () => {
+    const md = '# Plan\n\n<!-- BEGIN-PLAN -->\n\nObserve three crossings.\n\n<!-- END-PLAN -->'
+    expectClean(md)
+    editor.commands.insertContentAt(1, 'Updated ')
+    expect(serializeDoc(editor)).toContain('# Updated Plan')
+    expect(serializeDoc(editor)).toContain('<!-- BEGIN-PLAN -->')
+    expect(serializeDoc(editor)).toContain('<!-- END-PLAN -->')
+    expect(editor.getHTML()).toContain('hidden=""')
+    expectClean('<!-- Multiple\nlines -->\n\nEditable prose.')
+    expectClean('<!-- BEGIN-PLAN -->\nObserve three crossings.\n<!-- END-PLAN -->')
+  })
+
   it('headings 1-4', () => {
     expectClean('# 一级标题\n\n## 二级 Heading\n\n### 三级\n\n#### 四级标题')
   })
@@ -95,6 +117,16 @@ describe('round-trip corpus', () => {
 
   it('nested mixed list', () => {
     expectClean('- 外层一\n  - 内层 a\n  - 内层 b\n- 外层二\n  1. 步骤一\n  2. 步骤二')
+  })
+
+  it('preserves sublists beneath numbered items, including two-digit markers', () => {
+    for (const md of ['1. 来源一\n   - 方法说明\n\n2. 来源二', '10. 来源十\n    - 方法说明\n11. 来源十一']) {
+      const rt = roundTrip(md)
+      const firstTree = editor.getJSON()
+      editor.commands.setContent(rt, { contentType: 'markdown' })
+      expect(editor.getJSON()).toEqual(firstTree)
+      expect(compareRoundTrip(md, rt).clean).toBe(true)
+    }
   })
 
   it('task list', () => {
@@ -268,6 +300,10 @@ describe('known-lossy constructs are detected', () => {
 
   it('an indented code block keeps its indentation', () => {
     expect(normalizeMarkdown('正文\n\n    code()\n')).toContain('    code()')
+  })
+
+  it('keeps blank lines inside indented code that resembles a list', () => {
+    expect(compareRoundTrip('    - first\n\n    - second', '    - first\n    - second').clean).toBe(false)
   })
 })
 

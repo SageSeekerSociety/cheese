@@ -42,6 +42,12 @@ model_list:
     litellm_params:
       model: deepseek/deepseek-chat
       api_key: os.environ/DEEPSEEK_API_KEY
+    model_info:
+      # This deployment's alias supports native thinking/effort. Without these
+      # capabilities LiteLLM 1.96 drops thinking when Claude Code sends effort.
+      supports_reasoning: true
+      supports_adaptive_thinking: true
+      supports_output_config: true
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

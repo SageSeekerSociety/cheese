@@ -279,11 +279,12 @@ async function onFeedback(item: InboxItem, feedback: 'up' | 'down') {
           <v-col cols="12" md="6">
             <section class="page-section">
               <div class="page-section-head">
-                <span class="page-section-title">贡献 · 人 / AI</span>
+                <span class="page-section-title">工作记录 · 人 / AI</span>
               </div>
               <div class="page-section-body">
-                <div v-if="contribTotal === 0" class="text-medium-emphasis text-body-2 py-2">暂无贡献记录</div>
+                <div v-if="contribTotal === 0" class="text-medium-emphasis text-body-2 py-2">暂无工作记录</div>
                 <template v-else>
+                  <p class="text-medium-emphasis text-body-2 mb-3">按消息和文档内容块计数，不代表工作量或贡献评分</p>
                   <div class="contrib-bar mb-3">
                     <div class="contrib-seg contrib-human" :style="{ width: humanPct + '%' }" />
                     <div class="contrib-seg contrib-ai" :style="{ width: aiPct + '%' }" />

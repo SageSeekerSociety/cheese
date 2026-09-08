@@ -1,5 +1,6 @@
 <template>
-  <my-app>
+  <router-view v-if="currentRoute.meta.publicLanding" />
+  <my-app v-else>
     <!-- 桌面端：使用 StatusBar -->
     <template v-if="$vuetify.display.mdAndUp">
       <keep-alive>
@@ -61,6 +62,7 @@
       <v-card rounded="lg" class="pa-2">
         <v-card-title class="text-h6 font-weight-bold pb-1">新建项目</v-card-title>
         <v-card-text class="pb-2">
+          <p v-if="sourceTask" class="t-body c-muted mb-3">来自赛题：{{ sourceTask.name }}</p>
           <ResourceLimitsNotice v-if="newProjectDialog" />
           <v-text-field
             v-model="newProjectName"
@@ -77,7 +79,7 @@
             :items="newProjectTeams"
             :item-title="teamLabel"
             item-value="id"
-            label="所属小队"
+            label="所属团队"
             variant="outlined"
             color="primary"
             class="mt-3"
@@ -85,7 +87,11 @@
             :loading="loadingTeams"
             :disabled="creatingProject || loadingTeams"
           />
-          <div class="t-meta mt-2">选「个人」只有你自己看得到</div>
+          <div class="t-meta mt-2">项目归所选团队，成员可以一起协作</div>
+          <v-alert v-if="teamLoadError" type="error" density="compact" variant="tonal" class="mt-3">
+            {{ teamLoadError }}
+            <v-btn variant="text" size="small" :loading="loadingTeams" @click="loadProjectTeams">重试</v-btn>
+          </v-alert>
           <v-alert v-if="newProjectError" type="error" density="compact" variant="tonal" class="mt-3">
             {{ newProjectError }}
           </v-alert>
@@ -97,7 +103,7 @@
             color="primary"
             variant="flat"
             :loading="creatingProject"
-            :disabled="!newProjectName.trim()"
+            :disabled="!newProjectName.trim() || loadingTeams || newProjectTeamId === null || !!teamLoadError"
             @click="confirmNewProject"
           >
             创建
@@ -203,6 +209,12 @@ const projectListWarning = ref('')
 const showProjectListWarning = ref(false)
 
 async function loadCxProjects() {
+  // Public visitors have no project list; a 401 here would interrupt the landing page.
+  if (!AccountService.loggedIn) {
+    cxProjects.value = []
+    showProjectListWarning.value = false
+    return
+  }
   try {
     cxProjects.value = (await listProjects()).data
     saveCachedProjects(myHandle(), cxProjects.value)
@@ -266,7 +278,7 @@ const tabs = computed(() => tabItems(navSources.value))
 // we create the project owned by the current user, refresh the rail so the new
 // tile appears, then open its workspace. The same dialog is what a team page's
 // 新建项目 opens (useNewProjectDialog), with that team preselected.
-const { open: newProjectDialog, presetTeamId, show: showNewProjectDialog } = useNewProjectDialog()
+const { open: newProjectDialog, presetTeamId, sourceTask, show: showNewProjectDialog } = useNewProjectDialog()
 const newProjectName = ref('')
 const creatingProject = ref(false)
 const newProjectError = ref<string | null>(null)
@@ -276,6 +288,7 @@ const newProjectError = ref<string | null>(null)
 const newProjectTeams = ref<Team[]>([])
 const newProjectTeamId = ref<number | null>(null)
 const loadingTeams = ref(false)
+const teamLoadError = ref<string | null>(null)
 const teamLabel = (t: Team) => (t.personal ? '个人' : t.name)
 
 function createNewProject() {
@@ -283,33 +296,40 @@ function createNewProject() {
   showNewProjectDialog(teamIdInPath(currentRoute.path))
 }
 
-watch(newProjectDialog, async (opened) => {
-  if (!opened) return
-  newProjectName.value = ''
-  newProjectError.value = null
+async function loadProjectTeams() {
   loadingTeams.value = true
+  teamLoadError.value = null
+  newProjectTeamId.value = null
   try {
     const {
       data: { teams },
     } = await TeamsApi.getMyTeams()
     newProjectTeams.value = teams
+    if (!teams.length) teamLoadError.value = '暂无可用团队，请先创建或加入团队'
   } catch {
-    // The select simply stays empty; the backend then files the project under
-    // the personal team, which is what it did before this dialog asked.
     newProjectTeams.value = []
+    teamLoadError.value = '团队列表加载失败，请重试后选择项目归属'
   } finally {
     loadingTeams.value = false
   }
   newProjectTeamId.value = defaultTeamFor(presetTeamId.value, newProjectTeams.value)
+}
+
+watch(newProjectDialog, (opened) => {
+  if (!opened) return
+  newProjectName.value = sourceTask.value?.name ?? ''
+  newProjectError.value = null
+  void loadProjectTeams()
 })
 
 async function confirmNewProject() {
   const name = newProjectName.value.trim()
-  if (!name || creatingProject.value) return
+  if (!name || creatingProject.value || loadingTeams.value || teamLoadError.value || newProjectTeamId.value === null)
+    return
   creatingProject.value = true
   newProjectError.value = null
   try {
-    const project = await createProject(name, myHandle(), newProjectTeamId.value ?? undefined)
+    const project = await createProject(name, myHandle(), newProjectTeamId.value, sourceTask.value?.id)
     await loadCxProjects()
     newProjectDialog.value = false
     router.push(`/projects/${project.id}`)

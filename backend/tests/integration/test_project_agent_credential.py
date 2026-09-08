@@ -351,7 +351,7 @@ def test_it_is_a_member_not_a_lead(client):
 
 
 def test_what_it_writes_is_filed_under_the_fixed_project_agent(client):
-    """Every destination records the same credential-bound project agent."""
+    """Writes use the credential-bound agent; edit notices retain its AI identity."""
     pid = _project(client, "alice")
     token = _issued_token(client, pid)
     tid = _topic(client, pid, title="T", by="alice")
@@ -360,13 +360,15 @@ def test_what_it_writes_is_filed_under_the_fixed_project_agent(client):
     doc = _write_doc(client, tid, token)
     assert doc.status_code == 200, doc.text
     assert doc.json()["data"]["author"] == room_agent
-    assert doc.json()["data"]["author_type"] == "human"
+    assert doc.json()["data"]["author_type"] == "ai"
 
     events = [b for b in _blocks(client, tid) if b["kind"] == "event"]
     edit_events = [b for b in events if "编辑了文档" in b["content"]]
     assert edit_events, _blocks(client, tid)
     assert edit_events[-1]["author"] == room_agent
     assert edit_events[-1]["content"] == "芝士 编辑了文档"
+    assert edit_events[-1]["author_type"] == "system"
+    assert edit_events[-1]["meta"]["editor_type"] == "ai"
 
     decision = client.post(
         f"/topics/{tid}/decision",

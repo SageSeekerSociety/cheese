@@ -3,12 +3,37 @@
 import contextlib
 import os
 import re
+import shutil
 import subprocess
 import time
+import uuid
 
 import pytest
 
 from app.domain.agent.harness.claude_code import device_launch
+
+
+def test_liveness_probe_distinguishes_a_running_topic_from_an_exited_one(tmp_path):
+    executable = tmp_path / "claude"
+    shutil.copy2(shutil.which("sleep"), executable)
+    topic = str(uuid.uuid4())
+    process = subprocess.Popen(
+        [str(executable), "30"], env={**os.environ, "CHEESE_TOPIC": topic}
+    )
+
+    def probe():
+        return subprocess.check_output(
+            ["sh", "-c", device_launch.DEVICE_ALIVE_PROBE],
+            env={**os.environ, "CHEESE_ALIVE_TOPIC": topic},
+            text=True,
+        ).strip()
+
+    try:
+        assert probe() == "alive"
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
+    assert probe() == "dead"
 
 
 def test_hooks_settings_wire_command_hook_to_forwarder():
