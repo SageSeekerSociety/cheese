@@ -1,12 +1,16 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 
 import logo from '@/assets/logo-plain.svg?url'
 import HomepageMessage from '@/components/home/HomepageMessage.vue'
 import AccountService from '@/services/account'
 
 const router = useRouter()
+const route = useRoute()
+const loggedIn = computed(() => AccountService.loggedIn)
+const entryHref = computed(() => (loggedIn.value ? '/' : '/account/signin'))
+const entryLabel = computed(() => (loggedIn.value ? '进入工作台' : '开始体验'))
 const stages = [
   { id: 'discuss', label: '需求讨论' },
   { id: 'build', label: '协作执行' },
@@ -67,13 +71,10 @@ function moveTab(event: KeyboardEvent, group: 'stage' | 'audience') {
   else audience.value = audiences[next]
   buttons[next].focus()
 }
-// A restored session may finish refreshing after the public page has mounted.
-watch(
-  () => AccountService.loggedIn,
-  (loggedIn) => {
-    if (loggedIn) void router.replace({ name: 'HomeSpaces' })
-  }
-)
+// Session restoration redirects only the root; /about stays public after sign-in.
+watch([loggedIn, () => route.name], ([isLoggedIn, routeName]) => {
+  if (isLoggedIn && routeName === 'HomeDefault') void router.replace({ name: 'HomeSpaces' })
+})
 </script>
 
 <template>
@@ -90,8 +91,8 @@ watch(
         <a href="#teams">企业解决方案</a>
         <a href="#vision">我们的愿景</a>
       </nav>
-      <a class="nav-entry" href="/account/signin">
-        进入知是 <v-icon class="landing-icon" icon="mdi-arrow-top-right" size="17" />
+      <a class="nav-entry" :href="entryHref">
+        {{ entryLabel }} <v-icon class="landing-icon" icon="mdi-arrow-top-right" size="17" />
       </a>
     </header>
     <section class="hero wrap">
@@ -112,8 +113,8 @@ watch(
           让你把精力放在项目本身。
         </p>
         <div class="hero-actions">
-          <a class="button button-dark" href="/account/signin">
-            开始体验
+          <a class="button button-dark" :href="entryHref">
+            {{ entryLabel }}
             <v-icon class="landing-icon" icon="mdi-arrow-top-right" size="18" />
           </a>
           <a class="watch-link" href="#teams">
@@ -586,8 +587,8 @@ watch(
           <br />
           和团队一起开始。
         </p>
-        <a class="button button-light" href="/account/signin">
-          进入知是
+        <a class="button button-light" :href="entryHref">
+          {{ entryLabel }}
           <v-icon class="landing-icon" icon="mdi-arrow-top-right" size="19" />
         </a>
       </div>

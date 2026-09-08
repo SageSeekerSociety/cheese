@@ -124,6 +124,12 @@
               <v-list-item-title>我的设备</v-list-item-title>
             </v-list-item>
             <ThemeToggle />
+            <v-list-item to="/about" rounded="lg" class="mb-1" color="primary">
+              <template #prepend>
+                <v-icon icon="mdi-information-outline" class="me-2"></v-icon>
+              </template>
+              <v-list-item-title>了解知是</v-list-item-title>
+            </v-list-item>
             <v-list-item rounded="lg" color="error" @click="userMenu.onLogout">
               <template #prepend>
                 <v-icon icon="mdi-exit-to-app" class="me-2"></v-icon>

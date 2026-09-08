@@ -10,12 +10,18 @@ const getDefaultAvatarId = vi.fn()
 const getQuota = vi.fn()
 const user = ref<{ id: number; nickname: string; avatarId: number | null } | null>(null)
 const loggedIn = ref(true)
+const push = vi.fn()
+const logoutRequest = vi.fn()
+const clearSession = vi.fn(() => {
+  loggedIn.value = false
+  user.value = null
+})
 
-vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }))
+vi.mock('vue-router', () => ({ useRouter: () => ({ push }) }))
 vi.mock('@/network/api/avatars', () => ({ AvatarsApi: { getDefaultAvatarId: () => getDefaultAvatarId() } }))
 vi.mock('@/network/api/ai', () => ({ AIApi: { getQuota: () => getQuota() } }))
-vi.mock('@/network/api/users', () => ({ UserApi: { logout: vi.fn() } }))
-vi.mock('@/services/account', () => ({ default: { _user: user, _loggedIn: loggedIn, logout: vi.fn() } }))
+vi.mock('@/network/api/users', () => ({ UserApi: { logout: logoutRequest } }))
+vi.mock('@/services/account', () => ({ default: { _user: user, _loggedIn: loggedIn, logout: clearSession } }))
 
 /** 默认头像那一行的 id 是种子数据，各环境不同 —— 所以要现问。 */
 const DEFAULT_AVATAR_ID = 1
@@ -34,8 +40,33 @@ async function freshUserMenu() {
 }
 
 beforeEach(() => {
+  vi.clearAllMocks()
+  logoutRequest.mockResolvedValue(undefined)
   loggedIn.value = true
   getDefaultAvatarId.mockResolvedValue({ data: { avatarId: DEFAULT_AVATAR_ID } })
+})
+
+describe('Sign out', () => {
+  it.each([false, true])(
+    'returns to the public root after clearing the session (request failure: %s)',
+    async (fails) => {
+      if (fails) logoutRequest.mockRejectedValue(new Error('offline'))
+      const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const menu = await freshUserMenu()
+      push.mockImplementation(() => {
+        expect(loggedIn.value).toBe(false)
+        expect(user.value).toBeNull()
+      })
+      try {
+        await menu.onLogout()
+        expect(logoutRequest).toHaveBeenCalledOnce()
+        expect(clearSession).toHaveBeenCalledOnce()
+        expect(push).toHaveBeenCalledWith('/')
+      } finally {
+        warning.mockRestore()
+      }
+    }
+  )
 })
 
 describe('我的头像', () => {
