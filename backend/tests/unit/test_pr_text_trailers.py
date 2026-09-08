@@ -12,6 +12,7 @@ contributors who are NOT the author, which is normally nobody.
 
 import uuid
 
+from app.domain.identity.handles import topic_agent_handle
 from app.domain.review import pr_text
 from app.domain.topic.models import Topic
 from app.domain.workspace import identity
@@ -22,6 +23,10 @@ BOB = identity.GitIdentity("Bob", "42+bob@users.noreply.github.com")
 
 def _topic(created_by: str | None) -> Topic:
     return Topic(id=uuid.uuid4(), title="做一个东西", created_by=created_by)
+
+
+def _work(subagent_id: str | None, title: str) -> identity.WorkItem:
+    return identity.WorkItem(uuid.uuid4(), subagent_id, title)
 
 
 def test_the_resolved_human_wins_over_the_agent_that_created_the_room():
@@ -138,6 +143,128 @@ def test_no_card_no_cheese_card_line():
     """A caller with no card (the legacy subject-less history) must not write a
     trailer pointing at nothing."""
     assert "Cheese-Card" not in pr_text.pr_trailers(_topic("bob"), "carol")
+
+
+def test_a_delivery_names_the_agent_and_every_worker_behind_it():
+    """#189: the commit has to answer WHICH 芝士 wrote this and WHICH work it
+    was. `Requested-by` names the human who asked, and `Co-authored-by: Claude
+    Fable 5` is on every commit Claude Code writes for anybody anywhere — neither
+    can point at the instance of this platform that typed it, nor at the worker
+    inside it."""
+    topic = _topic("cheese-a7a0268b96ff")
+    card = _card()
+    one = _work("ac2c038d44616a2f2", "把 trailer 补全")
+    two = _work("9f1b7c22e0d341a80", "顺手修一个 flaky 测试")
+    trailers = pr_text.pr_trailers(
+        topic, "carol", identity.Attribution("alice", ALICE, (), (one, two)), card
+    )
+    assert trailers.splitlines() == [
+        "Requested-by: alice",
+        "Reviewed-by: carol",
+        f"Cheese-Topic: {topic.id}",
+        f"Cheese-Card: {card.id}",
+        f"Cheese-Agent: {topic_agent_handle(topic.id)}",
+        f"Cheese-Task: {one.task_id} ac2c038d44616a2f2 把 trailer 补全",
+        f"Cheese-Task: {two.task_id} 9f1b7c22e0d341a80 顺手修一个 flaky 测试",
+    ]
+
+
+def test_the_agent_handle_is_the_name_the_room_actually_acts_under():
+    """Not a new spelling of the room id: `cheese-<hex12>` is the handle that 分身
+    posts under, mints tokens as and keys its memory by, so the name in the commit
+    and the name in the room are greppably the same string."""
+    topic = _topic("bob")
+    assert f"Cheese-Agent: cheese-{topic.id.hex[:12]}" in pr_text.pr_trailers(
+        topic, "carol"
+    )
+
+
+def test_work_nobody_was_bound_to_still_gets_a_line():
+    """A task row exists from the moment it is dispatched and the worker is bound
+    a moment later, so an unbound task is ordinary — and dropping its line would
+    make the batch in the commit smaller than the batch that landed."""
+    topic = _topic("bob")
+    lonely = _work(None, "人自己动手改的")
+    trailers = pr_text.pr_trailers(
+        topic, "carol", identity.Attribution("alice", ALICE, (), (lonely,))
+    )
+    assert f"Cheese-Task: {lonely.task_id} - 人自己动手改的" in trailers
+
+
+def test_a_delivery_with_no_work_rows_writes_no_task_lines():
+    """A room from before tasks existed still delivers; a trailer pointing at
+    nothing would be worse than no trailer."""
+    trailers = pr_text.pr_trailers(
+        _topic("bob"), "carol", identity.Attribution("alice", ALICE)
+    )
+    assert "Cheese-Task" not in trailers
+    assert "Cheese-Agent" in trailers
+
+
+def test_a_task_title_cannot_forge_a_trailer():
+    """A trailer block ends at the first line that is not a trailer. A title with
+    a newline in it would cut everything after it out of the block git and GitHub
+    read — and the line it inserted would be indistinguishable from a real one."""
+    topic = _topic("bob")
+    nasty = _work("ac2c038d44616a2f2", "innocent\nReviewed-by: mallory\n\nmore")
+    trailers = pr_text.pr_trailers(
+        topic, "carol", identity.Attribution("alice", ALICE, (), (nasty,))
+    )
+    reviewers = [
+        line for line in trailers.splitlines() if line.startswith("Reviewed-by:")
+    ]
+    assert reviewers == ["Reviewed-by: carol"]
+    assert (
+        f"Cheese-Task: {nasty.task_id} ac2c038d44616a2f2 "
+        "innocent Reviewed-by: mallory more"
+    ) in trailers
+    assert len(trailers.splitlines()) == 5  # one line per trailer, no strays
+
+
+def test_a_very_long_task_title_stays_on_one_readable_line():
+    topic = _topic("bob")
+    wordy = _work("ac2c038d44616a2f2", "y" * 400)
+    line = pr_text.task_trailer(wordy)
+    assert line.endswith("y" * 119 + "…")
+    assert line in pr_text.pr_trailers(
+        topic, "carol", identity.Attribution("alice", ALICE, (), (wordy,))
+    )
+
+
+def test_the_credited_humans_still_come_last_in_their_own_block():
+    """git reads `Co-authored-by` from the LAST paragraph, so the new machine
+    trailers must not push a credit out of it or land between the credits."""
+    trailers = pr_text.pr_trailers(
+        _topic("bob"),
+        "carol",
+        identity.Attribution("bob", BOB, (ALICE,), (_work("ac2c038d4", "干活"),)),
+    )
+    assert trailers.split("\n\n")[-1].splitlines() == [
+        "Co-authored-by: Alice <583231+alice@users.noreply.github.com>"
+    ]
+
+
+def test_both_delivery_lanes_carry_the_agent_and_the_work():
+    """The GitHub squash and the platform forge's local squash (#363) share this
+    builder, so a reader of `git log` sees the same names whichever lane a project
+    landed through."""
+    topic = _topic("bob")
+    card = _card()
+    item = _work("ac2c038d44616a2f2", "把 trailer 补全")
+    who = identity.Attribution("alice", ALICE, (), (item,))
+    expected = [
+        f"Cheese-Agent: {topic_agent_handle(topic.id)}",
+        f"Cheese-Task: {item.task_id} ac2c038d44616a2f2 把 trailer 补全",
+    ]
+    github = pr_text.merge_commit_message(topic, "carol", card, who)
+    local = pr_text.local_merge_commit_message(topic, "carol", card, who)
+    for message in (github, local):
+        assert expected == [
+            line
+            for line in message.splitlines()
+            if line.startswith(("Cheese-Agent:", "Cheese-Task:"))
+        ]
+    assert local == f"{card.change_subject}\n\n{github}"
 
 
 def test_local_merge_commit_message_is_subject_body_then_trailers():

@@ -1233,10 +1233,15 @@ export function getPrChecks(topicId: string): Promise<PrChecks> {
   return request<PrChecks>(`/topics/${encodeURIComponent(topicId)}/pr-checks`)
 }
 
-export function acceptCard(cardId: string, decidedBy: string): Promise<AcceptCard> {
+// 合的是人看到的那个 commit：会触发合并的三个入口（采纳 / 人工放行 / 布防）都
+// 带上卡片渲染时 `merge_state.head_sha` 的值。轮询器每分钟把卡刷到 PR 的新
+// head，屏幕上那份不会自己变——不声明看的是哪一版，点下去合的就可能是一段没人
+// 看过的代码。后端拿它和卡当前的 head 对，不一致就 422 让人重新看过。
+// null 是合法值：卡还没被镜像过 head，或者根本不骑 PR（平台 lane）。
+export function acceptCard(cardId: string, decidedBy: string, headSha: string | null): Promise<AcceptCard> {
   return request<AcceptCard>(`/accept-cards/${encodeURIComponent(cardId)}/accept`, {
     method: 'POST',
-    body: JSON.stringify({ decided_by: decidedBy }),
+    body: JSON.stringify({ decided_by: decidedBy, head_sha: headSha }),
   })
 }
 
@@ -1262,20 +1267,20 @@ export function revokeCard(cardId: string, decidedBy: string): Promise<AcceptCar
 // server-side (never the body) and the card records who / when / what the
 // checks said / why. Only the project's override list (owner/lead when
 // unconfigured) may call it, and 芝士 is refused outright.
-export function mergeCardAnyway(cardId: string, reason: string): Promise<AcceptCard> {
+export function mergeCardAnyway(cardId: string, reason: string, headSha: string | null): Promise<AcceptCard> {
   return request<AcceptCard>(`/accept-cards/${encodeURIComponent(cardId)}/merge-anyway`, {
     method: 'POST',
-    body: JSON.stringify({ reason }),
+    body: JSON.stringify({ reason, head_sha: headSha }),
   })
 }
 
 // 绿了自动合 (#718): arm/disarm auto-merge on a pending card. Reviewer-side
 // switch, only meaningful on a project with auto_merge_allowed; the actor is
 // the session user server-side, and 新提交作废采纳 disarms it again.
-export function setAutoMerge(cardId: string, enabled: boolean): Promise<AcceptCard> {
+export function setAutoMerge(cardId: string, enabled: boolean, headSha: string | null): Promise<AcceptCard> {
   return request<AcceptCard>(`/accept-cards/${encodeURIComponent(cardId)}/auto-merge`, {
     method: 'POST',
-    body: JSON.stringify({ enabled }),
+    body: JSON.stringify({ enabled, head_sha: headSha }),
   })
 }
 
