@@ -223,6 +223,13 @@ const agentName = computed(() => {
   return seat?.name || seat?.member_handle || '芝士'
 })
 
+// 输入框那一行提示语。和芝士私聊时它**不能**说「交给它做」：私聊不占机器，那边
+// 的芝士没有工具，读不了文件也跑不了命令。一句承诺它做不到的事的提示语，换来的
+// 是一次「我试了但做不了」，而人只会记得是它没做成。
+const composerHint = computed(() =>
+  props.alwaysSummon ? `和${agentName.value}聊聊…（要它干活去开话题）` : `输入消息，@${agentName.value} 交给它做`
+)
+
 /** @ 得到的人：这个房间里的，加上项目里还没进这个房间的。 */
 const mentionPool = computed(() => {
   const room = roomMembers.value.map((m) => ({
@@ -1890,7 +1897,7 @@ onBeforeUnmount(() => {
               hide-details
               density="comfortable"
               class="composer-input"
-              :placeholder="alwaysSummon ? `告诉${agentName}要做什么…` : `输入消息，@${agentName} 交给它做`"
+              :placeholder="composerHint"
               :title="enterSends ? 'Enter 发送，Shift+Enter 换行，可直接粘贴图片' : '可直接粘贴图片'"
               @keydown="onComposerKey"
               @paste="onComposerPaste"

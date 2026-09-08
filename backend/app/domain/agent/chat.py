@@ -209,8 +209,9 @@ class _TurnContext:
     topic_refs_for_prompt: list[dict]
 
     # Which machine, and whether it reports its own liveness (which decides who
-    # owns this turn's clock — see the `turn_ceiling` frame).
-    provider: ComputeProvider
+    # owns this turn's clock — see the `turn_ceiling` frame). None = 这一轮不落在
+    # 任何一台机器上：私聊是一段对话，走 plain_chat 那条路（后端自己问一次模型）。
+    provider: ComputeProvider | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -3499,7 +3500,7 @@ class ChatService:
     async def _model_kwargs(
         self,
         project_id: uuid.UUID,
-        provider: ComputeProvider,
+        provider: ComputeProvider | None,
         topic_id: uuid.UUID | None = None,
         *,
         agent: ResolvedAgent | None = None,
@@ -3509,6 +3510,12 @@ class ChatService:
         Machine providers assemble their own scoped credentials. Other providers
         retain their gateway/profile transport, with the agent's saved model.
         The optional agent snapshot keeps model and role consistent within a turn.
+
+        ``provider=None`` means there is no machine in this turn at all (私聊 走
+        plain_chat): the platform is the one about to call the model, so it needs
+        the same base_url + key a sandbox would have been handed. That is exactly
+        the not-``builds_model_env`` branch, so it falls through to it rather than
+        growing a second way to answer the same question.
         """
         acting_agent: str | None = None
         environment = None
@@ -3551,7 +3558,7 @@ class ChatService:
             kwargs["agent_handle"] = acting_agent
         if environment is not None:
             kwargs["env"]["CHEESE_ENVIRONMENT"] = json.dumps(environment)
-        if provider.builds_model_env:
+        if provider is not None and provider.builds_model_env:
             return kwargs, supply
         pool_route = True
         if self._profiles is not None:
@@ -3951,96 +3958,108 @@ class ChatService:
                     card_statuses=[c.status for c in open_cards],
                 )
             )
-            # Resolve the room choice, then the explicit project default.
-            compute_id = _resolve_compute_id(
-                project.settings if project else None,
-                topic.compute_profile,
-            )
-            if compute_id == "device" and topic.compute_config is None:
-                from app.domain.agent.compute_configs import (
-                    bind_room_device_choice,
+            # 私聊不落在任何一台机器上。机器是**按话题**分配的，而私聊是一段
+            # 对话——照常走下去，每个人的私聊都在替一段对话占着一台机器（配了
+            # Cloud 的部署上就是一台云主机）。执行那一半据此改走 plain_chat：
+            # 后端自己向模型问一次。代价是明写的，也是选定的——私聊里的芝士
+            # **没有任何工具**，读不了文件、跑不了命令，要它干活得去开话题。
+            provider: ComputeProvider | None = None
+            if not is_private:
+                # Resolve the room choice, then the explicit project default.
+                compute_id = _resolve_compute_id(
+                    project.settings if project else None,
+                    topic.compute_profile,
                 )
+                if compute_id == "device" and topic.compute_config is None:
+                    from app.domain.agent.compute_configs import (
+                        bind_room_device_choice,
+                    )
 
-                await bind_room_device_choice(
-                    session, topic, project.settings if project else None
+                    await bind_room_device_choice(
+                        session, topic, project.settings if project else None
+                    )
+                provider = self._compute.select(
+                    provider_id=compute_id, harness=wanted_harness
                 )
-            provider = self._compute.select(
-                provider_id=compute_id, harness=wanted_harness
-            )
-            if provider is None:
-                # The machine is fine; what runs on it is not what this agent's
-                # type asked for. Running Claude Code anyway would answer as an
-                # agent nobody configured — say so instead, and leave the type
-                # to be fixed. (One harness ships, so today this needs a row
-                # written before the field was validated at all.)
-                return _TurnBail(
-                    [
-                        {
-                            "type": "event_block",
-                            "block": await self._bail_notice(
-                                project_id=topic.project_id,
-                                topic_id=topic_id,
-                                turn_id=turn_id,
-                                session=session,
-                                text=(
-                                    f"这个 agent 的类型要求用 {wanted_harness} "
-                                    "跑，而本话题选的机器上没有部署它，本轮没有开始。"
+                if provider is None:
+                    # The machine is fine; what runs on it is not what this agent's
+                    # type asked for. Running Claude Code anyway would answer as an
+                    # agent nobody configured — say so instead, and leave the type
+                    # to be fixed. (One harness ships, so today this needs a row
+                    # written before the field was validated at all.)
+                    return _TurnBail(
+                        [
+                            {
+                                "type": "event_block",
+                                "block": await self._bail_notice(
+                                    project_id=topic.project_id,
+                                    topic_id=topic_id,
+                                    turn_id=turn_id,
+                                    session=session,
+                                    text=(
+                                        f"这个 agent 的类型要求用 {wanted_harness} "
+                                        "跑，而本话题选的机器上没有部署它，本轮没有开始。"
+                                    ),
                                 ),
-                            ),
-                        },
-                        {"type": "done"},
-                    ]
-                )
-            if provider.provisions_machine:
-                ready, waiting_text = await provider.prepare_topic(
-                    project_id=project_id,
-                    topic_id=topic_id,
-                    actor=provision_actor,
-                )
-                if topic.compute_profile is None:
-                    topic.compute_profile = provider.name
-                if not ready:
-                    cloud_events = [
-                        block
-                        for block in history
-                        if (block.meta or {}).get("event_type") == "cloud_provisioning"
-                    ]
-                    waiting_payload = None
-                    if (
-                        not cloud_events
-                        or (cloud_events[-1].meta or {}).get("state") != "waiting"
-                    ):
-                        waiting_block = await blocks.add(
-                            project_id=project_id,
-                            topic_id=topic_id,
-                            author="system",
-                            author_type=AuthorType.system,
-                            content=waiting_text,
-                            kind=BlockKind.event,
-                            turn_id=turn_id,
-                            meta={
-                                # 这条已有自己的 event_type / state，前端按它渲染；
-                                # 补上轻重和「谁在管」，等待就不必再靠一个 ⏳ 说话。
-                                "severity": SEVERITY_INFO,
-                                "who": WHO_PLATFORM,
-                                "detail": (
-                                    "本话题会保留这条消息，机器就绪后自动继续。"
-                                ),
-                                "detail_label": "接下来会发生什么",
-                                "event_type": "cloud_provisioning",
-                                "state": "waiting",
                             },
+                            {"type": "done"},
+                        ]
+                    )
+                if provider.provisions_machine:
+                    ready, waiting_text = await provider.prepare_topic(
+                        project_id=project_id,
+                        topic_id=topic_id,
+                        actor=provision_actor,
+                    )
+                    if topic.compute_profile is None:
+                        topic.compute_profile = provider.name
+                    if not ready:
+                        cloud_events = [
+                            block
+                            for block in history
+                            if (block.meta or {}).get("event_type")
+                            == "cloud_provisioning"
+                        ]
+                        waiting_payload = None
+                        if (
+                            not cloud_events
+                            or (cloud_events[-1].meta or {}).get("state") != "waiting"
+                        ):
+                            waiting_block = await blocks.add(
+                                project_id=project_id,
+                                topic_id=topic_id,
+                                author="system",
+                                author_type=AuthorType.system,
+                                content=waiting_text,
+                                kind=BlockKind.event,
+                                turn_id=turn_id,
+                                meta={
+                                    # 这条已有自己的 event_type / state，前端按它渲染；
+                                    # 补上轻重和「谁在管」，等待就不必再靠一个 ⏳ 说话。
+                                    "severity": SEVERITY_INFO,
+                                    "who": WHO_PLATFORM,
+                                    "detail": (
+                                        "本话题会保留这条消息，机器就绪后自动继续。"
+                                    ),
+                                    "detail_label": "接下来会发生什么",
+                                    "event_type": "cloud_provisioning",
+                                    "state": "waiting",
+                                },
+                            )
+                            waiting_payload = _block_payload(
+                                BlockOut.model_validate(waiting_block)
+                            )
+                        await session.commit()
+                        frames: list[dict] = []
+                        if waiting_payload is not None:
+                            frames.append(
+                                {"type": "event_block", "block": waiting_payload}
+                            )
+                        frames.append(
+                            {"type": "waiting", "state": "cloud_provisioning"}
                         )
-                        waiting_payload = _block_payload(
-                            BlockOut.model_validate(waiting_block)
-                        )
-                    await session.commit()
-                    frames: list[dict] = []
-                    if waiting_payload is not None:
-                        frames.append({"type": "event_block", "block": waiting_payload})
-                    frames.append({"type": "waiting", "state": "cloud_provisioning"})
-                    frames.append({"type": "done"})
-                    return _TurnBail(frames)
+                        frames.append({"type": "done"})
+                        return _TurnBail(frames)
             # The prompt is built HERE, not where `pending` was computed: an
             # attachment line has to describe how the image reaches 芝士 on THIS
             # backend, and that is only knowable once the provider is picked.
@@ -4051,9 +4070,14 @@ class ChatService:
             # No pending human block ⇒ nobody spoke: this is a resume nudge,
             # a kickoff or a returned conclusion. Say so, rather than handing
             # 芝士 bare text that looks like a person's message.
+            # provider is None ⇒ 私聊那条路，它只发文字。默认值 True 在这里会变成
+            # 一句谎：提示词会告诉芝士「图片内容已附在本条消息里」，而它什么也没
+            # 收到——那种情况下它不会报错，它会编出图里有什么。
+            embeds_images = (
+                False if provider is None else getattr(provider, "embeds_images", True)
+            )
             backlog = "\n".join(
-                _prompt_line(b, embeds_images=getattr(provider, "embeds_images", True))
-                for b in pending
+                _prompt_line(b, embeds_images=embeds_images) for b in pending
             )
             prompt_text = backlog or platform_prompt(content)
             # 平台指令不会被待读消息挤掉。A platform turn EXISTS because of its
@@ -4088,7 +4112,9 @@ class ChatService:
             # killing the turn at the generic `agent_turn_timeout_s`. Without this
             # the device's own two-layer fix is dead on arrival — the outer guard
             # still kills at 900s.
-            if topic.compute_profile is None:
+            # 私聊没有机器，所以也不该在它身上钉一台。钉了就是给一段永远不会用到
+            # 机器的对话记上一台机器，而这一行本来是给「以后别换机器」用的。
+            if provider is not None and topic.compute_profile is None:
                 # v4 affinity red line: materialize the effective target BEFORE
                 # the first provider call. A later project-default change must
                 # never move an existing work tree or resumable Claude session.
@@ -4180,8 +4206,11 @@ class ChatService:
         # `agent_turn_timeout_s` (turn 活跃度检测). It is the HARNESS's number:
         # how long a silence may last before it means something is wrong depends
         # on what is producing the output, not on the machine underneath it.
-        runtime = runtime_for(provider)
-        yield {"type": "turn_ceiling", "seconds": runtime.hard_ceiling_s}
+        # provider is None ⇒ 私聊：这一轮没有会话，也就没有「静默多久算卡住」这个
+        # 问题——请求自己的生命周期就是这一轮的生命周期。
+        runtime = None if provider is None else runtime_for(provider)
+        if runtime is not None:
+            yield {"type": "turn_ceiling", "seconds": runtime.hard_ceiling_s}
         skills = load_skills(PRIVATE_SKILLS) if is_private else self._skills
         system_prompt = _build_system_prompt(
             self._base_prompt,
@@ -4214,6 +4243,28 @@ class ChatService:
         model_kwargs, route = await self._model_kwargs(
             project_id, provider, topic_id, agent=prepared.agent
         )
+        # 私聊在这里岔开：没有机器、没有会话、没有工具，后端自己问一次模型，把
+        # 回答当成这一轮的最终结果交给同一个消费口。落库、推帧、结算、记忆抽取因此
+        # 全部照旧——这条路换掉的只是「谁来产生那段文字」。
+        if is_private:
+            await self._run_plain_chat(
+                project_id=project_id,
+                topic_id=topic_id,
+                turn_id=turn_id,
+                user_block_id=user_block_id,
+                system_prompt=system_prompt,
+                model_kwargs=model_kwargs,
+                route=route,
+                pending_ids=pending_ids,
+                prompt_text=prompt_text,
+                private_owner=private_owner,
+                acting_agent=acting_agent,
+                agent_pool=agent_pool,
+                continuation_id=continuation_id,
+            )
+            yield {"type": "prompt_delivered"}
+            return
+
         # Remembered for the turns this session starts by itself. A route is a
         # fact about where a SESSION's traffic goes, not about one prompt, and a
         # self-started turn has no prompt to resolve it from — it rides the same
@@ -4315,6 +4366,9 @@ class ChatService:
             if prompt_text not in state.user_text:
                 state.user_text = f"{state.user_text}\n{prompt_text}"
 
+        # 走到这里 provider 一定有（私聊那条路在上面就 return 了），runtime 因此也
+        # 一定有；写出来是给类型检查看的，也是给下一个在这中间插东西的人看的。
+        assert runtime is not None
         try:
             ready = await runtime.send(
                 SessionRef(project_id, topic_id),
@@ -4392,6 +4446,128 @@ class ChatService:
             if payload is not None:
                 yield {"type": "event_block", "block": payload}
         return
+
+    # ---- 私聊：一次不落地的模型调用 ----------------------------------------
+    # 房间里的一轮活是「在一台机器上开一个会话」，因为它要读文件、跑命令、开 PR。
+    # 私聊不做这些事，而机器是按话题分配的——照原样走下去，每个人的私聊都在替一段
+    # 对话占着一台机器。这里换成后端自己问一次模型，然后把回答交给和会话那条路
+    # **同一个**消费口（`_consume_hook_event`）：落库、推帧、结算、记忆抽取因此一样
+    # 也不少，换掉的只是「谁产生了那段文字」。
+
+    #: 一次私聊调用带上多少条历史。这条路是无状态的（没有会话记住上下文），所以
+    #: 上下文得每次自己带；截断是必须的，而尾部才是对话，所以取最新的这些。
+    _PLAIN_HISTORY_BLOCKS = 40
+
+    async def _plain_chat_messages(
+        self, topic_id: uuid.UUID, prompt_text: str
+    ) -> list[dict[str, str]]:
+        """把这间私聊的近况整理成 messages。
+
+        只取人说的和芝士说的（`kind=message`）：系统事件是平台在说话，不是对话的一
+        部分，把它们混进来等于让芝士以为对面的人说过那些话。相邻的同角色合并，因为
+        Anthropic 协议要求 user/assistant 交替。
+        """
+        async with self._sessions() as session:
+            page = await BlockRepository(session).page_for_topic(
+                topic_id, limit=self._PLAIN_HISTORY_BLOCKS, kinds=[BlockKind.message]
+            )
+        messages: list[dict[str, str]] = []
+        for block in page.items:
+            if not (block.content or "").strip():
+                continue
+            role = "assistant" if block.author_type == AuthorType.ai else "user"
+            if messages and messages[-1]["role"] == role:
+                messages[-1]["content"] += f"\n{block.content}"
+            else:
+                messages.append({"role": role, "content": block.content})
+        # 这一轮的话可能还没落库（也可能落了但被上面的截断切掉了），补在末尾；已经
+        # 在里面就不重复。协议要求最后一条是 user。
+        if not messages or messages[-1]["role"] != "user":
+            messages.append({"role": "user", "content": prompt_text})
+        elif prompt_text.strip() and prompt_text not in messages[-1]["content"]:
+            messages[-1]["content"] += f"\n{prompt_text}"
+        # 第一条必须是 user：一段以芝士的话开头的历史（比如上一轮它先说了什么）会被
+        # 出口直接拒掉。
+        while messages and messages[0]["role"] != "user":
+            messages.pop(0)
+        return messages
+
+    async def _run_plain_chat(
+        self,
+        *,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID,
+        turn_id: uuid.UUID,
+        user_block_id: uuid.UUID | None,
+        system_prompt: str,
+        model_kwargs: dict,
+        route: str,
+        pending_ids: list[uuid.UUID],
+        prompt_text: str,
+        private_owner: str | None,
+        acting_agent: str,
+        agent_pool: tuple[MemoryScope, str] | None,
+        continuation_id: uuid.UUID | None,
+    ) -> None:
+        """跑完私聊这一轮：问一次模型，把结果（或失败）交给统一的消费口。"""
+        from app.domain.agent import plain_chat
+
+        # 这一轮的记账上下文。会话那条路由 `_register_work` 在收到第一个 hook 时建，
+        # 私聊没有 hook，所以在这里自己建——没有它，结果落得下去，这一轮的账却结不
+        # 掉（用量、turn 关闭都挂在它上面）。
+        # roster 传 []：私聊没有名册，而 None 的意思是「没组装过提示词，去库里读」。
+        state = _HookWorkState(
+            project_id=project_id,
+            topic_id=topic_id,
+            work_id=turn_id,
+            pending_ids=set(pending_ids),
+            reply_to=user_block_id,
+            roster=[],
+            topic_refs=[],
+            continuation_id=continuation_id,
+            route=route,
+            is_private=True,
+            private_owner=private_owner,
+            acting_agent=acting_agent,
+            agent_pool=agent_pool,
+            user_text=prompt_text,
+            started_at=datetime.now(UTC),
+        )
+        self._hook_work[(topic_id, turn_id)] = state
+
+        target = plain_chat.route_from_env(model_kwargs.get("env"))
+        try:
+            if target is None:
+                # 走订阅的部署会落到这里，而且这不是故障：订阅的凭据是机器上的
+                # OAuth token，后端手里根本没有。说清楚，而不是拿一个空 Bearer 去
+                # 撞 401 —— 那种失败会被读成「模型出问题了」。
+                raise plain_chat.PlainChatUnavailable(
+                    "这个部署的模型出口没有给后端可用的凭据（走订阅时凭据只在机器上），"
+                    "私聊这条不占机器的路暂时用不了"
+                )
+            base_url, api_key = target
+            reply = await plain_chat.ask(
+                base_url=base_url,
+                api_key=api_key,
+                model=str(model_kwargs.get("model") or ""),
+                system_prompt=system_prompt,
+                messages=await self._plain_chat_messages(topic_id, prompt_text),
+            )
+        except plain_chat.PlainChatUnavailable as exc:
+            logger.warning("plain chat failed (topic=%s): %s", topic_id, exc)
+            result = AgentResult(text=str(exc), session_id=None, is_error=True)
+        else:
+            result = AgentResult(
+                text=reply.text,
+                session_id=None,
+                usage=AgentUsage(
+                    input_tokens=reply.input_tokens,
+                    output_tokens=reply.output_tokens,
+                ),
+            )
+        await self._consume_hook_event(
+            project_id, topic_id, turn_id, result, None, False, False
+        )
 
     def _schedule_memory_extraction(
         self,
