@@ -27,15 +27,19 @@ vi.mock('../CodeEditor.vue', () => ({
 
 const getPreview = vi.fn()
 const readFile = vi.fn()
-const primeAppPreview = vi.fn()
+const requestPreviewSession = vi.fn()
 
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
     ...actual,
-    getPreview: (...a: unknown[]) => getPreview(...a),
+    getPreview: (...a: unknown[]) =>
+      getPreview(...a).then(
+        (preview: Record<string, unknown> | null) =>
+          preview && { ...preview, url: preview.kind === 'app' ? preview.url : 'https://preview-topic-a.example/' }
+      ),
     readFile: (...a: unknown[]) => readFile(...a),
-    primeAppPreview: (...a: unknown[]) => primeAppPreview(...a),
+    requestPreviewSession: (...a: unknown[]) => requestPreviewSession(...a),
     getDoc: vi.fn().mockResolvedValue({ markdown: '', title: '' }),
     putDoc: vi.fn().mockResolvedValue({}),
     getComments: vi.fn().mockResolvedValue({ data: [], total: 0 }),
@@ -98,7 +102,11 @@ beforeEach(() => {
   vi.clearAllMocks()
   getPreview.mockResolvedValue(null)
   readFile.mockResolvedValue({ path: 'report.html', content: '<p>hi</p>' })
-  primeAppPreview.mockResolvedValue({ ready: true })
+  requestPreviewSession.mockResolvedValue({
+    url: 'https://preview-topic-a.example/_cheese/session',
+    grant: 'preview-only',
+  })
+  vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(() => {})
 })
 
 describe('预览面板：运行中的应用到不了的时候说什么', () => {
@@ -136,12 +144,12 @@ describe('预览面板：运行中的应用到不了的时候说什么', () => {
     expect(container.textContent).toContain('服务多半已经退出')
   })
 
-  it('应用活着 → 嵌的是反代路径，而不是机器上的地址', async () => {
+  it('应用活着 → 向独立来源提交预览授权', async () => {
     getPreview.mockResolvedValue({
       kind: 'app',
       path: 'Vue dev server',
       mime: 'application/x-cheesex-app',
-      url: '/api/topics/topic-A/app/',
+      url: 'https://preview-topic-a.example/',
       tunnel_up: true,
       artifact_id: 'a1',
     })
@@ -150,19 +158,18 @@ describe('预览面板：运行中的应用到不了的时候说什么', () => {
     await openPreview(container)
 
     const frame = container.querySelector('iframe.preview-frame') as HTMLIFrameElement | null
-    expect(frame?.getAttribute('src')).toBe('/api/topics/topic-A/app/')
+    expect(frame?.getAttribute('src')).toBeNull()
+    expect(frame?.getAttribute('name')).toBeTruthy()
+    expect(HTMLFormElement.prototype.submit).toHaveBeenCalledOnce()
     // 授权先落地，否则 iframe 的第一个请求就 404 —— 白框。
-    expect(primeAppPreview).toHaveBeenCalledWith('topic-A')
-    // 页面是芝士写的：给了 same-origin 就等于把会话 token 交出去。
-    expect(frame?.getAttribute('sandbox')).not.toContain('allow-same-origin')
+    expect(requestPreviewSession).toHaveBeenCalledWith('topic-A')
+    // The named form targets an isolated content origin, so storage can work.
+    expect(frame?.getAttribute('sandbox')).toContain('allow-same-origin')
   })
 })
 
 describe('预览面板：文件读回来了但没有内容', () => {
-  // 后端的文本读取有 1MB 上限（它保护的是文件面板里那个能保存的编辑器），超了就
-  // 回 content: null。预览面板以前把这个 null 直接当空字符串塞进 iframe，于是一个
-  // 2MB 的产物渲染成一块不说话的白板——和「还没指定预览」长得一模一样。
-  it('文件超过上限 → 说清楚是太大了，并留下「在新窗口打开」这条出口', async () => {
+  it('大文件不再受文本编辑器读取上限限制，直接从独立来源加载', async () => {
     getPreview.mockResolvedValue({ kind: 'file', path: 'report.html', mime: 'text/html', artifact_id: 'a1' })
     readFile.mockResolvedValue({
       path: 'report.html',
@@ -176,12 +183,9 @@ describe('预览面板：文件读回来了但没有内容', () => {
     await flush()
     await openPreview(container)
 
-    expect(container.textContent).toContain('太大')
-    expect(container.textContent).toContain('2.0 MB')
-    // 白板的两个来源必须分得开：这不是「暂无预览」。
-    expect(container.textContent).not.toContain('暂无预览')
-    expect(container.querySelector('iframe.preview-frame')).toBeNull()
-    expect(container.textContent).toContain('在新窗口打开')
+    expect(container.textContent).not.toContain('太大')
+    expect(container.querySelector('iframe.preview-frame')).toBeTruthy()
+    expect(requestPreviewSession).toHaveBeenCalledWith('topic-A')
   })
 
   it('文件不是文本 → 说的是它读不了，不是它太大', async () => {
