@@ -18,7 +18,7 @@ import {
   saveOthersGroupOpen,
   visibleRows,
 } from '../lib/topicTree'
-import { avatarColor } from '../utils/avatar'
+import { avatarColor, avatarInitial } from '../utils/avatar'
 
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import SecondaryNavigation from './common/Navigation/SecondaryNavigation.vue'
@@ -103,6 +103,13 @@ const projectPages = [
 function openProjectPage(name: string) {
   if (!props.selectedProjectId) return
   router.push({ name, params: { projectId: props.selectedProjectId } })
+}
+
+// 换项目落在项目地址本身，而不是它的某个话题：哪个话题该开着是那个项目的事
+// （手机上这个地址就是它的话题列表，桌面上它自己跳大本营）。
+function openProject(projectId: string) {
+  if (projectId === props.selectedProjectId) return
+  router.push({ name: 'workspace-project', params: { projectId } })
 }
 
 // New topic: don't ask the human for a title — create an untitled one and open
@@ -509,7 +516,31 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
               <v-icon class="rail-header__caret" size="18" icon="mdi-chevron-down" />
             </button>
           </template>
-          <v-list density="compact" nav>
+          <v-list density="compact" nav max-height="60vh">
+            <!-- 整页形态下这个菜单是**唯一**能换项目的地方：一个项目一格的那条
+                 竖 rail 只在桌面渲染，底栏「工作区」那一格只落到一个项目，于是
+                 手机上进了一个项目就再也走不到别的项目去。桌面不列——rail 已经
+                 是那个入口，同一件事有两个入口只会让人猜哪个才算数。 -->
+            <template v-if="page && projects.length > 1">
+              <v-list-subheader class="t-eyebrow">切换项目</v-list-subheader>
+              <v-list-item
+                v-for="p in projects"
+                :key="p.id"
+                :active="p.id === selectedProjectId"
+                rounded="lg"
+                @click="openProject(p.id)"
+              >
+                <template #prepend>
+                  <span class="private-avatar-slot me-3">
+                    <span class="dm-avatar project-avatar" :style="{ backgroundColor: avatarColor(p.name) }">{{
+                      avatarInitial(p.name)
+                    }}</span>
+                  </span>
+                </template>
+                <v-list-item-title class="t-body">{{ p.name }}</v-list-item-title>
+              </v-list-item>
+              <v-divider class="my-1" />
+            </template>
             <v-list-item
               prepend-icon="mdi-cog-outline"
               title="项目设置"
@@ -870,7 +901,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
             <v-list density="compact" nav max-height="320">
               <v-list-item v-for="dm in otherDms" :key="dm.handle" @click="startDm(dm.handle)">
                 <template #prepend>
-                  <span class="private-avatar-slot">
+                  <span class="private-avatar-slot me-3">
                     <span class="dm-avatar" :style="{ backgroundColor: avatarColor(dm.handle) }">{{
                       dm.name.slice(0, 1).toUpperCase()
                     }}</span>
@@ -1234,9 +1265,10 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   flex: none;
   overflow: visible;
 }
-/* Human DM avatar: an initial in a muted circle, sized to match 芝士's 18px
-   avatar so both DM columns share the same icon/text lead. */
-.dm-avatar {
+/* 首字母头像：人的（.dm-avatar，圆）和项目的（.project-avatar，方）同一套底子，
+   都按 芝士 那颗 18px 头像的大小走，图标列和文字列才对得齐。 */
+.dm-avatar,
+.project-avatar {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1251,6 +1283,12 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   font-size: 10px;
   font-weight: 600;
   line-height: 1;
+}
+/* 项目头像：和人的头像同一个底子（.dm-avatar），只换形状——方头像，和桌面那条
+   竖 rail 上一个项目一格的画法是同一种语言。人是靠方/圆区分「这是个项目」还是
+   「这是个人」的，都画成圆的就混了。 */
+.project-avatar {
+  border-radius: var(--radius-sm);
 }
 /* 置顶行的图标：# / 总览 / 日历，三个各不相同所以留着；未读转琥珀。 */
 .row-glyph {

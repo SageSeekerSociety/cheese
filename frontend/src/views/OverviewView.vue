@@ -628,53 +628,16 @@ onMounted(load)
 .dot-ai {
   background: var(--faint);
 }
-/* Rendered markdown for the 一页纸总结 (v-html → :deep). */
+/* 概要是一段短摘要，字号和标题都比项目文档正文收一档；其余样式（含窄屏保护）
+   在 style.css 的 .md-content 那一份里，不再各抄一遍。 */
 .md-content {
   font-size: 0.92rem;
   line-height: 1.65;
-}
-.md-content :deep(p) {
-  margin: 0 0 8px;
-}
-.md-content :deep(p:last-child) {
-  margin-bottom: 0;
 }
 .md-content :deep(h1),
 .md-content :deep(h2),
 .md-content :deep(h3) {
   font-size: 1.05em;
-  font-weight: 600;
   margin: 12px 0 6px;
-}
-.md-content :deep(ul),
-.md-content :deep(ol) {
-  margin: 4px 0;
-  padding-left: 20px;
-}
-.md-content :deep(li) {
-  margin: 2px 0;
-}
-.md-content :deep(li::marker) {
-  color: var(--faint);
-}
-.md-content :deep(a) {
-  color: var(--accent-ink);
-  text-decoration: none;
-}
-.md-content :deep(a:hover) {
-  text-decoration: underline;
-}
-.md-content :deep(code) {
-  font-family: var(--font-mono);
-  background: var(--fill);
-  padding: 0.5px 5px;
-  border-radius: var(--radius-sm);
-  font-size: 0.88em;
-}
-.md-content :deep(blockquote) {
-  margin: 6px 0;
-  padding-left: 12px;
-  border-left: 2px solid var(--line-2);
-  color: var(--muted);
 }
 </style>
