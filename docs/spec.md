@@ -254,7 +254,7 @@ Project 自己管自己的策略。因为所有话题底层是 git 分支，权�
 
 - 一件事 = 一件活。它背后自动关联一些技术资源（AI 会话、代码分支、开发环境），用户不用管这些，它们自动跟着这件活走。一个项目对应一个代码仓库。一件活的分支从它所在房间的分支切出来，做完合回去，最终合到主分支。
 - 项目也可以**关联一个已有的 git 仓库**（上游）：把外部 repo 的历史拉进项目，之后随时"同步上游"合入新提交。这让"接手一个已有项目/代码库"成为一等公民——不是导入一次性快照，而是保持一条可持续同步的通道。冲突时同步原样中止（不合一半），交由芝士/人在话题里解决。
-- 【预留概念：**发布**】采纳是话题级的完成，"发布"是项目级的交付：打一个版本 tag，并触发一组发布动作（push GitHub 镜像、部署 demo 网站、导出 PDF 报告……）。这是 CD 在知是里的对应物——学生项目的"上线/给评委演示/报告定稿 v2"都是发布。暂不实现：目前唯一需要它的场景是平台自举（dogfooding 的 redeploy，用仓库工具顶着），等真实用户需求出现再设计，避免拍脑袋发明概念。
+- **Project delivery:** topic acceptance merges reviewed work into the project's accepted branch. The project-level delivery page publishes a private static Site from a specific accepted revision. Each project owns one Site; its URL stays fixed, and accepted changes reach the live Site only after an explicit publish. Files are copied into persistent release storage, so the Site does not depend on the development machine. Topic previews link to project delivery without publishing their working branches. Automatic builds, backend application hosting, public sharing, PDF export and GitHub mirroring are outside this initial release.
 - 话题的核心生命周期事件是"采纳"（Accept）：话题的主要成果被验收通过 = 这件事完成。因为所有产出底层都是 git repo 里的文件，采纳在实现上就是**当场 merge**（#718：点一下就是合并，合的是人看到的那个 commit；"只在绿的时候合"由项目的分支保护规则执行）——不管产出是代码、报告还是设计稿。采纳**不归档**（#442 决定 1）：话题保持活跃，归档是人单独做的动作；归档后工作面冻结，但对话永远可以追加评论（和 GitHub 里 merge 后的 PR 一样）。一件活 = 一件事 = 一次交付；想分批做 = 在同一个房间里再派一件活。没做完的房间也可以归档（打个"草稿"标签）。
 - 谁来验收：在项目设定的权限策略范围内（见 §4.4），芝士根据判断把验收卡递给一个具体的人（谁最懂这块/谁没参与过/谁有空），卡上写"等 XX 验收"。组长可以通过私聊告诉芝士偏好（见 §1 私聊）。验收记名、可撤回。
 - 冲突处理：芝士先尝试解决（它能看到两边话题的完整上下文）；解决不了就把两边放在一起，@ 相关人来拍板，结论写回文档。总览的定期巡检也会预警"两个话题改了同一个文件"。

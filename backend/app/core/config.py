@@ -82,6 +82,11 @@ class Settings(BaseSettings):
     # the compose file may claim it.
     deployed_via_compose: bool = False
     frontend_url: str = "http://localhost:5200"
+    # Dedicated content domain, outside the platform's registrable domain.
+    # Empty until its wildcard DNS/TLS and host-preserving gateway are ready.
+    sites_domain: str = ""
+    sites_scheme: str = "https"
+    sites_port: int | None = None
     # OAuth browser-flow landing pages (must match the frontend router).
     frontend_oauth_success_path: str = "/account/oauth/success"
     frontend_oauth_error_path: str = "/account/oauth/error"

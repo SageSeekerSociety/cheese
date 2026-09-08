@@ -15,6 +15,23 @@ export interface Project {
   external_task_id?: number | null
 }
 
+export interface ProjectSite {
+  id: string
+  url: string
+  source_revision: string
+  directory: string
+  published_at: string
+  published_by: string
+}
+
+export interface ProjectSiteInfo {
+  can_publish: boolean
+  source_revision: string | null
+  candidates: { directory: string; entry_file: string }[]
+  site: ProjectSite | null
+  unavailable_reason?: string | null
+}
+
 export interface Topic {
   id: string
   project_id: string

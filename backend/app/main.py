@@ -559,6 +559,11 @@ async def report_unhandled_to_room(request: Request, call_next: Callable):  # ty
 # body we declared and the body we sent differ.
 app.add_middleware(ResponseIntegrityAudit)
 
+# Content hosts must never reach platform APIs, including authentication routes.
+from app.domain.site.hosting import SiteHostMiddleware  # noqa: E402
+
+app.add_middleware(SiteHostMiddleware, platform=app)
+
 
 loaded_routers = _discover_routers(app)
 

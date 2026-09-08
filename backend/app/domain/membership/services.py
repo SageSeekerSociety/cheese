@@ -23,6 +23,11 @@ class MemberService:
         self._repo = MemberRepository(session)
         self._projects = ProjectRepository(session)
 
+    async def get(
+        self, *, project_id: uuid.UUID, user_handle: str
+    ) -> ProjectMember | None:
+        return await self._repo.get(project_id=project_id, user_handle=user_handle)
+
     async def _ensure_project(self, project_id: uuid.UUID) -> None:
         if await self._projects.get(project_id) is None:
             raise NotFoundError("Project not found")
