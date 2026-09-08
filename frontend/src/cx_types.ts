@@ -320,6 +320,8 @@ export interface ProjectMember {
 export interface ProjectMemberRow {
   user_handle: string
   role: string
+  source?: 'team'
+  team_id?: number
   name?: string
   // 这个人**自己选的**头像素材 id（getAvatarUrl 拼成 /avatars/{id}）。两种情况
   // 为 null：名册行背后没有 fusion 用户档案，或者他从来没设过头像（档案还指着
