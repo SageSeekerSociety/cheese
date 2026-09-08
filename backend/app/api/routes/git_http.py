@@ -225,12 +225,20 @@ async def branch_for_place(
         raise NotFoundError("这个地点现在没有可写的分支")
     base, base_sha = await asyncio.to_thread(ws.base_branch_head, project_id)
     delivered = False
+    on_head = ""
     if on and on != place.branch_name:
         history = await WorkTreeService(db).history(place.room_id)
         delivered = any(
             ws.branch_for_tree(t.id) == on and t.status is TreeStatus.merged
             for t in history
         )
+        if delivered:
+            # 上一批交出去的是哪个 commit。A device grafting its next batch has to
+            # do a three-way merge whose BASE is the content that was delivered —
+            # not the natural common ancestor, which is from before the previous
+            # batch even started and makes that batch's own changes look like
+            # unmerged local work all over again.
+            on_head = await asyncio.to_thread(ws.branch_head, project_id, on)
     return ok(
         {
             "branch": place.branch_name,
@@ -238,6 +246,7 @@ async def branch_for_place(
             "base": base,
             "base_sha": base_sha,
             "on_delivered": delivered,
+            "on_head": on_head,
         }
     )
 

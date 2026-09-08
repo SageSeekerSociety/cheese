@@ -659,6 +659,7 @@ cheese_field() {
 branch="$(cheese_field branch)"
 base="$(cheese_field base)"
 base_sha="$(cheese_field base_sha)"
+on_head="$(cheese_field on_head)"
 delivered=""
 # JSON whitespace is not part of the fact: `"on_delivered":true` and
 # `"on_delivered": true` are the same answer, and a pattern that only matched one
@@ -670,41 +671,61 @@ head="$(git rev-parse --verify -q HEAD 2>/dev/null || true)"
 failed=""
 tried=""
 detail=""
-# 上一批已经交付，房间换到了下一批 —— 接上去。
-#
-# 接不上去的话，这个 clone 的每一个新提交都还长在上一批的提交上，而上一批是被
-# squash 进 main 的：新分支上会重新带着上一批的改动，PR 的三点 diff 把它们再展示
-# 一遍，squash 正文再声称一遍。**祖先关系答不了这件事**（squash 提交不是被压的那
-# 条分支的后代），所以「上一批交付了没有」和「新一批从哪个 commit 起」这两件事都
-# 是平台**告诉**这里的，不是这里猜的。
-#
-# 接法只用 plumbing：`git merge-tree` 在**不碰工作区、不碰 index、不动 HEAD** 的
-# 情况下做一次真正的三方合并，把这个 clone committed 的东西合到新的 base 上。分身
-# 正在看的文件、`git status` 的输出、二分到一半的状态，一个字节都不变 —— 那条
-# 「这里永远不移动 HEAD」的不变量原样成立。未提交的东西不进分支（它进下面的快照
-# ref，和以前一样）：未提交的内容变成「已交付」是另一个方向的错。
-#
-# 冲突就是冲突：不推分支、如实报出来、快照照写，人能捞回全部内容。
+lease=""
+graft=""
 if [ -n "$head" ] && [ -n "$branch" ] && [ -n "$here" ] && [ "$here" != "$branch" ] \
-   && [ -n "$delivered" ] && [ -n "$base_sha" ]; then
+   && [ -n "$delivered" ]; then
+  graft=1
+fi
+# 上一批已经交付，房间换到了下一批 —— 把这个 clone 的活接到新一批上。
+#
+# 不接的话，这里的每一个新提交都还长在上一批的提交上，而上一批是被 squash 进
+# main 的：新分支上会重新带着上一批的改动，PR 的三点 diff 把它们再展示一遍，squash
+# 正文再声称一遍。**祖先关系答不了这件事**（squash 提交不是被压的那条分支的后代），
+# 所以下面三样都是平台**告诉**这里的，一样都不猜：上一批交付了没有、新一批从哪个
+# commit 起（`base_sha`）、上一批交出去的是哪个 commit（`on_head`）。
+#
+# `--merge-base` 是这里唯一正确的形状。少了它，三方合并会用**天然共同祖先**当基
+# 线 —— 那是上一批开始之前的那个 commit，于是上一批的改动被当成「我这边的新改动」
+# 再算一遍：main 在交付之后动过的同一个文件会被判成冲突，甚至被回滚掉。基线必须
+# 是**已经交付出去的那份内容**，那样这次合并说的才是「把交付之后写的东西，接到
+# 现在的 main 上」。
+#
+# 全程 plumbing：不碰工作区、不碰 index、不动 HEAD。分身正在看的文件、`git status`
+# 的输出、二分到一半的状态，一个字节都不变 —— 那条「这里永远不移动 HEAD」的不变量
+# 原样成立。未提交的东西不进分支（它进下面的快照 ref，和以前一样）：未提交的内容
+# 变成「已交付」是另一个方向的错。
+#
+# 每一步失败都是失败：不推分支、如实报出来、快照照写，人能捞回全部内容。绝不
+# 「退回旧 head 再强推」—— 那是在最该小心的时候做最危险的动作。
+if [ -n "$graft" ]; then
   git fetch -q origin "${base:-main}" >/dev/null 2>&1 || true
-  if git rev-parse -q --verify "$base_sha^{commit}" >/dev/null 2>&1; then
-    # The EXIT STATUS is the answer, not the output: `merge-tree` prints a tree
-    # oid for a conflicted merge too — one full of conflict markers — so reading
-    #「有输出就是成功」would push exactly the thing this is here to refuse.
-    if grafted_tree="$(git merge-tree --write-tree "$base_sha" "$head" \
-      2>/dev/null)"; then
-      head="$(git commit-tree "$grafted_tree" -p "$base_sha" \
-        -m "cheese: carry this batch onto $branch" 2>/dev/null || printf '%s' "$head")"
-    else
-      tried=1
-      failed=1
-      detail="conflict grafting onto $branch"
-    fi
+  if [ -z "$base_sha" ] || [ -z "$on_head" ]; then
+    tried=1; failed=1
+    detail="the platform did not say where $branch starts"
+  elif ! git rev-parse -q --verify "$base_sha^{commit}" >/dev/null 2>&1 \
+    || ! git rev-parse -q --verify "$on_head^{commit}" >/dev/null 2>&1; then
+    tried=1; failed=1
+    detail="this clone does not have the commits $branch is measured from"
+  # The EXIT STATUS is the answer, not the output: `merge-tree` prints a tree
+  # oid for a conflicted merge too — one full of conflict markers — so reading
+  #「有输出就是成功」would push exactly the thing this is here to refuse.
+  elif ! grafted_tree="$(git merge-tree --write-tree --merge-base="$on_head" \
+    "$base_sha" "$head" 2>/dev/null)"; then
+    tried=1; failed=1
+    detail="conflict grafting onto $branch"
+  elif ! grafted="$(git commit-tree "$grafted_tree" -p "$base_sha" \
+    -m "cheese: carry this batch onto $branch" 2>/dev/null)"; then
+    tried=1; failed=1
+    detail="could not build the commit that carries this batch onto $branch"
   else
-    tried=1
-    failed=1
-    detail="the platform named a base commit this clone does not have"
+    head="$grafted"
+    # 换写要带 lease，而且是**点名那个 SHA** 的 lease，不是裸的
+    # `--force-with-lease`：裸的比对的是本地的 remote-tracking ref，而这块屏幕
+    # 可能几个小时没 fetch 过，于是「我以为远端还是那样」本身就是过期的。这里比
+    # 对的是刚刚从远端读回来的值，读到之后远端再动一下，这次推送就被拒。
+    lease="$(git ls-remote origin "refs/heads/$branch" 2>/dev/null \
+      | cut -f1)"
   fi
 fi
 if [ -z "$branch" ]; then
@@ -715,7 +736,15 @@ if [ -z "$branch" ]; then
   detail="could not learn which batch this place is writing to"
 elif [ -z "$failed" ] && [ -n "$head" ]; then
   tried=1
-  git push -q -f origin "$head:refs/heads/$branch" >/dev/null 2>&1 || failed=1
+  if [ -n "$graft" ]; then
+    # 衔接是这条脚本里**唯一**一次改写：新分支上的历史要从 base 重新长出来。
+    git push -q --force-with-lease="refs/heads/$branch:$lease" origin \
+      "$head:refs/heads/$branch" >/dev/null 2>&1 || failed=1
+  else
+    # 平常的推送**不带 -f**。远端有别人的提交时被拒，就该被拒：房间里另一个分身、
+    # 平台的 push-fix、人手动推的东西，都不该被这一轮无声抹掉。拒了如实报失败。
+    git push -q origin "$head:refs/heads/$branch" >/dev/null 2>&1 || failed=1
+  fi
 fi
 # The scratch index lives inside .git so it is never something the agent can see
 # and never a path git would try to add to itself.

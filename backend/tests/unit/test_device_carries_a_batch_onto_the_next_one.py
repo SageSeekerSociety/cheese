@@ -99,6 +99,14 @@ def _device_clone(root: Path, remote: Path, branch: str) -> Path:
 
 
 def _turn(work: Path, sync: Path, platform: _Platform, remote: Path, log: Path) -> str:
+    """One turn ending. Returns what the hook reported FOR THIS TURN.
+
+    The log is truncated first, deliberately. Reading a cumulative log and
+    asserting `"status":"ok"` is in it is the most convincing false green there
+    is — the ok can be last turn's, and the assertion passes while this turn
+    failed.
+    """
+    log.write_text("")
     bindir = work.parent / "bin"
     bindir.mkdir(exist_ok=True)
     (bindir / "cheese-hook").write_text(f'#!/bin/sh\ncat >> "{log}"\n')
@@ -119,9 +127,13 @@ def _turn(work: Path, sync: Path, platform: _Platform, remote: Path, log: Path) 
     return log.read_text()
 
 
+_STAGING = [0]
+
+
 def _squash_into_main(bare: Path, root: Path, branch: str) -> str:
     """真的 squash 合并：main 拿到内容，而那条分支**不是** main 的祖先。"""
-    staging = root / "staging"
+    _STAGING[0] += 1
+    staging = root / f"staging-{_STAGING[0]}"
     _git(root, "clone", "-q", str(bare), str(staging))
     _git(staging, "config", "user.email", "p@z")
     _git(staging, "config", "user.name", "platform")
@@ -184,6 +196,7 @@ def test_the_next_batch_carries_only_its_own_changes_onto_the_new_branch():
                 "base": "main",
                 "base_sha": main_sha,
                 "on_delivered": True,
+                "on_head": delivered_tip,
             }
             (work / "two.txt").write_text("batch two\n")
             _git(work, "add", "-A")
@@ -244,11 +257,11 @@ def test_a_conflict_carrying_the_batch_over_is_reported_and_nothing_is_lost():
                 "base": "main",
                 "base_sha": main_sha,
                 "on_delivered": True,
+                "on_head": _git(work, "rev-parse", "HEAD").strip(),
             }
             (work / "shared.txt").write_text("the agent's next version\n")
             _git(work, "commit", "-qam", "feat: batch two")
             (work / "scratch.txt").write_text("还没提交的东西\n")
-            log.write_text("")
 
             reported = _turn(work, sync, platform, bare, log)
 
@@ -262,3 +275,267 @@ def test_a_conflict_carrying_the_batch_over_is_reported_and_nothing_is_lost():
             assert (work / "shared.txt").read_text() == "the agent's next version\n"
         finally:
             platform.stop()
+
+
+def _remote_commit(bare: Path, root: Path, branch: str, name: str) -> str:
+    """别人往这条分支上推了一个提交 —— 另一个分身、平台的 push-fix、或者人。"""
+    _STAGING[0] += 1
+    other = root / f"other-{_STAGING[0]}"
+    _git(root, "clone", "-q", str(bare), str(other))
+    _git(other, "config", "user.email", "o@z")
+    _git(other, "config", "user.name", "somebody else")
+    _git(other, "checkout", "-q", "-B", branch, f"origin/{branch}")
+    (other / name).write_text(f"{name}\n")
+    _git(other, "add", "-A")
+    _git(other, "commit", "-qm", f"chore: {name}")
+    _git(other, "push", "-q", "origin", branch)
+    return _git(other, "rev-parse", "HEAD").strip()
+
+
+def _tree_of(bare: Path, branch: str) -> list[str]:
+    out = _git(bare, "ls-tree", "-r", "--name-only", branch)
+    return sorted(x for x in out.splitlines() if x)
+
+
+def test_a_commit_somebody_else_pushed_is_not_wiped_out_by_this_turn():
+    """远端已经有别人的提交，这一轮的推送**必须被拒**，而不是把它抹掉。
+
+    一条无条件的 `push -f` 会静默吃掉房间里另一个分身、平台的 `push-fix`、或者人
+    手推上去的东西 —— 而且照样报 ok。丢数据已经够糟，报成功更糟：出事的人连出过
+    事都不知道。
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        bare = _platform_repo(root)
+        work = _device_clone(root, bare, "topic/one")
+        sync = root / "cheese-sync"
+        sync.write_text(_sync_body())
+        log = root / "hook.log"
+        platform = _Platform()
+        platform.payload = {"branch": "topic/one", "on_delivered": False}
+        try:
+            (work / "mine.txt").write_text("mine\n")
+            _git(work, "add", "-A")
+            _git(work, "commit", "-qm", "feat: mine")
+            _turn(work, sync, platform, bare, log)
+
+            _remote_commit(bare, root, "topic/one", "other.txt")
+            (work / "local.txt").write_text("local\n")
+            _git(work, "add", "-A")
+            _git(work, "commit", "-qm", "feat: local")
+
+            reported = _turn(work, sync, platform, bare, log)
+        finally:
+            platform.stop()
+
+        assert "other.txt" in _tree_of(bare, "topic/one"), (
+            "别人的提交被这一轮的推送抹掉了"
+        )
+        assert '"status":"failed"' in reported, reported
+
+
+def test_a_remote_that_moved_after_the_lease_was_read_is_not_overwritten():
+    """衔接那一次是这条脚本里唯一的改写，所以它带 lease —— 而 lease 比对的必须是
+    **刚从远端读到的那个 SHA**，不是本地那份可能几小时没更新的 remote-tracking。
+
+    屏障卡在脚本读 lease 的那一刻：读完之后、推送之前，远端又前进一步。时序是
+    构造出来的，不靠跑量。
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        bare = _platform_repo(root)
+        work = _device_clone(root, bare, "topic/one")
+        sync = root / "cheese-sync"
+        sync.write_text(_sync_body())
+        log = root / "hook.log"
+        platform = _Platform()
+        try:
+            platform.payload = {"branch": "topic/one", "on_delivered": False}
+            (work / "one.txt").write_text("batch one\n")
+            _git(work, "add", "-A")
+            _git(work, "commit", "-qm", "feat: batch one")
+            _turn(work, sync, platform, bare, log)
+            delivered_tip = _git(work, "rev-parse", "HEAD").strip()
+            main_sha = _squash_into_main(bare, root, "topic/one")
+            # 下一批的分支上已经有东西了（另一个分身先开工了）。
+            _git(bare, "branch", "topic/two", "topic/one")
+
+            platform.payload = {
+                "branch": "topic/two",
+                "base": "main",
+                "base_sha": main_sha,
+                "on_delivered": True,
+                "on_head": delivered_tip,
+            }
+            (work / "two.txt").write_text("batch two\n")
+            _git(work, "add", "-A")
+            _git(work, "commit", "-qm", "feat: batch two")
+            _race_on_ls_remote(root, work.parent / "bin", bare, "topic/two")
+
+            reported = _turn(work, sync, platform, bare, log)
+        finally:
+            platform.stop()
+
+        assert (root / "raced").exists(), "屏障没有生效：远端没有在读 lease 之后动过"
+        assert '"status":"failed"' in reported, reported
+        assert "raced.txt" in _tree_of(bare, "topic/two"), (
+            "读到 lease 之后落到远端的提交被这次衔接抹掉了"
+        )
+        assert "two.txt" not in _tree_of(bare, "topic/two")
+
+
+def _race_on_ls_remote(root: Path, bindir: Path, bare: Path, branch: str) -> None:
+    """装一个 `git` 垫片：答完 `ls-remote` 之后，远端立刻前进一步。
+
+    这正是要证明的那个窗口 —— 脚本读远端当前值来构造 lease，读完到推之间落下的
+    任何提交都不许被覆盖。
+    """
+    real = subprocess.run(
+        ["which", "git"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    racer = root / "race.sh"
+    racer.write_text(
+        "#!/bin/sh\n"
+        f'[ -f "{root}/raced" ] && exit 0\n'
+        f'touch "{root}/raced"\n'
+        f'{real} clone -q "{bare}" "{root}/racer" || exit 0\n'
+        f'cd "{root}/racer" || exit 0\n'
+        f"{real} config user.email o@z\n"
+        f"{real} config user.name other\n"
+        f'{real} checkout -q -B "{branch}" "origin/{branch}"\n'
+        "echo raced > raced.txt\n"
+        f"{real} add -A\n"
+        f'{real} commit -qm "chore: raced"\n'
+        f'{real} push -q origin "{branch}"\n'
+    )
+    racer.chmod(0o755)
+    bindir.mkdir(exist_ok=True)
+    shim = bindir / "git"
+    shim.write_text(
+        "#!/bin/sh\n"
+        f'out="$({real} "$@")" || exit $?\n'
+        f'case " $* " in *" ls-remote "*) "{racer}" >/dev/null 2>&1 || true;; esac\n'
+        "printf '%s\\n' \"$out\"\n"
+    )
+    shim.chmod(0o755)
+
+
+def test_main_moving_a_file_this_batch_never_touched_is_not_a_conflict():
+    """上一批把 `one.txt` 交付了，main 之后又改了它；下一批只新增一个无关文件。
+
+    这必须成功。用天然共同祖先当基线的话，上一批那次改动会被当成「我这边的改动」
+    再算一遍，于是 main 在交付之后对同一个文件的修改被判成冲突 —— 更糟的是新批次
+    的分支根本建不出来，这一批无法开工。基线必须是**已经交付出去的那份内容**。
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        bare = _platform_repo(root)
+        work = _device_clone(root, bare, "topic/one")
+        sync = root / "cheese-sync"
+        sync.write_text(_sync_body())
+        log = root / "hook.log"
+        platform = _Platform()
+        try:
+            platform.payload = {"branch": "topic/one", "on_delivered": False}
+            (work / "one.txt").write_text("delivered by batch one\n")
+            _git(work, "add", "-A")
+            _git(work, "commit", "-qm", "feat: batch one")
+            _turn(work, sync, platform, bare, log)
+            delivered_tip = _git(work, "rev-parse", "HEAD").strip()
+            _squash_into_main(bare, root, "topic/one")
+
+            # main 在交付**之后**又改了这个文件。
+            _STAGING[0] += 1
+            staging = root / f"after-{_STAGING[0]}"
+            _git(root, "clone", "-q", str(bare), str(staging))
+            _git(staging, "config", "user.email", "p@z")
+            _git(staging, "config", "user.name", "platform")
+            (staging / "one.txt").write_text("main improved it afterwards\n")
+            _git(staging, "commit", "-qam", "fix: improve one.txt")
+            _git(staging, "push", "-q", "origin", "main")
+            main_sha = _git(staging, "rev-parse", "HEAD").strip()
+
+            # 下一批只新增一个完全无关的文件。
+            platform.payload = {
+                "branch": "topic/two",
+                "base": "main",
+                "base_sha": main_sha,
+                "on_delivered": True,
+                "on_head": delivered_tip,
+            }
+            (work / "two.txt").write_text("batch two\n")
+            _git(work, "add", "-A")
+            _git(work, "commit", "-qm", "feat: batch two")
+
+            reported = _turn(work, sync, platform, bare, log)
+        finally:
+            platform.stop()
+
+        assert '"status":"ok"' in reported, reported
+        assert "refs/heads/topic/two" in _refs(bare)
+        assert _pr_would_show(bare, "main", "topic/two") == ["two.txt"]
+        # main 在交付之后的那次修改**没有被回滚**。
+        assert (
+            _git(bare, "show", "topic/two:one.txt") == "main improved it afterwards\n"
+        )
+
+
+def test_a_third_batch_and_repeated_syncs_within_one_batch():
+    """不是只有「第二批的第一次同步」成立。
+
+    同一批里同步好几次（分身一轮一轮地干），以及第三批 —— 每一次都只能带着这一批
+    自己的改动。
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        bare = _platform_repo(root)
+        work = _device_clone(root, bare, "topic/one")
+        sync = root / "cheese-sync"
+        sync.write_text(_sync_body())
+        log = root / "hook.log"
+        platform = _Platform()
+        try:
+            platform.payload = {"branch": "topic/one", "on_delivered": False}
+            (work / "one.txt").write_text("batch one\n")
+            _git(work, "add", "-A")
+            _git(work, "commit", "-qm", "feat: batch one")
+            assert '"status":"ok"' in _turn(work, sync, platform, bare, log)
+            tip_one = _git(work, "rev-parse", "HEAD").strip()
+            main_after_one = _squash_into_main(bare, root, "topic/one")
+
+            platform.payload = {
+                "branch": "topic/two",
+                "base": "main",
+                "base_sha": main_after_one,
+                "on_delivered": True,
+                "on_head": tip_one,
+            }
+            for nth in ("a", "b", "c"):
+                (work / f"two-{nth}.txt").write_text(f"batch two {nth}\n")
+                _git(work, "add", "-A")
+                _git(work, "commit", "-qm", f"feat: batch two {nth}")
+                assert '"status":"ok"' in _turn(work, sync, platform, bare, log)
+                # 每一次都只带这一批的东西，反复同步不会越滚越多。
+                assert _pr_would_show(bare, "main", "topic/two") == sorted(
+                    f"two-{x}.txt" for x in "abc"[: "abc".index(nth) + 1]
+                )
+
+            # 第二批交付，第三批开工。上一批交出去的是**远端那条分支**的样子。
+            tip_two = _git(bare, "rev-parse", "topic/two").strip()
+            main_after_two = _squash_into_main(bare, root, "topic/two")
+            platform.payload = {
+                "branch": "topic/three",
+                "base": "main",
+                "base_sha": main_after_two,
+                "on_delivered": True,
+                "on_head": tip_two,
+            }
+            (work / "three.txt").write_text("batch three\n")
+            _git(work, "add", "-A")
+            _git(work, "commit", "-qm", "feat: batch three")
+
+            assert '"status":"ok"' in _turn(work, sync, platform, bare, log)
+        finally:
+            platform.stop()
+
+        assert _pr_would_show(bare, "main", "topic/three") == ["three.txt"]
