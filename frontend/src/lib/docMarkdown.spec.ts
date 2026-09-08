@@ -41,6 +41,16 @@ function expectClean(md: string) {
 }
 
 describe('normalizeMarkdown tolerances', () => {
+  it('allows equivalent emphasis around links and escaped literal punctuation', () => {
+    expectClean('**[官方资料](https://example.org)**')
+    expectClean('**[作者。** _论文题名_](https://example.org)')
+  })
+
+  it('still rejects lost link destinations, emphasis and raw HTML', () => {
+    expect(compareRoundTrip('[资料](https://example.org)', '[资料](https://different.org)').clean).toBe(false)
+    expect(compareRoundTrip('**资料**', '资料').clean).toBe(false)
+    expect(compareRoundTrip('<img src="diagram.png">', '').clean).toBe(false)
+  })
   it('collapses blank-line runs and trailing whitespace', () => {
     expect(normalizeMarkdown('a  \n\n\n\nb\n')).toBe('a\n\nb')
   })

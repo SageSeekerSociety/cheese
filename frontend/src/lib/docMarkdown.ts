@@ -38,6 +38,9 @@ export const lowlight = createLowlight(common)
 // flanking, which supplies exactly the missing escape hatch and leaves
 // non-CJK text alone.
 export const docMarked = new Marked(markedCjkFriendly())
+// Tiptap adds editor-only tokenizers to docMarked. Fidelity rendering must use
+// an independent standard Markdown parser so unsupported nodes stay visible.
+const fidelityMarked = new Marked(markedCjkFriendly())
 
 // ---- Image: display resolves workspace-relative paths to the raw-file API,
 // but the node ATTR keeps the original path — markdown serialization reads the
@@ -434,6 +437,17 @@ export function compareRoundTrip(original: string, roundTripped: string): RoundT
   const a = normalizeMarkdown(original)
   const b = normalizeMarkdown(roundTripped)
   if (a === b) return { clean: true, diff: '' }
+  // Escaped literal punctuation and equivalent emphasis delimiters can differ
+  // byte-for-byte while preserving the document. Compare the independent
+  // inline Markdown renderer, not the editor's parsed tree (which could already
+  // have dropped unsupported HTML). Block syntax and code stay strict.
+  const rendered = (md: string) =>
+    mapProse(md, (seg) =>
+      fidelityMarked
+        .parseInline(seg, { async: false })
+        .replace(/<(strong|em)>(<a\b[^>]*>)([\s\S]*?)<\/a><\/\1>/g, '$2<$1>$3</$1></a>')
+    )
+  if (rendered(a) === rendered(b)) return { clean: true, diff: '' }
   const al = a.split('\n')
   const bl = b.split('\n')
   const diffs: string[] = []
