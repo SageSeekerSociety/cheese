@@ -222,6 +222,9 @@ function width(i: number): string {
 .skel__roster:first-of-type {
   margin-top: 4px;
 }
+.skel__roster:last-of-type {
+  margin-bottom: 4px;
+}
 .skel__roster-main {
   display: flex;
   flex-direction: column;
