@@ -94,6 +94,12 @@ _ACCEPT_PR_OPEN_FAILED_PREFIX = "采纳未完成：开不出 PR"
 #: 卡上有 PR 但此刻推进不了（GitHub 不可达 / PR 被关闭未合并 / …）。绑定 GitHub
 #: 的项目采纳只通过合并 PR 完成 (#363)——这类失败停下亮出来，永不落 local merge。
 _ACCEPT_PR_STALLED_PREFIX = "采纳未完成：PR 未能合并"
+#: 卡带着交付主张（change_subject 非空），树的分支上却没有任何提交。2026-09-07
+#: 卡 40be3e1a：改动被推到了别的分支，树分支从未存在，`open_pr_for_card` 把它
+#: 当成讨论话题返回 None，采纳落进本地合并 no-op——卡标成 accepted，人以为交付
+#: 完成，而改动没有合进任何地方。主张交付却无从交付的采纳必须停下；只有真正的
+#: 存量讨论卡（change_subject 为 NULL，递于 subject 必填之前）才允许 no-op 采纳。
+_ACCEPT_NO_BRANCH_PREFIX = "采纳未完成：这棵树的分支上没有任何提交"
 
 #: pending_gate 孤儿卡 (2026-08-11). 判死的卡和检查真红了的卡都落在 `gate_failed`
 #: 上，但对芝士意味着完全相反的下一步——「没跑完」= 原样重递，「没通过」= 去修
@@ -136,6 +142,31 @@ _MERGE_FAILED_MESSAGE = (
     "The card remains pending and the topic stays active; repair the workspace "
     "and retry."
 )
+
+
+def _stale_view_message(pr_number: int | None, action: str) -> str:
+    """「你看到的版本已过时」—— 卡面渲染时的 head 与卡当前的 head 不是一个。
+
+    与「head 在你查看后变了」(`_refresh_stale_card` 那条) 是同一件事的两个发现
+    时机：那条是点击时现读 GitHub 才发现漂移，这条是轮询器**已经**把卡刷到新
+    head、只有浏览器里那份还停在旧版本。卡不用刷新（它已经是新的），要刷新的
+    是人的眼睛。"""
+    where = f"PR #{pr_number} " if pr_number is not None else ""
+    return f"{where}有新提交，你看到的版本已过时 —— 请重新看过再{action}"
+
+
+def _never_shown_message(pr_number: int | None, action: str) -> str:
+    """「卡面还没显示过任何版本」—— PR 上的卡，`pr_head_sha` 还是空的。
+
+    这不是「没有版本可以过时」，而是**还不知道要合什么**：卡刚递上来、轮询器
+    还没镜像过 head，屏幕上那张卡从来没写出过一个 sha，所以点下去只能拿现读
+    GitHub 的 head 去合 —— 一个从未在任何界面上出现过的 commit。卡先刷新到当前
+    head（`_refresh_stale_card`），人重新看一眼，那一版才算被看过。"""
+    where = f"PR #{pr_number} " if pr_number is not None else ""
+    return (
+        f"{where}的卡还没显示过任何版本（刚递上来，还没读到 PR 的 head），"
+        f"卡已刷新 —— 请重新看过再{action}"
+    )
 
 
 #: How much of the failure detail rides in the nudge message. The detail is
@@ -268,6 +299,13 @@ _MISSING_SUBJECT = (
 #: here is the one overlap a machine can judge on its own (#314).
 _ALEMBIC_VERSIONS_DIR = "alembic/versions/"
 
+#: 声明了一条本房间没有的活。Almost always a copy-pasted id from another room's
+#: 简报; naming the room is what makes that visible instead of "not found".
+_NOT_THIS_ROOMS_WORK = (
+    "这个房间里没有活 {task_id}。--task 只认本房间派出的活的 id"
+    "（`cheese split` 当时打印的那个）。"
+)
+
 
 #: 人工放行时「当时检查是什么状态」对应的那半句话。以前它是写死的「明知检查未
 #: 全绿仍合并」，而放行的常见场景之一恰恰是检查**已经全绿**、平台却还没合（比如
@@ -388,6 +426,7 @@ class AcceptService:
         routing_reason: str = "",
         change_subject: str | None = None,
         change_body: str | None = None,
+        task_ids: list[uuid.UUID] | None = None,
     ) -> AcceptCard:
         topic = await self._topic_or_404(topic_id)
         # Before anything else touches the DB: a missing or malformed subject is
@@ -410,6 +449,11 @@ class AcceptService:
         # (#442 decision 1) —— 那一半由下面的 `accepted` 卡挡着。
         if topic.status == TopicStatus.archived:
             raise ValidationError("话题已归档，不能再递验收卡")
+        # Whose work this is, as the room says (#189). Checked here — before a
+        # tree is opened or a row is written — because a bad id is the filer's
+        # to fix in the same breath, and because what it ends up as is a line in
+        # permanent history.
+        delivered = await self._declared_work(topic, task_ids or [])
         # One card at a time, not a broadcast (spec §4.4): re-route / wait
         # instead of stacking a new one.
         #
@@ -424,9 +468,21 @@ class AcceptService:
         # 一棵树一个 PR: the thing that may not happen twice at once is two PRs
         # on ONE branch. Asking the room instead would refuse a second batch its
         # own PR, which is precisely what a second tree exists to allow.
-        tree = await WorkTreeService(self._session).ensure_open(
-            project_id=topic.project_id, room_id=topic.id
-        )
+        trees = WorkTreeService(self._session)
+        tree = await trees.ensure_open(project_id=topic.project_id, room_id=topic.id)
+        if trees.started_a_batch:
+            # 开一批活落在两个地方，而它们不能一起回滚：`work_trees` 的行，和
+            # `ws.bind_tree` 在磁盘上写的「这个房间写哪棵树」。这个方法底下还有
+            # 好几道会 raise 的闸（空树守卫首当其冲），raise 走的是请求事务的
+            # 回滚 —— 行没了，映射还在，房间从此指着一棵不存在的树。
+            #
+            # 而那道空树守卫恰恰要**点名一条分支**让人把提交推上去。它报的名字
+            # 来自刚开的这棵树，422 又把这棵树烧掉，下次递卡开的是另一棵、报的
+            # 是另一个名字 —— 照着推永远白推（房间 2026-09-08 实测）。
+            #
+            # 所以这一行先落地，跟这次递卡成不成没有关系。它本来就与递卡无关：
+            # 房间开着一棵空树是每两批活之间的常态，而磁盘已经这么认为了。
+            await self._session.commit()
         # Plus this place's tree-less cards. A card filed before trees existed
         # kept `tree_id IS NULL` wherever the backfill had no honest value to
         # give it, so asking the tree alone makes a live card from that era
@@ -442,6 +498,30 @@ class AcceptService:
         )
         if blocking is not None:
             raise ValidationError(_BLOCKED_BY_CARD_MESSAGES[blocking.status])
+        # 有活才有卡：这张卡带的 change_subject 是交付主张，绑定 GitHub 的项目
+        # 会拿它去开 PR，而 PR 要有分支可骑。树的分支不存在时 PR 开不出来，本地
+        # 合并也是 no-op——2026-09-07 卡 40be3e1a 就这样被标成 accepted，而改动
+        # 其实被推到了别的分支，没有合进任何地方。在递卡这一刻就拒绝，并点名该
+        # 推哪条分支。Best-effort：绑定状态或分支探测出错不拦递卡——采纳路径上
+        # 的 `_stop_accept_no_branch` 才是硬闸门（那边判定不了会 fail closed）。
+        from app.domain.workspace import service as ws
+
+        try:
+            tree_branch_missing = await self._github_bound(
+                topic.project_id
+            ) and not await asyncio.to_thread(
+                ws.topic_branch_exists, topic.project_id, topic_id
+            )
+        except Exception:  # noqa: BLE001 — 判定不了不拦递卡
+            tree_branch_missing = False
+        if tree_branch_missing:
+            branch = await asyncio.to_thread(
+                lambda: ws.branch_for_tree(ws.tree_for_place(topic_id))
+            )
+            raise ValidationError(
+                f"这棵树的分支（{branch}）上没有任何提交，没有东西可以交付。"
+                f"改动可能被提交到了别的分支——把提交推上 {branch} 后再递卡。"
+            )
         # Nothing to deliver is a fact about the branch, so ask the branch. It
         # used to be inferred from "this topic already had a card accepted",
         # which is true only until somebody commits again — and rooms do, that
@@ -450,8 +530,6 @@ class AcceptService:
         # (nothing was ever written) and the PR path already reports it with
         # the detail this check cannot see.
         if any(c.status == AcceptStatus.accepted for c in existing):
-            from app.domain.workspace import service as ws
-
             has_new = await asyncio.to_thread(
                 ws.has_undelivered_commits, topic.project_id, topic_id
             )
@@ -473,9 +551,66 @@ class AcceptService:
             status=AcceptStatus.pending,
             change_subject=change_subject,
             change_body=(change_body or None),
+            delivered_task_ids=delivered,
         )
         await self._warn_about_a_second_pending_migration(topic)
         return card
+
+    async def _declared_work(
+        self, topic: Topic, task_ids: list[uuid.UUID]
+    ) -> list[uuid.UUID]:
+        """The work this delivery says it carries, validated (#189).
+
+        The room declares it, because the room is the only party that knows.
+        The platform cannot derive it: a task's `tree_id` records which batch
+        was open when `cheese split` ran, not where its code eventually landed,
+        so the tree's membership names whoever happened to be sitting on it —
+        and the commits cannot be asked either, since inside the sandbox they
+        are all authored by the requester and co-authored by the model.
+
+        Exactly ONE thing is checkable, and it is checked rather than trusted,
+        because a wrong `Cheese-Task:` is permanent and reads exactly like a
+        right one: **the work belongs to THIS room**. A pasted id from another
+        room's brief would otherwise credit that room's worker on this change.
+
+        **为什么没有防重复。** 这里曾经还拦一条：「这条活被某张已采纳的卡声明过
+        了」。它跟本仓写明的语义直接冲突 —— `TaskStatus` 的 docstring 说 a task
+        can be delivered and still open (someone keeps pushing to the same
+        branch)。连续交付是既有语义：一条活参与上一批、之后继续写代码、真实地写
+        进下一批，是长命房间的常态，那条校验会把这条**真实**的声明拒掉。同一条
+        活出现在两次交付的历史里不是错误，它确实写了两批的代码。
+
+        剩下唯一算得上「同一批被署了两次」的形状，也不需要一条校验来防：
+        - 一次请求里报两遍 —— 下面的 `dict.fromkeys` 去重，它跟报一遍说的是同
+          一件事；
+        - 一棵树上两张卡各报一次 —— 一张卡采纳后树就 merged，`ensure_open` 给下
+          一批开的是新树，所以「同一棵树的第二张卡」只在前一张 **rejected /
+          voided** 之后才存在（`_CARD_BLOCKS_NEW_CARD` 只拦非终态）。那两种前一
+          张卡都没有交付过任何东西，重递并重报正是补救的路，拦它才是错的。
+
+        「重复署名却没有新贡献」是另一回事，而平台判不了它：能被机器判定的只有
+        分支上有没有新提交，那道闸已经在 `_NOTHING_TO_DELIVER`。再发明一条近似
+        规则，只会重新开始拒真放假。
+
+        What is deliberately NOT checked is whether the work "looks finished" —
+        a closed thread can have delivered nothing and an open one can have
+        written the whole change, so any such rule would reject true
+        declarations while still admitting false ones.
+
+        Empty in, empty out, and no inference: an undeclared delivery lands with
+        no `Cheese-Task:` line at all. One card naming the same work twice is
+        deduped rather than refused — it says nothing different from naming it
+        once.
+        """
+        wanted = list(dict.fromkeys(task_ids))
+        if not wanted:
+            return []
+        in_room = await TaskService(self._session).list_in_room(topic.id)
+        mine = {t.id for t in in_room}
+        for task_id in wanted:
+            if task_id not in mine:
+                raise ValidationError(_NOT_THIS_ROOMS_WORK.format(task_id=task_id))
+        return wanted
 
     async def _warn_about_a_second_pending_migration(self, topic: Topic) -> None:
         """两张未决卡各带一个新迁移 → 在房间里说一声 (#314).
@@ -649,9 +784,10 @@ class AcceptService:
         )
         data["approvals_required"] = approvals_required_of(project)
         # 卡上的状态＝合并态 (#718)。骑 PR 的卡读轮询器的镜像（还没镜像过 =
-        # unknown，下一拍收敛）；未绑 GitHub 的项目 (#363) 用本地判定 —— 唯一的
-        # 信号是「上次合并撞没撞冲突」（conflict 状态），没有信号就如实说
-        # unknown，但那里的采纳本来就纯粹是人的判断，who 恒为 human。
+        # unknown，下一拍收敛）；未绑 GitHub 的项目 (#363 拍板) 分支保护默认
+        # 关、没有检查可读，卡直接是 CLEAN —— 唯一会推翻它的信号是「上次合并
+        # 撞了冲突」（conflict 状态）→ dirty。who 恒为 human：那里的采纳本来
+        # 就纯粹是人的判断。
         if card.pr_number is not None:
             mirror = card.merge_state if isinstance(card.merge_state, dict) else None
             data["merge_state"] = mirror or {
@@ -670,9 +806,7 @@ class AcceptService:
             }
         else:
             local = merge_state.local_merge_state(
-                conflicts_with_trunk=(
-                    True if card.status == AcceptStatus.conflict else None
-                )
+                conflicts_with_trunk=(card.status == AcceptStatus.conflict)
             )
             data["merge_state"] = {
                 "state": local.state,
@@ -803,7 +937,12 @@ class AcceptService:
         return card
 
     async def arm_auto_merge(
-        self, *, card_id: uuid.UUID, decided_by: str, enabled: bool
+        self,
+        *,
+        card_id: uuid.UUID,
+        decided_by: str,
+        enabled: bool,
+        head_sha: str | None = None,
     ) -> AcceptCard:
         """绿了自动合 (#718)，GitHub auto-merge 的对应物。
 
@@ -813,6 +952,13 @@ class AcceptService:
 
         谁能布防：这张卡的验收人（跟采纳同一个人 —— 布防就是「提前采纳」）。
         项目要先开 `auto_merge_allowed`。解除给同一个人加布防人自己。
+
+        布防等于提前采纳，所以它跟采纳一样要声明「我看的是哪一版」
+        （`_seen_head_or_refresh`）：屏幕上那版已经过时、或者卡面还没显示过任何
+        版本的话，布防就是替一段没人看过的代码预先按下同意。
+        **这跟合并态是不是 blocked 无关**——这个开关本来就只在
+        BLOCKED / BEHIND 出现，规则没满足正是布防的前提，拒的理由只有「旧 SHA」
+        一个。解除布防不需要看过任何版本：撤销自己的同意什么都不会合并。
         """
         from app.domain.project.protection import branch_protection_of
 
@@ -830,6 +976,7 @@ class AcceptService:
         if decided_by not in allowed:
             raise ForbiddenError("只有这张卡的验收人能设置自动合并")
         if enabled:
+            await self._seen_head_or_refresh(card, topic, head_sha, "布防")
             card.auto_merge_armed_by = decided_by
             card.auto_merge_armed_at = datetime.now(UTC)
         else:
@@ -871,7 +1018,88 @@ class AcceptService:
             name=f"accept notice topic={topic.id}",
         )
 
-    async def accept(self, *, card_id: uuid.UUID, decided_by: str) -> AcceptCard:
+    @staticmethod
+    def _seen_head(card: AcceptCard, head_sha: str | None, action: str) -> str | None:
+        """合的是**人看到的**那个 commit：核对请求声明的 head，并把它交回去用。
+
+        `head_sha` 是前端渲染这张卡时卡面上的 head（`merge_state.head_sha`）。
+        它必须仍然是卡当前的 `pr_head_sha`——不一致意味着轮询器在渲染与点击之间
+        把卡刷到了新 commit，而屏幕上那份还是旧的：点下去合的会是一段**没有人
+        看过**的代码 (`advance_pr_card` 每 60s 跑一次，这个窗口天天都在)。
+        `dismiss_stale` 保护不了它，那条只清批准票，而采纳本身就是一票。
+
+        None 与 None 相等只在**没有 GitHub PR 的那条 lane 上**成立：卡面显示的
+        就是「没有 sha」，合的是 diff 视图展示的那条分支本身，没有哪一版可以过
+        时。骑着 PR 的卡不是这样——那种情况下「卡上没有 sha」意味着还不知道要合
+        哪个 commit，`_seen_head_or_refresh` 在进这里之前就把它拦下了。反过来，
+        卡上有 head 而请求什么都不带（老客户端）就是不相等，照样拒——不带 sha
+        不是绕过这道闸的方式。
+
+        返回值是**请求带的**那个 sha，调用方拿它去调合并 API：GitHub 的 sha
+        参数会在点击瞬间再拦一次漂移（409）。
+        """
+        seen = (head_sha or "").strip() or None
+        if seen != (card.pr_head_sha or None):
+            raise ValidationError(_stale_view_message(card.pr_number, action))
+        return seen
+
+    async def _seen_head_or_refresh(
+        self, card: AcceptCard, topic: Topic, head_sha: str | None, action: str
+    ) -> str | None:
+        """`_seen_head`，外加「PR 上的卡必须先有过一个展示出来的 head」这道闸。
+
+        骑着 PR 的卡在 `pr_head_sha` 还是空的时候（刚递上来、轮询器 60s 才跑一
+        次），卡面从未写出过任何 sha。此时放行等于让下游拿**现读 GitHub** 的
+        head 去合，而那个 commit 从来没有在任何界面上显示过——采纳、人工放行、
+        自动合布防三个入口都会走到那里，是同一个洞。
+
+        所以这不是「没有版本可以过时」，是「还不知道要合什么」：把当前 head 镜像
+        到卡上，让人重新看一眼，看过的那一版才谈得上被采纳。没有 PR 的本地 lane
+        不进这道闸——那条路合的就是 diff 视图展示的分支本身。
+        """
+        if card.pr_number is not None and not (card.pr_head_sha or "").strip():
+            await self._refresh_never_shown_card(card, topic, action)
+        return self._seen_head(card, head_sha, action)
+
+    async def _refresh_never_shown_card(
+        self, card: AcceptCard, topic: Topic, action: str
+    ) -> NoReturn:
+        """把 PR 当前的 head 镜像到一张从没显示过 sha 的卡上，然后要求重看。
+
+        读 head 是尽力而为：读不到就刷新一张没有 head 的卡（轮询器下一跳会补
+        上），但**绝不**因此放行——放行的前提是人看过某一版，读不到 head 恰恰
+        说明没有任何一版可看。"""
+        from app.domain.review import github_pr
+
+        number = card.pr_number
+        assert number is not None  # PR lane only; the caller checked
+        live = ""
+        creds, why = await self._app_credentials(topic)
+        if creds is None:
+            logger.warning("card %s: no credentials to read PR head (%s)", card.id, why)
+        else:
+            try:
+                owner, repo = await self._pr_repo_of(card, topic)
+                live = await github_pr.default_client().pull_request_head_sha(
+                    owner=owner, repo=repo, number=number, token=creds.read
+                )
+            except Exception as exc:  # noqa: BLE001 — refuse anyway; refresh with what we have
+                logger.warning("card %s: first-look head read failed: %s", card.id, exc)
+        await self._refresh_stale_card(
+            card,
+            topic,
+            live_head=live,
+            action=action,
+            headline=(
+                f"PR #{number} 的 head 还没镜像到卡上，卡面没显示过任何版本；"
+                "已刷新到当前 head"
+            ),
+        )
+        raise ValidationError(_never_shown_message(number, action))
+
+    async def accept(
+        self, *, card_id: uuid.UUID, decided_by: str, head_sha: str | None = None
+    ) -> AcceptCard:
         card = await self._card_or_404(card_id)
         # 机器闸门 (eval C2): the card isn't in the reviewer's hands yet / died.
         if card.status == AcceptStatus.pending_gate:
@@ -887,8 +1115,10 @@ class AcceptService:
         # decided_by is the caller's verified actor handle, never body-trusted.
         if decided_by != card.reviewer_handle:
             raise ForbiddenError("你不是这张验收卡指定的验收人，无权采纳")
-
         topic = await self._topic_or_404(card.topic_id)
+        # 合的是人看到的那个 commit：屏幕上那一版还在，才谈得上采纳它。
+        seen_head = await self._seen_head_or_refresh(card, topic, head_sha, "采纳")
+
         # 归档会连带终结这个话题上还没决议的卡 (review/archive.py)，所以这里通常
         # 走不到；留着是为了兜住"归档与采纳同时发生"的竞态。重复采纳本身由上面的
         # 卡状态闸门挡（一张卡只能 accepted 一次），不再依赖话题被归档。
@@ -921,12 +1151,20 @@ class AcceptService:
         #     without one — a fire-and-forget publish that failed or is still
         #     in flight — gets its PR opened right here, and ANY failure on the
         #     PR path stops the accept visibly rather than falling through to
-        #     the local merge (#362/#363). Accepting MERGES, here and now
-        #     (#718): the merge-state rules already said the button may light,
-        #     and the merge API is called with the head the human saw.
-        #     The one PR-less case that legitimately proceeds is a
-        #     discussion-only topic with no branch, where the local merge
-        #     no-ops and bypasses nothing.
+        #     the local merge (#362/#363). Opening it does NOT merge it this
+        #     click: the card never showed a head, so nothing on screen names
+        #     the commit that would land. The PR stays (it is the useful half),
+        #     its head goes onto the card, and the next click has something to
+        #     match. Accepting MERGES, here and now (#718) for every card that
+        #     already rode a PR: the merge-state rules said the button may
+        #     light, and the merge API is called with the head the human saw.
+        #     The one PR-less case that legitimately proceeds is a legacy card
+        #     with no delivery claim (change_subject IS NULL, filed before
+        #     subjects were required) on a branchless topic, where the local
+        #     merge no-ops and bypasses nothing. A card that DOES claim a
+        #     change but has no tree branch to carry it stops instead
+        #     (2026-09-07, 卡 40be3e1a: the work sat on another branch and
+        #     "accepted" merged nothing at all).
         #   - the platform forge (unbound): the local merge IS this project's
         #     accept (#363), and `forge.note` says so on the card so it can
         #     never read as a bound project that skipped its PR.
@@ -934,18 +1172,46 @@ class AcceptService:
         if forge.requires_pr:
             if card.pr_number is None:
                 await self._publish_pr_for_accept(card, topic)
+                if card.pr_number is not None:
+                    # PR 是这一秒才开出来的：卡面在此之前没有、现在也还没有一个
+                    # 被展示过的 head。「人看的是同一条分支」不等于「同一个
+                    # commit」—— 浏览器从来没有声明过它渲染的 diff 是哪个 sha，
+                    # 而分身边干边推是常态。所以这次不合，PR 留着（开 PR 是有价
+                    # 值的副作用，下次采纳就有 head 可比），head 镜像上卡，人重
+                    # 新看过再点。
+                    await self._refresh_never_shown_card(card, topic, "采纳")
             if card.pr_number is not None:
-                return await self._merge_pr_for_accept(card, topic, decided_by)
+                assert seen_head is not None  # the guard above rules None out
+                return await self._merge_pr_for_accept(
+                    card, topic, decided_by, seen_head=seen_head
+                )
+            if (card.change_subject or "").strip():
+                await self._stop_accept_no_branch(card, topic)
         unbound_note = forge.note
 
         # 采纳 = merge (spec §6.3) — and the merge DECIDES the outcome. A
         # conflict must never silently archive the topic while the work is
         # stranded on its branch (that shipped a lie once): the card moves to
         # `conflict`, 芝士 gets dispatched to resolve, a human retries.
+        #
+        # The platform forge squashes (#363), same shape as the GitHub lane's
+        # product: one commit, the card's subject and body, the pr_text
+        # trailers, authored by the requester (committer stays 芝士). The
+        # message and author are resolved HERE because merge_topic has no DB
+        # session to read the card or the roster with.
         from app.domain.workspace import service as ws
 
+        who = await identity.attribution(self._session, topic, card=card)
         try:
-            merged = await asyncio.to_thread(ws.merge_topic, topic.project_id, topic.id)
+            merged = await asyncio.to_thread(
+                ws.merge_topic,
+                topic.project_id,
+                topic.id,
+                message=pr_text.local_merge_commit_message(
+                    topic, decided_by, card, who
+                ),
+                author=who.author,
+            )
         except Exception as exc:  # noqa: BLE001 — surface, don't invent success
             logger.exception(
                 "accept merge raised for project=%s topic=%s",
@@ -1391,7 +1657,12 @@ class AcceptService:
         }
 
     async def _merge_pr_for_accept(
-        self, card: AcceptCard, topic: Topic, decided_by: str
+        self,
+        card: AcceptCard,
+        topic: Topic,
+        decided_by: str,
+        *,
+        seen_head: str,
     ) -> AcceptCard:
         """App forge: 采纳 = 当场调合并 API，合的是人看到的那个 commit (#718).
 
@@ -1401,13 +1672,16 @@ class AcceptService:
         项目直接调 API（405 就是被拦住，平台一个字不重算）；其余项目 clean /
         unstable（红的不在必跑名单）才合，非绿拒绝采纳并把状态和原因写进响应。
 
-        The merge call carries the head the human saw (`card.pr_head_sha`,
-        the poller's mirror). Any push that landed after their look — before
-        the click (live head differs) or during it (GitHub answers 409) —
-        refreshes the card instead of merging: head updated, approvals cleared
-        when the project dismisses stale accepts, and the human asked to look
-        again. #422's whole authorize-then-drift apparatus is replaced by this
-        one API parameter plus dismiss-stale.
+        The merge call carries the head the human saw — `seen_head`, the sha
+        the BROWSER rendered, already checked against the card by
+        `_seen_head_or_refresh`, and never anything else: there is no "just
+        read the live head" fallback, because a live head is by definition one
+        no screen has shown. Any push that landed after their look — before the
+        click (live head differs) or during it (GitHub answers 409) — refreshes
+        the card instead of merging: head updated, approvals cleared when the
+        project dismisses stale accepts, and the human asked to look again.
+        #422's whole authorize-then-drift apparatus is replaced by this one API
+        parameter plus dismiss-stale.
         """
         from app.domain.review import github_pr
 
@@ -1454,9 +1728,10 @@ class AcceptService:
                 card, topic, f"PR #{number} 已在 GitHub 被关闭但未合并"
             )
 
-        # 合的是人看到的那个 commit：卡面镜像的 head。镜像还没写过的卡（刚递、
-        # 轮询器没来得及看）没有「人看到的另一个版本」，以当前 head 为准。
-        seen = card.pr_head_sha or status.head_sha
+        # 合的是人看到的那个 commit：浏览器渲染时卡面上的 head，一个字都不兜底。
+        # GitHub 上的合并永远不用「现取的 head」——那种 commit 没有在任何界面上
+        # 出现过（`_seen_head_or_refresh` 是这条规矩的入口闸）。
+        seen = seen_head
         if status.head_sha != seen:
             await self._refresh_stale_card(card, topic, live_head=status.head_sha)
             raise ValidationError(
@@ -1495,9 +1770,7 @@ class AcceptService:
                 f"现在不能采纳（合并态：{verdict.state}）：{detail or '规则未满足'}"
             )
 
-        attribution = await identity.attribution(
-            self._session, topic, task_id=card.task_id
-        )
+        attribution = await identity.attribution(self._session, topic, card=card)
         result = await client.merge_pull_request(
             owner=owner,
             repo=repo,
@@ -1566,7 +1839,13 @@ class AcceptService:
         return card
 
     async def _refresh_stale_card(
-        self, card: AcceptCard, topic: Topic, *, live_head: str
+        self,
+        card: AcceptCard,
+        topic: Topic,
+        *,
+        live_head: str,
+        action: str = "采纳",
+        headline: str | None = None,
     ) -> None:
         """新提交作废已有的采纳 (#718, dismiss_stale — GitHub 的「Dismiss stale
         pull request approvals」，这里默认开): the head moved out from under
@@ -1606,9 +1885,9 @@ class AcceptService:
                 notes.record(
                     fresh,
                     None,
-                    f"PR #{number} 有新提交，之前看到的版本已过时"
+                    (headline or f"PR #{number} 有新提交，之前看到的版本已过时")
                     + ("；已有的批准一并作废" if dismiss else "")
-                    + "，请重新查看后再采纳",
+                    + f"，请重新查看后再{action}",
                 )
                 await session.commit()
         except Exception:  # noqa: BLE001 — the raise this accompanies must fire
@@ -2159,9 +2438,7 @@ class AcceptService:
             )
             await self._session.flush()
             return
-        attribution = await identity.attribution(
-            self._session, topic, task_id=card.task_id
-        )
+        attribution = await identity.attribution(self._session, topic, card=card)
         result = await client.merge_pull_request(
             owner=owner,
             repo=repo,
@@ -2746,6 +3023,54 @@ class AcceptService:
         )
         raise ValidationError(f"采纳未完成：PR 未能合并（{why}）。处理后重试采纳")
 
+    async def _stop_accept_no_branch(self, card: AcceptCard, topic: Topic) -> NoReturn:
+        """带交付主张的卡开不出 PR，因为这棵树的分支上没有任何提交（2026-09-07
+        卡 40be3e1a：改动被推到了别的分支）。旧路径把 `open_pr_for_card` 的 None
+        当「纯讨论话题」落进本地合并 no-op——卡标成 accepted，人以为交付完成，而
+        改动没有合进任何地方。主张交付却无从交付：停下，把该推哪条分支写在卡上，
+        推上后重试采纳。
+
+        Same rollback-first dance as `_stop_accept_pr_unavailable`, same reason:
+        the note is written on its own connection and must never queue behind a
+        row lock this doomed transaction still holds. Everything the note and
+        notification need is read while the instances are live, before the
+        rollback expires them."""
+        from app.domain.workspace import service as ws
+
+        card_id = card.id
+        subject = (card.change_subject or "").strip()
+        branch = await asyncio.to_thread(
+            lambda: ws.branch_for_tree(ws.tree_for_place(topic.id))
+        )
+        note = (
+            f"{_ACCEPT_NO_BRANCH_PREFIX}（{branch}），开不出能承载"
+            f"「{subject}」的 PR。改动可能被提交到了别的分支——"
+            f"把提交推上 {branch} 后重试采纳。"
+        )
+        self._notify_merge_result(
+            topic,
+            "采纳未完成：树上没有可交付的提交",
+            meta=notice(
+                EVENT_ACCEPT_STOPPED,
+                severity=SEVERITY_ERROR,
+                who=WHO_HUMAN,
+                detail=(
+                    f"这张卡主张交付「{subject}」，但这棵树的分支（{branch}）上"
+                    "没有任何提交：开不出 PR，也没有东西可以合并。改动可能在"
+                    f"别的分支上；把提交推上 {branch} 后重试采纳。"
+                ),
+                detail_label="为什么停下",
+            ),
+        )
+        await self._session.rollback()
+        await self._note_outside_accept_txn(
+            card_id, notes.NoteCode.accept_no_branch, note
+        )
+        raise ValidationError(
+            f"采纳未完成：这棵树的分支（{branch}）上没有任何提交，无法开 PR。"
+            f"改动可能在别的分支上；把提交推上 {branch} 后重试采纳"
+        )
+
     async def _publish_pr_for_accept(self, card: AcceptCard, topic: Topic) -> None:
         """无 PR 卡在采纳现场补开 App PR（#296 stage 1 的生产回归修复）.
 
@@ -2769,8 +3094,11 @@ class AcceptService:
         request back — the card must keep the PR it now rides, or the next
         attempt would look PR-less again. `open_pr_for_card` can still return
         None (its own not-applicable checks); with the caller pre-checking
-        `_github_bound`, in practice that means a discussion-only topic with
-        no branch — the card is left untouched and the local merge no-ops.
+        `_github_bound`, in practice that means a topic with no tree branch.
+        The card is left untouched, and the CALLER decides what a branchless
+        topic means: a legacy card with no delivery claim proceeds into the
+        no-op local merge, while a card claiming a change stops the accept
+        (`_stop_accept_no_branch` — 2026-09-07 卡 40be3e1a).
         When opening the PR FAILS, the accept STOPS: the reason is persisted
         on the card outside this transaction, the room is told, and
         ValidationError surfaces to the caller. Silently direct-pushing main
@@ -2915,7 +3243,12 @@ class AcceptService:
         return card
 
     async def merge_despite_checks(
-        self, *, card_id: uuid.UUID, decided_by: str, reason: str = ""
+        self,
+        *,
+        card_id: uuid.UUID,
+        decided_by: str,
+        reason: str = "",
+        head_sha: str | None = None,
     ) -> AcceptCard:
         """人明知规则没满足，仍然决定合并——**署名的**显式出口（人工放行）。
 
@@ -2935,6 +3268,11 @@ class AcceptService:
         同一条线），路由也**故意不进** `app/main.py` 的 `_CHEESE_WRITE_PATHS`——
         照 `void` 的先例：不进白名单本身拦不住任何东西（没列进去的写路由压根不
         过那个中间件），真正拦住芝士的是这里的 `_forbid_ai` 加路由上的登录校验。
+
+        放行**放的是规则，不是眼睛**：它跟采纳一样要声明「我看的是哪一版」
+        （`_seen_head_or_refresh`）。签字的人要为一段具体的代码背书，屏幕上那版
+        已经不在了、或者卡面压根没显示过任何版本的时候，这个签名就落到了别的东西
+        上。
         """
         from app.domain.project.protection import branch_protection_of
 
@@ -2964,6 +3302,10 @@ class AcceptService:
                 "只有项目分支保护的人工放行名单里的人能放行"
                 "（未配置名单时是项目 owner / 组长）"
             )
+        # 骑着 PR 的卡在这里必然带着一个被展示过的 sha：卡面从没显示过 head 的
+        # （刚递、轮询器还没镜像）会被刷新并要求重看，而不是拿现读的 head 去合。
+        seen_head = await self._seen_head_or_refresh(card, topic, head_sha, "放行")
+        assert seen_head is not None  # PR lane; the guard above rules None out
 
         creds, why = await self._pr_poll_credentials(card, topic)
         if creds is None:
@@ -2973,17 +3315,11 @@ class AcceptService:
 
         owner, repo = await self._pr_repo_of(card, topic)
         client = github_pr.default_client()
-        if not card.pr_head_sha:
-            # 放行合并同样只合人看到的那个 commit —— 卡面还没镜像过 head 的话，
-            # 先看今天的它。
-            card.pr_head_sha = await client.pull_request_head_sha(
-                owner=owner, repo=repo, number=card.pr_number, token=creds.read
-            )
         # 留痕用，不是门禁：读一次「此刻检查是什么状态」，读不到也照样放行。
         state: str | None = None
         try:
             state, tail = await client.check_state(
-                owner=owner, repo=repo, ref=card.pr_head_sha, token=creds.read
+                owner=owner, repo=repo, ref=seen_head, token=creds.read
             )
             checks_at_merge = f"{state}（{tail.splitlines()[0] if tail else ''}）"
         except Exception as exc:  # noqa: BLE001 — a broken read must not lock a human out
@@ -2997,7 +3333,7 @@ class AcceptService:
         verdict = _force_merge_verdict(state)
 
         number = card.pr_number
-        who = await identity.attribution(self._session, topic, task_id=card.task_id)
+        who = await identity.attribution(self._session, topic, card=card)
         result = await client.merge_pull_request(
             owner=owner,
             repo=repo,
@@ -3006,10 +3342,10 @@ class AcceptService:
             commit_title=pr_text.merge_commit_title(card, topic, number),
             commit_message=pr_text.merge_commit_message(topic, decided_by, card, who),
             # 放行合的也是人看到的那个 commit：head 变了 GitHub 409，卡刷新。
-            sha=card.pr_head_sha,
+            sha=seen_head,
         )
         if result.stale_head:
-            await self._refresh_stale_card(card, topic, live_head="")
+            await self._refresh_stale_card(card, topic, live_head="", action="放行")
             raise ValidationError(
                 f"PR #{number} 的 head 在放行瞬间变了（GitHub 409），卡已刷新 —— "
                 "请重新看过再放行"

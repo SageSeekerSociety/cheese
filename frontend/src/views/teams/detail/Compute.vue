@@ -3,7 +3,7 @@
 // platform cloud machines and self-hosted nodes live in one team pool; projects
 // only provide billing/audit attribution, while a topic chooses the actual target.
 import type { TeamResourceQuotas } from '@/api'
-import type { ComputeProfiles, MyDevice, Project, ProjectMachine } from '@/cx_types'
+import type { MyDevice, Project, ProjectMachine } from '@/cx_types'
 
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
@@ -20,7 +20,6 @@ import {
   unregisterDeviceFromTeam,
 } from '@/api'
 import { teamDataInjectionKey } from '@/keys'
-import { TeamsApi } from '@/network/api/teams'
 
 type CloudMachine = ProjectMachine & { projectName: string }
 
@@ -39,11 +38,9 @@ const selectedProjectUsage = computed(
   () => quotas.value?.projects.find((project) => project.id === selectedProject.value)?.machines_used ?? 0
 )
 const quotaFull = computed(() => Boolean(selectedQuota.value && selectedQuota.value.used >= selectedQuota.value.limit))
-const teamCompute = ref<ComputeProfiles | null>(null)
 const loading = ref(false)
 const error = ref<string | null>(null)
 const busy = ref<string | null>(null)
-const savingDefault = ref<string | null>(null)
 const cloudConfigured = ref(true)
 
 const createDialog = ref(false)
@@ -119,15 +116,13 @@ async function load() {
   quotas.value = null
   selectedProject.value = null
   try {
-    const [teamDevices, mine, profile, projectList] = await Promise.all([
+    const [teamDevices, mine, projectList] = await Promise.all([
       listTeamDevices(teamId.value),
       listMyDevices().catch(() => ({ devices: [] })),
-      TeamsApi.getComputeProfile(teamId.value),
       listProjects(teamId.value),
     ])
     devices.value = teamDevices.devices
     myDevices.value = mine.devices
-    teamCompute.value = profile.data
     projects.value = projectList.data
     selectedProject.value = selectedProject.value ?? projects.value[0]?.id ?? null
     await loadCloud()
@@ -142,8 +137,6 @@ async function load() {
 async function refreshCloud() {
   try {
     await loadCloud()
-    const profile = await TeamsApi.getComputeProfile(teamId.value)
-    teamCompute.value = profile.data
   } catch (cause) {
     error.value = errorMessage(cause, '刷新云算力状态失败')
   } finally {
@@ -155,20 +148,6 @@ function schedulePoll() {
   if (pollTimer) clearTimeout(pollTimer)
   pollTimer = null
   if (cloudMoving.value) pollTimer = setTimeout(refreshCloud, 5000)
-}
-
-async function pickDefault(profileId: string) {
-  if (!canManage.value || savingDefault.value || teamCompute.value?.current === profileId) return
-  savingDefault.value = profileId
-  error.value = null
-  try {
-    const response = await TeamsApi.setComputeProfile(teamId.value, profileId)
-    if (teamCompute.value) teamCompute.value = { ...teamCompute.value, current: response.data.current }
-  } catch (cause) {
-    error.value = errorMessage(cause, '修改团队默认算力失败')
-  } finally {
-    savingDefault.value = null
-  }
 }
 
 async function addMachine(device: MyDevice) {
@@ -247,7 +226,7 @@ onBeforeUnmount(() => {
       <div>
         <h2 class="text-h6 font-weight-medium mb-1">算力</h2>
         <p class="text-body-2 text-medium-emphasis mb-0">
-          团队统一管理云机器和自有设备。新话题沿用上次选择，第一条消息发出后锁定到该算力。
+          团队统一管理云额度和自有设备。项目设置默认与常用配置，房间可直接使用。
         </p>
       </div>
       <v-spacer />
@@ -323,40 +302,6 @@ onBeforeUnmount(() => {
             </tr>
           </tbody>
         </v-table>
-      </section>
-      <section class="compute-section mb-7">
-        <div class="section-heading mb-3">
-          <div>
-            <h3 class="text-subtitle-1 font-weight-medium">团队默认</h3>
-            <p class="text-caption text-medium-emphasis mb-0">项目第一次开话题时从这里开始；之后自动记住上次选择。</p>
-          </div>
-          <v-chip v-if="!canManage" size="small" variant="tonal">仅管理员可修改</v-chip>
-        </div>
-        <div class="profile-grid">
-          <button
-            v-for="profile in teamCompute?.profiles ?? []"
-            :key="profile.id"
-            type="button"
-            class="profile-card"
-            :class="{
-              'profile-card--active': teamCompute?.current === profile.id,
-              'profile-card--off': !profile.available,
-            }"
-            :disabled="!canManage || !profile.available || savingDefault !== null"
-            @click="pickDefault(profile.id)"
-          >
-            <v-icon size="20">{{
-              profile.id === 'device' ? 'mdi-laptop' : profile.id === 'gpu' ? 'mdi-expansion-card' : 'mdi-server'
-            }}</v-icon>
-            <span class="profile-copy">
-              <span class="profile-title">{{ profile.label }}</span>
-              <span class="profile-description">{{ profile.description }}</span>
-            </span>
-            <v-progress-circular v-if="savingDefault === profile.id" indeterminate size="16" width="2" />
-            <v-icon v-else-if="teamCompute?.current === profile.id" size="18" color="primary">mdi-check-circle</v-icon>
-            <span v-else-if="!profile.available" class="text-caption text-medium-emphasis">暂不可用</span>
-          </button>
-        </div>
       </section>
 
       <section class="compute-section mb-7">

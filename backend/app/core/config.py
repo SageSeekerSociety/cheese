@@ -374,7 +374,6 @@ class Settings(BaseSettings):
     ccproxy_tenant_timeout_s: float = 30.0
 
     # --- Agent sandbox (spec §9.1: 每话题在隔离容器里跑 claude + 原生工具) ---
-    sandbox_image: str = "cheesex-agent-sandbox:latest"
     # Base URL the in-container `cheese` CLI calls back to (host → backend).
     # The app ROOT, with no `/api`. The in-container `cheese` CLI reaches the
     # backend port DIRECTLY (no gateway, so nothing strips a prefix), and since

@@ -43,12 +43,18 @@ ledger.
   checks) gets the same rules from the platform, configured per project
   (`branch_protection` in project settings: required checks with path scopes,
   strict up-to-date, dismiss-stale, auto-merge, the override roster).
-- **The human merges what the human saw.** The merge call carries the card's
-  head sha ("SHA that pull request head must match"); a push that lands after
-  the reviewer's look makes GitHub answer 409 and the card refreshes. New
-  commits dismiss existing approvals by default (`dismiss_stale`, inverted from
-  GitHub's default because the pusher here is 芝士 holding App write
-  credentials, not a trusted human).
+- **The human merges what the human saw**, and "what the human saw" is what the
+  BROWSER declares, not what the card row happens to say now. Accept,
+  merge-anyway and the auto-merge arm each carry the `merge_state.head_sha`
+  their page rendered; the server refuses (422) unless that is still the card's
+  head, and merges with the sha the request carried. Three guards, in the order
+  a push can slip through them: the declared sha catches a poll that moved the
+  card between render and click; re-reading the PR catches a push the poll has
+  not seen yet; the merge API's own sha parameter answers 409 for a push landing
+  during the call. New commits also dismiss existing approvals by default
+  (`dismiss_stale`, inverted from GitHub's default because the pusher here is
+  芝士 holding App write credentials, not a trusted human) — but that clause
+  protects the votes, not the click, which is why the declared sha exists.
 - **The agent has its own identity.** PRs are opened and merged with the App's
   installation token. No path depends on a member's personal token.
 - **Accepting is one action with one meaning.** It merges, now. Merging later
@@ -104,6 +110,9 @@ names (`required_checks`, each optionally scoped to the paths that make it
 required — a workflow with a `paths:` filter is legitimately absent on a diff
 it cannot trigger, #470). The roster defaults to empty: requiring hosted repos
 to add checks we name was rejected in #640. This repo configures
-`test:backend/**`. A required check that has not reported is `BLOCKED` — 缺席是
-pending，不是通过 (#465/#468) — and one missing past the grace goes to a human,
-never to an auto-merge.
+`test:backend/**`. A required check that has not reported, or has reported and
+is still running, is `BLOCKED` — 没有结论不是通过 (#465/#468), and a check that
+has not finished has no conclusion. One missing past the grace goes to a human,
+never to an auto-merge. `UNSTABLE` therefore means exactly one thing: some
+check is not green and none of those are required — which is why it, and only
+it, joins `CLEAN` in what the accept gate and the auto-merge arm will merge.

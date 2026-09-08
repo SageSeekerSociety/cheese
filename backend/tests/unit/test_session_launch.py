@@ -6,6 +6,8 @@ and none is about a transport. A channel takes the resulting ``LaunchSpec`` and
 does its own delivery with it.
 """
 
+import json
+
 import pytest
 
 from app.domain.agent.harness.claude_code import hooks_settings, session_launch
@@ -23,6 +25,7 @@ def test_the_launch_names_the_files_claude_reads_before_it_starts():
     planted = {f.name: f.content for f in launch.files}
     assert set(planted) == {"settings.json", ".claude.json", "cheese-system-prompt.md"}
     assert planted["cheese-system-prompt.md"] == "你是芝士。"
+    assert json.loads(planted["settings.json"])["enableArtifact"] is False
     # The config dir isolates one claude from another on a machine; the harness
     # tag is how a runtime tells its own sessions from another harness's after a
     # restart, on a machine that hosts both.

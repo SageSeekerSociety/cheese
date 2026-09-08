@@ -161,7 +161,13 @@ async def test_turn_streams_hook_events_until_stop():
     assert isinstance(events[2], AgentResult) and events[2].text == "2"
 
 
-async def test_every_device_image_is_staged_before_rendezvous_prompt(monkeypatch):
+@pytest.mark.parametrize(
+    ("path", "mime"),
+    [("uploads/img-a.png", "image/png"), ("uploads/需求 文档.pdf", "application/pdf")],
+)
+async def test_every_device_image_is_staged_before_rendezvous_prompt(
+    monkeypatch, path, mime
+):
     hub = FakeHub()
     router = HookRouter()
     provider = _provider(hub, router, uuid.uuid4())
@@ -179,12 +185,12 @@ async def test_every_device_image_is_staged_before_rendezvous_prompt(monkeypatch
         prompt="[u] sent an image",
         system_prompt="",
         resume_session_id=None,
-        images=[{"path": "uploads/img-a.png", "media_type": "image/png"}],
+        images=[{"path": path, "media_type": mime}],
     )
     await asyncio.sleep(0.05)
 
-    assert hub.files == [("s1", "uploads/img-a.png", b"exact-image-bytes")]
-    assert hub.prompts == [["[u] sent an image\n\n@uploads/img-a.png"]]
+    assert hub.files == [("s1", path, b"exact-image-bytes")]
+    assert hub.prompts == [[f"[u] sent an image\n\n@{path}"]]
     router.push(
         str(topic_id), {"hook_event_name": "Stop", "last_assistant_message": "ok"}
     )
@@ -1138,7 +1144,9 @@ async def test_subscription_screen_env_has_no_gateway_and_no_real_credential(
     # deepseek/gateway model pin — the exact env dev observed is impossible.
     assert "ANTHROPIC_BASE_URL" not in env
     assert env["ANTHROPIC_AUTH_TOKEN"] == ""
-    assert not [k for k in env if "MODEL" in k]
+    # This marks the model-only proxy for script preparation; no model is pinned.
+    assert [k for k in env if "MODEL" in k] == ["CHEESE_MODEL_PROXY"]
+    assert env["CHEESE_MODEL_PROXY"] == "1"
     assert "UPSTREAM-PROVIDER-KEY" not in repr(env)
     # The login credential is a scoped cheese token the proxy can verify —
     # never a real subscription credential.

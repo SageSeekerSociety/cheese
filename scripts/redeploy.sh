@@ -42,10 +42,6 @@ if [[ $BUILD_IMAGES -eq 1 ]]; then
   docker build -q -t cheesex-agent-sandbox:latest \
     -f "$ROOT/backend/sandbox/Dockerfile" "$ROOT/backend/sandbox" >>"$LOG" 2>&1 \
     || die "base image build failed (see $LOG)"
-  log "docker build cheesex-dev:v0"
-  docker build -q -t cheesex-dev:v0 \
-    -f "$ROOT/backend/sandbox/cheesex-dev.Dockerfile" "$ROOT" >>"$LOG" 2>&1 \
-    || die "cheesex-dev image build failed (see $LOG)"
 fi
 
 # 4. Drain: wait for in-flight agent turns so the restart never kills 芝士

@@ -86,6 +86,8 @@ def hooks_settings(extra_stop: list[str] | None = None) -> dict:
     ]
     return {
         "skipDangerousModePermissionPrompt": True,
+        # Previews belong in Cheese, not on claude.ai via the Artifact tool.
+        "enableArtifact": False,
         # Tools with no way out of this platform (AskUserQuestion — see
         # cli.DISALLOWED_TOOLS). Also passed as --disallowedTools on the
         # launch line; a deny rule that only lives in one of the two is a deny

@@ -3,6 +3,7 @@
 import mimetypes
 import uuid
 from typing import Annotated
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Header, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -78,14 +79,32 @@ async def read_file(
 
 @router.get("/{project_id}/file/raw", dependencies=[Depends(require_project_access)])
 async def read_file_raw(
-    project_id: uuid.UUID, path: str, db: DbSession, topic: uuid.UUID | None = None
+    project_id: uuid.UUID,
+    path: str,
+    db: DbSession,
+    topic: uuid.UUID | None = None,
+    download: bool = False,
 ) -> Response:
     """Raw bytes of a worktree file — the 文件 panel renders images as images
     (the text endpoint would mangle binary content)."""
     await ProjectService(db).get_or_404(project_id)
     data = ws.read_file_bytes(project_id, path, topic_id=topic)
     mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
-    return Response(content=data, media_type=mime)
+    # Arbitrary uploads must never execute in the app's origin.
+    download = download or not mime.startswith("image/")
+    headers = {
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "default-src 'none'; sandbox",
+    }
+    if download:
+        headers["Content-Disposition"] = (
+            f"attachment; filename*=UTF-8''{quote(path.rsplit('/', 1)[-1], safe='')}"
+        )
+    return Response(
+        content=data,
+        media_type="application/octet-stream" if download else mime,
+        headers=headers,
+    )
 
 
 @router.put("/{project_id}/file", dependencies=[Depends(require_project_access)])

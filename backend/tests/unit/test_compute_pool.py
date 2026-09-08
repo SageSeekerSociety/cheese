@@ -246,18 +246,13 @@ def test_build_pool_registers_the_concrete_cloud_channel():
     assert backend.provisions_machine is True
 
 
-def test_resolve_compute_id_topic_then_project_then_team_default():
+def test_resolve_compute_id_uses_room_then_explicit_project_default():
     from app.domain.agent.chat import _resolve_compute_id
+    from app.domain.agent.compute_configs import ComputeChoice, ProjectComputeConfigs
 
-    # Topic's own选择 wins over the project sticky.
-    assert (
-        _resolve_compute_id({"compute_profile": "cloud"}, "device", "cloud") == "device"
+    configs = ProjectComputeConfigs(
+        default=ComputeChoice(name="Lab", profile="device", device_id="lab")
     )
-    # No topic选择 → project sticky, before the team's default.
-    assert _resolve_compute_id({"compute_profile": "device"}, None, "cloud") == "device"
-    # A fresh project starts from the team's default.
-    assert _resolve_compute_id({}, None, "device") == "device"
-    assert _resolve_compute_id(None, None, "device") == "device"
-    # No choice at any layer → None (pool default).
-    assert _resolve_compute_id({}, None, None) is None
-    assert _resolve_compute_id(None, None, None) is None
+    values = {"compute_configs": configs.model_dump()}
+    assert _resolve_compute_id(values, "cloud") == "cloud"
+    assert _resolve_compute_id(values) == "device"

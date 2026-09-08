@@ -237,7 +237,9 @@ def build_service(client=None, project=_UNSET, repo=None):
     service._repo = repo or FakeRepo()
     service._devices = FakeDevices()
     if project is _UNSET:
-        project = SimpleNamespace(id=uuid.uuid4(), name="Cheese 自建", team_id=1)
+        project = SimpleNamespace(
+            id=uuid.uuid4(), name="Cheese 自建", team_id=1, settings={}
+        )
     service._projects = SimpleNamespace(get=_returning(project))
     return service
 
@@ -266,19 +268,18 @@ async def test_quota_counts_stopped_and_deleting_but_not_released_machines():
     assert len(counted) == len(MachineStatus) - 1
 
 
-async def test_provision_clamps_a_spec_the_offering_cannot_honour():
+async def test_provision_rejects_an_unsupported_spec_without_buying_a_machine():
     client = FakeMicroCloud()
     service = build_service(client)
-    project_id = uuid.uuid4()
-
-    await service.provision(
-        project_id=project_id, requested_by="andy", cores=64, memory_mb=1, disk_gb=9999
-    )
-
-    body = client.created[0]
-    assert body["cores"] == OFFERING["coresMax"]
-    assert body["memoryMb"] == OFFERING["memoryMbMin"]
-    assert body["diskGb"] == OFFERING["diskGbMax"]
+    with pytest.raises(ValidationError, match="超出当前供应范围"):
+        await service.provision(
+            project_id=uuid.uuid4(),
+            requested_by="andy",
+            cores=64,
+            memory_mb=1,
+            disk_gb=9999,
+        )
+    assert client.created == []
 
 
 async def test_provision_bills_the_project_not_the_person():
@@ -317,6 +318,8 @@ async def test_ensure_topic_machine_reuses_the_active_lease(monkeypatch):
         id=uuid.uuid4(),
         project_id=uuid.uuid4(),
         created_by="owner",
+        compute_profile="cloud",
+        compute_config=None,
         status=TopicStatus.active,
     )
 
@@ -345,7 +348,7 @@ async def test_ensure_topic_machine_reuses_the_active_lease(monkeypatch):
     monkeypatch.setattr("app.domain.topic.services.TopicService", _Topics)
     monkeypatch.setattr("app.domain.machine.services.IdentityService", _Identities)
     authority = AsyncMock()
-    monkeypatch.setattr(service, "require_create_authority", authority)
+    monkeypatch.setattr(service, "require_use_authority", authority)
     actor = Actor(handle="owner", user_id=1, is_agent=False, via="token")
 
     first = await service.ensure_topic_machine(topic.id, actor=actor)
@@ -393,11 +396,15 @@ async def test_topic_machines_share_the_team_quota(monkeypatch):
     project_id = uuid.uuid4()
     service = build_service(
         client,
-        project=SimpleNamespace(id=project_id, name="Quota", team_id=1),
+        project=SimpleNamespace(id=project_id, name="Quota", team_id=1, settings={}),
     )
     topics = {
         topic_id: SimpleNamespace(
-            id=topic_id, project_id=project_id, status=TopicStatus.active
+            id=topic_id,
+            project_id=project_id,
+            status=TopicStatus.active,
+            compute_profile="cloud",
+            compute_config=None,
         )
         for topic_id in (uuid.uuid4(), uuid.uuid4(), uuid.uuid4())
     }
@@ -423,7 +430,7 @@ async def test_topic_machines_share_the_team_quota(monkeypatch):
     service._session = _Session()
     monkeypatch.setattr("app.domain.topic.services.TopicService", _Topics)
     monkeypatch.setattr("app.domain.machine.services.IdentityService", _Identities)
-    monkeypatch.setattr(service, "require_create_authority", AsyncMock())
+    monkeypatch.setattr(service, "require_use_authority", AsyncMock())
     actor = Actor("owner", 1, False, "token")
 
     for topic_id in list(topics)[:2]:

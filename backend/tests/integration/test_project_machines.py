@@ -281,6 +281,10 @@ def test_machines_are_scoped_to_their_project(
 
 
 def test_topic_cloud_provisioning_is_concurrent_safe_and_exclusive(client, monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "microcloud_base_url", "https://example.invalid")
+    monkeypatch.setattr(settings, "microcloud_tenant_secret", "test-only")
     token = seed_user(client, "owner")
     project_id = _project(client, {"Authorization": f"Bearer {token}"})
     first_topic_id = client.post(
@@ -301,7 +305,7 @@ def test_topic_cloud_provisioning_is_concurrent_safe_and_exclusive(client, monke
     async def _authorized(_self, _project_id, _actor):
         return None
 
-    monkeypatch.setattr(MachineService, "require_create_authority", _authorized)
+    monkeypatch.setattr(MachineService, "require_use_authority", _authorized)
     actor = Actor("owner", 1, False, "token")
 
     async def _ensure(topic_id: str) -> tuple[int, uuid.UUID]:
@@ -362,6 +366,10 @@ def test_direct_and_cascading_archive_release_every_topic_machine(client):
 
 
 def test_unarchived_topic_provisions_a_new_machine(client, monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "microcloud_base_url", "https://example.invalid")
+    monkeypatch.setattr(settings, "microcloud_tenant_secret", "test-only")
     seed_user(client, "owner")
 
     async def _seed():
@@ -394,7 +402,7 @@ def test_unarchived_topic_provisions_a_new_machine(client, monkeypatch):
     async def _authorized(_self, _project_id, _actor):
         return None
 
-    monkeypatch.setattr(MachineService, "require_create_authority", _authorized)
+    monkeypatch.setattr(MachineService, "require_use_authority", _authorized)
 
     async def _reprovision():
         async with client.test_factory() as session:

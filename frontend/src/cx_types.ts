@@ -252,7 +252,7 @@ export type WsServerFrame =
   // answered) — replace it in the timeline.
   | { type: 'block_updated'; block: Block }
 
-// 图片输入: an uploaded worktree image the message carries. `path` comes from
+// An uploaded worktree file the message carries. `path` comes from
 // POST /topics/{id}/attachments; the WS frame only references it (no binary).
 export interface ChatAttachment {
   path: string
@@ -269,7 +269,7 @@ export interface WsClientMessage {
   // session post as 匿名者 — so the client no longer names itself at all.
   summon: boolean
   reply_to?: string // B3: thread this message under another
-  attachments?: ChatAttachment[] // 图片输入 (uploaded first, referenced here)
+  attachments?: ChatAttachment[] // Uploaded first, referenced here.
   // 乐观渲染的对账号：客户端给自己这一次发送起的 id，后端原样戳回块的 meta 上。
   // 靠文本对账是不行的——落库那一步会把 @名字 改写成 <@handle>。
   client_id?: string
@@ -801,33 +801,63 @@ export interface TopicComputeDevice {
 }
 
 // GET /topics/{id}/compute-profile — a topic's session-level compute选择 (v4).
-// `current` is effective (topic → project sticky → team default → platform);
+// `current` is effective (room choice → project default → deployment default);
 // `locked` freezes the picker once the topic has run (session started);
-// `inherited` = still following project/team/platform defaults (no own choice yet);
-// `sticky` = project sticky if present, otherwise the team/platform default;
+// `inherited` = still following the project default (no own choice yet);
 // `device_id` is the self-hosted machine pinned to this topic, or null while
 // 「系统挑一台」still waits for the first turn to choose one.
 export interface TopicComputeProfile {
+  choice: ComputeChoice
+  project_default: ComputeChoice
+  favorites: ComputeChoice[]
   current: string
   device_id: string | null
   devices: TopicComputeDevice[]
   locked: boolean
   inherited: boolean
-  sticky: string
   profiles: PoolListing[]
   visibility: TopicComputeVisibility
 }
 
-// GET /projects/{id}/sandbox-image (spec §9.1 environment): which image runs the
-// project's agent. current=null → using the pool default base image.
-export interface SandboxImageOption {
-  image: string
-  label: string
+export interface EnvironmentConfig {
+  setup_script: string
+  startup_script: string
+  variables: Record<string, string>
+  revision: string
 }
-export interface SandboxImageInfo {
-  current: string | null
-  default: string
-  options: SandboxImageOption[]
+export interface ProjectEnvironmentInfo {
+  config: EnvironmentConfig
+  can_edit: boolean
+  rooms: { id: string; title: string; revision: string | null }[]
+}
+export interface EnvironmentStatus {
+  busy?: boolean
+  state: 'pending' | 'preparing' | 'ready' | 'stopped' | 'failed' | 'offline'
+  recovery_state?: 'requested' | 'retrying' | 'needs_help' | 'closed' | null
+  stage?: string
+  log?: string
+  error?: string
+  exit_code?: number | null
+  pinned_revision?: string | null
+  started_at?: string
+  finished_at?: string | null
+}
+
+export interface ComputeChoice {
+  name: string
+  profile: 'cloud' | 'device'
+  device_id: string | null
+  cores: number | null
+  memory_mb: number | null
+  disk_gb: number | null
+}
+
+export interface ProjectComputeConfigs {
+  default: ComputeChoice
+  favorites: ComputeChoice[]
+  can_manage: boolean
+  devices: TopicComputeDevice[]
+  cloud_available: boolean
 }
 
 // 当前用户 (Phase 0 极简登录): what /users/login returns and what we keep locally.

@@ -13,6 +13,7 @@ export interface RouteMetaTitle {
   getDynamicTitle?: (route: RouteLocationNormalized) => string
   disableBreadcrumbLink?: boolean
   isFullPage?: boolean
+  backTo?: string
 }
 
 export interface RouteHierarchyItem {

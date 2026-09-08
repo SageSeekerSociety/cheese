@@ -23,6 +23,7 @@ from app.core.errors import (
     NotFoundError,
     ValidationError,
 )
+from app.domain.agent.compute_configs import room_choice
 from app.domain.device.ccproxy_tenant import CcproxyTenantError
 from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
@@ -140,6 +141,22 @@ class MachineService:
                 raise NotFoundError("Project not found")
         await members.require_manager(project_id, actor)
 
+    async def require_use_authority(self, project_id: uuid.UUID, actor: Actor) -> None:
+        """Team membership authorizes room execution within the team's quota."""
+        if actor.via != "token" or actor.is_agent or actor.user_id is None:
+            raise AuthenticationRequiredError("Login required to use cloud compute")
+        project = await self._projects.get(project_id)
+        if project is None:
+            raise NotFoundError("Project not found")
+        team_id = await self._projects.team_for_project(project_id)
+        if team_id is not None:
+            if not await team_service(self._session).is_team_member(
+                team_id, actor.user_id
+            ):
+                raise ForbiddenError("只有团队成员可以使用团队云额度")
+        else:
+            await MemberService(self._session).require_manager(project_id, actor)
+
     async def _pick_offering(self) -> dict:
         offerings = await self._client.list_offerings()
         if not offerings:
@@ -199,6 +216,10 @@ class MachineService:
         def clamp(value: int | None, default: int, lo: str, hi: str) -> int:
             # The allowed range is per-offering, so a spec is only meaningful
             # against the offering we actually landed on.
+            if value is not None and not int(offering[lo]) <= value <= int(
+                offering[hi]
+            ):
+                raise ValidationError("所选云配置超出当前供应范围，请选择其他配置")
             return max(int(offering[lo]), min(int(offering[hi]), int(value or default)))
 
         spec = {
@@ -315,17 +336,25 @@ class MachineService:
             raise AuthenticationRequiredError(
                 "Cloud provisioning requires an authorized human caller"
             )
-        await self.require_create_authority(topic.project_id, actor)
+        await self.require_use_authority(topic.project_id, actor)
 
         project = await self._projects.get(topic.project_id)
         if project is None:
             raise NotFoundError("project not found")
+        choice = room_choice(topic, project.settings)
+        if choice.profile != "cloud":
+            raise ValidationError("当前房间未选择云端配置")
+        topic.compute_config = choice.model_dump()
+        topic.compute_profile = "cloud"
         agent = await IdentityService(self._session).ensure_topic_agent_user(topic_id)
         return await self.provision(
             project_id=topic.project_id,
             topic_id=topic_id,
             requested_by=actor.handle,
             owner_user_id=agent.id,
+            cores=choice.cores,
+            memory_mb=choice.memory_mb,
+            disk_gb=choice.disk_gb,
         )
 
     async def topic_machine(self, topic_id: uuid.UUID) -> ProjectMachine | None:
