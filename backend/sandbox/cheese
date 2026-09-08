@@ -463,6 +463,29 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    pfetch = sub.add_parser(
+        "fetch",
+        help="读一个网页(平台代抓,比内置的 WebFetch 覆盖面广)",
+        description=(
+            "让平台去读一个网页,把结果给你。\n\n"
+            "和内置的 WebFetch 有两点不一样,都是实测出来的:\n"
+            "① 覆盖面更广。平台按阶梯往下试——先看站点有没有直接发布 markdown\n"
+            "   (.md / llms.txt,命中的话又快又干净),再普通抓取,再换浏览器指纹,\n"
+            "   再(如果开了)第三方阅读器和共享浏览器。单一方法只能读到约六成页面,\n"
+            "   这条阶梯实测约八成五。\n"
+            "② 抓取在平台侧,不在你的沙箱里。沙箱的出口 IP 有些站直接拒。\n\n"
+            "带 --prompt 时返回的是**答案**,不带时返回整页 markdown。\n"
+            "尽量带上:同一篇维基词条,答案是几十个 token,整页是三万多。\n\n"
+            "读不到时会告诉你每一级分别是怎么失败的,不会只说一句读不到。"
+        ),
+    )
+    pfetch.add_argument("url", help="要读的网址")
+    pfetch.add_argument(
+        "--prompt",
+        default=None,
+        help="想从这一页里知道什么(带上它就返回答案而不是整页,省大量上下文)",
+    )
+
     pclaim = sub.add_parser(
         "claim",
         help="声明这条活要碰哪些路径(可以中途追加)",
@@ -970,6 +993,23 @@ def main() -> None:
         else:
             _call("POST", f"/topics/{topic}/title", {"title": a.text})
             print(f"话题标题已设为：{a.text}")
+    elif a.cmd == "fetch":
+        body = {"url": a.url}
+        if a.prompt:
+            body["prompt"] = a.prompt
+        data = _call("POST", "/fetch", body).get("data", {})
+        if not data.get("ok"):
+            # 逐级说清楚怎么失败的。只说"读不到"的话,下次没人知道该改哪一级。
+            print(f"[cheese] 读不到 {a.url}", file=sys.stderr)
+            print(f"[cheese] 各级结果: {data.get('trail', '(无)')}", file=sys.stderr)
+            if data.get("text"):
+                print("[cheese] 抓到的残缺内容如下(可能是验证页/登录墙):", file=sys.stderr)
+                print(data["text"][:2000])
+            sys.exit(1)
+        print(data.get("text", ""))
+        via = data.get("rung", "?")
+        note = "答案" if data.get("distilled") else "整页"
+        print(f"\n[cheese] 来源: {via}({note})", file=sys.stderr)
     elif a.cmd == "remember":
         proj = _need("CHEESE_PROJECT", PROJECT)
         # 带上话题：后端据此认出是哪个芝士在记，存进它自己的项目记忆
