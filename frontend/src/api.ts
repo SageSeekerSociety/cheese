@@ -1207,6 +1207,68 @@ export function requestPreviewSession(topicId: string): Promise<PreviewSession> 
   return request<PreviewSession>(`/topics/${encodeURIComponent(topicId)}/preview-session`, { method: 'POST' })
 }
 
+export interface AgentControlRequest {
+  request_id: string
+  request: {
+    subtype: string
+    tool_name?: string
+    input?: Record<string, unknown>
+  }
+}
+
+export interface AgentControlState {
+  id: string | null
+  connected: boolean
+  title?: string
+  controls?: string[]
+  pending?: Record<string, AgentControlRequest>
+  tasks?: Record<
+    string,
+    { task_id: string; description?: string; status?: string; subtype?: string; tool_use_id?: string }
+  >
+  state?: Record<string, Record<string, unknown>>
+}
+
+export interface AgentControlResult {
+  request_id: string
+  status: string
+  result: { response: { subtype: string; error?: string; response?: Record<string, unknown> } } | null
+}
+
+export function getAgentControl(topicId: string) {
+  return request<AgentControlState>(`/topics/${encodeURIComponent(topicId)}/agent/control`)
+}
+
+export function getAgentControlResult(topicId: string, sessionId: string, requestId: string) {
+  return request<{ result: AgentControlResult['result']; status: string }>(
+    `/topics/${encodeURIComponent(topicId)}/agent/control/${encodeURIComponent(requestId)}?session_id=${encodeURIComponent(sessionId)}`
+  )
+}
+
+export function sendAgentControl(
+  topicId: string,
+  sessionId: string,
+  control: Record<string, unknown>,
+  requestId = crypto.randomUUID()
+) {
+  return request<AgentControlResult>(`/topics/${encodeURIComponent(topicId)}/agent/control`, {
+    method: 'POST',
+    body: JSON.stringify({ session_id: sessionId, request_id: requestId, request: control }),
+  })
+}
+
+export function answerAgentControl(
+  topicId: string,
+  sessionId: string,
+  requestId: string,
+  response: Record<string, unknown>
+) {
+  return request<{ status: string }>(`/topics/${encodeURIComponent(topicId)}/agent/answer`, {
+    method: 'POST',
+    body: JSON.stringify({ session_id: sessionId, request_id: requestId, response }),
+  })
+}
+
 export function getGitLog(projectId: string, topicId?: string | null): Promise<ListPayload<GitCommit>> {
   const t = topicId ? `?topic=${encodeURIComponent(topicId)}` : ''
   return request<ListPayload<GitCommit>>(`/projects/${encodeURIComponent(projectId)}/git/log${t}`)

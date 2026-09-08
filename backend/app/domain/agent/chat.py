@@ -3736,9 +3736,12 @@ class ChatService:
             else config.model
         )
         config_hash = hashlib.sha256(
-            # Reopen existing terminals so the new chat skill and CLI arrive together.
+            # Reopen at the next task boundary to install the chat CLI/skills
+            # and native RC arguments; reattaching cannot update either.
             (
-                json.dumps(agent.configuration, sort_keys=True) + ":explicit-chat-v1"
+                json.dumps(agent.configuration, sort_keys=True)
+                + ":explicit-chat-v1"
+                + (":native-rc-v1" if supply == SUBSCRIPTION else "")
             ).encode()
         ).hexdigest()
         kwargs: dict = {"model": model, "env": {"CHEESE_AGENT_CONFIG": config_hash}}
