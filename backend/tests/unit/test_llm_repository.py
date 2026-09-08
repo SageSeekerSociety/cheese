@@ -134,8 +134,9 @@ class TestAIUserQuotaRepository:
         session.execute.return_value = _mock_scalar(existing)
         repo = AIUserQuotaRepository(session)
 
-        remaining, reset_at = await repo.consume(10, 10.0, 100.0)
+        remaining, reset_at, total = await repo.consume(10, 10.0, 10.0)
         assert remaining == 40.0
+        assert total == 100.0
         assert existing.total_seu_consumed == 60.0
         assert reset_at > datetime.now(UTC)
         assert (reset_at.hour, reset_at.minute, reset_at.second) == (0, 0, 0)
@@ -157,8 +158,9 @@ class TestAIUserQuotaRepository:
         session.execute.return_value = _mock_scalar(existing)
         repo = AIUserQuotaRepository(session)
 
-        remaining, reset_at = await repo.get_quota(10, 100.0)
+        remaining, reset_at, total = await repo.get_quota(10, 10.0)
         assert remaining == 75.0
+        assert total == 100.0
 
 
 # ---------------------------------------------------------------------------
