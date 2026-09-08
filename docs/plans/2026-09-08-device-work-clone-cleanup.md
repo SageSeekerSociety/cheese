@@ -1,8 +1,8 @@
 # Device work clones are never cleaned up
 
 Status: not started, handed to a dedicated owner on 2026-09-08. The two neighbouring
-classes of leftover — the backend's own topic checkouts and the device's per-topic
-home — were closed by #675 and #690. This is the third one, and on the dev box it is
+classes of leftover, the backend's own topic checkouts and the device's per-topic
+home, were closed by #675 and #690. This is the third one, and on the dev box it is
 now the largest.
 
 ## What is leaking
@@ -12,15 +12,15 @@ Every topic that runs on a device gets its own checkout there, at
 screen's working directory: the place the agent edits code, and the clone it pushes
 from. One directory per topic, per device.
 
-Measured on the dev box on 2026-09-08: **103 GB in 98 directories**, all under one
+Measured on the dev box on 2026-09-08: 103 GB in 98 directories, all under one
 project, against 342 GB used of a 504 GB disk. Almost all of them belong to topics
 that ended weeks ago.
 
 ## Why nothing removes them
 
 There is exactly one remover, and it only fires while the backend still remembers the
-screen. `DeviceChannel.release_topic` walks `hub.screens_for_topic(topic_id)` — the
-screens the running process holds in memory — closes each one, and then removes that
+screen. `DeviceChannel.release_topic` walks `hub.screens_for_topic(topic_id)`: the
+screens the running process holds in memory. It closes each one, then removes that
 screen's work directory (`_remove_work_dir`). Archive calls it through
 `release_topic_screen`, and so does the idle reaper.
 
@@ -53,29 +53,29 @@ pass already issues one `sh -lc` per device and one removal per directory; listi
 second root in the same command costs nothing extra, and a device that is slow or
 offline then fails one pass rather than two.
 
-`device_home_dir` has no counterpart for the work root — the path is built inline in
+`device_home_dir` has no counterpart for the work root: the path is built inline in
 `_work_dir`, which is a method on the provider. A module-level `device_work_dir()`
 beside `device_home_dir()` is the smallest thing that lets both the sweep and the
 provider name the same path.
 
 ## Traps
 
-1. **An active topic's clone is live state.** It holds uncommitted edits and the
+1. An active topic's clone is live state. It holds uncommitted edits and the
    branch the agent is working on. The verdict above never removes one, but a bug
    that widens it destroys work that exists nowhere else. Archived is different: an
    archive abandons uncommitted changes by definition, which is what `retire.py`
    already says for the backend's own checkout.
-2. **A thread runs under its own id**, which is a row in `tasks`, not `topics`.
+2. A thread runs under its own id, which is a row in `tasks`, not `topics`.
    `_place_archival` already resolves both kinds; call it rather than deriving the
    archival state again.
-3. **`list_device_homes` avoids `find -printf` on purpose** — it is GNU-only and a
+3. `list_device_homes` avoids `find -printf` on purpose: it is GNU-only and a
    device may be a Mac. Whatever lists the work root inherits that constraint.
-4. **An offline device raises `DeviceOffline`.** The home sweep leaves that device's
+4. An offline device raises `DeviceOffline`. The home sweep leaves that device's
    directories alone and picks them up on a later tick; do the same, and log it.
-5. **No transcript upload belongs here.** `_store_transcripts` exists because a home
+5. No transcript upload belongs here. `_store_transcripts` exists because a home
    holds the only copy of the raw session files. A work clone holds a git checkout
    whose commits are already on a branch.
-6. **Do not delete by mtime.** A directory's age says nothing about whether its topic
+6. Do not delete by mtime. A directory's age says nothing about whether its topic
    is still open, and the sweep has the database.
 
 ## How to verify
