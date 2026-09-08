@@ -172,6 +172,9 @@ async def create_project(
         team_id=body.team_id,
         external_task_id=body.external_task_id,
     )
+    # The caller can create a room as soon as this response arrives; the
+    # request-scoped dependency commits only after sending the response.
+    await db.commit()
     return ok(ProjectOut.model_validate(project).model_dump(mode="json"))
 
 
