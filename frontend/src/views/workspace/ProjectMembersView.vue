@@ -149,7 +149,7 @@ const canManage = computed(() => me.value === ownerHandle.value || myRole.value 
 // 项目所有者和自己这两行不带管理动作：把所有者降职会让项目没人管得了，而把
 // 自己踢出去是一个点一下就回不来的操作，两者都不该藏在一个 ⋯ 菜单里。
 function manageable(m: ProjectMemberRow): boolean {
-  return canManage.value && m.user_handle !== ownerHandle.value && m.user_handle !== me.value
+  return canManage.value && m.source !== 'team' && m.user_handle !== ownerHandle.value && m.user_handle !== me.value
 }
 
 function faceUrl(m: ProjectMemberRow): string {
@@ -330,6 +330,9 @@ async function submitInvite() {
                 <span v-else-if="m.user_handle === me" class="chip-neutral">我</span>
               </div>
               <div class="t-meta c-muted">@{{ m.user_handle }}</div>
+              <router-link v-if="m.source === 'team'" :to="`/teams/${m.team_id}`" class="t-meta"
+                >来自小队 · 在小队中管理</router-link
+              >
             </div>
             <v-spacer />
             <span v-if="m.user_handle !== me" class="dm-slot">

@@ -168,6 +168,9 @@ function topicTo(topicId: string | null | undefined) {
           <span v-if="projectName" class="t-meta">{{ projectName }}</span>
           <template v-if="kind === 'charter'">
             <v-spacer />
+            <v-btn v-if="rootTopicId" :to="topicTo(rootTopicId)" variant="text" size="small" prepend-icon="mdi-history"
+              >修改记录</v-btn
+            >
             <span v-if="saving" class="t-meta">保存中…</span>
             <span v-else-if="savedAt" class="d-inline-flex align-center ga-1 c-faint" style="font-size: 12px">
               <span class="status-dot status-dot--ok" />已保存
