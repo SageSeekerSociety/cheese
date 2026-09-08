@@ -52,6 +52,61 @@ def test_finished_agent_is_stopped_not_failed_preparation(tmp_path):
     assert "error" not in result
 
 
+@pytest.mark.parametrize("failure", ["setup", "adoption", None])
+def test_prepared_agent_adoption_follows_project_setup(tmp_path, monkeypatch, failure):
+    home, work = tmp_path / "home", tmp_path / "work"
+    home.mkdir()
+    work.mkdir()
+    subprocess.run(["git", "init", "-q", str(work)], check=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("CHEESE_WORK", str(work))
+    monkeypatch.setenv("CHEESE_ENVIRONMENT", "fixture")
+    config = EnvironmentConfig(
+        setup_script="exit 9" if failure == "setup" else "echo setup > setup-done",
+        startup_script='printf "%s" "$PROJECT_VALUE" > startup-value',
+        variables={"PROJECT_VALUE": "project-specific"},
+    )
+    adopted = []
+    root = home / ".cheese-environment"
+    with subprocess.Popen(["sleep", "30"]) as native:
+        try:
+
+            def adopt(environment, directory):
+                assert directory == work.resolve()
+                assert (work / "setup-done").read_text() == "setup\n"
+                assert (work / "startup-value").read_text() == "project-specific"
+                assert environment["PROJECT_VALUE"] == "project-specific"
+                assert "CHEESE_ENVIRONMENT" not in environment
+                assert environment_runner.read_status(root)["state"] == "preparing"
+                adopted.append(native.pid)
+                if failure == "adoption":
+                    raise RuntimeError("room binding failed")
+                return native.pid
+
+            code = environment_runner.run(config.snapshot(), root, [], adopt=adopt)
+            if failure == "setup":
+                assert code == 9
+                assert not adopted
+                assert environment_runner.read_status(root)["state"] == "failed"
+            elif failure == "adoption":
+                assert code == 1
+                assert adopted == [native.pid]
+                result = environment_runner.read_status(root)
+                assert result["state"] == "failed"
+                assert result["error"] == "room binding failed"
+            else:
+                assert code == 0
+                assert adopted == [native.pid]
+                result = environment_runner.read_status(root)
+                assert result["state"] == "ready"
+                assert result["pid"] == native.pid
+        finally:
+            native.terminate()
+            native.wait(timeout=5)
+    if failure is None:
+        assert environment_runner.read_status(root)["state"] == "stopped"
+
+
 def test_dead_installer_is_failed_preparation(tmp_path):
     import signal
 

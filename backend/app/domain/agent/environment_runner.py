@@ -60,7 +60,7 @@ def read_status(directory: Path) -> dict:
     return data
 
 
-def run(config, directory, command):
+def run(config, directory, command, *, adopt=None):
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     lock = (directory / "lock").open("a")
     try:
@@ -104,8 +104,8 @@ def run(config, directory, command):
         write_json(directory / "status.json", state)
         raise SystemExit(128 + signum)
 
-    signal.signal(signal.SIGTERM, cancel)
-    signal.signal(signal.SIGINT, cancel)
+    previous_term = signal.signal(signal.SIGTERM, cancel)
+    previous_int = signal.signal(signal.SIGINT, cancel)
     environment = dict(os.environ)
     environment.update(config["variables"])
     environment.pop("CHEESE_ENVIRONMENT", None)
@@ -170,11 +170,21 @@ def run(config, directory, command):
                 log.write(f"{now()} {stage}: completed\n")
                 if stage == "setup":
                     write_json(receipt, config["revision"])
+            if adopt is not None:
+                # Bind only after both scripts succeed. Status must follow the
+                # existing agent, not this short-lived preparation process.
+                pid = adopt(environment, work)
+                identity = process_identity(pid)
+                if not identity:
+                    raise RuntimeError("prepared agent exited during adoption")
+                state.update(pid=pid, process_identity=identity)
             state.update(
                 state="ready", stage="complete", exit_code=0, finished_at=now()
             )
             write_json(directory / "status.json", state)
             log.write(f"{now()} ready\n")
+            if adopt is not None:
+                return 0
             # Exec keeps the PID stable for status inspection. The project
             # variables are applied to the agent as well as both scripts.
             os.chdir(work)
@@ -186,6 +196,10 @@ def run(config, directory, command):
             log.write(f"{now()} failed: {exc}\n")
             write_json(directory / "status.json", state)
             return state["exit_code"]
+        finally:
+            signal.signal(signal.SIGTERM, previous_term)
+            signal.signal(signal.SIGINT, previous_int)
+            lock.close()
     return 0
 
 
