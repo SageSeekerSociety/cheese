@@ -98,9 +98,10 @@ def test_it_fetches_from_the_declared_port(port_file):
         app.shutdown()
 
 
-def test_app_receives_original_html_asset_and_api_paths(port_file):
+@pytest.mark.parametrize("legacy_base", ["", "/api/topics/old-topic/app/\n"])
+def test_app_receives_original_html_asset_and_api_paths(port_file, legacy_base):
     app = _server(b"app")
-    port_file.write_text(f"{app.server_address[1]}\n")
+    port_file.write_text(f"{app.server_address[1]}\n{legacy_base}")
     peer = _Peer(str(port_file))
     try:
         for stream, path in enumerate(
