@@ -638,10 +638,8 @@ def test_a_batch_with_no_recorded_delivery_is_refused_rather_than_guessed():
         assert "refs/heads/topic/two" not in _refs(bare), (
             "没有交付依据也把这一批推出去了 —— 那个 PR 会把上一批再展示一遍"
         )
-        # 报告里要说得出「东西在哪」和「怎么接着干」。
-        assert "refs/cheese/snapshots/topic/two" in reported
-        assert "Re-clone the workspace" in reported
         assert "refs/cheese/snapshots/topic/two" in _refs(bare)
+        _assert_the_report_is_safe_to_follow(reported, "topic/two")
 
 
 def test_a_batch_that_has_not_changed_still_pushes_normally():
@@ -666,3 +664,170 @@ def test_a_batch_that_has_not_changed_still_pushes_normally():
             platform.stop()
 
         assert _tree_of(bare, "topic/one") == ["README.md", "a.txt", "b.txt"]
+
+
+def _detail(reported: str) -> str:
+    """The `detail` the hook carried — read as JSON, because that is how it is
+    read on the other end. A detail with a quote in it does not arrive at all."""
+    line = [x for x in reported.splitlines() if x.strip()][-1]
+    return json.loads(line)["detail"]
+
+
+def _assert_the_report_is_safe_to_follow(reported: str, branch: str) -> None:
+    """接不上去的报告要是**能照着做**的：说得出没交付的提交怎么接过去、未提交的改
+    动在哪个 ref 上、以及「重新 clone」排在这两件之后。
+
+    「重新 clone」当第一句话是危险的：这一轮失败的意思正是这台机器上有平台那边没有
+    的东西。
+    """
+    detail = _detail(reported)
+    assert f"refs/cheese/snapshots/{branch}" in detail, detail
+    assert "git fetch origin" in detail, detail
+    reclone = detail.lower().index("re-clone only")
+    assert reclone > detail.index(f"refs/cheese/snapshots/{branch}"), detail
+    assert detail.lower().count("re-clone") == 1, detail
+
+
+def _publish_like_the_old_script(work: Path, branch: str) -> None:
+    """升级之前那个同步器干的事：把 HEAD 推上去，什么都不记。
+
+    没有 `refs/cheese/published/*`、没有 `refs/cheese/local-at/*`、没有
+    `.git/cheese-sync/branch` —— 这些 ref 是新脚本才开始写的，而升级不会追认
+    一个已经在跑的 clone 推过什么。
+    """
+    _git(work, "push", "-q", "origin", f"HEAD:refs/heads/{branch}")
+
+
+def test_a_clone_from_before_the_upgrade_does_not_redeliver_the_last_batch():
+    """这台机器**在升级之前**就已经在往上一批发布了，所以它一条本地记录都没有。
+
+    平台照样说得出这件事：`?on=` 问的那一批 `on_delivered=true`，而现在这一批是
+    另一条分支。只看本地记录的话，这台机器看起来像「从没发布过」，于是走普通推
+    送 —— 新分支从上一批的提交上长出来，PR 把上一批的改动再展示一遍，`status=ok`。
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        bare = _platform_repo(root)
+        work = _device_clone(root, bare, "topic/one")
+        sync = root / "cheese-sync"
+        sync.write_text(_sync_body())
+        log = root / "hook.log"
+        platform = _Platform()
+        try:
+            (work / "one.txt").write_text("batch one\n")
+            _git(work, "add", "-A")
+            _git(work, "commit", "-qm", "feat: batch one")
+            _publish_like_the_old_script(work, "topic/one")
+            delivered_tip = _git(work, "rev-parse", "HEAD").strip()
+            main_sha = _squash_into_main(bare, root, "topic/one")
+            assert "refs/cheese/published/topic/one" not in _git(
+                work, "for-each-ref", "--format=%(refname)"
+            ), "这个用例要的是一个**没有**新脚本记录的 clone"
+
+            platform.payload = {
+                "branch": "topic/two",
+                "base": "main",
+                "base_sha": main_sha,
+                "on_delivered": True,
+                "on_head": delivered_tip,
+            }
+            (work / "two.txt").write_text("batch two\n")
+            _git(work, "add", "-A")
+            _git(work, "commit", "-qm", "feat: batch two")
+            (work / "scratch.txt").write_text("还没提交的东西\n")
+
+            reported = _turn(work, sync, platform, bare, log)
+        finally:
+            platform.stop()
+
+        assert '"status":"ok"' not in reported, reported
+        assert '"status":"failed"' in reported, reported
+        # 上一批的改动没有被这一批再交付一次。
+        assert "refs/heads/topic/two" not in _refs(bare), (
+            "上一批的提交被当成新一批推了出去 —— 那个 PR 会把它们再展示一遍"
+        )
+        # 内容全在，而且报告说得出怎么取回来。
+        assert "refs/cheese/snapshots/topic/two" in _refs(bare)
+        assert (work / "scratch.txt").read_text() == "还没提交的东西\n"
+        assert "refs/cheese/snapshots/topic/two" in reported, reported
+        assert "git fetch" in reported, reported
+
+
+def _run_from(detail: str, pattern: str, cwd: Path) -> None:
+    """把 detail 里写的那条命令**原样跑一遍**。
+
+    这是这条指引唯一说得清的验收：它是不是真的能把东西取回来。断言 detail 里出现
+    了某几个词，证明的只是有人写过那几个词。
+    """
+    import re
+
+    found = re.search(pattern, detail)
+    assert found, f"{pattern!r} 不在这条指引里: {detail}"
+    done = subprocess.run(
+        ["sh", "-c", found.group(0)], cwd=cwd, capture_output=True, text=True
+    )
+    assert done.returncode == 0, f"{found.group(0)}: {done.stdout}{done.stderr}"
+
+
+def test_the_refusal_can_be_followed_to_get_every_commit_and_edit_back():
+    """指引里的命令是真的能跑通的，而且跑通之后交付出去的只有这一批。
+
+    「Re-clone the workspace」对一台**有未交付提交、有未提交改动**的机器是条会删东
+    西的建议 —— 而这正是拒绝发生时机器的样子。所以这里照着 detail 一条条粘：先把
+    没交付的提交接到新一批上推出去，再从快照 ref 把未提交的改动捞回一个新 clone。
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        bare = _platform_repo(root)
+        work = _device_clone(root, bare, "topic/one")
+        sync = root / "cheese-sync"
+        sync.write_text(_sync_body())
+        log = root / "hook.log"
+        platform = _Platform()
+        try:
+            (work / "one.txt").write_text("batch one\n")
+            _git(work, "add", "-A")
+            _git(work, "commit", "-qm", "feat: batch one")
+            _publish_like_the_old_script(work, "topic/one")
+            delivered_tip = _git(work, "rev-parse", "HEAD").strip()
+            main_sha = _squash_into_main(bare, root, "topic/one")
+
+            platform.payload = {
+                "branch": "topic/two",
+                "base": "main",
+                "base_sha": main_sha,
+                "on_delivered": True,
+                "on_head": delivered_tip,
+            }
+            (work / "two.txt").write_text("batch two\n")
+            _git(work, "add", "-A")
+            _git(work, "commit", "-qm", "feat: batch two")
+            (work / "scratch.txt").write_text("还没提交的东西\n")
+
+            reported = _turn(work, sync, platform, bare, log)
+        finally:
+            platform.stop()
+
+        assert '"status":"failed"' in reported, reported
+        _assert_the_report_is_safe_to_follow(reported, "topic/two")
+        detail = _detail(reported)
+
+        # 第一步：把没交付的提交接到新一批的 base 上，然后推出去。
+        _run_from(detail, r"git fetch origin \S+ && git rebase --onto \S+ \S+", work)
+        _run_from(detail, r"git push origin HEAD:refs/heads/[^\s.]+", work)
+        # 交付出去的只有这一批自己的改动 —— 上一批没有被再带一次。
+        assert _pr_would_show(bare, "main", "topic/two") == ["two.txt"]
+        # 未提交的改动没有被这条路径碰过。
+        assert (work / "scratch.txt").read_text() == "还没提交的东西\n"
+
+        # 第二步：**只有到这里**才谈重新 clone —— 而未提交的改动捞得回来。
+        fresh = root / "re-cloned"
+        _git(root, "clone", "-q", "-b", "topic/two", str(bare), str(fresh))
+        assert not (fresh / "scratch.txt").exists()
+        _run_from(
+            detail,
+            r"git fetch origin refs/cheese/snapshots/\S+ "
+            r"&& git checkout FETCH_HEAD -- \.",
+            fresh,
+        )
+        assert (fresh / "scratch.txt").read_text() == "还没提交的东西\n"

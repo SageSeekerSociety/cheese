@@ -677,6 +677,47 @@ case "$(printf '%s' "$answer" | tr -d ' ')" in
   *'"on_delivered":true'*) delivered=1;;
 esac
 local_head="$(git rev-parse --verify -q HEAD 2>/dev/null || true)"
+# 接不上去的时候写进 detail 的那段话。它写的是可以直接粘的命令：接不上去意味着这
+# 台机器上有平台那边没有的东西，而「重新 clone」会把工作区连同它一起删掉 —— 所以
+# 这段话先说没交付的提交怎么接到新一批上并推出去，再说未提交的改动落在哪个 ref、
+# 用什么命令捞回来，「重新 clone」放在最后一句、两件事都做完之后。
+#
+# 顺序也是能走通的那个：rebase 拒绝在脏工作区上跑，所以先接提交（未跟踪的文件不
+# 挡它）再谈捞快照；反过来先把快照 checkout 回来，那次 rebase 就跑不了了。
+#
+# 整段不写双引号：它最后拼进 JSON 的 `"detail":"%s"`，一个引号就让这条报告解析不
+# 了 —— 而失败的时候它是唯一还能传出去的东西。
+#
+# $1 是「从哪个提交往后是还没交付的」，空字符串表示平台没记下那一批交出去的是哪个
+# commit。其余的（$branch / $asked_on / $base / $base_sha）从调用处的上下文取。
+cheese_recovery() {
+  printf 'Nothing is lost yet, and re-cloning now would delete what is only '
+  printf 'here. '
+  if [ -n "$1" ]; then
+    printf 'The commits this machine has not delivered are %s..HEAD: commit ' \
+      "$1"
+    printf 'any modified file first (a rebase refuses on a dirty tree), then '
+    printf 'git fetch origin %s && git rebase --onto %s %s puts them on the ' \
+      "${base:-main}" "${base_sha:-FETCH_HEAD}" "$1"
+    printf 'base of %s, and git push origin HEAD:refs/heads/%s delivers ' \
+      "$branch" "$branch"
+    printf 'them. '
+  else
+    printf 'Which of the commits here are already delivered cannot be told '
+    printf 'from this machine, because the platform recorded no delivered '
+    printf 'commit for %s: git log --oneline %s..HEAD lists every commit ' \
+      "$asked_on" "${base_sha:-origin/${base:-main}}"
+    printf 'since the base of %s, and git cherry-pick puts the ones this ' \
+      "$branch"
+    printf 'batch added onto a branch started at %s. ' \
+      "${base_sha:-origin/${base:-main}}"
+  fi
+  printf 'Uncommitted work leaves the machine in this same turn, to '
+  printf 'refs/cheese/snapshots/%s: git fetch origin ' "$branch"
+  printf 'refs/cheese/snapshots/%s && git checkout FETCH_HEAD -- . brings it ' \
+    "$branch"
+  printf 'back in a fresh clone. Re-clone only after both.'
+}
 head="$local_head"
 failed=""
 tried=""
@@ -707,16 +748,21 @@ if [ -n "$local_head" ] && [ -n "$branch" ]; then
     || true)"
   if [ -n "$anchor" ]; then
     graft=1  # 这一批已经在衔接了，继续用同一个基线
-  elif [ -n "$last_branch" ] && [ "$last_branch" != "$branch" ]; then
-    # 这台机器**发布过**上一批，而房间已经换批了。**这一定要衔接**：这里的每个提
-    # 交都还长在上一批上，而上一批是被 squash 进 main 的。所以从这里往下，没有
-    #「不衔接」这个选项 —— 只有「接得上」和「说清楚接不上」。
+  elif [ "$asked_on" != "$branch" ] \
+       && { [ -n "$delivered" ] || [ -n "$last_branch" ]; }; then
+    # 问的那一批（`$asked_on`）不是现在这一批，而且要么平台说前者**已经交付**，
+    # 要么这台机器自己记得发布过它。两个判据缺一不可地合在这里：
     #
-    # 判据是 `last_branch`（我自己发布过什么）而不是本地分支名：从没发布过的第一
-    # 次同步没有上一批可接，那时候普通推送才是对的。
+    # `$delivered` 是**平台事实**，任何 clone 都拿得到 —— 包括在这个同步器写
+    # `refs/cheese/*` 之前就已经在跑、并且一直往上一批发布的那些。只看本地记录
+    # 的话，这样一台机器看起来和「从没发布过」一模一样，于是走普通推送：新分支从
+    # 上一批的提交上长出来，把已经 squash 进 main 的改动再交付一次，还报 ok。
     #
-    # 没有交付依据时**拒绝**，而不是退回普通推送。退回普通推送恰恰是这段代码要
-    # 消灭的那个结果：一个把上一批改动又展示一遍的 PR，外加一个 `status=ok`。
+    # `$last_branch` 单独也够：这台机器发布过 `$asked_on`，那它的提交就长在那一批
+    # 上，无论平台此刻怎么说那一批的交付状态。
+    #
+    # 往下没有「不衔接」这个选项 —— 只有「接得上」和「说清楚接不上」。没有依据时
+    # **拒绝**，而不是退回普通推送：退回普通推送恰恰是这段代码要消灭的那个结果。
     graft=1
     anchor="$(git rev-parse -q --verify "refs/cheese/local-at/$asked_on" \
       2>/dev/null || true)"
@@ -727,18 +773,19 @@ if [ -n "$local_head" ] && [ -n "$branch" ]; then
       # 不回填）。这条路只对那之前的批次成立，是个会自己走完的窗口。
       tried=1; failed=1
       detail="no recorded delivery for $asked_on, so this batch cannot be \
-carried onto $branch. Nothing is lost: the commits are still here and the \
-uncommitted work is in refs/cheese/snapshots/$branch. Re-clone the workspace \
-to start $branch from the current base."
+carried onto $branch. $(cheese_recovery '')"
     elif [ -z "$anchor" ]; then
       tried=1; failed=1
-      detail="this machine has no record of what it published to $asked_on. \
-Re-clone the workspace to start $branch from the current base."
+      detail="this machine has no record of what it published to $asked_on, \
+so it cannot tell which of its commits that batch already delivered. \
+$(cheese_recovery "$on_head")"
     elif [ "$on_head" != "$published" ]; then
       # 交付出去的不是我推上去的那个 commit —— 别人也往那条分支推过东西，而我的
       # 基线只覆盖我自己写的部分，照它接过去会把别人那份悄悄丢掉。
       tried=1; failed=1
-      detail="what $asked_on delivered is not what this machine published to it"
+      detail="what $asked_on delivered is not what this machine published to \
+it, so carrying this batch over would drop whatever else went into that \
+delivery. $(cheese_recovery "$on_head")"
     fi
   fi
 fi
