@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import LandingSpark from '@/assets/landing-spark.svg?component'
 import logo from '@/assets/logo-plain.svg?url'
 import HomepageMessage from '@/components/home/HomepageMessage.vue'
 import AccountService from '@/services/account'
@@ -102,7 +103,9 @@ watch([loggedIn, () => route.name], ([isLoggedIn, routeName]) => {
           把项目，
           <br />
           真正
-          <span class="highlight-word"> 做出来<span class="highlight-spark">✳</span> </span>
+          <span class="highlight-word">
+            做出来<LandingSpark class="landing-spark highlight-spark" aria-hidden="true" focusable="false" />
+          </span>
           。
         </h1>
         <p class="hero-description">
@@ -244,7 +247,7 @@ watch([loggedIn, () => route.name], ([isLoggedIn, routeName]) => {
               <span class="member-dots">
                 <span>企</span>
                 <span>研</span>
-                <span>✳</span>
+                <span><LandingSpark class="landing-spark" aria-hidden="true" focusable="false" /></span>
               </span>
             </div>
             <div
@@ -553,7 +556,7 @@ watch([loggedIn, () => route.name], ([isLoggedIn, routeName]) => {
           <span>探索的起点。</span>
         </h2>
         <div>
-          <span class="vision-symbol" aria-hidden="true"> ✳ </span>
+          <LandingSpark class="landing-spark vision-symbol" aria-hidden="true" focusable="false" />
           <p>当 AI 成为持续参与的队友，团队积累着成果，也积累着形成成果的思考。</p>
           <p>知是希望把这些思考变成可继续学习、创作与实践的资源，让后来的人接得上。</p>
           <a
