@@ -38,30 +38,44 @@ async def list_topic_members(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
     members, total = await TopicMemberService(db).list_for_topic(topic_id)
-    # Attach display names so the UI can label 头像 without a second round-trip.
+    # Attach display names and avatars so the UI can draw the roster without a
+    # second round-trip.
     users = UserRepository(db)
     profiles = UserProfileRepository(db)
     bindings = AgentBindingRepository(db)
     # Resolve handles → users once, then derive is-agent from the binding (never
     # a hard-coded handle check): a member is an agent iff it carries a binding.
-    rows = {
-        m.member_handle: await users.get_by_handle(m.member_handle) for m in members
-    }
-    user_ids = [u.id for u in rows.values() if u is not None]
+    rows = await users.get_by_handles([m.member_handle for m in members])
+    user_ids = [u.id for u in rows.values()]
     agent_ids = await bindings.agent_user_ids(user_ids)
     # The human-readable display name lives on the profile (nickname); the core
     # User row only carries the handle (username). Fall back to the handle.
     profile_by_uid = await profiles.get_profiles_by_user_ids(user_ids)
+    avatar_by_uid = await profiles.chosen_avatar_ids(user_ids)
+    # 芝士's seat is one row per room whose profile nickname is a constant fixed
+    # at creation (``IdentityService.ensure_topic_agent_user``), so it does NOT
+    # follow the agent the room was handed to. Name that seat after whoever is
+    # actually working here — the roster is where the UI reads the AI teammate's
+    # name from, and a stale name there is indistinguishable from the swap not
+    # having happened.
+    agent_name = (await TopicService(db).resolve_agent(topic)).display_name
     items = []
     for m in members:
         d = TopicMemberOut.model_validate(m).model_dump(mode="json")
         user = rows.get(m.member_handle)
         profile = profile_by_uid.get(user.id) if user is not None else None
-        d["name"] = (
-            profile.nickname if profile and profile.nickname else m.member_handle
-        )
         # Agent members wear an Agent badge — derived from the execution binding.
-        d["agent"] = user is not None and user.id in agent_ids
+        is_agent = user is not None and user.id in agent_ids
+        d["agent"] = is_agent
+        if is_agent:
+            d["name"] = agent_name
+        else:
+            d["name"] = (
+                profile.nickname if profile and profile.nickname else m.member_handle
+            )
+        # Absent = this person never picked an avatar; the UI draws its coloured
+        # initial rather than the one face everybody else who never picked has.
+        d["avatar_id"] = avatar_by_uid.get(user.id) if user is not None else None
         items.append(d)
     return ok(page(items, total))
 

@@ -318,7 +318,12 @@ export interface TopicMemberRow {
   topic_id: string
   member_handle: string
   role: 'owner' | 'admin' | 'member'
+  // 芝士那一行上，这是**这个房间现在交给的那个队友**的名字（换队友就跟着变），
+  // 不是座位账号的昵称 —— 座位昵称是建号时写死的常量，永远是「芝士」。
   name?: string
+  // 这个人**自己挑的**头像素材 id，同 ProjectMemberRow.avatar_id：没挑过就是
+  // null，画彩色首字母。别拿它去取 /avatars/default。
+  avatar_id?: number | null
   agent?: boolean
   created_at: string
 }

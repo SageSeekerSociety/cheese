@@ -130,6 +130,10 @@ const props = withDefaults(
     // 开这个话题的那一刻还有多少条没读（只数别人发的，和侧栏角标同一口径）。
     // 由 host 在 markRead 之前捕获——一旦 markRead 跑过，这个数就没了。
     unreadOnOpen?: number
+    // 换 AI 队友之后 +1。房间的名册（谁在这儿、以及那个 AI 队友现在叫什么）由
+    // 这个组件自己拉，而换队友的按钮长在话题头上——两边够不着，所以由上面的人
+    // 说一声「过期了，重拉」。
+    rosterRevision?: number
   }>(),
   {
     alwaysSummon: false,
@@ -140,6 +144,7 @@ const props = withDefaults(
     topicList: () => [],
     titleOverride: null,
     unreadOnOpen: 0,
+    rosterRevision: 0,
   }
 )
 
@@ -200,7 +205,15 @@ async function loadRoster() {
   }
 }
 
-watch(() => props.topic?.id, loadRoster, { immediate: true })
+watch(() => [props.topic?.id, props.rosterRevision], loadRoster, { immediate: true })
+
+// 这个房间现在交给的是哪个 AI 队友。名册那一行说了算（后端把芝士那一行的名字
+// 解析成当前队友的名字）。界面上任何一处写死「芝士」，换完队友都不会变，看起来
+// 就是「换人没生效」——这正是它被报上来的样子。
+const agentName = computed(() => {
+  const seat = roomMembers.value.find((m) => m.agent)
+  return seat?.name || seat?.member_handle || '芝士'
+})
 
 /** @ 得到的人：这个房间里的，加上项目里还没进这个房间的。 */
 const mentionPool = computed(() => {
@@ -1045,7 +1058,7 @@ const memberByHandle = computed(() => {
 // 「显示成昵称」只能在这里做：查名册，查不到（退出项目的人、anonymous 兜底
 // 作者）就把 handle 原样显示出来。
 function displayName(m: Block): string {
-  if (m.author_type === 'ai') return '芝士'
+  if (m.author_type === 'ai') return agentName.value
   return memberByHandle.value.get(m.author)?.name || m.author
 }
 // 真头像加载失败过的 handle —— 退回彩色首字母，不留破图。
@@ -1560,7 +1573,7 @@ onBeforeUnmount(() => {
               <!-- avatar gutter: only on the first of a run -->
               <div class="im-gutter">
                 <template v-if="isRunStart(i)">
-                  <CheeseAvatar v-if="m.author_type === 'ai'" :size="28" />
+                  <CheeseAvatar v-if="m.author_type === 'ai'" :size="28" :name="displayName(m)" />
                   <!-- 真头像；取不到或加载失败退回按 handle 哈希的彩色首字母。
                      底色的种子继续用 handle（换成昵称会让每个人的颜色都变）,
                      变的只有色块里的字。 -->
@@ -1727,11 +1740,11 @@ onBeforeUnmount(() => {
              working-log checklist stays visible for the whole turn. -->
           <div v-if="awaitingReply || todoItems.length" class="im-row">
             <div class="im-gutter">
-              <CheeseAvatar :size="28" />
+              <CheeseAvatar :size="28" :name="agentName" />
             </div>
             <div class="im-main">
               <div class="im-meta">
-                <span class="im-name">芝士</span>
+                <span class="im-name">{{ agentName }}</span>
               </div>
 
               <!-- Working-log checklist (芝士's tasks, §3.1.1). Live during a
@@ -1748,7 +1761,7 @@ onBeforeUnmount(() => {
 
               <!-- Instant ack before the first message / during cold start -->
               <div v-if="awaitingReply" class="im-text">
-                <span class="text-medium-emphasis">芝士正在处理…</span>
+                <span class="text-medium-emphasis">{{ agentName }}正在处理…</span>
                 <span class="caret" />
               </div>
             </div>
@@ -1851,7 +1864,7 @@ onBeforeUnmount(() => {
               hide-details
               density="comfortable"
               class="composer-input"
-              :placeholder="alwaysSummon ? '告诉芝士要做什么…' : '输入消息，@芝士 交给它做'"
+              :placeholder="alwaysSummon ? `告诉${agentName}要做什么…` : `输入消息，@${agentName} 交给它做`"
               :title="enterSends ? 'Enter 发送，Shift+Enter 换行，可直接粘贴图片' : '可直接粘贴图片'"
               @keydown="onComposerKey"
               @paste="onComposerPaste"
