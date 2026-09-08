@@ -351,8 +351,26 @@ describe('向后兼容：库里存量的老事件一个都不能变样', () => {
     await flush()
     const details = container.querySelector('.action-card details')!
     expect(details.querySelector('summary')!.textContent).toBe('查看本次修改')
-    expect(details.querySelector('pre')!.textContent).toContain('-旧方案\n+实地调研方案')
+    expect(details.querySelector('.doc-edit-line--del')!.textContent).toContain('旧方案')
+    expect(details.querySelector('.doc-edit-line--add')!.textContent).toContain('实地调研方案')
+    expect(details.textContent).not.toContain('--- 修改前')
     expect(container.querySelectorAll('.action-card')).toHaveLength(2)
+  })
+
+  it('omits empty lines and their encoding from an old document change', async () => {
+    const { container } = mountRoom([
+      event('', '芝士 编辑了文档', {
+        action: 'doc',
+        detail: '--- 修改前\n+++ 修改后\n@@ -1 +1 @@\n-&nbsp;\n+调查安排',
+      }),
+    ])
+    await flush()
+    const diff = container.querySelector('.doc-edit-diff')!
+    expect(diff.textContent).not.toContain('空行')
+    expect(diff.querySelectorAll('.doc-edit-line')).toHaveLength(1)
+    expect(diff.textContent).toContain('调查安排')
+    expect(diff.textContent).not.toContain('&nbsp;')
+    expect(diff.textContent).not.toContain('@@')
   })
 
   it('meta=null 的老事件还是那条居中灰字', async () => {

@@ -70,6 +70,7 @@ import {
 import { usePendingAttachments } from '../lib/attachments'
 import { cachedWindow, setCachedWindow } from '../lib/blockCache'
 import { mergeRefreshedTail, PAGE_SIZE, prependOlder, scrollTopAfterPrepend, shouldLoadOlder } from '../lib/blockPaging'
+import { parseDiffLines } from '../lib/diff'
 import { collapseNotices } from '../lib/platformNotice'
 import {
   coalesceSplitFencedCodeBlocks,
@@ -95,6 +96,11 @@ const refMaps = { mentionNames, topicTitles }
 
 function renderMarkdown(text: string): string {
   return renderMarkdownWith(text, refMaps)
+}
+
+function docDiffText(line: string): string {
+  const text = line.slice(1)
+  return /^(?:\s|&nbsp;)*$/.test(text) ? '' : text
 }
 
 function renderPlain(text: string): string {
@@ -1542,7 +1548,22 @@ onBeforeUnmount(() => {
               </div>
               <details v-if="notice.detail" class="sys-more">
                 <summary>{{ notice.detailLabel || '展开详情' }}</summary>
-                <pre class="sys-detail">{{ notice.detail }}</pre>
+                <div v-if="notice.resource === 'doc'" class="doc-edit-diff" aria-label="文档修改对比">
+                  <template v-for="(line, index) in parseDiffLines(notice.detail)" :key="index">
+                    <div
+                      v-if="line.kind !== 'meta' && line.kind !== 'hunk' && docDiffText(line.text)"
+                      class="doc-edit-line"
+                      :class="`doc-edit-line--${line.kind}`"
+                      :aria-label="line.kind === 'add' ? '新增' : line.kind === 'del' ? '删除' : undefined"
+                    >
+                      <span class="doc-edit-mark" aria-hidden="true">{{
+                        line.kind === 'add' ? '+' : line.kind === 'del' ? '−' : ' '
+                      }}</span>
+                      <span>{{ docDiffText(line.text) }}</span>
+                    </div>
+                  </template>
+                </div>
+                <pre v-else class="sys-detail">{{ notice.detail }}</pre>
               </details>
             </div>
             <!-- 后端报错 (backend_log.py): 芝士 needs the whole traceback, a
@@ -2040,6 +2061,32 @@ details.sys-row > summary::-webkit-details-marker {
   font-size: 12px;
   color: var(--faint);
   margin-top: 4px;
+}
+.doc-edit-diff {
+  margin-top: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  font-size: 13px;
+  color: var(--text);
+}
+.doc-edit-line {
+  display: flex;
+  gap: 8px;
+  padding: 4px 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.doc-edit-mark {
+  flex: 0 0 1em;
+}
+.doc-edit-line--add {
+  background: var(--ok-wash);
+  color: var(--ok-ink);
+}
+.doc-edit-line--del {
+  background: var(--danger-wash);
+  color: var(--danger-ink);
 }
 .sys-detail {
   margin: 4px 0 6px;

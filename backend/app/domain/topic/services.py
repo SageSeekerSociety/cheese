@@ -10,6 +10,7 @@ topic children at all. What used to be a third level is a `tasks` row — see
 """
 
 import difflib
+import html
 import logging
 import uuid
 from dataclasses import dataclass
@@ -28,7 +29,7 @@ from app.domain.agent_instance.services import (
 )
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.alert.services import AlertService
-from app.domain.block.doc_tree import markdown_to_nodes
+from app.domain.block.doc_tree import PARAGRAPH, markdown_to_nodes
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import looks_like_agent_handle, names_a_person
@@ -86,6 +87,16 @@ def _require_room(parent: Topic) -> None:
 
 
 logger = logging.getLogger("cheesex.topic")
+
+
+def _doc_edit_lines(content: str) -> list[str]:
+    # Empty editor paragraphs are layout, not a contribution. Keep the saved
+    # document intact; omit only empty prose nodes from conversation evidence.
+    return "\n\n".join(
+        node.content
+        for node in markdown_to_nodes(content)
+        if node.node_type != PARAGRAPH or html.unescape(node.content).strip()
+    ).splitlines()
 
 
 def _doc_conflict(current_version: int) -> ConflictError:
@@ -1021,7 +1032,7 @@ class TopicService:
         author: str,
         expected_version: int,
         author_type: AuthorType = AuthorType.human,
-    ) -> Block:
+    ) -> tuple[Block, Block | None]:
         """改文档即指令 (eval B2): upsert the topic's living doc and drop a
         '编辑了文档' event into the conversation. The agent reads the latest doc
         on its next turn, so the edit acts as an instruction.
@@ -1069,6 +1080,10 @@ class TopicService:
         # doc's blocks get stable ids for cross-view highlight / comments later.
         await self._sync_doc_nodes(doc, content)
         # Append-only conversation event (spec H1): the doc edit is visible.
+        before_lines = _doc_edit_lines(previous_content)
+        after_lines = _doc_edit_lines(content)
+        if before_lines == after_lines:
+            return doc, None
         # A human actor is emitted as the structured <@handle> token so the
         # client renders it as a clickable mention chip (resolving handle→name
         # via the roster) — NOT prose we later pattern-match. 芝士 stays plain
@@ -1076,7 +1091,7 @@ class TopicService:
         # ``cheese-<topic hex>`` handle, and a raw handle is not what a reader
         # should see — one familiar name, whichever 分身 wrote it.
         actor = "芝士" if looks_like_agent_handle(author) else f"<@{author}>"
-        await self._blocks.add(
+        notice = await self._blocks.add(
             project_id=topic.project_id,
             topic_id=place.room_id,
             author=author,
@@ -1094,8 +1109,8 @@ class TopicService:
                 "detail_label": "查看本次修改",
                 "detail": "\n".join(
                     difflib.unified_diff(
-                        previous_content.splitlines(),
-                        content.splitlines(),
+                        before_lines,
+                        after_lines,
                         fromfile="修改前",
                         tofile="修改后",
                         lineterm="",
@@ -1103,7 +1118,7 @@ class TopicService:
                 ),
             },
         )
-        return doc
+        return doc, notice
 
     async def _sync_doc_nodes(self, root: Block, content: str) -> None:
         """Reconcile the living doc's node tree (B1) with `content` via a
