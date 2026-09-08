@@ -106,6 +106,23 @@ class Settings(BaseSettings):
     agent_haiku_model: str | None = "glm-4.5-air"
     agent_sonnet_model: str | None = "glm-5.2"
     agent_opus_model: str | None = "glm-5.2"
+    # --- Platform-side fetch service (app.domain.fetch) ---
+    # Reading the web for an agent happens HERE, not in the sandbox: the sandbox
+    # has a datacentre egress that several sites refuse outright, one browser per
+    # topic would mean one 185 MB Chrome per topic, and nothing cached would be
+    # shared. Both endpoints are optional and both default to off.
+    #
+    # The reader is a THIRD PARTY: enabling it hands every fetched URL to someone
+    # else, so it is an operator's decision rather than a default. Measured, it
+    # earns its place — it returned a Cloudflare-challenged page and a host this
+    # network cannot reach at all — but that is a trade to make deliberately.
+    fetch_reader_endpoint: str | None = None
+    # A shared browser, reached over HTTP rather than supervised in-process:
+    # it needs Chrome and pooling, and an API worker cannot restart a headless
+    # browser process tree cleanly. Measured, one shared instance served six
+    # concurrent pages in 4.7s where per-caller browsers took 9.5s for three.
+    fetch_browser_endpoint: str | None = None
+
     # --- LLM gateway admin (L1/L2 — defined in `app.domain.agent.gateway`) ---
     # When the pool routes through the self-hosted LiteLLM gateway, the backend can
     # use the gateway's ADMIN API to (L1) mint a per-project virtual key — injected
