@@ -706,6 +706,26 @@ Docker Postgres 里做的，仓库工作区除本文件外零改动；探针索�
 | buffers | 63,666（41,096 读盘） | **1,295** |
 | 执行时间 | 234.0 ms | **43–48 ms** |
 
+## `_last_activity()` 合并成一趟：确认没有变成「一条查询里算两遍」
+
+把派生列 select 出来的同时还要按它排序，值得担心的是 Postgres 会不会算两遍。
+实测没有——计划里**只有一个 `SubPlan`**，`loops=220`（每个话题一次），
+排序键直接引用同一个 SubPlan：
+
+```
+ Sort  (actual time=4.569..4.588 rows=220 loops=1)
+   Sort Key: (COALESCE((SubPlan 2), topics.created_at)) DESC
+   ->  Bitmap Heap Scan on topics  (actual time=0.258..4.440 rows=220 loops=1)
+         ->  Bitmap Index Scan on ix_topics_project_id
+         SubPlan 2
+           ->  Result  (actual time=0.018..0.018 rows=1 loops=220)
+                 InitPlan 1
+                   ->  Limit  (actual time=0.018..0.018 rows=1 loops=220)
+                         ->  Index Only Scan Backward using ix_blocks_topic_id_created_at on blocks
+```
+
+合并后一趟 4.59 ms；合并前是两趟 3.60 + 3.28 = 6.88 ms。
+
 ## 写入代价（加索引必须付的账）
 
 单行 INSERT，服务端 `clock_timestamp()` 计时，每组 3 轮：
