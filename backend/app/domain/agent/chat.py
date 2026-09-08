@@ -64,6 +64,7 @@ from app.domain.agent.service import (
 from app.domain.agent.skills import DEFAULT_CHAT_SKILLS, load_scenario, load_skills
 from app.domain.agent.stages import TopicStage, resolve_stage, stage_scenario
 from app.domain.agent.supply import SUBSCRIPTION, resolve_pool
+from app.domain.agent.tool_preview import ToolPreview, tool_preview, work_subpath
 from app.domain.agent_instance.configuration import (
     AgentConfiguration,
     validate_configuration,
@@ -264,15 +265,6 @@ _TOOL_VERB = {
     "write_file": "写文件",
     "record_decision": "记录决策",
 }
-_TOOL_ARG = {
-    "update_doc": "content",
-    "remember": "fact",
-    "notify": "title",
-    "request_accept": "reviewer_handle",
-    "pin_milestone": "title",
-    "write_file": "path",
-    "record_decision": "decision",
-}
 
 
 # Native Claude Code tools (sandbox mode) → 现场 labels. Systematic: every tool
@@ -302,41 +294,17 @@ _TOOL_VERB.update(
         "ToolSearch": "查找工具",
     }
 )
-_TOOL_ARG.update(
-    {
-        "Bash": "command",
-        "Write": "file_path",
-        "Edit": "file_path",
-        "Read": "file_path",
-        "Glob": "pattern",
-        "Grep": "pattern",
-        "WebSearch": "query",
-        "WebFetch": "url",
-        "Agent": "description",
-        "Task": "description",
-        "NotebookEdit": "notebook_path",
-        "Skill": "skill",
-        "ToolSearch": "query",
-    }
-)
 
 
-def _tool_arg_preview(name: str, args: dict) -> str:
-    """Whitespace-collapsed preview of the tool's most telling argument."""
-    key = _TOOL_ARG.get(name)
-    if key and isinstance(args, dict) and args.get(key) is not None:
-        return " ".join(str(args[key]).split())[:120]
-    return ""
-
-
-def _format_tool_event(name: str, args: dict) -> str:
+def _format_tool_event(name: str, preview: ToolPreview) -> str:
     """Human-readable FALLBACK text for an event block (old clients / old rows).
 
     The UI renders from the structured meta (see _tool_event_meta); this baked
-    string only shows when meta is absent."""
-    verb = _TOOL_VERB.get(name, name)
-    preview = _tool_arg_preview(name, args)
-    return f"{verb}\n{preview}" if preview else verb
+    string only shows when meta is absent. Both are built from the SAME
+    ToolPreview, so the baked line and the rendered one cannot describe the
+    call differently."""
+    verb = _TOOL_VERB.get(preview.action or name, name)
+    return f"{verb}\n{preview.text}" if preview.text else verb
 
 
 # 现场圆点分级: a PLATFORM action (amber dot) vs plain work (neutral dot).
@@ -355,14 +323,22 @@ def _is_platform_tool(raw_name: str, args: dict) -> bool:
     return False
 
 
-def _tool_event_meta(name: str, args: dict, *, platform: bool) -> dict:
+def _tool_event_meta(name: str, preview: ToolPreview, *, platform: bool) -> dict:
     """Structured payload persisted on an event block: the UI translates the
     tool name and colors the dot from these fields at DISPLAY time, so a verb
-    missing from today's table is never baked in untranslated forever."""
+    missing from today's table is never baked in untranslated forever.
+
+    ``as_tool`` rides alongside ``tool`` rather than replacing it: ``tool`` says
+    what actually ran, ``as_tool`` says whose label reads better (a Bash
+    `cat foo.py` is still a Bash call, but 「读取文件」 is what it did). NOT named
+    ``action`` — that key already means "which platform resource this card points
+    at" (see the frontend's platformNotice), and one name answering two questions
+    is how a card ends up pointing at a resource called "Read"."""
     meta: dict = {"tool": name, "platform": platform}
-    preview = _tool_arg_preview(name, args)
-    if preview:
-        meta["arg"] = preview
+    if preview.text:
+        meta["arg"] = preview.text
+    if preview.action:
+        meta["as_tool"] = preview.action
     return meta
 
 
@@ -2910,11 +2886,14 @@ class ChatService:
         spool reconcile can dedup a backfilled copy against this live one. Returns
         the persisted block payload so a caller (live path or spool reconcile) can
         broadcast it as a WS frame."""
+        preview = tool_preview(
+            name, tool_input, work_dir=work_subpath(project_id, topic_id)
+        )
         return await self._persist_room_event(
             project_id=project_id,
             topic_id=topic_id,
-            content=_format_tool_event(name, tool_input),
-            meta=_tool_event_meta(name, tool_input, platform=platform),
+            content=_format_tool_event(name, preview),
+            meta=_tool_event_meta(name, preview, platform=platform),
             turn_id=turn_id,
             eid=eid,
             backfilled=backfilled,

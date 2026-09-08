@@ -227,7 +227,9 @@ const LEGACY_VERB: Record<string, string> = {
 // from the table at write time is never frozen untranslated. Rows without meta
 // (pre-meta data) fall back to the baked content text.
 function eventVerb(b: Block): string {
-  if (b.meta?.tool) return toolLabel(b.meta.tool)
+  // as_tool 优先：一次 Bash 调用如果后端认出它其实在读文件，就按「读取文件」显示。
+  // tool 仍然如实记着真正跑的是哪个工具。
+  if (b.meta?.tool) return toolLabel(b.meta.as_tool ?? b.meta.tool)
   const first = (b.content.split('\n')[0] || '').replace(/^🔧\s*/, '')
   return LEGACY_VERB[first] ?? first
 }

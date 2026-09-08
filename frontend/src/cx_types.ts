@@ -71,6 +71,10 @@ export interface BlockMeta {
   tool?: string
   arg?: string
   platform?: boolean
+  // 现场那一行的动词覆盖：值是「标签更贴切的那个工具名」（Bash 跑的 `cat x.py`
+  // 显示成「读取文件」）。和 `action` 是两回事 —— 那个答的是「这张平台动作卡指
+  // 向哪个资源」，共用一个键就会让卡片指向一个叫 Read 的资源。
+  as_tool?: string
   action?: string
   event_type?: string
   code?: string
