@@ -23,6 +23,9 @@ const props = defineProps<{
   // 开这个话题的那一刻还有多少条没读——对话栏用它画「以下是新消息」那条线。
   // 必须一路透传：漏掉它不会报错，只是那条线再也不出现。
   unreadOnOpen?: number
+  // 换过 AI 队友之后 +1，对话栏据此重拉名册（它显示的 AI 名字来自那份名册）。
+  // 同样必须一路透传：漏掉它不报错，只是换完队友对话里还写着上一个的名字。
+  rosterRevision?: number
 }>()
 
 const emit = defineEmits<{
@@ -67,6 +70,7 @@ defineExpose({
       :members="members"
       :topic-list="topicList"
       :unread-on-open="unreadOnOpen"
+      :roster-revision="rosterRevision"
       @turn-done="emit('turn-done')"
       @working="emit('working', $event)"
       @tool-used="emit('tool-used', $event)"

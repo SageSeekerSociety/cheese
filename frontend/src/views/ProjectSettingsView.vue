@@ -25,6 +25,7 @@ import {
   setUpstream,
   syncUpstream,
 } from '../api'
+import ProjectComputeSettings from '../components/ProjectComputeSettings.vue'
 import ProjectEnvironmentSettings from '../components/ProjectEnvironmentSettings.vue'
 import { parseApprovalsInput, parseCheckPaths } from '../lib/branchProtection'
 import {
@@ -36,8 +37,7 @@ import {
 import { relTime } from '../lib/relTime'
 import { myId } from '../me'
 
-// Project settings. Compute is intentionally absent: execution-architecture v4
-// places the pool/default on the team and the per-run choice on the topic.
+// Project defaults and favorites never change an already running room.
 const props = defineProps<{ projectId: string }>()
 const router = useRouter()
 const route = useRoute()
@@ -384,6 +384,9 @@ watch(
       </v-alert>
 
       <template v-else>
+        <section class="page-section">
+          <ProjectComputeSettings :project-id="projectId" />
+        </section>
         <ProjectEnvironmentSettings :project-id="projectId" />
 
         <!-- 上游仓库 (spec §6.3): link an existing repo, keep pulling it in -->

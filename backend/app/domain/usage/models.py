@@ -14,19 +14,20 @@ from app.domain.common import Timestamps, UuidPk
 
 
 class ComputeGrant(UuidPk, Timestamps, Base):
-    """A compute-credit grant issued to a project (spec §9.1 机构提供算力).
+    """Team credits, optionally restricted to a funded project.
 
-    Issued when a project links a Task whose Template's resource_pack carries
-    {"compute_credits": N} — the protocol's 资源包 made real. A project with NO
-    grants is unlimited (spec §4 项目自治: an unlinked personal project is never
-    metered). Turn token usage is folded into credits and deducted oldest grant
-    first; the newest grant may over-run its total so consumption stays truthful.
+    A task's resource pack keeps its project restriction. General grants have
+    no project_id and can be consumed by every project in the owning team.
     """
 
     __tablename__ = "compute_grants"
 
-    project_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    team_id: Mapped[int | None] = mapped_column(
+        ForeignKey("team.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    # NULL is team-wide. Old owner-less projects can retain restricted grants.
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True
     )
     # The 赛题 whose 项目集 funded this grant (#370). An int, and deliberately
     # NOT a foreign key: the credits were granted, so the audit trail has to

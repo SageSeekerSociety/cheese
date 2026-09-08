@@ -161,9 +161,7 @@ def compute_selectable(
 def compute_default_name(
     settings=None,  # type: ignore[no-untyped-def]
 ) -> str:
-    """What a topic runs on when nothing was chosen: last selection first (the
-    topic's own, then the project's sticky memory, then the team default — see
-    `_resolve_compute_id`), and this pool when there is none.
+    """Deployment default used when neither room nor project has a choice.
 
     Cloud where the deployment can provision one, the self-hosted device pool
     where it cannot — the machine the deployment actually has, named honestly

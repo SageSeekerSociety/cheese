@@ -288,9 +288,11 @@ class DeviceService:
         return await self._repo.list_devices_by_team(team_id)
 
     async def serves_project(self, device_id: str, project_id: uuid.UUID) -> bool:
-        """Whether the device is assigned to the project — the precondition for
-        running an agent (screen) there."""
-        return await self._repo.is_assigned(device_id, project_id)
+        """Whether a project or its team currently shares this device."""
+        return any(
+            device.device_id == device_id
+            for device in await self.list_devices_for_project(project_id)
+        )
 
     async def list_devices_for_project(self, project_id: uuid.UUID) -> list[Device]:
         return await self._repo.list_devices_by_project(project_id)

@@ -52,6 +52,9 @@ const props = withDefaults(
     withChat?: boolean
     // 地址里的 `?card=` —— 非空就是总览那一格正看着一张卡。
     openCardId?: string | null
+    // 现场那一格用它给 AI 干的每一行署名。一路透传：漏掉它不报错，只是换完
+    // 队友那一格里还写着上一个的名字。
+    agentName?: string
   }>(),
   {
     worklog: () => [],
@@ -59,6 +62,7 @@ const props = withDefaults(
     workingSince: null,
     topicList: () => [],
     openCardId: null,
+    agentName: '芝士',
     tab: undefined,
     phase: undefined,
     withChat: false,
@@ -450,6 +454,7 @@ defineExpose({ pulse, highlightTurn, openFile })
           :working="working"
           :working-since="workingSince"
           :active="active === 'site'"
+          :agent-name="agentName"
         />
         <PanelChanges
           v-if="mounted.has('changes')"

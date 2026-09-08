@@ -659,7 +659,48 @@ export function setComputeProfile(projectId: string, profile: string): Promise<{
 
 // MicroCloud machines are billed/audited through one project but enroll into that
 // project's team compute pool. The browser never receives provider credentials.
-export function listProjectMachines(projectId: string): Promise<ListPayload<import('./cx_types').ProjectMachine>> {
+export interface ResourceLimits {
+  max_machines_per_team: number
+  max_concurrent_turns: number
+}
+
+export function getResourceLimits(): Promise<ResourceLimits> {
+  return request('/projects/resource-limits')
+}
+
+export interface MachineQuota {
+  team_id: number
+  used: number
+  limit: number
+  project_used: number
+}
+
+export interface TeamResourceQuotas {
+  team_id: number
+  machines: { used: number; limit: number }
+  credits: {
+    unlimited: boolean
+    credits_total: number
+    credits_used: number
+    credits_remaining: number
+    tokens_per_credit: number
+  }
+  projects: {
+    id: string
+    name: string
+    machines_used: number
+    total_tokens: number
+    restricted_credits_remaining: number
+  }[]
+}
+
+export function getTeamResourceQuotas(teamId: number): Promise<TeamResourceQuotas> {
+  return request(`/teams/${teamId}/resource-quotas`)
+}
+
+export function listProjectMachines(
+  projectId: string
+): Promise<ListPayload<import('./cx_types').ProjectMachine> & { quota: MachineQuota }> {
   return request(`/projects/${encodeURIComponent(projectId)}/machines`)
 }
 
@@ -685,6 +726,30 @@ export function deleteProjectMachine(
 // 会话级算力 (v4): a topic's own compute选择, switchable until its first turn.
 export function getTopicComputeProfile(topicId: string): Promise<TopicComputeProfile> {
   return request<TopicComputeProfile>(`/topics/${encodeURIComponent(topicId)}/compute-profile`)
+}
+
+export function getProjectComputeConfigs(projectId: string): Promise<import('./cx_types').ProjectComputeConfigs> {
+  return request(`/projects/${encodeURIComponent(projectId)}/compute-configs`)
+}
+
+export function saveProjectComputeConfigs(
+  projectId: string,
+  configs: Pick<import('./cx_types').ProjectComputeConfigs, 'default' | 'favorites'>
+): Promise<Pick<import('./cx_types').ProjectComputeConfigs, 'default' | 'favorites'>> {
+  return request(`/projects/${encodeURIComponent(projectId)}/compute-configs`, {
+    method: 'PUT',
+    body: JSON.stringify(configs),
+  })
+}
+
+export function setTopicComputeChoice(
+  topicId: string,
+  choice: import('./cx_types').ComputeChoice
+): Promise<{ choice: import('./cx_types').ComputeChoice }> {
+  return request(`/topics/${encodeURIComponent(topicId)}/compute-profile`, {
+    method: 'PUT',
+    body: JSON.stringify({ choice }),
+  })
 }
 export function setTopicComputeProfile(
   topicId: string,

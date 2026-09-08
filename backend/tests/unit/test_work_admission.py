@@ -203,8 +203,8 @@ async def test_exhausted_credits_refuses_turn_but_lands_message():
     # The agent never ran.
     assert chat.max_running == 0
     # The refusal is the PLATFORM's structured copy, in the topic 现场.
-    assert any("算力额度已用完" in e for e in chat.system_events)
-    assert "算力额度已用完" in frames[-1]["message"]
+    assert any("tokens 额度已用完" in e for e in chat.system_events)
+    assert "tokens 额度已用完" in frames[-1]["message"]
     await _until(lambda: runner.active_work_count() == 0)
 
 
