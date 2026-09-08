@@ -53,7 +53,7 @@ import type {
   WsServerFrame,
 } from '../cx_types'
 
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useEventListener } from '@vueuse/core'
 
 import {
@@ -90,8 +90,8 @@ import TimelineMark from './TimelineMark.vue'
 // Message rendering (markdown / plain / reference chips) lives in
 // ../lib/renderMessage so it's unit-testable; here we just bind the
 // handle→name and id→title maps filled from the roster / topics props.
-const mentionNames: Record<string, string> = {}
-const topicTitles: Record<string, string> = {}
+const mentionNames = reactive<Record<string, string>>({})
+const topicTitles = reactive<Record<string, string>>({})
 const refMaps = { mentionNames, topicTitles }
 
 function renderMarkdown(text: string): string {
