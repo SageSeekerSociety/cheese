@@ -817,8 +817,13 @@ async def test_session_timeout_retires_activity_but_keeps_subscription(
     factory = client.test_factory
     project_id, topic_id = await _seed_topic(factory)
     router = HookRouter()
+
+    class DeadChannel(_IdleChannel):
+        async def confirm_alive(self, screen):
+            return False
+
     provider = ClaudeCodeRuntime(
-        _IdleChannel(),
+        DeadChannel(),
         router=router,
         idle_suspect_s=0.2,
         hard_ceiling_s=0.2,
