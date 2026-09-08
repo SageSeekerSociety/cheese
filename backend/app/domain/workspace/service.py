@@ -20,7 +20,7 @@ import shutil
 import subprocess
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from pathlib import Path
 
 from app.core.config import settings
@@ -2006,6 +2006,60 @@ def pr_base_branch(project_id: uuid.UUID) -> str:
     """两阶段采纳 (PR迭代式): the base branch a topic's PR should target — same
     branch merge_topic() would merge into locally."""
     return _base_branch(ensure_repo(project_id))
+
+
+def batches_a_clone_stands_on(
+    project_id: uuid.UUID,
+    delivered: dict[str, str],
+    reported: Collection[str],
+) -> set[str]:
+    """Of these batches, the ones whose delivered work a clone is built on top of.
+
+    `delivered` maps a batch's branch to the commit recorded when it merged
+    (empty for the batches that merged before that was recorded); `reported` is
+    the commits the clone says it has — its HEAD and that commit's ancestors.
+    The answer is the branches, but the QUESTION is only ever about commits: a
+    branch can be renamed with `git branch -m` without a single commit moving,
+    so a clone's own branch name proves nothing about what its history carries.
+
+    Two facts here identify a batch and neither can be renamed: the commit the
+    platform recorded it delivering, and where its branch in THIS repo points —
+    the tip the delivering device actually pushed, which is what covers the
+    batches that merged with no `delivered_head` recorded at all.
+
+    A commit the base branch already reaches is not evidence: it is on main by
+    ancestry, so a PR opened on top of it shows none of it a second time. Every
+    clone of this project carries those, so counting them would refuse the first
+    push of every freshly made branch. It matters concretely because a merge
+    that joins upstream history is NOT squashed (`merge_topic`), and neither is
+    a PR merged on GitHub with a merge commit: in both, the batch's own tip ends
+    up an ancestor of main.
+    """
+    wanted = {c for c in reported if c}
+    if not wanted:
+        return set()
+    repo = ensure_repo(project_id)
+    base = _base_branch(repo)
+    tips = _branch_tips(repo)
+    carried: set[str] = set()
+    for branch, delivered_head in delivered.items():
+        marks = {m for m in (delivered_head, tips.get(branch, "")) if m in wanted}
+        if any(not _is_ancestor(repo, mark, base) for mark in marks):
+            carried.add(branch)
+    return carried
+
+
+def _branch_tips(repo: Path) -> dict[str, str]:
+    """Every branch in this repo and the commit it points at, in one call."""
+    listed = _git(
+        repo, "for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads/"
+    )
+    tips: dict[str, str] = {}
+    for line in listed.splitlines():
+        name, _, sha = line.partition(" ")
+        if name and sha:
+            tips[name] = sha
+    return tips
 
 
 def has_undelivered_commits(project_id: uuid.UUID, topic_id: uuid.UUID) -> bool:

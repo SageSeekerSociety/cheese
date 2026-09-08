@@ -647,10 +647,18 @@ mine_dir="$CHEESE_WORK/.git/cheese-sync"
 mkdir -p "$mine_dir" 2>/dev/null || true
 last_branch="$(cat "$mine_dir/branch" 2>/dev/null || true)"
 asked_on="${last_branch:-$here}"
+# 名字之外，把**提交**一起报上去。`git branch -m` 改一个名字，一个提交都不动 ——
+# 光凭名字问的话，一台历史长在已经 squash 进 main 的那一批上的机器，只要分支被改
+# 过名（我们自己的工作区此刻就是这个形状），平台就只能答「这个名字从来不是本房间
+# 的批次」，于是普通推送、报 ok，而新一批的 PR 把上一批的改动又展示一遍。
+#
+# 提交改不了名字：平台手里有每一批交付时记下的 head、以及那条分支上被推到的 tip，
+# 拿这里的 HEAD 及其祖先去对，命中的就是一个旧批次，无论它现在叫什么。
+heads="$(git rev-list --max-count=100 HEAD 2>/dev/null | tr '\n' ',' || true)"
 answer=""
 if [ -n "${CHEESE_BRANCH_URL:-}" ]; then
   answer="$(curl -fsS --max-time 10 -H "X-Cheese-Token: ${CHEESE_TOKEN:-}" \
-    "$CHEESE_BRANCH_URL?on=$asked_on" 2>/dev/null || true)"
+    "$CHEESE_BRANCH_URL?on=$asked_on&heads=$heads" 2>/dev/null || true)"
 fi
 cheese_field() {
   printf '%s' "$answer" | sed -n "s/.*\"$1\"[ ]*:[ ]*\"\([^\"]*\)\".*/\1/p"
@@ -659,6 +667,12 @@ branch="$(cheese_field branch)"
 base="$(cheese_field base)"
 base_sha="$(cheese_field base_sha)"
 on_head="$(cheese_field on_head)"
+# 平台认出来的那一批**叫什么**。下面所有本地记录（`published/` `local-at/`）都是
+# 按分支名存的，是这个同步器自己写下的，改名改不到它们 —— 所以认出旧批次之后要按
+# 平台给的那个名字去找，而不是按这个 clone 现在的分支名。答案里没这个字段（平台
+# 没认出任何一批）就还是问出去的那个名字。
+on_branch="$(cheese_field on_branch)"
+asked_on="${on_branch:-$asked_on}"
 merged=""
 # JSON whitespace is not part of the fact: `"on_merged":true` and
 # `"on_merged": true` are the same answer, and a pattern that only matched one of
@@ -740,20 +754,22 @@ if [ -n "$local_head" ] && [ -n "$branch" ]; then
   if [ -n "$anchor" ]; then
     graft=1  # 这一批已经在衔接了，继续用同一个基线
   elif [ -n "$merged" ] && [ "$asked_on" != "$branch" ]; then
-    # 平台说 `?on=` 问的那一批（`$asked_on`）是这个房间**已经合进 main** 的一批，而
-    # 房间现在写的是另一批（`$branch`）。「合没合」只有平台说得出：squash 提交不是
-    # 被压的那条分支的后代，祖先关系对「交付了」和「从没交付」给的是同一个答案。
+    # 平台认出这个 clone 的历史长在这个房间**已经合进 main** 的某一批上
+    #（`$asked_on`），而房间现在写的是另一批（`$branch`）。「合没合」只有平台说得
+    # 出：squash 提交不是被压的那条分支的后代，祖先关系对「交付了」和「从没交付」
+    # 给的是同一个答案。
     #
-    # 本地记录（`$last_branch`）只决定**问哪一批**，不决定**判什么**：有它就问它
-    #（我上次发布到哪条分支），没有就问本地分支名，答案两种情况下都是平台给的。所
-    # 以一台在这个同步器开始写 `refs/cheese/*` 之前就在跑的机器 —— 一条本地记录都
-    # 没有、看起来和「从没发布过」一模一样 —— 照样会走到这里。把「有没有本地记录」
-    # 当判据的那一版，这种机器走的是普通推送：新分支从上一批的提交上长出来，把那一
-    # 批已经进了 main 的改动再交付一次，还报 `status=ok`。
+    # 认的是**上报的那些提交**，不是名字：本地分支名随手就能改（`git branch -m` 一
+    # 个提交都不动），而提交改不了名。本地记录（`$last_branch`）和当前分支名只是多
+    # 给平台一个候选，判据是平台拿提交对出来的那一批。所以一台在这个同步器开始写
+    # `refs/cheese/*` 之前就在跑、又被改过分支名的机器 —— 看起来和「从没发布过」一
+    # 模一样 —— 照样会走到这里。按名字判的那一版，这种机器走的是普通推送：新分支从
+    # 上一批的提交上长出来，把那一批已经进了 main 的改动再交付一次，还报
+    # `status=ok`。
     #
-    # 反过来，`$asked_on` **不是**这个房间合并过的批次时（分身自己起的分支名、或者
-    # clone 时落在的基线分支），普通推送才是对的：没有哪一批从它交付出去过，也就没
-    # 有要衔接的东西。
+    # 反过来，上报的提交里没有任何一批的交付点时（分身自己起的 `dev/…`、或者 clone
+    # 时落在的基线分支），普通推送才是对的：没有哪一批从它交付出去过，也就没有要衔
+    # 接的东西。
     #
     # 到了这里就只有「接得上」和「说清楚接不上」两条路 —— 没有「不衔接地推过去」。
     graft=1

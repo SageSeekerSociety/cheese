@@ -16,6 +16,7 @@ history, deletes and conflict handling badly; with this the agent uses plain
 
 import asyncio
 import os
+import re
 import subprocess
 import uuid
 from pathlib import Path
@@ -168,6 +169,7 @@ async def branch_for_place(
     topic_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
     on: str = "",
+    heads: str = "",
     x_cheese_token: str | None = Header(default=None, alias="X-Cheese-Token"),
 ) -> dict:
     """Which branch this place writes to **right now**, and how to get onto it.
@@ -184,18 +186,30 @@ async def branch_for_place(
     credential as the push it precedes: the device already holds a
     project-scoped token and already talks to this router to push.
 
-    `on` is the branch the caller's clone is currently on, and the two extra
-    facts in the answer exist because a device **cannot work them out for
-    itself** after a squash merge:
+    `on` is the branch the caller's clone is currently on and `heads` are the
+    commits it has (its HEAD and that commit's ancestors). Both are asked for
+    because **the name alone is not evidence**: `git branch -m` renames a branch
+    without moving a single commit, so a clone whose history is built on a batch
+    already squashed into main can present a name this room never delivered from
+    — and be told, truthfully about the name and disastrously about the history,
+    that there is nothing to carry over. The commits cannot be renamed, so they
+    are what the batch is identified by; `on` only ADDS the batch this device's
+    own record says it last published to.
 
-    - `on_merged` — is `on` a batch of THIS room that has landed? Ancestry
-      cannot say. A squash commit is not a descendant of the branch it
-      squashed, so `merge-base --is-ancestor` answers "no" for a batch that is
-      fully delivered and "no" for one that never was. Nor can a device tell a
-      landed batch from a branch name that was never a batch at all (its own
-      `dev/…`, or the base branch it was cloned onto) — and the two need
-      opposite handling: the first must be carried onto the new batch or
+    The three extra facts in the answer exist because a device **cannot work
+    them out for itself** after a squash merge:
+
+    - `on_merged` — is this clone's history built on a batch of THIS room that
+      has landed? Ancestry cannot say. A squash commit is not a descendant of
+      the branch it squashed, so `merge-base --is-ancestor` answers "no" for a
+      batch that is fully delivered and "no" for one that never was. Nor can a
+      device tell a landed batch from a branch that was never a batch at all
+      (its own `dev/…`, or the base branch it was cloned onto) — and the two
+      need opposite handling: the first must be carried onto the new batch or
       refused, the second is just a name and pushes normally.
+    - `on_branch` — which batch that was, by name. The device keys its own
+      records (what it published, where it was locally when it did) by branch
+      name, so being told the name is what lets it find them after a rename.
     - `on_head` — the commit that batch delivered, empty when the merge
       predates recording it. A merged batch with no `on_head` is the case the
       device must REFUSE rather than push: it knows the work here sits on a
@@ -203,9 +217,9 @@ async def branch_for_place(
     - `base` / `base_sha` — the commit the next batch starts from, by name AND
       by sha. Same reason: the delivering clone has no ref that reaches it.
 
-    Both are the platform stating a fact it alone holds, so that a device grafts
-    its next batch onto the right commit only when the previous one is confirmed
-    delivered — never on a guess.
+    All of them are the platform stating a fact it alone holds, so that a device
+    grafts its next batch onto the right commit only when the previous one is
+    confirmed delivered — never on a guess.
     """
     _repo_for(project_id, x_cheese_token)
     from app.domain.room_task.place import PlaceResolver
@@ -232,38 +246,66 @@ async def branch_for_place(
     if place.branch_name is None:
         raise NotFoundError("这个地点现在没有可写的分支")
     base, base_sha = await asyncio.to_thread(ws.base_branch_head, project_id)
-    on_merged = False
-    on_head = ""
-    if on and on != place.branch_name:
-        history = await WorkTreeService(db).history(place.room_id)
-        was = next(
-            (
-                t
-                for t in history
-                if ws.branch_for_tree(t.id) == on and t.status == TreeStatus.merged
-            ),
-            None,
+    history = await WorkTreeService(db).history(place.room_id)
+    landed = {
+        ws.branch_for_tree(t.id): t for t in history if t.status == TreeStatus.merged
+    }
+    carried = set()
+    reported = _commits_a_clone_reported(heads)
+    if landed and reported:
+        carried = await asyncio.to_thread(
+            ws.batches_a_clone_stands_on,
+            project_id,
+            {b: (t.delivered_head or "") for b, t in landed.items()},
+            reported,
         )
-        # 「交出去的是哪个 commit」来自合并那一刻记下的 `delivered_head`，**不是**
-        # 那条分支现在指向哪里。A device grafting its next batch does a three-way
-        # merge whose BASE is the content that was delivered; the branch is
-        # mutable, so a commit pushed onto it after the merge (a stale screen,
-        # a hand push) would be taken for delivered content it never was, and
-        # the graft would silently re-deliver or drop work. A batch that merged
-        # before this was recorded answers `on_merged` with no `on_head`, and
-        # the device refuses rather than guesses.
-        on_merged = was is not None
-        on_head = (was.delivered_head or "") if was is not None else ""
+    # 名字命中和提交命中放在一起挑，挑最后交付的那一批。A clone that has grafted
+    # already still has the batch BEFORE last in its ancestry — HEAD never moves
+    # here, the graft is built with plumbing — so on a third batch the commits
+    # identify the first one while `on` (the syncer's own record of what it last
+    # published to) identifies the second. Carrying onto the older of the two
+    # would re-deliver everything the second one added, so the newest wins.
+    was = max(
+        (t for b, t in landed.items() if b == on or b in carried),
+        key=lambda t: t.merged_at or t.created_at,
+        default=None,
+    )
+    # 「交出去的是哪个 commit」来自合并那一刻记下的 `delivered_head`，**不是**
+    # 那条分支现在指向哪里。A device grafting its next batch does a three-way
+    # merge whose BASE is the content that was delivered; the branch is
+    # mutable, so a commit pushed onto it after the merge (a stale screen,
+    # a hand push) would be taken for delivered content it never was, and
+    # the graft would silently re-deliver or drop work. A batch that merged
+    # before this was recorded answers `on_merged` with no `on_head`, and
+    # the device refuses rather than guesses.
     return ok(
         {
             "branch": place.branch_name,
             "tree_id": str(place.tree_id),
             "base": base,
             "base_sha": base_sha,
-            "on_merged": on_merged,
-            "on_head": on_head,
+            "on_merged": was is not None,
+            "on_branch": ws.branch_for_tree(was.id) if was is not None else "",
+            "on_head": (was.delivered_head or "") if was is not None else "",
         }
     )
+
+
+#: 一个 commit 长这样，别的都不是。The list arrives in a URL a device wrote, and
+#: every entry goes on to be an argument to `git merge-base` — so what is not a
+#: full hex object name never reaches git. The trailing empty field of a
+#: comma-terminated list is dropped by the same rule.
+_A_COMMIT = re.compile(r"\A[0-9a-f]{40}(?:[0-9a-f]{24})?\Z")
+
+#: How many of a clone's commits are looked at. The batch tip a device is
+#: sitting on is whatever it delivered last, so it is within this batch's own
+#: commits — deep enough to cover a long batch, short enough that the URL stays
+#: well inside what proxies and servers accept on a request line.
+_HOW_FAR_BACK = 100
+
+
+def _commits_a_clone_reported(heads: str) -> list[str]:
+    return [c for c in heads.split(",") if _A_COMMIT.match(c)][:_HOW_FAR_BACK]
 
 
 @router.get("/{project_id}/git/info/refs")
