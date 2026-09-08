@@ -271,6 +271,9 @@ async function handleUpgradeMessage(messageId: string) {
 // 「新消息从哪开始」只有开话题的那一瞬间知道：markRead 一跑，未读数就归零了。
 // 所以在归零之前抓一次，交给对话栏去画那条线。
 const unreadOnOpen = ref(0)
+// 换了 AI 队友之后 +1。对话栏显示的 AI 名字来自它自己拉的房间名册，而换队友的
+// 按钮长在话题头上——两边是兄弟，够不着彼此，所以这个计数从这里往下发。
+const rosterRevision = ref(0)
 watch(
   () => props.topicId,
   async (id) => {
@@ -315,6 +318,7 @@ watch(
         :focus="focusMode"
         @toggle-focus="focusMode = !focusMode"
         @open-topic="openTopic"
+        @agent-swapped="rosterRevision += 1"
       />
 
       <div class="panes d-flex flex-grow-1" style="min-width: 0; min-height: 0; position: relative">
@@ -329,6 +333,7 @@ watch(
           :members="store.members"
           :topic-list="store.topics"
           :unread-on-open="unreadOnOpen"
+          :roster-revision="rosterRevision"
           v-on="chatEvents"
         />
         <div
@@ -366,6 +371,7 @@ watch(
               :members="store.members"
               :topic-list="store.topics"
               :unread-on-open="unreadOnOpen"
+              :roster-revision="rosterRevision"
               v-on="chatEvents"
             />
           </template>
