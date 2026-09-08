@@ -3,6 +3,11 @@
 回答一个问题：侧边栏和时间线背后的 5 个接口，每一个到底花在哪、有没有能省的。
 全部数字都是在一个**造出来的真实规模库**上实测的，不是读代码推断的。
 
+> **诊断已经落地成改动**。本文前半部分是诊断（改动前的测量），
+> **改完之后的复测见文末「改完之后」一节**。诊断那部分保持原样没有回填，
+> 因为它记录的是「当时看到的是什么」——把它改成现在的样子，
+> 下一个人就再也看不出这几条是怎么被发现的了。
+
 ## 结论速览
 
 | 接口 | SQL 条数 | p50 | 其中 SQL | 响应(原始/网上) | 判决 |
@@ -645,8 +650,170 @@ ix_users_handle                 UNIQUE (handle)
 | 本地跑 backend 要先装 rustup | ✅ 照做通过，`srp_rs` 编好 |
 | `GET /projects/{id}/topics` | ❌ 该路径不存在，实际是 `GET /topics?project_id=` |
 
-## 附：本轮没有改任何代码
+## 附：诊断这一轮没有改任何代码
 
 所有实验（SQL 监听器、摘中间件、建索引）都在 `/tmp` 的包装模块和一个一次性的
 Docker Postgres 里做的，仓库工作区除本文件外零改动；探针索引 `ix_probe_unread`
-测完已 `DROP`。
+测完已 `DROP`。**改动是下一轮做的，见下。**
+
+---
+
+# 改完之后
+
+同一套测法、同一个库（10 项目 / 2230 话题 / 990,376 blocks / 624 MB），
+改动前后各 40 个样本。
+
+## 五个接口，前后对照
+
+| 接口 | SQL 前→后 | p50 前→后 | SQL 时间 前→后 | 响应体积 |
+|---|---|---|---|---|
+| `/projects/{id}/topic-unread` | 4 → 4 | 244.1 → **40.3** ms（**−83%**） | 232.7 → 29.6 ms | 5.3 KB（一字节没变） |
+| `/projects/{id}/members` | **35 → 6** | 35.8 → **12.9** ms（**−64%**） | 14.3 → 3.2 ms | 6.5 KB（一字节没变） |
+| `/projects/{id}/private-unread` | 4 → 4 | 21.0 → **14.3** ms（**−32%**） | 10.2 → 4.4 ms | 0.2 KB（一字节没变） |
+| `/topics/{id}/blocks?limit=50` | 9 → 9 | 27.1 → **23.9** ms（−12%） | 8.7 → 7.1 ms | 43.6 KB（一字节没变） |
+| `/topics?project_id=…` | 10 → **9** | 46.4 → **41.0** ms（−11%） | 12.4 → 10.1 ms | 119.8 KB（一字节没变） |
+| `/topics/{id}/blocks`（不分页，agent 读全量） | 9 → 9 | 205.5 → 199.2 ms（−3%） | 43.4 → 40.2 ms | 2.0 MB（一字节没变） |
+
+**响应体积一字节没变**——这几条改的全是「怎么拿到同样的答案」，不是「答案是什么」。
+
+## `topic-unread` 改后的 EXPLAIN (ANALYZE, BUFFERS)
+
+```
+ HashAggregate  (cost=6676.74..6698.85 rows=2211 width=24) (actual time=47.390..47.439 rows=125 loops=1)
+   Group Key: blocks.topic_id
+   ->  Hash Left Join
+         Hash Cond: (blocks.topic_id = topic_read_states.topic_id)
+         Filter: ((topic_read_states.last_read_at IS NULL) OR (blocks.created_at > topic_read_states.last_read_at))
+         ->  Nested Loop
+               ->  Bitmap Heap Scan on topics
+                     Recheck Cond: (project_id = '1111…'::uuid)
+                     ->  Bitmap Index Scan on ix_topics_project_id
+               ->  Index Only Scan using ix_blocks_topic_kind_task_created on blocks
+                     Index Cond: ((topic_id = topics.id) AND (kind = 'message'::text) AND (task_id IS NULL))
+                     Filter: ((author)::text <> 'alice'::text)
+                     Heap Fetches: 0
+         ->  Seq Scan on topic_read_states  (rows=125 loops=1)
+ Execution Time: 47.696 ms
+```
+
+对照改动前的 `Parallel Seq Scan on blocks` + `Buffers: shared hit=22570 read=41096`
++ `Execution Time: 234.022 ms`：
+
+| | 前 | 后 |
+|---|---|---|
+| 扫描方式 | Parallel Seq Scan（全表 990k 行） | Index **Only** Scan，只碰这 250 个房间 |
+| 回堆 | 每行都回 | **`Heap Fetches: 0`** |
+| buffers | 63,666（41,096 读盘） | **1,295** |
+| 执行时间 | 234.0 ms | **43–48 ms** |
+
+## 写入代价（加索引必须付的账）
+
+单行 INSERT，服务端 `clock_timestamp()` 计时，每组 3 轮：
+
+| 场景 | 前 p50 | 后 p50 | 变化 |
+|---|---|---|---|
+| **同话题连插**（缓存友好） | 0.108 ms | 0.110 ms | 测不出差别，组内波动比组间大 |
+| **随机话题插**（碰冷叶页，更接近真实） | 0.160 ms | **0.186 ms** | **+0.026 ms（+16%）** |
+| 随机话题 mean | 0.207 ms | 0.272 ms | +0.065 ms |
+| 随机话题 p99 | 0.665 ms | 0.889 ms | +0.224 ms（仍是亚毫秒） |
+
+磁盘：新索引 94 MB，被替换掉的 `ix_blocks_topic_id` 只有 7 MB
+（PG13+ 的 btree 去重把重复 topic_id 压得极扁），**净增约 87 MB**，
+blocks 表的 +14%。索引条数持平（8 → 8）。
+
+换算：一次 `topic-unread` 轮询省下的时间 ≈ 7,800 次 block 插入的增量。
+
+## 删掉 `ix_blocks_topic_id` 的两项核对
+
+新的复合索引以 `topic_id` 打头，所以它是旧单列索引的超集。但「理论上覆盖得住」
+和「计划器真的会用」是两件事，所以两项都实测了。
+
+**其一，另外 4 个接口的计划有没有退化**——没有，还白捡两个改进：
+
+| 查询 | 改后走的路 | 结论 |
+|---|---|---|
+| 话题列表按最后活动排序 | `Index Only Scan Backward using ix_blocks_topic_id_created_at` | 不变 |
+| `blocks?limit=50` 分页 | `Index Scan Backward using ix_blocks_topic_id_created_at`，18 buffers | 不变 |
+| `count_for_topic` | `Index Only Scan`，`Heap Fetches: 0`，168 → 34 buffers | **3.13 → 1.38 ms** |
+| `private_unread_counts` | `Index Only Scan`，`Heap Fetches: 0` | **原来是 Bitmap Heap Scan** |
+| 单纯按 topic_id 查 blocks | `Bitmap Index Scan on ix_blocks_topic_id_created_at` | 仍走索引，**没退化成 Seq Scan** |
+
+**其二，级联删除**——这是最容易因为「少一条索引」从毫秒掉到分钟的地方，
+平时没人测。删一个 2500 blocks + 300 reactions 的话题：
+
+| | round1 | round2 | round3 | 中位 |
+|---|---|---|---|---|
+| 前（有 `ix_blocks_topic_id`） | 1126.9 | 1154.3 | 1249.2 | 1154.3 ms |
+| 后（已删） | 1146.3 | 1117.9 | 1134.6 | **1134.6 ms** |
+
+**没有退化**，差异在噪声内。级联走的是 `ix_blocks_topic_id_created_at`，
+它一直都在，且同样以 `topic_id` 打头。
+
+## `total`：留着，一个字没改
+
+上一轮说它「占 `blocks?limit=50` SQL 时间的 38%、而且没人读」，结论没错，
+但**它指向的解法是错的**。
+
+`page(items, total)` 是 `app/api/response.py` 里两行的共享 helper，
+被 12 个路由文件、29 个调用点用着——它是全站响应信封的一部分。
+（`docs/api-conventions.md` 里一个字都没提它，那份文件只管 URL 寻址；
+判据是共享 helper 本身。）为 1.38 ms 让 `blocks` 变成唯一一个信封缺一块的接口，
+不划算，后面每个人都得单独记住这个例外。
+
+**而真正的解法根本不是删字段，是索引**：为 `topic-unread` 加的那条索引顺手覆盖了
+`count_for_topic`，一行代码没改——
+
+```
+前: Bitmap Heap Scan, Buffers: shared hit=168,             Execution Time: 3.134 ms
+后: Index Only Scan,  Heap Fetches: 0, Buffers: hit=17 read=17, Execution Time: 1.376 ms
+```
+
+**这条值得单独记一笔**：一个看起来像「删掉冗余字段」的问题，
+底下其实是「缺索引」。按第一直觉动手，会破坏一个全站约定，
+换来的收益还不如加索引——而且加索引连带把另外两个查询也修了。
+**一个字段贵，不一定是这个字段该死，可能只是问它的方式不对。**
+
+## 顺带发现、但没有动手的
+
+按边界只诊断不动刀，记在这里：
+
+- **`GET /projects/{id}/members` 不需要认证**（`members.py` 第 47 行没有
+  `ActorResolverDep`，无 Authorization 头实测 200）。文件头注释写着
+  "Reading the roster stays open, as it was"，是有意为之，所以不是漏洞。
+  只是它意味着任何人都能触发这个接口——N+1 修掉之后，这件事的放大倍数
+  从「人数 × 往返」降到了常数，顺带也算收窄了一点。
+- **`ix_blocks_project_id`（6.6 MB）目前没有任何热点查询在用**。
+  `unread_counts` 本来可以用它（给 where 补一个 `Block.project_id`，实测
+  234 → 157 ms），但加了复合索引之后这条路不再需要。它是否还有别的读者
+  没有查，**没动**。
+
+## 本轮改了什么
+
+| 文件 | 改动 |
+|---|---|
+| `backend/alembic/versions/b7e4d21c9a06_*.py` | 新索引 `(topic_id, kind, task_id, created_at) INCLUDE (author)`，并替换掉 `ix_blocks_topic_id`；upgrade/downgrade 都在真库上验过 |
+| `backend/app/domain/block/models.py` | 模型与 migration 对齐（含去掉 `topic_id` 的 `index=True`） |
+| `backend/app/api/routes/members.py` | `get_by_handle` 逐个查 → 已有的 `get_by_handles` 批查 |
+| `backend/app/domain/topic/{repositories,services}.py`、`api/routes/topics.py` | `_last_activity()` 从算两遍改成排序那一趟顺带 select 出来 |
+| `frontend/nginx.conf` | 补 `gzip_proxied any;`（补悬崖，不是修 bug——今天没人加 `Via`，压缩一直是开着的） |
+| `backend/tests/integration/test_hot_path_queries.py` | 8 条测试，见下 |
+
+## 测试
+
+`tests/integration/test_hot_path_queries.py`，8 条全绿。它们盯的不是绝对速度
+（那是 benchmark 的事），而是**形状**：
+
+- **往返次数不能随列表长度增长**——花名册从 3 人涨到 15 人、话题从 3 个涨到 12 个，
+  SQL 条数必须一模一样。这正是 N+1 唯一的可观测症状：答案一直是对的。
+- **索引必须真的在收窄扫描**——EXPLAIN 里 `kind` 和 `task_id` 必须出现在
+  `Index Cond`/`Recheck Cond` 里，而不是只在 `Filter` 里。
+  改动前它们就在 `Filter` 里，意味着把整个话题的 block 都取上来再扔掉。
+- **删掉单列索引之后，按 topic_id 查仍然走索引**（级联删除依赖这条路）。
+- 外加行为不变的功能断言：花名册的 `name`/`agent`/`avatar_id`、
+  每一行都有 `last_activity_at`、在房间里说话会把它顶到列表最前面。
+
+关于 `Heap Fetches: 0`：它是这条索引最值钱的性质，但**测试里没有断言它**。
+index-only scan 要求 visibility map 是新的，那需要一次 `VACUUM`，
+而事务里的测试跑不了 `VACUUM`。断言它会变成一条看运气的测试。
+所以测试断言的是稳定的那半（索引在收窄），`Heap Fetches: 0` 由上面的
+EXPLAIN 原文佐证。
