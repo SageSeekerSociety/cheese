@@ -421,14 +421,15 @@ WAITPY
 # declaring the preview — waits on the BACKEND side, where the helper's arrival is
 # actually observable.
 CHEESE_PREVIEW_UP = """#!/bin/sh
-# $1, optional: the port to declare before bringing the helper up. `cheese serve`
+# $1, optional: the port; $2: its upstream mount, empty for a root-mounted app.
+# `cheese serve`
 # passes it and nothing else does, which is what keeps the file layout of the
 # preview helper entirely inside the launcher — the CLI knows only this script.
 PORTF="$HOME/.claude/cheese-preview.port"
 PIDF="$HOME/.claude/cheese-preview.pid"
 STAMPF="$HOME/.claude/cheese-preview.stamp"
 if [ -n "$1" ]; then
-  printf '%s\\n' "$1" > "$PORTF.tmp" && mv "$PORTF.tmp" "$PORTF"
+  printf '%s\\n%s\\n' "$1" "$2" > "$PORTF.tmp" && mv "$PORTF.tmp" "$PORTF"
 fi
 [ -s "$PORTF" ] || exit 0
 [ -n "${CHEESE_PREVIEW_URL:-}" ] || exit 0
@@ -1135,6 +1136,8 @@ if command -v tmux >/dev/null 2>&1; then
   # margin is deliberately small: it only rejects an already-dead-or-dying token,
   # never a healthy one, so a short-lived credential (the gateway path's hour) is
   # re-minted at most once an hour rather than on every turn.
+  # Configuration is checked at the turn boundary, including after backend restart.
+  printf '%s' "${{CHEESE_AGENT_CONFIG:-}}" > "$HOME/.claude/agent-configuration"
   EXPFILE="$HOME/.claude/$SESSION.tokexp"
   if atmux has-session -t "$SESSION" 2>/dev/null; then
     TOKEXP="$(cat "$EXPFILE" 2>/dev/null || true)"
@@ -1154,7 +1157,8 @@ if command -v tmux >/dev/null 2>&1; then
     # is what makes a rotation reach the process. On a device with no ticket the
     # file is absent and this is the old checksum unchanged, so nothing churns.
     CFGNOW="$(cat "$REAL_HOME/.claude/settings.json" \\
-      "$HOME/.claude/cheese-machine.token" 2>/dev/null | cksum | cut -d" " -f1)"
+      "$HOME/.claude/cheese-machine.token" \\
+      "$HOME/.claude/agent-configuration" 2>/dev/null | cksum | cut -d" " -f1)"
     CFGWAS="$(cat "$CFGF" 2>/dev/null || true)"
     RETIRE=0
     [ -f "$HOME/.claude/environment-restart" ] && RETIRE=1
@@ -1221,7 +1225,8 @@ if command -v tmux >/dev/null 2>&1; then
     # tell a stale-credential session from a good one and retire only the stale.
     printf '%s\\n' "${{CHEESE_TOKEN_EXPIRES:-0}}" > "$EXPFILE" 2>/dev/null || true
     cat "$REAL_HOME/.claude/settings.json" \\
-      "$HOME/.claude/cheese-machine.token" 2>/dev/null | cksum | cut -d" " -f1 \\
+      "$HOME/.claude/cheese-machine.token" \\
+      "$HOME/.claude/agent-configuration" 2>/dev/null | cksum | cut -d" " -f1 \\
       > "$HOME/.claude/$SESSION.cfg" 2>/dev/null || true
     # Hand THIS launch's credential / routing / attribution env to the new session
     # EXPLICITLY with -e, never by inheritance. tmux seeds a new session's env from

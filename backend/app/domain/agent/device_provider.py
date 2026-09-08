@@ -744,6 +744,15 @@ class DeviceChannel(Channel):
             )
             if status["state"] == "preparing":
                 return existing
+        configuration = (env or {}).get("CHEESE_AGENT_CONFIG", "")
+        if (
+            existing is not None
+            and configuration
+            and existing.agent_configuration != configuration
+        ):
+            # Called between turns. A running CLI cannot adopt a changed model or role.
+            await self._hub.close_screen(existing.device_id, existing.sid)
+            existing = None
         if existing is not None and self._credential_is_stale(existing):
             # #388 缺陷二: the screen is still alive, but the credential its `claude`
             # was LAUNCHED with has expired (or is within the retire margin). That
@@ -911,7 +920,7 @@ class DeviceChannel(Channel):
             provider = provider_env.api_key_provider(
                 gateway_base=f"{self._public_base}/llm",
                 key=token,
-                model=settings.agent_model,
+                model=launch.model or settings.agent_model,
             )
             model_env = {**provider.env, **(env or {})}
             # Same stamp on the gateway path: the model credential is the scoped
@@ -979,6 +988,7 @@ class DeviceChannel(Channel):
         # later turn's reuse gate (and the zero-output fuse) can tell a live
         # credential from a dead one without re-deriving it.
         screen.credential_expires = credential_expires
+        screen.agent_configuration = configuration
         return screen
 
     # --- turn --------------------------------------------------------------

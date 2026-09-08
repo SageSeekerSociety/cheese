@@ -31,6 +31,11 @@ class SilentScreen(StubChannel):
     def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
         del topic_id, prompt, reply
 
+    async def confirm_alive(self, screen: object) -> bool:
+        # Silence alone is not failure; this fixture models a confirmed dead
+        # process so each replay attempt reaches a terminal result.
+        return False
+
 
 def _use_failing_agent(client, monkeypatch) -> SilentScreen:
     """A topic whose every turn dies, with nothing else re-prompting it.
@@ -40,20 +45,9 @@ def _use_failing_agent(client, monkeypatch) -> SilentScreen:
     batch behind these tests' backs. That is what makes it safe to count how
     many times ONE batch is sent, which is the whole assertion here.
     """
-    # `hard_ceiling_s` is NOT squeezed, and must not be: it is a wall clock that
-    # starts before the screen is even reached, so squeezing it races the setup
-    # it is supposed to outlive. Lose that race — and a loaded CI box loses it
-    # roughly two runs in five — and the monitor finds the ceiling already
-    # expired on its first pass, takes the branch for a session that never
-    # delivered anything, and the verdict lands with nobody subscribed to hear
-    # it: no `done` is ever published and `_say` blocks until pytest-timeout
-    # kills the run 300 seconds later.
-    #
-    # This screen ends its turns through `delivery_timeout_s` — it emits no
-    # hooks at all, so the prompt is never acknowledged — and THAT is the knob
-    # worth squeezing. The ceiling only has to stay far enough above the setup
-    # path that it cannot fire during it; it is never reached, so its size
-    # costs nothing.
+    # The first silence check asks the channel whether the process is alive.
+    # Keep that check short; the fake then confirms death. The wall-clock
+    # ceiling only records elapsed time and does not terminate the turn.
     screen = SilentScreen(
         idle_suspect_s=0.2, hard_ceiling_s=10.0, delivery_timeout_s=0.2
     )

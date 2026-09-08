@@ -73,7 +73,7 @@ def test_ask_requires_a_valid_topic_scoped_credential(client):
             )
         },
     )
-    assert wrong_topic.status_code == 401
+    assert wrong_topic.status_code == 403
 
 
 def test_answer_records_choice_and_posts_reply(client):

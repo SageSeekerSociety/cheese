@@ -1676,6 +1676,37 @@ async def test_a_reused_screen_with_a_live_credential_is_adopted(monkeypatch):
     assert [s.sid for s in hub.opened] == ["s1"]
 
 
+@pytest.mark.anyio
+async def test_agent_config_change_replaces_screen_at_next_launch(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "subscription_enabled", False)
+    hub = ReuseGateHub()
+    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
+    pid, tid = uuid.uuid4(), uuid.uuid4()
+
+    async def ensure(config):
+        return await provider._ensure_screen(
+            device_id="dev1",
+            agent_user_id=1,
+            agent_handle="cheese",
+            project_id=pid,
+            topic_id=tid,
+            token="tok",
+            env={"CHEESE_AGENT_CONFIG": config},
+            launch=ClaudeLaunch(system_prompt="", model="requested-model"),
+        )
+
+    first = await ensure("original")
+    assert await ensure("original") is first
+    second = await ensure("edited")
+    assert second.sid != first.sid
+    assert hub.closed == [first.sid]
+    assert second.agent_configuration == "edited"
+    assert hub.envs[-1]["CLAUDE_MODEL"] == "requested-model"
+    assert hub.envs[-1]["ANTHROPIC_DEFAULT_SONNET_MODEL"] == "requested-model"
+
+
 def test_topic_credential_expiry_reads_the_live_screens_stamp():
     """The runtime fuse's lookup (#388 缺陷一): the credential expiry of a topic's
     LIVE device screen, or None when it has none online / unrecorded — so a topic on

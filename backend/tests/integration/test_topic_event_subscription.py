@@ -818,12 +818,15 @@ async def test_session_timeout_retires_activity_but_keeps_subscription(
     project_id, topic_id = await _seed_topic(factory)
     router = HookRouter()
 
-    class DeadChannel(_IdleChannel):
-        async def confirm_alive(self, screen):
-            return False
+    class RecoveringChannel(_IdleChannel):
+        alive = False
 
+        async def confirm_alive(self, screen):
+            return self.alive
+
+    channel = RecoveringChannel()
     provider = ClaudeCodeRuntime(
-        DeadChannel(),
+        channel,
         router=router,
         idle_suspect_s=0.2,
         hard_ceiling_s=0.2,
@@ -863,6 +866,9 @@ async def test_session_timeout_retires_activity_but_keeps_subscription(
     assert subscription.current_work is None
     assert router.subscribe(str(topic_id)) is subscription.sink
 
+    # Late output comes from a live session; the dead verdict belongs to the
+    # first turn, not to the new unsolicited activity processing these hooks.
+    channel.alive = True
     async with broker.subscribe(str(topic_id)) as room:
         assert router.push(
             str(topic_id),

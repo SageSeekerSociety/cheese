@@ -1731,6 +1731,8 @@ class ClaudeCodeRuntime:
             project_id=str(session.project_id),
             topic_id=str(session.topic_id),
             ttl_s=SESSION_TOKEN_TTL_S,
+            access_scope="project",
+            agent_handle=opening.agent_handle,
         )
         screen = await self._channel.ensure_ready(
             project_id=session.project_id,
@@ -1826,6 +1828,7 @@ class ClaudeCodeRuntime:
         owner: str | None = None,
         turn_id: uuid.UUID | None = None,
         images: list[dict] | None = None,
+        agent_handle: str | None = None,
     ) -> AsyncIterator[AgentEvent]:
         if topic_id is None:
             yield AgentResult(
@@ -1852,6 +1855,8 @@ class ClaudeCodeRuntime:
             project_id=str(project_id),
             topic_id=str(topic_id),
             ttl_s=SESSION_TOKEN_TTL_S,
+            access_scope="project",
+            agent_handle=agent_handle,
         )
         attribution: WorkAttribution | None = None
         try:

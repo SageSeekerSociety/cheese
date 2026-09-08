@@ -42,6 +42,7 @@ const PROJECT = 'de808b13-ffd2-4b8a-9d1d-fba7babe389f'
 
 function agent(overrides: Partial<ProjectAgent> = {}): ProjectAgent {
   return {
+    configuration: { body: '', model: 'sonnet', harness: 'claude-code', skills: [], mcp_servers: [], effort: null },
     id: 'a1',
     project_id: PROJECT,
     handle: 'cheese',

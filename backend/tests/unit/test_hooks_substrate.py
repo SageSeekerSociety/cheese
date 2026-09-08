@@ -1116,6 +1116,34 @@ async def test_an_accepted_prompt_survives_a_late_first_receipt():
         await provider._close_topic(topic_id)
 
 
+async def test_session_credential_names_the_selected_agent_and_explicit_scope():
+    from app.core.sandbox_auth import scoped_token_claims, verify_scoped_token
+
+    issued = []
+
+    class Capture(_AliveScreen):
+        async def ensure_ready(self, **kwargs):
+            issued.append(kwargs["token"])
+            return "screen"
+
+    project_id, topic_id = _uuid.uuid4(), _uuid.uuid4()
+    runtime = ClaudeCodeRuntime(Capture(), router=HookRouter())
+    try:
+        await runtime.ensure(
+            SessionRef(project_id, topic_id),
+            Opening(system_prompt="", agent_handle="selected-agent"),
+        )
+        claims = scoped_token_claims(issued[0])
+        assert claims is not None
+        assert claims["a"] == "selected-agent"
+        assert claims["s"] == "project"
+        # Execution callbacks still cannot use this token on another room.
+        assert verify_scoped_token(issued[0], topic_id=str(topic_id))
+        assert not verify_scoped_token(issued[0], topic_id=str(_uuid.uuid4()))
+    finally:
+        await runtime._close_topic(topic_id)
+
+
 async def test_cancelling_a_consumer_during_activity_cleanup_stops_it():
     """Cancellation during a child's cleanup must not restart the hook loop."""
     router = HookRouter()
