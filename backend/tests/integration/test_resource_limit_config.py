@@ -22,8 +22,9 @@ def test_operator_update_persists_and_reaches_existing_api_client(client):
             env={**os.environ, "DATABASE_URL": TEST_DATABASE_URL},
             capture_output=True,
             text=True,
-            check=True,
+            check=False,
         )
+        assert result.returncode == 0, result.stderr
         return json.loads(result.stdout)
 
     assert notice() == 50

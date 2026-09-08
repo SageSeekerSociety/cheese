@@ -10,6 +10,7 @@ import argparse
 import asyncio
 import json
 
+import app.models  # noqa: F401 — register foreign-key targets for standalone grants
 from app.core.db import async_session_factory, engine
 from app.domain.machine.limits import (
     get_machine_limit,
