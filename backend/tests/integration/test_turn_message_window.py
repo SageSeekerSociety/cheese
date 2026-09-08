@@ -175,8 +175,11 @@ async def test_mid_turn_summon_is_not_relabelled_as_a_platform_instruction(
     assert len(agent.prompts) == 2
     second = agent.prompts[1]
     # 这是一个人说的话：带说话人标签，且**不能**顶着平台权威的抬头。
-    assert "[u2]: 顺便把 README 也更了" in second
-    assert PLATFORM_NOTICE not in second
+    user_text, reminder = second.split("\n\n", 1)
+    assert user_text == "[u2]: 顺便把 README 也更了"
+    assert PLATFORM_NOTICE not in user_text
+    assert reminder.startswith(PLATFORM_NOTICE)
+    assert "cheese chat send" in reminder
 
 
 @pytest.mark.anyio
@@ -210,7 +213,7 @@ async def test_two_simultaneous_summons_run_one_turn_not_two(client, tmp_path):
     await settle_turn(svc, topic_id)
 
     # 两句都到了，各一次，顺序就是说话的顺序。
-    assert agent.prompts == [
+    assert [p.split("\n\n", 1)[0] for p in agent.prompts] == [
         "[u0]: 开工",
         "[u1]: A 怎么办",
         "[u2]: B 也一起",

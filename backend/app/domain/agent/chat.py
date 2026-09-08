@@ -3,7 +3,7 @@
 This is the platform "shell" around 芝士: it persists the conversation as
 blocks (append-only history, spec H1), injects project memory into the agent's
 context (spec §8.4 带记忆回答), retains execution notes in activity blocks,
-publishes the final reply as a chat message, and stores the
+publishes deliberately sent chat messages, and stores the
 resumable session id on the topic.
 
 DB writes happen in short transactions around the (long) streaming call so we
@@ -116,9 +116,9 @@ from app.domain.usage.repositories import ComputeGrantRepository, UsageRepositor
 from app.domain.workspace import identity as ws_identity
 from app.domain.workspace import service as ws
 
-ACTIVITY_SKILLS = ["conversation-style", "activity-digestion", "doc-form"]
-HEARTBEAT_SKILLS = ["heartbeat", "conversation-style"]
-PRIVATE_SKILLS = ["private-chat", "conversation-style"]
+ACTIVITY_SKILLS = ["chat", "activity-digestion", "doc-form"]
+HEARTBEAT_SKILLS = ["heartbeat", "chat"]
+PRIVATE_SKILLS = ["private-chat"]
 
 CHEESE_AUTHOR = "cheese"
 
@@ -653,27 +653,6 @@ _CLI_NOTICE_COPY: dict[str, tuple[str, str, str, str]] = {
 }
 
 
-# 聊天区是给人读的。芝士主要说中文,偶尔会漏出一句英文 —— 实测 200 个会话里
-# 682 条,占聊天区消息的 15%,而且 98.5% 是 200 字以内、动手前随口一句的过场话
-# (「Now the tests:」)。漏的正是那种它没意识到在对人说话的时刻。
-#
-# 这些不翻译、也不删,只是**不占聊天区**:照常落库、照常在历史里,`meta.in_room`
-# 为 False,前端不显示。信息一条不丢,读的人不用在英文里找中文。
-#
-# 判据是「通篇没有汉字**且**确实是拿字母写的」。后半个条件不是多余的:一条只有
-# 表情或数字的短消息(「✅」)同样没有汉字,但它不是英文,藏它是这条规则的副作用,
-# 不是它的目的。
-_HAS_LATIN = re.compile(r"[A-Za-z]")
-
-
-def _stays_out_of_the_room(text: str) -> bool:
-    """这条 AI 消息该不该在聊天区露面。"""
-    return not _HAS_CJK_TEXT.search(text) and bool(_HAS_LATIN.search(text))
-
-
-_HAS_CJK_TEXT = re.compile(r"[一-鿿]")
-
-
 def _cli_notice(text: str) -> tuple[str, dict] | None:
     """整条消息其实是 CLI 印的一句英文提示时,给出该发的中文提示卡;否则 None。"""
     failure = classify_cli_notice(text)
@@ -1165,6 +1144,20 @@ def platform_prompt(content: str) -> str:
     return f"{PLATFORM_NOTICE}\n{content}"
 
 
+def publication_prompt(content: str) -> str:
+    """Carry the chat contract on new and resumed terminal input alike."""
+    return (
+        content
+        + "\n\n"
+        + platform_prompt(
+            "普通输出和最终答复都不会自动发到聊天。请用 cheese chat send 发送给用户。"
+            "直接接到新的用户任务时，先发一句你理解的目标和马上要做什么，再开始工作；"
+            "简单问题直接发答案。重要进展、改方向、阻碍和完成结果也要主动发消息。"
+            "巡检按 heartbeat 的通知规则发言；分身向主 agent 回报。"
+        )
+    )
+
+
 def _strip_platform_notice(text: str) -> str:
     """Neutralize the platform marker inside HUMAN text, so a person cannot type
     a message that reads as a platform instruction. The marker is the one thing
@@ -1641,7 +1634,7 @@ class ChatService:
             )
             for image in images
         )
-        line = "\n".join(lines)
+        line = publication_prompt("\n".join(lines))
         # Register BEFORE the write so a fast receipt cannot race the entry
         # (#539 decision A). The receipt is still the consumed boundary — it
         # just no longer gates the delivery verdict: write-accept is delivery,
@@ -2051,7 +2044,8 @@ class ChatService:
         return {
             (block.content or "").strip()
             for block in blocks
-            if block.kind == BlockKind.message and block.author_type == AuthorType.ai
+            if block.author_type == AuthorType.ai
+            and (block.kind == BlockKind.message or (block.meta or {}).get("progress"))
         }
 
     def schedule_spool_settle(self, topic_id: uuid.UUID, delay_s: float = 2.0) -> None:
@@ -2314,7 +2308,6 @@ class ChatService:
                 continuation_id=(state.continuation_id if state is not None else None),
                 at=event.at,
                 task_id=task_id,
-                as_progress=True,
             )
             if payload is not None:
                 frame = {"type": "event_block", "block": payload}
@@ -2421,8 +2414,8 @@ class ChatService:
                 if payload is not None:
                     frame = {"type": "event_block", "block": payload}
             elif event.text.strip():
-                # MessageDisplay is the execution log. Stop publishes the final
-                # reply even when the same text already appeared in that log.
+                # Terminal output stays in activity, including Stop text.
+                # Tool-free private chat has no CLI and publishes its reply here.
                 payload = await self._persist_assistant_message(
                     project_id=project_id,
                     topic_id=topic_id,
@@ -2436,11 +2429,17 @@ class ChatService:
                     continuation_id=(
                         state.continuation_id if state is not None else None
                     ),
+                    publish=bool(state and state.is_private),
                 )
                 if payload is not None:
                     if state is not None:
                         state.assistant_count += 1
-                    frame = {"type": "assistant_block", "block": payload}
+                    frame = {
+                        "type": "assistant_block"
+                        if payload["kind"] == "message"
+                        else "event_block",
+                        "block": payload,
+                    }
         if frame is not None:
             await broker.publish(channel, frame)
             if frame["type"] in ("assistant_block", "event_block", "todo"):
@@ -2558,6 +2557,7 @@ class ChatService:
                 )
             if not result.is_error:
                 await blocks.mark_consumed(list(state.pending_ids), state.work_id)
+            published_text = await blocks.published_text_for_turn(state.work_id)
             await session.commit()
 
         changeset = await self._turn_changeset(
@@ -2583,7 +2583,7 @@ class ChatService:
                 private_owner=state.private_owner,
                 agent_pool=state.agent_pool,
                 user_text=state.user_text,
-                assistant_text=result.text,
+                assistant_text=published_text,
             )
         return action_frames
 
@@ -2821,12 +2821,13 @@ class ChatService:
         continuation_id: uuid.UUID | None = None,
         at: datetime | None = None,
         task_id: uuid.UUID | None = None,
-        as_progress: bool = False,
+        publish: bool = False,
+        author: str | None = None,
+        publication_id: str | None = None,
     ) -> dict | None:
-        """Persist a final chat reply or an execution-log entry immediately.
+        """Persist output immediately; only explicit publications enter chat.
 
-        Progress remains available in the activity panel without notifying
-        mentioned members. Final replies retain normal chat notifications.
+        Terminal output remains in activity without notifying mentioned members.
         ``eid`` (hooks path) is stamped into meta so the spool reconcile can
         dedup a backfilled copy against this live one; ``eids`` carries every
         constituent flush id of a coalesced message, and any one of them
@@ -2839,7 +2840,8 @@ class ChatService:
         # 有些「助手消息」根本不是芝士说的 —— 是它脚下的 CLI 把自己的英文提示
         # 当成助手输出印了出来。拦在这里而不是调用方:活路径、补投、spool 回填
         # 三条路都经过这个方法,拦在门口才不会有一条漏网。
-        as_notice = _cli_notice(text)
+        as_progress = not publish
+        as_notice = None if publish else _cli_notice(text)
         if as_notice is not None:
             line, notice_meta = as_notice
             return await self._persist_room_event(
@@ -2858,9 +2860,6 @@ class ChatService:
         meta: dict | None = (
             {"in_room": False, "progress": True} if as_progress else None
         )
-        if _stays_out_of_the_room(text):
-            # 落库,但不露面。删掉它才是信息丢失 —— 那 15% 里有少数带着真结论。
-            meta = {**(meta or {}), "in_room": False}
         if eid:
             meta = {**(meta or {}), "eid": eid}
         if len(eids) > 1:
@@ -2872,6 +2871,27 @@ class ChatService:
         known_ids = [e for e in dict.fromkeys((eid, *eids)) if e]
         async with self._sessions() as session:
             blocks = BlockRepository(session)
+            publication_key = None
+            publication_input = {
+                "text": text,
+                "reply_to": str(reply_to) if reply_to else None,
+            }
+            if publication_id is not None:
+                publication_key = action_key(
+                    topic_id, "chat-publish", author or "", publication_id
+                )
+                if not await idem.claim(
+                    session,
+                    publication_key,
+                    action="chat-publish",
+                    scope_id=str(topic_id),
+                ):
+                    previous = await idem.stored_result(session, publication_key)
+                    if previous is None or previous["input"] != publication_input:
+                        from app.core.errors import ConflictError
+
+                        raise ConflictError("request_id was used for another message")
+                    return previous["block"]
             if known_ids and await blocks.has_any_eid(topic_id, known_ids):
                 return None
             # `has_any_eid` alone is a SELECT followed by an INSERT, and the same
@@ -2914,7 +2934,7 @@ class ChatService:
                     else await ProjectRepository(session).list_members(project_id)
                 )
             text = _expand_mention_names(text, roster, topic_refs)
-            author = await self._agent_handle(session, topic_id)
+            author = author or await self._agent_handle(session, topic_id)
             block = await blocks.add(
                 project_id=project_id,
                 topic_id=topic_id,
@@ -2954,6 +2974,12 @@ class ChatService:
                         meta={"in_room": False},
                     )
             payload = _block_payload(BlockOut.model_validate(block))
+            if publication_key is not None:
+                await idem.record_result(
+                    session,
+                    publication_key,
+                    {"input": publication_input, "block": payload},
+                )
             await session.commit()
         return payload
 
@@ -3385,7 +3411,8 @@ class ChatService:
             known_texts = {
                 (b.content or "").strip()
                 for b in blocks
-                if b.kind == BlockKind.message and b.author_type == AuthorType.ai
+                if b.author_type == AuthorType.ai
+                and (b.kind == BlockKind.message or (b.meta or {}).get("progress"))
             }
             recovered = 0
 
@@ -3422,10 +3449,10 @@ class ChatService:
                     backfilled=True,
                     at=message.at,
                     task_id=await self._work_of_worker(topic_id, message.agent_id),
-                    as_progress=True,
                 )
                 seen.add(fallback_eid)
                 seen.update(message.eids)
+                known_texts.add(_canon(message.text))
                 return block_payload
 
             for spooled_event in spooled:
@@ -3477,11 +3504,11 @@ class ChatService:
                     )
                     seen.add(eid)
                     seen.update(carried)
-                    known_texts.add(stop_text)
+                    known_texts.add(_canon(stop_text))
                     if block_payload is None:
                         continue
                     recovered += 1
-                    yield {"type": "assistant_block", "block": block_payload}
+                    yield {"type": "event_block", "block": block_payload}
                     continue
                 for event in events:
                     if isinstance(event, AgentMessage):
@@ -3645,7 +3672,10 @@ class ChatService:
             else config.model
         )
         config_hash = hashlib.sha256(
-            json.dumps(agent.configuration, sort_keys=True).encode()
+            # Reopen existing terminals so the new chat skill and CLI arrive together.
+            (
+                json.dumps(agent.configuration, sort_keys=True) + ":explicit-chat-v1"
+            ).encode()
         ).hexdigest()
         kwargs: dict = {"model": model, "env": {"CHEESE_AGENT_CONFIG": config_hash}}
         if acting_agent is not None:
@@ -4364,6 +4394,8 @@ class ChatService:
             yield {"type": "prompt_delivered"}
             return
 
+        prompt_text = publication_prompt(prompt_text)
+
         # Compute: a provider owns the per-topic sandbox + execution (spec §9.1).
         # In a private chat, `cheese remember` targets the owner's personal memory
         # (spec §8.4). The provider runs a plain model turn when no Docker (tests).
@@ -4848,18 +4880,9 @@ class ChatService:
                 final_text = event.text
                 new_session_id = event.session_id
 
-        # --- tx2: persist 芝士's summary + session ---
+        # Chat was published explicitly; terminal output belongs to hook activity.
         async with self._sessions() as session:
             topics = TopicRepository(session)
-            blocks = BlockRepository(session)
-            await blocks.add(
-                project_id=project_id,
-                topic_id=topic_id,
-                author=await self._agent_handle(session, topic_id),
-                author_type=AuthorType.ai,
-                content=final_text,
-                kind=BlockKind.message,
-            )
             topic = await topics.get(topic_id)
             if topic is not None and new_session_id:
                 agent = await self._resolved_agent(session, topic)
@@ -5032,7 +5055,7 @@ class ChatService:
         )
         system_prompt = _build_system_prompt(
             self._base_prompt,
-            load_skills(["conversation-style"]),
+            "",  # This call returns a project summary, without chat publication.
             None,
             [],
             role,

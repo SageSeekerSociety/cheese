@@ -3,8 +3,8 @@
 import contextlib
 import os
 import re
-import shutil
 import subprocess
+import sys
 import time
 import uuid
 
@@ -15,10 +15,13 @@ from app.domain.agent.harness.claude_code import device_launch
 
 def test_liveness_probe_distinguishes_a_running_topic_from_an_exited_one(tmp_path):
     executable = tmp_path / "claude"
-    shutil.copy2(shutil.which("sleep"), executable)
+    # A symlink keeps Python's libraries reachable under the process name.
+    # Renamed Nix sleep and copied macOS system binaries can exit immediately.
+    executable.symlink_to(sys.executable)
     topic = str(uuid.uuid4())
     process = subprocess.Popen(
-        [str(executable), "30"], env={**os.environ, "CHEESE_TOPIC": topic}
+        [str(executable), "-c", "import time; time.sleep(30)"],
+        env={**os.environ, "CHEESE_TOPIC": topic},
     )
 
     def probe():

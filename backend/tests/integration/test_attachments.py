@@ -224,9 +224,9 @@ def test_message_with_attachment_creates_block_and_prompts_agent(client, stub_ho
     assert att["path"] in prompt
     assert "已附在本条消息里" in prompt
 
-    # Persisted: message + attachment + AI activity + final reply.
+    # Persisted: message + attachment + terminal activity.
     blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
-    assert [b["kind"] for b in blocks] == ["message", "attachment", "event", "message"]
+    assert [b["kind"] for b in blocks] == ["message", "attachment", "event"]
     assert blocks[2]["meta"]["in_room"] is False
 
 
@@ -252,8 +252,8 @@ def test_image_only_message_allowed(client, stub_hooks):
     # posted, and the @-mention the screen resolves into the image itself.
     assert (stub_hooks.last_prompt or "").count(att["path"]) == 2
 
-    # 芝士's reply threads under the attachment block (the turn's anchor).
-    assistant = next(f for f in frames if f["type"] == "assistant_block")["block"]
+    # The execution record retains the attachment as its input anchor.
+    assistant = next(f for f in frames if f["type"] == "event_block")["block"]
     assert assistant["reply_to"] == user_frames[0]["id"]
 
 

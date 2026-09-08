@@ -8,7 +8,7 @@
 该找谁。
 """
 
-from app.domain.agent.chat import _cli_notice, _stays_out_of_the_room
+from app.domain.agent.chat import _cli_notice
 from app.domain.agent.platform_failures import (
     MODEL_LIMIT_REACHED_CODE,
     PROVIDER_OVERLOADED_CODE,
@@ -117,32 +117,3 @@ def test_an_overload_says_it_is_worth_retrying():
     _, meta = result
     assert meta["severity"] == "warn"
     assert meta["who"] == "platform"
-
-
-# ---- 通篇没有中文的 AI 消息：落库，但不占聊天区 ----
-
-
-def test_an_all_english_line_stays_out_of_the_room():
-    # 实测这类占聊天区消息的 15%，98.5% 是这种动手前随口一句。
-    assert _stays_out_of_the_room("Now the tests:")
-    assert _stays_out_of_the_room("While that installs, let me survey the code.")
-
-
-def test_one_chinese_character_is_enough_to_show_it():
-    # 用户定的线就是这条：只要不是整句英文就照常显示。
-    assert not _stays_out_of_the_room("跑一下 the full suite")
-    assert not _stays_out_of_the_room("确认了——deadlock from my own run.")
-
-
-def test_a_message_with_no_letters_is_not_english():
-    # 「没有汉字」不等于「是英文」。一条只有表情或数字的短消息藏起来，是这条
-    # 规则的副作用，不是它的目的。
-    assert not _stays_out_of_the_room("✅")
-    assert not _stays_out_of_the_room("👍 +1")
-    assert not _stays_out_of_the_room("")
-
-
-def test_code_and_paths_alone_still_count_as_english():
-    # 真实数据里 682 条没有一条是纯代码块（芝士贴代码总是包在中文里），所以这
-    # 条不会误伤；但真出现了，藏起来也不丢 —— 它还在库里。
-    assert _stays_out_of_the_room("backend/app/domain/agent/chat.py")
