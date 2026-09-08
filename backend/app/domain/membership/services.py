@@ -71,6 +71,25 @@ class MemberService:
             project_id=project_id, user_handle=user_handle, role=role
         )
 
+    async def ensure_member(
+        self, *, project_id: uuid.UUID, user_handle: str, role: ProjectRole
+    ) -> ProjectMember | None:
+        """把一个人放上名册，已经在上面就什么也不做。
+
+        **没有 actor，因为这不是谁发起的写**：它只有一个调用场景——建项目时按小队
+        铺名册。那一刻还没有请求者在对这个项目做动作，硬凑一个演员出来只会让「谁被
+        授权做了什么」这件事变得更难读。所有由人发起的加人都走 ``add``，那条路要
+        actor、也会授权。
+
+        幂等，所以重复铺不会撞上唯一约束。
+        """
+        existing = await self._repo.get(project_id=project_id, user_handle=user_handle)
+        if existing is not None:
+            return None
+        return await self._repo.add(
+            project_id=project_id, user_handle=user_handle, role=role
+        )
+
     async def list_for_project(
         self, project_id: uuid.UUID
     ) -> tuple[list[ProjectMember], int]:

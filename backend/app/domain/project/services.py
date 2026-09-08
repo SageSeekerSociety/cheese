@@ -99,18 +99,11 @@ class ProjectService:
         每一步都尽量往下做：解析不出用户的 handle（agent、测试夹具）不该让建项目
         整个失败——名册可以事后补，项目建不出来就什么都没有了。
         """
-        from app.domain.membership.repositories import MemberRepository
+        from app.domain.membership.services import MemberService
         from app.domain.team.services import team_service
         from app.domain.user.repositories import UserRepository
 
-        members = MemberRepository(self._session)
-
-        async def put(handle: str, role: ProjectRole) -> None:
-            if not handle:
-                return
-            if await members.get(project_id=project.id, user_handle=handle) is None:
-                await members.add(project_id=project.id, user_handle=handle, role=role)
-
+        members = MemberService(self._session)
         if project.team_id is None:
             return
         try:
@@ -127,7 +120,11 @@ class ProjectService:
             user = users.get(relation.user_id)
             if user is None or user.username == project.owner_handle:
                 continue
-            await put(user.username, ProjectRole.member)
+            await members.ensure_member(
+                project_id=project.id,
+                user_handle=user.username,
+                role=ProjectRole.member,
+            )
 
     async def _resolve_personal_team_id(self, owner_handle: str) -> int | None:
         """owner_handle == User.username (fusion A1) → that user's personal team,

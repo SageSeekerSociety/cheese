@@ -34,6 +34,7 @@ const TOPICS = ['推荐算法原型', '召回层选型', '离线评测流水线'
 )
 
 const ok = (data) => ({ code: 200, message: 'ok', data })
+const PAGE = { pageStart: 0, pageSize: 20, hasMore: false, total: 0 }
 const list = (items) => ok({ data: items, total: items.length })
 
 const INVITATIONS = [
@@ -72,6 +73,26 @@ function handle(pathname) {
   if (pathname === `/api/projects/${PID}/topic-unread`) return ok({ t4: 3 })
   if (pathname === `/api/projects/${PID}/private-unread`) return ok({ ligan: 2, cheese: 1 })
   if (pathname === '/api/topics') return list(TOPICS)
+  // 「待定」那一页的小队申请/邀请，也在 1.0 那层。
+  if (pathname === '/users/me/team-requests')
+    return { code: 200, message: 'OK', data: { requests: [], page: PAGE } }
+  if (pathname === '/users/me/team-invitations')
+    return { code: 200, message: 'OK', data: { invitations: [], page: PAGE } }
+  // 等我答复的项目邀请。
+  if (pathname === '/api/me/invitations')
+    return list([
+      {
+        id: 'inv-9',
+        project_id: PID,
+        invitee_handle: 'alice',
+        inviter_handle: 'zhangheng',
+        role: 'member',
+        status: 'pending',
+        created_at: '2026-09-08T02:00:00Z',
+        responded_at: null,
+        project_name: '推荐算法原型',
+      },
+    ])
   // 按 uid 查人走的是 1.0 那层，不带 /api 前缀。
   if (pathname.startsWith('/users/'))
     return ok({ user: { id: 1024, username: 'zhangheng', nickname: '张衡', avatarId: 0 } })
@@ -149,6 +170,12 @@ await p.getByRole('button', { name: '取消' }).click()
 await p.locator('.member-row').first().scrollIntoViewIfNeeded()
 await p.getByText('等待接受 · 1').scrollIntoViewIfNeeded()
 await shot('04-pending-invitations')
+
+// 被邀请的那一边：首页 → 小队 → 待定
+await p.goto(`${BASE}/teams/pending`, { waitUntil: 'domcontentloaded', timeout: 60000 })
+await p.getByText('收到的项目邀请').waitFor({ timeout: 30000 })
+await p.waitForTimeout(7000) // 让假后端引出的那条一次性提示自己散掉（小队接口不在这套假数据里）
+await shot('05-accept-page')
 
 console.log('unmatched:', [...unmatched].join(', ') || '(none)')
 await b.close()
