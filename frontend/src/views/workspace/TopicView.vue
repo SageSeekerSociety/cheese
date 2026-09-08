@@ -8,6 +8,7 @@ import { useDisplay } from 'vuetify'
 
 import { usePageTitle } from '@/composables/usePageTitle'
 
+import { getTopicAgent } from '@/api'
 import RoomEnvironmentStatus from '@/components/RoomEnvironmentStatus.vue'
 import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
@@ -274,6 +275,25 @@ const unreadOnOpen = ref(0)
 // 换了 AI 队友之后 +1。对话栏显示的 AI 名字来自它自己拉的房间名册，而换队友的
 // 按钮长在话题头上——两边是兄弟，够不着彼此，所以这个计数从这里往下发。
 const rosterRevision = ref(0)
+
+// 这个房间现在交给的 AI 队友叫什么。「现场」那一格给它干的每一行署名，而那一格
+// 自己不拉名册。一个项目可以有好几个队友，所以这个名字不能写死。
+const agentName = ref('芝士')
+async function loadAgentName(id: string) {
+  try {
+    const agent = await getTopicAgent(id)
+    if (props.topicId === id) agentName.value = agent.display_name || '芝士'
+  } catch {
+    // 支线（和旧环境）没有这条路由。写死的兜底名字比空白好，也比报错好。
+  }
+}
+watch(
+  () => [props.topicId, rosterRevision.value],
+  () => {
+    if (props.topicId) void loadAgentName(props.topicId)
+  },
+  { immediate: true }
+)
 watch(
   () => props.topicId,
   async (id) => {
@@ -357,6 +377,7 @@ watch(
           :phase="phase"
           :with-chat="!mdAndUp"
           :open-card-id="openCardId"
+          :agent-name="agentName"
           @open-topic="openTopic"
           @open-card="onOpenCard"
           @mention-click="handleMentionClick"
