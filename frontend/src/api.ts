@@ -1359,6 +1359,30 @@ export function listProjectMembers(projectId: string): Promise<ListPayload<Proje
   return request<ListPayload<ProjectMemberRow>>(`/projects/${encodeURIComponent(projectId)}/members`)
 }
 
+// 项目成员的增 / 改角色 / 移出。后端在服务层就把「只有 owner / lead 能写」这条
+// 授权做掉了（membership/services.py），并且**不认**请求体里自称的 handle —— 身份
+// 从 token 解析。所以这里不传 actor：传了也不会被信，反而读起来像是能伪造。
+export function addProjectMember(projectId: string, handle: string, role: string): Promise<ProjectMemberRow> {
+  return request<ProjectMemberRow>(`/projects/${encodeURIComponent(projectId)}/members`, {
+    method: 'POST',
+    body: JSON.stringify({ user_handle: handle, role }),
+  })
+}
+
+export function updateProjectMemberRole(projectId: string, handle: string, role: string): Promise<ProjectMemberRow> {
+  return request<ProjectMemberRow>(`/projects/${encodeURIComponent(projectId)}/members/${encodeURIComponent(handle)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ role }),
+  })
+}
+
+export function removeProjectMember(projectId: string, handle: string): Promise<{ deleted: boolean }> {
+  return request<{ deleted: boolean }>(
+    `/projects/${encodeURIComponent(projectId)}/members/${encodeURIComponent(handle)}`,
+    { method: 'DELETE' }
+  )
+}
+
 // ---- 话题成员名册 (群聊房间的地基, fusion-design §3) --------------------------
 // Roster of a topic's group room. `actor` is the acting user's handle — no auth
 // layer yet (agent-as-user is P1), so the backend authorizes mutations against

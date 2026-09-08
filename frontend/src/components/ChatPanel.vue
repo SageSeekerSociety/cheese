@@ -129,6 +129,9 @@ const props = withDefaults(
     // Header label override for a 私聊 whose stored title is a bookkeeping key
     // (e.g. a person DM's canonical "私聊 · a · b"): show the peer's name instead.
     titleOverride?: string | null
+    // 标题左边那颗 ←，以及它旁边的字。私聊是从名册点进来的，而名册页在桌面上
+    // 不是侧栏的一行，所以没有这颗按钮就只能靠浏览器后退回去。null = 不画。
+    backLabel?: string | null
     // 开这个话题的那一刻还有多少条没读（只数别人发的，和侧栏角标同一口径）。
     // 由 host 在 markRead 之前捕获——一旦 markRead 跑过，这个数就没了。
     unreadOnOpen?: number
@@ -145,6 +148,7 @@ const props = withDefaults(
     members: () => [],
     topicList: () => [],
     titleOverride: null,
+    backLabel: null,
     unreadOnOpen: 0,
     rosterRevision: 0,
   }
@@ -154,6 +158,8 @@ const props = withDefaults(
 // without a manual reload (spec §7.1 实时联动). `tool-used` fires per tool call
 // (carries the short tool name); `turn-done` fires when a turn completes.
 const emit = defineEmits<{
+  // 标题左边那颗 ← 被按了。去哪儿由拥有这个地址的人决定，不是这里。
+  (e: 'back'): void
   (e: 'tool-used', name: string, input?: Record<string, unknown>): void
   // A cheese command changed a platform resource (doc/decision/topics/...) —
   // the parent refreshes that panel live, mid-turn.
@@ -216,6 +222,13 @@ const agentName = computed(() => {
   const seat = roomMembers.value.find((m) => m.agent)
   return seat?.name || seat?.member_handle || '芝士'
 })
+
+// 输入框那一行提示语。和芝士私聊时它**不能**说「交给它做」：私聊不占机器，那边
+// 的芝士没有工具，读不了文件也跑不了命令。一句承诺它做不到的事的提示语，换来的
+// 是一次「我试了但做不了」，而人只会记得是它没做成。
+const composerHint = computed(() =>
+  props.alwaysSummon ? `和${agentName.value}聊聊…（要它干活去开话题）` : `输入消息，@${agentName.value} 交给它做`
+)
 
 /** @ 得到的人：这个房间里的，加上项目里还没进这个房间的。 */
 const mentionPool = computed(() => {
@@ -1396,6 +1409,17 @@ onBeforeUnmount(() => {
       <!-- Plain chat header — normal chat (飞书私聊 / 本体): title + 已连接 -->
       <div v-else-if="!hideHeader" class="pr-header px-4 py-3">
         <div class="d-flex align-center ga-2">
+          <v-btn
+            v-if="backLabel"
+            variant="text"
+            size="small"
+            density="comfortable"
+            prepend-icon="mdi-arrow-left"
+            class="c-muted"
+            @click="emit('back')"
+          >
+            {{ backLabel }}
+          </v-btn>
           <span class="pr-title t-title">{{ titleOverride || topic.title }}</span>
           <v-spacer />
           <span
@@ -1878,7 +1902,7 @@ onBeforeUnmount(() => {
               hide-details
               density="comfortable"
               class="composer-input"
-              :placeholder="alwaysSummon ? `告诉${agentName}要做什么…` : `输入消息，@${agentName} 交给它做`"
+              :placeholder="composerHint"
               :title="enterSends ? 'Enter 发送，Shift+Enter 换行，可直接粘贴图片' : '可直接粘贴图片'"
               @keydown="onComposerKey"
               @paste="onComposerPaste"
