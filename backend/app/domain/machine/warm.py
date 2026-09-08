@@ -25,7 +25,7 @@ from app.domain.machine.models import (
     WarmMachine,
 )
 from app.domain.machine.repositories import ProjectMachineRepository
-from app.domain.project.repositories import ProjectRepository
+from app.domain.project.services import ProjectService
 
 logger = logging.getLogger("cheese.machine.warm")
 POOL_LOCK = 728104913
@@ -59,7 +59,6 @@ class WarmPoolService:
                 select(WarmMachine)
                 .where(WarmMachine.state == "ready")
                 .order_by(WarmMachine.created_at)
-                .with_for_update(skip_locked=True)
             )
         ).all()
         for warm in candidates:
@@ -82,6 +81,14 @@ class WarmPoolService:
                 seconds=settings.microcloud_warm_max_age_seconds
             ):
                 continue
+            warm = await self.session.scalar(
+                select(WarmMachine)
+                .where(WarmMachine.id == warm.id, WarmMachine.state == "ready")
+                .with_for_update(skip_locked=True)
+            )
+            if warm is None:
+                continue
+            assert warm.machine_id is not None
             machine = await ProjectMachineRepository(self.session).add(
                 project_id=project_id,
                 topic_id=topic_id,
@@ -172,7 +179,7 @@ class WarmPoolService:
         if device is None or device.supply != Supply.cloud:
             raise ValidationError("预热机器连接已失效，请稍后重试")
         device.owner_user_id = owner_user_id
-        project = await ProjectRepository(self.session).get(machine.project_id)
+        project = await ProjectService(self.session).get(machine.project_id)
         if project is None:
             raise ValidationError("项目不存在")
         await self.session.flush()
@@ -308,7 +315,14 @@ class WarmPoolService:
             await self.session.scalars(
                 select(WarmMachine).where(
                     WarmMachine.state.in_(
-                        ["preparing", "ready", "deleting", "cleanup_failed"]
+                        [
+                            "preparing",
+                            "ready",
+                            "deleting",
+                            "cleanup_failed",
+                            "reserved",
+                            "claim_failed",
+                        ]
                     )
                 )
             )

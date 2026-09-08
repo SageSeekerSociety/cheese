@@ -224,8 +224,10 @@ def test_disabling_pool_deletes_only_unused_capacity(warm_case, monkeypatch):
     assert cloud.deleted == [200]
 
 
-def test_failed_claim_stays_reserved_until_explicit_retry(warm_case):
+def test_failed_claim_stays_reserved_until_explicit_retry(warm_case, monkeypatch):
     client, topics, actor, cloud = warm_case
+    monkeypatch.setattr(settings, "microcloud_warm_pool_size", 1)
+    monkeypatch.setattr(settings, "connector_public_base", "https://example.invalid")
     cloud.fail_claim = True
 
     async def run():
@@ -240,6 +242,11 @@ def test_failed_claim_stays_reserved_until_explicit_retry(warm_case):
             assert row.state == "claim_failed"
             assert machine.warm_claim_pending
             assert machine.enroll_error
+            # An unconfirmed handoff may still bill the platform; do not replace it.
+            before = len(cloud.created)
+            await service.sweep()
+            assert len(cloud.created) == before
+            assert len((await session.scalars(select(WarmMachine))).all()) == 1
             cloud.fail_claim = False
             await service.finish_claim(machine)
             assert row.state == "claimed"
