@@ -4,6 +4,31 @@ The project navigation contains **导出与发布**. Project owners, project lea
 team administrators can publish; project and team members can open the published
 Site. Its access does not become public when it is published.
 
+## Topic previews
+
+The topic's preview shows its selected artifact or running application at
+`preview-<topic UUID hex>.<SITES_DOMAIN>`. The project Site uses
+`<project UUID hex>.<SITES_DOMAIN>` and serves a published release. Both share
+the configured wildcard gateway and certificate. Previewing does not publish.
+
+HTML and SVG previews load file bytes from the selected artifact's directory;
+the editor's 1 MiB text limit does not limit their rendering. Relative resources
+stay inside that directory, with hidden files and escaping symlinks rejected.
+Running apps receive their original HTTP and WebSocket paths. Fullscreen keeps
+the same iframe. New windows enter through `/previews/<topic-id>` on the platform
+and establish their own content session; browsers control whether their storage
+is shared with an embedded preview.
+
+Preview grants last 30 seconds. The content host exchanges them for an eight-hour
+HttpOnly, Secure, SameSite=None, Partitioned cookie. It checks room access for
+every HTTP request and WebSocket connection; private rooms require room membership.
+An established WebSocket ends no later than session expiry. Platform credentials
+are never sent to the app. A static preview follows the current workspace file;
+a running preview requires its development machine and server to remain available.
+Application session cookies are host-only, Secure, SameSite=None and Partitioned
+so ordinary cookie logins work inside the panel. Their HttpOnly, path and expiry
+attributes are preserved; application Bearer authentication is forwarded unchanged.
+
 ## Publishing
 
 Select a website from the project's accepted revision, then publish it. Each
