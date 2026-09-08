@@ -14,8 +14,9 @@ A subscription cannot be served that way. Its legitimacy rests on the client
 being Claude Code itself, so re-originating the call from our own HTTP client
 changes the user agent, the header shape and the request rhythm — a fingerprint
 the provider can act on, and the account at risk is a person's. The subscription
-therefore keeps BASE_URL untouched and travels through a TRANSPARENT proxy: the
-request that arrives upstream is byte-for-byte Claude Code's own.
+therefore keeps BASE_URL untouched and travels through the metering proxy.
+The proxy streams model bodies and replaces authentication headers. RC-enabled
+sessions additionally route control traffic to Cheese; see docs/remote-control.md.
 
 Both remain observable. The difference is only where the observation sits — a
 client we control, or a proxy the traffic passes through.
@@ -133,8 +134,8 @@ def subscription_provider(
     the CLI routes even plain-http requests through HTTPS_PROXY, so without it the
     hooks/git/CLI traffic detours through the meter — or dies with it.
 
-    Either way the request that leaves the CLI is byte-for-byte an ordinary
-    session's. The model is deliberately NOT pinned: the subscription serves its
+    The CLI generates the model request; proxy authentication and RC routing
+    are separate. The model is deliberately NOT pinned: the subscription serves its
     own (claude-opus-5), and forcing a name it does not serve fails the turn.
     """
     env = {

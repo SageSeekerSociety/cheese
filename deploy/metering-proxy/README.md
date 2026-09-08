@@ -1,12 +1,17 @@
 # Subscription metering proxy
 
-The transparent proxy between a sandbox's Claude Code and Anthropic. It swaps
+The metering proxy between a sandbox's Claude Code and Anthropic. It swaps
 the sandbox's scoped cheese token for the real subscription credential (which
-never leaves this proxy), meters every `/v1/messages` response into
+never reaches the sandbox), meters every `/v1/messages` response into
 `usage.jsonl` (ingested by the backend — `subscription_ingest`), and refuses a
 turn its project cannot afford (backend `/llm/admission`, plus a rolling token
 cap as backstop). Design context: issue #218 and
 `docs/plans/2026-08-10-usage-unification-design.md`.
+
+For RC-enabled device sessions, the addon also routes native control requests
+to Cheese, consumes the intercepted telemetry, and enables the RC feature flags.
+See [terminal controls](../../docs/remote-control.md) for the API, deployment order,
+recovery behavior and provider-visibility limits.
 
 ## Files
 

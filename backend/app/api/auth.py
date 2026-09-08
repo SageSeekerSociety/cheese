@@ -385,10 +385,15 @@ class ActorResolver:
         return replace(actor, handle=user.username)
 
     async def authorize_topic(
-        self, actor: Actor, *, project_id: uuid.UUID, topic_id: uuid.UUID
+        self,
+        actor: Actor,
+        *,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID,
+        enforce: bool = False,
     ) -> None:
         """Require a verified participant with access to this room."""
-        if not settings.authz_enforce_topic_access:
+        if not enforce and not settings.authz_enforce_topic_access:
             return
         self.reject_failed_credential(actor)
         if not actor.authenticated:

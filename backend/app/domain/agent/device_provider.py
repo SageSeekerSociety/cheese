@@ -51,6 +51,7 @@ from app.domain.agent.platform_failures import (
     DEVICE_OFFLINE_MESSAGE,
     HOST_UNREACHABLE_CODE,
 )
+from app.domain.device.models import DeviceRow
 from app.domain.device.service import DeviceService
 from app.domain.device.supply import (
     Supply,
@@ -573,6 +574,22 @@ class DeviceChannel(Channel):
                 return screen
         return None
 
+    async def _device_api_base(self, device_id: str) -> str:
+        factory = self._session_factory
+        if factory is None:
+            from app.core.db import async_session_factory
+
+            factory = async_session_factory
+        async with factory() as session:
+            device = await session.get(DeviceRow, device_id)
+            if (
+                device
+                and device.supply == Supply.cloud
+                and device.cloud_control_private
+            ):
+                return "http://127.0.0.1:18080"
+        return self._public_base
+
     async def _device_ccproxy_upstream(self, device_id: str) -> str:
         """The ccproxy identity this DEVICE brings, '' when it brings none.
 
@@ -606,11 +623,6 @@ class DeviceChannel(Channel):
         translating a backend path into the device's namespace.
         """
         return f"$HOME/.cheese/work/{project_id}/{topic_id}"
-
-    def _hook_url(self, topic_id: uuid.UUID) -> str:
-        # Reuse the existing sandbox hook endpoint (scoped-token auth + shared
-        # hook_router), so the device path adds no second hook surface.
-        return f"{self._public_base}/sandbox/hooks/{topic_id}"
 
     def _no_proxy_hosts(self) -> str:
         """What the screen's HTTPS_PROXY must NOT capture: the backend itself
@@ -777,6 +789,7 @@ class DeviceChannel(Channel):
         # turns show zero output.
         home_dir = device_home_dir(project_id, topic_id)
         work_dir = self._work_dir(project_id, topic_id)
+        api_base = await self._device_api_base(device_id)
         ca_pem = ""
         if settings.subscription_enabled:
             # Every request from every machine reached this way runs on the
@@ -804,6 +817,7 @@ class DeviceChannel(Channel):
                 project_id=str(project_id),
                 topic_id=str(topic_id),
                 ttl_s=SESSION_TOKEN_TTL_S,
+                remote_control=True,
             )
             tunnel_url = settings.subscription_tunnel_url.strip()
             via_tunnel = uses_tunnel(tunnel_url=tunnel_url)
@@ -836,6 +850,15 @@ class DeviceChannel(Channel):
             ):
                 merged.pop(k, None)
             merged.update(sub.env)
+            merged["CHEESE_REMOTE_CONTROL"] = "1"
+            # The tunnel's CONNECT credential must carry the same place and RC
+            # claims as the direct proxy URL; CHEESE_TOKEN authenticates hooks.
+            merged["CHEESE_CONNECT_TOKEN"] = session_token
+            # These scopes describe the Cheese control credential. The model
+            # provider still authenticates inference at its existing proxy hop.
+            merged["CLAUDE_CODE_OAUTH_SCOPES"] = (
+                "user:inference user:profile user:sessions:claude_code"
+            )
             if connect_proxy_url:
                 # The meter accepts model hosts, not package registries.
                 merged["CHEESE_MODEL_PROXY"] = "1"
@@ -884,9 +907,9 @@ class DeviceChannel(Channel):
         # reaches for hooks, git and the CLI rather than configured separately:
         # the preview rides the path the connector proved, so a deployment that
         # can host a device can host a preview with nothing further to set.
-        model_env["CHEESE_PREVIEW_URL"] = _preview_ws_url(self._public_base)
+        model_env["CHEESE_PREVIEW_URL"] = _preview_ws_url(api_base)
         command, screen_env = build_screen_launch(
-            hook_url=self._hook_url(topic_id),
+            hook_url=f"{api_base}/sandbox/hooks/{topic_id}",
             hook_token=token,
             home_dir=home_dir,
             work_dir=work_dir,
@@ -905,13 +928,13 @@ class DeviceChannel(Channel):
             # another `/api` was right only while the 2.0 routes carried their
             # own prefix; afterwards it injected `<origin>/api/api` and every
             # `cheese` command in a device sandbox 404'd with 话题不存在.
-            api_base=self._public_base,
+            api_base=api_base,
             project_id=str(project_id),
             topic_id=str(topic_id),
             author=agent_handle,
             git_author=(agent_handle, f"{agent_handle}@agent.cheese.local"),
             # Every device owns its checkout and syncs through authenticated git.
-            git_remote=f"{self._public_base}/projects/{project_id}/git",
+            git_remote=f"{api_base}/projects/{project_id}/git",
             git_branch=ws.branch_for_tree(ws.tree_for_place(topic_id)),
             system_prompt=launch.system_prompt,
             ca_pem=ca_pem,

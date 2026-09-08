@@ -192,12 +192,26 @@ def test_a_resume_that_worked_can_be_used_again_later(tmp_path):
     )
 
 
-async def test_a_turn_hands_the_machine_the_conversation_to_continue():
+async def test_a_turn_hands_the_machine_the_conversation_to_continue(monkeypatch):
     """The other half. The platform already works out which conversation this
     place resumes by; that answer has to reach the machine, and the screen env
     is where the launcher reads it. Dropped here, every guard above is dead
     code."""
-    hub = FakeHub()
+    from app.domain.agent.device_provider import DeviceChannel
+
+    async def public_base(self, _device_id):
+        return self._public_base
+
+    monkeypatch.setattr(DeviceChannel, "_device_api_base", public_base)
+    opened = asyncio.Event()
+
+    class RecordingHub(FakeHub):
+        async def open_screen(self, *args, **kwargs):
+            screen = await super().open_screen(*args, **kwargs)
+            opened.set()
+            return screen
+
+    hub = RecordingHub()
     runtime = _provider(hub, HookRouter(), uuid.uuid4())
 
     async def drain():
@@ -211,8 +225,11 @@ async def test_a_turn_hands_the_machine_the_conversation_to_continue():
             pass
 
     task = asyncio.create_task(drain())
-    await asyncio.sleep(0.05)  # resolve the device, open the screen
-    task.cancel()
+    try:
+        await asyncio.wait_for(opened.wait(), timeout=5)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
     assert hub.envs, "no screen was ever opened"
     assert (hub.envs[0] or {}).get("CHEESE_RESUME_SESSION") == SESSION_ID, (

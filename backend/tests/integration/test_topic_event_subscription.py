@@ -183,7 +183,7 @@ async def test_exchange_blocks_and_usage_share_the_supplied_id(
     conversation = [
         block
         for block in rows
-        if block.kind == BlockKind.message
+        if (block.kind == BlockKind.message or (block.meta or {}).get("progress"))
         and block.author_type in {AuthorType.human, AuthorType.ai}
     ]
     assert [block.author_type for block in conversation] == [
@@ -223,7 +223,7 @@ async def test_human_summon_uses_message_id_as_work_attribution(
         answers = [
             block
             for block in await BlockRepository(session).list_for_topic(topic_id)
-            if block.author_type == AuthorType.ai and block.kind == BlockKind.message
+            if block.author_type == AuthorType.ai and (block.meta or {}).get("progress")
         ]
     assert [str(block.turn_id) for block in answers] == [user["id"]]
     async with factory() as session:
@@ -312,7 +312,9 @@ async def test_mid_run_message_is_consumed_before_the_run_succeeds(
     # about the session, never about whether a caller is still holding on.
     assert any(t == topic_id for t, _ in service._hook_work)
     assert provider.runs == 1
-    assert provider.delivered == ["[u2]: Also handle B"]
+    assert len(provider.delivered) == 1
+    assert provider.delivered[0].startswith("[u2]: Also handle B\n")
+    assert "cheese chat send" in provider.delivered[0]
     # #539 decision A: the write-accept delivered it, but the consumed stamp
     # waits for the session's UserPromptSubmit receipt — until then the
     # message stays pending so a session death replays it.
@@ -384,24 +386,24 @@ async def test_session_initiated_work_is_persisted_and_broadcast(
         )
         started_frame = await asyncio.wait_for(room.get(), 1)
         progress_frame = await asyncio.wait_for(room.get(), 1)
-        message_frame = await asyncio.wait_for(room.get(), 1)
         done_frame = await asyncio.wait_for(room.get(), 1)
         finished_frame = await asyncio.wait_for(room.get(), 1)
 
     assert started_frame["type"] == "turn_started"
     assert progress_frame["type"] == "event_block"
     assert progress_frame["block"]["meta"]["in_room"] is False
-    assert message_frame["type"] == "assistant_block"
     assert done_frame == {"type": "done"}
     assert finished_frame == {
         "type": "turn_finished",
         "turn_id": started_frame["turn_id"],
     }
-    block = message_frame["block"]
+    block = progress_frame["block"]
     assert block["turn_id"] is not None
     assert block["meta"] == {
-        "eid": "stop-autonomous-1",
+        "eid": "message-autonomous-1",
         "platform_unsolicited": True,
+        "progress": True,
+        "in_room": False,
     }
 
     async with factory() as session:
@@ -414,7 +416,7 @@ async def test_session_initiated_work_is_persisted_and_broadcast(
         for row in rows
         if row.kind == BlockKind.message and row.author_type == AuthorType.ai
     ]
-    assert [row.content for row in ai_messages] == ["后台那件事跑完了"]
+    assert ai_messages == []
     assert resumes_by == "session-autonomous"
 
     await provider._close_topic(topic_id)
@@ -473,14 +475,13 @@ async def test_an_all_english_message_lands_but_stays_out_of_the_room(
         )
         await asyncio.wait_for(room.get(), 1)  # turn_started
         progress_frame = await asyncio.wait_for(room.get(), 1)
-        message_frame = await asyncio.wait_for(room.get(), 1)
+        done_frame = await asyncio.wait_for(room.get(), 1)
 
     assert progress_frame["type"] == "event_block"
     assert progress_frame["block"]["content"] == "Now the tests:"
     assert progress_frame["block"]["meta"]["in_room"] is False
     assert progress_frame["block"]["meta"]["progress"] is True
-    assert message_frame["type"] == "assistant_block"
-    assert message_frame["block"]["meta"]["in_room"] is False
+    assert done_frame["type"] == "done"
 
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
@@ -489,8 +490,8 @@ async def test_an_all_english_message_lands_but_stays_out_of_the_room(
         for row in rows
         if row.kind == BlockKind.message and row.author_type == AuthorType.ai
     ]
-    # 藏起来的那条仍然是一条消息,内容一个字没改 —— 历史里查得到。
-    assert [row.content for row in ai_messages] == ["Now the tests:"]
+    assert ai_messages == []
+    assert any(row.content == "Now the tests:" for row in rows)
 
     await provider._close_topic(topic_id)
 
@@ -579,7 +580,7 @@ async def test_a_subagents_boundaries_pass_through_the_room_untouched(
     assert kinds == [
         "turn_started",
         "event_block",
-        "assistant_block",
+        "event_block",
         "done",
         "turn_finished",
     ]
@@ -603,7 +604,7 @@ async def test_a_subagents_boundaries_pass_through_the_room_untouched(
         row.content
         for row in rows
         if row.kind == BlockKind.message and row.author_type == AuthorType.ai
-    ] == ["会话答完了"]
+    ] == []
     assert "分身查完了" not in [row.content for row in rows]
 
     await provider._close_topic(topic_id)
@@ -668,20 +669,18 @@ async def test_late_hook_opens_fresh_unsolicited_work(client, tmp_path) -> None:
         )
         started = await asyncio.wait_for(room.get(), 1)
         progress = await asyncio.wait_for(room.get(), 1)
-        frame = await asyncio.wait_for(room.get(), 1)
         assert await asyncio.wait_for(room.get(), 1) == {"type": "done"}
         finished = await asyncio.wait_for(room.get(), 1)
 
     assert started["type"] == "turn_started"
     assert progress["type"] == "event_block"
     assert progress["block"]["meta"]["in_room"] is False
-    assert frame["type"] == "assistant_block"
     assert finished == {
         "type": "turn_finished",
         "turn_id": started["turn_id"],
     }
-    assert uuid.UUID(frame["block"]["turn_id"]) != requested_id
-    assert frame["block"]["meta"]["platform_unsolicited"] is True
+    assert uuid.UUID(progress["block"]["turn_id"]) != requested_id
+    assert progress["block"]["meta"]["platform_unsolicited"] is True
     await provider._close_topic(topic_id)
 
 
@@ -723,21 +722,21 @@ async def test_restart_reattaches_and_replays_spooled_hooks(
         assert await service.recover_sessions() == 1
         started = await asyncio.wait_for(room.get(), 1)
         progress = await asyncio.wait_for(room.get(), 1)
-        message = await asyncio.wait_for(room.get(), 1)
         assert await asyncio.wait_for(room.get(), 1) == {"type": "done"}
         finished = await asyncio.wait_for(room.get(), 1)
 
     assert started["type"] == "turn_started"
     assert progress["type"] == "event_block"
     assert progress["block"]["meta"]["in_room"] is False
-    assert message["type"] == "assistant_block"
     assert finished == {
         "type": "turn_finished",
         "turn_id": started["turn_id"],
     }
-    assert message["block"]["meta"] == {
-        "eid": "restart-stop-1",
+    assert progress["block"]["meta"] == {
+        "eid": "restart-message-1",
         "platform_unsolicited": True,
+        "progress": True,
+        "in_room": False,
     }
     # Replayed to the end. The files stay for their retention window; what says
     # they were consumed is the cursor, so the tail past it must be empty.
@@ -805,7 +804,7 @@ async def test_a_deploy_does_not_interrupt_a_turn_that_is_already_running(
     assert [
         b.content
         for b in blocks
-        if b.author_type == AuthorType.ai and b.kind == BlockKind.message
+        if b.author_type == AuthorType.ai and (b.meta or {}).get("progress")
     ] == ["跑绿了，收工"]
     # Nothing was announced — from the room's side the deploy did not happen.
     assert [b for b in blocks if b.author_type == AuthorType.system] == []
@@ -970,12 +969,11 @@ async def test_session_timeout_retires_activity_but_keeps_subscription(
                 "_eid": "late-after-timeout-stop",
             },
         )
-        late_frames = [await asyncio.wait_for(room.get(), 1) for _ in range(5)]
+        late_frames = [await asyncio.wait_for(room.get(), 1) for _ in range(4)]
 
     assert [frame["type"] for frame in late_frames] == [
         "turn_started",
         "event_block",
-        "assistant_block",
         "done",
         "turn_finished",
     ]

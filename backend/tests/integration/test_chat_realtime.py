@@ -106,7 +106,7 @@ async def test_execution_notes_are_retained_outside_public_replies(client, tmp_p
         for b in rows
         if b.kind == BlockKind.message and b.author_type == AuthorType.ai
     ]
-    assert replies == ["The plan is ready."]
+    assert replies == []
     notes = [b for b in rows if (b.meta or {}).get("progress")]
     assert [b.content for b in notes] == ["Read workspace files.", "The plan is ready."]
     assert all(b.kind == BlockKind.event and b.meta["in_room"] is False for b in notes)
@@ -399,7 +399,9 @@ async def test_summon_during_active_work_is_injected_without_a_second_done(
     # Pre-fix this blocked until the active run finished.
     frames = await asyncio.wait_for(summoned("user-2", "等一下，先别跑"), 2)
     assert all(frame["type"] != "done" for frame in frames)
-    assert provider.delivered == ["[user-2]: 等一下，先别跑"]
+    assert [p.split("\n\n", 1)[0] for p in provider.delivered] == [
+        "[user-2]: 等一下，先别跑"
+    ]
     # Injected, not queued: still exactly one active run.
     assert provider.runs == 1
 
@@ -500,7 +502,7 @@ async def test_failed_live_delivery_reports_error_then_queues_work(client, tmp_p
     await asyncio.wait_for(first, 5)
     second_frames = await asyncio.wait_for(second, 5)
     assert provider.runs == 2
-    assert provider.delivered == ["[user-2]: 第二件事"]
+    assert [p.split("\n\n", 1)[0] for p in provider.delivered] == ["[user-2]: 第二件事"]
 
     fallback_frames = [
         frame

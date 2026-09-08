@@ -299,11 +299,15 @@ def test_the_compose_no_longer_stamps_one_identity_on_every_connection():
 # widening the bind cannot silently produce an open relay.
 
 
-def _scoped_token(secret: str, *, project: str = "p1", ttl_s: float = 3600.0) -> str:
+def _scoped_token(
+    secret: str, *, project: str = "p1", ttl_s: float = 3600.0, rc: bool = False
+) -> str:
     """A token shaped exactly like the backend's mint_scoped_token. Signed for
     real: the addon verifies the HMAC, so a hand-written string would only ever
     exercise the reject path."""
-    raw = json.dumps({"p": project, "t": "t1", "exp": time.time() + ttl_s})
+    raw = json.dumps(
+        {"p": project, "t": "t1", "exp": time.time() + ttl_s, "rc": int(rc)}
+    )
     body = base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
     digest = hmac.new(secret.encode(), body.encode(), hashlib.sha256).digest()
     return f"{body}.{base64.urlsafe_b64encode(digest).decode().rstrip('=')}"
@@ -311,6 +315,75 @@ def _scoped_token(secret: str, *, project: str = "p1", ttl_s: float = 3600.0) ->
 
 def _basic(password: str) -> str:
     return "Basic " + base64.b64encode(f"cheese:{password}".encode()).decode()
+
+
+def test_rc_bootstrap_routes_to_cheese_before_credential_injection(
+    monkeypatch, tmp_path
+):
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="provider-secret", scoped_secret="test-secret"
+    )
+    mod.RC_BASE = "https://backend.example/api"
+    token = _scoped_token("test-secret", rc=True)
+    mod.http_connect(_make_connect_flow(_basic(token)))
+    flow = _make_flow(path="/v1/code/sessions", caller_bearer="machine-ticket")
+    flow.request.headers["x-cheese-attr"] = "p1/some-other-topic"
+    flow.request.headers["x-api-key"] = "stale-provider-key"
+    asyncio.run(mod.requestheaders(flow))
+    assert flow.request.host == "backend.example"
+    assert flow.request.path == "/api/v1/code/sessions"
+    assert flow.request.headers["x-cheese-token"] == token
+    assert "authorization" not in flow.request.headers
+    assert "x-api-key" not in flow.request.headers
+    assert "x-cheese-attr" not in flow.request.headers
+    assert flow.server_conn.via is None
+    assert mod.verify_scoped_token(token, "test-secret")["t"] == "t1"
+
+
+def test_rc_without_backend_never_falls_through_to_official_service(
+    monkeypatch, tmp_path
+):
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="provider-secret", scoped_secret="test-secret"
+    )
+    token = _scoped_token("test-secret", rc=True)
+    flow = _make_flow(path="/v1/code/sessions", caller_bearer=token)
+    asyncio.run(mod.requestheaders(flow))
+    assert flow.response.status_code == 503
+    assert flow.request.headers["authorization"] != "Bearer provider-secret"
+
+
+def test_rc_telemetry_is_consumed_without_attaching_provider_credential(
+    monkeypatch, tmp_path
+):
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="provider-secret", scoped_secret="test-secret"
+    )
+    token = _scoped_token("test-secret", rc=True)
+    mod.http_connect(_make_connect_flow(_basic(token)))
+    flow = _make_flow(path="/api/event_logging/v2/batch", caller_bearer="")
+    asyncio.run(mod.requestheaders(flow))
+    assert flow.response.status_code == 200
+    assert flow.request.stream is False
+    assert flow.request.headers["authorization"] != "Bearer provider-secret"
+
+
+def test_rc_flags_preserve_other_feature_values(monkeypatch, tmp_path):
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="provider-secret", scoped_secret="test-secret"
+    )
+    flow = _make_flow(
+        path="/api/eval/test", caller_bearer=_scoped_token("test-secret", rc=True)
+    )
+    asyncio.run(mod.requestheaders(flow))
+    flow.response = mod.http.Response.make(
+        200, json.dumps({"features": {"unrelated": {"defaultValue": 7}}}).encode()
+    )
+    mod.responseheaders(flow)
+    mod.response(flow)
+    features = json.loads(flow.response.content)["features"]
+    assert features["unrelated"] == {"defaultValue": 7}
+    assert features["tengu_ccr_bridge"] == {"defaultValue": True}
 
 
 def _make_connect_flow(proxy_auth: str | None = None, *, conn: str = "client-1"):
