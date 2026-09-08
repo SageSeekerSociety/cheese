@@ -1,19 +1,37 @@
 <script setup lang="ts">
 import type { MilestoneFull } from '../cx_types'
 
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed } from 'vue'
+
+import { useCachedResource } from '@/composables/useCachedResource'
 
 import { getCalendar, getProject, listMilestones } from '../api'
 
 // 时间维度 (spec §7.2): a clean deadline list with countdowns, plus the done
 // milestones shown faded.
+defineOptions({ name: 'CalendarView' })
+
 const props = defineProps<{ projectId: string }>()
 
-const projectName = ref<string>('')
-const upcoming = ref<MilestoneFull[]>([])
-const allMilestones = ref<MilestoneFull[]>([])
-const loading = ref(false)
-const error = ref<string | null>(null)
+// 进过一次的日历，再进来第一帧就是上次那一屏，请求在背后跑（useCachedResource）。
+const { data, loading, error } = useCachedResource(
+  () => `calendar:${props.projectId}`,
+  async (): Promise<{ projectName: string; upcoming: MilestoneFull[]; milestones: MilestoneFull[] }> => {
+    const [cal, all] = await Promise.all([getCalendar(props.projectId), listMilestones(props.projectId)])
+    let projectName = ''
+    try {
+      projectName = (await getProject(props.projectId)).name
+    } catch {
+      projectName = ''
+    }
+    return { projectName, upcoming: cal.data, milestones: all.data }
+  }
+)
+
+const projectName = computed<string>(() => data.value?.projectName ?? '')
+const upcoming = computed<MilestoneFull[]>(() => data.value?.upcoming ?? [])
+const allMilestones = computed<MilestoneFull[]>(() => data.value?.milestones ?? [])
+const errorMessage = computed<string | null>(() => (error.value ? error.value.message || '加载日历失败' : null))
 
 // Done milestones (status === 'done'), kept separate to render faded.
 const done = computed<MilestoneFull[]>(() => allMilestones.value.filter((m) => m.status === 'done'))
@@ -49,28 +67,6 @@ function countdownDotClass(d: string | null): string {
   return 'status-dot--ok'
 }
 
-async function load() {
-  loading.value = true
-  error.value = null
-  try {
-    const [cal, all] = await Promise.all([getCalendar(props.projectId), listMilestones(props.projectId)])
-    upcoming.value = cal.data
-    allMilestones.value = all.data
-    try {
-      const project = await getProject(props.projectId)
-      projectName.value = project.name
-    } catch {
-      projectName.value = ''
-    }
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : '加载日历失败'
-  } finally {
-    loading.value = false
-  }
-}
-
-watch(() => props.projectId, load)
-onMounted(load)
 </script>
 
 <template>
@@ -79,8 +75,8 @@ onMounted(load)
       <div v-if="loading" class="d-flex justify-center py-10">
         <v-progress-circular indeterminate color="primary" />
       </div>
-      <v-alert v-else-if="error" type="error" density="comfortable">
-        {{ error }}
+      <v-alert v-else-if="errorMessage" type="error" density="comfortable">
+        {{ errorMessage }}
       </v-alert>
 
       <template v-else>

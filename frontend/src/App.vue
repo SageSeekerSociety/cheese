@@ -30,7 +30,25 @@
     <v-main class="bg-background h-100">
       <div class="border-t-sm bg-background h-100 overflow-hidden">
         <div id="app-scrollable" class="app-content h-100">
-          <router-view />
+          <!-- 保活是白名单，不是黑名单。缓存一个页面组件等于把它的表单、它的
+               「上一个人是谁」一起留在内存里 —— 登录/注册/OAuth 回调/验证码那
+               几页要是被留下来，退出后再登录会看到上一个账号的填写状态。所以
+               这里只点名那些「进过一次就该立刻回来」的项目内页面，其余一律照
+               旧挂载/卸载。:max 是内存上限，别去掉。
+
+               v-memo="[]" 是这里的必需品，不是优化。带 v-slot 的 router-view 就
+               有了 slot，而 Vue 对「有 slot 的子组件」在父组件重渲染时一律强制更
+               新；RouterView 每次重渲染都给页面组件换一个新的 onVnodeUnmounted，
+               于是页面组件也跟着在**父组件的 patch 中途**重渲染。断点从桌面切到
+               手机时这个中途正好排在移动顶栏挂上之前，Home 的 Teleport 因此找不
+               到 #app-bar-slot：首页的分段 tab 消失，卸载时还会崩。空的依赖数组
+               让这棵子树不再被父组件的重渲染碰到（路由自己的重渲染照常），也就
+               是加 v-slot 之前 router-view 本来的样子。 -->
+          <router-view v-slot="{ Component }" v-memo="[]">
+            <keep-alive :include="keptAlivePages" :max="5">
+              <component :is="Component" />
+            </keep-alive>
+          </router-view>
         </div>
       </div>
     </v-main>
@@ -161,6 +179,17 @@ router.isReady().then(async () => {
   watch(() => store.updateTrigger, updateDocumentTitle)
   watch([() => store.siteName, () => store.separator], updateDocumentTitle)
 })
+
+// 名字来自各自组件里的 defineOptions({ name })——它们也是唯一接了
+// useCachedResource 的五个页面，「组件还在」和「数据还在」必须成对，不然回到页
+// 面看到的是一屏永远不再刷新的旧数据。
+const keptAlivePages = [
+  'OverviewView',
+  'ProjectDocsView',
+  'MemberView',
+  'CalendarView',
+  'ProjectAgentsView',
+]
 
 const hideAppBar = computed(() => {
   return currentRoute.meta.hideAppBar

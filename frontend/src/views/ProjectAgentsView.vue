@@ -10,7 +10,9 @@
 import type { MemoryEntryOut } from '../api'
 import type { AgentType, ProjectAgent } from '../cx_types'
 
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref } from 'vue'
+
+import { useCachedResource } from '@/composables/useCachedResource'
 
 import {
   deactivateProjectAgent,
@@ -26,19 +28,78 @@ import UserAvatar from '../components/common/UserAvatar.vue'
 import { agentKey, memoryCountsByHandle, topicCountsByAgent } from '../lib/projectAgents'
 import { relTime } from '../lib/relTime'
 
+defineOptions({ name: 'ProjectAgentsView' })
+
 const props = defineProps<{ projectId: string }>()
 
-const agents = ref<ProjectAgent[]>([])
-const types = ref<AgentType[]>([])
-const memories = ref<MemoryEntryOut[]>([])
-const topicCounts = ref<Record<string, number>>({})
-// 一开始就是「在加载」。名册还没拉回来时 agents 是空的，从 false 起步会让每次
-// 进入这一页都先闪一下「暂无 AI 队友」——那句话在这时候是假的。
-const loading = ref(true)
-const error = ref<string | null>(null)
-// 后端那一半是单独上线的。没上线时这一页不能是白屏，也不能是一句看起来像
-// bug 的报错 —— 它得说清楚「功能还没到这个环境」。
-const backendMissing = ref(false)
+interface AgentsPayload {
+  agents: ProjectAgent[]
+  types: AgentType[]
+  memories: MemoryEntryOut[]
+  topicCounts: Record<string, number>
+  // 后端那一半是单独上线的。没上线时这一页不能是白屏，也不能是一句看起来像
+  // bug 的报错 —— 它得说清楚「功能还没到这个环境」。
+  backendMissing: boolean
+  // 「名册没拉回来」是这一页的一个状态，不是一次异常：页面照样有标题、有刷新
+  // 按钮，只是列表位置换成一条错误。所以它跟数据一起走，而不是抛出去。
+  loadError: string | null
+}
+
+// 进过一次的队友名册，再进来第一帧就在（useCachedResource）。
+const { data, loading, refreshing, refresh } = useCachedResource(
+  () => `project-agents:${props.projectId}`,
+  async (): Promise<AgentsPayload> => {
+    const payload: AgentsPayload = {
+      agents: [],
+      types: [],
+      memories: [],
+      topicCounts: {},
+      backendMissing: false,
+      loadError: null,
+    }
+    try {
+      payload.agents = (await listProjectAgents(props.projectId)).data
+    } catch (e) {
+      if (isEndpointMissing(e)) payload.backendMissing = true
+      else payload.loadError = e instanceof Error ? e.message : '加载 AI 队友失败'
+      return payload
+    }
+    // 三个补充数据，谁失败谁空着。
+    const [typeList, memoryList, topicList] = await Promise.all([
+      listAgentTypes().then(
+        (r) => r.data,
+        () => [] as AgentType[]
+      ),
+      listMemory(props.projectId).then(
+        (r) => r.data,
+        () => [] as MemoryEntryOut[]
+      ),
+      listTopics(props.projectId).then(
+        (r) => r.data,
+        () => []
+      ),
+    ])
+    payload.types = typeList
+    payload.memories = memoryList
+    payload.topicCounts = topicCountsByAgent(topicList, payload.agents)
+    return payload
+  }
+)
+
+const agents = computed<ProjectAgent[]>(() => data.value?.agents ?? [])
+const types = computed<AgentType[]>(() => data.value?.types ?? [])
+const memories = computed<MemoryEntryOut[]>(() => data.value?.memories ?? [])
+const topicCounts = computed<Record<string, number>>(() => data.value?.topicCounts ?? {})
+const backendMissing = computed<boolean>(() => data.value?.backendMissing ?? false)
+// 名册取不回来，和「设为默认 / 停用」那一下失败，都显示在同一条 alert 上。
+const actionError = ref<string | null>(null)
+const error = computed<string | null>(() => actionError.value ?? data.value?.loadError ?? null)
+
+// 关掉这条 alert 要连缓存里的那份一起关，不然离开这一页再回来它又弹出来。
+function dismissError() {
+  actionError.value = null
+  if (data.value) data.value.loadError = null
+}
 
 const memoryCounts = computed(() => memoryCountsByHandle(memories.value, props.projectId))
 
@@ -59,43 +120,6 @@ function subtitleOf(agent: ProjectAgent): string {
   return agent.configuration.model
 }
 
-async function load() {
-  loading.value = true
-  error.value = null
-  try {
-    agents.value = (await listProjectAgents(props.projectId)).data
-    backendMissing.value = false
-  } catch (e) {
-    if (isEndpointMissing(e)) {
-      backendMissing.value = true
-      agents.value = []
-      return
-    }
-    error.value = e instanceof Error ? e.message : '加载 AI 队友失败'
-    return
-  } finally {
-    loading.value = false
-  }
-  // 三个补充数据，谁失败谁空着。
-  const [typeList, memoryList, topicList] = await Promise.all([
-    listAgentTypes().then(
-      (p) => p.data,
-      () => [] as AgentType[]
-    ),
-    listMemory(props.projectId).then(
-      (p) => p.data,
-      () => [] as MemoryEntryOut[]
-    ),
-    listTopics(props.projectId).then(
-      (p) => p.data,
-      () => []
-    ),
-  ])
-  types.value = typeList
-  memories.value = memoryList
-  topicCounts.value = topicCountsByAgent(topicList, agents.value)
-}
-
 function openCreate() {
   editing.value = null
   editorOpen.value = true
@@ -111,12 +135,12 @@ const settingDefault = ref<string | null>(null)
 async function makeDefault(agent: ProjectAgent) {
   if (agent.is_default || !agent.id) return
   settingDefault.value = agentKey(agent)
-  error.value = null
+  actionError.value = null
   try {
     await setProjectDefaultAgent(props.projectId, { instance_id: agent.id })
-    await load()
+    await refresh()
   } catch (e) {
-    error.value = isEndpointMissing(e)
+    actionError.value = isEndpointMissing(e)
       ? '这个环境还没上线默认队友的设置'
       : e instanceof Error
         ? e.message
@@ -130,13 +154,13 @@ async function confirmDeactivate() {
   const agent = deactivateTarget.value
   if (!agent?.id) return
   deactivating.value = true
-  error.value = null
+  actionError.value = null
   try {
     await deactivateProjectAgent(props.projectId, agent.id)
     deactivateTarget.value = null
-    await load()
+    await refresh()
   } catch (e) {
-    error.value = isEndpointMissing(e)
+    actionError.value = isEndpointMissing(e)
       ? '这个环境还没上线停用功能，队友没有变化'
       : e instanceof Error
         ? e.message
@@ -146,8 +170,6 @@ async function confirmDeactivate() {
     deactivating.value = false
   }
 }
-
-onMounted(load)
 </script>
 
 <template>
@@ -159,7 +181,14 @@ onMounted(load)
           <h1 class="t-page-title">AI 队友</h1>
         </div>
         <v-spacer />
-        <v-btn variant="text" icon="mdi-refresh" class="mr-1" aria-label="刷新" :loading="loading" @click="load" />
+        <v-btn
+          variant="text"
+          icon="mdi-refresh"
+          class="mr-1"
+          aria-label="刷新"
+          :loading="loading || refreshing"
+          @click="refresh"
+        />
         <v-btn
           v-if="!backendMissing"
           color="primary"
@@ -180,11 +209,11 @@ onMounted(load)
         这个环境还没上线 AI 队友的管理功能，上线后这一页会列出项目里的所有队友
       </v-alert>
 
-      <v-alert v-if="error" type="error" density="comfortable" class="mb-4" closable @click:close="error = null">
+      <v-alert v-if="error" type="error" density="comfortable" class="mb-4" closable @click:close="dismissError">
         {{ error }}
       </v-alert>
 
-      <div v-if="loading && agents.length === 0" class="d-flex justify-center py-10">
+      <div v-if="loading" class="d-flex justify-center py-10">
         <v-progress-circular indeterminate color="primary" />
       </div>
 
