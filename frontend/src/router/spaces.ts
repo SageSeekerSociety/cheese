@@ -9,6 +9,7 @@ export default {
   },
   meta: {
     isFullPage: true,
+    backTo: 'HomeSpaces',
     // 这一棵下面还挂着 SpaceSidebar，手机上它是抽屉，所以顶栏给汉堡。
     drawer: true,
   },
@@ -46,6 +47,7 @@ export default {
           },
           meta: {
             titleKey: 'spaces.detail.myPublishedContests',
+            backTo: 'SpacesDetailTasksList',
           },
         },
         {
@@ -57,6 +59,7 @@ export default {
           },
           meta: {
             titleKey: 'spaces.detail.myJoinedContests',
+            backTo: 'SpacesDetailTasksList',
           },
         },
         {
@@ -68,6 +71,7 @@ export default {
           },
           meta: {
             titleKey: 'tasks.publish.title',
+            backTo: 'SpacesDetailTasksList',
           },
         },
         {
@@ -79,6 +83,7 @@ export default {
           },
           meta: {
             title: '赛题',
+            backTo: 'SpacesDetailTasksList',
           },
           children: [
             {
@@ -114,6 +119,7 @@ export default {
               component: () => import('@/views/tasks/detail/Submit.vue'),
               meta: {
                 title: '提交',
+                backTo: 'TasksDetail',
                 disableBreadcrumbLink: true,
               },
             },
@@ -134,6 +140,7 @@ export default {
           component: () => import('@/views/tasks/Edit.vue'),
           meta: {
             title: '编辑赛题',
+            backTo: 'TasksDetail',
           },
         },
       ],
@@ -151,16 +158,19 @@ export default {
     {
       path: 'templates/create',
       name: 'SpacesDetailCreateTemplate',
+      meta: { backTo: 'SpacesDetailManageTemplates' },
       component: () => import('@/views/spaces/detail/TemplateForm.vue'),
     },
     {
       path: 'templates/:templateIndex/edit',
       name: 'SpacesDetailEditTemplate',
+      meta: { backTo: 'SpacesDetailManageTemplates' },
       component: () => import('@/views/spaces/detail/TemplateForm.vue'),
     },
     {
       path: 'select-template',
       name: 'SpacesDetailSelectTemplate',
+      meta: { backTo: 'SpacesDetailTasksList' },
       component: () => import('@/views/spaces/detail/SelectTemplate.vue'),
     },
     {
@@ -229,6 +239,7 @@ export default {
       component: () => import('@/views/spaces/detail/CreateDiscussion.vue'),
       meta: {
         titleKey: 'spaces.discussions.createDiscussion',
+        backTo: 'SpacesDetailDiscussions',
       },
     },
     {
@@ -237,6 +248,7 @@ export default {
       component: () => import('@/views/spaces/detail/DiscussionItem.vue'),
       meta: {
         titleKey: 'spaces.discussions.detailTitle',
+        backTo: 'SpacesDetailDiscussions',
       },
     },
   ],

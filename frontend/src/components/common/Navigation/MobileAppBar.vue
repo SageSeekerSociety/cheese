@@ -4,8 +4,8 @@
     <!-- 页面栈里的一层：← 回上一层。汉堡只留给**还真挂着抽屉**的那几页
          （1.0 的空间/小队详情，见 docs/plans/2026-08-18-mobile-shell-design.md §8）。 -->
     <template #prepend>
-      <v-btn v-if="backTo" icon="mdi-arrow-left" variant="text" aria-label="返回" @click="goBack" />
-      <v-app-bar-nav-icon v-else-if="hasDrawer" @click="toggleDrawer" />
+      <ParentBackButton />
+      <v-app-bar-nav-icon v-if="hasDrawer" @click="toggleDrawer" />
     </template>
 
     <!-- 中间这一格：要么是路由的标题，要么由当前页自己填（它 Teleport 到这里）。
@@ -134,11 +134,13 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
 
 import { usePageTitle } from '@/composables/usePageTitle'
 import { useUserMenu } from '@/composables/useUserMenu'
+
+import ParentBackButton from './ParentBackButton.vue'
 
 import ThemeToggle from '@/components/common/ThemeToggle.vue'
 import { useNavigationStore } from '@/stores/navigation'
@@ -148,16 +150,11 @@ import { usePageTitleStore } from '@/stores/title'
 const userMenu = useUserMenu()
 
 const route = useRoute()
-const router = useRouter()
 const navigationStore = useNavigationStore()
 
 // 栈末端的路由自己说它回哪儿去（meta.backTo），而不是靠 history.back()——
 // 从别处直接打开一个话题链接时，后退会离开这个 app。
 const backTo = computed(() => (typeof route.meta.backTo === 'string' ? route.meta.backTo : null))
-
-function goBack() {
-  if (backTo.value) void router.push({ name: backTo.value, params: route.params })
-}
 
 // 汉堡由路由说了算：一个点了没反应的入口比没有入口更糟，而这条顶栏看不见自己
 // 下面挂没挂侧栏——手机上没有侧栏的页面（/inbox、首页那两页）以前照样画一个汉堡。

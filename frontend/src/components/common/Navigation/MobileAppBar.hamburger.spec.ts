@@ -21,7 +21,7 @@ const routes = [
   { path: '/inbox', name: 'inbox', component: blank },
   // 没登录的时候这条顶栏会把人送去登录页；路由表里缺了它只会刷一行警告。
   { path: '/account/signin', name: 'signin', component: blank },
-  { path: '/spaces/:spaceId', name: 'space', component: blank, meta: { drawer: true } },
+  { path: '/spaces/:spaceId', name: 'space', component: blank, meta: { drawer: true, backTo: 'inbox' } },
 ]
 
 beforeAll(() => {
@@ -56,6 +56,7 @@ describe('手机顶栏的汉堡', () => {
     const { container, pinia } = await mountAt('/spaces/s1')
     const button = hamburger(container)
     expect(button).toBeTruthy()
+    expect(container.querySelector('a[aria-label="返回上一级"]')).toBeTruthy()
 
     await fireEvent.click(button!)
     expect(useNavigationStore(pinia).isSecondaryDrawerOpen).toBe(true)
