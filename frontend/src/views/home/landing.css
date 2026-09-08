@@ -1836,10 +1836,6 @@ footer > span {
     font-size: 48px;
   }
 
-  .statement-strip {
-    break-after: page;
-  }
-
   .demo-section {
     padding-block: 45px;
   }
