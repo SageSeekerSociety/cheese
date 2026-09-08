@@ -25,7 +25,7 @@ from pathlib import Path
 # can't drift (fusion-design §8.6). Re-exported here (`hooks_settings`) because
 # this module's launcher and its callers build on it.
 from app.domain.agent import environment_runner, machine_tunnel, preview_tunnel
-from app.domain.agent.harness.claude_code import event_drain
+from app.domain.agent.harness.claude_code import event_drain, startup_cache
 from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD
 from app.domain.agent.harness.claude_code.hooks_substrate import CHEESE_HOOK_SCRIPT
 from app.domain.agent.harness.claude_code.session_launch import hooks_settings
@@ -707,6 +707,7 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
     sync_script = CHEESE_SYNC_SCRIPT
     workspace_bringup = CHEESE_WORKSPACE_BRINGUP
     settings_reconcile = CHEESE_SETTINGS_RECONCILE
+    startup_cache_source = Path(startup_cache.__file__).read_text()
     drain_script = build_drain_script()
     cli_source = (Path(__file__).resolve().parents[5] / "sandbox" / "cheese").read_text(
         encoding="utf-8"
@@ -1017,6 +1018,10 @@ if [ -n "${{CHEESE_RV_TOKEN_FILE:-}}" ]; then
   CLAUDE_BG_RV_AUTH="$(cat "$CHEESE_RV_TOKEN_FILE" 2>/dev/null || true)"
   export CLAUDE_BG_BACKEND CLAUDE_BG_RENDEZVOUS_SOCK CLAUDE_BG_RV_AUTH
 fi
+python3 - restore "$REAL_HOME" "$CLAUDE_V" \\
+  "$CLAUDE_CONFIG_DIR" <<'CHEESE_NATIVE_CACHE'
+{startup_cache_source}
+CHEESE_NATIVE_CACHE
 CLAUDE="\\"$CLAUDE_BIN\\"{CLAUDE_BASE_ARGS}"
 [ -n "$CLAUDE_MODEL" ] && CLAUDE="$CLAUDE --model $CLAUDE_MODEL"
 # 上一段对话接在哪儿。A screen is retired and reopened for reasons that have

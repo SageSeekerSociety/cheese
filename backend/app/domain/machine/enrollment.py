@@ -18,12 +18,14 @@ import json
 import logging
 import os
 import tempfile
+from pathlib import Path
 
 from app.core.config import settings
 from app.domain.agent import connector_build
 from app.domain.agent.harness.claude_code import (
     CLAUDE_MIN_VERSION,
     CLAUDE_PINNED_VERSION,
+    startup_cache,
 )
 from app.domain.machine import claude_dist
 
@@ -81,7 +83,9 @@ async def generate_keypair() -> tuple[str, str]:
     return private, public
 
 
-def bootstrap_script(*, origin: str, token: str, device_id: str) -> str:
+def bootstrap_script(
+    *, origin: str, token: str, device_id: str, prepare_native_cache: bool = False
+) -> str:
     """What runs on the machine. Writes the cli's config, then connects.
 
     Deliberately arch-agnostic: the same script serves an LXC container and a VM
@@ -106,6 +110,13 @@ def bootstrap_script(*, origin: str, token: str, device_id: str) -> str:
     origin_clean = origin.rstrip("/")
     min_version = CLAUDE_MIN_VERSION
     pinned_version = CLAUDE_PINNED_VERSION
+    cache_script = ""
+    if prepare_native_cache:
+        cache_source = Path(startup_cache.__file__).read_text()
+        cache_script = (
+            f'python3 - prepare "$HOME" "{pinned_version}" <<\'CHEESE_NATIVE_CACHE\'\n'
+            f"{cache_source}\nCHEESE_NATIVE_CACHE\n"
+        )
     return f"""set -eu
 arch=$(uname -m)
 case "$arch" in
@@ -197,6 +208,8 @@ if [ -z "$have" ] || [ "$(printf '%s\n%s\n' "{min_version}" "$have" \
   echo "claude at $claude_pin is ${{have:-unusable}}, need >= {min_version}" >&2
   exit 1
 fi
+umask 077
+{cache_script}
 mkdir -p "$HOME/.local/bin" "$HOME/.config/cheese"
 curl -fsSL --retry 3 --retry-delay 2 -m 120 \\
   "{origin.rstrip("/")}/connector/latest/$target/cheesehost" \\
