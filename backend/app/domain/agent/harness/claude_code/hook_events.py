@@ -35,7 +35,7 @@ whose work it is looking at instead of one interleaved stream from nobody.
 """
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -442,7 +442,16 @@ class MessageAssembler:
         if event is None:
             return []
         if isinstance(event, AgentResult):
-            return [*self.drain(), event]
+            messages = self.drain()
+            if messages and not event.is_error:
+                last = messages[-1]
+                if last.agent_id is None and event.text.strip().startswith(
+                    last.text.strip()
+                ):
+                    # Stop carries the whole final reply when its last display
+                    # flush was lost. Complete it before either copy is saved.
+                    messages[-1] = replace(last, text=event.text)
+            return [*messages, event]
         return [event]
 
     def drain(self) -> list[AgentMessage]:

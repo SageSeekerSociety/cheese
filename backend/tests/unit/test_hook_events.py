@@ -504,6 +504,30 @@ def test_a_message_drained_by_a_stop_keeps_its_own_start_time():
     assert [m.at for m in drained] == [started]
 
 
+def test_stop_completes_its_partial_summary_before_it_reaches_chat():
+    assembler = MessageAssembler()
+    assembler.add(_flush("summary", 0, "Plan saved.\n", eid="first"))
+    assembler.add(_flush("summary", 1, "- Sources checked.\n", eid="second"))
+    full = "Plan saved.\n- Sources checked.\n- Locations need confirmation."
+    events = assembler.translate(
+        {"hook_event_name": "Stop", "last_assistant_message": full}
+    )
+    messages = [event for event in events if isinstance(event, AgentMessage)]
+    assert len(messages) == 1
+    assert messages[0].text == full
+    assert messages[0].eids == ("first", "second")
+    assert isinstance(events[-1], AgentResult)
+    assert events[-1].text == messages[0].text
+    assert (
+        assembler.add(
+            _flush(
+                "summary", 2, "- Locations need confirmation.", final=True, eid="late"
+            )
+        )
+        is None
+    )
+
+
 def test_an_unstamped_hook_falls_back_to_now():
     """The live path handles a hook as it arrives, so it stamps nothing and
     'now' is the honest answer. Only a backfill pass has to say otherwise."""

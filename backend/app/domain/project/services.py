@@ -122,7 +122,10 @@ class ProjectService:
 
         # The original requirements may be rich-text JSON. Keep their canonical
         # page reachable instead of copying serialized editor data into Markdown.
-        brief = f"## 赛题要求\n\n{task.intro}\n\n[查看完整赛题要求](/tasks/{task.id})"
+        brief = (
+            f"## 赛题要求\n\n{task.intro}\n\n"
+            f"[查看完整赛题要求](/spaces/{task.space_id}/tasks/{task.id})"
+        )
         if task.deadline:
             deadline = task.deadline.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
             brief += f"\n\n提交截止时间：{deadline}"

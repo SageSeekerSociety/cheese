@@ -11,6 +11,7 @@ never hold a transaction open across the model round-trip.
 """
 
 import asyncio
+import codecs
 import hashlib
 import json
 import logging
@@ -448,7 +449,11 @@ def _diff_file_stats(diff: str) -> list[dict]:
     for line in diff.splitlines():
         header = _DIFF_HEADER_RE.match(line)
         if header is not None:
-            current = {"path": header.group("path"), "added": 0, "removed": 0}
+            path = header.group("path")
+            if line.endswith('"'):
+                # Git quotes UTF-8 bytes with C-style octal escapes.
+                path = codecs.escape_decode(path.encode())[0].decode()
+            current = {"path": path, "added": 0, "removed": 0}
             stats.append(current)
             in_hunk = False
             continue
