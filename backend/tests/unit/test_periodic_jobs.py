@@ -62,6 +62,29 @@ async def test_one_failing_cycle_does_not_end_the_loop():
         await runner.stop()
 
 
+async def test_a_cancellation_raised_inside_a_job_does_not_end_the_loop():
+    """A job that cancels something of its own raises CancelledError without
+    anyone having asked the runner to stop. Ending the loop there would take the
+    job out for the life of the process, silently."""
+    cycles = 0
+
+    async def job() -> None:
+        nonlocal cycles
+        cycles += 1
+        if cycles == 1:
+            raise asyncio.CancelledError
+
+    runner = PeriodicRunner(name="cancels-itself", interval_seconds=0.01, job=job)
+    runner.start()
+    for _ in range(200):
+        await asyncio.sleep(0.01)
+        if cycles >= 3:
+            break
+    await runner.stop()
+
+    assert cycles >= 3, "the loop stopped at the cancellation raised inside the job"
+
+
 async def test_interval_zero_means_this_box_does_not_run_it():
     ran = False
 
