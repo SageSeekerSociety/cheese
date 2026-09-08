@@ -63,6 +63,13 @@ const previewReadError = ref<string | null>(null)
 // @keydown.esc could not fire).
 const previewFull = ref(false)
 
+// 一个人看得懂的大小。上限是按字节算的，而「1048576 字节」不是一句话。
+function formatBytes(n: number): string {
+  if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`
+  if (n >= 1024) return `${Math.round(n / 1024)} KB`
+  return `${n} 字节`
+}
+
 function openPreviewInNewTab() {
   if (previewAppUrl.value) {
     window.open(previewAppUrl.value, '_blank', 'noopener')
@@ -239,7 +246,11 @@ watch(
           title="在新标签页打开"
           @click="openPreviewInNewTab"
         />
+        <!-- 全屏放的是同一个 iframe：内容没读回来时全屏也只是一块更大的白板，
+             所以这颗按钮跟着内容走，而「在新标签页打开」不跟——那条路走的是原始
+             字节，正是内容读不回来时唯一还能看到东西的路。 -->
         <v-btn
+          v-if="previewAppUrl || previewFile?.content !== null"
           icon="mdi-arrow-expand-all"
           size="small"
           variant="text"
@@ -300,6 +311,24 @@ watch(
       <div v-else class="text-caption mt-1">
         跑这个话题的机器现在没有把预览通道拨出来（机器离线，或者这一轮还没开始）。再 @ 芝士一次即可重新拉起。
       </div>
+    </div>
+    <!-- 读回来了，但没有内容：文件超过文本读取上限（1MB），或者它根本不是文本。
+         这一条不加的话，`content` 是 null 时下面那个 iframe 拿到的是空字符串——
+         面板变成一块不说话的白板，看起来和「芝士还没指定预览」一模一样，而这正是
+         人会当成平台坏了的那种状态。原始字节那条路没有上限，所以这里给的是出口，
+         不只是一句解释。 -->
+    <div v-else-if="previewFile && previewFile.content === null" class="text-center text-medium-emphasis py-8">
+      <v-icon size="32" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
+      <div>{{ previewFile.too_large ? '这个文件太大，面板里放不下' : '这个文件不是文本' }}</div>
+      <div class="text-caption mt-1">
+        <template v-if="previewFile.too_large">
+          {{ previewFile.path }} 有 {{ formatBytes(previewFile.bytes) }}，超过预览能内嵌的上限（1MB）
+        </template>
+        <template v-else> {{ previewFile.path }} 里有网页读不了的字节，只能整个下下来看 </template>
+      </div>
+      <v-btn class="mt-3" size="small" variant="tonal" prepend-icon="mdi-open-in-new" @click="openPreviewInNewTab">
+        在新窗口打开
+      </v-btn>
     </div>
     <div v-else-if="previewFile" class="preview-wrap">
       <div class="preview-bar text-caption px-3 pt-2">

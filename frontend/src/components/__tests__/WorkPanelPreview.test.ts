@@ -158,6 +158,51 @@ describe('预览面板：运行中的应用到不了的时候说什么', () => {
   })
 })
 
+describe('预览面板：文件读回来了但没有内容', () => {
+  // 后端的文本读取有 1MB 上限（它保护的是文件面板里那个能保存的编辑器），超了就
+  // 回 content: null。预览面板以前把这个 null 直接当空字符串塞进 iframe，于是一个
+  // 2MB 的产物渲染成一块不说话的白板——和「还没指定预览」长得一模一样。
+  it('文件超过上限 → 说清楚是太大了，并留下「在新窗口打开」这条出口', async () => {
+    getPreview.mockResolvedValue({ kind: 'file', path: 'report.html', mime: 'text/html', artifact_id: 'a1' })
+    readFile.mockResolvedValue({
+      path: 'report.html',
+      content: null,
+      version: null,
+      bytes: 2_113_182,
+      binary: false,
+      too_large: true,
+    })
+    const { container } = mountPanel()
+    await flush()
+    await openPreview(container)
+
+    expect(container.textContent).toContain('太大')
+    expect(container.textContent).toContain('2.0 MB')
+    // 白板的两个来源必须分得开：这不是「暂无预览」。
+    expect(container.textContent).not.toContain('暂无预览')
+    expect(container.querySelector('iframe.preview-frame')).toBeNull()
+    expect(container.textContent).toContain('在新窗口打开')
+  })
+
+  it('文件不是文本 → 说的是它读不了，不是它太大', async () => {
+    getPreview.mockResolvedValue({ kind: 'file', path: 'shot.bin', mime: 'text/html', artifact_id: 'a1' })
+    readFile.mockResolvedValue({
+      path: 'shot.bin',
+      content: null,
+      version: 'v1',
+      bytes: 2048,
+      binary: true,
+      too_large: false,
+    })
+    const { container } = mountPanel()
+    await flush()
+    await openPreview(container)
+
+    expect(container.textContent).toContain('不是文本')
+    expect(container.textContent).not.toContain('太大')
+  })
+})
+
 describe('预览面板：刷新', () => {
   it('静默刷新不重建 iframe——正在看的产物不会被重载', async () => {
     getPreview.mockResolvedValue({
