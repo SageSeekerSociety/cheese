@@ -12,6 +12,7 @@ GitHub 全程是 test double：开 PR 走 `pr_publish.GitHubPRClient`（App 那�
 
 import asyncio
 import subprocess
+import time
 import uuid as _uuid
 from datetime import UTC, datetime
 
@@ -19,6 +20,7 @@ import pytest
 
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.review import github_pr
+from app.domain.review.pr_publish import dispatch as _REAL_DISPATCH
 from tests.conftest import wait_work_idle
 from tests.integration.conftest import room_text, session_auth_headers
 from tests.machine_work import machine_commits
@@ -521,6 +523,12 @@ def app_world(client, monkeypatch):
                     pr["draft"] = False
                     fake.draft_by_number[pr["number"]] = False
 
+        async def pr_view(self, number: int) -> dict:
+            for pr in recorded["prs_by_head"].values():
+                if pr["number"] == number:
+                    return pr
+            raise AssertionError(f"no such PR: {number}")
+
     async def _tokens_for_project(_project_id, _session):
         return _FakeTokens()
 
@@ -531,6 +539,9 @@ def app_world(client, monkeypatch):
         pr_publish, "github_app_tokens_for_project", _tokens_for_project
     )
     monkeypatch.setattr(pr_publish, "GitHubPRClient", _AppPrOpener)
+    # `cheese ready` / 更正描述走 `AcceptService._app_pr_client`，它在调用时
+    # 从 github_pr 模块取这个名字 —— 同一只假 client，同一批 PR。
+    monkeypatch.setattr(github_pr, "GitHubPRClient", _AppPrOpener)
     # 递卡那一刻的 fire-and-forget 开 PR 在这里是噪音（竞态源）：默认关掉，
     # 「卡上有没有 PR」由每个测试自己决定（见 _give_card_a_pr）。
     monkeypatch.setattr(pr_publish, "dispatch", lambda *a, **kw: None)
@@ -559,6 +570,12 @@ def app_world(client, monkeypatch):
         return branch
 
     monkeypatch.setattr(ws, "push_topic_branch", _push)
+
+    def _push_branch(pid, branch, token):
+        recorded["pushes"].append({"branch": branch, "token": token})
+        return branch
+
+    monkeypatch.setattr(ws, "push_branch", _push_branch)
 
     def _repush(pid, tid, *, owner, repo, remote_branch, token):
         recorded["repushes"].append({"remote_branch": remote_branch, "token": token})
@@ -1968,3 +1985,507 @@ def test_a_failed_post_merge_sync_is_annotated_not_fatal(
     card = r.json()["data"]
     assert card["status"] == "accepted"
     assert "本地同步待补" in card["note"]
+
+
+# ============================ 连续交付 ======================================
+#
+# 一个房间交付完不会停下来。上一批采纳合并之后，下一行代码马上就写出来了 —— 而
+# 这正是 2026-09-08 在本仓库自己的房间里踩到的那一刀：卡 accepted、树 merged、
+# PR 被 squash 成 main 上的一个提交，而房间的工作区还停在那条已经交付完的分支
+# 上，所以「继续干活」写出来的每一个提交都落在一条 main 里再也到不了的分支上。
+# 下面这一组走的是真入口：真的 accept、真的 git 提交，然后问 git。
+
+
+def _disk_branch(place_id: str) -> str:
+    """磁盘这一层说的「这个地方现在写哪条分支」——分身 commit 时用的就是它。"""
+    from app.domain.workspace import service as ws
+
+    return ws.branch_for_tree(ws.tree_for_place(_uuid.UUID(place_id)))
+
+
+def _branch_holds(project_id: str, branch: str, sha: str) -> bool:
+    from app.domain.workspace import service as ws
+
+    done = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", sha, branch],
+        cwd=ws.ensure_repo(_uuid.UUID(project_id)),
+        capture_output=True,
+        text=True,
+    )
+    return done.returncode == 0
+
+
+def _landed_batch(client, app_world, subject: str = "chore(test): file an accept card"):
+    """一批真的走完的交付：写代码 → 递卡 → 采纳合并。返回交付掉的那条分支。"""
+    fake = app_world["fake"]
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    machine_commits(_uuid.UUID(pid), _uuid.UUID(tid), {"first.txt": "batch one\n"})
+    cid = _make_card(client, tid)
+    head_sha = _give_card_a_pr(client, app_world, tid, cid, 7)
+    fake.check_state_by_sha[head_sha] = ("success", "全绿")
+    delivered = _disk_branch(tid)
+    assert _accept(client, cid).status_code == 200
+    return pid, tid, delivered
+
+
+def test_a_commit_right_after_the_batch_landed_does_not_go_on_the_merged_branch(
+    client, app_world
+):
+    """采纳之后**什么都不做**，直接提交下一批的第一行代码。
+
+    它不能落在刚交付掉的那条分支上。那条分支的内容已经作为一个 squash 提交进了
+    main，分支本身不是 main 的祖先，所以写在它上面的东西 `git log main` 里永远
+    看不到，而且下一次递卡也带不走 —— 交付路径上没有任何一步会发现这件事。
+    """
+    pid, tid, delivered = _landed_batch(client, app_world)
+
+    sha = machine_commits(_uuid.UUID(pid), _uuid.UUID(tid), {"next.txt": "batch two\n"})
+
+    now = _disk_branch(tid)
+    assert now != delivered, "采纳之后房间还写在已经交付掉的那条分支上"
+    assert _branch_holds(pid, now, sha)
+    assert not _branch_holds(pid, delivered, sha)
+
+
+def test_the_next_batch_gets_its_own_draft_pr_on_its_own_branch(
+    client, app_world, monkeypatch
+):
+    """第二批的 draft PR 开在**新**分支上，而不是上一批那条已经合掉的。
+
+    走的是这条 PR 真正的入口：平台看不见 worktree 里那次 commit，所以是巡检
+    (`draft pr sweep`) 观察到「这一批的分支比 main 多了东西」才开的 PR。
+    """
+    from app.domain.review import pr_publish
+
+    monkeypatch.setattr(pr_publish, "enabled", lambda: True)
+    pid, tid, delivered = _landed_batch(client, app_world)
+    machine_commits(_uuid.UUID(pid), _uuid.UUID(tid), {"next.txt": "batch two\n"})
+    fresh = _disk_branch(tid)
+
+    counts = asyncio.run(pr_publish.sweep_draft_prs(client.test_factory))
+
+    assert counts["opened"] == 1, counts
+    drafts = [o for o in app_world["opened"] if o["draft"]]
+    assert [d["head"] for d in drafts] == [fresh]
+    assert delivered not in [d["head"] for d in drafts]
+    # 而且卡递出来时认领的就是它，不是再开一个。
+    cid = _make_card(client, tid)
+    assert _cards(client, tid)[0]["pr_number"] == drafts[0]["number"] and cid
+
+
+def test_work_still_open_when_the_batch_landed_follows_the_room(client, app_world):
+    """房间搬到新一批上，还没收的活跟着搬 —— 它的文件就在房间的工作区里，留在
+    已合并那棵树上等于指着一个没人再写的目录。"""
+    fake = app_world["fake"]
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    r = client.post(f"/topics/{tid}/split", json={"title": "还在干的活"})
+    assert r.status_code == 200, r.text
+    task = r.json()["data"]
+    machine_commits(_uuid.UUID(pid), _uuid.UUID(tid), {"first.txt": "batch one\n"})
+    cid = _make_card(client, tid)
+    head_sha = _give_card_a_pr(client, app_world, tid, cid, 7)
+    fake.check_state_by_sha[head_sha] = ("success", "全绿")
+    assert _accept(client, cid).status_code == 200
+
+    moved = client.get(f"/topics/{tid}/tasks/{task['id']}").json()["data"]
+    assert moved["tree_id"] != task["tree_id"]
+    from app.domain.workspace import service as ws
+
+    assert ws.tree_for_place(_uuid.UUID(task["id"])) == _uuid.UUID(moved["tree_id"])
+
+
+# ===================== 有东西就有 PR / cheese ready ==========================
+#
+# #718 拍板①：draft PR 在这批活第一次提交时就开，`cheese ready` 只是把 draft
+# 翻成 ready。平台看不见容器里那次 `git commit`，所以「第一次提交」是**观察**
+# 出来的：巡检看到这一批的分支比 main 多了东西。
+#
+# 真实仓库上实测过这两个 GitHub 能力（本仓、2026-09-08、用平台 App 的 token）：
+# `POST /pulls` 带 draft=true 开出 PR #738 且 `"draft": true`；GraphQL
+# `markPullRequestReadyForReview` 把它翻回 `isDraft: false`。
+
+
+def _sweep(client) -> dict:
+    from app.domain.review import pr_publish
+
+    return asyncio.run(pr_publish.sweep_draft_prs(client.test_factory))
+
+
+def _room_with_work(client) -> tuple[str, str]:
+    """一个房间，派了一条活（这是房间开出一批活的那道门），并且提交了东西。"""
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    assert client.post(f"/topics/{tid}/split", json={"title": "活"}).status_code == 200
+    machine_commits(_uuid.UUID(pid), _uuid.UUID(tid), {"a.txt": "work\n"})
+    return pid, tid
+
+
+def _ready(client, topic_id: str):
+    return client.post(f"/topics/{topic_id}/ready")
+
+
+@pytest.fixture
+def sweeping(app_world, monkeypatch):
+    """巡检开着（默认它靠 App 配置判断在不在线，测试环境里没配）。"""
+    from app.domain.review import pr_publish
+
+    monkeypatch.setattr(pr_publish, "enabled", lambda: True)
+    return app_world
+
+
+def test_a_batch_with_commits_gets_a_draft_pr_without_anybody_filing_a_card(
+    client, sweeping
+):
+    """有东西就有 PR：没有人递卡，光是提交了东西，PR 就该在了 —— 而且是 draft。"""
+    pid, tid = _room_with_work(client)
+
+    counts = _sweep(client)
+
+    assert counts["opened"] == 1, counts
+    [opened] = sweeping["opened"]
+    assert opened["draft"] is True
+    assert opened["head"] == _disk_branch(tid)
+
+
+def test_a_batch_with_nothing_on_its_branch_gets_no_pr(client, sweeping):
+    """一批空的活是房间两次交付之间的常态。给它开 PR = 把一个空 diff 推到人脸上。"""
+    _make_topic(client, _make_project(client))
+
+    counts = _sweep(client)
+
+    assert counts["opened"] == 0
+    assert sweeping["opened"] == []
+
+
+def test_the_sweep_never_opens_a_second_pr_for_the_same_batch(client, sweeping):
+    """跑几次都只有一个 PR —— 巡检每个 tick 都会重新扫到这棵树。"""
+    _room_with_work(client)
+
+    _sweep(client)
+    second = _sweep(client)
+
+    assert second["opened"] == 0
+    assert len([o for o in sweeping["opened"] if not o.get("adopted")]) == 1
+
+
+def test_a_batch_that_merged_after_the_list_was_taken_gets_no_pr(
+    client, sweeping, monkeypatch
+):
+    """扫到一棵树和这棵树被交付掉，可以是同时发生的。
+
+    名单是快照：轮到某棵树时它可能刚刚被采纳合并，而给一条已经被 squash 进 main
+    的分支开 PR，开出来的是一个谁也合不掉的 PR。这里把那个窗口做成确定性的 ——
+    名单已经取到，然后这一批在别的会话里合并并提交，之后巡检才轮到它。
+    """
+    from app.domain.room_task.services import WorkTreeService
+    from app.domain.review import pr_publish
+
+    pid, tid = _room_with_work(client)
+    original = WorkTreeService.open_without_pr
+
+    async def _list_then_merge(self):
+        trees = await original(self)
+
+        async def _merge_it() -> None:
+            async with client.test_factory() as s:
+                svc = WorkTreeService(s)
+                landed = await svc.current(_uuid.UUID(tid))
+                assert landed is not None
+                await svc.mark_merged(landed)
+                await s.commit()
+
+        await _merge_it()
+        return trees
+
+    monkeypatch.setattr(WorkTreeService, "open_without_pr", _list_then_merge)
+
+    counts = asyncio.run(pr_publish.sweep_draft_prs(client.test_factory))
+
+    assert counts["opened"] == 0, counts
+    assert sweeping["opened"] == []
+
+
+def test_one_batch_failing_does_not_cost_the_next_one_its_pr(
+    client, sweeping, monkeypatch
+):
+    """一棵树写库失败，后面的树照样拿到 PR。
+
+    共用一个 session 的话这条是反的：失败之后事务已经脏了，后面每一棵树都会跟着
+    一起挂，一个项目的问题变成所有房间的问题。
+    """
+    from app.domain.room_task.services import WorkTreeService
+
+    first_pid, first_tid = _room_with_work(client)
+    second_pid, second_tid = _room_with_work(client)
+    doomed = _disk_branch(first_tid)
+    original = WorkTreeService.record_pr
+    blown: list[str] = []
+
+    async def _explode_once(self, tree, *, number, url):
+        from app.domain.workspace import service as ws
+
+        if ws.branch_for_tree(tree.id) == doomed and not blown:
+            blown.append(doomed)
+            raise RuntimeError("DB 抽风")
+        return await original(self, tree, number=number, url=url)
+
+    monkeypatch.setattr(WorkTreeService, "record_pr", _explode_once)
+
+    counts = _sweep(client)
+
+    assert counts["failed"] == 1 and counts["opened"] == 1, counts
+    assert _disk_branch(second_tid) in [o["head"] for o in sweeping["opened"]]
+
+
+def test_filing_a_card_takes_the_batchs_pr_out_of_draft(
+    client, sweeping, monkeypatch
+):
+    """递卡的语义就是「请人来看」，所以卡一递出去，PR 就不再是 draft。
+
+    这条要的正是 `app_world` 默认关掉的那件事（递卡时 fire-and-forget 开 PR），
+    所以把它开回来，再等那份后台工作落库。
+    """
+    from app.domain.review import pr_publish
+
+    monkeypatch.setattr(pr_publish, "dispatch", _REAL_DISPATCH)
+    pid, tid = _room_with_work(client)
+    _sweep(client)
+    node_id = sweeping["prs_by_head"][_disk_branch(tid)]["node_id"]
+
+    _make_card(client, tid)
+    for _ in range(300):
+        if sweeping["readied"]:
+            break
+        time.sleep(0.01)
+
+    assert sweeping["readied"] == [node_id]
+    assert sweeping["prs_by_head"][_disk_branch(tid)]["draft"] is False
+    # 认领，不是重开：GitHub 一条 head 上只有一个开着的 PR。
+    assert len([o for o in sweeping["opened"] if not o.get("adopted")]) == 1
+
+
+def test_ready_flips_the_draft_and_changes_nothing_else(client, sweeping):
+    """`cheese ready` 只做一件事。"""
+    pid, tid = _room_with_work(client)
+    _sweep(client)
+    pr = sweeping["prs_by_head"][_disk_branch(tid)]
+    assert pr["draft"] is True
+    title_before, body_before = pr["title"], pr["body"]
+
+    r = _ready(client, tid)
+
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["ready"] is True
+    assert pr["draft"] is False
+    # 不合并、不改文案、不动别的字段。
+    assert sweeping["fake"].merge_calls == []
+    assert sweeping["local_merges"] == []
+    assert (pr["title"], pr["body"]) == (title_before, body_before)
+    assert sweeping["patched"] == []
+    assert _cards(client, tid) == []  # 也没有顺手递一张卡
+
+
+def test_ready_on_a_pr_that_is_not_a_draft_says_so_instead_of_failing(
+    client, sweeping
+):
+    """本来就 ready 就是调用方想要的状态。为它抛异常只会教会分身别用这条命令。"""
+    pid, tid = _room_with_work(client)
+    _sweep(client)
+    assert _ready(client, tid).status_code == 200
+
+    again = _ready(client, tid)
+
+    assert again.status_code == 200, again.text
+    assert again.json()["data"]["ready"] is False
+    assert "本来就不是 draft" in again.json()["data"]["reason"]
+    assert len(sweeping["readied"]) == 1
+
+
+def test_ready_never_opens_a_pr(client, sweeping):
+    """`ready` 不承担「首次建 PR」。没有 PR 时它说清楚为什么，一个 PR 也不开。"""
+    tid = _make_topic(client, _make_project(client))
+
+    r = _ready(client, tid)
+
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    assert data["ready"] is False
+    assert "先提交点东西" in data["reason"]
+    assert sweeping["opened"] == []
+    assert sweeping["prs_by_head"] == {}
+
+
+# ======================= 更正卡片描述，PR 跟着改 =============================
+#
+# #735 是活例子：评审把 PR 正文改对了，采纳时用的却是递卡那一刻快照下来的卡片
+# 描述，于是 `1c298199a` 的正文里留下一句与事实不符的历史陈述，而 main 的历史
+# 不能重写。所以卡是唯一的源，改卡的同时改 PR —— 两边物理上不可能各说各话。
+
+
+def _describe(client, topic_id: str, **body):
+    return client.post(f"/topics/{topic_id}/accept-card/describe", json=body)
+
+
+def test_correcting_the_card_rewrites_the_pr_and_the_commit_that_lands(
+    client, sweeping
+):
+    fake = sweeping["fake"]
+    pid, tid = _room_with_work(client)
+    cid = _make_card(client, tid)
+    head_sha = _give_card_a_pr(client, sweeping, tid, cid, 7)
+    sweeping["prs_by_head"][_disk_branch(tid)] = {
+        "number": 7,
+        "html_url": f"https://github.com/{REPO}/pull/7",
+        "title": "chore(test): file an accept card",
+        "body": "递卡那一刻写的正文",
+        "draft": False,
+        "node_id": "PR_node_7",
+    }
+    fake.check_state_by_sha[head_sha] = ("success", "全绿")
+
+    r = _describe(
+        client,
+        tid,
+        change_subject="fix(accept): say what the review said",
+        change_body="评审指出原来那句话与事实不符。",
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["change_subject"] == "fix(accept): say what the review said"
+    # PR 上那份跟着改了 —— 从卡这一份长出来，不是反过来读回卡里。
+    [patch] = sweeping["patched"]
+    assert patch["title"] == "fix(accept): say what the review said"
+    assert "评审指出原来那句话与事实不符。" in patch["body"]
+    # 而且 trailer 仍然是平台写的，不是 GitHub 文本框里能改的东西。
+    assert f"Cheese-Topic: {tid}" in patch["body"]
+
+    assert _accept(client, cid).status_code == 200
+    [merge] = fake.merge_calls
+    assert merge["commit_title"].startswith("fix(accept): say what the review said")
+    assert "评审指出原来那句话与事实不符。" in merge["commit_message"]
+
+
+def test_a_correction_is_refused_once_the_card_has_been_accepted(client, sweeping):
+    """采纳之后 main 上那个提交已经存在，改卡改不了它 —— 那种情况的正解是在
+    房间里记一条更正。"""
+    fake = sweeping["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, sweeping)
+    fake.check_state_by_sha[head_sha] = ("success", "全绿")
+    assert _accept(client, cid).status_code == 200
+
+    r = _describe(client, tid, change_subject="fix(x): too late")
+
+    assert r.status_code == 422, r.text
+    assert "没有待处理的验收卡" in r.json()["message"]
+
+
+def test_a_correction_is_validated_like_the_original_subject(client, sweeping):
+    """标题走的是同一道 Conventional Commits 校验：更正入口不能成为绕过它的路。"""
+    pid, tid = _room_with_work(client)
+    _make_card(client, tid)
+
+    r = _describe(client, tid, change_subject="随便写点什么。")
+
+    assert r.status_code == 422, r.text
+    assert sweeping["patched"] == []
+
+
+def test_a_correction_leaves_a_trace_in_the_room(client, sweeping):
+    """谁在什么时候把它从什么改成了什么。这条入口能改「这次改动会在历史里说
+    什么」，所以它自己必须可追溯。"""
+    pid, tid = _room_with_work(client)
+    _make_card(client, tid)
+
+    r = _describe(client, tid, change_subject="fix(accept): corrected subject")
+    assert r.status_code == 200, r.text
+
+    assert "改了验收卡的描述" in _room_settled(client, tid, "改了验收卡的描述")
+
+
+def test_a_correction_never_touches_the_delivery_claim(client, sweeping):
+    """署名是对**事实**的断言（哪个分身写的代码），描述是对改动的**说明**。
+    更正入口只有后者，前者连字段都不收。"""
+    pid, tid = _room_with_work(client)
+    r = client.post(f"/topics/{tid}/split", json={"title": "另一条活"})
+    other = r.json()["data"]["id"]
+    _make_card(client, tid)
+
+    sent = _describe(
+        client,
+        tid,
+        change_subject="fix(accept): corrected subject",
+        task_ids=[other],
+    )
+
+    assert sent.status_code == 200, sent.text
+    assert _cards(client, tid)[0]["change_subject"] == "fix(accept): corrected subject"
+    # `task_ids` 被无视，而不是被收下。
+    from app.domain.review.repositories import AcceptCardRepository
+
+    async def _claimed() -> list:
+        async with client.test_factory() as s:
+            card = await AcceptCardRepository(s).get(
+                _uuid.UUID(_cards(client, tid)[0]["id"])
+            )
+            assert card is not None
+            return list(card.delivered_task_ids or [])
+
+    assert asyncio.run(_claimed()) == []
+
+
+def test_a_batch_being_merged_right_now_does_not_get_a_second_pr(client, sweeping):
+    """巡检**手里攥着树的行锁**的那一刻，采纳在 GitHub 上把这批活合掉了。
+
+    这是真实的时序，不是「先把 DB 标 merged 再扫」：合并先发生（merge API 返回
+    成功），树的行才被标 merged —— 而那次 UPDATE 正卡在巡检手上的锁后面。所以
+    巡检看到的 `status` 仍然是 `open`，光靠行锁它会给一条**已经被 squash 进
+    main** 的分支开一个 PR，一个谁也合不掉的 PR。
+
+    挡住它的不是锁，是「这一批已经有人递过卡了」：卡就是交付，卡一存在 PR 就归
+    卡管，而**没有任何一条合并路径不经过卡**（正常采纳、绿了自动合、人工放行、
+    以及别人在 GitHub 上直接合掉之后平台补记的那条）。
+    """
+    import threading
+
+    from app.domain.room_task.services import WorkTreeService
+
+    fake = sweeping["fake"]
+    pid, tid = _room_with_work(client)
+    cid = _make_card(client, tid)
+    head_sha = _give_card_a_pr(client, sweeping, tid, cid, 7)
+    fake.check_state_by_sha[head_sha] = ("success", "全绿")
+
+    claimed = threading.Event()
+    merged = threading.Event()
+    original_claim = WorkTreeService.claim_for_pr
+
+    async def _claim_then_wait(self, tree_id):
+        tree = await original_claim(self, tree_id)
+        claimed.set()  # 行锁已经在手上（拿到行的那条路径上）
+        assert merged.wait(20), "采纳那边没有走到合并"
+        return tree
+
+    original_merge = type(fake).merge_pull_request
+
+    async def _merge_then_release(self, **kw):
+        result = await original_merge(self, **kw)
+        merged.set()  # GitHub 已经合了；平台还没来得及标这棵树
+        return result
+
+    WorkTreeService.claim_for_pr = _claim_then_wait
+    type(fake).merge_pull_request = _merge_then_release
+    swept: dict = {}
+    try:
+        worker = threading.Thread(target=lambda: swept.update(_sweep(client)))
+        worker.start()
+        assert claimed.wait(20), "巡检没有走到取锁那一步"
+        assert _accept(client, cid).status_code == 200
+        worker.join(30)
+    finally:
+        WorkTreeService.claim_for_pr = original_claim
+        type(fake).merge_pull_request = original_merge
+
+    assert swept.get("opened") == 0, swept
+    assert [o for o in sweeping["opened"] if o["draft"]] == []

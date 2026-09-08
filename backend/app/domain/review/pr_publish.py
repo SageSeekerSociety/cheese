@@ -245,28 +245,38 @@ async def sweep_draft_prs(session_factory: async_sessionmaker) -> dict[str, int]
 async def _draft_pr_for_one_tree(session: AsyncSession, tree_id: uuid.UUID) -> bool:
     """Open and record this batch's draft PR. False = there was nothing to do.
 
-    The row is re-read and LOCKED first, and that lock is the whole
-    concurrency story. The list this sweep is walking was taken earlier and is a
-    snapshot: by the time a tree's turn comes, its batch may have been delivered
-    and merged — and opening a PR then would put a PR on a branch that is
-    already squashed into main, which is a PR nobody can close by merging it.
+    **A batch anybody has filed a card on is not this sweep's business**, and
+    that — not the row lock — is what keeps it off a merged branch. The tree's
+    `status` cannot answer "has this been merged on GitHub", because the merge
+    happens FIRST and the row is updated after
+    (`AcceptService._merge_pr_for_accept`: merge API, then
+    `_mark_cards_tree_merged`). A sweep holding the row lock in between sees
+    `open` while the branch is, on GitHub, already squashed into main — and
+    opens a PR nobody can ever close by merging it. Locking the row makes that
+    window deterministic instead of removing it. The card does remove it: a
+    filed card is the delivery, from that moment the PR belongs to it
+    (`open_pr_for_card`), and no batch is ever merged without one. So the
+    question this asks is the question that has a stable answer.
 
-    `FOR UPDATE` makes that deterministic rather than unlikely. Marking a tree
-    merged (`AcceptService._mark_cards_tree_merged`) updates this row, so the two
-    serialise on it whichever arrives first: an accept already in flight makes
-    this wait and then see `merged`; a sweep already in flight makes the accept
-    wait and then merge a batch that legitimately gained a PR a moment earlier.
+    Every merging path goes through a card — the ordinary accept, an
+    auto-merged armed card, a manual override, and the PR somebody merged on
+    GitHub that the platform then settles — so all of them are excluded by the
+    same one check.
 
-    Same re-check answers the idempotence question: two overlapping passes over
-    one tree cannot both open a PR, because the second sees `pr_number` set. Even
-    if it somehow did, `open_pr` adopts the PR already open on that head instead
-    of creating a second — but that is the belt, and this is the braces.
+    The row is still locked and re-read, for the narrower job it can actually
+    do: two overlapping passes over one tree must not both open a PR. The second
+    sees `pr_number` set. Even if it somehow did not, `open_pr` adopts the PR
+    already open on that head rather than creating a second — that is the belt,
+    this is the braces.
     """
+    from app.domain.review.repositories import AcceptCardRepository
     from app.domain.room_task.services import WorkTreeService
 
     trees = WorkTreeService(session)
     tree = await trees.claim_for_pr(tree_id)
     if tree is None:
+        return False
+    if await AcceptCardRepository(session).list_for_tree(tree.id):
         return False
     pr = await _open_draft_for_tree(session, tree)
     if pr is None:
@@ -402,20 +412,36 @@ async def _pr_text(
 async def record_pr(
     session_factory: async_sessionmaker, *, card_id: uuid.UUID, pr: dict
 ) -> None:
-    """Write the opened PR onto the card. Clears a `PR_OPEN_FAILED_PREFIX`
-    note from an earlier failed publish — the card rides a PR now, and a
-    stale「开 PR 失败」would contradict the pr_number sitting next to it."""
+    """Write the opened PR onto the card AND onto the batch it delivers.
+
+    Both, because both answer questions somebody asks: the card is what a
+    reviewer opens, and the tree is what the draft-PR sweep consults to know
+    this batch already has one. Writing only the card left a delivered batch
+    looking, to the sweep, like a batch that had never had a PR.
+
+    Clears a `PR_OPEN_FAILED_PREFIX` note from an earlier failed publish — the
+    card rides a PR now, and a stale「开 PR 失败」would contradict the pr_number
+    sitting next to it.
+    """
     from app.domain.review.repositories import AcceptCardRepository
+    from app.domain.room_task.services import WorkTreeService
 
     async with session_factory() as session:
         card = await AcceptCardRepository(session).get(card_id)
         if card is None:
             logger.error("PR recorded nowhere: card %s vanished", card_id)
             return
-        card.pr_number = int(pr["number"])
-        card.pr_url = str(pr.get("html_url") or "")[:255] or None
+        number = int(pr["number"])
+        url = str(pr.get("html_url") or "")[:255] or None
+        card.pr_number = number
+        card.pr_url = url
         if card.note_code is notes.NoteCode.pr_open_failed:
             notes.clear(card)
+        if card.tree_id is not None:
+            trees = WorkTreeService(session)
+            tree = await trees.get(card.tree_id)
+            if tree is not None and tree.pr_number is None:
+                await trees.record_pr(tree, number=number, url=url)
         await session.commit()
 
 
