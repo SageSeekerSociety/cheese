@@ -419,7 +419,7 @@
                 color="primary"
                 variant="tonal"
                 rounded="pill"
-                :to="{ name: 'TasksAIAdvice', params: { taskId: taskData?.id } }"
+                :to="{ name: 'TasksAIAdvice', params: { spaceId: taskData?.space?.id, taskId: taskData?.id } }"
                 class="px-4"
               >
                 查看建议
@@ -622,7 +622,7 @@ const goToAIAdvice = () => {
   if (props.taskData) {
     router.push({
       name: 'TasksAIAdvice',
-      params: { taskId: props.taskData.id },
+      params: { spaceId: props.taskData.space?.id, taskId: props.taskData.id },
     })
   }
 }
