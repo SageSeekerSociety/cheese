@@ -2458,10 +2458,12 @@ class AcceptService:
                 # fact about the batch, including the head that actually landed.
                 card.pr_merged_at = status.merged_at or datetime.now(UTC)
                 await self._mark_cards_tree_merged(card, delivered_head=status.head_sha)
+                sync_note = await self._sync_merged_base(topic)
                 await self._session.flush()
                 self._notify_merge_result(
                     topic,
-                    f"PR #{number} 已在 GitHub 合并，批次已关闭；原退回记录保留",
+                    f"PR #{number} 已在 GitHub 合并，批次已关闭；"
+                    f"原退回记录保留{sync_note}",
                     meta=notice(
                         EVENT_ACCEPT_DONE,
                         severity=SEVERITY_INFO,
@@ -3238,29 +3240,7 @@ class AcceptService:
             else "已合并"
         )
         settled = f"PR #{card.pr_number} {how}：{card.pr_url}"
-        # 合完同步本地 base (#718 点名的旧账): the merge happened on GitHub, so
-        # the platform's own main is now behind it — pull it down here, in the
-        # same act, instead of leaving the workspace stale until the next
-        # scheduled sync. Best-effort: the merge is already a fact, so a sync
-        # failure annotates the note (and its recurring conflict has its own
-        # dispatch, workspace/upstream_conflict.py) rather than failing the
-        # accept.
-        try:
-            from app.domain.agent.github_app import github_app_read_token_for_project
-            from app.domain.workspace import service as ws
-
-            token = await github_app_read_token_for_project(
-                topic.project_id, self._session
-            )
-            synced = await asyncio.to_thread(
-                ws.sync_upstream, topic.project_id, token=token
-            )
-            if not synced.get("synced"):
-                settled += f"；本地同步待补：{synced.get('reason', '')}"
-                if synced.get("conflicts"):
-                    settled += "；到项目里点一次「同步上游」，芝士会去解这个冲突"
-        except Exception as exc:  # noqa: BLE001 — never fail the accept itself
-            settled += f"；本地同步待补：{exc}"
+        settled += await self._sync_merged_base(topic)
         notes.record(card, None, f"{headline}；{settled}" if headline else settled)
         await self._release_billed_compute(topic)
         # 交付完成 ≠ 话题结束 (#442 decision 1)：话题保持 active，归档由人来做。
@@ -3287,6 +3267,31 @@ class AcceptService:
                 detail_label="交付说明",
             ),
         )
+
+    async def _sync_merged_base(self, topic: Topic) -> str:
+        """Refresh local main after a known merge, returning any failure to show.
+
+        A fetch failure cannot undo the merge. Both acceptance and a returned
+        batch's external merge report it without rewriting that fact.
+        """
+        try:
+            from app.domain.agent.github_app import github_app_read_token_for_project
+            from app.domain.workspace import service as ws
+
+            token = await github_app_read_token_for_project(
+                topic.project_id, self._session
+            )
+            synced = await asyncio.to_thread(
+                ws.sync_upstream, topic.project_id, token=token
+            )
+            if not synced.get("synced"):
+                note = f"；本地同步待补：{synced.get('reason', '')}"
+                if synced.get("conflicts"):
+                    note += "；到项目里点一次「同步上游」，芝士会去解这个冲突"
+                return note
+        except Exception as exc:  # noqa: BLE001 — the merge already happened
+            return f"；本地同步待补：{exc}"
+        return ""
 
     async def _resolve_forge(self, project_id: uuid.UUID) -> "forge_mod.Forge":
         """Which forge this project's accept goes through — the one place the

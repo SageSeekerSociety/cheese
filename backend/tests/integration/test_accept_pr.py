@@ -1633,9 +1633,19 @@ def test_poll_settles_an_externally_merged_pr(client, app_world):
     assert delivered["accepted_at"] is not None
 
 
+@pytest.mark.parametrize("sync_fails", [False, True])
 def test_external_merge_closes_a_returned_batch_without_rewriting_its_review(
-    client, app_world
+    client, app_world, monkeypatch, sync_fails
 ):
+    from app.domain.workspace import service as ws
+
+    sync_calls = []
+
+    def sync(project_id, **kwargs):
+        sync_calls.append(project_id)
+        return {"synced": not sync_fails, "reason": "read failed"}
+
+    monkeypatch.setattr(ws, "sync_upstream", sync)
     fake = app_world["fake"]
     pid, tid, cid, number, head_sha = _ready_card(client, app_world)
     branch = _room_open_tree_branch(client, tid)
@@ -1662,7 +1672,11 @@ def test_external_merge_closes_a_returned_batch_without_rewriting_its_review(
     assert _room_open_tree_branch(client, tid) != branch
     assert _branch_of_record(client, tid) == _room_open_tree_branch(client, tid)
     assert fake.merge_calls == []
-    assert "原退回记录保留" in _room_settled(client, tid, "原退回记录保留")
+    room = _room_settled(client, tid, "原退回记录保留")
+    assert "原退回记录保留" in room
+    assert sync_calls == [_uuid.UUID(pid)]
+    if sync_fails:
+        assert "本地同步待补：read failed" in room
 
     async def check_delivery_boundary():
         from app.domain.review.repositories import AcceptCardRepository
