@@ -118,8 +118,10 @@ setup and model response; no startup latency has been established by the functio
 
 Follow the upstream [release procedure](https://github.com/micro-teams/micro-cloud/blob/main/RELEASING.md)
 and [deployment instructions](https://github.com/micro-teams/micro-cloud/blob/main/deploy/README.md).
-The current repository rules require an approval from its code-reviewers team and a
-passing `test-compose` check. Push access alone does not satisfy that review requirement.
+The normal merge queue requires a code-reviewers approval. The upstream release
+procedure also documents a direct REST merge path for an authorized maintainer.
+Use the permitted release path after CI passes; push access alone is not evidence
+that every merge method is available.
 
 Generate Kotlin API models from `MicroCloud-API.yml`, run the Maven build with
 PostgreSQL, and retain the generated schema changes. Deploy the approved main-branch
