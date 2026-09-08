@@ -42,7 +42,20 @@ class _FakeTokens:
 
 
 class _FakeClient:
+    """The App-token PR client, as much of GitHub as this file needs.
+
+    It answers `open_pr` with the PR it just made — title, body, `draft` and
+    `node_id` included — because the publisher reads those back: it rewrites the
+    text of a PR it merely ADOPTED, and it takes an adopted draft out of draft.
+    A stub that returned only `{number, html_url}` would make both of those
+    invisible here.
+    """
+
     opened: list[dict] = []
+    patched: list[dict] = []
+    readied: list[str] = []
+    #: 已经开着的 PR，按 head 分支索引 —— GitHub 一条 head 上只有一个开着的 PR。
+    existing: dict[str, dict] = {}
 
     def __init__(self, owner: str, repo: str, tokens, **_):
         pass
@@ -55,6 +68,7 @@ class _FakeClient:
         title: str,
         body: str,
         as_user_token: str | None = None,
+        draft: bool = False,
     ) -> dict:
         record = {
             "head": head,
@@ -62,9 +76,36 @@ class _FakeClient:
             "title": title,
             "body": body,
             "as_user_token": as_user_token,
+            "draft": draft,
         }
         type(self).opened.append(record)
-        return {"number": 42, "html_url": "https://github.com/acme/widgets/pull/42"}
+        if head in type(self).existing:
+            # GitHub's "a pull request already exists" → the caller adopts it.
+            return type(self).existing[head]
+        pr = {
+            "number": 42,
+            "html_url": "https://github.com/acme/widgets/pull/42",
+            "title": title,
+            "body": body,
+            "draft": draft,
+            "node_id": f"PR_node_{head}",
+        }
+        type(self).existing[head] = pr
+        return pr
+
+    async def update_pr(self, number: int, *, title: str, body: str) -> dict:
+        type(self).patched.append({"number": number, "title": title, "body": body})
+        for pr in type(self).existing.values():
+            if pr["number"] == number:
+                pr.update(title=title, body=body)
+                return pr
+        return {"number": number, "title": title, "body": body}
+
+    async def mark_ready_for_review(self, node_id: str) -> None:
+        type(self).readied.append(node_id)
+        for pr in type(self).existing.values():
+            if pr.get("node_id") == node_id:
+                pr["draft"] = False
 
 
 def _github_world(monkeypatch) -> None:
@@ -72,6 +113,9 @@ def _github_world(monkeypatch) -> None:
     from app.domain.workspace import service as ws
 
     _FakeClient.opened = []
+    _FakeClient.patched = []
+    _FakeClient.readied = []
+    _FakeClient.existing = {}
 
     # #192: the installation is resolved per-project, not from a global.
     async def _fake_tokens_for_project(_project_id, _session):

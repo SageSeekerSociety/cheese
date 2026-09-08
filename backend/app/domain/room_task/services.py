@@ -16,6 +16,7 @@ from app.domain.room_task.models import (
     RoomLock,
     Task,
     TaskStatus,
+    TreeStatus,
     WorkTree,
 )
 from app.domain.room_task.repositories import TaskRepository, WorkTreeRepository
@@ -78,22 +79,31 @@ class WorkTreeService:
         return current
 
     async def _move_open_work_onto(self, tree: WorkTree) -> None:
-        """Carry the room's still-open threads into the new batch.
+        """Carry threads off a LANDED batch and onto the new one.
 
         A thread outlives a batch: the room delivers, and the worker that is
         still going keeps writing — into the NEXT batch, because the one it was
         dispatched into has landed and its branch is finished. `tree_id` is
         where a thread's files are (see :class:`Task`), so it has to follow, or
-        the thread names a worktree nobody is writing in and its claims are
+        the thread names a worktree nobody is writing in, and its claims are
         checked against a batch nobody is on.
 
-        Only OPEN threads. A closed one's tree is history — it says which batch
-        that work went out in, and moving it would rewrite that.
+        Two things deliberately do NOT move:
+
+        - a CLOSED thread. Its tree is history — it says which batch that work
+          went out in, and moving it would rewrite that.
+        - a thread on a SEALED batch. Sealed means the PR is in flight and the
+          tree IS its content; those threads finish the turn they are in and
+          stop (`TreeStatus`). Merged is the opposite situation — the branch is
+          finished, so staying is what would be wrong.
         """
         from app.domain.workspace import service as ws
 
         for task in await TaskRepository(self._session).list_for_room(tree.room_id):
             if task.status is not TaskStatus.open or task.tree_id == tree.id:
+                continue
+            was = await self._repo.get(task.tree_id)
+            if was is None or was.status is not TreeStatus.merged:
                 continue
             task.tree_id = tree.id
             ws.bind_tree(task.id, tree.id)
@@ -103,6 +113,11 @@ class WorkTreeService:
         """Batches taking work that have no PR yet — the draft-PR sweep's input
         (#718 拍板①). See :meth:`WorkTreeRepository.open_without_pr`."""
         return await self._repo.open_without_pr()
+
+    async def claim_for_pr(self, tree_id: uuid.UUID) -> WorkTree | None:
+        """Lock this batch and hand it back only if it still wants a PR —
+        see :meth:`WorkTreeRepository.claim_for_pr`."""
+        return await self._repo.claim_for_pr(tree_id)
 
     async def record_pr(
         self, tree: WorkTree, *, number: int, url: str | None

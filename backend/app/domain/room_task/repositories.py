@@ -66,6 +66,28 @@ class WorkTreeRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
+    async def claim_for_pr(self, tree_id: uuid.UUID) -> WorkTree | None:
+        """Lock this batch and hand it back only if it still wants a PR.
+
+        `FOR UPDATE` because the answer has to survive the work that follows it:
+        opening a PR takes GitHub round trips, and an accept can merge the batch
+        in the middle of them. Locking the row makes the sweep and the accept
+        serialise instead of racing — see `pr_publish._draft_pr_for_one_tree`.
+
+        None when somebody got there first (the batch merged, or already has a
+        PR), which is a normal outcome, not an error.
+        """
+        stmt = (
+            select(WorkTree)
+            .where(
+                WorkTree.id == tree_id,
+                WorkTree.status == TreeStatus.open,
+                WorkTree.pr_number.is_(None),
+            )
+            .with_for_update()
+        )
+        return (await self._session.scalars(stmt)).first()
+
     async def record_pr(self, tree: WorkTree, *, number: int, url: str | None) -> None:
         """Remember which PR this batch is being written into."""
         tree.pr_number = number

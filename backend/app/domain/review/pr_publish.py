@@ -202,16 +202,25 @@ async def sweep_draft_prs(session_factory: async_sessionmaker) -> dict[str, int]
     over `git push` to `git_http`, by a human on the host), which an interception
     at any one of those three could never be.
 
-    **The cost is latency, and it is the right thing to pay.** A first commit
-    can wait up to one tick for its PR. Draft means 进行中; nobody's decision
-    changes because the words「进行中」reached GitHub thirty seconds later. The
-    tick is the PR poller's own interval rather than a new setting — this runs
-    on the same clock as the other thing that watches PRs, and one more knob to
-    get wrong buys nothing.
+    **The cost is latency, and here is its actual bound.** A first commit waits
+    at most `accept_pr_poll_interval_s` (the tick this shares with the PR
+    poller — one clock for the two things that watch PRs, rather than a second
+    knob to get wrong) PLUS the time this pass spends on the trees ahead of it,
+    because the trees are walked one at a time and each one that qualifies costs
+    a branch check, a push and two GitHub round trips. So the bound grows
+    LINEARLY with the number of open batches that have commits and no PR, and
+    quoting the interval alone would understate it. In practice that number is
+    tiny — a batch acquires its PR on the first tick after its first commit and
+    then never qualifies again, so the steady state is "the batches that started
+    in the last tick", not "every open batch". It would become a problem if a
+    project ever had hundreds of rooms committing for the first time inside one
+    interval; at that point this wants batching by project, not a shorter tick.
 
-    Best-effort per tree: one project whose App installation is gone must not
-    stop every other room from getting its PR, so failures are counted and
-    logged rather than raised.
+    Per-tree isolation, in a session of its own. A shared session would not
+    merely lose one tree's work: a failed write leaves the transaction dirty, so
+    every tree after it fails too — one project's missing App installation would
+    silently cost every other room its PR, which is exactly the shape of failure
+    a sweep exists to prevent.
     """
     from app.domain.room_task.services import WorkTreeService
 
@@ -219,25 +228,53 @@ async def sweep_draft_prs(session_factory: async_sessionmaker) -> dict[str, int]
     if not enabled():
         return counts
     async with session_factory() as session:
-        trees_svc = WorkTreeService(session)
-        for tree in await trees_svc.open_without_pr():
-            try:
-                pr = await _open_draft_for_tree(session, tree)
-            except Exception:  # noqa: BLE001 — one bad tree must not end the sweep
-                counts["failed"] += 1
-                logger.warning(
-                    "draft PR not opened for tree %s", tree.id, exc_info=True
-                )
-                continue
-            if pr is None:
-                counts["skipped"] += 1
-                continue
-            await trees_svc.record_pr(
-                tree, number=int(pr["number"]), url=str(pr.get("html_url") or "")
-            )
-            counts["opened"] += 1
-        await session.commit()
+        wanted = [t.id for t in await WorkTreeService(session).open_without_pr()]
+    for tree_id in wanted:
+        try:
+            async with session_factory() as session:
+                opened = await _draft_pr_for_one_tree(session, tree_id)
+                await session.commit()
+        except Exception:  # noqa: BLE001 — one bad tree must not end the sweep
+            counts["failed"] += 1
+            logger.warning("draft PR not opened for tree %s", tree_id, exc_info=True)
+            continue
+        counts["opened" if opened else "skipped"] += 1
     return counts
+
+
+async def _draft_pr_for_one_tree(session: AsyncSession, tree_id: uuid.UUID) -> bool:
+    """Open and record this batch's draft PR. False = there was nothing to do.
+
+    The row is re-read and LOCKED first, and that lock is the whole
+    concurrency story. The list this sweep is walking was taken earlier and is a
+    snapshot: by the time a tree's turn comes, its batch may have been delivered
+    and merged — and opening a PR then would put a PR on a branch that is
+    already squashed into main, which is a PR nobody can close by merging it.
+
+    `FOR UPDATE` makes that deterministic rather than unlikely. Marking a tree
+    merged (`AcceptService._mark_cards_tree_merged`) updates this row, so the two
+    serialise on it whichever arrives first: an accept already in flight makes
+    this wait and then see `merged`; a sweep already in flight makes the accept
+    wait and then merge a batch that legitimately gained a PR a moment earlier.
+
+    Same re-check answers the idempotence question: two overlapping passes over
+    one tree cannot both open a PR, because the second sees `pr_number` set. Even
+    if it somehow did, `open_pr` adopts the PR already open on that head instead
+    of creating a second — but that is the belt, and this is the braces.
+    """
+    from app.domain.room_task.services import WorkTreeService
+
+    trees = WorkTreeService(session)
+    tree = await trees.claim_for_pr(tree_id)
+    if tree is None:
+        return False
+    pr = await _open_draft_for_tree(session, tree)
+    if pr is None:
+        return False
+    await trees.record_pr(
+        tree, number=int(pr["number"]), url=str(pr.get("html_url") or "")
+    )
+    return True
 
 
 async def _open_draft_for_tree(session: AsyncSession, tree) -> dict | None:  # noqa: ANN001

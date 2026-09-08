@@ -438,13 +438,21 @@ def app_world(client, monkeypatch):
         "repushes": [],
         "local_merges": [],
         "opened": [],
+        "patched": [],
+        "readied": [],
+        "prs_by_head": {},
     }
     _FakeTokens.minted_write = 0
     _FakeTokens.minted_read = 0
 
     class _AppPrOpener:
         """`pr_publish` 用来开 PR 的那只 client（App token，大写 PR 的那个）。
-        开出来的 PR 同时登记进 `fake`，因为之后点击/轮询读的是另一只 client。"""
+        开出来的 PR 同时登记进 `fake`，因为之后点击/轮询读的是另一只 client。
+
+        一条 head 上只有一个开着的 PR：同一条分支再开一次，拿回的是同一个
+        （真 GitHub 是 422「already exists」+ 查回来，`open_pr` 内部做的）。
+        `update_pr` / `mark_ready_for_review` 在这里是真的会改状态的，因为
+        「认领来的 draft PR 会被改写文案并翻成 ready」正是递卡这一步的行为。"""
 
         def __init__(self, owner: str, repo: str, tokens, **_):
             self.owner, self.repo = owner, repo
@@ -457,14 +465,61 @@ def app_world(client, monkeypatch):
             title: str,
             body: str,
             as_user_token: str | None = None,
+            draft: bool = False,
         ) -> dict:
-            number = 21 + len(recorded["opened"])
-            recorded["opened"].append({"head": head, "base": base, "number": number})
+            if head in recorded["prs_by_head"]:
+                adopted = recorded["prs_by_head"][head]
+                recorded["opened"].append(
+                    {
+                        "head": head,
+                        "base": base,
+                        "draft": draft,
+                        "title": title,
+                        "number": adopted["number"],
+                        "adopted": True,
+                    }
+                )
+                return adopted
+            number = 21 + len(recorded["prs_by_head"])
+            recorded["opened"].append(
+                {
+                    "head": head,
+                    "base": base,
+                    "draft": draft,
+                    "title": title,
+                    "number": number,
+                    "adopted": False,
+                }
+            )
             fake.seed_pr(number, head=head, base=base)
-            return {
+            fake.draft_by_number[number] = draft
+            pr = {
                 "number": number,
                 "html_url": f"https://github.com/{REPO}/pull/{number}",
+                "title": title,
+                "body": body,
+                "draft": draft,
+                "node_id": f"PR_node_{head}",
             }
+            recorded["prs_by_head"][head] = pr
+            return pr
+
+        async def update_pr(self, number: int, *, title: str, body: str) -> dict:
+            recorded["patched"].append(
+                {"number": number, "title": title, "body": body}
+            )
+            for pr in recorded["prs_by_head"].values():
+                if pr["number"] == number:
+                    pr.update(title=title, body=body)
+                    return pr
+            return {"number": number, "title": title, "body": body}
+
+        async def mark_ready_for_review(self, node_id: str) -> None:
+            recorded["readied"].append(node_id)
+            for pr in recorded["prs_by_head"].values():
+                if pr.get("node_id") == node_id:
+                    pr["draft"] = False
+                    fake.draft_by_number[pr["number"]] = False
 
     async def _tokens_for_project(_project_id, _session):
         return _FakeTokens()
@@ -1205,7 +1260,11 @@ def test_a_delivery_after_the_last_batch_merged_keeps_the_tree_it_named(
     pid, tid, cid, number, head_sha = _ready_card(client, app_world)
     fake.check_state_by_sha[head_sha] = ("success", "全绿")
     assert _accept(client, cid).status_code == 200  # 上一批落地，树 merged
-    assert _room_open_tree_branch(client, tid) is None
+    # 合完当场就开了下一批：房间必须立刻有个别的地方可写，否则在下一次递卡之前
+    # 提交的每一行都落在刚被 squash 进 main 的那条分支上。
+    rolled = _room_open_tree_branch(client, tid)
+    assert rolled is not None
+    assert rolled != f"topic/{_uuid.UUID(tid).hex[:8]}"
 
     pushed: set[str] = set()  # 新一批的分支上还什么都没有
     _only_these_branches_exist(monkeypatch, pushed)
