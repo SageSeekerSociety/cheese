@@ -32,6 +32,11 @@ def _no_device_identity(monkeypatch):
 
     monkeypatch.setattr(DeviceChannel, "_device_ccproxy_upstream", none)
 
+    async def public_base(self, _device_id):
+        return self._public_base
+
+    monkeypatch.setattr(DeviceChannel, "_device_api_base", public_base)
+
 
 class FakeHub:
     """Minimal DeviceHub stand-in recording what the provider drives."""
@@ -808,7 +813,10 @@ def test_device_hook_set_pushes_while_local_container_hook_set_does_not():
 
 
 @pytest.mark.anyio
-async def test_every_machine_facing_url_is_the_base_plus_a_route_that_exists():
+@pytest.mark.parametrize("direct", [False, True])
+async def test_every_machine_facing_url_is_the_base_plus_a_route_that_exists(
+    monkeypatch, direct
+):
     """Each URL handed to a device must be `{public_base}/<a real backend path>`.
 
     That is the contract `settings.connector_public_base` states — the base maps
@@ -849,9 +857,14 @@ async def test_every_machine_facing_url_is_the_base_plus_a_route_that_exists():
             return await super().open_screen(device_id, command, **kw)
 
     # The production shape: behind the gateway the base carries the `/api` mount.
-    base = "http://cheese.test/api"
+    base = "http://127.0.0.1:18080" if direct else "http://cheese.test/api"
     hub = RecordingHub()
-    provider = DeviceChannel(hub=hub, public_base=base)
+    provider = DeviceChannel(hub=hub, public_base="http://cheese.test/api")
+
+    async def api_base(_device_id):
+        return base
+
+    monkeypatch.setattr(provider, "_device_api_base", api_base)
     await provider._ensure_screen(
         device_id="dev1",
         agent_user_id=1,
