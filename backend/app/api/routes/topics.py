@@ -70,7 +70,6 @@ from app.domain.room_task.services import (
     TaskService,
     WorkTreeService,
 )
-from app.domain.team.repositories import TeamRepository
 from app.domain.topic.doc_change import summarize_doc_change
 from app.domain.topic.models import Topic
 from app.domain.topic.relay import TopicRelayService
@@ -1165,15 +1164,7 @@ async def get_topic_compute_profile(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """The compute this topic runs on (execution-architecture v4 会话级选择).
-
-    `current` is the effective pool
-    (topic choice → project sticky → team default → platform default).
-    `locked` is true once the topic has run (some agent has a session here) — the
-    picker freezes then, matching the device-affinity boundary. `sticky` is the
-    effective starting
-    choice for a new topic (project memory, then team default); `profiles` include
-    unavailable targets so a locked offline device still has a readable label."""
+    """Room choice, project favorites and the matching execution lock."""
     topic = await TopicService(db).get_or_404(topic_id)
     actor = await resolver.resolve(
         fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
@@ -1182,12 +1173,12 @@ async def get_topic_compute_profile(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
     project = await ProjectRepository(db).get(topic.project_id)
-    sticky = (project.settings or {}).get("compute_profile") if project else None
-    team_default = None
-    if project is not None and project.team_id is not None:
-        team = await TeamRepository(db).get_by_id(project.team_id)
-        team_default = team.compute_profile if team is not None else None
-    current = topic.compute_profile or sticky or team_default or compute_default_name()
+    from app.domain.agent.compute_configs import project_configs, room_choice
+    from app.domain.machine.repositories import ProjectMachineRepository
+
+    configs = project_configs(project.settings if project else None)
+    choice = room_choice(topic, project.settings if project else None)
+    current = choice.profile
     device_online = await project_device_online(db, topic.project_id)
     device_service = sql_device_service(db)
     devices = await device_service.list_devices_for_project(topic.project_id)
@@ -1198,12 +1189,20 @@ async def get_topic_compute_profile(
     # a visible safety badge for a Hosted Machine turn instead of the platform
     # granting whole-machine access silently (原则八).
     binding = await device_service.topic_binding(topic_id)
+    if current == COMPUTE_DEVICE and binding is not None:
+        choice.device_id = binding.device_id
+        if topic.compute_config is None:
+            named = next((d for d in devices if d.device_id == binding.device_id), None)
+            choice.name = named.name if named else "自有设备"
     effective_visibility: str | None = None
     if binding is not None:
         effective_visibility = binding.visibility.value
     return ok(
         {
             "current": current,
+            "choice": choice.model_dump(),
+            "project_default": configs.default.model_dump(),
+            "favorites": [v.model_dump() for v in configs.favorites],
             # A machine id only has selection meaning under the self-hosted pool.
             # Cloud also records its connector in device_topic, but that endpoint is
             # an implementation detail of the freshly provisioned topic machine, not
@@ -1211,7 +1210,7 @@ async def get_topic_compute_profile(
             "device_id": (
                 binding.device_id
                 if current == COMPUTE_DEVICE and binding is not None
-                else None
+                else choice.device_id
             ),
             "devices": [
                 {
@@ -1221,9 +1220,11 @@ async def get_topic_compute_profile(
                 }
                 for device in devices
             ],
-            "locked": await AgentSessionService(db).has_run(topic_id),
+            "locked": bool(
+                await AgentSessionService(db).has_run(topic_id)
+                or await ProjectMachineRepository(db).get_active_for_topic(topic_id)
+            ),
             "inherited": topic.compute_profile is None,
-            "sticky": sticky or team_default or compute_default_name(),
             "profiles": [
                 asdict(v)
                 for v in compute_listings(settings, device_online=device_online)
@@ -1246,10 +1247,16 @@ async def get_topic_compute_profile(
 async def set_topic_compute_profile(
     topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """Pick the topic's compute pool. Allowed only before the first turn (no agent
-    has a session here yet); once the topic has run the pin is frozen so its work
-    tree / session never move. The choice also updates the project's sticky default, so
-    the next new topic inherits it (spec v4: 选了之后持久化，除非新 session 又改)."""
+    """Change only this room before its first resource allocation or session."""
+    from pydantic import ValidationError as SchemaError
+
+    from app.domain.agent.compute_configs import (
+        ComputeChoice,
+        standard_choice,
+        validate_choice,
+    )
+    from app.domain.machine.repositories import ProjectMachineRepository
+
     topic = await TopicService(db).get_or_404(topic_id)
     actor = await resolver.resolve(
         fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
@@ -1257,9 +1264,25 @@ async def set_topic_compute_profile(
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
-    if await AgentSessionService(db).has_run(topic_id):
+    await ProjectMachineRepository(db).lock_topic(topic_id)
+    if await AgentSessionService(db).has_run(
+        topic_id
+    ) or await ProjectMachineRepository(db).get_active_for_topic(topic_id):
         raise ValidationError("话题已开始，算力已锁定；新建话题可另选算力")
     name = (body.get("profile") or "").strip() or compute_default_name()
+    try:
+        choice = ComputeChoice.model_validate(
+            body.get("choice")
+            or {
+                **standard_choice(name).model_dump(),
+                "profile": name,
+                "device_id": body.get("device_id"),
+            }
+        )
+    except SchemaError as exc:
+        raise ValidationError("算力配置无效，请检查名称、设备和资源规格") from exc
+    name = choice.profile
+    body = {**body, "device_id": choice.device_id}
     raw_device_id = body.get("device_id")
     if raw_device_id is not None and not isinstance(raw_device_id, str):
         raise ValidationError("device_id 必须是字符串")
@@ -1275,7 +1298,9 @@ async def set_topic_compute_profile(
     if name not in allowed and not (name == COMPUTE_DEVICE and device_id is not None):
         raise ValidationError(f"算力池 {name!r} 尚未接入，暂不可选")
     if name == COMPUTE_CLOUD:
-        await MachineService(db).require_create_authority(topic.project_id, actor)
+        await MachineService(db).require_use_authority(topic.project_id, actor)
+    if body.get("choice"):
+        await validate_choice(db, topic.project_id, choice)
 
     device_service = sql_device_service(db)
     if device_id is not None:
@@ -1302,13 +1327,12 @@ async def set_topic_compute_profile(
         )
 
     topic.compute_profile = name
-    project = await ProjectRepository(db).get(topic.project_id)
-    if project is not None:
-        project.settings = {**(project.settings or {}), "compute_profile": name}
+    topic.compute_config = choice.model_dump()
     await db.flush()
     return ok(
         {
             "current": name,
+            "choice": choice.model_dump(),
             "device_id": device_id if name == COMPUTE_DEVICE else None,
             "locked": False,
             "inherited": False,

@@ -10,7 +10,7 @@ the platform's structured event; a project belonging to no 赛题 is unlimited.
 
 import pytest
 
-from tests.conftest import seed_task_with_protocol, wait_work_idle
+from tests.conftest import seed_task_with_protocol, seed_user, wait_work_idle
 from tests.integration.conftest import chat_ws_url
 
 # The stub agent reports usage of 10 input + 5 output tokens per turn; at the
@@ -22,6 +22,7 @@ CREDITS_PER_TURN = STUB_TURN_TOKENS / 10_000
 def _mk_project(client, name: str = "Demo", *, from_task: int | None = None) -> str:
     """A project. With `from_task`, created FROM that 赛题 — which is how a
     project accepts its 项目集's protocol and receives the 资源包 (#370)."""
+    client.headers["Authorization"] = f"Bearer {seed_user(client, 'u1')}"
     body: dict = {"name": name}
     if from_task is not None:
         body["external_task_id"] = from_task
@@ -167,13 +168,13 @@ def test_exhausted_credits_refuse_next_turn(client):
     # The human's message still lands; the agent never replies — instead the
     # platform's structured exhaustion event closes the turn.
     assert types == ["user_block", "event_block", "error"]
-    assert "算力额度已用完" in second[1]["block"]["content"]
+    assert "tokens 额度已用完" in second[1]["block"]["content"]
     assert second[-1]["persisted"] is True
     assert not any(t == "assistant_block" for t in types)
 
     # The refusal event is persisted in the topic 现场 (survives reload).
     blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
-    assert any("算力额度已用完" in b["content"] for b in blocks)
+    assert any("tokens 额度已用完" in b["content"] for b in blocks)
 
     # And no further credits were burned by the refused turn.
     after = client.get(f"/projects/{project_id}/credits").json()["data"]

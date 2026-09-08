@@ -347,9 +347,6 @@ class Settings(BaseSettings):
     # bills compute against this; 0 disables top-ups (an operator funds it by hand).
     microcloud_account_name: str = "compute"
     microcloud_initial_funds: float = 1000.0
-    # A ceiling per project: provisioning is one API call, and nothing else here
-    # stops a loop from filling a Proxmox node.
-    microcloud_max_machines_per_project: int = 2
     # How long a SETTLED machine may go without being re-checked against
     # MicroCloud. Zero would put a provider round-trip on every read; never
     # would let a machine destroyed upstream sit here as `running` forever

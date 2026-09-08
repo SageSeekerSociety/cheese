@@ -1,29 +1,19 @@
-from dataclasses import asdict
-from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.api.deps import team_device_online
 from app.auth.checker import require_auth_user, require_permission
 from app.auth.core import Action, AuthUserInfo, Resource
 from app.core.config import settings
 from app.core.errors import (
     BadRequestError,
-    ForbiddenError,
     NotFoundError,
-    ValidationError,
 )
 from app.db.session import get_db
-from app.domain.agent.market import (
-    COMPUTE_CLOUD,
-    compute_default_name,
-    compute_listings,
-    compute_selectable,
-)
-from app.domain.identity.actor import Actor
+from app.domain.machine.limits import get_machine_limit
 from app.domain.machine.services import MachineService
+from app.domain.project.services import ProjectService
 from app.domain.team.membership_services import TeamMembershipService
 from app.domain.team.models import (
     ApplicationStatus,
@@ -36,11 +26,13 @@ from app.domain.team.repositories import (
     TeamRepository,
 )
 from app.domain.team.services import TeamService
+from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
 from app.domain.user.repositories import UserProfileRepository, UserRepository
 
 # Number of admin / member examples to surface alongside the count, mirroring
 # the Kotlin TeamService implementation (PageRequest.of(0, 3)).
 _TEAM_EXAMPLES_LIMIT = 3
+
 
 # ── Request Models ────────────────────────────────────────────────────────────
 
@@ -74,10 +66,6 @@ class AddTeamMemberRequest(BaseModel):
 
     user_id: int = Field(..., alias="userId", gt=0)
     role: str = "MEMBER"
-
-
-class ComputeProfileRequest(BaseModel):
-    profile: str = ""
 
 
 class CreateTeamInvitationRequest(BaseModel):
@@ -506,82 +494,55 @@ async def get_team(
     }
 
 
-@router.get(
-    "/{teamId}/compute-profile",
-    summary="Query Team Compute Default",
-)
-async def get_team_compute_profile(
+@router.get("/{teamId}/resource-quotas", summary="Query Team Resource Quotas")
+async def get_team_resource_quotas(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
-    """The team's compute pool and default (execution-architecture v4)."""
-    repo = TeamRepository(session=db)
-    team = await repo.get_by_id(team_id)
-    if team is None or not await repo.is_team_member(team_id, auth_user.user_id):
-        # Compute inventory contains private infrastructure details. Conceal it
-        # from authenticated outsiders just like project machine inventory.
-        raise NotFoundError(
-            "Resource team not found", data={"type": "team", "id": team_id}
-        )
-    online = await team_device_online(db, team_id)
+    repo = TeamRepository(db)
+    if not await repo.get_by_id(team_id) or not await repo.is_team_member(
+        team_id, auth_user.user_id
+    ):
+        raise NotFoundError("Resource team not found")
+    machines = await MachineService(db).quota_machines(team_id)
+    grants = await ComputeGrantRepository(db).list_for_team(team_id)
+    shared = [g for g in grants if g.project_id is None]
+    total = sum(g.credits_total for g in shared)
+    used = sum(g.credits_used for g in shared)
+    projects = await ProjectService(db).list_for_team(team_id)
+    usage = UsageRepository(db)
     return {
         "code": 200,
         "message": "OK",
         "data": {
-            "current": team.compute_profile or compute_default_name(),
-            "profiles": [
-                asdict(profile)
-                for profile in compute_listings(settings, device_online=online)
+            "team_id": team_id,
+            "machines": {
+                "used": len(machines),
+                "limit": await get_machine_limit(db, team_id),
+            },
+            "credits": {
+                "unlimited": not shared,
+                "credits_total": total,
+                "credits_used": used,
+                "credits_remaining": total - used,
+                "tokens_per_credit": settings.compute_credit_tokens,
+            },
+            "projects": [
+                {
+                    "id": str(p.id),
+                    "name": p.name,
+                    "machines_used": sum(m.project_id == p.id for m in machines),
+                    "total_tokens": (await usage.for_project(p.id))["total_tokens"],
+                    "restricted_credits_remaining": sum(
+                        g.credits_total - g.credits_used
+                        for g in grants
+                        if g.project_id == p.id
+                    ),
+                }
+                for p in projects
             ],
         },
-    }
-
-
-@router.put(
-    "/{teamId}/compute-profile",
-    summary="Update Team Compute Default",
-)
-async def put_team_compute_profile(
-    team_id: Annotated[int, Path(ge=1, alias="teamId")],
-    payload: ComputeProfileRequest,
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    db=Depends(get_db),
-) -> dict:
-    """Set the default inherited by new projects/topics; admin-only."""
-    repo = TeamRepository(session=db)
-    team = await repo.get_by_id(team_id)
-    if team is None or not await repo.is_team_member(team_id, auth_user.user_id):
-        raise NotFoundError(
-            "Resource team not found", data={"type": "team", "id": team_id}
-        )
-    if not await repo.is_team_at_least_admin(team_id, auth_user.user_id):
-        raise ForbiddenError("Only team owners and admins can change compute")
-
-    name = payload.profile.strip() or compute_default_name()
-    online = await team_device_online(db, team_id)
-    allowed = {
-        profile.id for profile in compute_selectable(settings, device_online=online)
-    }
-    if name not in allowed:
-        raise ValidationError(f"Compute pool {name!r} is not available")
-    if name == COMPUTE_CLOUD:
-        await MachineService(db).require_team_create_authority(
-            team_id,
-            Actor(
-                handle=str(auth_user.user_id),
-                user_id=auth_user.user_id,
-                is_agent=False,
-                via="token",
-            ),
-        )
-    team.compute_profile = name
-    team.updated_at = datetime.now(UTC)
-    await db.flush()
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"current": name},
     }
 
 

@@ -94,7 +94,6 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task.place import Place, PlaceResolver
-from app.domain.team.repositories import TeamRepository
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic.repositories import TopicProgressRepository, TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
@@ -564,24 +563,11 @@ _TRANSIENT_HTTP = {408, 429, 500, 502, 503, 504, 529}
 def _resolve_compute_id(
     project_settings: dict | None,
     topic_compute_profile: str | None = None,
-    team_compute_profile: str | None = None,
 ) -> str | None:
-    """The compute pool a turn runs on (execution-architecture v4 会话级选择): the
-    topic's own selection wins, else the project's sticky memory, then the team's
-    default, else None (the ComputePool default). An id that isn't deployed here
-    is ignored by ``ComputePool.select`` and degrades to the default — never breaks
-    a turn."""
-    if topic_compute_profile:
-        return topic_compute_profile
-    return (project_settings or {}).get("compute_profile") or team_compute_profile
+    """A room keeps its choice; otherwise use the explicit project default."""
+    from app.domain.agent.compute_configs import project_configs
 
-
-async def _team_compute_profile(session: AsyncSession, project) -> str | None:
-    """Load the owning team's default without making Project own the setting."""
-    if project is None or project.team_id is None:
-        return None
-    team = await TeamRepository(session).get_by_id(project.team_id)
-    return team.compute_profile if team is not None else None
+    return topic_compute_profile or project_configs(project_settings).default.profile
 
 
 def _turn_failure_notice(text: str, code: str | None) -> tuple[str, dict]:
@@ -3974,12 +3960,19 @@ class ChatService:
                     card_statuses=[c.status for c in open_cards],
                 )
             )
-            # Which compute this topic runs on (v4): topic → project sticky → team.
+            # Resolve the room choice, then the explicit project default.
             compute_id = _resolve_compute_id(
                 project.settings if project else None,
                 topic.compute_profile,
-                await _team_compute_profile(session, project),
             )
+            if compute_id == "device" and topic.compute_config is None:
+                from app.domain.agent.compute_configs import (
+                    bind_room_device_choice,
+                )
+
+                await bind_room_device_choice(
+                    session, topic, project.settings if project else None
+                )
             provider = self._compute.select(
                 provider_id=compute_id, harness=wanted_harness
             )
@@ -4106,7 +4099,7 @@ class ChatService:
             # still kills at 900s.
             if topic.compute_profile is None:
                 # v4 affinity red line: materialize the effective target BEFORE
-                # the first provider call. A later team-default/sticky change must
+                # the first provider call. A later project-default change must
                 # never move an existing work tree or resumable Claude session.
                 topic.compute_profile = provider.name
                 await session.commit()
@@ -4514,7 +4507,6 @@ class ChatService:
             topic_id = topic.id
             compute_id = _resolve_compute_id(
                 project.settings,
-                team_compute_profile=await _team_compute_profile(session, project),
             )
             await session.commit()
 
@@ -4613,7 +4605,6 @@ class ChatService:
             root_topic_id = project.root_topic_id
             compute_id = _resolve_compute_id(
                 project.settings,
-                team_compute_profile=await _team_compute_profile(session, project),
             )
 
         topic_lines = "\n".join(
@@ -4716,7 +4707,6 @@ class ChatService:
             role = await agents.system_prompt(await agents.for_project(project))
             compute_id = _resolve_compute_id(
                 project.settings,
-                team_compute_profile=await _team_compute_profile(session, project),
             )
 
         topic_lines = "\n".join(
