@@ -19,6 +19,7 @@ import logging
 import os
 import tempfile
 
+from app.core.config import settings
 from app.domain.agent import connector_build
 from app.domain.agent.harness.claude_code import (
     CLAUDE_MIN_VERSION,
@@ -92,6 +93,11 @@ def bootstrap_script(*, origin: str, token: str, device_id: str) -> str:
             "base": f"{origin.rstrip('/')}/connector",
             "token": token,
             "device_id": device_id,
+            **(
+                {"ws": "ws://127.0.0.1:18080/connector/agent"}
+                if settings.microcloud_direct_control
+                else {}
+            ),
         }
     )
     # The floor and the pin are the launcher's, read from there rather than
