@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import type { Contributions, InboxItem, ProjectCredits, ProjectOverview, TopicRef } from '../cx_types'
 
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import DOMPurify from 'dompurify'
+
+import { useCachedResource } from '@/composables/useCachedResource'
 
 import { getContributions, getInbox, getOverview, getProject, getProjectCredits, markRead, sendFeedback } from '../api'
 import { label, NOTIF_KIND, PROJECT_ROLE, TOPIC_STATUS } from '../labels'
@@ -10,21 +12,65 @@ import { myHandle } from '../me'
 
 import { markdown } from '@/lib/markdown'
 
+defineOptions({ name: 'OverviewView' })
+
 const props = defineProps<{ projectId: string }>()
 
 const ME = myHandle()
 
-const overview = ref<ProjectOverview | null>(null)
-const inbox = ref<InboxItem[]>([])
-const loading = ref(false)
-const error = ref<string | null>(null)
+interface OverviewPayload {
+  overview: ProjectOverview
+  inbox: InboxItem[]
+  contributions: Contributions | null
+  credits: ProjectCredits | null
+  summary: string
+}
+
+// 这一页并发打四个请求，缓存的粒度是「整个 load 的结果」而不是四个 key：后三个
+// 各自的降级（失败就当没有）是这一页的语义，拆开缓存就把它拆散了。
+const { data, loading, error } = useCachedResource(
+  () => `overview:${props.projectId}`,
+  async (): Promise<OverviewPayload> => {
+    const [ov, ib, contrib, cred] = await Promise.all([
+      getOverview(props.projectId),
+      // A 401/403 here (signed out, or a stale cached handle after switching
+      // accounts) must not blank the whole overview — degrade to an empty inbox.
+      getInbox(props.projectId, ME).catch(() => null),
+      getContributions(props.projectId).catch(() => null),
+      getProjectCredits(props.projectId).catch(() => null),
+    ])
+    // The overview extends the project card; if it didn't carry summary, fetch
+    // the project to get it.
+    let summary = ''
+    if (typeof ov.summary === 'string') {
+      summary = ov.summary
+    } else {
+      try {
+        summary = (await getProject(props.projectId)).summary ?? ''
+      } catch {
+        summary = ''
+      }
+    }
+    return { overview: ov, inbox: ib?.data ?? [], contributions: contrib, credits: cred, summary }
+  }
+)
+
+const overview = computed<ProjectOverview | null>(() => data.value?.overview ?? null)
+const inbox = computed<InboxItem[]>(() => data.value?.inbox ?? [])
+
+// 标记已读 / 反馈失败是「刚才那一下没成」，不是「这一页加载不出来」——所以它跟
+// 取数的 error 分开存，免得一次点击把整屏换成错误页。
+const actionError = ref<string | null>(null)
+const errorMessage = computed<string | null>(
+  () => actionError.value ?? (error.value ? error.value.message || '加载总览失败' : null)
+)
 
 // 概要. Read-only here: the overview (or the project card) carries it and
 // nothing in this view writes it back. The 生成/刷新 button that used to sit in
 // the section head is gone along with the POST behind it — parking a feature has
 // to include its entry point, or the user reads the leftover button as "this is
 // broken" rather than "this is off".
-const summary = ref<string>('')
+const summary = computed<string>(() => data.value?.summary ?? '')
 
 function renderMarkdown(text: string): string {
   return DOMPurify.sanitize(markdown.parse(text, { async: false }) as string)
@@ -58,7 +104,7 @@ const restMilestones = computed(() => {
 })
 
 // Credits available to this project from shared and restricted grants.
-const credits = ref<ProjectCredits | null>(null)
+const credits = computed<ProjectCredits | null>(() => data.value?.credits ?? null)
 const creditsUsedPct = computed<number>(() => {
   const c = credits.value
   if (!c || c.unlimited || c.credits_total <= 0) return 0
@@ -77,7 +123,7 @@ function fmtCredits(n: number): string {
 }
 
 // ---- 贡献图 (§10.1): human vs AI split ----
-const contributions = ref<Contributions | null>(null)
+const contributions = computed<Contributions | null>(() => data.value?.contributions ?? null)
 const humanCount = computed<number>(() => contributions.value?.by_author_type.human ?? 0)
 const aiCount = computed<number>(() => contributions.value?.by_author_type.ai ?? 0)
 const contribTotal = computed<number>(() => humanCount.value + aiCount.value)
@@ -98,47 +144,12 @@ function statusDotColor(status: string): string {
   return 'var(--faint)'
 }
 
-async function load() {
-  loading.value = true
-  error.value = null
-  try {
-    const [ov, ib, contrib, cred] = await Promise.all([
-      getOverview(props.projectId),
-      // A 401/403 here (signed out, or a stale cached handle after switching
-      // accounts) must not blank the whole overview — degrade to an empty inbox.
-      getInbox(props.projectId, ME).catch(() => null),
-      getContributions(props.projectId).catch(() => null),
-      getProjectCredits(props.projectId).catch(() => null),
-    ])
-    overview.value = ov
-    inbox.value = ib?.data ?? []
-    contributions.value = contrib
-    credits.value = cred
-    // The overview extends the project card; if it didn't carry summary, fetch
-    // the project to get it.
-    if (typeof ov.summary === 'string') {
-      summary.value = ov.summary
-    } else {
-      try {
-        const project = await getProject(props.projectId)
-        summary.value = project.summary ?? ''
-      } catch {
-        summary.value = ''
-      }
-    }
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : '加载总览失败'
-  } finally {
-    loading.value = false
-  }
-}
-
 async function onMarkRead(item: InboxItem) {
   try {
     await markRead(item.id)
     item.read = true
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '标记已读失败'
+    actionError.value = e instanceof Error ? e.message : '标记已读失败'
   }
 }
 
@@ -147,12 +158,9 @@ async function onFeedback(item: InboxItem, feedback: 'up' | 'down') {
     await sendFeedback(item.id, feedback)
     item.feedback = feedback
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '反馈失败'
+    actionError.value = e instanceof Error ? e.message : '反馈失败'
   }
 }
-
-watch(() => props.projectId, load)
-onMounted(load)
 </script>
 
 <template>
@@ -161,8 +169,8 @@ onMounted(load)
       <div v-if="loading" class="d-flex justify-center py-10">
         <v-progress-circular indeterminate color="primary" />
       </div>
-      <v-alert v-else-if="error" type="error" density="comfortable">
-        {{ error }}
+      <v-alert v-else-if="errorMessage" type="error" density="comfortable">
+        {{ errorMessage }}
       </v-alert>
 
       <template v-else-if="overview">
@@ -628,53 +636,16 @@ onMounted(load)
 .dot-ai {
   background: var(--faint);
 }
-/* Rendered markdown for the 一页纸总结 (v-html → :deep). */
+/* 概要是一段短摘要，字号和标题都比项目文档正文收一档；其余样式（含窄屏保护）
+   在 style.css 的 .md-content 那一份里，不再各抄一遍。 */
 .md-content {
   font-size: 0.92rem;
   line-height: 1.65;
-}
-.md-content :deep(p) {
-  margin: 0 0 8px;
-}
-.md-content :deep(p:last-child) {
-  margin-bottom: 0;
 }
 .md-content :deep(h1),
 .md-content :deep(h2),
 .md-content :deep(h3) {
   font-size: 1.05em;
-  font-weight: 600;
   margin: 12px 0 6px;
-}
-.md-content :deep(ul),
-.md-content :deep(ol) {
-  margin: 4px 0;
-  padding-left: 20px;
-}
-.md-content :deep(li) {
-  margin: 2px 0;
-}
-.md-content :deep(li::marker) {
-  color: var(--faint);
-}
-.md-content :deep(a) {
-  color: var(--accent-ink);
-  text-decoration: none;
-}
-.md-content :deep(a:hover) {
-  text-decoration: underline;
-}
-.md-content :deep(code) {
-  font-family: var(--font-mono);
-  background: var(--fill);
-  padding: 0.5px 5px;
-  border-radius: var(--radius-sm);
-  font-size: 0.88em;
-}
-.md-content :deep(blockquote) {
-  margin: 6px 0;
-  padding-left: 12px;
-  border-left: 2px solid var(--line-2);
-  color: var(--muted);
 }
 </style>

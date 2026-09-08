@@ -38,6 +38,8 @@ import { ApiError } from '../api'
 
 import ProjectAgentsView from './ProjectAgentsView.vue'
 
+import { clearPageCache } from '@/lib/pageCache'
+
 const PROJECT = 'de808b13-ffd2-4b8a-9d1d-fba7babe389f'
 
 function agent(overrides: Partial<ProjectAgent> = {}): ProjectAgent {
@@ -89,6 +91,9 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  // 页面缓存是模块级的、跨用例活着的：不清的话上一条用例的名册会被下一条用例的
+  // 第一帧画出来（那正是「第二次进不转圈」的设计），断言就打在旧数据上。
+  clearPageCache()
   listProjectAgents.mockReset()
   listAgentTypes.mockReset().mockResolvedValue({ data: [], total: 0 })
   listMemory.mockReset().mockResolvedValue({ data: [], total: 0 })

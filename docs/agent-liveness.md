@@ -13,7 +13,7 @@
 
 | 情况 | 证据是什么 | 什么时候结束 | 房间看到什么 |
 |---|---|---|---|
-| 会话没有任何动静 | `agent_idle_suspect_s`（5 分钟）内一个 hook 都没到 | 先探进程（`confirm_alive`）；进程确认没了才结束，活着就继续等 | 轮次超时事件（`TURN_TIMEOUT`） |
+| 会话没有任何动静 | No hook within 25 seconds after the transport accepts the prompt; after the first hook, no hook within `agent_idle_suspect_s` (5 minutes) | 先探进程（`confirm_alive`）；进程确认没了才结束，活着就继续等 | 轮次超时事件（`TURN_TIMEOUT`） |
 | 只说话不干活 | 最近有输出（`MessageDisplay`），但最近一次「动作」（`PreToolUse` / `PostToolUse` / `Stop`）已经是 `agent_no_progress_s`（30 分钟）以前 | 到点即结束 | 轮次超时事件（`TURN_TIMEOUT`） |
 | 发给它的消息它一直不读 | 提示词已送达之后又注入了一条消息，`agent_unread_grace_s`（30 分钟）内没有它的消费收据（`UserPromptSubmit`） | 到点即结束；没读的消息带进下一轮 | 「没读到你」事件（`PROMPT_UNDELIVERED`） |
 | API 拒绝 | Claude Code 发 `StopFailure` 而不是 `Stop`（额度用完、密钥失效、529 都是它） | 立刻，作为一次失败结束 | Claude Code 自己的那句话原文进房间 |
@@ -41,17 +41,21 @@ Code 那句「Invalid API key」。
 
 时限从 `prompt_delivered` 那一帧起算（传输接受了写入），准备容器、连屏幕的时间不算在内。
 
-## 一轮开始之前的两道口子
+## Before the first output
 
-这两道不在「卡住」的范畴里，发生在会话真正开始干活之前，这次改动没有碰它们：
+Startup and silence after an accepted write have separate checks:
 
 - **冷启动熔断** `agent_first_output_timeout_s`（5 分钟）：从这轮的循环开始算，既没有一个
   assistant 文本、也没有一次工具调用，就按「环境没起来」结束（没有容器、没有盘、没有模型
   连接）。它问的是「这轮起来了没有」，所以准备阶段算在内；第一份输出到达它就退役。凭证
   已知过期时熔断缩到 15 秒（`credential_expired_fuse_s`）。
-- **送不到**：提示词写进传输之后，`DELIVERY_TIMEOUT_S`（25 秒）内没有收到会话的消费收据
-  （`UserPromptSubmit`），按「没送到」结束（`PROMPT_UNDELIVERED`）。平台什么时候原样重发、
-  什么时候只发事件，见 `spec.md` 里「平台自己收拾干净的事不通报」那一条。
+- **Initial silence**: after the transport accepts a prompt write, no hook within
+  `DELIVERY_TIMEOUT_S` (25 seconds) triggers a process probe. If the process is alive
+  or its status is unknown, the turn keeps waiting and probes again every 15 seconds.
+  Confirmed process death ends the turn with `TURN_TIMEOUT`. An accepted write does not prove
+  consumption, and a missing receipt does not prove delivery failure. The channel
+  still reports explicit write rejection. A screen still starting uses the longer
+  idle window before its first probe.
 
 ## 结束之后
 
@@ -67,7 +71,7 @@ Code 那句「Invalid API key」。
 | `agent_unread_grace_s` | 1800 | 注入的消息多久没被读算「不读」 |
 | `agent_turn_hard_ceiling_s` | 10800 | 过线只记录，不结束 |
 | `agent_first_output_timeout_s` | 300 | 一轮多久没有任何输出算「没起来」 |
-| `DELIVERY_TIMEOUT_S` | 25 | 提示词多久没有消费收据算「没送到」 |
+| `DELIVERY_TIMEOUT_S` | 25 | Initial silence after an accepted write before probing the process |
 
 数值和它们的取舍理由都写在 `backend/app/core/config.py` 各项的注释里；改数值先读那段注释。
 

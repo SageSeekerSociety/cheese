@@ -32,7 +32,11 @@ const REPO_INSTALL_REASONS: Record<string, string> = {
   project_not_found: '找不到这个项目，可能刚被删除。',
   no_accessible_repos: '这次安装没有授权任何仓库。请在 GitHub 的安装页里勾选至少一个仓库。',
   installation_conflict: '这个安装已经绑给别的项目了。请换一个仓库，或先在那边解绑。',
-  github_error: 'GitHub 那边返回了错误。稍后重试；一直失败就看 GitHub 的状态页。',
+  github_error: '无法验证你的 GitHub 仓库权限。请重新连接 GitHub 账号，确认该账号能访问安装和仓库后重试。',
+  access_denied: '连接人的项目权限或 GitHub 账号连接已失效。请由项目 owner/lead 重新连接 GitHub 账号后重试。',
+  upstream_not_accessible: '这次安装未授权项目的上游仓库，或你的 GitHub 账号无权访问。请检查上游地址与安装授权后重试。',
+  repository_selection_required: '这次安装可访问多个仓库。请先在本页「上游仓库」保存目标 GitHub 仓库地址，再连接仓库。',
+  repository_write_required: '你的 GitHub 账号没有该仓库的写入权限。请有写入权限的项目 owner/lead 来连接。',
   internal_error: '平台内部出错，这次连接没有生效。重试一次；仍失败请提 issue。',
 }
 

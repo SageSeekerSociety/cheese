@@ -1908,18 +1908,13 @@ class AgentWorkRunner:
                     if kind == "waiting":
                         rec["status"] = "waiting"
                         rec["detail"] = "Cloud machine provisioning"
-                    if (
-                        kind in ("tool", "assistant_block")
-                        and rec["first_output_s"] is None
-                    ):
+                    if kind == "assistant_block" and rec["first_output_s"] is None:
                         rec["first_output_s"] = round(time.monotonic() - t0, 2)
                         # The model spoke: the substrate is up, so hand the turn
                         # its real ceiling and retire the cold-start fuse.
                         if fuse_deadline is not None:
                             fuse_deadline = None
                             turn_deadline.reschedule(None)
-                    if kind == "tool":
-                        rec["tools"] += 1
                     if kind == "error":
                         rec["status"] = "error"
                         rec["detail"] = str(frame.get("message", ""))[:200]

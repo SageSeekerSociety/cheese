@@ -11,7 +11,7 @@ from starlette.status import (
     HTTP_404_NOT_FOUND,
     HTTP_409_CONFLICT,
     HTTP_412_PRECONDITION_FAILED,
-    HTTP_422_UNPROCESSABLE_ENTITY,
+    HTTP_422_UNPROCESSABLE_CONTENT,
     HTTP_429_TOO_MANY_REQUESTS,
     HTTP_500_INTERNAL_SERVER_ERROR,
     HTTP_503_SERVICE_UNAVAILABLE,
@@ -85,7 +85,7 @@ class PreconditionFailedError(BaseError):
 
 class UnprocessableEntityError(BaseError):
     def __init__(self, message: str, data: Any | None = None) -> None:
-        super().__init__(HTTP_422_UNPROCESSABLE_ENTITY, message, data)
+        super().__init__(HTTP_422_UNPROCESSABLE_CONTENT, message, data)
 
 
 class InternalServerError(BaseError):

@@ -103,11 +103,11 @@ describe('页面栈的末端', () => {
   it('列表之外的每一层都收起底栏，并说明回哪一层', () => {
     const paths = [
       `/projects/${PROJECT}/topics/t1`,
-      `/projects/${PROJECT}/dm/cheese`,
       `/projects/${PROJECT}/docs/charter`,
       `/projects/${PROJECT}/overview`,
       `/projects/${PROJECT}/calendar`,
       `/projects/${PROJECT}/settings`,
+      `/projects/${PROJECT}/members`,
       `/projects/${PROJECT}/members/alice`,
     ]
     for (const path of paths) {
@@ -115,6 +115,14 @@ describe('页面栈的末端', () => {
       expect(leaf.meta.hideTabs, path).toBe(true)
       expect(leaf.meta.backTo, path).toBe('workspace-project')
     }
+  })
+
+  // 私聊是唯一一层不回话题列表的：它只有一个入口——名册。回话题列表等于把人
+  // 送到一个他没来过的地方，而那一层再也走不回他刚才在的那份名单。
+  it('私聊回的是成员页，不是话题列表', () => {
+    const leaf = leafOf(`/projects/${PROJECT}/dm/cheese`)
+    expect(leaf.meta.hideTabs).toBe(true)
+    expect(leaf.meta.backTo).toBe('project-members')
   })
 
   it('话题列表那一层自己是一级目的地，底栏留着', () => {

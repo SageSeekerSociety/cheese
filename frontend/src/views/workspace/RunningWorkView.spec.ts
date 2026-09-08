@@ -20,7 +20,7 @@ vi.mock('@/api', async () => {
 })
 
 const push = vi.fn()
-vi.mock('vue-router', () => ({ useRouter: () => ({ push }) }))
+vi.mock('vue-router', () => ({ useRouter: () => ({ push, replace: vi.fn() }), useRoute: () => ({ query: {} }) }))
 
 vi.mock('@/stores/workspace', () => ({
   useWorkspaceStore: () => ({
@@ -28,6 +28,7 @@ vi.mock('@/stores/workspace', () => ({
       { id: 'room-1', title: '运维' },
       { id: 'room-2', title: '前端' },
     ],
+    members: [{ user_handle: 'ligan', role: 'member', name: '李干' }],
   }),
 }))
 
@@ -276,5 +277,32 @@ describe('一件活都没有', () => {
     listProjectTasks.mockResolvedValue({ data: [], total: 0 })
     const { findByText } = mount()
     await findByText('暂无派出去的活')
+  })
+
+  it('每一列自己说它空，「施工中」那一列还说得出下一步', async () => {
+    // 这不是收尾的一句话：一个项目几百条活里同时活着的常常只有几条，三列全空是
+    // 第一屏的常态，所以那几行字就是这一屏的主要内容。
+    listProjectTasks.mockResolvedValue({ data: [], total: 0 })
+    const { findByText } = mount()
+    await findByText('暂无施工中的活')
+    await findByText('暂无交付中的活')
+    await findByText('暂无等你的活')
+    await findByText('在房间里说一声，芝士会把它拆成活')
+  })
+
+  it('活全在「已完成」里的时候，板面照样说得出下一步', async () => {
+    listProjectTasks.mockResolvedValue({
+      data: [
+        task({ id: 'a', title: '甲', presentation: { column: 'done', display_status: '已收工' } }),
+        task({ id: 'b', title: '乙', presentation: { column: 'done', display_status: '已收工' } }),
+      ],
+      total: 2,
+    })
+    const { container, getByText } = mount()
+    // 顶上那行仍然说得出这个项目交付过多少：板面空不等于什么都没发生过。
+    await waitFor(() =>
+      expect(container.querySelector('.board__head p')?.textContent?.replace(/\s+/g, '')).toBe('已完成2')
+    )
+    getByText('在房间里说一声，芝士会把它拆成活')
   })
 })

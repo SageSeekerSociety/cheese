@@ -38,7 +38,7 @@ export async function apiToken(page: Page): Promise<string> {
 // and cannot drift from the port the app is really talking to.
 export async function api(
   page: Page,
-  method: 'get' | 'post' | 'patch',
+  method: 'get' | 'post' | 'patch' | 'put',
   path: string,
   body?: unknown
 ): Promise<Record<string, unknown>> {

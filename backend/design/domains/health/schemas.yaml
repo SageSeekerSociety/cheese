@@ -15,28 +15,18 @@ DetailedHealthStatus:
   properties:
     status:
       type: string
-      enum: [healthy, unhealthy, degraded]
-    database:
+      enum: [healthy, degraded]
+    checks:
       type: object
-      properties:
-        status:
-          type: string
-        latency_ms:
-          type: number
-    redis:
-      type: object
-      properties:
-        status:
-          type: string
-        latency_ms:
-          type: number
-    elasticsearch:
-      type: object
-      properties:
-        status:
-          type: string
-        latency_ms:
-          type: number
-    timestamp:
-      type: string
-      format: date-time
+      description: >
+        One entry per dependency, keyed by name (database, redis, memory).
+        Only some of them gate readiness — see /readyz. `skipped` means the
+        check had nothing to do on this deployment, which is not a failure.
+      additionalProperties:
+        type: object
+        properties:
+          status:
+            type: string
+            enum: [up, down, skipped]
+          error:
+            type: string

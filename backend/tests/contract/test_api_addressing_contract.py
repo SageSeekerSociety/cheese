@@ -381,3 +381,40 @@ def test_direct_backend_scripts_do_not_add_the_gateway_mount() -> None:
     assert ":8081/api" not in workflow, (
         "the device wiring runner talks to port 8081 directly, without /api"
     )
+
+
+@pytest.mark.skipif(
+    not _NGINX_CONF.exists(), reason="frontend image config not in this checkout"
+)
+def test_api_responses_stay_compressed_behind_another_proxy() -> None:
+    """Guard a cliff rather than a bug.
+
+    nginx decides a request is "proxied" by the presence of a `Via` header, and
+    `gzip_proxied` defaults to `off` — so compression here is not unconditional
+    even though `gzip on` is set. Nothing in front of this container adds `Via`
+    today, so responses ARE compressed; the day something does (an edge
+    gateway, a CDN, someone's debugging proxy) every JSON response silently
+    grows by an order of magnitude with nothing in any log to say why. The
+    topics list measures 10,116 B compressed against 122,709 B without.
+
+    Pinned here beside the other property of this file that a caller cannot
+    see and cannot debug from the outside.
+    """
+    conf = _NGINX_CONF.read_text()
+
+    assert re.search(r"^\s*gzip\s+on;", conf, re.MULTILINE), (
+        "the frontend image stopped compressing anything"
+    )
+    proxied = re.search(r"^\s*gzip_proxied\s+(?P<value>[^;]+);", conf, re.MULTILINE)
+    assert proxied, (
+        "gzip_proxied is unset, so nginx falls back to `off` and stops "
+        "compressing as soon as any proxy in front of us sets a Via header"
+    )
+    assert "off" not in proxied.group("value").split(), (
+        f"gzip_proxied is `{proxied.group('value').strip()}`, which turns "
+        "compression off for exactly the deployment that needs it most"
+    )
+    assert "application/json" in conf, (
+        "API responses are JSON; dropping it from gzip_types un-compresses "
+        "every one of them"
+    )

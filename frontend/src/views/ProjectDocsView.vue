@@ -2,9 +2,11 @@
 import type { MemoryEntryOut } from '../api'
 import type { Block, Topic } from '../cx_types'
 
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import DOMPurify from 'dompurify'
+
+import { useCachedResource } from '@/composables/useCachedResource'
 
 import { deleteMemory, getProject, getProjectDecisions, listMemory, listTopics } from '../api'
 import DocEditor from '../components/DocEditor.vue'
@@ -20,6 +22,9 @@ import { markdown } from '@/lib/markdown'
 // that led to two different places under the same words.
 type Kind = 'charter' | 'decisions' | 'weeklies' | 'memory'
 const KINDS: readonly Kind[] = ['charter', 'decisions', 'weeklies', 'memory']
+
+defineOptions({ name: 'ProjectDocsView' })
+
 const props = defineProps<{
   projectId: string
   kind?: string
@@ -52,9 +57,47 @@ const OVERLINES: Record<Kind, string> = {
   memory: '芝士记住的事',
 }
 
-const projectName = ref<string>('')
-const loading = ref(false)
-const error = ref<string | null>(null)
+interface DocsPayload {
+  projectName: string
+  rootTopicId: string | null
+  decisions: Block[]
+  weeklies: Topic[]
+  memoryEntries: MemoryEntryOut[]
+}
+
+// 一个 kind 一份缓存：四个 tab 是四份不同的文档，来回点不该各转一次圈。
+const { data, loading, error } = useCachedResource(
+  () => `docs:${props.projectId}:${kind.value}`,
+  async (): Promise<DocsPayload> => {
+    const project = await getProject(props.projectId)
+    const payload: DocsPayload = {
+      projectName: project.name,
+      // DocEditor loads/persists the doc itself once rootTopicId is set.
+      rootTopicId: project.root_topic_id ?? null,
+      decisions: [],
+      weeklies: [],
+      memoryEntries: [],
+    }
+    if (kind.value === 'decisions') {
+      payload.decisions = (await getProjectDecisions(props.projectId)).data
+    } else if (kind.value === 'memory') {
+      payload.memoryEntries = (await listMemory(props.projectId, AUTHOR)).data
+    } else if (kind.value === 'weeklies') {
+      payload.weeklies = (await listTopics(props.projectId)).data.filter((t) => t.title.includes('周报'))
+    }
+    return payload
+  }
+)
+
+const projectName = computed<string>(() => data.value?.projectName ?? '')
+const decisions = computed<Block[]>(() => data.value?.decisions ?? [])
+const weeklies = computed<Topic[]>(() => data.value?.weeklies ?? [])
+const memoryEntries = computed<MemoryEntryOut[]>(() => data.value?.memoryEntries ?? [])
+// 章程的保存失败是「刚才那一下没成」，跟「这一页加载不出来」分开报。
+const saveError = ref<string | null>(null)
+const errorMessage = computed<string | null>(
+  () => saveError.value ?? (error.value ? error.value.message || '加载失败' : null)
+)
 
 function renderMarkdown(text: string): string {
   return DOMPurify.sanitize(markdown.parse(text, { async: false }) as string)
@@ -65,10 +108,18 @@ function renderMarkdown(text: string): string {
 // getDoc/putDoc API PanelDoc uses. Like the workspace PanelDoc, it is ALWAYS
 // editable and autosaves (debounce + ⌘S + blur) — no 编辑 toggle. Here we only
 // mirror the save-status indicator it emits. ----
-const rootTopicId = ref<string | null>(null)
+const rootTopicId = computed<string | null>(() => data.value?.rootTopicId ?? null)
 const saving = ref(false)
 const savedAt = ref<number | null>(null)
 const charterDirty = ref(false)
+
+// 换一个 tab（或换一个项目）等于换一篇文档，上一篇的保存状态不能跟过来。
+watch([kind, () => props.projectId], () => {
+  saving.value = false
+  savedAt.value = null
+  charterDirty.value = false
+  saveError.value = null
+})
 
 function onCharterSaving() {
   saving.value = true
@@ -85,14 +136,8 @@ function onCharterDirty() {
 }
 function onCharterError(message: string) {
   saving.value = false
-  error.value = message
+  saveError.value = message
 }
-
-// ---- 决策记录 ----
-const decisions = ref<Block[]>([])
-
-// ---- 周报集: topics whose title contains 周报 ----
-const weeklies = ref<Topic[]>([])
 
 function fmtDate(d: string | null): string {
   if (!d) return ''
@@ -100,42 +145,10 @@ function fmtDate(d: string | null): string {
 }
 
 // ---- 记忆 (spec §8.4 记忆可见): entries 芝士 remembered, human-prunable ----
-const memoryEntries = ref<MemoryEntryOut[]>([])
-async function loadMemory() {
-  const payload = await listMemory(props.projectId, AUTHOR)
-  memoryEntries.value = payload.data
-}
+// 删一条要写回缓存里的那份，不然离开这一页再回来它又出现了。
 async function removeMemory(id: string) {
   await deleteMemory(id)
-  memoryEntries.value = memoryEntries.value.filter((e) => e.id !== id)
-}
-
-async function load() {
-  loading.value = true
-  error.value = null
-  savedAt.value = null
-  try {
-    const project = await getProject(props.projectId)
-    projectName.value = project.name
-
-    if (kind.value === 'charter') {
-      // DocEditor loads/persists the doc itself once rootTopicId is set.
-      rootTopicId.value = project.root_topic_id ?? null
-      charterDirty.value = false
-    } else if (kind.value === 'decisions') {
-      const payload = await getProjectDecisions(props.projectId)
-      decisions.value = payload.data
-    } else if (kind.value === 'memory') {
-      await loadMemory()
-    } else {
-      const payload = await listTopics(props.projectId)
-      weeklies.value = payload.data.filter((t) => t.title.includes('周报'))
-    }
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : '加载失败'
-  } finally {
-    loading.value = false
-  }
+  if (data.value) data.value.memoryEntries = data.value.memoryEntries.filter((e) => e.id !== id)
 }
 
 // A source-topic link: open that topic in the same project frame.
@@ -143,11 +156,6 @@ function topicTo(topicId: string | null | undefined) {
   if (!topicId) return { name: 'workspace-project', params: { projectId: props.projectId } }
   return { name: 'workspace-topic', params: { projectId: props.projectId, topicId } }
 }
-
-onMounted(load)
-// The component persists across 章程/决策/周报/记忆 switches (same route record,
-// different param) — each switch must refetch or the new page shows stale data.
-watch([kind, () => props.projectId], load)
 </script>
 
 <template>
@@ -183,8 +191,8 @@ watch([kind, () => props.projectId], load)
       <div v-if="loading" class="d-flex justify-center py-10">
         <v-progress-circular indeterminate color="primary" />
       </div>
-      <v-alert v-else-if="error" type="error" density="comfortable" class="mb-4">
-        {{ error }}
+      <v-alert v-else-if="errorMessage" type="error" density="comfortable" class="mb-4">
+        {{ errorMessage }}
       </v-alert>
 
       <template v-else>
@@ -338,70 +346,6 @@ watch([kind, () => props.projectId], load)
 }
 .weekly-row:hover {
   background: var(--fill);
-}
-
-/* Rendered markdown (mirrors OverviewView's .md-content). */
-.md-content {
-  font-size: 0.95rem;
-  line-height: 1.7;
-}
-.md-content :deep(p) {
-  margin: 0 0 8px;
-}
-.md-content :deep(p:last-child) {
-  margin-bottom: 0;
-}
-.md-content :deep(h1),
-.md-content :deep(h2),
-.md-content :deep(h3) {
-  font-weight: 600;
-  margin: 14px 0 6px;
-}
-.md-content :deep(h1) {
-  font-size: 1.4em;
-}
-.md-content :deep(h2) {
-  font-size: 1.2em;
-}
-.md-content :deep(h3) {
-  font-size: 1.05em;
-}
-.md-content :deep(ul),
-.md-content :deep(ol) {
-  margin: 4px 0;
-  padding-left: 20px;
-}
-.md-content :deep(li) {
-  margin: 2px 0;
-}
-.md-content :deep(li::marker) {
-  color: var(--faint);
-}
-.md-content :deep(a) {
-  color: var(--accent-ink);
-  text-decoration: none;
-}
-.md-content :deep(a:hover) {
-  text-decoration: underline;
-}
-.md-content :deep(code) {
-  font-family: var(--font-mono);
-  background: var(--fill);
-  padding: 0.5px 5px;
-  border-radius: var(--radius-sm);
-  font-size: 0.88em;
-}
-.md-content :deep(pre) {
-  background: var(--fill);
-  padding: 10px 12px;
-  border-radius: 8px;
-  overflow-x: auto;
-}
-.md-content :deep(blockquote) {
-  margin: 6px 0;
-  padding-left: 12px;
-  border-left: 2px solid var(--line-2);
-  color: var(--muted);
 }
 </style>
 
