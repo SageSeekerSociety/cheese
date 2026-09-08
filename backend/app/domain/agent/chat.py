@@ -113,7 +113,6 @@ from app.domain.topic.repositories import TopicProgressRepository, TopicReposito
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.credits import usage_to_credits
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
-from app.domain.workspace import identity as ws_identity
 from app.domain.workspace import service as ws
 
 ACTIVITY_SKILLS = ["chat", "activity-digestion", "doc-form"]
@@ -532,6 +531,7 @@ _CHEESE_RESOURCE = {
     "conclude": "topics",
     "milestone": "milestone",
     "accept-request": "accept",
+    "describe": "accept",
     "notify": "notify",
 }
 
@@ -3736,10 +3736,13 @@ class ChatService:
             else config.model
         )
         config_hash = hashlib.sha256(
-            # Reopen at the next task boundary to install the chat CLI/skills
-            # and native RC arguments; reattaching cannot update either.
+            # Author identity, chat skills, and native RC arguments are installed
+            # at process birth; refresh them together at the next task boundary.
             (
-                json.dumps(agent.configuration, sort_keys=True)
+                json.dumps(
+                    {"agent": agent.configuration, "git_author": acting_agent},
+                    sort_keys=True,
+                )
                 + ":explicit-chat-v1"
                 + (":native-rc-v1" if supply == SUBSCRIPTION else "")
             ).encode()
@@ -4104,12 +4107,6 @@ class ChatService:
                     exclude_id=topic.id,
                 )
             project_id = topic.project_id
-            # Who this topic's commits are authored by. Refreshed every turn
-            # rather than once at creation: people connect GitHub after their
-            # first topic, and topics that predate this have no record at all.
-            # Best-effort by construction — see workspace/identity.py.
-            if not is_private:
-                await ws_identity.sync_for_topic(session, topic)
             # This agent's conversation here, not just any: a room may host
             # several agents and each resumes its own (agent_session/models.py).
             # Looked up under the same key the turn that stores it writes under

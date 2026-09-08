@@ -52,6 +52,7 @@ function card(over: Partial<AcceptCard>): AcceptCard {
     approvals: [],
     approvals_required: 1,
     pr_number: null,
+    has_external_checks: false,
     pr_url: null,
     // 平台 lane 的常态 (#718)：没有信号，who 恒 human，采纳纯是人的判断。
     merge_state: {

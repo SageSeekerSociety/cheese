@@ -288,9 +288,12 @@ def test_accept_request_without_a_subject_never_reaches_the_backend(
 def test_accept_request_sends_the_subject_it_was_given(monkeypatch):
     cli = _load()
     sent: list[dict] = []
-    monkeypatch.setattr(
-        cli, "_call", lambda m, p, d=None: sent.append({"p": p, "d": d})
-    )
+
+    def _call(m, p, d=None):
+        sent.append({"p": p, "d": d})
+        return {"data": {"reviewer_handle": "alice"}}
+
+    monkeypatch.setattr(cli, "_call", _call)
     monkeypatch.setattr(cli, "TOPIC", "t-1")
     monkeypatch.setattr(
         cli.sys,
@@ -310,6 +313,38 @@ def test_accept_request_sends_the_subject_it_was_given(monkeypatch):
     [call] = sent
     assert call["p"] == "/topics/t-1/accept-card"
     assert call["d"]["change_subject"] == "fix(accept): require a commit subject"
+    assert call["d"]["reviewer_handle"] == "alice"
+
+
+def test_accept_request_without_a_reviewer_lets_the_backend_pick_the_default(
+    monkeypatch,
+):
+    """未指定验收人 = 用项目默认验收人 (#718 设置表).
+
+    The CLI must not invent a value for the field — not the empty string
+    either. "Nobody was named" and "somebody typed an empty name" have to stay
+    distinguishable at the backend, because only one of them may fall through
+    to the project default.
+    """
+    cli = _load()
+    sent: list[dict] = []
+
+    def _call(m, p, d=None):
+        sent.append({"p": p, "d": d})
+        return {"data": {"reviewer_handle": "bob"}}
+
+    monkeypatch.setattr(cli, "_call", _call)
+    monkeypatch.setattr(cli, "TOPIC", "t-1")
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        ["cheese", "accept-request", "--subject", "fix(x): y"],
+    )
+
+    cli.main()
+
+    [call] = sent
+    assert "reviewer_handle" not in call["d"]
 
 
 def _subparsers(parser):

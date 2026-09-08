@@ -866,6 +866,9 @@ class TopicService:
         brief: str | None = None,
         paths: list[str] | None = None,
         triggered_by: str | None = None,
+        reviewer_handle: str | None = None,
+        reporter_handle: str | None = None,
+        contributor_handles: list[str] | None = None,
     ) -> Task:
         """从上往下拆解 (eval A2): open a new thread of work in a room.
 
@@ -918,8 +921,7 @@ class TopicService:
         #    stalls, someone else picks it up, and the work that comes out of THEIR
         #    turn is theirs: the child ends in an accept card, and handing that card
         #    to whoever opened the parent room months ago strands it a second time.
-        #    GitHub credit for the original requester is not lost — they come back
-        #    as `Co-authored-by:` (`workspace.identity.coauthor_handles`).
+        #    Ownership routes work; code contribution credits are declared separately.
         # 3. The room's owner, then the project's — an autonomous 分身 split
         #    and a platform-initiated turn identify no person at all, and a room
         #    born before any of this has no owner to inherit, so the emptiness
@@ -932,11 +934,26 @@ class TopicService:
             if names_a_person(triggered_by)
             else parent_owner or (project.owner_handle if project else None)
         )
+        # 谁来验收这条活 (#718 设置表): 显式指定优先，没指定就用项目的默认验收人。
+        # Resolved HERE, at dispatch, and stored on the row — see
+        # `Task.reviewer_handle` for why it is not read back out of the setting
+        # when the card is filed. None is a legitimate outcome (no default
+        # configured, nobody named): the card then has to name one itself, and
+        # refusing to dispatch work over it would make an unset setting stop a
+        # project from working at all.
+        from app.domain.project.protection import branch_protection_of
+
+        reviewer_handle = (reviewer_handle or "").strip() or (
+            branch_protection_of(project).default_reviewer or None
+        )
         task = await TaskService(self._session).open_thread(
             project_id=room.project_id,
             room_id=room.id,
             title=title,
             owner_handle=owner_handle,
+            reviewer_handle=reviewer_handle,
+            reporter_handle=reporter_handle,
+            contributor_handles=contributor_handles,
             created_by=created_by,
         )
         if paths:

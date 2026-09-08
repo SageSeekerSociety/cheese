@@ -64,6 +64,17 @@ def periodic_jobs(
         PeriodicRunner(
             "pr poll", settings.accept_pr_poll_interval_s, scheduler.poll_open_prs
         ),
+        # 有东西就有 PR (#718 拍板①): a batch's draft PR opens at its first
+        # commit, and the platform can only OBSERVE that commit (a 分身 commits
+        # in the shared worktree — no push, no webhook, nothing to intercept).
+        # Same clock as the poller above on purpose: this is the other half of
+        # "watch the PRs", and a second interval setting would be one more knob
+        # to get wrong.
+        PeriodicRunner(
+            "draft pr sweep",
+            settings.accept_pr_poll_interval_s,
+            scheduler.open_draft_prs,
+        ),
         # 自动同步上游: keeps each linked project's base current so accepting can
         # actually push. Conflicts hand off to 芝士 the same way the manual button
         # does, and an open resolution task is reused rather than duplicated.

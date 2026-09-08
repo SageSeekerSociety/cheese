@@ -326,6 +326,17 @@ class SchedulerService:
                 dispatched += 1
         return {"synced": synced, "dispatched": dispatched, "errors": errors}
 
+    async def open_draft_prs(self) -> dict:
+        """有东西就有 PR (#718 拍板①): give every batch with commits a draft PR,
+        without waiting for anyone to file a card.
+
+        The observation and every reason it is an observation rather than a hook
+        live in `pr_publish.sweep_draft_prs`; this is only the clock.
+        """
+        from app.domain.review import pr_publish
+
+        return dict(await pr_publish.sweep_draft_prs(self._sessions))
+
     async def poll_open_prs(self) -> dict:
         """合并态轮询 (#718): advance every pending card that rides a PR one
         step — mirror its merge state, send the events the 「谁的活」 table

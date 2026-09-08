@@ -72,6 +72,7 @@ function card(over: Partial<AcceptCard>): AcceptCard {
     approvals: [],
     approvals_required: 1,
     pr_number: null,
+    has_external_checks: false,
     pr_url: null,
     // 平台 lane 的常态（#363 拍板）：没有检查可读，后端直接下发 clean。
     merge_state: mergeState({
@@ -85,7 +86,7 @@ function card(over: Partial<AcceptCard>): AcceptCard {
 
 /** 绑了 GitHub 的卡：有 PR，合并态来自轮询器的镜像。 */
 function githubCard(over: Partial<AcceptCard>): AcceptCard {
-  return card({ pr_number: 12, pr_url: 'https://github.com/o/r/pull/12', ...over })
+  return card({ has_external_checks: true, pr_number: 12, pr_url: 'https://github.com/o/r/pull/12', ...over })
 }
 
 async function flush() {
@@ -117,6 +118,26 @@ beforeEach(() => {
 })
 
 describe('合的是人看到的那个 commit', () => {
+  it('a linked project without a PR offers creation instead of a clean acceptance', async () => {
+    const pending = githubCard({
+      pr_number: null,
+      pr_url: null,
+      merge_state: mergeState({
+        state: 'unknown',
+        who: 'platform',
+        reasons: [{ kind: 'no_signal', checks: [], detail: 'PR 尚未创建，检查状态未知' }],
+      }),
+    })
+    const { container, getByRole } = await mountWith([pending])
+    const create = getByRole('button', { name: '创建 PR' }) as HTMLButtonElement
+    expect(create.disabled).toBe(false)
+    expect(container.textContent).toContain('PR 尚未创建，检查状态未知')
+    expect(Array.from(container.querySelectorAll('button')).some((b) => b.textContent?.trim() === '采纳')).toBe(false)
+    acceptCard.mockRejectedValue({ message: 'PR 已创建，请重新查看提交' })
+    await fireEvent.click(create)
+    expect(acceptCard).toHaveBeenCalledWith(pending.id, expect.any(String), null)
+  })
+
   it('采纳带上卡面渲染时的那个 head sha', async () => {
     // 轮询器每分钟把卡刷到 PR 的新 head，屏幕上那份不会跟着变。不声明看的是
     // 哪一版，服务端就只能拿数据库里的那个去合——合进去的会是没人看过的代码。

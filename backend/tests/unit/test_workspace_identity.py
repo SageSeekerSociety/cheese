@@ -6,7 +6,6 @@ landed as a grey unlinked name — no avatar, no link, no contribution credit fo
 the person who asked for it.
 """
 
-import json
 import uuid
 from types import SimpleNamespace
 
@@ -50,42 +49,6 @@ def test_no_identity_rather_than_an_address_that_links_to_nobody():
     assert identity.identity_from_profile("octocat", {"login": "octocat"}) is None
     assert identity.identity_from_profile("583231", {}) is None
     assert identity.identity_from_profile(None, {"login": "octocat"}) is None
-
-
-def test_remembered_identity_survives_to_the_launch_path(tmp_path, monkeypatch):
-    """The machine that commits reads this while a screen is being opened, with
-    no DB session, so the identity has to be on disk by then."""
-    monkeypatch.setattr(identity.settings, "workspace_root", str(tmp_path))
-    pid, tid = _ids()
-    assert identity.read(pid, tid) is None
-
-    who = identity.GitIdentity("octocat", "583231+octocat@users.noreply.github.com")
-    identity.remember(pid, tid, who)
-    assert identity.read(pid, tid) == who
-
-
-def test_a_corrupt_sidecar_falls_back_instead_of_raising(tmp_path, monkeypatch):
-    """Authorship is a nicety; it must never be why a turn's work fails to
-    commit."""
-    monkeypatch.setattr(identity.settings, "workspace_root", str(tmp_path))
-    pid, tid = _ids()
-    path = identity.identity_path(pid, tid)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("{not json", encoding="utf-8")
-    assert identity.read(pid, tid) is None
-
-
-def test_rewriting_is_skipped_when_nothing_changed(tmp_path, monkeypatch):
-    """Called every turn, so an unchanged identity must not churn the file."""
-    monkeypatch.setattr(identity.settings, "workspace_root", str(tmp_path))
-    pid, tid = _ids()
-    who = identity.GitIdentity("octocat", "583231+octocat@users.noreply.github.com")
-    identity.remember(pid, tid, who)
-    path = identity.identity_path(pid, tid)
-    before = path.stat().st_mtime_ns
-    identity.remember(pid, tid, who)
-    assert path.stat().st_mtime_ns == before
-    assert json.loads(path.read_text())["email"] == who.email
 
 
 def test_coauthor_trailer_is_omitted_for_the_platform_itself():
@@ -201,10 +164,11 @@ async def test_the_parent_rooms_owner_is_credited_when_the_child_is_someone_else
 
     who = await identity.attribution(None, child)
     assert who.handle == "bob"
-    assert who.author == identity.GitIdentity("bob", "42+bob@users.noreply.github.com")
-    assert who.coauthors == (
-        identity.GitIdentity("alice", "583231+alice@users.noreply.github.com"),
+    assert who.requester == identity.GitIdentity(
+        "bob", "42+bob@users.noreply.github.com"
     )
+    assert who.author == identity.agent_identity(identity.topic_agent_handle(child.id))
+    assert who.coauthors == ()
 
 
 @pytest.mark.anyio
@@ -414,7 +378,7 @@ async def test_unreadable_work_costs_the_trailers_and_nothing_else(monkeypatch):
     )
     assert who.tasks == ()
     assert who.handle == "alice"
-    assert who.author == identity.GitIdentity(
+    assert who.requester == identity.GitIdentity(
         "alice", "583231+alice@users.noreply.github.com"
     )
 
@@ -428,4 +392,33 @@ def test_session_sidecars_share_one_base_directory(tmp_path, monkeypatch):
     pid, tid = _ids()
     base = identity.session_dir(pid, tid)
     assert ws.spool_dir(pid, tid).parent == base
-    assert identity.identity_path(pid, tid).parent == base
+
+
+@pytest.mark.anyio
+async def test_declared_reporter_and_code_contributor_have_distinct_git_trailers(
+    monkeypatch,
+):
+    import subprocess
+
+    from app.domain.review.pr_text import pr_trailers
+
+    task = _task("worker-1", "fix bug")
+    task.reporter_handle = "reporter"
+    task.contributor_handles = ["coder"]
+    _rows(monkeypatch, [task])
+    _roster_owner(monkeypatch, "requester")
+    _connected(monkeypatch, {"coder": ("42", "coder")})
+    topic = _topic("requester")
+    who = await identity.attribution(
+        None, topic, card=_card([str(task.id)]), decided_by="reviewer"
+    )
+    body = pr_trailers(topic, "reviewer", who)
+    parsed = subprocess.check_output(
+        ["git", "interpret-trailers", "--parse"], input="Fix bug\n\n" + body, text=True
+    )
+    assert "Requested-by: requester <requester@zhishi.local>" in parsed
+    assert "Reported-by: reporter <reporter@zhishi.local>" in parsed
+    assert "Reviewed-by: reviewer <reviewer@zhishi.local>" in parsed
+    assert "Co-authored-by: coder <42+coder@users.noreply.github.com>" in parsed
+    assert "Co-authored-by: requester" not in parsed
+    assert who.author == identity.agent_identity(identity.topic_agent_handle(topic.id))

@@ -23,6 +23,7 @@ from app.domain.agent.platform_notices import (
     EVENT_ACCEPT_DONE,
     EVENT_ACCEPT_READY,
     EVENT_ACCEPT_STOPPED,
+    EVENT_CARD_REDESCRIBED,
     EVENT_CARD_VOIDED,
     EVENT_CI_FAILED,
     EVENT_FORCE_MERGED,
@@ -418,11 +419,66 @@ class AcceptService:
         lifecycle", not a new one; the reclamation policy itself is still open."""
         await self._machines.release_topic_machine(topic.id)
 
+    async def _reviewer_or_project_default(
+        self,
+        project: Project | None,
+        reviewer_handle: str | None,
+        *,
+        from_work: list[Task] | None = None,
+    ) -> str:
+        """谁验收：显式指定 > 这批活派出去时定的人 > 项目默认验收人 (#718 设置表).
+
+        显式指定优先 —— the person filing knows something neither the work nor
+        the setting can: which change THIS is, and who understands that part of
+        the code. A default that overrode them would make the setting a ceiling
+        instead of a floor.
+
+        Then the work's own reviewer, because that is who this work was HANDED
+        TO when it was dispatched (`Task.reviewer_handle`, resolved from the
+        same setting at that moment). Reading the project setting again instead
+        would silently re-route work dispatched under an older policy.
+
+        Work that disagrees is refused rather than resolved. Two threads handed
+        to two different people, delivered in one batch, is a real question
+        about who gets to say this may land, and any answer this code invented —
+        the first, the newest, the most common — would route somebody's review
+        to somebody else and look correct doing it.
+
+        Nothing anywhere is an error rather than a guess, for the same reason:
+        routing to the project owner, the room's owner, or whoever accepted last
+        would each hand a real delivery to someone who never agreed to look at
+        it, and the card would sit there looking correctly routed.
+        """
+        from app.domain.project.protection import branch_protection_of
+
+        explicit = (reviewer_handle or "").strip()
+        if explicit:
+            return explicit
+        handed_to = sorted(
+            {t.reviewer_handle for t in (from_work or []) if t.reviewer_handle}
+        )
+        if len(handed_to) > 1:
+            raise ValidationError(
+                "这批活派出去时定的验收人不是同一个人（"
+                + "、".join(handed_to)
+                + "），平台不替你选。递卡时点名一个。"
+            )
+        if handed_to:
+            return handed_to[0]
+        default = branch_protection_of(project).default_reviewer
+        if default:
+            return default
+        raise ValidationError(
+            "没说验收卡递给谁，项目也没有设默认验收人。"
+            "点名一个人（`cheese members` 查准确 handle），"
+            "或者在项目设置的「分支保护 → 任务默认 reviewer」里填一个。"
+        )
+
     async def create_card(
         self,
         *,
         topic_id: uuid.UUID,
-        reviewer_handle: str,
+        reviewer_handle: str | None = None,
         routing_reason: str = "",
         change_subject: str | None = None,
         change_body: str | None = None,
@@ -543,6 +599,23 @@ class AcceptService:
         # a change is good. `pending_gate`/`gate_failed`/`gate_blocked` are no
         # longer entered; existing rows keep their historical values and their
         # exits (review/gate_sweep.py, AcceptService.void) stay in place.
+        # 递卡沿用派活时定的验收人 (#718 设置表)。The work this card says it
+        # carries is the right set to ask — a batch's tree also holds threads
+        # whose code is NOT in this delivery, and routing by those would hand
+        # the card to somebody whose work is not in it. An undeclared delivery
+        # falls back to everyone on the batch, which is the best available
+        # answer when the card names nothing.
+        tasks = TaskService(self._session)
+        handed_to = (
+            await tasks.list_by_ids(delivered)
+            if delivered
+            else await WorkTreeService(self._session).tasks_on(tree.id)
+        )
+        reviewer_handle = await self._reviewer_or_project_default(
+            await self._projects.get(topic.project_id),
+            reviewer_handle,
+            from_work=handed_to,
+        )
         card = await self._repo.add(
             topic_id=topic_id,
             reviewer_handle=reviewer_handle,
@@ -553,6 +626,13 @@ class AcceptService:
             change_body=(change_body or None),
             delivered_task_ids=delivered,
         )
+        # 这批活的 PR 早就开着了 (#718 拍板①)：draft PR 在这棵树第一次提交时就
+        # 开出来了，卡认领它，而不是再开一个。GitHub 那边也认领得了（一条 head
+        # 上只能有一个开着的 PR，`open_pr` 撞上 422 会去找它），但那要一次失败的
+        # POST 加一次 GET 才知道号码；树上记着，卡当场就有 PR 可显示。
+        if tree.pr_number is not None:
+            card.pr_number = tree.pr_number
+            card.pr_url = tree.pr_url
         await self._warn_about_a_second_pending_migration(topic)
         return card
 
@@ -565,8 +645,7 @@ class AcceptService:
         The platform cannot derive it: a task's `tree_id` records which batch
         was open when `cheese split` ran, not where its code eventually landed,
         so the tree's membership names whoever happened to be sitting on it —
-        and the commits cannot be asked either, since inside the sandbox they
-        are all authored by the requester and co-authored by the model.
+        and commit authors identify the room's agent, not its individual tasks.
 
         Exactly ONE thing is checkable, and it is checked rather than trusted,
         because a wrong `Cheese-Task:` is permanent and reads exactly like a
@@ -778,17 +857,14 @@ class AcceptService:
         level = notes.note_level(card.note_code, card.note)
         data["note_level"] = level.value if level else None
         data["approvals"] = await self._repo.list_approver_handles(card.id)
-        topic = await self._topics.get(card.topic_id)
-        project = (
-            await self._projects.get(topic.project_id) if topic is not None else None
-        )
+        topic = await self._topic_or_404(card.topic_id)
+        project = await self._projects.get(topic.project_id)
+        forge = await self._resolve_forge(topic.project_id)
+        data["has_external_checks"] = forge.has_external_checks
         data["approvals_required"] = approvals_required_of(project)
-        # 卡上的状态＝合并态 (#718)。骑 PR 的卡读轮询器的镜像（还没镜像过 =
-        # unknown，下一拍收敛）；未绑 GitHub 的项目 (#363 拍板) 分支保护默认
-        # 关、没有检查可读，卡直接是 CLEAN —— 唯一会推翻它的信号是「上次合并
-        # 撞了冲突」（conflict 状态）→ dirty。who 恒为 human：那里的采纳本来
-        # 就纯粹是人的判断。
-        if card.pr_number is not None:
+        # External checks stay unknown until the PR has a mirrored state.
+        # Local acceptance has no checks; only a recorded merge conflict blocks it.
+        if forge.has_external_checks:
             mirror = card.merge_state if isinstance(card.merge_state, dict) else None
             data["merge_state"] = mirror or {
                 "state": "unknown",
@@ -797,7 +873,11 @@ class AcceptService:
                     {
                         "kind": "no_signal",
                         "checks": [],
-                        "detail": "平台还没看过这个 PR 的合并态",
+                        "detail": (
+                            "平台还没看过这个 PR 的合并态"
+                            if card.pr_number is not None
+                            else "PR 尚未创建，检查状态未知"
+                        ),
                     }
                 ],
                 "head_sha": card.pr_head_sha,
@@ -826,6 +906,7 @@ class AcceptService:
         data["auto_merge"] = {
             "allowed": (
                 branch_protection_of(project).auto_merge_allowed
+                and forge.has_external_checks
                 and card.pr_number is not None
             ),
             "armed_by": card.auto_merge_armed_by,
@@ -890,14 +971,22 @@ class AcceptService:
             raise ValidationError("按机构协议，这个话题须由导师验收")
 
     async def reassign(
-        self, *, card_id: uuid.UUID, reviewer_handle: str, reason: str = ""
+        self,
+        *,
+        card_id: uuid.UUID,
+        reviewer_handle: str | None = None,
+        reason: str = "",
     ) -> AcceptCard:
         """改验收人 (spec §4.4): anyone can re-route a pending accept card to a
-        different reviewer."""
+        different reviewer — or, naming nobody, back to the project's default
+        one, which is the same ladder 递卡 climbs."""
         card = await self._card_or_404(card_id)
         if card.status != AcceptStatus.pending:
             raise ValidationError("只有待处理的验收卡能改验收人")
-        card.reviewer_handle = reviewer_handle
+        topic = await self._topic_or_404(card.topic_id)
+        card.reviewer_handle = await self._reviewer_or_project_default(
+            await self._projects.get(topic.project_id), reviewer_handle
+        )
         if reason:
             card.routing_reason = reason
         await self._session.flush()
@@ -1196,12 +1285,14 @@ class AcceptService:
         #
         # The platform forge squashes (#363), same shape as the GitHub lane's
         # product: one commit, the card's subject and body, the pr_text
-        # trailers, authored by the requester (committer stays 芝士). The
+        # trailers, authored by the acting agent (committer stays 芝士). The
         # message and author are resolved HERE because merge_topic has no DB
         # session to read the card or the roster with.
         from app.domain.workspace import service as ws
 
-        who = await identity.attribution(self._session, topic, card=card)
+        who = await identity.attribution(
+            self._session, topic, card=card, decided_by=decided_by
+        )
         try:
             merged = await asyncio.to_thread(
                 ws.merge_topic,
@@ -1717,7 +1808,7 @@ class AcceptService:
         if status.merged:
             # 有人已经在 GitHub 上合了这个 PR —— 同一件事，照单收下。
             card.pr_merged_at = status.merged_at or datetime.now(UTC)
-            await self._mark_cards_tree_merged(card)
+            await self._mark_cards_tree_merged(card, delivered_head=status.head_sha)
             if status.merge_commit_sha:
                 card.pr_head_sha = status.merge_commit_sha
             return await self._conclude_pr_accept(
@@ -1770,7 +1861,9 @@ class AcceptService:
                 f"现在不能采纳（合并态：{verdict.state}）：{detail or '规则未满足'}"
             )
 
-        attribution = await identity.attribution(self._session, topic, card=card)
+        attribution = await identity.attribution(
+            self._session, topic, card=card, decided_by=decided_by
+        )
         result = await client.merge_pull_request(
             owner=owner,
             repo=repo,
@@ -1813,7 +1906,7 @@ class AcceptService:
             raise ValidationError(f"GitHub 拒绝合并 PR #{number}：{reason}")
 
         card.pr_merged_at = datetime.now(UTC)
-        await self._mark_cards_tree_merged(card)
+        await self._mark_cards_tree_merged(card, delivered_head=seen)
         card.pr_head_sha = result.sha  # the merge commit, for the record
         return await self._conclude_pr_accept(card, topic, decided_by)
 
@@ -2000,16 +2093,219 @@ class AcceptService:
             self._note_poll_failed(card, exc)
             await self._session.flush()
 
-    async def _mark_cards_tree_merged(self, card: AcceptCard) -> None:
-        """The batch landed. The tree stays — the work that produced it still
-        points here, and a task whose tree vanished could not say where its
-        changes went."""
+    async def _mark_cards_tree_merged(
+        self, card: AcceptCard, *, delivered_head: str | None = None
+    ) -> None:
+        """The batch landed — so close it AND start the next one, here.
+
+        The tree row stays: the work that produced it still points here, and a
+        task whose tree vanished could not say where its changes went.
+
+        Opening the next batch in the same breath is the load-bearing half.
+        Marking a tree `merged` used to be the whole of it, and the on-disk
+        「这个房间写哪棵树」marker (`ws.bind_tree`) kept naming the tree that had
+        just landed until somebody happened to call `ensure_open` — which is
+        递卡, i.e. the END of the next batch. Everything in between wrote to a
+        delivered branch: the room commits, `git log` looks healthy, and the
+        commits sit on a branch whose PR is already squashed into main, so they
+        are ahead of nothing and reachable from nothing. That is not a
+        hypothetical — this repository's own room sat on `topic/229e3403` after
+        its PR merged as `1c298199a`, with its head not an ancestor of main.
+
+        A room is between batches most of the time and holding an empty open
+        tree is that state's normal shape (`create_card` already commits one on
+        sight), so there is nothing to defer: the moment a batch lands is
+        exactly the moment the room needs somewhere else to write.
+        """
         if card.tree_id is None:
             return
         trees = WorkTreeService(self._session)
         tree = await trees.get(card.tree_id)
-        if tree is not None and tree.status is not TreeStatus.merged:
+        if tree is None:
+            return
+        # `==`, not `is`: `WorkTree.status` is a plain String column, so a row
+        # loaded from the database carries a `str` and an identity comparison is
+        # False for every value it could hold.
+        if tree.status != TreeStatus.merged:
             await trees.mark_merged(tree)
+        # 交出去的是哪个 commit，在这一刻记死。Passed in rather than read off the
+        # card, because the card's `pr_head_sha` becomes the MERGE commit moments
+        # later and which of the two a reader gets would then depend on statement
+        # order. See `WorkTree.delivered_head` for why the branch's tip is not an
+        # acceptable substitute.
+        if delivered_head and not tree.delivered_head:
+            tree.delivered_head = delivered_head[:64]
+            await self._session.flush()
+        await trees.ensure_open(project_id=tree.project_id, room_id=tree.room_id)
+
+    async def _app_pr_client(self, topic: Topic):  # noqa: ANN202 — GitHubPRClient
+        """The App-token client for this project's upstream, or None when the
+        project has no GitHub side at all (no installation, or an upstream that
+        is not a GitHub https remote)."""
+        from app.domain.agent.github_app import github_app_tokens_for_project
+        from app.domain.review.github_pr import GitHubPRClient, parse_github_repo
+        from app.domain.workspace import service as ws
+
+        tokens = await github_app_tokens_for_project(topic.project_id, self._session)
+        if tokens is None:
+            return None
+        upstream = await asyncio.to_thread(ws.get_upstream, topic.project_id)
+        parsed = parse_github_repo(upstream)
+        if parsed is None:
+            return None
+        return GitHubPRClient(*parsed, tokens)
+
+    async def _live_pr_number(self, place_id: uuid.UUID, topic: Topic) -> int | None:
+        """Which PR this place is writing into right now.
+
+        The card first, because a filed card IS the delivery and its
+        `pr_number` is what every other path here already trusts; the room's
+        open batch second, which is the answer BEFORE anyone files a card —
+        the draft PR opened at the first commit (#718 拍板①) hangs there.
+        """
+        cards = await self._repo.list_live_for_places(
+            [place_id], statuses=(AcceptStatus.pending,)
+        )
+        for card in cards:
+            if card.pr_number is not None:
+                return card.pr_number
+        tree = await WorkTreeService(self._session).current(topic.id)
+        return tree.pr_number if tree is not None else None
+
+    async def mark_ready(self, place_id: uuid.UUID) -> dict:
+        """`cheese ready`: take this batch's PR out of draft. Nothing else.
+
+        Not a delivery and not an accept — it flips one boolean on GitHub, the
+        one that means「这份东西可以看了」. 递卡 flips the same boolean (递卡 的
+        语义就是请人来看) and does the rest; this exists for the case where the
+        work is worth showing before anybody is ready to ask for a review.
+
+        Flipping it is the one thing here that REST cannot do — see
+        `GitHubPRClient.mark_ready_for_review`, which is why a GraphQL request
+        appears in this codebase at all.
+
+        Returns a dict the CLI prints rather than raising for "there was
+        nothing to flip": a PR that is already ready is the state the caller
+        wanted, and an exception for it would teach agents to avoid the
+        command. A FAILED flip does raise — a draft that silently stayed draft
+        is a delivery sitting where no reviewer will look for it.
+        """
+        topic = await self._topic_or_404(place_id)
+        number = await self._live_pr_number(place_id, topic)
+        if number is None:
+            return {
+                "ready": False,
+                "reason": (
+                    "这个房间还没有 PR —— 先提交点东西（有提交平台就会开一个 draft PR）"
+                ),
+            }
+        client = await self._app_pr_client(topic)
+        if client is None:
+            return {"ready": False, "reason": "这个项目没有绑定 GitHub，没有 PR 可以翻"}
+        view = await client.pr_view(number)
+        url = str(view.get("html_url") or "")
+        if not view.get("draft"):
+            return {
+                "ready": False,
+                "already": True,
+                "pr_number": number,
+                "pr_url": url,
+                "reason": f"PR #{number} 本来就不是 draft",
+            }
+        node_id = str(view.get("node_id") or "")
+        if not node_id:
+            raise ValidationError(f"GitHub 没给 PR #{number} 的 node_id，翻不了 ready")
+        await client.mark_ready_for_review(node_id)
+        return {"ready": True, "pr_number": number, "pr_url": url}
+
+    async def redescribe(
+        self,
+        place_id: uuid.UUID,
+        *,
+        actor: str,
+        change_subject: str | None = None,
+        change_body: str | None = None,
+    ) -> AcceptCard:
+        """更正这张卡的描述 —— and rewrite the PR from it in the same breath.
+
+        **Why this may be corrected while `Cheese-Task:` may not.** A delivery
+        claim is an ASSERTION OF FACT about who wrote the code; letting it be
+        edited after filing is letting somebody put another agent's name on a
+        change, and the wrong name in permanent history reads exactly like the
+        right one. A description is an EXPLANATION of the change, and having a
+        reviewer say "that reasoning is wrong" is what review IS. Refusing to
+        correct it does not protect history — it guarantees the correction
+        happens on the PR page only, and main receives the sentence everyone
+        already agreed was false. PR #735 是活例子：评审把 PR 正文改对了，
+        `1c298199a` 里留下的仍是递卡那一刻的快照。
+
+        The PR is rewritten from the card, never read back into it. The card is
+        the single source of both texts, so they cannot disagree — and the
+        trailers (`Cheese-Task`, `Requested-by`, `Cheese-Agent`) stay something
+        the platform asserts rather than something anybody can retype in a
+        GitHub textarea.
+
+        Only while the card is `pending`. Once it is accepted the commit is
+        already in main and there is nothing left to correct here; that case
+        belongs in a correction the room records, not in a row nobody reads
+        again.
+        """
+        cards = await self._repo.list_live_for_places(
+            [place_id], statuses=(AcceptStatus.pending,)
+        )
+        if not cards:
+            raise ValidationError("这个话题手上没有待处理的验收卡，没有描述可以改")
+        card = cards[0]
+        topic = await self._topic_or_404(card.topic_id)
+        before_subject, before_body = card.change_subject, card.change_body or ""
+
+        subject = (change_subject or "").strip()
+        if subject:
+            try:
+                card.change_subject = commit_message.check_subject(subject)
+            except commit_message.InvalidSubject as exc:
+                raise ValidationError(str(exc)) from exc
+        if change_body is not None:
+            card.change_body = change_body.strip() or None
+        if (card.change_subject, card.change_body or "") == (
+            before_subject,
+            before_body,
+        ):
+            return card
+        await self._session.flush()
+
+        if card.pr_number is not None:
+            client = await self._app_pr_client(topic)
+            if client is not None:
+                who = await identity.attribution(self._session, topic, card=card)
+                view = await client.pr_view(card.pr_number)
+                await pr_publish.sync_pr_text(
+                    client,
+                    view,
+                    title=pr_text.change_subject(card, topic),
+                    body=pr_text.pr_body(topic, "", card, who),
+                )
+        # 留痕：谁在什么时候把描述从什么改成了什么。这条入口的存在本身需要可追溯，
+        # 否则它就是一条能悄悄改「这次改动会在历史里说什么」的路。
+        self._notify_merge_result(
+            topic,
+            f"{actor} 改了验收卡的描述（PR 正文已同步）",
+            meta=notice(
+                EVENT_CARD_REDESCRIBED,
+                severity=SEVERITY_INFO,
+                who=WHO_CHEESE,
+                detail=(
+                    f"改前标题：{before_subject or '（空）'}\n"
+                    f"改后标题：{card.change_subject or '（空）'}\n\n"
+                    f"改前正文：{before_body or '（空）'}\n\n"
+                    f"改后正文：{card.change_body or '（空）'}"
+                ),
+                detail_label="改了什么",
+            ),
+        )
+        await self._session.flush()
+        await self._session.refresh(card)
+        return card
 
     async def push_fix(self, place_id: uuid.UUID) -> dict:
         """Put this place's branch on the PR it is riding, NOW.
@@ -2438,7 +2734,9 @@ class AcceptService:
             )
             await self._session.flush()
             return
-        attribution = await identity.attribution(self._session, topic, card=card)
+        attribution = await identity.attribution(
+            self._session, topic, card=card, decided_by=armer
+        )
         result = await client.merge_pull_request(
             owner=owner,
             repo=repo,
@@ -2465,7 +2763,7 @@ class AcceptService:
             await self._session.flush()
             return
         card.pr_merged_at = datetime.now(UTC)
-        await self._mark_cards_tree_merged(card)
+        await self._mark_cards_tree_merged(card, delivered_head=card.pr_head_sha)
         card.pr_head_sha = result.sha
         await self._repo.add_approval(card.id, armer)
         card.decided_by = armer
@@ -2526,7 +2824,7 @@ class AcceptService:
         fact, and since #206 that fact is the whole of what the platform waits
         for."""
         card.pr_merged_at = status.merged_at or datetime.now(UTC)
-        await self._mark_cards_tree_merged(card)
+        await self._mark_cards_tree_merged(card, delivered_head=status.head_sha)
         if status.merge_commit_sha:
             # Nice to have, not required: nothing downstream looks a run up by
             # this sha any more, it is just the truest record of what landed.
@@ -3333,7 +3631,9 @@ class AcceptService:
         verdict = _force_merge_verdict(state)
 
         number = card.pr_number
-        who = await identity.attribution(self._session, topic, card=card)
+        who = await identity.attribution(
+            self._session, topic, card=card, decided_by=decided_by
+        )
         result = await client.merge_pull_request(
             owner=owner,
             repo=repo,
@@ -3363,7 +3663,7 @@ class AcceptService:
             f"（{verdict}；合并时检查状态：{checks_at_merge}）{tail_reason}"
         )
         card.pr_merged_at = now
-        await self._mark_cards_tree_merged(card)
+        await self._mark_cards_tree_merged(card, delivered_head=seen_head)
         card.pr_head_sha = result.sha
         await self._repo.add_approval(card.id, decided_by)
         card.decided_by = decided_by

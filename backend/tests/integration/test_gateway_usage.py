@@ -455,6 +455,18 @@ async def test_a_room_uses_its_agent_and_an_ongoing_turn_keeps_its_snapshot(
     assert (
         current["env"]["CHEESE_AGENT_CONFIG"] != following["env"]["CHEESE_AGENT_CONFIG"]
     )
+    repeated, _ = await svc._model_kwargs(pid, _on_a_machine(), tid)
+    assert (
+        repeated["env"]["CHEESE_AGENT_CONFIG"]
+        == following["env"]["CHEESE_AGENT_CONFIG"]
+    )
+    monkeypatch.setattr(svc, "_agent_handle", AsyncMock(return_value="ops"))
+    different_author, _ = await svc._model_kwargs(pid, _on_a_machine(), tid)
+    assert different_author["model"] == following["model"]
+    assert (
+        different_author["env"]["CHEESE_AGENT_CONFIG"]
+        != following["env"]["CHEESE_AGENT_CONFIG"]
+    )
 
 
 @pytest.mark.anyio

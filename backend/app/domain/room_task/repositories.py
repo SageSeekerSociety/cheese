@@ -52,6 +52,48 @@ class WorkTreeRepository:
         stmt = select(WorkTree).where(WorkTree.project_id == project_id)
         return list((await self._session.scalars(stmt)).all())
 
+    async def open_without_pr(self) -> list[WorkTree]:
+        """Batches that are taking work and have no PR yet (#718 拍板①).
+
+        The draft-PR sweep's whole input. `open` and `pr_number IS NULL` are
+        both part of the question rather than a filter on the answer: a sealed
+        or merged batch must never gain a PR after the fact, and a batch that
+        already has one is the case this sweep exists to stop re-asking GitHub
+        about.
+        """
+        stmt = select(WorkTree).where(
+            WorkTree.status == TreeStatus.open, WorkTree.pr_number.is_(None)
+        )
+        return list((await self._session.scalars(stmt)).all())
+
+    async def claim_for_pr(self, tree_id: uuid.UUID) -> WorkTree | None:
+        """Lock this batch and hand it back only if it still wants a PR.
+
+        `FOR UPDATE` because the answer has to survive the work that follows it:
+        opening a PR takes GitHub round trips, and an accept can merge the batch
+        in the middle of them. Locking the row makes the sweep and the accept
+        serialise instead of racing — see `pr_publish._draft_pr_for_one_tree`.
+
+        None when somebody got there first (the batch merged, or already has a
+        PR), which is a normal outcome, not an error.
+        """
+        stmt = (
+            select(WorkTree)
+            .where(
+                WorkTree.id == tree_id,
+                WorkTree.status == TreeStatus.open,
+                WorkTree.pr_number.is_(None),
+            )
+            .with_for_update()
+        )
+        return (await self._session.scalars(stmt)).first()
+
+    async def record_pr(self, tree: WorkTree, *, number: int, url: str | None) -> None:
+        """Remember which PR this batch is being written into."""
+        tree.pr_number = number
+        tree.pr_url = (url or "")[:255] or None
+        await self._session.flush()
+
     async def add(
         self,
         *,
@@ -127,6 +169,9 @@ class TaskRepository:
         title: str,
         owner_handle: str | None,
         created_by: str | None,
+        reviewer_handle: str | None = None,
+        reporter_handle: str | None = None,
+        contributor_handles: list[str] | None = None,
     ) -> Task:
         """A new thread in *room_id*, working on *tree_id*.
 
@@ -141,6 +186,9 @@ class TaskRepository:
             tree_id=tree_id,
             title=title,
             owner_handle=owner_handle,
+            reviewer_handle=reviewer_handle,
+            reporter_handle=reporter_handle,
+            contributor_handles=contributor_handles or [],
             created_by=created_by,
         )
         self._session.add(task)

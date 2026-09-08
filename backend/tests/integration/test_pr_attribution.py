@@ -11,12 +11,86 @@ human as the child's owner — and that is what these read now.
 
 import asyncio
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 
 class _FakeTokens:
     async def write_token(self) -> tuple[str, str]:
         return "ghs_write", "2099-01-01T00:00:00+00:00"
+
+
+def test_reporter_credit_survives_dispatch_and_only_declared_work_is_credited(client):
+    from types import SimpleNamespace
+
+    from app.domain.room_task.place import PlaceResolver
+    from app.domain.user.models import User
+    from app.domain.workspace import identity
+
+    async def seed():
+        async with client.test_factory() as session:
+            now = datetime.now(UTC)
+            session.add_all(
+                [
+                    User(
+                        username=name,
+                        email=f"{name}@test.invalid",
+                        created_at=now,
+                        updated_at=now,
+                    )
+                    for name in ("reporter", "coder")
+                ]
+            )
+            await session.commit()
+
+    asyncio.run(seed())
+    _, room = _project(client, owner="alice")
+    result = client.post(
+        f"/topics/{room}/split",
+        json={
+            "title": "Fix reported bug",
+            "reporter_handle": "reporter",
+            "contributor_handles": ["coder", "coder"],
+        },
+    )
+    assert result.status_code == 200, result.text
+    task = result.json()["data"]
+    assert task["reporter_handle"] == "reporter"
+    assert task["contributor_handles"] == ["coder"]
+
+    async def read_credit():
+        async with client.test_factory() as session:
+            place = await PlaceResolver(session).resolve(uuid.UUID(room))
+            assert place is not None
+            card = SimpleNamespace(delivered_task_ids=[task["id"]], task_id=None)
+            return await identity.attribution(session, place.room, card=card)
+
+    credited = asyncio.run(read_credit())
+    assert credited.reporters == (identity.platform_identity("reporter"),)
+    assert credited.coauthors == (identity.platform_identity("coder"),)
+    assert credited.author == identity.agent_identity(identity.topic_agent_handle(room))
+    concluded = client.post(
+        f"/topics/{room}/tasks/{task['id']}/conclude",
+        json={"contributor_handles": ["reporter"], "reporter_handle": None},
+    )
+    assert concluded.status_code == 200, concluded.text
+    credited = asyncio.run(read_credit())
+    assert credited.reporters == ()
+    assert credited.coauthors == (identity.platform_identity("reporter"),)
+    preserved = client.post(f"/topics/{room}/tasks/{task['id']}/conclude", json={})
+    assert preserved.status_code == 200, preserved.text
+    assert preserved.json()["data"]["contributor_handles"] == ["reporter"]
+    rejected = client.post(
+        f"/topics/{room}/tasks/{task['id']}/conclude",
+        json={"contributor_handles": ["nobody-exists"]},
+    )
+    assert rejected.status_code == 422, rejected.text
+    assert asyncio.run(read_credit()).coauthors == credited.coauthors
+    bad = client.post(
+        f"/topics/{room}/split",
+        json={"title": "bad", "reporter_handle": "nobody-exists"},
+    )
+    assert bad.status_code == 422, bad.text
 
 
 class _FakeClient:
@@ -212,47 +286,3 @@ def test_a_topic_a_human_opened_directly_is_untouched(client, monkeypatch):
     [opened] = _FakeClient.opened
     assert opened["as_user_token"] == "gho_alice"
     assert "Requested-by: alice" in opened["body"]
-
-
-def test_the_commit_author_sidecar_names_the_human_too(client, monkeypatch, tmp_path):
-    """验收 3: the commits themselves. `sync_for_topic` runs once per turn and
-    writes the git identity the snapshot path commits under — fed `created_by`
-    it resolved a `cheese-…` handle to nothing, so every dispatched thread kept
-    committing as `芝士 <cheese@zhishi.local>` and `coauthored_by()` was None.
-
-    The sidecar is keyed by the ROOM, which is what the worktree is keyed by:
-    every 分身 in a room commits into the same tree, under the same identity."""
-    from app.domain.room_task.place import PlaceResolver
-    from app.domain.workspace import identity
-
-    monkeypatch.setattr(identity.settings, "workspace_root", str(tmp_path))
-
-    async def _fake_profile(_session, handle: str):
-        return (
-            ("583231", {"login": "alice", "name": "Alice"})
-            if handle == "alice"
-            else None
-        )
-
-    monkeypatch.setattr(
-        "app.domain.oauth.services.get_github_profile_for_handle", _fake_profile
-    )
-
-    pid, root = _project(client, owner="alice")
-    # 房间是由 alice 建的，但派活的是一个分身 —— 归属要落在人身上，不是那个
-    # `cheese-…` handle 上。
-    _split(client, root, by=f"cheese-{uuid.uuid4().hex[:12]}")
-
-    async def _sync() -> None:
-        async with client.test_factory() as s:
-            place = await PlaceResolver(s).resolve(uuid.UUID(root))
-            assert place is not None
-            await identity.sync_for_topic(s, place.room)
-
-    asyncio.run(_sync())
-
-    who = identity.read(uuid.UUID(pid), uuid.UUID(root))
-    assert who == identity.GitIdentity("Alice", "583231+alice@users.noreply.github.com")
-    assert identity.coauthored_by(who) == (
-        "Co-authored-by: Alice <583231+alice@users.noreply.github.com>"
-    )

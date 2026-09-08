@@ -99,12 +99,19 @@ const mergeBadge = computed(() => {
   if (!card || card.status === 'conflict') return null
   return mergeBadgeOf(card.merge_state)
 })
-const mergeReasons = computed(() => (pendingCard.value ? visibleReasons(pendingCard.value.merge_state) : []))
-// 平台 lane (#363)：没绑 GitHub 的项目，采纳纯粹是人的判断，按钮从不按状态灰。
+const mergeReasons = computed(() => {
+  const card = pendingCard.value
+  if (!card) return []
+  return card.has_external_checks && card.pr_number === null
+    ? card.merge_state.reasons
+    : visibleReasons(card.merge_state)
+})
+// Projects without external checks leave acceptance to the reviewer.
 const platformLane = computed(() => {
   const card = pendingCard.value
-  return !!card && card.merge_state.who === 'human' && card.pr_number === null
+  return !!card && !card.has_external_checks
 })
+const needsPr = computed(() => !!pendingCard.value?.has_external_checks && pendingCard.value.pr_number === null)
 // 按钮亮不亮，跟后端的采纳闸门是同一条线（domain/review/merge_state.py +
 // services.py）：`clean` 与 `unstable` 后端会合，按钮就亮；`blocked` /
 // `behind` / `dirty` / `unknown` 后端会 422 拒，按钮就灰，title 说明为什么。
@@ -115,7 +122,7 @@ const platformLane = computed(() => {
 const MERGEABLE_STATES = ['clean', 'unstable']
 const acceptBlockedTitle = computed<string | null>(() => {
   const card = pendingCard.value
-  if (!card || platformLane.value) return null
+  if (!card || platformLane.value || needsPr.value) return null
   if (MERGEABLE_STATES.includes(card.merge_state.state)) return null
   const why = mergeReasons.value.map((r) => r.detail).filter(Boolean)
   return ['现在采纳不会合并', ...why].join('：')
@@ -255,7 +262,7 @@ async function onAcceptCard() {
     }
     await Promise.all([loadAcceptCard(), store.refreshTopicRow(props.topicId)])
   } catch (e) {
-    store.reportError(e, '采纳失败')
+    store.reportError(e, needsPr.value ? '创建 PR 未完成' : '采纳失败')
     // 被拒的原因可能正是「你看到的版本已过时」——那就把屏幕换成新的那一版，
     // 否则人只能对着同一张旧卡再点一次，再被拒一次。
     await loadAcceptCard(true)
@@ -595,7 +602,7 @@ defineExpose({ reload: loadAcceptCard })
               prepend-icon="mdi-check"
               @click="onAcceptCard"
             >
-              {{ pendingCard.status === 'conflict' ? '重试采纳' : '采纳' }}
+              {{ needsPr ? '创建 PR' : pendingCard.status === 'conflict' ? '重试采纳' : '采纳' }}
             </v-btn>
           </span>
           <v-btn

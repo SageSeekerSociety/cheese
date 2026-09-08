@@ -107,6 +107,7 @@ def _jobs():
         tick=_noop,
         reap_idle_device_screens=_noop,
         poll_open_prs=_noop,
+        open_draft_prs=_noop,
         sync_upstreams=_noop,
         sweep_orphan_turns=_noop,
         remind_silent_turns=_noop,

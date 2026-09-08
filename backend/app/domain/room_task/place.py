@@ -89,10 +89,42 @@ class PlaceResolver:
         topic = await self._session.get(Topic, place_id)
         if topic is None:
             return None
-        return Place(room=topic, tree=await self._open_tree(topic.id))
+        tree = await self._open_tree(topic.id)
+        self._heal_the_marker(topic.id, tree)
+        return Place(room=topic, tree=tree)
 
     async def _open_tree(self, room_id: uuid.UUID) -> WorkTree | None:
         stmt = select(WorkTree).where(
             WorkTree.room_id == room_id, WorkTree.status == TreeStatus.open
         )
         return (await self._session.scalars(stmt)).first()
+
+    @staticmethod
+    def _heal_the_marker(room_id: uuid.UUID, tree: WorkTree | None) -> None:
+        """Drag the on-disk「这个房间写哪棵树」marker back onto the open batch.
+
+        The marker is a cache of a DB fact, written by whoever last called
+        `ensure_open`, and the workspace layer is sync and DB-free so it cannot
+        check it. Every time the two have drifted, the symptom has been silent
+        and expensive: a room whose marker still named the batch that had just
+        MERGED kept committing onto a branch already squashed into main, and its
+        head was an ancestor of nothing (this repository, `topic/229e3403` after
+        `1c298199a`). The marker is also written outside any transaction, so a
+        rollback after the row it names is created leaves it naming a row that
+        does not exist at all.
+
+        Both skews have the same shape — the marker names a tree that is not the
+        one this room writes to — and the DB knows the answer here, so this is
+        where they stop. Reading a place is the one thing every path that goes
+        on to touch files does first, which is why the repair lives on a read.
+
+        Nothing to repair when the room has no open batch: there is no right
+        answer to write, and inventing one would make reading a room create
+        rows in it.
+        """
+        if tree is None:
+            return
+        from app.domain.workspace import service as ws
+
+        if ws.tree_for_place(room_id) != tree.id:
+            ws.bind_tree(room_id, tree.id)
