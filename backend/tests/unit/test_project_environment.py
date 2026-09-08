@@ -298,6 +298,77 @@ async def test_reconnect_to_preparing_process_never_probes_it_as_dead(monkeypatc
     channel.confirm_alive.assert_not_awaited()
 
 
+async def test_reconnect_uses_initial_environment_read_until_next_poll(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from app.domain.agent import device_provider
+
+    channel = device_provider.DeviceChannel.__new__(device_provider.DeviceChannel)
+    channel._hub = object()
+    channel._subscription_devices = {}
+    screen = object()
+    channel._existing_screen = lambda *args: screen
+    channel.confirm_alive = AsyncMock()
+    read = AsyncMock(side_effect=[{"state": "preparing"}, {"state": "ready"}])
+    monkeypatch.setattr(device_provider, "environment_status", read)
+    actual = await channel.ensure_ready(
+        project_id="project",
+        topic_id="topic",
+        token="token",
+        env={"CHEESE_ENVIRONMENT": "{}"},
+        memory_scope=None,
+        owner=None,
+        turn_id=None,
+        launch=None,
+        precheck=("machine", 1, "agent"),
+    )
+    assert actual is screen
+    assert read.await_count == 2
+    channel.confirm_alive.assert_not_awaited()
+
+
+@pytest.mark.parametrize("replacement", [False, True])
+@pytest.mark.parametrize("next_state", ["ready", "failed"])
+async def test_ready_environment_is_rechecked_only_after_screen_replacement(
+    monkeypatch, replacement, next_state
+):
+    from unittest.mock import AsyncMock
+
+    from app.domain.agent import device_provider
+
+    channel = device_provider.DeviceChannel.__new__(device_provider.DeviceChannel)
+    channel._hub = object()
+    channel._subscription_devices = {}
+    original = object()
+    screen = object() if replacement else original
+    channel._existing_screen = lambda *args: original
+    channel._ensure_screen = AsyncMock(return_value=screen)
+    read = AsyncMock(
+        side_effect=[
+            {"state": "ready", "attempt": "old"},
+            {"state": next_state, "attempt": "new"},
+        ]
+    )
+    monkeypatch.setattr(device_provider, "environment_status", read)
+    request = channel.ensure_ready(
+        project_id="project",
+        topic_id="topic",
+        token="token",
+        env={"CHEESE_ENVIRONMENT": "{}"},
+        memory_scope=None,
+        owner=None,
+        turn_id=None,
+        launch=None,
+        precheck=("machine", 1, "agent"),
+    )
+    if replacement and next_state == "failed":
+        with pytest.raises(device_provider.EnvironmentPreparationError):
+            await request
+    else:
+        assert await request is screen
+    assert read.await_count == (2 if replacement else 1)
+
+
 async def test_fast_environment_is_observed_without_two_second_wait(monkeypatch):
     from unittest.mock import AsyncMock
 
