@@ -7,12 +7,13 @@ import { ref } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getDefaultAvatarId = vi.fn()
+const getQuota = vi.fn()
 const user = ref<{ id: number; nickname: string; avatarId: number | null } | null>(null)
 const loggedIn = ref(true)
 
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }))
 vi.mock('@/network/api/avatars', () => ({ AvatarsApi: { getDefaultAvatarId: () => getDefaultAvatarId() } }))
-vi.mock('@/network/api/ai', () => ({ AIApi: { getQuota: vi.fn() } }))
+vi.mock('@/network/api/ai', () => ({ AIApi: { getQuota: () => getQuota() } }))
 vi.mock('@/network/api/users', () => ({ UserApi: { logout: vi.fn() } }))
 vi.mock('@/services/account', () => ({ default: { _user: user, _loggedIn: loggedIn, logout: vi.fn() } }))
 
@@ -38,6 +39,15 @@ beforeEach(() => {
 })
 
 describe('我的头像', () => {
+  it('reads the quota and reset time returned by the API when the menu opens', async () => {
+    const quota = { remaining: 7, daily: 10, used: 3, resetTime: '2026-09-09T00:00:00+00:00' }
+    getQuota.mockResolvedValue({ data: { quota } })
+    const menu = await freshUserMenu()
+    menu.menuOpen.value = true
+    await settle()
+    expect(menu.aiQuota.value).toEqual(quota)
+  })
+
   it('从来没挑过头像 → 不给图，让界面画彩色首字母', async () => {
     user.value = { id: 7, nickname: '爱丽丝', avatarId: DEFAULT_AVATAR_ID }
     const menu = await freshUserMenu()

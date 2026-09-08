@@ -52,7 +52,7 @@ export function useUserMenu() {
     if (!loggedIn.value) return
     try {
       const { data } = await AIApi.getQuota()
-      aiQuota.value = data
+      aiQuota.value = data.quota
     } catch (error) {
       console.error('Failed to fetch AI quota:', error)
     }
