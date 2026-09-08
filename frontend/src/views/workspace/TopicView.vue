@@ -9,7 +9,6 @@ import { useDisplay } from 'vuetify'
 import { usePageTitle } from '@/composables/usePageTitle'
 
 import { getTopicAgent } from '@/api'
-import RoomEnvironmentStatus from '@/components/RoomEnvironmentStatus.vue'
 import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
 import { formatToolAction, isPlatformAction, toolLabel } from '@/lib/toolLabels'
@@ -323,11 +322,6 @@ watch(
     </div>
 
     <template v-else>
-      <RoomEnvironmentStatus
-        v-if="selectedTopic && selectedTopic.kind !== 'root'"
-        :project-id="projectId"
-        :topic-id="topicId"
-      />
       <!-- 一条话题头部，横跨对话和工作面板 -->
       <TopicHeader
         :topic="selectedTopic"
