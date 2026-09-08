@@ -53,6 +53,9 @@ class SchedulerService:
         """
         return {"projects_inspected": 0, "errors": [], "parked": True}
 
+    async def remind_silent_turns(self) -> int:
+        return await self._chat.remind_silent_turns()
+
     async def sweep_orphan_turns(self) -> int:
         """Periodic counterpart to the startup orphan sweep in `lifespan`.
 

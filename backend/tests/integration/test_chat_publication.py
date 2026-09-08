@@ -1,9 +1,11 @@
 """Explicit agent publication persists chat without starting another turn."""
 
+import asyncio
 import importlib.util
 import json
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
@@ -205,3 +207,75 @@ def test_publish_during_work_keeps_turn_open_and_only_published_text_enters_memo
     assert (
         memories[0]["assistant_text"] == first["content"] + "\n\n" + second["content"]
     )
+
+
+def test_silence_reminder_is_visible_while_terminal_waits_and_rearms_on_publication(
+    client, stub_hooks, monkeypatch
+):
+    from app.domain.agent import chat as chat_module
+
+    topic, headers = room(client)
+    chat = client.app.dependency_overrides[get_chat_service]()
+    clock = datetime.now(UTC)
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock
+
+    monkeypatch.setattr(chat_module, "datetime", Clock)
+
+    def begin(topic_id, prompt, reply):
+        stub_hooks.starts(topic_id)
+        stub_hooks.acknowledges(topic_id, prompt)
+        stub_hooks.says(topic_id, "Internal output")
+
+    monkeypatch.setattr(stub_hooks, "emit_turn", begin)
+    release = asyncio.Event()
+    notices = []
+
+    async def delayed_notice(topic_id, notice):
+        notices.append(notice)
+        await release.wait()
+        return True
+
+    monkeypatch.setattr(chat, "notify_running_turn", delayed_notice)
+    with client.websocket_connect(chat_ws_url(topic, "alice")) as ws:
+        ws.send_json({"type": "message", "content": "检查一下", "summon": True})
+        while True:
+            frame = ws.receive_json()
+            if (
+                frame["type"] == "event_block"
+                and frame["block"]["content"] == "Internal output"
+            ):
+                break
+        assert client.portal.call(chat.remind_silent_turns) == 0
+        clock += timedelta(seconds=61)
+        client.portal.call(stub_hooks.says, uuid.UUID(topic), "More internal output")
+        assert ws.receive_json()["block"]["content"] == "More internal output"
+        sweep = client.portal.start_task_soon(chat.remind_silent_turns)
+        waiting = ws.receive_json()
+        assert waiting["type"] == "event_block"
+        assert waiting["block"]["author_type"] == "system"
+        assert waiting["block"]["content"] == "芝士已有一分钟未更新进度"
+        assert not sweep.done()  # A blocked terminal cannot hide platform status.
+        client.portal.call(release.set)
+        assert sweep.result(timeout=2) == 1
+        assert len(notices) == 1 and "cheese chat send" in notices[0]
+        clock += timedelta(seconds=120)
+        assert client.portal.call(chat.remind_silent_turns) == 0
+        request_id = str(uuid.uuid4())
+        sent = publish(client, topic, headers, request_id=request_id).json()["data"]
+        assert ws.receive_json()["block"]["id"] == sent["id"]
+        assert client.portal.call(chat.remind_silent_turns) == 0
+        clock += timedelta(seconds=61)
+        # Replaying a previous send must not masquerade as a fresh update.
+        assert publish(client, topic, headers, request_id=request_id).status_code == 200
+        assert ws.receive_json()["block"]["id"] == sent["id"]
+        assert client.portal.call(chat.remind_silent_turns) == 1
+        assert ws.receive_json()["block"]["content"] == waiting["block"]["content"]
+        client.portal.call(stub_hooks.stops, uuid.UUID(topic), "Finished internally")
+        while ws.receive_json()["type"] != "done":
+            pass
+        clock += timedelta(seconds=120)
+        assert client.portal.call(chat.remind_silent_turns) == 0

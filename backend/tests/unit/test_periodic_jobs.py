@@ -109,6 +109,7 @@ def _jobs():
         poll_open_prs=_noop,
         sync_upstreams=_noop,
         sweep_orphan_turns=_noop,
+        remind_silent_turns=_noop,
         sweep_abandoned_gates=_noop,
     )
     return periodic_jobs(
@@ -124,6 +125,7 @@ def _jobs():
         ("notification finalize", "notification_finalize_interval_s"),
         ("notification email drain", "notification_email_drain_interval_s"),
         ("task deadline sweep", "task_deadline_sweep_interval_s"),
+        ("chat progress reminder", "chat_progress_check_interval_s"),
         # Same shape of absence one layer down: a worktree and a device home
         # nobody removes is a disk that fills at 1-4 GB a topic (141 GB and
         # 162 GB on the dev box, 2026-09-03) with no error anywhere.

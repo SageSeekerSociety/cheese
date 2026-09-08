@@ -152,6 +152,8 @@ class _HookWorkState:
     user_text: str
     started_at: datetime
     assistant_count: int = 0
+    last_chat_at: datetime | None = None
+    progress_reminded: bool = False
     todo: list[dict] = field(default_factory=list)
     #: 每个分身自己那份清单，按它做的那条活分开。Claude Code 的任务编号是**每个
     #: agent 各数各的**，都从 1 开始，所以几份清单混进一个 list 里不只是看着乱：
@@ -1665,6 +1667,63 @@ class ChatService:
             return False
         return True
 
+    async def remind_silent_turns(self) -> int:
+        """Report chat silence independently of a terminal's blocked tool call."""
+        from app.domain.agent.runtime import get_broker
+
+        now = datetime.now(UTC)
+        due = [
+            state
+            for state in self._hook_work.values()
+            # Background inspections have their own notification policy. Only
+            # work answering a person owes a periodic chat update.
+            if state.reply_to is not None
+            and not state.is_private
+            and not state.progress_reminded
+            and (now - (state.last_chat_at or state.started_at)).total_seconds() >= 60
+            and self._active_turn_ids.get(state.topic_id) == state.work_id
+        ]
+
+        async def remind(state: _HookWorkState) -> bool:
+            try:
+                last_chat_at = state.last_chat_at
+                payload = await self.post_system_event(
+                    state.topic_id,
+                    "芝士已有一分钟未更新进度",
+                    state.work_id,
+                    meta={"event_type": "chat_progress_waiting"},
+                )
+                if payload is None:
+                    return False
+                # Once per silent stretch. Only a new publication re-arms this;
+                # tool output and duplicate send requests do not.
+                state.progress_reminded = state.last_chat_at == last_chat_at
+                await get_broker().publish(
+                    str(state.topic_id), {"type": "event_block", "block": payload}
+                )
+                if (
+                    state.progress_reminded
+                    and self._active_turn_ids.get(state.topic_id) == state.work_id
+                ):
+                    # Delivering a notice can itself stall. Other rooms and the
+                    # platform's waiting event must not wait for this terminal.
+                    async with asyncio.timeout(5):
+                        await self.notify_running_turn(
+                            state.topic_id,
+                            "If this task is still in progress and you have not "
+                            "posted an update since this reminder was queued, "
+                            "use cheese chat send to tell the user what is known "
+                            "and what you are waiting for.",
+                        )
+                return True
+            except Exception:  # noqa: BLE001 — one room must not stop the sweep
+                logger.exception(
+                    "chat progress reminder failed (topic=%s)", state.topic_id
+                )
+                return False
+
+        return sum(await asyncio.gather(*(remind(state) for state in due)))
+
     async def notify_running_turn(self, topic_id: uuid.UUID, notice: str) -> bool:
         """Tell the turn already running on this topic that the world changed
         under it. Returns whether the live session took it.
@@ -2981,6 +3040,11 @@ class ChatService:
                     {"input": publication_input, "block": payload},
                 )
             await session.commit()
+        if publish and task_id is None and turn_id is not None:
+            state = self._hook_work.get((topic_id, turn_id))
+            if state is not None:
+                state.last_chat_at = datetime.now(UTC)
+                state.progress_reminded = False
         return payload
 
     async def _persist_progress(

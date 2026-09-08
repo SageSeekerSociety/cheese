@@ -47,6 +47,16 @@ history may still have professional expertise.
 
 The launch configuration changes so existing terminals reopen through the
 session-resume path at the next task boundary and receive the updated CLI and
-instructions. Progress timing is a model instruction, not an independent timer:
-a blocked tool can still delay a message. Runtime status and failure reporting
-remain available independently of whether the agent publishes a chat message.
+instructions.
+
+For room work answering a person, the backend checks chat silence every 15
+seconds. After one minute without a published message it posts a system waiting
+event and queues a reminder to the running agent. Each silent stretch produces
+one reminder; a new publication starts the clock again. Raw terminal output and
+retries of an existing publication do not reset it. Private chat and background
+inspections retain their own notification policy.
+
+The waiting event appears even if the terminal cannot consume the reminder yet.
+The reminder does not interrupt work or automatically background tools. Native
+RC controls let a person background supported tasks or interrupt the current
+turn. A blocked tool can still delay the agent's own progress message.
