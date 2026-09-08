@@ -358,6 +358,51 @@ async def test_second_turn_reasserts_the_screen_instead_of_trusting_the_registry
     assert hub.prompts == [["turn 0"], ["turn 1"]]
 
 
+async def test_reuse_checks_and_launcher_transfer_do_not_wait_for_each_other(
+    monkeypatch,
+):
+    hub = FakeHub()
+    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
+    arguments = dict(
+        device_id="dev1",
+        agent_user_id=1,
+        agent_handle="cheese",
+        project_id=uuid.uuid4(),
+        topic_id=uuid.uuid4(),
+        token="tok",
+        env=None,
+        launch=ClaudeLaunch(system_prompt=""),
+    )
+    screen = await provider._ensure_screen(**arguments)
+    entered = set()
+    ready = asyncio.Event()
+
+    async def operation(name, result):
+        entered.add(name)
+        if len(entered) == 3:
+            ready.set()
+        await ready.wait()
+        assert hub.reasserted == []
+        return result
+
+    async def alive(_screen):
+        return await operation("alive", True)
+
+    async def tunnel(_screen):
+        return await operation("tunnel", False)
+
+    async def ship(*_arguments):
+        return await operation("launcher", ["bash", "launch.sh"])
+
+    monkeypatch.setattr(provider, "confirm_alive", alive)
+    monkeypatch.setattr(provider, "_tunnel_helper_is_down", tunnel)
+    monkeypatch.setattr(provider, "_ship_launcher", ship)
+    reused = await asyncio.wait_for(provider._ensure_screen(**arguments), timeout=2)
+    assert reused is screen
+    assert entered == {"alive", "tunnel", "launcher"}
+    assert hub.reasserted == [screen.sid]
+
+
 class DeadClaudeHub(FakeHub):
     """A device whose `claude` DIED while the connector kept running: the hub's
     registry still holds the screen, but the liveness probe (DEVICE_ALIVE_PROBE

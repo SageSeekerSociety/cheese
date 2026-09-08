@@ -774,49 +774,6 @@ class DeviceChannel(Channel):
             # the next summon instead of an unrunnable screen being reused forever.
             await self._hub.close_screen(existing.device_id, existing.sid)
             existing = None
-        if existing is not None and not await self.confirm_alive(existing):
-            # The hub still has a screen for this topic, but the `claude` behind it
-            # is GONE — its tmux session was killed out from under a STILL-RUNNING
-            # connector (an orphan sweep, a `tmux kill-server`, a crash). Reasserting
-            # (adopt-create, #369) does NOT bring it back: the frozen connector,
-            # finding the sid still in its own in-memory session map, only
-            # re-attaches and returns — it re-Spawns the launcher ONLY
-            # for a sid it has forgotten, i.e. after IT restarted (cli host.go
-            # createSession). #369 rebuilds a screen a CONNECTOR restart lost; it
-            # cannot rebuild one whose `claude` died while the connector lived. The
-            # turn would then prompt a dead pane and die in the 25s
-            # "会话没有任何反应" delivery timeout, reaching no model — which on a
-            # subscription deployment silently never
-            # bills a turn (#325 G2). Drop the stale screen (session.close makes the
-            # connector forget the sid too) so the code below OPENS a fresh one under
-            # a NEW sid the connector cannot short-circuit and must Spawn: the
-            # launcher runs, `claude` restarts, hooks flow. Only an explicit `dead`
-            # reading forces this (see `confirm_alive`) — an alive, `unknown`, or
-            # probe-hiccup screen is still reasserted, exactly as before.
-            await self._hub.close_screen(existing.device_id, existing.sid)
-            existing = None
-        if existing is not None and await self._tunnel_helper_is_down(existing):
-            # The third way a reused screen can be alive and unusable, and the one
-            # that had no gate: its `claude` runs, its credential is fresh, and the
-            # machine-local tunnel helper its HTTPS_PROXY points at is GONE. That
-            # helper is started ONLY by `cheese-tunnel-up`, which runs ONLY as the
-            # launcher's prefix — and reuse reasserts (an adopt-create)
-            # instead of relaunching, so nothing on either side ever restarts it.
-            # `claude` read that HTTPS_PROXY once at startup and never re-reads it,
-            # so every turn from then on dies with `API Error: Unable to connect to
-            # API (ConnectionRefused)` while `confirm_alive` keeps answering
-            # `alive` — the same "live process + dead dependency" shape the
-            # credential gate above exists for, on the other dependency.
-            #
-            # Measured 2026-08-18: the dev box's standing data plane was swapped
-            # (#573) under five still-running screens. Every subsequent turn failed,
-            # one topic replayed the same 28-message batch 30 times at ~3 minutes a
-            # try, and no re-@ could ever have fixed it — the only cure was a fresh
-            # launch, which nothing was able to ask for. Retire the screen here so
-            # the OPEN below Spawns one whose launcher runs `cheese-tunnel-up`
-            # again.
-            await self._hub.close_screen(existing.device_id, existing.sid)
-            existing = None
         # Device-side paths (the launcher mkdir -p's them). Kept under a stable per
         # project/topic root so the screen's git-backed work persists across turns.
         # The home MUST be per topic, not per project: every hook event lands in
@@ -968,7 +925,21 @@ class DeviceChannel(Channel):
             system_prompt=launch.system_prompt,
             ca_pem=ca_pem,
         )
-        command = await self._ship_launcher(device_id, topic_id, command)
+        if existing is None:
+            command = await self._ship_launcher(device_id, topic_id, command)
+        else:
+            # These device requests are independent. Finish all three before
+            # adopting or replacing the screen, without adding their round trips.
+            alive, tunnel_down, command = await asyncio.gather(
+                self.confirm_alive(existing),
+                self._tunnel_helper_is_down(existing),
+                self._ship_launcher(device_id, topic_id, command),
+            )
+            if not alive or tunnel_down:
+                # Adopt-create cannot restart a dead process or its tunnel while
+                # the connector still knows the sid. A new sid runs the launcher.
+                await self._hub.close_screen(existing.device_id, existing.sid)
+                existing = None
         if existing is not None:
             # A reassert keeps the CURRENTLY-RUNNING `claude`, which still holds the
             # credential it was born with — so the recorded birth expiry must NOT be
