@@ -32,6 +32,9 @@ class TaskOut(BaseModel):
     status: TaskStatus
     # 唯一的主. A room answers this with a roster; a task with one handle.
     owner_handle: str | None = None
+    # 谁来验收这条活 —— 派活那一刻定下的 (#718 设置表)。NULL 表示派出去时既没
+    # 点名、项目也没有默认验收人，递卡时必须自己点一个。
+    reviewer_handle: str | None = None
     created_by: str | None = None
     # 这条活在哪棵树上干 — many tasks share one, and that tree is the batch
     # that opens one PR. A task has no branch of its own any more.

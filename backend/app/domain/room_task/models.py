@@ -264,6 +264,19 @@ class Task(UuidPk, Timestamps, Base):
     # 唯一的主: the one member this work belongs to. A room has a roster; a task
     # has an owner, and that difference is the point of the split.
     owner_handle: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # 谁来验收这条活 (#718 设置表「任务默认 reviewer」). Distinct from
+    # `owner_handle`: the owner is whose work this is, the reviewer is who says
+    # it may land, and a project where those are the same person is a project
+    # with no review.
+    #
+    # Resolved and WRITTEN when the work is dispatched (explicit `--reviewer`,
+    # else the project's default), rather than read back out of the project
+    # setting at 递卡 time. The setting is a policy that can change; who a piece
+    # of work was handed to is a fact about the moment it was handed over, and a
+    # value re-derived later would silently re-route work dispatched under the
+    # old policy. NULL when the project had no default and nobody named one —
+    # then the card must name a reviewer itself.
+    reviewer_handle: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # 这条活在哪棵树上干. Many tasks share one tree — 一棵树 = 一个分支 =
     # 一个 PR = 一批活 — so this is what says which batch the work belongs to,

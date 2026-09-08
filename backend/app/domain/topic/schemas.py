@@ -88,6 +88,11 @@ class SplitIn(BaseModel):
     # once and can never be changed, and a claim always grows as work reaches
     # files nobody predicted. A path ending in `/` is a directory.
     paths: list[str] = Field(default_factory=list)
+    # 谁来验收这条活 (#718 设置表「任务默认 reviewer」). Omitted means the
+    # project's default — resolved at dispatch and STORED, not re-derived at
+    # 递卡: the setting can change between the two, and the person a piece of
+    # work was handed to is a fact about that moment.
+    reviewer_handle: str | None = Field(default=None, max_length=64)
 
 
 class ClaimIn(BaseModel):

@@ -269,6 +269,7 @@ class TaskService:
         title: str,
         owner_handle: str | None,
         created_by: str | None,
+        reviewer_handle: str | None = None,
     ) -> Task:
         """Open a new thread of work in a room, on the room's current tree.
 
@@ -292,6 +293,7 @@ class TaskService:
             tree_id=tree.id,
             title=title,
             owner_handle=owner_handle,
+            reviewer_handle=reviewer_handle,
             created_by=created_by,
         )
         # A thread writes to its room's tree, with its siblings. Without this the

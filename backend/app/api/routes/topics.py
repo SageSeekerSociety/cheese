@@ -1612,6 +1612,10 @@ async def split_topic(
         created_by=actor.handle if actor.handle != "anonymous" else body.created_by,
         brief=body.brief,
         paths=body.paths,
+        # 显式指定优先，没指定就用项目默认验收人 (#718 设置表)。The resolution is
+        # in the service because it needs the project row; the route only says
+        # whether anybody named somebody.
+        reviewer_handle=body.reviewer_handle,
         # 归属跟推进者走: who is DRIVING this room right now. 芝士 splits under her
         # own handle, so `created_by` names the robot and the person who asked for
         # the split is nowhere in the request — the runner is the only place that

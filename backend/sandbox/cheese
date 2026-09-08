@@ -398,6 +398,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     ps.add_argument(
+        "--reviewer",
+        default=None,
+        help=(
+            "这条活将来由谁验收(`cheese members` 查准确 handle)。"
+            "不写就用项目设置里的默认验收人;两个都没有就先空着,递卡时再点名。"
+            "递卡沿用这里定下的人,除非你递卡时显式指定别人"
+        ),
+    )
+    ps.add_argument(
         "--brief",
         default=None,
         help=(
@@ -952,11 +961,21 @@ def main() -> None:
             body["brief"] = a.brief
         if a.paths:
             body["paths"] = a.paths
+        # 不写 --reviewer = 用项目默认验收人。同 accept-request：别塞空串，
+        # 「没说」和「说了空的」在后端是两件事。
+        if a.reviewer:
+            body["reviewer_handle"] = a.reviewer
         r = _call("POST", f"/topics/{topic}/split", body)["data"]
+        who = r.get("reviewer_handle")
         print(
             f"已开一条活：{r['title']}（id={r['id']}）。**它还没人做**，接下来两步：\n"
             f"  1. 用你的 Agent 工具起一个分身，把 --brief 的原文放进 prompt\n"
-            f"  2. cheese bind {r['id']} <分身的 agent_id>"
+            f"  2. cheese bind {r['id']} <分身的 agent_id>\n"
+            + (
+                f"验收人：{who}（递卡时不指定就用它）"
+                if who
+                else "这条活还没有验收人（项目也没设默认），递卡时要点名一个。"
+            )
         )
     elif a.cmd == "bind":
         topic = _need("CHEESE_TOPIC", TOPIC)

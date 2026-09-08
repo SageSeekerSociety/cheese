@@ -420,26 +420,51 @@ class AcceptService:
         await self._machines.release_topic_machine(topic.id)
 
     async def _reviewer_or_project_default(
-        self, project: Project | None, reviewer_handle: str | None
+        self,
+        project: Project | None,
+        reviewer_handle: str | None,
+        *,
+        from_work: list[Task] | None = None,
     ) -> str:
-        """谁验收：说了算说了的，没说就用项目的默认验收人 (#718 设置表).
+        """谁验收：显式指定 > 这批活派出去时定的人 > 项目默认验收人 (#718 设置表).
 
-        显式指定优先 —— the person filing knows something the project setting
-        cannot: which change this is, and who understands that part of the code.
-        A default that overrode them would make the setting a ceiling instead of
-        a floor.
+        显式指定优先 —— the person filing knows something neither the work nor
+        the setting can: which change THIS is, and who understands that part of
+        the code. A default that overrode them would make the setting a ceiling
+        instead of a floor.
 
-        Neither one present is an error rather than a guess. The alternatives
-        are all worse in the same way: routing to the project owner, to the
-        room's owner, or to whoever accepted last would each hand a real
-        delivery to somebody who never agreed to look at it, and the card would
-        sit there looking correctly routed.
+        Then the work's own reviewer, because that is who this work was HANDED
+        TO when it was dispatched (`Task.reviewer_handle`, resolved from the
+        same setting at that moment). Reading the project setting again instead
+        would silently re-route work dispatched under an older policy.
+
+        Work that disagrees is refused rather than resolved. Two threads handed
+        to two different people, delivered in one batch, is a real question
+        about who gets to say this may land, and any answer this code invented —
+        the first, the newest, the most common — would route somebody's review
+        to somebody else and look correct doing it.
+
+        Nothing anywhere is an error rather than a guess, for the same reason:
+        routing to the project owner, the room's owner, or whoever accepted last
+        would each hand a real delivery to someone who never agreed to look at
+        it, and the card would sit there looking correctly routed.
         """
         from app.domain.project.protection import branch_protection_of
 
         explicit = (reviewer_handle or "").strip()
         if explicit:
             return explicit
+        handed_to = sorted(
+            {t.reviewer_handle for t in (from_work or []) if t.reviewer_handle}
+        )
+        if len(handed_to) > 1:
+            raise ValidationError(
+                "这批活派出去时定的验收人不是同一个人（"
+                + "、".join(handed_to)
+                + "），平台不替你选。递卡时点名一个。"
+            )
+        if handed_to:
+            return handed_to[0]
         default = branch_protection_of(project).default_reviewer
         if default:
             return default
@@ -460,9 +485,6 @@ class AcceptService:
         task_ids: list[uuid.UUID] | None = None,
     ) -> AcceptCard:
         topic = await self._topic_or_404(topic_id)
-        reviewer_handle = await self._reviewer_or_project_default(
-            await self._projects.get(topic.project_id), reviewer_handle
-        )
         # Before anything else touches the DB: a missing or malformed subject is
         # the filer's to fix in the same breath, and it is the one thing here
         # that ends up in permanent history.
@@ -577,6 +599,23 @@ class AcceptService:
         # a change is good. `pending_gate`/`gate_failed`/`gate_blocked` are no
         # longer entered; existing rows keep their historical values and their
         # exits (review/gate_sweep.py, AcceptService.void) stay in place.
+        # 递卡沿用派活时定的验收人 (#718 设置表)。The work this card says it
+        # carries is the right set to ask — a batch's tree also holds threads
+        # whose code is NOT in this delivery, and routing by those would hand
+        # the card to somebody whose work is not in it. An undeclared delivery
+        # falls back to everyone on the batch, which is the best available
+        # answer when the card names nothing.
+        tasks = TaskService(self._session)
+        handed_to = (
+            await tasks.list_by_ids(delivered)
+            if delivered
+            else await WorkTreeService(self._session).tasks_on(tree.id)
+        )
+        reviewer_handle = await self._reviewer_or_project_default(
+            await self._projects.get(topic.project_id),
+            reviewer_handle,
+            from_work=handed_to,
+        )
         card = await self._repo.add(
             topic_id=topic_id,
             reviewer_handle=reviewer_handle,
