@@ -199,6 +199,7 @@ h1 {
 
 .hero-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 28px;
   margin-top: 32px;
@@ -207,6 +208,7 @@ h1 {
 .hero-actions .button,
 .hero-actions .watch-link {
   font-size: 16px;
+  white-space: nowrap;
 }
 
 .button {
@@ -1357,7 +1359,7 @@ footer > span {
   }
 }
 
-@media screen and (width <= 760px) {
+@media screen and (width <= 900px) {
   .wrap {
     width: calc(100% - 40px);
   }
@@ -1423,18 +1425,31 @@ footer > span {
   }
 
   .collaboration-map {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px 12px;
     width: 100%;
-    height: 370px;
+    height: auto;
     max-width: 500px;
     margin: auto;
   }
 
   .map-coordinate {
-    left: 8px;
+    position: static;
+    grid-column: 1 / -1;
     font-size: 14px;
   }
 
+  .map-lines {
+    display: none;
+  }
+
   .map-core {
+    position: relative;
+    inset: auto;
+    grid-column: 1 / -1;
+    justify-self: center;
+    transform: none;
     width: 118px;
     height: 118px;
     border-radius: var(--radius-lg);
@@ -1454,28 +1469,10 @@ footer > span {
     font-size: 14px;
   }
 
-  .node-team {
-    top: 74px;
-    left: 0;
-  }
-
-  .node-ai {
-    top: 44px;
-    right: 0;
-  }
-
-  .node-knowledge {
-    bottom: 46px;
-    left: 0;
-  }
-
-  .node-output {
-    right: 0;
-    bottom: 76px;
-  }
-
   .map-node {
-    max-width: calc(50% - 6px);
+    position: relative;
+    inset: auto;
+    transform: none;
     padding: 11px;
     gap: 9px;
   }
@@ -1494,6 +1491,9 @@ footer > span {
   }
 
   .map-foot {
+    position: relative;
+    inset: auto;
+    grid-column: 1 / -1;
     font-size: 14px;
   }
 
@@ -1759,6 +1759,16 @@ footer > span {
     font-size: 18px;
   }
 
+  .content-sheet > div {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .content-sheet > div span {
+    flex-basis: 100%;
+    margin-left: 24px;
+  }
+
   .content-caption {
     padding: 10px 12px;
     font-size: 14px;
@@ -2007,7 +2017,7 @@ footer > span {
   background: var(--accent-wash);
 }
 
-@media screen and (width <= 760px) {
+@media screen and (width <= 900px) {
   .resources-section {
     grid-template-columns: 1fr;
     gap: 32px;
