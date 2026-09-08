@@ -1,11 +1,12 @@
-// 「运行环境还没好」这条状态：说什么、长什么样、住在哪。
+// 「运行环境还没好」这条状态：哪几种情况要说话，各说什么。
 //
-// 住在哪是这里最要紧的一条。它以前在话题页最顶上，横跨对话和工作面板、把话题标
-// 题也挤下去；可它讲的事只跟对话有关——「你现在打的这条，芝士还接不到」。所以
-// 它搬到了输入框上沿，而这个位置得有测试钉住：位置不像文案，改错了不会报错，只
-// 会在某次重构里悄悄漂回页顶。
+// 最要紧的是**哪几种**。后端会返回 pending / preparing / ready / stopped /
+// failed / offline 六种，而这个组件长期只画 preparing 和 failed——于是一个新话题
+// 起始的那几十秒（pending）、以及机器离线（offline，芝士永远收不到消息、而且不
+// 会自己好）屏幕上一个字都没有。用户报的「哪里都没有」就是这个。
+//
+// 所以下面每一种状态各有一条：漏掉一种不会报错，只会安静。
 import type { Component } from 'vue'
-import type { Topic } from '@/cx_types'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -13,32 +14,29 @@ import * as directives from 'vuetify/directives'
 import { render } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import ChatPanel from './ChatPanel.vue'
 import RoomEnvironmentStatus from './RoomEnvironmentStatus.vue'
 
 const Status = RoomEnvironmentStatus as unknown as Component
-const Panel = ChatPanel as unknown as Component
 
 let vuetify: ReturnType<typeof createVuetify>
 /** 后端这一刻回的运行环境状态。 */
 let env: Record<string, unknown> = { state: 'preparing', stage: 'project' }
+/** 后端这会儿打不通（模拟 502）。 */
+let down = false
 
 const settle = async () => {
   for (let i = 0; i < 8; i += 1) await new Promise((r) => setTimeout(r, 0))
 }
 
-function topic(): Topic {
-  return {
-    id: 't1',
-    project_id: 'p1',
-    parent_id: null,
-    title: 't1',
-    kind: 'topic',
-    status: 'active',
-    created_by: 'u',
-    created_at: '2026-09-01T00:00:00Z',
-    updated_at: '2026-09-01T00:00:00Z',
-  } as Topic
+/** 往前走一个轮询周期。
+ *
+ *  5 秒是组件自己的间隔，后面那 1.5 秒是传输层的退避：`api.ts` 对 GET 的 502 会
+ *  自己重试两次（250ms + 750ms）才最终抛出。不走完这一段，一次「失败」在测试里
+ *  根本没有失败完 —— 这也意味着线上真正连着两次读不到，实际经历的是六次请求。 */
+const tick = async () => {
+  await vi.advanceTimersByTimeAsync(5000)
+  await vi.advanceTimersByTimeAsync(1500)
+  for (let i = 0; i < 12; i += 1) await Promise.resolve()
 }
 
 beforeAll(() => {
@@ -47,6 +45,8 @@ beforeAll(() => {
 
 beforeEach(() => {
   env = { state: 'preparing', stage: 'project' }
+  down = false
+  vi.useFakeTimers({ shouldAdvanceTime: true })
   localStorage.setItem('cheesex.me', JSON.stringify({ id: '1', handle: 'me', name: 'me', token: '' }))
   vi.stubGlobal(
     'WebSocket',
@@ -57,18 +57,21 @@ beforeEach(() => {
       removeEventListener() {}
     }
   )
-  vi.stubGlobal('fetch', async (url: string) => ({
-    ok: true,
-    status: 200,
-    json: async () => {
-      const u = String(url)
-      if (u.includes('/environment/rooms/')) return { code: 200, data: env }
-      if (u.includes('/members')) return { code: 200, data: { data: [], total: 0 } }
-      if (u.includes('/progress')) return { code: 200, data: { items: [], updated_at: null } }
-      if (u.includes('/tasks')) return { code: 200, data: { data: [], total: 0 } }
-      return { code: 200, data: { data: [], total: 0, has_more: false } }
-    },
-  }))
+  vi.stubGlobal('fetch', async (url: string) => {
+    if (down && String(url).includes('/environment/rooms/')) throw new Error('502')
+    return {
+      ok: true,
+      status: 200,
+      json: async () => {
+        const u = String(url)
+        if (u.includes('/environment/rooms/')) return { code: 200, data: env }
+        if (u.includes('/members')) return { code: 200, data: { data: [], total: 0 } }
+        if (u.includes('/progress')) return { code: 200, data: { items: [], updated_at: null } }
+        if (u.includes('/tasks')) return { code: 200, data: { data: [], total: 0 } }
+        return { code: 200, data: { data: [], total: 0, has_more: false } }
+      },
+    }
+  })
 })
 
 const mountStatus = () => render(Status, { props: { projectId: 'p1', topicId: 't1' }, global: { plugins: [vuetify] } })
@@ -98,7 +101,7 @@ describe('运行环境状态条', () => {
     await settle()
 
     const box = container.querySelector('.env')
-    expect(box?.className).toContain('env--failed')
+    expect(box?.className).toContain('env--stuck')
     expect(container.querySelector('.env__line')?.textContent).toContain('环境准备失败')
     // 失败是唯一需要人动手的状态，所以它得说出手往哪伸。
     expect(container.querySelector('.env__next')?.textContent).toContain('运行环境设置')
@@ -111,7 +114,7 @@ describe('运行环境状态条', () => {
     const { container } = mountStatus()
     await settle()
 
-    expect(container.querySelector('.env')?.className).not.toContain('env--failed')
+    expect(container.querySelector('.env')?.className).not.toContain('env--stuck')
     expect(container.querySelector('.env__line')?.textContent).toContain('正在重新启动')
     expect(container.querySelector('.env__bar')).not.toBeNull()
   })
@@ -122,6 +125,29 @@ describe('运行环境状态条', () => {
     await settle()
 
     expect(container.querySelector('.env')).toBeNull()
+  })
+
+  it('pending：新话题起始的那几十秒也要说话 —— 这是「哪里都没有」的那一种', async () => {
+    env = { state: 'pending' }
+    const { container } = mountStatus()
+    await settle()
+
+    expect(container.querySelector('.env__line')?.textContent).toContain('正在准备运行环境')
+    // 它在往前走，所以画那条动的线，且不是「要人管」的样子。
+    expect(container.querySelector('.env__bar')).not.toBeNull()
+    expect(container.querySelector('.env')?.className).not.toContain('env--stuck')
+  })
+
+  it('offline：机器离线要人去管，而且不会自己好', async () => {
+    env = { state: 'offline' }
+    const { container } = mountStatus()
+    await settle()
+
+    expect(container.querySelector('.env')?.className).toContain('env--stuck')
+    expect(container.querySelector('.env__line')?.textContent).toContain('运行设备已离线')
+    expect(container.querySelector('.env__next')?.textContent).toContain('重新连接')
+    // 停住了就不该还有东西在动。
+    expect(container.querySelector('.env__bar')).toBeNull()
   })
 
   // 以下三条是 main 上原有的用例，搬进这份新框架里 —— 位置和长相变了，它们钉的
@@ -154,7 +180,7 @@ describe('运行环境状态条', () => {
     env = { state: 'failed' }
     const { container, rerender } = mountStatus()
     await settle()
-    expect(container.querySelector('.env')?.className).toContain('env--failed')
+    expect(container.querySelector('.env')?.className).toContain('env--stuck')
 
     env = { state: 'ready' }
     await rerender({ projectId: 'p1', topicId: 'other' })
@@ -174,23 +200,47 @@ describe('运行环境状态条', () => {
   })
 })
 
-describe('它住在哪', () => {
-  it('在输入框上沿，不在时间线里 —— 后面来的消息顶不走它', async () => {
-    const { container } = render(Panel, {
-      props: { topic: topic(), showComposer: true },
-      global: { plugins: [vuetify] },
-      slots: { 'composer-notice': '<div class="probe-notice">通知</div>' },
-    })
+describe('拉不到状态的时候', () => {
+  it('抖一次不闪 —— 第一次失败保持上一次的样子', async () => {
+    env = { state: 'preparing', stage: 'project' }
+    const { container } = mountStatus()
+    await settle()
+    expect(container.querySelector('.env__line')?.textContent).toContain('正在准备项目')
+
+    down = true
+    await tick() // 一次失败
+    expect(container.querySelector('.env__line')?.textContent).toContain('正在准备项目')
+    expect(container.querySelector('.env--unreachable')).toBeNull()
+  })
+
+  it('连着两次拉不到就说出来 —— 平台挂了的时候，它是唯一还能说话的地方', async () => {
+    env = { state: 'preparing', stage: 'project' }
+    const { container } = mountStatus()
     await settle()
 
-    const notice = container.querySelector('.probe-notice')
-    const box = container.querySelector('.composer-box')
-    const scroll = container.querySelector('[data-testid="chat-scroll"]')
-    expect(notice).not.toBeNull()
-    expect(box).not.toBeNull()
-    // 在输入框之前：DOM 顺序就是屏幕上的上下顺序。
-    expect(notice!.compareDocumentPosition(box!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    // 而且不在会滚的那一段里 —— 在里面的话，两条新消息就把它推走了。
-    expect(scroll?.contains(notice as Node)).not.toBe(true)
+    down = true
+    await tick()
+    await tick() // 第二次
+    expect(container.querySelector('.env__line')?.textContent).toContain('暂时读不到运行环境状态')
+    // 读不到不是「这个房间坏了」，别画成要人去修的样子。
+    expect(container.querySelector('.env')?.className).not.toContain('env--stuck')
+    // 也不该还有东西在动。
+    expect(container.querySelector('.env__bar')).toBeNull()
+  })
+
+  it('恢复之后立刻回到真实状态', async () => {
+    env = { state: 'preparing', stage: 'project' }
+    const { container } = mountStatus()
+    await settle()
+    down = true
+    await tick()
+    await tick()
+    expect(container.querySelector('.env--unreachable')).not.toBeNull()
+
+    down = false
+    env = { state: 'offline' }
+    await tick()
+    expect(container.querySelector('.env--unreachable')).toBeNull()
+    expect(container.querySelector('.env__line')?.textContent).toContain('运行设备已离线')
   })
 })
