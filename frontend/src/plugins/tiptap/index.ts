@@ -1,7 +1,7 @@
 import 'vuetify-pro-tiptap/style.css'
 
-import type { InstallationOptions } from 'vuetify-pro-tiptap'
 import type { App } from 'vue'
+import type { InstallationOptions } from 'vuetify-pro-tiptap'
 
 import { createVuetifyProTipTap, VuetifyTiptap, VuetifyViewer } from 'vuetify-pro-tiptap'
 import {
