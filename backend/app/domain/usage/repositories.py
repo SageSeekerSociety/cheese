@@ -5,7 +5,6 @@ import uuid
 from sqlalchemy import and_, case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.project.repositories import ProjectRepository
 from app.domain.usage.models import ComputeGrant, ResourceUsage
 
 
@@ -128,8 +127,10 @@ class ComputeGrantRepository:
         source_task_id: int | None,
         credits_total: float,
     ) -> ComputeGrant:
+        from app.domain.project.services import ProjectService
+
         row = ComputeGrant(
-            team_id=await ProjectRepository(self._session).team_for_project(project_id),
+            team_id=await ProjectService(self._session).team_for_project(project_id),
             project_id=project_id,
             source_task_id=source_task_id,
             credits_total=credits_total,
@@ -172,7 +173,9 @@ class ComputeGrantRepository:
     async def list_for_project(
         self, project_id: uuid.UUID, *, lock: bool = False
     ) -> list[ComputeGrant]:
-        team_id = await ProjectRepository(self._session).team_for_project(project_id)
+        from app.domain.project.services import ProjectService
+
+        team_id = await ProjectService(self._session).team_for_project(project_id)
         eligible = ComputeGrant.project_id == project_id
         if team_id is not None:
             eligible = or_(

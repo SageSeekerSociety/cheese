@@ -114,6 +114,10 @@ class ProjectService:
         """
         return await self._repo.get(project_id)
 
+    async def team_for_project(self, project_id: uuid.UUID) -> int | None:
+        """Resolve quota ownership, including older personal-team projects."""
+        return await self._repo.team_for_project(project_id)
+
     async def get_or_404(self, project_id: uuid.UUID) -> Project:
         project = await self.get(project_id)
         if project is None:
