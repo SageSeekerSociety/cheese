@@ -115,13 +115,36 @@ class Block(UuidPk, Timestamps, Base):
             "created_at",
             postgresql_where=text("task_id IS NOT NULL"),
         ),
+        # 话题级未读: count, per topic, the messages on a room's own line that
+        # someone else wrote after the reader's cursor. Its only selective
+        # predicate lives on `topics`, so without this the planner read the
+        # whole table — every 30 seconds, for every open tab, at a cost that
+        # grew with the size of the entire platform rather than the project
+        # being looked at. INCLUDE(author) rather than a fifth key column
+        # because `author <> me` is only ever tested for inequality; carrying
+        # it in the leaf is what makes the scan index-ONLY (Heap Fetches: 0),
+        # and the heap reads are where the buffer-pool churn came from.
+        # `created_at` IS a key column: the cursor comparison ranges on it.
+        Index(
+            "ix_blocks_topic_kind_task_created",
+            "topic_id",
+            "kind",
+            "task_id",
+            "created_at",
+            postgresql_include=["author"],
+        ),
     )
 
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), index=True
     )
+    # No single-column index of its own: `ix_blocks_topic_kind_task_created`
+    # and `ix_blocks_topic_id_created_at` both lead with topic_id, so either
+    # serves a topic_id-only lookup (including the ON DELETE CASCADE sweep when
+    # a topic or project goes away). A third copy would only be one more index
+    # for every insert to maintain.
     topic_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("topics.id", ondelete="CASCADE"), index=True
+        ForeignKey("topics.id", ondelete="CASCADE")
     )
     # WHICH thread this block is in. NULL = the room's own line; set = the
     # conversation of that one piece of work. This is the key that makes a task

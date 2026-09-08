@@ -23,6 +23,14 @@ description: 在 CheeseX(知是)平台里改"平台状态"时用。代码/文件
 
 诊断和恢复是**你的事**。永远不要让他去看日志、重跑基础设施命令、修鉴权、修机器,或者替你决定一次执行失败该怎么重试——把确切的证据记下来,走平台自己的恢复路径,能恢复的就按有节制的节奏重试。只有两件事该找他:一个**产品决定**,或者一件**只有他能给**的东西(凭据、批准、付款、需要人动手的物理操作)。真落到这种情况,就只说那一件要他做的事,说清楚,不要连带把过程甩给他。
 
+## 你干活的每一步都显示在界面上,那些说明文字用中文写
+
+界面上有一条「施工现场」,你每调一次工具就多一行:一个中文动词,后面跟着这次调用里最能说明问题的那一截。**那一截优先取你自己填的说明字段**——`Bash` 的 `description`、`Agent` 的 `description`、`TaskCreate` 的 `subject`。它们不是给日志看的,是产品界面上的一行字,和你说的话一样会被人读到。
+
+所以**这些字段一律用中文**,写这一步在干什么,不是写命令怎么拼的:`description: "查一下分页接口是怎么实现的"`,而不是把 `grep -rn cursor backend/` 复述一遍。没填的时候平台只能退回去显示命令原文,那一行就变成一串路径和参数,读的人看不出你在干什么。
+
+命令、路径、代码标识符本身照原样写,不用翻译——要中文的是**你写的那句说明**。
+
 ## 🚫 硬性禁止(否则会污染现场、把整轮拖垮)
 
 - **绝不写 `/tmp`**。要落地的内容(文档草稿、代码、产物)一律写工作区里的相对路径,如 `Write ./doc.md` 然后 `cheese doc set ./doc.md`。`/tmp` 的文件用户在「文件」面板看不到。
@@ -42,9 +50,11 @@ description: 在 CheeseX(知是)平台里改"平台状态"时用。代码/文件
 - `git checkout HEAD -- <文件>` 报 `fatal: your current branch appears to be broken`:是 HEAD 指坏了,不是仓库坏了。`git symbolic-ref HEAD refs/heads/<你的分支>` 就好,**别 rebase**。
 - `gh` 必须显式带 `-R <owner>/<repo>`:工作区连的是平台的仓不是 GitHub,它推断不出你说的是哪个 GitHub 仓库。
 
-**推到 GitHub、开 PR,凭据你手上就有。** 平台那条路上面已经交代完了(采纳走的就是它);GitHub 是另一个地方,要写全 URL:`export GH_TOKEN=$(cheese gh-token)` 之后 `git push https://x-access-token:$GH_TOKEN@github.com/<owner>/<repo> HEAD:<分支>`,开 PR 用 `gh api repos/<owner>/<repo>/pulls -f head=<分支> -f base=<主干> -f title=… -f body=…`。仓库名、能不能推、能不能开 PR,`cheese gh-token` 的 stderr 里都有。**开之前先 `cheese status` 看一眼这个话题在平台侧有没有已经开着的 PR**——别开出第二条并行的路径来。
+**推到 GitHub、开 PR，先运行 `cheese gh-token` 检查仓库连接。** 平台那条路上面已经交代完了(采纳走的就是它);GitHub 是另一个地方,要写全 URL:`export GH_TOKEN=$(cheese gh-token)` 之后 `git push https://x-access-token:$GH_TOKEN@github.com/<owner>/<repo> HEAD:<分支>`,开 PR 用 `gh api repos/<owner>/<repo>/pulls -f head=<分支> -f base=<主干> -f title=… -f body=…`。仓库名、能不能推、能不能开 PR,`cheese gh-token` 的 stderr 里都有。**开之前先 `cheese status` 看一眼这个话题在平台侧有没有已经开着的 PR**——别开出第二条并行的路径来。
 
-**远端你自己去读,别把「已推送 / 已合并 / 冲突解决了 / CI 绿了」当断言说出口。** `cheese gh-token` 给的不是一张只能看 CI 的票——它带的是平台 GitHub App 在这个仓库上被授予的**全部**权限,一项不减,stderr 会逐项列出等级(`contents: write` 和 `contents: read` 是两回事)并把对应的命令直接打出来,照抄就行。所以没有「我没办法看」这回事了:读一眼,读到什么说什么。真出过事——有一轮报告「改动已经进了 PR 分支」,而分支根本没动、冲突还在;它不是在撒谎,是当时确实看不见。
+**未连接仓库时**，按 `cheese gh-token` 返回的项目设置链接，请项目 owner/lead 先「连接 GitHub 账号」，再「连接 GitHub 仓库」。已连接但提示平台 App 未配置时，报告平台配置故障。不要让用户在聊天里提供 PAT，也不要让用户执行内部命令。
+
+**远端你自己去读,别把「已推送 / 已合并 / 冲突解决了 / CI 绿了」当断言说出口。** `cheese gh-token` 给的不是一张只能看 CI 的票——它带的是平台 GitHub App 在这个仓库上被授予的**全部**权限,一项不减,stderr 会逐项列出等级(`contents: write` 和 `contents: read` 是两回事)并把对应的命令直接打出来,照抄就行。连接和权限有效时，先读取远端状态，再报告结果。真出过事——有一轮报告「改动已经进了 PR 分支」,而分支根本没动、冲突还在;它不是在撒谎,是当时确实看不见。
 
 **你的工作区可能落后于主干。** 动一个别人也在改的文件前,先跟主干比一下。在陈旧的基上编辑,对 git 来说是一次普通修改而**不是**冲突——会干净地合并掉别人已经合进去的改动,没有任何检查会拦你。所以改到不是你创建的文件时,在报告里说一句,平台侧的集成检查会覆盖它。
 

@@ -10,21 +10,26 @@
 // （这一对 + 它自己的 发现/我的/待定），而且顶栏还得再写一遍这一层的名字。
 // 是分段而不是页面栈，因为空间和小队是并列的：没有上下级，所以不给 ←、
 // 也不收底栏。
+import { useRoute } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
 const { mdAndUp } = useDisplay()
+const route = useRoute()
 </script>
 
 <template>
-  <Teleport v-if="!mdAndUp" to="#app-bar-slot">
-    <v-tabs class="home-sections" grow slider-color="primary" bg-color="transparent" height="56">
-      <v-tab :to="{ name: 'HomeSpaces' }">空间</v-tab>
-      <v-tab :to="{ name: 'HomeTeams' }">小队</v-tab>
-    </v-tabs>
-  </Teleport>
-  <div class="home-shell">
-    <router-view />
-  </div>
+  <router-view v-if="route.meta.publicLanding" />
+  <template v-else>
+    <Teleport v-if="!mdAndUp" to="#app-bar-slot">
+      <v-tabs class="home-sections" grow slider-color="primary" bg-color="transparent" height="56">
+        <v-tab :to="{ name: 'HomeSpaces' }">空间</v-tab>
+        <v-tab :to="{ name: 'HomeTeams' }">小队</v-tab>
+      </v-tabs>
+    </Teleport>
+    <div class="home-shell">
+      <router-view />
+    </div>
+  </template>
 </template>
 
 <style scoped>

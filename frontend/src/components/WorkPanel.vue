@@ -30,13 +30,12 @@ import PanelSite from './panels/PanelSite.vue'
 const props = withDefaults(
   defineProps<{
     topic: Topic | null
-    // Bumped by the parent on AI activity (turn-done / update_doc tool) so 文档
-    // reloads the doc 芝士 just wrote. See TopicView activityTick.
+    // Bumped by the parent on AI activity (turn-done / a platform resource the
+    // turn changed) so 文档 reloads the doc 芝士 just wrote. See TopicView
+    // activityTick.
     activityTick: number
-    // 施工现场 inputs. Only 现场 reads them; they are passed straight through.
-    worklog?: { label: string; text: string; platform?: boolean }[]
+    // 芝士 正在这个话题里干活 —— tab 栏据此给「现场」加一个跳动的点。
     working?: boolean
-    workingSince?: number | null
     // Project topics (A2): 文档 resolves live-ref badges and <#id> chips with it.
     topicList?: Topic[]
     // Which tab the URL asks for (`?tab=`). The address is the page's business,
@@ -57,9 +56,7 @@ const props = withDefaults(
     agentName?: string
   }>(),
   {
-    worklog: () => [],
     working: false,
-    workingSince: null,
     topicList: () => [],
     openCardId: null,
     agentName: '芝士',
@@ -450,9 +447,6 @@ defineExpose({ pulse, highlightTurn, openFile })
           v-if="mounted.has('site')"
           v-show="active === 'site'"
           :topic="topic"
-          :worklog="worklog"
-          :working="working"
-          :working-since="workingSince"
           :active="active === 'site'"
           :agent-name="agentName"
         />

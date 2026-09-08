@@ -15,6 +15,8 @@
       'app-rail-item--add': item.add,
     }"
     @click="!item.to && item.action ? item.action() : undefined"
+    @mouseenter="warmDestination()"
+    @mouseleave="cancelPrefetch()"
   >
     <!-- Discord-style hover flyout: name + ⌘N quick-switch key -->
     <v-tooltip activator="parent" location="end" content-class="rail-flyout">
@@ -52,16 +54,26 @@
 
 <script lang="ts" setup>
 import { toRefs } from 'vue'
+import { useRouter } from 'vue-router'
 
 import { NavGenericItem } from './types'
 
 import CheeseLogo from '@/assets/logo-plain.svg?component'
+import { cancelPrefetch, prefetchOnHover } from '@/lib/routePrefetch'
 
 const navBarProps = defineProps<{
   item: NavGenericItem
 }>()
 
 const { item } = toRefs(navBarProps)
+
+// 一级导航的每一格都是整整一个页面。指针停在格子上的那几百毫秒，正好够把那个页面
+// 的代码下下来——按下去的时候就只剩下拉数据那一段了。
+const router = useRouter()
+function warmDestination() {
+  const to = item.value.type === 'item' ? item.value.to : undefined
+  if (to) prefetchOnHover({ router, to })
+}
 </script>
 
 <style lang="scss">

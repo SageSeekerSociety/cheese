@@ -16,6 +16,7 @@ import { columnDotStyle } from '../../lib/board'
 import { markdown } from '../../lib/markdown'
 import { relTime } from '../../lib/relTime'
 import { myHandle } from '../../me'
+import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -117,9 +118,7 @@ async function send() {
       </button>
     </header>
 
-    <div v-if="loading && !card" class="d-flex justify-center py-6">
-      <v-progress-circular indeterminate color="primary" size="20" />
-    </div>
+    <LoadingSkeleton v-if="loading && !card" variant="text" :rows="4" class="pt-2" />
 
     <div v-else-if="!card" class="px-3 py-4 t-body c-muted">
       {{ errorMsg ?? '这个房间里没有这条活' }}
