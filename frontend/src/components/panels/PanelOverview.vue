@@ -78,11 +78,19 @@ defineExpose({
 </template>
 
 <style scoped>
+/* min-width: 0 next to the min-height: 0 — a flex item refuses to shrink below
+   its content's min-content size, and that applies to width as much as height.
+   The doc below carries markdown tables, whose min-content width is however wide
+   the widest cell insists on being; without this the whole doc column is sized
+   to the table and hangs off the right edge of the panel, clipped rather than
+   scrollable. The table wrapper already scrolls horizontally on its own — it
+   only gets the chance once the column above it is allowed to shrink. */
 .panel-overview {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
+  min-width: 0;
 }
 .panel-overview__doc {
   flex: 1 1 auto;

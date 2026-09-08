@@ -178,6 +178,18 @@ async def lifespan(_: FastAPI):
     )
     for job in jobs:
         job.start()
+
+    # The openviking backend's whole failure mode is silence: a rejected key
+    # leaves extraction writing nothing, recall answering empty, and no other
+    # symptom anywhere — indistinguishable from the db backend, which also
+    # never learns on its own. So somebody has to actually call the endpoints,
+    # and boot is when: whoever just flipped MEMORY_BACKEND is reading this log
+    # right now. No-op on the db backend, and it never raises — a model vendor
+    # outage must not keep the rest of the platform from starting.
+    from app.domain.memory import endpoint_probe as memory_endpoint_probe
+
+    await memory_endpoint_probe.check_on_startup()
+
     try:
         yield
     finally:

@@ -1,16 +1,13 @@
 <script setup lang="ts">
 // 现场 tab: 芝士 干活的实况 —— 优先接真实终端（跑这一轮的机器上的
 // screen 通道），接不上就渲染重建出来的 transcript 时间线。
-//
-// 这个 tab 的输入是隔离的：worklog / working / workingSince 只有它用，别的 tab
-// 一概不需要，所以它们直接从 WorkPanel 透传到这里，不进任何共享状态。
 import type { Block, Topic } from '../../cx_types'
 
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { nextTick, ref, watch } from 'vue'
 
 import { getTerminal, getTranscript, SITE_PAGE_SIZE } from '../../api'
-import { countLines, isLongSiteEntry, shouldFollowTail, shouldKeepPinning, SITE_CLAMP_LINES } from '../../lib/siteLog'
-import { isPlatformEvent, summarizeActions, toolLabel } from '../../lib/toolLabels'
+import { countLines, isLongSiteEntry, shouldKeepPinning, SITE_CLAMP_LINES } from '../../lib/siteLog'
+import { isPlatformEvent, toolLabel } from '../../lib/toolLabels'
 import CheeseAvatar from '../CheeseAvatar.vue'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 import DeviceLiveViewer from '../DeviceLiveViewer.vue'
@@ -18,13 +15,6 @@ import DeviceLiveViewer from '../DeviceLiveViewer.vue'
 const props = withDefaults(
   defineProps<{
     topic: Topic | null
-    // 施工现场: this topic's AI tool-action log for the turn in flight.
-    // platform: amber dot (cheese action) vs neutral dot (plain work).
-    worklog?: { label: string; text: string; platform?: boolean }[]
-    // A turn is in flight — the live feed's newest line pulses.
-    working?: boolean
-    // Epoch ms when the current turn's first tool ran (drives the ⏱ elapsed).
-    workingSince?: number | null
     // This tab is the one on screen. Load happens on the rising edge, exactly
     // like opening the old drawer did.
     active?: boolean
@@ -32,7 +22,7 @@ const props = withDefaults(
     // 能换，所以这里不能写死「芝士」——这一栏和对话栏说的是同一个人。
     agentName?: string
   }>(),
-  { worklog: () => [], working: false, workingSince: null, active: false, agentName: '芝士' }
+  { active: false, agentName: '芝士' }
 )
 
 const loading = ref(false)
@@ -112,42 +102,10 @@ function scrollSiteToTail(): void {
   nextTick(() => requestAnimationFrame(pin))
 }
 
-// 本轮实时动作 appends to the bottom of the same list while a turn runs, so it
-// has to follow the tail too — otherwise 现场 opens on the newest entry and then
-// grows out of view while you watch it. Only when the reader is already parked
-// at the bottom: someone who scrolled up to read a tool argument is reading it.
-watch(
-  () => props.worklog.length,
-  () => {
-    const el = scrollRef.value
-    if (props.active && el && shouldFollowTail(el)) scrollSiteToTail()
-  }
-)
-
 // 现场实时终端: when a machine has this topic's screen open, 现场 embeds the real
-// pane instead of the rebuilt worklog. The probe hands back the screen
+// pane instead of the rebuilt timeline. The probe hands back the screen
 // WebSocket path, and 现场 embeds DeviceLiveViewer on it.
 const screenSid = ref<string | null>(null)
-
-// Live-turn elapsed seconds (ticks while `working`).
-const nowTick = ref(Date.now())
-let tickTimer: ReturnType<typeof setInterval> | null = null
-watch(
-  () => props.working,
-  (w) => {
-    if (tickTimer) clearInterval(tickTimer)
-    tickTimer = w ? setInterval(() => (nowTick.value = Date.now()), 1000) : null
-  },
-  { immediate: true }
-)
-onBeforeUnmount(() => {
-  if (tickTimer) clearInterval(tickTimer)
-})
-const liveElapsed = computed(() => {
-  if (!props.working || !props.workingSince) return null
-  return Math.max(0, Math.round((nowTick.value - props.workingSince) / 1000))
-})
-const liveSummary = computed(() => summarizeActions(props.worklog.map((w) => w.label)))
 
 async function load() {
   const tid = props.topic?.id
@@ -156,8 +114,8 @@ async function load() {
   errorMsg.value = null
   try {
     // Prefer the real pane on the machine running the turn; fall back to the
-    // worklog timeline. The terminal probe must never break 现场 — on any error
-    // it just stays null and the worklog view renders.
+    // rebuilt timeline. The terminal probe must never break 现场 — on any error
+    // it just stays null and the timeline renders.
     const [tx, term] = await Promise.all([
       getTranscript(tid, { limit: SITE_PAGE_SIZE }),
       getTerminal(tid).catch(() => null),
@@ -227,7 +185,9 @@ const LEGACY_VERB: Record<string, string> = {
 // from the table at write time is never frozen untranslated. Rows without meta
 // (pre-meta data) fall back to the baked content text.
 function eventVerb(b: Block): string {
-  if (b.meta?.tool) return toolLabel(b.meta.tool)
+  // as_tool 优先：一次 Bash 调用如果后端认出它其实在读文件，就按「读取文件」显示。
+  // tool 仍然如实记着真正跑的是哪个工具。
+  if (b.meta?.tool) return toolLabel(b.meta.as_tool ?? b.meta.tool)
   const first = (b.content.split('\n')[0] || '').replace(/^🔧\s*/, '')
   return LEGACY_VERB[first] ?? first
 }
@@ -263,9 +223,7 @@ function eventPlatform(b: Block): boolean {
 
     <!-- read-only transcript timeline (芝士 messages + tool events) -->
     <template v-else>
-      <div v-if="transcript.length === 0 && worklog.length === 0" class="text-center text-medium-emphasis py-6">
-        暂无现场记录
-      </div>
+      <div v-if="transcript.length === 0" class="text-center text-medium-emphasis py-6">暂无现场记录</div>
       <div v-else class="site-log pa-3">
         <div v-if="hasOlder" class="site-older">
           {{ loadingOlder ? '加载更早的现场…' : '更早的现场' }}
@@ -319,34 +277,6 @@ function eventPlatform(b: Block): boolean {
             </div>
           </div>
         </template>
-
-        <!-- 本轮实时动作 (live feed): what 芝士 is doing RIGHT NOW — newest line
-             pulses; the list clears when the turn ends and the persisted
-             transcript above becomes the record. -->
-        <template v-for="(act, i) in worklog" :key="'live-' + i">
-          <div class="site-act">
-            <v-icon
-              class="site-act__dot"
-              :class="{
-                'site-act__dot--platform': act.platform,
-                'site-act__dot--live': working && i === worklog.length - 1,
-              }"
-              size="8"
-              >mdi-circle</v-icon
-            >
-            <div class="site-act__body">
-              <span class="site-act__verb">{{ act.text }}</span>
-            </div>
-          </div>
-        </template>
-        <!-- 本轮聚合摘要 (Claude Code 风): deterministic counts + 耗时 -->
-        <div v-if="working && worklog.length" class="site-summary">
-          <v-icon class="site-act__dot site-act__dot--live" size="8">mdi-circle</v-icon>
-          <span>
-            {{ liveSummary }}
-            <template v-if="liveElapsed !== null"> （{{ liveElapsed }}s） </template>
-          </span>
-        </div>
       </div>
     </template>
   </div>
@@ -407,41 +337,14 @@ function eventPlatform(b: Block): boolean {
   font-size: 12.5px;
   line-height: 1.5;
 }
-.site-summary {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 8px;
-  padding-top: 6px;
-  border-top: 1px dashed var(--line-2);
-  font-size: 12px;
-  color: var(--muted);
-}
-@keyframes site-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.3;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .site-act__dot--live {
-    animation: none;
-  }
-}
 /* 圆点分级: neutral = plain work (read/search/run), amber = platform action
-   (cheese tool / cheese CLI / doc edit). --live (pulse) overrides both. */
+   (cheese tool / cheese CLI / doc edit). */
 /* 图标盒子没有文字基线，行改成顶对齐后要手动把 8px 圆点压到第一行的中线上
-   ((12.5px × 1.5 − 8px) / 2 ≈ 5px)。摘要行是 align-items: center，不用补。 */
+   ((12.5px × 1.5 − 8px) / 2 ≈ 5px)。 */
 .site-act__dot {
   flex: 0 0 auto;
   margin-top: 5px;
   color: var(--faint);
-}
-.site-summary .site-act__dot {
-  margin-top: 0;
 }
 .site-act__argicon {
   flex: 0 0 auto;
@@ -450,11 +353,6 @@ function eventPlatform(b: Block): boolean {
 }
 .site-act__dot--platform {
   color: var(--accent);
-}
-/* Declared last so the live pulse wins over both dot tiers. */
-.site-act__dot--live {
-  color: rgb(var(--v-theme-primary));
-  animation: site-pulse 1.2s ease-in-out infinite;
 }
 .site-act__body {
   flex: 1 1 auto;
