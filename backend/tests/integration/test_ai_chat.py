@@ -1,3 +1,5 @@
+from datetime import UTC, datetime, timedelta
+
 from fastapi.testclient import TestClient
 
 from tests.integration.conftest import CreatedUser
@@ -120,6 +122,7 @@ class TestAIChatIntegration:
         assert data["conversation"]["title"] == "Updated Title"
 
     def test_get_quota(self, authenticated_user: CreatedUser, api_client: TestClient):
+        before = datetime.now(UTC)
         resp = api_client.get(
             "/ai/quota",
             headers={"Authorization": f"Bearer {authenticated_user.token}"},
@@ -131,3 +134,6 @@ class TestAIChatIntegration:
         assert "quota" in data
         quota = data["quota"]
         assert "daily" in quota or "remaining" in quota or "used" in quota
+        reset_at = datetime.fromisoformat(quota["resetTime"])
+        assert before < reset_at <= datetime.now(UTC) + timedelta(days=1)
+        assert (reset_at.hour, reset_at.minute, reset_at.second) == (0, 0, 0)

@@ -84,13 +84,13 @@
               <div class="d-flex justify-space-between align-center text-body-2 mb-2">
                 <span>今日剩余额度</span>
                 <span class="font-weight-medium">
-                  {{ userMenu.aiQuota.value?.remaining ?? '-' }}/{{ userMenu.aiQuota.value?.total ?? '-' }}
+                  {{ userMenu.aiQuota.value?.remaining ?? '-' }}/{{ userMenu.aiQuota.value?.daily ?? '-' }}
                 </span>
               </div>
 
               <v-progress-linear
                 :model-value="
-                  userMenu.aiQuota.value ? (userMenu.aiQuota.value.remaining / userMenu.aiQuota.value.total) * 100 : 0
+                  userMenu.aiQuota.value ? (userMenu.aiQuota.value.remaining / userMenu.aiQuota.value.daily) * 100 : 0
                 "
                 color="primary"
                 bg-color="primary-lighten-5"
@@ -100,7 +100,7 @@
 
               <div class="text-caption mt-1">
                 将在
-                {{ userMenu.aiQuota.value ? userMenu.dayjs(userMenu.aiQuota.value.reset_time).fromNow() : '-' }} 重置
+                {{ userMenu.aiQuota.value ? userMenu.dayjs(userMenu.aiQuota.value.resetTime).fromNow() : '-' }} 重置
               </div>
             </v-card-text>
           </v-card>

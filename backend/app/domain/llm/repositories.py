@@ -1,5 +1,5 @@
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -52,7 +52,9 @@ class AIUserQuotaRepository:
         entity.total_seu_consumed = (entity.total_seu_consumed or 0.0) + amount
         entity.updated_at = datetime.now(UTC)
         await self._session.flush()
-        reset_at = entity.last_reset_time or datetime.now(UTC)
+        reset_at = (datetime.now(UTC) + timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
         return new_remaining, reset_at
 
     async def get_quota(
@@ -60,7 +62,9 @@ class AIUserQuotaRepository:
     ) -> tuple[float, datetime]:
         entity = await self.get_or_create(user_id, daily_total)
         remaining = max(0.0, entity.remaining_seu or 0.0)
-        reset_at = entity.last_reset_time or datetime.now(UTC)
+        reset_at = (datetime.now(UTC) + timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
         return remaining, reset_at
 
 

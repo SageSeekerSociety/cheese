@@ -137,6 +137,8 @@ class TestAIUserQuotaRepository:
         remaining, reset_at = await repo.consume(10, 10.0, 100.0)
         assert remaining == 40.0
         assert existing.total_seu_consumed == 60.0
+        assert reset_at > datetime.now(UTC)
+        assert (reset_at.hour, reset_at.minute, reset_at.second) == (0, 0, 0)
 
     @pytest.mark.anyio
     async def test_consume_exhausted(self):
