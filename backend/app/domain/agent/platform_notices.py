@@ -64,6 +64,8 @@ EVENT_ACCEPT_CONFLICT: Final = "accept_conflict"
 EVENT_CARD_REJECTED: Final = "card_rejected"
 #: 验收卡被作废 —— 不是驳回：没人对代码下过判断，卡只是被收尾了。
 EVENT_CARD_VOIDED: Final = "card_voided"
+#: 验收卡的描述被更正了 —— 这次改动会在 main 的历史里说什么，变了。
+EVENT_CARD_REDESCRIBED: Final = "card_redescribed"
 #: 同步上游时合并冲突。
 EVENT_UPSTREAM_CONFLICT: Final = "upstream_conflict"
 #: A message expected to enter the live session had to return to the queue.
@@ -127,6 +129,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_ACCEPT_CONFLICT,
         EVENT_CARD_REJECTED,
         EVENT_CARD_VOIDED,
+        EVENT_CARD_REDESCRIBED,
         EVENT_UPSTREAM_CONFLICT,
         EVENT_DELIVERY_FALLBACK,
         EVENT_TURN_FAILED,

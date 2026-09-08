@@ -1944,10 +1944,20 @@ def push_topic_branch(project_id: uuid.UUID, topic_id: uuid.UUID, token: str) ->
     The branch as it stands is what the PR carries. --force-with-lease: a
     re-push after a conflict fix must move the remote branch, but never trample
     one somebody else moved."""
+    return push_branch(project_id, branch_for_tree(tree_for_place(topic_id)), token)
+
+
+def push_branch(project_id: uuid.UUID, branch: str, token: str) -> str:
+    """:func:`push_topic_branch`, named by BRANCH instead of by place.
+
+    The draft-PR sweep (#718) walks `work_trees` rows and has a tree in hand,
+    not a place. Going through a place would mean trusting the on-disk
+    「这个房间写哪棵树」marker to agree with the row it just read — and the
+    sweep's whole job is to act on trees the room may not be pointing at yet.
+    """
     repo = ensure_repo(project_id)
     if get_upstream(project_id) is None:
         raise ValidationError("未关联上游仓库，无法推分支")
-    branch = branch_for_tree(tree_for_place(topic_id))
     if not _branch_exists(repo, branch):
         raise ValidationError("话题没有分支，无法推送")
     _git(
@@ -1960,6 +1970,21 @@ def push_topic_branch(project_id: uuid.UUID, topic_id: uuid.UUID, token: str) ->
         env=_token_git_env(token),
     )
     return branch
+
+
+def branch_has_commits(project_id: uuid.UUID, branch: str) -> bool:
+    """Does *branch* exist and hold anything the base branch does not?
+
+    :func:`has_undelivered_commits` asked by branch — the fact the draft-PR
+    sweep needs, because "有东西" is exactly "this branch is ahead of main",
+    and a batch whose branch is empty (or does not exist yet) has nothing a PR
+    could carry.
+    """
+    repo = ensure_repo(project_id)
+    base = _base_branch(repo)
+    if not _branch_exists(repo, branch) or not _branch_exists(repo, base):
+        return False
+    return not _is_ancestor(repo, branch, base)
 
 
 def pr_base_branch(project_id: uuid.UUID) -> str:

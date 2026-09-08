@@ -52,6 +52,26 @@ class WorkTreeRepository:
         stmt = select(WorkTree).where(WorkTree.project_id == project_id)
         return list((await self._session.scalars(stmt)).all())
 
+    async def open_without_pr(self) -> list[WorkTree]:
+        """Batches that are taking work and have no PR yet (#718 拍板①).
+
+        The draft-PR sweep's whole input. `open` and `pr_number IS NULL` are
+        both part of the question rather than a filter on the answer: a sealed
+        or merged batch must never gain a PR after the fact, and a batch that
+        already has one is the case this sweep exists to stop re-asking GitHub
+        about.
+        """
+        stmt = select(WorkTree).where(
+            WorkTree.status == TreeStatus.open, WorkTree.pr_number.is_(None)
+        )
+        return list((await self._session.scalars(stmt)).all())
+
+    async def record_pr(self, tree: WorkTree, *, number: int, url: str | None) -> None:
+        """Remember which PR this batch is being written into."""
+        tree.pr_number = number
+        tree.pr_url = (url or "")[:255] or None
+        await self._session.flush()
+
     async def add(
         self,
         *,

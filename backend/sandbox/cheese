@@ -683,11 +683,25 @@ def build_parser() -> argparse.ArgumentParser:
             "写、代码又进了这一批,就照实再报一次,它确实写了两批。\n"
             "\n"
             "声明只在递卡这一刻收,递出去就补不上了(卡上没有改声明的入口,同一棵树上\n"
-            "也递不出第二张卡)。忘了带只能请验收人作废这张卡、你再重递一次。"
+            "也递不出第二张卡)。忘了带只能请验收人作废这张卡、你再重递一次。\n"
+            "\n"
+            "**--subject / --body 不一样:递出去还能改**,用 `cheese describe`。评审说\n"
+            "「这句话不对」的时候改卡,平台会把 PR 正文一起改掉;只在 GitHub 上改 PR\n"
+            "正文没用——合进 main 的是卡上这一份。署名之所以不能改,是因为它是对\n"
+            "**事实**的断言(谁写的代码);描述是对改动的**说明**,改它正是评审要的。"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    pa.add_argument("reviewer", help="验收人的 handle(用 `cheese members` 查准确值)")
+    pa.add_argument(
+        "reviewer",
+        nargs="?",
+        default=None,
+        help=(
+            "验收人的 handle(用 `cheese members` 查准确值)。"
+            "不写就用项目设置里的默认验收人;两个都没有会当场打回。"
+            "要写 reason 就必须先写 reviewer(两个都是位置参数)"
+        ),
+    )
     pa.add_argument("reason", nargs="?", default="", help="为什么找这个人验收")
     pa.add_argument(
         "--subject",
@@ -709,6 +723,55 @@ def build_parser() -> argparse.ArgumentParser:
             "改动要走下一批的活都别填(平台分辨不了,只能你说)。"
             "不填就一行不写:错的署名比没有署名更糟"
         ),
+    )
+
+    pdesc = sub.add_parser(
+        "describe",
+        help="改这张待处理验收卡的提交标题/正文(PR 正文一起改)",
+        description=(
+            "更正你递出去那张卡的 --subject / --body。评审说「这句话不对」时用它。\n"
+            "\n"
+            "改的是**卡**,不是 GitHub 上那份 PR 正文——卡才是两者共同的源头:\n"
+            "PR 正文是它渲染出来的,采纳时压进 main 的那个提交也是它写的。只在\n"
+            "GitHub 上改 PR 正文,合进去的仍然是递卡那一刻的快照,于是 main 的历史\n"
+            "里留下一句评审早就指出不对的话(#735 就是这么发生的)。改卡,平台顺手\n"
+            "把 PR 正文也改掉,两边不可能各说各话。\n"
+            "\n"
+            "只在卡还没被采纳时能改。采纳之后 main 上那个提交已经存在了,改卡没有\n"
+            "意义——那种情况在房间里记一条更正。\n"
+            "\n"
+            "**--task 的署名改不了,也不给改**:署名是对事实的断言(哪个分身写的),\n"
+            "事后能改就等于能往别人头上安署名;描述是对改动的说明,改它正是评审要的。\n"
+            "\n"
+            "谁在什么时候把它从什么改成了什么,会记在房间里。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    pdesc.add_argument(
+        "--subject", default=None, help="新的提交标题(Conventional Commits,当场校验)"
+    )
+    pdesc.add_argument(
+        "--body",
+        default=None,
+        help="新的提交正文(写为什么)。传空串就是把正文清空;不传就是不动它",
+    )
+
+    sub.add_parser(
+        "ready",
+        help="把这批活的 draft PR 翻成 ready(只翻这一件事)",
+        description=(
+            "说一句「这份东西可以看了」。\n"
+            "\n"
+            "有东西就有 PR:这批活第一次提交之后,平台就给它开了一个 draft PR\n"
+            "(draft 是 GitHub 里「进行中」的意思)。这条命令把它翻成 ready。\n"
+            "\n"
+            "它**只**做这一件事:不合并、不改署名、不动 PR 别的任何字段,也不递卡。\n"
+            "要把活交给某个人验收,那是 `cheese accept-request`——它自己也会顺手把\n"
+            "draft 翻掉,所以递卡之前不用先跑这条。\n"
+            "\n"
+            "本来就不是 draft 的 PR,跑它不算错,会直说「本来就不是 draft」。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
     pt = sub.add_parser(
@@ -1020,13 +1083,39 @@ def main() -> None:
         }
         _call("POST", f"/projects/{proj}/alerts", body)
         print(f"已发送通知给 {a.to or '所有人'}。")
+    elif a.cmd == "ready":
+        topic = _need("CHEESE_TOPIC", TOPIC)
+        r = _call("POST", f"/topics/{topic}/ready")["data"]
+        if r.get("ready"):
+            print(f"PR #{r['pr_number']} 已从 draft 翻成 ready：{r.get('pr_url') or ''}")
+        else:
+            print(r.get("reason") or "没有可以翻的 PR。")
+    elif a.cmd == "describe":
+        topic = _need("CHEESE_TOPIC", TOPIC)
+        if a.subject is None and a.body is None:
+            print("[cheese] describe 至少要给 --subject 或 --body", file=sys.stderr)
+            sys.exit(2)
+        body = {}
+        if a.subject is not None:
+            body["change_subject"] = a.subject
+        if a.body is not None:
+            body["change_body"] = a.body
+        r = _call("POST", f"/topics/{topic}/accept-card/describe", body)["data"]
+        print(
+            f"验收卡的描述已更正（PR 正文同步改掉了）。现在的标题："
+            f"{r.get('change_subject') or '（空）'}"
+        )
     elif a.cmd == "accept-request":
         topic = _need("CHEESE_TOPIC", TOPIC)
-        _call("POST", f"/topics/{topic}/accept-card",
-              {"reviewer_handle": a.reviewer, "routing_reason": a.reason,
-               "change_subject": a.subject, "change_body": a.body,
-               "task_ids": a.task or []})
-        print(f"已把验收卡递给 {a.reviewer}。")
+        payload = {"routing_reason": a.reason, "change_subject": a.subject,
+                   "change_body": a.body, "task_ids": a.task or []}
+        # 不写验收人 = 用项目默认验收人。**不要**在这里塞一个空串:后端把
+        # 「没说」和「说了空的」当同一件事处理会掩盖真正的空输入,而它给的
+        # 那句打回文案正是这条命令唯一能帮上忙的地方。
+        if a.reviewer:
+            payload["reviewer_handle"] = a.reviewer
+        r = _call("POST", f"/topics/{topic}/accept-card", payload)["data"]
+        print(f"已把验收卡递给 {r.get('reviewer_handle') or a.reviewer}。")
         if not a.task:
             # 别在这里说「重递一次带上 --task」：卡已经 pending，同一棵树上再递
             # 一张会被 create_card 直接拒掉，照着做必然失败。声明只在递卡这一刻

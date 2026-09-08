@@ -32,6 +32,7 @@ from app.domain.review.github_pr import (
 from app.domain.review.models import AcceptStatus
 from app.domain.review.schemas import (
     AcceptCardCreate,
+    AcceptCardDescribe,
     AcceptDecision,
     ApprovalCreate,
     AutoMergeDecision,
@@ -97,6 +98,48 @@ async def push_fix(topic_id: uuid.UUID, db: DbSession) -> dict:
     result = await svc.push_fix(topic_id)
     await db.commit()
     return ok(result)
+
+
+@router.post("/topics/{topic_id}/ready")
+async def mark_ready(topic_id: uuid.UUID, db: DbSession) -> dict:
+    """把这批活的 draft PR 翻成 ready —— 只翻这一件事 (#718 拍板①)。
+
+    有东西就有 PR：第一次提交时平台就开了一个 draft PR（draft 是 GitHub 里
+    「进行中」的意思）。这条路由是它的另一半——说一句「可以看了」。它不合并、
+    不改署名、不动 PR 的任何别的字段，也不递卡：递卡是把活交给某个具体的人，
+    那是另一件事，而且它自己也会顺手把 draft 翻掉。
+    """
+    result = await AcceptService(db).mark_ready(topic_id)
+    await db.commit()
+    return ok(result)
+
+
+@router.post("/topics/{topic_id}/accept-card/describe")
+async def describe_card(
+    topic_id: uuid.UUID,
+    body: AcceptCardDescribe,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """更正待处理验收卡的描述，并把 PR 正文一起改掉。
+
+    评审说「这句话不对」的时候，能改的必须是**卡**，因为卡才是 PR 正文和最终
+    squash 正文共同的源头。只改 GitHub 上那份 PR 正文的话，合进 main 的仍然是
+    递卡那一刻的快照——#735 就是这么在 `1c298199a` 里留下一句与事实不符的
+    历史陈述的。
+
+    署名（`Cheese-Task:`）没有这样的入口，而且不该有：见
+    `AcceptService.redescribe` 的 docstring。
+    """
+    actor = await resolver.resolve(fallback_handle=None, topic_id=topic_id)
+    card = await AcceptService(db).redescribe(
+        topic_id,
+        actor=actor.handle,
+        change_subject=body.change_subject,
+        change_body=body.change_body,
+    )
+    await db.commit()
+    return ok(await AcceptService(db).describe(card))
 
 
 @router.get("/topics/{topic_id}/accept-card")

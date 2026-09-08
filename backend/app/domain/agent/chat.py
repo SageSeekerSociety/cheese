@@ -537,6 +537,7 @@ _CHEESE_RESOURCE = {
     "conclude": "topics",
     "milestone": "milestone",
     "accept-request": "accept",
+    "describe": "accept",
     "notify": "notify",
 }
 

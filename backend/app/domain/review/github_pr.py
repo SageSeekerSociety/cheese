@@ -1424,11 +1424,19 @@ class GitHubPRClient:
         title: str,
         body: str,
         as_user_token: str | None = None,
+        draft: bool = False,
     ) -> dict:
         """Open (or find the already-open) PR for a branch.
 
         Re-submitting a card for the same topic must not fail on GitHub's
         "a pull request already exists" — the existing PR IS this topic's PR.
+
+        `draft` opens it as a draft — GitHub's word for 进行中 (#718 拍板①).
+        REST can only open one that way; it cannot flip an existing PR either
+        direction, which is why `mark_ready_for_review` below has to speak
+        GraphQL. An adopted PR keeps whatever draft state it already had: this
+        argument describes the PR being CREATED, and re-deriving the state of
+        one that already exists is `mark_ready_for_review`'s job.
 
         `as_user_token` is the requester's own user-to-server token, and it
         decides WHOSE PR this is: GitHub attributes a PR to whoever's
@@ -1440,7 +1448,14 @@ class GitHubPRClient:
         PR at all, and the fallback is invisible to everything downstream.
         """
         app_token, _ = await self._tokens.write_token()
-        payload = {"title": title, "head": head, "base": base, "body": body}
+        payload: dict[str, object] = {
+            "title": title,
+            "head": head,
+            "base": base,
+            "body": body,
+        }
+        if draft:
+            payload["draft"] = True
         async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
 
             async def _create(token: str) -> httpx.Response:
@@ -1501,6 +1516,73 @@ class GitHubPRClient:
         (`parse_pull_request_status`), instead of each caller sniffing the
         raw json ad hoc."""
         return parse_pull_request_status(await self.pr_view(number))
+
+    @_as_pr_error
+    async def update_pr(self, number: int, *, title: str, body: str) -> dict:
+        """Rewrite the PR's title and description — nothing else.
+
+        The card is the single source of both, so correcting the card
+        (`AcceptService.redescribe`) writes here in the same breath: what a
+        reviewer reads on GitHub and what lands in `git log` come out of one
+        value, and cannot drift into saying two different things about one
+        change (#735 landed a description the review had already corrected).
+        """
+        token, _ = await self._tokens.write_token()
+        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+            resp = await client.patch(
+                self._url(f"/pulls/{number}"),
+                json={"title": title, "body": body},
+                headers=self._headers(token),
+            )
+        if resp.status_code != 200:
+            raise GitHubPRError(
+                f"PR 正文更新失败 (HTTP {resp.status_code}): {resp.text[:300]}"
+            )
+        return resp.json()
+
+    @_as_pr_error
+    async def mark_ready_for_review(self, node_id: str) -> None:
+        """Flip a draft PR to ready — the ONE call here that is not REST.
+
+        REST can open a PR as a draft and cannot take it out of draft:
+        `PATCH /pulls/{n}` has no `draft` field, and GitHub exposes the
+        transition only as the GraphQL mutation `markPullRequestReadyForReview`,
+        keyed by the PR's node id (which the REST response already carries, so
+        nothing has to be stored for this). That is the whole reason a GraphQL
+        request appears in a REST client — it is a hole in the REST API, not a
+        second way of talking to GitHub, so this stays one private method
+        instead of growing a GraphQL layer nothing else would use.
+
+        Already-ready is not an error and not this method's business to detect:
+        the mutation is idempotent, and the caller (`AcceptService.mark_ready`)
+        is the one that knows whether it had anything to flip.
+
+        Failures raise. A draft PR that silently stayed draft is a delivery
+        nobody can review while everything on the platform says it is waiting
+        for them.
+        """
+        token, _ = await self._tokens.write_token()
+        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+            resp = await client.post(
+                f"{self._api_base}/graphql",
+                json={
+                    "query": (
+                        "mutation($id:ID!){markPullRequestReadyForReview("
+                        "input:{pullRequestId:$id}){pullRequest{isDraft}}}"
+                    ),
+                    "variables": {"id": node_id},
+                },
+                headers=self._headers(token),
+            )
+        if resp.status_code != 200:
+            raise GitHubPRError(
+                f"PR 转 ready 失败 (HTTP {resp.status_code}): {resp.text[:300]}"
+            )
+        # GraphQL answers 200 with an `errors` array, so a non-200 check alone
+        # would read every refusal as a success.
+        payload = resp.json()
+        if payload.get("errors"):
+            raise GitHubPRError(f"PR 转 ready 失败：{str(payload['errors'])[:300]}")
 
     @_as_pr_error
     async def merge_pr(self, number: int, *, title: str, message: str) -> dict:

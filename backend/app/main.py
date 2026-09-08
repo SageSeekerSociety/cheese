@@ -331,6 +331,11 @@ _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
     # a project-scoped credential reaches every topic of it.
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/tell$")),
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/accept-card$")),
+    # 更正卡片描述: 评审说「这句话不对」时,改的必须是卡(PR 正文和 squash 正文的
+    # 共同源头),而不是只改 GitHub 上那份渲染。改的人通常就是芝士。
+    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/accept-card/describe$")),
+    # 把 draft PR 翻成 ready: 「这份东西可以看了」,不合并、不递卡。
+    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/ready$")),
     # 重推是意图，不是定时器: the poller stopped committing on a timer, so this
     # is how an agent says "the tree is worth showing now".
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/push-fix$")),

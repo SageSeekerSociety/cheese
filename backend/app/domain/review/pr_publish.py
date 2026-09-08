@@ -153,8 +153,148 @@ async def open_pr_for_card(
         # thing here that is guaranteed to work.
         as_user_token=await _requester_token(session, topic_id),
     )
+    # The PR very often already exists by now: the batch's draft PR was opened
+    # at its first commit (#718 拍板①) and `open_pr` adopts it rather than
+    # failing on GitHub's "already exists". An adopted PR still carries the
+    # placeholder words the draft opened with, so the card's own subject/body
+    # has to be written onto it — otherwise the reviewer reads 「WIP: 房间名」
+    # while the squash commit says something else entirely.
+    await sync_pr_text(client, pr, title=title, body=body)
+    # 递卡的语义就是「请人来看」，所以卡一递出去，PR 就不再是 draft (#718 拍板①)。
+    # Not best-effort: a card that says 等验收 while GitHub still says 草稿 is a
+    # delivery nobody can review, and nothing else would ever say so.
+    if pr.get("draft") and pr.get("node_id"):
+        await client.mark_ready_for_review(str(pr["node_id"]))
+        pr["draft"] = False
     logger.info(
         "PR #%s ready for card %s (%s)", pr.get("number"), card_id, pr.get("html_url")
+    )
+    return pr
+
+
+async def sync_pr_text(
+    client: GitHubPRClient, pr: dict, *, title: str, body: str
+) -> None:
+    """Make the PR on GitHub say what `title`/`body` say — and only then.
+
+    Skipping the write when it would change nothing is not an optimisation: a
+    PATCH to a PR is an edit event on GitHub, and re-issuing it on every accept
+    poll would fill the timeline with edits that changed no character.
+    """
+    if pr.get("title") == title and (pr.get("body") or "") == body:
+        return
+    number = pr.get("number")
+    if number is None:
+        return
+    updated = await client.update_pr(int(number), title=title, body=body)
+    pr.update(updated)
+
+
+async def sweep_draft_prs(session_factory: async_sessionmaker) -> dict[str, int]:
+    """有东西就有 PR (#718 拍板①): open a draft PR for every batch that has
+    commits and no PR yet.
+
+    **Why a sweep and not a hook on the commit.** The platform never sees the
+    commit. A 分身 commits inside the shared worktree — no push, no webhook, no
+    tool the platform can intercept — so there is no event to hang this on, only
+    a fact to observe: the batch's branch is ahead of main. Observing it also
+    makes the answer indifferent to HOW the commit arrived (in the worktree,
+    over `git push` to `git_http`, by a human on the host), which an interception
+    at any one of those three could never be.
+
+    **The cost is latency, and it is the right thing to pay.** A first commit
+    can wait up to one tick for its PR. Draft means 进行中; nobody's decision
+    changes because the words「进行中」reached GitHub thirty seconds later. The
+    tick is the PR poller's own interval rather than a new setting — this runs
+    on the same clock as the other thing that watches PRs, and one more knob to
+    get wrong buys nothing.
+
+    Best-effort per tree: one project whose App installation is gone must not
+    stop every other room from getting its PR, so failures are counted and
+    logged rather than raised.
+    """
+    from app.domain.room_task.services import WorkTreeService
+
+    counts = {"opened": 0, "skipped": 0, "failed": 0}
+    if not enabled():
+        return counts
+    async with session_factory() as session:
+        trees_svc = WorkTreeService(session)
+        for tree in await trees_svc.open_without_pr():
+            try:
+                pr = await _open_draft_for_tree(session, tree)
+            except Exception:  # noqa: BLE001 — one bad tree must not end the sweep
+                counts["failed"] += 1
+                logger.warning(
+                    "draft PR not opened for tree %s", tree.id, exc_info=True
+                )
+                continue
+            if pr is None:
+                counts["skipped"] += 1
+                continue
+            await trees_svc.record_pr(
+                tree, number=int(pr["number"]), url=str(pr.get("html_url") or "")
+            )
+            counts["opened"] += 1
+        await session.commit()
+    return counts
+
+
+async def _open_draft_for_tree(session: AsyncSession, tree) -> dict | None:  # noqa: ANN001
+    """The draft PR for one batch, or None when this batch cannot have one yet.
+
+    None (not an error) for: a project with no App installation, a non-GitHub
+    upstream, and — the ordinary case, on every tick — a branch with nothing on
+    it. 有东西才有 PR: an empty batch is the state a room sits in between
+    deliveries, and opening a PR for it would put an empty diff in front of a
+    reviewer.
+    """
+    from app.domain.review import pr_text
+    from app.domain.room_task.place import PlaceResolver
+    from app.domain.workspace import identity
+
+    project_id = tree.project_id
+    tokens = await github_app_tokens_for_project(project_id, session)
+    if tokens is None:
+        return None
+    upstream = await asyncio.to_thread(ws.get_upstream, project_id)
+    parsed = parse_github_repo(upstream)
+    if parsed is None:
+        return None
+    branch = ws.branch_for_tree(tree.id)
+    if not await asyncio.to_thread(ws.branch_has_commits, project_id, branch):
+        return None
+    place = await PlaceResolver(session).resolve(tree.room_id)
+    if place is None:
+        return None
+    room = place.room
+
+    token, _ = await tokens.write_token()
+    await asyncio.to_thread(ws.push_branch, project_id, branch, token)
+    base = (
+        await asyncio.to_thread(
+            lambda: ws.upstream_default_branch(ws.ensure_repo(project_id), token=token)
+        )
+        or ws.DEFAULT_BRANCH
+    )
+    who = await identity.attribution(session, room)
+    client = GitHubPRClient(*parsed, tokens)
+    pr = await client.open_pr(
+        head=branch,
+        base=base,
+        # No `Reviewed-by` and no card: nobody has accepted, and the subject
+        # this change will land under is not written until somebody files a
+        # card. `WIP:` says both — and 递卡 replaces it (`sync_pr_text`).
+        title=f"WIP: {room.title or branch}"[:255],
+        body=pr_text.pr_body(room, "", None, who),
+        as_user_token=await _requester_token(session, room.id),
+        draft=True,
+    )
+    logger.info(
+        "draft PR #%s opened for tree %s (%s)",
+        pr.get("number"),
+        tree.id,
+        pr.get("html_url"),
     )
     return pr
 

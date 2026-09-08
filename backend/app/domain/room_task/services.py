@@ -71,10 +71,45 @@ class WorkTreeService:
                 room_id=room_id,
                 tree_id=room_id if first else None,
             )
+            await self._move_open_work_onto(current)
         # The workspace layer is sync and DB-free, so it cannot ask which tree a
         # room is on. Tell it — same arrangement `bind_room` uses for boxes.
         ws.bind_tree(room_id, current.id)
         return current
+
+    async def _move_open_work_onto(self, tree: WorkTree) -> None:
+        """Carry the room's still-open threads into the new batch.
+
+        A thread outlives a batch: the room delivers, and the worker that is
+        still going keeps writing — into the NEXT batch, because the one it was
+        dispatched into has landed and its branch is finished. `tree_id` is
+        where a thread's files are (see :class:`Task`), so it has to follow, or
+        the thread names a worktree nobody is writing in and its claims are
+        checked against a batch nobody is on.
+
+        Only OPEN threads. A closed one's tree is history — it says which batch
+        that work went out in, and moving it would rewrite that.
+        """
+        from app.domain.workspace import service as ws
+
+        for task in await TaskRepository(self._session).list_for_room(tree.room_id):
+            if task.status is not TaskStatus.open or task.tree_id == tree.id:
+                continue
+            task.tree_id = tree.id
+            ws.bind_tree(task.id, tree.id)
+        await self._session.flush()
+
+    async def open_without_pr(self) -> list[WorkTree]:
+        """Batches taking work that have no PR yet — the draft-PR sweep's input
+        (#718 拍板①). See :meth:`WorkTreeRepository.open_without_pr`."""
+        return await self._repo.open_without_pr()
+
+    async def record_pr(
+        self, tree: WorkTree, *, number: int, url: str | None
+    ) -> WorkTree:
+        """Remember which PR this batch is being written into."""
+        await self._repo.record_pr(tree, number=number, url=url)
+        return tree
 
     async def seal(self, tree: WorkTree) -> WorkTree:
         return await self._repo.seal(tree)
