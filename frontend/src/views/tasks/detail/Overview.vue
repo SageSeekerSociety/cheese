@@ -502,12 +502,12 @@ function createProjectFromTask() {
 
 watch(() => props.taskData?.id, loadTaskProjects, { immediate: true })
 
-const formatTaskDate = (date: number | string | Date | undefined) => {
+const formatTaskDate = (date: number | string | Date | null | undefined) => {
   if (!date) return '未设置'
   return dayjs(date).format('YYYY-MM-DD HH:mm')
 }
 
-const isDeadlineSoon = (date: number | string | Date | undefined) => {
+const isDeadlineSoon = (date: number | string | Date | null | undefined) => {
   if (!date) return false
   const deadlineDate = dayjs(date)
   const now = dayjs()
