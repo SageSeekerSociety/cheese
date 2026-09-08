@@ -14,6 +14,8 @@ from sqlalchemy.sql.elements import (
 
 from app.domain.block.models import Block, BlockKind
 from app.domain.identity.handles import CHEESE_HANDLE
+from app.domain.project.environment import project_environment
+from app.domain.project.models import Project
 from app.domain.topic.models import Topic, TopicKind, TopicProgress, TopicReadState
 
 TopicSortField = Literal["updated_at", "title", "last_activity_at"]
@@ -77,8 +79,10 @@ class TopicRepository:
         upgraded_from_block_id: uuid.UUID | None = None,
         agent_instance_id: uuid.UUID | None = None,
     ) -> Topic:
+        project = await self._session.get(Project, project_id)
         topic = Topic(
             project_id=project_id,
+            environment=project_environment(project.settings if project else None),
             title=title,
             parent_id=parent_id,
             kind=kind,
@@ -170,8 +174,10 @@ class TopicRepository:
         # Title is a rendering hint only; the sidebar/ChatPanel show the peer's
         # own name from the roster. Deterministic, no NL parsing (CLAUDE.md §4).
         title = f"私聊 · {owner} · {peer}" if peer else f"与芝士私聊 · {owner}"
+        project = await self._session.get(Project, project_id)
         topic = Topic(
             project_id=project_id,
+            environment=project_environment(project.settings if project else None),
             title=title,
             kind=TopicKind.topic,
             created_by=user_handle,

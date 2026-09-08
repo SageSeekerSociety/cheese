@@ -1,23 +1,21 @@
-"""Which agent is acting here, and whose memory that makes this.
-
-Every caller that used to ask "what handle does 芝士 write memory under in this
-topic" asks :meth:`AgentInstanceService.for_topic` instead. The answer walks one
-step at a time — the topic's own agent, else the project's default, else the
-implicit 芝士 — so a project that has never configured anything still resolves,
-without a row and without a migration.
-"""
+"""Resolve a room's selected agent, or the project's saved default agent."""
 
 import re
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
 from app.domain.agent.harness import harness_name
+from app.domain.agent_instance.configuration import (
+    AgentConfiguration,
+    initial_model,
+    validate_configuration,
+)
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.repositories import AgentInstanceRepository
-from app.domain.agent_type.services import AgentTypeService
+from app.domain.agent_type.library import preset_types
 from app.domain.identity.handles import (
     CHEESE_HANDLE,
     CHEESE_NAME,
@@ -26,7 +24,6 @@ from app.domain.identity.handles import (
 )
 from app.domain.memory.models import MemoryScope, agent_project_scope_id
 from app.domain.project.models import Project
-from app.domain.room_task.models import Task
 from app.domain.topic.models import Topic
 
 # An instance handle keys a memory pool (``{project}:{handle}``), so it may not
@@ -49,6 +46,7 @@ class ResolvedAgent:
     handle: str
     type_name: str | None
     display_name: str
+    configuration: dict = field(default_factory=dict)
 
 
 IMPLICIT_DEFAULT = ResolvedAgent(
@@ -84,23 +82,18 @@ class AgentInstanceService:
     def __init__(self, session: AsyncSession):
         self._session = session
         self._repo = AgentInstanceRepository(session)
-        self._types = AgentTypeService(session)
 
     # --- resolution ---------------------------------------------------------
 
     async def for_project(self, project: Project) -> ResolvedAgent:
         """The project's default agent."""
         if project.default_agent_instance_id is None:
-            return IMPLICIT_DEFAULT
+            return self.resolved(await self.materialize_default(project))
         instance = await self._repo.get(project.default_agent_instance_id)
-        return self.resolved(instance) if instance else IMPLICIT_DEFAULT
+        return self.resolved(instance or await self.materialize_default(project))
 
-    async def for_topic(self, topic: Topic | Task, project: Project) -> ResolvedAgent:
-        """The agent acting in *topic* — its own, else the project's default.
-
-        Takes a thread as readily as a room: both carry the pick on their own
-        row, and a thread is given the room's when the work goes out.
-        """
+    async def for_topic(self, topic: Topic, project: Project) -> ResolvedAgent:
+        """The agent acting in *topic* — its own, else the project's default."""
         if topic.agent_instance_id is not None:
             instance = await self._repo.get(topic.agent_instance_id)
             if instance is not None:
@@ -108,24 +101,16 @@ class AgentInstanceService:
         return await self.for_project(project)
 
     async def system_prompt(self, agent: ResolvedAgent) -> str | None:
-        """The system prompt *agent*'s type contributes, if it has one."""
-        return await self._types.system_prompt(agent.type_name)
+        """The role instructions saved on this agent."""
+        return agent.configuration.get("body") or None
 
     async def harness(self, agent: ResolvedAgent) -> str:
-        """Which harness this agent runs on — the platform's default when its
-        type declines to choose, which most do.
-
-        A type is 出厂设置: it says who an agent is, not which of a deployment's
-        runtimes it must use. Pinning one here would override a deployment that
-        ships something else, so a null means "whatever this platform runs" and
-        is resolved, not honoured as an absence.
-        """
-        resolved = await self._types.resolve(agent.type_name)
-        return harness_name(resolved.harness if resolved else None)
+        """The execution harness saved on this agent."""
+        return harness_name(agent.configuration.get("harness"))
 
     async def model(self, agent: ResolvedAgent) -> str | None:
-        """The model *agent* runs on, or None to follow the project's pick."""
-        return await self._types.model(agent.type_name)
+        """The explicit model saved on this agent."""
+        return agent.configuration.get("model")
 
     # --- management ---------------------------------------------------------
 
@@ -153,6 +138,7 @@ class AgentInstanceService:
         handle: str,
         type_name: str | None,
         display_name: str,
+        configuration: AgentConfiguration | None = None,
     ) -> AgentInstance:
         handle = handle.strip()
         if not _HANDLE_RE.match(handle):
@@ -166,19 +152,47 @@ class AgentInstanceService:
         if await self._repo.get_by_handle(project_id=project_id, handle=handle):
             raise ValidationError(f"这个项目里已经有 handle 为 {handle!r} 的 agent")
         await self._require_known_type(type_name)
+        project = await self._project(project_id)
+        config = configuration or await self.initial_configuration(project, type_name)
+        validate_configuration(config, project.settings)
         return await self._repo.create(
             project_id=project_id,
             handle=handle,
             type_name=type_name or None,
             display_name=display_name.strip() or CHEESE_NAME,
+            configuration=config.model_dump(),
         )
 
     async def set_type(
         self, instance: AgentInstance, type_name: str | None
     ) -> AgentInstance:
         await self._require_known_type(type_name)
+        project = await self._project(instance.project_id)
+        config = await self.initial_configuration(project, type_name)
+        validate_configuration(config, project.settings)
+        instance.configuration = config.model_dump()
         instance.type_name = type_name or None
         return instance
+
+    async def initial_configuration(
+        self, project: Project, type_name: str | None = None
+    ) -> AgentConfiguration:
+        preset = preset_types().get(type_name) if type_name else None
+        return AgentConfiguration(
+            body=preset.body if preset else "",
+            model=(preset.model if preset else None) or initial_model(project.settings),
+            harness=harness_name(preset.harness if preset else None),
+            skills=list(preset.skills) if preset else [],
+            mcp_servers=list(preset.mcp_servers) if preset else [],
+            effort=preset.effort if preset else None,
+        )
+
+    async def configure(
+        self, instance: AgentInstance, config: AgentConfiguration
+    ) -> None:
+        project = await self._project(instance.project_id)
+        validate_configuration(config, project.settings)
+        instance.configuration = config.model_dump()
 
     async def rename(self, instance: AgentInstance, display_name: str) -> AgentInstance:
         """What this agent is called. Its ``handle`` is deliberately untouched:
@@ -192,21 +206,22 @@ class AgentInstanceService:
         return instance
 
     async def deactivate(self, project: Project, instance: AgentInstance) -> None:
-        """Retire an agent: no new work goes to it, everything it has stays.
+        """Retire an agent while preserving its identity, rooms and memory.
 
-        Deliberately not a delete. The rooms already working with it keep
-        resolving it — :meth:`for_topic` looks the row up by id and never asks
-        whether it is still on offer — and its memory survives because the row
-        that keys the pool survives.
-
-        A retired agent cannot remain the project's default, or every new room
-        would be handed the one agent nobody may choose. Clearing the pointer is
-        the whole fix: :meth:`for_project` already answers ``IMPLICIT_DEFAULT``
-        when it is None.
+        New rooms need an active default, so the last active agent cannot retire.
+        Retiring the default selects another active agent for new rooms.
         """
+        active = [
+            row
+            for row in await self._repo.list_for_project(project.id)
+            if row.is_active and row.id != instance.id
+        ]
+        if not active:
+            # New rooms require a saved agent, with no implicit fallback.
+            raise ValidationError("请先创建另一个队友，再停用这个队友")
         instance.is_active = False
         if project.default_agent_instance_id == instance.id:
-            project.default_agent_instance_id = None
+            project.default_agent_instance_id = active[0].id
         await self._session.flush()
 
     async def set_project_default(
@@ -236,6 +251,7 @@ class AgentInstanceService:
             handle=IMPLICIT_DEFAULT.handle,
             type_name=None,
             display_name=IMPLICIT_DEFAULT.display_name,
+            configuration=(await self.initial_configuration(project)).model_dump(),
         )
         # Configuring the project's 芝士 is choosing it, so a retired row under
         # that handle comes back rather than becoming a default nobody may pick.
@@ -246,8 +262,14 @@ class AgentInstanceService:
         return instance
 
     async def _require_known_type(self, type_name: str | None) -> None:
-        if type_name and await self._types.resolve(type_name) is None:
+        if type_name and type_name not in preset_types():
             raise ValidationError(f"agent 类型 {type_name!r} 不存在")
+
+    async def _project(self, project_id: uuid.UUID) -> Project:
+        # Project creation also creates its first agent, so import at call time.
+        from app.domain.project.services import ProjectService
+
+        return await ProjectService(self._session).get_or_404(project_id)
 
     @staticmethod
     def resolved(instance: AgentInstance) -> ResolvedAgent:
@@ -256,4 +278,5 @@ class AgentInstanceService:
             handle=instance.handle,
             type_name=instance.type_name,
             display_name=instance.display_name or CHEESE_NAME,
+            configuration=instance.configuration,
         )

@@ -381,7 +381,7 @@ WCAG AA 要求正文 ≥ 4.5:1、大字号与图形 ≥ 3:1。深色主题实测
 | **固定调色板闸门** | **模板属性和 script 里的 `color="grey-*"` / `bg-white` / `text-grey-*`（见 1.2）** | **`.claude/scripts/check-repo-rules.sh`** |
 | 存量棘轮 | 以上全部只拦**新增**，存量冻结在基线里且只能减少 | `frontend/stylelint-baseline.json`、`frontend/palette-baseline.json` |
 
-**为什么固定调色板要单独一道闸门**：stylelint 只解析 CSS。`<template>` 的属性、`class` 里的工具类、`<script>` 里的 prop 默认值，它一个都看不见——所以 1.2 说的那一整类问题，此前没有任何闸门能发现，直到深色模式上线才暴露。这道闸门是纯文本匹配（bash + grep），跟着 `check-repo-rules.sh` 一起跑在 `task check`、验收卡的质量闸门和 CI 的 Repo Guards 里。
+**为什么固定调色板要单独一道闸门**：stylelint 只解析 CSS。`<template>` 的属性、`class` 里的工具类、`<script>` 里的 prop 默认值，它一个都看不见——所以 1.2 说的那一整类问题，此前没有任何闸门能发现，直到深色模式上线才暴露。这道闸门是纯文本匹配（bash + grep），跟着 `check-repo-rules.sh` 一起跑在 `task check` 和 CI 的 Repo Guards 里。
 
 **为什么要棘轮（ratchet）**：闸门上线那天，stylelint 这一侧的存量是 524 处（88 个文件），固定调色板名是 111 处（40 个文件）。规则一上线就全红的话，唯一的结局是被人关掉。棘轮把存量冻进基线，新增的一律拦下，修好了跑一次更新命令让基线单调下降。这个模式抄的是仓库里已有的 `tsc-ratchet.mjs`。**基线只能降不能升**——`--update-palette-baseline` 发现你想把某个文件的额度调高时会直接拒绝并告诉你是哪个文件。
 

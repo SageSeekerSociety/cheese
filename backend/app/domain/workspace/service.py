@@ -23,12 +23,10 @@ import uuid
 from collections.abc import Iterator
 from pathlib import Path
 
-from app.core.background import spawn
 from app.core.config import settings
 from app.core.errors import ConflictError, ValidationError
 from app.domain.agent.platform_failures import WORKSPACE_VCS_PERMS_CODE
 from app.domain.workspace import identity as identity_mod
-from app.domain.workspace.dogfood_notices import watch_dogfood_push
 from app.domain.workspace.textfile import (
     MAX_TEXT_BYTES,
     content_version,
@@ -54,8 +52,7 @@ SANDBOX_IMAGE = "python:3.12-slim"
 # today, so both sides must still be the same uid.
 #
 # 1000 = `node` in the sandbox image (node:22 + USER node, started with
-# `--user node`), which is the side we do not fully control — a project can
-# point `sandbox_image` at any other node-based image. The backend image is
+# `--user node`). The backend image is
 # built to match (backend/Dockerfile); tests/unit/test_workspace_uid_alignment.py
 # pins all three together.
 AGENT_UID = 1000
@@ -1355,6 +1352,20 @@ def _sync_shared_checkout(repo: Path, base: str, sha: str) -> None:
 _MERGE_RETRY_LIMIT = 5
 
 
+def _staged_is_empty(wt: Path) -> bool:
+    """Whether a `merge --squash` staged nothing (already merged, or the branch
+    is content-identical to the base)."""
+    return (
+        subprocess.run(
+            ["git", "diff", "--cached", "--quiet"],
+            cwd=wt,
+            capture_output=True,
+            timeout=20,
+        ).returncode
+        == 0
+    )
+
+
 def _merge_ref_into_base(
     project_id: uuid.UUID,
     repo: Path,
@@ -1364,6 +1375,8 @@ def _merge_ref_into_base(
     *,
     allow_unrelated_histories: bool = False,
     sync_checkout: bool = True,
+    squash: bool = False,
+    author: identity_mod.GitIdentity | None = None,
 ) -> dict:
     """Merge `merge_ref` into `base` without ever running the merge itself in
     the project's shared working directory. The merge happens in a throwaway
@@ -1373,6 +1386,13 @@ def _merge_ref_into_base(
     (`update-ref old new`) — if another accept landed on `base` in the
     meantime, this retries against the new tip rather than clobbering it or
     silently merging on top of a stale base.
+
+    `squash=True` lands the whole ref as ONE commit on `base` (#363): the
+    author knob names the human the work belongs to (falling back to 芝士),
+    the committer stays 芝士, same two-knob split as every commit the
+    platform makes (`workspace.identity`). A ref that adds nothing —
+    already merged, or content-identical — lands no commit at all and still
+    reports merged, matching what the merge form did for an ancestor.
 
     `sync_checkout=False` for a `base` that is NOT the project's base branch.
     The shared directory mirrors the base tip and nothing else; pointing it at a
@@ -1391,16 +1411,18 @@ def _merge_ref_into_base(
         with _isolated_worktree(project_id, repo, old_sha) as wt:
             args = [
                 "-c",
-                "user.name=芝士",
+                f"user.name={identity_mod.CHEESE_NAME}",
                 "-c",
-                "user.email=cheese@zhishi.local",
+                f"user.email={identity_mod.CHEESE_EMAIL}",
                 "merge",
-                "--no-ff",
-                "-q",
             ]
+            args += ["--squash"] if squash else ["--no-ff"]
+            args.append("-q")
             if allow_unrelated_histories:
                 args.append("--allow-unrelated-histories")
-            args += ["-m", message, merge_ref]
+            if not squash:  # --squash refuses -m: there is no commit yet
+                args += ["-m", message]
+            args.append(merge_ref)
             try:
                 _git(wt, *args)
             except ValidationError as exc:
@@ -1413,14 +1435,41 @@ def _merge_ref_into_base(
                 except ValidationError:
                     conflicts = []
                 try:
-                    _git(wt, "merge", "--abort")
+                    # A conflicted --squash leaves no MERGE_HEAD to abort, so
+                    # reset instead; the worktree is discarded either way, this
+                    # only keeps the conflict listing above honest next attempt.
+                    if squash:
+                        _git(wt, "reset", "-q", "--hard")
+                    else:
+                        _git(wt, "merge", "--abort")
                 except ValidationError:
                     pass
                 reason = (
                     "合并冲突：" + "、".join(conflicts[:20]) if conflicts else str(exc)
                 )
                 return {"merged": False, "reason": reason, "conflicts": conflicts}
-            new_sha = _git(wt, "rev-parse", "HEAD").strip()
+            if squash and _staged_is_empty(wt):
+                # Nothing to deliver (branch already merged / content-identical):
+                # minting an empty commit would put a delivery in history that
+                # delivered nothing.
+                new_sha = old_sha
+            elif squash:
+                _git(
+                    wt,
+                    "-c",
+                    f"user.name={identity_mod.CHEESE_NAME}",
+                    "-c",
+                    f"user.email={identity_mod.CHEESE_EMAIL}",
+                    "commit",
+                    "-q",
+                    "--author",
+                    str(author or identity_mod.CHEESE_IDENTITY),
+                    "-m",
+                    message,
+                )
+                new_sha = _git(wt, "rev-parse", "HEAD").strip()
+            else:
+                new_sha = _git(wt, "rev-parse", "HEAD").strip()
         try:
             _git(repo, "update-ref", f"refs/heads/{base}", new_sha, old_sha)
         except ValidationError:
@@ -1458,13 +1507,37 @@ def _merge_ref_into_base(
     }
 
 
-def merge_topic(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
-    """采纳 = merge (spec §6.3): merge the topic's branch into the base branch.
+def merge_topic(
+    project_id: uuid.UUID,
+    topic_id: uuid.UUID,
+    *,
+    message: str,
+    author: identity_mod.GitIdentity | None = None,
+) -> dict:
+    """采纳 = merge (spec §6.3): SQUASH the topic's branch into the base branch,
+    one commit per accepted delivery — the platform forge's merge has the same
+    shape as the GitHub lane's (#363), instead of `--no-ff` dragging every
+    branch commit (including 芝士's auto-snapshots) into main.
+
+    The caller writes the commit: `message` is the whole squash message
+    (subject + body + trailers — `pr_text.local_merge_commit_message`), and
+    `author` names the human the work belongs to, exactly as the GitHub lane's
+    squash product is authored by the requester. Both live with the accept card,
+    which this module cannot reach (no DB session here) — that is why they are
+    parameters and not lookups. Committer stays 芝士 regardless.
 
     Whatever is on the branch is what gets merged, and nothing is added to it on
     the way in. Work that was never committed was never delivered — the person
     who wrote it decides when it becomes a commit, and until they do it is not
     in the diff anyone reviewed either.
+
+    The ONE branch that still merges with `--no-ff`: a topic that completes an
+    upstream sync (`prepare_upstream_conflict_resolution`), recognizable as the
+    upstream tip being an ancestor of the branch but not of the base. Its whole
+    point is joining the upstream history — squashing it lands the resolved
+    CONTENT while leaving upstream's commits unreachable from base, so the next
+    `sync_upstream` still counts itself behind, re-merges, and hits the very
+    conflict the topic just resolved, forever.
 
     On conflict it aborts and reports, never half-merges."""
     repo = ensure_repo(project_id)
@@ -1478,9 +1551,38 @@ def merge_topic(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
             "noop": True,
             "reason": "topic is the base branch",
         }
-    return _merge_ref_into_base(
-        project_id, repo, base, branch, f"chore: merge {branch} into {base}"
+    tip = _known_upstream_tip(repo)
+    joins_upstream = (
+        tip is not None
+        and _is_ancestor(repo, tip, branch)
+        and not _is_ancestor(repo, tip, base)
     )
+    return _merge_ref_into_base(
+        project_id,
+        repo,
+        base,
+        branch,
+        message,
+        squash=not joins_upstream,
+        author=author,
+    )
+
+
+def _known_upstream_tip(repo: Path) -> str | None:
+    """The last-fetched upstream tip's sha, or None when the project has no
+    upstream (or it was never fetched). Non-raising counterpart of
+    `_upstream_ref`, for callers that only need to know whether a branch
+    carries the upstream history."""
+    for name in (DEFAULT_BRANCH, "master"):
+        probe = subprocess.run(
+            ["git", "rev-parse", "--verify", "-q", f"{UPSTREAM_REMOTE}/{name}"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+        )
+        if probe.returncode == 0:
+            return probe.stdout.strip()
+    return None
 
 
 def _is_ancestor(repo: Path, ref: str, of: str) -> bool:
@@ -1612,9 +1714,15 @@ def _fast_forward_base(project_id: uuid.UUID, repo: Path, base: str, ref: str) -
     }
 
 
-def sync_upstream(project_id: uuid.UUID) -> dict:
+def sync_upstream(project_id: uuid.UUID, *, token: str | None = None) -> dict:
     """同步上游: bring the project's base branch up to the upstream's default
     branch.
+
+    `token` is the platform App's installation token when the project is bound
+    to GitHub, and the fetch authenticates with that and nothing else. An
+    unbound project fetches with no credential at all: a private upstream it
+    is not bound to fails here, visibly, rather than being read on a key the
+    platform cannot account for.
 
     **For a bound project the base branch is a MIRROR of the upstream's default
     branch, not a branch of its own.** That is the whole design, and getting it
@@ -1636,7 +1744,13 @@ def sync_upstream(project_id: uuid.UUID) -> dict:
     if get_upstream(project_id) is None:
         return {"synced": False, "reason": "未关联上游仓库"}
     try:
-        _git(repo, "fetch", UPSTREAM_REMOTE, timeout=120)
+        _git(
+            repo,
+            "fetch",
+            UPSTREAM_REMOTE,
+            timeout=120,
+            env=_token_git_env(token) if token else None,
+        )
         ref = _upstream_ref(repo)
     except ValidationError as exc:
         return {"synced": False, "reason": str(exc)}
@@ -1682,11 +1796,16 @@ def prepare_conflict_resolution(
 
 
 def prepare_upstream_conflict_resolution(
-    project_id: uuid.UUID, topic_id: uuid.UUID
+    project_id: uuid.UUID, topic_id: uuid.UUID, *, token: str | None = None
 ) -> list[str]:
     """同步上游冲突 → 派芝士解决的前置。Same contract as
     `prepare_conflict_resolution`, but the side being merged in is the UPSTREAM
     branch rather than the project's base.
+
+    `token` is the same credential `sync_upstream` fetches with: the App's
+    installation token for a bound project, nothing for an unbound one. The
+    conflict this materializes was found by a fetch that used it, and the
+    re-fetch here reads the same private upstream.
 
     Why this exists at all: `sync_upstream` aborts cleanly on conflict and
     reports — which is the right thing for the shared repo, but on its own it is
@@ -1695,12 +1814,19 @@ def prepare_upstream_conflict_resolution(
     had diverged simply could not pull, and every later sync hit the same wall.
 
     Accepting the resulting topic finishes the sync: the merge commit 芝士 makes
-    carries upstream as a parent, so `merge_topic` folding it into base brings
-    the upstream history along with the resolution."""
+    carries upstream as a parent, and `merge_topic` recognizes such a branch and
+    folds it in with a real merge (its one non-squash case), so base gains the
+    upstream history along with the resolution."""
     repo = ensure_repo(project_id)
     # A commit id rather than a ref name: `upstream/main` means nothing inside
     # the worktree until it fetches, and a raw sha needs no name at all.
-    _git(repo, "fetch", UPSTREAM_REMOTE, timeout=120)
+    _git(
+        repo,
+        "fetch",
+        UPSTREAM_REMOTE,
+        timeout=120,
+        env=_token_git_env(token) if token else None,
+    )
     return _materialize_conflicts(
         project_id, topic_id, _git(repo, "rev-parse", _upstream_ref(repo))
     )
@@ -1763,11 +1889,23 @@ def _materialize_conflicts(
     return files
 
 
-def upstream_default_branch(repo: Path) -> str | None:
+def upstream_default_branch(repo: Path, *, token: str | None = None) -> str | None:
     """The upstream's own default branch (what its HEAD points at), so a push
-    lands where that repo actually keeps its trunk instead of a guessed name."""
+    lands where that repo actually keeps its trunk instead of a guessed name.
+
+    `token` is the App's installation token for a bound project: a private
+    upstream answers `ls-remote` to nothing else, and without it the caller
+    falls back to guessing `main`."""
     try:
-        out = _git(repo, "ls-remote", "--symref", UPSTREAM_REMOTE, "HEAD", timeout=60)
+        out = _git(
+            repo,
+            "ls-remote",
+            "--symref",
+            UPSTREAM_REMOTE,
+            "HEAD",
+            timeout=60,
+            env=_token_git_env(token) if token else None,
+        )
     except ValidationError:
         return None
     for line in out.splitlines():
@@ -1777,109 +1915,17 @@ def upstream_default_branch(repo: Path) -> str | None:
     return None
 
 
-def push_back(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
-    """采纳即上线: propagate an accepted merge to the upstream repo.
-
-    采纳 IS the merge — the topic branch is already merged into the project's
-    base by the time we get here — so the upstream should receive THAT merge,
-    fast-forward, not a side branch waiting for someone to decide again. Landing
-    it must never need cheese-specific setup in the target repo (the whole point
-    of "import a repo and it just works").
-
-    Order:
-      1. fast-forward the upstream's own default branch (never forced — a
-         rejected push means the upstream moved or protects the branch, which is
-         information, not something to overwrite);
-      2. if that is refused, fall back to pushing ``dogfood/<topic>`` so the work
-         is never stuck on our side, and say so — the caller surfaces it instead
-         of leaving the user to wonder why nothing shipped.
-
-    Auth comes from the HOST's git credentials, never from the DB. A local-path
-    upstream additionally runs its ``scripts/on-dogfood-push.sh`` DETACHED
-    (operator-trusted only for local paths)."""
-    repo = ensure_repo(project_id)
-    url = get_upstream(project_id)
-    if not url:
-        return {"pushed": False, "mode": "none", "reason": "无上游，跳过回推"}
-    base = _base_branch(repo)
-    branch = f"dogfood/{topic_id.hex[:8]}"
-    target = upstream_default_branch(repo) or base
-    if not url.startswith("/"):
-        # Take the upstream's new commits FIRST. A fast-forward push is refused
-        # whenever the upstream moved since the project was imported — i.e. on any
-        # repo with other contributors — and every accept would silently degrade
-        # to a side branch (observed live: "remote contains work that you do not
-        # have locally"). Syncing here makes landing the normal outcome and keeps
-        # the merge semantics identical to 同步上游 (conflicts abort cleanly).
-        synced = sync_upstream(project_id)
-        if not synced.get("synced"):
-            return {
-                "pushed": False,
-                "mode": "blocked",
-                "target": target,
-                "reason": f"上游同步失败，未回推：{synced.get('reason', '')}",
-            }
-        # 120s: the first remote push negotiates history (the remote already has
-        # upstream's objects, so the delta stays small — but be safe).
-        try:
-            _git(repo, "push", UPSTREAM_REMOTE, f"{base}:{target}", timeout=120)
-            return {"pushed": True, "mode": "upstream", "target": target}
-        except ValidationError as exc:
-            reason = str(exc)[-400:]
-            _git(repo, "push", "-f", UPSTREAM_REMOTE, f"{base}:{branch}", timeout=120)
-            return {
-                "pushed": True,
-                "mode": "branch",
-                "branch": branch,
-                "target": target,
-                "reason": reason,
-            }
-    # Local-path upstream: keep the branch + hook flow (the hook merges/deploys).
-    # -f: re-accepting (after revoke / a follow-up round) moves the same branch.
-    _git(repo, "push", "-f", UPSTREAM_REMOTE, f"{base}:{branch}", timeout=120)
-    hook = Path(url) / "scripts" / "on-dogfood-push.sh"
-    hook_started = False
-    if hook.is_file() and os.access(hook, os.X_OK):
-        log = Path(url) / "tmp_dogfood_push.log"
-        # The log is shared across every push-back run for this project (and a
-        # re-accept can reuse the same branch name), so grepping it for our
-        # branch would risk picking up a stale prior run. Recording the byte
-        # offset before we start pins the watcher to exactly this run's output.
-        log_offset = log.stat().st_size if log.exists() else 0
-        with open(log, "a") as out:
-            proc = subprocess.Popen(  # noqa: S603 — operator-trusted local repo hook
-                [str(hook), branch],
-                cwd=url,
-                stdout=out,
-                stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL,
-                start_new_session=True,  # survives our own redeploy
-            )
-        hook_started = True
-        # Report the eventual result back into the topic timeline without
-        # making this call wait for it (accept() must return immediately).
-        # `spawn` holds a strong reference (asyncio keeps only a weak one) and
-        # is a no-op with no running loop, e.g. sync tests/scripts. This watcher
-        # outlives a whole subprocess, so it is precisely the shape that can be
-        # collected mid-await, taking the topic's push result with it.
-        spawn(
-            watch_dogfood_push(topic_id, proc, log, log_offset, branch),
-            name=f"dogfood push watch topic={topic_id}",
-        )
-    return {"pushed": True, "mode": "branch", "branch": branch, "hook": hook_started}
-
-
-def _token_push_env(token: str) -> dict[str, str]:
-    """Subprocess env that authenticates one git push with a GitHub token.
+def _token_git_env(token: str) -> dict[str, str]:
+    """Subprocess env that authenticates one git push or fetch with a GitHub
+    token.
 
     The token travels via env var into an inline credential helper — never argv
-    (visible in ps), never disk. The helper list is reset first: the container
-    wires a store-file helper through GIT_CONFIG_* (compose), and letting it run
-    first would push with the host credential instead of the token's identity.
+    (visible in ps), never disk. The helper list is reset first so that nothing
+    configured elsewhere (a helper in the backend's persistent HOME, say) can
+    answer before this one and act as some other identity.
     """
     helper = (
-        "!f() { echo username=x-access-token; "
-        'echo "password=$CHEESE_GIT_PUSH_TOKEN"; }; f'
+        '!f() { echo username=x-access-token; echo "password=$CHEESE_GIT_TOKEN"; }; f'
     )
     return {
         **os.environ,
@@ -1888,7 +1934,7 @@ def _token_push_env(token: str) -> dict[str, str]:
         "GIT_CONFIG_VALUE_0": "",
         "GIT_CONFIG_KEY_1": "credential.helper",
         "GIT_CONFIG_VALUE_1": helper,
-        "CHEESE_GIT_PUSH_TOKEN": token,
+        "CHEESE_GIT_TOKEN": token,
     }
 
 
@@ -1911,7 +1957,7 @@ def push_topic_branch(project_id: uuid.UUID, topic_id: uuid.UUID, token: str) ->
         UPSTREAM_REMOTE,
         f"{branch}:{branch}",
         timeout=120,
-        env=_token_push_env(token),
+        env=_token_git_env(token),
     )
     return branch
 
@@ -2148,13 +2194,11 @@ def push_topic_branch_for_github_pr(
     """两阶段采纳 (PR迭代式): push the topic's OWN branch (not the base) to the
     project's connected GitHub repo under `remote_branch`, authenticated as
     the approving human's own token — never the App's, since attribution is
-    the point (see the PR trailer). Distinct from push_back(), which pushes
-    the ALREADY-MERGED base branch via the host's own git credentials and the
-    `upstream` remote; this instead prepares a branch for review, using
+    the point (see the PR trailer). This prepares a branch for review, using
     whichever repo #192 connected the project to (not necessarily the same
     remote `push_topic_branch` above pushes to).
 
-    Auth reuses `_token_push_env` (credential helper via env var, never argv)
+    Auth reuses `_token_git_env` (credential helper via env var, never argv)
     rather than embedding the token in the push URL. Raises ValidationError on
     any git failure (bad/expired token, network, GitHub outage) — the caller
     treats that as "mechanism unavailable" and degrades to the old
@@ -2175,7 +2219,7 @@ def push_topic_branch_for_github_pr(
     if not _branch_exists(repo_path, branch):
         raise ValidationError("话题还没有可推送的分支")
     url = _github_push_url(owner, repo)
-    env = _token_push_env(token)
+    env = _token_git_env(token)
     refspec = f"{branch}:refs/heads/{remote_branch}"
     try:
         _git(repo_path, "push", url, refspec, timeout=120, env=env)
@@ -2243,13 +2287,6 @@ def session_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     spool = d / "cheese-spool"
     spool.mkdir(parents=True, exist_ok=True)
     _loosen(str(spool), 0o777)
-    # Same treatment for `cheese await`'s output logs: they live in the session
-    # mount (not the container's own filesystem) so a multi-hour command's output
-    # outlives the container that ran it, and not in the worktree so it never
-    # reaches a commit.
-    awaited = d / "cheese-await"
-    awaited.mkdir(parents=True, exist_ok=True)
-    _loosen(str(awaited), 0o777)
     skills_dst = d / "skills"
     if _SKILL_SRC.is_dir():
         shutil.copytree(_SKILL_SRC, skills_dst, dirs_exist_ok=True)
@@ -2303,15 +2340,6 @@ def spool_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     mounts to /home/node/.claude), and the backend reconciles from it. Mirrors
     session_dir's base so both sides agree on ONE location."""
     return identity_mod.session_dir(project_id, topic_id) / "cheese-spool"
-
-
-def await_log_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
-    """Host path of the topic's `cheese await` output logs. The container writes
-    here via CHEESE_AWAIT_LOGS=/home/node/.claude/cheese-await (the session dir
-    mounts to /home/node/.claude), so the output of a command that runs for hours
-    survives the container being rebuilt under it. Mirrors spool_dir's base so
-    both sides agree on ONE location."""
-    return identity_mod.session_dir(project_id, topic_id) / "cheese-await"
 
 
 # `docker info` costs ~50ms, and the answer changes only when someone starts or

@@ -9,8 +9,6 @@ a top-level ``router`` is included. This lets domains be added without editing
 this file.
 """
 
-# dogfood loop: accepted on cheesex, deployed to dev (2026-07-18)
-
 import importlib
 import logging
 import pkgutil
@@ -319,24 +317,18 @@ register_all_permissions()
 # not follow a route that moves. #370 step 2 flattened the 2.0 prefix and every
 # one of them stopped matching, which does not fail: it silently opens the
 # cheese write-surface to anyone who can reach the port. The suite caught it
-# (test_project_agent_credential, test_ask_options, test_await_wake,
-# test_memory_search all went from "refused" to "allowed"), which is the only
+# (test_project_agent_credential, test_ask_options and test_memory_search all
+# went from "refused" to "allowed"), which is the only
 # reason to say it out loud here: a gate defined by strings has to be moved by
 # hand whenever the strings it names do.
 _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/webhook-token$")),
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/ask$")),
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/decision$")),
-    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/background-task$")),
-    (
-        "POST",
-        re.compile(r"^/topics/(?P<topic>[^/]+)/background-task/[^/]+/done$"),
-    ),
-    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/return-conclusion$")),
-    # 母子传话: the scoping id is the SENDER (whose turn is talking); the receiver
-    # is in the body and is checked against the parent/child edge by
-    # `TopicRelayService.direction` — this gate can only prove "some agent of this
-    # project", because a project-scoped credential reaches every topic of it.
+    # 留话给一条活: the scoping id is the SENDER (the room whose turn is talking);
+    # the receiver is in the body and is checked against the threads that room
+    # dispatched — this gate can only prove "some agent of this project", because
+    # a project-scoped credential reaches every topic of it.
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/tell$")),
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/accept-card$")),
     # 重推是意图，不是定时器: the poller stopped committing on a timer, so this
@@ -348,15 +340,6 @@ _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/check-result$")),
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/lock$")),
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/unlock$")),
-    # 结论卡: settled by the PARENT during its own turn, so the scoping id in
-    # the URL is the receiver, not the sub-topic that produced the card.
-    (
-        "POST",
-        re.compile(
-            r"^/topics/(?P<topic>[^/]+)/conclusion-cards/[^/]+/"
-            r"(accept|need-evidence|escalate)$"
-        ),
-    ),
     ("POST", re.compile(r"^/projects/(?P<project>[^/]+)/memory$")),
     ("POST", re.compile(r"^/projects/(?P<project>[^/]+)/memory/search$")),
     # 记忆整理: the topic is the turn that is SPEAKING; which pools it may

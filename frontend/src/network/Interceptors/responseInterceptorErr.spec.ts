@@ -54,7 +54,7 @@ describe('responseInterceptorErr', () => {
     )
   })
 
-  it('a write behind a 502 page says the operation did not land', () => {
+  it('a write behind a 502 page leaves completion unknown', () => {
     const error = {
       response: {
         status: 502,
@@ -67,7 +67,7 @@ describe('responseInterceptorErr', () => {
       expect.objectContaining<Partial<ServerError>>({
         name: 'ServerError',
         code: 502,
-        message: '服务暂时不可达，刚才的操作没有送达，请稍后重试（HTTP 502）',
+        message: '服务暂时不可达，无法确认操作是否完成，请刷新查看后再重试（HTTP 502）',
       })
     )
   })

@@ -16,7 +16,9 @@ Per request:
   5. let the device commit and push its own worktree back over git smart-HTTP.
 """
 
+import asyncio
 import hashlib
+import json
 import logging
 import time
 import uuid
@@ -51,6 +53,7 @@ from app.domain.agent.platform_failures import (
 )
 from app.domain.device.service import DeviceService
 from app.domain.device.supply import (
+    Supply,
     default_visibility,
     has_runnable_transport,
 )
@@ -71,6 +74,15 @@ _LAUNCHER_SHIP_TIMEOUT_S = 30
 DeviceResolver = Callable[
     [uuid.UUID, uuid.UUID], Awaitable["tuple[str, int, str] | None"]
 ]
+
+
+class EnvironmentPreparationError(ScreenSetupError):
+    def __init__(self, status: dict):
+        self.environment_status = status
+        super().__init__(
+            "环境准备失败，芝士还没有开始处理这条消息。",
+            failure_code="environment_preparation_failed",
+        )
 
 
 def _git_author(project_id: uuid.UUID, topic_id: uuid.UUID) -> tuple[str, str] | None:
@@ -136,6 +148,8 @@ async def resolve_pinned_device(
     chosen = await service.topic_binding(topic_id)
     if chosen is not None:
         device_id = chosen.device_id
+        if not await service.serves_project(device_id, project_id):
+            raise ScreenSetupError("设备已移出团队或项目，请联系设备所有者")
         if await service.get_hosted_device(device_id) is None:
             raise ScreenSetupError(DEVICE_NOT_HOSTED_MESSAGE)
         if not is_online(device_id):
@@ -366,6 +380,37 @@ def device_home_dir(project_id: uuid.UUID, place_id: uuid.UUID) -> str:
     return f"{DEVICE_HOME_ROOT}/{project_id}/{place_id}"
 
 
+async def environment_status(
+    hub: DeviceHub,
+    device_id: str,
+    project_id: uuid.UUID,
+    topic_id: uuid.UUID,
+    *,
+    action: str = "status",
+) -> dict:
+    home = device_home_dir(project_id, topic_id)
+    reset_marker = (
+        'mkdir -p "$HOME/.claude"; touch "$HOME/.claude/environment-restart"; '
+        if action == "reset"
+        else ""
+    )
+    result = await hub.exec(
+        device_id,
+        [
+            "sh",
+            "-c",
+            f'export HOME="{home}"; '
+            'if [ -f "$HOME/.claude/cheese-environment.py" ]; then '
+            f'python3 "$HOME/.claude/cheese-environment.py" {action} || exit $?; '
+            "else printf '%s' '{\"state\":\"pending\"}'; fi; " + reset_marker,
+        ],
+        timeout=10,
+    )
+    if result.get("exit") != 0:
+        raise ScreenSetupError("无法读取机器上的环境准备状态")
+    return json.loads(result.get("stdout") or '{"state":"pending"}')
+
+
 class DeviceChannel(Channel):
     """The REMOTE channel: a screen on a user's enrolled machine, opened over
     the frozen link.Msg link (DeviceHub). The screen is a ``HubScreen``.
@@ -408,15 +453,38 @@ class DeviceChannel(Channel):
         happen per turn, in ``precheck``."""
         return bool(self._hub.online_device_ids())
 
+    def owns(self, supply: Supply) -> bool:
+        """Is a machine that entered this way THIS channel's to listen to?
+
+        Both channels bind their topics into the same table, so a pin does not
+        say which of them made it — the machine does, and ``Supply`` is the axis
+        that separates them (the platform opened it → Cloud's; a human enrolled
+        it → this one's). ``_resolve_device_agent`` on the Cloud side already
+        refuses a machine of the wrong supply for the same reason.
+        """
+        return supply is not Supply.cloud
+
     async def discover(
         self, device_id: str | None = None
     ) -> list[tuple[uuid.UUID, uuid.UUID, object | None, str | None]]:
-        """Topics durably pinned to currently connected devices.
+        """Topics durably pinned to currently connected devices OF THIS CHANNEL.
 
         No screen comes back with them: the ``HubScreen`` that was open before
         the restart is gone from this process, and the device reattaches on the
         topic's next turn. What survives is the PIN, which is enough to start
-        listening again."""
+        listening again.
+
+        A topic may come back from exactly ONE channel, because a topic's hooks
+        arrive on exactly one process-wide queue (``hook_router``) and every
+        channel that discovers a topic puts a consumer on it. Two consumers do
+        not each get a copy — they SPLIT the queue: a message that arrives in
+        four flushes is assembled half by each, both halves land as separate
+        replies, and the Stop that carries the full text lands a third, because
+        "已经说过的话" is a per-consumer list. That is what an unfiltered
+        discover cost: every topic on an online connector was recovered by the
+        device channel AND the cloud one, on every backend start and every
+        connector reconnect.
+        """
         online = set(self._hub.online_device_ids())
         device_ids = [device_id] if device_id in online else []
         if device_id is None:
@@ -434,6 +502,9 @@ class DeviceChannel(Channel):
             devices = sql_device_service(session)
             topics = TopicService(session)
             for connected_device_id in device_ids:
+                endpoint = await devices.get_device(connected_device_id)
+                if endpoint is None or not self.owns(endpoint.supply):
+                    continue
                 bindings = await devices.list_topic_bindings(connected_device_id)
                 for binding in bindings:
                     topic = await topics.get(binding.topic_id)
@@ -667,6 +738,21 @@ class DeviceChannel(Channel):
         (``confirm_alive``); an explicitly dead one is closed and reopened under a
         fresh sid the connector must Spawn, rather than reasserted into a corpse."""
         existing = self._existing_screen(device_id, topic_id)
+        if existing is not None and (env or {}).get("CHEESE_ENVIRONMENT"):
+            status = await environment_status(
+                self._hub, device_id, project_id, topic_id
+            )
+            if status["state"] == "preparing":
+                return existing
+        configuration = (env or {}).get("CHEESE_AGENT_CONFIG", "")
+        if (
+            existing is not None
+            and configuration
+            and existing.agent_configuration != configuration
+        ):
+            # Called between turns. A running CLI cannot adopt a changed model or role.
+            await self._hub.close_screen(existing.device_id, existing.sid)
+            existing = None
         if existing is not None and self._credential_is_stale(existing):
             # #388 缺陷二: the screen is still alive, but the credential its `claude`
             # was LAUNCHED with has expired (or is within the retire margin). That
@@ -799,6 +885,9 @@ class DeviceChannel(Channel):
             ):
                 merged.pop(k, None)
             merged.update(sub.env)
+            if connect_proxy_url:
+                # The meter accepts model hosts, not package registries.
+                merged["CHEESE_MODEL_PROXY"] = "1"
             if via_tunnel:
                 # Read by the launch script: it writes the helper and the token
                 # file, and starts the helper before `claude`. Carried on the env
@@ -831,7 +920,7 @@ class DeviceChannel(Channel):
             provider = provider_env.api_key_provider(
                 gateway_base=f"{self._public_base}/llm",
                 key=token,
-                model=settings.agent_model,
+                model=launch.model or settings.agent_model,
             )
             model_env = {**provider.env, **(env or {})}
             # Same stamp on the gateway path: the model credential is the scoped
@@ -899,6 +988,7 @@ class DeviceChannel(Channel):
         # later turn's reuse gate (and the zero-output fuse) can tell a live
         # credential from a dead one without re-deriving it.
         screen.credential_expires = credential_expires
+        screen.agent_configuration = configuration
         return screen
 
     # --- turn --------------------------------------------------------------
@@ -942,6 +1032,12 @@ class DeviceChannel(Channel):
         assert isinstance(precheck, tuple)  # from our precheck
         device_id, agent_user_id, agent_handle = precheck
         try:
+            before = (
+                await environment_status(self._hub, device_id, project_id, topic_id)
+                if (env or {}).get("CHEESE_ENVIRONMENT")
+                else {}
+            )
+            prior_screen = self._existing_screen(device_id, topic_id)
             screen = await self._ensure_screen(
                 device_id=device_id,
                 agent_user_id=agent_user_id,
@@ -953,7 +1049,50 @@ class DeviceChannel(Channel):
                 launch=launch,
             )
             self._subscription_devices[topic_id] = device_id
+            if (env or {}).get("CHEESE_ENVIRONMENT"):
+                # A process started before this feature keeps its environment
+                # until its next restart; it has no preparation receipt yet.
+                if before.get("state") == "pending" and screen is prior_screen:
+                    return screen
+                try:
+                    start_deadline = time.monotonic() + 60
+                    async with asyncio.timeout(3660):
+                        while True:
+                            status = await environment_status(
+                                self._hub, device_id, project_id, topic_id
+                            )
+                            if status["state"] == "ready":
+                                break
+                            if status["state"] == "stopped" and status.get(
+                                "attempt"
+                            ) != before.get("attempt"):
+                                raise ScreenSetupError(
+                                    "环境已准备完成，但芝士启动后退出，请查看房间终端"
+                                )
+                            if (
+                                status["state"] == "pending"
+                                or status.get("attempt") == before.get("attempt")
+                                and before.get("state") != "preparing"
+                            ) and time.monotonic() >= start_deadline:
+                                raise ScreenSetupError(
+                                    "环境执行器未启动，请查看房间终端"
+                                )
+                            if status["state"] == "failed" and (
+                                before.get("state") == "preparing"
+                                or status.get("attempt") != before.get("attempt")
+                            ):
+                                raise EnvironmentPreparationError(status)
+                            await asyncio.sleep(2)
+                except asyncio.CancelledError:
+                    await asyncio.shield(
+                        environment_status(
+                            self._hub, device_id, project_id, topic_id, action="cancel"
+                        )
+                    )
+                    raise
             return screen
+        except EnvironmentPreparationError:
+            raise
         except Exception as exc:  # noqa: BLE001 — any setup failure ends the turn
             # str(exc) is EMPTY for a bare TimeoutError — the failure that used to
             # reach the room as 「device 后端启动失败：」 with nothing after the

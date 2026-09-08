@@ -255,7 +255,7 @@ Project 自己管自己的策略。因为所有话题底层是 git 分支，权�
 - 一件事 = 一件活。它背后自动关联一些技术资源（AI 会话、代码分支、开发环境），用户不用管这些，它们自动跟着这件活走。一个项目对应一个代码仓库。一件活的分支从它所在房间的分支切出来，做完合回去，最终合到主分支。
 - 项目也可以**关联一个已有的 git 仓库**（上游）：把外部 repo 的历史拉进项目，之后随时"同步上游"合入新提交。这让"接手一个已有项目/代码库"成为一等公民——不是导入一次性快照，而是保持一条可持续同步的通道。冲突时同步原样中止（不合一半），交由芝士/人在话题里解决。
 - 【预留概念：**发布**】采纳是话题级的完成，"发布"是项目级的交付：打一个版本 tag，并触发一组发布动作（push GitHub 镜像、部署 demo 网站、导出 PDF 报告……）。这是 CD 在知是里的对应物——学生项目的"上线/给评委演示/报告定稿 v2"都是发布。暂不实现：目前唯一需要它的场景是平台自举（dogfooding 的 redeploy，用仓库工具顶着），等真实用户需求出现再设计，避免拍脑袋发明概念。
-- 话题的核心生命周期事件是"采纳"（Accept）：话题的主要成果被验收通过 = 这件事完成 = 话题归档。因为所有产出底层都是 git repo 里的文件，采纳在实现上就是 merge——不管产出是代码、报告还是设计稿。归档后工作面冻结（分支合入、开发环境回收、文档定格），但对话永远可以追加评论（和 GitHub 里 merge 后的 PR 一样）。新的工作永远开新话题：归档后出现的后续，从结论处升级成新话题继续做。一件活 = 一件事 = 一次交付；想分批做 = 在同一个房间里再派一件活。没做完的房间也可以归档（打个"草稿"标签）。
+- 话题的核心生命周期事件是"采纳"（Accept）：话题的主要成果被验收通过 = 这件事完成。因为所有产出底层都是 git repo 里的文件，采纳在实现上就是**当场 merge**（#718：点一下就是合并，合的是人看到的那个 commit；"只在绿的时候合"由项目的分支保护规则执行）——不管产出是代码、报告还是设计稿。采纳**不归档**（#442 决定 1）：话题保持活跃，归档是人单独做的动作；归档后工作面冻结，但对话永远可以追加评论（和 GitHub 里 merge 后的 PR 一样）。一件活 = 一件事 = 一次交付；想分批做 = 在同一个房间里再派一件活。没做完的房间也可以归档（打个"草稿"标签）。
 - 谁来验收：在项目设定的权限策略范围内（见 §4.4），芝士根据判断把验收卡递给一个具体的人（谁最懂这块/谁没参与过/谁有空），卡上写"等 XX 验收"。组长可以通过私聊告诉芝士偏好（见 §1 私聊）。验收记名、可撤回。
 - 冲突处理：芝士先尝试解决（它能看到两边话题的完整上下文）；解决不了就把两边放在一起，@ 相关人来拍板，结论写回文档。总览的定期巡检也会预警"两个话题改了同一个文件"。
 - 讨论串里谁先发谁先说，AI 不自动开场；但从讨论升级出来的新话题，第一条必须是芝士的开场白——复述任务、确认理解（和 Claude Code 的 plan 确认一样）。
@@ -333,23 +333,17 @@ Project 自己管自己的策略。因为所有话题底层是 git 分支，权�
 | Skills（灵魂） | 见 §8.2 | 教 Claude Code 变成"芝士"。产品的核心知识，用自然语言写，迭代快、谁都能改 |
 | 工具（外接能力） | 记忆存储 / 开发环境 / 语音转文字 / GitHub / 机构汇总 | 给芝士接上外部能力 |
 
-### 8.2 agent 类型与实例
+### 8.2 Project agents and starting configurations
 
-芝士不是只有一种人格——不同项目可以用不同类型的芝士。历史学项目的芝士懂学术规范和文献检索，计算机项目的芝士懂代码架构和测试，设计项目的芝士懂用户体验和视觉语言。
+Each project agent owns its name, role instructions, explicit model and memory. A room selects an agent; the project selects the default agent for new rooms. There is no project default model.
 
-分成三层，寿命各不相同：
+Built-in presets provide starting values when an agent is created. A preset can supply role instructions, a model and existing tool settings. Missing model values are filled from the available supply's creation default and saved on the new agent. Subsequent preset changes do not affect existing agents. There is no editable team or global role catalog.
 
-| 层 | 是什么 | 范围 |
-|---|---|---|
-| **类型**（出厂设置） | 名字、系统提示、skills、MCP、model、effort、harness | **可跨项目共享**（平台预设 + 自定义） |
-| **实例 + 记忆** | 这个 agent 在这个项目里学到的东西 | **项目内**，跟身份走、不跟话题走 |
-| **会话** | 它在某个话题里聊到哪了 | 一个话题一个，可丢、可重建 |
+Users edit an individual agent in AI 队友. Edits take effect from its next turn in every room using that agent. The current turn uses one configuration snapshot. Existing agent IDs, handles and memory remain unchanged, and other agents keep their own configuration. New rooms require an active agent, so the last active agent cannot be retired.
 
-类型直接对应 Claude Code 的 agent type 定义，用带 frontmatter 的 markdown 描述：正文是系统提示，frontmatter 说它能够到什么（skills / mcp_servers）和怎么跑（model / effort / harness）。平台预设以文件形式随代码发布，人自己定义的存在 `agent_types` 表里；同名的自定义类型会盖掉预设，所以改一个预设不必 fork 它的文件。项目集协议可以指定默认类型（比如"创研课"默认用学术研究类型）。
+Model choices come from the project's connected supply. An unavailable saved model produces an error requiring a new selection. Device and Cloud execution pass the saved model explicitly. A reused process is refreshed between turns when the agent configuration changes. This guarantees the requested model; provider-side substitutions are outside this setting's guarantee.
 
-**记忆归实例，不归话题。** 一个芝士在项目的五个房间里干活，学到的是同一份记忆——这才是"同一个芝士跨房间"的实际含义。换掉一个话题的 agent 会重开会话：会话是某一个 agent 对这段对话的记忆，交给另一个 agent 续用，等于让它笃定地"记得"自己没说过的话。
-
-**运行时可变**：类型是起点，不是终点。运行中芝士可以动态加载额外的 skills；协作中学到的领域知识沉淀进实例的记忆（§8.4），越用越懂。类型本身不会运行时改变，但记忆的积累让同一个类型在不同项目里表现不同。
+Migration copies existing role instructions and the effective model onto each agent. Projects with an implicit default receive a saved agent under the same cheese handle, preserving their memory keys. Original custom roles and project settings remain in archive tables for inspection and rollback.
 
 ### 8.3 Skills：产品的配方
 
@@ -403,7 +397,7 @@ Ground truth 永远在文档里。对话中的通知只是文档变更的实时�
 
 两种典型通知：
 
-- **变更提醒**：AI 干完活后发一条——一句话总结 + 改了哪些文件 + 需要注意的点 + 一个"看改动"入口。想看更多细节点进去看完整 diff 或施工现场。大部分时候看摘要就够了。这条通知上**没有采纳**：采纳是话题级的一次性动作（§6.3、§14.6 采纳 = merge = 归档，一个话题一次交付），每轮一个 Accept 和那条规则直接冲突。要说"这不对，重做"，回一句话就是原语（§14.2 的参照系是同事，同事不会给你一排 approve/reject 按钮）。
+- **变更提醒**：AI 干完活后发一条——一句话总结 + 改了哪些文件 + 需要注意的点 + 一个"看改动"入口。想看更多细节点进去看完整 diff 或施工现场。大部分时候看摘要就够了。这条通知上**没有采纳**：采纳是话题级的一次性动作（§6.3、§14.6 采纳 = 当场 merge，一次交付一次采纳），每轮一个 Accept 和那条规则直接冲突。要说"这不对，重做"，回一句话就是原语（§14.2 的参照系是同事，同事不会给你一排 approve/reject 按钮）。
 - **决策请求**：AI 遇到需要人拍板的事，发一条带选项的通知——"方案 A 还是 B？"，人选一个，AI 继续。这是平台提供的工具，不依赖特定 AI 框架。
 
 ### 8.6 AI 什么时候主动说话
@@ -447,7 +441,7 @@ Ground truth 永远在文档里。对话中的通知只是文档变更的实时�
 ### 9.1 运行时细节
 
 - 事件循环：事件（消息/文档变更/webhook/定期巡检/活的结果回传）→ 每个地点维护一个串行队列 → 恢复会话（注入发言者标签 + 记忆）→ AI 调用工具（回复/编辑块/记忆/派出一件活/GitHub/搜索）→ 会话结束时自动提取记忆。
-- 开发环境（项目级 config，不是话题内容）：环境是**算力池的一层**——池提供基础机器和镜像（市场里选），项目在上面叠一段 setup 脚本装依赖。它和"选哪个模型""跑在哪台机器"同层，是项目级元信息，配在项目设置里、全项目所有话题/分身共用一份——**不写进**某个话题的文档或 git 分支（那是会话级内容、会跟着 merge 走，语义会糊：哪个分支的环境算数、分身改了算谁的）。setup 脚本的内容哈希即快照 key：没变就复用已 `docker commit` 的 per-project 镜像（跳过安装），改了自动重建——对齐 Codex / Claude Code web 的「Environment + 文件系统快照」模型。密钥走平台密钥管理不进数据库；出网默认收敛、按域名 allowlist 放行（phase 2）；场景包 / Task Template 带默认环境模板。改环境是罕见、全项目、偏 owner 的动作：人在项目设置里改，芝士要动走 `cheese env propose` 提案给 owner 批，不静默 mutate 全项目基建。容器承载、预装常用工具；网页预览走反向代理；空闲挂起、归档回收；用户可直接进终端/文件浏览器操作同一个环境。
+- Project environment: project settings hold an initialization script, a workspace startup script, and ordinary variables visible to project members and the agent. Cloud and Hosted Machine use the same runner; Hosted Sandbox remains unavailable. Work rooms pin configuration at creation. Saving affects new rooms; applying to an idle room stops its agent, preserves its checkout, and prepares the environment on its next start. Initialization runs once per successful revision in that environment. Startup runs before every new agent process; attaching to a live process does not rerun scripts. Both run in Bash at the checkout root with the agent's HOME and execution identity. Overview uses the base environment without project scripts or variables so it can diagnose setup failures. A failed work room sends a recovery event to overview, whose scoped API can inspect logs, repair that room's configuration, and restart once while retaining pending messages. A second failure or unavailable repair requires assistance; project defaults and other rooms remain unchanged. Preparation status and logs appear in the room and settings. The implementation retains initialization receipts and package caches, without filesystem snapshots or secret storage.
 - 算力调度（平台代码，不是 AI 决定的）：资源池 = 自有 PVE 节点 + 机构/实验室自带的节点；根据环境配置匹配节点，按项目额度限制并发，超额排队。三级可见性：话题里看这个话题的用量 → 项目总览里看整个项目的用量 → 机构看板里看所有项目的用量和节点状态。
 - 中途介入：所有入口（@ 某人、改文档、在施工现场插话、给文档段落评论）= 往这个话题的 AI 会话里注入一条消息。现阶段在会话间歇注入，未来用 Agent SDK 的 streaming input 实时注入。
 - 调度分两层：确定性的（消息路由/定时任务/生命周期管理）= 平台代码做，不让 AI 当消息总线；需要判断的（该催谁/该拆什么/有什么风险）= 根话题的芝士来判断。
@@ -557,11 +551,9 @@ Ground truth 永远在文档里。对话中的通知只是文档变更的实时�
 
 ### 14.6 采纳语义
 
-- **采纳 = merge**，采纳即归档、可撤销（原有 §6.3）。
+- **采纳 = 当场 merge**（#718），可撤销；不归档（#442 决定 1，归档是人的另一个动作）。
 - **冲突是状态，不是失败**：merge 冲突时话题不归档、卡片进入"冲突"态，芝士被自动派去
   resolve，人再重试采纳。绝不静默归档而工作滞留分支。
-- **采纳即上线**（dogfooding 自举）：采纳 → push-back → 全量检查 → 红灯回滚 → 部署 → 上游同步。
-  依赖变更须同步处理运行中的 dev server（缓存重启）。
 
 ### 14.7 面向用户的语言是产品语言
 
@@ -592,8 +584,11 @@ merge to main。判据是这个词有没有在教用户平台的内部机制。
   坏不坏」：接线收账和原样重发都不出声（订阅跟着屏幕活，房间里本来就没出现断裂）。
   只有 prompt 确实丢了、而且平台不会再重发时才发事件，标 `severity=error` +
   `who=human`——那时房间里没有任何别的东西会显示这件事。
-- 供应商错误结构化呈现（限额恢复时间用北京时间），可重试的自动重试，中断的自动续跑
-  （resume 不 replay，已产出的进度不丢）。
+- 供应商错误结构化呈现（限额恢复时间用北京时间）。平台**不自动重试**：认不出来的
+  失败、超时、卡死各发一次事件（`who=human`），交给人看一眼、修好后重新 @——不自己
+  连着重跑（重跑要么把同一个缺陷再触发一遍，要么再撞上同一台刚死的机器）。跨部署
+  存活是另一回事，照旧靠 recover/replay/adopt 把还活着的那一轮认回来。什么会结束一轮、
+  之后房间看到什么，见 `docs/agent-liveness.md`。
 - 错误提示永不被裁切/遮挡；前置条件不用错误横幅表达。
 
 ### 14.10 切换与导航体验

@@ -3,16 +3,10 @@
  * 派活的入口本来就是 API（芝士自己拆的活占绝大多数），所以布景走 API；**断言全在
  * 界面上**，因为这里要钉的正是「派出去之后，人看不看得见、点不点得进去」。
  *
- * 这一层能钉的只有这些。阶段 5 另外两件事 —— 排队/出队的圆环、封口期提示 —— 在
- * e2e 里做不出可靠的布景，原因是环境本身：
- *
- *   - 槽位是**正在跑的轮次**占住的，不是「活还开着」占住的。e2e 环境没有 agent
- *     镜像，kickoff 三秒就失败、槽位自己放开，队列根本排不起来，写出来就是一条
- *     看运气的测试。排队/出队钉在 tests/integration/test_task_threads.py —— 那里
- *     能直接摆出 residency，是确定的。
- *   - 封口要 `x-cheese-token`（每轮次令牌）。这是对的：封口是芝士的动作，浏览器
- *     里的人本来就不该能递卡。封口期提示钉在 TaskProgress.seal.spec.ts 和
- *     tests/integration/test_tree_sealing_and_quick_check.py。
+ * 这一层能钉的只有这些。封口期提示在 e2e 里做不出布景：封口要 `x-cheese-token`
+ * （每轮次令牌），而这是对的——封口是芝士的动作，浏览器里的人本来就不该能递卡。
+ * 它钉在 TaskProgress.seal.spec.ts 和
+ * tests/integration/test_tree_sealing_and_quick_check.py。
  */
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
@@ -63,9 +57,11 @@ test.describe('房间里派出去的活', () => {
     // 具体哪个状态由 lib/board.spec.ts 逐条钉。
     await expect(progress.locator('.task-row .board-dot')).toHaveCount(2);
 
-    // 点条目进这条活自己的 chat 页 —— 总览里的一行必须是个入口，不然它只是一张表。
+    // 点条目就地展开这张卡 —— 总览里的一行必须是个入口，不然它只是一张表。
+    // 卡不是地点：地址留在房间上，卡的 id 进 query（T6 起）。
     await progress.getByText(`第一件事 ${stamp}`).click();
-    await expect(page).toHaveURL(new RegExp(`/topics/${first.id}`));
+    await expect(page).toHaveURL(new RegExp(`/topics/${roomId}\\?.*card=${first.id}`));
+    await expect(page.locator('.panel-card')).toBeVisible();
   });
 
   test('侧栏的「看板」是一直在的入口，进去是整个项目的视角', async ({ page }) => {

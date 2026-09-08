@@ -87,45 +87,66 @@ jobs:
       # is exactly the outcome this exists to prevent. So a break files an issue
       # naming the version, and a recovery closes it — one issue, reopened and
       # updated, never a new one per night.
-      - name: File or update the canary issue
-        if: steps.e2e.outputs.status != '0'
+      #
+      # Through the API, not `gh`: the cheese-ci runners do not have `gh`, and
+      # from 2026-08-18 to 2026-09-05 every run died here with
+      # `gh: command not found` — after the e2e had PASSED. Nineteen green
+      # verdicts read as red, no issue ever filed or closed, and the pin was
+      # held back by a canary that was not reporting. A canary that cannot
+      # speak is the silent one this comment warns about.
+      - name: File, update, or close the canary issue
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
-          GH_TOKEN: ${{ github.token }}
+          STATUS: ${{ steps.e2e.outputs.status }}
           CANARY: ${{ steps.install.outputs.version }}
           PIN: ${{ steps.pin.outputs.version }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          title="Claude Code $CANARY breaks rendezvous prompt delivery"
-          failed=$(grep -E '^--- FAIL' /tmp/canary.log | sed 's/^/    /' | head -20)
-          body=$(printf '%s\n' \
-            "The rendezvous e2e suite fails against **Claude Code \`$CANARY\`**, while production is pinned at \`$PIN\`." \
-            "" \
-            "Nothing is broken right now — production still runs the pin. What this means is that **upgrading would break prompt delivery**, so the pin cannot move until this is understood." \
-            "" \
-            "Failing cases:" \
-            '```' "$failed" '```' \
-            "" \
-            "Run: $RUN_URL" \
-            "" \
-            "The delivery path rides an undocumented socket protocol (see #480); its frames already changed once between 2.1.220 and 2.1.224. The likely next step is to diff what the new build does to the frames in \`cli/internal/rendezvous/client.go\`.")
-          existing=$(gh issue list --state open --search "in:title \"breaks rendezvous prompt delivery\"" --json number,title --jq '.[0].number // empty')
-          if [ -n "$existing" ]; then
-            gh issue comment "$existing" --body "$body"
-            gh issue edit "$existing" --title "$title"
-          else
-            gh issue create --title "$title" --body "$body" --label ci || gh issue create --title "$title" --body "$body"
-          fi
+        with:
+          script: |
+            const fs = require('fs');
+            const { STATUS, CANARY, PIN, RUN_URL } = process.env;
+            const marker = 'breaks rendezvous prompt delivery';
+            const repo = { owner: context.repo.owner, repo: context.repo.repo };
+            // One issue, found by its title; the first 100 open issues are more
+            // than this repository has.
+            const { data: open } = await github.rest.issues.listForRepo({ ...repo, state: 'open', per_page: 100 });
+            const existing = open.find(i => !i.pull_request && i.title.includes(marker));
 
-      - name: Close the canary issue when it recovers
-        if: steps.e2e.outputs.status == '0'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CANARY: ${{ steps.install.outputs.version }}
-        run: |
-          existing=$(gh issue list --state open --search "in:title \"breaks rendezvous prompt delivery\"" --json number --jq '.[0].number // empty')
-          if [ -n "$existing" ]; then
-            gh issue close "$existing" --comment "Green again against Claude Code \`$CANARY\`."
-          fi
+            if (STATUS === '0') {
+              if (existing) {
+                await github.rest.issues.createComment({ ...repo, issue_number: existing.number,
+                  body: `Green again against Claude Code \`${CANARY}\`.` });
+                await github.rest.issues.update({ ...repo, issue_number: existing.number, state: 'closed' });
+              }
+              return;
+            }
+
+            const log = fs.existsSync('/tmp/canary.log') ? fs.readFileSync('/tmp/canary.log', 'utf8') : '';
+            const failed = log.split('\n').filter(l => l.startsWith('--- FAIL')).slice(0, 20).map(l => '    ' + l).join('\n');
+            const title = `Claude Code ${CANARY} breaks rendezvous prompt delivery`;
+            const body = [
+              `The rendezvous e2e suite fails against **Claude Code \`${CANARY}\`**, while production is pinned at \`${PIN}\`.`,
+              '',
+              'Nothing is broken right now — production still runs the pin. What this means is that **upgrading would break prompt delivery**, so the pin cannot move until this is understood.',
+              '',
+              'Failing cases:',
+              '```', failed, '```',
+              '',
+              `Run: ${RUN_URL}`,
+              '',
+              'The delivery path rides an undocumented socket protocol (see #480); its frames already changed once between 2.1.220 and 2.1.224. The likely next step is to diff what the new build does to the frames in `cli/internal/rendezvous/client.go`.',
+            ].join('\n');
+
+            if (existing) {
+              await github.rest.issues.createComment({ ...repo, issue_number: existing.number, body });
+              await github.rest.issues.update({ ...repo, issue_number: existing.number, title });
+            } else {
+              try {
+                await github.rest.issues.create({ ...repo, title, body, labels: ['ci'] });
+              } catch (e) {
+                await github.rest.issues.create({ ...repo, title, body });
+              }
+            }
 
       # The job's own conclusion still tracks the test, so the run history is
       # honest and `gh run list` shows the break.

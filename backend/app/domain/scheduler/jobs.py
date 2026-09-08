@@ -58,7 +58,7 @@ def periodic_jobs(
             settings.sandbox_reap_interval_seconds,
             lambda: scheduler.reap_idle_device_screens(settings.sandbox_idle_hours),
         ),
-        # 两阶段采纳 (PR迭代式, 2026-08-09): advances pr_open accept cards — PR CI
+        # 合并态轮询 (#718): mirrors pending PR cards' merge state — PR CI
         # → merge → deploy workflow → archive.
         PeriodicRunner(
             "pr poll", settings.accept_pr_poll_interval_s, scheduler.poll_open_prs
@@ -86,14 +86,6 @@ def periodic_jobs(
             "gate sweep",
             settings.gate_sweep_interval_s,
             scheduler.sweep_abandoned_gates,
-        ),
-        # 结论卡·阶段一: 默认采信 must happen even when the parent's digest turn
-        # never runs (queued behind a wedged turn, refused on credits, killed by
-        # a deploy). This sweeps cards past their 30-minute absolute deadline.
-        PeriodicRunner(
-            "conclusion sweep",
-            settings.conclusion_sweep_interval_s,
-            scheduler.sweep_conclusion_cards,
         ),
         # Enrolling provisioned machines is platform plumbing, so it runs on its
         # own interval rather than the AI scheduler's — see machine/runner.py.

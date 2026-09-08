@@ -19,7 +19,19 @@ Event mapping:
                                             assembled from its line-batch
                                             flushes; see the class docstring)
   PostToolUse{tool_name, tool_response}   → AgentToolResult (subagents only)
+  SubagentStart{agent_id, agent_type}     → AgentSubagentStart
+  SubagentStop{agent_id, last_assistant_message, agent_transcript_path}
+                                          → AgentSubagentStop
   Stop{last_assistant_message, ...}       → AgentResult (ends the turn stream)
+  StopFailure{error, last_assistant_message}
+                                          → AgentResult(is_error=True) (ends it too:
+                                            Claude Code fires this instead of Stop
+                                            when the API refused the turn)
+
+One session can have several workers going at once — a subagent's hooks come up
+the same pipe as the session's own, tagged with ``agent_id`` (see ``_agent_id``).
+Every event above carries that tag when the payload had one, so a reader can tell
+whose work it is looking at instead of one interleaved stream from nobody.
 """
 
 import asyncio
@@ -32,6 +44,8 @@ from app.domain.agent.service import (
     AgentMessage,
     AgentResult,
     AgentSessionInfo,
+    AgentSubagentStart,
+    AgentSubagentStop,
     AgentToolResult,
     AgentToolUse,
     AgentUsage,
@@ -57,6 +71,27 @@ def _flush_time(hook: dict) -> datetime:
 # question and never the answer. Both names are live — `Task` is the older CLI's
 # name for `Agent` and either can arrive depending on the box's image age.
 _SUBAGENT_TOOLS = {"Task", "Agent"}
+
+
+def _agent_id(hook: dict) -> str | None:
+    """WHICH worker inside the session produced this hook — a subagent's id, or
+    None for the session's own thread.
+
+    The main thread's payloads do not carry the key at all (verified against
+    2.1.224: a subagent's PreToolUse/PostToolUse carry `agent_id` and
+    `agent_type`, the spawner's carry neither), so absence IS the answer rather
+    than a gap: nothing has to be reconciled to decide an event belongs to the
+    session. A blank value is read as absent for the same reason — an id that
+    identifies nobody cannot attribute anything.
+    """
+    value = hook.get("agent_id")
+    return value.strip() or None if isinstance(value, str) else None
+
+
+def _agent_type(hook: dict) -> str | None:
+    """The subagent kind (`general-purpose`, a custom agent's name…), or None."""
+    value = hook.get("agent_type")
+    return value.strip() or None if isinstance(value, str) else None
 
 
 def _hook_event_name(hook: dict) -> str:
@@ -113,6 +148,35 @@ def translate_hook(hook: dict) -> AgentEvent | None:
         sid = hook.get("session_id")
         return AgentSessionInfo(session_id=str(sid)) if sid else None
 
+    if event == "SubagentStart":
+        # No id, no event: everything downstream of this exists to attribute
+        # later hooks to a worker, and an unnamed worker cannot be told apart
+        # from the session — announcing one would put work on the room's
+        # timeline under a name nothing else will ever match.
+        agent_id = _agent_id(hook)
+        if agent_id is None:
+            return None
+        sid = hook.get("session_id")
+        return AgentSubagentStart(
+            agent_id=agent_id,
+            agent_type=_agent_type(hook) or "",
+            session_id=str(sid) if sid else None,
+        )
+
+    if event == "SubagentStop":
+        agent_id = _agent_id(hook)
+        if agent_id is None:
+            return None
+        path = hook.get("agent_transcript_path")
+        sid = hook.get("session_id")
+        return AgentSubagentStop(
+            agent_id=agent_id,
+            text=str(hook.get("last_assistant_message") or ""),
+            agent_type=_agent_type(hook) or "",
+            transcript_path=str(path) if path else None,
+            session_id=str(sid) if sid else None,
+        )
+
     if event == "PreToolUse":
         tool_input = hook.get("tool_input")
         eid = hook.get("_eid")
@@ -120,6 +184,8 @@ def translate_hook(hook: dict) -> AgentEvent | None:
             name=str(hook.get("tool_name") or ""),
             input=tool_input if isinstance(tool_input, dict) else {},
             eid=eid if isinstance(eid, str) else None,
+            agent_id=_agent_id(hook),
+            agent_type=_agent_type(hook),
         )
 
     if event == "PostToolUse":
@@ -143,6 +209,8 @@ def translate_hook(hook: dict) -> AgentEvent | None:
                 else ""
             ),
             eid=eid if isinstance(eid, str) else None,
+            agent_id=_agent_id(hook),
+            agent_type=_agent_type(hook),
         )
 
     if event == "MessageDisplay":
@@ -153,7 +221,12 @@ def translate_hook(hook: dict) -> AgentEvent | None:
         text = hook.get("delta")
         if isinstance(text, str) and text.strip():
             eid = hook.get("_eid")
-            return AgentMessage(text=text, eid=eid if isinstance(eid, str) else None)
+            return AgentMessage(
+                text=text,
+                eid=eid if isinstance(eid, str) else None,
+                agent_id=_agent_id(hook),
+                agent_type=_agent_type(hook),
+            )
         return None
 
     if event == "CheeseSync":
@@ -199,6 +272,32 @@ def translate_hook(hook: dict) -> AgentEvent | None:
             text=str(hook.get("last_assistant_message") or ""),
             session_id=str(sid) if sid else None,
             usage=_usage_from_hook(hook),
+            agent_id=_agent_id(hook),
+            agent_type=_agent_type(hook),
+        )
+
+    if event == "StopFailure":
+        # Fired INSTEAD of Stop when the turn ends on an API error, after Claude
+        # Code's own retries ran out (10 attempts over ~3 minutes for a 429,
+        # measured on 2.1.224). Without this branch the turn never ends from
+        # the platform's side.
+        #
+        # No failure_code, on purpose. `error` is Claude Code's reading of the
+        # status, and it is not reliable for what the room needs to say: a 429
+        # from our own metering proxy (budget spent) arrives as
+        # `authentication_failed`, because a repeated 429 from a custom gateway
+        # looks like a bad key to it. So the room line is left to the text
+        # path (`_turn_failure_notice`), and the error kind rides along inside
+        # the text where the out-of-credit markers can still see `billing`.
+        sid = hook.get("session_id")
+        kind = str(hook.get("error") or "unknown")
+        said = str(hook.get("last_assistant_message") or "").strip()
+        text = f"{said}（{kind}）" if said else f"AI 服务拒绝了请求（{kind}）"
+        return AgentResult(
+            text=text,
+            session_id=str(sid) if sid else None,
+            is_error=True,
+            errors=[kind],
         )
 
     # Any unmapped event: nothing to surface.
@@ -212,6 +311,13 @@ class _PendingMessage:
     deltas: dict[int, str] = field(default_factory=dict)
     eids: dict[int, str | None] = field(default_factory=dict)
     final_index: int | None = None
+    #: Which worker is saying this. Taken from the first flush that names one
+    #: and then left alone: the flushes of ONE message all come from the same
+    #: thread, so a later flush can only repeat it — while a payload that omits
+    #: the key must not erase what an earlier one established, or a message
+    #: assembled out of order would come out belonging to nobody.
+    agent_id: str | None = None
+    agent_type: str | None = None
     #: When the first flush of this message arrived — the moment 芝士 started
     #: saying it, which is where it belongs in the timeline. Assembly finishes
     #: later (a message is only known to be whole once something after it
@@ -230,14 +336,15 @@ class MessageAssembler:
     across the message's flushes), ``index`` (increments per flush), ``final``
     (exactly one flush per message), and ``delta`` (the new lines, newlines
     included — concatenating deltas in index order reconstructs the message
-    verbatim). Verified against 2.1.224, the pinned device version, and 2.1.233.
+    verbatim). Verified against 2.1.224, 2.1.233, and 2.1.261 (the pinned device
+    version).
 
     Persisting each flush as its own chat message is what split one reply into
     several bubbles — and what then defeated every whole-text dedup downstream,
     because the Stop hook's ``last_assistant_message`` never matches a fragment,
-    so the full text landed AGAIN next to its own pieces. The SDK backend fixed
-    the same shape in #170 by buffering fragments to a semantic boundary; this
-    is the hooks-path equivalent, with ``final`` as the boundary.
+    so the full text landed AGAIN next to its own pieces. #170 fixed the same
+    shape once before by buffering fragments to a semantic boundary; this does
+    the same with ``final`` as the boundary.
 
     Also absorbs at-least-once redelivery: a flush re-POSTed after a lost ack
     arrives with the same (message_id, index) and is dropped, whether its
@@ -277,7 +384,14 @@ class MessageAssembler:
         ):
             if not text.strip():
                 return None
-            return AgentMessage(text=text, eid=eid, eids=(eid,) if eid else (), at=at)
+            return AgentMessage(
+                text=text,
+                eid=eid,
+                eids=(eid,) if eid else (),
+                at=at,
+                agent_id=_agent_id(hook),
+                agent_type=_agent_type(hook),
+            )
         if message_id in self._done:
             return None
         pending = self._pending.setdefault(message_id, _PendingMessage())
@@ -285,6 +399,23 @@ class MessageAssembler:
             return None
         pending.deltas[index] = text
         pending.eids[index] = eid
+        # The tag has to survive assembly, not just translation: this is the
+        # path a streamed message actually takes, and a whole reply that comes
+        # out of it unattributed is one no reader can file under the worker who
+        # said it.
+        #
+        # Measured on 2.1.224, twice (a nested claude in tmux with every hook
+        # logged): a subagent's own answer produces NO MessageDisplay at all —
+        # this stream carries only the main thread's display, and the
+        # subagent's whole reply reached us solely as
+        # SubagentStop.last_assistant_message. So nothing arrives here tagged
+        # today. It stays because the cost is two fields and the failure it
+        # prevents is silent: whoever changes that in Claude Code will not come
+        # and tell us, and an untagged reply is indistinguishable from one the
+        # session said itself.
+        if pending.agent_id is None:
+            pending.agent_id = _agent_id(hook)
+            pending.agent_type = _agent_type(hook)
         # Earliest wins: flushes can arrive out of order (a retried spool file
         # lands after later ones), and what this records is when the message
         # STARTED, not which flush happened to be handled first.
@@ -355,6 +486,8 @@ class MessageAssembler:
             eid=eids[0] if eids else None,
             eids=eids,
             at=pending.started_at,
+            agent_id=pending.agent_id,
+            agent_type=pending.agent_type,
         )
 
 
@@ -371,6 +504,15 @@ class HookRouter:
     The endpoint and provider run on the same asyncio loop, so ``put_nowait`` is
     safe. Re-subscribing is idempotent: a second caller gets the existing sink
     instead of replacing it and starving its consumer.
+
+    Which is why a topic must have exactly ONE consumer in the process. The sink
+    is a queue, not a broadcast: a second consumer reading the same sink does not
+    see the same hooks, it takes half of them. Half the flushes of a message
+    assemble into half a reply on each side, and the "已经说过的话" a consumer
+    checks the final Stop against is its own — so one sentence reaches the room
+    as two fragments plus a full copy. Nothing here can enforce that (a sink does
+    not know who is reading it); what does is that every channel discovers only
+    its own machines, so no two of them ever recover the same topic.
     """
 
     def __init__(self) -> None:

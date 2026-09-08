@@ -10,7 +10,7 @@ import pytest
 
 from app.domain.review.models import AcceptStatus
 from app.domain.review.notes import NoteCode
-from app.domain.room_task.models import Residency, TaskStatus
+from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.presentation import (
     LOST_SIGNAL_AFTER,
     CardFacts,
@@ -31,8 +31,6 @@ def task(**kw) -> TaskFacts:
     """A thread that is doing nothing at all, plus whatever the case is about."""
     base = {
         "status": TaskStatus.open,
-        "residency": Residency.idle,
-        "queued_at": None,
         "last_signal_at": None,
         "accepted_at": None,
         "card": None,
@@ -51,7 +49,7 @@ def room(**kw) -> RoomFacts:
 
 
 def card(status: AcceptStatus, **kw) -> CardFacts:
-    base = {"note_code": None, "pr_merged_at": None}
+    base = {"note_code": None, "merge_state_word": None, "merge_who": None}
     return CardFacts(status=status, **{**base, **kw})
 
 
@@ -59,29 +57,53 @@ def card(status: AcceptStatus, **kw) -> CardFacts:
 
 TASK_CASES = [
     # (名字, 事实, 列, 短语)
+    ("闲着", task(), Column.building, "空闲"),
+    # 一条活由房间会话里的一个分身做，所以「它还在不在」有两个答案，先问屏幕。
     (
-        "在跑",
-        task(residency=Residency.running, last_signal_at=JUST_NOW),
+        "分身在做，刚说过话",
+        task(has_worker=True, last_signal_at=JUST_NOW),
         Column.building,
         "运行中",
     ),
-    ("排队", task(queued_at=JUST_NOW), Column.building, "排队中"),
-    ("闲着", task(), Column.building, "空闲"),
-    # 说自己在跑、但已经太久没有任何动静了。今天前端没有这一格：taskRing 只看
-    # residency，于是一条卡死的活和一条真在跑的活长得一模一样。
+    # 屏幕没了，那个分身一定也没了 —— 它住在房间的会话里，而它不会来说一声。
     (
-        "在跑但早就没动静了",
-        task(residency=Residency.running, last_signal_at=LONG_AGO),
+        "分身所在的屏幕没了",
+        task(has_worker=True, last_signal_at=JUST_NOW, room_screen_live=False),
         Column.building,
         "失联",
     ),
-    # residency 说 running，却一个信号都没有过 —— 既没说过话也没记下开跑，
-    # 「没有证据」不能读成「一切正常」。
     (
-        "在跑但从没被确认过",
-        task(residency=Residency.running, last_signal_at=None),
+        "屏幕还在，但分身早就没动静了",
+        task(has_worker=True, last_signal_at=LONG_AGO),
         Column.building,
         "失联",
+    ),
+    # 干完了在等房间收卡，不是断了 —— 这一条安静得理直气壮。
+    (
+        "分身交了结论，等房间收卡",
+        task(has_worker=True, last_signal_at=LONG_AGO, has_conclusion=True),
+        Column.building,
+        "空闲",
+    ),
+    # 同样安静得理直气壮的另一种：卡已经递出去了，在等人。分身干完活不会把
+    # `subagent_id` 抹掉，所以「失联」要是抢在卡前面说，每一条等验收的活都会
+    # 被误报成失联。
+    (
+        "分身递了卡，安静地等人验收",
+        task(has_worker=True, last_signal_at=LONG_AGO, card=card(AcceptStatus.pending)),
+        Column.needs_you,
+        "等待验收",
+    ),
+    (
+        "分身递了卡，检查还在跑",
+        task(
+            has_worker=True,
+            last_signal_at=LONG_AGO,
+            room_screen_live=False,
+            card=card(AcceptStatus.pending_gate),
+        ),
+        Column.delivering,
+        "检查运行中",
     ),
     (
         "闸门在跑",
@@ -89,54 +111,87 @@ TASK_CASES = [
         Column.delivering,
         "检查运行中",
     ),
+    # 等采纳的卡按合并态镜像的「谁的活」分列 (#718)。
     (
-        "PR 开着等 CI",
-        task(card=card(AcceptStatus.pr_open)),
+        "CI 在跑",
+        task(
+            card=card(AcceptStatus.pending, merge_state_word="unstable", merge_who="ci")
+        ),
         Column.delivering,
         "等待检查",
     ),
     # 同一个「CI 红了」，平台已经派芝士去修 → 平台在推，不该催人。
     (
         "芝士在修 CI",
-        task(card=card(AcceptStatus.pr_open, note_code=NoteCode.checks_failed)),
+        task(card=card(AcceptStatus.pending, note_code=NoteCode.checks_failed)),
         Column.delivering,
         "修复检查",
     ),
     (
-        "合并冲突，芝士在解",
-        task(card=card(AcceptStatus.pr_open, note_code=NoteCode.merge_conflict)),
+        "合并态说检查红了（还没叫芝士）",
+        task(
+            card=card(
+                AcceptStatus.pending, merge_state_word="blocked", merge_who="agent"
+            )
+        ),
+        Column.delivering,
+        "修复检查",
+    ),
+    (
+        "和 main 冲突，芝士来解",
+        task(
+            card=card(AcceptStatus.pending, merge_state_word="dirty", merge_who="agent")
+        ),
         Column.delivering,
         "解决冲突",
     ),
     (
-        "PR 合了，等落地",
-        task(card=card(AcceptStatus.pr_open, pr_merged_at=JUST_NOW)),
+        "落后基线，平台在更新分支",
+        task(
+            card=card(
+                AcceptStatus.pending, merge_state_word="behind", merge_who="platform"
+            )
+        ),
         Column.delivering,
-        "等待合并",
+        "平台更新分支",
+    ),
+    (
+        "合并冲突，芝士在解",
+        task(card=card(AcceptStatus.pending, note_code=NoteCode.merge_conflict)),
+        Column.delivering,
+        "解决冲突",
     ),
     ("等人采纳", task(card=card(AcceptStatus.pending)), Column.needs_you, "等待验收"),
+    (
+        "绿了等人采纳",
+        task(
+            card=card(AcceptStatus.pending, merge_state_word="clean", merge_who="human")
+        ),
+        Column.needs_you,
+        "等待验收",
+    ),
     # 同一个「CI 红了」，但芝士推不上去修 —— PR 上的红是旧的，没人能清掉它。
     (
         "修不上去的 CI",
-        task(card=card(AcceptStatus.pr_open, note_code=NoteCode.repush_failed)),
+        task(card=card(AcceptStatus.pending, note_code=NoteCode.repush_failed)),
         Column.needs_you,
         "检查未通过",
     ),
     (
         "分叉了推不动",
-        task(card=card(AcceptStatus.pr_open, note_code=NoteCode.repush_diverged)),
+        task(card=card(AcceptStatus.pending, note_code=NoteCode.repush_diverged)),
         Column.needs_you,
         "检查未通过",
     ),
     (
         "GitHub 拒绝合并",
-        task(card=card(AcceptStatus.pr_open, note_code=NoteCode.merge_refused)),
+        task(card=card(AcceptStatus.pending, note_code=NoteCode.merge_refused)),
         Column.needs_you,
         "交付被退回",
     ),
     (
         "PR 被人关掉了",
-        task(card=card(AcceptStatus.pr_open, note_code=NoteCode.pr_closed_unmerged)),
+        task(card=card(AcceptStatus.pending, note_code=NoteCode.pr_closed_unmerged)),
         Column.needs_you,
         "交付被退回",
     ),
@@ -207,7 +262,7 @@ def test_delivery_beats_everything():
     shown = task_presentation(
         task(
             accepted_at=JUST_NOW,
-            residency=Residency.running,
+            has_worker=True,
             last_signal_at=JUST_NOW,
             card=card(AcceptStatus.pending),
         ),
@@ -220,7 +275,7 @@ def test_the_live_fact_beats_the_paperwork():
     """在跑压过卡：卡描述的是它可能马上就要顶掉的那一版。"""
     shown = task_presentation(
         task(
-            residency=Residency.running,
+            has_worker=True,
             last_signal_at=JUST_NOW,
             card=card(AcceptStatus.pending),
         ),
@@ -293,9 +348,51 @@ def test_every_phrase_is_reachable():
     assert reached == every
 
 
+def test_a_worker_that_stopped_reporting_is_not_a_worker_that_finished():
+    """分身报完成不是活干完了 —— 一个分身可以报好几次完成（把长命令丢进自己的后台
+    再停下来等也算一次），所以看板绝不能因为它安静下来就把这条活翻成「已收工」。
+    只有收工（`TaskStatus.closed`）或者已交付才是终态。"""
+    quiet = task(has_worker=True, last_signal_at=LONG_AGO)
+    shown = task_presentation(quiet, now=NOW)
+    assert shown.column is Column.building, "断了联系不等于干完了"
+    assert shown.display_status == "失联"
+
+    gone = task_presentation(
+        task(has_worker=True, last_signal_at=JUST_NOW, room_screen_live=False), now=NOW
+    )
+    assert gone.column is Column.building
+
+
+def test_a_finished_thread_still_reads_as_finished_with_a_worker_on_it():
+    """反过来也得成立：绑过分身不能盖掉真正的终态。"""
+    closed = task(has_worker=True, status=TaskStatus.closed, last_signal_at=LONG_AGO)
+    assert task_presentation(closed, now=NOW).display_status == "已收工"
+    delivered = task(has_worker=True, accepted_at=JUST_NOW, last_signal_at=LONG_AGO)
+    assert task_presentation(delivered, now=NOW).display_status == "已采纳"
+
+
+def test_a_thread_waiting_on_a_person_is_not_out_of_contact():
+    """分身干完活不会把自己从这条活上摘掉，所以「等人」的每一格都要能压过失联 ——
+    否则整个 delivering / needs_you 两列会被一句「失联」抹平。"""
+    for status in (
+        AcceptStatus.pending,
+        AcceptStatus.pending_gate,
+        AcceptStatus.conflict,
+    ):
+        quiet = task(
+            has_worker=True,
+            last_signal_at=LONG_AGO,
+            room_screen_live=False,
+            card=card(status),
+        )
+        shown = task_presentation(quiet, now=NOW)
+        assert shown.display_status != "失联", f"{status} 的卡被失联抢答了"
+        assert shown.column in (Column.delivering, Column.needs_you)
+
+
 def test_it_reads_nothing_but_the_facts_it_was_given():
     """纯函数：同样的事实 + 同样的「现在几点」= 同样的答案，跑多少次都一样。"""
-    facts = task(residency=Residency.running, last_signal_at=LONG_AGO)
+    facts = task(has_worker=True, last_signal_at=LONG_AGO)
     first = task_presentation(facts, now=NOW)
     assert first == task_presentation(facts, now=NOW)
     # 只有「现在几点」变了，同一行事实就换了一格 —— 时间是参数，不是它自己去读的。

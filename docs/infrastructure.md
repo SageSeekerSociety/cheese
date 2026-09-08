@@ -423,17 +423,6 @@ holding a 1001 backend on a 1000 tree: `git` refused the workspaces as
 when that run actually moved them, which the script reports to the caller.
 Rolling images back without rolling ownership back is not a rollback.
 
-`GIT_CREDENTIALS_FILE` **is** handed over with everything else, mode untouched
-(600 before, 600 after). It is operator-owned and outside git, but it is mounted
-read-only into the backend at a fixed path, so its owner has to *be* the
-backend's uid — it was 1001 only because the backend was. An earlier version of
-this script deliberately refused to move it and only checked readability; that
-protected nothing and stopped the deploy on a step whose only remedy was a sudo
-nobody in the deploy path has. The readability check survives and still fails the
-deploy loudly with the exact `chown` to run, but it now runs *after* the
-handover, so it only fires on something a chown cannot fix. The default
-`/dev/null` (feature off) is a device node and is skipped, never chowned.
-
 These scripts are exercised by `deploy/tests/` against a fake docker, gated in CI
 by `.github/workflows/deploy-scripts-test.yml` (hosted, ~1m — it must not queue
 behind the box's single runner). Before 2026-08-11 that harness existed but no

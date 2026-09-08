@@ -21,9 +21,12 @@ export function isTransportFailure(body: unknown): boolean {
 // The status stays on the error for whoever is debugging; the sentence is for
 // the user, so it says what they can do and not what failed — no 网关, no 隧道
 // (design-system §8.2). A write gets the longer one: whether it landed is the
-// one thing they cannot know.
+// one thing they cannot know. The app may have applied the write before
+// an intermediary returned the error page.
 export function transportFailureMessage(method: string, status: number): string {
   const sentence =
-    method.toUpperCase() === 'GET' ? '服务暂时不可达，请稍后重试' : '服务暂时不可达，刚才的操作没有送达，请稍后重试'
+    method.toUpperCase() === 'GET'
+      ? '服务暂时不可达，请稍后重试'
+      : '服务暂时不可达，无法确认操作是否完成，请刷新查看后再重试'
   return `${sentence}（HTTP ${status}）`
 }

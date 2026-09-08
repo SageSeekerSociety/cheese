@@ -69,10 +69,6 @@ function handleStateChanged(resource: string) {
   if (resource === 'topics') void store.refreshTopics()
 }
 
-function handleToolUsed(name: string) {
-  if (name === 'create_subtopic') void store.refreshTopics()
-}
-
 function openTopic(topicId: string) {
   void router.push({ name: 'workspace-topic', params: { projectId: props.projectId, topicId } })
 }
@@ -115,7 +111,6 @@ async function handleUpgradeMessage(messageId: string) {
       :topic-list="store.topics"
       :show-composer="true"
       @turn-done="handleTurnDone"
-      @tool-used="handleToolUsed"
       @state-changed="handleStateChanged"
       @mention-click="handleMentionClick"
       @open-resource="handleOpenResource"

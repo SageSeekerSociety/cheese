@@ -3,6 +3,7 @@
 import mimetypes
 import uuid
 from typing import Annotated
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Header, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -78,14 +79,32 @@ async def read_file(
 
 @router.get("/{project_id}/file/raw", dependencies=[Depends(require_project_access)])
 async def read_file_raw(
-    project_id: uuid.UUID, path: str, db: DbSession, topic: uuid.UUID | None = None
+    project_id: uuid.UUID,
+    path: str,
+    db: DbSession,
+    topic: uuid.UUID | None = None,
+    download: bool = False,
 ) -> Response:
     """Raw bytes of a worktree file — the 文件 panel renders images as images
     (the text endpoint would mangle binary content)."""
     await ProjectService(db).get_or_404(project_id)
     data = ws.read_file_bytes(project_id, path, topic_id=topic)
     mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
-    return Response(content=data, media_type=mime)
+    # Arbitrary uploads must never execute in the app's origin.
+    download = download or not mime.startswith("image/")
+    headers = {
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "default-src 'none'; sandbox",
+    }
+    if download:
+        headers["Content-Disposition"] = (
+            f"attachment; filename*=UTF-8''{quote(path.rsplit('/', 1)[-1], safe='')}"
+        )
+    return Response(
+        content=data,
+        media_type="application/octet-stream" if download else mime,
+        headers=headers,
+    )
 
 
 @router.put("/{project_id}/file", dependencies=[Depends(require_project_access)])
@@ -157,21 +176,13 @@ async def topic_work_summary(
     ``has_run`` is the topic's captured session, not its message count: 现场
     shows what 芝士 did, and a room where only people talked has no 现场 to open.
 
-    The id may name a room or a thread, and the two fields answer at DIFFERENT
-    grains — which is the whole reason they are computed separately here:
-
-    - ``changed_files`` belongs to the TREE. 一棵树 = 一个分支 = 一个 PR = 一批活,
-      so a thread's siblings write the same branch and the diff is honestly
-      theirs together; asking per-thread would invent an isolation that does not
-      exist. ``topic_changed_files`` already resolves the place to its tree.
-    - ``has_run`` belongs to the PLACE. A thread runs its own agent, in its own
-      session row, on its own screen — so "has this run" is about this work, not
-      about its room. A room that has run does not make an untouched thread look
-      like it has.
+    ``changed_files`` belongs to the TREE, not to the room: 一棵树 = 一个分支 =
+    一个 PR = 一批活, so the diff is what the room's whole current batch has
+    written. ``topic_changed_files`` resolves the room to its tree.
     """
     await ProjectService(db).get_or_404(project_id)
     place = await TopicService(db).place_or_404(topic_id)
-    paths = ws.topic_changed_files(project_id, place.id)
+    paths = ws.topic_changed_files(project_id, place.room_id)
     # 跑过没有 = 这个地点有没有哪个 agent 留下过会话。
-    has_run = await AgentSessionService(db).has_run(place.id)
+    has_run = await AgentSessionService(db).has_run(place.room_id)
     return ok({"changed_files": paths, "has_run": has_run})

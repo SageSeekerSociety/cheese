@@ -60,6 +60,7 @@ import {
   answerOptions,
   attachmentRawUrl,
   chatWsUrl,
+  downloadFile,
   getProgress,
   listBlocks,
   listRoomTasks,
@@ -69,7 +70,6 @@ import {
 import { usePendingAttachments } from '../lib/attachments'
 import { cachedWindow, setCachedWindow } from '../lib/blockCache'
 import { mergeRefreshedTail, PAGE_SIZE, prependOlder, scrollTopAfterPrepend, shouldLoadOlder } from '../lib/blockPaging'
-import { roomIdOf } from '../lib/place'
 import { collapseNotices } from '../lib/platformNotice'
 import {
   coalesceSplitFencedCodeBlocks,
@@ -130,6 +130,10 @@ const props = withDefaults(
     // 开这个话题的那一刻还有多少条没读（只数别人发的，和侧栏角标同一口径）。
     // 由 host 在 markRead 之前捕获——一旦 markRead 跑过，这个数就没了。
     unreadOnOpen?: number
+    // 换 AI 队友之后 +1。房间的名册（谁在这儿、以及那个 AI 队友现在叫什么）由
+    // 这个组件自己拉，而换队友的按钮长在话题头上——两边够不着，所以由上面的人
+    // 说一声「过期了，重拉」。
+    rosterRevision?: number
   }>(),
   {
     alwaysSummon: false,
@@ -140,6 +144,7 @@ const props = withDefaults(
     topicList: () => [],
     titleOverride: null,
     unreadOnOpen: 0,
+    rosterRevision: 0,
   }
 )
 
@@ -189,12 +194,10 @@ async function loadRoster() {
     roomMembers.value = []
     return
   }
-  // 名册是**房间**的，永远只有这一份：支线没有自己的名册（`/members` 对它 404），
-  // 而在一条支线里 @ 谁，问的仍然是「这个房间里有谁」。
-  const id = roomIdOf(place)
+  const id = place.id
   try {
     const payload = await listTopicMembers(id)
-    if (props.topic && roomIdOf(props.topic) === id) roomMembers.value = payload.data
+    if (props.topic?.id === id) roomMembers.value = payload.data
   } catch {
     // 名单拉不到就说出来：@ 补全会缺人（包括芝士）。静默的话，表现是「@ 不出
     // 芝士」，而屏幕上没有任何东西说明为什么。
@@ -202,7 +205,15 @@ async function loadRoster() {
   }
 }
 
-watch(() => props.topic?.id, loadRoster, { immediate: true })
+watch(() => [props.topic?.id, props.rosterRevision], loadRoster, { immediate: true })
+
+// 这个房间现在交给的是哪个 AI 队友。名册那一行说了算（后端把芝士那一行的名字
+// 解析成当前队友的名字）。界面上任何一处写死「芝士」，换完队友都不会变，看起来
+// 就是「换人没生效」——这正是它被报上来的样子。
+const agentName = computed(() => {
+  const seat = roomMembers.value.find((m) => m.agent)
+  return seat?.name || seat?.member_handle || '芝士'
+})
 
 /** @ 得到的人：这个房间里的，加上项目里还没进这个房间的。 */
 const mentionPool = computed(() => {
@@ -819,7 +830,7 @@ function showReplyCue(m: Block): boolean {
   return m.author_type === 'human' && !!parentOf(m)
 }
 function replySnippet(m: Block): string {
-  if (m.kind === 'attachment') return '[图片]'
+  if (m.kind === 'attachment') return isImageBlock(m) ? '[图片]' : '[文件]'
   const t = m.content.replace(/\s+/g, ' ').trim()
   return t.length > 24 ? t.slice(0, 24) + '…' : t
 }
@@ -830,6 +841,13 @@ function isImageBlock(m: Block): boolean {
 }
 function imageUrl(m: Block): string {
   return props.topic ? attachmentRawUrl(props.topic.id, m.content) : ''
+}
+async function downloadAttachment(m: Block) {
+  try {
+    await downloadFile(imageUrl(m), m.content.split('/').pop() || 'file')
+  } catch (e) {
+    errorMsg.value = e instanceof Error ? e.message : '下载失败'
+  }
 }
 function scrollToMessage(id: string) {
   document.querySelector(`[data-mid="${id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -1040,7 +1058,7 @@ const memberByHandle = computed(() => {
 // 「显示成昵称」只能在这里做：查名册，查不到（退出项目的人、anonymous 兜底
 // 作者）就把 handle 原样显示出来。
 function displayName(m: Block): string {
-  if (m.author_type === 'ai') return '芝士'
+  if (m.author_type === 'ai') return agentName.value
   return memberByHandle.value.get(m.author)?.name || m.author
 }
 // 真头像加载失败过的 handle —— 退回彩色首字母，不留破图。
@@ -1219,6 +1237,7 @@ function mentionsAgent(expanded: string): boolean {
 }
 
 function sendDraft() {
+  if (attsUploading.value) return
   const content = expandMentions(draft.value)
   if (send(content, props.alwaysSummon || mentionsAgent(content), pendingAtts.value.slice())) {
     draft.value = ''
@@ -1554,7 +1573,7 @@ onBeforeUnmount(() => {
               <!-- avatar gutter: only on the first of a run -->
               <div class="im-gutter">
                 <template v-if="isRunStart(i)">
-                  <CheeseAvatar v-if="m.author_type === 'ai'" :size="28" />
+                  <CheeseAvatar v-if="m.author_type === 'ai'" :size="28" :name="displayName(m)" />
                   <!-- 真头像；取不到或加载失败退回按 handle 哈希的彩色首字母。
                      底色的种子继续用 handle（换成昵称会让每个人的颜色都变）,
                      变的只有色块里的字。 -->
@@ -1586,6 +1605,17 @@ onBeforeUnmount(() => {
                 <a v-if="isImageBlock(m)" class="im-image-link" :href="imageUrl(m)" target="_blank" rel="noopener">
                   <img class="im-image" :src="imageUrl(m)" :alt="m.content" loading="lazy" />
                 </a>
+                <v-btn
+                  v-else-if="m.kind === 'attachment'"
+                  variant="text"
+                  prepend-icon="mdi-file-document-outline"
+                  append-icon="mdi-download-outline"
+                  class="text-none im-file-link"
+                  :title="`下载 ${m.content.split('/').pop()}`"
+                  @click="downloadAttachment(m)"
+                >
+                  <span class="text-truncate">{{ m.content.split('/').pop() }}</span>
+                </v-btn>
                 <div v-else-if="m.author_type === 'ai'" class="im-text md-content" v-html="renderMarkdown(m.content)" />
                 <!-- 现场尊重原文: human text renders verbatim — newlines and
                    spacing preserved (pre-wrap), no markdown reflow. -->
@@ -1710,11 +1740,11 @@ onBeforeUnmount(() => {
              working-log checklist stays visible for the whole turn. -->
           <div v-if="awaitingReply || todoItems.length" class="im-row">
             <div class="im-gutter">
-              <CheeseAvatar :size="28" />
+              <CheeseAvatar :size="28" :name="agentName" />
             </div>
             <div class="im-main">
               <div class="im-meta">
-                <span class="im-name">芝士</span>
+                <span class="im-name">{{ agentName }}</span>
               </div>
 
               <!-- Working-log checklist (芝士's tasks, §3.1.1). Live during a
@@ -1731,7 +1761,7 @@ onBeforeUnmount(() => {
 
               <!-- Instant ack before the first message / during cold start -->
               <div v-if="awaitingReply" class="im-text">
-                <span class="text-medium-emphasis">芝士正在处理…</span>
+                <span class="text-medium-emphasis">{{ agentName }}正在处理…</span>
                 <span class="caret" />
               </div>
             </div>
@@ -1806,7 +1836,16 @@ onBeforeUnmount(() => {
             <!-- 图片输入: images waiting to go with the next send. -->
             <div v-if="pendingAtts.length || attsUploading" class="att-strip">
               <div v-for="(a, i) in pendingAtts" :key="a.path" class="att-thumb">
-                <img :src="attachmentRawUrl(topic.id, a.path)" :alt="a.path" />
+                <img v-if="a.mime.startsWith('image/')" :src="attachmentRawUrl(topic.id, a.path)" :alt="a.path" />
+                <v-chip
+                  v-else
+                  variant="tonal"
+                  class="pe-6"
+                  prepend-icon="mdi-file-document-outline"
+                  :title="a.path.split('/').pop()"
+                >
+                  <span class="text-truncate">{{ a.path.split('/').pop() }}</span>
+                </v-chip>
                 <button type="button" class="att-remove" title="移除" @click="removePendingAtt(i)">
                   <v-icon size="12">mdi-close</v-icon>
                 </button>
@@ -1825,7 +1864,7 @@ onBeforeUnmount(() => {
               hide-details
               density="comfortable"
               class="composer-input"
-              :placeholder="alwaysSummon ? '告诉芝士要做什么…' : '输入消息，@芝士 交给它做'"
+              :placeholder="alwaysSummon ? `告诉${agentName}要做什么…` : `输入消息，@${agentName} 交给它做`"
               :title="enterSends ? 'Enter 发送，Shift+Enter 换行，可直接粘贴图片' : '可直接粘贴图片'"
               @keydown="onComposerKey"
               @paste="onComposerPaste"
@@ -1835,23 +1874,16 @@ onBeforeUnmount(() => {
             <!-- 下面一行：动作靠左，发送靠右。发送是这一行唯一的主操作，所以它是
                唯一的实心按钮，其余一律是安静的图标。 -->
             <div class="composer-actions d-flex align-center ga-1">
-              <input
-                ref="fileInput"
-                type="file"
-                accept="image/png,image/jpeg,image/gif,image/webp"
-                multiple
-                class="d-none"
-                @change="onFilePicked"
-              />
+              <input ref="fileInput" type="file" multiple class="d-none" @change="onFilePicked" />
               <!-- 附件上传走的是 HTTP，和聊天那条 socket 是两回事：socket 断着的
                  时候图片照样传得上去，所以这里不跟着 `connected` 一起禁用。 -->
               <v-btn
                 class="composer-icon"
-                icon="mdi-image-plus-outline"
+                icon="mdi-paperclip"
                 variant="text"
                 size="small"
                 color="medium-emphasis"
-                title="发送图片"
+                title="上传文件或图片（每个文件最大 10MB）"
                 @click="pickFiles"
               />
               <v-spacer />
@@ -1867,7 +1899,7 @@ onBeforeUnmount(() => {
                 icon="mdi-send"
                 size="small"
                 title="发送"
-                :disabled="!draft.trim() && !pendingAtts.length"
+                :disabled="attsUploading || (!draft.trim() && !pendingAtts.length)"
                 @click="sendDraft"
               />
             </div>
@@ -2376,7 +2408,15 @@ details.sys-row > summary::-webkit-details-marker {
   background: var(--fill);
   object-fit: contain;
 }
-/* Pending images above the composer, each with a remove button. */
+.im-file-link,
+.att-thumb,
+.att-thumb .v-chip {
+  max-width: 100%;
+}
+.im-file-link :deep(.v-btn__content) {
+  min-width: 0;
+}
+/* Pending attachments, each with a remove button. */
 .att-strip {
   display: flex;
   align-items: center;
@@ -2387,6 +2427,9 @@ details.sys-row > summary::-webkit-details-marker {
 .att-thumb {
   position: relative;
   line-height: 0;
+}
+.att-thumb .v-chip {
+  line-height: normal;
 }
 .att-thumb img {
   width: 56px;

@@ -2,13 +2,18 @@
 // ApiEnvelope; these helpers unwrap `data` and surface non-200 codes as errors.
 import type {
   AcceptCard,
+  AgentConfiguration,
   AgentType,
   ApiEnvelope,
   Block,
+  BranchProtection,
+  BranchProtectionPatch,
+  BranchProtectionRules,
   ChatAttachment,
   ComputeProfiles,
   Contributions,
-  ExecProfiles,
+  EnvironmentConfig,
+  EnvironmentStatus,
   FileContent,
   GitCommit,
   GithubConnection,
@@ -24,12 +29,12 @@ import type {
   Project,
   ProjectAgent,
   ProjectCredits,
+  ProjectEnvironmentInfo,
   ProjectMemberRow,
   ProjectOverview,
   ReactionAgg,
   RoomTask,
   RoomTree,
-  SandboxImageInfo,
   Topic,
   TopicComputeProfile,
   TopicMemberRow,
@@ -41,9 +46,7 @@ import type {
   UserProfile,
   WorkspaceFile,
 } from './cx_types'
-import type { PlacePayload } from './lib/place'
 
-import { isThreadPayload } from './lib/place'
 import { TOPIC_TITLE_MAX_LENGTH } from './lib/topicTitle'
 import { isTransportFailure, transportFailureMessage } from './lib/transportFailure'
 
@@ -648,8 +651,10 @@ export function unarchiveTopic(topicId: string, by: string): Promise<Topic> {
 // 把一条消息升级成它自己的地点 (eval A1)。`blockId` 是那条消息的 block id。
 // 房间里的消息升级出来的是一条**支线**；私聊里的升级出来的是一个真房间——私聊
 // 不在话题树里，支线在那儿没人打得开。所以回答有两种形状。
-export function upgradeBlock(blockId: string, createdBy: string): Promise<PlacePayload> {
-  return request<PlacePayload>(`/blocks/${encodeURIComponent(blockId)}/upgrade`, {
+/** 升级一条消息。房间里的消息变成这个房间的一张**卡**（回来的是 RoomTask），
+ *  私聊里的变成一个新房间（回来的是 Topic）。 */
+export function upgradeBlock(blockId: string, createdBy: string): Promise<Topic | RoomTask> {
+  return request<Topic | RoomTask>(`/blocks/${encodeURIComponent(blockId)}/upgrade`, {
     method: 'POST',
     body: JSON.stringify({ created_by: createdBy }),
   })
@@ -674,17 +679,6 @@ export function getProjectCredits(projectId: string): Promise<ProjectCredits> {
 
 // ---- 题目匹配市场 (spec §13 阶段 6) ----
 
-// AI 模型池: the project's current profile + the ones it may select.
-export function getExecutionProfiles(projectId: string): Promise<ExecProfiles> {
-  return request<ExecProfiles>(`/projects/${encodeURIComponent(projectId)}/execution-profiles`)
-}
-export function setExecutionProfile(projectId: string, profile: string): Promise<{ current: string }> {
-  return request(`/projects/${encodeURIComponent(projectId)}/execution-profile`, {
-    method: 'PUT',
-    body: JSON.stringify({ profile }),
-  })
-}
-
 // 算力池: the project's current compute pool + the deployed ones it may select.
 export function getComputeProfiles(projectId: string): Promise<ComputeProfiles> {
   return request<ComputeProfiles>(`/projects/${encodeURIComponent(projectId)}/compute-profiles`)
@@ -698,7 +692,48 @@ export function setComputeProfile(projectId: string, profile: string): Promise<{
 
 // MicroCloud machines are billed/audited through one project but enroll into that
 // project's team compute pool. The browser never receives provider credentials.
-export function listProjectMachines(projectId: string): Promise<ListPayload<import('./cx_types').ProjectMachine>> {
+export interface ResourceLimits {
+  max_machines_per_team: number
+  max_concurrent_turns: number
+}
+
+export function getResourceLimits(): Promise<ResourceLimits> {
+  return request('/projects/resource-limits')
+}
+
+export interface MachineQuota {
+  team_id: number
+  used: number
+  limit: number
+  project_used: number
+}
+
+export interface TeamResourceQuotas {
+  team_id: number
+  machines: { used: number; limit: number }
+  credits: {
+    unlimited: boolean
+    credits_total: number
+    credits_used: number
+    credits_remaining: number
+    tokens_per_credit: number
+  }
+  projects: {
+    id: string
+    name: string
+    machines_used: number
+    total_tokens: number
+    restricted_credits_remaining: number
+  }[]
+}
+
+export function getTeamResourceQuotas(teamId: number): Promise<TeamResourceQuotas> {
+  return request(`/teams/${teamId}/resource-quotas`)
+}
+
+export function listProjectMachines(
+  projectId: string
+): Promise<ListPayload<import('./cx_types').ProjectMachine> & { quota: MachineQuota }> {
   return request(`/projects/${encodeURIComponent(projectId)}/machines`)
 }
 
@@ -721,21 +756,33 @@ export function deleteProjectMachine(
   })
 }
 
-// 订阅模型: the project's current Claude model + the ones it may select. Same
-// shape as compute pools; a project picks Sonnet 5 (default) or Opus 5.
-export function getModelProfiles(projectId: string): Promise<ComputeProfiles> {
-  return request<ComputeProfiles>(`/projects/${encodeURIComponent(projectId)}/model-profiles`)
-}
-export function setModelProfile(projectId: string, profile: string): Promise<{ current: string }> {
-  return request(`/projects/${encodeURIComponent(projectId)}/model-profile`, {
-    method: 'PUT',
-    body: JSON.stringify({ profile }),
-  })
-}
-
 // 会话级算力 (v4): a topic's own compute选择, switchable until its first turn.
 export function getTopicComputeProfile(topicId: string): Promise<TopicComputeProfile> {
   return request<TopicComputeProfile>(`/topics/${encodeURIComponent(topicId)}/compute-profile`)
+}
+
+export function getProjectComputeConfigs(projectId: string): Promise<import('./cx_types').ProjectComputeConfigs> {
+  return request(`/projects/${encodeURIComponent(projectId)}/compute-configs`)
+}
+
+export function saveProjectComputeConfigs(
+  projectId: string,
+  configs: Pick<import('./cx_types').ProjectComputeConfigs, 'default' | 'favorites'>
+): Promise<Pick<import('./cx_types').ProjectComputeConfigs, 'default' | 'favorites'>> {
+  return request(`/projects/${encodeURIComponent(projectId)}/compute-configs`, {
+    method: 'PUT',
+    body: JSON.stringify(configs),
+  })
+}
+
+export function setTopicComputeChoice(
+  topicId: string,
+  choice: import('./cx_types').ComputeChoice
+): Promise<{ choice: import('./cx_types').ComputeChoice }> {
+  return request(`/topics/${encodeURIComponent(topicId)}/compute-profile`, {
+    method: 'PUT',
+    body: JSON.stringify({ choice }),
+  })
 }
 export function setTopicComputeProfile(
   topicId: string,
@@ -750,15 +797,6 @@ export function setTopicComputeProfile(
   return request(`/topics/${encodeURIComponent(topicId)}/compute-profile`, {
     method: 'PUT',
     body: JSON.stringify(profile === 'device' ? { profile, device_id: deviceId } : { profile }),
-  })
-}
-
-// Which type the project's default agent wears; an empty name clears it. The
-// agent itself stays — and so does the memory it has been accumulating.
-export function setProjectAgentType(projectId: string, typeName: string): Promise<ProjectAgent> {
-  return request(`/projects/${encodeURIComponent(projectId)}/default-agent`, {
-    method: 'PUT',
-    body: JSON.stringify({ type_name: typeName }),
   })
 }
 
@@ -789,49 +827,22 @@ export interface AgentFieldOptions {
 
 export type AgentTypeOptions = Record<string, AgentFieldOptions>
 
-export function getAgentTypeOptions(): Promise<AgentTypeOptions> {
-  return request<AgentTypeOptions>('/agent-types/options')
+export function getProjectAgentOptions(projectId: string): Promise<AgentTypeOptions> {
+  return request<AgentTypeOptions>(`/projects/${encodeURIComponent(projectId)}/agent-options`)
 }
 
-// The merged type catalog: platform presets + this project's custom types.
+// Built-in starting configurations, copied only when creating an agent.
 export function listAgentTypes(): Promise<ListPayload<AgentType>> {
   return request<ListPayload<AgentType>>('/agent-types')
 }
 
-export interface AgentTypeInput {
-  title?: string
-  description?: string
-  body?: string
-  skills?: string[]
-  mcp_servers?: string[]
-  model?: string | null
-  effort?: string | null
-  harness?: string | null
-  // Who authored the type — the backend records it and shows it in the catalog.
-  created_by?: string
-}
-
-export function createAgentType(payload: AgentTypeInput & { name: string; body: string }): Promise<AgentType> {
-  return request<AgentType>('/agent-types', { method: 'POST', body: JSON.stringify(payload) })
-}
-
-export function updateAgentType(name: string, payload: AgentTypeInput): Promise<AgentType> {
-  return request<AgentType>(`/agent-types/${encodeURIComponent(name)}`, {
-    method: 'PUT',
-    body: JSON.stringify(payload),
-  })
-}
-
-// The agents this project has. A project that never configured one still gets a
-// row back — the implicit 芝士, `configured: false` — because it is really
-// working in every room and owns a real memory pool.
 export function listProjectAgents(projectId: string): Promise<ListPayload<ProjectAgent>> {
   return request<ListPayload<ProjectAgent>>(`/projects/${encodeURIComponent(projectId)}/agents`)
 }
 
 export function createProjectAgent(
   projectId: string,
-  payload: { display_name: string; handle?: string; type_name?: string | null }
+  payload: { display_name: string; handle?: string; type_name?: string | null; configuration: AgentConfiguration }
 ): Promise<ProjectAgent> {
   return request<ProjectAgent>(`/projects/${encodeURIComponent(projectId)}/agents`, {
     method: 'POST',
@@ -842,7 +853,7 @@ export function createProjectAgent(
 export function updateProjectAgent(
   projectId: string,
   agentId: string,
-  payload: { display_name?: string; type_name?: string | null }
+  payload: { display_name?: string; configuration?: AgentConfiguration }
 ): Promise<ProjectAgent> {
   return request<ProjectAgent>(`/projects/${encodeURIComponent(projectId)}/agents/${encodeURIComponent(agentId)}`, {
     method: 'PUT',
@@ -859,27 +870,33 @@ export function deactivateProjectAgent(projectId: string, agentId: string): Prom
   )
 }
 
-// Which agent a new topic gets. `instance_id` picks a different agent (a
-// different memory pool); `type_name` re-skins the one the project already has,
-// so the pool it has been filling stays its own.
-export function setProjectDefaultAgent(
-  projectId: string,
-  body: { instance_id?: string | null; type_name?: string | null }
-): Promise<ProjectAgent> {
+// Select the existing agent that new rooms start with.
+export function setProjectDefaultAgent(projectId: string, body: { instance_id: string }): Promise<ProjectAgent> {
   return request<ProjectAgent>(`/projects/${encodeURIComponent(projectId)}/default-agent`, {
     method: 'PUT',
     body: JSON.stringify(body),
   })
 }
 
-// 环境 (spec §9.1): which sandbox image runs this project's agent.
-export function getSandboxImage(projectId: string): Promise<SandboxImageInfo> {
-  return request<SandboxImageInfo>(`/projects/${encodeURIComponent(projectId)}/sandbox-image`)
+export function getProjectEnvironment(projectId: string): Promise<ProjectEnvironmentInfo> {
+  return request(`/projects/${encodeURIComponent(projectId)}/environment`)
 }
-export function setSandboxImage(projectId: string, image: string): Promise<{ current: string | null }> {
-  return request(`/projects/${encodeURIComponent(projectId)}/sandbox-image`, {
+export function saveProjectEnvironment(
+  projectId: string,
+  config: Omit<EnvironmentConfig, 'revision'>
+): Promise<EnvironmentConfig> {
+  return request(`/projects/${encodeURIComponent(projectId)}/environment`, {
     method: 'PUT',
-    body: JSON.stringify({ image }),
+    body: JSON.stringify(config),
+  })
+}
+export function getRoomEnvironment(projectId: string, roomId: string): Promise<EnvironmentStatus> {
+  return request(`/projects/${encodeURIComponent(projectId)}/environment/rooms/${encodeURIComponent(roomId)}`)
+}
+export function applyRoomEnvironment(projectId: string, roomId: string, latest: boolean): Promise<EnvironmentStatus> {
+  return request(`/projects/${encodeURIComponent(projectId)}/environment/rooms/${encodeURIComponent(roomId)}/apply`, {
+    method: 'POST',
+    body: JSON.stringify({ latest }),
   })
 }
 
@@ -896,6 +913,18 @@ export function setUpstream(projectId: string, url: string): Promise<UpstreamInf
 export function syncUpstream(projectId: string): Promise<UpstreamSyncResult> {
   return request(`/projects/${encodeURIComponent(projectId)}/upstream/sync`, {
     method: 'POST',
+  })
+}
+
+// 分支保护 (#718): 平台侧的合并规则。GET 附带只读的 merge_method 和
+// github_protection；PUT 是 partial-update，body 里出现哪个键就改哪个。
+export function getBranchProtection(projectId: string): Promise<BranchProtection> {
+  return request<BranchProtection>(`/projects/${encodeURIComponent(projectId)}/branch-protection`)
+}
+export function setBranchProtection(projectId: string, patch: BranchProtectionPatch): Promise<BranchProtectionRules> {
+  return request(`/projects/${encodeURIComponent(projectId)}/branch-protection`, {
+    method: 'PUT',
+    body: JSON.stringify(patch),
   })
 }
 
@@ -993,9 +1022,9 @@ export function toggleReaction(
   )
 }
 
-// ---- 图片输入 (chat image attachments) ----
+// ---- Chat attachments ----
 
-// Upload a chat image into the topic's worktree. NOTE: raw fetch, not
+// Upload a file into the topic's worktree. NOTE: raw fetch, not
 // request() — multipart needs the browser to set the boundary header itself.
 export async function uploadAttachment(topicId: string, file: File): Promise<ChatAttachment> {
   const form = new FormData()
@@ -1015,6 +1044,20 @@ export async function uploadAttachment(topicId: string, file: File): Promise<Cha
 // <img src=…> URL for an uploaded attachment (binary raw endpoint).
 export function attachmentRawUrl(topicId: string, path: string): string {
   return `${BASE}/topics/${encodeURIComponent(topicId)}/attachments/raw?path=${encodeURIComponent(path)}`
+}
+
+// Downloads carry the same credentials as API requests, including token-only sessions.
+export async function downloadFile(rawUrl: string, filename: string): Promise<void> {
+  const res = await fetch(`${rawUrl}&download=true`, { headers: authHeaders() })
+  if (!res.ok) throw new Error(`下载失败（HTTP ${res.status}）`)
+  const url = URL.createObjectURL(await res.blob())
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
 // Living-doc helpers (spec §2.2 docs-out/docs-in). `content` is markdown.
@@ -1238,10 +1281,15 @@ export function getPrChecks(topicId: string): Promise<PrChecks> {
   return request<PrChecks>(`/topics/${encodeURIComponent(topicId)}/pr-checks`)
 }
 
-export function acceptCard(cardId: string, decidedBy: string): Promise<AcceptCard> {
+// 合的是人看到的那个 commit：会触发合并的三个入口（采纳 / 人工放行 / 布防）都
+// 带上卡片渲染时 `merge_state.head_sha` 的值。轮询器每分钟把卡刷到 PR 的新
+// head，屏幕上那份不会自己变——不声明看的是哪一版，点下去合的就可能是一段没人
+// 看过的代码。后端拿它和卡当前的 head 对，不一致就 422 让人重新看过。
+// null 是合法值：卡还没被镜像过 head，或者根本不骑 PR（平台 lane）。
+export function acceptCard(cardId: string, decidedBy: string, headSha: string | null): Promise<AcceptCard> {
   return request<AcceptCard>(`/accept-cards/${encodeURIComponent(cardId)}/accept`, {
     method: 'POST',
-    body: JSON.stringify({ decided_by: decidedBy }),
+    body: JSON.stringify({ decided_by: decidedBy, head_sha: headSha }),
   })
 }
 
@@ -1261,16 +1309,26 @@ export function revokeCard(cardId: string, decidedBy: string): Promise<AcceptCar
   })
 }
 
-// 人工放行 (App 采纳等 CI 再合): merge a pr_open card's PR even though its
-// checks are not all green. The platform never does this on its own —红着合
-// 有时候是对的，不能接受的是没有人做过这个决定。So the actor is taken from the
-// session server-side (never the body) and the card records who / when / what
-// the checks said / why. Only the reviewer, the authorizer, or an owner/lead
-// may call it, and 芝士 is refused outright.
-export function mergeCardAnyway(cardId: string, reason: string): Promise<AcceptCard> {
+// 人工放行 (#718): merge a pending card's PR even though its merge state is
+// not clean. The platform never does this on its own —红着合有时候是对的，
+// 不能接受的是没有人做过这个决定。So the actor is taken from the session
+// server-side (never the body) and the card records who / when / what the
+// checks said / why. Only the project's override list (owner/lead when
+// unconfigured) may call it, and 芝士 is refused outright.
+export function mergeCardAnyway(cardId: string, reason: string, headSha: string | null): Promise<AcceptCard> {
   return request<AcceptCard>(`/accept-cards/${encodeURIComponent(cardId)}/merge-anyway`, {
     method: 'POST',
-    body: JSON.stringify({ reason }),
+    body: JSON.stringify({ reason, head_sha: headSha }),
+  })
+}
+
+// 绿了自动合 (#718): arm/disarm auto-merge on a pending card. Reviewer-side
+// switch, only meaningful on a project with auto_merge_allowed; the actor is
+// the session user server-side, and 新提交作废采纳 disarms it again.
+export function setAutoMerge(cardId: string, enabled: boolean, headSha: string | null): Promise<AcceptCard> {
+  return request<AcceptCard>(`/accept-cards/${encodeURIComponent(cardId)}/auto-merge`, {
+    method: 'POST',
+    body: JSON.stringify({ enabled, head_sha: headSha }),
   })
 }
 
@@ -1336,17 +1394,33 @@ export function removeTopicMember(topicId: string, handle: string, actor: string
   )
 }
 
-// 一个 id 指向一个「地点」——房间答 Topic，支线答 RoomTask (lib/place.ts)。
-// 打开一条支线只有这一条路：侧栏那份列表只查 topics 表，支线从来不在里面。
-export function getPlace(placeId: string): Promise<PlacePayload> {
-  return request<PlacePayload>(`/topics/${encodeURIComponent(placeId)}`)
+// 一个 id 指向一个房间。**卡不是地点**：拿卡的 id 问这条接口是 404，卡走
+// `getRoomTask`（房间的地址 + 卡的 id）。
+export function getTopic(topicId: string): Promise<Topic> {
+  return request<Topic>(`/topics/${encodeURIComponent(topicId)}`)
 }
 
-// Re-fetch a single ROOM (after accept it becomes archived). Null for a thread:
-// the caller patches a row in the rail's list, and threads have no row there.
-export async function getTopic(topicId: string): Promise<Topic | null> {
-  const place = await getPlace(topicId)
-  return isThreadPayload(place) ? null : place
+/** 一张卡，连着它自己的对话。`limit` 只截对话，卡本身照常整份回来。 */
+export function getRoomTask(
+  roomId: string,
+  taskId: string,
+  opts?: { limit?: number }
+): Promise<RoomTask & { blocks: Block[] }> {
+  const q = new URLSearchParams()
+  if (opts?.limit != null) q.set('limit', String(opts.limit))
+  const query = q.toString() ? `?${q.toString()}` : ''
+  return request<RoomTask & { blocks: Block[] }>(
+    `/topics/${encodeURIComponent(roomId)}/tasks/${encodeURIComponent(taskId)}${query}`
+  )
+}
+
+/** 在一张卡下面说话。落在这条活的时间线上，房间被叫来转达 —— 做这条活的分身住在
+ *  房间的会话里，只有房间的芝士递得到话。 */
+export function sayOnRoomTask(roomId: string, taskId: string, content: string, author: string): Promise<Block> {
+  return request<Block>(`/topics/${encodeURIComponent(roomId)}/tasks/${encodeURIComponent(taskId)}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({ content, author }),
+  })
 }
 
 // ---- 日历 / 里程碑 (§7.2) ----

@@ -18,6 +18,7 @@ from app.domain.agent.harness.claude_code.hooks_substrate import (
     Channel,
     ClaudeCodeRuntime,
     ScreenSetupError,
+    SessionActivity,
     WorkAttribution,
     monitor_session_activity,
 )
@@ -91,10 +92,22 @@ async def test_monitor_session_activity_streams_in_order_and_ends_on_stop():
     assert events[-1].is_error is False
 
 
-async def test_monitor_session_activity_times_out_with_message_on_silence():
-    queue: asyncio.Queue[dict] = asyncio.Queue()  # nothing ever arrives
+async def test_silence_ends_only_when_the_probe_says_the_process_is_gone():
+    """一条 hook 都没有，本身不是结论。它让会话进入可疑，然后由探针去数进程；
+    只有探针说进程没了才结束。硬上限到了也只记一笔，不再当判决。"""
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    queue.put_nowait({"hook_event_name": "UserPromptSubmit", "prompt": "hi"})
+
+    async def confirm_alive() -> bool:
+        return False
+
     events = await _drain(
-        queue, idle_suspect_s=0.05, hard_ceiling_s=0.05, timeout_message="轮次超时"
+        queue,
+        idle_suspect_s=0.05,
+        hard_ceiling_s=5,
+        timeout_message="轮次超时",
+        confirm_alive=confirm_alive,
+        confirm_poll_s=0.02,
     )
     assert len(events) == 1
     assert isinstance(events[0], AgentResult)
@@ -109,6 +122,8 @@ async def test_a_timed_out_turn_carries_its_own_classification():
     transport 换了自己的措辞——分类就丢了，房间里显示的是「AI 服务返回错误」，
     把排查的人指向一个根本没收到这轮请求的服务。这里故意用一句和原文毫无共同
     字词的文案，它照样得被认出来。
+
+    现在产生这条失败的是「有输出、没进展」那道判据，所以会话得一直在说话。
     """
     from app.domain.agent.platform_failures import (
         TURN_TIMEOUT,
@@ -116,12 +131,26 @@ async def test_a_timed_out_turn_carries_its_own_classification():
     )
 
     queue: asyncio.Queue[dict] = asyncio.Queue()
-    events = await _drain(
-        queue,
-        idle_suspect_s=0.05,
-        hard_ceiling_s=0.05,
-        timeout_message="完全不一样的一句话",
-    )
+    queue.put_nowait({"hook_event_name": "UserPromptSubmit", "prompt": "hi"})
+
+    async def keep_talking() -> None:
+        while True:
+            await asyncio.sleep(0.01)
+            queue.put_nowait({"hook_event_name": "MessageDisplay", "delta": "还在说"})
+
+    task = asyncio.create_task(keep_talking())
+    try:
+        events = await _drain(
+            queue,
+            idle_suspect_s=5,
+            hard_ceiling_s=5,
+            no_progress_s=0.1,
+            timeout_message="完全不一样的一句话",
+        )
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
     result = events[-1]
     assert isinstance(result, AgentResult) and result.is_error
     assert (
@@ -340,12 +369,15 @@ async def test_agent_activity_also_counts_as_delivery():
 async def test_idle_suspect_keeps_waiting_while_confirm_alive_says_alive():
     """No hooks arrive after delivery, but `confirm_alive` keeps saying the
     screen is alive (mirrors a long tool call with a busy tmux pane and no
-    interim hook) — the turn must NOT die at the idle-suspect threshold, only
-    at the hard ceiling, and it must have been re-probed more than once along
-    the way (a single probe at minute 5 isn't enough — the screen could die at
-    minute 6)."""
+    interim hook). The turn must NOT die at the idle-suspect threshold, must be
+    re-probed more than once along the way (a single probe at minute 5 isn't
+    enough — the screen could die at minute 6), and crossing the hard ceiling
+    must be RECORDED rather than acted on: it ends when the session itself
+    says Stop."""
     queue: asyncio.Queue[dict] = asyncio.Queue()
     queue.put_nowait({"hook_event_name": "UserPromptSubmit", "prompt": "hi"})
+    loop = asyncio.get_running_loop()
+    tracker = ActivityTracker(last_at=loop.time())
     probe_calls = 0
 
     async def confirm_alive() -> bool:
@@ -353,18 +385,35 @@ async def test_idle_suspect_keeps_waiting_while_confirm_alive_says_alive():
         probe_calls += 1
         return True
 
-    events = await _drain(
-        queue,
-        idle_suspect_s=0.05,
-        hard_ceiling_s=0.25,
-        timeout_message="硬顶到了",
-        confirm_alive=confirm_alive,
-        confirm_poll_s=0.05,
-    )
-    assert len(events) == 1
-    assert events[0].is_error
-    assert events[0].text == "硬顶到了"  # the HARD ceiling ended it, not idle-suspect
+    async def stop_later() -> None:
+        await asyncio.sleep(0.4)
+        queue.put_nowait(
+            {
+                "hook_event_name": "Stop",
+                "last_assistant_message": "done",
+                "session_id": "s1",
+            }
+        )
+
+    stop_task = asyncio.create_task(stop_later())
+    try:
+        events = await _drain(
+            queue,
+            idle_suspect_s=0.05,
+            hard_ceiling_s=0.25,
+            timeout_message="硬顶到了",
+            tracker=tracker,
+            confirm_alive=confirm_alive,
+            confirm_poll_s=0.05,
+        )
+    finally:
+        stop_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await stop_task
     assert probe_calls >= 2
+    assert tracker.ceiling_crossed_at is not None  # 到了，记下了
+    assert events[-1].is_error is False  # 但没有因此结束
+    assert events[-1].text == "done"
 
 
 async def test_confirm_alive_false_ends_the_turn_well_before_the_hard_ceiling():
@@ -390,13 +439,13 @@ async def test_confirm_alive_false_ends_the_turn_well_before_the_hard_ceiling():
 
 
 async def test_external_tracker_touch_clears_idle_suspicion():
-    """A backend-specific activity signal ALONGSIDE hooks (the tmux backend's
-    capture-pane polling) must count as activity just like a hook arrival does
-    — an externally-touched tracker keeps the turn out of idle-suspect
-    entirely, so `confirm_alive` is never even called."""
+    """A tracker fed by a transport side channel keeps the session out of
+    idle-suspect entirely, so the probe is never asked. The hard ceiling is
+    crossed along the way and recorded; what ends the session is its own
+    Stop."""
     queue: asyncio.Queue[dict] = asyncio.Queue()
     queue.put_nowait({"hook_event_name": "UserPromptSubmit", "prompt": "hi"})
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     tracker = ActivityTracker(last_at=loop.time())
     probe_calls = 0
 
@@ -406,9 +455,16 @@ async def test_external_tracker_touch_clears_idle_suspicion():
         return True
 
     async def touch_periodically() -> None:
-        for _ in range(8):
+        for _ in range(12):
             await asyncio.sleep(0.03)
             tracker.touch(loop.time())
+        queue.put_nowait(
+            {
+                "hook_event_name": "Stop",
+                "last_assistant_message": "done",
+                "session_id": "s1",
+            }
+        )
 
     touch_task = asyncio.create_task(touch_periodically())
     try:
@@ -426,8 +482,9 @@ async def test_external_tracker_touch_clears_idle_suspicion():
         with contextlib.suppress(asyncio.CancelledError):
             await touch_task
 
-    assert events[0].text == "硬顶到了"
     assert probe_calls == 0
+    assert tracker.ceiling_crossed_at is not None
+    assert events[-1].is_error is False
 
 
 async def test_deliver_reaches_the_screen_of_the_turn_in_flight():
@@ -835,22 +892,44 @@ async def test_undelivered_verdict_logs_a_warning_with_context(caplog):
     )
 
 
-async def test_hard_ceiling_verdict_logs_a_warning_with_context(caplog):
+async def test_hard_ceiling_crossing_logs_a_warning_with_context_and_does_not_end(
+    caplog,
+):
+    """The ceiling is a fact, not a verdict. Crossing it must be visible in the
+    log with the topic that crossed it, and must NOT end the turn: the session's
+    own Stop does."""
     queue: asyncio.Queue[dict] = asyncio.Queue()
     queue.put_nowait({"hook_event_name": "SessionStart", "session_id": "s1"})
-    with caplog.at_level("WARNING"):
-        events = await _drain(
-            queue,
-            idle_suspect_s=0.05,
-            hard_ceiling_s=0.15,
-            timeout_message="轮次超时",
-            context="topic=t-ceiling",
+
+    async def stop_later() -> None:
+        await asyncio.sleep(0.3)
+        queue.put_nowait(
+            {
+                "hook_event_name": "Stop",
+                "last_assistant_message": "done",
+                "session_id": "s1",
+            }
         )
-    assert isinstance(events[-1], AgentResult) and events[-1].is_error
+
+    task = asyncio.create_task(stop_later())
+    try:
+        with caplog.at_level("WARNING"):
+            events = await _drain(
+                queue,
+                idle_suspect_s=0.05,
+                hard_ceiling_s=0.15,
+                timeout_message="轮次超时",
+                context="topic=t-ceiling",
+            )
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
     assert any(
         "t-ceiling" in r.getMessage() and "ceiling" in r.getMessage()
         for r in caplog.records
     )
+    assert isinstance(events[-1], AgentResult) and events[-1].is_error is False
 
 
 async def test_deliver_without_live_screen_logs_why(caplog):
@@ -983,6 +1062,166 @@ class _AliveScreen(Channel):
         return True
 
 
+async def test_cancelling_a_consumer_during_activity_cleanup_stops_it():
+    """Cancellation during a child's cleanup must not restart the hook loop."""
+    router = HookRouter()
+    provider = ClaudeCodeRuntime(_AliveScreen(), router=router)
+    reported = []
+
+    async def on_activity(_project, _topic, _work, active):
+        reported.append(active)
+
+    provider.bind_activity(on_activity)
+    project_id, topic_id = _uuid.uuid4(), _uuid.uuid4()
+    subscription = await provider.ensure_subscription(project_id, topic_id)
+    child_started = asyncio.Event()
+    child_stopping = asyncio.Event()
+    release_child = asyncio.Event()
+
+    async def slow_activity_cleanup():
+        child_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            child_stopping.set()
+            await release_child.wait()
+
+    child = asyncio.create_task(slow_activity_cleanup())
+    subscription.activity = SessionActivity(
+        work_id=_uuid.uuid4(), queue=asyncio.Queue(), ready=True, task=child
+    )
+    consumer = subscription.consumer_task
+    assert consumer is not None
+    try:
+        await asyncio.wait_for(child_started.wait(), timeout=1)
+        router.push(
+            str(topic_id),
+            {"hook_event_name": "Stop", "last_assistant_message": "done"},
+        )
+        await asyncio.wait_for(child_stopping.wait(), timeout=1)
+        consumer.cancel()
+        done, _ = await asyncio.wait({consumer}, timeout=1)
+        assert consumer in done, "cancelled consumer went back to waiting for hooks"
+        assert consumer.cancelled()
+        assert reported == [False]
+    finally:
+        release_child.set()
+        for task in (consumer, child):
+            task.cancel()
+        await asyncio.gather(consumer, child, return_exceptions=True)
+        await provider._close_topic(topic_id)
+
+
+# --- 关闭不能把一次消费拦腰砍断 ---------------------------------------------
+#
+# 关掉一个话题的理由从来都不受这边控制：设备掉线、屏幕死了、工作区被回收，或者
+# 一个测试自己收尾。而消费一条钩子是**要写库**的——这一轮的消息、这一轮的账、这
+# 一轮的结束。关闭如果就地把消费者 cancel 掉，写到一半的那条语句连同它的连接一
+# 起被撕掉，留下一轮记了一半的账。下面两条把两个已经在真实运行里撞到过的时刻分
+# 别钉住。
+
+
+async def _let_the_close_reach_its_decision() -> None:
+    """把事件循环让给别人，反复地让，且不看表。
+
+    `asyncio.sleep(0)` 是一次让步而不是一段延时：每一趟都把此刻就绪的任务全部推
+    到它们的下一个挂起点。十趟远多于「取消一个消费者」需要的两趟，所以这之后读到
+    的是一个**已经做完的决定**，不是一场赛跑。
+    """
+    for _ in range(10):
+        await asyncio.sleep(0)
+
+
+async def _one_topic_mid_hook(provider, router, project_id, topic_id):
+    """Start a turn and hand its Stop to the consumer."""
+    await provider.send(
+        SessionRef(project_id=project_id, topic_id=topic_id),
+        "go",
+        Opening(system_prompt=""),
+        work_id=_uuid.uuid4(),
+        on_mark=lambda _work_id: None,
+    )
+    router.push(
+        str(topic_id),
+        {
+            "hook_event_name": "Stop",
+            "last_assistant_message": "done",
+            "session_id": "s1",
+        },
+    )
+
+
+async def test_closing_lets_a_half_written_hook_finish_landing():
+    """关闭撞上「这条钩子正在写库」时，必须等它写完。"""
+    router = HookRouter()
+    provider = ClaudeCodeRuntime(
+        _AliveScreen(), router=router, idle_suspect_s=30, hard_ceiling_s=30
+    )
+    writing = asyncio.Event()
+    release = asyncio.Event()
+    landed: list[str] = []
+
+    async def consume(_p, _t, _work_id, event, _eid, _seen, _unsolicited):
+        # The barrier stands where a persist would be: the consumer is inside
+        # this hook, with a write it has not finished.
+        writing.set()
+        await release.wait()
+        landed.append(getattr(event, "text", ""))
+
+    provider.bind_events(consume)
+    project_id, topic_id = _uuid.uuid4(), _uuid.uuid4()
+    await _one_topic_mid_hook(provider, router, project_id, topic_id)
+    await asyncio.wait_for(writing.wait(), timeout=5)
+
+    close = asyncio.create_task(provider._close_topic(topic_id))
+    await _let_the_close_reach_its_decision()
+    release.set()
+    await asyncio.wait_for(close, timeout=5)
+
+    assert landed == ["done"], "关闭把一条写到一半的钩子砍断了，这一轮的账丢了"
+
+
+async def test_closing_lets_a_turn_finish_reporting_that_it_ended():
+    """关闭撞上「这一轮正在收尾」时，必须等它收完。
+
+    收尾自己会**先**把 `subscription.activity` 清空、**后**才去把「这一轮结束了」
+    报出去，所以那个标志位不能代替这件事：关闭读到 None 的时候，收尾可能还在半空
+    中。真实运行里撞到的就是这一刻——消费者停在收尾里，关闭看一眼标志位就直接
+    cancel。
+    """
+    router = HookRouter()
+    provider = ClaudeCodeRuntime(
+        _AliveScreen(), router=router, idle_suspect_s=30, hard_ceiling_s=30
+    )
+    ending = asyncio.Event()
+    release = asyncio.Event()
+    reported: list[bool] = []
+
+    async def on_activity(_p, _t, _work_id, active):
+        if active:
+            reported.append(True)
+            return
+        ending.set()
+        await release.wait()
+        reported.append(False)
+
+    async def consume(*_args, **_kwargs):
+        return None
+
+    provider.bind_activity(on_activity)
+    provider.bind_events(consume)
+    project_id, topic_id = _uuid.uuid4(), _uuid.uuid4()
+    await _one_topic_mid_hook(provider, router, project_id, topic_id)
+    await asyncio.wait_for(ending.wait(), timeout=5)
+
+    close = asyncio.create_task(provider._close_topic(topic_id))
+    await _let_the_close_reach_its_decision()
+    release.set()
+    await asyncio.wait_for(close, timeout=5)
+
+    assert reported == [True, False], "关闭把正在进行的收尾砍断了：报了开始却没报结束"
+
+
 async def test_every_turn_reported_started_is_also_reported_finished():
     """一轮报了开始，就必须报结束——哪怕它是烂尾的。
 
@@ -1014,6 +1253,9 @@ async def test_every_turn_reported_started_is_also_reported_finished():
         router=router,
         idle_suspect_s=1,
         hard_ceiling_s=1,
+        # The verdict this test is about. The ceiling used to arrive first and
+        # stand in for it; the ceiling no longer ends anything.
+        delivery_timeout_s=0.2,
     )
     provider.bind_activity(watch_activity)
     provider.bind_events(consume_and_fail)
@@ -1108,6 +1350,25 @@ def _provider_with_ledger():
                 "tool_response": "x",
             },
         ),
+        # 分身的起止说的是「会话里多了/少了一个工人」，不是「会话正在答」。
+        # 而且分身跨得过轮次边界：它可以在会话早就停下之后才结束，那时候不会再
+        # 有任何 Stop 来关掉这个标记。
+        (
+            "SubagentStart",
+            {
+                "hook_event_name": "SubagentStart",
+                "agent_id": "w1",
+                "agent_type": "general-purpose",
+            },
+        ),
+        (
+            "SubagentStop",
+            {
+                "hook_event_name": "SubagentStop",
+                "agent_id": "w1",
+                "last_assistant_message": "查完了",
+            },
+        ),
     ],
 )
 async def test_a_hook_that_is_not_the_session_working_opens_nothing(label, hook):
@@ -1190,6 +1451,68 @@ async def test_the_session_working_on_its_own_still_lights_the_room():
     await provider._close_topic(topic_id)
 
 
+async def test_nobody_accuses_a_self_running_session_of_never_hearing_us():
+    """投递看门狗看的是「投喂进去的话，会话接到了吗」。会话自己开始干活的那一轮压根
+    没有投喂 —— 要是它照样被算进去，房间里会冒出一行「消息没送进芝士的会话」，说的
+    是一条从来不存在的消息。
+
+    它不会，而且不是靠豁免：开出这段 activity 的就是会话产出的那个钩子，那个钩子
+    同一批进了 activity 的队列，投递因此当场成立。
+    """
+    import uuid as _uuid
+
+    from app.domain.agent.platform_failures import PROMPT_UNDELIVERED_CODE
+
+    router = HookRouter()
+    consumed: list[object] = []
+    reported: list[tuple[object, bool]] = []
+
+    async def consumer(_p, _t, _work_id, event, _eid, _seen, _unsolicited):
+        consumed.append(event)
+
+    async def watch_activity(_project, _topic, work_id, active):
+        reported.append((work_id, active))
+
+    # 投递窗口掐到 50ms：真要误判，这个测试会当场看见。
+    provider = ClaudeCodeRuntime(
+        _AliveScreen(),
+        router=router,
+        idle_suspect_s=30,
+        hard_ceiling_s=30,
+        delivery_timeout_s=0.05,
+    )
+    provider.bind_events(consumer)
+    provider.bind_activity(watch_activity)
+    project_id, topic_id = _uuid.uuid4(), _uuid.uuid4()
+    topic_key = str(topic_id)
+    await provider.ensure_subscription(project_id, topic_id)
+    provider._live[topic_id] = "screen"
+
+    router.push(
+        topic_key,
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": "ls"},
+            "_eid": "own-1",
+        },
+    )
+    for _ in range(60):
+        await asyncio.sleep(0.01)
+
+    # 先确认看门狗真的在跑 —— 不然「没有误判」只是因为压根没人判过。
+    assert [w for w, a in reported if a], "会话自己在产出，房间没亮，这条测试等于没测"
+    failures = [
+        e
+        for e in consumed
+        if isinstance(e, AgentResult)
+        and e.is_error
+        and e.failure_code == PROMPT_UNDELIVERED_CODE
+    ]
+    assert not failures, f"会话自己在干活，平台却说消息没送到：{failures}"
+    await provider._close_topic(topic_id)
+
+
 # --- 图片输入: an image that cannot be staged costs the image, not the message ---
 #
 # The bytes live in the backend's worktree. A screen on another machine can only
@@ -1261,7 +1584,7 @@ async def test_an_unstaged_image_is_declared_rather_than_mentioned():
     assert prompt is not None
     assert "@uploads/img-1.png" not in prompt
     assert "没能送到" in prompt
-    assert "不要猜图里是什么" in prompt
+    assert "不要猜测文件内容" in prompt
 
 
 async def test_a_staged_image_is_mentioned_and_nothing_is_declared_missing():
@@ -1287,3 +1610,376 @@ async def test_a_channel_that_raises_while_staging_does_not_lose_the_message():
     assert prompt is not None
     assert "[fulu] 看看这张截图" in prompt
     assert "没能送到" in prompt
+
+
+# --- 第三道判据：会话还在产出，但已经不再读进任何东西 ------------------------
+#
+# 前两道判据看的都是会话「产出」什么：多久没有 hook、跑了多久。一个停止读取输入
+# 的会话照样产出，所以那两道永远不会为它响。它做不到的是接住下一句话，而那是
+# 唯一一种「有人在等」的失败。
+
+
+async def test_an_injected_message_left_unread_ends_the_session():
+    """注入的消息超过宽限期还没被消费，这个会话就该结束。
+
+    结束不是丢弃：那条消息仍然留在待消费列表里，下一轮会重放它。
+    """
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    queue.put_nowait({"hook_event_name": "UserPromptSubmit", "prompt": "hi"})
+    loop = asyncio.get_running_loop()
+    written_at = loop.time() - 10  # 十秒前写进去的，至今没有回执
+
+    events = await _drain(
+        queue,
+        idle_suspect_s=30,
+        hard_ceiling_s=30,
+        timeout_message="不该是这句",
+        delivery_message="读不进去",
+        unread_since=lambda: written_at,
+        unread_grace_s=0.05,
+    )
+    assert len(events) == 1
+    assert events[0].is_error
+    # 是「读不进去」而不是「超时」：两道判据的结论不能混，房间里显示的原因不同。
+    assert events[0].text == "读不进去"
+
+
+async def test_nothing_waiting_means_this_check_never_fires():
+    """没有人在等的时候，这道判据完全不参与，会话照旧由探针管：这里探针说
+    进程没了，结束的是那条路，措辞是超时那句而不是「读不进去」。"""
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    queue.put_nowait({"hook_event_name": "UserPromptSubmit", "prompt": "hi"})
+
+    async def confirm_alive() -> bool:
+        return False
+
+    events = await _drain(
+        queue,
+        idle_suspect_s=0.05,
+        hard_ceiling_s=5,
+        timeout_message="轮次超时",
+        delivery_message="读不进去",
+        unread_since=lambda: None,
+        unread_grace_s=0.05,
+        confirm_alive=confirm_alive,
+        confirm_poll_s=0.02,
+    )
+    assert len(events) == 1
+    assert events[0].text == "轮次超时"
+
+
+async def test_a_message_still_inside_its_grace_does_not_end_anything():
+    """刚注入的消息不算读不进去。一个跑长命令的会话在工具返回之前本来就读不到
+    输入，宽限期就是留给这种情况的。会话由自己的 Stop 正常结束。"""
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    queue.put_nowait({"hook_event_name": "UserPromptSubmit", "prompt": "hi"})
+    loop = asyncio.get_running_loop()
+    just_now = loop.time()
+
+    async def stop_later() -> None:
+        await asyncio.sleep(0.2)
+        queue.put_nowait(
+            {
+                "hook_event_name": "Stop",
+                "last_assistant_message": "done",
+                "session_id": "s1",
+            }
+        )
+
+    task = asyncio.create_task(stop_later())
+    try:
+        events = await _drain(
+            queue,
+            idle_suspect_s=5,
+            hard_ceiling_s=5,
+            timeout_message="轮次超时",
+            delivery_message="读不进去",
+            unread_since=lambda: just_now,
+            unread_grace_s=30,
+        )
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    assert events[-1].is_error is False
+    assert events[-1].text == "done"
+
+
+# --- 第二道判据：在说话，但没在干活 --------------------------------------------
+#
+# 陷在循环里的会话每隔几秒发一条 MessageDisplay，在「有没有动静」眼里它一直活着，
+# 探针数进程也一直在。它做不到的是调工具或者收尾。这道判据看的就是「最后一次
+# 输出比最后一次进展新，而且离最后一次进展已经太久」。
+
+
+async def test_output_with_no_progress_ends_the_session():
+    """一直在吐字、一次工具都不调：这就是这道判据要拦的那个会话。"""
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    queue.put_nowait({"hook_event_name": "UserPromptSubmit", "prompt": "hi"})
+
+    async def keep_talking() -> None:
+        while True:
+            await asyncio.sleep(0.01)
+            queue.put_nowait({"hook_event_name": "MessageDisplay", "delta": "还在说"})
+
+    task = asyncio.create_task(keep_talking())
+    try:
+        events = await _drain(
+            queue,
+            idle_suspect_s=5,
+            hard_ceiling_s=5,
+            no_progress_s=0.1,
+            timeout_message="光说不做",
+        )
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    assert events[-1].is_error is True
+    assert events[-1].text == "光说不做"
+
+
+async def test_a_session_that_spoke_once_and_went_quiet_belongs_to_the_probe():
+    """说过一句然后沉默：这不是「在说话没干活」，是安静。安静归探针管，探针说
+    活着就一直等；这道判据不许因为很久以前的一句话就把它判掉。"""
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    queue.put_nowait({"hook_event_name": "UserPromptSubmit", "prompt": "hi"})
+    queue.put_nowait({"hook_event_name": "MessageDisplay", "delta": "说一句"})
+
+    async def confirm_alive() -> bool:
+        return True
+
+    async def stop_later() -> None:
+        await asyncio.sleep(0.4)
+        queue.put_nowait(_stop())
+
+    task = asyncio.create_task(stop_later())
+    try:
+        events = await _drain(
+            queue,
+            idle_suspect_s=0.05,
+            hard_ceiling_s=30,
+            no_progress_s=0.1,
+            timeout_message="光说不做",
+            confirm_alive=confirm_alive,
+            confirm_poll_s=0.02,
+        )
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    assert events[-1].is_error is False
+    assert events[-1].text == "done"
+
+
+async def test_output_interleaved_with_tool_calls_is_work():
+    """每次输出之间都有一次工具调用，进展的时钟一直在刷新，这道判据不会响。"""
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    queue.put_nowait({"hook_event_name": "UserPromptSubmit", "prompt": "hi"})
+
+    async def keep_working() -> None:
+        for _ in range(6):
+            await asyncio.sleep(0.03)
+            queue.put_nowait({"hook_event_name": "MessageDisplay", "delta": "看一下"})
+            await asyncio.sleep(0.03)
+            queue.put_nowait(
+                {"hook_event_name": "PreToolUse", "tool_name": "Read", "tool_input": {}}
+            )
+        queue.put_nowait(
+            {
+                "hook_event_name": "Stop",
+                "last_assistant_message": "done",
+                "session_id": "s1",
+            }
+        )
+
+    task = asyncio.create_task(keep_working())
+    try:
+        events = await _drain(
+            queue,
+            idle_suspect_s=5,
+            hard_ceiling_s=5,
+            no_progress_s=0.1,
+            timeout_message="光说不做",
+        )
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    assert events[-1].is_error is False
+
+
+async def test_a_long_tool_call_produces_no_output_and_is_left_alone():
+    """长命令的形状：一条 PreToolUse 之后什么都没有。没有输出，所以「输出比进展新」
+    不成立，这道判据不碰它；它由探针管，探针说活着就一直等。"""
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    queue.put_nowait({"hook_event_name": "UserPromptSubmit", "prompt": "hi"})
+    queue.put_nowait(
+        {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {}}
+    )
+
+    async def confirm_alive() -> bool:
+        return True
+
+    async def stop_later() -> None:
+        await asyncio.sleep(0.25)
+        queue.put_nowait(
+            {
+                "hook_event_name": "Stop",
+                "last_assistant_message": "done",
+                "session_id": "s1",
+            }
+        )
+
+    task = asyncio.create_task(stop_later())
+    try:
+        events = await _drain(
+            queue,
+            idle_suspect_s=0.05,
+            hard_ceiling_s=5,
+            no_progress_s=0.05,
+            timeout_message="光说不做",
+            confirm_alive=confirm_alive,
+            confirm_poll_s=0.02,
+        )
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    assert events[-1].is_error is False
+
+
+# --- 第二道关卡不看工具在飞的时候 ---------------------------------------------
+#
+# 输入是在工具边界被读走的。一条消息在一个 40 分钟的命令跑着的时候注入，
+# 它读不到不是聋了，是还没到能读的那一刻。
+#
+# 注入都在会话已经进入工具之后才发生（`injected["at"]` 由一个任务稍后填），
+# 因为那才是这条判据真正面对的顺序：先有工具在飞，然后有人说话。
+
+
+def _stop() -> dict:
+    return {
+        "hook_event_name": "Stop",
+        "last_assistant_message": "done",
+        "session_id": "s1",
+    }
+
+
+async def test_an_unread_message_during_a_tool_call_is_not_a_verdict():
+    """PreToolUse 之后没有 PostToolUse，工具在飞：注入多久没被读都不算。"""
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    queue.put_nowait({"hook_event_name": "UserPromptSubmit", "prompt": "hi"})
+    queue.put_nowait(
+        {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {}}
+    )
+    loop = asyncio.get_running_loop()
+    injected: dict[str, float | None] = {"at": None}
+
+    async def confirm_alive() -> bool:
+        return True
+
+    async def inject_then_stop() -> None:
+        await asyncio.sleep(0.05)
+        injected["at"] = loop.time() - 100  # already far past any grace
+        await asyncio.sleep(0.2)
+        queue.put_nowait(_stop())
+
+    task = asyncio.create_task(inject_then_stop())
+    try:
+        events = await _drain(
+            queue,
+            idle_suspect_s=0.05,
+            hard_ceiling_s=30,
+            timeout_message="轮次超时",
+            delivery_message="读不进去",
+            unread_since=lambda: injected["at"],
+            unread_grace_s=0.05,
+            confirm_alive=confirm_alive,
+            confirm_poll_s=0.02,
+        )
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    assert events[-1].is_error is False
+    assert events[-1].text == "done"
+
+
+async def test_the_unread_clock_starts_over_when_the_tool_returns():
+    """工具返回之后，等待从返回那一刻起算，而不是从注入起算：会话在这个边界
+    上才第一次有机会读到它，宽限期要给在这之后。"""
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    queue.put_nowait({"hook_event_name": "UserPromptSubmit", "prompt": "hi"})
+    queue.put_nowait(
+        {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {}}
+    )
+    loop = asyncio.get_running_loop()
+    injected: dict[str, float | None] = {"at": None}
+
+    async def inject_return_stop() -> None:
+        await asyncio.sleep(0.05)
+        injected["at"] = loop.time() - 100
+        await asyncio.sleep(0.05)
+        queue.put_nowait(
+            {"hook_event_name": "PostToolUse", "tool_name": "Bash", "tool_response": {}}
+        )
+        # Inside the grace measured from the return; the injection itself is
+        # ancient. If the clock ran from injection this would have fired.
+        await asyncio.sleep(0.1)
+        queue.put_nowait(_stop())
+
+    task = asyncio.create_task(inject_return_stop())
+    try:
+        events = await _drain(
+            queue,
+            idle_suspect_s=30,
+            hard_ceiling_s=30,
+            timeout_message="轮次超时",
+            delivery_message="读不进去",
+            unread_since=lambda: injected["at"],
+            unread_grace_s=1.0,
+        )
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    assert events[-1].is_error is False
+    assert events[-1].text == "done"
+
+
+async def test_an_unread_message_after_the_tool_returned_still_counts():
+    """工具返回、宽限期从返回算起过完、还是没读：这才是聋了。"""
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    queue.put_nowait({"hook_event_name": "UserPromptSubmit", "prompt": "hi"})
+    queue.put_nowait(
+        {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {}}
+    )
+    loop = asyncio.get_running_loop()
+    injected: dict[str, float | None] = {"at": None}
+
+    async def inject_then_return() -> None:
+        await asyncio.sleep(0.05)
+        injected["at"] = loop.time() - 100
+        await asyncio.sleep(0.05)
+        queue.put_nowait(
+            {"hook_event_name": "PostToolUse", "tool_name": "Bash", "tool_response": {}}
+        )
+
+    task = asyncio.create_task(inject_then_return())
+    try:
+        events = await _drain(
+            queue,
+            idle_suspect_s=30,
+            hard_ceiling_s=30,
+            timeout_message="轮次超时",
+            delivery_message="读不进去",
+            unread_since=lambda: injected["at"],
+            unread_grace_s=0.1,
+        )
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    assert events[-1].is_error is True
+    assert events[-1].text == "读不进去"

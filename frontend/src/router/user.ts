@@ -47,21 +47,25 @@ export default {
         {
           path: 'real-name-info',
           name: 'PrivacyCenterRealNameInfo',
+          meta: { backTo: 'PrivacyCenter' },
           component: () => import('@/views/user/privacy/RealNameInfo.vue'),
         },
         {
           path: 'access-logs',
           name: 'PrivacyCenterAccessLogs',
+          meta: { backTo: 'PrivacyCenter' },
           component: () => import('@/views/user/privacy/AccessLogs.vue'),
         },
         {
           path: 'data-sharing',
           name: 'PrivacyCenterDataSharing',
+          meta: { backTo: 'PrivacyCenter' },
           component: () => import('@/views/user/privacy/DataSharing.vue'),
         },
         {
           path: 'privacy-policy',
           name: 'PrivacyCenterPolicy',
+          meta: { backTo: 'PrivacyCenter' },
           component: () => import('@/views/user/privacy/PrivacyPolicy.vue'),
         },
       ],

@@ -90,7 +90,7 @@ def _github_world(monkeypatch) -> None:
     )
     monkeypatch.setattr(ws, "topic_branch_exists", lambda pid, tid: True)
     monkeypatch.setattr(ws, "ensure_repo", lambda pid: Path("."))
-    monkeypatch.setattr(ws, "upstream_default_branch", lambda repo: "main")
+    monkeypatch.setattr(ws, "upstream_default_branch", lambda repo, **_: "main")
 
 
 def test_publication_records_the_pr_on_the_card(client, monkeypatch):
@@ -208,9 +208,9 @@ def test_submit_route_dispatches_when_enabled(client, monkeypatch):
     from app.domain.review import pr_publish
 
     dispatched: list[dict] = []
-    monkeypatch.setattr(settings, "accept_via_pr", True)
     # enabled() gates on the App being configured (per-project resolution happens
-    # in the task); #192 dropped the global github_app_tokens() probe.
+    # in the task); #192 dropped the global github_app_tokens() probe, and #718
+    # dropped the accept_via_pr flag — the App configured IS the switch.
     monkeypatch.setattr(settings, "github_app_id", 12345)
     monkeypatch.setattr(settings, "github_app_private_key_path", "/tmp/fake-app.pem")
     monkeypatch.setattr(
@@ -224,27 +224,6 @@ def test_submit_route_dispatches_when_enabled(client, monkeypatch):
     [kw] = dispatched
     assert str(kw["topic_id"]) == tid
     assert str(kw["project_id"]) == pid
-
-
-def test_submit_route_stays_quiet_when_flag_off(client, monkeypatch):
-    from app.core.config import settings
-    from app.domain.review import pr_publish
-
-    dispatched: list[dict] = []
-    # 采纳即合并 (#296) 把 accept_via_pr 默认翻成了 True，所以「关」这条现在要显式
-    # 关掉 flag（.env 覆盖仍然能关），并且证明即便 App 配好了，flag 一关就不开 PR。
-    monkeypatch.setattr(settings, "accept_via_pr", False)
-    monkeypatch.setattr(settings, "github_app_id", 12345)
-    monkeypatch.setattr(settings, "github_app_private_key_path", "/tmp/fake-app.pem")
-    monkeypatch.setattr(
-        pr_publish, "dispatch", lambda factory, **kw: dispatched.append(kw)
-    )
-
-    pid = _make_project(client)
-    tid = _make_topic(client, pid)
-    _make_card(client, tid)
-
-    assert dispatched == []
 
 
 def test_submit_route_stays_quiet_when_app_not_configured(client, monkeypatch):

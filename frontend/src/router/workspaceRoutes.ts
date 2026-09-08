@@ -22,9 +22,8 @@ import type { RouteRecordRaw } from 'vue-router'
 // full page. One address per document now; the old links still resolve.
 const DOC_KINDS = ['charter', 'decisions', 'weeklies'] as const
 
-// 手机上这整棵子树是一条页面栈：话题列表是唯一的一级目的地（底栏「工作区」那一格
-// 的落点），其余每一层都收起底栏并说明 ← 回哪儿去。桌面上这些 meta 全都不生效——
-// 那儿话题列表是常驻侧栏，没有"上一层"可回。
+// The topic list is the mobile workspace destination. Child pages declare their
+// parent through backTo, which is used by both desktop and mobile navigation.
 export const workspaceRoutes: RouteRecordRaw = {
   path: '/projects/:projectId',
   components: {
@@ -50,7 +49,7 @@ export const workspaceRoutes: RouteRecordRaw = {
       props: true,
       // 手机上这是页面栈的末端：底栏收起（它不是一级目的地），← 回到话题列表。
       // `barSlot`: TopicHeader（标题 + #id + 阶段）填的就是顶栏那一格，不再自己
-      // 画一条横条；← 由顶栏按 backTo 出。桌面上三者都不生效。
+      // 画一条横条；← 由顶栏按 backTo 出。
       meta: { hideTabs: true, backTo: 'workspace-project', barSlot: true },
     },
     {
@@ -100,7 +99,7 @@ export const workspaceRoutes: RouteRecordRaw = {
       path: 'agents',
       component: () => import('@/views/ProjectAgentsView.vue'),
       props: true,
-      meta: { title: 'AI 队友' },
+      meta: { title: 'AI 队友', backTo: 'workspace-project' },
     },
     {
       name: 'project-settings',

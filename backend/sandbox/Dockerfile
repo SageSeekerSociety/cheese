@@ -6,7 +6,7 @@ FROM node:22-bookworm-slim
 
 # Universal toolchain (the shared base, like Codex's `universal` image): package
 # managers + build tools every project tends to need. Project-specific deps get
-# layered on top (uv sync / npm ci) — see cheesex-dev.Dockerfile.
+# installed by project environment scripts in the room's HOME and checkout.
 # Only the package INDEX is cached, not the .deb archives: caching those means
 # deleting the base image's docker-clean, and every image layered on this one —
 # tmux.Dockerfile, and whatever a hosted repo builds — would silently start
@@ -59,7 +59,7 @@ RUN ARCH="$(dpkg --print-architecture)" \
 # to enrolled devices — an unpinned install means a rebuild for any unrelated
 # reason can change the agent runtime under a topic, and that a container and a
 # device running "the same" turn are not running the same thing.
-ARG CLAUDE_CODE_VERSION=2.1.224
+ARG CLAUDE_CODE_VERSION=2.1.261
 RUN --mount=type=cache,target=/root/.npm \
     npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" && claude --version
 
@@ -73,8 +73,7 @@ RUN chmod +x /usr/local/bin/cheese && mkdir -p /work && chown -R node:node /work
 # runs as the SAME uid — the two share one git store through the main-repo
 # `.git` bind mount and both COMMIT into it, and git's object directories
 # belong to whoever wrote them, so a uid split leaves one side unable to add
-# anything. Do not usermod/groupmod this user, and keep any derived image
-# (backend/sandbox/cheesex-dev.Dockerfile) on `USER node`.
+# anything. Do not usermod/groupmod this user; derived images keep `USER node`.
 # The invariant is asserted by tests/unit/test_workspace_uid_alignment.py.
 RUN test "$(id -u node)" = 1000 && test "$(id -g node)" = 1000
 USER node

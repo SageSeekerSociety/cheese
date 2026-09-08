@@ -3,7 +3,7 @@
 - app.domain.webhook.service: verify() against a stored version, post_with_retries()
 - app.api.routes.webhooks.receive_webhook: auth failure / validation / source landing
 
-No DB — repositories and sessions are faked, matching the dogfood_notices style.
+No DB — repositories and sessions are faked.
 """
 
 import asyncio

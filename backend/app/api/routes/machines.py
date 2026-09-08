@@ -15,6 +15,7 @@ from app.core.errors import (
     ValidationError,
 )
 from app.domain.identity.actor import Actor
+from app.domain.machine.limits import get_machine_limit
 from app.domain.machine.microcloud import MicroCloudError
 from app.domain.machine.models import MachineStatus
 from app.domain.machine.schemas import MachineCreate, MachineOut
@@ -66,13 +67,14 @@ async def _require_project_access(
     if project is None:
         raise NotFoundError("Project not found")
 
-    if project.team_id is not None:
+    team_id = await ProjectRepository(db).team_for_project(project_id)
+    if team_id is not None:
         if actor.user_id is None:
             raise AuthenticationRequiredError(
                 "A current user credential is required to manage team compute"
             )
         teams = TeamRepository(db)
-        if not await teams.is_team_member(project.team_id, actor.user_id):
+        if not await teams.is_team_member(team_id, actor.user_id):
             raise NotFoundError("Project not found")
         return actor
 
@@ -98,8 +100,21 @@ async def list_machines(
     service = _service(db)
     machines = await service.list_for_project(project_id)
     items = [MachineOut.model_validate(m).model_dump(mode="json") for m in machines]
+    team_id = await service.quota_team_id(project_id)
+    counted = await service.quota_machines(team_id)
+    limit = await get_machine_limit(db, team_id)
     await db.commit()
-    return ok(page(items, len(items)))
+    return ok(
+        {
+            **page(items, len(items)),
+            "quota": {
+                "team_id": team_id,
+                "used": len(counted),
+                "limit": limit,
+                "project_used": sum(m.project_id == project_id for m in counted),
+            },
+        }
+    )
 
 
 @router.post("/{project_id}/machines")

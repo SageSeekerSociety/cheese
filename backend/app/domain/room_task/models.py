@@ -10,7 +10,7 @@ still alive?".
 What a task owns, and the room does not:
 
 - a single owner (`owner_handle`) — not a roster,
-- the agent doing it (`agent_instance_id`),
+- the 分身 doing it (`subagent_id`),
 - one thread of conversation — every `Block` whose `task_id` is this row,
 - a delivery: `accepted_by` / `accepted_at`.
 
@@ -84,41 +84,6 @@ class TreeStatus(enum.StrEnum):
     open = "open"
     sealed = "sealed"
     merged = "merged"
-
-
-class Residency(enum.StrEnum):
-    """Whether this task is using one of its room's slots right now.
-
-    `running` — a turn is going, or one is queued to start.
-    `idle` — quiet; the slot is released.
-
-    `idle` is NOT "finished". A task goes idle at the end of a turn and comes
-    back the moment anyone speaks to it, with its conversation and its files
-    untouched. That is what makes releasing the slot free — and therefore
-    automatic, rather than something a person has to remember to do.
-
-    DeepSeek Harness has a third value here, `waiting`: quiet, but still owning
-    children that have not finished. It is not reachable for us — 活不嵌套, a
-    task's split is a SIBLING in the same room — so it would be a word nothing
-    writes and nothing reads, which is the thing `TaskStatus` above refuses for
-    the same reason.
-
-    Deliberately separate from `TaskStatus`: open/closed answers "is this work
-    still wanted", which is a judgement; residency answers "is it using a slot",
-    which is observable. A room whose four slots were held by open-but-idle
-    threads could never take new work again, and nothing on screen would say
-    why — folding the two together is how that gets built.
-    """
-
-    running = "running"
-    idle = "idle"
-
-
-#: 一个房间最多同时开几条后台子代理。The room's own line is NOT one of them, so
-#: a busy room runs five agents: four threads and itself. Matching DeepSeek
-#: Harness's `maxBackgroundAgents` default, which is also a per-session budget
-#: covering every continuable direct child.
-MAX_RESIDENT_TASKS_PER_ROOM = 4
 
 
 class WorkTree(UuidPk, Timestamps, Base):
@@ -216,9 +181,8 @@ class RoomLock(UuidPk, Timestamps, Base):
     Deliberately narrow, and the two kinds are enforced differently — which is
     worth knowing before trusting either:
 
-    - `heavy` is REAL. Test runs, dependency installs and dev servers go through
-      `cheese await`, which is the platform's own code, so the lane can simply
-      be held there.
+    - `heavy` is REAL. `cheese check` takes it around the project's quick check,
+      which is the platform's own code, so the lane can simply be held there.
     - `file` is ADVISORY. An agent's `Write` is its harness's tool, not ours; we
       cannot stand in front of it. What this offers is a way for an agent about
       to overwrite a whole file to find out that somebody else is already doing
@@ -260,7 +224,13 @@ class Task(UuidPk, Timestamps, Base):
     # (room_id, created_at) is the room's task list, and it is read on every
     # room open — the same shape as ix_blocks_topic_id_created_at, for the same
     # reason: this must not degrade into a scan as tasks accumulate.
-    __table_args__ = (Index("ix_tasks_room_id_created_at", "room_id", "created_at"),)
+    __table_args__ = (
+        Index("ix_tasks_room_id_created_at", "room_id", "created_at"),
+        # Every hook event a worker produces asks "whose work is this?", so this
+        # lookup runs on each tool call in the room — the one index whose
+        # absence would be paid per event rather than per page.
+        Index("ix_tasks_room_id_subagent_id", "room_id", "subagent_id"),
+    )
 
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), index=True
@@ -279,13 +249,6 @@ class Task(UuidPk, Timestamps, Base):
     # has an owner, and that difference is the point of the split.
     owner_handle: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    # WHICH agent works here. NULL = the project's default, same meaning as on a
-    # topic, so a task nobody pinned an agent to follows the project.
-    agent_instance_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("agent_instances.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
     # 这条活在哪棵树上干. Many tasks share one tree — 一棵树 = 一个分支 =
     # 一个 PR = 一批活 — so this is what says which batch the work belongs to,
     # and it is the only place a task's files live. NOT NULL: a task with no
@@ -293,25 +256,47 @@ class Task(UuidPk, Timestamps, Base):
     tree_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("work_trees.id", ondelete="CASCADE"), index=True
     )
+    # WHICH worker inside the room's session is doing this. A subagent is a
+    # second worker in one Claude session: its hooks come up the SAME pipe as
+    # the room's own, carrying `agent_id` and nothing else to say whose they
+    # are (the room's own events carry no such key at all). So this column is
+    # the whole of the attribution — without it every tool call a worker makes
+    # reads as the room's, and the room's timeline is one interleaved stream
+    # from nobody.
+    #
+    # A string, not a foreign key: the id is minted by Claude Code inside the
+    # container, and the platform only ever recognises it. NULL means nobody
+    # has claimed this work yet — a task row exists from the moment it is
+    # dispatched, and the worker is bound a moment later, once the room has
+    # actually spawned one.
+    subagent_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
-    # 占不占本房间的一个额度，见 `Residency`. Materialised rather than derived:
-    # dsh can recompute it per call because its children live in the process
-    # that asks; ours outlive the backend that started them, so the answer has
-    # to survive a restart. `last_turn_at` is what lets a crash be told from a
-    # turn that is genuinely still going — a `running` row older than the
-    # timeout is a ghost holding a slot, and the sweep releases it.
-    residency: Mapped[Residency] = mapped_column(
-        String(16), default=Residency.idle, server_default="idle", index=True
-    )
+    # 最后一次有人确认这条活还活着。Stamped when a worker is bound; the board
+    # reads it together with the thread's last block, and takes the later of the
+    # two — a worker that has said nothing yet has only this, and one that has
+    # been going for hours has only the blocks. Nothing else writes it, because
+    # nothing else knows: the work happens inside a session the platform does
+    # not drive.
     last_turn_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    # 排队中: dispatched, but the room was at its cap. Not a refusal — the
-    # condition clears on its own, and a refusal would make the dispatcher
-    # decide what to do about it. NULL once it has started.
-    queued_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+
+    # 简报原文, written once when the work is dispatched and never edited —
+    # a brief is a statement of what was asked for, and one that could be
+    # rewritten afterwards would stop being evidence of that.
+    #
+    # It lives on the row rather than in a document of its own because the
+    # document had no maintainer: work is a subagent holding the room's token,
+    # which cannot reach a thread's doc address at all, so what got seeded at
+    # dispatch stayed frozen there forever while the real state moved on.
+    brief: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # 分身交回来的最后一句话 —— `SubagentStop.last_assistant_message`, written
+    # by the platform every time a bound worker hands something back, each one
+    # overwriting the last. A worker reports finished more than once (parking a
+    # long command counts), so the newest is the only one worth keeping and no
+    # single one of them means the work is over. What ends it is the room
+    # closing the card, after reading this.
+    conclusion: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # 这条活说它要碰哪些路径。Mutable on purpose: a brief is written once and
     # cannot be changed, but a claim always grows — work reaches a file nobody

@@ -45,11 +45,9 @@ class AcceptStatus(enum.StrEnum):
     # 卡照样不递给验收人，但话术和卡面都要说"没跑成"而不是"没通过"——把它
     # 当绿放行，正是这个状态存在的原因（见 .claude/scripts/check.sh 的 exit 2）。
     gate_blocked = "gate_blocked"
-    # 两阶段采纳 (PR迭代式，2026-08-09)：人点了采纳，批准人有可用的已连接
-    # GitHub token，PR 已推送/开出，话题不归档，容器不停。`pr_merged_at` on the
-    # card distinguishes still-waiting-on-PR-checks (None) from
-    # merged-waiting-on-deploy (set) — both live under this one status so a
-    # reviewer/API consumer sees one "still iterating" state, not two.
+    # 采纳=授权、轮询器等绿再合（#422）的在途态。#718 撤销了授权语义（采纳
+    # 回到当场合并），存量行也已由迁移 b1e6a4d2c718 收敛 —— 枚举值照 gate_*
+    # 先例保留、死于写。
     pr_open = "pr_open"
 
 
@@ -90,6 +88,42 @@ class AcceptCard(UuidPk, Timestamps, Base):
     # historical card whose tree was never created has no honest value.
     tree_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("work_trees.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # 这批交付是哪几条活干出来的 —— 递卡的那一刻，由递卡方说 (#189)。The ids of
+    # `tasks` rows, and the whole of what `Cheese-Task:` writes into permanent
+    # history.
+    #
+    # It is DECLARED and not derived, because nothing here can derive it. A
+    # task's `tree_id` is fixed when `cheese split` runs and says which batch it
+    # joined THEN; which branch its code ends up on is decided when the room
+    # files a card, and a room that keeps working across two batches makes those
+    # two different answers. Enumerating the delivering tree's members therefore
+    # credits whoever happened to be sitting on that tree: run it over this
+    # project's own room/task/tree data as of 2026-09-08 and one delivery comes
+    # out wrong in both directions — three tasks that contributed nothing named
+    # on a PR, and the task that actually wrote it named on the previous one.
+    # (Nothing in this repository's history carries a wrong trailer; the
+    # trailers did not exist when those PRs merged. What is wrong is the
+    # inference, measured against real data before it could write anything.)
+    # Nor can the commits be asked: every commit in the sandbox is
+    # authored by the requester and co-authored by the model, so the range says
+    # nothing about which 分身 typed it.
+    #
+    # There is no automatic filling-in, and that is the point. Every rule a
+    # machine could apply — the tree's members, "everything not claimed by an
+    # earlier card" — establishes only that a task EXISTS and was not filed
+    # before; neither can establish that its code is in this diff. A placeholder
+    # task that wrote no code, and a sibling still running whose work goes out
+    # next batch, both pass those tests and would be signed onto a change they
+    # contributed nothing to. So an undeclared delivery carries no
+    # `Cheese-Task:` line at all: a wrong name in permanent history is worse
+    # than no name, because an audit believes it.
+    #
+    # A JSON list rather than a join table for the same reason `nudge_state`
+    # is one: it is read and written whole, always by the card that owns it, and
+    # never queried across cards.
+    delivered_task_ids: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, default=list, server_default="[]"
     )
     # Routed reviewer (spec C5): the specific person asked to accept.
     reviewer_handle: Mapped[str] = mapped_column(String(64), index=True)
@@ -141,41 +175,40 @@ class AcceptCard(UuidPk, Timestamps, Base):
     )
     # Tail of the check output (green or red) — full output is in the gate log.
     gate_output: Mapped[str] = mapped_column(Text, default="", server_default="")
-    # PR-based accept (#188 §5.1, extended 2026-08-09 by 两阶段采纳/PR迭代式):
-    # the real GitHub PR this card rides on. `pr_number`/`pr_url` are set
-    # either by pr_publish.py (fire-and-forget on a card turning pending, the
-    # original #188 §5.1 flow, off by default behind `settings.accept_via_pr`)
-    # or by AcceptService._accept_via_pr (the two-phase flow, triggered when a
-    # human clicks accept and the approver has a usable connected GitHub
-    # token — see review/services.py). Either way, a card WITH a pr_number
-    # rides a PR; one without falls back to the local merge + push_back path
-    # — every card is self-describing, so flag flips and GitHub outages never
-    # strand one.
+    # PR-based accept (#188 §5.1 → #296 → #718): the real GitHub PR this card
+    # rides on. `pr_number`/`pr_url` are set by pr_publish.py when the card is
+    # filed (or by the accept-time retry `_publish_pr_for_accept`). A card
+    # WITH a pr_number rides a PR; one without is an unbound project's card
+    # (the platform is its forge, #363) or a discussion-only topic — every
+    # card is self-describing, so GitHub outages never strand one.
     pr_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     pr_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    # 两阶段采纳 (PR迭代式) only, below: which repo (#192 project_git_installations,
-    # not necessarily the same as the `upstream` git remote pr_publish.py
-    # resolves from), and the polling state while status == pr_open.
+    # Which repo the PR lives in (#192 project_git_installations, not
+    # necessarily the same as the `upstream` git remote). Backfilled by the
+    # poller's first look at a card it wasn't recorded on.
     pr_repo: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    # Head commit of the pushed PR branch — what check-runs/workflow-runs are
-    # queried against (a fresh push moves this, so polling never checks a stale
-    # commit's status after 芝士 pushes a fix).
+    # The PR head as this platform last saw it — the commit the card shows,
+    # and therefore THE sha the accept click hands to the merge API ("SHA that
+    # pull request head must match", #718): a push that lands between the
+    # human's look and the merge makes GitHub answer 409 instead of merging a
+    # commit nobody saw.
     pr_head_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    # 人类授权动作前移 (2026-08-10): the commit the human actually authorized —
-    # frozen at the moment they clicked, while `pr_head_sha` keeps moving with
-    # every 芝士 fix pushed onto the PR afterwards. THE reason this is a column
-    # and not derived: the safety valve is baseline-relative by definition
-    # ("approve 之后 head 又动，且新 diff 超出授权范围"), and after two pushes
-    # nothing else on the card, on GitHub, or in the local repo still says what
-    # the human saw. Comparing each push against the PREVIOUS one instead would
-    # forget drift as soon as a benign push followed a risky one.
-    # NULL = a card from before this existed (or one that never rode a PR):
-    # 在途的 pr_open 卡不能被打断, so the poller adopts the current head as the
-    # baseline on its first tick rather than blocking retroactively.
-    pr_authorized_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    # None: still waiting on the PR's own CI. Set: PR merged, now waiting on
-    # the deploy workflow it triggered before the topic can finally archive.
+    # None: not merged. Set: when the PR merged (by the accept click, by the
+    # armed auto-merge, or by a human on GitHub directly).
     pr_merged_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # 卡上的状态＝合并态 (#718)：轮询器每拍把 verdict 镜像到这里 ——
+    # {"state","who","reasons":[{kind,checks,detail}],"head_sha","checked_at",
+    # "since"}。`since` 是「这个 (state, head) 组合从什么时候开始成立」，给
+    # 「必跑检查迟迟没报到，超过宽限转人」那条当时钟。NULL = 轮询器还没看过
+    # （或这张卡不骑 PR）。展示走它，采纳点击不走 —— 点击现场重算。
+    merge_state: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # 绿了自动合 (#718，GitHub auto-merge 的对应物；项目开了 auto_merge_allowed
+    # 才可用)：布防不是决议 —— 卡留在 pending，规则满足时轮询器以布防人的名义
+    # 合并并把布防人的那票算进去；新提交作废采纳（dismiss_stale）同样解除布防。
+    auto_merge_armed_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    auto_merge_armed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
     # PR 回流的去重账本 (review/pr_signals.py)：每一类回流（CI 失败 / 评审意见 /

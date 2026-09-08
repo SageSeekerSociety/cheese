@@ -72,27 +72,13 @@ class ProjectMachineRepository:
     async def get(self, machine_row_id: uuid.UUID) -> ProjectMachine | None:
         return await self._session.get(ProjectMachine, machine_row_id)
 
-    async def lock_provisioning(
-        self, project_id: uuid.UUID, topic_id: uuid.UUID
-    ) -> None:
-        """Serialize paid creates for a project before calling MicroCloud.
-
-        The partial unique index is the durable invariant for one active row per
-        topic. This transaction lock closes the earlier external side-effect race:
-        two requests must not both create a VM and only then discover the index.
-        Project scope also makes the existing per-project quota concurrency-safe.
-        """
+    async def lock_team_quota(self, team_id: int) -> None:
+        """Hold the team's last slot through the provider call and DB commit."""
         await self._session.execute(
             text(
                 "SELECT pg_advisory_xact_lock(hashtextextended(CAST(:key AS text), 0))"
             ),
-            {"key": f"cloud-project:{project_id}"},
-        )
-        await self._session.execute(
-            text(
-                "SELECT pg_advisory_xact_lock(hashtextextended(CAST(:key AS text), 0))"
-            ),
-            {"key": f"cloud-topic:{topic_id}"},
+            {"key": f"cloud-team:{team_id}"},
         )
 
     async def lock_topic(self, topic_id: uuid.UUID) -> None:
@@ -153,6 +139,18 @@ class ProjectMachineRepository:
             select(ProjectMachine)
             .where(ProjectMachine.project_id == project_id)
             .order_by(ProjectMachine.created_at)
+        )
+        return list(result.scalars())
+
+    async def list_for_team(self, team_id: int) -> list[ProjectMachine]:
+        from app.domain.project.services import ProjectService
+
+        # Personal teams also own their pre-team projects, as on the project list.
+        projects = await ProjectService(self._session).list_for_team(team_id)
+        result = await self._session.execute(
+            select(ProjectMachine).where(
+                ProjectMachine.project_id.in_([p.id for p in projects])
+            )
         )
         return list(result.scalars())
 
@@ -317,14 +315,32 @@ class ProjectMachineRepository:
         )
         return list(result.scalars())
 
-    async def ccproxy_upstream_for_topic(self, topic_id: uuid.UUID) -> str | None:
-        """The ccproxy identity of the machine this topic's turns run on.
+    async def ccproxy_upstream_for_place(self, place_id: uuid.UUID) -> str | None:
+        """The ccproxy identity of the machine this place's turns run on.
 
         One join rather than two round trips, because the metering proxy asks
         this on the admission path — the hop every turn already waits on. The
-        chain is topic → pinned device → machine: a topic's work tree and its
+        chain is room → pinned device → machine: a room's work tree and its
         resumable claude session live on ONE machine, and that pin is write-once
-        (``bind_topic_device``), so the answer is stable for the topic's life.
+        (``bind_topic_device``), so the answer is stable for the room's life.
+
+        A THREAD is asked about by its own id, because that is the id its
+        per-turn token carries and the only one the proxy ever holds. Its own pin
+        is consulted first and its ROOM's is the fallback, and the order is
+        load-bearing in both directions:
+
+        - A thread on a self-hosted device pins ITSELF — the resolver binds by
+          the place id it is given, and two threads of one room can land on two
+          different boxes. Answering such a thread from its room would name a
+          machine its turns do not run on.
+        - A thread in a Cloud room has no pin of its own to find: the lease and
+          the pin are the room's (#702), deliberately, because releasing the
+          room's machine drops only the room's pin. That is the case that was
+          broken, and empty is not the harmless fallback here that it is for a
+          room — a caller carrying its own ccproxy ticket is REFUSED when no
+          identity resolves, rather than billed to the platform. Every thread
+          turn on such a machine was refused, and the refusal did not even reach
+          the caller; it timed out.
 
         Two sources, one meaning. A MicroCloud machine's identity is captured at
         enrollment into `ProjectMachine`; a self-hosted device has no enrollment,
@@ -332,11 +348,16 @@ class ProjectMachineRepository:
         device — the dev box first). Checked in that order; they cannot disagree,
         because a device is only ever one of the two kinds.
 
-        None whenever every link is missing — an unpinned topic, a device that
+        None whenever every link is missing — an unpinned place, a device that
         brings no identity, a machine enrolled before the identity was recorded.
         Every one of those means "use the deployment-wide identity", which is
         the behaviour those turns have today.
         """
+        return await self._upstream_of_pinned_device(place_id)
+
+    async def _upstream_of_pinned_device(self, topic_id: uuid.UUID) -> str | None:
+        """The ccproxy identity behind one `device_topic` pin, from whichever of
+        the two device kinds carries it."""
         from_machine = await self._session.scalar(
             select(ProjectMachine.ccproxy_upstream)
             .join(DeviceTopicRow, DeviceTopicRow.device_id == ProjectMachine.device_id)

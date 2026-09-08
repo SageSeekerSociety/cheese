@@ -25,7 +25,7 @@ from pathlib import Path
 # can't drift (fusion-design §8.6). Re-exported here (`hooks_settings`) because
 # this module's launcher and its callers build on it.
 from app.core.config import GATEWAY_MOUNT
-from app.domain.agent import machine_tunnel, preview_tunnel
+from app.domain.agent import environment_runner, machine_tunnel, preview_tunnel
 from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD
 from app.domain.agent.harness.claude_code.hooks_substrate import CHEESE_HOOK_SCRIPT
 from app.domain.agent.harness.claude_code.session_launch import hooks_settings
@@ -55,8 +55,8 @@ _CHEESE_HOOK_SCRIPT = CHEESE_HOOK_SCRIPT
 #
 # Raising these is a deliberate act: re-run cli/e2e (CHEESE_RV=1) against the
 # new build first, because "it launched" is not evidence the frames still work.
-CLAUDE_PINNED_VERSION = "2.1.224"
-CLAUDE_MIN_VERSION = "2.1.224"
+CLAUDE_PINNED_VERSION = "2.1.261"
+CLAUDE_MIN_VERSION = "2.1.261"
 
 # CLAUDE_BASE_CMD starts with the bare word `claude`; the launcher resolves a
 # specific binary (pin, then ~/.local/bin, then PATH) and needs only the flags.
@@ -555,8 +555,37 @@ if [ -n "${CHEESE_GIT_REMOTE:-}" ]; then
     # `2>/dev/null || true` made that indistinguishable from success.
     CHEESE_WS_TMP="$CHEESE_WORK.clone.$$"
     rm -rf "$CHEESE_WS_TMP"
-    CHEESE_WS_ERR="$(git -c http.extraHeader="X-Cheese-Token: $CHEESE_TOKEN" \
-      clone -q --no-checkout "$CHEESE_GIT_REMOTE" "$CHEESE_WS_TMP" 2>&1)" || true
+    # A shallow, single-branch clone: the tip of one branch, never the project's
+    # whole history. A device only clones and pushes its own topic tree — every
+    # history-dependent operation (diff, merge-base, 采纳's merge) runs on the
+    # platform's full repo, not here — so the tip is all a workspace needs, and
+    # fetching it is O(one commit) rather than O(every topic branch this project
+    # has ever opened). A full clone of an active project's proxy is minutes and
+    # hundreds of MB of history the agent never reads; this is seconds.
+    cheese_ws_git() {
+      git -c http.extraHeader="X-Cheese-Token: $CHEESE_TOKEN" "$@"
+    }
+    # WHICH branch to clone is decided by asking the server whether the topic
+    # branch is there yet — not by cloning it and falling back on failure. The
+    # difference matters: a resumed topic, or one a fileless device already
+    # pushed to, carries commits on its branch that are the only checkout of that
+    # work, and a transient clone failure must be REPORTED, never quietly
+    # answered by checking out the base branch instead — that would hand the
+    # agent a stale tree and let its next push clobber or diverge from the real
+    # tip. So: clone the topic branch only when it provably exists; otherwise
+    # (a brand-NEW topic, whose branch the device itself creates from the base
+    # tip and pushes later) clone the default branch and let cheese_ws_adopt
+    # synthesize the topic branch from its HEAD, exactly as the old full clone
+    # did. Either way it is one branch, one commit deep.
+    if cheese_ws_git ls-remote --exit-code --heads \
+         "$CHEESE_GIT_REMOTE" "$CHEESE_WS_BRANCH" >/dev/null 2>&1; then
+      CHEESE_WS_ERR="$(cheese_ws_git clone -q --no-checkout --depth 1 \
+        --single-branch --branch "$CHEESE_WS_BRANCH" \
+        "$CHEESE_GIT_REMOTE" "$CHEESE_WS_TMP" 2>&1)" || true
+    else
+      CHEESE_WS_ERR="$(cheese_ws_git clone -q --no-checkout --depth 1 \
+        "$CHEESE_GIT_REMOTE" "$CHEESE_WS_TMP" 2>&1)" || true
+    fi
     if [ -d "$CHEESE_WS_TMP/.git" ] \
        && mv "$CHEESE_WS_TMP/.git" "$CHEESE_WORK/.git" 2>/dev/null; then
       cheese_ws_adopt \
@@ -694,6 +723,9 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
     # copy here: it is a real, linted, unit-tested module precisely so there is
     # only one version of it to be wrong.
     tunnel_helper = Path(machine_tunnel.__file__).read_text().rstrip("\n") + "\n"
+    environment_helper = (
+        Path(environment_runner.__file__).read_text().rstrip("\n") + "\n"
+    )
     tunnel_up = CHEESE_TUNNEL_UP
     preview_helper = Path(preview_tunnel.__file__).read_text().rstrip("\n") + "\n"
     preview_up = CHEESE_PREVIEW_UP
@@ -724,6 +756,8 @@ mkdir -p "$HOME" "$CHEESE_WORK"
 export HOME="$(cd "$HOME" && pwd -P)"
 export CHEESE_WORK="$(cd "$CHEESE_WORK" && pwd -P)"
 mkdir -p "$HOME/.claude"
+cat > "$HOME/.claude/cheese-environment.py" <<'CHEESE_ENV_PY'
+{environment_helper}CHEESE_ENV_PY
 # THE isolation boundary on a machine we do not own (#5): claude reads AND
 # writes its config — settings.json, .claude.json, .credentials.json — under
 # CLAUDE_CONFIG_DIR when it is set, and never falls back to the login user's
@@ -917,12 +951,51 @@ fi
 # nobody the wiser). Exiting non-zero surfaces as a screen setup error on the
 # turn, which is the honest outcome.
 #
-# The binary is pinned to a verified build when the device has it: this is
-# undocumented private surface and the frames DID move between 2.1.220 and
-# 2.1.224, so "whatever `claude` resolves to today" is not a basis for a
-# delivery path. PATH is the fallback, still gated by the floor.
+# The binary is pinned to a verified build: this is undocumented private
+# surface and the frames DID move between 2.1.220 and 2.1.224, so "whatever
+# `claude` resolves to today" is not a basis for a delivery path. PATH is the
+# fallback, still gated by the floor.
+#
+# The pin is PLACED here when it is missing, from the platform — the same
+# unauthenticated route enrollment downloads from — so a pin bump reaches a
+# machine enrolled under the previous pin at its next launch, with no
+# re-provisioning and no owner action. Before this, bumping the pin left every
+# already-enrolled cloud machine with no binary at all: enrollment installs only
+# versions/<pin> (deliberately no symlink), and nothing else on that machine
+# has a claude. Non-fatal: the chain below still runs, and the floor check
+# still refuses a build that is too old. A screen created without CHEESE_API
+# skips this and behaves as before.
+_pin="$REAL_HOME/.local/share/claude/versions/{CLAUDE_PINNED_VERSION}"
+if [ ! -x "$_pin" ] && [ -n "${{CHEESE_API:-}}" ]; then
+  case "$(uname -m)" in
+    x86_64|amd64) _carch=x64 ;;
+    aarch64|arm64) _carch=arm64 ;;
+    *) _carch="" ;;
+  esac
+  if [ -n "$_carch" ]; then
+    if [ "$(uname -s)" = "Linux" ]; then
+      if ldd /bin/ls 2>&1 | grep -q musl; then
+        _cplat="linux-$_carch-musl"
+      else
+        _cplat="linux-$_carch"
+      fi
+    else
+      _cplat="darwin-$_carch"
+    fi
+    mkdir -p "$(dirname "$_pin")"
+    if curl -fsSL --retry 3 --retry-delay 2 -m 300 \\
+        "${{CHEESE_API%/}}/connector/claude/{CLAUDE_PINNED_VERSION}/$_cplat/claude" \\
+        -o "$_pin.new" && [ -s "$_pin.new" ]; then
+      chmod +x "$_pin.new" && mv "$_pin.new" "$_pin"
+    else
+      rm -f "$_pin.new"
+      echo "cheese-launch: could not fetch claude {CLAUDE_PINNED_VERSION} for \\
+$_cplat from the platform; trying what the machine has" >&2
+    fi
+  fi
+fi
 CLAUDE_BIN=""
-for _c in "$REAL_HOME/.local/share/claude/versions/{CLAUDE_PINNED_VERSION}" \\
+for _c in "$_pin" \\
           "$REAL_HOME/.local/bin/claude"; do
   if [ -x "$_c" ]; then CLAUDE_BIN="$_c"; break; fi
 done
@@ -935,8 +1008,8 @@ CLAUDE_V="$("$CLAUDE_BIN" --version 2>/dev/null | head -n 1 | awk '{{print $1}}'
 if [ -z "$CLAUDE_V" ] || [ "$(printf '%s\\n%s\\n' "{CLAUDE_MIN_VERSION}" "$CLAUDE_V" \\
     | sort -V | head -n 1)" != "{CLAUDE_MIN_VERSION}" ]; then
   echo "cheese-launch: claude ${{CLAUDE_V:-unknown}} at $CLAUDE_BIN is older than \\
-{CLAUDE_MIN_VERSION}; prompt delivery needs the rendezvous socket. Upgrade with \\
-\\`claude install stable\\`." >&2
+{CLAUDE_MIN_VERSION}, and the platform's pinned build is not at $_pin; prompt \\
+delivery needs the rendezvous socket of a newer claude." >&2
   exit 1
 fi
 # One token per topic, on disk rather than in the env: an ADOPTED claude keeps
@@ -999,6 +1072,10 @@ fi
 # embedded QUOTED so both consumers survive a home dir with spaces: the tmux
 # branch re-parses $CLAUDE through sh -c, the exec branch through eval.
 CHEESE_SP="$HOME/.claude/cheese-system-prompt.md"
+ENVIRONMENT_CMD=""
+if [ -n "${{CHEESE_ENVIRONMENT:-}}" ]; then
+  ENVIRONMENT_CMD="python3 \\"$HOME/.claude/cheese-environment.py\\" "
+fi
 [ -s "$CHEESE_SP" ] && CLAUDE="$CLAUDE --append-system-prompt-file \\"$CHEESE_SP\\""
 if command -v tmux >/dev/null 2>&1; then
   # WHICH tmux server hosts the inner session decides who is able to wipe it.
@@ -1032,6 +1109,8 @@ if command -v tmux >/dev/null 2>&1; then
   # the work dir gives per-topic isolation AND retires a stale session whenever
   # the resolved work dir changes.
   SESSION="cheese_$(printf '%s' "$CHEESE_WORK" | cksum | cut -d' ' -f1)"
+  python3 -c 'import json,sys; json.dump(sys.argv[1:], open(sys.argv[3], "w"))' \\
+    "$CHEESE_TMUX_SOCK" "$SESSION" "$HOME/.claude/environment-session.json"
   # An agent session is never the owner's to carry. One sitting on the default
   # server is ours all the same, and it is not harmless: it holds this topic's
   # rendezvous socket, spool and work tree, so leaving it running means a second
@@ -1056,6 +1135,8 @@ if command -v tmux >/dev/null 2>&1; then
   # margin is deliberately small: it only rejects an already-dead-or-dying token,
   # never a healthy one, so a short-lived credential (the gateway path's hour) is
   # re-minted at most once an hour rather than on every turn.
+  # Configuration is checked at the turn boundary, including after backend restart.
+  printf '%s' "${{CHEESE_AGENT_CONFIG:-}}" > "$HOME/.claude/agent-configuration"
   EXPFILE="$HOME/.claude/$SESSION.tokexp"
   if atmux has-session -t "$SESSION" 2>/dev/null; then
     TOKEXP="$(cat "$EXPFILE" 2>/dev/null || true)"
@@ -1075,9 +1156,11 @@ if command -v tmux >/dev/null 2>&1; then
     # is what makes a rotation reach the process. On a device with no ticket the
     # file is absent and this is the old checksum unchanged, so nothing churns.
     CFGNOW="$(cat "$REAL_HOME/.claude/settings.json" \\
-      "$HOME/.claude/cheese-machine.token" 2>/dev/null | cksum | cut -d" " -f1)"
+      "$HOME/.claude/cheese-machine.token" \\
+      "$HOME/.claude/agent-configuration" 2>/dev/null | cksum | cut -d" " -f1)"
     CFGWAS="$(cat "$CFGF" 2>/dev/null || true)"
     RETIRE=0
+    [ -f "$HOME/.claude/environment-restart" ] && RETIRE=1
     [ "$TOKEXP" -le "$(( $(date +%s) + 300 ))" ] && RETIRE=1
     [ -n "$CFGNOW" ] && [ "$CFGNOW" != "$CFGWAS" ] && RETIRE=1
     # The connector's server keeps a pane after its program exits, so a claude
@@ -1141,7 +1224,8 @@ if command -v tmux >/dev/null 2>&1; then
     # tell a stale-credential session from a good one and retire only the stale.
     printf '%s\\n' "${{CHEESE_TOKEN_EXPIRES:-0}}" > "$EXPFILE" 2>/dev/null || true
     cat "$REAL_HOME/.claude/settings.json" \\
-      "$HOME/.claude/cheese-machine.token" 2>/dev/null | cksum | cut -d" " -f1 \\
+      "$HOME/.claude/cheese-machine.token" \\
+      "$HOME/.claude/agent-configuration" 2>/dev/null | cksum | cut -d" " -f1 \\
       > "$HOME/.claude/$SESSION.cfg" 2>/dev/null || true
     # Hand THIS launch's credential / routing / attribution env to the new session
     # EXPLICITLY with -e, never by inheritance. tmux seeds a new session's env from
@@ -1215,7 +1299,7 @@ for k, v in os.environ.items():
     SRCENV=""
     [ -s "$ENVF" ] && SRCENV=". \\"$ENVF\\"; "
     DRAINCMD="sh \\"$HOME/.claude/cheese-drain\\" >/dev/null 2>&1"
-    set -- "$@" "$SRCENV$TUP$PUP $DRAINCMD & exec $CLAUDE"
+    set -- "$@" "$SRCENV$TUP$PUP $DRAINCMD & exec $ENVIRONMENT_CMD$CLAUDE"
     # Fall back to a plain create ONLY when this tmux predates -e (< 3.0 says
     # "unknown flag" / prints usage). Any OTHER create failure fails LOUDLY:
     # the old catch-everything fallback turned a transient server error into a
@@ -1227,7 +1311,7 @@ for k, v in os.environ.items():
       case "$_ERR" in
         *"unknown flag"*|*"usage:"*|*"invalid option"*)
           atmux new-session -d -s "$SESSION" -c "$CHEESE_WORK" \\
-            "$SRCENV$TUP$PUP $DRAINCMD & exec $CLAUDE"
+            "$SRCENV$TUP$PUP $DRAINCMD & exec $ENVIRONMENT_CMD$CLAUDE"
           ;;
         *)
           echo "cheese-launch: tmux new-session failed: $_ERR" >&2
@@ -1235,6 +1319,7 @@ for k, v in os.environ.items():
       esac
     fi
   fi
+  rm -f "$HOME/.claude/environment-restart"
   exec tmux -S "$CHEESE_TMUX_SOCK" attach -t "$SESSION"
 else
   # eval, not bare exec: $CLAUDE now carries a QUOTED file path, and plain
@@ -1248,7 +1333,7 @@ else
     sh "$HOME/.claude/cheese-preview-up" >/dev/null 2>&1 || true
   fi
   sh "$HOME/.claude/cheese-drain" >/dev/null 2>&1 &
-  eval "exec $CLAUDE"
+  eval "exec $ENVIRONMENT_CMD$CLAUDE"
 fi
 """
 
@@ -1291,6 +1376,15 @@ def build_screen_launch(
         "CHEESE_TOKEN": hook_token,
         "CHEESE_HOME": home_dir,
         "CHEESE_WORK": work_dir,
+        # Work is a subagent of the room's session, so these two are the shape
+        # of the room itself. Depth 1: a piece of work does not split further —
+        # its own children would be invisible to the platform (nothing binds
+        # them to a card) and unaddressable by a person. Concurrency 4: how
+        # many pieces of work a room runs at once; they share one worktree, so
+        # the ceiling is about how much simultaneous editing of one tree stays
+        # comprehensible, not about machine capacity.
+        "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "1",
+        "CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS": "4",
     }
     if model:
         env["CLAUDE_MODEL"] = model

@@ -57,15 +57,11 @@ async def terminal_status(topic_id: uuid.UUID, request: Request, db: DbSession) 
     refuse them, which is what left users staring at a blank frame with no way
     back to the timeline.
 
-    Two ids, and for a thread they differ: the pane is looked up by the PLACE
-    (a thread runs its own screen, under its own id), while who may watch it is
-    the ROOM's roster. Handing the place id to the roster check is the mistake
-    that has no symptom on a room, where the two are the same uuid.
     """
     place = await TopicService(db).place_or_404(topic_id)
     if not await proxy.may_view_topic(db, place.room_id, request, COOKIE_NAME):
         return ok({"available": False})
-    sid = _device_screen_id(place.id)
+    sid = _device_screen_id(place.room_id)
     if sid is None:
         return ok({"available": False})
     return ok(

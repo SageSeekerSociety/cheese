@@ -15,6 +15,7 @@ from sqlalchemy import func, or_, select
 
 from app.core.config import settings
 from app.domain.agent.chat import ChatService
+from app.domain.agent.github_app import github_app_read_token_for_project
 from app.domain.block.models import AuthorType, Block
 from app.domain.memory.dream import DREAM_PROMPT, latest_dream, open_dream
 from app.domain.project.repositories import ProjectRepository
@@ -292,7 +293,14 @@ class SchedulerService:
             try:
                 if await asyncio.to_thread(ws.get_upstream, project.id) is None:
                     continue  # no upstream linked — nothing to keep current
-                result = await asyncio.to_thread(ws.sync_upstream, project.id)
+                # A bound project fetches as the App; an unbound one fetches
+                # with no credential, so a private upstream it is not bound to
+                # fails here and is logged — never read on somebody else's key.
+                async with self._sessions() as session:
+                    token = await github_app_read_token_for_project(project.id, session)
+                result = await asyncio.to_thread(
+                    ws.sync_upstream, project.id, token=token
+                )
             except Exception as exc:  # noqa: BLE001 — one project must not stop the rest
                 errors.append(f"{project.id}: {exc}")
                 logger.exception("upstream sync failed for project %s", project.id)
@@ -316,11 +324,11 @@ class SchedulerService:
         return {"synced": synced, "dispatched": dispatched, "errors": errors}
 
     async def poll_open_prs(self) -> dict:
-        """两阶段采纳 (PR迭代式, 2026-08-09): advance every pr_open accept card
-        one step — see AcceptService.advance_pr_card for the actual state
-        machine (check PR CI → merge → check deploy workflow → archive).
-        One DB transaction per card so one card's failure can't roll back
-        another's progress."""
+        """合并态轮询 (#718): advance every pending card that rides a PR one
+        step — mirror its merge state, send the events the 「谁的活」 table
+        names, and merge an armed auto-merge card whose rules are satisfied
+        (AcceptService.advance_pr_card). One DB transaction per card so one
+        card's failure can't roll back another's progress."""
         from app.api.deps import get_work_runner
         from app.domain.review.services import AcceptService
 
@@ -394,73 +402,3 @@ class SchedulerService:
             )
 
         return await gate_sweep.sweep(self._sessions, nudge=nudge)
-
-    async def sweep_conclusion_cards(self) -> dict:
-        """结论卡·阶段一 (机制①bis): the 30-minute absolute timeout.
-
-        The turn-end hook settles a card the moment the parent's digest turn
-        finishes. This covers the case that hook cannot: the digest turn never
-        ran at all (queued behind a wedged turn, refused on credits, killed by a
-        deploy). 默认采信 must not depend on any turn actually happening.
-        One transaction per sweep — the cards are independent but few.
-
-        Second job, same shape: pay back the archives 采信 deferred because the
-        sub-topic still held an undecided accept card. That deferral is what
-        keeps a reviewer's card from being revoked out from under them; this is
-        what keeps the deferral from turning into a never-archived sub-topic.
-
-        Third job: land the sub-topic commits 采信 could not fold into the room's
-        branch at the time — the room was waiting on CI, or somebody was editing
-        in its workspace. Queuing those is the whole reason they are safe to
-        refuse; this is the exit from the queue.
-        """
-        from app.domain.conclusion.services import ConclusionCardService
-
-        errors: list[str] = []
-        settled: list[uuid.UUID] = []
-        archived: list[uuid.UUID] = []
-        async with self._sessions() as session:
-            try:
-                settled = await ConclusionCardService(session).sweep_expired()
-                if settled:
-                    await session.commit()
-            except Exception as exc:  # noqa: BLE001 — maintenance must survive
-                await session.rollback()
-                logger.exception("conclusion card sweep failed")
-                errors.append(str(exc))
-        # 归档补账走**自己的**事务：默认采信是主机制，补账是它的尾巴，尾巴出错
-        # 不能把已经结算好的卡一起回滚掉。
-        async with self._sessions() as session:
-            try:
-                service = ConclusionCardService(session)
-                archived = await service.sweep_deferred_archives()
-                if archived:
-                    await session.commit()
-            except Exception as exc:  # noqa: BLE001 — maintenance must survive
-                await session.rollback()
-                logger.exception("deferred archive sweep failed")
-                errors.append(str(exc))
-        # 幽灵额度: a backend that died mid-turn leaves a task marked running
-        # forever, holding one of its room's four slots with nothing behind it.
-        # Materialised residency is what lets a slot survive a restart; this is
-        # the other half of that bargain.
-        freed: list = []
-        async with self._sessions() as session:
-            try:
-                from app.domain.room_task.services import ResidencyService
-
-                svc = ResidencyService(session)
-                freed = await svc.sweep_ghosts()
-                for task in freed:
-                    await svc.dequeue(task.room_id)
-                await session.commit()
-            except Exception as exc:  # noqa: BLE001 — maintenance must survive
-                await session.rollback()
-                logger.exception("ghost residency sweep failed")
-                errors.append(str(exc))
-        return {
-            "settled": len(settled),
-            "archived": len(archived),
-            "freed_slots": len(freed),
-            "errors": errors,
-        }

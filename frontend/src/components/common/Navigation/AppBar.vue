@@ -3,7 +3,8 @@
        Material palette name like grey-lighten-5 would pin it to #FAFAFA in dark
        theme while the text inside follows --v-theme-on-surface → unreadable. -->
   <v-system-bar window color="background" absolute class="app-system-bar">
-    <div class="position-absolute text-caption font-weight-bold title-bar w-100">
+    <ParentBackButton />
+    <div class="text-caption font-weight-bold title-bar flex-grow-1">
       <span class="text-caption">{{ currentTitle }}</span>
     </div>
     <div class="position-relative d-flex align-center justify-center">
@@ -17,8 +18,17 @@
         transition="scale-transition"
       >
         <template #activator="{ props }">
-          <v-btn icon position="relative" v-bind="props" color="text" size="x-small" variant="plain">
-            <v-icon size="20">mdi-bell</v-icon>
+          <v-btn
+            icon
+            position="relative"
+            v-bind="props"
+            color="on-surface-variant"
+            :size="28"
+            variant="text"
+            aria-label="通知"
+            title="通知"
+          >
+            <v-icon size="18">mdi-bell</v-icon>
             <v-badge
               v-if="unreadNotificationsCount > 0"
               color="error"
@@ -31,8 +41,8 @@
         </template>
         <notification-panel @update-count="updateUnreadCount" />
       </v-menu>
-      <v-btn v-else icon class="me-4" disabled>
-        <v-icon>mdi-bell</v-icon>
+      <v-btn v-else icon :size="28" variant="text" color="on-surface-variant" aria-label="通知" disabled>
+        <v-icon size="18">mdi-bell</v-icon>
       </v-btn>
     </div>
   </v-system-bar>
@@ -45,6 +55,8 @@ import { useRouter } from 'vue-router'
 import { usePageTitle } from '@/composables/usePageTitle'
 
 import NotificationPanel from '../Notification/NotificationPanel.vue'
+
+import ParentBackButton from './ParentBackButton.vue'
 
 import { NotificationsApi } from '@/network/api/notifications'
 import AccountService from '@/services/account'

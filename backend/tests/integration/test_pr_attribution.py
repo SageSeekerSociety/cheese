@@ -67,7 +67,7 @@ def _github_world(monkeypatch, *, connected: dict[str, str]) -> None:
     )
     monkeypatch.setattr(ws, "topic_branch_exists", lambda pid, tid: True)
     monkeypatch.setattr(ws, "ensure_repo", lambda pid: Path("."))
-    monkeypatch.setattr(ws, "upstream_default_branch", lambda repo: "main")
+    monkeypatch.setattr(ws, "upstream_default_branch", lambda repo, **_: "main")
 
 
 def _project(client, owner: str) -> tuple[str, str]:
@@ -174,8 +174,11 @@ def test_a_room_with_no_human_owner_still_opens_its_pr(client, monkeypatch):
     assert agent not in opened["body"]
 
 
-def test_a_thread_cannot_open_a_pr_of_its_own(client, monkeypatch):
-    """上面三条都从房间递卡，是因为支线递不了——这条钉住那个前提。"""
+def test_a_card_cannot_open_a_pr_of_its_own(client, monkeypatch):
+    """上面三条都从房间递卡，是因为一张卡递不了——这条钉住那个前提。
+
+    走不通的方式是 404：卡不是地点，那个 id 名下没有话题可以递。
+    """
     _github_world(monkeypatch, connected={"alice": "gho_alice"})
 
     _, root = _project(client, owner="alice")
@@ -189,8 +192,7 @@ def test_a_thread_cannot_open_a_pr_of_its_own(client, monkeypatch):
             "change_subject": "fix(accept): credit the human, not the bot",
         },
     )
-    assert r.status_code == 422, r.text
-    assert "cheese conclude" in r.json()["message"]
+    assert r.status_code == 404, r.text
     assert _FakeClient.opened == []
 
 
@@ -218,9 +220,8 @@ def test_the_commit_author_sidecar_names_the_human_too(client, monkeypatch, tmp_
     it resolved a `cheese-…` handle to nothing, so every dispatched thread kept
     committing as `芝士 <cheese@zhishi.local>` and `coauthored_by()` was None.
 
-    The sidecar is keyed by the PLACE, which is what the worktree is keyed by:
-    two threads in one room commit as two different people when they belong to
-    two different people."""
+    The sidecar is keyed by the ROOM, which is what the worktree is keyed by:
+    every 分身 in a room commits into the same tree, under the same identity."""
     from app.domain.room_task.place import PlaceResolver
     from app.domain.workspace import identity
 
@@ -237,21 +238,20 @@ def test_the_commit_author_sidecar_names_the_human_too(client, monkeypatch, tmp_
         "app.domain.oauth.services.get_github_profile_for_handle", _fake_profile
     )
 
-    _, root = _project(client, owner="alice")
-    tid = _split(client, root, by=f"cheese-{uuid.uuid4().hex[:12]}")
+    pid, root = _project(client, owner="alice")
+    # 房间是由 alice 建的，但派活的是一个分身 —— 归属要落在人身上，不是那个
+    # `cheese-…` handle 上。
+    _split(client, root, by=f"cheese-{uuid.uuid4().hex[:12]}")
 
     async def _sync() -> None:
         async with client.test_factory() as s:
-            place = await PlaceResolver(s).resolve(uuid.UUID(tid))
+            place = await PlaceResolver(s).resolve(uuid.UUID(root))
             assert place is not None
-            await identity.sync_for_topic(s, place.room, task_id=place.task_id)
+            await identity.sync_for_topic(s, place.room)
 
     asyncio.run(_sync())
 
-    who = identity.read(
-        uuid.UUID(client.get(f"/topics/{tid}").json()["data"]["project_id"]),
-        uuid.UUID(tid),
-    )
+    who = identity.read(uuid.UUID(pid), uuid.UUID(root))
     assert who == identity.GitIdentity("Alice", "583231+alice@users.noreply.github.com")
     assert identity.coauthored_by(who) == (
         "Co-authored-by: Alice <583231+alice@users.noreply.github.com>"

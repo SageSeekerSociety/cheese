@@ -133,44 +133,18 @@ def test_a_rooms_own_pool_stays_readable(client):
 # --- which agent works where -------------------------------------------------
 
 
-def test_a_project_starts_with_an_implicit_cheese_that_owns_a_pool(client):
-    """A project nobody configured is not agent-less — 芝士 is already there."""
+def test_a_project_starts_with_one_editable_cheese(client):
     pid = _project(client)
-
     agents = _agents(client, pid)
     assert len(agents) == 1
-    default = agents[0]
-    assert (default["handle"], default["is_default"]) == ("cheese", True)
-    # No row to edit yet, which a settings screen has to be able to tell.
-    assert default["configured"] is False
-    assert default["id"] is None
-
-
-def test_the_projects_cheese_is_listed_once_after_it_materializes(client):
-    """Giving 芝士 a type turns the implicit default into a row. It is still ONE
-    agent under one handle — listing the row AND the synthesized default would
-    show two teammates sharing a memory pool."""
-    pid = _project(client)
-    r = client.put(
-        f"/projects/{pid}/default-agent", json={"type_name": "product-design"}
-    )
-    assert r.status_code == 200, r.text
-
-    agents = _agents(client, pid)
-    assert [(a["handle"], a["is_default"]) for a in agents] == [("cheese", True)]
+    assert agents[0]["handle"] == "cheese"
     assert agents[0]["configured"] is True
-    assert agents[0]["type_name"] == "product-design"
-
-
-def test_an_agent_added_under_the_default_handle_is_the_default(client):
-    """Same handle = same memory pool, so it cannot be a second, separate agent
-    — whatever order it was created in."""
-    pid = _project(client)
-    created = _add_agent(client, pid, handle="cheese", display_name="芝士")
-
-    agents = _agents(client, pid)
-    assert [(a["handle"], a["is_default"]) for a in agents] == [("cheese", True)]
-    assert agents[0]["id"] == created["id"]
+    assert agents[0]["id"] is not None
+    assert agents[0]["configuration"]["model"]
+    assert (
+        client.post(f"/projects/{pid}/agents", json={"handle": "cheese"}).status_code
+        == 422
+    )
 
 
 def test_a_new_topic_follows_the_projects_default(client):
@@ -213,11 +187,13 @@ def test_a_topic_can_be_created_with_its_own_agent(client):
     assert agent["inherited"] is False
 
 
-def test_work_split_out_of_a_room_goes_out_under_the_same_agent(client):
+def test_work_split_out_of_a_room_learns_into_the_rooms_pool(client):
     """This is the loop the split exists for: whatever the 分身 learns doing the
     work lands in the SAME pool the room reads, so the room has it afterwards.
-    A child that fell back to the project's default would be a different agent
-    and a different memory."""
+
+    没有第二个 agent 要解析 —— 做这条活的分身跑在房间那一个会话里，它就是房间的
+    agent 在干活。所以「这条活归谁」不是一个问题，「它学到的东西进谁的池子」才是。
+    """
     pid = _project(client)
     reviewer = _add_agent(client, pid, handle="reviewer")
     room = _topic(client, pid, "review room")
@@ -228,12 +204,10 @@ def test_work_split_out_of_a_room_goes_out_under_the_same_agent(client):
         json={"title": "拆出来的活", "created_by": "u"},
     )
     assert r.status_code == 200, r.text
-    child = r.json()["data"]["id"]
+    # 一张卡问不出 agent 来：它不是地点。
+    assert client.get(f"/topics/{r.json()['data']['id']}/agent").status_code == 404
 
-    assert client.get(f"/topics/{child}/agent").json()["data"]["handle"] == "reviewer"
-
-    # And what the child learns is readable from the room that dispatched it.
-    _remember(client, pid, child, "分身查出来的事")
+    _remember(client, pid, room, "分身查出来的事")
     assert [h["abstract"] for h in _recall(client, pid, room, "查出来")] == [
         "分身查出来的事"
     ]
@@ -281,17 +255,13 @@ def test_renaming_an_agent_keeps_the_memory_it_had(client):
     ]
 
 
-def test_an_agent_can_be_put_in_another_type(client):
+def test_an_agents_role_can_be_edited_directly(client):
     pid = _project(client)
-    reviewer = _add_agent(client, pid, handle="reviewer", display_name="评审")
-
-    r = _update_agent(client, pid, reviewer["id"], type_name="product-design")
-    assert r.status_code == 200, r.text
-    assert r.json()["data"]["type_name"] == "product-design"
-
-    r = _update_agent(client, pid, reviewer["id"], type_name=None)
-    assert r.status_code == 200, r.text
-    assert r.json()["data"]["type_name"] is None
+    agent = _add_agent(client, pid, handle="reviewer")
+    config = {**agent["configuration"], "body": "Review security"}
+    r = _update_agent(client, pid, agent["id"], configuration=config)
+    assert r.status_code == 200
+    assert r.json()["data"]["configuration"] == config
 
 
 def test_renaming_without_naming_a_type_leaves_the_type_alone(client):
@@ -305,12 +275,13 @@ def test_renaming_without_naming_a_type_leaves_the_type_alone(client):
     assert r.json()["data"]["type_name"] == "product-design"
 
 
-def test_an_unknown_type_is_rejected(client):
+def test_editing_an_agent_cannot_rebind_it_to_a_shared_type(client):
     pid = _project(client)
     reviewer = _add_agent(client, pid, handle="reviewer")
 
     r = _update_agent(client, pid, reviewer["id"], type_name="no-such-type")
-    assert r.status_code == 422
+    assert r.status_code == 400
+    assert "type_name" in r.text
 
 
 def test_renaming_an_agent_that_is_not_there_is_a_404(client):
@@ -421,26 +392,15 @@ def test_one_project_cannot_retire_anothers_agent(client):
     assert _agents(client, theirs)[-1]["is_active"] is True
 
 
-def test_configuring_the_projects_cheese_again_brings_it_back(client):
-    """Retiring the project's own 芝士 leaves it on the implicit default — the
-    same pool, no row. Giving that 芝士 a type is choosing it again, so the row
-    comes back rather than materializing as a default nobody may pick."""
+def test_the_last_agent_cannot_be_retired_without_a_replacement(client):
     pid = _project(client)
-    client.put(f"/projects/{pid}/default-agent", json={"type_name": "product-design"})
-    cheese = next(a for a in _agents(client, pid) if a["handle"] == "cheese")
-
-    client.delete(f"/projects/{pid}/agents/{cheese['id']}")
-    assert (
-        next(a for a in _agents(client, pid) if a["id"] == cheese["id"])["is_active"]
-        is False
-    )
-
-    r = client.put(
-        f"/projects/{pid}/default-agent", json={"type_name": "fullstack-engineer"}
-    )
-    assert r.status_code == 200, r.text
-    back = next(a for a in _agents(client, pid) if a["id"] == cheese["id"])
-    assert (back["is_active"], back["is_default"]) == (True, True)
+    cheese = _agents(client, pid)[0]
+    assert client.delete(f"/projects/{pid}/agents/{cheese['id']}").status_code == 422
+    replacement = _add_agent(client, pid, handle="replacement")
+    assert client.delete(f"/projects/{pid}/agents/{cheese['id']}").status_code == 200
+    assert next(a for a in _agents(client, pid) if a["id"] == replacement["id"])[
+        "is_default"
+    ]
 
 
 def test_a_duplicate_handle_in_one_project_is_rejected(client):

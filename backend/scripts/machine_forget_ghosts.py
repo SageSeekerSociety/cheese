@@ -2,7 +2,7 @@
 
 A machine that reached `running` was never re-checked, so a destroyed one keeps
 reading as healthy here forever — and `provision()` counts those rows against
-`microcloud_max_machines_per_project`, which means a project whose machines are
+the runtime machine limit, which means a project whose machines are
 all gone can never get another one. PR #160 fixes that in the service; this is
 the one-off for a database that already has the ghosts.
 

@@ -4,7 +4,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.agent.device_hub import DeviceHub, device_hub
 from app.domain.agent.device_provider import DeviceChannel
@@ -29,7 +29,7 @@ ReadTopicCloud = Callable[[uuid.UUID], Awaitable[CloudLease | None]]
 
 
 class CloudChannel(DeviceChannel):
-    """One-topic lease resolution over the existing device transport.
+    """One-room lease resolution over the existing device transport.
 
     Inheritance here is not the M×N the composition split removed: a leased
     Cloud machine IS a device, reached over the same link with the same screen —
@@ -42,6 +42,10 @@ class CloudChannel(DeviceChannel):
     supply route and the same --model alias an enrolled one takes. Code that
     asks which of the two a turn is on in order to answer THAT is asking the
     wrong question.
+
+    The machine is the ROOM's, and a room is the only thing that runs a turn:
+    work inside a room is a 分身 in that room's own session, on that room's
+    machine.
     """
 
     name = "cloud"
@@ -67,6 +71,20 @@ class CloudChannel(DeviceChannel):
 
     def available(self) -> bool:
         return self._configured
+
+    def owns(self, supply: Supply) -> bool:
+        """The machines this channel listens to are the ones the platform
+        opened. Inverting the base channel's answer is the whole of it — see
+        ``DeviceChannel.discover`` for what a topic recovered by both costs."""
+        return supply is Supply.cloud
+
+    def _sessions(self) -> AsyncSession:
+        factory = self._session_factory
+        if factory is None:
+            from app.core.db import async_session_factory
+
+            factory = async_session_factory
+        return factory()
 
     async def prepare_topic(
         self,
@@ -99,12 +117,7 @@ class CloudChannel(DeviceChannel):
             raise ScreenSetupError("本话题没有自己的 Cloud 机器")
         if lease.device_id is None or not self._hub.is_online(lease.device_id):
             return None
-        factory = self._session_factory
-        if factory is None:
-            from app.core.db import async_session_factory
-
-            factory = async_session_factory
-        async with factory() as session:
+        async with self._sessions() as session:
             devices = sql_device_service(session)
             endpoint = await devices.get_device(lease.device_id)
             if endpoint is None or endpoint.supply is not Supply.cloud:
@@ -118,6 +131,7 @@ class CloudChannel(DeviceChannel):
                 await devices.bind_topic_device(
                     topic_id, lease.device_id, visibility=Visibility.host
                 )
+            # 这个房间的 agent 身份：它的会话就是以这个身份记录和恢复的 (#660)。
             agent = await IdentityService(session).ensure_topic_agent_user(topic_id)
             await session.commit()
             return lease.device_id, agent.id, agent.username

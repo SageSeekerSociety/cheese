@@ -2,9 +2,8 @@
 
 芝士 can only act on what the injected skill tells it exists. When the two
 disagree the agent walks into a wall it cannot diagnose — observed 2026-08-10,
-where SKILL.md documented `cheese await` in mandatory terms ("要等几分钟以上的
-命令一律走它") while no such subcommand existed yet, and conversely `gh-token`
-was implemented but documented nowhere.
+where SKILL.md documented a command in mandatory terms while no such subcommand
+existed yet, and conversely `gh-token` was implemented but documented nowhere.
 
 So the command table and the argparse surface are pinned to each other, the same
 way test_hooks_substrate pins the committed hook script to its source constant.
@@ -37,8 +36,7 @@ def _load_cli():
 
 def _implemented() -> set[str]:
     """Public subcommands. Names starting with `_` are internal plumbing the
-    agent never types (e.g. `__await-child`, which the detached await child
-    re-enters through) and are deliberately undocumented."""
+    agent never types and are deliberately undocumented."""
     parser = _load_cli().build_parser()
     groups = [a for a in parser._actions if isinstance(a, argparse._SubParsersAction)]
     assert len(groups) == 1, "expected exactly one subcommand group"
@@ -68,12 +66,6 @@ def test_every_implemented_command_is_documented():
         f"the CLI implements commands SKILL.md never mentions: {sorted(undocumented)}. "
         "An undocumented command is one 芝士 will never use."
     )
-
-
-def test_await_is_present_on_both_sides():
-    """The specific pair that started this: the manual's most emphatic command."""
-    assert "await" in _documented()
-    assert "await" in _implemented()
 
 
 def test_version_flag_reports_a_source_fingerprint():

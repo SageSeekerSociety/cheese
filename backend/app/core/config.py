@@ -162,9 +162,10 @@ class Settings(BaseSettings):
     # backend (no activity signal exists there), plus the generic outer default
     # any backend keeps until it signals its own ceiling. The hooks-driven
     # backends no longer use this for their
-    # effective timeout: they run the two-layer idle-suspect / hard-ceiling loop
-    # (agent_idle_suspect_s / agent_turn_hard_ceiling_s below) and reschedule the
-    # outer wrap to their own ceiling (turn 活跃度检测, 2026-08-09).
+    # effective timeout: they run the liveness loop the settings below describe
+    # (idle-suspect then a process probe, no-progress, unread grace; the ceiling
+    # only records) and hand the outer wrap their own ceiling through the
+    # `turn_ceiling` frame.
     agent_turn_timeout_s: float = 900.0
     # 冷启动看门狗: a turn that has emitted no assistant text and made no tool
     # call within this many seconds is declared dead, whatever its ceiling says.
@@ -183,10 +184,36 @@ class Settings(BaseSettings):
     # — a long foreground command with no interim hook must not look identical to a
     # dead screen.
     agent_idle_suspect_s: float = 300.0
-    # Unconditional backstop for both hooks backends regardless of activity — guards
-    # against a pathological "looks active but never converges" turn (a tool
-    # retrying forever, a genuine infinite loop that keeps printing).
+    # The wall-clock mark past which a turn is recorded as long. A metric, not
+    # a gate: crossing it is logged once by the harness monitor and written to
+    # the turn record (`ceiling_crossed_s`), and nothing ends. With the three
+    # gates in place (the process probe past idle-suspect, output with no
+    # progress, an unread injection), what a wall clock alone could still end
+    # is a turn that is working and has not finished, which is not a fault. One
+    # number for both layers: the monitor reads it directly and the outer wrap
+    # in runtime.py receives it via the `turn_ceiling` frame.
     agent_turn_hard_ceiling_s: float = 10800.0
+    # How long a message we injected may sit unconsumed before the session is
+    # called unable to read. On a different axis from the two above: those watch
+    # what a session PRODUCES, and a session that has stopped reading goes on
+    # producing, so neither of them ever fires for it. This one only exists
+    # while something is actually waiting, which makes it the narrower check and
+    # the one with a person behind it.
+    #
+    # Sized against the longest legitimate reason a message goes unread, which
+    # is a single long tool call: input is taken at tool boundaries, so a
+    # 20-minute command legitimately holds a message that long. This is not a
+    # responsiveness target. Ending the turn on this verdict replays the pending
+    # message into the next one, so the cost of firing is a restart, not a loss.
+    agent_unread_grace_s: float = 1800.0
+    # How long a session may keep producing output with no tool call and no
+    # ending before it is called stuck. This is the gate for a loop: a session
+    # that talks and never acts keeps every other signal healthy, because the
+    # idle check sees hooks arriving and the process probe sees a live process.
+    # A long foreground command does not trip it, since it emits no output
+    # while it runs. Sized for the longest honest stretch of pure writing, a
+    # document drafted with no tool call in between.
+    agent_no_progress_s: float = 1800.0
 
     # RETIRED (2026-08-10). Used to name a HOST directory holding a `cheese` CLI
     # to mount over the image's baked copy — but nothing kept that checkout in
@@ -320,9 +347,6 @@ class Settings(BaseSettings):
     # bills compute against this; 0 disables top-ups (an operator funds it by hand).
     microcloud_account_name: str = "compute"
     microcloud_initial_funds: float = 1000.0
-    # A ceiling per project: provisioning is one API call, and nothing else here
-    # stops a loop from filling a Proxmox node.
-    microcloud_max_machines_per_project: int = 2
     # How long a SETTLED machine may go without being re-checked against
     # MicroCloud. Zero would put a provider round-trip on every read; never
     # would let a machine destroyed upstream sit here as `running` forever
@@ -350,14 +374,6 @@ class Settings(BaseSettings):
     ccproxy_tenant_timeout_s: float = 30.0
 
     # --- Agent sandbox (spec §9.1: 每话题在隔离容器里跑 claude + 原生工具) ---
-    sandbox_image: str = "cheesex-agent-sandbox:latest"
-    # Machine quality gates use a disposable sibling container and never the
-    # backend process. Keep this explicit so operators can ship a test-toolchain
-    # image without granting the gate Docker socket or backend credentials.
-    quality_gate_image: str = "cheesex-agent-sandbox:latest"
-    quality_gate_memory_mb: int = 2048
-    quality_gate_cpus: float = 2.0
-    quality_gate_pids_limit: int = 512
     # Base URL the in-container `cheese` CLI calls back to (host → backend).
     # The app ROOT, with no `/api`. The in-container `cheese` CLI reaches the
     # backend port DIRECTLY (no gateway, so nothing strips a prefix), and since
@@ -577,36 +593,6 @@ class Settings(BaseSettings):
     # deployment can have many connected repos, each with its own
     # installation_id.
     github_app_slug: str = "cheesex-app"
-    # 采纳即合并 (docs/accept-is-merge.md #296, staged rollout): submitting an
-    # accept card opens a real PR with the App's installation token; 采纳 merges
-    # that PR via the API. On by default as of stage 1 — the App owns PR
-    # creation, so the accept path never opens a competing PR while this is on
-    # (see AcceptService.accept). Submission-side only — accept dispatches on the
-    # card's stored pr_number, so flipping this never strands a card, and a
-    # deployment can still switch it off via .env (dev override) if needed.
-    accept_via_pr: bool = True
-    # Tier-2 semantics for the accept poller (#468): check names that must have
-    # APPEARED (and be green) before the poller may merge. Absence is pending,
-    # never pass — #465 merged on a run where `test` was never triggered and
-    # everything visible was skipped/green. Comma-separated; empty disables.
-    #
-    # Each entry may carry the diff scope that makes it required:
-    # `name:glob;glob` (globs are GitHub's path-filter syntax — `**` crosses
-    # directories, `*` does not). A bare name is required unconditionally.
-    # **Mirror the workflow's own `paths:` filter here.** `test` lives in
-    # .github/workflows/test.yml, which only triggers on `backend/**` — so on a
-    # frontend-only PR that check never appears, and demanding it unconditionally
-    # is an infinite wait, not a safety valve (2026-08-16: #483/#485/#486 sat
-    # fully green until a human merged them by hand). Getting the scope too
-    # NARROW is the mild failure: a check that does run still has to go green,
-    # because `check_state` sees it — only the not-yet-created window reopens.
-    accept_required_check_names: str = "test:backend/**;.github/workflows/test.yml"
-    # Backstop for the roster above: how long a required check may stay MISSING
-    # before the card stops waiting and asks a human. Waiting with no timeout is
-    # how a renamed/disabled workflow — or an Actions billing lapse, which this
-    # org had on 2026-08-13 — turns into a card that hangs forever with nobody
-    # told. The exit is 交给人, never an auto-merge. 0 disables (wait forever).
-    accept_required_check_grace_minutes: int = 30
 
     # --- 闸门孤儿卡扫底 (2026-08-11) ---
     # How often to look for `pending_gate` cards nobody will ever settle (the
@@ -638,11 +624,6 @@ class Settings(BaseSettings):
     notification_finalize_interval_s: int = 60
     notification_email_drain_interval_s: int = 60
     task_deadline_sweep_interval_s: int = 900
-    # --- 结论卡 (2026-08-11) ---
-    # How often open conclusion cards past their absolute deadline are swept and
-    # auto-accepted. Backstop for the turn-end hook: 默认采信 must not depend on
-    # the parent's digest turn ever running. 0 disables the loop (tests).
-    conclusion_sweep_interval_s: int = 60
     # merge_method for the auto-merge (GitHub: merge | squash | rebase). MUST
     # be one the target repo actually allows — GitHub answers 405 forever for
     # a disabled one, which is exactly how 两阶段采纳 shipped never having

@@ -86,7 +86,7 @@ def _github_world(monkeypatch, *, connected: dict[str, tuple[str, str]]) -> None
     )
     monkeypatch.setattr(ws, "topic_branch_exists", lambda pid, tid: True)
     monkeypatch.setattr(ws, "ensure_repo", lambda pid: Path("."))
-    monkeypatch.setattr(ws, "upstream_default_branch", lambda repo: "main")
+    monkeypatch.setattr(ws, "upstream_default_branch", lambda repo, **_: "main")
 
 
 def _driving(monkeypatch, handle: str | None):
@@ -261,10 +261,11 @@ def test_nobody_is_credited_twice_when_the_room_never_changed_hands(
     assert "Co-authored-by" not in body
 
 
-def test_a_thread_cannot_open_the_pr_for_the_batch_it_is_one_of(client, monkeypatch):
-    """支线自己递卡会被拒——这正是上面两条为什么都从房间递。
+def test_a_card_cannot_open_the_pr_for_the_batch_it_is_one_of(client, monkeypatch):
+    """一件活自己递不出卡——这正是上面两条为什么都从房间递。
 
-    放它过去的话，它会把兄弟们还在写的那条分支封口开 PR。
+    放它过去的话，它会把兄弟们还在写的那条分支封口开 PR。走不通的方式是 404：
+    卡不是地点。
     """
     _github_world(monkeypatch, connected={"alice": ("583231", "alice")})
     _driving(monkeypatch, "bob")
@@ -279,5 +280,4 @@ def test_a_thread_cannot_open_the_pr_for_the_batch_it_is_one_of(client, monkeypa
             "change_subject": "fix(split): follow the driver, not the room",
         },
     )
-    assert r.status_code == 422, r.text
-    assert "cheese conclude" in r.json()["message"]
+    assert r.status_code == 404, r.text

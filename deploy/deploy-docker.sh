@@ -423,9 +423,7 @@ OWNERSHIP_PATHS=(
   "$TRANSCRIPTS_PATH"
 )
 OWNERSHIP_IMAGE="${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:$SHA}"
-OWNERSHIP_SECRETS="${GIT_CREDENTIALS_FILE:-/dev/null}"
 log "checking workspace/uploads ownership…"
-SECRET_FILE_PATHS="$OWNERSHIP_SECRETS" \
 OWNERSHIP_REPORT_FILE="$OWNERSHIP_REPORT" \
 "$HERE/fix-workspace-ownership.sh" \
   "$OWNERSHIP_IMAGE" \
@@ -557,7 +555,6 @@ if [ "$code" != ok ]; then
       log "handing the bind mounts back to ${PREVIOUS_AGENT_UID:-1001} before starting $PREV_SHA…"
       AGENT_UID="${PREVIOUS_AGENT_UID:-1001}" \
       AGENT_GID="${PREVIOUS_AGENT_GID:-1001}" \
-      SECRET_FILE_PATHS="$OWNERSHIP_SECRETS" \
       FORCE_OWNERSHIP_FIX=1 \
       "$HERE/fix-workspace-ownership.sh" \
         "$OWNERSHIP_IMAGE" \

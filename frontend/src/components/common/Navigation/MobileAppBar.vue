@@ -4,8 +4,8 @@
     <!-- 页面栈里的一层：← 回上一层。汉堡只留给**还真挂着抽屉**的那几页
          （1.0 的空间/小队详情，见 docs/plans/2026-08-18-mobile-shell-design.md §8）。 -->
     <template #prepend>
-      <v-btn v-if="backTo" icon="mdi-arrow-left" variant="text" aria-label="返回" @click="goBack" />
-      <v-app-bar-nav-icon v-else-if="hasDrawer" @click="toggleDrawer" />
+      <ParentBackButton />
+      <v-app-bar-nav-icon v-if="hasDrawer" @click="toggleDrawer" />
     </template>
 
     <!-- 中间这一格：要么是路由的标题，要么由当前页自己填（它 Teleport 到这里）。
@@ -39,18 +39,43 @@
       >
         <template #activator="{ props }">
           <v-btn icon v-bind="props" variant="text">
-            <v-avatar size="28">
-              <v-img v-if="userMenu.avatar.value" :src="userMenu.avatar.value" />
-              <v-icon v-else icon="mdi-account" />
+            <!-- 没挑过头像的人画彩色首字母，不画 mdi-account：那个图标对每个人
+                 都一样，等于告诉你「这是某个人」而不是「这是你」。和左栏
+                 (LeftAppRail) 同一套兜底。 -->
+            <v-avatar
+              size="28"
+              :style="userMenu.avatar.value ? undefined : { backgroundColor: userMenu.avatarColor.value }"
+            >
+              <v-img v-if="userMenu.avatar.value" :src="userMenu.avatar.value">
+                <template #error>
+                  <span class="bar-avatar-char" :style="{ backgroundColor: userMenu.avatarColor.value }">{{
+                    userMenu.avatarInitial.value
+                  }}</span>
+                </template>
+              </v-img>
+              <span v-else class="bar-avatar-char">{{ userMenu.avatarInitial.value }}</span>
             </v-avatar>
           </v-btn>
         </template>
 
         <v-card class="user-menu-card rounded-lg elevation-1 border pa-0" min-width="300">
           <v-card-item class="user-header pa-4 pb-3">
-            <v-avatar size="56" class="mb-2" elevation="1">
-              <v-img v-if="userMenu.avatar.value" :src="userMenu.avatar.value" />
-              <v-icon v-else icon="mdi-account" size="large" />
+            <v-avatar
+              size="56"
+              class="mb-2"
+              elevation="1"
+              :style="userMenu.avatar.value ? undefined : { backgroundColor: userMenu.avatarColor.value }"
+            >
+              <v-img v-if="userMenu.avatar.value" :src="userMenu.avatar.value">
+                <template #error>
+                  <span
+                    class="bar-avatar-char bar-avatar-char--lg"
+                    :style="{ backgroundColor: userMenu.avatarColor.value }"
+                    >{{ userMenu.avatarInitial.value }}</span
+                  >
+                </template>
+              </v-img>
+              <span v-else class="bar-avatar-char bar-avatar-char--lg">{{ userMenu.avatarInitial.value }}</span>
             </v-avatar>
             <div class="mt-2">
               <v-card-title class="px-0 py-0 text-h6 font-weight-bold">{{ userMenu.nickname.value }}</v-card-title>
@@ -134,11 +159,13 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
 
 import { usePageTitle } from '@/composables/usePageTitle'
 import { useUserMenu } from '@/composables/useUserMenu'
+
+import ParentBackButton from './ParentBackButton.vue'
 
 import ThemeToggle from '@/components/common/ThemeToggle.vue'
 import { useNavigationStore } from '@/stores/navigation'
@@ -148,16 +175,11 @@ import { usePageTitleStore } from '@/stores/title'
 const userMenu = useUserMenu()
 
 const route = useRoute()
-const router = useRouter()
 const navigationStore = useNavigationStore()
 
 // 栈末端的路由自己说它回哪儿去（meta.backTo），而不是靠 history.back()——
 // 从别处直接打开一个话题链接时，后退会离开这个 app。
 const backTo = computed(() => (typeof route.meta.backTo === 'string' ? route.meta.backTo : null))
-
-function goBack() {
-  if (backTo.value) void router.push({ name: backTo.value, params: route.params })
-}
 
 // 汉堡由路由说了算：一个点了没反应的入口比没有入口更糟，而这条顶栏看不见自己
 // 下面挂没挂侧栏——手机上没有侧栏的页面（/inbox、首页那两页）以前照样画一个汉堡。
@@ -211,6 +233,30 @@ watch([getRouteHierarchy, () => updateTrigger], updateTitle, { immediate: true }
   font-weight: 600;
   line-height: 1.4;
   color: var(--ink);
+}
+
+/* 没挑过头像时的彩色首字母，同 LeftAppRail 的 .rail-avatar-char。
+   #fff 是刻意写死的：底色是 avatarColor() 算出来的那个 #rrggbb，它按固定的
+   感知亮度取（OKLCH L = 0.54），深浅两套主题下是同一个值，所以压在它上面的字
+   也必须是同一个值 —— 跟着 --v-theme-on-surface 走反而会在两套主题里各错一次。 */
+.bar-avatar-char {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  line-height: 1;
+  /* stylelint-disable-next-line color-no-hex -- 这是「压在头像底色上」的墨色，
+     底色是 avatarColor() 算出来的 #rrggbb（固定感知亮度，深浅两套主题同一个
+     值），所以它也必须是同一个值。改成 token 反而会在两套主题里各错一次。
+     和 LeftAppRail 的 .rail-avatar-char 是同一处判断。 */
+  color: #fff;
+  font-weight: 600;
+  font-size: 13px;
+
+  &--lg {
+    font-size: 22px;
+  }
 }
 
 .user-menu-card {

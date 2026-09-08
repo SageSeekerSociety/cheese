@@ -53,7 +53,6 @@ async def _thread(session, *, project_id, room_id, title):
         title=title,
         owner_handle="alice",
         created_by="alice",
-        agent_instance_id=None,
     )
 
 
