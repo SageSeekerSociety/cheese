@@ -54,6 +54,7 @@ import type {
 } from '../cx_types'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { useDisplay } from 'vuetify'
 import { useEventListener } from '@vueuse/core'
 
 import {
@@ -1204,6 +1205,8 @@ function expandMentions(text: string): string {
 // 图片输入: paste (screenshot) or pick images; they upload to the topic's
 // worktree immediately and wait in a preview strip until send.
 const fileInput = ref<HTMLInputElement | null>(null)
+const imageInput = ref<HTMLInputElement | null>(null)
+const { mdAndUp } = useDisplay()
 const {
   pending: pendingAtts,
   uploading: attsUploading,
@@ -1220,6 +1223,11 @@ const {
 )
 function pickFiles() {
   fileInput.value?.click()
+}
+// 手机上单开一个「照片」：系统的文件选择器里翻相册要好几步，而 accept=image/*
+// 直接进相册/相机。桌面上不给这一颗——那儿贴一张截图或者拖进来就完事了。
+function pickImages() {
+  imageInput.value?.click()
 }
 function onFilePicked(e: Event) {
   const input = e.target as HTMLInputElement
@@ -1875,7 +1883,19 @@ onBeforeUnmount(() => {
             <!-- 下面一行：动作靠左，发送靠右。发送是这一行唯一的主操作，所以它是
                唯一的实心按钮，其余一律是安静的图标。 -->
             <div class="composer-actions d-flex align-center ga-1">
-              <input ref="fileInput" type="file" multiple class="d-none" @change="onFilePicked" />
+              <!-- 这两个 input 是藏起来的，但**不能**用 display:none / visibility:hidden：
+                   iOS Safari 拒绝用脚本打开一个被隐藏掉的文件选择框，按钮点下去
+                   毫无反应。所以按 .visually-hidden 的老办法藏——留在布局里、只是
+                   看不见。旁边 components/common/FileSelect.vue 里也是这么藏的。 -->
+              <input ref="fileInput" type="file" multiple class="visually-hidden" @change="onFilePicked" />
+              <input
+                ref="imageInput"
+                type="file"
+                accept="image/*"
+                multiple
+                class="visually-hidden"
+                @change="onFilePicked"
+              />
               <!-- 附件上传走的是 HTTP，和聊天那条 socket 是两回事：socket 断着的
                  时候图片照样传得上去，所以这里不跟着 `connected` 一起禁用。 -->
               <v-btn
@@ -1884,8 +1904,20 @@ onBeforeUnmount(() => {
                 variant="text"
                 size="small"
                 color="medium-emphasis"
-                title="上传文件或图片（每个文件最大 10MB）"
+                title="上传文件（每个最大 10MB）"
                 @click="pickFiles"
+              />
+              <!-- 手机上多一颗「照片」：那儿没有截图可贴、也没有东西可拖，从文件
+                   选择器里翻相册要绕好几步。 -->
+              <v-btn
+                v-if="!mdAndUp"
+                class="composer-icon"
+                icon="mdi-image-outline"
+                variant="text"
+                size="small"
+                color="medium-emphasis"
+                title="发送照片"
+                @click="pickImages"
               />
               <v-spacer />
               <!-- 算力说的是「这条消息会在哪儿跑」，属于发送这一侧，不和左边那两个
