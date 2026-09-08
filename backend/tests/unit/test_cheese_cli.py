@@ -27,6 +27,26 @@ def _load():
     return mod
 
 
+def test_members_reads_the_current_topic_roster(monkeypatch, capsys):
+    cli = _load()
+    monkeypatch.setattr(cli, "TOPIC", "room")
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "members"])
+    calls = []
+
+    def request(method, path):
+        calls.append((method, path))
+        return {
+            "data": {
+                "data": [{"member_handle": "alice", "name": "Alice", "role": "owner"}]
+            }
+        }
+
+    monkeypatch.setattr(cli, "_call", request)
+    cli.main()
+    assert calls == [("GET", "/topics/room/members")]
+    assert "Alice（owner）→ 在消息里写 <@alice>" in capsys.readouterr().out
+
+
 def test_artifact_publishes_the_local_file_from_a_subdirectory(monkeypatch, tmp_path):
     cli = _load()
     folder = tmp_path / "site"

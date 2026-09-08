@@ -30,7 +30,22 @@ export interface DiffLine {
  * spaces or non-ASCII bytes. Left as-is when the path is not quoted. */
 function unquote(path: string): string {
   if (!path.startsWith('"') || !path.endsWith('"')) return path
-  return path.slice(1, -1).replace(/\\t/g, '\t').replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\')
+  const escapes: Record<string, string> = {
+    '\\': '\\',
+    '"': '"',
+    a: '\x07',
+    b: '\b',
+    f: '\f',
+    n: '\n',
+    r: '\r',
+    t: '\t',
+    v: '\v',
+  }
+  return path.slice(1, -1).replace(/(?:\\[0-7]{3})+|\\([\\"abfnrtv])/g, (value, escape: string) => {
+    if (escape) return escapes[escape]!
+    const bytes = value.match(/[0-7]{3}/g)!.map((octal: string) => Number.parseInt(octal, 8))
+    return new TextDecoder().decode(new Uint8Array(bytes))
+  })
 }
 
 /** The path a `diff --git a/X b/X` header is about. */

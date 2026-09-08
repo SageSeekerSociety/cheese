@@ -1137,16 +1137,29 @@ async def edit_topic_doc(
     # read saw is the version the accepted write replaced.
     previous = await BlockRepository(db).doc_root(place.room_id)
     was = previous.content if previous else ""
-    doc = await TopicService(db).edit_doc(
+    doc, notice = await TopicService(db).edit_doc(
         topic_id=topic_id,
         content=content,
         author=actor.handle,
         expected_version=body.expected_version,
+        author_type=AuthorType.ai if actor.is_agent else AuthorType.human,
     )
-    if not actor.is_agent:
+    # Publish only committed edits: connected teammates can immediately read
+    # the new document and the same persisted contribution record.
+    await db.commit()
+    broker = get_broker()
+    if notice is not None:
+        await broker.publish(
+            str(place.room_id),
+            {
+                "type": "event_block",
+                "block": BlockOut.model_validate(notice).model_dump(mode="json"),
+            },
+        )
+    await broker.publish(str(place.room_id), {"type": "state", "resource": "doc"})
+    if not actor.is_agent and notice is not None:
         # The notice tells 芝士 to go re-read the doc, so the doc has to BE the
         # new one by the time it does — same ordering as the comment route.
-        await db.commit()
         # 芝士's own `cheese doc set` is not news to 芝士.
         await chat.notify_running_turn(
             topic_id,

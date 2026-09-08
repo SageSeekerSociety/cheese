@@ -97,6 +97,28 @@ const settle = async () => {
 }
 
 describe('AI 说的话署谁的名', () => {
+  it('名册晚到时，已有消息里的点名也更新为显示名', async () => {
+    const originalFetch = globalThis.fetch
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    vi.stubGlobal('fetch', async (...args: Parameters<typeof fetch>) => {
+      if (String(args[0]).includes('/members')) await gate
+      return originalFetch(...args)
+    })
+    history = [{ ...aiMsg('mention-late', `<@${SEAT}> 请整理方案`), author_type: 'human', author: 'me' }]
+    const { container } = render(Panel, {
+      props: { topic: topicOf('t1'), showComposer: false },
+      global: { plugins: [vuetify] },
+    })
+    await settle()
+    expect(container.querySelector('.im-text .mention')?.textContent).toBe(`@${SEAT}`)
+    release()
+    await settle()
+    expect(container.querySelector('.im-text .mention')?.textContent).toBe('@芝士')
+  })
+
   it('署这个房间现在交给的那个队友，不是写死的「芝士」', async () => {
     agentName = '评审'
     history = [aiMsg('a', '看过了')]

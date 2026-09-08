@@ -42,7 +42,6 @@ export default async function refreshToken(error: AxiosError<ResponseDataType>) 
       const {
         data: { accessToken, user },
       } = await UserApi.refreshAccessToken()
-      console.log('refresh token success', accessToken, user)
       if (!accessToken || !user) {
         throw new Error('Failed to refresh token: missing accessToken or user')
       }
@@ -55,7 +54,6 @@ export default async function refreshToken(error: AxiosError<ResponseDataType>) 
       // 处理 EventSource 请求队列
       eventSourceQueue.forEach((cb) => cb(accessToken))
       eventSourceQueue.splice(0)
-      console.log('re-request', config)
       // config 自带 baseURL（axios 以它覆盖实例默认值），任一实例重发都等价。
       return ApiInstance.request<any>(config)
     } catch {
@@ -71,7 +69,6 @@ export default async function refreshToken(error: AxiosError<ResponseDataType>) 
       // 缓存网络请求，等token刷新后直接执行
       queue.push((newToken: string) => {
         Reflect.set(config.headers!, 'Authorization', `Bearer ${newToken}`)
-        console.log('queue', config)
         // config 自带 baseURL（axios 以它覆盖实例默认值），任一实例重发都等价。
         resolve(ApiInstance.request<any>(config))
       })
@@ -96,7 +93,6 @@ export async function refreshTokenForEventSource(onTokenRefreshed: (token: strin
       const {
         data: { accessToken, user },
       } = await UserApi.refreshAccessToken()
-      console.log('[EventSource] refresh token success', accessToken, user)
       if (!accessToken || !user) {
         throw new Error('Failed to refresh token: missing accessToken or user')
       }

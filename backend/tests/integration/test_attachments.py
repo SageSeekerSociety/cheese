@@ -224,9 +224,10 @@ def test_message_with_attachment_creates_block_and_prompts_agent(client, stub_ho
     assert att["path"] in prompt
     assert "已附在本条消息里" in prompt
 
-    # Persisted in the timeline: message + attachment + AI reply.
+    # Persisted: message + attachment + AI activity + final reply.
     blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
-    assert [b["kind"] for b in blocks] == ["message", "attachment", "message"]
+    assert [b["kind"] for b in blocks] == ["message", "attachment", "event", "message"]
+    assert blocks[2]["meta"]["in_room"] is False
 
 
 def test_image_only_message_allowed(client, stub_hooks):

@@ -761,9 +761,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser(
         "members",
-        help="列出项目成员(名字+handle+角色)",
+        help="列出当前话题成员(名字+handle+角色)",
         description=(
-            "列出项目成员。点名前先跑一次核对写法——名字和成员表不一致时,"
+            "列出当前话题可点名的成员。点名前先跑一次核对写法——名字和成员表不一致时,"
             "平台会在现场标红「没能通知到」,而且那条提醒真的没送出去。"
         ),
     )
@@ -1142,11 +1142,11 @@ def main() -> None:
             )
         print("\n".join(lines), file=sys.stderr)
     elif a.cmd == "members":
-        proj = _need("CHEESE_PROJECT", PROJECT)
-        d = _call("GET", f"/projects/{proj}/members").get("data", {})
+        topic = _need("CHEESE_TOPIC", TOPIC)
+        d = _call("GET", f"/topics/{topic}/members").get("data", {})
         rows = d.get("data", d) if isinstance(d, dict) else d
         for m in rows:
-            h = m.get("user_handle")
+            h = m.get("member_handle")
             print(f"- {m.get('name')}（{m.get('role')}）→ 在消息里写 <@{h}> 点名 ta")
     elif a.cmd == "status":
         topic = _need("CHEESE_TOPIC", TOPIC)

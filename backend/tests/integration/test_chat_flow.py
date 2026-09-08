@@ -83,6 +83,7 @@ def test_blocks_empty_then_populated_after_chat(client):
         "turn_started",
         "reaction",
         "turn_started",
+        "event_block",
         "assistant_block",
         "done",
     ]
@@ -102,10 +103,13 @@ def test_blocks_empty_then_populated_after_chat(client):
     # block. A later exact receipt replaces it with the consuming turn id.
     assert user["meta"]["consumed_turn"] is None
 
-    # Persisted: two blocks now exist in timeline order.
+    # Progress remains in the activity log; only Stop publishes a chat reply.
     r = client.get(f"/topics/{topic_id}/blocks")
     blocks = r.json()["data"]["data"]
-    assert [b["author_type"] for b in blocks] == ["human", "ai"]
+    assert [b["author_type"] for b in blocks] == ["human", "ai", "ai"]
+    assert blocks[1]["meta"]["progress"] is True
+    assert blocks[1]["meta"]["in_room"] is False
+    assert blocks[2]["kind"] == "message"
     assert blocks[0]["meta"]["consumed_turn"]
 
 

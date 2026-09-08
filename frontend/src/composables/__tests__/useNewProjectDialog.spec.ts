@@ -37,6 +37,17 @@ describe('teamIdInPath', () => {
 })
 
 describe('useNewProjectDialog', () => {
+  it('preserves a task and its team, then clears the task for ordinary creation', () => {
+    const { open, sourceTask, presetTeamId, show } = useNewProjectDialog()
+    show(42, { id: 7, name: 'Research proposal' })
+    expect(sourceTask.value).toEqual({ id: 7, name: 'Research proposal' })
+    expect(presetTeamId.value).toBe(42)
+    open.value = false
+    show(8)
+    expect(sourceTask.value).toBeNull()
+    expect(presetTeamId.value).toBe(8)
+    open.value = false
+  })
   it('opens with the team the caller named', () => {
     const { open, presetTeamId, show } = useNewProjectDialog()
     show(42)

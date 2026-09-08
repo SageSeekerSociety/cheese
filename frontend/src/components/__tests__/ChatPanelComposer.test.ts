@@ -22,6 +22,7 @@ vi.mock('../../api', async () => {
     ...actual,
     listBlocks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getProgress: vi.fn().mockResolvedValue({ items: [], updated_at: null }),
+    listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     // 芝士的座位在**话题**名册上，一个话题一个分身。项目名册上没有它——这正是
     // 「线上 @ 不出芝士」那次的成因，所以这里照真实形状摆：分身 handle 带话题
     // 后缀，而项目名册里只有人。
@@ -113,6 +114,35 @@ beforeEach(() => {
 })
 
 describe('对话栏自己的输入栏', () => {
+  it('offers editable starter drafts in an empty project and sends only on confirmation', async () => {
+    const { container, rerender, getByRole, queryByRole } = mountPanel({}, 'starter-project')
+    await rerender({ topic: { ...topic('starter-project'), kind: 'root' } })
+    await flush()
+    await fireEvent.click(getByRole('button', { name: '起草文档' }))
+    const box = composerBox(container)!
+    expect(box.value).toContain('@芝士')
+    expect(box.value).toContain('文档')
+    expect(document.activeElement).toBe(box)
+    expect(sent).toHaveLength(0)
+    expect(queryByRole('button', { name: '起草文档' })).toBeNull()
+    await fireEvent.update(box, '@芝士 帮我起草一份项目介绍')
+    await fireEvent.keyDown(box, { key: 'Enter' })
+    await flush()
+    expect(JSON.parse(sent[0].payload)).toMatchObject({
+      content: '<@cheese-topica> 帮我起草一份项目介绍',
+      summon: true,
+    })
+  })
+
+  it('does not offer starter drafts in an archived project or a regular conversation', async () => {
+    const { rerender, queryByRole } = mountPanel({}, 'starter-archived')
+    await flush()
+    expect(queryByRole('button', { name: '起草文档' })).toBeNull()
+    await rerender({ topic: { ...topic('starter-archived'), kind: 'root', status: 'archived' } })
+    await flush()
+    expect(queryByRole('button', { name: '起草文档' })).toBeNull()
+  })
+
   it('previews a document and sends its uploaded path', async () => {
     const api = await import('../../api')
     vi.mocked(api.uploadAttachment).mockResolvedValue({

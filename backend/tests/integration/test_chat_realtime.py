@@ -60,6 +60,58 @@ class InstantScreen(StubChannel):
         self.stops(topic_id, "done", session_id="s-affinity")
 
 
+class ProcessNotesScreen(StubChannel):
+    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+        self.acknowledges(topic_id, prompt)
+        self.hook(
+            topic_id,
+            hook_event_name="MessageDisplay",
+            delta="Read workspace files.",
+            _eid="process",
+        )
+        self.hook(
+            topic_id,
+            hook_event_name="MessageDisplay",
+            delta="The plan is ready.",
+            _eid="display",
+        )
+        self.stops(topic_id, "The plan is ready.", session_id="s-notes")
+
+
+@pytest.mark.anyio
+async def test_execution_notes_are_retained_outside_public_replies(client, tmp_path):
+    factory = client.test_factory
+    svc = ChatService(
+        session_factory=factory,
+        compute=stub_compute(ProcessNotesScreen()),
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        tid = topic.id
+        await session.commit()
+    async for _ in svc.converse(
+        topic_id=tid, author="u", content="Write a plan", summon=True
+    ):
+        pass
+    await settle_turn(svc, tid)
+    async with factory() as session:
+        rows = await BlockRepository(session).list_for_topic(tid)
+    replies = [
+        b.content
+        for b in rows
+        if b.kind == BlockKind.message and b.author_type == AuthorType.ai
+    ]
+    assert replies == ["The plan is ready."]
+    notes = [b for b in rows if (b.meta or {}).get("progress")]
+    assert [b.content for b in notes] == ["Read workspace files.", "The plan is ready."]
+    assert all(b.kind == BlockKind.event and b.meta["in_room"] is False for b in notes)
+
+
 @pytest.mark.anyio
 async def test_first_turn_materializes_inherited_compute_before_running(
     client, tmp_path

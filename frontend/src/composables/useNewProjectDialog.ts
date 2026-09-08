@@ -8,13 +8,15 @@ import { ref } from 'vue'
 // of owning a copy that would drift.
 const open = ref(false)
 const presetTeamId = ref<number | null>(null)
+const sourceTask = ref<{ id: number; name: string } | null>(null)
 
 export function useNewProjectDialog() {
-  function show(teamId: number | null = null) {
+  function show(teamId: number | null = null, task: { id: number; name: string } | null = null) {
     presetTeamId.value = teamId
+    sourceTask.value = task
     open.value = true
   }
-  return { open, presetTeamId, show }
+  return { open, presetTeamId, sourceTask, show }
 }
 
 /**
