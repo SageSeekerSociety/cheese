@@ -13,7 +13,14 @@ vi.mock('../api', () => ({
   getDoc: mocks.getDoc,
   putDoc: mocks.putDoc,
   chatWsUrl: (id: string) => `ws://test/${id}`,
-  ApiError: class extends Error {},
+  ApiError: class extends Error {
+    constructor(
+      readonly status: number,
+      message: string
+    ) {
+      super(message)
+    }
+  },
 }))
 vi.mock('../me', () => ({ myHandle: () => 'editor' }))
 vi.mock('@tiptap/vue-3', async () => {
@@ -35,6 +42,8 @@ vi.mock('@vueuse/core', async () => ({
     mocks.socket = options
   },
 }))
+import { ApiError } from '../api'
+
 import DocEditor from './DocEditor.vue'
 
 const wrappers: ReturnType<typeof render>[] = []
@@ -63,6 +72,26 @@ afterEach(() => {
 })
 
 describe('charter collaboration', () => {
+  it('does not retry a rejected version on blur or when editing is disabled', async () => {
+    const view = await open()
+    mocks.getDoc.mockResolvedValue({ content: '队友已保存的修改', doc_version: 2 })
+    mocks.putDoc.mockRejectedValueOnce(new ApiError(409, 'conflict'))
+    mocks.editor!.commands.insertContent('本地草稿')
+    const prose = view.container.querySelector('.ProseMirror')!
+    await fireEvent.keyDown(prose, { key: 's', metaKey: true })
+    await flushPromises()
+    expect(mocks.putDoc).toHaveBeenCalledTimes(1)
+    await fireEvent.focusOut(prose)
+    await view.rerender({ editable: false })
+    await flushPromises()
+    expect(mocks.putDoc).toHaveBeenCalledTimes(1)
+    expect(prose.textContent).toContain('本地草稿')
+    await view.rerender({ editable: true })
+    await fireEvent.keyDown(prose, { key: 's', metaKey: true })
+    await flushPromises()
+    expect(mocks.putDoc).toHaveBeenCalledTimes(2)
+    expect(mocks.putDoc.mock.calls[1][3]).toBe(2)
+  })
   it('refreshes after another member saves and uses the fresh version on the next save', async () => {
     const wrapper = await open()
     mocks.getDoc.mockResolvedValue({ content: '队友补充', doc_version: 2 })
