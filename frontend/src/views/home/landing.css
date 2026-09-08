@@ -1268,7 +1268,8 @@ footer > span {
   }
 
   .hero {
-    gap: 5px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+    gap: 16px;
   }
 
   .map-node {
@@ -1300,6 +1301,7 @@ footer > span {
 
   .node-output {
     right: -5px;
+    bottom: 74px;
   }
 
   .node-knowledge {
