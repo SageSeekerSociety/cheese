@@ -2,7 +2,7 @@
 
 ## 一句话
 
-**没有全部解决，但 #582 已经落地。** 2026-09-03 commit `acae0ed29` 把 #582（记忆整理/dreaming）合进了 main（<@caisongyang> 确认，房间已核实）。可线上仍是默认配置——`memory_backend` 仍是 `"db"`，而且新发现 dreaming 这条**还有自己独立的开关 `DREAM_ENABLED`，默认 `false`**，合进 main 不等于已经在跑。issue 最初量到的现象（平台几乎不长记忆）今天原样成立。剩下的都是**只有人能做**的事。2026-09-08 <@caisongyang> 给了一把智谱 key，房间实测：**key 本身有效，但账号余额为 0**，除免费的 `glm-4-flash` 外所有模型（含全部 embedding）都被挡回 429，所以它现在还翻不动牌——见下方「这把 key 实测结果」。
+**dreaming 已经在 dev 上真跑起来了（09-08）。** 2026-09-03 commit `acae0ed29` 把 #582（记忆整理/dreaming）合进了 main（<@caisongyang> 确认，房间已核实）。可线上仍是默认配置——`memory_backend` 仍是 `"db"`，而且新发现 dreaming 这条**还有自己独立的开关 `DREAM_ENABLED`，默认 `false`**，合进 main 不等于已经在跑。issue 最初量到的现象（平台几乎不长记忆）今天原样成立。剩下的都是**只有人能做**的事。2026-09-08 <@caisongyang> 给了一把智谱 key，房间实测：**key 本身有效，但账号余额为 0**，除免费的 `glm-4-flash` 外所有模型（含全部 embedding）都被挡回 429，所以它现在还翻不动牌——见下方「这把 key 实测结果」。
 
 ## 逐条对账（对着 issue 正文的每一条）
 
@@ -96,11 +96,31 @@
 
 **失败是干净的**：pull 阶段就退出了，没走到重建容器和跑迁移，线上仍是完好的 `addd224`。
 
+## dreaming 开关：已翻（2026-09-08）
+
+<@maxiaoyu> 手工跑部署脚本两次都栽在 ghc r 未登录，改用 **GitHub Actions 手动 dispatch `Deploy (dev/test box)`** 后一次成功。房间在机器上验过三条，都过：
+
+| 检查 | 结果 |
+|---|---|
+| 容器环境里有 `DREAM_ENABLED=true` | ✅ |
+| 容器是**新建**的（UTC 09:30:57，`RestartCount=0`） | ✅ 说明 `.env` 真的被重读了，不是 restart |
+| `healthz` | ✅ `{"status":"ok"}` |
+
+**别等着看动静**：话题要静默满 8h 才是候选，回收器每小时扫一次、每次最多整理 1 个，所以翻牌当天不会有反应。查活没活看 `docker logs cheese-backend-1 | grep 记忆整理`。
+
+## 搭车修掉的一个弃用警告
+
+<@maxiaoyu> 报的：容器每次启动都打 `StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated`。starlette 1.3 把它改名成了 `HTTP_422_UNPROCESSABLE_CONTENT`，值仍是 422，纯改名。全仓库只有 <&backend/app/core/errors.py> 两处在用，都改了；starlette 1.3 另外弃用的三个常量（413/414/416）我们一个都没用。
+
+**没做的事**：CI 里那条 `Node.js 20 is deprecated` 警告没动——<@maxiaoyu> 判断改动太大，暂缓。存档结论备查：`actions/checkout` 我们钉在 v4（**28 处**），升到 **v5** 即可转 node24；`astral-sh/setup-uv` 钉在 v4（**6 处**），但 **v5/v6 仍是 node20，必须直接跳到 v10**——只升一档是白改。
+
+**另一条同时澄清的**：CI 里的 `Cancelled` 不是故障。<&.github/workflows/test.yml> 的并发组是 `ci-test-<PR ref>` 且 PR 上 `cancel-in-progress: true`，往同一个 PR 再推一次，旧 run 就被顶掉，是省 runner 的设计。
+
 ## 还差什么（谁做）
 
 | # | 事 | 谁 | 状态 |
 |---|---|---|---|
-| 0 | 上机把 `DREAM_ENABLED=true` 写进 `backend/.env` 并重部当前 sha | **必须人** | **做了一半，线上未生效**：`.env` 第 153 行已加（09-08 UTC 09:15，备份 `.env.bak-20260908-021522`），但重部因 ghcr 未登录失败，容器仍是 UTC 08:44 那个、环境里无 `DREAM_*`。**下一步：GitHub 上 dispatch `Deploy (dev/test box)`** |
+| 0 | 上机把 `DREAM_ENABLED=true` 写进 `backend/.env` 并重部当前 sha | <@maxiaoyu> | **✅ 已完成（09-08 UTC 09:30:57）**。房间在机器上验过三条：容器环境里有 `DREAM_ENABLED=true`、容器是新建的（`RestartCount=0`，说明 `.env` 真被重读）、`healthz` 正常 |
 | 1 | 让这把智谱 key 真的能用：**给账号充值 / 买资源包**（key 本身有效，缺的是余额），充值前建议先轮换 | **必须人**（采购） | **进了一半**：key 09-08 已拿到，实测 429 余额不足，仍卡着 3 |
 | 2 | ~~在 GitHub 上点一次 re-run，把 #582 那两条环境性 CI 红刷掉~~ | — | **已完成**：09-03 `acae0ed29` 把两条 CI 修复和 #582 一起合并了，不用再单独重跑 |
 | 3 | 上机改 `backend/.env` 三行（`MEMORY_BACKEND`/两把 key）、重部当前 sha、跑迁移脚本 | **必须人**（芝士上不了机器） | 依赖 1；步骤见 <&docs/infrastructure.md> |
@@ -114,6 +134,7 @@
 ## 一条贯穿始终的平台风险（不属于 #187，但吃掉了这轮的工）
 
 端点自检那条支线的工作区被平台**整个重建两次**，两次都发生在「写完文件」和「push」之间那几分钟：`.git` 连同提交一起被换掉，`git status` 全程显示干净、无任何提示。`commit` 不构成保护，**只有 push 出去的才算存在**。现在所有支线的简报都写死「每写完一个文件就 add + commit + push，中间不插任何别的工具调用」。是否单独开一条支线追这个触发条件，问题已递给 <@caisongyang>，尚未回复。
+
 
 
 
