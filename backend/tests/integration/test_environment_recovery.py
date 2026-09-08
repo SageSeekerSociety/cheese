@@ -82,7 +82,6 @@ def test_only_overview_can_inspect_and_repair_once(client, monkeypatch):
     state = {"state": "failed", "attempt": "first"}
     status = AsyncMock(side_effect=lambda *args, **kwargs: state)
     monkeypatch.setattr(routes, "environment_status", status)
-    monkeypatch.setattr(routes, "drop_topic_subscriptions", AsyncMock())
     monkeypatch.setattr(routes.device_hub, "screens_for_topic", lambda tid: [])
     body = {
         "incident_id": incident,

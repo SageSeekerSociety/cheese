@@ -19,9 +19,6 @@ from app.core.sandbox_auth import scoped_token_claims
 from app.domain.agent.chat import ChatService
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import environment_status
-from app.domain.agent.harness.claude_code.hooks_substrate import (
-    drop_topic_subscriptions,
-)
 from app.domain.agent.models import AgentTurn
 from app.domain.device.wiring import sql_device_service
 from app.domain.membership.repositories import MemberRepository
@@ -185,7 +182,7 @@ async def reset_idle_room(db: AsyncSession, topic_id: uuid.UUID, project_id: uui
         await environment_status(
             device_hub, binding.device_id, project_id, topic_id, action="reset"
         )
-        await drop_topic_subscriptions(topic_id)
+        # Closing each screen also releases its runtime subscription.
         for screen in device_hub.screens_for_topic(topic_id):
             await device_hub.close_screen(screen.device_id, screen.sid)
 
