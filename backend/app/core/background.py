@@ -126,11 +126,31 @@ class PeriodicRunner:
             await asyncio.sleep(self._interval)
             try:
                 result = await self._job()
+            except asyncio.CancelledError:
+                # `stop()` cancels this task, and THAT has to end the loop.
+                # But a job can raise the same exception with nobody having
+                # asked this loop to stop: a `wait_for` it ran, a task it
+                # awaited, a session torn down under it. Letting that through
+                # ends the job for the life of the process, with nothing in the
+                # log to say so, which is the failure this class exists to
+                # prevent, one level up from a job that was never scheduled.
+                if _cancellation_requested():
+                    raise
+                logger.exception("%s was cancelled from inside; continuing", self._name)
+                continue
             except Exception:  # noqa: BLE001 — one bad cycle must not end the loop
                 logger.exception("%s failed", self._name)
                 continue
             if _worth_reporting(result):
                 logger.info("%s: %s", self._name, result)
+
+
+def _cancellation_requested() -> bool:
+    """Whether somebody asked the task running this loop to stop — `stop()`, or
+    the event loop shutting down. `Task.cancelling()` counts those requests, and
+    a `CancelledError` raised inside a job leaves the count at zero."""
+    task = asyncio.current_task()
+    return task is not None and task.cancelling() > 0
 
 
 def _worth_reporting(result: Any) -> bool:
