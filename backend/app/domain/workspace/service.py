@@ -24,7 +24,7 @@ from collections.abc import Collection, Iterator
 from pathlib import Path
 
 from app.core.config import settings
-from app.core.errors import ConflictError, ValidationError
+from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.domain.agent.platform_failures import WORKSPACE_VCS_PERMS_CODE
 from app.domain.workspace import identity as identity_mod
 from app.domain.workspace.textfile import (
@@ -919,6 +919,68 @@ def read_file_bytes(
         raise WorkspacePermissionError(_uid_split_hint(f"读 {path}: {exc}")) from exc
 
 
+def accepted_revision(project_id: uuid.UUID) -> str:
+    """Pin the project's accepted branch, without reading its mutable checkout."""
+    repo = ensure_repo(project_id)
+    return _git(repo, "rev-parse", f"{_base_branch(repo)}^{{commit}}").strip()
+
+
+def committed_files(project_id: uuid.UUID, revision: str) -> list[dict]:
+    """List the exact tree, including build directories hidden by the file panel."""
+    if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", revision):
+        raise ValidationError("invalid commit revision")
+    out = _git(ensure_repo(project_id), "ls-tree", "-r", "-z", "-l", revision)
+    files = []
+    for entry in out.split("\0"):
+        if not entry:
+            continue
+        meta, path = entry.split("\t", 1)
+        mode, kind, oid, size = meta.split()
+        files.append(
+            {
+                "path": path,
+                "mode": mode,
+                "kind": kind,
+                "oid": oid,
+                "bytes": int(size) if size != "-" else 0,
+            }
+        )
+    return files
+
+
+def read_committed_blobs(
+    project_id: uuid.UUID, object_ids: list[str]
+) -> dict[str, bytes]:
+    """Read known blob ids in one binary-safe git call; callers bound tree sizes."""
+    ids = list(dict.fromkeys(object_ids))
+    if not ids:
+        return {}
+    if any(not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", oid) for oid in ids):
+        raise ValidationError("invalid git object")
+    result = subprocess.run(
+        ["git", "cat-file", "--batch"],
+        cwd=ensure_repo(project_id),
+        input=("\n".join(ids) + "\n").encode(),
+        capture_output=True,
+        timeout=60,
+    )
+    if result.returncode:
+        raise ValidationError("无法读取已采纳版本的文件")
+    data = result.stdout
+    offset = 0
+    blobs = {}
+    for oid in ids:
+        end = data.index(b"\n", offset)
+        header = data[offset:end].decode("ascii").split()
+        if len(header) != 3 or header[0] != oid or header[1] != "blob":
+            raise ValidationError("发布文件不是普通 Git 文件")
+        size = int(header[2])
+        offset = end + 1
+        blobs[oid] = data[offset : offset + size]
+        offset += size + 1
+    return blobs
+
+
 def write_file_bytes(
     project_id: uuid.UUID, path: str, data: bytes, topic_id: uuid.UUID | None = None
 ) -> None:
@@ -973,6 +1035,23 @@ def git_log(
         if len(parts) == 3:
             rows.append({"hash": parts[0], "author": parts[1], "message": parts[2]})
     return rows
+
+
+def accepted_commit_revision(project_id: uuid.UUID, ref: str) -> str:
+    """Resolve a public history selection without exposing unaccepted room work."""
+    if ref.startswith("-"):
+        raise ValidationError("invalid ref")
+    repo = ensure_repo(project_id)
+    try:
+        revision = _git(
+            repo, "rev-parse", "--verify", "--end-of-options", f"{ref}^{{commit}}"
+        ).strip()
+        _git(
+            repo, "merge-base", "--is-ancestor", revision, accepted_revision(project_id)
+        )
+    except ValidationError as exc:
+        raise NotFoundError("Commit not found in accepted project history") from exc
+    return revision
 
 
 def git_diff(project_id: uuid.UUID, ref: str | None = None) -> str:

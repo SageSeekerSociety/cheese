@@ -94,3 +94,54 @@ async def test_a_personal_project_pulls_nobody_in(client):
         await session.commit()
 
     assert _roster(client, pid) == {}
+
+
+async def test_late_teammate_is_listed_without_a_persistent_project_grant(client):
+    from app.domain.membership.repositories import MemberRepository
+    from app.domain.project.repositories import ProjectRepository
+    from app.domain.team.models import TeamMemberRole
+    from app.domain.team.repositories import TeamRepository
+
+    factory = client.test_factory
+    captain = await _user(factory, "late-captain")
+    mate = await _user(factory, "late-mate")
+    async with factory() as session:
+        team = await team_service(session).create_team(
+            name="小队", intro="", description="", avatar_id=1, owner_id=captain
+        )
+        project = await ProjectService(session).create(
+            name="P", owner_handle="late-captain", team_id=team.id
+        )
+        pid, team_id = project.id, team.id
+        await session.commit()
+    assert _roster(client, str(pid)) == {}
+
+    async with factory() as session:
+        await TeamRepository(session).add_member(team_id, mate, TeamMemberRole.MEMBER)
+        await session.commit()
+    result = client.get(f"/projects/{pid}/members").json()["data"]
+    assert result["total"] == 1
+    assert result["data"][0]["user_handle"] == "late-mate"
+    assert result["data"][0]["source"] == "team"
+    async with factory() as session:
+        from app.domain.dashboard.services import DashboardService
+
+        overview = await DashboardService(session).project_overview(
+            pid, viewer="late-captain"
+        )
+        assert {m["handle"] for m in overview["members"]} == {
+            "late-captain",
+            "late-mate",
+        }
+        assert (
+            await MemberRepository(session).get(project_id=pid, user_handle="late-mate")
+            is None
+        )
+        assert [
+            m["handle"] for m in await ProjectRepository(session).list_members(pid)
+        ] == ["late-mate"]
+        repo = TeamRepository(session)
+        relation = await repo.get_member_relation(team_id, mate)
+        await repo.soft_delete_member(relation)
+        await session.commit()
+    assert _roster(client, str(pid)) == {}

@@ -157,7 +157,7 @@ pg_restore --clean --if-exists --no-owner -d "$DBURL" ~/backups/cheese-<ts>.dump
 The weekly workflow runs `deploy/db-restore-test.sh` against the newest dump in
 a throwaway container. The drill fails on any `pg_restore` error, an incomplete
 schema, or zero rows across the critical `user`, `projects`, `topics`, and
-`blocks` tables. It retains the restore log under `tmp/restore-tests/` and
+`blocks` tables. It retains the restore log under `.tmp/restore-tests/` and
 prints the path and tail when the restore fails.
 
 A deliberately empty fresh installation can exercise the schema-only path with

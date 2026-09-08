@@ -15,6 +15,23 @@ export interface Project {
   external_task_id?: number | null
 }
 
+export interface ProjectSite {
+  id: string
+  url: string
+  source_revision: string
+  directory: string
+  published_at: string
+  published_by: string
+}
+
+export interface ProjectSiteInfo {
+  can_publish: boolean
+  source_revision: string | null
+  candidates: { directory: string; entry_file: string }[]
+  site: ProjectSite | null
+  unavailable_reason?: string | null
+}
+
 export interface Topic {
   id: string
   project_id: string
@@ -306,6 +323,8 @@ export interface ProjectMember {
 export interface ProjectMemberRow {
   user_handle: string
   role: string
+  source?: 'team'
+  team_id?: number
   name?: string
   // 这个人**自己选的**头像素材 id（getAvatarUrl 拼成 /avatars/{id}）。两种情况
   // 为 null：名册行背后没有 fusion 用户档案，或者他从来没设过头像（档案还指着

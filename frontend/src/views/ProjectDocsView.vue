@@ -129,6 +129,7 @@ function onCharterSaved() {
   saving.value = false
   charterDirty.value = false
   savedAt.value = Date.now()
+  saveError.value = null
 }
 function onCharterDirty() {
   charterDirty.value = true
@@ -168,6 +169,9 @@ function topicTo(topicId: string | null | undefined) {
           <span v-if="projectName" class="t-meta">{{ projectName }}</span>
           <template v-if="kind === 'charter'">
             <v-spacer />
+            <v-btn v-if="rootTopicId" :to="topicTo(rootTopicId)" variant="text" size="small" prepend-icon="mdi-history"
+              >修改记录</v-btn
+            >
             <span v-if="saving" class="t-meta">保存中…</span>
             <span v-else-if="savedAt" class="d-inline-flex align-center ga-1 c-faint" style="font-size: 12px">
               <span class="status-dot status-dot--ok" />已保存
@@ -191,11 +195,12 @@ function topicTo(topicId: string | null | undefined) {
       <div v-if="loading" class="d-flex justify-center py-10">
         <v-progress-circular indeterminate color="primary" />
       </div>
-      <v-alert v-else-if="errorMessage" type="error" density="comfortable" class="mb-4">
+      <v-alert v-if="errorMessage" type="error" density="comfortable" class="mb-4">
         {{ errorMessage }}
       </v-alert>
 
-      <template v-else>
+      <!-- A save error must not unmount the editor holding the local draft. -->
+      <template v-if="!loading && !error">
         <!-- ===== 记忆: what 芝士 remembers, human-prunable ===== -->
         <template v-if="kind === 'memory'">
           <div v-if="memoryEntries.length === 0" class="text-medium-emphasis text-body-2 py-6 text-center">

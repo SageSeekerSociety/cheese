@@ -60,7 +60,7 @@ for path in "$@"; do
     log "skip $path (already migrated to uid $AGENT_UID)"
     continue
   fi
-  log "handing $path over to $AGENT_UID:$AGENT_GID…"
+  log "handing $path over to ${AGENT_UID}:${AGENT_GID}…"
   # From here the path may be half-moved, so the caller is owed the truth even
   # if the next command dies.
   MIGRATED=yes

@@ -52,7 +52,7 @@ async def list_members(project_id: uuid.UUID, db: DbSession) -> dict:
     from app.domain.project.repositories import ProjectRepository
     from app.domain.user.repositories import UserRepository
 
-    members, total = await MemberService(db).list_for_project(project_id)
+    members, _ = await MemberService(db).list_for_project(project_id)
     # Attach display names (User.name) so the UI can resolve @名字 → handle, and
     # the profile's avatar_id so the chat panel can render the real avatar
     # instead of a colored initial. Both come off the same roster row; avatar_id
@@ -72,7 +72,7 @@ async def list_members(project_id: uuid.UUID, db: DbSession) -> dict:
     # on a 30-person project, 10.3 ms of a 32.8 ms response. `get_by_handles`
     # exists for exactly this and says so.
     users = UserRepository(db)
-    rows = await users.get_by_handles([m.user_handle for m in members])
+    rows = await users.get_by_handles(list(profiles))
     agent_ids = await AgentBindingRepository(db).agent_user_ids(
         [u.id for u in rows.values()]
     )
@@ -85,7 +85,20 @@ async def list_members(project_id: uuid.UUID, db: DbSession) -> dict:
         user = rows.get(m.user_handle)
         d["agent"] = user is not None and user.id in agent_ids
         items.append(d)
-    return ok(page(items, total))
+    for handle, profile in profiles.items():
+        if profile.get("source") != "team":
+            continue
+        user = rows.get(handle)
+        items.append(
+            {
+                **profile,
+                "id": None,
+                "project_id": str(project_id),
+                "user_handle": handle,
+                "agent": user is not None and user.id in agent_ids,
+            }
+        )
+    return ok(page(items, len(items)))
 
 
 @router.put("/projects/{project_id}/members/{user_handle}")

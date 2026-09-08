@@ -545,12 +545,14 @@ func (h *Host) deliverPrompt(m link.Msg, s *sess) {
 		return
 	}
 
-	c, err := h.rendezvousClient(s)
+	c, delivered, err := h.rendezvousClient(s, text)
 	if err != nil {
 		reply(nil, err.Error())
 		return
 	}
-	err = c.Reply(text)
+	if !delivered {
+		err = c.Reply(text)
+	}
 	if err == nil {
 		reply(map[string]any{"ok": true, "ready": true, "transport": "rendezvous"}, "")
 		return
@@ -561,23 +563,27 @@ func (h *Host) deliverPrompt(m link.Msg, s *sess) {
 	// rejected or unwritable frame never reached the queue, so a retry cannot
 	// duplicate a delivered prompt.
 	h.dropRendezvous(s)
-	if c2, err2 := h.rendezvousClient(s); err2 == nil {
-		if err3 := c2.Reply(text); err3 == nil {
+	if c2, delivered2, err2 := h.rendezvousClient(s, text); err2 == nil {
+		if !delivered2 {
+			err2 = c2.Reply(text)
+		}
+		if err2 == nil {
 			reply(map[string]any{"ok": true, "ready": true, "transport": "rendezvous", "retried": true}, "")
 			return
 		} else {
-			err = err3
+			err = err2
 		}
 	}
 	reply(nil, fmt.Sprintf("rendezvous delivery failed: %v", err))
 }
 
-// rendezvousClient returns a live client for the screen, dialling on first use.
-func (h *Host) rendezvousClient(s *sess) (*rendezvous.Client, error) {
+// rendezvousClient sends the first prompt while connecting; a cached client
+// leaves delivery to the caller. The boolean prevents sending that prompt twice.
+func (h *Host) rendezvousClient(s *sess, prompt string) (*rendezvous.Client, bool, error) {
 	s.rvMu.Lock()
 	defer s.rvMu.Unlock()
 	if s.rv != nil && s.rv.Alive() {
-		return s.rv, nil
+		return s.rv, false, nil
 	}
 	if s.rv != nil {
 		s.rv.Close()
@@ -585,21 +591,22 @@ func (h *Host) rendezvousClient(s *sess) (*rendezvous.Client, error) {
 	}
 	token, err := readRvToken(s.rvTokenFile)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	ctx, cancel := context.WithTimeout(h.ctx, rvDialWindow+15*time.Second)
 	defer cancel()
 	c, err := rendezvous.Dial(ctx, s.rvPath, token, rendezvous.Options{
+		InitialPrompt: prompt,
 		WaitForSocket: rvDialWindow,
 		Logf: func(format string, args ...any) {
 			fmt.Fprintf(os.Stderr, "cheese: rendezvous: "+format+"\n", args...)
 		},
 	})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	s.rv = c
-	return c, nil
+	return c, true, nil
 }
 
 func (h *Host) dropRendezvous(s *sess) {

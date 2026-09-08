@@ -236,6 +236,15 @@ watch(
 <template>
   <div class="panel-preview">
     <div class="preview-head">
+      <v-btn
+        v-if="projectId"
+        :to="{ name: 'project-delivery', params: { projectId } }"
+        size="small"
+        variant="text"
+        class="c-muted"
+      >
+        导出与发布
+      </v-btn>
       <v-spacer />
       <template v-if="previewAppUrl || previewFile">
         <v-btn

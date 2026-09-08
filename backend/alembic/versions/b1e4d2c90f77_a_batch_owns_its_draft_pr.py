@@ -12,7 +12,7 @@ that already has commits, on its next tick). A backfill would have to ask GitHub
 per tree for a value that is about to be written correctly anyway.
 
 Revision ID: b1e4d2c90f77
-Revises: a4f1c73b2e60
+Revises: f1a72c8d4e93
 Create Date: 2026-09-07
 """
 
@@ -23,7 +23,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "b1e4d2c90f77"
-down_revision: str | Sequence[str] | None = "c1f4a9b73d20"
+down_revision: str | Sequence[str] | None = "f1a72c8d4e93"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -88,9 +88,8 @@ export default defineConfig({
     // degrade gracefully and auto-recover when the network returns. NO offline
     // writes / message queue — reads only.
     VitePWA({
-      // autoUpdate: a new SW takes control and the page reloads itself, so a
-      // deploy reaches every open tab without a manual refresh. We register it
-      // ourselves in src/pwa.ts (registerSW), so nothing is injected here.
+      // registerSW requests a reload when an updated worker activates. Public
+      // HTML has its own online strategy below. Registration lives in pwa.ts.
       registerType: 'autoUpdate',
       injectRegister: false,
       // The SW controls the whole origin; keep it at root scope.
@@ -133,6 +132,9 @@ export default defineConfig({
         ],
       },
       workbox: {
+        // Keep '/' out of the precache's implicit '/index.html' alias so the
+        // public navigation rule below can fetch the current HTML online.
+        directoryIndex: null,
         // Precache the app shell. maximumFileSizeToCacheInBytes is raised well
         // above the 2 MiB default because this bundle is heavy (monaco / tiptap
         // / prismjs-all) — the shell-critical chunks (vue, vuetify, entry) must
@@ -166,11 +168,8 @@ export default defineConfig({
         // Anything that should not be precached goes in `globIgnores` by name.
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         cleanupOutdatedCaches: true,
-        // Take control of open pages as soon as a new SW activates. With
-        // autoUpdate this is what makes a deploy reach every already-open tab
-        // (the reload fires on controllerchange), and it lets the very first
-        // visit be SW-controlled so an offline reload works without a second
-        // manual load first.
+        // Activation follows completion of the precache download. Public
+        // navigation must not depend on that download to see current routes.
         clientsClaim: true,
         skipWaiting: true,
         // Inline the workbox runtime into sw.js — one root file to keep
@@ -182,8 +181,19 @@ export default defineConfig({
         // must reach the server (or fail, when offline) — not be answered with
         // the SPA HTML: the /api/* backend API, the /connector/* device plane,
         // and bare 1.0 routes.
-        navigateFallbackDenylist: [/^\/api\//, /^\/connector\//, /^\/users\//],
+        navigateFallbackDenylist: [/^\/api\//, /^\/connector\//, /^\/users\//, /^\/(?:about\/?)?(?:\?|$)/],
         runtimeCaching: [
+          {
+            // An old cached entry has no /about route and renders a local 404.
+            // Fetch public HTML online; keep the precached shell for offline use.
+            urlPattern: ({ url, request, sameOrigin }) =>
+              sameOrigin && request.mode === 'navigate' && ['/', '/about', '/about/'].includes(url.pathname),
+            handler: 'NetworkOnly',
+            options: {
+              fetchOptions: { cache: 'no-cache' },
+              precacheFallback: { fallbackURL: 'index.html' },
+            },
+          },
           {
             // Read-only API data (rooms / messages / project lists …):
             // network-first so online is always fresh, with a cache fallback so

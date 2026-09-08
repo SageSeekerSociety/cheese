@@ -40,6 +40,7 @@ describe('the project frame', () => {
     ['/calendar', 'calendar'],
     ['/agents', 'project-agents'],
     ['/settings', 'project-settings'],
+    ['/delivery', 'project-delivery'],
     ['/members/lisi', 'member'],
   ])('renders %s inside the frame, not beside it', (suffix, name) => {
     const resolved = router().resolve(`/projects/${PROJECT}${suffix === '/' ? '' : suffix}`)
@@ -107,6 +108,7 @@ describe('页面栈的末端', () => {
       `/projects/${PROJECT}/overview`,
       `/projects/${PROJECT}/calendar`,
       `/projects/${PROJECT}/settings`,
+      `/projects/${PROJECT}/delivery`,
       `/projects/${PROJECT}/members`,
       `/projects/${PROJECT}/members/alice`,
     ]
