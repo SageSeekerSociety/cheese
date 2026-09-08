@@ -327,7 +327,7 @@ async def test_fallback_reply_does_not_duplicate_a_late_spooled_message(
 
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
-    matches = [b for b in rows if b.kind == BlockKind.message and b.content == text]
+    matches = [b for b in _progress(rows) if b.content == text]
     assert len(matches) == 1  # not duplicated
 
 
@@ -392,7 +392,8 @@ async def test_fallback_dedup_survives_mention_expansion_and_trailing_newline(
     matches = [
         b
         for b in rows
-        if b.kind == BlockKind.message
+        if b.kind == BlockKind.event
+        and (b.meta or {}).get("progress")
         and b.author_type == AuthorType.ai
         and "交给你了" in (b.content or "")
     ]
@@ -508,10 +509,11 @@ async def test_spooled_message_flushes_land_as_one_block(client, tmp_path, monke
 
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
-    messages = _ai_messages(rows)
+    assert _ai_messages(rows) == []
+    messages = [b for b in _progress(rows) if b.content == "第一行\n第二行"]
     assert [b.content for b in messages] == ["第一行\n第二行"]
     assert messages[0].meta.get("backfilled") is True
-    assert messages[0].meta.get("eid") == "s1"
+    assert messages[0].meta.get("eid") == "f0"
     assert _progress(rows)[0].meta.get("eids") == ["f0", "f1"]
     assert _unread(spool) == []
 
@@ -610,7 +612,10 @@ async def test_live_coalesced_message_is_not_backfilled_again(
         pass
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
-    assert [b.content for b in _ai_messages(rows)] == ["第一行\n第二行"]
+    assert _ai_messages(rows) == []
+    assert [b.content for b in _progress(rows) if b.content != "ok"] == [
+        "第一行\n第二行"
+    ]
 
 
 @pytest.mark.anyio
@@ -707,4 +712,5 @@ async def test_stop_does_not_duplicate_a_message_that_landed_live(
 
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
-    assert len(_ai_messages(rows)) == 1
+    assert _ai_messages(rows) == []
+    assert len([b for b in _progress(rows) if b.content != "ok"]) == 1

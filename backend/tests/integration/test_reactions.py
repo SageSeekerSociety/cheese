@@ -156,9 +156,9 @@ def test_summon_gets_cheese_check_receipt(client):
 
     user_block = next(f for f in frames if f["type"] == "user_block")["block"]
     ack = next(f for f in frames if f["type"] == "reaction")
-    # The ✅ lands BEFORE any assistant message (it's the receipt, not the reply).
+    # The receipt lands before the agent's execution activity.
     assert frames.index(ack) < frames.index(
-        next(f for f in frames if f["type"] == "assistant_block")
+        next(f for f in frames if f["type"] == "event_block")
     )
     assert ack["block_id"] == user_block["id"]
     agent = topic_agent_handle(uuid.UUID(topic_id))

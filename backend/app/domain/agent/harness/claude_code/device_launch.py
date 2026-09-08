@@ -672,7 +672,10 @@ if [ -n "$failed" ]; then status=failed; else status=ok; fi
 
 
 def build_launch_script(
-    sync_on_stop: bool = False, system_prompt: str = "", ca_pem: str = ""
+    sync_on_stop: bool = False,
+    system_prompt: str = "",
+    ca_pem: str = "",
+    remote_control: bool = False,
 ) -> str:
     """The ``bash -lc`` body run as the screen's program. It reads a few env vars the
     screen is created with: ``CHEESE_HOME`` (isolated config/home dir),
@@ -724,9 +727,15 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
     preview_up = CHEESE_PREVIEW_UP
     settings_json = json.dumps(
         hooks_settings(
-            ["cheese-sync", "cheese-usage"] if sync_on_stop else ["cheese-usage"]
+            ["cheese-sync", "cheese-usage"] if sync_on_stop else ["cheese-usage"],
+            remote_control=remote_control,
         ),
         ensure_ascii=False,
+    )
+    claude_args = (
+        " --dangerously-skip-permissions --remote-control Cheese"
+        if remote_control
+        else CLAUDE_BASE_ARGS
     )
     # The settings.json / cheese-hook heredocs are quoted ('JSON'/'SH') so the shell
     # never expands them. ~/.claude.json is written by the shell (see below) so a
@@ -871,14 +880,11 @@ mv "$HOME/.claude/cheese-drain.env.tmp" "$HOME/.claude/cheese-drain.env"
 if [ -n "${{CHEESE_TUNNEL_URL:-}}" ]; then
   cat > "$HOME/.claude/cheese-tunnel.py" <<'TUNNELPY'
 {tunnel_helper}TUNNELPY
-  # CHEESE_TOKEN, deliberately — not CLAUDE_CODE_OAUTH_TOKEN. The helper's token
-  # answers "which project is opening this tunnel, and may it spend", which is
-  # the scoped cheese token's job and nothing else's. They used to be the same
-  # string, so reading either worked by accident; on an enrolled machine
-  # CLAUDE_CODE_OAUTH_TOKEN is now the machine's ccproxy ticket, and stamping
-  # THAT as the CONNECT password would get every tunnel refused with 407.
+  # Use the place-scoped CONNECT credential, including its RC claim. The hook
+  # token can have project scope; the machine OAuth ticket is never a tunnel
+  # credential. A missing CONNECT token must not fall back to either one.
   cat > "$HOME/.claude/cheese-tunnel.token.tmp" <<TUNNELTOK
-$CHEESE_TOKEN
+$CHEESE_CONNECT_TOKEN
 TUNNELTOK
   chmod 600 "$HOME/.claude/cheese-tunnel.token.tmp"
   mv "$HOME/.claude/cheese-tunnel.token.tmp" "$HOME/.claude/cheese-tunnel.token"
@@ -1022,7 +1028,7 @@ python3 - restore "$REAL_HOME" "$CLAUDE_V" \\
   "$CLAUDE_CONFIG_DIR" <<'CHEESE_NATIVE_CACHE'
 {startup_cache_source}
 CHEESE_NATIVE_CACHE
-CLAUDE="\\"$CLAUDE_BIN\\"{CLAUDE_BASE_ARGS}"
+CLAUDE="\\"$CLAUDE_BIN\\"{claude_args}"
 [ -n "$CLAUDE_MODEL" ] && CLAUDE="$CLAUDE --model $CLAUDE_MODEL"
 # 上一段对话接在哪儿。A screen is retired and reopened for reasons that have
 # nothing to do with the conversation — an expired credential, a `claude` that
@@ -1131,6 +1137,7 @@ if command -v tmux >/dev/null 2>&1; then
   # re-minted at most once an hour rather than on every turn.
   # Configuration is checked at the turn boundary, including after backend restart.
   printf '%s' "${{CHEESE_AGENT_CONFIG:-}}" > "$HOME/.claude/agent-configuration"
+  printf '%s' {shlex.quote(claude_args)} > "$HOME/.claude/launch-contract"
   EXPFILE="$HOME/.claude/$SESSION.tokexp"
   if atmux has-session -t "$SESSION" 2>/dev/null; then
     TOKEXP="$(cat "$EXPFILE" 2>/dev/null || true)"
@@ -1151,7 +1158,8 @@ if command -v tmux >/dev/null 2>&1; then
     # file is absent and this is the old checksum unchanged, so nothing churns.
     CFGNOW="$(cat "$REAL_HOME/.claude/settings.json" \\
       "$HOME/.claude/cheese-machine.token" \\
-      "$HOME/.claude/agent-configuration" 2>/dev/null | cksum | cut -d" " -f1)"
+      "$HOME/.claude/agent-configuration" \\
+      "$HOME/.claude/launch-contract" 2>/dev/null | cksum | cut -d" " -f1)"
     CFGWAS="$(cat "$CFGF" 2>/dev/null || true)"
     RETIRE=0
     [ -f "$HOME/.claude/environment-restart" ] && RETIRE=1
@@ -1219,7 +1227,8 @@ if command -v tmux >/dev/null 2>&1; then
     printf '%s\\n' "${{CHEESE_TOKEN_EXPIRES:-0}}" > "$EXPFILE" 2>/dev/null || true
     cat "$REAL_HOME/.claude/settings.json" \\
       "$HOME/.claude/cheese-machine.token" \\
-      "$HOME/.claude/agent-configuration" 2>/dev/null | cksum | cut -d" " -f1 \\
+      "$HOME/.claude/agent-configuration" \\
+      "$HOME/.claude/launch-contract" 2>/dev/null | cksum | cut -d" " -f1 \\
       > "$HOME/.claude/$SESSION.cfg" 2>/dev/null || true
     # Hand THIS launch's credential / routing / attribution env to the new session
     # EXPLICITLY with -e, never by inheritance. tmux seeds a new session's env from
@@ -1358,7 +1367,10 @@ def build_screen_launch(
     bundled ``cheese`` CLI (accept cards / docs / decisions / memory) uses
     its ``CHEESE_*`` env — the same actions the in-container agent has locally."""
     script = build_launch_script(
-        sync_on_stop=bool(git_remote), system_prompt=system_prompt, ca_pem=ca_pem
+        sync_on_stop=bool(git_remote),
+        system_prompt=system_prompt,
+        ca_pem=ca_pem,
+        remote_control=(extra_env or {}).get("CHEESE_REMOTE_CONTROL") == "1",
     )
     command = ["bash", "-lc", script]
     env: dict[str, str] = {

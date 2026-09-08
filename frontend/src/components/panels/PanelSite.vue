@@ -8,6 +8,7 @@ import { nextTick, ref, watch } from 'vue'
 import { getTerminal, getTranscript, SITE_PAGE_SIZE } from '../../api'
 import { countLines, isLongSiteEntry, shouldKeepPinning, SITE_CLAMP_LINES } from '../../lib/siteLog'
 import { isPlatformEvent, toolLabel } from '../../lib/toolLabels'
+import AgentControls from '../AgentControls.vue'
 import CheeseAvatar from '../CheeseAvatar.vue'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 import DeviceLiveViewer from '../DeviceLiveViewer.vue'
@@ -214,6 +215,7 @@ function eventPlatform(b: Block): boolean {
          screen WebSocket, and INTERACTIVE — typing here reaches the pane (the
          backend gates input by the same authorization as watching). -->
     <div v-else-if="screenSid" class="term-wrap">
+      <AgentControls v-if="topic" :topic-id="topic.id" :active="active" />
       <div class="term-bar text-caption px-3 py-1">
         <v-icon class="term-bar__dot" size="10">mdi-circle</v-icon>
         实时终端 · 机器上的 Claude Code，可直接输入

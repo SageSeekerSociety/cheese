@@ -826,6 +826,7 @@ class DeviceChannel(Channel):
                 project_id=str(project_id),
                 topic_id=str(topic_id),
                 ttl_s=SESSION_TOKEN_TTL_S,
+                remote_control=True,
             )
             tunnel_url = settings.subscription_tunnel_url.strip()
             via_tunnel = uses_tunnel(tunnel_url=tunnel_url)
@@ -858,6 +859,15 @@ class DeviceChannel(Channel):
             ):
                 merged.pop(k, None)
             merged.update(sub.env)
+            merged["CHEESE_REMOTE_CONTROL"] = "1"
+            # The tunnel's CONNECT credential must carry the same place and RC
+            # claims as the direct proxy URL; CHEESE_TOKEN authenticates hooks.
+            merged["CHEESE_CONNECT_TOKEN"] = session_token
+            # These scopes describe the Cheese control credential. The model
+            # provider still authenticates inference at its existing proxy hop.
+            merged["CLAUDE_CODE_OAUTH_SCOPES"] = (
+                "user:inference user:profile user:sessions:claude_code"
+            )
             if connect_proxy_url:
                 # The meter accepts model hosts, not package registries.
                 merged["CHEESE_MODEL_PROXY"] = "1"

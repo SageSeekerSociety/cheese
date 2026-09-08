@@ -209,7 +209,9 @@ async def test_a_recovered_message_lands_once_and_whole(client, tmp_path):
     said = [
         (block.content or "").strip()
         for block in blocks
-        if block.kind == BlockKind.message and block.author_type == AuthorType.ai
+        if block.kind == BlockKind.event
+        and block.author_type == AuthorType.ai
+        and (block.meta or {}).get("progress")
     ]
 
     assert said == [REPLY]

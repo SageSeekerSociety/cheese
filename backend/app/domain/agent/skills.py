@@ -89,4 +89,4 @@ def load_skills(names: list[str]) -> str:
 
 
 # Default skills loaded for an in-topic conversation.
-DEFAULT_CHAT_SKILLS = ["conversation-style", "doc-form"]
+DEFAULT_CHAT_SKILLS = ["chat", "doc-form"]

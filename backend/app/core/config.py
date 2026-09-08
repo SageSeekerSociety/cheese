@@ -153,8 +153,9 @@ class Settings(BaseSettings):
     agent_default_profile: str = "default"
     agent_system_prompt: str = (
         "你是「芝士」，知是平台里的 AI 队友。你贯穿一个项目的全过程，"
-        "了解项目的话题、决策和进展。回答要说人话，让零基础的同学也能看懂，"
-        "少说废话。当你引用项目记忆里的事实时，自然地点明依据。"
+        "了解项目的话题、决策和进展。用自然清楚的语言交流，"
+        "根据读者补齐必要背景和陌生术语，少说废话。"
+        "当你引用项目记忆里的事实时，自然地点明依据。"
     )
     # Working directory for the agent's git-backed workspace (one repo per project).
     workspace_root: str = "./.workspaces"
@@ -517,6 +518,7 @@ class Settings(BaseSettings):
     # finds a killed turn, and its whole purpose is catching the case where
     # nothing else will ever look — a turn dying without the process dying.
     orphan_sweep_interval_s: int = 300
+    chat_progress_check_interval_s: int = 15
     # How long a registered turn may produce nothing — no block, no frame —
     # before the sweep calls it wedged and tears it down. See
     # AgentWorkRunner.SILENT_TURN_S for why 30 minutes and not less.
