@@ -38,6 +38,10 @@ else
     # The production backend bakes backend/sandbox into /app/sandbox, while the
     # same directory is also the context for both runtime images.
     case "$changed_path" in
+      backend/sandbox/skills/*)
+        # Skills ship in the backend, which seeds them into agent workspaces.
+        # The sandbox Dockerfile copies only `cheese`, not this directory.
+        ;;
       backend/sandbox/*)
         sandbox=true
         ;;
