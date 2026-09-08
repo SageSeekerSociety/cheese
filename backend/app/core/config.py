@@ -335,6 +335,9 @@ class Settings(BaseSettings):
     microcloud_default_cores: int = 2
     microcloud_default_memory_mb: int = 4096
     microcloud_default_disk_gb: int = 20
+    # Prepare the default CPU offering; zero disables replenishment.
+    microcloud_warm_pool_size: int = Field(default=0, ge=0, le=5)
+    microcloud_warm_max_age_seconds: int = Field(default=3600, ge=300, le=86400)
     microcloud_login_user: str = "cheese"
     # An operator's SSH public key, authorised on every machine the platform
     # opens, next to the one-shot bootstrap key. That key is erased the moment
