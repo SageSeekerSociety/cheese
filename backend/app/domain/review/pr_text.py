@@ -29,13 +29,15 @@ def task_trailer(topic: Topic, item: identity.WorkItem) -> str:
     """One `Cheese-Task:` line — which piece of work, which 分身 did it, and a
     URL that opens that work.
 
-    The URL is the room's page with `?card=<task_id>`, which is a route that
-    resolves: `TopicView.vue` reads that query and drills the overview panel down
-    to the TASK it names. That is the whole difference from `Cheese-Card`, which
-    stays a bare id — an accept card has no route, so a URL built from one would
-    look clickable and open nothing.
+    The URL is the room's page with `?tab=overview&card=<task_id>` — the exact
+    query the room writes when somebody clicks that piece of work, so following
+    it lands where clicking lands. Both halves are needed: the page reads `card`
+    to know WHICH work to drill into and `tab` to know which panel to be on, and
+    a link with only `card` opens whichever tab the reader last had. That is the
+    whole difference from `Cheese-Card`, which stays a bare id — an accept card
+    has no route, so a URL built from one would look clickable and open nothing.
 
-    The id is still greppable out of permanent history: `?card=` is a fixed
+    The id is still greppable out of permanent history: `card=` is a fixed
     prefix in front of it, so `grep -o 'card=[0-9a-f-]*'` gets what
     `Cheese-Task: <uuid>` used to hand over directly.
 
@@ -52,7 +54,7 @@ def task_trailer(topic: Topic, item: identity.WorkItem) -> str:
     # apart: a URL has no spaces in it, and the 分身 id keeps having its own
     # stripped out — one there would silently push the title into its place.
     subagent = "".join((item.subagent_id or "").split()) or NO_SUBAGENT
-    where = f"{_room_url(topic)}?card={item.task_id}"
+    where = f"{_room_url(topic)}?tab=overview&card={item.task_id}"
     return f"Cheese-Task: {where} {subagent} {title}".rstrip()
 
 

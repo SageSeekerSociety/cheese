@@ -28,13 +28,13 @@ from tests.machine_work import machine_commits
 def _task_line(pid: str, room: str, task: str, subagent: str, title: str) -> str:
     """`Cheese-Task:` 一条活写一行：**打得开的地址**、分身、标题。
 
-    地址是房间页面加 `?card=<task_id>` —— 房间页读这个查询串，把总览那一格下钻到
-    它点名的那条活。活的 id 仍在地址里，`card=` 后面那一段就是。
+    地址是房间页面加 `?tab=overview&card=<task_id>` —— 点开一条活时房间页写进地址
+    栏的就是这两个查询串。活的 id 仍在地址里，`card=` 后面那一段就是。
     """
     from app.core.config import settings
 
     where = f"{settings.frontend_url.rstrip('/')}/projects/{pid}/topics/{room}"
-    return f"Cheese-Task: {where}?card={task} {subagent} {title}"
+    return f"Cheese-Task: {where}?tab=overview&card={task} {subagent} {title}"
 
 
 def _project(client) -> str:

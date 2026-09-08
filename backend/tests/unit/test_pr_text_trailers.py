@@ -44,9 +44,9 @@ def _work(subagent_id: str | None, title: str) -> identity.WorkItem:
 
 
 def _task_url(topic: Topic, item: identity.WorkItem) -> str:
-    """哪条活 —— 一个真能打开的地址。`?card=<task_id>` 是房间页面上的一层下钻，
-    收的就是 task id（`TopicView.vue` 的 `onOpenCard`）。"""
-    return f"{_room_url(topic)}?card={item.task_id}"
+    """哪条活 —— 一个真能打开的地址：房间页面上点开一条活时，地址栏里出现的正是
+    `?tab=overview&card=<task_id>`（`TopicView.vue` 的 `onOpenCard`）。"""
+    return f"{_room_url(topic)}?tab=overview&card={item.task_id}"
 
 
 def test_the_resolved_human_wins_over_the_agent_that_created_the_room():
@@ -338,7 +338,12 @@ def test_the_pr_body_links_to_the_task_the_card_declared():
     where = urlparse(links[0])
     assert where.scheme in ("http", "https")
     assert where.path == f"/projects/{topic.project_id}/topics/{topic.id}"
-    assert parse_qs(where.query)["card"] == [str(item.task_id)]
+    # 两个查询串都要在：`card` 说打开哪条活，`tab` 说停在哪一格 —— 少了 `tab`，
+    # 链接把读的人丢在他上次待着的那一格里。
+    assert parse_qs(where.query) == {
+        "tab": ["overview"],
+        "card": [str(item.task_id)],
+    }
 
 
 def test_a_card_that_declared_no_work_leaves_no_empty_link():
