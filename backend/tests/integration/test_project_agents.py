@@ -420,19 +420,13 @@ def test_the_unresolved_sentinel_cannot_be_claimed_as_an_agent(client):
 # --- "we cannot tell who this is" is its own identity ------------------------
 
 
-def test_a_credential_naming_no_agent_is_attributed_to_the_room(client):
-    """``cheese`` used to be the answer to "this call names no 分身", and it is
-    now a real agent owning a real memory pool — so that answer would file every
-    unattributable action under the default agent's name. The room answers
-    instead: the same 分身 a per-turn token would have named."""
+def test_project_credentials_cannot_borrow_the_destination_agent_seat(client):
+    """The root agent needs its own membership in the destination room."""
     from app.core.sandbox_auth import mint_project_agent_credential
-    from app.domain.identity.handles import topic_agent_handle
 
     pid = _project(client)
     room = _topic(client, pid)
 
-    # A project-wide credential reaches every room of its project and names no
-    # 分身 of its own — the case `cheese` used to answer for.
     r = client.post(
         f"/topics/{room}/comments",
         json={"content": "从项目级凭据发出的"},
@@ -440,21 +434,18 @@ def test_a_credential_naming_no_agent_is_attributed_to_the_room(client):
             "X-Cheese-Token": mint_project_agent_credential(project_id=pid, epoch=0)
         },
     )
-    assert r.status_code == 200, r.text
-    comment = r.json()["data"]
-    assert comment["author"] == topic_agent_handle(room)
-    assert comment["author"] != "cheese"
-    assert comment["author_type"] == "ai"
+    assert r.status_code == 403, r.text
 
 
-def test_a_credential_with_no_room_at_all_falls_to_the_sentinel(client):
-    """Nothing identifies this caller beyond "some agent of this project". It
-    must not borrow the default agent's name to write under."""
+def test_a_credential_without_an_agent_identity_is_rejected(client):
+    """A project capability without a participant cannot authenticate one."""
     import asyncio
     import uuid as _uuid
 
+    import pytest
+
     from app.api.auth import ActorResolver
-    from app.domain.identity.handles import CHEESE_HANDLE, UNRESOLVED_AGENT_HANDLE
+    from app.core.errors import AuthenticationRequiredError
 
     pid = _project(client)
     token = mint_scoped_token(project_id=pid)
@@ -466,10 +457,8 @@ def test_a_credential_with_no_room_at_all_falls_to_the_sentinel(client):
                 fallback_handle=None, project_id=_uuid.UUID(pid)
             )
 
-    actor = asyncio.run(_resolve())
-    assert actor.is_agent is True
-    assert actor.handle == UNRESOLVED_AGENT_HANDLE
-    assert actor.handle != CHEESE_HANDLE
+    with pytest.raises(AuthenticationRequiredError):
+        asyncio.run(_resolve())
 
 
 # --- switching agents costs the session --------------------------------------

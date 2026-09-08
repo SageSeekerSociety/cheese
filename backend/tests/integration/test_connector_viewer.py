@@ -10,7 +10,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from app.domain.agent.device_hub import HubScreen, device_hub
 from tests.conftest import seed_user
-from tests.integration.conftest import session_token
+from tests.integration.conftest import session_auth_headers, session_token
 
 
 def _login(client, handle: str) -> str:
@@ -125,6 +125,14 @@ def test_cheese_call_inside_screen_is_attributed_to_the_agent(client):
         topic_id=uuid.UUID(topic["id"]),
         handle="agent-macbook",
     )
+    assert (
+        client.post(
+            f"/topics/{topic['id']}/members",
+            json={"handle": "agent-macbook"},
+            headers=session_auth_headers("alice"),
+        ).status_code
+        == 200
+    )
     try:
         r = client.put(
             f"/topics/{topic['id']}/doc",
@@ -151,6 +159,60 @@ def test_cheese_call_without_screen_header_is_not_the_agent(client):
     )
     assert r.status_code == 200, r.text
     assert r.json()["data"]["author"] == "human-alice"
+
+
+def test_write_gate_and_route_use_the_same_screen_participant(client):
+    from app.core.sandbox_auth import mint_scoped_token
+    from app.domain.identity.handles import topic_agent_handle
+
+    project = client.post(
+        "/projects", json={"name": "Screen identity", "owner_handle": "alice"}
+    ).json()["data"]
+    tid = project["root_topic_id"]
+    owner = session_auth_headers("alice")
+    screen = _register_screen(
+        project_id=uuid.UUID(project["id"]),
+        topic_id=uuid.UUID(tid),
+        handle="screen-agent",
+    )
+    try:
+        assert (
+            client.post(
+                f"/topics/{tid}/members", json={"handle": "screen-agent"}, headers=owner
+            ).status_code
+            == 200
+        )
+        default_agent = topic_agent_handle(uuid.UUID(tid))
+        assert (
+            client.delete(
+                f"/topics/{tid}/members/{default_agent}", headers=owner
+            ).status_code
+            == 200
+        )
+        auth = {
+            "X-Cheese-Token": mint_scoped_token(project_id=project["id"], topic_id=tid),
+            "X-Cheese-Screen": screen.token,
+        }
+        assert (
+            client.post(f"/topics/{tid}/webhook-token", headers=auth).status_code == 200
+        )
+        assert (
+            client.post(
+                f"/topics/{tid}/members", json={"handle": default_agent}, headers=owner
+            ).status_code
+            == 200
+        )
+        assert (
+            client.delete(
+                f"/topics/{tid}/members/screen-agent", headers=owner
+            ).status_code
+            == 200
+        )
+        assert (
+            client.post(f"/topics/{tid}/webhook-token", headers=auth).status_code == 401
+        )
+    finally:
+        _unregister(screen)
 
 
 # --- 「我的设备」management CRUD ------------------------------------------------
