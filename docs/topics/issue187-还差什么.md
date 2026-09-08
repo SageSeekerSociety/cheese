@@ -2,7 +2,7 @@
 
 ## 一句话
 
-**没有全部解决。** 线上跑的仍然是 `db` 后端——issue 最初量到的现象（平台几乎不长记忆）今天原样成立。三件前置里**两件已经做完**（在分支上等合并），剩下的两件**只有人能做**：买一把 key、上机改一行配置。
+**没有全部解决，但 #582 已经落地。** 2026-09-03 commit `acae0ed29` 把 #582（记忆整理/dreaming）合进了 main（<@caisongyang> 确认，房间已核实）。可线上仍是默认配置——`memory_backend` 仍是 `"db"`，而且新发现 dreaming 这条**还有自己独立的开关 `DREAM_ENABLED`，默认 `false`**，合进 main 不等于已经在跑。issue 最初量到的现象（平台几乎不长记忆）今天原样成立。剩下的都是**只有人能做**的事。2026-09-08 <@caisongyang> 给了一把智谱 key，房间实测：**key 本身有效，但账号余额为 0**，除免费的 `glm-4-flash` 外所有模型（含全部 embedding）都被挡回 429，所以它现在还翻不动牌——见下方「这把 key 实测结果」。
 
 ## 逐条对账（对着 issue 正文的每一条）
 
@@ -15,7 +15,7 @@
 | 已经不是问题：接线会悄悄烂掉 | 属实，#577 加了假端点测试 | <&backend/tests/integration/test_openviking_fake_endpoint.py> |
 | 三层分工那一节没过期 | 属实 | — |
 | 「进度层缺一块」（checklist 状态存在对话记录里，随机器一起死） | **仍然成立，不归 #187** | 归 #184，仍开着，08-08 后无人动 |
-| dreaming 归 #582，是一个还开着的 PR | **冲突已解干净，等人重跑 CI + 评审** | 见下 |
+| dreaming 归 #582，是一个还开着的 PR | **已合并 main（09-03，`acae0ed29`），但功能默认关着** | 见下 |
 
 **另外两条 issue 正文没写、但已经从待办里划掉的**：#271 抛出的记忆作用域和显著性分层**都已经落地**——`MemoryScope.agent_project` 和 `MemoryLayer`/`layer` 列都在表上。任何还说这两条待拍板的文档都过期了。
 
@@ -39,29 +39,44 @@
 
 **附带抓到一个真 bug**（房间读装机的 openviking 包独立核实）：`openai_embedders.py` 的 `_should_send_dimensions()` 在 `provider == "openai"` 时直接 `return False`，而我们的 `ov.conf` 配的就是它。所以请求不带 `dimensions`，向量宽度由厂商模型决定，而索引按 `OPENVIKING_EMBEDDING_DIMENSION` 建——**这个配置项读起来像控制请求宽度，实际只控制索引宽度**。默认 2048 恰好等于智谱 embedding-3 的原生宽度所以没事，一改就是「key 是好的、库是坏的」，且一声不吭。探针现在会比对两者并报错。
 
-### 3. #582 改挂回收器 — 冲突已解，等人重跑 CI
+### 3. #582 改挂回收器 — 已合并 main，功能默认关着
 
 不是普通的解冲突：`c45826d5f`（#630「retire the platform's own box」）把 `reap_idle_containers` 连同整个容器载体删了，而 #582 的设计原话就是「挂在 `reap_idle_containers` 上」。方案 A（<@caisongyang> 拍板）：改挂到活着的 `reap_idle_device_screens`。
 
-分支 `topic/109efa7c`，头 `f649bc71f`，15 文件 / +1563 / −19。**房间独立验证**：`git merge-tree topic/109efa7c main` 退出码 0、冲突 0；GitHub 侧 `mergeable=true`。
+**2026-09-03 已合并**：main 上的 `acae0ed29`（标题「修复 test 超时、empty-pr-guard 网络抖动」）落地了这条改动——`backend/app/domain/scheduler/service.py` 的 `reap_idle_device_screens` 现在在回收空闲话题的沙箱屏幕**之前**先挂一次 `记忆整理(dreaming)`：给 芝士 最后一轮机会，把这个话题学到的东西整理进项目记忆池（合并重复、把「上周」标成日期、撤掉被推翻的旧事实），然后再回收。原两条环境性 CI 红（超时用例、runner 网络抖动）在同一个 PR 里一起修掉了。房间此前对 `git merge-tree`/`mergeable=true` 的独立验证已经被这次合并印证。
 
-**已知并已写进代码的缺口**（`service.py:121` 原文）：一轮不一定跑在 device 上，也可能跑在 Cloud 上，而 scheduler 里没有 Cloud 侧回收器——所以记忆整理只覆盖跑在自建设备上的话题。这是方案 A 接受的代价，没有粉饰成全覆盖。
+**已知并已写进代码的缺口**（`service.py` 注释原文）：一轮不一定跑在 device 上，也可能跑在 Cloud 上，而 scheduler 里没有 Cloud 侧回收器——所以记忆整理只覆盖跑在自建设备上的话题。这是方案 A 接受的代价，没有粉饰成全覆盖。
 
-**CI 现在 6 绿 2 红，两条都与改动无关**：
-- `test`：5450 passed / 1 failed，失败的是 `test_mid_run_message_is_consumed_before_the_run_succeeds` 的 `TimeoutError`，那条用例写死 `asyncio.wait_for(..., 1)` 一秒。**决定性证据**：同一分支上一个提交 `10b0cb462` 的 CI `test` 是 success（03:25Z），红的是 `f649bc71f`（03:43Z），而两者 `git diff` 只有 `.env.example` 和 `config.py`——**房间复核过，去掉注释行只剩一个空行，一行代码没变**。
-- `empty-pr-guard`：`actions/checkout` 的 git fetch 报 GnuTLS handshake failed，重试三次全挂，退出码 128。runner 网络问题。
+**新发现，之前没写进本文档**：dreaming 这个功能自带一个独立开关 `DREAM_ENABLED`（`backend/.env.example`），**默认 `false`**，和 `MEMORY_BACKEND` 完全是两码事——**合进 main 不等于线上已经在跑**。而且这个功能读的是既有的 db 后端记忆行（`MemoryEntry`/`MemoryScope`/`MemoryLayer`），**不需要智谱 key**、也不依赖 `MEMORY_BACKEND=openviking`：只要把 `DREAM_ENABLED=true` 写进部署的 `backend/.env` 并重新部署，就能独立生效，是四步清单里成本最低的一步。配套两个旋钮：`DREAM_MAX_PER_SWEEP`（每次回收扫描最多整理几个话题，默认 1）、`DREAM_MIN_BLOCKS`（少于这么多条消息的话题不整理，默认 20）——.env.example 里说明写死了「默认关闭，因为它会花模型预算，一次整理约等于一轮对话」。
 
-所以 `mergeable_state` 是 `unstable` 而不是 `clean`——**不是冲突，是这两条红把状态拉下来了**。
+## 这把 key 实测结果（2026-09-08，房间实打实调的）
+
+<@caisongyang> 在话题里给了一把智谱 key。**它不写进仓库、文档或任何提交**，值只在话题聊天记录里。房间拿它直连 `open.bigmodel.cn` 逐个模型试了一遍：
+
+| 模型 | 结果 |
+|---|---|
+| `glm-4-flash`（免费） | **200 通** |
+| `glm-4.5-air`（`OPENVIKING_LLM_MODEL` 配的就是它） | 429 `1113 余额不足或无可用资源包,请充值。` |
+| `glm-4-plus` / `glm-4.6` / `glm-4-air` | 429 同上 |
+| `embedding-3`（`OPENVIKING_EMBEDDING_MODEL` 配的就是它） | 429 同上 |
+| `embedding-2` | 429 同上 |
+
+**读法**：key 的签名是对的（否则会是 401 而不是 429），挡住的是**账号余额**。免费模型能过、付费模型全挡，正好把我们配置里用到的两个模型都覆盖了——所以按当前 `.env.example` 的默认值，这把 key 一个端点也调不通。
+
+**顺带给端点自检拿到了第一次真环境验证**：以前只有假端点测试，这次用真 key 跑 `endpoint_probe.probe()`，输出 `status: "down"`、两个端点各自 down、并原样引用了厂商中文原话「余额不足或无可用资源包,请充值。」。这正是这条支线存在的理由——**如果没有这个探针，翻牌之后现场表现会和「db 后端不长记忆」一模一样，没人能看出是余额问题。**
+
+**安全提醒**：这把 key 是明文发在话题聊天里的，任何能看到本话题的人都能取走。充值之后它就成了一把能花钱的 key，建议 <@caisongyang> **充值前先轮换一次**，新 key 别再走聊天。
 
 ## 还差什么（谁做）
 
 | # | 事 | 谁 | 状态 |
 |---|---|---|---|
-| 1 | 弄到一把有 **embedding + chat** 权限的智谱 key | **必须人**（采购） | 未开始，卡着 3 |
-| 2 | 在 GitHub 上点一次 re-run，把 #582 那两条环境性 CI 红刷掉 | **必须人**（芝士的 token 只有 `actions: read`） | 待办。**别为刷绿造空提交**——这条分支被「空 tip 覆盖」咬过一次 |
-| 3 | 上机改 `backend/.env` 三行、重部当前 sha、跑迁移脚本 | **必须人**（芝士上不了机器） | 依赖 1；步骤见 <&docs/infrastructure.md> |
+| 0 | 上机把 `DREAM_ENABLED=true` 写进 `backend/.env` 并重部当前 sha | **必须人**（芝士上不了机器） | **新增，可独立于下面几条先做**——不需要智谱 key，成本最低，#582 已在 main 上等这一步 |
+| 1 | 让这把智谱 key 真的能用：**给账号充值 / 买资源包**（key 本身有效，缺的是余额），充值前建议先轮换 | **必须人**（采购） | **进了一半**：key 09-08 已拿到，实测 429 余额不足，仍卡着 3 |
+| 2 | ~~在 GitHub 上点一次 re-run，把 #582 那两条环境性 CI 红刷掉~~ | — | **已完成**：09-03 `acae0ed29` 把两条 CI 修复和 #582 一起合并了，不用再单独重跑 |
+| 3 | 上机改 `backend/.env` 三行（`MEMORY_BACKEND`/两把 key）、重部当前 sha、跑迁移脚本 | **必须人**（芝士上不了机器） | 依赖 1；步骤见 <&docs/infrastructure.md> |
 | 4 | 房间递一张验收卡，带走备份线 + 端点自检（共用分支，只能递一张） | 芝士 | 等端点自检 conclude |
-| 5 | #582 评审合并 | 人 | 依赖 2 |
+| 5 | ~~#582 评审合并~~ | — | **已完成**，见上方「一句话」 |
 | 6 | 「进度层」那条边 | — | 归 #184，不在本 issue |
 
 **翻牌前必须先确认第 2 步之外的一件事**：`cheese-viking-backup.timer` 已经在那台机器上真的装好并在跑。备份线的代码进了仓库不等于机器上装了 timer，这跟 DB 备份一样属于手工 runbook。
@@ -69,3 +84,5 @@
 ## 一条贯穿始终的平台风险（不属于 #187，但吃掉了这轮的工）
 
 端点自检那条支线的工作区被平台**整个重建两次**，两次都发生在「写完文件」和「push」之间那几分钟：`.git` 连同提交一起被换掉，`git status` 全程显示干净、无任何提示。`commit` 不构成保护，**只有 push 出去的才算存在**。现在所有支线的简报都写死「每写完一个文件就 add + commit + push，中间不插任何别的工具调用」。是否单独开一条支线追这个触发条件，问题已递给 <@caisongyang>，尚未回复。
+
+
