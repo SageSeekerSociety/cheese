@@ -55,6 +55,68 @@
     <!-- 分隔符 -->
     <v-divider v-if="myRequests.length || myInvitations.length" class="my-4"></v-divider>
 
+    <!-- 收到的项目邀请。和小队邀请并排放在这里，是因为这一页就是「等你答复的事」
+         的那一页；被邀请的人还不在那个项目里，任何项目里的界面他都够不着。 -->
+    <v-list-subheader>
+      收到的项目邀请 <span v-if="!loadingProjectInvitations">{{ projectInvitations.length }}</span>
+    </v-list-subheader>
+
+    <div v-if="loadingProjectInvitations" class="d-flex flex-column align-center py-4">
+      <v-progress-circular indeterminate color="primary" :size="40" :width="3" class="mb-3"></v-progress-circular>
+      <p class="text-body-2 text-medium-emphasis">加载中...</p>
+    </div>
+
+    <div v-else-if="!projectInvitations.length" class="d-flex flex-column align-center py-4">
+      <v-avatar size="48" class="bg-surface-light mb-3">
+        <v-icon icon="mdi-folder-account-outline" size="large" color="on-surface-variant"></v-icon>
+      </v-avatar>
+      <p class="text-subtitle-2 font-weight-medium text-center mb-1">暂无项目邀请</p>
+      <p class="text-caption text-center text-medium-emphasis">您暂时没有收到项目邀请</p>
+    </div>
+
+    <v-list-item
+      v-for="invitation in projectInvitations"
+      :key="`project-invitation-${invitation.id}`"
+      rounded="lg"
+      class="mb-2 application-item"
+    >
+      <template #prepend>
+        <v-avatar size="40" class="mr-3 bg-surface-light">
+          <v-icon icon="mdi-folder-outline" color="on-surface-variant"></v-icon>
+        </v-avatar>
+      </template>
+      <v-list-item-title>{{ invitation.project_name || '一个项目' }}</v-list-item-title>
+      <v-list-item-subtitle class="text-caption">
+        {{ invitation.inviter_handle }} 邀请 · 接受之后你能看到这个项目的全部话题
+      </v-list-item-subtitle>
+
+      <template #append>
+        <div class="d-flex">
+          <v-btn
+            variant="text"
+            color="success"
+            size="small"
+            icon="mdi-check"
+            title="接受"
+            class="mr-1"
+            :disabled="answering === invitation.id"
+            @click="answerProjectInvitation(invitation, true)"
+          ></v-btn>
+          <v-btn
+            variant="text"
+            color="error"
+            size="small"
+            icon="mdi-close"
+            title="拒绝"
+            :disabled="answering === invitation.id"
+            @click="answerProjectInvitation(invitation, false)"
+          ></v-btn>
+        </div>
+      </template>
+    </v-list-item>
+
+    <v-divider class="my-4"></v-divider>
+
     <!-- 收到的邀请副标题 -->
     <v-list-subheader>
       收到的邀请 <span v-if="!loadingMyInvitations">{{ myInvitations.length }}</span>
@@ -123,6 +185,7 @@
 </template>
 
 <script setup lang="ts">
+import type { ProjectInvitation } from '@/cx_types'
 import type { TeamMembershipApplication } from '@/types'
 
 import { onMounted, ref } from 'vue'
@@ -130,6 +193,7 @@ import { toast } from 'vuetify-sonner'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import { listMyInvitations, respondToInvitation } from '@/api'
 import { TeamsApi } from '@/network/api/teams'
 
 // 申请和邀请的状态
@@ -137,6 +201,37 @@ const myRequests = ref<TeamMembershipApplication[]>([])
 const myInvitations = ref<TeamMembershipApplication[]>([])
 const loadingMyRequests = ref(false)
 const loadingMyInvitations = ref(false)
+
+// 项目邀请（cheesex 那一半）。和上面的小队邀请是两回事，只是同一种「等你答复」。
+const projectInvitations = ref<ProjectInvitation[]>([])
+const loadingProjectInvitations = ref(false)
+const answering = ref<string | null>(null)
+
+const fetchProjectInvitations = async () => {
+  loadingProjectInvitations.value = true
+  try {
+    projectInvitations.value = (await listMyInvitations()).data
+  } catch {
+    // 这一段拿不到就空着：小队那两段是这一页的主体，不该被它拖垮。
+    projectInvitations.value = []
+  } finally {
+    loadingProjectInvitations.value = false
+  }
+}
+
+const answerProjectInvitation = async (invitation: ProjectInvitation, accept: boolean) => {
+  answering.value = invitation.id
+  try {
+    await respondToInvitation(invitation.id, accept)
+    toast.success(accept ? '已加入项目' : '已拒绝邀请')
+    await fetchProjectInvitations()
+  } catch (error) {
+    console.error('答复项目邀请失败', error)
+    toast.error('答复失败，请稍后再试')
+  } finally {
+    answering.value = null
+  }
+}
 
 // 获取我发起的申请
 const fetchMyJoinRequests = async () => {
@@ -253,6 +348,7 @@ const getStatusText = (status: string) => {
 onMounted(async () => {
   await fetchMyJoinRequests()
   await fetchMyInvitations()
+  await fetchProjectInvitations()
 })
 </script>
 

@@ -1,17 +1,20 @@
 """Project business logic."""
 
+import logging
 import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError
 from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.project.models import AiMode, Project
+from app.domain.project.models import AiMode, Project, ProjectRole
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import TopicKind
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.repositories import ComputeGrantRepository
+
+logger = logging.getLogger(__name__)
 
 
 class ProjectService:
@@ -69,11 +72,9 @@ class ProjectService:
             created_by=owner_handle,
         )
         await self._repo.set_root_topic(project, root.id)
+        await self._seed_roster(project)
         # 总览 = 项目本体: its roster mirrors the whole project (fusion-design §3).
-        # Seed it with every current project member + 芝士. At create-time the
-        # ProjectMember rows may not exist yet (added separately); seed_root is
-        # idempotent, so the owner + 芝士 are seeded now and any members already
-        # present are folded in.
+        # Seed it with every current project member + 芝士.
         member_handles = [
             m["handle"] for m in await self._repo.list_members(project.id)
         ]
@@ -81,6 +82,52 @@ class ProjectService:
             root.id, owner_handle=owner_handle, member_handles=member_handles
         )
         return project
+
+    async def _seed_roster(self, project: Project) -> None:
+        """新项目的名册：这个小队里的其他人。
+
+        项目本来就归小队（项目归团队 v4），所以一个小队开的项目，队里的人默认就是
+        项目成员——让他们一个一个再被邀请一遍，等于把「我们是一个队」这件事重说
+        一次。个人项目落在个人小队上，那里只有建项目的人自己，所以这条规则在那儿
+        什么也不做。
+
+        **建项目的人不写进这张表**，尽管他显然是这个项目的人。这不是遗漏：这个仓
+        里「谁是所有者」记在 ``Project.owner_handle`` 上，成员表存的是**其他**人，
+        很多地方按这个前提写（包括「把所有者加进名册」这个动作本身）。把他也塞进
+        来会让那些调用变成插重复键。所以名册上少他一行，是界面该补的事，不是这里。
+
+        每一步都尽量往下做：解析不出用户的 handle（agent、测试夹具）不该让建项目
+        整个失败——名册可以事后补，项目建不出来就什么都没有了。
+        """
+        from app.domain.membership.repositories import MemberRepository
+        from app.domain.team.services import team_service
+        from app.domain.user.repositories import UserRepository
+
+        members = MemberRepository(self._session)
+
+        async def put(handle: str, role: ProjectRole) -> None:
+            if not handle:
+                return
+            if await members.get(project_id=project.id, user_handle=handle) is None:
+                await members.add(project_id=project.id, user_handle=handle, role=role)
+
+        if project.team_id is None:
+            return
+        try:
+            relations = await team_service(self._session).get_team_members(
+                project.team_id
+            )
+            users = await UserRepository(session=self._session).get_by_ids(
+                [r.user_id for r in relations]
+            )
+        except Exception:  # noqa: BLE001 — 名册补得上，项目建不出来就没了
+            logger.exception("seeding roster from team %s failed", project.team_id)
+            return
+        for relation in relations:
+            user = users.get(relation.user_id)
+            if user is None or user.username == project.owner_handle:
+                continue
+            await put(user.username, ProjectRole.member)
 
     async def _resolve_personal_team_id(self, owner_handle: str) -> int | None:
         """owner_handle == User.username (fusion A1) → that user's personal team,
