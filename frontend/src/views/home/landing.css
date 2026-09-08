@@ -116,6 +116,10 @@ h3 {
   letter-spacing: 0;
 }
 
+.site-header .brand-cn {
+  transform: translateY(1px);
+}
+
 .site-header nav {
   display: flex;
   gap: 34px;
@@ -424,33 +428,6 @@ h1 {
   letter-spacing: 0.14em;
   color: var(--muted);
   justify-content: space-between;
-}
-
-.statement-strip {
-  color: var(--surface);
-  background: var(--ink);
-}
-
-.statement-strip .wrap {
-  display: flex;
-  min-height: 78px;
-  justify-content: space-between;
-  align-items: center;
-  gap: 20px;
-}
-
-.statement-strip span {
-  font-size: 14px;
-  letter-spacing: 0.16em;
-  color: var(--muted);
-}
-
-.statement-strip p {
-  font-size: 18px;
-}
-
-.statement-strip .landing-icon {
-  color: var(--accent);
 }
 
 .demo-section {
@@ -1497,27 +1474,6 @@ footer > span {
     inset: auto;
     grid-column: 1 / -1;
     font-size: 14px;
-  }
-
-  .statement-strip .wrap {
-    min-height: 76px;
-    flex-wrap: wrap;
-    gap: 7px;
-    padding-block: 18px;
-  }
-
-  .statement-strip span {
-    width: 100%;
-    font-size: 14px;
-  }
-
-  .statement-strip p {
-    font-size: 14px;
-  }
-
-  .statement-strip .landing-icon {
-    width: 17px;
-    height: 17px;
   }
 
   .demo-section {
