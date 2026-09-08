@@ -511,6 +511,22 @@ button:not(.v-btn) {
   color: var(--muted);
 }
 
+/* 藏起来但仍然存在：读屏读得到，脚本也点得动。
+   给文件选择框用的时候这不是洁癖而是硬要求——iOS Safari 拒绝用脚本打开一个
+   display:none / visibility:hidden 的 <input type=file>，按钮点下去毫无反应。
+   这里只用透明 + 缩到 1px，不用 clip-path：被裁剪掉的输入框在一部分旧 WebKit
+   上同样打不开，而这条规则存在的全部意义就是让它打得开。 */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  opacity: 0;
+  border: 0;
+}
+
 /* Crisp keyboard focus (a11y floor) — soft amber ring. */
 :focus-visible {
   outline: 2px solid var(--focus-ring);

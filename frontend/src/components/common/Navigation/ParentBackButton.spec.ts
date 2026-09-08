@@ -73,6 +73,17 @@ describe('返回上一级', () => {
     }
   )
 
+  // 它指向的是**父**地址，而 vue-router 的非精确匹配认为「站在子路由上时父链接
+  // 是激活的」，于是 Vuetify 一直给它盖一层 12% 的实底遮罩——顶栏左上角一个永远
+  // 按下去的灰方块。返回是「离开这一层」，不是「你在这儿」。
+  it.each(['/projects/project-a/topics/topic-b', '/projects/project-a/settings', '/spaces/42/tasks/7'])(
+    'does not sit in a pressed state on %s',
+    async (path) => {
+      const { getByRole } = await open(path)
+      expect(getByRole('link', { name: '返回上一级' }).className).not.toContain('v-btn--active')
+    }
+  )
+
   it('updates the parent when navigating to another project', async () => {
     const { router, getByRole } = await open('/projects/project-a/topics/topic-b')
     await router.push('/projects/project-c/settings')
