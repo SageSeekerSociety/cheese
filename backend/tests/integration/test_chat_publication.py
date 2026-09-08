@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -209,8 +210,9 @@ def test_publish_during_work_keeps_turn_open_and_only_published_text_enters_memo
     )
 
 
-def test_silence_reminder_is_visible_while_terminal_waits_and_rearms_on_publication(
-    client, stub_hooks, monkeypatch
+@pytest.mark.parametrize("threshold", [600, 90])
+def test_silence_reminder_only_queues_for_an_active_silent_response(
+    client, stub_hooks, monkeypatch, threshold
 ):
     from app.domain.agent import chat as chat_module
 
@@ -224,6 +226,10 @@ def test_silence_reminder_is_visible_while_terminal_waits_and_rearms_on_publicat
             return clock
 
     monkeypatch.setattr(chat_module, "datetime", Clock)
+    assert settings.chat_progress_reminder_after_s == 600
+    monkeypatch.setattr(settings, "chat_progress_reminder_after_s", threshold)
+    system_event = AsyncMock(wraps=chat.post_system_event)
+    monkeypatch.setattr(chat, "post_system_event", system_event)
 
     def begin(topic_id, prompt, reply):
         stub_hooks.starts(topic_id)
@@ -232,10 +238,12 @@ def test_silence_reminder_is_visible_while_terminal_waits_and_rearms_on_publicat
 
     monkeypatch.setattr(stub_hooks, "emit_turn", begin)
     release = asyncio.Event()
+    started = asyncio.Event()
     notices = []
 
     async def delayed_notice(topic_id, notice):
         notices.append(notice)
+        started.set()
         await release.wait()
         return True
 
@@ -250,32 +258,39 @@ def test_silence_reminder_is_visible_while_terminal_waits_and_rearms_on_publicat
             ):
                 break
         assert client.portal.call(chat.remind_silent_turns) == 0
-        clock += timedelta(seconds=61)
+        system_event.reset_mock()
+        clock += timedelta(seconds=threshold - 1)
+        assert client.portal.call(chat.remind_silent_turns) == 0
+        clock += timedelta(seconds=1)
         client.portal.call(stub_hooks.says, uuid.UUID(topic), "More internal output")
         assert ws.receive_json()["block"]["content"] == "More internal output"
         sweep = client.portal.start_task_soon(chat.remind_silent_turns)
-        waiting = ws.receive_json()
-        assert waiting["type"] == "event_block"
-        assert waiting["block"]["author_type"] == "system"
-        assert waiting["block"]["content"] == "芝士已有一分钟未更新进度"
-        assert not sweep.done()  # A blocked terminal cannot hide platform status.
+        client.portal.call(started.wait)
+        assert not sweep.done()
+        system_event.assert_not_called()
         client.portal.call(release.set)
         assert sweep.result(timeout=2) == 1
         assert len(notices) == 1 and "cheese chat send" in notices[0]
+        assert "If you have finished" in notices[0]
         clock += timedelta(seconds=120)
         assert client.portal.call(chat.remind_silent_turns) == 0
         request_id = str(uuid.uuid4())
         sent = publish(client, topic, headers, request_id=request_id).json()["data"]
         assert ws.receive_json()["block"]["id"] == sent["id"]
         assert client.portal.call(chat.remind_silent_turns) == 0
-        clock += timedelta(seconds=61)
+        clock += timedelta(seconds=threshold)
         # Replaying a previous send must not masquerade as a fresh update.
         assert publish(client, topic, headers, request_id=request_id).status_code == 200
         assert ws.receive_json()["block"]["id"] == sent["id"]
         assert client.portal.call(chat.remind_silent_turns) == 1
-        assert ws.receive_json()["block"]["content"] == waiting["block"]["content"]
+        assert len(notices) == 2
+        system_event.assert_not_called()
+        # Stop must disarm a fresh silence interval, not merely a sent reminder.
+        sent = publish(client, topic, headers, content="检查已经结束。").json()["data"]
+        assert ws.receive_json()["block"]["id"] == sent["id"]
         client.portal.call(stub_hooks.stops, uuid.UUID(topic), "Finished internally")
         while ws.receive_json()["type"] != "done":
             pass
-        clock += timedelta(seconds=120)
+        clock += timedelta(seconds=threshold)
         assert client.portal.call(chat.remind_silent_turns) == 0
+        assert len(notices) == 2

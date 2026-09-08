@@ -1153,8 +1153,9 @@ def publication_prompt(content: str) -> str:
         + "\n\n"
         + platform_prompt(
             "普通输出和最终答复都不会自动发到聊天。请用 cheese chat send 发送给用户。"
-            "直接接到新的用户任务时，先发一句你理解的目标和马上要做什么，再开始工作；"
-            "简单问题直接发答案。重要进展、改方向、阻碍和完成结果也要主动发消息。"
+            "收到需要回应的用户消息（包括排队或执行中追加的消息）时，能直接回答就发答案；"
+            "需要继续处理就先说明你理解的意思和接下来要做什么，再继续。"
+            "重要进展、改方向、阻碍和完成结果也要主动发消息。"
             "巡检按 heartbeat 的通知规则发言；分身向主 agent 回报。"
         )
     )
@@ -1668,9 +1669,7 @@ class ChatService:
         return True
 
     async def remind_silent_turns(self) -> int:
-        """Report chat silence independently of a terminal's blocked tool call."""
-        from app.domain.agent.runtime import get_broker
-
+        """Queue an internal reminder while a room response is still running."""
         now = datetime.now(UTC)
         due = [
             state
@@ -1680,42 +1679,31 @@ class ChatService:
             if state.reply_to is not None
             and not state.is_private
             and not state.progress_reminded
-            and (now - (state.last_chat_at or state.started_at)).total_seconds() >= 60
+            and (now - (state.last_chat_at or state.started_at)).total_seconds()
+            >= settings.chat_progress_reminder_after_s
             and self._active_turn_ids.get(state.topic_id) == state.work_id
         ]
 
         async def remind(state: _HookWorkState) -> bool:
+            if (
+                self._hook_work.get((state.topic_id, state.work_id)) is not state
+                or self._active_turn_ids.get(state.topic_id) != state.work_id
+            ):
+                return False
             try:
-                last_chat_at = state.last_chat_at
-                payload = await self.post_system_event(
-                    state.topic_id,
-                    "芝士已有一分钟未更新进度",
-                    state.work_id,
-                    meta={"event_type": "chat_progress_waiting"},
-                )
-                if payload is None:
-                    return False
                 # Once per silent stretch. Only a new publication re-arms this;
                 # tool output and duplicate send requests do not.
-                state.progress_reminded = state.last_chat_at == last_chat_at
-                await get_broker().publish(
-                    str(state.topic_id), {"type": "event_block", "block": payload}
-                )
-                if (
-                    state.progress_reminded
-                    and self._active_turn_ids.get(state.topic_id) == state.work_id
-                ):
-                    # Delivering a notice can itself stall. Other rooms and the
-                    # platform's waiting event must not wait for this terminal.
-                    async with asyncio.timeout(5):
-                        await self.notify_running_turn(
-                            state.topic_id,
-                            "If this task is still in progress and you have not "
-                            "posted an update since this reminder was queued, "
-                            "use cheese chat send to tell the user what is known "
-                            "and what you are waiting for.",
-                        )
-                return True
+                state.progress_reminded = True
+                # A blocked terminal must not hold up reminders in other rooms.
+                async with asyncio.timeout(5):
+                    return await self.notify_running_turn(
+                        state.topic_id,
+                        "If you are still working on a response and have not "
+                        "posted an update since this reminder was queued, "
+                        "use cheese chat send to tell the user what is known "
+                        "and what you are waiting for. If you have finished, "
+                        "ignore this reminder.",
+                    )
             except Exception:  # noqa: BLE001 — one room must not stop the sweep
                 logger.exception(
                     "chat progress reminder failed (topic=%s)", state.topic_id
@@ -3743,7 +3731,7 @@ class ChatService:
                     {"agent": agent.configuration, "git_author": acting_agent},
                     sort_keys=True,
                 )
-                + ":explicit-chat-v1"
+                + ":explicit-chat-v2"
                 + (":native-rc-v1" if supply == SUBSCRIPTION else "")
             ).encode()
         ).hexdigest()
