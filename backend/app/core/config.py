@@ -519,6 +519,7 @@ class Settings(BaseSettings):
     # nothing else will ever look — a turn dying without the process dying.
     orphan_sweep_interval_s: int = 300
     chat_progress_check_interval_s: int = 15
+    chat_progress_reminder_after_s: int = Field(default=600, gt=0)
     # How long a registered turn may produce nothing — no block, no frame —
     # before the sweep calls it wedged and tears it down. See
     # AgentWorkRunner.SILENT_TURN_S for why 30 minutes and not less.
