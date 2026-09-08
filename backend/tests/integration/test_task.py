@@ -484,9 +484,10 @@ class TestTaskIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert team_resp.status_code in [200, 201], (
-            f"Team creation failed: {team_resp.text}"
-        )
+        assert team_resp.status_code in [
+            200,
+            201,
+        ], f"Team creation failed: {team_resp.text}"
 
         create_resp = api_client.post(
             "/tasks",
@@ -1786,6 +1787,43 @@ class TestTeamTask:
             headers=headers,
         )
         assert join_resp.status_code == 200, f"Join failed: {join_resp.text}"
+
+        participants_resp = api_client.get(
+            f"/tasks/{task_id}/participants",
+            params={"queryTeamInfo": True},
+            headers=headers,
+        )
+        assert participants_resp.status_code == 200
+        registration = next(
+            row
+            for row in participants_resp.json()["data"]["participants"]
+            if row["memberId"] == team_task_setup["team_id"]
+        )
+        expected_name = f"Test Team ({team_task_setup['suffix']})"
+        assert registration["member"]["name"] == expected_name
+        assert registration["member"]["avatarId"] == 1
+        detail_resp = api_client.get(
+            f"/tasks/{task_id}/participants/{registration['id']}", headers=headers
+        )
+        assert detail_resp.status_code == 200
+        assert (
+            detail_resp.json()["data"]["participant"]["member"]["name"] == expected_name
+        )
+        deadline = int((datetime.now(UTC).timestamp() + 86400) * 1000)
+        approval = api_client.patch(
+            f"/tasks/{task_id}/participants/{registration['id']}",
+            json={"approved": "APPROVED", "deadline": deadline},
+            headers=headers,
+        )
+        assert approval.status_code == 200
+        task_detail = api_client.get(f"/tasks/{task_id}", headers=headers)
+        identity = next(
+            row
+            for row in task_detail.json()["data"]["participation"]["identities"]
+            if row["id"] == registration["id"]
+        )
+        assert identity["deadline"] == deadline
+        assert identity["teamName"] == expected_name
 
     def test_get_teams_for_task(
         self, api_client: TestClient, team_task_setup: dict

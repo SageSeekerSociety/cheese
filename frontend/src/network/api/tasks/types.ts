@@ -8,6 +8,7 @@ export interface TaskParticipationIdentity {
   type: TaskSubmitterType
   memberId: number
   teamName?: string
+  deadline?: number | null
   canSubmit: boolean
   approved: 'NONE' | 'APPROVED' | 'DISAPPROVED'
 }
