@@ -36,11 +36,11 @@ function topic(id: string, parentId: string | null, kind = 'topic'): Topic {
 
 const topics: Topic[] = [topic('root', null, 'root'), topic('甲', 'root'), topic('乙', 'root')]
 
+// 路由的兜底页面写成一个纯对象（不是 defineComponent）：这个文件里只该有一个组件，
+// 就是下面那个把侧栏包起来的宿主。
 const router = createRouter({
   history: createWebHistory(),
-  routes: [
-    { path: '/:pathMatch(.*)*', name: 'catch-all', component: defineComponent({ setup: () => () => h('div') }) },
-  ],
+  routes: [{ path: '/:pathMatch(.*)*', name: 'catch-all', component: { render: () => h('div') } }],
 })
 
 // v-navigation-drawer 必须活在一个 v-layout 里（同 TopicSidebar.rail.spec）。
