@@ -287,7 +287,8 @@ function eventPlatform(b: Block): boolean {
           </div>
           <!-- 芝士 speaks — shown as a person, with avatar (like the chat) -->
           <div v-else class="site-msg">
-            <CheeseAvatar :size="26" class="site-msg__av" />
+            <!-- 头像上的字取的是这个房间当前那个队友的名字，和它右边写的名字同一个来源。 -->
+            <CheeseAvatar :size="26" :name="agentName" class="site-msg__av" />
             <div class="site-msg__main">
               <div class="site-msg__meta">
                 <span class="site-msg__name">{{ authorLabel(b) }}</span>
