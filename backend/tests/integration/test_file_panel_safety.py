@@ -18,6 +18,12 @@ def _mkproject(client) -> uuid.UUID:
     return uuid.UUID(resp["data"]["id"])
 
 
+def _mktopic(client, pid: uuid.UUID) -> uuid.UUID:
+    response = client.post("/topics", json={"project_id": str(pid), "title": "Files"})
+    assert response.status_code == 200
+    return uuid.UUID(response.json()["data"]["id"])
+
+
 def _owner(client) -> dict[str, str]:
     from tests.integration.test_connector_viewer import _login
 
@@ -32,7 +38,8 @@ def _put(pid: uuid.UUID, topic: uuid.UUID, path: str, data: bytes) -> None:
 
 
 def test_reading_a_binary_file_returns_no_text_to_edit(client):
-    pid, tid = _mkproject(client), uuid.uuid4()
+    pid = _mkproject(client)
+    tid = _mktopic(client, pid)
     _put(pid, tid, "app.bin", BINARY)
 
     body = client.get(
@@ -47,7 +54,8 @@ def test_reading_a_binary_file_returns_no_text_to_edit(client):
 
 
 def test_saving_over_a_binary_file_is_rejected_and_the_bytes_survive(client):
-    pid, tid = _mkproject(client), uuid.uuid4()
+    pid = _mkproject(client)
+    tid = _mktopic(client, pid)
     _put(pid, tid, "app.bin", BINARY)
     before = hashlib.md5(BINARY).hexdigest()
 
@@ -64,7 +72,8 @@ def test_saving_over_a_binary_file_is_rejected_and_the_bytes_survive(client):
 
 
 def test_a_save_that_lost_the_race_answers_409_and_changes_nothing(client):
-    pid, tid = _mkproject(client), uuid.uuid4()
+    pid = _mkproject(client)
+    tid = _mktopic(client, pid)
     _put(pid, tid, "note.txt", "原始内容\n".encode())
     headers = _owner(client)
 
@@ -94,7 +103,8 @@ def test_a_save_that_lost_the_race_answers_409_and_changes_nothing(client):
 
 
 def test_a_save_carrying_the_current_version_goes_through(client):
-    pid, tid = _mkproject(client), uuid.uuid4()
+    pid = _mkproject(client)
+    tid = _mktopic(client, pid)
     _put(pid, tid, "note.txt", "原始内容\n".encode())
     headers = _owner(client)
 
@@ -119,7 +129,8 @@ def test_a_save_carrying_the_current_version_goes_through(client):
 
 
 def test_a_dangling_symlink_does_not_500_the_file_listing(client):
-    pid, tid = _mkproject(client), uuid.uuid4()
+    pid = _mkproject(client)
+    tid = _mktopic(client, pid)
     _put(pid, tid, "real.txt", b"ok\n")
     (ws.topic_worktree(pid, tid) / "dangling").symlink_to("/nonexistent/target")
 

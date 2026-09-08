@@ -25,7 +25,7 @@ from collections.abc import Iterator
 from pathlib import Path, PurePosixPath
 
 from app.core.config import settings
-from app.core.errors import ConflictError, ValidationError
+from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.domain.agent.platform_failures import WORKSPACE_VCS_PERMS_CODE
 from app.domain.workspace import identity as identity_mod
 from app.domain.workspace.textfile import (
@@ -1066,6 +1066,23 @@ def git_log(
         if len(parts) == 3:
             rows.append({"hash": parts[0], "author": parts[1], "message": parts[2]})
     return rows
+
+
+def accepted_commit_revision(project_id: uuid.UUID, ref: str) -> str:
+    """Resolve a public history selection without exposing unaccepted room work."""
+    if ref.startswith("-"):
+        raise ValidationError("invalid ref")
+    repo = ensure_repo(project_id)
+    try:
+        revision = _git(
+            repo, "rev-parse", "--verify", "--end-of-options", f"{ref}^{{commit}}"
+        ).strip()
+        _git(
+            repo, "merge-base", "--is-ancestor", revision, accepted_revision(project_id)
+        )
+    except ValidationError as exc:
+        raise NotFoundError("Commit not found in accepted project history") from exc
+    return revision
 
 
 def git_diff(project_id: uuid.UUID, ref: str | None = None) -> str:
