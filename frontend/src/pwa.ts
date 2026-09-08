@@ -7,8 +7,8 @@
  *
  * A new worker must finish precaching before it activates. The plugin reloads
  * on update activation; until then a controlled tab can still run its old
- * entry. Public navigations fetch current HTML separately in vite.config.ts,
- * while workspace navigation retains its offline shell.
+ * entry. Online navigations fetch current HTML separately in vite.config.ts;
+ * the precached shell remains available when that network request fails.
  *
  * The whole thing is a no-op unless the browser supports service workers and
  * the build produced one (the virtual module resolves to a stub otherwise), so

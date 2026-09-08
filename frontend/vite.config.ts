@@ -168,26 +168,23 @@ export default defineConfig({
         // Anything that should not be precached goes in `globIgnores` by name.
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         cleanupOutdatedCaches: true,
-        // Activation follows completion of the precache download. Public
+        // Activation follows completion of the precache download. Online
         // navigation must not depend on that download to see current routes.
         clientsClaim: true,
         skipWaiting: true,
         // Inline the workbox runtime into sw.js — one root file to keep
         // no-cached in nginx, instead of a separate workbox-*.js.
         inlineWorkboxRuntime: true,
-        // SPA offline fallback: serve the cached index.html for navigations…
-        navigateFallback: 'index.html',
-        // …but NEVER for backend routes. These are same-origin navigations that
-        // must reach the server (or fail, when offline) — not be answered with
-        // the SPA HTML: the /api/* backend API, the /connector/* device plane,
-        // and bare 1.0 routes.
-        navigateFallbackDenylist: [/^\/api\//, /^\/connector\//, /^\/users\//, /^\/(?:about\/?)?(?:\?|$)/],
+        // A precache-only NavigationRoute keeps workspace refreshes on old code
+        // until the next worker finishes installing. Use the online route below,
+        // with the same cached shell as its offline fallback.
+        navigateFallback: null,
         runtimeCaching: [
           {
-            // An old cached entry has no /about route and renders a local 404.
-            // Fetch public HTML online; keep the precached shell for offline use.
+            // Refresh every application page online, including deep workspace
+            // links. Backend navigations must never receive the SPA fallback.
             urlPattern: ({ url, request, sameOrigin }) =>
-              sameOrigin && request.mode === 'navigate' && ['/', '/about', '/about/'].includes(url.pathname),
+              sameOrigin && request.mode === 'navigate' && !/^\/(?:api|connector|users)(?:\/|$)/.test(url.pathname),
             handler: 'NetworkOnly',
             options: {
               fetchOptions: { cache: 'no-cache' },
