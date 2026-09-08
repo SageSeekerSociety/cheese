@@ -15,7 +15,7 @@ import type { AnyExtension } from '@tiptap/core'
 import type { ImageOptions } from '@tiptap/extension-image'
 import type { marked } from 'marked'
 
-import { Extension, InputRule, mergeAttributes } from '@tiptap/core'
+import { Extension, InputRule, mergeAttributes, Node } from '@tiptap/core'
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import Image from '@tiptap/extension-image'
 import { ListItem, TaskItem, TaskList } from '@tiptap/extension-list'
@@ -157,6 +157,38 @@ export interface DocExtensionsOptions {
   resolveImageSrc?: (src: string) => string
 }
 
+// Keep standalone Markdown comments as invisible document nodes. Dropping them
+// would lose source annotations and correctly trip the save-fidelity guard.
+const DocComment = Node.create({
+  name: 'docComment',
+  group: 'block',
+  atom: true,
+  selectable: false,
+  addAttributes() {
+    return { source: { default: '', rendered: false } }
+  },
+  parseHTML() {
+    return [
+      { tag: 'div[data-doc-comment]', getAttrs: (element) => ({ source: element.getAttribute('data-doc-comment') }) },
+    ]
+  },
+  renderHTML({ node }) {
+    return ['div', { 'data-doc-comment': node.attrs.source, hidden: '', 'aria-hidden': 'true' }]
+  },
+  parseMarkdown: (token, helpers) => helpers.createNode('docComment', { source: token.text }),
+  renderMarkdown: (node) => node.attrs?.source ?? '',
+  markdownTokenizer: {
+    name: 'docComment',
+    level: 'block',
+    start: (source) => source.search(/^ {0,3}<!--/m),
+    tokenize(source) {
+      const match = source.match(/^ {0,3}<!--[\s\S]*?-->[ \t]*(?:\n|$)/)
+      if (!match) return undefined
+      return { type: 'docComment', raw: match[0], text: match[0].trimEnd() }
+    },
+  },
+})
+
 const DocListItem = ListItem.extend({
   renderMarkdown(node, helpers, context) {
     if (context.parentType !== 'orderedList' || context.meta?.parentAttrs?.type) {
@@ -192,6 +224,7 @@ export function docExtensions(opts: DocExtensionsOptions = {}): AnyExtension[] {
     // instance, which is what its own README passes. `getDefaults` is the one
     // module-only member, and nothing in the package calls it.
     Markdown.configure({ marked: docMarked as unknown as typeof marked }),
+    DocComment,
     TableKit.configure({ table: { resizable: false } }),
     DocListItem,
     TaskList,
@@ -342,7 +375,7 @@ function normalizeTableRow(line: string): string {
 
 // A line that opens a block of its own: heading, quote, list item, fence,
 // table row, thematic break. Everything else continues the block above it.
-const BLOCK_START_RE = /^ {0,3}(#{1,6}(\s|$)|>|([-*+]|\d{1,9}[.)])(\s|$)|(```|~~~)|\||((\*|-|_)\s*){3,}$)/
+const BLOCK_START_RE = /^ {0,3}(#{1,6}(\s|$)|<!--|>|([-*+]|\d{1,9}[.)])(\s|$)|(```|~~~)|\||((\*|-|_)\s*){3,}$)/
 // A heading is a block all by itself, so whatever follows it starts a new one.
 const HEADING_RE = /^ {0,3}#{1,6}(\s|$)/
 
@@ -397,7 +430,10 @@ export function normalizeMarkdown(md: string): string {
   for (const l of out) {
     const prev = spaced[spaced.length - 1]
     if (!l.literal && prev && !prev.literal && prev.text !== '') {
-      const boundary = HEADING_RE.test(prev.text) || (!BLOCK_START_RE.test(prev.text) && BLOCK_START_RE.test(l.text))
+      const boundary =
+        HEADING_RE.test(prev.text) ||
+        /-->$/.test(prev.text) ||
+        (!BLOCK_START_RE.test(prev.text) && BLOCK_START_RE.test(l.text))
       if (boundary && l.text !== '') spaced.push({ text: '', literal: false })
     }
     const continuation = !l.literal && prev && !prev.literal && prev.text !== '' && !BLOCK_START_RE.test(l.text)

@@ -79,6 +79,18 @@ describe('normalizeMarkdown tolerances', () => {
 })
 
 describe('round-trip corpus', () => {
+  it('preserves standalone HTML comments around editable prose', () => {
+    const md = '# Plan\n\n<!-- BEGIN-PLAN -->\n\nObserve three crossings.\n\n<!-- END-PLAN -->'
+    expectClean(md)
+    editor.commands.insertContentAt(1, 'Updated ')
+    expect(serializeDoc(editor)).toContain('# Updated Plan')
+    expect(serializeDoc(editor)).toContain('<!-- BEGIN-PLAN -->')
+    expect(serializeDoc(editor)).toContain('<!-- END-PLAN -->')
+    expect(editor.getHTML()).toContain('hidden=""')
+    expectClean('<!-- Multiple\nlines -->\n\nEditable prose.')
+    expectClean('<!-- BEGIN-PLAN -->\nObserve three crossings.\n<!-- END-PLAN -->')
+  })
+
   it('headings 1-4', () => {
     expectClean('# 一级标题\n\n## 二级 Heading\n\n### 三级\n\n#### 四级标题')
   })
