@@ -2624,3 +2624,52 @@ def _tree_of(repo: Path, branch: str) -> str:
         text=True,
     )
     return done.stdout
+
+
+def _treeless_card(client, topic_id: str, status: str) -> None:
+    """一张老卡：`tree_id IS NULL`（迁移 `e4c9a2f60b18` 对没有诚实值可填的卡就是
+    这么留的），状态由用例指定。"""
+    from app.domain.review.models import AcceptCard, AcceptStatus
+
+    async def _do() -> None:
+        async with client.test_factory() as s:
+            s.add(
+                AcceptCard(
+                    topic_id=_uuid.UUID(topic_id),
+                    reviewer_handle="alice",
+                    routing_reason="",
+                    status=AcceptStatus(status),
+                    change_subject="chore(old): a card from before trees",
+                )
+            )
+            await s.commit()
+
+    client.portal.call(_do)
+
+
+def test_a_finished_treeless_card_does_not_switch_drafts_off_forever(client, sweeping):
+    """一张历史上的无树老卡，已经采纳/作废/驳回了 —— 它不该让这个房间**以后每一
+    批**都开不出 draft PR。
+
+    它手上没有任何一个还等着被合的 PR，而拿它当「这条分支已经有 PR 了」用，等于
+    一次远古交付把整个房间的 draft 永久关掉，而且没有任何地方看得出来。
+    """
+    pid, tid = _room_with_work(client)
+    _treeless_card(client, tid, "accepted")
+
+    counts = _sweep(client)
+
+    assert counts["opened"] == 1, counts
+    assert [o["head"] for o in sweeping["opened"] if o["draft"]] == [_disk_branch(tid)]
+
+
+def test_a_live_treeless_card_still_stops_a_second_pr(client, sweeping):
+    """反过来：那张老卡还待处理时，它骑着的 PR 就在这条分支上。再开一个就是同一条
+    head 上两个 PR 抢同一批提交。"""
+    pid, tid = _room_with_work(client)
+    _treeless_card(client, tid, "pending")
+
+    counts = _sweep(client)
+
+    assert counts["opened"] == 0, counts
+    assert sweeping["opened"] == []

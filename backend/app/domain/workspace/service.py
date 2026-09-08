@@ -1987,6 +1987,21 @@ def branch_has_commits(project_id: uuid.UUID, branch: str) -> bool:
     return not _is_ancestor(repo, branch, base)
 
 
+def base_branch_head(project_id: uuid.UUID) -> tuple[str, str]:
+    """(name, sha) of the branch a new batch starts from.
+
+    The SHA is given out rather than left to be derived, because after a squash
+    merge it CANNOT be derived from the delivered branch: the squash commit is
+    not a descendant of anything the delivering clone has, so no ancestry
+    question a device can ask has a true answer. A device grafting its next
+    batch onto the base has to be TOLD which commit that is.
+    """
+    repo = ensure_repo(project_id)
+    branch = _base_branch(repo)
+    sha = _git(repo, "rev-parse", "-q", "--verify", branch).strip()
+    return branch, sha
+
+
 def pr_base_branch(project_id: uuid.UUID) -> str:
     """两阶段采纳 (PR迭代式): the base branch a topic's PR should target — same
     branch merge_topic() would merge into locally."""

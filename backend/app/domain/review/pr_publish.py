@@ -284,15 +284,26 @@ async def _draft_pr_for_one_tree(session: AsyncSession, tree_id: uuid.UUID) -> b
     if tree is None:
         return False
     cards = AcceptCardRepository(session)
-    # Plus the room's tree-less cards. A card filed before trees existed keeps
-    # `tree_id IS NULL` (migration `e4c9a2f60b18` left it that way wherever the
-    # backfill had no honest value), and one of them can still be riding a live
-    # PR on this very branch. Asking the tree alone makes that card invisible —
-    # and then this opens a SECOND PR on the branch its PR is already on, which
-    # is the same hole `create_card`'s own guard was widened to close.
-    if await cards.list_for_tree(tree.id) or await cards.list_treeless_for_topic(
-        tree.room_id
-    ):
+    # Plus the room's tree-less cards, but only the ones still in flight. A card
+    # filed before trees existed keeps `tree_id IS NULL` (migration
+    # `e4c9a2f60b18` left it that way wherever the backfill had no honest
+    # value), and one of those can still be riding a live PR on this very
+    # branch — asking the tree alone makes it invisible, and then this opens a
+    # SECOND PR on the branch its PR is already on.
+    #
+    # Live is the whole of it, though. Counting an accepted / rejected / voided
+    # tree-less card would mean one piece of a room's ancient history switched
+    # draft PRs off for that room FOREVER: every later batch, on every later
+    # branch, silently PR-less. A card in a terminal state holds no PR anybody
+    # is going to merge.
+    from app.domain.review.services import _CARD_BLOCKS_NEW_CARD
+
+    live_treeless = [
+        c
+        for c in await cards.list_treeless_for_topic(tree.room_id)
+        if c.status in _CARD_BLOCKS_NEW_CARD
+    ]
+    if await cards.list_for_tree(tree.id) or live_treeless:
         return False
     pr = await _open_draft_for_tree(session, tree)
     if pr is None:

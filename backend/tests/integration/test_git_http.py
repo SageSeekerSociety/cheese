@@ -188,3 +188,38 @@ def test_the_branch_is_only_told_to_a_token_for_that_project(client):
     )
     assert with_token.status_code == 200, with_token.text
     assert with_token.json()["data"]["branch"].startswith("topic/")
+
+
+def test_a_refused_cross_project_ask_does_not_touch_that_projects_marker(client):
+    """拒绝之前不许先写。
+
+    解析一个地点会**顺手修**它磁盘上那条「这个房间写哪棵树」的记号，这是个写副
+    作用。校验放在解析之后，就等于在拒绝一个外项目请求之前，已经先改了那个外项目
+    的东西 —— 一个越权的读被拒了，越权的写却已经发生了。
+    """
+    import uuid as _uuid
+
+    from app.core.sandbox_auth import mint_scoped_token
+    from app.domain.workspace import service as ws
+    from tests.integration.conftest import session_auth_headers
+
+    client.headers.update(session_auth_headers("alice"))
+    mine = client.post("/projects", json={"name": "A"}).json()["data"]["id"]
+    theirs = client.post("/projects", json={"name": "B"}).json()["data"]["id"]
+    room = client.post(
+        "/topics", json={"project_id": theirs, "title": "别人的房间"}
+    ).json()["data"]["id"]
+    assert client.post(f"/topics/{room}/split", json={"title": "活"}).status_code == 200
+    # 把那个项目的记号按到一个别的值上，然后看它有没有被动过。
+    skew = _uuid.uuid4()
+    ws.bind_tree(_uuid.UUID(room), skew)
+
+    r = client.get(
+        _branch_url(mine, room),
+        headers={"X-Cheese-Token": mint_scoped_token(project_id=mine)},
+    )
+
+    assert r.status_code == 404, r.text
+    assert ws.tree_for_place(_uuid.UUID(room)) == skew, (
+        "拒绝这次跨项目请求之前，已经改了那个项目的记号"
+    )

@@ -14,6 +14,7 @@ history, deletes and conflict handling badly; with this the agent uses plain
 `git push`.
 """
 
+import asyncio
 import os
 import subprocess
 import uuid
@@ -27,6 +28,7 @@ from app.api.response import ok
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.core.sandbox_auth import verify_scoped_token
+from app.domain.room_task.models import TreeStatus
 from app.domain.workspace import service as ws
 
 router = APIRouter(prefix="/projects", tags=["git"])
@@ -165,9 +167,10 @@ async def branch_for_place(
     project_id: uuid.UUID,
     topic_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
+    on: str = "",
     x_cheese_token: str | None = Header(default=None, alias="X-Cheese-Token"),
 ) -> dict:
-    """Which branch this place writes to **right now**.
+    """Which branch this place writes to **right now**, and how to get onto it.
 
     A device's screen is long-lived and its environment is fixed at launch, so
     `CHEESE_GIT_BRANCH` is a snapshot of the batch that was open when the screen
@@ -180,22 +183,63 @@ async def branch_for_place(
     `git_http` because it belongs to the same conversation and the same
     credential as the push it precedes: the device already holds a
     project-scoped token and already talks to this router to push.
+
+    `on` is the branch the caller's clone is currently on, and the two extra
+    facts in the answer exist because a device **cannot work them out for
+    itself** after a squash merge:
+
+    - `on_delivered` — has that batch landed? Ancestry cannot say. A squash
+      commit is not a descendant of the branch it squashed, so `merge-base
+      --is-ancestor` answers "no" for a batch that is fully delivered and "no"
+      for one that never was.
+    - `base` / `base_sha` — the commit the next batch starts from, by name AND
+      by sha. Same reason: the delivering clone has no ref that reaches it.
+
+    Both are the platform stating a fact it alone holds, so that a device grafts
+    its next batch onto the right commit only when the previous one is confirmed
+    delivered — never on a guess.
     """
     _repo_for(project_id, x_cheese_token)
     from app.domain.room_task.place import PlaceResolver
+    from app.domain.room_task.services import WorkTreeService
+    from app.domain.topic.models import Topic
 
+    # BEFORE resolving. The token proves a claim on the project in the URL and
+    # NOTHING about the topic, and a place id is resolved globally — so without
+    # this a device holding one project's credential could name any other
+    # project's room and be told which branch it is writing to.
+    #
+    # And it has to come BEFORE rather than after, because resolving a place is
+    # not a pure read: it repairs that place's on-disk tree marker
+    # (`PlaceResolver._heal_the_marker`). Checking afterwards would refuse the
+    # request having already written into the very project it is refusing to
+    # talk about. Same answer for "no such topic" and "somebody else's topic" —
+    # which of the two it is, is exactly what a caller probing ids wants told.
+    room = await db.get(Topic, topic_id)
+    if room is None or room.project_id != project_id:
+        raise NotFoundError("这个项目里没有这个地点")
     place = await PlaceResolver(db).resolve(topic_id)
-    # The token proves a claim on the project in the URL, and NOTHING about the
-    # topic: a place id is resolved globally, so without this line a device
-    # holding one project's credential could name any other project's room and
-    # be told which branch it is writing to. Same answer for "no such topic" and
-    # "somebody else's topic" — which of the two it is, is exactly what a caller
-    # probing ids wants told.
-    if place is None or place.project_id != project_id:
+    if place is None:
         raise NotFoundError("这个项目里没有这个地点")
     if place.branch_name is None:
         raise NotFoundError("这个地点现在没有可写的分支")
-    return ok({"branch": place.branch_name, "tree_id": str(place.tree_id)})
+    base, base_sha = await asyncio.to_thread(ws.base_branch_head, project_id)
+    delivered = False
+    if on and on != place.branch_name:
+        history = await WorkTreeService(db).history(place.room_id)
+        delivered = any(
+            ws.branch_for_tree(t.id) == on and t.status is TreeStatus.merged
+            for t in history
+        )
+    return ok(
+        {
+            "branch": place.branch_name,
+            "tree_id": str(place.tree_id),
+            "base": base,
+            "base_sha": base_sha,
+            "on_delivered": delivered,
+        }
+    )
 
 
 @router.get("/{project_id}/git/info/refs")

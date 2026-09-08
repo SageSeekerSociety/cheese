@@ -647,23 +647,75 @@ cd "$CHEESE_WORK" || exit 0
 # the second for the first is precisely the mis-delivery being removed here —
 # with a green report on top of it. Unknown is reported as a failure; the
 # snapshot ref below is written either way, so nothing the agent wrote is lost.
-branch=""
+here="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+answer=""
 if [ -n "${CHEESE_BRANCH_URL:-}" ]; then
-  branch="$(curl -fsS --max-time 10 -H "X-Cheese-Token: ${CHEESE_TOKEN:-}" \
-    "$CHEESE_BRANCH_URL" 2>/dev/null \
-    | sed -n 's/.*"branch"[ ]*:[ ]*"\([^"]*\)".*/\1/p')"
+  answer="$(curl -fsS --max-time 10 -H "X-Cheese-Token: ${CHEESE_TOKEN:-}" \
+    "$CHEESE_BRANCH_URL?on=$here" 2>/dev/null || true)"
 fi
+cheese_field() {
+  printf '%s' "$answer" | sed -n "s/.*\"$1\"[ ]*:[ ]*\"\([^\"]*\)\".*/\1/p"
+}
+branch="$(cheese_field branch)"
+base="$(cheese_field base)"
+base_sha="$(cheese_field base_sha)"
+delivered=""
+# JSON whitespace is not part of the fact: `"on_delivered":true` and
+# `"on_delivered": true` are the same answer, and a pattern that only matched one
+# of them would silently read「已交付」as「没交付」and skip the graft entirely.
+case "$(printf '%s' "$answer" | tr -d ' ')" in
+  *'"on_delivered":true'*) delivered=1;;
+esac
 head="$(git rev-parse --verify -q HEAD 2>/dev/null || true)"
 failed=""
 tried=""
+detail=""
+# 上一批已经交付，房间换到了下一批 —— 接上去。
+#
+# 接不上去的话，这个 clone 的每一个新提交都还长在上一批的提交上，而上一批是被
+# squash 进 main 的：新分支上会重新带着上一批的改动，PR 的三点 diff 把它们再展示
+# 一遍，squash 正文再声称一遍。**祖先关系答不了这件事**（squash 提交不是被压的那
+# 条分支的后代），所以「上一批交付了没有」和「新一批从哪个 commit 起」这两件事都
+# 是平台**告诉**这里的，不是这里猜的。
+#
+# 接法只用 plumbing：`git merge-tree` 在**不碰工作区、不碰 index、不动 HEAD** 的
+# 情况下做一次真正的三方合并，把这个 clone committed 的东西合到新的 base 上。分身
+# 正在看的文件、`git status` 的输出、二分到一半的状态，一个字节都不变 —— 那条
+# 「这里永远不移动 HEAD」的不变量原样成立。未提交的东西不进分支（它进下面的快照
+# ref，和以前一样）：未提交的内容变成「已交付」是另一个方向的错。
+#
+# 冲突就是冲突：不推分支、如实报出来、快照照写，人能捞回全部内容。
+if [ -n "$head" ] && [ -n "$branch" ] && [ -n "$here" ] && [ "$here" != "$branch" ] \
+   && [ -n "$delivered" ] && [ -n "$base_sha" ]; then
+  git fetch -q origin "${base:-main}" >/dev/null 2>&1 || true
+  if git rev-parse -q --verify "$base_sha^{commit}" >/dev/null 2>&1; then
+    # The EXIT STATUS is the answer, not the output: `merge-tree` prints a tree
+    # oid for a conflicted merge too — one full of conflict markers — so reading
+    #「有输出就是成功」would push exactly the thing this is here to refuse.
+    if grafted_tree="$(git merge-tree --write-tree "$base_sha" "$head" \
+      2>/dev/null)"; then
+      head="$(git commit-tree "$grafted_tree" -p "$base_sha" \
+        -m "cheese: carry this batch onto $branch" 2>/dev/null || printf '%s' "$head")"
+    else
+      tried=1
+      failed=1
+      detail="conflict grafting onto $branch"
+    fi
+  else
+    tried=1
+    failed=1
+    detail="the platform named a base commit this clone does not have"
+  fi
+fi
 if [ -z "$branch" ]; then
   # Not knowing is a failure, loudly. The commits stay on the machine and in the
   # snapshot ref below; what must never happen is a push onto a guess.
   tried=1
   failed=1
-elif [ -n "$head" ]; then
+  detail="could not learn which batch this place is writing to"
+elif [ -z "$failed" ] && [ -n "$head" ]; then
   tried=1
-  git push -q origin "$head:refs/heads/$branch" >/dev/null 2>&1 || failed=1
+  git push -q -f origin "$head:refs/heads/$branch" >/dev/null 2>&1 || failed=1
 fi
 # The scratch index lives inside .git so it is never something the agent can see
 # and never a path git would try to add to itself.
@@ -704,7 +756,8 @@ fi
 if [ -n "$failed" ]; then status=failed; else status=ok; fi
 {
   printf '{"hook_event_name":"CheeseSync","status":"%s",' "$status"
-  printf '"commit":"%s","snapshot":"%s","branch":"%s"}' "$head" "$snapshot" "$branch"
+  printf '"commit":"%s","snapshot":"%s","branch":"%s","detail":"%s"}' \
+    "$head" "$snapshot" "$branch" "$detail"
 } | cheese-hook >/dev/null 2>&1 || true
 """
 
