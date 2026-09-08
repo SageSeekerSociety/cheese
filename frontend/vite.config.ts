@@ -208,11 +208,8 @@ export default defineConfig({
               // caching them would persist a bearer token on disk and serve
               // another user stale bytes.
               if (url.searchParams.has('token')) return false
-              // Whether a topic has a live pane open right now: a cached answer
-              // is a wrong answer by the time it is read. The running-app iframe
-              // is the same story one step further — it is served live out of
-              // someone's machine, so a cached copy is a screenshot.
-              if (/^\/api\/topics\/[^/]+\/(terminal|app)(\/|$)/.test(url.pathname)) return false
+              // Terminal availability changes with the live connection.
+              if (/^\/api\/topics\/[^/]+\/terminal(\/|$)/.test(url.pathname)) return false
               // SSE streams (agent advice): a NetworkFirst would hang forever
               // waiting to cache a response that never ends.
               if ((request.headers.get('accept') || '').includes('text/event-stream')) return false

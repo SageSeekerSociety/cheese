@@ -13,6 +13,7 @@
 """
 
 import contextlib
+import hashlib
 import logging
 import os
 import re
@@ -21,7 +22,7 @@ import subprocess
 import time
 import uuid
 from collections.abc import Iterator
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from app.core.config import settings
 from app.core.errors import ConflictError, NotFoundError, ValidationError
@@ -917,6 +918,36 @@ def read_file_bytes(
         return target.read_bytes()
     except PermissionError as exc:
         raise WorkspacePermissionError(_uid_split_hint(f"读 {path}: {exc}")) from exc
+
+
+def read_preview_file(
+    project_id: uuid.UUID, topic_id: uuid.UUID, entry: str, relative: str
+) -> bytes:
+    """Read web assets only inside the explicitly selected artifact's directory."""
+    parts = relative.split("/")
+    if not relative or any(
+        not part or part.startswith(".") or "\\" in part or "\x00" in part
+        for part in parts
+    ):
+        raise ValidationError("preview path unavailable")
+    tree = _tree(project_id, topic_id)
+    directory = _safe_path(tree, str(PurePosixPath(entry).parent))
+    target = _safe_path(directory, relative)
+    return read_file_bytes(project_id, str(target.relative_to(tree)), topic_id)
+
+
+def preview_file_version(
+    project_id: uuid.UUID, topic_id: uuid.UUID, entry: str
+) -> str | None:
+    """Track HTML edits without loading a large artifact into the editor API."""
+    target = _safe_path(_tree(project_id, topic_id), entry)
+    try:
+        with target.open("rb") as source:
+            return hashlib.file_digest(source, "sha256").hexdigest()[:16]
+    except OSError:
+        # The metadata still names a missing/unreadable artifact; the file API
+        # supplies its existing detailed error state to the preview panel.
+        return None
 
 
 def accepted_revision(project_id: uuid.UUID) -> str:
