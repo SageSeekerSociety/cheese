@@ -280,6 +280,145 @@ async def test_a_coauthor_without_a_github_account_is_simply_not_credited(monkey
     assert who.coauthors == ()
 
 
+# --- The machines: which 分身 did which piece of work in this delivery (#189) ---
+#
+# A commit's human trailers cannot answer that, and neither can `Co-authored-by:
+# Claude Fable 5`, which every Claude Code commit anywhere carries. The answer is
+# the one the card was FILED with: the room says whose code this is, because the
+# room is the only party that knows, and nothing here guesses when it doesn't.
+
+
+def _task(subagent_id: str | None, title: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=uuid.uuid4(),
+        subagent_id=subagent_id,
+        title=title,
+        owner_handle=None,
+        created_by=None,
+    )
+
+
+def _card(declares, task_id: uuid.UUID | None = None) -> SimpleNamespace:
+    """An accept card as it reaches attribution — `declares` is what the room
+    said this delivery carries, in the column's own form (JSON strings)."""
+    return SimpleNamespace(
+        id=uuid.uuid4(),
+        task_id=task_id,
+        delivered_task_ids=list(declares),
+    )
+
+
+def _rows(monkeypatch, tasks):
+    """Stand in for the task table. `tasks` is every row that exists, or an
+    exception the read raises."""
+    from app.domain.room_task.services import TaskService
+
+    async def _list_by_ids(_self, task_ids):
+        if isinstance(tasks, BaseException):
+            raise tasks
+        wanted = set(task_ids)
+        return [t for t in tasks if t.id in wanted]
+
+    monkeypatch.setattr(TaskService, "list_by_ids", _list_by_ids)
+
+
+@pytest.mark.anyio
+async def test_the_delivery_names_the_work_the_card_declared(monkeypatch):
+    mine = _task("ac2c038d44616a2f2", "补 trailer")
+    theirs = _task("9f1b7c22e0d341a80", "修 flaky")
+    _rows(monkeypatch, [mine, theirs])
+    _roster_owner(monkeypatch, "alice")
+    _connected(monkeypatch, {"alice": ("583231", "alice")})
+
+    who = await identity.attribution(
+        None, _topic("alice"), card=_card([str(mine.id), str(theirs.id)])
+    )
+    assert who.tasks == (
+        identity.WorkItem(mine.id, "ac2c038d44616a2f2", "补 trailer"),
+        identity.WorkItem(theirs.id, "9f1b7c22e0d341a80", "修 flaky"),
+    )
+
+
+@pytest.mark.anyio
+async def test_work_the_card_did_not_declare_is_not_named(monkeypatch):
+    """The room has other threads — one that wrote nothing, one still running —
+    and neither wrote this change. Only what was declared may be signed on."""
+    mine = _task("ac2c038d44616a2f2", "补 trailer")
+    placeholder = _task(None, "占位")
+    running = _task("9f1b7c22e0d341a80", "还在跑")
+    _rows(monkeypatch, [mine, placeholder, running])
+    _roster_owner(monkeypatch, "alice")
+    _connected(monkeypatch, {"alice": ("583231", "alice")})
+
+    who = await identity.attribution(None, _topic("alice"), card=_card([str(mine.id)]))
+    assert [item.task_id for item in who.tasks] == [mine.id]
+
+
+@pytest.mark.anyio
+async def test_a_card_that_declared_nothing_names_nobody(monkeypatch):
+    """诚实的空白, and no fallback. Work exists in this room and some of it may
+    even be in this change — but nothing here can tell which, and a plausible
+    wrong name in permanent history is worse than no name, because an audit
+    believes it."""
+    _rows(monkeypatch, [_task("ac2c038d44616a2f2", "补 trailer")])
+    _roster_owner(monkeypatch, "alice")
+    _connected(monkeypatch, {"alice": ("583231", "alice")})
+
+    empty = await identity.attribution(None, _topic("alice"), card=_card([]))
+    assert empty.tasks == ()
+    assert (await identity.attribution(None, _topic("alice"))).tasks == ()
+
+
+@pytest.mark.anyio
+async def test_work_nobody_was_bound_to_keeps_its_place_in_the_batch(monkeypatch):
+    """`subagent_id` is NULL until a worker is bound, and a room can write a
+    change itself. Dropping the row would make the batch in the commit smaller
+    than the batch the room declared."""
+    mine = _task(None, "人自己动手改的")
+    _rows(monkeypatch, [mine])
+    _roster_owner(monkeypatch, "alice")
+    _connected(monkeypatch, {"alice": ("583231", "alice")})
+
+    who = await identity.attribution(None, _topic("alice"), card=_card([str(mine.id)]))
+    assert who.tasks == (identity.WorkItem(mine.id, None, "人自己动手改的"),)
+
+
+@pytest.mark.anyio
+async def test_a_declared_id_whose_row_is_gone_costs_only_its_own_line(monkeypatch):
+    """The declaration is a list of ids, not a foreign key, so it can outlive
+    what it names. The rest of the batch still gets its credit."""
+    mine = _task("ac2c038d44616a2f2", "补 trailer")
+    _rows(monkeypatch, [mine])
+    _roster_owner(monkeypatch, "alice")
+    _connected(monkeypatch, {"alice": ("583231", "alice")})
+
+    who = await identity.attribution(
+        None,
+        _topic("alice"),
+        card=_card([str(mine.id), str(uuid.uuid4()), "not-a-uuid"]),
+    )
+    assert [item.task_id for item in who.tasks] == [mine.id]
+
+
+@pytest.mark.anyio
+async def test_unreadable_work_costs_the_trailers_and_nothing_else(monkeypatch):
+    """Same rule as every other part of attribution: a trailer is not worth
+    failing a merge, and one broken lookup must not take the rest with it — the
+    person who asked still gets their credit."""
+    _rows(monkeypatch, RuntimeError("tasks unreadable"))
+    _roster_owner(monkeypatch, "alice")
+    _connected(monkeypatch, {"alice": ("583231", "alice")})
+
+    who = await identity.attribution(
+        None, _topic("alice"), card=_card([str(uuid.uuid4())])
+    )
+    assert who.tasks == ()
+    assert who.handle == "alice"
+    assert who.author == identity.GitIdentity(
+        "alice", "583231+alice@users.noreply.github.com"
+    )
+
+
 def test_session_sidecars_share_one_base_directory(tmp_path, monkeypatch):
     """The identity file sits beside the hook spool; two definitions of "this
     topic's session dir" is how they drift apart."""

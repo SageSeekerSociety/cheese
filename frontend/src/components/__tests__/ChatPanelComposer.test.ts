@@ -35,6 +35,8 @@ vi.mock('../../api', async () => {
     }),
     chatWsUrl: () => 'ws://test/ws',
     attachmentRawUrl: () => '',
+    uploadAttachment: vi.fn(),
+    downloadFile: vi.fn(),
   }
 })
 
@@ -140,6 +142,56 @@ describe('对话栏自己的输入栏', () => {
     await flush()
     expect(queryByRole('button', { name: '起草文档' })).toBeNull()
   })
+
+  it('previews a document and sends its uploaded path', async () => {
+    const api = await import('../../api')
+    vi.mocked(api.uploadAttachment).mockResolvedValue({
+      path: 'uploads/id/需求 文档.pdf',
+      mime: 'application/pdf',
+    })
+    const { container } = mountPanel({}, 'topic-files')
+    await flush()
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!
+    expect(input.accept).toBe('')
+    const file = new File(['%PDF'], '需求 文档.pdf', { type: 'application/pdf' })
+    await fireEvent.change(input, { target: { files: [file] } })
+    await flush()
+    expect(container.querySelector('.att-strip')?.textContent).toContain('需求 文档.pdf')
+    expect(container.querySelector('.att-strip img')).toBeNull()
+    await fireEvent.click(container.querySelector('[title="发送"]')!)
+    await flush()
+    expect(JSON.parse(sent[0].payload).attachments).toEqual([
+      { path: 'uploads/id/需求 文档.pdf', mime: 'application/pdf' },
+    ])
+  })
+
+  it('renders a received document with a download action', async () => {
+    const api = await import('../../api')
+    vi.mocked(api.listBlocks).mockResolvedValueOnce({
+      data: [
+        {
+          id: 'doc-1',
+          topic_id: 'topic-download',
+          kind: 'attachment',
+          content: 'uploads/id/report.docx',
+          mime_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          author: 'alice',
+          author_type: 'human',
+          created_at: '2026-09-07T12:00:00Z',
+        } as never,
+      ],
+      total: 1,
+      has_more: false,
+      oldest_id: 'doc-1',
+    })
+    const { container } = mountPanel({}, 'topic-download')
+    await flush()
+    const download = container.querySelector('[title="下载 report.docx"]')
+    expect(download).toBeTruthy()
+    await fireEvent.click(download!)
+    expect(api.downloadFile).toHaveBeenCalledWith('', 'report.docx')
+  })
+
   it('输入栏就在对话栏里，不再横跨到工作面板底下', async () => {
     const { container } = mountPanel()
     await flush()

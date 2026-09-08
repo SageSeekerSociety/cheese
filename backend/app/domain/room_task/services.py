@@ -27,6 +27,8 @@ class WorkTreeService:
     def __init__(self, session: AsyncSession):
         self._session = session
         self._repo = WorkTreeRepository(session)
+        #: Did the last :meth:`ensure_open` start a new batch? See its docstring.
+        self.started_a_batch = False
 
     async def get(self, tree_id: uuid.UUID) -> WorkTree | None:
         return await self._repo.get(tree_id)
@@ -50,10 +52,18 @@ class WorkTreeService:
         worktree directory, container workdir and tmux session are
         byte-for-byte the names they already had (migration `b8e2f4a90d33`).
         Later trees get fresh ids, and therefore fresh branches.
+
+        ``started_a_batch`` on the way out says whether this call CREATED the
+        tree. It exists because starting a batch lands in two places that
+        cannot roll back together — this row, and the marker `bind_tree`
+        writes below — so a caller that might raise afterwards has to know it
+        is now holding a fact the disk already believes, and make it durable
+        (:meth:`AcceptService.create_card` is the one that does).
         """
         from app.domain.workspace import service as ws
 
         current = await self._repo.open_tree_for_room(room_id)
+        self.started_a_batch = current is None
         if current is None:
             first = not await self._repo.list_for_room(room_id)
             current = await self._repo.add(
@@ -102,6 +112,27 @@ class TaskService:
 
     async def get(self, task_id: uuid.UUID) -> Task | None:
         return await self._repo.get(task_id)
+
+    async def list_in_room(self, room_id: uuid.UUID) -> list[Task]:
+        """Every piece of work this room has dispatched, oldest first.
+
+        The rows only — `threads_for_room` is the same set with each thread's
+        conversation attached, and a caller that wants to know *which work
+        exists* should not pay for every block ever written in the room to find
+        out.
+        """
+        return await self._repo.list_for_room(room_id)
+
+    async def list_by_ids(self, task_ids: list[uuid.UUID]) -> list[Task]:
+        """These rows, oldest first, silently skipping ids that name nothing.
+
+        Ordered by the table and not by the argument, so that a set of ids
+        always renders in one fixed order however it was assembled — the caller
+        is `Cheese-Task:`, and trailer order that depended on the order someone
+        typed `--task` would make two identical declarations produce two
+        different commit messages.
+        """
+        return await self._repo.list_by_ids(task_ids)
 
     async def mark_transcripts_archived(self, task_id: uuid.UUID, at: datetime) -> bool:
         """Stamp the thread with when its device home's transcripts reached

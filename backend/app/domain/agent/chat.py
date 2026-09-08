@@ -1114,7 +1114,11 @@ def _strip_platform_notice(text: str) -> str:
     return text.replace(PLATFORM_NOTICE, "【平台·用户原文】")
 
 
-def _attachment_prompt_line(author: str, path: str, *, embeds_images: bool) -> str:
+def _attachment_prompt_line(
+    author: str, path: str, *, embeds_images: bool, mime: str = "image/png"
+) -> str:
+    if not mime.startswith("image/"):
+        return f"[{author}] 发来一个文件：{path}。请用适合该格式的工具读取文件内容。"
     if embeds_images:
         return (
             f"[{author}] 发来一张图片（图片内容已附在本条消息里；"
@@ -1146,7 +1150,9 @@ def _prompt_line(b, *, embeds_images: bool) -> str:
     invented. Saying "去打开这个文件" fails safe: worst case it reports it could
     not read the path."""
     if b.kind == BlockKind.attachment:
-        return _attachment_prompt_line(b.author, b.content, embeds_images=embeds_images)
+        return _attachment_prompt_line(
+            b.author, b.content, embeds_images=embeds_images, mime=b.mime_type or ""
+        )
     return f"[{b.author}]: {_strip_platform_notice(b.content)}"
 
 
@@ -1571,7 +1577,9 @@ class ChatService:
             if attachment.get("path")
         ]
         lines.extend(
-            _attachment_prompt_line(author, image["path"], embeds_images=True)
+            _attachment_prompt_line(
+                author, image["path"], embeds_images=True, mime=image["media_type"]
+            )
             for image in images
         )
         line = "\n".join(lines)

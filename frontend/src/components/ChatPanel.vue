@@ -60,6 +60,7 @@ import {
   answerOptions,
   attachmentRawUrl,
   chatWsUrl,
+  downloadFile,
   getProgress,
   listBlocks,
   listRoomTasks,
@@ -816,7 +817,7 @@ function showReplyCue(m: Block): boolean {
   return m.author_type === 'human' && !!parentOf(m)
 }
 function replySnippet(m: Block): string {
-  if (m.kind === 'attachment') return '[图片]'
+  if (m.kind === 'attachment') return isImageBlock(m) ? '[图片]' : '[文件]'
   const t = m.content.replace(/\s+/g, ' ').trim()
   return t.length > 24 ? t.slice(0, 24) + '…' : t
 }
@@ -827,6 +828,13 @@ function isImageBlock(m: Block): boolean {
 }
 function imageUrl(m: Block): string {
   return props.topic ? attachmentRawUrl(props.topic.id, m.content) : ''
+}
+async function downloadAttachment(m: Block) {
+  try {
+    await downloadFile(imageUrl(m), m.content.split('/').pop() || 'file')
+  } catch (e) {
+    errorMsg.value = e instanceof Error ? e.message : '下载失败'
+  }
 }
 function scrollToMessage(id: string) {
   document.querySelector(`[data-mid="${id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -1241,6 +1249,7 @@ function mentionsAgent(expanded: string): boolean {
 }
 
 function sendDraft() {
+  if (attsUploading.value) return
   const content = expandMentions(draft.value)
   if (send(content, props.alwaysSummon || mentionsAgent(content), pendingAtts.value.slice())) {
     draft.value = ''
@@ -1629,6 +1638,17 @@ onBeforeUnmount(() => {
                 <a v-if="isImageBlock(m)" class="im-image-link" :href="imageUrl(m)" target="_blank" rel="noopener">
                   <img class="im-image" :src="imageUrl(m)" :alt="m.content" loading="lazy" />
                 </a>
+                <v-btn
+                  v-else-if="m.kind === 'attachment'"
+                  variant="text"
+                  prepend-icon="mdi-file-document-outline"
+                  append-icon="mdi-download-outline"
+                  class="text-none im-file-link"
+                  :title="`下载 ${m.content.split('/').pop()}`"
+                  @click="downloadAttachment(m)"
+                >
+                  <span class="text-truncate">{{ m.content.split('/').pop() }}</span>
+                </v-btn>
                 <div v-else-if="m.author_type === 'ai'" class="im-text md-content" v-html="renderMarkdown(m.content)" />
                 <!-- 现场尊重原文: human text renders verbatim — newlines and
                    spacing preserved (pre-wrap), no markdown reflow. -->
@@ -1849,7 +1869,16 @@ onBeforeUnmount(() => {
             <!-- 图片输入: images waiting to go with the next send. -->
             <div v-if="pendingAtts.length || attsUploading" class="att-strip">
               <div v-for="(a, i) in pendingAtts" :key="a.path" class="att-thumb">
-                <img :src="attachmentRawUrl(topic.id, a.path)" :alt="a.path" />
+                <img v-if="a.mime.startsWith('image/')" :src="attachmentRawUrl(topic.id, a.path)" :alt="a.path" />
+                <v-chip
+                  v-else
+                  variant="tonal"
+                  class="pe-6"
+                  prepend-icon="mdi-file-document-outline"
+                  :title="a.path.split('/').pop()"
+                >
+                  <span class="text-truncate">{{ a.path.split('/').pop() }}</span>
+                </v-chip>
                 <button type="button" class="att-remove" title="移除" @click="removePendingAtt(i)">
                   <v-icon size="12">mdi-close</v-icon>
                 </button>
@@ -1878,23 +1907,16 @@ onBeforeUnmount(() => {
             <!-- 下面一行：动作靠左，发送靠右。发送是这一行唯一的主操作，所以它是
                唯一的实心按钮，其余一律是安静的图标。 -->
             <div class="composer-actions d-flex align-center ga-1">
-              <input
-                ref="fileInput"
-                type="file"
-                accept="image/png,image/jpeg,image/gif,image/webp"
-                multiple
-                class="d-none"
-                @change="onFilePicked"
-              />
+              <input ref="fileInput" type="file" multiple class="d-none" @change="onFilePicked" />
               <!-- 附件上传走的是 HTTP，和聊天那条 socket 是两回事：socket 断着的
                  时候图片照样传得上去，所以这里不跟着 `connected` 一起禁用。 -->
               <v-btn
                 class="composer-icon"
-                icon="mdi-image-plus-outline"
+                icon="mdi-paperclip"
                 variant="text"
                 size="small"
                 color="medium-emphasis"
-                title="发送图片"
+                title="上传文件或图片（每个文件最大 10MB）"
                 @click="pickFiles"
               />
               <v-spacer />
@@ -1910,7 +1932,7 @@ onBeforeUnmount(() => {
                 icon="mdi-send"
                 size="small"
                 title="发送"
-                :disabled="!draft.trim() && !pendingAtts.length"
+                :disabled="attsUploading || (!draft.trim() && !pendingAtts.length)"
                 @click="sendDraft"
               />
             </div>
@@ -2419,7 +2441,15 @@ details.sys-row > summary::-webkit-details-marker {
   background: var(--fill);
   object-fit: contain;
 }
-/* Pending images above the composer, each with a remove button. */
+.im-file-link,
+.att-thumb,
+.att-thumb .v-chip {
+  max-width: 100%;
+}
+.im-file-link :deep(.v-btn__content) {
+  min-width: 0;
+}
+/* Pending attachments, each with a remove button. */
 .att-strip {
   display: flex;
   align-items: center;
@@ -2430,6 +2460,9 @@ details.sys-row > summary::-webkit-details-marker {
 .att-thumb {
   position: relative;
   line-height: 0;
+}
+.att-thumb .v-chip {
+  line-height: normal;
 }
 .att-thumb img {
   width: 56px;

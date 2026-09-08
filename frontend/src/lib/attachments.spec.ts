@@ -1,7 +1,4 @@
-// 拖一个 PDF 进输入栏，过去是：没上传、没报错、没有任何提示——文件就是消失了。
-// 只收图片这条限制本身不是 bug（后端的 raw 读取按扩展名白名单，是有意的），
-// 不出声才是（issue #450：no silent degradation）。
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { usePendingAttachments } from './attachments'
 
@@ -9,39 +6,92 @@ function file(name: string, type: string): File {
   return new File(['x'], name, { type })
 }
 
-describe('把文件交给输入栏', () => {
-  it('不认识的类型会说出来，而不是静默丢掉', async () => {
+beforeEach(() => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (_url, options) => {
+      const uploaded = options.body.get('file') as File
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          code: 200,
+          data: { path: `uploads/id/${uploaded.name}`, mime: uploaded.type },
+        }),
+      }
+    })
+  )
+})
+afterEach(() => vi.unstubAllGlobals())
+
+describe('chat attachments', () => {
+  it('does not attach an upload to a different topic after navigation', async () => {
+    let topic = 'first'
+    let finish!: (value: unknown) => void
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve
+          })
+      )
+    )
+    const { addFiles, pending } = usePendingAttachments(() => topic)
+    const uploading = addFiles([file('paper.pdf', 'application/pdf')])
+    topic = 'second'
+    finish({
+      ok: true,
+      json: async () => ({ code: 200, data: { path: 'uploads/paper.pdf', mime: 'application/pdf' } }),
+    })
+    await uploading
+    expect(pending.value).toHaveLength(0)
+  })
+
+  it('uploads a PDF with its filename', async () => {
     const onError = vi.fn()
     const { addFiles, pending } = usePendingAttachments(() => 't1', onError)
 
     await addFiles([file('paper.pdf', 'application/pdf')])
 
-    expect(onError).toHaveBeenCalledTimes(1)
-    expect(onError.mock.calls[0][0]).toContain('图片')
-    expect(pending.value).toHaveLength(0)
+    expect(onError).not.toHaveBeenCalled()
+    expect(pending.value).toEqual([{ path: 'uploads/id/paper.pdf', mime: 'application/pdf' }])
   })
 
-  it('图片和别的混在一起：图片照传，被挡下的那些也要说一声', async () => {
+  it('uploads images and documents together', async () => {
     const onError = vi.fn()
-    const uploaded: string[] = []
-    vi.stubGlobal('fetch', async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({ code: 200, data: { path: 'uploads/img-1.png', mime: 'image/png' } }),
-    }))
     const { addFiles, pending } = usePendingAttachments(() => 't1', onError)
 
     await addFiles([file('a.png', 'image/png'), file('b.csv', 'text/csv')])
 
-    expect(onError).toHaveBeenCalledTimes(1)
-    expect(pending.value.length + uploaded.length).toBeGreaterThan(0)
+    expect(onError).not.toHaveBeenCalled()
+    expect(pending.value.map((a) => a.path)).toEqual(['uploads/id/a.png', 'uploads/id/b.csv'])
   })
 
-  it('没有话题就什么都不做——附件是传进某个话题的工作区的', async () => {
+  it('does not upload without a topic', async () => {
     const onError = vi.fn()
     const { addFiles, pending } = usePendingAttachments(() => null, onError)
     await addFiles([file('paper.pdf', 'application/pdf')])
     expect(onError).not.toHaveBeenCalled()
     expect(pending.value).toHaveLength(0)
+  })
+
+  it('reports the count limit', async () => {
+    const onError = vi.fn()
+    const { addFiles, pending } = usePendingAttachments(() => 't1', onError)
+    await addFiles(Array.from({ length: 10 }, (_, i) => file(`${i}.txt`, 'text/plain')))
+    expect(pending.value).toHaveLength(9)
+    expect(onError).toHaveBeenCalledWith('每条消息最多添加 9 个附件')
+  })
+
+  it('reports an oversized file and uploads the next one', async () => {
+    const onError = vi.fn()
+    const large = file('large.pdf', 'application/pdf')
+    Object.defineProperty(large, 'size', { value: 10 * 1024 * 1024 + 1 })
+    const { addFiles, pending } = usePendingAttachments(() => 't1', onError)
+    await addFiles([large, file('small.pdf', 'application/pdf')])
+    expect(onError).toHaveBeenCalledWith('large.pdf 超过 10MB，无法上传')
+    expect(pending.value).toHaveLength(1)
+    expect(pending.value[0].path).toContain('small.pdf')
   })
 })

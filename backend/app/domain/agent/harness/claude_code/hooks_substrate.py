@@ -26,6 +26,7 @@ import logging
 import uuid
 import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -311,6 +312,13 @@ class TopicSubscription:
     current_work: WorkAttribution | None = None
     activity: SessionActivity | None = None
     consumer_task: asyncio.Task[None] | None = None
+    # Held by `consumer_task` for as long as it is inside ONE hook. Closing a
+    # topic stops that task by cancelling it, and consuming a hook is a write —
+    # so without this, close lands wherever the consumer happened to be and
+    # tears a half-finished turn off its database connection. Whoever wants the
+    # consumer stopped takes this first, which can only be granted between
+    # hooks.
+    consuming: asyncio.Lock = field(default_factory=asyncio.Lock)
     ready: asyncio.Event = field(default_factory=asyncio.Event)
     # Crash-recovery replay bookkeeping, set up by ChatService before the
     # consumer starts. `replay_queue` is the spool's unread tail in order, and
@@ -326,6 +334,26 @@ class TopicSubscription:
     # assembled) has to survive across works, or a flush redelivered after
     # its turn ended would land again as a fragment.
     assembler: MessageAssembler = field(default_factory=MessageAssembler)
+
+
+@asynccontextmanager
+async def _consumer_between_hooks(
+    subscription: TopicSubscription,
+) -> AsyncIterator[None]:
+    """Hold the subscription still at a boundary between two hooks.
+
+    Waits out whatever hook the consumer is inside, then keeps it out of the
+    next one — which is the only state in which taking the consumer away costs
+    nothing, because a hook half-consumed is a turn half-written.
+
+    Skipped when the caller IS that consumer: it holds the lock already, so
+    taking it again would be waiting for itself.
+    """
+    if subscription.consumer_task is asyncio.current_task():
+        yield
+        return
+    async with subscription.consuming:
+        yield
 
 
 def _advance_replay_cursor(subscription: TopicSubscription) -> None:
@@ -661,8 +689,8 @@ def _prompt_with_native_images(
     if lost:
         named = "、".join(lost)
         parts.append(
-            f"【平台】本轮有 {len(lost)} 张图片没能送到这台机器上（{named}），"
-            "你手上没有它们的内容。回复时直说没收到图，不要猜图里是什么。"
+            f"【平台】本轮有 {len(lost)} 个附件没能送到这台机器上（{named}），"
+            "你手上没有它们的内容。回复时直说没收到附件，不要猜测文件内容。"
         )
     return "\n\n".join(parts)
 
@@ -1326,16 +1354,22 @@ class ClaudeCodeRuntime:
         if subscription is None:
             return
         subscription.current_work = None
-        if subscription.activity is not None:
-            await self._end_session_activity(subscription, subscription.activity)
-        self._router.unsubscribe(str(topic_id), subscription.sink)
-        task = subscription.consumer_task
-        if task is not None:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+        # Everything below stops the consumer, so it waits for a moment where
+        # stopping it costs nothing. `subscription.activity` cannot stand in for
+        # that moment: `_end_session_activity` clears it BEFORE it reports the
+        # end, so a close reading None may still be looking at a turn whose
+        # books are open — and cancelling then leaves them open forever.
+        async with _consumer_between_hooks(subscription):
+            if subscription.activity is not None:
+                await self._end_session_activity(subscription, subscription.activity)
+            self._router.unsubscribe(str(topic_id), subscription.sink)
+            task = subscription.consumer_task
+            if task is not None and task is not asyncio.current_task():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
     async def drop_screen_subscription(self, screen: object) -> None:
         """Drop topics whose live transport handle is this dead screen."""
@@ -1391,7 +1425,14 @@ class ClaudeCodeRuntime:
         await subscription.ready.wait()
         while True:
             hook = await subscription.sink.queue.get()
+            holding = False
             try:
+                # One hook is one unit of work, and it writes: the turn's
+                # blocks, its accounting, the report that it ended. Holding this
+                # for the whole of it is what confines `_close_topic`'s cancel
+                # to the gaps between hooks — see `_consumer_between_hooks`.
+                await subscription.consuming.acquire()
+                holding = True
                 self._observe_delivery_hook(subscription.topic_id, hook)
                 attribution = subscription.current_work
                 if attribution is None:
@@ -1526,6 +1567,8 @@ class ClaudeCodeRuntime:
                     if activity is not None:
                         await self._end_session_activity(subscription, activity)
             finally:
+                if holding:
+                    subscription.consuming.release()
                 subscription.sink.queue.task_done()
 
     async def _begin_session_activity(
