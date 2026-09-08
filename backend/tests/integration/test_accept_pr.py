@@ -2581,7 +2581,8 @@ def test_a_long_lived_screen_stops_pushing_onto_the_batch_it_already_delivered(
         "CHEESE_TOPIC": tid,
         "CHEESE_TOKEN": token,
         "CHEESE_GIT_REMOTE": f"http://{host}:{port}/projects/{pid}/git",
-        "CHEESE_GIT_BRANCH": first_branch,  # 上一批的分支，冻在这里
+        "CHEESE_BRANCH_URL": (f"http://{host}:{port}/projects/{pid}/git/branch/{tid}"),
+        "CHEESE_GIT_BRANCH": first_branch,  # 上一批的分支，冻在这里；脚本不许用它
     }
 
     def _turn_ends(what: str) -> None:

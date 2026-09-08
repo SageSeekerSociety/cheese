@@ -637,22 +637,31 @@ cd "$CHEESE_WORK" || exit 0
 # Which branch this place writes to RIGHT NOW, asked rather than remembered.
 # The screen's environment is fixed when it starts, so `CHEESE_GIT_BRANCH` names
 # whichever batch was open then — and a room that delivers moves to a new batch
-# on a new branch while the same screen keeps running. Trusting the env var made
+# on a new branch while the same screen keeps running. Trusting that env var made
 # every later turn push onto a branch that had already been squashed into main:
 # `git push` succeeds, the hook reports ok, and the work is on a branch main can
-# never reach. The env var stays as the fallback, for the case where the platform
-# cannot be reached at all — pushing to the last known branch beats not pushing.
-branch="${CHEESE_GIT_BRANCH:-main}"
-if [ -n "${CHEESE_GIT_REMOTE:-}" ] && [ -n "${CHEESE_TOPIC:-}" ]; then
-  now="$(curl -fsS --max-time 10 -H "X-Cheese-Token: $CHEESE_TOKEN" \
-    "$CHEESE_GIT_REMOTE/branch/$CHEESE_TOPIC" 2>/dev/null \
+# never reach.
+#
+# So there is NO fallback to it. "I could not find out which batch this is" and
+# "it is still the batch this screen started on" are different facts, and using
+# the second for the first is precisely the mis-delivery being removed here —
+# with a green report on top of it. Unknown is reported as a failure; the
+# snapshot ref below is written either way, so nothing the agent wrote is lost.
+branch=""
+if [ -n "${CHEESE_BRANCH_URL:-}" ]; then
+  branch="$(curl -fsS --max-time 10 -H "X-Cheese-Token: ${CHEESE_TOKEN:-}" \
+    "$CHEESE_BRANCH_URL" 2>/dev/null \
     | sed -n 's/.*"branch"[ ]*:[ ]*"\([^"]*\)".*/\1/p')"
-  [ -n "$now" ] && branch="$now"
 fi
 head="$(git rev-parse --verify -q HEAD 2>/dev/null || true)"
 failed=""
 tried=""
-if [ -n "$head" ]; then
+if [ -z "$branch" ]; then
+  # Not knowing is a failure, loudly. The commits stay on the machine and in the
+  # snapshot ref below; what must never happen is a push onto a guess.
+  tried=1
+  failed=1
+elif [ -n "$head" ]; then
   tried=1
   git push -q origin "$head:refs/heads/$branch" >/dev/null 2>&1 || failed=1
 fi
@@ -684,7 +693,11 @@ if [ -n "$tree" ] && [ "$tree" != "$headtree" ]; then
 fi
 if [ -n "$snapshot" ]; then
   tried=1
-  git push -q -f origin "$snapshot:refs/cheese/snapshots/$branch" >/dev/null 2>&1 \
+  # Keyed by the topic when the batch could not be learned: the uncommitted work
+  # has to leave the machine either way, and a ref name is not the place to
+  # guess which branch it belongs to.
+  snapref="${branch:-topic-${CHEESE_TOPIC:-unknown}}"
+  git push -q -f origin "$snapshot:refs/cheese/snapshots/$snapref" >/dev/null 2>&1 \
     || failed=1
 fi
 [ -n "$tried" ] || exit 0
@@ -1432,6 +1445,13 @@ def build_screen_launch(
         # Every device clones and pushes its own independent topic tree.
         env["CHEESE_GIT_REMOTE"] = git_remote
         env["CHEESE_GIT_BRANCH"] = git_branch or "main"
+        if topic_id:
+            # Where `cheese-sync` asks which batch this place is writing to. The
+            # ADDRESS is fixed at launch and that is fine — it names the place,
+            # which does not change; the branch it answers with is the thing that
+            # does, which is exactly why `CHEESE_GIT_BRANCH` cannot be trusted
+            # after the room delivers once.
+            env["CHEESE_BRANCH_URL"] = f"{git_remote}/branch/{topic_id}"
     if git_author:
         # Who the turn's commits belong to (workspace/identity.py). Absent, the
         # launcher falls back to 芝士 — the same default the in-repo snapshot

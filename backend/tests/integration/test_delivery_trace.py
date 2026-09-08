@@ -410,7 +410,8 @@ def test_git_itself_parses_the_trailers_on_the_commit_that_landed(client):
     一个 trailer 块在空行处结束，而 `git interpret-trailers --parse` 只读最后
     一块。所以整套 trailer 之间只要有一个空行，上半截就整个消失 —— 消息里看着
     还在，`git log --format='%(trailers)'` 里没有，任何按 trailer 做的审计都查
-    不到。真实的 `1c298199a` 就是这么丢掉一半的。
+    不到。只有带共同作者的改动才踩得到（没有共同作者就不会插那个空行），所以它
+    躲过了历史上每一次交付，也躲过了每一个用「这行字面量在不在」写的断言。
     """
     pid = _project(client)
     room = _room(client, pid)

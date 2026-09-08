@@ -54,22 +54,30 @@ def _workspace(root: Path) -> tuple[Path, str]:
 
 
 def _run(work: Path, remote: str, hook_log: Path) -> subprocess.CompletedProcess:
+    from tests.unit.test_device_sync_reports_failure import _branch_server
+
     bindir = work.parent / "bin"
     bindir.mkdir(exist_ok=True)
     (bindir / "cheese-hook").write_text(f'#!/bin/sh\ncat >> "{hook_log}"\n')
     (bindir / "cheese-hook").chmod(0o755)
     sync = work.parent / "cheese-sync"
     sync.write_text(_sync_body())
+    # 脚本现在在推之前先问平台「这批活写哪条分支」，所以这里得有人回答它。
+    server = _branch_server("topic/abc")
+    host, port = server.server_address[:2]
     env = {
         **os.environ,
         "PATH": f"{bindir}:{os.environ['PATH']}",
         "CHEESE_GIT_REMOTE": remote,
-        "CHEESE_GIT_BRANCH": "topic/abc",
+        "CHEESE_BRANCH_URL": f"http://{host}:{port}/branch",
         "CHEESE_WORK": str(work),
     }
-    return subprocess.run(
-        ["sh", str(sync)], env=env, capture_output=True, text=True, timeout=120
-    )
+    try:
+        return subprocess.run(
+            ["sh", str(sync)], env=env, capture_output=True, text=True, timeout=120
+        )
+    finally:
+        server.shutdown()
 
 
 def _remote_ref(remote: str, ref: str) -> str:

@@ -185,7 +185,15 @@ async def branch_for_place(
     from app.domain.room_task.place import PlaceResolver
 
     place = await PlaceResolver(db).resolve(topic_id)
-    if place is None or place.branch_name is None:
+    # The token proves a claim on the project in the URL, and NOTHING about the
+    # topic: a place id is resolved globally, so without this line a device
+    # holding one project's credential could name any other project's room and
+    # be told which branch it is writing to. Same answer for "no such topic" and
+    # "somebody else's topic" — which of the two it is, is exactly what a caller
+    # probing ids wants told.
+    if place is None or place.project_id != project_id:
+        raise NotFoundError("这个项目里没有这个地点")
+    if place.branch_name is None:
         raise NotFoundError("这个地点现在没有可写的分支")
     return ok({"branch": place.branch_name, "tree_id": str(place.tree_id)})
 

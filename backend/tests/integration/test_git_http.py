@@ -133,3 +133,58 @@ def test_a_push_still_lands_after_the_worktree_directory_is_deleted(client):
         check=True,
     ).stdout
     assert "delivered.txt" in listed
+
+
+# --- 「这批活现在写哪条分支」---------------------------------------------
+
+
+def _branch_url(project_id, topic_id) -> str:
+    return f"/projects/{project_id}/git/branch/{topic_id}"
+
+
+def test_a_devices_token_cannot_ask_about_another_projects_room(client):
+    """凭据证明的是「我在这个项目里」，而地点 id 是全局解析的。
+
+    少了这道一致性校验，拿 A 项目的 token 带上 B 项目某个房间的 id，就能问出
+    B 在写哪条分支 —— 一个项目的凭据换来了另一个项目的信息。
+    """
+    from app.core.sandbox_auth import mint_scoped_token
+    from tests.integration.conftest import session_auth_headers
+
+    client.headers.update(session_auth_headers("alice"))
+    mine = client.post("/projects", json={"name": "A"}).json()["data"]["id"]
+    theirs = client.post("/projects", json={"name": "B"}).json()["data"]["id"]
+    room = client.post(
+        "/topics", json={"project_id": theirs, "title": "别人的房间"}
+    ).json()["data"]["id"]
+    assert client.post(f"/topics/{room}/split", json={"title": "活"}).status_code == 200
+
+    r = client.get(
+        _branch_url(mine, room),
+        headers={"X-Cheese-Token": mint_scoped_token(project_id=mine)},
+    )
+
+    assert r.status_code == 404, r.text
+    assert "topic/" not in r.text
+
+
+def test_the_branch_is_only_told_to_a_token_for_that_project(client):
+    from app.core.sandbox_auth import mint_scoped_token
+    from tests.integration.conftest import session_auth_headers
+
+    client.headers.update(session_auth_headers("alice"))
+    pid = client.post("/projects", json={"name": "A"}).json()["data"]["id"]
+    room = client.post("/topics", json={"project_id": pid, "title": "房间"}).json()[
+        "data"
+    ]["id"]
+    assert client.post(f"/topics/{room}/split", json={"title": "活"}).status_code == 200
+
+    without = client.get(_branch_url(pid, room))
+    assert without.status_code == 401, without.text
+
+    with_token = client.get(
+        _branch_url(pid, room),
+        headers={"X-Cheese-Token": mint_scoped_token(project_id=pid)},
+    )
+    assert with_token.status_code == 200, with_token.text
+    assert with_token.json()["data"]["branch"].startswith("topic/")

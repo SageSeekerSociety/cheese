@@ -23,7 +23,45 @@ def _sync_body() -> str:
     return script.split("'SYNC'")[1].split("SYNC")[0]
 
 
-def _run(work: Path, remote: str, hook_log: Path) -> subprocess.CompletedProcess:
+def _branch_server(answer: str | None):
+    """The platform answering「这批活现在写哪条分支」over a real socket.
+
+    The script asks at push time rather than trusting the branch its screen
+    started with, so a test of the script has to answer that question — and
+    `answer=None` is the case that matters most: not knowing must not silently
+    become "the branch this screen started on".
+    """
+    import json
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802 — BaseHTTPRequestHandler's own spelling
+            if answer is None:
+                self.send_response(404)
+                self.end_headers()
+                return
+            body = json.dumps({"branch": answer}).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+def _run(
+    work: Path,
+    remote: str,
+    hook_log: Path,
+    *,
+    branch: str | None = "topic/abc",
+) -> subprocess.CompletedProcess:
     """Run the real generated script with cheese-hook stubbed to a log."""
     bindir = work.parent / "bin"
     bindir.mkdir(exist_ok=True)
@@ -31,16 +69,24 @@ def _run(work: Path, remote: str, hook_log: Path) -> subprocess.CompletedProcess
     (bindir / "cheese-hook").chmod(0o755)
     sync = work.parent / "cheese-sync"
     sync.write_text(_sync_body())
+    server = _branch_server(branch)
+    host, port = server.server_address[:2]
     env = {
         **os.environ,
         "PATH": f"{bindir}:{os.environ['PATH']}",
         "CHEESE_GIT_REMOTE": remote,
-        "CHEESE_GIT_BRANCH": "topic/abc",
+        # 冻在启动那一刻的那个值。脚本**不许**用它。
+        "CHEESE_GIT_BRANCH": "topic/stale",
+        "CHEESE_BRANCH_URL": f"http://{host}:{port}/branch",
+        "CHEESE_TOPIC": "a-place",
         "CHEESE_WORK": str(work),
     }
-    return subprocess.run(
-        ["sh", str(sync)], env=env, capture_output=True, text=True, timeout=60
-    )
+    try:
+        return subprocess.run(
+            ["sh", str(sync)], env=env, capture_output=True, text=True, timeout=60
+        )
+    finally:
+        server.shutdown()
 
 
 def _repo_with_one_edit(work: Path, remote: str) -> None:
@@ -132,3 +178,38 @@ def test_a_successful_sync_stays_quiet():
         )
         is None
     )
+
+
+def test_a_branch_it_could_not_learn_is_reported_rather_than_guessed():
+    """问不到「现在写哪条分支」时，不许退回启动那一刻冻住的那个值。
+
+    那个值正是这条改动要消灭的东西：房间交付之后它指的是一条已经被 squash 进
+    main 的分支，往它上面推，push 成功、钩子报 ok、代码谁也够不着。「不知道」和
+    「还是老那条」是两件事，把后者当前者用，就是给一次错投盖上绿章。
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        remote = root / "remote.git"
+        subprocess.run(
+            ["git", "init", "-q", "--bare", str(remote)], capture_output=True
+        )
+        work = root / "work"
+        work.mkdir()
+        hook_log = root / "hook.log"
+        _repo_with_one_edit(work, str(remote))
+
+        result = _run(work, str(remote), hook_log, branch=None)
+
+        assert result.returncode == 0, "a Stop hook must never take the turn down"
+        reported = hook_log.read_text()
+        assert '"status":"failed"' in reported, reported
+        assert "topic/stale" not in reported, reported
+        # 那条冻住的分支一个字节都没收到。
+        refs = subprocess.run(
+            ["git", "-C", str(remote), "for-each-ref", "--format=%(refname)"],
+            capture_output=True,
+            text=True,
+        ).stdout
+        assert "refs/heads/topic/stale" not in refs, refs
+        # 但工作没有丢：未提交的东西照样进了快照 ref。
+        assert "refs/cheese/snapshots/" in refs, refs
