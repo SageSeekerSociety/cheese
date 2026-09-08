@@ -107,6 +107,8 @@ class Topic(UuidPk, Timestamps, Base):
     # until the topic has run — i.e. until it has an `agent_sessions` row — after
     # which it is frozen, matching the device-affinity boundary.
     compute_profile: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # A room keeps its script revision when project settings change.
+    environment: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # 私聊 (spec §1): a 1:1 conversation, not shown in the topic tree; uses the
     # participants' cross-project personal memory (spec §8.4).

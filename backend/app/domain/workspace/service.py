@@ -52,8 +52,7 @@ SANDBOX_IMAGE = "python:3.12-slim"
 # today, so both sides must still be the same uid.
 #
 # 1000 = `node` in the sandbox image (node:22 + USER node, started with
-# `--user node`), which is the side we do not fully control — a project can
-# point `sandbox_image` at any other node-based image. The backend image is
+# `--user node`). The backend image is
 # built to match (backend/Dockerfile); tests/unit/test_workspace_uid_alignment.py
 # pins all three together.
 AGENT_UID = 1000

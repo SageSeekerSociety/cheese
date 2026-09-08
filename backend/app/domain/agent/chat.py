@@ -11,6 +11,7 @@ never hold a transaction open across the model round-trip.
 """
 
 import asyncio
+import json
 import logging
 import re
 import shutil
@@ -24,7 +25,7 @@ from datetime import UTC, datetime
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
-from app.core.errors import GatewayUnavailableError, NotFoundError
+from app.core.errors import GatewayUnavailableError, NotFoundError, ValidationError
 from app.core.text import markdown_preview
 from app.domain.agent.compute import ComputePool, ComputeProvider
 from app.domain.agent.gateway import LlmGateway, drain_new_usage
@@ -88,6 +89,7 @@ from app.domain.memory.models import MemoryScope
 from app.domain.memory.store import RecallResult, memory_store, recall_pools
 from app.domain.mentions import expand_mention_names
 from app.domain.milestone.repositories import MilestoneRepository
+from app.domain.project.environment import EnvironmentConfig, pin_environment
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
@@ -1685,6 +1687,17 @@ class ChatService:
     def has_running_turn(self, topic_id: uuid.UUID) -> bool:
         """Whether this process currently owns live work for the topic."""
         return topic_id in self._active_turn_ids
+
+    @asynccontextmanager
+    async def edit_environment(self, topic_id: uuid.UUID) -> AsyncIterator[None]:
+        """Prevent a new prompt from racing an explicit environment change."""
+        lock = self._lock_for(topic_id)
+        if lock.locked() or self.has_running_turn(topic_id):
+            raise ValidationError("房间正在工作，请结束当前工作后再应用环境配置")
+        async with lock:
+            if self.has_running_turn(topic_id):
+                raise ValidationError("房间正在工作，请稍后重试")
+            yield
 
     def session_took_over(self, topic_id: uuid.UUID, turn_id: uuid.UUID) -> bool:
         """Did the live session take responsibility for THIS turn's indicator?
@@ -3490,10 +3503,7 @@ class ChatService:
         topic_id: uuid.UUID | None = None,
     ) -> tuple[dict, str]:
         """Per-turn overrides for the agent call, resolved from project.settings:
-        the ExecutionProfile → model+env (design §2), and the sandbox image (spec
-        §9.1 environment — a project can run on cheesex-dev for dogfooding). model
-        is skipped when no registry is configured (the agent uses its default); the
-        image is resolved regardless (it's independent of the AI profile).
+        the ExecutionProfile and the room's pinned environment configuration.
 
         Also returns the turn's supply ROUTE — where its model traffic actually
         goes, which names the ONE authoritative meter (issue #218):
@@ -3519,19 +3529,26 @@ class ChatService:
         that names none declines to choose, and the project's pick still
         applies — so the override is `agent or project`, never a blank winning."""
         agent_model: str | None = None
+        environment = None
         async with self._sessions() as session:
             project = await ProjectRepository(session).get(project_id)
             if topic_id is not None and project is not None:
                 topic = await TopicRepository(session).get(topic_id)
                 if topic is not None:
+                    # Overview coordinates repairs even when project setup fails.
+                    environment = (
+                        EnvironmentConfig().snapshot()
+                        if topic.kind == TopicKind.root
+                        else await pin_environment(session, project_id, topic_id)
+                    )
                     agents = AgentInstanceService(session)
                     agent_model = await agents.model(
                         await agents.for_topic(topic, project)
                     )
+                    await session.commit()
         kwargs: dict = {}
-        image = (project.settings or {}).get("sandbox_image") if project else None
-        if image:
-            kwargs["sandbox_image"] = image
+        if environment is not None:
+            kwargs["env"] = {"CHEESE_ENVIRONMENT": json.dumps(environment)}
         if provider.builds_model_env:
             # A machine's model env is that machine's backend's own affair —
             # handing it this box's profile env would put a box-local URL and a
@@ -3558,7 +3575,7 @@ class ChatService:
                 project.owner_handle if project else None,
             )
             kwargs["model"] = profile.model
-            kwargs["env"] = profile.full_env()
+            kwargs["env"] = {**kwargs.get("env", {}), **profile.full_env()}
             # Only the pool profile routes through the gateway; the testing
             # (native Claude) profiles pin their own base_url + credentials.
             pool_route = profile.base_url == settings.anthropic_base_url
@@ -4349,6 +4366,11 @@ class ChatService:
                 False,
                 False,
             )
+            status = getattr(exc, "environment_status", None)
+            if status is not None:
+                from app.domain.project.environment_recovery import report_failure
+
+                await report_failure(self, project_id, topic_id, status)
             return
         # Internal frame: `send` returned, so the transport accepted
         # the write — which IS delivery (#563, per #487's contract that a
@@ -4359,6 +4381,11 @@ class ChatService:
         # and so calls a prompt that landed two seconds earlier undelivered
         # and re-sends it. Nothing but the runtime acts on this, so it never
         # reaches the broker.
+        from app.domain.project.environment_recovery import close_recovery
+
+        async with self._sessions() as session:
+            await close_recovery(session, topic_id)
+            await session.commit()
         yield {"type": "prompt_delivered"}
         if ready is False:
             marked_work_id = marked_work_ids[-1] if marked_work_ids else turn_id

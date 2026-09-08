@@ -11,6 +11,8 @@ import type {
   ChatAttachment,
   ComputeProfiles,
   Contributions,
+  EnvironmentConfig,
+  EnvironmentStatus,
   ExecProfiles,
   FileContent,
   GitCommit,
@@ -27,12 +29,12 @@ import type {
   Project,
   ProjectAgent,
   ProjectCredits,
+  ProjectEnvironmentInfo,
   ProjectMemberRow,
   ProjectOverview,
   ReactionAgg,
   RoomTask,
   RoomTree,
-  SandboxImageInfo,
   Topic,
   TopicComputeProfile,
   TopicMemberRow,
@@ -842,14 +844,25 @@ export function setProjectDefaultAgent(
   })
 }
 
-// 环境 (spec §9.1): which sandbox image runs this project's agent.
-export function getSandboxImage(projectId: string): Promise<SandboxImageInfo> {
-  return request<SandboxImageInfo>(`/projects/${encodeURIComponent(projectId)}/sandbox-image`)
+export function getProjectEnvironment(projectId: string): Promise<ProjectEnvironmentInfo> {
+  return request(`/projects/${encodeURIComponent(projectId)}/environment`)
 }
-export function setSandboxImage(projectId: string, image: string): Promise<{ current: string | null }> {
-  return request(`/projects/${encodeURIComponent(projectId)}/sandbox-image`, {
+export function saveProjectEnvironment(
+  projectId: string,
+  config: Omit<EnvironmentConfig, 'revision'>
+): Promise<EnvironmentConfig> {
+  return request(`/projects/${encodeURIComponent(projectId)}/environment`, {
     method: 'PUT',
-    body: JSON.stringify({ image }),
+    body: JSON.stringify(config),
+  })
+}
+export function getRoomEnvironment(projectId: string, roomId: string): Promise<EnvironmentStatus> {
+  return request(`/projects/${encodeURIComponent(projectId)}/environment/rooms/${encodeURIComponent(roomId)}`)
+}
+export function applyRoomEnvironment(projectId: string, roomId: string, latest: boolean): Promise<EnvironmentStatus> {
+  return request(`/projects/${encodeURIComponent(projectId)}/environment/rooms/${encodeURIComponent(roomId)}/apply`, {
+    method: 'POST',
+    body: JSON.stringify({ latest }),
   })
 }
 

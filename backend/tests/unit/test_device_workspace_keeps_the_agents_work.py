@@ -65,6 +65,36 @@ def _origin_with_a_commit(root: Path) -> str:
     return str(remote)
 
 
+def _origin_with_history(root: Path, depth: int, *, topic: bool) -> str:
+    """A bare remote carrying `depth` commits of history on `main`, optionally
+    with `topic/abc` one commit further ahead. Returned as a `file://` URL so
+    `--depth` is honoured — git silently ignores it for a plain local path.
+
+    HEAD is set to `main`, matching the platform's proxy repo (`ensure_repo`),
+    whose HEAD is the base branch a device falls back to when its own topic
+    branch does not exist on the server yet.
+    """
+    remote = root / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(remote)], capture_output=True)
+    seed = root / "seed"
+    seed.mkdir()
+    _git(seed, "init", "-q")
+    for i in range(depth):
+        (seed / "app.py").write_text(f"production line {i}\n")
+        _git(seed, "add", "-A")
+        _git(seed, "commit", "-qm", f"c{i}")
+    _git(seed, "branch", "-M", "main")
+    _git(seed, "push", "-q", str(remote), "main")
+    if topic:
+        _git(seed, "checkout", "-q", "-b", "topic/abc")
+        (seed / "topic_only.py").write_text("only on the topic branch\n")
+        _git(seed, "add", "-A")
+        _git(seed, "commit", "-qm", "topic work")
+        _git(seed, "push", "-q", str(remote), "topic/abc")
+    _git(remote, "symbolic-ref", "HEAD", "refs/heads/main")
+    return f"file://{remote}"
+
+
 def _run(work: Path, remote: str, hook_log: Path) -> subprocess.CompletedProcess:
     bindir = work.parent / "bin"
     bindir.mkdir(exist_ok=True)
@@ -242,3 +272,91 @@ def test_a_healthy_workspace_is_left_exactly_as_it_was():
         assert _git(work, "rev-parse", "HEAD").stdout.strip() == before
         assert (work / "app.py").read_text() == "production line\nmid-edit\n"
         assert (work / "scratch.py").read_text() == "uncommitted\n"
+
+
+def _count(work: Path, rev: str = "HEAD") -> int:
+    out = _git(work, "rev-list", "--count", rev).stdout.strip()
+    return int(out) if out.isdigit() else -1
+
+
+def test_bringing_a_new_workspace_up_fetches_the_tip_not_the_whole_history():
+    """The cold-start cost that made a new topic's first summon time out. A full
+    clone of an active project is O(every topic branch it has ever opened); a
+    device never reads that history (diff, merge-base and 采纳's merge all run on
+    the platform's own full repo), so bring-up takes only the branch tip."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        remote = _origin_with_history(root, depth=25, topic=True)
+        work = root / "work"
+        work.mkdir()
+
+        result = _run(work, remote, root / "hook.log")
+
+        assert result.returncode == 0, result.stderr
+        assert _head_ref(work) == "refs/heads/topic/abc"
+        assert (work / "topic_only.py").read_text() == "only on the topic branch\n"
+        assert (work / ".git" / "shallow").exists(), (
+            "the clone pulled full history instead of a shallow tip"
+        )
+        assert _count(work) == 1, (
+            "a shallow bring-up must hold only the tip commit, not the "
+            f"branch's history (got {_count(work)} commits from 26 on the remote)"
+        )
+
+
+def test_a_brand_new_topic_whose_branch_is_not_on_the_server_still_comes_up():
+    """The first summon of a new topic: the device is the FIRST to need
+    `topic/abc`, so it does not exist on the server yet (the device creates it
+    from the base tip and pushes it at end of turn). A `--branch topic/abc`
+    clone fails outright, so bring-up must fall back to the base branch and
+    synthesize the topic branch from its tip — shallow all the same."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        remote = _origin_with_history(root, depth=25, topic=False)
+        work = root / "work"
+        work.mkdir()
+
+        result = _run(work, remote, root / "hook.log")
+
+        assert result.returncode == 0, result.stderr
+        assert _head_ref(work) == "refs/heads/topic/abc", (
+            "a new topic whose branch is not yet on the server got no workspace: "
+            + result.stdout
+            + result.stderr
+        )
+        # The base tip's file is there; the branch was synthesized from HEAD.
+        assert (work / "app.py").read_text() == "production line 24\n"
+        assert _count(work) == 1
+        assert (work / ".git" / "shallow").exists()
+
+
+def test_a_shallow_workspace_can_still_push_its_topic_branch():
+    """The hard boundary: whatever bring-up fetches, the agent's end-of-turn sync
+    must still land. A commit made on the shallow tip pushes back to the proxy —
+    its ancestors already live there, so git needs to send only the new commit.
+    A new topic's branch is CREATED by exactly this push."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        remote = _origin_with_history(root, depth=25, topic=False)
+        bare = root / "origin.git"
+        work = root / "work"
+        work.mkdir()
+
+        assert _run(work, remote, root / "hook.log").returncode == 0
+        assert not _branch_on_remote(bare, "topic/abc"), "precondition"
+
+        (work / "app.py").write_text("the agent's own line\n")
+        _git(work, "add", "-A")
+        _git(work, "commit", "-qm", "agent commit on a shallow clone")
+        head = _git(work, "rev-parse", "HEAD").stdout.strip()
+
+        pushed = _git(work, "push", "-q", remote, "HEAD:refs/heads/topic/abc")
+        assert pushed.returncode == 0, pushed.stderr
+        assert _branch_on_remote(bare, "topic/abc") == head, (
+            "a shallow clone could not create and push its topic branch"
+        )
+
+
+def _branch_on_remote(bare: Path, branch: str) -> str:
+    out = _git(bare, "rev-parse", "-q", "--verify", f"refs/heads/{branch}")
+    return out.stdout.strip()

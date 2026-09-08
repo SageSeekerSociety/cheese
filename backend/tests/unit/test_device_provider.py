@@ -1138,7 +1138,9 @@ async def test_subscription_screen_env_has_no_gateway_and_no_real_credential(
     # deepseek/gateway model pin — the exact env dev observed is impossible.
     assert "ANTHROPIC_BASE_URL" not in env
     assert env["ANTHROPIC_AUTH_TOKEN"] == ""
-    assert not [k for k in env if "MODEL" in k]
+    # This marks the model-only proxy for script preparation; no model is pinned.
+    assert [k for k in env if "MODEL" in k] == ["CHEESE_MODEL_PROXY"]
+    assert env["CHEESE_MODEL_PROXY"] == "1"
     assert "UPSTREAM-PROVIDER-KEY" not in repr(env)
     # The login credential is a scoped cheese token the proxy can verify —
     # never a real subscription credential.

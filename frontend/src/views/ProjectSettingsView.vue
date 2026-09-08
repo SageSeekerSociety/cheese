@@ -8,7 +8,6 @@ import type {
   GithubConnection,
   OAuthConnectionInfo,
   ProjectMemberRow,
-  SandboxImageInfo,
   UpstreamSyncResult,
 } from '../cx_types'
 
@@ -25,7 +24,6 @@ import {
   getGithubConnection,
   getModelProfiles,
   getProject,
-  getSandboxImage,
   getUpstream,
   listAgentTypes,
   listOAuthConnections,
@@ -35,10 +33,10 @@ import {
   setExecutionProfile,
   setModelProfile,
   setProjectAgentType,
-  setSandboxImage,
   setUpstream,
   syncUpstream,
 } from '../api'
+import ProjectEnvironmentSettings from '../components/ProjectEnvironmentSettings.vue'
 import { parseApprovalsInput, parseCheckPaths } from '../lib/branchProtection'
 import {
   explainAccountLinkFailure,
@@ -61,10 +59,7 @@ const model = ref<ComputeProfiles | null>(null)
 const savingModel = ref<string | null>(null)
 const loading = ref(false)
 const error = ref<string | null>(null)
-const env = ref<SandboxImageInfo | null>(null)
 const savingAi = ref<string | null>(null)
-// '' is the sentinel for the default-image row (image null); a real image key otherwise.
-const savingEnv = ref<string | null>(null)
 // 上游仓库: the linked repo URL as edited, plus save/sync state and last result.
 const upstreamUrl = ref('')
 const upstreamSaved = ref<string | null>(null)
@@ -316,11 +311,10 @@ async function load() {
   loading.value = true
   error.value = null
   try {
-    const [proj, execP, modelP, envP, upP, typesP, agentsP, ghP] = await Promise.all([
+    const [proj, execP, modelP, upP, typesP, agentsP, ghP] = await Promise.all([
       getProject(props.projectId),
       getExecutionProfiles(props.projectId),
       getModelProfiles(props.projectId),
-      getSandboxImage(props.projectId),
       getUpstream(props.projectId),
       listAgentTypes(),
       listProjectAgents(props.projectId),
@@ -329,7 +323,6 @@ async function load() {
     projectName.value = proj.name
     ai.value = execP
     model.value = modelP
-    env.value = envP
     upstreamSaved.value = upP.url
     upstreamUrl.value = upP.url ?? ''
     agentTypes.value = typesP.data
@@ -365,20 +358,6 @@ async function pickModel(id: string) {
     error.value = e instanceof Error ? e.message : '切换模型失败'
   } finally {
     savingModel.value = null
-  }
-}
-
-// Pick the env image. image='' means the default (pool base image → current null).
-async function pickEnv(image: string) {
-  if (!env.value || (env.value.current ?? '') === image) return
-  savingEnv.value = image || '__default__'
-  try {
-    const r = await setSandboxImage(props.projectId, image)
-    env.value = { ...env.value, current: r.current }
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : '切换环境镜像失败'
-  } finally {
-    savingEnv.value = null
   }
 }
 
@@ -626,59 +605,7 @@ watch(
           </div>
         </section>
 
-        <!-- 环境 (spec §9.1): which sandbox image the agent runs in -->
-        <section class="page-section">
-          <div class="page-section-head">
-            <v-icon size="14" class="c-faint">mdi-package-variant-closed</v-icon>
-            <span class="page-section-title">环境镜像</span>
-          </div>
-          <div class="page-section-body">
-            <!-- Default (pool base image) -->
-            <button
-              type="button"
-              class="pool-row"
-              :class="{ 'pool-row--active': !env?.current }"
-              :disabled="savingEnv !== null"
-              @click="pickEnv('')"
-            >
-              <span class="pool-radio" :class="{ 'pool-radio--on': !env?.current }" />
-              <div class="pool-main">
-                <div class="pool-title">默认镜像</div>
-                <div class="pool-sub c-muted">{{ env?.default }}</div>
-              </div>
-              <v-progress-circular
-                v-if="savingEnv === '__default__'"
-                indeterminate
-                size="16"
-                width="2"
-                color="primary"
-              />
-              <span v-else-if="!env?.current" class="pool-current">使用中</span>
-            </button>
-            <!-- Curated images (e.g. cheesex-dev for dogfooding on this repo) -->
-            <button
-              v-for="o in env?.options ?? []"
-              :key="o.image"
-              type="button"
-              class="pool-row"
-              :class="{ 'pool-row--active': env?.current === o.image }"
-              :disabled="savingEnv !== null"
-              @click="pickEnv(o.image)"
-            >
-              <span class="pool-radio" :class="{ 'pool-radio--on': env?.current === o.image }" />
-              <div class="pool-main">
-                <div class="pool-title">{{ o.label }}</div>
-                <div class="pool-sub c-muted">{{ o.image }}</div>
-              </div>
-              <v-progress-circular v-if="savingEnv === o.image" indeterminate size="16" width="2" color="primary" />
-              <span v-else-if="env?.current === o.image" class="pool-current">使用中</span>
-            </button>
-            <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
-              默认镜像装了 uv / node / git 等通用工具；cheesex-dev 额外预装了本仓库的依赖，芝士可以直接在里面运行本仓库
-              自己的测试。
-            </p>
-          </div>
-        </section>
+        <ProjectEnvironmentSettings :project-id="projectId" />
 
         <!-- 上游仓库 (spec §6.3): link an existing repo, keep pulling it in -->
         <section class="page-section">
