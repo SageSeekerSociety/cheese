@@ -419,9 +419,12 @@ restore/DR runbook in [`deploy/README-backup.md`](../deploy/README-backup.md).
   `/home/nictheboy/cheese-transcripts`, mounted at `/data/transcripts`): the
   raw Claude session files of every place that ran on a device, one
   `<project>/<place>/<timestamp>.tar.gz` per upload, shipped there before the
-  device home is deleted (`docs/where-a-turn-runs.md` §八). **Not in any
-  backup job yet** — that directory IS the data, so it needs its own line, the
-  way the memory tree above got one, if it is to survive a box rebuild.
+  device home is deleted (`docs/where-a-turn-runs.md` §八). That directory IS
+  the data: hourly additive mirror to R2 `transcripts/` / `prod-transcripts/`
+  (`cheese-transcripts-mirror.timer`, running the uploads mirror's script). The
+  archives are written once and never modified, so they need neither the tar nor
+  the hot-snapshot care the memory tree above takes, and the mirror never
+  deletes remotely, so R2 stays a superset of the box.
 - **Monitoring** (code-enforced tripwires): `backup-freshness.yml` (daily, fails
   if last backup > 26h), `box-uptime.yml` (twice hourly at :25/:50, fails when
   the last **two** heartbeats both failed to complete — dev box, prod box, or
