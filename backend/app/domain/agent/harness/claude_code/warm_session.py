@@ -2,6 +2,7 @@
 
 This module is shipped to a cloud machine and uses only the standard library.
 Room adoption is separate: preparation never submits a prompt or enables RC.
+Native OAuth can still perform its own quota probe during startup.
 """
 
 import fcntl
@@ -251,6 +252,41 @@ def bind(
         return binding
 
 
+def connection(directory: Path, project_id: str, topic_id: str) -> dict:
+    """Expose only the terminal and input socket assigned to this room."""
+    binding = json.loads((directory / "binding.json").read_text())
+    if (
+        binding["phase"] != "bound"
+        or binding["project_id"] != str(uuid.UUID(project_id))
+        or binding["topic_id"] != str(uuid.UUID(topic_id))
+    ):
+        raise ValueError("Native terminal is not assigned to this room")
+    state = json.loads((directory / "state.json").read_text())
+    if _tmux(state, "has-session", "-t", "native-warm").returncode:
+        raise RuntimeError("Bound native process is no longer running")
+    session_file = Path(state["home"]) / ".claude/environment-session.json"
+    _write(
+        session_file,
+        json.dumps([state["socket"], "native-warm", str(session_file)]),
+    )
+    return {
+        "command": [
+            "tmux",
+            "-S",
+            state["socket"],
+            "attach-session",
+            "-t",
+            "native-warm",
+        ],
+        "home": state["home"],
+        "work": binding["work"],
+        "env": {
+            "CHEESE_RV_SOCK": state["rendezvous"],
+            "CHEESE_RV_TOKEN_FILE": state["token_file"],
+        },
+    }
+
+
 if __name__ == "__main__":
     os.umask(0o077)
     action, root = sys.argv[1:3]
@@ -262,5 +298,9 @@ if __name__ == "__main__":
         body = json.load(sys.stdin)
         body["work"] = Path(body["work"])
         print(json.dumps(bind(Path(root), **body)))
+    elif action == "attach":
+        terminal = connection(Path(root), *sys.argv[3:5])
+        os.environ.pop("TMUX", None)
+        os.execvp("tmux", terminal["command"])
     else:
         raise ValueError("Unknown warm session operation")
