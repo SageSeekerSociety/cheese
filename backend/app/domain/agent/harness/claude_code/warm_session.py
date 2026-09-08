@@ -20,6 +20,18 @@ import uuid
 from pathlib import Path
 
 
+def build_warm_session_prepare(version: str) -> str:
+    source = Path(__file__).read_text()
+    return (
+        'mkdir -p "$HOME/.cheese"\n'
+        "cat > \"$HOME/.cheese/warm-native-runner.py\" <<'CHEESE_WARM_RUNNER'\n"
+        f"{source}\nCHEESE_WARM_RUNNER\n"
+        'python3 "$HOME/.cheese/warm-native-runner.py" prepare-machine "$HOME" '
+        + shlex.quote(version)
+        + "\n"
+    )
+
+
 def _write(path: Path, value: str) -> None:
     with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as file:
         file.write(value)
@@ -191,7 +203,11 @@ def bind(
         fcntl.flock(lock, fcntl.LOCK_EX)
         if binding_path.exists():
             binding = json.loads(binding_path.read_text())
-            if any(binding[key] != value for key, value in intent.items()):
+            if any(
+                binding.get(key) != value
+                for key, value in intent.items()
+                if key != "context" or binding["phase"] != "staging"
+            ):
                 raise ValueError("Native session binding does not match this request")
             if binding["phase"] == "bound":
                 return binding
@@ -252,6 +268,59 @@ def bind(
         return binding
 
 
+def stage(
+    directory: Path,
+    *,
+    project_id: str,
+    topic_id: str,
+    home: Path,
+    work: Path,
+    rendezvous: Path,
+    token_file: Path,
+) -> dict:
+    """Connect ordinary room paths to an exclusively reserved prepared session."""
+    project_id, topic_id = str(uuid.UUID(project_id)), str(uuid.UUID(topic_id))
+    state = json.loads((directory / "state.json").read_text())
+    if (
+        not (directory / "ready").exists()
+        or _tmux(state, "has-session", "-t", "native-warm").returncode
+    ):
+        raise RuntimeError("Native session is not ready for assignment")
+    intent = {
+        "project_id": project_id,
+        "topic_id": topic_id,
+        "work": state["workspace"],
+    }
+    binding_path = directory / "binding.json"
+    with (directory / "binding.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if binding_path.exists():
+            binding = json.loads(binding_path.read_text())
+            if any(binding[key] != value for key, value in intent.items()):
+                raise ValueError("Prepared workspace belongs to another room")
+        else:
+            _write(binding_path, json.dumps({**intent, "phase": "staging"}))
+        links = {
+            home: Path(state["home"]),
+            work: Path(state["workspace"]),
+            rendezvous: Path(state["rendezvous"]),
+            token_file: Path(state["token_file"]),
+        }
+        # Never replace existing room data or an unrelated socket/token.
+        for alias, target in links.items():
+            if alias.is_symlink() and alias.resolve() == target.resolve():
+                continue
+            if alias.exists() or alias.is_symlink():
+                raise ValueError(
+                    "Room path already exists outside the prepared session"
+                )
+        for alias, target in links.items():
+            if not alias.is_symlink():
+                alias.parent.mkdir(parents=True, exist_ok=True)
+                alias.symlink_to(target)
+    return {"home": state["home"], "work": state["workspace"]}
+
+
 def connection(directory: Path, project_id: str, topic_id: str) -> dict:
     """Expose only the terminal and input socket assigned to this room."""
     binding = json.loads((directory / "binding.json").read_text())
@@ -292,12 +361,24 @@ if __name__ == "__main__":
     action, root = sys.argv[1:3]
     if action == "prepare":
         print(json.dumps(prepare(Path(root), Path(sys.argv[3]), json.load(sys.stdin))))
+    elif action == "prepare-machine":
+        owner = Path(root)
+        environment = json.loads((owner / ".claude/settings.json").read_text())["env"]
+        if not environment.get("CLAUDE_CODE_OAUTH_TOKEN"):
+            raise ValueError("Warm machine OAuth credential is missing")
+        binary = owner / ".local/share/claude/versions" / sys.argv[3]
+        print(json.dumps(prepare(owner / ".cheese/native-warm", binary, environment)))
     elif action == "run":
         run(Path(root))
     elif action == "bind":
         body = json.load(sys.stdin)
         body["work"] = Path(body["work"])
         print(json.dumps(bind(Path(root), **body)))
+    elif action == "stage":
+        body = json.load(sys.stdin)
+        for field in ("home", "work", "rendezvous", "token_file"):
+            body[field] = Path(body[field])
+        print(json.dumps(stage(Path(root), **body)))
     elif action == "attach":
         terminal = connection(Path(root), *sys.argv[3:5])
         os.environ.pop("TMUX", None)
