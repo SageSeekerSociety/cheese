@@ -293,6 +293,7 @@ def test_roster_reports_the_global_default_avatar_as_no_avatar(client):
             client.post(
                 f"/topics/{tid}/members",
                 json={"handle": handle, "role": "member", "actor": "dan"},
+                headers=session_auth_headers("dan"),
             ).status_code
             == 200
         )
