@@ -1584,7 +1584,7 @@ async def test_an_unstaged_image_is_declared_rather_than_mentioned():
     assert prompt is not None
     assert "@uploads/img-1.png" not in prompt
     assert "没能送到" in prompt
-    assert "不要猜图里是什么" in prompt
+    assert "不要猜测文件内容" in prompt
 
 
 async def test_a_staged_image_is_mentioned_and_nothing_is_declared_missing():

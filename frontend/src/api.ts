@@ -988,9 +988,9 @@ export function toggleReaction(
   )
 }
 
-// ---- 图片输入 (chat image attachments) ----
+// ---- Chat attachments ----
 
-// Upload a chat image into the topic's worktree. NOTE: raw fetch, not
+// Upload a file into the topic's worktree. NOTE: raw fetch, not
 // request() — multipart needs the browser to set the boundary header itself.
 export async function uploadAttachment(topicId: string, file: File): Promise<ChatAttachment> {
   const form = new FormData()
@@ -1010,6 +1010,20 @@ export async function uploadAttachment(topicId: string, file: File): Promise<Cha
 // <img src=…> URL for an uploaded attachment (binary raw endpoint).
 export function attachmentRawUrl(topicId: string, path: string): string {
   return `${BASE}/topics/${encodeURIComponent(topicId)}/attachments/raw?path=${encodeURIComponent(path)}`
+}
+
+// Downloads carry the same credentials as API requests, including token-only sessions.
+export async function downloadFile(rawUrl: string, filename: string): Promise<void> {
+  const res = await fetch(`${rawUrl}&download=true`, { headers: authHeaders() })
+  if (!res.ok) throw new Error(`下载失败（HTTP ${res.status}）`)
+  const url = URL.createObjectURL(await res.blob())
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
 // Living-doc helpers (spec §2.2 docs-out/docs-in). `content` is markdown.

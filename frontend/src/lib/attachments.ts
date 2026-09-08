@@ -1,17 +1,11 @@
-// 图片输入: pending-attachment state shared by the two composers (TopicView
-// 的跨栏输入框和 ChatPanel 的私聊输入框). Paste or pick an image → it uploads to
-// the topic's worktree immediately → the send only references {path, mime}.
+// Files upload into the topic's worktree; sending a message references {path, mime}.
 import type { ChatAttachment } from '../cx_types'
 
 import { ref } from 'vue'
 
 import { uploadAttachment } from '../api'
 
-const IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
 const MAX_PENDING = 9
-// 后端今天只收图片（`attachment_raw` 是刻意按扩展名白名单的，别的类型要配一条
-// 单独的下载通道才安全）。这个上限本身不是 bug——**不出声地把文件扔掉**才是。
-const UNSUPPORTED = '暂时只能发图片（PNG / JPEG / GIF / WebP）'
 
 export function usePendingAttachments(
   getTopicId: () => string | null | undefined,
@@ -24,18 +18,24 @@ export function usePendingAttachments(
     const topicId = getTopicId()
     if (!topicId) return
     const all = [...files]
-    const images = all.filter((f) => IMAGE_MIME.has(f.type))
-    // 拖一个 PDF 进来，过去是：没上传、没报错、没有任何提示。文件就是消失了。
-    if (images.length < all.length) onError?.(UNSUPPORTED)
-    if (!images.length) return
+    if (!all.length) return
     uploading.value = true
     try {
-      for (const f of images) {
-        if (pending.value.length >= MAX_PENDING) break
-        pending.value.push(await uploadAttachment(topicId, f))
+      for (const f of all) {
+        if (pending.value.length >= MAX_PENDING) {
+          onError?.('每条消息最多添加 9 个附件')
+          break
+        }
+        if (f.size > 10 * 1024 * 1024) {
+          onError?.(`${f.name} 超过 10MB，无法上传`)
+          continue
+        }
+        const attachment = await uploadAttachment(topicId, f)
+        if (getTopicId() !== topicId) return
+        pending.value.push(attachment)
       }
     } catch (e) {
-      onError?.(e instanceof Error ? e.message : '图片上传失败')
+      onError?.(e instanceof Error ? e.message : '文件上传失败')
     } finally {
       uploading.value = false
     }
