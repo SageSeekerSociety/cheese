@@ -80,9 +80,9 @@ watch(
   <main id="top" class="landing-page">
     <a class="skip-link" href="#experience"> 跳到产品演示 </a>
     <header class="site-header wrap">
-      <a class="brand" href="#top" aria-label="芝士首页">
+      <a class="brand" href="#top" aria-label="知是首页">
         <span class="cheese-mark" :style="{ maskImage: `url(${logo})` }" aria-hidden="true" />
-        <span> cheese<span class="brand-cn">芝士</span> </span>
+        <span> cheese<span class="brand-cn">知是</span> </span>
       </a>
       <nav aria-label="主导航">
         <a href="#experience">产品体验</a>
@@ -91,7 +91,7 @@ watch(
         <a href="#vision">我们的愿景</a>
       </nav>
       <a class="nav-entry" href="/account/signin">
-        进入芝士 <v-icon class="landing-icon" icon="mdi-arrow-top-right" size="17" />
+        进入知是 <v-icon class="landing-icon" icon="mdi-arrow-top-right" size="17" />
       </a>
     </header>
     <section class="hero wrap">
@@ -234,7 +234,7 @@ watch(
               <span class="avatar ai-avatar">
                 <v-icon class="landing-icon" icon="mdi-creation" size="16" />
               </span>
-              芝士 <small>AI 队友</small>
+              知是 <small>AI 队友</small>
             </div>
             <div class="sidebar-bottom">
               <v-icon class="landing-icon" icon="mdi-source-branch" size="15" /> 讨论与成果，一起留下
@@ -267,7 +267,7 @@ watch(
                 <HomepageMessage who="研究同学">
                   <p>先做一个小范围原型，回答里需要能看到资料来源。</p>
                 </HomepageMessage>
-                <HomepageMessage who="芝士" ai>
+                <HomepageMessage who="知是" ai>
                   <p>我会先梳理评估方法，再搭建检索原型。待确认的问题和产出会整理在项目文档里。</p>
                   <div class="inline-note">
                     <v-icon class="landing-icon" icon="mdi-file-document-outline" size="15" /> 项目文档随工作更新
@@ -301,7 +301,7 @@ watch(
               tabindex="0"
             >
               <div class="chat-column">
-                <HomepageMessage who="芝士" ai>
+                <HomepageMessage who="知是" ai>
                   <p>检索原型与评估方案正在分别推进。团队可以在各自的任务里继续讨论。</p>
                 </HomepageMessage>
                 <div class="task-rows">
@@ -342,7 +342,7 @@ watch(
               tabindex="0"
             >
               <div class="chat-column">
-                <HomepageMessage who="芝士" ai
+                <HomepageMessage who="知是" ai
                   ><p>原型已经准备好。团队可以查看运行结果，继续反馈需要调整的地方。</p></HomepageMessage
                 >
                 <div class="prototype-preview">
@@ -382,7 +382,7 @@ watch(
               tabindex="0"
             >
               <div class="chat-column">
-                <HomepageMessage who="芝士" ai>
+                <HomepageMessage who="知是" ai>
                   <p>原型已准备好供团队审阅。评估范围和局限已写入说明，请确认下一步要验证的问题。</p>
                 </HomepageMessage>
                 <div class="review-card">
@@ -560,7 +560,7 @@ watch(
         <div>
           <span class="vision-symbol" aria-hidden="true"> ✳ </span>
           <p>当 AI 成为持续参与的队友，团队积累着成果，也积累着形成成果的思考。</p>
-          <p>芝士希望把这些思考变成可继续学习、创作与实践的资源，让后来的人接得上。</p>
+          <p>知是希望把这些思考变成可继续学习、创作与实践的资源，让后来的人接得上。</p>
           <a
             class="policy-link"
             href="https://hudong.moe.gov.cn/srcsite/A16/s3342/202604/t20260410_1433240.html"
@@ -587,18 +587,18 @@ watch(
           和团队一起开始。
         </p>
         <a class="button button-light" href="/account/signin">
-          进入芝士
+          进入知是
           <v-icon class="landing-icon" icon="mdi-arrow-top-right" size="19" />
         </a>
       </div>
     </section>
     <footer class="wrap">
-      <a class="brand" href="#top" aria-label="芝士首页">
+      <a class="brand" href="#top" aria-label="知是首页">
         <span class="cheese-mark" :style="{ maskImage: `url(${logo})` }" aria-hidden="true" />
-        <span> cheese<span class="brand-cn">芝士</span> </span>
+        <span> cheese<span class="brand-cn">知是</span> </span>
       </a>
       <p>人与 AI，一起把事做成</p>
-      <span> © 2026 芝士 </span>
+      <span> © 2026 知是 </span>
     </footer>
   </main>
 </template>
