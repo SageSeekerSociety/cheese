@@ -104,6 +104,8 @@ const projectPages = [
   { key: 'workspace-running', label: '看板', icon: 'mdi-view-column-outline' },
   { key: 'calendar', label: '日历', icon: 'mdi-calendar-outline' },
   { key: 'project-agents', label: 'AI 队友', icon: 'mdi-robot-outline' },
+  // 成员紧挨着 AI 队友：这两行答的是同一个问题的两半——这个项目里都有谁。
+  { key: 'project-members', label: '成员', icon: 'mdi-account-group-outline' },
 ] as const
 function openProjectPage(name: string) {
   if (!props.selectedProjectId) return
@@ -278,8 +280,9 @@ const archivedUnread = computed<number>(() => archivedRows.value.reduce((sum, t)
 
 // ---- 私聊 (C3): the rail's tail, not the end of the scroll ----
 // 全体成员常驻是这一区原来的形态，结果是话题一多、未读徽标就滚出屏幕——恰好在
-// 最需要看见它的时候。现在只留「有事的人」：芝士 + 有未读的 + 正在聊的那一个，
-// 其余全部收进「发起私聊」。
+// 最需要看见它的时候。现在只留「有事的人」：芝士 + 有未读的 + 正在聊的那一个。
+// 找一个还没聊过的人去成员页——名册只该有一份，而那一份带搜索、带角色、带头像，
+// 这里再挂一个没有任何一样的下拉小名册，是同一件事的第二个答案。
 //
 // 评审处方里还有一条「最近有消息的人」，这一轮做不了：接口只回未读计数
 // (privateUnreadMap)，没有任何「上次有消息是什么时候」的时间戳，而为一条排序
@@ -295,13 +298,6 @@ const peerDms = computed(() =>
 const visibleDms = computed(() =>
   peerDms.value.filter((d) => privateUnreadOf(d.handle) > 0 || props.activePeer === d.handle)
 )
-const hiddenDmHandles = computed(() => new Set(visibleDms.value.map((d) => d.handle)))
-const otherDms = computed(() => peerDms.value.filter((d) => !hiddenDmHandles.value.has(d.handle)))
-const startDmOpen = ref(false)
-function startDm(handle: string) {
-  startDmOpen.value = false
-  emit('select-peer-dm', handle)
-}
 
 // ---- 折叠 ----
 // 一个房间下面挂的是**它派出去的活**，不是子话题——房间之下不能再建房间。
@@ -913,23 +909,14 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
         <v-divider />
         <div class="t-eyebrow side-subhead side-subhead--row">
           <span>私聊</span>
-          <v-menu v-if="otherDms.length" v-model="startDmOpen" location="top end">
-            <template #activator="{ props: menuProps }">
-              <v-btn v-bind="menuProps" icon="mdi-plus" size="x-small" variant="text" title="发起私聊" />
-            </template>
-            <v-list density="compact" nav max-height="320">
-              <v-list-item v-for="dm in otherDms" :key="dm.handle" @click="startDm(dm.handle)">
-                <template #prepend>
-                  <span class="private-avatar-slot me-3">
-                    <span class="dm-avatar" :style="{ backgroundColor: avatarColor(dm.handle) }">{{
-                      dm.name.slice(0, 1).toUpperCase()
-                    }}</span>
-                  </span>
-                </template>
-                <v-list-item-title class="t-body">{{ dm.name }}</v-list-item-title>
-              </v-list-item>
-            </v-list>
-          </v-menu>
+          <!-- 找一个没聊过的人：去成员页。那里才是名册。 -->
+          <v-btn
+            icon="mdi-plus"
+            size="x-small"
+            variant="text"
+            title="发起私聊"
+            @click="openProjectPage('project-members')"
+          />
         </div>
         <v-list density="compact" nav class="py-0 pb-2">
           <v-list-item

@@ -109,6 +109,15 @@ export const workspaceRoutes: RouteRecordRaw = {
       meta: { title: '项目设置', hideTabs: true, backTo: 'workspace-project' },
     },
     {
+      // 名册页和单人主页共用 `members` 这一段路径，父子关系就是它们的关系：
+      // /members 是「有谁」，/members/:handle 是「他是谁」。
+      name: 'project-members',
+      path: 'members',
+      component: () => import('@/views/workspace/ProjectMembersView.vue'),
+      props: true,
+      meta: { title: '成员', hideTabs: true, backTo: 'workspace-project' },
+    },
+    {
       name: 'member',
       path: 'members/:handle',
       component: () => import('@/views/MemberView.vue'),
