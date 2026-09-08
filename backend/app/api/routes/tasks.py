@@ -1649,6 +1649,9 @@ async def get_task(
                     "id": user_membership.id,
                     "type": "USER",
                     "memberId": auth_user.user_id,
+                    "deadline": int(user_membership.deadline.timestamp() * 1000)
+                    if user_membership.deadline
+                    else None,
                     "canSubmit": approved_label == "APPROVED",
                     "approved": approved_label,
                 }
@@ -1659,6 +1662,9 @@ async def get_task(
             task_id=task_id,
             user_id=auth_user.user_id,
         )
+        identity_teams = await TeamRepository(session=db).get_by_ids(
+            [membership.member_id for membership in team_memberships]
+        )
         for membership in team_memberships:
             approved_label = approved_rev_map.get(membership.approved, "NONE")
             identities.append(
@@ -1666,8 +1672,12 @@ async def get_task(
                     "id": membership.id,
                     "type": "TEAM",
                     "memberId": membership.member_id,
-                    # teamName 与 canSubmit 的精细逻辑后续接入 TeamService / role 判定
-                    "teamName": None,
+                    "teamName": identity_teams[membership.member_id].name
+                    if membership.member_id in identity_teams
+                    else None,
+                    "deadline": int(membership.deadline.timestamp() * 1000)
+                    if membership.deadline
+                    else None,
                     "canSubmit": approved_label == "APPROVED",
                     "approved": approved_label,
                 }

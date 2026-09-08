@@ -1809,6 +1809,21 @@ class TestTeamTask:
         assert (
             detail_resp.json()["data"]["participant"]["member"]["name"] == expected_name
         )
+        deadline = int((datetime.now(UTC).timestamp() + 86400) * 1000)
+        approval = api_client.patch(
+            f"/tasks/{task_id}/participants/{registration['id']}",
+            json={"approved": "APPROVED", "deadline": deadline},
+            headers=headers,
+        )
+        assert approval.status_code == 200
+        task_detail = api_client.get(f"/tasks/{task_id}", headers=headers)
+        identity = next(
+            row
+            for row in task_detail.json()["data"]["participation"]["identities"]
+            if row["id"] == registration["id"]
+        )
+        assert identity["deadline"] == deadline
+        assert identity["teamName"] == expected_name
 
     def test_get_teams_for_task(
         self, api_client: TestClient, team_task_setup: dict
