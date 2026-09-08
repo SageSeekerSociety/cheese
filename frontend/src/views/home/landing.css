@@ -1589,7 +1589,7 @@ footer > span {
     padding: 22px 20px;
     border-left: 0;
     border-top: 1px solid var(--line);
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr;
     gap: 8px 18px;
   }
 
