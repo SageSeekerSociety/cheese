@@ -4,6 +4,9 @@ source_dir=$(cd "$(dirname "$0")" && pwd)
 target_dir="$HOME/.local/lib/cheese-cloud-control"
 unit_dir="$HOME/.config/systemd/user"
 test "$(loginctl show-user "$(id -un)" -p Linger --value)" = yes
+# CI runs without a login session; the lingering user's bus still lives here.
+export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
 mkdir -p "$target_dir" "$unit_dir"
 install -m 755 "$source_dir/cloud-control.py" "$target_dir/cloud-control.py.next"
 mv "$target_dir/cloud-control.py.next" "$target_dir/cloud-control.py"
