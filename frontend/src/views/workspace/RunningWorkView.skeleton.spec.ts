@@ -19,10 +19,13 @@ vi.mock('@/api', async () => {
   return { ...actual, listProjectTasks: (...a: unknown[]) => listProjectTasks(...a) }
 })
 
-vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }))
+vi.mock('vue-router', () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useRoute: () => ({ query: {} }),
+}))
 
 vi.mock('@/stores/workspace', () => ({
-  useWorkspaceStore: () => ({ topics: [{ id: 'room-1', title: '运维' }] }),
+  useWorkspaceStore: () => ({ topics: [{ id: 'room-1', title: '运维' }], members: [] }),
 }))
 
 import RunningWorkView from './RunningWorkView.vue'
