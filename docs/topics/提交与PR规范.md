@@ -18,10 +18,10 @@
 ## 已定的做法
 
 - **提交信息**：平台自动提交一律改成英文 Conventional Commits（`chore: snapshot workspace after agent turn` 等）；「后台任务运行中，可能是中间态」这类警告移到正文，不再挂在标题上。
-- **谁的提交**：话题发起人连了 GitHub 就用他的 `<id>+<login>@users.noreply.github.com` 作为 author（jj 0.43 无 `--author`，改用 `jj metaedit --update-author` 事后改写）。没连账号就保持 芝士，不编邮箱。
+- **Commit author**: agent work commits and platform-local squash commits use the acting room agent, with an `agent.cheese.local` email. The requester is recorded separately in `Requested-by`. GitHub native squash retains GitHub's author rules; the squash commit records the actual room agent in `Cheese-Agent` while preserving native merge protection.
 - **谁的 PR**：开 PR 时优先用发起人自己的 user-to-server token，失败（离职/取消授权/权限不足）自动回落到 App token，绝不因此开不出 PR。
 - **落到 main 的那一个提交**：本仓是 squash 合并，整个话题压成一个提交。它的标题/正文由芝士递卡时写：`cheese accept-request <handle> "<理由>" --subject '<Conventional Commits 标题>' --body '<为什么>'`。格式不对后端当场打回并给出正确写法。不给 `--subject` 就回落成 `chore: <话题标题>`——故意难看，提醒补上。
-- **多人归属**：squash 提交正文的 `Co-authored-by:` 只列**不是 author 的贡献者**——话题换过手时，接手的人是 author（`Requested-by:`），原发起人靠这行留在历史里。同一个人不会被写两遍：一个话题只有一份 git 身份，指向 author 本人的那行不携带信息。芝士自己永不出现在这行（`cheese@zhishi.local` 关联不到任何 GitHub 账号，只会污染 contributors；要追溯来源用正文已有的 `Cheese-Topic:`）。
+- **Contribution roles**: `Requested-by` identifies the requester, `Reported-by` the explicitly declared reporter, and `Reviewed-by` the person who accepted the work. Human `Co-authored-by` credits require explicitly declared code contributions on delivered tasks; owning or requesting a task grants no coauthor credit. Connected human identities use GitHub noreply addresses derived from linked account IDs and logins; others use platform identities.
 - **同步上游**：改成「能快进就快进，绝不造合并提交」。判据不是「落后几个提交」而是**本地 base 相对两边共同祖先有没有内容改动**——因为存量项目已经比上游多几十个空合并，用 `merge --ff-only` 只会被拒绝然后再造第 42 个。有真实本地内容（绑定前就有活的项目）时才走真合并。
 
 ## 规范本身（写进 <&CLAUDE.md> 的「Commits and PRs」一节）
@@ -33,7 +33,7 @@
 
 ## 改了什么（backend）
 
-- 新增 `<&backend/app/domain/workspace/identity.py>`：把人解析成 git 身份并落盘（同步的快照路径没有 DB session，只能读文件）。
+- `<&backend/app/domain/workspace/identity.py>` resolves the agent author and declared human contribution roles. Agent launch configuration supplies the Git author identity; no human-author sidecar is written.
 - 新增 `<&backend/app/domain/review/commit_message.py>`：Conventional Commits 校验 + squash 标题拼接。
 - 新增 `<&backend/app/domain/review/pr_text.py>`：PR/提交文案只此一份——之前四个地方各写各的。
 - `<&backend/app/domain/workspace/service.py>`：`sync_upstream` 改为快进优先；平台自动提交信息全部英文化。
@@ -60,4 +60,4 @@
 
 - **存量话题的历史提交不会被追溯改写**，只影响之后的提交；本话题自己的 PR 里那 41 条同步提交也还在。
 - 同步上游的修复对**新切出来的话题分支**才干净——已经开着的分支已经把那一摞带进去了。
-- 归属要求本人在设置里连过 GitHub；没连就还是芝士署名，不会瞎编邮箱。
+- GitHub account links apply to human contribution identities. Agent identities do not depend on the requester's GitHub connection.
