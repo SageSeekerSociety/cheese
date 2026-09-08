@@ -119,6 +119,9 @@ _TOOL_ARG = {
     # 参数填进去反而不如留空。
     "cheese_chat_send": "content",
     "chat_send": "content",
+    # 搜记录时说的是在找什么。翻最近一页、按 id 读一条或它的回复，参数不是没有
+    # 就是一个 UUID，跟在动词后面等于什么都没说 —— 只留动词。
+    "cheese_chat_search": "query",
     "cheese_doc_set": "file",
     "cheese_split": "title",
     # 任务的 id 是个 UUID，跟在动词后面等于什么都没说 —— 同一条理由让上面那批
