@@ -436,6 +436,40 @@ def _run_block(env, expiry):
     return proc
 
 
+def test_full_launcher_installs_platform_cli_without_network(tmp_path):
+    home, env, _log = _stub_tmux_env(tmp_path)
+    bindir = tmp_path / "bin"
+    network = tmp_path / "network.calls"
+    curl = bindir / "curl"
+    curl.write_text(f'#!/bin/sh\necho attempted >> "{network}"\nexit 1\n')
+    curl.chmod(0o755)
+    claude = home / ".local/bin/claude"
+    claude.parent.mkdir(parents=True)
+    claude.write_text('#!/bin/sh\necho "2.1.261 (Claude Code)"\n')
+    claude.chmod(0o755)
+    env["CHEESE_TOKEN_EXPIRES"] = str(int(time.time()) + 3600)
+    result = subprocess.run(
+        ["sh", "-c", device_launch.build_launch_script()],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert not network.exists(), "room startup must not fetch the platform CLI"
+    installed = home / ".claude/cheese"
+    source = (
+        device_launch.Path(device_launch.__file__).resolve().parents[5]
+        / "sandbox/cheese"
+    )
+    assert installed.read_bytes() == source.read_bytes()
+    result = subprocess.run(
+        [str(installed), "--help"], env=env, capture_output=True, text=True, timeout=5
+    )
+    assert result.returncode == 0, result.stderr
+    assert "usage:" in result.stdout
+
+
 def _tokexp_file(home):
     files = list((home / ".claude").glob("*.tokexp"))
     assert len(files) == 1, files
