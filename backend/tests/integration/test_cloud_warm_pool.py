@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.errors import ForbiddenError, ValidationError
+from app.domain.agent.device_provider import DeviceChannel
 from app.domain.device.models import DeviceRow, DeviceTeamRow
 from app.domain.device.supply import Supply, Visibility
 from app.domain.identity.actor import Actor
@@ -35,6 +36,32 @@ class ClaimCloud(FakeMicroCloud):
         if self.fail_claim:
             raise MicroCloudError("response lost")
         return {"id": machine_id, "status": "running", "aiStatus": "ready"}
+
+
+@pytest.mark.parametrize(
+    "supply,direct,expected",
+    [
+        (Supply.cloud, True, "http://127.0.0.1:18080"),
+        (Supply.cloud, False, "https://public.example/api"),
+        (Supply.self_hosted, True, "https://public.example/api"),
+    ],
+)
+def test_device_api_route_follows_cloud_enrollment(warm_case, supply, direct, expected):
+    client, _, _, _ = warm_case
+
+    async def run():
+        async with client.test_factory() as session:
+            device = await session.get(DeviceRow, "warm-test")
+            device.supply = supply
+            device.cloud_control_private = direct
+            await session.commit()
+        channel = DeviceChannel(
+            session_factory=client.test_factory,
+            public_base="https://public.example/api",
+        )
+        assert await channel._device_api_base("warm-test") == expected
+
+    asyncio.run(run())
 
 
 @pytest.fixture
