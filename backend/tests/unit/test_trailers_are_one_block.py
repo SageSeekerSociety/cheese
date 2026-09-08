@@ -118,7 +118,8 @@ def test_the_emails_and_the_urls_are_still_one_parseable_block(a_full_delivery):
     assert by_token["Reviewed-by"] == "Wang <7+wang@users.noreply.github.com>"
     assert by_token["Cheese-Topic"].startswith("http")
     assert str(room.id) in by_token["Cheese-Topic"]
-    assert by_token["Cheese-Card"].endswith(f"?card={card.id}")
+    # 卡没有能打开它的路由，所以它老老实实是个 id，不是一条打不开的链接。
+    assert by_token["Cheese-Card"] == str(card.id)
 
 
 def test_somebody_without_github_gets_the_platforms_own_address(a_full_delivery):

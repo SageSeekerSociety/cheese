@@ -414,7 +414,7 @@ def test_accept_squashes_the_delivery_with_the_cards_words(client):
     assert "Two files, one delivery." in body
     assert "Reviewed-by: alice <alice@zhishi.local>" in body
     assert f"/topics/{tid}" in body
-    assert f"?card={card['id']}" in body
+    assert f"Cheese-Card: {card['id']}" in body
     parents = _main_log(pid, "%P").split()
     assert len(parents) == 1  # squashed, not a merge commit
     committer = _main_log(pid, "%cn %ce").strip()

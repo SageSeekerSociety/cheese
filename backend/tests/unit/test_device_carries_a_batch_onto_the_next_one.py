@@ -592,3 +592,77 @@ def test_a_commit_that_reached_the_new_branch_first_is_not_overwritten():
             "先到远端的那个提交被这次衔接抹掉了"
         )
         assert '"status":"failed"' in reported, reported
+
+
+def test_a_batch_with_no_recorded_delivery_is_refused_rather_than_guessed():
+    """上一批合并的时候没人记下「交出去的是哪个 commit」（迁移不回填），而房间已经
+    换批了 —— 这时候**不许**退回普通推送。
+
+    退回普通推送的结果正是这段代码要消灭的那个：一个把上一批改动又展示一遍的 PR，
+    外加一个 `status=ok`。「没有依据」和「不用衔接」是两件事。
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        bare = _platform_repo(root)
+        work = _device_clone(root, bare, "topic/one")
+        sync = root / "cheese-sync"
+        sync.write_text(_sync_body())
+        log = root / "hook.log"
+        platform = _Platform()
+        try:
+            platform.payload = {"branch": "topic/one", "on_delivered": False}
+            (work / "one.txt").write_text("batch one\n")
+            _git(work, "add", "-A")
+            _git(work, "commit", "-qm", "feat: batch one")
+            _turn(work, sync, platform, bare, log)
+            main_sha = _squash_into_main(bare, root, "topic/one")
+
+            # 旧批次：合了，但没有记录下交付的那个 commit。
+            platform.payload = {
+                "branch": "topic/two",
+                "base": "main",
+                "base_sha": main_sha,
+                "on_delivered": False,
+                "on_head": "",
+            }
+            (work / "two.txt").write_text("batch two\n")
+            _git(work, "add", "-A")
+            _git(work, "commit", "-qm", "feat: batch two")
+            (work / "scratch.txt").write_text("还没提交的东西\n")
+
+            reported = _turn(work, sync, platform, bare, log)
+        finally:
+            platform.stop()
+
+        assert '"status":"failed"' in reported, reported
+        assert "refs/heads/topic/two" not in _refs(bare), (
+            "没有交付依据也把这一批推出去了 —— 那个 PR 会把上一批再展示一遍"
+        )
+        # 报告里要说得出「东西在哪」和「怎么接着干」。
+        assert "refs/cheese/snapshots/topic/two" in reported
+        assert "Re-clone the workspace" in reported
+        assert "refs/cheese/snapshots/topic/two" in _refs(bare)
+
+
+def test_a_batch_that_has_not_changed_still_pushes_normally():
+    """别误伤：分支没变的时候（同一批的下一轮），旧批次有没有交付记录都无所谓 ——
+    根本没有衔接需求，普通推送就是对的。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        bare = _platform_repo(root)
+        work = _device_clone(root, bare, "topic/one")
+        sync = root / "cheese-sync"
+        sync.write_text(_sync_body())
+        log = root / "hook.log"
+        platform = _Platform()
+        platform.payload = {"branch": "topic/one", "on_delivered": False, "on_head": ""}
+        try:
+            for nth in ("a", "b"):
+                (work / f"{nth}.txt").write_text(f"{nth}\n")
+                _git(work, "add", "-A")
+                _git(work, "commit", "-qm", f"feat: {nth}")
+                assert '"status":"ok"' in _turn(work, sync, platform, bare, log)
+        finally:
+            platform.stop()
+
+        assert _tree_of(bare, "topic/one") == ["README.md", "a.txt", "b.txt"]

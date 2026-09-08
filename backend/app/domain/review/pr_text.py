@@ -139,15 +139,19 @@ def pr_trailers(
         # claim a review that has not happened.
         seen_it = identity.as_trailer(decided_by, who.reviewer if who else None)
         lines.append(f"Reviewed-by: {seen_it}")
-    # URLs, not bare ids (#189). A uuid in `git log` is a dead end unless the
-    # reader already knows this platform's routes; the whole point of these two
-    # lines is that somebody auditing a commit can GET TO the room and the
-    # delivery that produced it. The card has no route of its own, so it rides
-    # the room's as a query — the page ignores it and the id stays in the
-    # commit, which is strictly more than the bare uuid carried.
+    # The ROOM is a URL (#189): a uuid in `git log` is a dead end unless the
+    # reader already knows this platform's routes, and this line exists so that
+    # somebody auditing a commit can get to where the change was made.
     lines.append(f"Cheese-Topic: {_room_url(topic)}")
     if card is not None:
-        lines.append(f"Cheese-Card: {_room_url(topic)}?card={card.id}")
+        # The CARD stays a bare id, deliberately. There is no route that opens an
+        # accept card: `?card=` on the room's page takes a TASK id
+        # (TopicView.vue), so hanging the card's id off it would produce a link
+        # that looks clickable and opens nothing — worse than an id, because an
+        # id is honestly a lookup key while a dead link is a claim. Making it a
+        # URL is a frontend change (a deep link that resolves an accept card),
+        # not a string change here.
+        lines.append(f"Cheese-Card: {card.id}")
     lines.append(f"Cheese-Agent: {topic_agent_handle(topic.id)}")
     lines.extend(task_trailer(item) for item in (who.tasks if who else ()))
     coauthors = who.coauthors if who else ()

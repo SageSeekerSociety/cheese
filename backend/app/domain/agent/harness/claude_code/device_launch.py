@@ -707,16 +707,34 @@ if [ -n "$local_head" ] && [ -n "$branch" ]; then
     || true)"
   if [ -n "$anchor" ]; then
     graft=1  # 这一批已经在衔接了，继续用同一个基线
-  elif [ -n "$delivered" ] && [ -n "$asked_on" ] && [ "$asked_on" != "$branch" ]; then
+  elif [ -n "$last_branch" ] && [ "$last_branch" != "$branch" ]; then
+    # 这台机器**发布过**上一批，而房间已经换批了。**这一定要衔接**：这里的每个提
+    # 交都还长在上一批上，而上一批是被 squash 进 main 的。所以从这里往下，没有
+    #「不衔接」这个选项 —— 只有「接得上」和「说清楚接不上」。
+    #
+    # 判据是 `last_branch`（我自己发布过什么）而不是本地分支名：从没发布过的第一
+    # 次同步没有上一批可接，那时候普通推送才是对的。
+    #
+    # 没有交付依据时**拒绝**，而不是退回普通推送。退回普通推送恰恰是这段代码要
+    # 消灭的那个结果：一个把上一批改动又展示一遍的 PR，外加一个 `status=ok`。
     graft=1
     anchor="$(git rev-parse -q --verify "refs/cheese/local-at/$asked_on" \
       2>/dev/null || true)"
     published="$(git rev-parse -q --verify "refs/cheese/published/$asked_on" \
       2>/dev/null || true)"
-    if [ -z "$anchor" ]; then
+    if [ -z "$on_head" ]; then
+      # 那一批合并的时候还没有人记下「交出去的是哪个 commit」（`delivered_head`
+      # 不回填）。这条路只对那之前的批次成立，是个会自己走完的窗口。
       tried=1; failed=1
-      detail="this machine has no record of what it published to $asked_on"
-    elif [ -z "$on_head" ] || [ "$on_head" != "$published" ]; then
+      detail="no recorded delivery for $asked_on, so this batch cannot be \
+carried onto $branch. Nothing is lost: the commits are still here and the \
+uncommitted work is in refs/cheese/snapshots/$branch. Re-clone the workspace \
+to start $branch from the current base."
+    elif [ -z "$anchor" ]; then
+      tried=1; failed=1
+      detail="this machine has no record of what it published to $asked_on. \
+Re-clone the workspace to start $branch from the current base."
+    elif [ "$on_head" != "$published" ]; then
       # 交付出去的不是我推上去的那个 commit —— 别人也往那条分支推过东西，而我的
       # 基线只覆盖我自己写的部分，照它接过去会把别人那份悄悄丢掉。
       tried=1; failed=1

@@ -150,9 +150,11 @@ def test_the_card_that_delivered_the_change_is_a_trailer_too():
     card = _card()
     trailers = pr_text.pr_trailers(topic, "carol", None, card)
     assert f"Cheese-Topic: {_room_url(topic)}" in trailers
-    assert f"Cheese-Card: {_room_url(topic)}?card={card.id}" in trailers
-    assert f"?card={card.id}" in pr_text.pr_body(topic, "carol", card)
-    assert f"?card={card.id}" in pr_text.merge_commit_message(topic, "carol", card)
+    assert f"Cheese-Card: {card.id}" in trailers
+    assert f"Cheese-Card: {card.id}" in pr_text.pr_body(topic, "carol", card)
+    assert f"Cheese-Card: {card.id}" in pr_text.merge_commit_message(
+        topic, "carol", card
+    )
 
 
 def test_no_card_no_cheese_card_line():
@@ -178,7 +180,7 @@ def test_a_delivery_names_the_agent_and_every_worker_behind_it():
         "Requested-by: Alice <583231+alice@users.noreply.github.com>",
         "Reviewed-by: carol <carol@zhishi.local>",
         f"Cheese-Topic: {_room_url(topic)}",
-        f"Cheese-Card: {_room_url(topic)}?card={card.id}",
+        f"Cheese-Card: {card.id}",
         f"Cheese-Agent: {topic_agent_handle(topic.id)}",
         f"Cheese-Task: {one.task_id} ac2c038d44616a2f2 把 trailer 补全",
         f"Cheese-Task: {two.task_id} 9f1b7c22e0d341a80 顺手修一个 flaky 测试",
@@ -298,7 +300,7 @@ def test_local_merge_commit_message_is_subject_body_then_trailers():
     assert "Requested-by: Alice <583231+alice@users.noreply.github.com>" in msg
     assert "Reviewed-by: carol <carol@zhishi.local>" in msg
     assert f"Cheese-Topic: {_room_url(topic)}" in msg
-    assert f"Cheese-Card: {_room_url(topic)}?card={card.id}" in msg
+    assert f"Cheese-Card: {card.id}" in msg
     assert msg == "feat: deliver the thing\n\n" + pr_text.pr_body(
         topic, "carol", card, identity.Attribution("alice", ALICE)
     )
