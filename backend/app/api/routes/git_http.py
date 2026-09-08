@@ -188,10 +188,18 @@ async def branch_for_place(
     facts in the answer exist because a device **cannot work them out for
     itself** after a squash merge:
 
-    - `on_delivered` — has that batch landed? Ancestry cannot say. A squash
-      commit is not a descendant of the branch it squashed, so `merge-base
-      --is-ancestor` answers "no" for a batch that is fully delivered and "no"
-      for one that never was.
+    - `on_merged` — is `on` a batch of THIS room that has landed? Ancestry
+      cannot say. A squash commit is not a descendant of the branch it
+      squashed, so `merge-base --is-ancestor` answers "no" for a batch that is
+      fully delivered and "no" for one that never was. Nor can a device tell a
+      landed batch from a branch name that was never a batch at all (its own
+      `dev/…`, or the base branch it was cloned onto) — and the two need
+      opposite handling: the first must be carried onto the new batch or
+      refused, the second is just a name and pushes normally.
+    - `on_head` — the commit that batch delivered, empty when the merge
+      predates recording it. A merged batch with no `on_head` is the case the
+      device must REFUSE rather than push: it knows the work here sits on a
+      landed batch and cannot tell where that batch ends.
     - `base` / `base_sha` — the commit the next batch starts from, by name AND
       by sha. Same reason: the delivering clone has no ref that reaches it.
 
@@ -224,7 +232,7 @@ async def branch_for_place(
     if place.branch_name is None:
         raise NotFoundError("这个地点现在没有可写的分支")
     base, base_sha = await asyncio.to_thread(ws.base_branch_head, project_id)
-    delivered = False
+    on_merged = False
     on_head = ""
     if on and on != place.branch_name:
         history = await WorkTreeService(db).history(place.room_id)
@@ -236,14 +244,15 @@ async def branch_for_place(
             ),
             None,
         )
-        # 交付事实来自合并那一刻记下的 `delivered_head`，**不是**那条分支现在指向
-        # 哪里。A device grafting its next batch does a three-way merge whose BASE
-        # is the content that was delivered; the branch is mutable, so a commit
-        # pushed onto it after the merge (a stale screen, a hand push) would be
-        # taken for delivered content it never was, and the graft would silently
-        # re-deliver or drop work. A batch that merged before this was recorded
-        # answers with nothing, and the device refuses rather than guesses.
-        delivered = was is not None and bool(was.delivered_head)
+        # 「交出去的是哪个 commit」来自合并那一刻记下的 `delivered_head`，**不是**
+        # 那条分支现在指向哪里。A device grafting its next batch does a three-way
+        # merge whose BASE is the content that was delivered; the branch is
+        # mutable, so a commit pushed onto it after the merge (a stale screen,
+        # a hand push) would be taken for delivered content it never was, and
+        # the graft would silently re-deliver or drop work. A batch that merged
+        # before this was recorded answers `on_merged` with no `on_head`, and
+        # the device refuses rather than guesses.
+        on_merged = was is not None
         on_head = (was.delivered_head or "") if was is not None else ""
     return ok(
         {
@@ -251,7 +260,7 @@ async def branch_for_place(
             "tree_id": str(place.tree_id),
             "base": base,
             "base_sha": base_sha,
-            "on_delivered": delivered,
+            "on_merged": on_merged,
             "on_head": on_head,
         }
     )

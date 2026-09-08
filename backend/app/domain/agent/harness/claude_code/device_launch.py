@@ -683,12 +683,12 @@ branch="$(cheese_field branch)"
 base="$(cheese_field base)"
 base_sha="$(cheese_field base_sha)"
 on_head="$(cheese_field on_head)"
-delivered=""
-# JSON whitespace is not part of the fact: `"on_delivered":true` and
-# `"on_delivered": true` are the same answer, and a pattern that only matched one
-# of them would silently read「已交付」as「没交付」and skip the graft entirely.
+merged=""
+# JSON whitespace is not part of the fact: `"on_merged":true` and
+# `"on_merged": true` are the same answer, and a pattern that only matched one of
+# them would silently read「那一批已经合了」as「没合」and skip the graft entirely.
 case "$(printf '%s' "$answer" | tr -d ' ')" in
-  *'"on_delivered":true'*) delivered=1;;
+  *'"on_merged":true'*) merged=1;;
 esac
 local_head="$(git rev-parse --verify -q HEAD 2>/dev/null || true)"
 # 接不上去的时候写进 detail 的那段话。它写的是可以直接粘的命令：接不上去意味着这
@@ -744,7 +744,8 @@ anchor=""
 # 不接的话，这里的每一个新提交都还长在上一批的提交上，而上一批是被 squash 进
 # main 的：新分支上会重新带着上一批的改动，PR 的三点 diff 把它们再展示一遍，squash
 # 正文再声称一遍。**祖先关系答不了这件事**（squash 提交不是被压的那条分支的后代），
-# 所以「上一批交付了没有」和「新一批从哪个 commit 起」都是平台**告诉**这里的。
+# 所以「上一批合进去了没有」「它交出去的是哪个 commit」「新一批从哪个 commit 起」
+# 三件事都是平台**告诉**这里的。
 #
 # 三方合并的**基线是这个 clone 自己的那个提交** —— 我上次发布到上一批分支时，本地
 # HEAD 是什么。只有它能让这次合并说的是「交付之后我写的东西」：拿天然共同祖先当基
@@ -762,32 +763,36 @@ if [ -n "$local_head" ] && [ -n "$branch" ]; then
     || true)"
   if [ -n "$anchor" ]; then
     graft=1  # 这一批已经在衔接了，继续用同一个基线
-  elif [ "$asked_on" != "$branch" ] \
-       && { [ -n "$delivered" ] || [ -n "$last_branch" ]; }; then
-    # 问的那一批（`$asked_on`）不是现在这一批，而且两个判据**任意一个**成立：平台
-    # 说前者已经交付，或者这台机器自己记得发布过它。两个都写在这里的原因：
+  elif [ -n "$merged" ] && [ "$asked_on" != "$branch" ]; then
+    # 这个 clone 写的那一批（`$asked_on`）是这个房间的一批、**已经合进 main 了**，
+    # 而房间现在写的是另一批。两件事都是平台说的 —— 任何 clone 都问得到，包括在这
+    # 个同步器开始写 `refs/cheese/*` 之前就已经在跑的那些。
     #
-    # `$delivered` 是**平台事实**，任何 clone 都拿得到 —— 包括在这个同步器写
-    # `refs/cheese/*` 之前就已经在跑、并且一直往上一批发布的那些。只看本地记录
-    # 的话，这样一台机器看起来和「从没发布过」一模一样，于是走普通推送：新分支从
-    # 上一批的提交上长出来，把已经 squash 进 main 的改动再交付一次，还报 ok。
+    # 判据里**没有本地记录**（`$last_branch`、`refs/cheese/*`）：那些只有这个同步
+    # 器自己写，升级不会追认一台已经在跑的机器发布过什么，所以「一条本地记录都没
+    # 有」和「从没发布过」在这里长得一模一样。拿本地记录当判据，一台升级之前就在往
+    # 上一批发布的机器会走普通推送：新分支从上一批的提交上长出来，把那一批已经进了
+    # main 的改动再交付一次，还报 `status=ok`。
     #
-    # `$last_branch` 单独也够：这台机器发布过 `$asked_on`，那它的提交就长在那一批
-    # 上，无论平台此刻怎么说那一批的交付状态。
+    # 反过来，`$asked_on` **不是**这个房间合并过的批次时（这台机器自己起的分支名、
+    # 或者 clone 时落在的基线分支），普通推送才是对的：没有哪一批从它交付出去过，
+    # 也就没有要衔接的东西。
     #
-    # 往下没有「不衔接」这个选项 —— 只有「接得上」和「说清楚接不上」。没有依据时
-    # **拒绝**，而不是退回普通推送：退回普通推送恰恰是这段代码要消灭的那个结果。
+    # 到了这里就只有「接得上」和「说清楚接不上」两条路 —— 没有「不衔接地推过去」。
     graft=1
     anchor="$(git rev-parse -q --verify "refs/cheese/local-at/$asked_on" \
       2>/dev/null || true)"
     published="$(git rev-parse -q --verify "refs/cheese/published/$asked_on" \
       2>/dev/null || true)"
     if [ -z "$on_head" ]; then
-      # 那一批合并的时候还没有人记下「交出去的是哪个 commit」（`delivered_head`
-      # 不回填）。这条路只对那之前的批次成立，是个会自己走完的窗口。
+      # 那一批合了，但合的时候没人记下「交出去的是哪个 commit」（`delivered_head`
+      # 不回填的那些老批次）。**交付边界不知道**。
+      #
+      # 不知道就拒绝，不猜。这里的提交长在一批已经进了 main 的历史上，普通推送就是
+      # 把那批改动再交付一次；而没有边界也做不了三方合并 —— 拿什么当基线都是猜。
       tried=1; failed=1
-      detail="no recorded delivery for $asked_on, so this batch cannot be \
-carried onto $branch. $(cheese_recovery '')"
+      detail="$asked_on was merged without recording the commit it delivered, \
+so where it ends and $branch begins is unknown here. $(cheese_recovery '')"
     elif [ -z "$anchor" ]; then
       tried=1; failed=1
       detail="this machine has no record of what it published to $asked_on, \

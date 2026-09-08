@@ -2655,7 +2655,7 @@ def test_a_long_lived_screen_stops_pushing_onto_the_batch_it_already_delivered(
         )
 
         # 第三批 —— 这条走的是**真路由**：脚本自己决定 `?on=` 带什么，平台自己
-        # 算 `on_delivered` / `on_head`。第三批正是手填 payload 骗得过、真实系统
+        # 算 `on_merged` / `on_head`。第三批正是手填 payload 骗得过、真实系统
         # 里骗不过的地方：HEAD 从没动过，本地分支名说的还是第一批。
         cid2 = _make_card(client, tid)
         _give_card_a_pr(client, app_world, tid, cid2, 8)

@@ -223,3 +223,33 @@ def test_a_refused_cross_project_ask_does_not_touch_that_projects_marker(client)
     assert ws.tree_for_place(_uuid.UUID(room)) == skew, (
         "拒绝这次跨项目请求之前，已经改了那个项目的记号"
     )
+
+
+def test_a_branch_this_room_never_delivered_from_is_not_a_merged_batch(client):
+    """`on_merged` 说的是「`?on=` 那个名字是这个房间**合并过**的一批」，不是「那个
+    名字和现在这批不一样」。
+
+    分身自己起的 `dev/…`、clone 落在的基线分支，名字都对不上当前批次，而从它们身上
+    没有哪一批交付出去过 —— device 照常推就是对的。把这两种情况混成一个答案，房间
+    第一次同步就会被当成「衔接失败」挡住。
+    """
+    from app.core.sandbox_auth import mint_scoped_token
+    from tests.integration.conftest import session_auth_headers
+
+    client.headers.update(session_auth_headers("alice"))
+    pid = client.post("/projects", json={"name": "A"}).json()["data"]["id"]
+    room = client.post("/topics", json={"project_id": pid, "title": "房间"}).json()[
+        "data"
+    ]["id"]
+    assert client.post(f"/topics/{room}/split", json={"title": "活"}).status_code == 200
+
+    answer = client.get(
+        f"{_branch_url(pid, room)}?on=dev/my-own-branch",
+        headers={"X-Cheese-Token": mint_scoped_token(project_id=pid)},
+    )
+
+    assert answer.status_code == 200, answer.text
+    said = answer.json()["data"]
+    assert said["on_merged"] is False
+    assert said["on_head"] == ""
+    assert said["branch"].startswith("topic/")

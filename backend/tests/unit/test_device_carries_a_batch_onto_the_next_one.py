@@ -14,7 +14,7 @@ if nothing is done, and neither of them can be worked out from inside the clone:
 Ancestry cannot answer either question: **a squash commit is not a descendant of
 the branch it squashed**, so `merge-base --is-ancestor` says "no" for a batch
 that is fully delivered and "no" for one that never was. So the platform states
-both facts (`on_delivered`, `base_sha`) and the device acts only on them.
+both facts (`on_merged`, `on_head`, `base_sha`) and the device acts only on them.
 
 Everything here is a real repository and the real generated script. The one thing
 that is faked is the platform's answer — which is the point: these pin what the
@@ -171,7 +171,7 @@ def test_the_next_batch_carries_only_its_own_changes_onto_the_new_branch():
         platform = _Platform()
         try:
             # 第一批：写、提交、同步。
-            platform.payload = {"branch": "topic/one", "on_delivered": False}
+            platform.payload = {"branch": "topic/one"}
             (work / "one.txt").write_text("batch one\n")
             _git(work, "add", "-A")
             _git(work, "commit", "-qm", "feat: batch one")
@@ -195,7 +195,7 @@ def test_the_next_batch_carries_only_its_own_changes_onto_the_new_branch():
                 "branch": "topic/two",
                 "base": "main",
                 "base_sha": main_sha,
-                "on_delivered": True,
+                "on_merged": True,
                 "on_head": delivered_tip,
             }
             (work / "two.txt").write_text("batch two\n")
@@ -235,7 +235,7 @@ def test_a_conflict_carrying_the_batch_over_is_reported_and_nothing_is_lost():
         log = root / "hook.log"
         platform = _Platform()
         try:
-            platform.payload = {"branch": "topic/one", "on_delivered": False}
+            platform.payload = {"branch": "topic/one"}
             (work / "shared.txt").write_text("the agent's version\n")
             _git(work, "add", "-A")
             _git(work, "commit", "-qm", "feat: batch one")
@@ -256,7 +256,7 @@ def test_a_conflict_carrying_the_batch_over_is_reported_and_nothing_is_lost():
                 "branch": "topic/two",
                 "base": "main",
                 "base_sha": main_sha,
-                "on_delivered": True,
+                "on_merged": True,
                 "on_head": _git(work, "rev-parse", "HEAD").strip(),
             }
             (work / "shared.txt").write_text("the agent's next version\n")
@@ -312,7 +312,7 @@ def test_a_commit_somebody_else_pushed_is_not_wiped_out_by_this_turn():
         sync.write_text(_sync_body())
         log = root / "hook.log"
         platform = _Platform()
-        platform.payload = {"branch": "topic/one", "on_delivered": False}
+        platform.payload = {"branch": "topic/one"}
         try:
             (work / "mine.txt").write_text("mine\n")
             _git(work, "add", "-A")
@@ -350,7 +350,7 @@ def test_a_remote_that_moved_after_the_lease_was_read_is_not_overwritten():
         log = root / "hook.log"
         platform = _Platform()
         try:
-            platform.payload = {"branch": "topic/one", "on_delivered": False}
+            platform.payload = {"branch": "topic/one"}
             (work / "one.txt").write_text("batch one\n")
             _git(work, "add", "-A")
             _git(work, "commit", "-qm", "feat: batch one")
@@ -364,7 +364,7 @@ def test_a_remote_that_moved_after_the_lease_was_read_is_not_overwritten():
                 "branch": "topic/two",
                 "base": "main",
                 "base_sha": main_sha,
-                "on_delivered": True,
+                "on_merged": True,
                 "on_head": delivered_tip,
             }
             (work / "two.txt").write_text("batch two\n")
@@ -436,7 +436,7 @@ def test_main_moving_a_file_this_batch_never_touched_is_not_a_conflict():
         log = root / "hook.log"
         platform = _Platform()
         try:
-            platform.payload = {"branch": "topic/one", "on_delivered": False}
+            platform.payload = {"branch": "topic/one"}
             (work / "one.txt").write_text("delivered by batch one\n")
             _git(work, "add", "-A")
             _git(work, "commit", "-qm", "feat: batch one")
@@ -460,7 +460,7 @@ def test_main_moving_a_file_this_batch_never_touched_is_not_a_conflict():
                 "branch": "topic/two",
                 "base": "main",
                 "base_sha": main_sha,
-                "on_delivered": True,
+                "on_merged": True,
                 "on_head": delivered_tip,
             }
             (work / "two.txt").write_text("batch two\n")
@@ -495,7 +495,7 @@ def test_a_third_batch_and_repeated_syncs_within_one_batch():
         log = root / "hook.log"
         platform = _Platform()
         try:
-            platform.payload = {"branch": "topic/one", "on_delivered": False}
+            platform.payload = {"branch": "topic/one"}
             (work / "one.txt").write_text("batch one\n")
             _git(work, "add", "-A")
             _git(work, "commit", "-qm", "feat: batch one")
@@ -507,7 +507,7 @@ def test_a_third_batch_and_repeated_syncs_within_one_batch():
                 "branch": "topic/two",
                 "base": "main",
                 "base_sha": main_after_one,
-                "on_delivered": True,
+                "on_merged": True,
                 "on_head": tip_one,
             }
             for nth in ("a", "b", "c"):
@@ -527,7 +527,7 @@ def test_a_third_batch_and_repeated_syncs_within_one_batch():
                 "branch": "topic/three",
                 "base": "main",
                 "base_sha": main_after_two,
-                "on_delivered": True,
+                "on_merged": True,
                 "on_head": tip_two,
             }
             (work / "three.txt").write_text("batch three\n")
@@ -557,7 +557,7 @@ def test_a_commit_that_reached_the_new_branch_first_is_not_overwritten():
         log = root / "hook.log"
         platform = _Platform()
         try:
-            platform.payload = {"branch": "topic/one", "on_delivered": False}
+            platform.payload = {"branch": "topic/one"}
             (work / "one.txt").write_text("batch one\n")
             _git(work, "add", "-A")
             _git(work, "commit", "-qm", "feat: batch one")
@@ -570,7 +570,7 @@ def test_a_commit_that_reached_the_new_branch_first_is_not_overwritten():
                 "branch": "topic/two",
                 "base": "main",
                 "base_sha": main_sha,
-                "on_delivered": True,
+                "on_merged": True,
                 "on_head": tip_one,
             }
             (work / "two.txt").write_text("batch two\n")
@@ -610,7 +610,7 @@ def test_a_batch_with_no_recorded_delivery_is_refused_rather_than_guessed():
         log = root / "hook.log"
         platform = _Platform()
         try:
-            platform.payload = {"branch": "topic/one", "on_delivered": False}
+            platform.payload = {"branch": "topic/one"}
             (work / "one.txt").write_text("batch one\n")
             _git(work, "add", "-A")
             _git(work, "commit", "-qm", "feat: batch one")
@@ -622,7 +622,7 @@ def test_a_batch_with_no_recorded_delivery_is_refused_rather_than_guessed():
                 "branch": "topic/two",
                 "base": "main",
                 "base_sha": main_sha,
-                "on_delivered": False,
+                "on_merged": True,
                 "on_head": "",
             }
             (work / "two.txt").write_text("batch two\n")
@@ -653,7 +653,7 @@ def test_a_batch_that_has_not_changed_still_pushes_normally():
         sync.write_text(_sync_body())
         log = root / "hook.log"
         platform = _Platform()
-        platform.payload = {"branch": "topic/one", "on_delivered": False, "on_head": ""}
+        platform.payload = {"branch": "topic/one", "on_head": ""}
         try:
             for nth in ("a", "b"):
                 (work / f"{nth}.txt").write_text(f"{nth}\n")
@@ -701,7 +701,8 @@ def _publish_like_the_old_script(work: Path, branch: str) -> None:
 def test_a_clone_from_before_the_upgrade_does_not_redeliver_the_last_batch():
     """这台机器**在升级之前**就已经在往上一批发布了，所以它一条本地记录都没有。
 
-    平台照样说得出这件事：`?on=` 问的那一批 `on_delivered=true`，而现在这一批是
+    平台照样说得出这件事：`?on=` 问的那一批 `on_merged=true`、交出去的是哪个
+    commit 也记着，而现在这一批是
     另一条分支。只看本地记录的话，这台机器看起来像「从没发布过」，于是走普通推
     送 —— 新分支从上一批的提交上长出来，PR 把上一批的改动再展示一遍，`status=ok`。
     """
@@ -728,7 +729,7 @@ def test_a_clone_from_before_the_upgrade_does_not_redeliver_the_last_batch():
                 "branch": "topic/two",
                 "base": "main",
                 "base_sha": main_sha,
-                "on_delivered": True,
+                "on_merged": True,
                 "on_head": delivered_tip,
             }
             (work / "two.txt").write_text("batch two\n")
@@ -796,7 +797,7 @@ def test_the_refusal_can_be_followed_to_get_every_commit_and_edit_back():
                 "branch": "topic/two",
                 "base": "main",
                 "base_sha": main_sha,
-                "on_delivered": True,
+                "on_merged": True,
                 "on_head": delivered_tip,
             }
             (work / "two.txt").write_text("batch two\n")
@@ -831,3 +832,96 @@ def test_the_refusal_can_be_followed_to_get_every_commit_and_edit_back():
             fresh,
         )
         assert (fresh / "scratch.txt").read_text() == "还没提交的东西\n"
+
+
+def test_an_old_workspace_with_no_delivery_record_at_all_is_still_refused():
+    """交付边界两边都答不出的那一格：那一批的 `delivered_head` 是空的（`on_head`
+    空，所以「已交付」这个结论也不成立），而这台机器 `branch` / `published` /
+    `local-at` / `anchor` 四种记录**一个都没有**（升级之前就在跑的 clone）。
+
+    这一格最容易被当成「没什么要衔接的」：两边都说不出上一批交出去的是什么。但平台
+    还是说得出那一批**已经合进 main 了**，而这里的提交就长在它上面 —— 普通推送等于
+    把那些改动当成新一批再交付一次。边界不知道的时候，唯一对的动作是停下来说清楚。
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        bare = _platform_repo(root)
+        work = _device_clone(root, bare, "topic/one")
+        sync = root / "cheese-sync"
+        sync.write_text(_sync_body())
+        log = root / "hook.log"
+        platform = _Platform()
+        try:
+            (work / "one.txt").write_text("batch one\n")
+            _git(work, "add", "-A")
+            _git(work, "commit", "-qm", "feat: batch one")
+            _publish_like_the_old_script(work, "topic/one")
+            _squash_into_main(bare, root, "topic/one")
+            assert (
+                _git(work, "for-each-ref", "--format=%(refname)").count("refs/cheese/")
+                == 0
+            ), "这个用例要的是一条本地记录都没有的 clone"
+            assert not (work / ".git" / "cheese-sync" / "branch").exists()
+
+            # 平台侧只说得出「那一批合了」：合并时没有回填 delivered_head。
+            platform.payload = {
+                "branch": "topic/two",
+                "base": "main",
+                "base_sha": _git(bare, "rev-parse", "main").strip(),
+                "on_merged": True,
+                "on_head": "",
+            }
+            (work / "two.txt").write_text("batch two\n")
+            _git(work, "add", "-A")
+            _git(work, "commit", "-qm", "feat: batch two")
+            (work / "scratch.txt").write_text("还没提交的东西\n")
+
+            reported = _turn(work, sync, platform, bare, log)
+        finally:
+            platform.stop()
+
+        assert '"status":"ok"' not in reported, reported
+        assert '"status":"failed"' in reported, reported
+        assert "refs/heads/topic/two" not in _refs(bare), (
+            "交付边界不知道，却还是把上一批的提交推成了新一批"
+        )
+        assert "refs/cheese/snapshots/topic/two" in _refs(bare)
+        assert (work / "scratch.txt").read_text() == "还没提交的东西\n"
+        _assert_the_report_is_safe_to_follow(reported, "topic/two")
+
+
+def test_a_local_branch_that_was_never_a_batch_still_pushes_normally():
+    """别误伤：本地分支名和这一批的分支名不一样，**不**等于要衔接。
+
+    分身可以自己起一条 `dev/…` 干活，clone 也可能落在基线分支上。平台答的是「这个
+    名字不是这个房间合并过的任何一批」，那就没有哪一批从它交付出去过 —— 没有要接
+    的东西，普通推送就是对的。把「名字对不上」本身当成拒绝的理由，房间第一次同步
+    就会被挡住。
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        bare = _platform_repo(root)
+        work = _device_clone(root, bare, "dev/my-own-branch")
+        sync = root / "cheese-sync"
+        sync.write_text(_sync_body())
+        log = root / "hook.log"
+        platform = _Platform()
+        try:
+            # `dev/my-own-branch` 不是这个房间的批次，所以 on_merged 是 false。
+            platform.payload = {
+                "branch": "topic/one",
+                "base": "main",
+                "base_sha": _git(bare, "rev-parse", "main").strip(),
+                "on_merged": False,
+                "on_head": "",
+            }
+            (work / "mine.txt").write_text("我自己起的分支上写的\n")
+            _git(work, "add", "-A")
+            _git(work, "commit", "-qm", "feat: on my own branch")
+
+            reported = _turn(work, sync, platform, bare, log)
+        finally:
+            platform.stop()
+
+        assert '"status":"ok"' in reported, reported
+        assert _tree_of(bare, "topic/one") == ["README.md", "mine.txt"]
