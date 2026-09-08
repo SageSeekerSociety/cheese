@@ -1,6 +1,7 @@
 """Device screen launcher: hooks settings + self-contained launch command."""
 
 import contextlib
+import json
 import os
 import re
 import subprocess
@@ -1427,3 +1428,49 @@ def test_declaring_a_port_writes_it_on_the_machine(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert (tmp_path / ".claude/cheese-preview.port").read_text().strip() == "5173"
+
+
+def test_every_sandbox_gets_a_fetch_tool_it_can_time_out():
+    """A hosted repo must be fetchable-from safely without adding a `.mcp.json`
+    of its own, and the fetch path must be one a deadline can reach.
+
+    The built-in WebFetch is neither: it is unconfigurable and it can hang a
+    turn open indefinitely (anthropics/claude-code#86910, reproduced here on
+    2.1.224 — two of two attempts on one URL hung for 1,028 s and 390 s, while a
+    larger page returned in 5 s). So the platform plants a fetch server and the
+    timeout that bounds it.
+    """
+    settings = device_launch.hooks_settings()
+    assert settings["env"]["MCP_TOOL_TIMEOUT"], "an MCP tool call must have a deadline"
+
+    script = device_launch.build_launch_script(
+        sync_on_stop=True, system_prompt="", ca_pem=""
+    )
+    gates = _claude_json_from(script)
+    assert "fetch" in gates["mcpServers"], "the machine plants no fetch server"
+
+
+def test_a_machine_and_a_container_fetch_the_same_way():
+    """Two delivery paths, one fetch behaviour — a device that fetched
+    differently from a container is a second thing to be wrong."""
+    from app.domain.agent.harness.claude_code.session_launch import (
+        build_session_launch,
+    )
+
+    script = device_launch.build_launch_script(
+        sync_on_stop=True, system_prompt="", ca_pem=""
+    )
+    machine = _claude_json_from(script)["mcpServers"]
+
+    spec = build_session_launch(config_dir="/cfg", workdir="/work", system_prompt="x")
+    container = json.loads(
+        next(f.content for f in spec.files if f.name == ".claude.json")
+    )["mcpServers"]
+
+    assert machine == container
+
+
+def _claude_json_from(script: str) -> dict:
+    """The `.claude.json` the launch script writes, as the shell would leave it."""
+    line = next(l for l in script.splitlines() if "hasCompletedOnboarding" in l)
+    return json.loads(line.replace("$CHEESE_WORK", "/work"))
