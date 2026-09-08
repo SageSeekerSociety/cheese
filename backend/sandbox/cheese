@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -51,6 +52,24 @@ TURN = os.environ.get("CHEESE_TURN", "")
 # In a private chat, `remember` writes the owner's personal memory (跟着人走).
 MEMORY_SCOPE = os.environ.get("CHEESE_MEMORY_SCOPE", "project")
 OWNER = os.environ.get("CHEESE_OWNER", "")
+
+
+def _preview_base(port: int) -> str:
+    """Recognize a server mounted at the platform's advertised preview base."""
+    base = os.environ.get("CHEESE_APP_BASE", "")
+    if not base:
+        return ""
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    try:
+        conn.request("GET", "/")
+        response = conn.getresponse()
+        # Vite redirects / to its configured base. Do not follow redirects:
+        # an application's login redirect must not change the preview mount.
+        if response.status in (301, 302, 303, 307, 308) and response.getheader("Location") == base:
+            return base.rstrip("/")
+        return ""
+    finally:
+        conn.close()
 
 
 def _call(
@@ -815,9 +834,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser(
         "members",
-        help="列出项目成员(名字+handle+角色)",
+        help="列出当前话题成员(名字+handle+角色)",
         description=(
-            "列出项目成员。点名前先跑一次核对写法——名字和成员表不一致时,"
+            "列出当前话题可点名的成员。点名前先跑一次核对写法——名字和成员表不一致时,"
             "平台会在现场标红「没能通知到」,而且那条提醒真的没送出去。"
         ),
     )
@@ -1233,11 +1252,11 @@ def main() -> None:
             )
         print("\n".join(lines), file=sys.stderr)
     elif a.cmd == "members":
-        proj = _need("CHEESE_PROJECT", PROJECT)
-        d = _call("GET", f"/projects/{proj}/members").get("data", {})
+        topic = _need("CHEESE_TOPIC", TOPIC)
+        d = _call("GET", f"/topics/{topic}/members").get("data", {})
         rows = d.get("data", d) if isinstance(d, dict) else d
         for m in rows:
-            h = m.get("user_handle")
+            h = m.get("member_handle")
             print(f"- {m.get('name')}（{m.get('role')}）→ 在消息里写 <@{h}> 点名 ta")
     elif a.cmd == "status":
         topic = _need("CHEESE_TOPIC", TOPIC)
@@ -1262,7 +1281,12 @@ def main() -> None:
         # written on THIS machine and read from disk by the helper — it never
         # travels on the wire, which is what keeps the platform unable to point
         # a machine at any other port.
-        rc = subprocess.call(["sh", up, str(a.port)])
+        try:
+            base = _preview_base(a.port)
+        except (OSError, http.client.HTTPException) as exc:
+            print(f"[cheese] :{a.port} 无法访问: {exc}", file=sys.stderr)
+            sys.exit(1)
+        rc = subprocess.call(["sh", up, str(a.port), base])
         if rc != 0:
             print(f"[cheese] 预览通道没能起来（{up} 退出码 {rc}）。", file=sys.stderr)
             sys.exit(1)
@@ -1280,7 +1304,13 @@ def main() -> None:
         rel = os.path.relpath(os.path.abspath(a.path), root)
         if rel.startswith(".."):  # outside the worktree — let the backend validate
             rel = a.path
-        _call("POST", f"/topics/{topic}/artifact", {"path": rel, "as": a.as_})
+        try:
+            with open(a.path, encoding="utf-8") as source:
+                content = source.read()
+        except (OSError, UnicodeError) as exc:
+            print(f"[cheese] 无法读取 {a.path}: {exc}", file=sys.stderr)
+            sys.exit(1)
+        _call("POST", f"/topics/{topic}/artifact", {"path": rel, "as": a.as_, "content": content})
         print(f"已把 {rel} 设为当前预览（{a.as_}）。")
     elif a.cmd == "api":
         if not a.method:

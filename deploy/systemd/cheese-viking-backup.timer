@@ -1,0 +1,17 @@
+[Unit]
+Description=Back up the openviking memory tree every 6 hours
+
+[Timer]
+# :15 keeps it clear of the DB backup (:00) and the uploads mirror (:30).
+#
+# Every 6h rather than hourly: each run stores a FULL tar (there is no
+# incremental leg for this tree), so the disk cost is cadence x retention x tree
+# size, on a box that already needs a disk-pressure guard. Memory also moves far
+# slower than the DB — losing at most 6h of remembered facts is a different kind
+# of loss from 6h of application rows.
+OnCalendar=*-*-* 00,06,12,18:15:00
+RandomizedDelaySec=300
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -377,11 +377,15 @@
 
           <v-card-text class="px-6 py-4">
             <div v-if="taskProjectsLoading" class="text-medium-emphasis">加载中…</div>
+            <div v-else-if="taskProjectsError" class="text-medium-emphasis">
+              {{ taskProjectsError }}
+              <v-btn variant="text" size="small" @click="loadTaskProjects">重试</v-btn>
+            </div>
             <div v-else-if="taskProjects.length" class="d-flex flex-column gap-2">
               <a
                 v-for="p in taskProjects"
                 :key="p.id"
-                :href="`/project/${p.id}`"
+                :href="`/projects/${p.id}`"
                 class="d-flex align-center gap-2 text-decoration-none"
               >
                 <v-icon size="18" color="primary">mdi-folder-outline</v-icon>
@@ -390,21 +394,11 @@
             </div>
             <div v-else class="text-medium-emphasis">还没有人从这道赛题开始做。</div>
 
-            <v-alert v-if="taskProjectError" type="error" density="compact" variant="tonal" class="mt-3">
-              {{ taskProjectError }}
-            </v-alert>
-
-            <v-btn
-              color="primary"
-              variant="tonal"
-              rounded="pill"
-              class="mt-4"
-              :loading="creatingTaskProject"
-              @click="createProjectFromTask"
-            >
+            <v-btn color="primary" variant="tonal" rounded="pill" class="mt-4" @click="createProjectFromTask">
               <v-icon start>mdi-plus</v-icon>
               从这道赛题创建项目
             </v-btn>
+            <ResourceLimitsNotice />
           </v-card-text>
         </v-card>
 
@@ -426,7 +420,7 @@
                 color="primary"
                 variant="tonal"
                 rounded="pill"
-                :to="{ name: 'TasksAIAdvice', params: { taskId: taskData?.id } }"
+                :to="{ name: 'TasksAIAdvice', params: { spaceId: taskData?.space?.id, taskId: taskData?.id } }"
                 class="px-4"
               >
                 查看建议
@@ -453,10 +447,13 @@ import dayjs from 'dayjs'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
+
 // The cheesex (2.0) client: a project here is a git repo + root topic + 芝士,
 // not the 1.0 team-project that shares the word.
-import { createProject as createCheesexProject, listProjectsForTask } from '@/api'
+import { listProjectsForTask } from '@/api'
 import { MarkdownRenderer } from '@/components/chat/services/markdownRenderer'
+import ResourceLimitsNotice from '@/components/ResourceLimitsNotice.vue'
 import { TaskParticipationInfo } from '@/network/api/tasks/types'
 import AccountService from '@/services/account'
 
@@ -477,36 +474,30 @@ const router = useRouter()
 // 东西，同名不同物，这里要的是前者。
 const taskProjects = ref<CheesexProject[]>([])
 const taskProjectsLoading = ref(false)
-const taskProjectError = ref('')
-const creatingTaskProject = ref(false)
+const taskProjectsError = ref('')
+const { show: showNewProjectDialog } = useNewProjectDialog()
 
 async function loadTaskProjects() {
   const id = props.taskData?.id
   if (!id) return
   taskProjectsLoading.value = true
+  taskProjectsError.value = ''
   try {
     taskProjects.value = (await listProjectsForTask(id)).data
   } catch {
-    // A 赛题 page must still render when this list cannot be fetched.
     taskProjects.value = []
+    taskProjectsError.value = '项目列表加载失败，暂时无法确认是否已有项目。'
   } finally {
     taskProjectsLoading.value = false
   }
 }
 
-async function createProjectFromTask() {
-  const id = props.taskData?.id
-  if (!id || creatingTaskProject.value) return
-  creatingTaskProject.value = true
-  taskProjectError.value = ''
-  try {
-    const project = await createCheesexProject(props.taskData?.name || `赛题 ${id}`, undefined, undefined, id)
-    window.location.href = `/project/${project.id}`
-  } catch (e) {
-    taskProjectError.value = e instanceof Error ? e.message : String(e)
-  } finally {
-    creatingTaskProject.value = false
-  }
+function createProjectFromTask() {
+  const task = props.taskData
+  if (!task) return
+  const teams =
+    props.participationInfo?.identities.filter((i) => i.type === 'TEAM' && i.approved !== 'DISAPPROVED') ?? []
+  showNewProjectDialog(teams.length === 1 ? teams[0].memberId : null, { id: task.id, name: task.name })
 }
 
 watch(() => props.taskData?.id, loadTaskProjects, { immediate: true })
@@ -633,7 +624,7 @@ const goToAIAdvice = () => {
   if (props.taskData) {
     router.push({
       name: 'TasksAIAdvice',
-      params: { taskId: props.taskData.id },
+      params: { spaceId: props.taskData.space?.id, taskId: props.taskData.id },
     })
   }
 }

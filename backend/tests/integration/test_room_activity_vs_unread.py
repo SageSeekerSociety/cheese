@@ -33,6 +33,7 @@ def _join(client, room_id: str, handle: str) -> None:
     r = client.post(
         f"/topics/{room_id}/members",
         json={"handle": handle, "role": "member", "actor": "alice"},
+        headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200, r.text
 

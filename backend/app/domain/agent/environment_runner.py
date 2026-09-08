@@ -11,12 +11,13 @@ import signal
 import subprocess
 import sys
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 
 def now():
-    return datetime.now(UTC).isoformat()
+    # This shipped helper also runs with macOS's system Python 3.9.
+    return datetime.now(timezone.utc).isoformat()  # noqa: UP017
 
 
 def process_identity(pid):

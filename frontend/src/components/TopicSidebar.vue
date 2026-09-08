@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { Project, ProjectAgent, ProjectMemberRow, Topic } from '../cx_types'
+import type { Project, ProjectAgent, Topic } from '../cx_types'
 import type { FlatRow, VisibleRow } from '../lib/topicTree'
 
 import { computed, ref, watch } from 'vue'
@@ -7,6 +7,7 @@ import { useRoute, useRouter } from 'vue-router'
 
 import { listProjectAgents } from '../api'
 import { columnDotStyle } from '../lib/board'
+import { cancelPrefetch, prefetchOnHover } from '../lib/routePrefetch'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '../lib/topicTitle'
 import {
   ancestorPathIds,
@@ -18,10 +19,10 @@ import {
   saveOthersGroupOpen,
   visibleRows,
 } from '../lib/topicTree'
-import { avatarColor } from '../utils/avatar'
+import { avatarColor, avatarInitial } from '../utils/avatar'
 
+import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import SecondaryNavigation from './common/Navigation/SecondaryNavigation.vue'
-import CheeseAvatar from './CheeseAvatar.vue'
 
 const props = defineProps<{
   projects: Project[]
@@ -29,14 +30,6 @@ const props = defineProps<{
   topics: Topic[]
   selectedTopicId: string | null
   loadingTopics: boolean
-  // True when the 私聊 (1:1 with 芝士) entry is the active main view.
-  privateActive: boolean
-  // Project roster for the 私聊 DM list (each OTHER member = a person to DM).
-  members?: ProjectMemberRow[]
-  // The signed-in user's handle — excluded from the member DM list (no self-DM).
-  meHandle?: string
-  // The peer handle whose DM is currently open (for active highlighting), or null.
-  activePeer?: string | null
   // Which 项目文档 is open in the main area ('charter'|'decisions'|'weeklies'|
   // 'memory'), or null when none — the rail shows ONE 项目文档 row, active for
   // any of them, because which document is open is the page's business now.
@@ -45,8 +38,9 @@ const props = defineProps<{
   width?: number
   // 话题级未读 (Feishu-style): {topicId: count}; missing key = no unread.
   unreadMap?: Record<string, number>
-  // 私聊未读: {peerHandle: count}, `cheese` = the 芝士 DM. Separate from
-  // unreadMap because DM rows are built from the roster and have no topic id.
+  // 私聊未读: {peerHandle: count}, `cheese` = 和芝士那一间。侧栏只用它的**总数**，
+  // 挂在「成员」那一行上；是谁找你在成员页里说（每个人的私聊按钮上各带各的）。
+  // 和 unreadMap 分开是因为私聊是按对方 handle 编址的，没有话题 id。
   privateUnreadMap?: Record<string, number>
   // 整页形态: 手机上话题列表是页面栈的一层，占满内容区，不是侧边抽屉。
   page?: boolean
@@ -54,16 +48,16 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'select-topic', id: string): void
+  // 指针停在一行上：让父组件（拥有这一行的路由的那个）顺手把它预热了。点这一行
+  // 会发生什么由 select-topic 的接收方决定，所以「提前准备什么」也归它。
+  (e: 'hover-topic', id: string): void
+  (e: 'leave-topic'): void
   (e: 'create-topic', title: string, agentInstanceId?: string | null): void
   // 归档去向: manual archive / unarchive from the row's ⋯ actions.
   (e: 'archive-topic', id: string): void
   (e: 'unarchive-topic', id: string): void
   // Rename a topic's title from the row's ⋯ actions.
   (e: 'rename-topic', payload: { id: string; title: string }): void
-  // Open the 1:1 private chat with 芝士 in the main area (飞书私聊 conversation).
-  (e: 'select-private'): void
-  // Open a person-to-person DM with the given member handle (飞书私聊 conversation).
-  (e: 'select-peer-dm', handle: string): void
   // Open 项目文档 in the main area. The rail always asks for 章程 — the page
   // itself carries the tabs that reach the other three.
   (e: 'select-docs', kind: 'charter' | 'decisions' | 'weeklies' | 'memory'): void
@@ -98,10 +92,25 @@ const projectPages = [
   { key: 'workspace-running', label: '看板', icon: 'mdi-view-column-outline' },
   { key: 'calendar', label: '日历', icon: 'mdi-calendar-outline' },
   { key: 'project-agents', label: 'AI 队友', icon: 'mdi-robot-outline' },
+  // 成员紧挨着 AI 队友：这两行答的是同一个问题的两半——这个项目里都有谁。
+  { key: 'project-members', label: '成员', icon: 'mdi-account-group-outline' },
 ] as const
 function openProjectPage(name: string) {
   if (!props.selectedProjectId) return
   router.push({ name, params: { projectId: props.selectedProjectId } })
+}
+// 谁负责 push，谁负责预热：指针停住的时候把这个页面的代码先下下来，等真按下去时
+// 只剩下拉数据那一段。
+function hoverProjectPage(name: string) {
+  if (!props.selectedProjectId) return
+  prefetchOnHover({ router, to: { name, params: { projectId: props.selectedProjectId } } })
+}
+
+// 换项目落在项目地址本身，而不是它的某个话题：哪个话题该开着是那个项目的事
+// （手机上这个地址就是它的话题列表，桌面上它自己跳大本营）。
+function openProject(projectId: string) {
+  if (projectId === props.selectedProjectId) return
+  router.push({ name: 'workspace-project', params: { projectId } })
 }
 
 // New topic: don't ask the human for a title — create an untitled one and open
@@ -250,39 +259,12 @@ function countLabel(n: number): string {
 function unreadLabel(id: string): string {
   return countLabel(unreadOf(id))
 }
-// 私聊 badges are addressed by peer handle ('cheese' = the 芝士 DM).
-function privateUnreadOf(handle: string): number {
-  return props.privateUnreadMap?.[handle] ?? 0
-}
+// 私聊未读的总数——侧栏只说「有几条」，不说是谁。
+const privateUnreadTotal = computed<number>(() =>
+  Object.values(props.privateUnreadMap ?? {}).reduce((sum, n) => sum + n, 0)
+)
 // Unread hiding inside the collapsed archived group still deserves a hint.
 const archivedUnread = computed<number>(() => archivedRows.value.reduce((sum, t) => sum + unreadOf(t.id), 0))
-
-// ---- 私聊 (C3): the rail's tail, not the end of the scroll ----
-// 全体成员常驻是这一区原来的形态，结果是话题一多、未读徽标就滚出屏幕——恰好在
-// 最需要看见它的时候。现在只留「有事的人」：芝士 + 有未读的 + 正在聊的那一个，
-// 其余全部收进「发起私聊」。
-//
-// 评审处方里还有一条「最近有消息的人」，这一轮做不了：接口只回未读计数
-// (privateUnreadMap)，没有任何「上次有消息是什么时候」的时间戳，而为一条排序
-// 规则去改后端不在这条线的范围里。所以退化成「有未读的」。
-const peerDms = computed(() =>
-  (props.members ?? [])
-    .filter((m) => m.user_handle !== props.meHandle && !m.agent)
-    .map((m) => ({
-      handle: m.user_handle,
-      name: m.name || m.user_handle,
-    }))
-)
-const visibleDms = computed(() =>
-  peerDms.value.filter((d) => privateUnreadOf(d.handle) > 0 || props.activePeer === d.handle)
-)
-const hiddenDmHandles = computed(() => new Set(visibleDms.value.map((d) => d.handle)))
-const otherDms = computed(() => peerDms.value.filter((d) => !hiddenDmHandles.value.has(d.handle)))
-const startDmOpen = ref(false)
-function startDm(handle: string) {
-  startDmOpen.value = false
-  emit('select-peer-dm', handle)
-}
 
 // ---- 折叠 ----
 // 一个房间下面挂的是**它派出去的活**，不是子话题——房间之下不能再建房间。
@@ -465,7 +447,7 @@ function setActionsMenu(topicId: string, open: boolean) {
 const onDocs = computed(() => !!props.activeDocs)
 
 // 一列图标，一列文字。侧栏里每一行的左侧都是「8px 起 + 一个 16px 槽」——话题行
-// 是折叠开关/状态点，置顶行是自己的图标，项目文档/私聊是图标或头像。所以缩进
+// 是折叠开关/状态点，置顶行和项目文档是自己的图标。所以缩进
 // 只有一个值了（折叠开关不再单独占一列，见上面的合槽说明）。写在 style 上而不是
 // scoped class 里：Vuetify 的 `.v-list--nav .v-list-item` 内边距比单个 scoped
 // 类更特化，话题行本来也是这么压住它的。
@@ -482,8 +464,9 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
     <!-- Drag handle on the right edge to resize the rail. 整页形态下没有可拖的
          宽度——它占满内容区。 -->
     <div v-if="!page" class="rail-resizer" title="拖动调整宽度" @mousedown="startResize" />
-    <!-- 三段式 (C3): 头固定 / 中段唯一滚动 / 尾固定。私聊和它的未读徽标在
-         话题列表滚到底时必须还在屏幕上。 -->
+    <!-- 两段式: 头固定 / 下面唯一滚动。原来还有第三段（尾固定的私聊栏），它
+         撤掉了：私聊的未读改挂在「成员」那一行上，而那一行在头下面的置顶组里，
+         本来就不随话题列表滚。 -->
     <div class="d-flex flex-column fill-height">
       <!-- 项目头 = 标识 + 菜单，整块可点。48px 基线 (.sidebar-header) 和首页
            侧栏头、内容区 PageHeader 共用，三条标题线才落在同一水平上。
@@ -508,7 +491,31 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
               <v-icon class="rail-header__caret" size="18" icon="mdi-chevron-down" />
             </button>
           </template>
-          <v-list density="compact" nav>
+          <v-list density="compact" nav max-height="60vh">
+            <!-- 整页形态下这个菜单是**唯一**能换项目的地方：一个项目一格的那条
+                 竖 rail 只在桌面渲染，底栏「工作区」那一格只落到一个项目，于是
+                 手机上进了一个项目就再也走不到别的项目去。桌面不列——rail 已经
+                 是那个入口，同一件事有两个入口只会让人猜哪个才算数。 -->
+            <template v-if="page && projects.length > 1">
+              <v-list-subheader class="t-eyebrow">切换项目</v-list-subheader>
+              <v-list-item
+                v-for="p in projects"
+                :key="p.id"
+                :active="p.id === selectedProjectId"
+                rounded="lg"
+                @click="openProject(p.id)"
+              >
+                <template #prepend>
+                  <span class="private-avatar-slot me-3">
+                    <span class="dm-avatar project-avatar" :style="{ backgroundColor: avatarColor(p.name) }">{{
+                      avatarInitial(p.name)
+                    }}</span>
+                  </span>
+                </template>
+                <v-list-item-title class="t-body">{{ p.name }}</v-list-item-title>
+              </v-list-item>
+              <v-divider class="my-1" />
+            </template>
             <v-list-item
               prepend-icon="mdi-cog-outline"
               title="项目设置"
@@ -537,6 +544,8 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
               :class="{ 'is-active': rootTopic.id === selectedTopicId }"
               :style="ROW_INDENT"
               @click="emit('select-topic', rootTopic.id)"
+              @mouseenter="emit('hover-topic', rootTopic.id)"
+              @mouseleave="emit('leave-topic')"
             >
               <template #prepend>
                 <!-- 置顶行的槽住的是它自己的图标：# / 总览 / 日历 三个各不相同，
@@ -565,6 +574,8 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
               :class="{ 'is-active': route.name === p.key }"
               :style="ROW_INDENT"
               @click="openProjectPage(p.key)"
+              @mouseenter="hoverProjectPage(p.key)"
+              @mouseleave="cancelPrefetch()"
             >
               <template #prepend>
                 <span class="row-slot">
@@ -572,6 +583,12 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                 </span>
               </template>
               <v-list-item-title>{{ p.label }}</v-list-item-title>
+              <!-- 私聊的未读挂在「成员」这一行上。私聊那一栏撤掉之后，这是
+                   「有人找你」在主导航上唯一会亮的地方，所以它必须在这里；进了
+                   成员页才精确到是谁（每个人的私聊按钮上各带各的）。 -->
+              <template v-if="p.key === 'project-members' && privateUnreadTotal > 0" #append>
+                <span class="unread-badge">{{ countLabel(privateUnreadTotal) }}</span>
+              </template>
             </v-list-item>
           </v-list>
 
@@ -609,9 +626,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
             />
           </div>
 
-          <div v-if="loadingTopics" class="px-4 py-2">
-            <v-progress-circular indeterminate size="20" width="2" color="primary" />
-          </div>
+          <LoadingSkeleton v-if="loadingTopics" variant="list" class="rail-skel" />
 
           <template v-else>
             <!-- 一组都不相关的时候（刚进项目、还没参与任何话题），上组是空的。
@@ -661,6 +676,8 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                     '--guide-x': 16 + (row.depth - 1) * 20 + 'px',
                   }"
                   @click="emit('select-topic', row.topic.id)"
+                  @mouseenter="emit('hover-topic', row.topic.id)"
+                  @mouseleave="emit('leave-topic')"
                 >
                   <!-- 干净行：左边只有一个 16px 槽（状态，或顶替它的折叠开关），
                        身份靠标题本身，种类标签不要（缩进表达层级），操作 hover 才浮现。
@@ -815,6 +832,8 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                 class="topic-row topic-row--archived"
                 :class="{ 'is-active': t.id === selectedTopicId }"
                 @click="emit('select-topic', t.id)"
+                @mouseenter="emit('hover-topic', t.id)"
+                @mouseleave="emit('leave-topic')"
               >
                 <template #prepend>
                   <v-icon size="16" class="me-1 c-faint" icon="mdi-archive-outline" />
@@ -857,84 +876,6 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
             />
           </v-list>
         </template>
-      </div>
-
-      <!-- 尾固定 (C3): 私聊。不随话题列表滚动——未读徽标必须一直在屏幕上。 -->
-      <div v-if="selectedProjectId" class="rail-foot">
-        <v-divider />
-        <div class="t-eyebrow side-subhead side-subhead--row">
-          <span>私聊</span>
-          <v-menu v-if="otherDms.length" v-model="startDmOpen" location="top end">
-            <template #activator="{ props: menuProps }">
-              <v-btn v-bind="menuProps" icon="mdi-plus" size="x-small" variant="text" title="发起私聊" />
-            </template>
-            <v-list density="compact" nav max-height="320">
-              <v-list-item v-for="dm in otherDms" :key="dm.handle" @click="startDm(dm.handle)">
-                <template #prepend>
-                  <span class="private-avatar-slot">
-                    <span class="dm-avatar" :style="{ backgroundColor: avatarColor(dm.handle) }">{{
-                      dm.name.slice(0, 1).toUpperCase()
-                    }}</span>
-                  </span>
-                </template>
-                <v-list-item-title class="t-body">{{ dm.name }}</v-list-item-title>
-              </v-list-item>
-            </v-list>
-          </v-menu>
-        </div>
-        <v-list density="compact" nav class="py-0 pb-2">
-          <v-list-item
-            :active="privateActive"
-            rounded="lg"
-            class="nav-row private-row"
-            :class="{ 'is-active': privateActive }"
-            :style="ROW_INDENT"
-            @click="emit('select-private')"
-          >
-            <template #prepend>
-              <!-- 芝士头像放进与图标同宽 (16px) 的定宽槽并居中：头像 18px，
-                   视觉上与话题/项目文档那一列的 ~16px 图标同大，icon-left 与
-                   text-left 都能和那一列对齐。 -->
-              <span class="private-avatar-slot">
-                <CheeseAvatar :size="18" />
-              </span>
-            </template>
-            <v-list-item-title class="t-body" style="font-weight: 500; color: var(--ink)"> 芝士 </v-list-item-title>
-            <template #append>
-              <span v-if="privateUnreadOf('cheese') > 0" class="unread-badge">
-                {{ countLabel(privateUnreadOf('cheese')) }}
-              </span>
-            </template>
-          </v-list-item>
-
-          <!-- 有事的人才常驻：有未读的，加上正在聊的那一个。 -->
-          <v-list-item
-            v-for="dm in visibleDms"
-            :key="dm.handle"
-            :active="activePeer === dm.handle"
-            rounded="lg"
-            class="nav-row private-row"
-            :class="{ 'is-active': activePeer === dm.handle }"
-            :style="ROW_INDENT"
-            @click="emit('select-peer-dm', dm.handle)"
-          >
-            <template #prepend>
-              <span class="private-avatar-slot">
-                <span class="dm-avatar" :style="{ backgroundColor: avatarColor(dm.handle) }">{{
-                  dm.name.slice(0, 1).toUpperCase()
-                }}</span>
-              </span>
-            </template>
-            <v-list-item-title class="t-body" style="font-weight: 500; color: var(--ink)">
-              {{ dm.name }}
-            </v-list-item-title>
-            <template #append>
-              <span v-if="privateUnreadOf(dm.handle) > 0" class="unread-badge">
-                {{ countLabel(privateUnreadOf(dm.handle)) }}
-              </span>
-            </template>
-          </v-list-item>
-        </v-list>
       </div>
 
       <!-- 新建项目 moved to the project rail's + (App.vue) — one affordance,
@@ -1000,12 +941,12 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
  * 删掉这一行，线就会静默消失，而且沙箱里跑不了渲染、任何测试都抓不到。 */
 .rail-header {
   width: 100%;
-  /* 三段式里它是第一段，必须和第三段 .rail-foot 一样退出收缩：中段 .rail-scroll
-     的 flex-basis 是 auto = 它那一长列话题的内容高度，几十个话题就足以把整列撑得
-     比侧栏高。弹性盒于是按各自 basis 分摊收缩量，这一条虽只有 48px 也照分，一路
-     被压到自己的最小内容高度（8+8 内边距 + 一行字 ≈ 38px）为止——右边内容区顶栏
-     钉死在 48px，两条分隔线就再也接不上。中段自己有 overflow-y:auto，min-height
-     解析为 0，该吸收收缩量的本来就是它。 */
+  /* 它必须退出收缩：下面那段 .rail-scroll 的 flex-basis 是 auto = 那一长列话题
+     的内容高度，几十个话题就足以把整列撑得比侧栏高。弹性盒于是按各自 basis 分摊
+     收缩量，这一条虽只有 48px 也照分，一路被压到自己的最小内容高度（8+8 内边距
+     + 一行字 ≈ 38px）为止——右边内容区顶栏钉死在 48px，两条分隔线就再也接不上。
+     下面那段自己有 overflow-y:auto，min-height 解析为 0，该吸收收缩量的本来就
+     是它。 */
   flex: none;
   border: 0;
   border-block-end: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
@@ -1039,14 +980,6 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-/* 三段式：中段是这个侧栏里唯一的滚动容器，尾段永远贴着底。
-   尾段自己有上限：一屋子人同时来消息时，它不能反过来把话题列表挤没。 */
-.rail-foot {
-  flex: none;
-  max-height: 40%;
-  overflow-y: auto;
 }
 
 /* Unread: the row's title carries the signal. */
@@ -1178,6 +1111,13 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   border-radius: 8px;
   padding: 1px 6px;
 }
+/* 话题还在路上时，先把行的形状画出来（LoadingSkeleton）。这条 rail 的底是
+   --canvas，骨架默认那档 --fill-2 压上去只有 1.083:1，等于什么都没画；--line-2 是
+   这条 rail 上「再离底一档」的那个值（选中行用的也是它），在两个主题下都看得见。 */
+.rail-skel {
+  --skel-bone: var(--line-2);
+}
+
 /* Archived rows read as "done": slightly dimmed titles. */
 .topic-row--archived :deep(.v-list-item-title) {
   color: var(--muted);
@@ -1197,15 +1137,15 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
 }
 /* 核心修正：Vuetify 的 prepend spacer 默认 ~32px，把图标和标题隔出一条鸿沟，
    稀释了一切缩进关系。压到 8px，缩进的台阶才立得起来。
-   nav-row (置顶行/项目文档/私聊) 必须共用同一套：否则图标虽同列，文字却各自
-   缩进（话题 24px、项目文档 56px、私聊 32px），三列文字对不齐。 */
+   nav-row (置顶行/项目文档) 必须共用同一套：否则图标虽同列，文字却各自缩进
+   （话题 24px、项目文档 56px），两列文字对不齐。 */
 .topic-row :deep(.v-list-item__spacer),
 .nav-row :deep(.v-list-item__spacer) {
   width: 8px !important;
 }
 /* 图标槽统一成 16px 定宽方块：话题用 size=16 的 v-icon，项目文档用
-   prepend-icon（默认 24），私聊用 24px 头像。锁死 prepend 里图标的字号与
-   槽宽，icon-left 与 text-left 才能双双成列。 */
+   prepend-icon（默认 24）。锁死 prepend 里图标的字号与槽宽，icon-left 与
+   text-left 才能双双成列。 */
 .topic-row :deep(.v-list-item__prepend),
 .nav-row :deep(.v-list-item__prepend) {
   align-items: center;
@@ -1216,9 +1156,9 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   height: 16px;
   margin: 0;
 }
-/* 私聊行的头像槽：定宽 16px、与图标同列；18px 头像在其中居中、略微溢出，
-   视觉大小与话题/项目文档那一列的图标持平，头像左缘落在同一图标列、
-   文字左缘落在同一文字列。 */
+/* 头像槽：定宽 16px、与图标同列；18px 头像在其中居中、略微溢出，视觉大小与
+   话题/项目文档那一列的图标持平，头像左缘落在同一图标列、文字左缘落在同一
+   文字列。项目切换菜单里的项目头像用的就是它。 */
 .private-avatar-slot {
   display: inline-flex;
   align-items: center;
@@ -1228,9 +1168,10 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   flex: none;
   overflow: visible;
 }
-/* Human DM avatar: an initial in a muted circle, sized to match 芝士's 18px
-   avatar so both DM columns share the same icon/text lead. */
-.dm-avatar {
+/* 首字母头像：人的（.dm-avatar，圆）和项目的（.project-avatar，方）同一套底子，
+   18px，图标列和文字列才对得齐。 */
+.dm-avatar,
+.project-avatar {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1245,6 +1186,12 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   font-size: 10px;
   font-weight: 600;
   line-height: 1;
+}
+/* 项目头像：和人的头像同一个底子（.dm-avatar），只换形状——方头像，和桌面那条
+   竖 rail 上一个项目一格的画法是同一种语言。人是靠方/圆区分「这是个项目」还是
+   「这是个人」的，都画成圆的就混了。 */
+.project-avatar {
+  border-radius: var(--radius-sm);
 }
 /* 置顶行的图标：# / 总览 / 日历，三个各不相同所以留着；未读转琥珀。 */
 .row-glyph {

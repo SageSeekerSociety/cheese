@@ -6,6 +6,8 @@ bare executable), so it's loaded by path.
 
 import importlib.util
 import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
@@ -23,6 +25,90 @@ def _load():
     mod = importlib.util.module_from_spec(spec)
     loader.exec_module(mod)
     return mod
+
+
+def test_members_reads_the_current_topic_roster(monkeypatch, capsys):
+    cli = _load()
+    monkeypatch.setattr(cli, "TOPIC", "room")
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "members"])
+    calls = []
+
+    def request(method, path):
+        calls.append((method, path))
+        return {
+            "data": {
+                "data": [{"member_handle": "alice", "name": "Alice", "role": "owner"}]
+            }
+        }
+
+    monkeypatch.setattr(cli, "_call", request)
+    cli.main()
+    assert calls == [("GET", "/topics/room/members")]
+    assert "Alice（owner）→ 在消息里写 <@alice>" in capsys.readouterr().out
+
+
+def test_artifact_publishes_the_local_file_from_a_subdirectory(monkeypatch, tmp_path):
+    cli = _load()
+    folder = tmp_path / "site"
+    folder.mkdir()
+    (folder / "report.html").write_text("<h1>Published result</h1>")
+    monkeypatch.chdir(folder)
+    monkeypatch.setenv("CHEESE_WORKTREE_ROOT", str(tmp_path))
+    monkeypatch.setattr(cli, "TOPIC", "room")
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "artifact", "report.html"])
+    calls = []
+    monkeypatch.setattr(cli, "_call", lambda *args: calls.append(args))
+
+    cli.main()
+
+    assert calls == [
+        (
+            "POST",
+            "/topics/room/artifact",
+            {
+                "path": "site/report.html",
+                "as": "html",
+                "content": "<h1>Published result</h1>",
+            },
+        )
+    ]
+
+
+@pytest.mark.parametrize("location", ["/api/topics/room/app/", "/login", None])
+def test_serve_registers_the_mount_only_when_the_app_redirects_to_it(
+    monkeypatch, location
+):
+    cli = _load()
+
+    class App(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(302 if location else 200)
+            if location:
+                self.send_header("Location", location)
+            self.end_headers()
+
+        def log_message(self, *_args):
+            pass
+
+    app = ThreadingHTTPServer(("127.0.0.1", 0), App)
+    thread = threading.Thread(target=app.serve_forever)
+    thread.start()
+    port = app.server_address[1]
+    monkeypatch.setenv("CHEESE_APP_BASE", "/api/topics/room/app/")
+    monkeypatch.setenv("CHEESE_PREVIEW_UP", "/preview-up")
+    monkeypatch.setattr(cli, "TOPIC", "room")
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "serve", str(port)])
+    calls = []
+    monkeypatch.setattr(cli.subprocess, "call", lambda args: calls.append(args) or 0)
+    monkeypatch.setattr(cli, "_call", lambda *args: {})
+    try:
+        cli.main()
+        mount = "/api/topics/room/app" if location == "/api/topics/room/app/" else ""
+        assert calls == [["sh", "/preview-up", str(port), mount]]
+    finally:
+        app.shutdown()
+        app.server_close()
+        thread.join()
 
 
 @pytest.mark.parametrize(

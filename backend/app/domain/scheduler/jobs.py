@@ -40,6 +40,7 @@ def periodic_jobs(
     sessions: SessionFactory,
 ) -> list[PeriodicRunner]:
     from app.domain import backend_log
+    from app.domain.machine.warm import sweep_warm_pool
     from app.domain.notification.maintenance import (
         drain_email_queue,
         finalize_expired_aggregations,
@@ -104,6 +105,11 @@ def periodic_jobs(
             "machine enrollment sweep",
             settings.machine_enroll_interval_seconds,
             machines.sweep,
+        ),
+        PeriodicRunner(
+            "cloud warm pool",
+            settings.machine_enroll_interval_seconds,
+            lambda: sweep_warm_pool(sessions),
         ),
         # Subscription turns are metered at the proxy; this tails its log into
         # resource_usage + credits (issue #218). Off unless the log path is set.

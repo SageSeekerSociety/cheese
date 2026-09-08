@@ -1,6 +1,7 @@
 import type { useTaskData } from './useTaskData'
 
 import { ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
 import { useEvents } from '../events'
@@ -13,6 +14,7 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
   const { taskData, loadTaskData } = taskDataModule
   const dialogs = useDialog()
   const events = useEvents()
+  const router = useRouter()
 
   const selectedTeamId = ref<number | null>(null)
 
@@ -36,7 +38,11 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
     try {
       events.emit('verify-dialog-open', false)
 
-      if (taskData.value?.submitterType === 'TEAM' && selectedTeamId.value) {
+      if (taskData.value?.submitterType === 'TEAM') {
+        if (!selectedTeamId.value) {
+          events.emit('team-selection-dialog-open', true)
+          return
+        }
         await joinTaskWithTeam(formData, selectedTeamId.value)
       } else {
         await joinTaskAsIndividual(formData)
@@ -58,18 +64,23 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
     if (!taskData.value || !teamId) return
 
     try {
-      await TasksApi.addParticipant(taskData.value.id, teamId, {
-        deadline: null,
-        email: contactInfo.email,
-        phone: contactInfo.phone,
-        applyReason: contactInfo.applyReason,
-        personalAdvantage: undefined,
-        remark: undefined,
-      })
+      const result = await TasksApi.join(
+        taskData.value.id,
+        {
+          deadline: null,
+          email: contactInfo.email,
+          phone: contactInfo.phone,
+          applyReason: contactInfo.applyReason,
+          personalAdvantage: undefined,
+          remark: undefined,
+        },
+        teamId
+      )
 
-      toast.success('小队领取赛题成功')
+      toast.success('报名已提交，项目已准备好')
       await loadTaskData()
       events.emit('reload-joined-teams')
+      await router.push(`/projects/${result.data.project.id}`)
     } catch (error) {
       toast.error('小队领取赛题失败')
       console.error('Failed to join task as team:', error)
@@ -86,7 +97,7 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
         return
       }
 
-      await TasksApi.addParticipant(taskData.value.id, userId, {
+      const result = await TasksApi.join(taskData.value.id, {
         deadline: null,
         email: contactInfo?.email,
         phone: contactInfo?.phone,
@@ -95,8 +106,9 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
         remark: undefined,
       })
 
-      toast.success('领取赛题成功')
+      toast.success('报名已提交，项目已准备好')
       await loadTaskData()
+      await router.push(`/projects/${result.data.project.id}`)
     } catch (error) {
       toast.error('领取赛题失败')
     }

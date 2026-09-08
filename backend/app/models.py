@@ -8,7 +8,6 @@ metadata. Keep this list complete when adding a new model.
 from app.domain.agent import models as agent  # noqa: F401
 from app.domain.agent_instance import models as agent_instance  # noqa: F401
 from app.domain.agent_session import models as agent_session  # noqa: F401
-from app.domain.agent_type import models as agent_type  # noqa: F401
 from app.domain.alert import models as alert  # noqa: F401
 from app.domain.answers import models as answers  # noqa: F401
 from app.domain.attachment import models as attachment  # noqa: F401
@@ -23,6 +22,7 @@ from app.domain.identity import models as identity  # noqa: F401
 from app.domain.knowledge import models as knowledge  # noqa: F401
 from app.domain.llm import models as llm  # noqa: F401
 from app.domain.machine import models as machine  # noqa: F401
+from app.domain.machine.limits import MachineLimit, TeamMachineLimit  # noqa: F401
 from app.domain.materials import models as materials  # noqa: F401
 from app.domain.memory import models as memory  # noqa: F401
 from app.domain.milestone import models as milestone  # noqa: F401

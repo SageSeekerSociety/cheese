@@ -30,13 +30,12 @@ import PanelSite from './panels/PanelSite.vue'
 const props = withDefaults(
   defineProps<{
     topic: Topic | null
-    // Bumped by the parent on AI activity (turn-done / update_doc tool) so 文档
-    // reloads the doc 芝士 just wrote. See TopicView activityTick.
+    // Bumped by the parent on AI activity (turn-done / a platform resource the
+    // turn changed) so 文档 reloads the doc 芝士 just wrote. See TopicView
+    // activityTick.
     activityTick: number
-    // 施工现场 inputs. Only 现场 reads them; they are passed straight through.
-    worklog?: { label: string; text: string; platform?: boolean }[]
+    // 芝士 正在这个话题里干活 —— tab 栏据此给「现场」加一个跳动的点。
     working?: boolean
-    workingSince?: number | null
     // Project topics (A2): 文档 resolves live-ref badges and <#id> chips with it.
     topicList?: Topic[]
     // Which tab the URL asks for (`?tab=`). The address is the page's business,
@@ -52,13 +51,15 @@ const props = withDefaults(
     withChat?: boolean
     // 地址里的 `?card=` —— 非空就是总览那一格正看着一张卡。
     openCardId?: string | null
+    // 现场那一格用它给 AI 干的每一行署名。一路透传：漏掉它不报错，只是换完
+    // 队友那一格里还写着上一个的名字。
+    agentName?: string
   }>(),
   {
-    worklog: () => [],
     working: false,
-    workingSince: null,
     topicList: () => [],
     openCardId: null,
+    agentName: '芝士',
     tab: undefined,
     phase: undefined,
     withChat: false,
@@ -446,10 +447,8 @@ defineExpose({ pulse, highlightTurn, openFile })
           v-if="mounted.has('site')"
           v-show="active === 'site'"
           :topic="topic"
-          :worklog="worklog"
-          :working="working"
-          :working-since="workingSince"
           :active="active === 'site'"
+          :agent-name="agentName"
         />
         <PanelChanges
           v-if="mounted.has('changes')"

@@ -61,6 +61,8 @@ def api_key_provider(gateway_base: str, key: str, model: str) -> ProviderChoice:
             "ANTHROPIC_BASE_URL": gateway_base,
             "ANTHROPIC_AUTH_TOKEN": key,
             "CLAUDE_MODEL": model,
+            # WebFetch resolves haiku separately from the main/worker aliases.
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": model,
             "ANTHROPIC_DEFAULT_SONNET_MODEL": model,
             "ANTHROPIC_DEFAULT_OPUS_MODEL": model,
         },

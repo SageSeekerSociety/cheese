@@ -7,8 +7,16 @@ paths:
 
 Full spec: [`docs/design-system.md`](../../docs/design-system.md). Read it before
 any non-trivial styling work. This file is only the part you will otherwise get
-wrong on turn one: the backlog is down from 524 to 92 gated violations, but 92
-counterexamples are still 92 things to copy from by accident.
+wrong on turn one.
+
+The gates pass on a tree that still holds violations: the existing ones are
+frozen in a baseline and only NEW ones are blocked. So a green gate does not
+mean the file open in front of you is clean — it may well be one of the frozen
+ones. `frontend/stylelint-baseline.json` and `frontend/palette-baseline.json`
+say which files have an allowance; check there before copying a neighbour.
+
+After a change, `frontend-design` (a skill) walks the whole checklist including
+the parts no gate can see.
 
 ## The product has a dark theme. Every colour you write must survive it.
 
@@ -48,6 +56,30 @@ counterexamples are still 92 things to copy from by accident.
 
 If you find yourself writing `:root[data-theme='dark'] .thing { ... }`, stop:
 nine times out of ten the real fix is that `.thing` picked the wrong token.
+
+## Motion: still is the default
+
+Full rules: [`docs/design-system.md` §9](../../docs/design-system.md#9-动效). The three
+that get written wrong on turn one:
+
+- **`:hover` changes colour, never position.** This side of the product is dense
+  lists — a sidebar of dozens of topics, a chat of dozens of messages, a board
+  column of a dozen cards. Lift each row 2px under the pointer and what a person
+  sees is the column jumping, not which row they are on; the background change
+  already said that. (The community half does lift, in ~33 files. It is the side
+  that has to come off it, not this one.)
+- **Never `transition: all`** — it drags `width`/`height`/`padding` along, so the
+  browser relayouts every frame inside a list, and nobody can tell what the line
+  was meant to animate. Name the properties.
+- **Anything `infinite` needs its own reduced-motion escape.** The global
+  fallback in `style.css` squeezes durations to `0.001ms`, which turns a 1.6s
+  pulse into a strobe — worse than leaving it. Write
+  `@media (prefers-reduced-motion: reduce) { animation: none }` next to it, and
+  make sure the thing still says what it meant with the animation off.
+
+Durations are 0.12s (answering the pointer) / 0.2s (appearing, disappearing) /
+0.3s (a whole panel moving in or out). Easing is `ease`; `ease-in-out` for loops;
+`linear` only for genuinely constant motion.
 
 ## Colours live in two files and must be changed in both
 

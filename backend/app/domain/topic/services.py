@@ -10,6 +10,7 @@ topic children at all. What used to be a third level is a `tasks` row — see
 """
 
 import difflib
+import html
 import logging
 import uuid
 from dataclasses import dataclass
@@ -28,7 +29,7 @@ from app.domain.agent_instance.services import (
 )
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.alert.services import AlertService
-from app.domain.block.doc_tree import markdown_to_nodes
+from app.domain.block.doc_tree import PARAGRAPH, markdown_to_nodes
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import looks_like_agent_handle, names_a_person
@@ -86,6 +87,16 @@ def _require_room(parent: Topic) -> None:
 
 
 logger = logging.getLogger("cheesex.topic")
+
+
+def _doc_edit_lines(content: str) -> list[str]:
+    # Empty editor paragraphs are layout, not a contribution. Keep the saved
+    # document intact; omit only empty prose nodes from conversation evidence.
+    return "\n\n".join(
+        node.content
+        for node in markdown_to_nodes(content)
+        if node.node_type != PARAGRAPH or html.unescape(node.content).strip()
+    ).splitlines()
 
 
 def _doc_conflict(current_version: int) -> ConflictError:
@@ -387,13 +398,21 @@ class TopicService:
         sort: TopicSortField | None = None,
         order: SortOrder = "asc",
         active_since: datetime | None = None,
-    ) -> tuple[list[Topic], int]:
-        topics = await self._repo.list_for_project(
+    ) -> tuple[list[Topic], dict[uuid.UUID, datetime], int]:
+        """The project's topics, their 最后活动时间, and the total.
+
+        Activity comes back with the rows because the query that ordered them
+        already derived it; fetching it separately made the database compute
+        the same correlated subquery over the same topics twice.
+        """
+        rows = await self._repo.list_for_project_with_activity(
             project_id,
             sort=sort,
             order=order,
             active_since=_as_utc(active_since),
         )
+        topics = [topic for topic, _ in rows]
+        last_activity = {topic.id: last for topic, last in rows}
         # `total` counts what the caller got: a filtered page whose total still
         # said "all topics" would tell a paging client to keep asking for rows
         # that do not exist.
@@ -402,7 +421,7 @@ class TopicService:
             if active_since is not None
             else await self._repo.count_for_project(project_id)
         )
-        return topics, total
+        return topics, last_activity, total
 
     async def last_activity_for_topics(
         self, topic_ids: list[uuid.UUID]
@@ -785,10 +804,10 @@ class TopicService:
             ),
         )
         await self._blocks.set_upgraded_to_place(block, topic_id=new_room.id)
-        await self._seed_brief_doc(new_room, brief)
+        await self.seed_brief_doc(new_room, brief)
         return new_room, None, True
 
-    async def _seed_brief_doc(self, topic: Topic, content: str) -> None:
+    async def seed_brief_doc(self, topic: Topic, content: str) -> None:
         """Preset a newborn ROOM's living doc with its task brief. Author is
         `system`: the platform assembled it from existing text — nothing here
         speaks as 芝士 (the room's kickoff turn writes the real opening).
@@ -940,7 +959,7 @@ class TopicService:
             # only one of the two. A claim that was refused simply is not
             # recorded — the thread still exists and can narrow it and try again.
             await ClaimService(self._session).claim(task, paths)
-        # 简报进卡, not into a document of its own — see `_seed_brief_doc` for
+        # 简报进卡, not into a document of its own — see `seed_brief_doc` for
         # why the document could not be kept up to date. The worker gets these
         # same words a second way, in the prompt the room hands its subagent;
         # this copy is the record of what was asked for.
@@ -1028,8 +1047,14 @@ class TopicService:
         return [dict(item) for item in row.items], row.updated_at
 
     async def edit_doc(
-        self, *, topic_id: uuid.UUID, content: str, author: str, expected_version: int
-    ) -> Block:
+        self,
+        *,
+        topic_id: uuid.UUID,
+        content: str,
+        author: str,
+        expected_version: int,
+        author_type: AuthorType = AuthorType.human,
+    ) -> tuple[Block, Block | None]:
         """改文档即指令 (eval B2): upsert the topic's living doc and drop a
         '编辑了文档' event into the conversation. The agent reads the latest doc
         on its next turn, so the edit acts as an instruction.
@@ -1050,6 +1075,7 @@ class TopicService:
         if topic.status == TopicStatus.archived:
             raise ValidationError("话题已归档，文档已定格，不能再编辑")
         doc = await self._blocks.doc_root(place.room_id)
+        previous_content = doc.content if doc is not None else ""
         if doc is not None:
             updated = await self._blocks.set_doc_content(
                 doc, content, expected_version=expected_version
@@ -1064,14 +1090,22 @@ class TopicService:
                 project_id=topic.project_id,
                 topic_id=place.room_id,
                 author=author,
-                author_type=AuthorType.human,
+                author_type=author_type,
                 content=content,
                 kind=BlockKind.doc,
             )
+        # The root records the latest editor; unchanged nodes keep their author,
+        # and _sync_doc_nodes attributes only newly written nodes to this editor.
+        doc.author = author
+        doc.author_type = author_type
         # B1: also sync the structured node tree (struct_parent children) so the
         # doc's blocks get stable ids for cross-view highlight / comments later.
         await self._sync_doc_nodes(doc, content)
         # Append-only conversation event (spec H1): the doc edit is visible.
+        before_lines = _doc_edit_lines(previous_content)
+        after_lines = _doc_edit_lines(content)
+        if before_lines == after_lines:
+            return doc, None
         # A human actor is emitted as the structured <@handle> token so the
         # client renders it as a clickable mention chip (resolving handle→name
         # via the roster) — NOT prose we later pattern-match. 芝士 stays plain
@@ -1079,7 +1113,7 @@ class TopicService:
         # ``cheese-<topic hex>`` handle, and a raw handle is not what a reader
         # should see — one familiar name, whichever 分身 wrote it.
         actor = "芝士" if looks_like_agent_handle(author) else f"<@{author}>"
-        await self._blocks.add(
+        notice = await self._blocks.add(
             project_id=topic.project_id,
             topic_id=place.room_id,
             author=author,
@@ -1089,9 +1123,24 @@ class TopicService:
             refs=[str(doc.id)],
             # action:"doc" → the client renders the 看文档 link on this SAME
             # line — one event vocabulary for humans and 芝士 alike.
-            meta={"platform": True, "action": "doc"},
+            meta={
+                "platform": True,
+                "action": "doc",
+                "doc_version": doc.doc_version,
+                "editor_type": author_type.value,
+                "detail_label": "查看本次修改",
+                "detail": "\n".join(
+                    difflib.unified_diff(
+                        before_lines,
+                        after_lines,
+                        fromfile="修改前",
+                        tofile="修改后",
+                        lineterm="",
+                    )
+                ),
+            },
         )
-        return doc
+        return doc, notice
 
     async def _sync_doc_nodes(self, root: Block, content: str) -> None:
         """Reconcile the living doc's node tree (B1) with `content` via a

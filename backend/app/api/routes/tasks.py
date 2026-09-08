@@ -1240,6 +1240,46 @@ async def confirm_publish_task_from_pdf(
     }
 
 
+async def _participation_response(db, task, membership, auth_user) -> dict:
+    from app.domain.project.services import ProjectService
+
+    owner_id = auth_user.user_id if membership.is_team else membership.member_id
+    if membership.is_team:
+        from app.domain.team.models import TeamMemberRole
+
+        members = await TeamRepository(db).list_members_of_team(membership.member_id)
+        if not any(member.user_id == owner_id for member in members):
+            owner_id = next(
+                (
+                    member.user_id
+                    for member in members
+                    if member.role == TeamMemberRole.OWNER
+                ),
+                None,
+            )
+            if owner_id is None:
+                raise NotFoundError("Team owner not found")
+    owner = await UserRepository(session=db).get_by_id(owner_id)
+    if owner is None:
+        raise NotFoundError("Participant user not found")
+    project = await ProjectService(db).for_participation(
+        task=task, membership=membership, owner_handle=owner.username
+    )
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {
+            "participant": _membership_to_api_model(membership),
+            "project": {
+                "id": str(project.id),
+                "name": project.name,
+                "root_topic_id": str(project.root_topic_id),
+                "team_id": project.team_id,
+            },
+        },
+    }
+
+
 @router.post(
     "/{taskId}/participants",
     summary="Apply for Task (create participant)",
@@ -1329,13 +1369,7 @@ async def create_task_participant(
         remark=payload.remark,
     )
 
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
-            "participant": _membership_to_api_model(membership),
-        },
-    }
+    return await _participation_response(db, task, membership, auth_user)
 
 
 @router.post(
@@ -1399,13 +1433,7 @@ async def join_task_as_user(
         remark=payload.remark,
     )
 
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
-            "participant": _membership_to_api_model(membership),
-        },
-    }
+    return await _participation_response(db, task, membership, auth_user)
 
 
 @router.post(
@@ -1474,13 +1502,7 @@ async def join_task_as_team(
         remark=payload.remark,
     )
 
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
-            "participant": _membership_to_api_model(membership),
-        },
-    }
+    return await _participation_response(db, task, membership, auth_user)
 
 
 @router.patch(
@@ -1533,6 +1555,10 @@ async def patch_task_participant(
         email=payload.email,
         phone=payload.phone,
     )
+
+    from app.domain.project.services import ProjectService
+
+    await ProjectService(db).activate_participation(task=task, membership=updated)
 
     return {
         "code": 200,
@@ -2348,6 +2374,10 @@ async def patch_task_membership_by_member(
         email=payload.email,
         phone=payload.phone,
     )
+
+    from app.domain.project.services import ProjectService
+
+    await ProjectService(db).activate_participation(task=task, membership=membership)
 
     # 按 Kotlin PatchTaskMembershipByMember 语义，返回当前任务下所有参与者。
     all_memberships = await membership_service.list_memberships_for_task(

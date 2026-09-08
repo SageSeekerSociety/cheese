@@ -335,6 +335,9 @@ class Settings(BaseSettings):
     microcloud_default_cores: int = 2
     microcloud_default_memory_mb: int = 4096
     microcloud_default_disk_gb: int = 20
+    # Prepare the default CPU offering; zero disables replenishment.
+    microcloud_warm_pool_size: int = Field(default=0, ge=0, le=5)
+    microcloud_warm_max_age_seconds: int = Field(default=3600, ge=300, le=86400)
     microcloud_login_user: str = "cheese"
     # An operator's SSH public key, authorised on every machine the platform
     # opens, next to the one-shot bootstrap key. That key is erased the moment
@@ -347,9 +350,6 @@ class Settings(BaseSettings):
     # bills compute against this; 0 disables top-ups (an operator funds it by hand).
     microcloud_account_name: str = "compute"
     microcloud_initial_funds: float = 1000.0
-    # A ceiling per project: provisioning is one API call, and nothing else here
-    # stops a loop from filling a Proxmox node.
-    microcloud_max_machines_per_project: int = 2
     # How long a SETTLED machine may go without being re-checked against
     # MicroCloud. Zero would put a provider round-trip on every read; never
     # would let a machine destroyed upstream sit here as `running` forever

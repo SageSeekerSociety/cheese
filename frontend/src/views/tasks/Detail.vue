@@ -99,7 +99,7 @@ const { onJoinTaskClicked, confirmLeaveTask } = taskParticipationModule
 
 // Navigate to the edit page
 const navigateToEditPage = () => {
-  router.push({ name: 'TasksEdit', params: { taskId: taskId.value } })
+  router.push({ name: 'TasksEdit', params: { spaceId: taskData.value?.space?.id, taskId: taskId.value } })
 }
 
 // Vuetify's VBtn TSX typing doesn't expose `onClick` in props.

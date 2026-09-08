@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import type { MemberSummary, ProfileProject, UserProfile } from '../cx_types'
 
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed } from 'vue'
 import { useRouter } from 'vue-router'
+
+import { useCachedResource } from '@/composables/useCachedResource'
 
 import { getMemberSummary, getUserProfile } from '../api'
 import { label, NOTIF_KIND, PROJECT_ROLE, TOPIC_STATUS } from '../labels'
@@ -10,13 +12,29 @@ import { label, NOTIF_KIND, PROJECT_ROLE, TOPIC_STATUS } from '../labels'
 // 个人主页 = LinkedIn / GitHub profile (spec §1). "项目过程即简历": the page is
 // primarily the cross-project profile; the per-project member summary (TA 发起的
 // 话题 / 等 TA 处理的事) is kept below as the in-project context.
+defineOptions({ name: 'MemberView' })
+
 const props = defineProps<{ projectId: string; handle: string }>()
 const router = useRouter()
 
-const profile = ref<UserProfile | null>(null)
-const member = ref<MemberSummary | null>(null)
-const loading = ref(false)
-const error = ref<string | null>(null)
+// 一个人一份缓存：key 里既有项目也有 handle，换谁都是另一份数据（useCachedResource）。
+const { data, loading, error } = useCachedResource(
+  () => `member:${props.projectId}:${props.handle}`,
+  async (): Promise<{ profile: UserProfile | null; member: MemberSummary | null }> => {
+    // Profile drives the header/skills/understanding; the member summary gives
+    // the per-project lists. Fetch both; tolerate either being unavailable.
+    const [prof, mem] = await Promise.all([
+      getUserProfile(props.handle).catch(() => null),
+      getMemberSummary(props.projectId, props.handle).catch(() => null),
+    ])
+    if (!prof && !mem) throw new Error('加载成员信息失败')
+    return { profile: prof, member: mem }
+  }
+)
+
+const profile = computed<UserProfile | null>(() => data.value?.profile ?? null)
+const member = computed<MemberSummary | null>(() => data.value?.member ?? null)
+const errorMessage = computed<string | null>(() => (error.value ? error.value.message || '加载成员信息失败' : null))
 
 const initial = computed<string>(() => {
   const name = profile.value?.name || props.handle
@@ -68,31 +86,6 @@ function openProject(p: ProfileProject) {
     params: { projectId: p.project_id, handle: props.handle },
   })
 }
-
-async function load() {
-  loading.value = true
-  error.value = null
-  try {
-    // Profile drives the header/skills/understanding; the member summary gives
-    // the per-project lists. Fetch both; tolerate either being unavailable.
-    const [prof, mem] = await Promise.all([
-      getUserProfile(props.handle).catch(() => null),
-      getMemberSummary(props.projectId, props.handle).catch(() => null),
-    ])
-    profile.value = prof
-    member.value = mem
-    if (!prof && !mem) {
-      error.value = '加载成员信息失败'
-    }
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : '加载成员信息失败'
-  } finally {
-    loading.value = false
-  }
-}
-
-watch(() => [props.projectId, props.handle], load)
-onMounted(load)
 </script>
 
 <template>
@@ -101,8 +94,8 @@ onMounted(load)
       <div v-if="loading" class="d-flex justify-center py-10">
         <v-progress-circular indeterminate color="primary" />
       </div>
-      <v-alert v-else-if="error" type="error" density="comfortable">
-        {{ error }}
+      <v-alert v-else-if="errorMessage" type="error" density="comfortable">
+        {{ errorMessage }}
       </v-alert>
 
       <template v-else>

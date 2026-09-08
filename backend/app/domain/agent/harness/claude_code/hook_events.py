@@ -35,7 +35,7 @@ whose work it is looking at instead of one interleaved stream from nobody.
 """
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -364,6 +364,7 @@ class MessageAssembler:
     def __init__(self) -> None:
         self._pending: dict[str, _PendingMessage] = {}
         self._done: dict[str, None] = {}
+        self._last_stop_text: str | None = None
 
     def add(self, hook: dict) -> AgentMessage | None:
         """Fold one MessageDisplay payload in. Returns the completed message,
@@ -435,14 +436,35 @@ class MessageAssembler:
         into the assembler (a completed message emerges as ONE event), a Stop
         first drains whatever is still buffered so nothing dies with the
         buffer, and every other hook passes through ``translate_hook``."""
-        if _hook_event_name(hook) == "MessageDisplay":
+        name = _hook_event_name(hook)
+        if name in {"UserPromptSubmit", "PreToolUse"}:
+            self._last_stop_text = None
+        if name == "MessageDisplay":
             message = self.add(hook)
+            if (
+                message is not None
+                and message.agent_id is None
+                and message.text.strip() == self._last_stop_text
+            ):
+                # A late display of the reply Stop already delivered must not
+                # open a new, unsolicited turn after the session finished.
+                return []
             return [message] if message is not None else []
         event = translate_hook(hook)
         if event is None:
             return []
         if isinstance(event, AgentResult):
-            return [*self.drain(), event]
+            self._last_stop_text = None if event.is_error else event.text.strip()
+            messages = self.drain()
+            if messages and not event.is_error:
+                last = messages[-1]
+                if last.agent_id is None and event.text.strip().startswith(
+                    last.text.strip()
+                ):
+                    # Stop carries the whole final reply when its last display
+                    # flush was lost. Complete it before either copy is saved.
+                    messages[-1] = replace(last, text=event.text)
+            return [*messages, event]
         return [event]
 
     def drain(self) -> list[AgentMessage]:

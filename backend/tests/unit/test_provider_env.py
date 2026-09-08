@@ -39,6 +39,7 @@ def test_a_key_provider_is_addressed_directly_and_never_proxied():
 
     assert env["ANTHROPIC_BASE_URL"] == "http://gw:4000"
     assert env["CLAUDE_MODEL"] == "glm-5.2"
+    assert env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] == "glm-5.2"
     assert "HTTPS_PROXY" not in env
     assert "HTTP_PROXY" not in env
 

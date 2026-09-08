@@ -22,6 +22,7 @@ vi.mock('../../api', async () => {
     ...actual,
     listBlocks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getProgress: vi.fn().mockResolvedValue({ items: [], updated_at: null }),
+    listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     // 芝士的座位在**话题**名册上，一个话题一个分身。项目名册上没有它——这正是
     // 「线上 @ 不出芝士」那次的成因，所以这里照真实形状摆：分身 handle 带话题
     // 后缀，而项目名册里只有人。
@@ -34,6 +35,8 @@ vi.mock('../../api', async () => {
     }),
     chatWsUrl: () => 'ws://test/ws',
     attachmentRawUrl: () => '',
+    uploadAttachment: vi.fn(),
+    downloadFile: vi.fn(),
   }
 })
 
@@ -111,6 +114,84 @@ beforeEach(() => {
 })
 
 describe('对话栏自己的输入栏', () => {
+  it('offers editable starter drafts in an empty project and sends only on confirmation', async () => {
+    const { container, rerender, getByRole, queryByRole } = mountPanel({}, 'starter-project')
+    await rerender({ topic: { ...topic('starter-project'), kind: 'root' } })
+    await flush()
+    await fireEvent.click(getByRole('button', { name: '起草文档' }))
+    const box = composerBox(container)!
+    expect(box.value).toContain('@芝士')
+    expect(box.value).toContain('文档')
+    expect(document.activeElement).toBe(box)
+    expect(sent).toHaveLength(0)
+    expect(queryByRole('button', { name: '起草文档' })).toBeNull()
+    await fireEvent.update(box, '@芝士 帮我起草一份项目介绍')
+    await fireEvent.keyDown(box, { key: 'Enter' })
+    await flush()
+    expect(JSON.parse(sent[0].payload)).toMatchObject({
+      content: '<@cheese-topica> 帮我起草一份项目介绍',
+      summon: true,
+    })
+  })
+
+  it('does not offer starter drafts in an archived project or a regular conversation', async () => {
+    const { rerender, queryByRole } = mountPanel({}, 'starter-archived')
+    await flush()
+    expect(queryByRole('button', { name: '起草文档' })).toBeNull()
+    await rerender({ topic: { ...topic('starter-archived'), kind: 'root', status: 'archived' } })
+    await flush()
+    expect(queryByRole('button', { name: '起草文档' })).toBeNull()
+  })
+
+  it('previews a document and sends its uploaded path', async () => {
+    const api = await import('../../api')
+    vi.mocked(api.uploadAttachment).mockResolvedValue({
+      path: 'uploads/id/需求 文档.pdf',
+      mime: 'application/pdf',
+    })
+    const { container } = mountPanel({}, 'topic-files')
+    await flush()
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!
+    expect(input.accept).toBe('')
+    const file = new File(['%PDF'], '需求 文档.pdf', { type: 'application/pdf' })
+    await fireEvent.change(input, { target: { files: [file] } })
+    await flush()
+    expect(container.querySelector('.att-strip')?.textContent).toContain('需求 文档.pdf')
+    expect(container.querySelector('.att-strip img')).toBeNull()
+    await fireEvent.click(container.querySelector('[title="发送"]')!)
+    await flush()
+    expect(JSON.parse(sent[0].payload).attachments).toEqual([
+      { path: 'uploads/id/需求 文档.pdf', mime: 'application/pdf' },
+    ])
+  })
+
+  it('renders a received document with a download action', async () => {
+    const api = await import('../../api')
+    vi.mocked(api.listBlocks).mockResolvedValueOnce({
+      data: [
+        {
+          id: 'doc-1',
+          topic_id: 'topic-download',
+          kind: 'attachment',
+          content: 'uploads/id/report.docx',
+          mime_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          author: 'alice',
+          author_type: 'human',
+          created_at: '2026-09-07T12:00:00Z',
+        } as never,
+      ],
+      total: 1,
+      has_more: false,
+      oldest_id: 'doc-1',
+    })
+    const { container } = mountPanel({}, 'topic-download')
+    await flush()
+    const download = container.querySelector('[title="下载 report.docx"]')
+    expect(download).toBeTruthy()
+    await fireEvent.click(download!)
+    expect(api.downloadFile).toHaveBeenCalledWith('', 'report.docx')
+  })
+
   it('输入栏就在对话栏里，不再横跨到工作面板底下', async () => {
     const { container } = mountPanel()
     await flush()

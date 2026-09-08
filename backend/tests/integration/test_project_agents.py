@@ -133,44 +133,18 @@ def test_a_rooms_own_pool_stays_readable(client):
 # --- which agent works where -------------------------------------------------
 
 
-def test_a_project_starts_with_an_implicit_cheese_that_owns_a_pool(client):
-    """A project nobody configured is not agent-less — 芝士 is already there."""
+def test_a_project_starts_with_one_editable_cheese(client):
     pid = _project(client)
-
     agents = _agents(client, pid)
     assert len(agents) == 1
-    default = agents[0]
-    assert (default["handle"], default["is_default"]) == ("cheese", True)
-    # No row to edit yet, which a settings screen has to be able to tell.
-    assert default["configured"] is False
-    assert default["id"] is None
-
-
-def test_the_projects_cheese_is_listed_once_after_it_materializes(client):
-    """Giving 芝士 a type turns the implicit default into a row. It is still ONE
-    agent under one handle — listing the row AND the synthesized default would
-    show two teammates sharing a memory pool."""
-    pid = _project(client)
-    r = client.put(
-        f"/projects/{pid}/default-agent", json={"type_name": "product-design"}
-    )
-    assert r.status_code == 200, r.text
-
-    agents = _agents(client, pid)
-    assert [(a["handle"], a["is_default"]) for a in agents] == [("cheese", True)]
+    assert agents[0]["handle"] == "cheese"
     assert agents[0]["configured"] is True
-    assert agents[0]["type_name"] == "product-design"
-
-
-def test_an_agent_added_under_the_default_handle_is_the_default(client):
-    """Same handle = same memory pool, so it cannot be a second, separate agent
-    — whatever order it was created in."""
-    pid = _project(client)
-    created = _add_agent(client, pid, handle="cheese", display_name="芝士")
-
-    agents = _agents(client, pid)
-    assert [(a["handle"], a["is_default"]) for a in agents] == [("cheese", True)]
-    assert agents[0]["id"] == created["id"]
+    assert agents[0]["id"] is not None
+    assert agents[0]["configuration"]["model"]
+    assert (
+        client.post(f"/projects/{pid}/agents", json={"handle": "cheese"}).status_code
+        == 422
+    )
 
 
 def test_a_new_topic_follows_the_projects_default(client):
@@ -281,17 +255,13 @@ def test_renaming_an_agent_keeps_the_memory_it_had(client):
     ]
 
 
-def test_an_agent_can_be_put_in_another_type(client):
+def test_an_agents_role_can_be_edited_directly(client):
     pid = _project(client)
-    reviewer = _add_agent(client, pid, handle="reviewer", display_name="评审")
-
-    r = _update_agent(client, pid, reviewer["id"], type_name="product-design")
-    assert r.status_code == 200, r.text
-    assert r.json()["data"]["type_name"] == "product-design"
-
-    r = _update_agent(client, pid, reviewer["id"], type_name=None)
-    assert r.status_code == 200, r.text
-    assert r.json()["data"]["type_name"] is None
+    agent = _add_agent(client, pid, handle="reviewer")
+    config = {**agent["configuration"], "body": "Review security"}
+    r = _update_agent(client, pid, agent["id"], configuration=config)
+    assert r.status_code == 200
+    assert r.json()["data"]["configuration"] == config
 
 
 def test_renaming_without_naming_a_type_leaves_the_type_alone(client):
@@ -305,12 +275,13 @@ def test_renaming_without_naming_a_type_leaves_the_type_alone(client):
     assert r.json()["data"]["type_name"] == "product-design"
 
 
-def test_an_unknown_type_is_rejected(client):
+def test_editing_an_agent_cannot_rebind_it_to_a_shared_type(client):
     pid = _project(client)
     reviewer = _add_agent(client, pid, handle="reviewer")
 
     r = _update_agent(client, pid, reviewer["id"], type_name="no-such-type")
-    assert r.status_code == 422
+    assert r.status_code == 400
+    assert "type_name" in r.text
 
 
 def test_renaming_an_agent_that_is_not_there_is_a_404(client):
@@ -421,26 +392,15 @@ def test_one_project_cannot_retire_anothers_agent(client):
     assert _agents(client, theirs)[-1]["is_active"] is True
 
 
-def test_configuring_the_projects_cheese_again_brings_it_back(client):
-    """Retiring the project's own 芝士 leaves it on the implicit default — the
-    same pool, no row. Giving that 芝士 a type is choosing it again, so the row
-    comes back rather than materializing as a default nobody may pick."""
+def test_the_last_agent_cannot_be_retired_without_a_replacement(client):
     pid = _project(client)
-    client.put(f"/projects/{pid}/default-agent", json={"type_name": "product-design"})
-    cheese = next(a for a in _agents(client, pid) if a["handle"] == "cheese")
-
-    client.delete(f"/projects/{pid}/agents/{cheese['id']}")
-    assert (
-        next(a for a in _agents(client, pid) if a["id"] == cheese["id"])["is_active"]
-        is False
-    )
-
-    r = client.put(
-        f"/projects/{pid}/default-agent", json={"type_name": "fullstack-engineer"}
-    )
-    assert r.status_code == 200, r.text
-    back = next(a for a in _agents(client, pid) if a["id"] == cheese["id"])
-    assert (back["is_active"], back["is_default"]) == (True, True)
+    cheese = _agents(client, pid)[0]
+    assert client.delete(f"/projects/{pid}/agents/{cheese['id']}").status_code == 422
+    replacement = _add_agent(client, pid, handle="replacement")
+    assert client.delete(f"/projects/{pid}/agents/{cheese['id']}").status_code == 200
+    assert next(a for a in _agents(client, pid) if a["id"] == replacement["id"])[
+        "is_default"
+    ]
 
 
 def test_a_duplicate_handle_in_one_project_is_rejected(client):
@@ -460,19 +420,13 @@ def test_the_unresolved_sentinel_cannot_be_claimed_as_an_agent(client):
 # --- "we cannot tell who this is" is its own identity ------------------------
 
 
-def test_a_credential_naming_no_agent_is_attributed_to_the_room(client):
-    """``cheese`` used to be the answer to "this call names no 分身", and it is
-    now a real agent owning a real memory pool — so that answer would file every
-    unattributable action under the default agent's name. The room answers
-    instead: the same 分身 a per-turn token would have named."""
+def test_project_credentials_cannot_borrow_the_destination_agent_seat(client):
+    """The root agent needs its own membership in the destination room."""
     from app.core.sandbox_auth import mint_project_agent_credential
-    from app.domain.identity.handles import topic_agent_handle
 
     pid = _project(client)
     room = _topic(client, pid)
 
-    # A project-wide credential reaches every room of its project and names no
-    # 分身 of its own — the case `cheese` used to answer for.
     r = client.post(
         f"/topics/{room}/comments",
         json={"content": "从项目级凭据发出的"},
@@ -480,21 +434,18 @@ def test_a_credential_naming_no_agent_is_attributed_to_the_room(client):
             "X-Cheese-Token": mint_project_agent_credential(project_id=pid, epoch=0)
         },
     )
-    assert r.status_code == 200, r.text
-    comment = r.json()["data"]
-    assert comment["author"] == topic_agent_handle(room)
-    assert comment["author"] != "cheese"
-    assert comment["author_type"] == "ai"
+    assert r.status_code == 403, r.text
 
 
-def test_a_credential_with_no_room_at_all_falls_to_the_sentinel(client):
-    """Nothing identifies this caller beyond "some agent of this project". It
-    must not borrow the default agent's name to write under."""
+def test_a_credential_without_an_agent_identity_is_rejected(client):
+    """A project capability without a participant cannot authenticate one."""
     import asyncio
     import uuid as _uuid
 
+    import pytest
+
     from app.api.auth import ActorResolver
-    from app.domain.identity.handles import CHEESE_HANDLE, UNRESOLVED_AGENT_HANDLE
+    from app.core.errors import AuthenticationRequiredError
 
     pid = _project(client)
     token = mint_scoped_token(project_id=pid)
@@ -506,10 +457,8 @@ def test_a_credential_with_no_room_at_all_falls_to_the_sentinel(client):
                 fallback_handle=None, project_id=_uuid.UUID(pid)
             )
 
-    actor = asyncio.run(_resolve())
-    assert actor.is_agent is True
-    assert actor.handle == UNRESOLVED_AGENT_HANDLE
-    assert actor.handle != CHEESE_HANDLE
+    with pytest.raises(AuthenticationRequiredError):
+        asyncio.run(_resolve())
 
 
 # --- switching agents costs the session --------------------------------------

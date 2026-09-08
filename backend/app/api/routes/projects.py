@@ -27,6 +27,11 @@ from app.core.errors import (
     ValidationError,
 )
 from app.domain.agent.chat import ChatService
+from app.domain.agent.compute_configs import (
+    ProjectComputeConfigs,
+    project_configs,
+    validate_choice,
+)
 from app.domain.agent.github_app import (
     GitHubAppError,
     github_app_read_token_for_project,
@@ -35,12 +40,10 @@ from app.domain.agent.market import (
     COMPUTE_CLOUD,
     compute_default_name,
     compute_selectable,
-    subscription_model_default,
-    subscription_model_ids,
-    subscription_model_listings,
 )
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.runtime import AgentWorkRunner
+from app.domain.agent_instance.configuration import AgentConfiguration
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.schemas import (
     AgentInstanceCreate,
@@ -59,8 +62,10 @@ from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.identity.handles import looks_like_agent_handle
+from app.domain.machine.limits import get_machine_limit
 from app.domain.machine.services import MachineService
 from app.domain.membership.repositories import MemberRepository
+from app.domain.membership.services import MemberService
 from app.domain.memory.models import MemoryScope
 from app.domain.project.models import Project, ProjectRole
 from app.domain.project.protection import (
@@ -113,6 +118,17 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 Registry = Annotated[ProfileRegistry, Depends(get_profile_registry)]
+
+
+@router.get("/resource-limits")
+async def resource_limits(db: DbSession) -> dict:
+    """Creation defaults, available before a project exists."""
+    return ok(
+        {
+            "max_machines_per_team": await get_machine_limit(db),
+            "max_concurrent_turns": settings.max_concurrent_turns,
+        }
+    )
 
 
 @router.post("")
@@ -276,6 +292,7 @@ def _agent_out(
         handle=agent.handle,
         type_name=agent.type_name,
         display_name=agent.display_name,
+        configuration=AgentConfiguration.model_validate(agent.configuration),
         is_default=is_default,
         configured=agent.instance_id is not None,
         is_active=is_active,
@@ -284,16 +301,10 @@ def _agent_out(
 
 @router.get("/{project_id}/agents")
 async def list_project_agents(project_id: uuid.UUID, db: DbSession) -> dict:
-    """The agents this project has, and which one a new topic gets.
-
-    A project that never configured one is not empty: it still has an implicit
-    芝士 (``configured: false``), and that agent owns a real memory pool. Hiding
-    it would make the settings page claim there is no agent while one is
-    plainly working in every room.
-    """
+    """The project's saved agents, including its default for new rooms."""
     project = await ProjectService(db).get_or_404(project_id)
     service = AgentInstanceService(db)
-    default = await service.for_project(project)
+    await service.for_project(project)
     rows = await service.list_for_project(project_id)
     items = [
         _agent_out(
@@ -304,10 +315,6 @@ async def list_project_agents(project_id: uuid.UUID, db: DbSession) -> dict:
         )
         for row in rows
     ]
-    # Synthesized only when nothing materialized it yet. Listing both would show
-    # two agents under one handle, reading as two teammates where there is one.
-    if default.instance_id is None and not any(item["is_default"] for item in items):
-        items.insert(0, _agent_out(project_id, default, is_default=True))
     return ok(page(items, len(items)))
 
 
@@ -320,15 +327,34 @@ async def create_project_agent(
     service = AgentInstanceService(db)
     instance = await service.create(
         project_id=project_id,
-        handle=body.handle or body.type_name or IMPLICIT_DEFAULT.handle,
+        handle=body.handle or f"agent-{uuid.uuid4().hex[:8]}",
         type_name=body.type_name,
         display_name=body.display_name,
+        configuration=body.configuration,
     )
     await db.flush()
     return ok(
         _agent_out(
             project_id, AgentInstanceService.resolved(instance), is_default=False
         )
+    )
+
+
+@router.get("/{project_id}/agent-options")
+async def project_agent_options(project_id: uuid.UUID, db: DbSession) -> dict:
+    from app.domain.agent_instance.configuration import model_choices
+
+    project = await ProjectService(db).get_or_404(project_id)
+    choices = model_choices(project.settings)
+    return ok(
+        {
+            "model": {
+                "state": "choosable" if choices else "unavailable",
+                "choices": choices,
+                "reason": "" if choices else "当前项目没有可用模型，请检查模型服务",
+                "note": "",
+            }
+        }
     )
 
 
@@ -339,7 +365,7 @@ async def update_project_agent(
     body: AgentInstanceUpdate,
     db: DbSession,
 ) -> dict:
-    """Rename an agent, or put it in another type.
+    """Edit one agent's name and saved configuration.
 
     ``handle`` is not editable and is not accepted here: it keys the memory
     pool, so changing it would hand the agent an empty one and orphan
@@ -351,8 +377,8 @@ async def update_project_agent(
     fields = body.model_fields_set
     if "display_name" in fields and body.display_name is not None:
         await service.rename(instance, body.display_name)
-    if "type_name" in fields:
-        await service.set_type(instance, body.type_name)
+    if body.configuration is not None:
+        await service.configure(instance, body.configuration)
     await db.flush()
     return ok(
         _agent_out(
@@ -386,25 +412,13 @@ async def deactivate_project_agent(
 async def set_project_default_agent(
     project_id: uuid.UUID, body: ProjectDefaultAgentIn, db: DbSession
 ) -> dict:
-    """Which agent a new topic in this project gets.
-
-    Two ways in, because they are two different intents. ``instance_id`` picks a
-    different agent — a different memory pool. ``type_name`` re-skins the one
-    the project already has, which is what "which persona does 芝士 wear here"
-    means: the pool it has been filling stays its own.
-    """
+    """Select the existing agent that new rooms start with."""
     project = await ProjectService(db).get_or_404(project_id)
     service = AgentInstanceService(db)
-    if body.instance_id is not None:
-        instance = await service.get_in_project(
-            project_id=project_id, instance_id=body.instance_id
-        )
-        agent = await service.set_project_default(project, instance)
-    else:
-        instance = await service.materialize_default(project)
-        await service.set_type(instance, body.type_name)
-        await db.flush()
-        agent = await service.for_project(project)
+    instance = await service.get_in_project(
+        project_id=project_id, instance_id=body.instance_id
+    )
+    agent = await service.set_project_default(project, instance)
     return ok(_agent_out(project_id, agent, is_default=True))
 
 
@@ -673,7 +687,7 @@ async def get_private_chat(
     if actor.authenticated:
         await resolver.authorize_project(actor, project_id=project_id)
         participants = {user_handle, peer_handle} - {None}
-        if actor.is_agent or actor.handle not in participants:
+        if actor.handle not in participants:
             raise ForbiddenError("只能打开自己参与的私聊")
     topic = await TopicService(db).get_or_create_private(
         project_id=project_id, user_handle=user_handle, peer_handle=peer_handle
@@ -681,53 +695,78 @@ async def get_private_chat(
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
 
 
-# --- ExecutionProfile (design §2): which model/provider this project runs on ---
-
-
-@router.get("/{project_id}/execution-profiles")
-async def list_execution_profiles(
-    project_id: uuid.UUID, db: DbSession, registry: Registry
-) -> dict:
-    """Profiles this project may select (credentialed + permitted for its owner),
-    plus the current selection. Default = our AI pool."""
-    project = await ProjectRepository(db).get(project_id)
-    if project is None:
-        raise NotFoundError("Project not found")
-    current = (project.settings or {}).get("execution_profile") or "default"
-    profiles = [asdict(v) for v in registry.selectable(project.owner_handle)]
-    return ok({"current": current, "profiles": profiles})
-
-
-@router.put("/{project_id}/execution-profile")
-async def set_execution_profile(
-    project_id: uuid.UUID, body: dict, db: DbSession, registry: Registry
-) -> dict:
-    """Set the project's execution profile. Only a profile that's selectable for
-    this owner is accepted (a testing-tier profile on a non-dogfood project is
-    rejected — review Finding 7)."""
-    project = await ProjectRepository(db).get(project_id)
-    if project is None:
-        raise NotFoundError("Project not found")
-    name = (body.get("profile") or "").strip() or "default"
-    allowed = {v.name for v in registry.selectable(project.owner_handle)}
-    if name not in allowed:
-        raise ValidationError(f"执行档案 {name!r} 对本项目不可用")
-    project.settings = {**(project.settings or {}), "execution_profile": name}
-    await db.flush()
-    return ok({"current": name})
-
-
 # --- Compute pool (design §3): which machine runs this project's sandbox ---
 
 
-@router.get("/{project_id}/compute-profiles")
-async def list_compute_profiles(project_id: uuid.UUID, db: DbSession) -> dict:
-    """Compute pools this project may select (only the ones actually deployed),
-    plus the current selection. Default = 知是本地算力."""
+@router.get("/{project_id}/compute-configs")
+async def get_compute_configs(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    from app.domain.agent.device_hub import device_hub
+    from app.domain.device.wiring import sql_device_service
+
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectRepository(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
-    current = (project.settings or {}).get("compute_profile") or compute_default_name()
+    can_manage = True
+    try:
+        await MemberService(db).require_manager(project_id, actor)
+    except ForbiddenError:
+        can_manage = False
+    devices = await sql_device_service(db).list_devices_for_project(project_id)
+    return ok(
+        {
+            **project_configs(project.settings).model_dump(),
+            "can_manage": can_manage,
+            "devices": [
+                {
+                    "device_id": d.device_id,
+                    "name": d.name,
+                    "online": device_hub.is_online(d.device_id),
+                }
+                for d in devices
+            ],
+            "cloud_available": any(
+                p.id == COMPUTE_CLOUD for p in compute_selectable(settings)
+            ),
+        }
+    )
+
+
+@router.put("/{project_id}/compute-configs")
+async def save_compute_configs(
+    project_id: uuid.UUID,
+    body: ProjectComputeConfigs,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    project = await ProjectRepository(db).get(project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    await MemberService(db).require_manager(project_id, actor)
+    for choice in [body.default, *body.favorites]:
+        await validate_choice(db, project_id, choice)
+        if choice.profile == COMPUTE_CLOUD:
+            await MachineService(db).require_use_authority(project_id, actor)
+    values = dict(project.settings or {})
+    values.pop("compute_profile", None)
+    values["compute_configs"] = body.model_dump()
+    project.settings = values
+    await db.flush()
+    return ok(body.model_dump())
+
+
+@router.get("/{project_id}/compute-profiles")
+async def list_compute_profiles(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """Available compute sources and the explicit project default."""
+    configs = await get_compute_configs(project_id, db, resolver)
+    current = configs["data"]["default"]["profile"]
     device_online = await project_device_online(db, project_id)
     profiles = [
         asdict(v) for v in compute_selectable(settings, device_online=device_online)
@@ -749,49 +788,11 @@ async def set_compute_profile(
     allowed = {v.id for v in compute_selectable(settings, device_online=device_online)}
     if name not in allowed:
         raise ValidationError(f"算力池 {name!r} 尚未接入，暂不可选")
-    if name == COMPUTE_CLOUD:
-        actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-        await MachineService(db).require_create_authority(project_id, actor)
-    project.settings = {**(project.settings or {}), "compute_profile": name}
-    await db.flush()
-    return ok({"current": name})
+    from app.domain.agent.compute_configs import standard_choice
 
-
-# --- Subscription model: which Claude model this project's subscription turns
-# use (parallel to the compute pool). Only relevant when the subscription path is
-# deployed; otherwise the listing is informational. -----------------------------
-
-
-@router.get("/{project_id}/model-profiles")
-async def list_model_profiles(project_id: uuid.UUID, db: DbSession) -> dict:
-    """Claude models this project may select for subscription turns, plus the
-    current selection. Default = Sonnet 5 (balanced / saves the subscription's
-    quota)."""
-    project = await ProjectRepository(db).get(project_id)
-    if project is None:
-        raise NotFoundError("Project not found")
-    current = (project.settings or {}).get(
-        "subscription_model"
-    ) or subscription_model_default()
-    return ok(
-        {
-            "current": current,
-            "profiles": [asdict(v) for v in subscription_model_listings()],
-        }
-    )
-
-
-@router.put("/{project_id}/model-profile")
-async def set_model_profile(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
-    """Set the project's subscription model. Only a known model id is accepted."""
-    project = await ProjectRepository(db).get(project_id)
-    if project is None:
-        raise NotFoundError("Project not found")
-    name = (body.get("profile") or "").strip() or subscription_model_default()
-    if name not in subscription_model_ids():
-        raise ValidationError(f"模型 {name!r} 不可选")
-    project.settings = {**(project.settings or {}), "subscription_model": name}
-    await db.flush()
+    configs = project_configs(project.settings)
+    configs.default = standard_choice(name)
+    await save_compute_configs(project_id, configs, db, resolver)
     return ok({"current": name})
 
 
@@ -801,17 +802,15 @@ async def set_model_profile(project_id: uuid.UUID, body: dict, db: DbSession) ->
 async def require_project_steward(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> str:
-    """The verified human owner/lead of a project, or a 404 that hides it.
+    """The verified owner/lead of a project, or a 404 that hides it.
 
-    A sandbox-scoped agent token is deliberately not accepted: an agent that
-    could configure the command judging its own work has a review bypass (and,
-    before gate isolation, a host-command primitive), and an agent that could
-    reassign ``owner_handle`` could hand itself the project.
+    People and agents need the same management role. A credential alone does
+    not grant authority to change ownership or the project's checks.
 
     Returns the caller's handle so a route can record who acted.
     """
     actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    if not actor.authenticated or actor.via != "token" or actor.is_agent:
+    if not actor.authenticated:
         raise NotFoundError("Project not found")
     handle = actor.handle
     project = await ProjectRepository(db).get(project_id)
@@ -956,8 +955,8 @@ async def set_branch_protection(
 
     ``approvals_required`` predates this block and stays at
     ``settings["approvals_required"]`` — read and written here, never moved,
-    never dual-written. Writes need a verified human owner/lead: an agent that
-    could loosen the rules judging its own merges has a review bypass.
+    never dual-written. Writes need a verified owner/lead. Assigning this role
+    to an agent grants the same authority to change review requirements.
     """
     project = await ProjectRepository(db).get(project_id)
     if project is None:

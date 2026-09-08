@@ -23,9 +23,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 import app.api.routes as routes_pkg
+from app.api.auth import ActorResolver
 from app.core.config import settings
 from app.core.db import get_db
-from app.core.errors import register_exception_handlers
+from app.core.errors import BaseError, register_exception_handlers
 from app.core.obs import (
     ResponseIntegrityAudit,
     bind_context,
@@ -34,8 +35,10 @@ from app.core.obs import (
     get_logger,
 )
 from app.core.sandbox_auth import (
+    is_global_sandbox_token,
     is_valid_cheese_token,
     looks_like_project_agent_credential,
+    scoped_token_claims,
 )
 from app.core.work_context import current_work_id, parse_work_id
 from app.core.ws_diagnostics import LogRefusedWebSockets
@@ -175,6 +178,18 @@ async def lifespan(_: FastAPI):
     )
     for job in jobs:
         job.start()
+
+    # The openviking backend's whole failure mode is silence: a rejected key
+    # leaves extraction writing nothing, recall answering empty, and no other
+    # symptom anywhere — indistinguishable from the db backend, which also
+    # never learns on its own. So somebody has to actually call the endpoints,
+    # and boot is when: whoever just flipped MEMORY_BACKEND is reading this log
+    # right now. No-op on the db backend, and it never raises — a model vendor
+    # outage must not keep the rest of the platform from starting.
+    from app.domain.memory import endpoint_probe as memory_endpoint_probe
+
+    await memory_endpoint_probe.check_on_startup()
+
     try:
         yield
     finally:
@@ -323,8 +338,6 @@ register_all_permissions()
 # hand whenever the strings it names do.
 _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/webhook-token$")),
-    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/ask$")),
-    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/decision$")),
     # 留话给一条活: the scoping id is the SENDER (the room whose turn is talking);
     # the receiver is in the body and is checked against the threads that room
     # dispatched — this gate can only prove "some agent of this project", because
@@ -420,12 +433,15 @@ async def request_context(request: Request, call_next: Callable):  # type: ignor
 
 
 async def _credential_opens_gate(
-    token: str, *, project_id: str | None, topic_id: str | None
+    token: str,
+    *,
+    project_id: str | None,
+    topic_id: str | None,
+    screen_token: str = "",
 ) -> bool:
-    """Whether a project agent credential opens the cheese write-surface here.
+    """Whether the credential's participant may access this write-surface.
 
-    The gate is the ONLY authorization several of these routes have (``decision``
-    writes a block with no resolver behind it), so the project match and the
+    Some execution endpoints rely on this gate, so the project match and the
     revocation check have to happen here — which means a database read, before
     the router and therefore before ``Depends(get_db)`` exists. Going through
     ``dependency_overrides`` instead of importing the session factory keeps ONE
@@ -437,9 +453,31 @@ async def _credential_opens_gate(
     sessions = provider()
     session = await anext(sessions)
     try:
-        return await ProjectAgentCredentialService(session).opens_gate(
-            token, project_id=project_id, topic_id=topic_id
+        target = await ProjectAgentCredentialService(session).project_of_request(
+            project_id=project_id, topic_id=topic_id
         )
+        if target is None:
+            return False
+        import uuid
+
+        claims = scoped_token_claims(token)
+        origin = claims.get("t") if claims else None
+        topic = uuid.UUID(topic_id or origin) if topic_id or origin else None
+        resolver = ActorResolver(
+            session=session, bearer=None, cheese_token=token, screen_token=screen_token
+        )
+        actor = await resolver.resolve(
+            fallback_handle=None, project_id=target, topic_id=topic
+        )
+        if not actor.authenticated:
+            return False
+        if topic is not None:
+            await resolver.authorize_topic(actor, project_id=target, topic_id=topic)
+        else:
+            await resolver.authorize_project(actor, project_id=target)
+        return True
+    except (BaseError, ValueError):
+        return False
     finally:
         # Read-only: closing without draining skips the provider's commit, which
         # is what we want — the gate must not commit anything on the way past.
@@ -460,12 +498,17 @@ async def cheese_token_gate(request: Request, call_next: Callable):  # type: ign
         opened = is_valid_cheese_token(
             token, project_id=ids.get("project"), topic_id=ids.get("topic")
         )
-        # A project agent credential reaches every topic of its project, so it
+        # A project agent credential can address topics in its project, so it
         # can't be matched against the URL by string compare the way a per-turn
         # token is — a topic path names its project only through the topic.
-        if not opened and looks_like_project_agent_credential(token):
+        if not is_global_sandbox_token(token) and (
+            opened or looks_like_project_agent_credential(token)
+        ):
             opened = await _credential_opens_gate(
-                token, project_id=ids.get("project"), topic_id=ids.get("topic")
+                token,
+                project_id=ids.get("project"),
+                topic_id=ids.get("topic"),
+                screen_token=request.headers.get("x-cheese-screen") or "",
             )
         if not opened:
             return JSONResponse(

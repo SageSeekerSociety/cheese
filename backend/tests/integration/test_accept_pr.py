@@ -1727,7 +1727,9 @@ def test_merge_anyway_is_for_humans_only(client, app_world):
 
     # 芝士拿着作用域内的 token 也不行 —— 放行是授权类动作，只给人。
     r = _merge_anyway(
-        client, cid, headers={"X-Cheese-Token": mint_scoped_token(project_id=pid)}
+        client,
+        cid,
+        headers={"X-Cheese-Token": mint_scoped_token(project_id=pid, topic_id=tid)},
     )
     assert r.status_code == 422, r.text
     assert "AI" in r.json()["message"]

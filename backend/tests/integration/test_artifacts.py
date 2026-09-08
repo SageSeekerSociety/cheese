@@ -2,12 +2,39 @@
 which becomes the topic's current preview (spec §9.1)."""
 
 
-def _topic(client) -> tuple[str, str]:
-    p = client.post("/projects", json={"name": "P"}).json()["data"]
+def _topic(client, owner: str | None = None) -> tuple[str, str]:
+    p = client.post("/projects", json={"name": "P", "owner_handle": owner}).json()[
+        "data"
+    ]
     t = client.post("/topics", json={"project_id": p["id"], "title": "T"}).json()[
         "data"
     ]
     return p["id"], t["id"]
+
+
+def test_a_remote_artifact_is_readable_without_a_git_push(client):
+    from tests.integration.conftest import session_auth_headers
+
+    pid, tid = _topic(client, "alice")
+    html = "<h1>Result from the remote machine</h1>"
+    response = client.post(
+        f"/topics/{tid}/artifact",
+        json={
+            "path": "site/report.html",
+            "content": html,
+        },
+    )
+    assert response.status_code == 200, response.text
+    response = client.get(
+        f"/projects/{pid}/file",
+        headers=session_auth_headers("alice"),
+        params={
+            "topic": tid,
+            "path": "site/report.html",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["content"] == html
 
 
 def test_artifact_sets_current_preview(client):

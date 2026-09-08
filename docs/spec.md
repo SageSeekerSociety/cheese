@@ -333,23 +333,17 @@ Project 自己管自己的策略。因为所有话题底层是 git 分支，权�
 | Skills（灵魂） | 见 §8.2 | 教 Claude Code 变成"芝士"。产品的核心知识，用自然语言写，迭代快、谁都能改 |
 | 工具（外接能力） | 记忆存储 / 开发环境 / 语音转文字 / GitHub / 机构汇总 | 给芝士接上外部能力 |
 
-### 8.2 agent 类型与实例
+### 8.2 Project agents and starting configurations
 
-芝士不是只有一种人格——不同项目可以用不同类型的芝士。历史学项目的芝士懂学术规范和文献检索，计算机项目的芝士懂代码架构和测试，设计项目的芝士懂用户体验和视觉语言。
+Each project agent owns its name, role instructions, explicit model and memory. A room selects an agent; the project selects the default agent for new rooms. There is no project default model.
 
-分成三层，寿命各不相同：
+Built-in presets provide starting values when an agent is created. A preset can supply role instructions, a model and existing tool settings. Missing model values are filled from the available supply's creation default and saved on the new agent. Subsequent preset changes do not affect existing agents. There is no editable team or global role catalog.
 
-| 层 | 是什么 | 范围 |
-|---|---|---|
-| **类型**（出厂设置） | 名字、系统提示、skills、MCP、model、effort、harness | **可跨项目共享**（平台预设 + 自定义） |
-| **实例 + 记忆** | 这个 agent 在这个项目里学到的东西 | **项目内**，跟身份走、不跟话题走 |
-| **会话** | 它在某个话题里聊到哪了 | 一个话题一个，可丢、可重建 |
+Users edit an individual agent in AI 队友. Edits take effect from its next turn in every room using that agent. The current turn uses one configuration snapshot. Existing agent IDs, handles and memory remain unchanged, and other agents keep their own configuration. New rooms require an active agent, so the last active agent cannot be retired.
 
-类型直接对应 Claude Code 的 agent type 定义，用带 frontmatter 的 markdown 描述：正文是系统提示，frontmatter 说它能够到什么（skills / mcp_servers）和怎么跑（model / effort / harness）。平台预设以文件形式随代码发布，人自己定义的存在 `agent_types` 表里；同名的自定义类型会盖掉预设，所以改一个预设不必 fork 它的文件。项目集协议可以指定默认类型（比如"创研课"默认用学术研究类型）。
+Model choices come from the project's connected supply. An unavailable saved model produces an error requiring a new selection. Device and Cloud execution pass the saved model explicitly. A reused process is refreshed between turns when the agent configuration changes. This guarantees the requested model; provider-side substitutions are outside this setting's guarantee.
 
-**记忆归实例，不归话题。** 一个芝士在项目的五个房间里干活，学到的是同一份记忆——这才是"同一个芝士跨房间"的实际含义。换掉一个话题的 agent 会重开会话：会话是某一个 agent 对这段对话的记忆，交给另一个 agent 续用，等于让它笃定地"记得"自己没说过的话。
-
-**运行时可变**：类型是起点，不是终点。运行中芝士可以动态加载额外的 skills；协作中学到的领域知识沉淀进实例的记忆（§8.4），越用越懂。类型本身不会运行时改变，但记忆的积累让同一个类型在不同项目里表现不同。
+Migration copies existing role instructions and the effective model onto each agent. Projects with an implicit default receive a saved agent under the same cheese handle, preserving their memory keys. Original custom roles and project settings remain in archive tables for inspection and rollback.
 
 ### 8.3 Skills：产品的配方
 
