@@ -787,7 +787,8 @@ if [ -z "$branch" ]; then
 elif [ -z "$failed" ] && [ -n "$head" ]; then
   tried=1
   if [ -n "$graft" ] && [ -n "$lease" ]; then
-    # 衔接是这条脚本里**唯一**一次改写：新分支上的历史要从 base 重新长出来。
+    # 这是这条脚本里唯一一次改写**分支**（下面那个快照 ref 也是强推，但它是一次性
+    # 的草稿地址，不是任何人的交付）。新分支上的历史要从 base 重新长出来。
     git push -q --force-with-lease="refs/heads/$branch:$lease" origin \
       "$head:refs/heads/$branch" >/dev/null 2>&1 || failed=1
   else
