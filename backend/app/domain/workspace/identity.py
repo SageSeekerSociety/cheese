@@ -109,6 +109,11 @@ class Attribution:
     coauthors: tuple[GitIdentity, ...] = ()
     #: `Cheese-Task:`, one line each. See `work_items`.
     tasks: tuple[WorkItem, ...] = ()
+    #: `Reviewed-by:`'s git identity — the accepter's, when they connected
+    #: GitHub. Resolved here rather than at the trailer builder for the same
+    #: reason as `author`: that module is pure, so anything needing a session
+    #: arrives already resolved.
+    reviewer: GitIdentity | None = None
 
 
 __all__ = [
@@ -123,7 +128,9 @@ __all__ = [
     "coauthored_by",
     "identity_from_profile",
     "identity_path",
+    "as_trailer",
     "noreply_email",
+    "platform_identity",
     "read",
     "remember",
     "requester_handle",
@@ -145,6 +152,31 @@ def session_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
 
 def identity_path(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     return session_dir(project_id, topic_id) / _IDENTITY_FILE
+
+
+def platform_identity(handle: str) -> GitIdentity:
+    """The address for somebody who never connected GitHub (#189).
+
+    A trailer has to name a person, and a bare handle names a string. This is
+    the honest degrade: the platform's own domain, the same one 芝士 commits
+    under, so it is a well-formed address that git and GitHub both accept and
+    that no reader can mistake for a real mailbox or for a GitHub account. What
+    it must NEVER be is a fabricated `users.noreply.github.com` address — that
+    one LOOKS linkable and points at nobody, which is worse than admitting we
+    have no account for them.
+    """
+    return GitIdentity(handle, f"{handle}@{CHEESE_EMAIL.split('@', 1)[1]}")
+
+
+def as_trailer(handle: str | None, resolved: "GitIdentity | None") -> str:
+    """`Name <email>` for a trailer — resolved identity first, platform address
+    otherwise, and the bare handle only when there is no handle to build from."""
+    if resolved is not None:
+        return f"{resolved.name} <{resolved.email}>"
+    if not handle:
+        return ""
+    who = platform_identity(handle)
+    return f"{who.name} <{who.email}>"
 
 
 def noreply_email(github_user_id: str, login: str) -> str:
@@ -340,7 +372,7 @@ def _as_uuid(raw: Any) -> uuid.UUID | None:
 
 
 async def attribution(
-    session: Any, topic: "Topic", *, card: Any = None
+    session: Any, topic: "Topic", *, card: Any = None, decided_by: str | None = None
 ) -> "Attribution":
     """Everything a PR body and a squash commit need to say about who a change
     belongs to, resolved in ONE place.
@@ -394,7 +426,9 @@ async def attribution(
         logger.warning(
             "could not resolve the work behind topic %s", topic.id, exc_info=True
         )
-    return Attribution(handle, author, tuple(coauthors), tasks)
+    return Attribution(
+        handle, author, tuple(coauthors), tasks, await _identity_of(session, decided_by)
+    )
 
 
 async def _identity_of(session: Any, handle: str | None) -> GitIdentity | None:

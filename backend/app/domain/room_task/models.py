@@ -164,6 +164,14 @@ class WorkTree(UuidPk, Timestamps, Base):
     # per open tree per tick, forever.
     pr_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     pr_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # 这一批交出去的是哪个 commit —— 合并那一刻记下的事实，之后再也不改。
+    #
+    # NOT the branch's tip. A branch is mutable: a commit pushed onto it after
+    # the batch merged (a stale screen, a hand push) would then read as「已经交付
+    # 的内容」 while never having been anywhere near main. A device carrying its
+    # next batch over uses this as the base of a three-way merge, so a wrong
+    # value here silently re-delivers or drops work.
+    delivered_head: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class LockKind(enum.StrEnum):

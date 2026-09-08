@@ -160,7 +160,7 @@ def test_publication_records_the_pr_on_the_card(client, monkeypatch):
     # Routing bookkeeping is gone from the body — a GitHub reviewer needs the
     # change, not the platform's internal handoff.
     assert "验收人" not in opened["body"]
-    assert f"Cheese-Topic: {tid}" in opened["body"]
+    assert f"/topics/{tid}" in opened["body"]
 
     card = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"][0]
     assert card["pr_number"] == 42
@@ -341,7 +341,7 @@ def test_the_pr_body_claims_no_review_that_has_not_happened(client, monkeypatch)
     opened = _publish(client, pid, tid, cid)
 
     assert "Reviewed-by:" not in opened["body"]
-    assert f"Cheese-Topic: {tid}" in opened["body"]
+    assert f"/topics/{tid}" in opened["body"]
 
 
 def test_a_malformed_subject_is_refused_at_the_card(client, monkeypatch):

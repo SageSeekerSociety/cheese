@@ -82,3 +82,54 @@ def test_a_blank_line_before_the_co_author_would_swallow_the_rest(a_full_deliver
 
     assert _tokens(split_apart) == {"Co-authored-by"}
     assert _tokens(good) > _tokens(split_apart)
+
+
+def test_the_emails_and_the_urls_are_still_one_parseable_block(a_full_delivery):
+    """#189 加了两样东西：`Requested-by`/`Reviewed-by` 带身份邮箱，
+    `Cheese-Topic`/`Cheese-Card` 是可点开的地址。
+
+    两样都是**值**变了，块不许因此断开 —— 一个 `Name <email>` 或一个带查询串的
+    URL 都在 git 的 trailer 语法之内，而「为了好看加一行」正是刚修掉的那个 bug。
+    """
+    room, card, who = a_full_delivery
+    who = identity.Attribution(
+        who.handle,
+        who.author,
+        who.coauthors,
+        who.tasks,
+        identity.GitIdentity("Wang", "7+wang@users.noreply.github.com"),
+    )
+
+    message = pr_text.local_merge_commit_message(room, "wangchangxin", card, who)
+    parsed = _parse(message)
+
+    assert _tokens(message) == {
+        "Requested-by",
+        "Reviewed-by",
+        "Cheese-Topic",
+        "Cheese-Card",
+        "Cheese-Agent",
+        "Cheese-Task",
+        "Co-authored-by",
+    }
+    by_token = {line.split(":", 1)[0]: line.split(": ", 1)[1] for line in parsed}
+    # 关联了 GitHub 的用身份邮箱；没关联的诚实地用平台域名，不伪造一个 noreply。
+    assert by_token["Requested-by"] == "Alice <1+alice@users.noreply.github.com>"
+    assert by_token["Reviewed-by"] == "Wang <7+wang@users.noreply.github.com>"
+    assert by_token["Cheese-Topic"].startswith("http")
+    assert str(room.id) in by_token["Cheese-Topic"]
+    assert by_token["Cheese-Card"].endswith(f"?card={card.id}")
+
+
+def test_somebody_without_github_gets_the_platforms_own_address(a_full_delivery):
+    """降级要诚实：伪造一个 `users.noreply.github.com` 会**看起来**能点开而指向
+    谁也不是，比承认「我们没有这个人的账号」更糟。"""
+    room, card, _ = a_full_delivery
+    who = identity.Attribution("alice", None)
+
+    message = pr_text.local_merge_commit_message(room, "wangchangxin", card, who)
+    parsed = {line.split(":", 1)[0]: line.split(": ", 1)[1] for line in _parse(message)}
+
+    assert parsed["Requested-by"] == "alice <alice@zhishi.local>"
+    assert parsed["Reviewed-by"] == "wangchangxin <wangchangxin@zhishi.local>"
+    assert "noreply.github.com" not in message

@@ -103,7 +103,8 @@ class WorkTreeService:
             if task.status is not TaskStatus.open or task.tree_id == tree.id:
                 continue
             was = await self._repo.get(task.tree_id)
-            if was is None or was.status is not TreeStatus.merged:
+            # `==`, not `is` — see AcceptService._mark_cards_tree_merged.
+            if was is None or was.status != TreeStatus.merged:
                 continue
             task.tree_id = tree.id
             ws.bind_tree(task.id, tree.id)

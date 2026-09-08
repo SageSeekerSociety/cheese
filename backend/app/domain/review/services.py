@@ -1289,7 +1289,9 @@ class AcceptService:
         # session to read the card or the roster with.
         from app.domain.workspace import service as ws
 
-        who = await identity.attribution(self._session, topic, card=card)
+        who = await identity.attribution(
+            self._session, topic, card=card, decided_by=decided_by
+        )
         try:
             merged = await asyncio.to_thread(
                 ws.merge_topic,
@@ -1805,7 +1807,7 @@ class AcceptService:
         if status.merged:
             # 有人已经在 GitHub 上合了这个 PR —— 同一件事，照单收下。
             card.pr_merged_at = status.merged_at or datetime.now(UTC)
-            await self._mark_cards_tree_merged(card)
+            await self._mark_cards_tree_merged(card, delivered_head=status.head_sha)
             if status.merge_commit_sha:
                 card.pr_head_sha = status.merge_commit_sha
             return await self._conclude_pr_accept(
@@ -1858,7 +1860,9 @@ class AcceptService:
                 f"现在不能采纳（合并态：{verdict.state}）：{detail or '规则未满足'}"
             )
 
-        attribution = await identity.attribution(self._session, topic, card=card)
+        attribution = await identity.attribution(
+            self._session, topic, card=card, decided_by=decided_by
+        )
         result = await client.merge_pull_request(
             owner=owner,
             repo=repo,
@@ -1901,7 +1905,7 @@ class AcceptService:
             raise ValidationError(f"GitHub 拒绝合并 PR #{number}：{reason}")
 
         card.pr_merged_at = datetime.now(UTC)
-        await self._mark_cards_tree_merged(card)
+        await self._mark_cards_tree_merged(card, delivered_head=seen)
         card.pr_head_sha = result.sha  # the merge commit, for the record
         return await self._conclude_pr_accept(card, topic, decided_by)
 
@@ -2088,7 +2092,9 @@ class AcceptService:
             self._note_poll_failed(card, exc)
             await self._session.flush()
 
-    async def _mark_cards_tree_merged(self, card: AcceptCard) -> None:
+    async def _mark_cards_tree_merged(
+        self, card: AcceptCard, *, delivered_head: str | None = None
+    ) -> None:
         """The batch landed — so close it AND start the next one, here.
 
         The tree row stays: the work that produced it still points here, and a
@@ -2116,8 +2122,19 @@ class AcceptService:
         tree = await trees.get(card.tree_id)
         if tree is None:
             return
-        if tree.status is not TreeStatus.merged:
+        # `==`, not `is`: `WorkTree.status` is a plain String column, so a row
+        # loaded from the database carries a `str` and an identity comparison is
+        # False for every value it could hold.
+        if tree.status != TreeStatus.merged:
             await trees.mark_merged(tree)
+        # 交出去的是哪个 commit，在这一刻记死。Passed in rather than read off the
+        # card, because the card's `pr_head_sha` becomes the MERGE commit moments
+        # later and which of the two a reader gets would then depend on statement
+        # order. See `WorkTree.delivered_head` for why the branch's tip is not an
+        # acceptable substitute.
+        if delivered_head and not tree.delivered_head:
+            tree.delivered_head = delivered_head[:64]
+            await self._session.flush()
         await trees.ensure_open(project_id=tree.project_id, room_id=tree.room_id)
 
     async def _app_pr_client(self, topic: Topic):  # noqa: ANN202 — GitHubPRClient
@@ -2716,7 +2733,9 @@ class AcceptService:
             )
             await self._session.flush()
             return
-        attribution = await identity.attribution(self._session, topic, card=card)
+        attribution = await identity.attribution(
+            self._session, topic, card=card, decided_by=armer
+        )
         result = await client.merge_pull_request(
             owner=owner,
             repo=repo,
@@ -2743,7 +2762,7 @@ class AcceptService:
             await self._session.flush()
             return
         card.pr_merged_at = datetime.now(UTC)
-        await self._mark_cards_tree_merged(card)
+        await self._mark_cards_tree_merged(card, delivered_head=card.pr_head_sha)
         card.pr_head_sha = result.sha
         await self._repo.add_approval(card.id, armer)
         card.decided_by = armer
@@ -2804,7 +2823,7 @@ class AcceptService:
         fact, and since #206 that fact is the whole of what the platform waits
         for."""
         card.pr_merged_at = status.merged_at or datetime.now(UTC)
-        await self._mark_cards_tree_merged(card)
+        await self._mark_cards_tree_merged(card, delivered_head=status.head_sha)
         if status.merge_commit_sha:
             # Nice to have, not required: nothing downstream looks a run up by
             # this sha any more, it is just the truest record of what landed.
@@ -3611,7 +3630,9 @@ class AcceptService:
         verdict = _force_merge_verdict(state)
 
         number = card.pr_number
-        who = await identity.attribution(self._session, topic, card=card)
+        who = await identity.attribution(
+            self._session, topic, card=card, decided_by=decided_by
+        )
         result = await client.merge_pull_request(
             owner=owner,
             repo=repo,
@@ -3641,7 +3662,7 @@ class AcceptService:
             f"（{verdict}；合并时检查状态：{checks_at_merge}）{tail_reason}"
         )
         card.pr_merged_at = now
-        await self._mark_cards_tree_merged(card)
+        await self._mark_cards_tree_merged(card, delivered_head=seen_head)
         card.pr_head_sha = result.sha
         await self._repo.add_approval(card.id, decided_by)
         card.decided_by = decided_by

@@ -240,7 +240,7 @@ def test_the_agent_handle_never_reaches_the_pr_however_the_work_was_split(
     _split(client, root, by=agent)
 
     body = _pr_body(client, pid, root)
-    assert "Requested-by: alice" in body
+    assert "Requested-by: Alice <583231+alice@users.noreply.github.com>" in body
     assert agent not in body
 
 
@@ -257,7 +257,7 @@ def test_nobody_is_credited_twice_when_the_room_never_changed_hands(
     _split(client, root, by=_agent())
 
     body = _pr_body(client, pid, root)
-    assert "Requested-by: alice" in body
+    assert "Requested-by: Alice <583231+alice@users.noreply.github.com>" in body
     assert "Co-authored-by" not in body
 
 

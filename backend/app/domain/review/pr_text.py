@@ -68,6 +68,15 @@ def change_subject(card: AcceptCard | None, topic: Topic) -> str:
     return subject or fallback_subject(topic)
 
 
+def _room_url(topic: Topic) -> str:
+    """Where a reader can open this room. Base from configuration, never a
+    literal: the same commit text is produced by every deployment."""
+    from app.core.config import settings
+
+    base = settings.frontend_url.rstrip("/")
+    return f"{base}/projects/{topic.project_id}/topics/{topic.id}"
+
+
 def pr_trailers(
     topic: Topic,
     decided_by: str,
@@ -115,16 +124,30 @@ def pr_trailers(
     place a second contributor survives with an avatar, a link and credit."""
     lines = []
     requester = (who.handle if who else None) or topic.created_by
+    # `Name <email>`, not a bare handle (#189). A handle names a string; an
+    # address names a person — GitHub renders an avatar and a link for one it
+    # recognises, and `git log --author` / `shortlog` can group by it. Somebody
+    # who never connected GitHub gets the platform's own domain rather than a
+    # fabricated GitHub address (`identity.platform_identity`): a degrade that
+    # admits itself beats one that looks linkable and points at nobody.
     if requester:
-        lines.append(f"Requested-by: {requester}")
+        asker = identity.as_trailer(requester, who.author if who else None)
+        lines.append(f"Requested-by: {asker}")
     if decided_by:
         # Empty when the PR is being OPENED (pr_publish): nobody has accepted
         # yet, and `Reviewed-by:` with a blank or a merely-routed name would
         # claim a review that has not happened.
-        lines.append(f"Reviewed-by: {decided_by}")
-    lines.append(f"Cheese-Topic: {topic.id}")
+        seen_it = identity.as_trailer(decided_by, who.reviewer if who else None)
+        lines.append(f"Reviewed-by: {seen_it}")
+    # URLs, not bare ids (#189). A uuid in `git log` is a dead end unless the
+    # reader already knows this platform's routes; the whole point of these two
+    # lines is that somebody auditing a commit can GET TO the room and the
+    # delivery that produced it. The card has no route of its own, so it rides
+    # the room's as a query — the page ignores it and the id stays in the
+    # commit, which is strictly more than the bare uuid carried.
+    lines.append(f"Cheese-Topic: {_room_url(topic)}")
     if card is not None:
-        lines.append(f"Cheese-Card: {card.id}")
+        lines.append(f"Cheese-Card: {_room_url(topic)}?card={card.id}")
     lines.append(f"Cheese-Agent: {topic_agent_handle(topic.id)}")
     lines.extend(task_trailer(item) for item in (who.tasks if who else ()))
     coauthors = who.coauthors if who else ()

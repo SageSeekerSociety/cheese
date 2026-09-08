@@ -138,9 +138,9 @@ def test_the_landed_commit_names_the_agent_and_every_worker_declared(client):
     assert f"Cheese-Task: {mine} ac2c038d44616a2f2 补 trailer" in body
     assert f"Cheese-Task: {theirs} 9f1b7c22e0d341a80 顺手修 flaky 测试" in body
     # The trailers that were already there did not move over to make room.
-    assert f"Cheese-Topic: {room}" in body
-    assert f"Cheese-Card: {card['id']}" in body
-    assert "Reviewed-by: alice" in body
+    assert f"/topics/{room}" in body
+    assert f"?card={card['id']}" in body
+    assert "Reviewed-by: alice <alice@zhishi.local>" in body
 
 
 # --- 跨批次 ---------------------------------------------------------------
@@ -316,7 +316,7 @@ def test_unreadable_work_costs_the_trailers_and_not_the_merge(client, monkeypatc
     body = _landed_body(pid)
     assert body.splitlines()[0] == "feat: land when the batch is unreadable"
     assert "Cheese-Task" not in body
-    assert f"Cheese-Card: {card['id']}" in body
+    assert f"?card={card['id']}" in body
 
 
 # --- What the declaration is checked against ------------------------------

@@ -22,7 +22,21 @@ BOB = identity.GitIdentity("Bob", "42+bob@users.noreply.github.com")
 
 
 def _topic(created_by: str | None) -> Topic:
-    return Topic(id=uuid.uuid4(), title="做一个东西", created_by=created_by)
+    return Topic(
+        id=uuid.uuid4(),
+        project_id=uuid.uuid4(),
+        title="做一个东西",
+        created_by=created_by,
+    )
+
+
+def _room_url(topic: Topic) -> str:
+    """#189: `Cheese-Topic` / `Cheese-Card` 是可点开的地址，不是裸 uuid ——
+    `git log` 里一个 uuid 是死胡同，除非读的人本来就知道这个平台的路由。"""
+    from app.core.config import settings
+
+    base = settings.frontend_url.rstrip("/")
+    return f"{base}/projects/{topic.project_id}/topics/{topic.id}"
 
 
 def _work(subagent_id: str | None, title: str) -> identity.WorkItem:
@@ -32,14 +46,16 @@ def _work(subagent_id: str | None, title: str) -> identity.WorkItem:
 def test_the_resolved_human_wins_over_the_agent_that_created_the_room():
     topic = _topic("cheese-a7a0268b96ff")
     trailers = pr_text.pr_trailers(topic, "", identity.Attribution("alice", ALICE))
-    assert "Requested-by: alice" in trailers
+    assert "Requested-by: Alice <583231+alice@users.noreply.github.com>" in trailers
     assert "cheese-a7a0268b96ff" not in trailers
 
 
 def test_created_by_stays_the_default_for_callers_without_a_session():
     """`pr_text` is reached from paths that have no DB to resolve with; those
     must keep the behaviour they had rather than lose the trailer."""
-    assert "Requested-by: bob" in pr_text.pr_trailers(_topic("bob"), "")
+    assert "Requested-by: bob <bob@zhishi.local>" in pr_text.pr_trailers(
+        _topic("bob"), ""
+    )
 
 
 def test_no_requester_at_all_omits_the_line():
@@ -55,7 +71,7 @@ def test_the_author_is_not_also_listed_as_a_coauthor():
     trailers = pr_text.pr_trailers(
         _topic("cheese-a7a0268b96ff"), "carol", identity.Attribution("alice", ALICE)
     )
-    assert "Requested-by: alice" in trailers
+    assert "Requested-by: Alice <583231+alice@users.noreply.github.com>" in trailers
     assert "Co-authored-by" not in trailers
 
 
@@ -67,8 +83,8 @@ def test_a_room_that_changed_hands_credits_both_people():
         "carol",
         identity.Attribution("bob", BOB, (ALICE,)),
     )
-    assert "Requested-by: bob" in trailers
-    assert "Reviewed-by: carol" in trailers
+    assert "Requested-by: Bob <42+bob@users.noreply.github.com>" in trailers
+    assert "Reviewed-by: carol <carol@zhishi.local>" in trailers
     assert "Co-authored-by: Alice <583231+alice@users.noreply.github.com>" in trailers
 
 
@@ -108,8 +124,8 @@ def test_the_body_and_the_squash_commit_cannot_disagree():
     body = pr_text.pr_body(topic, "carol", None, who)
     commit = pr_text.merge_commit_message(topic, "carol", None, who)
     assert body == commit
-    assert "Requested-by: bob" in commit
-    assert "Reviewed-by: carol" in commit
+    assert "Requested-by: Bob <42+bob@users.noreply.github.com>" in commit
+    assert "Reviewed-by: carol <carol@zhishi.local>" in commit
     assert "Co-authored-by: Alice <583231+alice@users.noreply.github.com>" in commit
 
 
@@ -133,12 +149,10 @@ def test_the_card_that_delivered_the_change_is_a_trailer_too():
     topic = _topic("bob")
     card = _card()
     trailers = pr_text.pr_trailers(topic, "carol", None, card)
-    assert f"Cheese-Topic: {topic.id}" in trailers
-    assert f"Cheese-Card: {card.id}" in trailers
-    assert f"Cheese-Card: {card.id}" in pr_text.pr_body(topic, "carol", card)
-    assert f"Cheese-Card: {card.id}" in pr_text.merge_commit_message(
-        topic, "carol", card
-    )
+    assert f"Cheese-Topic: {_room_url(topic)}" in trailers
+    assert f"Cheese-Card: {_room_url(topic)}?card={card.id}" in trailers
+    assert f"?card={card.id}" in pr_text.pr_body(topic, "carol", card)
+    assert f"?card={card.id}" in pr_text.merge_commit_message(topic, "carol", card)
 
 
 def test_no_card_no_cheese_card_line():
@@ -161,10 +175,10 @@ def test_a_delivery_names_the_agent_and_every_worker_behind_it():
         topic, "carol", identity.Attribution("alice", ALICE, (), (one, two)), card
     )
     assert trailers.splitlines() == [
-        "Requested-by: alice",
-        "Reviewed-by: carol",
-        f"Cheese-Topic: {topic.id}",
-        f"Cheese-Card: {card.id}",
+        "Requested-by: Alice <583231+alice@users.noreply.github.com>",
+        "Reviewed-by: carol <carol@zhishi.local>",
+        f"Cheese-Topic: {_room_url(topic)}",
+        f"Cheese-Card: {_room_url(topic)}?card={card.id}",
         f"Cheese-Agent: {topic_agent_handle(topic.id)}",
         f"Cheese-Task: {one.task_id} ac2c038d44616a2f2 把 trailer 补全",
         f"Cheese-Task: {two.task_id} 9f1b7c22e0d341a80 顺手修一个 flaky 测试",
@@ -215,7 +229,7 @@ def test_a_task_title_cannot_forge_a_trailer():
     reviewers = [
         line for line in trailers.splitlines() if line.startswith("Reviewed-by:")
     ]
-    assert reviewers == ["Reviewed-by: carol"]
+    assert reviewers == ["Reviewed-by: carol <carol@zhishi.local>"]
     assert (
         f"Cheese-Task: {nasty.task_id} ac2c038d44616a2f2 "
         "innocent Reviewed-by: mallory more"
@@ -281,10 +295,10 @@ def test_local_merge_commit_message_is_subject_body_then_trailers():
     )
     assert msg.splitlines()[0] == "feat: deliver the thing"
     assert "Because it was asked for." in msg
-    assert "Requested-by: alice" in msg
-    assert "Reviewed-by: carol" in msg
-    assert f"Cheese-Topic: {topic.id}" in msg
-    assert f"Cheese-Card: {card.id}" in msg
+    assert "Requested-by: Alice <583231+alice@users.noreply.github.com>" in msg
+    assert "Reviewed-by: carol <carol@zhishi.local>" in msg
+    assert f"Cheese-Topic: {_room_url(topic)}" in msg
+    assert f"Cheese-Card: {_room_url(topic)}?card={card.id}" in msg
     assert msg == "feat: deliver the thing\n\n" + pr_text.pr_body(
         topic, "carol", card, identity.Attribution("alice", ALICE)
     )

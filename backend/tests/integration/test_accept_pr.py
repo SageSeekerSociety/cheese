@@ -2530,6 +2530,37 @@ def _platform_over_http(client, pid: str):
     return server, token
 
 
+def _pr_head_is_the_real_branch_tip(
+    client, app_world, repo, card_id: str, number: int, branch: str
+) -> str:
+    """让这张卡的 PR head 就是**平台仓库里那条分支的真实 tip**。
+
+    生产上这本来就是同一个 commit：平台把自己仓库里的分支推到 GitHub，PR 的 head
+    就是设备推上来的那个提交。假 GitHub 默认编一个 `sha-...` 字符串，于是「交付出
+    去的是不是我推的那个」这道校验在测试里永远为假 —— 那不是被测系统的性质，是
+    替身的性质。
+    """
+    from app.domain.review.repositories import AcceptCardRepository
+
+    tip = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", branch],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    app_world["fake"].prs[number]["head_sha"] = tip
+
+    async def _do() -> None:
+        async with client.test_factory() as s:
+            card = await AcceptCardRepository(s).get(_uuid.UUID(card_id))
+            assert card is not None
+            card.pr_head_sha = tip
+            await s.commit()
+
+    client.portal.call(_do)
+    return tip
+
+
 def _long_lived_clone(tmp: Path, repo: Path, branch: str) -> Path:
     work = tmp / "work"
     subprocess.run(
@@ -2570,7 +2601,8 @@ def test_a_long_lived_screen_stops_pushing_onto_the_batch_it_already_delivered(
     )
     bindir = tmp_path / "bin"
     bindir.mkdir()
-    (bindir / "cheese-hook").write_text("#!/bin/sh\ncat >/dev/null\n")
+    hook_log = tmp_path / "hook.log"
+    (bindir / "cheese-hook").write_text(f'#!/bin/sh\ncat >> "{hook_log}"\n')
     (bindir / "cheese-hook").chmod(0o755)
     host, port = server.server_address[:2]
     # 屏幕启动那一刻的环境，从此**一个字都不改**。
@@ -2589,10 +2621,14 @@ def test_a_long_lived_screen_stops_pushing_onto_the_batch_it_already_delivered(
         (work / f"{what}.txt").write_text(f"{what}\n")
         subprocess.run(["git", "add", "-A"], cwd=work, capture_output=True)
         subprocess.run(["git", "commit", "-qm", what], cwd=work, capture_output=True)
+        hook_log.write_text("")
         done = subprocess.run(
             ["sh", str(sync)], env=env, capture_output=True, text=True, timeout=60
         )
         assert done.returncode == 0, done.stderr
+        # 同步报了什么，是这条用例的一半：一次没推上去的同步和一次推上去的同步，
+        # 从返回码上看一模一样。
+        assert '"status":"ok"' in hook_log.read_text(), hook_log.read_text()
 
     try:
         _turn_ends("before")
@@ -2600,7 +2636,10 @@ def test_a_long_lived_screen_stops_pushing_onto_the_batch_it_already_delivered(
 
         # 真的走一次采纳：卡、PR、合并。房间从此写下一批。
         cid = _make_card(client, tid)
-        head_sha = _give_card_a_pr(client, app_world, tid, cid, 7)
+        _give_card_a_pr(client, app_world, tid, cid, 7)
+        head_sha = _pr_head_is_the_real_branch_tip(
+            client, app_world, repo, cid, 7, first_branch
+        )
         fake.check_state_by_sha[head_sha] = ("success", "全绿")
         assert _accept(client, cid).status_code == 200
         second_branch = _disk_branch(tid)
@@ -2608,13 +2647,43 @@ def test_a_long_lived_screen_stops_pushing_onto_the_batch_it_already_delivered(
 
         # 同一个 clone、同一份脚本、同一组环境变量，下一轮结束。
         _turn_ends("after")
+        assert "after.txt" in _tree_of(repo, second_branch)
+        assert "after.txt" not in _tree_of(repo, first_branch), (
+            "这一轮的提交又落在了已经交付掉的那条分支上"
+        )
+
+        # 第三批 —— 这条走的是**真路由**：脚本自己决定 `?on=` 带什么，平台自己
+        # 算 `on_delivered` / `on_head`。第三批正是手填 payload 骗得过、真实系统
+        # 里骗不过的地方：HEAD 从没动过，本地分支名说的还是第一批。
+        cid2 = _make_card(client, tid)
+        _give_card_a_pr(client, app_world, tid, cid2, 8)
+        head2 = _pr_head_is_the_real_branch_tip(
+            client, app_world, repo, cid2, 8, second_branch
+        )
+        fake.check_state_by_sha[head2] = ("success", "全绿")
+        assert _accept(client, cid2).status_code == 200
+        third_branch = _disk_branch(tid)
+        assert third_branch not in (first_branch, second_branch)
+
+        _turn_ends("third")
     finally:
         server.shutdown()
 
-    assert "after.txt" in _tree_of(repo, second_branch)
-    assert "after.txt" not in _tree_of(repo, first_branch), (
-        "这一轮的提交又落在了已经交付掉的那条分支上"
-    )
+    assert "third.txt" in _tree_of(repo, third_branch)
+    assert "third.txt" not in _tree_of(repo, second_branch)
+    # 而且它是**从 base 重新长出来的一个提交**，不是接在上一批的历史后面 —— 这就
+    # 是衔接真的发生了的证据。手填 payload 骗得过的地方正在这里：真实脚本第三批
+    # 带的 `?on=` 是它自己上次发布到的那条分支，平台据此答的才是第二批的交付事实。
+    assert _commits_since(repo, "main", third_branch) == 1
+
+
+def _commits_since(repo: Path, base: str, head: str) -> int:
+    out = subprocess.run(
+        ["git", "-C", str(repo), "rev-list", "--count", f"{base}..{head}"],
+        capture_output=True,
+        text=True,
+    ).stdout
+    return int(out.strip() or 0)
 
 
 def _tree_of(repo: Path, branch: str) -> str:

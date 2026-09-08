@@ -2002,21 +2002,6 @@ def base_branch_head(project_id: uuid.UUID) -> tuple[str, str]:
     return branch, sha
 
 
-def branch_head(project_id: uuid.UUID, branch: str) -> str:
-    """The commit a branch points at here, or "" when there is no such branch.
-
-    The platform's own repo is the authority on what a delivered batch ended up
-    being: a device that keeps working past a delivery needs that commit as the
-    BASE of the merge that carries its next batch over, and its own clone cannot
-    supply it (the branch may have moved, and after a squash nothing reachable
-    from main names it).
-    """
-    repo = ensure_repo(project_id)
-    if not _branch_exists(repo, branch):
-        return ""
-    return _git(repo, "rev-parse", "-q", "--verify", branch).strip()
-
-
 def pr_base_branch(project_id: uuid.UUID) -> str:
     """两阶段采纳 (PR迭代式): the base branch a topic's PR should target — same
     branch merge_topic() would merge into locally."""

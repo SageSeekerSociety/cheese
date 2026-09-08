@@ -539,3 +539,56 @@ def test_a_third_batch_and_repeated_syncs_within_one_batch():
             platform.stop()
 
         assert _pr_would_show(bare, "main", "topic/three") == ["three.txt"]
+
+
+def test_a_commit_that_reached_the_new_branch_first_is_not_overwritten():
+    """别人的提交**在我们读之前**就已经在远端了 —— 照样不许覆盖。
+
+    这是 CAS 挡不住的那一半：读取时刻算出来的「预期值」根本不是 lease，它只是
+    「现在那儿是什么」，于是先到的贡献被读进来当成预期值，然后被理直气壮地盖掉。
+    基准必须是**这个同步器自己上次发布的那个 SHA**。
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        bare = _platform_repo(root)
+        work = _device_clone(root, bare, "topic/one")
+        sync = root / "cheese-sync"
+        sync.write_text(_sync_body())
+        log = root / "hook.log"
+        platform = _Platform()
+        try:
+            platform.payload = {"branch": "topic/one", "on_delivered": False}
+            (work / "one.txt").write_text("batch one\n")
+            _git(work, "add", "-A")
+            _git(work, "commit", "-qm", "feat: batch one")
+            _turn(work, sync, platform, bare, log)
+            tip_one = _git(work, "rev-parse", "HEAD").strip()
+            main_sha = _squash_into_main(bare, root, "topic/one")
+
+            # 第二批：先衔接一次，把 topic/two 建出来。
+            platform.payload = {
+                "branch": "topic/two",
+                "base": "main",
+                "base_sha": main_sha,
+                "on_delivered": True,
+                "on_head": tip_one,
+            }
+            (work / "two.txt").write_text("batch two\n")
+            _git(work, "add", "-A")
+            _git(work, "commit", "-qm", "feat: batch two")
+            assert '"status":"ok"' in _turn(work, sync, platform, bare, log)
+
+            # 另一个 clone 往同一批推了东西 —— **先于**下一轮的任何读取。
+            _remote_commit(bare, root, "topic/two", "other.txt")
+            (work / "local.txt").write_text("local\n")
+            _git(work, "add", "-A")
+            _git(work, "commit", "-qm", "feat: local")
+
+            reported = _turn(work, sync, platform, bare, log)
+        finally:
+            platform.stop()
+
+        assert "other.txt" in _tree_of(bare, "topic/two"), (
+            "先到远端的那个提交被这次衔接抹掉了"
+        )
+        assert '"status":"failed"' in reported, reported

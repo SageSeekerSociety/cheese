@@ -647,11 +647,20 @@ cd "$CHEESE_WORK" || exit 0
 # the second for the first is precisely the mis-delivery being removed here —
 # with a green report on top of it. Unknown is reported as a failure; the
 # snapshot ref below is written either way, so nothing the agent wrote is lost.
+# 「我上次发布到哪条分支」—— 这个同步器**自己**留下的状态，不是 HEAD。
+#
+# HEAD 永远不动（衔接是用 plumbing 做的），所以从第三批起，本地分支名说的还是第
+# 一批。拿它去问平台，平台答的永远是第一批交付了什么 —— 一个真实系统里不存在的
+# 输入，而且答案是错的。这个同步器唯一知道的真相是它自己上次把什么推到了哪里。
 here="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+mine_dir="$CHEESE_WORK/.git/cheese-sync"
+mkdir -p "$mine_dir" 2>/dev/null || true
+last_branch="$(cat "$mine_dir/branch" 2>/dev/null || true)"
+asked_on="${last_branch:-$here}"
 answer=""
 if [ -n "${CHEESE_BRANCH_URL:-}" ]; then
   answer="$(curl -fsS --max-time 10 -H "X-Cheese-Token: ${CHEESE_TOKEN:-}" \
-    "$CHEESE_BRANCH_URL?on=$here" 2>/dev/null || true)"
+    "$CHEESE_BRANCH_URL?on=$asked_on" 2>/dev/null || true)"
 fi
 cheese_field() {
   printf '%s' "$answer" | sed -n "s/.*\"$1\"[ ]*:[ ]*\"\([^\"]*\)\".*/\1/p"
@@ -667,51 +676,67 @@ delivered=""
 case "$(printf '%s' "$answer" | tr -d ' ')" in
   *'"on_delivered":true'*) delivered=1;;
 esac
-head="$(git rev-parse --verify -q HEAD 2>/dev/null || true)"
+local_head="$(git rev-parse --verify -q HEAD 2>/dev/null || true)"
+head="$local_head"
 failed=""
 tried=""
 detail=""
 lease=""
 graft=""
-if [ -n "$head" ] && [ -n "$branch" ] && [ -n "$here" ] && [ "$here" != "$branch" ] \
-   && [ -n "$delivered" ]; then
-  graft=1
-fi
-# 上一批已经交付，房间换到了下一批 —— 把这个 clone 的活接到新一批上。
+anchor=""
+# 上一批交付了，房间换到了下一批 —— 把这个 clone 的活接到新一批上。
 #
 # 不接的话，这里的每一个新提交都还长在上一批的提交上，而上一批是被 squash 进
 # main 的：新分支上会重新带着上一批的改动，PR 的三点 diff 把它们再展示一遍，squash
 # 正文再声称一遍。**祖先关系答不了这件事**（squash 提交不是被压的那条分支的后代），
-# 所以下面三样都是平台**告诉**这里的，一样都不猜：上一批交付了没有、新一批从哪个
-# commit 起（`base_sha`）、上一批交出去的是哪个 commit（`on_head`）。
+# 所以「上一批交付了没有」和「新一批从哪个 commit 起」都是平台**告诉**这里的。
 #
-# `--merge-base` 是这里唯一正确的形状。少了它，三方合并会用**天然共同祖先**当基
-# 线 —— 那是上一批开始之前的那个 commit，于是上一批的改动被当成「我这边的新改动」
-# 再算一遍：main 在交付之后动过的同一个文件会被判成冲突，甚至被回滚掉。基线必须
-# 是**已经交付出去的那份内容**，那样这次合并说的才是「把交付之后写的东西，接到
-# 现在的 main 上」。
+# 三方合并的**基线是这个 clone 自己的那个提交** —— 我上次发布到上一批分支时，本地
+# HEAD 是什么。只有它能让这次合并说的是「交付之后我写的东西」：拿天然共同祖先当基
+# 线，上一批的改动会被再算一遍；拿远端那条分支的 tip 当基线，main 上这个 clone 从
+# 来没有过的文件会被当成「我删掉的」而真的删掉。
+#
+# 基线在**一批之内只定一次**（`refs/cheese/anchor/<branch>`）。每轮重新定的话，
+# 这一批早先几轮的改动会在下一次改写里消失。
 #
 # 全程 plumbing：不碰工作区、不碰 index、不动 HEAD。分身正在看的文件、`git status`
-# 的输出、二分到一半的状态，一个字节都不变 —— 那条「这里永远不移动 HEAD」的不变量
-# 原样成立。未提交的东西不进分支（它进下面的快照 ref，和以前一样）：未提交的内容
-# 变成「已交付」是另一个方向的错。
-#
-# 每一步失败都是失败：不推分支、如实报出来、快照照写，人能捞回全部内容。绝不
-# 「退回旧 head 再强推」—— 那是在最该小心的时候做最危险的动作。
-if [ -n "$graft" ]; then
+# 的输出、二分到一半的状态，一个字节都不变。未提交的东西不进分支（进下面的快照
+# ref）：未提交的内容变成「已交付」是另一个方向的错。
+if [ -n "$local_head" ] && [ -n "$branch" ]; then
+  anchor="$(git rev-parse -q --verify "refs/cheese/anchor/$branch" 2>/dev/null \
+    || true)"
+  if [ -n "$anchor" ]; then
+    graft=1  # 这一批已经在衔接了，继续用同一个基线
+  elif [ -n "$delivered" ] && [ -n "$asked_on" ] && [ "$asked_on" != "$branch" ]; then
+    graft=1
+    anchor="$(git rev-parse -q --verify "refs/cheese/local-at/$asked_on" \
+      2>/dev/null || true)"
+    published="$(git rev-parse -q --verify "refs/cheese/published/$asked_on" \
+      2>/dev/null || true)"
+    if [ -z "$anchor" ]; then
+      tried=1; failed=1
+      detail="this machine has no record of what it published to $asked_on"
+    elif [ -z "$on_head" ] || [ "$on_head" != "$published" ]; then
+      # 交付出去的不是我推上去的那个 commit —— 别人也往那条分支推过东西，而我的
+      # 基线只覆盖我自己写的部分，照它接过去会把别人那份悄悄丢掉。
+      tried=1; failed=1
+      detail="what $asked_on delivered is not what this machine published to it"
+    fi
+  fi
+fi
+if [ -n "$graft" ] && [ -z "$failed" ]; then
   git fetch -q origin "${base:-main}" >/dev/null 2>&1 || true
-  if [ -z "$base_sha" ] || [ -z "$on_head" ]; then
+  if [ -z "$base_sha" ]; then
     tried=1; failed=1
     detail="the platform did not say where $branch starts"
-  elif ! git rev-parse -q --verify "$base_sha^{commit}" >/dev/null 2>&1 \
-    || ! git rev-parse -q --verify "$on_head^{commit}" >/dev/null 2>&1; then
+  elif ! git rev-parse -q --verify "$base_sha^{commit}" >/dev/null 2>&1; then
     tried=1; failed=1
-    detail="this clone does not have the commits $branch is measured from"
+    detail="this clone does not have the commit $branch starts from"
   # The EXIT STATUS is the answer, not the output: `merge-tree` prints a tree
   # oid for a conflicted merge too — one full of conflict markers — so reading
   #「有输出就是成功」would push exactly the thing this is here to refuse.
-  elif ! grafted_tree="$(git merge-tree --write-tree --merge-base="$on_head" \
-    "$base_sha" "$head" 2>/dev/null)"; then
+  elif ! grafted_tree="$(git merge-tree --write-tree --merge-base="$anchor" \
+    "$base_sha" "$local_head" 2>/dev/null)"; then
     tried=1; failed=1
     detail="conflict grafting onto $branch"
   elif ! grafted="$(git commit-tree "$grafted_tree" -p "$base_sha" \
@@ -720,12 +745,19 @@ if [ -n "$graft" ]; then
     detail="could not build the commit that carries this batch onto $branch"
   else
     head="$grafted"
-    # 换写要带 lease，而且是**点名那个 SHA** 的 lease，不是裸的
-    # `--force-with-lease`：裸的比对的是本地的 remote-tracking ref，而这块屏幕
-    # 可能几个小时没 fetch 过，于是「我以为远端还是那样」本身就是过期的。这里比
-    # 对的是刚刚从远端读回来的值，读到之后远端再动一下，这次推送就被拒。
-    lease="$(git ls-remote origin "refs/heads/$branch" 2>/dev/null \
-      | cut -f1)"
+    # 比较基准是**这个同步器自己上次发布到这条分支的那个 SHA**，不是「现在远端是
+    # 什么」。现读的值不是 lease —— 它把别人**在我们读之前**就推上去的提交当成
+    # 「预期值」，然后理直气壮地覆盖掉。CAS 只挡得住读之后的竞争。
+    #
+    # 从没往这条分支发布过（新一批的第一次），基准就是「它不该存在」。远端已经
+    # 有了，说明别人先开工了：拒绝，不猜。
+    lease="$(git rev-parse -q --verify "refs/cheese/published/$branch" \
+      2>/dev/null || true)"
+    remote_now="$(git ls-remote origin "refs/heads/$branch" 2>/dev/null | cut -f1)"
+    if [ "$remote_now" != "$lease" ]; then
+      tried=1; failed=1
+      detail="$branch moved on the remote since this machine last published it"
+    fi
   fi
 fi
 if [ -z "$branch" ]; then
@@ -736,14 +768,25 @@ if [ -z "$branch" ]; then
   detail="could not learn which batch this place is writing to"
 elif [ -z "$failed" ] && [ -n "$head" ]; then
   tried=1
-  if [ -n "$graft" ]; then
+  if [ -n "$graft" ] && [ -n "$lease" ]; then
     # 衔接是这条脚本里**唯一**一次改写：新分支上的历史要从 base 重新长出来。
     git push -q --force-with-lease="refs/heads/$branch:$lease" origin \
       "$head:refs/heads/$branch" >/dev/null 2>&1 || failed=1
   else
-    # 平常的推送**不带 -f**。远端有别人的提交时被拒，就该被拒：房间里另一个分身、
-    # 平台的 push-fix、人手动推的东西，都不该被这一轮无声抹掉。拒了如实报失败。
+    # 平常的推送、以及衔接的第一次（那条分支本来就该不存在）都**不带 -f**。远端有
+    # 别人的提交时被拒，就该被拒：房间里另一个分身、平台的 push-fix、人手动推的
+    # 东西，都不该被这一轮无声抹掉。拒了如实报失败。
     git push -q origin "$head:refs/heads/$branch" >/dev/null 2>&1 || failed=1
+  fi
+  if [ -z "$failed" ]; then
+    # 推成功了才记。下一轮要用的三样都在这里定下来：这条分支上「我推的是什么」
+    # （lease 基准）、「我本地当时到哪了」（下一批的基线）、以及这一批的基线。
+    git update-ref "refs/cheese/published/$branch" "$head" 2>/dev/null || true
+    git update-ref "refs/cheese/local-at/$branch" "$local_head" 2>/dev/null || true
+    if [ -n "$graft" ] && [ -n "$anchor" ]; then
+      git update-ref "refs/cheese/anchor/$branch" "$anchor" 2>/dev/null || true
+    fi
+    printf '%s' "$branch" > "$mine_dir/branch" 2>/dev/null || true
   fi
 fi
 # The scratch index lives inside .git so it is never something the agent can see
