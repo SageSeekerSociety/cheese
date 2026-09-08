@@ -1,8 +1,11 @@
 package host
 
 import (
+	"bufio"
 	"context"
 	"encoding/base64"
+	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,8 +16,74 @@ import (
 	"time"
 
 	"github.com/SageSeekerSociety/cheese/cli/internal/link"
+	"github.com/SageSeekerSociety/cheese/cli/internal/rendezvous"
 	"github.com/gorilla/websocket"
 )
+
+func TestFirstAndCachedPromptsAreEachDeliveredOnce(t *testing.T) {
+	dir, err := os.MkdirTemp("", "rv-host-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	path := filepath.Join(dir, "socket")
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { listener.Close() })
+	frames := make(chan rendezvous.Frame, 8)
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		scanner := bufio.NewScanner(conn)
+		for scanner.Scan() {
+			var frame rendezvous.Frame
+			if json.Unmarshal(scanner.Bytes(), &frame) == nil {
+				frames <- frame
+			}
+		}
+	}()
+	tokenFile := filepath.Join(dir, "token")
+	if err := os.WriteFile(tokenFile, []byte("tok"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	screen := &sess{rvPath: path, rvTokenFile: tokenFile}
+	t.Cleanup(func() {
+		screen.rvMu.Lock()
+		defer screen.rvMu.Unlock()
+		if screen.rv != nil {
+			screen.rv.Close()
+		}
+	})
+	server := hostOnAFakeServer(t, map[string]*sess{"s1": screen})
+	for _, prompt := range []string{"first", "second"} {
+		server.send(t, link.Msg{T: "rpc.call", Sid: "s1", ID: prompt,
+			Name: "prompt", Args: []any{prompt}})
+		if result := server.awaitResult(t, prompt); result.Error != "" {
+			t.Fatal(result.Error)
+		}
+	}
+	for i, text := range []string{"", "first", "second"} {
+		select {
+		case frame := <-frames:
+			if frame.Text != text || (i == 0 && frame.Auth != "tok") {
+				t.Fatalf("unexpected frame %d: %+v", i, frame)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("missing frame %d", i)
+		}
+	}
+	select {
+	case frame := <-frames:
+		t.Fatalf("duplicate delivery: %+v", frame)
+	default:
+	}
+}
 
 func TestWriteScreenFileIsAtomicAndConfinedToUploads(t *testing.T) {
 	work := t.TempDir()
