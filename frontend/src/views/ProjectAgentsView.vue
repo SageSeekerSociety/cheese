@@ -23,7 +23,7 @@ import {
 } from '../api'
 import AgentEditorDialog from '../components/agents/AgentEditorDialog.vue'
 import UserAvatar from '../components/common/UserAvatar.vue'
-import { agentKey, findType, memoryCountsByHandle, topicCountsByAgent, typeLabel } from '../lib/projectAgents'
+import { agentKey, memoryCountsByHandle, topicCountsByAgent } from '../lib/projectAgents'
 import { relTime } from '../lib/relTime'
 
 const props = defineProps<{ projectId: string }>()
@@ -56,10 +56,7 @@ function memoriesOf(agent: ProjectAgent): MemoryEntryOut[] {
 }
 
 function subtitleOf(agent: ProjectAgent): string {
-  const t = findType(types.value, agent.type_name)
-  const parts = [typeLabel(types.value, agent.type_name)]
-  if (t?.model) parts.push(t.model)
-  return parts.join(' · ')
+  return agent.configuration.model
 }
 
 async function load() {
@@ -250,7 +247,6 @@ onMounted(load)
             <v-icon size="14" class="mr-1">mdi-forum-outline</v-icon>
             {{ topicCounts[agentKey(a)] ?? 0 }} 个话题在用
           </span>
-          <span v-if="!a.configured" class="t-meta c-muted">尚未配置，用的是平台默认设定</span>
         </div>
 
         <v-expand-transition>

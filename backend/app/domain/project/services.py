@@ -61,6 +61,7 @@ class ProjectService:
             await self._accept_task_protocol(project, external_task_id)
         if agent_type:
             await self._set_agent_type(project, agent_type)
+        await AgentInstanceService(self._session).materialize_default(project)
         root = await self._topics.add(
             project_id=project.id,
             title=f"{name} · 项目总览",

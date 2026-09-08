@@ -85,6 +85,7 @@ class HubScreen:
     # `None` = never recorded (a screen adopted after a server restart, or a dev
     # token with no decodable expiry) → treated as fresh, never retired on it.
     credential_expires: int | None = None
+    agent_configuration: str = ""
     viewers: set[ViewerTransport] = field(default_factory=set)
 
 

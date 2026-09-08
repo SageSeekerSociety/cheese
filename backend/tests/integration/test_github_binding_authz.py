@@ -210,3 +210,71 @@ def test_failed_reconnect_preserves_existing_binding(client, monkeypatch):
         f"/projects/{pid}/github/connection", headers=session_auth_headers("alice")
     ).json()["data"]
     assert connection == {"connected": True, "repo": "acme/widgets", "account": "acme"}
+
+
+@pytest.mark.parametrize("is_agent", [False, True])
+def test_github_management_follows_participant_role_and_own_account(
+    client, monkeypatch, is_agent
+):
+    import uuid
+
+    from app.common.auth import decode_token
+    from app.core.sandbox_auth import mint_scoped_token
+    from app.domain.identity.handles import topic_agent_handle
+    from app.domain.oauth.services import OAuthService
+    from tests.conftest import seed_user
+
+    project = client.post(
+        "/projects", json={"name": "Participant access", "owner_handle": "alice"}
+    ).json()["data"]
+    pid = project["id"]
+    origin = project["root_topic_id"]
+    handle = topic_agent_handle(uuid.UUID(origin)) if is_agent else "bob"
+    user_id = int(decode_token(seed_user(client, handle))["sub"])
+    auth = (
+        {
+            "X-Cheese-Token": mint_scoped_token(
+                project_id=pid, topic_id=origin, access_scope="project"
+            )
+        }
+        if is_agent
+        else session_auth_headers(handle)
+    )
+    owner = session_auth_headers("alice")
+    roster = f"/projects/{pid}/members"
+    connection = f"/projects/{pid}/github/connection"
+    install = f"/projects/{pid}/github/install-url"
+    assert client.get(connection, headers=auth).status_code == 403
+    assert (
+        client.post(
+            roster, json={"user_handle": handle, "role": "member"}, headers=owner
+        ).status_code
+        == 200
+    )
+    assert client.get(connection, headers=auth).status_code == 200
+    assert client.get(install, headers=auth).status_code == 403
+    assert (
+        client.put(
+            f"{roster}/{handle}", json={"role": "lead"}, headers=owner
+        ).status_code
+        == 200
+    )
+    assert client.get(install, headers=auth).status_code == 200
+
+    async def no_own_account(self, requested_user_id):
+        assert requested_user_id == user_id
+        return None
+
+    monkeypatch.setattr(OAuthService, "get_github_user_token", no_own_account)
+    denied = client.get(install, headers=auth)
+    assert denied.status_code == 403
+    assert "GitHub 账号" in denied.json()["message"]
+    assert (
+        client.put(
+            f"{roster}/{handle}", json={"role": "member"}, headers=owner
+        ).status_code
+        == 200
+    )
+    denied = client.get(install, headers=auth)
+    assert denied.status_code == 403
+    assert "owner / lead" in denied.json()["message"]

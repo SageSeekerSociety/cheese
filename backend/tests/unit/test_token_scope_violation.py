@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.api import auth as auth_mod
-from app.core.errors import ForbiddenError
+from app.core.errors import AuthenticationRequiredError, ForbiddenError
 from app.core.sandbox_auth import SANDBOX_TOKEN, mint_scoped_token
 
 pytestmark = pytest.mark.anyio
@@ -39,7 +39,10 @@ def _resolver(monkeypatch, *, cheese_token: str):
     monkeypatch.setattr(
         auth_mod,
         "UserRepository",
-        lambda _session: SimpleNamespace(get_by_id=AsyncMock(return_value=None)),
+        lambda _session: SimpleNamespace(
+            get_by_id=AsyncMock(return_value=None),
+            get_by_username=AsyncMock(return_value=None),
+        ),
     )
     return auth_mod.ActorResolver(
         session=MagicMock(), bearer=None, cheese_token=cheese_token
@@ -89,18 +92,13 @@ async def test_in_scope_token_still_acts_as_this_topics_agent(monkeypatch):
     assert actor.handle.startswith("cheese-")
 
 
-async def test_project_wide_token_is_not_out_of_scope_for_a_topic(monkeypatch):
-    """Capability tokens (git-http / LLM proxy) carry no ``t`` claim. They do not
-    authenticate on a topic route, but they are not a violation either — 403-ing
-    them would break the proxies."""
+async def test_capability_without_identity_cannot_act_in_a_topic(monkeypatch):
+    """Proxy capabilities remain valid at proxies, but cannot become actors."""
     token = mint_scoped_token(project_id=str(PROJECT), topic_id=None)
     resolver = _resolver(monkeypatch, cheese_token=token)
 
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=TOPIC, project_id=PROJECT
-    )
-
-    assert actor.handle == "anonymous"
+    with pytest.raises(AuthenticationRequiredError):
+        await resolver.resolve(fallback_handle=None, topic_id=TOPIC, project_id=PROJECT)
 
 
 async def test_global_dev_token_keeps_its_existing_behaviour(monkeypatch):

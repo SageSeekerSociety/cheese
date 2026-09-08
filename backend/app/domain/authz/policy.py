@@ -1,37 +1,9 @@
-"""Composable authorization policy (fusion-design §4, 照 reference viewer_authz.py).
+"""Participant authorization, independent of whether a user is human or an agent.
 
-Authorization is a **pure策略 + injected adapters** so it is unit-testable without
-a DB or WebSocket, and the concrete integrations wire once (``app.api.auth``).
-
-Discipline:
-- **A valid token is 必要非充分** — every write is authorized against the actor's
-  *real* membership/role, not merely "has a token".
-- **权限属于项目** — a project member (or its owner) may act in the project's topics;
-  the group is the unit of shared access.
-- **话题成员可访问其内容/现场** — a topic-roster member may act in that topic.
-- **Backward compatible** — the Phase-0 handle fallback (``actor.authenticated``
-  is False) stays permissive so pre-token callers never break; enforcement bites
-  only authenticated (token/agent) actors, and only when a roster actually exists.
-
-⚠️ 那条 "stays permissive" 的假设已被现场证伪，两处都在待办上（阶段三）:
-
-1. It is not permissiveness, it is **failure degrading to full allow**. A caller
-   presenting a *wrong* credential does not fail closed — it fails to resolve,
-   drops to the handle fallback, lands as unauthenticated, and hits line 1 of
-   ``authorize_topic_access``. So **presenting the wrong token was strictly more
-   permissive than presenting none**. Observed live: a topic's scoped token used
-   on a *different* topic's comment route, which wrote a block authored
-   ``anonymous``. Closed upstream for that path (``ActorResolver.
-   _reject_out_of_scope_token`` 403s an out-of-scope scoped token), but the
-   ``if not actor.authenticated: return True`` branch itself is still here.
-   The chat WebSocket no longer reaches that branch at all: it refuses a socket
-   it cannot identify (``refuse_unauthenticated_chat``), the same "close the
-   entrance, leave the branch for 阶段三" move as ``_reject_out_of_scope_token``.
-   Every REST route still takes it.
-2. The "no roster yet → legacy topic" escape is valid only for shared legacy
-   topics. Private topics now seed their actual participants and bypass that
-   escape entirely: access always requires authenticated membership in their
-   exact roster.
+Verified room members and project members can access shared rooms. Private
+rooms require exact room membership. Missing credentials or an empty roster
+grant nothing. Credential scope is checked by ActorResolver before this policy.
+Project membership management requires the project's owner or lead role.
 """
 
 import uuid
@@ -43,7 +15,6 @@ from app.domain.topic.models import TopicRole
 
 # Injected adapters — each a thin DB read wired in app.api.auth.
 TopicRoleReader = Callable[[uuid.UUID, str], Awaitable[TopicRole | None]]
-RosterExists = Callable[[uuid.UUID], Awaitable[bool]]  # topic has any members?
 ProjectMemberCheck = Callable[[uuid.UUID, str], Awaitable[bool]]  # project, handle
 ProjectRoleReader = Callable[[uuid.UUID, str], Awaitable[ProjectRole | None]]
 ProjectOwnerReader = Callable[[uuid.UUID], Awaitable[str | None]]
@@ -61,35 +32,25 @@ async def authorize_topic_access(
     project_id: uuid.UUID,
     topic_id: uuid.UUID,
     topic_role: TopicRoleReader,
-    roster_exists: RosterExists,
     is_project_member: ProjectMemberCheck,
     is_private: bool = False,
 ) -> bool:
     """May ``actor`` read/act in this topic's group room?
 
-    Agents (their scoped token already bound them to this project/topic at the
-    gate) and the deprecated handle-fallback are allowed; an authenticated human
-    must be a topic-roster member OR a project member — unless the topic has no
-    roster yet (legacy), which stays open. Private topics are the exception:
-    authenticated membership in that exact topic is always required."""
+    Authenticated people and agents need room or project membership. Private
+    rooms require membership in that exact room. Credential scope is checked
+    separately at the request boundary."""
+    if not actor.authenticated:
+        return False
     role = await topic_role(topic_id, actor.handle)
     if is_private:
-        # Private rooms admit exactly their roster. This also keeps a
-        # project-wide agent credential out of human-to-human DMs; the topic's
-        # own agent is allowed only when it has the seeded DM seat.
+        # Project membership never grants access to someone else's private room.
         return actor.authenticated and role is not None
-    if actor.is_agent:
-        return True
-    # Phase-0 fallback stays permissive for non-private legacy surfaces.
-    if not actor.authenticated:
-        return True
     if role is not None:
         return True
     if await is_project_member(project_id, actor.handle):
         return True
-    # No roster exists yet → shared legacy topic, stay permissive; else outsider.
-    # Private topics returned above and can never reach this compatibility path.
-    return not await roster_exists(topic_id)
+    return False
 
 
 def refuse_unauthenticated_chat(
@@ -128,21 +89,10 @@ async def can_manage_project_members(
 ) -> bool:
     """May ``actor`` add / remove a project member or change their role?
 
-    Only a **verified human** who owns or leads the project. This is the one
-    judgment where the Phase-0 handle fallback is deliberately NOT permissive,
-    and the exception is load-bearing: the project roster is the floor of topic
-    access control — ``authorize_topic_access`` lets *any* project member into
-    *every* topic of the project — so honoring a merely *claimed* handle would
-    let an anonymous caller write itself into the roster and read the whole
-    project. Same reasoning as ``require_project_steward``: a credential is
-    必要 for the writes that decide who else gets in.
-
-    Agents are refused as well, even holding a valid scoped token: a 分身 must
-    ask a human to change the roster rather than promote itself. That is not
-    theoretical — 芝士 promoting a member to lead through this very surface is
-    what exposed the missing check.
+    A verified participant must own or lead the project. Credentials prove
+    identity, not management authority; a member cannot promote itself.
     """
-    if actor.via != "token" or actor.is_agent:
+    if not actor.authenticated:
         return False
     if await project_owner(project_id) == actor.handle:
         return True
