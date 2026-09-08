@@ -723,20 +723,6 @@ export interface ProjectCredits {
 // ---- 题目匹配市场 (spec §13 阶段 6: Space 发布题目, 团队应征) ----
 
 // A selectable AI execution profile (GET /projects/{id}/execution-profiles).
-export interface ExecProfileOption {
-  name: string
-  label: string
-  tier: string
-  model: string
-  available: boolean
-}
-
-// GET /projects/{id}/execution-profiles
-export interface ExecProfiles {
-  current: string
-  profiles: ExecProfileOption[]
-}
-
 // GET /projects/{id}/compute-profiles
 export interface ComputeProfiles {
   current: string
@@ -985,16 +971,7 @@ export interface DeviceApproval {
 
 // ---- AI 队友 (agent 类型与实例) ----
 //
-// Three layers, three lifetimes (docs/topics/room-task-agent-session-设计方案.md
-// §12): a TYPE is 出厂设置 and belongs to no project; an INSTANCE is that type
-// working inside one project, and it owns the memory it accumulated there; a
-// session is where one conversation got to and may be thrown away.
-//
-// So "how this agent behaves" (system prompt, skills, MCP, model, effort,
-// harness) is on the TYPE, and "who it is here" (name, handle, memory) is on the
-// INSTANCE. The management page shows both, which is why it reads two endpoints.
-
-// GET /agent-types — presets merged with the project's custom types.
+// GET /agent-types: built-in starting configurations for new agents.
 export interface AgentType {
   name: string
   title: string
@@ -1014,8 +991,18 @@ export interface AgentType {
 }
 
 // GET /projects/{id}/agents — one agent working in this project.
+export interface AgentConfiguration {
+  body: string
+  model: string
+  harness: string
+  skills: string[]
+  mcp_servers: string[]
+  effort: string | null
+}
+
 export interface ProjectAgent {
-  // Null for the implicit 芝士 a project has before anyone configured one.
+  configuration: AgentConfiguration
+  // Current project rosters always return saved IDs; nullable for older clients.
   id: string | null
   project_id: string
   // The memory pool key inside the project (`{project}:{handle}`).
@@ -1024,7 +1011,7 @@ export interface ProjectAgent {
   display_name: string
   // What a new topic in this project gets.
   is_default: boolean
-  // False = it resolves and owns a memory pool, but there is no row to edit.
+  // Retained for older clients; current project roster entries are always saved.
   configured: boolean
   // False = 已停用. Still listed and still working in the topics that already
   // have it — just not offered when picking an agent for new work.

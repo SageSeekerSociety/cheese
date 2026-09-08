@@ -1033,6 +1033,41 @@ def test_a_session_born_on_a_different_contract_is_retired():
     assert script.count("RETIRE=1") >= 2
 
 
+def test_surviving_inner_session_detects_an_agent_edit(tmp_path):
+    import os
+    import subprocess
+    import time
+
+    script = device_launch.build_launch_script()
+    config_dir = tmp_path / ".claude"
+    config_dir.mkdir()
+    (config_dir / "settings.json").write_text("{}")
+    (config_dir / "cheese-machine.token").write_text("unchanged-ticket")
+    (config_dir / "agent-configuration").write_text("original-config")
+    env = {
+        **os.environ,
+        "HOME": str(tmp_path),
+        "REAL_HOME": str(tmp_path),
+        "SESSION": "test-session",
+        "TOKEXP": str(int(time.time()) + 3600),
+    }
+    start = script.rindex('    cat "$REAL_HOME/.claude/settings.json"')
+    record = script[start : script.index("    # Hand THIS launch", start)]
+    subprocess.run(["bash", "-c", record], env=env, check=True)
+    start = script.index('    CFGF="$HOME/.claude/$SESSION.cfg"')
+    gate = script[start : script.index("    # The connector's server", start)]
+    for config, retired in [("original-config", "0"), ("edited-config", "1")]:
+        (config_dir / "agent-configuration").write_text(config)
+        result = subprocess.run(
+            ["bash", "-c", gate + '\nprintf "%s" "$RETIRE"'],
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert result.stdout == retired
+
+
 def test_the_launcher_adopts_that_ticket_as_the_model_credential():
     """It has to reach claude through the process environment, because the file
     that would otherwise carry it is in a home claude does not read."""

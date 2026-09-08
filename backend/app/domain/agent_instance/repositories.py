@@ -19,12 +19,14 @@ class AgentInstanceRepository:
         handle: str,
         type_name: str | None,
         display_name: str,
+        configuration: dict,
     ) -> AgentInstance:
         instance = AgentInstance(
             project_id=project_id,
             handle=handle,
             type_name=type_name,
             display_name=display_name,
+            configuration=configuration,
         )
         self._session.add(instance)
         await self._session.flush()

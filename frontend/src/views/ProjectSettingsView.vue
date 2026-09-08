@@ -1,10 +1,7 @@
 <script setup lang="ts">
 import type {
-  AgentType,
   BranchProtection,
   BranchProtectionPatch,
-  ComputeProfiles,
-  ExecProfiles,
   GithubConnection,
   OAuthConnectionInfo,
   ProjectMemberRow,
@@ -16,23 +13,15 @@ import { useRoute, useRouter } from 'vue-router'
 
 import {
   connectGithubRepo as apiConnectGithubRepo,
-  createAgentType,
   deleteOAuthConnection,
   getBranchProtection,
-  getExecutionProfiles,
   getGithubAccountAuthorizeUrl,
   getGithubConnection,
-  getModelProfiles,
   getProject,
   getUpstream,
-  listAgentTypes,
   listOAuthConnections,
-  listProjectAgents,
   listProjectMembers,
   setBranchProtection,
-  setExecutionProfile,
-  setModelProfile,
-  setProjectAgentType,
   setUpstream,
   syncUpstream,
 } from '../api'
@@ -46,7 +35,7 @@ import {
   isGithubAccountTokenExpired,
 } from '../lib/githubAccount'
 import { relTime } from '../lib/relTime'
-import { myHandle, myId } from '../me'
+import { myId } from '../me'
 
 // Project defaults and favorites never change an already running room.
 const props = defineProps<{ projectId: string }>()
@@ -54,12 +43,8 @@ const router = useRouter()
 const route = useRoute()
 
 const projectName = ref('')
-const ai = ref<ExecProfiles | null>(null)
-const model = ref<ComputeProfiles | null>(null)
-const savingModel = ref<string | null>(null)
 const loading = ref(false)
 const error = ref<string | null>(null)
-const savingAi = ref<string | null>(null)
 // 上游仓库: the linked repo URL as edited, plus save/sync state and last result.
 const upstreamUrl = ref('')
 const upstreamSaved = ref<string | null>(null)
@@ -234,130 +219,23 @@ async function saveOverrideHandles(handles: string[]) {
   await saveBranchProtection({ override_handles: handles.length ? handles : null }, 'override_handles')
 }
 
-// Which type this project's 芝士 wears. The catalog merges preset types with
-// custom ones; '' = 芝士 with no specialty. The type sits on the AGENT, not on
-// the project — switching it re-skins the 芝士 that is already here and leaves
-// the memory it has accumulated exactly where it is.
-const agentTypes = ref<AgentType[]>([])
-const agentTypeCurrent = ref('')
-const savingRole = ref(false)
-// 新建角色 dialog: the Claude Code agents-file fields (frontmatter + body).
-const roleDialog = ref(false)
-const newRoleName = ref('')
-const newRoleTitle = ref('')
-const newRoleDescription = ref('')
-const newRoleBody = ref('')
-const creatingRole = ref(false)
-const roleFormError = ref<string | null>(null)
-
-const roleItems = computed(() => [
-  { name: '', title: '不设置（通用芝士）', description: '' },
-  ...agentTypes.value.map((r) => ({
-    name: r.name,
-    title: r.builtin ? r.title : `${r.title || r.name}（自定义）`,
-    description: r.description,
-  })),
-])
-
-async function pickRole(name: string | null) {
-  const next = name ?? ''
-  savingRole.value = true
-  try {
-    const agent = await setProjectAgentType(props.projectId, next)
-    agentTypeCurrent.value = agent.type_name ?? ''
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : '切换专家角色失败'
-  } finally {
-    savingRole.value = false
-  }
-}
-
-async function submitNewRole() {
-  roleFormError.value = null
-  creatingRole.value = true
-  try {
-    const created = await createAgentType({
-      name: newRoleName.value.trim(),
-      title: newRoleTitle.value.trim(),
-      description: newRoleDescription.value.trim(),
-      body: newRoleBody.value.trim(),
-      created_by: myHandle(),
-    })
-    // A custom role shadows its built-in namesake — keep one entry per name.
-    agentTypes.value = [...agentTypes.value.filter((r) => r.name !== created.name), created]
-    roleDialog.value = false
-    newRoleName.value = ''
-    newRoleTitle.value = ''
-    newRoleDescription.value = ''
-    newRoleBody.value = ''
-    // Creating a role from here means "use it": select it right away.
-    await pickRole(created.name)
-  } catch (e) {
-    roleFormError.value = e instanceof Error ? e.message : '创建角色失败'
-  } finally {
-    creatingRole.value = false
-  }
-}
-
-const TIER_LABEL: Record<string, string> = {
-  default: '默认',
-  included: '包含',
-  testing: '内测',
-  byo: '自带',
-  premium: '增值',
-}
-
 async function load() {
   loading.value = true
   error.value = null
   try {
-    const [proj, execP, modelP, upP, typesP, agentsP, ghP] = await Promise.all([
+    const [proj, upP, ghP] = await Promise.all([
       getProject(props.projectId),
-      getExecutionProfiles(props.projectId),
-      getModelProfiles(props.projectId),
       getUpstream(props.projectId),
-      listAgentTypes(),
-      listProjectAgents(props.projectId),
       getGithubConnection(props.projectId),
     ])
     projectName.value = proj.name
-    ai.value = execP
-    model.value = modelP
     upstreamSaved.value = upP.url
     upstreamUrl.value = upP.url ?? ''
-    agentTypes.value = typesP.data
-    agentTypeCurrent.value = agentsP.data.find((a) => a.is_default)?.type_name ?? ''
     githubConnection.value = ghP
   } catch (e) {
     error.value = e instanceof Error ? e.message : '加载设置失败'
   } finally {
     loading.value = false
-  }
-}
-
-async function pickAi(name: string) {
-  if (!ai.value || ai.value.current === name) return
-  savingAi.value = name
-  try {
-    const r = await setExecutionProfile(props.projectId, name)
-    ai.value = { ...ai.value, current: r.current }
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : '切换 AI 池失败'
-  } finally {
-    savingAi.value = null
-  }
-}
-
-async function pickModel(id: string) {
-  if (!model.value || model.value.current === id) return
-  savingModel.value = id
-  try {
-    const r = await setModelProfile(props.projectId, id)
-    model.value = { ...model.value, current: r.current }
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : '切换模型失败'
-  } finally {
-    savingModel.value = null
   }
 }
 
@@ -492,11 +370,9 @@ watch(
 
       <div class="mb-6">
         <div class="t-eyebrow mb-1">项目设置 · {{ projectName }}</div>
-        <h1 class="t-page-title">资源池</h1>
+        <h1 class="t-page-title">项目设置</h1>
         <p class="t-body c-muted mt-1" style="max-width: 640px">
-          选择这个项目使用哪套 AI
-          模型、运行在哪套算力上。默认都是知是自己的资源池，开箱即用；需要更强的模型或专属机器，可以在
-          <a class="link" @click="router.push({ name: 'market' })">市场</a> 里挑选。
+          管理运行环境、仓库连接和分支保护。角色设定和模型请到“AI 队友”中修改对应的队友。
         </p>
       </div>
 
@@ -508,106 +384,9 @@ watch(
       </v-alert>
 
       <template v-else>
-        <!-- 专家角色 (spec §8.2): which persona 芝士 loads for this project -->
         <section class="page-section">
           <ProjectComputeSettings :project-id="projectId" />
         </section>
-        <section class="page-section">
-          <div class="page-section-head">
-            <v-icon size="14" class="c-faint">mdi-account-school-outline</v-icon>
-            <span class="page-section-title">专家角色</span>
-          </div>
-          <div class="page-section-body">
-            <div class="d-flex align-center" style="gap: 8px">
-              <v-select
-                :model-value="agentTypeCurrent"
-                :items="roleItems"
-                item-title="title"
-                item-value="name"
-                density="compact"
-                variant="outlined"
-                hide-details
-                :loading="savingRole"
-                :disabled="savingRole"
-                style="flex: 1"
-                @update:model-value="pickRole"
-              >
-                <template #item="{ props: itemProps, item }">
-                  <v-list-item v-bind="itemProps" :subtitle="item.raw.description || undefined" />
-                </template>
-              </v-select>
-              <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" @click="roleDialog = true"> 新建角色 </v-btn>
-            </div>
-            <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
-              芝士以这个专家身份进驻项目，影响它的口吻和关注点。平台内置了几个角色，也可以为机构或自己定义新的。
-            </p>
-          </div>
-        </section>
-
-        <!-- AI 模型池 -->
-        <section class="page-section">
-          <div class="page-section-head">
-            <v-icon size="14" class="c-faint">mdi-brain</v-icon>
-            <span class="page-section-title">AI 模型池</span>
-          </div>
-          <div class="page-section-body">
-            <button
-              v-for="p in ai?.profiles ?? []"
-              :key="p.name"
-              type="button"
-              class="pool-row"
-              :class="{ 'pool-row--active': ai?.current === p.name }"
-              :disabled="savingAi !== null"
-              @click="pickAi(p.name)"
-            >
-              <span class="pool-radio" :class="{ 'pool-radio--on': ai?.current === p.name }" />
-              <div class="pool-main">
-                <div class="pool-title">
-                  {{ p.label }}
-                  <span class="pool-tier">{{ TIER_LABEL[p.tier] ?? p.tier }}</span>
-                </div>
-                <div class="pool-sub c-muted">模型 {{ p.model }}</div>
-              </div>
-              <v-progress-circular v-if="savingAi === p.name" indeterminate size="16" width="2" color="primary" />
-              <span v-else-if="ai?.current === p.name" class="pool-current">使用中</span>
-            </button>
-          </div>
-        </section>
-
-        <!-- 模型 -->
-        <section v-if="(model?.profiles?.length ?? 0) > 0" class="page-section">
-          <div class="page-section-head">
-            <v-icon size="14" class="c-faint">mdi-brain</v-icon>
-            <span class="page-section-title">模型</span>
-          </div>
-          <div class="page-section-body">
-            <p class="t-body c-muted mb-2" style="font-size: 0.82rem">
-              芝士在这个项目里用哪个 Claude 模型。默认 <strong>Sonnet 5</strong>（均衡、最省额度）；复杂项目可切换到
-              <strong>Opus 5</strong>（更强，但消耗额度更快）。
-            </p>
-            <button
-              v-for="p in model?.profiles ?? []"
-              :key="p.id"
-              type="button"
-              class="pool-row"
-              :class="{ 'pool-row--active': model?.current === p.id }"
-              :disabled="savingModel !== null"
-              @click="pickModel(p.id)"
-            >
-              <span class="pool-radio" :class="{ 'pool-radio--on': model?.current === p.id }" />
-              <div class="pool-main">
-                <div class="pool-title">
-                  {{ p.label }}
-                  <span class="pool-tier">{{ p.price }}</span>
-                </div>
-                <div class="pool-sub c-muted">{{ p.description }}</div>
-              </div>
-              <v-progress-circular v-if="savingModel === p.id" indeterminate size="16" width="2" color="primary" />
-              <span v-else-if="model?.current === p.id" class="pool-current">使用中</span>
-            </button>
-          </div>
-        </section>
-
         <ProjectEnvironmentSettings :project-id="projectId" />
 
         <!-- 上游仓库 (spec §6.3): link an existing repo, keep pulling it in -->
@@ -1017,64 +796,6 @@ watch(
 
     <!-- 新建角色: the Claude Code agents-file fields — name/title/description
          (frontmatter) + persona body. -->
-    <v-dialog v-model="roleDialog" max-width="620">
-      <v-card>
-        <v-card-title class="pt-4">新建专家角色</v-card-title>
-        <v-card-text class="pb-0">
-          <v-text-field
-            v-model="newRoleName"
-            label="名称（英文）"
-            placeholder="data-science"
-            hint="小写字母、数字和 .-_"
-            persistent-hint
-            density="compact"
-            variant="outlined"
-            class="mb-3"
-          />
-          <v-text-field
-            v-model="newRoleTitle"
-            label="标题"
-            placeholder="数据科学"
-            density="compact"
-            variant="outlined"
-            class="mb-3"
-          />
-          <v-text-field
-            v-model="newRoleDescription"
-            label="描述"
-            placeholder="统计分析、机器学习与数据可视化"
-            density="compact"
-            variant="outlined"
-            class="mb-3"
-          />
-          <v-textarea
-            v-model="newRoleBody"
-            label="角色设定（可留空）"
-            placeholder="你是一位数据科学导师，擅长……"
-            rows="6"
-            density="compact"
-            variant="outlined"
-            auto-grow
-          />
-          <v-alert v-if="roleFormError" type="error" density="compact" class="mb-2">
-            {{ roleFormError }}
-          </v-alert>
-        </v-card-text>
-        <v-card-actions class="px-6 pb-4">
-          <v-spacer />
-          <v-btn variant="text" @click="roleDialog = false">取消</v-btn>
-          <v-btn
-            color="primary"
-            variant="flat"
-            :loading="creatingRole"
-            :disabled="!newRoleName.trim()"
-            @click="submitNewRole"
-          >
-            创建并使用
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
   </div>
 </template>
 

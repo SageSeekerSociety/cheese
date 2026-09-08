@@ -11,6 +11,7 @@ never hold a transaction open across the model round-trip.
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -62,6 +63,11 @@ from app.domain.agent.service import (
 )
 from app.domain.agent.skills import DEFAULT_CHAT_SKILLS, load_scenario, load_skills
 from app.domain.agent.stages import TopicStage, resolve_stage, stage_scenario
+from app.domain.agent.supply import SUBSCRIPTION, resolve_pool
+from app.domain.agent_instance.configuration import (
+    AgentConfiguration,
+    validate_configuration,
+)
 from app.domain.agent_instance.services import (
     IMPLICIT_DEFAULT,
     AgentInstanceService,
@@ -3495,85 +3501,67 @@ class ChatService:
         project_id: uuid.UUID,
         provider: ComputeProvider,
         topic_id: uuid.UUID | None = None,
+        *,
+        agent: ResolvedAgent | None = None,
     ) -> tuple[dict, str]:
-        """Per-turn overrides for the agent call, resolved from project.settings:
-        the ExecutionProfile and the room's pinned environment configuration.
+        """Resolve a turn's explicit agent model, model environment and usage route.
 
-        Also returns the turn's supply ROUTE — where its model traffic actually
-        goes, which names the ONE authoritative meter (issue #218):
-
-          "gateway"      LiteLLM, directly or via /llm from a machine; metered by
-                         the gateway spend log, never by provider-reported
-                         numbers (double count).
-          "subscription" the metering proxy; metered by its usage log.
-          "native"       profile-pinned credentials; the SDK's own usage report
-                         is all there is.
-
-        The route is a fact about where the PROVIDER actually sends the turn's
-        traffic, so it is asked of the provider: a backend that builds its own
-        model environment (``builds_model_env``) rides the deployment's supply —
-        the metering proxy under a subscription, /llm → gateway without one — and
-        is metered by that supply's log. Labeling a turn "subscription" while its
-        traffic went through /llm was a real bug once, and so was the reverse:
-        the label must follow the traffic, in both directions.
-
-        The model a turn runs on is the AGENT's before it is the project's: an
-        agent whose type names a model runs on that model in every room it
-        works in, which is the whole of "the model follows the agent". A type
-        that names none declines to choose, and the project's pick still
-        applies — so the override is `agent or project`, never a blank winning."""
-        agent_model: str | None = None
+        Machine providers assemble their own scoped credentials. Other providers
+        retain their gateway/profile transport, with the agent's saved model.
+        The optional agent snapshot keeps model and role consistent within a turn.
+        """
         acting_agent: str | None = None
         environment = None
         async with self._sessions() as session:
             project = await ProjectRepository(session).get(project_id)
-            if topic_id is not None and project is not None:
-                topic = await TopicRepository(session).get(topic_id)
-                if topic is not None:
-                    acting_agent = await self._agent_handle(session, topic_id)
-                    # Overview coordinates repairs even when project setup fails.
-                    environment = (
-                        EnvironmentConfig().snapshot()
-                        if topic.kind == TopicKind.root
-                        else await pin_environment(session, project_id, topic_id)
-                    )
-                    agents = AgentInstanceService(session)
-                    agent_model = await agents.model(
-                        await agents.for_topic(topic, project)
-                    )
-                    await session.commit()
-        kwargs: dict = {}
+            if project is None:
+                raise NotFoundError("Project not found")
+            topic = await TopicRepository(session).get(topic_id) if topic_id else None
+            if topic is not None:
+                acting_agent = await self._agent_handle(session, topic.id)
+                # Overview remains available to repair failed project setup.
+                environment = (
+                    EnvironmentConfig().snapshot()
+                    if topic.kind == TopicKind.root
+                    else await pin_environment(session, project_id, topic.id)
+                )
+                await session.commit()
+            if agent is None:
+                agents = AgentInstanceService(session)
+                agent = (
+                    await agents.for_topic(topic, project)
+                    if topic
+                    else await agents.for_project(project)
+                )
+            config = AgentConfiguration.model_validate(agent.configuration)
+            validate_configuration(config, project.settings)
+            supply = resolve_pool(
+                project.settings, subscription_enabled=settings.subscription_enabled
+            )
+        model = (
+            subscription_model_alias(config.model)
+            if supply == SUBSCRIPTION
+            else config.model
+        )
+        config_hash = hashlib.sha256(
+            json.dumps(agent.configuration, sort_keys=True).encode()
+        ).hexdigest()
+        kwargs: dict = {"model": model, "env": {"CHEESE_AGENT_CONFIG": config_hash}}
         if acting_agent is not None:
             kwargs["agent_handle"] = acting_agent
         if environment is not None:
-            kwargs["env"] = {"CHEESE_ENVIRONMENT": json.dumps(environment)}
+            kwargs["env"]["CHEESE_ENVIRONMENT"] = json.dumps(environment)
         if provider.builds_model_env:
-            # A machine's model env is that machine's backend's own affair —
-            # handing it this box's profile env would put a box-local URL and a
-            # raw provider key on hardware that is not this process, whoever
-            # rents it. Under the subscription the backend builds the
-            # metering-proxy env itself; only the project's model pick travels
-            # from here, as the --model alias ("" = the subscription's default,
-            # no flag). Without the subscription it gets the backend's /llm route
-            # + its scoped token, and the backend swaps in the project's virtual
-            # key per request (routes/llm_proxy).
-            if settings.subscription_enabled:
-                choice = agent_model or (
-                    (project.settings or {}).get("subscription_model")
-                    if project
-                    else None
-                )
-                kwargs["model"] = subscription_model_alias(choice)
-                return kwargs, "subscription"
-            return kwargs, "gateway"
+            return kwargs, supply
         pool_route = True
         if self._profiles is not None:
             profile = self._profiles.resolve(
                 project.settings if project else None,
                 project.owner_handle if project else None,
             )
-            kwargs["model"] = profile.model
-            kwargs["env"] = {**kwargs.get("env", {}), **profile.full_env()}
+            kwargs["env"].update(profile.full_env())
+            kwargs["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"] = model
+            kwargs["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"] = model
             # Only the pool profile routes through the gateway; the testing
             # (native Claude) profiles pin their own base_url + credentials.
             pool_route = profile.base_url == settings.anthropic_base_url
@@ -3890,8 +3878,7 @@ class ChatService:
                 )
             projects_repo = ProjectRepository(session)
             project = await projects_repo.get(topic.project_id)
-            # The persona comes from the AGENT working here, via its type — the
-            # room's own agent if it has one, else the project's default.
+            # Read the selected agent once so this turn's role and model agree.
             agents = AgentInstanceService(session)
             agent = (
                 await agents.for_topic(topic, project)
@@ -4224,7 +4211,9 @@ class ChatService:
         # Compute: a provider owns the per-topic sandbox + execution (spec §9.1).
         # In a private chat, `cheese remember` targets the owner's personal memory
         # (spec §8.4). The provider runs a plain model turn when no Docker (tests).
-        model_kwargs, route = await self._model_kwargs(project_id, provider, topic_id)
+        model_kwargs, route = await self._model_kwargs(
+            project_id, provider, topic_id, agent=prepared.agent
+        )
         # Remembered for the turns this session starts by itself. A route is a
         # fact about where a SESSION's traffic goes, not about one prompt, and a
         # self-started turn has no prompt to resolve it from — it rides the same
@@ -4709,7 +4698,8 @@ class ChatService:
                 ),
             )
             agents = AgentInstanceService(session)
-            role = await agents.system_prompt(await agents.for_project(project))
+            agent = await agents.for_project(project)
+            role = await agents.system_prompt(agent)
             compute_id = _resolve_compute_id(
                 project.settings,
             )
@@ -4755,9 +4745,11 @@ class ChatService:
             prompt=prompt,
             system_prompt=system_prompt,
             resume_session_id=None,
-            **(await self._model_kwargs(project_id, provider, project.root_topic_id))[
-                0
-            ],
+            **(
+                await self._model_kwargs(
+                    project_id, provider, project.root_topic_id, agent=agent
+                )
+            )[0],
         ):
             if isinstance(event, AgentResult):
                 final_text = event.text
