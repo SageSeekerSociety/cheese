@@ -28,6 +28,15 @@ export default {
       },
     },
     {
+      path: 'about',
+      name: 'About',
+      meta: {
+        title: '了解知是',
+        publicLanding: true,
+      },
+      component: () => import('@/views/home/Landing.vue'),
+    },
+    {
       path: 'spaces',
       name: 'HomeSpaces',
       component: () => import('@/views/spaces/Index.vue'),
