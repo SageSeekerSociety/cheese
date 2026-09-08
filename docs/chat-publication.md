@@ -34,11 +34,13 @@ file or stdin with `--file -`.
 
 ## Communication instructions
 
-The chat skill is loaded with room conversations and teaches the lead agent to
-send an opening message before work, meaningful progress updates, and a result
-before ending. Each new or merged terminal input also reminds the agent that
-ordinary text is not sent. Subagents report to their lead; scheduled inspections
-use the heartbeat notification rules.
+The backend includes the chat skill in the system prompt when launching a room's
+terminal session. It teaches the lead agent to answer user messages directly
+when possible, announce work before doing it, and publish progress and results.
+Queued messages and messages received during work follow the same rules. Each
+new or merged terminal input also reminds the agent that ordinary text is not
+sent. Subagents report to their lead; scheduled inspections use the heartbeat
+notification rules.
 
 The doc-form skill handles durable overviews and updates when the underlying
 state changes. It does not require a document edit for every chat turn. Both
@@ -50,13 +52,18 @@ session-resume path at the next task boundary and receive the updated CLI and
 instructions.
 
 For room work answering a person, the backend checks chat silence every 15
-seconds. After one minute without a published message it posts a system waiting
-event and queues a reminder to the running agent. Each silent stretch produces
-one reminder; a new publication starts the clock again. Raw terminal output and
-retries of an existing publication do not reset it. Private chat and background
-inspections retain their own notification policy.
+seconds. While a response remains active, the backend queues a reminder after
+`CHAT_PROGRESS_REMINDER_AFTER_S` seconds without a published message. The default
+is 600 seconds (10 minutes), measured from the start of the response or its last
+publication. Set this backend environment variable to a positive number of
+seconds and restart the backend to change it. Each silent stretch produces one
+reminder; a new publication starts the clock again. Raw terminal output and
+retries of an existing publication do not reset it. A Stop ends eligibility.
+Private chat and background inspections retain their own notification policy.
 
-The waiting event appears even if the terminal cannot consume the reminder yet.
-The reminder does not interrupt work or automatically background tools. Native
-RC controls let a person background supported tasks or interrupt the current
-turn. A blocked tool can still delay the agent's own progress message.
+The reminder goes only to the agent; the agent chooses the update to publish.
+It does not create a system waiting message in chat, interrupt work, or
+automatically background tools. Native RC controls let a person background
+supported tasks or interrupt the current turn. A blocked tool can still delay
+the agent's own progress message. A delayed reminder tells the agent to ignore
+it if the response has already finished.
