@@ -1633,6 +1633,99 @@ def test_poll_settles_an_externally_merged_pr(client, app_world):
     assert delivered["accepted_at"] is not None
 
 
+def test_external_merge_closes_a_returned_batch_without_rewriting_its_review(
+    client, app_world
+):
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    branch = _room_open_tree_branch(client, tid)
+    response = client.post(
+        f"/accept-cards/{cid}/reject",
+        json={"decided_by": "alice", "note": "The batch boundary is not proven"},
+        headers=session_auth_headers("alice"),
+    )
+    assert response.status_code == 200, response.text
+    rejected = _cards(client, tid)[0]
+    delivered_head = fake.push_new_commit(number)
+    fake.merge_externally(number, merge_commit_sha="a34b8e12")
+
+    result = _poll(client)
+
+    assert result["cards_checked"] == 1
+    assert result["errors"] == []
+    card = _cards(client, tid)[0]
+    assert card["status"] == "rejected"
+    assert card["note"] == rejected["note"]
+    assert card["decided_by"] == rejected["decided_by"]
+    assert card["pr_head_sha"] == rejected["pr_head_sha"]
+    assert card["pr_merged_at"] is not None
+    assert _room_open_tree_branch(client, tid) != branch
+    assert _branch_of_record(client, tid) == _room_open_tree_branch(client, tid)
+    assert fake.merge_calls == []
+    assert "原退回记录保留" in _room_settled(client, tid, "原退回记录保留")
+
+    async def check_delivery_boundary():
+        from app.domain.review.repositories import AcceptCardRepository
+        from app.domain.room_task.repositories import WorkTreeRepository
+
+        async with client.test_factory() as session:
+            stored = await AcceptCardRepository(session).get(_uuid.UUID(cid))
+            tree = await WorkTreeRepository(session).get(stored.tree_id)
+            assert tree.status == "merged"
+            assert tree.delivered_head == delivered_head
+
+    asyncio.run(check_delivery_boundary())
+    assert _poll(client)["cards_checked"] == 0
+
+
+@pytest.mark.parametrize("closed", [False, True])
+def test_poll_never_merges_or_rewrites_a_returned_pr(client, app_world, closed):
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    branch = _room_open_tree_branch(client, tid)
+    response = client.post(
+        f"/accept-cards/{cid}/reject",
+        json={"decided_by": "alice", "note": "Needs another review"},
+        headers=session_auth_headers("alice"),
+    )
+    assert response.status_code == 200, response.text
+    rejected = _cards(client, tid)[0]
+    fake.check_state_by_sha[head_sha] = ("success", "All checks passed")
+    if closed:
+        fake.close_unmerged(number)
+
+    assert _poll(client)["errors"] == []
+
+    card = _cards(client, tid)[0]
+    assert card["status"] == "rejected"
+    assert card["note"] == rejected["note"]
+    assert card["pr_merged_at"] is None
+    assert _room_open_tree_branch(client, tid) == branch
+    assert fake.merge_calls == []
+
+
+def test_poll_prefers_a_resubmitted_card_to_its_previous_return(client, app_world):
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    response = client.post(
+        f"/accept-cards/{cid}/reject",
+        json={"decided_by": "alice", "note": "Needs another review"},
+        headers=session_auth_headers("alice"),
+    )
+    assert response.status_code == 200, response.text
+    new_card = _make_card(client, tid)
+    _give_card_a_pr(client, app_world, tid, new_card, number)
+    fake.merge_externally(number)
+
+    result = _poll(client)
+
+    assert result["cards_checked"] == 1
+    assert result["errors"] == []
+    cards = {card["id"]: card for card in _cards(client, tid)}
+    assert cards[new_card]["status"] == "accepted"
+    assert cards[cid]["status"] == "rejected"
+
+
 def test_poll_steady_state_costs_one_pr_read_per_tick(client, app_world):
     fake = app_world["fake"]
     pid, tid, cid, number, head_sha = _ready_card(client, app_world)
