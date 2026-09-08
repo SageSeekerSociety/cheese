@@ -5,8 +5,8 @@
 # `production` starts from this stage, so anything added here ships to prod.
 FROM python:3.11-slim AS runtime-base
 
-# ① 更换 apt 源为清华镜像（Debian 新格式支持 deb822）
-RUN sed -i 's/deb.debian.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list.d/debian.sources
+# Keep the existing Debian mirror and use HTTPS for package downloads.
+RUN sed -i 's|http://deb.debian.org|https://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources
 
 # ② 用 BuildKit 缓存挂载存 apt 的下载与索引。base image 自带的 docker-clean
 # 会在每次 install 后删掉刚下载的 .deb，正好抵消 /var/cache/apt 这个挂载，所以
