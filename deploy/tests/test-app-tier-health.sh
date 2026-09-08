@@ -409,6 +409,37 @@ test_rollout_keeps_a_backend_serving() {
   echo "PASS: rollout keeps a healthy backend behind api-front throughout"
 }
 
+test_frontend_rollout_keeps_serving() {
+  local run_dir docker_log next_up flip recreate flip_back gone
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  bash "$ROOT/deploy/llm-tunnel/configure-frontend.sh" "$run_dir/active" 8080
+  rollout_run "$run_dir" env ACTIVE_FRONTEND_DIR="$run_dir/active" >"$run_dir/deploy.log" 2>&1 || { cat "$run_dir/deploy.log"; fail "frontend rollout failed"; }
+  next_up="$(log_line "$docker_log" 'run -d --no-deps --name cheese-frontend-next')"
+  flip="$(nth_log_line "$docker_log" 'exec cheese-api-front nginx -s reload' 3)"
+  recreate="$(log_line "$docker_log" 'up -d --no-deps frontend')"
+  flip_back="$(nth_log_line "$docker_log" 'exec cheese-api-front nginx -s reload' 4)"
+  gone="$(last_log_line "$docker_log" 'rm -f cheese-frontend-next')"
+  [ -n "$next_up" ] && [ -n "$flip" ] && [ -n "$flip_back" ] || fail "missing frontend switches"
+  [ "$next_up" -lt "$flip" ] && [ "$flip" -lt "$recreate" ] && [ "$recreate" -lt "$flip_back" ] && [ "$flip_back" -lt "$gone" ] || fail "frontend replaced before traffic moved"
+  grep -Fq 'server 127.0.0.1:8080;' "$run_dir/active/sites-frontend.conf" || fail "frontend proxy did not return to compose"
+  rm -rf "$run_dir"
+  echo "PASS: frontend stays behind a healthy proxy target across recreate"
+}
+
+test_frontend_rollout_rejects_unhealthy_next() {
+  local run_dir
+  run_dir="$(new_rollout_run_dir)"
+  bash "$ROOT/deploy/llm-tunnel/configure-frontend.sh" "$run_dir/active" 8080
+  if rollout_run "$run_dir" env ACTIVE_FRONTEND_DIR="$run_dir/active" APP_TIER_CURL_FAIL_MATCH=:18084/ >/dev/null 2>&1; then
+    fail "unhealthy frontend was accepted"
+  fi
+  ! grep -q 'up -d --no-deps frontend' "$run_dir/docker.log" || fail "old frontend was replaced without a healthy successor"
+  grep -Fq 'server 127.0.0.1:8080;' "$run_dir/active/sites-frontend.conf" || fail "frontend proxy moved to unhealthy successor"
+  rm -rf "$run_dir"
+  echo "PASS: failed frontend startup leaves the old frontend serving"
+}
+
 test_rollout_leaves_the_running_backend_alone_when_next_never_comes_up() {
   local run_dir docker_log
   run_dir="$(new_rollout_run_dir)"
@@ -645,6 +676,8 @@ case "$CASE" in
   workflow) test_workflow_rejects_stale_frontend ;;
   healthy) test_healthy_current_pair_passes ;;
   rollout) test_rollout_keeps_a_backend_serving ;;
+  frontend-rollout) test_frontend_rollout_keeps_serving ;;
+  frontend-rollout-unhealthy) test_frontend_rollout_rejects_unhealthy_next ;;
   rollout-unhealthy-next) test_rollout_leaves_the_running_backend_alone_when_next_never_comes_up ;;
   all)
     test_deploy_rejects_absent_frontend
@@ -667,6 +700,8 @@ case "$CASE" in
     test_workflow_rejects_stale_frontend
     test_healthy_current_pair_passes
     test_rollout_keeps_a_backend_serving
+    test_frontend_rollout_keeps_serving
+    test_frontend_rollout_rejects_unhealthy_next
     test_rollout_leaves_the_running_backend_alone_when_next_never_comes_up
     ;;
   *) fail "unknown case: $CASE" ;;
