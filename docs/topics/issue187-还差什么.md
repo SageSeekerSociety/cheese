@@ -67,11 +67,26 @@
 
 **安全提醒**：这把 key 是明文发在话题聊天里的，任何能看到本话题的人都能取走。充值之后它就成了一把能花钱的 key，建议 <@caisongyang> **充值前先轮换一次**，新 key 别再走聊天。
 
+## dreaming 这一步的前置核实（2026-09-08，房间在真机上查的）
+
+<@caisongyang> 问「上机怎么操作」，房间借着这轮**正好跑在 dev app host（`cheese-dev-env1-app` / 192.168.16.5）上**，把四个前置逐条查了一遍——全部就位，真的只差一行 `.env`：
+
+| 前置 | 结果 | 怎么查的 |
+|---|---|---|
+| 线上 sha 含不含 #582 | ✅ 含 | 容器镜像 tag 是 `addd224`，`git merge-base --is-ancestor acae0ed29 addd224` 通过 |
+| 数据库迁移跑没跑 | ✅ 跑了 | 连线上库查到 `memory_dreams` 表存在，`memory_entries` 上有 `retired_at`/`layer`/`scope` 三列 |
+| 有没有在线 device（没有则永不触发） | ✅ 有，`984da7f7affb` | 后端日志 `launcher shipped to device`，本话题这轮就跑在它上面 |
+| `.env` 里现在有没有这行 | ✅ 没有，干净默认值 | `grep DREAM /home/nictheboy/cheese-backend-py/backend/.env` 无输出 |
+
+**开了之后不会立刻有反应，这是设计如此**：dreaming 挂在空闲屏幕回收器上，扫描间隔 1h（`SANDBOX_REAP_INTERVAL_SECONDS`），话题要**静默满 8h**（`IDLE_REAP_HOURS`）才算候选，每次扫描最多整理 **1 个**话题，少于 20 条消息的话题跳过。所以**第一次整理最快也在翻牌 8 小时之后**，之后大约每小时消化一个。一下午没动静是正常的，不是部署失败——查 `docker logs cheese-backend-1 | grep 记忆整理`，别反复翻开关。
+
+**顺带修掉一处会误导操作的过期文档**：<&docs/infrastructure.md> 顶部环境表里 dev/prod 的 Stack 列写着 `bare-metal (systemd + local .venv)`，而实际跑的是 Docker 容器（同一份文档下一节自己就这么说）。照那行上机会去找根本不存在的 systemd 服务。已改。
+
 ## 还差什么（谁做）
 
 | # | 事 | 谁 | 状态 |
 |---|---|---|---|
-| 0 | 上机把 `DREAM_ENABLED=true` 写进 `backend/.env` 并重部当前 sha | **必须人**（芝士上不了机器） | **新增，可独立于下面几条先做**——不需要智谱 key，成本最低，#582 已在 main 上等这一步 |
+| 0 | 上机把 `DREAM_ENABLED=true` 写进 `backend/.env` 并重部当前 sha | **必须人**（芝士上不了机器） | **四个前置房间已在真机核实全部就位**，见下方「dreaming 这一步的前置核实」；操作步骤在 <&docs/infrastructure.md> 的「Turning on 记忆整理 / dreaming」一节 |
 | 1 | 让这把智谱 key 真的能用：**给账号充值 / 买资源包**（key 本身有效，缺的是余额），充值前建议先轮换 | **必须人**（采购） | **进了一半**：key 09-08 已拿到，实测 429 余额不足，仍卡着 3 |
 | 2 | ~~在 GitHub 上点一次 re-run，把 #582 那两条环境性 CI 红刷掉~~ | — | **已完成**：09-03 `acae0ed29` 把两条 CI 修复和 #582 一起合并了，不用再单独重跑 |
 | 3 | 上机改 `backend/.env` 三行（`MEMORY_BACKEND`/两把 key）、重部当前 sha、跑迁移脚本 | **必须人**（芝士上不了机器） | 依赖 1；步骤见 <&docs/infrastructure.md> |
@@ -84,5 +99,6 @@
 ## 一条贯穿始终的平台风险（不属于 #187，但吃掉了这轮的工）
 
 端点自检那条支线的工作区被平台**整个重建两次**，两次都发生在「写完文件」和「push」之间那几分钟：`.git` 连同提交一起被换掉，`git status` 全程显示干净、无任何提示。`commit` 不构成保护，**只有 push 出去的才算存在**。现在所有支线的简报都写死「每写完一个文件就 add + commit + push，中间不插任何别的工具调用」。是否单独开一条支线追这个触发条件，问题已递给 <@caisongyang>，尚未回复。
+
 
 
