@@ -173,13 +173,6 @@ watch([loggedIn, () => route.name], ([isLoggedIn, routeName]) => {
         <div class="map-foot"><span>+</span> 人的判断 × AI 的执行 <span>+</span></div>
       </figure>
     </section>
-    <div class="statement-strip">
-      <div class="wrap">
-        <span>AI FOR THE WHOLE JOURNEY</span>
-        <p>你的团队，和一个持续参与的 AI 队友。</p>
-        <v-icon class="landing-icon" icon="mdi-arrow-right" size="22" />
-      </div>
-    </div>
     <section id="experience" class="demo-section wrap">
       <div class="section-intro">
         <div>
@@ -189,6 +182,7 @@ watch([loggedIn, () => route.name], ([isLoggedIn, routeName]) => {
             <br />
             交付真正的成果。
           </h2>
+          <p class="demo-tagline">你的团队，和一个持续参与的 AI 队友。</p>
         </div>
         <p>
           需求、分工、运行与成果，在同一个项目里衔接。

@@ -1,5 +1,6 @@
 """Topic routes."""
 
+import asyncio
 import re
 import shutil
 import uuid
@@ -13,7 +14,6 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api import proxy
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.deps import (
     get_broker,
@@ -2091,6 +2091,8 @@ async def get_preview(
     art = await BlockRepository(db).latest_artifact(place.room_id)
     if art is None:
         return ok(None)
+    from app.api.preview_host import preview_origin
+
     if art.mime_type == _ARTIFACT_MIME["app"]:
         # Knocked on LIVE, through the tunnel, every time the panel asks. A
         # declared preview is not a running one: the agent's dev server exits,
@@ -2104,12 +2106,8 @@ async def get_preview(
                 "kind": "app",
                 "path": art.content,
                 "mime": art.mime_type,
-                # Root-relative: the backend's reverse proxy, reachable from any
-                # browser. There is no machine-local address to hand out — that
-                # is the whole reason the tunnel exists.
-                "url": (
-                    proxy.browser_path(f"/topics/{topic_id}/app/") if alive else None
-                ),
+                # Every executable preview stays outside the platform origin.
+                "url": (preview_origin(topic_id) + "/" if alive else None),
                 "tunnel_up": tunnel_up,
                 "artifact_id": str(art.id),
             }
@@ -2117,6 +2115,10 @@ async def get_preview(
     return ok(
         {
             "kind": "file",
+            "url": preview_origin(topic_id) + "/",
+            "version": await asyncio.to_thread(
+                ws.preview_file_version, place.project_id, topic_id, art.content
+            ),
             "path": art.content,
             "mime": art.mime_type,
             # Which artifact this is, so a client can tell "芝士 pointed at
@@ -2124,31 +2126,6 @@ async def get_preview(
             # the same path is a new preview too, so the path cannot carry this.
             "artifact_id": str(art.id),
         }
-    )
-
-
-@router.get("/{topic_id}/preview/raw")
-async def get_preview_raw(
-    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> Response:
-    """The current file artifact served as a real page — 在新窗口打开 (Claude
-    Artifacts style). CSP `sandbox allow-scripts` keeps it an opaque origin so
-    artifact JS can't call our API as the user."""
-    topic = await TopicService(db).get_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
-    )
-    await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
-    )
-    art = await BlockRepository(db).latest_artifact(topic_id)
-    if art is None or art.mime_type == _ARTIFACT_MIME["app"]:
-        raise NotFoundError("没有可打开的文件 artifact")
-    data = ws.read_file_bytes(topic.project_id, art.content, topic_id=topic_id)
-    return Response(
-        content=data,
-        media_type=art.mime_type or "text/html",
-        headers={"Content-Security-Policy": "sandbox allow-scripts"},
     )
 
 

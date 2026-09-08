@@ -343,6 +343,8 @@ class Settings(BaseSettings):
     microcloud_default_disk_gb: int = 20
     # Prepare the default CPU offering; zero disables replenishment.
     microcloud_warm_pool_size: int = Field(default=0, ge=0, le=5)
+    # Requires deploy/cloud-control.py on the backend host before enrollment.
+    microcloud_direct_control: bool = False
     microcloud_warm_max_age_seconds: int = Field(default=3600, ge=300, le=86400)
     microcloud_login_user: str = "cheese"
     # An operator's SSH public key, authorised on every machine the platform

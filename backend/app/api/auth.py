@@ -400,6 +400,16 @@ class ActorResolver:
             if is_global_sandbox_token(self._cheese_token):
                 return  # Trusted development credential; anonymous access stays denied.
             raise AuthenticationRequiredError("Login required to access a room")
+        if not await self.can_access_topic(
+            actor, project_id=project_id, topic_id=topic_id
+        ):
+            _log.info("topic_access_denied", handle=actor.handle, topic=str(topic_id))
+            raise ForbiddenError("你不是这个话题的成员，无权在此操作")
+
+    async def can_access_topic(
+        self, actor: Actor, *, project_id: uuid.UUID, topic_id: uuid.UUID
+    ) -> bool:
+        """Check actual membership even on isolated content hosts in dev mode."""
         members = TopicMembershipRepository(self._session)
         topic = await TopicRepository(self._session).get(topic_id)
 
@@ -410,7 +420,7 @@ class ActorResolver:
         async def is_project_member(pid: uuid.UUID, handle: str) -> bool:
             return await self._is_project_member(pid, handle)
 
-        allowed = await authorize_topic_access(
+        return await authorize_topic_access(
             actor,
             project_id=project_id,
             topic_id=topic_id,
@@ -418,9 +428,6 @@ class ActorResolver:
             is_project_member=is_project_member,
             is_private=bool(topic and topic.is_private),
         )
-        if not allowed:
-            _log.info("topic_access_denied", handle=actor.handle, topic=str(topic_id))
-            raise ForbiddenError("你不是这个话题的成员，无权在此操作")
 
     async def authorize_project(self, actor: Actor, *, project_id: uuid.UUID) -> None:
         """Require a verified participant with project membership."""

@@ -79,7 +79,7 @@ def _summary(client, pid, topic) -> dict:
 def test_topic_commits_visible_before_accept(client):
     """The panel's main complaint: 采纳 前一条提交都不显示。"""
     pid = _mkproject(client)
-    tid = uuid.uuid4()
+    tid = _mktopic(client, pid)
     _turn(pid, tid, "a.py", "print(1)\n", "加了 a.py")
 
     messages = [c["message"] for c in _log(client, pid, topic=tid)]
@@ -91,7 +91,7 @@ def test_topic_log_excludes_other_topics_commits(client):
     """After one topic is 采纳'd, its commits are on the base — and must not
     show up as another topic's work."""
     pid = _mkproject(client)
-    mine, theirs = uuid.uuid4(), uuid.uuid4()
+    mine, theirs = _mktopic(client, pid), _mktopic(client, pid)
     _turn(pid, theirs, "theirs.py", "x = 1\n", "别的话题的提交")
     assert ws.merge_topic(pid, theirs, message=_MSG)["merged"] is True
     _turn(pid, mine, "mine.py", "y = 2\n", "我的提交")
@@ -105,7 +105,7 @@ def test_topic_with_no_commits_shows_none_not_the_projects(client):
     """An untouched topic has no history of its own — and must not borrow the
     project's, which is what made the panel look busy on a fresh topic."""
     pid = _mkproject(client)
-    busy, fresh = uuid.uuid4(), uuid.uuid4()
+    busy, fresh = _mktopic(client, pid), _mktopic(client, pid)
     _turn(pid, busy, "busy.py", "z = 3\n", "主干上的提交")
     assert ws.merge_topic(pid, busy, message=_MSG)["merged"] is True
 
@@ -163,7 +163,7 @@ def test_project_log_still_available_without_a_topic(client):
     """The project-level view is unchanged — it is simply not what a topic
     panel asks for."""
     pid = _mkproject(client)
-    tid = uuid.uuid4()
+    tid = _mktopic(client, pid)
     _turn(pid, tid, "c.py", "w = 4\n", "会被采纳的提交")
     assert ws.merge_topic(pid, tid, message=_MSG)["merged"] is True
 

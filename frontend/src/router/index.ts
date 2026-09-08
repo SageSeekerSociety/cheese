@@ -40,6 +40,12 @@ const routes: RouteRecordRaw[] = [
   ...legacyProjectRedirects,
   workspaceRoutes,
   {
+    name: 'preview-open',
+    path: '/previews/:topicId',
+    component: () => import('@/views/PreviewOpenView.vue'),
+    meta: { title: '打开预览', isFullPage: true },
+  },
+  {
     name: 'site-open',
     path: '/sites/:projectId',
     component: () => import('@/views/SiteOpenView.vue'),

@@ -181,7 +181,7 @@ async function adoptServerVersion(topicId: string) {
 }
 
 function onBlur() {
-  if (dirty.value && !lossy.value) void save()
+  if (dirty.value && props.editable && !lossy.value && !conflict.value) void save()
 }
 
 function onKeydown(e: KeyboardEvent) {
@@ -238,7 +238,7 @@ watch(
   () => props.editable,
   (v) => {
     editor.value?.setEditable(v, false)
-    if (!v && dirty.value) void save()
+    if (!v && dirty.value && !lossy.value && !conflict.value) void save()
   }
 )
 

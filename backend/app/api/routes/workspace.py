@@ -8,6 +8,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, Header, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import ActorResolverDep
 from app.api.response import ok, page
 from app.auth.caller import may_access_project
 from app.core.db import get_db
@@ -27,6 +28,8 @@ async def require_project_access(
     project_id: uuid.UUID,
     request: Request,
     db: DbSession,
+    resolver: ActorResolverDep,
+    topic: uuid.UUID | None = None,
     x_cheese_token: str | None = Header(default=None, alias="X-Cheese-Token"),
 ) -> None:
     """Reject a caller with no claim on this project.
@@ -43,13 +46,27 @@ async def require_project_access(
     A route dependency rather than a line in each handler: the per-handler shape
     is exactly how six routes came to share one hole.
     """
-    if x_cheese_token and verify_scoped_token(
-        x_cheese_token, project_id=str(project_id)
-    ):
-        return
-    if await may_access_project(request, db, project_id):
-        return
-    raise NotFoundError("project not found")
+    scoped = bool(x_cheese_token) and verify_scoped_token(
+        x_cheese_token or "", project_id=str(project_id)
+    )
+    if not scoped and not await may_access_project(request, db, project_id):
+        raise NotFoundError("project not found")
+
+    # Files and Git diffs contain the private room's source, not just its title.
+    # The path-bound room wins over a query parameter on work-summary requests.
+    room_id = request.path_params.get("topic_id") or topic
+    if room_id is not None:
+        try:
+            room_uuid = uuid.UUID(str(room_id))
+        except ValueError as exc:
+            raise NotFoundError("Topic not found") from exc
+        room = await TopicService(db).get_or_404(room_uuid)
+        if room.project_id != project_id:
+            raise NotFoundError("Topic not found")
+        actor = await resolver.resolve(
+            fallback_handle=None, project_id=project_id, topic_id=room.id
+        )
+        await resolver.authorize_topic(actor, project_id=project_id, topic_id=room.id)
 
 
 @router.get("/{project_id}/files", dependencies=[Depends(require_project_access)])
@@ -155,6 +172,8 @@ async def git_diff(
     # A topic shows its branch's full diff vs the base (what 采纳 would merge).
     if topic is not None:
         return ok({"diff": ws.topic_diff(project_id, topic)})
+    if ref:
+        ref = ws.accepted_commit_revision(project_id, ref)
     return ok({"diff": ws.git_diff(project_id, ref)})
 
 

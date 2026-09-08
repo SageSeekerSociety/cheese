@@ -13,6 +13,7 @@
 """
 
 import contextlib
+import hashlib
 import logging
 import os
 import re
@@ -21,10 +22,10 @@ import subprocess
 import time
 import uuid
 from collections.abc import Iterator
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from app.core.config import settings
-from app.core.errors import ConflictError, ValidationError
+from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.domain.agent.platform_failures import WORKSPACE_VCS_PERMS_CODE
 from app.domain.workspace import identity as identity_mod
 from app.domain.workspace.textfile import (
@@ -919,6 +920,36 @@ def read_file_bytes(
         raise WorkspacePermissionError(_uid_split_hint(f"读 {path}: {exc}")) from exc
 
 
+def read_preview_file(
+    project_id: uuid.UUID, topic_id: uuid.UUID, entry: str, relative: str
+) -> bytes:
+    """Read web assets only inside the explicitly selected artifact's directory."""
+    parts = relative.split("/")
+    if not relative or any(
+        not part or part.startswith(".") or "\\" in part or "\x00" in part
+        for part in parts
+    ):
+        raise ValidationError("preview path unavailable")
+    tree = _tree(project_id, topic_id)
+    directory = _safe_path(tree, str(PurePosixPath(entry).parent))
+    target = _safe_path(directory, relative)
+    return read_file_bytes(project_id, str(target.relative_to(tree)), topic_id)
+
+
+def preview_file_version(
+    project_id: uuid.UUID, topic_id: uuid.UUID, entry: str
+) -> str | None:
+    """Track HTML edits without loading a large artifact into the editor API."""
+    target = _safe_path(_tree(project_id, topic_id), entry)
+    try:
+        with target.open("rb") as source:
+            return hashlib.file_digest(source, "sha256").hexdigest()[:16]
+    except OSError:
+        # The metadata still names a missing/unreadable artifact; the file API
+        # supplies its existing detailed error state to the preview panel.
+        return None
+
+
 def accepted_revision(project_id: uuid.UUID) -> str:
     """Pin the project's accepted branch, without reading its mutable checkout."""
     repo = ensure_repo(project_id)
@@ -1035,6 +1066,23 @@ def git_log(
         if len(parts) == 3:
             rows.append({"hash": parts[0], "author": parts[1], "message": parts[2]})
     return rows
+
+
+def accepted_commit_revision(project_id: uuid.UUID, ref: str) -> str:
+    """Resolve a public history selection without exposing unaccepted room work."""
+    if ref.startswith("-"):
+        raise ValidationError("invalid ref")
+    repo = ensure_repo(project_id)
+    try:
+        revision = _git(
+            repo, "rev-parse", "--verify", "--end-of-options", f"{ref}^{{commit}}"
+        ).strip()
+        _git(
+            repo, "merge-base", "--is-ancestor", revision, accepted_revision(project_id)
+        )
+    except ValidationError as exc:
+        raise NotFoundError("Commit not found in accepted project history") from exc
+    return revision
 
 
 def git_diff(project_id: uuid.UUID, ref: str | None = None) -> str:

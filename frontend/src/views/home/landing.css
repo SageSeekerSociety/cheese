@@ -111,9 +111,13 @@ h3 {
 
 .brand-cn {
   font-family: var(--font-sans);
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 600;
   letter-spacing: 0;
+}
+
+.site-header .brand-cn {
+  transform: translateY(1px);
 }
 
 .site-header nav {
@@ -426,33 +430,6 @@ h1 {
   justify-content: space-between;
 }
 
-.statement-strip {
-  color: var(--surface);
-  background: var(--ink);
-}
-
-.statement-strip .wrap {
-  display: flex;
-  min-height: 78px;
-  justify-content: space-between;
-  align-items: center;
-  gap: 20px;
-}
-
-.statement-strip span {
-  font-size: 14px;
-  letter-spacing: 0.16em;
-  color: var(--muted);
-}
-
-.statement-strip p {
-  font-size: 18px;
-}
-
-.statement-strip .landing-icon {
-  color: var(--accent);
-}
-
 .demo-section {
   padding-top: 72px;
   padding-bottom: 72px;
@@ -477,6 +454,12 @@ h1 {
   padding-bottom: 5px;
   font-size: 16px;
   line-height: 1.75;
+  color: var(--muted);
+}
+
+.demo-tagline {
+  margin-top: 16px;
+  font-size: 20px;
   color: var(--muted);
 }
 
@@ -1379,7 +1362,7 @@ footer > span {
   }
 
   .brand-cn {
-    font-size: 14px;
+    font-size: 15px;
   }
 
   .brand img {
@@ -1499,27 +1482,6 @@ footer > span {
     font-size: 14px;
   }
 
-  .statement-strip .wrap {
-    min-height: 76px;
-    flex-wrap: wrap;
-    gap: 7px;
-    padding-block: 18px;
-  }
-
-  .statement-strip span {
-    width: 100%;
-    font-size: 14px;
-  }
-
-  .statement-strip p {
-    font-size: 14px;
-  }
-
-  .statement-strip .landing-icon {
-    width: 17px;
-    height: 17px;
-  }
-
   .demo-section {
     padding-block: 60px;
   }
@@ -1541,6 +1503,10 @@ footer > span {
 
   .section-intro > p {
     margin-top: 20px;
+    font-size: 16px;
+  }
+
+  .demo-tagline {
     font-size: 16px;
   }
 
@@ -1878,10 +1844,6 @@ footer > span {
 
   .hero h1 {
     font-size: 48px;
-  }
-
-  .statement-strip {
-    break-after: page;
   }
 
   .demo-section {

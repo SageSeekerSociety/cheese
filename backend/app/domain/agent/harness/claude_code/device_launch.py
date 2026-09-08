@@ -24,7 +24,6 @@ from pathlib import Path
 # substrate — identical for the local (tmux) and remote (device) backends so it
 # can't drift (fusion-design §8.6). Re-exported here (`hooks_settings`) because
 # this module's launcher and its callers build on it.
-from app.core.config import GATEWAY_MOUNT
 from app.domain.agent import environment_runner, machine_tunnel, preview_tunnel
 from app.domain.agent.harness.claude_code import event_drain
 from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD
@@ -435,7 +434,7 @@ WAITPY
 # declaring the preview — waits on the BACKEND side, where the helper's arrival is
 # actually observable.
 CHEESE_PREVIEW_UP = """#!/bin/sh
-# $1, optional: the port; $2: its upstream mount, empty for a root-mounted app.
+# $1, optional: the port.
 # `cheese serve`
 # passes it and nothing else does, which is what keeps the file layout of the
 # preview helper entirely inside the launcher — the CLI knows only this script.
@@ -443,7 +442,7 @@ PORTF="$HOME/.claude/cheese-preview.port"
 PIDF="$HOME/.claude/cheese-preview.pid"
 STAMPF="$HOME/.claude/cheese-preview.stamp"
 if [ -n "$1" ]; then
-  printf '%s\\n%s\\n' "$1" "$2" > "$PORTF.tmp" && mv "$PORTF.tmp" "$PORTF"
+  printf '%s\\n' "$1" > "$PORTF.tmp" && mv "$PORTF.tmp" "$PORTF"
 fi
 [ -s "$PORTF" ] || exit 0
 [ -n "${CHEESE_PREVIEW_URL:-}" ] || exit 0
@@ -1260,8 +1259,7 @@ if command -v tmux >/dev/null 2>&1; then
       "CHEESE_TUNNEL_URL=$CHEESE_TUNNEL_URL" \\
       "CHEESE_TUNNEL_PORT=$CHEESE_TUNNEL_PORT" \\
       "CHEESE_PREVIEW_URL=$CHEESE_PREVIEW_URL" \\
-      "CHEESE_PREVIEW_UP=$CHEESE_PREVIEW_UP" \\
-      "CHEESE_APP_BASE=$CHEESE_APP_BASE"; do
+      "CHEESE_PREVIEW_UP=$CHEESE_PREVIEW_UP"; do
       # An empty value = a var this launch didn't set; skip it (a same-mode box's
       # frozen-global copy already matches, and forcing empty could flip modes).
       case "$_kv" in *=) ;; *) set -- "$@" -e "$_kv" ;; esac
@@ -1389,11 +1387,6 @@ def build_screen_launch(
         env["CHEESE_PROJECT"] = project_id
     if topic_id:
         env["CHEESE_TOPIC"] = topic_id
-        # Where a preview of this place's running app will be mounted for the
-        # browser. The agent needs it BEFORE it starts a dev server, because a
-        # server that emits root-absolute asset URLs (vite's `/@vite/client`)
-        # has to be started under this base or the panel shows a white frame.
-        env["CHEESE_APP_BASE"] = f"{GATEWAY_MOUNT}/topics/{topic_id}/app/"
         # Where this screen's prompts arrive. The launcher turns these two into
         # Claude Code's own CLAUDE_BG_* trio and mints the token; the connector
         # reads the same two to dial. Keyed on the topic so an adopted screen
