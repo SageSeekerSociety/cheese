@@ -33,7 +33,12 @@ from app.domain.agent.gateway import LlmGateway, drain_new_usage
 from app.domain.agent.harness import Opening, SessionRef, runtime_for
 from app.domain.agent.market import subscription_model_alias
 from app.domain.agent.platform_failures import (
+    MODEL_LIMIT_REACHED_CODE,
+    PROVIDER_OVERLOADED_CODE,
+    PROVIDER_UNREACHABLE_CODE,
+    RESPONSE_TRUNCATED_CODE,
     TURN_TIMEOUT_MESSAGE,
+    classify_cli_notice,
     classify_platform_failure,
 )
 from app.domain.agent.platform_notices import (
@@ -594,6 +599,57 @@ def _turn_failure_notice(text: str, code: str | None) -> tuple[str, dict]:
             part for part in (hint, f"服务原话：\n{detail}" if detail else "") if part
         )
         or None,
+        detail_label="详细说明",
+    )
+
+
+# CLI 自己印在对话里的那几句英文,换成平台自己的中文提示卡。
+#
+# 它们过去顶着芝士的名字发出来,读的人看到的是「芝士在说英文报错」,而实际上
+# 芝士根本没说话 —— 是它脚下的 CLI 印的。归属错了比语言错了更糟:一个平台故障
+# 被读成 AI 的回答,谁也不知道该找谁。
+#
+# 英文原话一个字都不丢,收进「服务原话」的折叠区 —— 它是唯一的一份。
+_CLI_NOTICE_COPY: dict[str, tuple[str, str, str, str]] = {
+    PROVIDER_UNREACHABLE_CODE: (
+        "芝士连不上 AI 服务，这一步没做成",
+        SEVERITY_ERROR,
+        WHO_PLATFORM,
+        "这个多半不会自己好:要么是这台机器上的隧道助手掉了,要么是中继在丢连接。"
+        "先重新 @ 它一次;还是连不上就该找人看机器,不要反复重试。",
+    ),
+    PROVIDER_OVERLOADED_CODE: (
+        "AI 服务暂时过载，这一步没做成",
+        SEVERITY_WARN,
+        WHO_PLATFORM,
+        "服务端的事,通常一会儿就好。稍后再 @ 它一次。",
+    ),
+    MODEL_LIMIT_REACHED_CODE: (
+        "这个模型的额度用完了",
+        SEVERITY_ERROR,
+        WHO_HUMAN,
+        "这不是等一等就能好的:要换一个模型,或者等额度恢复。重试无效。",
+    ),
+    RESPONSE_TRUNCATED_CODE: (
+        "上面那条回复没说完就断了",
+        SEVERITY_WARN,
+        WHO_PLATFORM,
+        "上面那条可能是半截。要它接着说就再 @ 它一次。",
+    ),
+}
+
+
+def _cli_notice(text: str) -> tuple[str, dict] | None:
+    """整条消息其实是 CLI 印的一句英文提示时,给出该发的中文提示卡;否则 None。"""
+    failure = classify_cli_notice(text)
+    if failure is None:
+        return None
+    line, severity, who, hint = _CLI_NOTICE_COPY[failure]
+    return line, notice(
+        EVENT_TURN_FAILED,
+        severity=severity,
+        who=who,
+        detail=f"{hint}\n\n服务原话：\n{text.strip()}",
         detail_label="详细说明",
     )
 
@@ -2743,6 +2799,25 @@ class ChatService:
         landed in an earlier attempt at the same work (④ 重发): the re-sent
         turn re-narrating "我先看一下 X" must not post a second copy of it. The
         caller treats None as "nothing to broadcast"."""
+        # 有些「助手消息」根本不是芝士说的 —— 是它脚下的 CLI 把自己的英文提示
+        # 当成助手输出印了出来。拦在这里而不是调用方:活路径、补投、spool 回填
+        # 三条路都经过这个方法,拦在门口才不会有一条漏网。
+        as_notice = _cli_notice(text)
+        if as_notice is not None:
+            line, notice_meta = as_notice
+            return await self._persist_room_event(
+                project_id=project_id,
+                topic_id=topic_id,
+                content=line,
+                meta=notice_meta,
+                turn_id=turn_id,
+                eid=eid,
+                backfilled=backfilled,
+                platform_unsolicited=platform_unsolicited,
+                in_room=True,
+                author_type=AuthorType.system,
+                task_id=task_id,
+            )
         meta: dict | None = None
         if eid:
             meta = {"eid": eid}
