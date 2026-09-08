@@ -785,10 +785,10 @@ class TopicService:
             ),
         )
         await self._blocks.set_upgraded_to_place(block, topic_id=new_room.id)
-        await self._seed_brief_doc(new_room, brief)
+        await self.seed_brief_doc(new_room, brief)
         return new_room, None, True
 
-    async def _seed_brief_doc(self, topic: Topic, content: str) -> None:
+    async def seed_brief_doc(self, topic: Topic, content: str) -> None:
         """Preset a newborn ROOM's living doc with its task brief. Author is
         `system`: the platform assembled it from existing text — nothing here
         speaks as 芝士 (the room's kickoff turn writes the real opening).
@@ -926,7 +926,7 @@ class TopicService:
             # only one of the two. A claim that was refused simply is not
             # recorded — the thread still exists and can narrow it and try again.
             await ClaimService(self._session).claim(task, paths)
-        # 简报进卡, not into a document of its own — see `_seed_brief_doc` for
+        # 简报进卡, not into a document of its own — see `seed_brief_doc` for
         # why the document could not be kept up to date. The worker gets these
         # same words a second way, in the prompt the room hands its subagent;
         # this copy is the record of what was asked for.
@@ -1014,7 +1014,13 @@ class TopicService:
         return [dict(item) for item in row.items], row.updated_at
 
     async def edit_doc(
-        self, *, topic_id: uuid.UUID, content: str, author: str, expected_version: int
+        self,
+        *,
+        topic_id: uuid.UUID,
+        content: str,
+        author: str,
+        expected_version: int,
+        author_type: AuthorType = AuthorType.human,
     ) -> Block:
         """改文档即指令 (eval B2): upsert the topic's living doc and drop a
         '编辑了文档' event into the conversation. The agent reads the latest doc
@@ -1036,6 +1042,7 @@ class TopicService:
         if topic.status == TopicStatus.archived:
             raise ValidationError("话题已归档，文档已定格，不能再编辑")
         doc = await self._blocks.doc_root(place.room_id)
+        previous_content = doc.content if doc is not None else ""
         if doc is not None:
             updated = await self._blocks.set_doc_content(
                 doc, content, expected_version=expected_version
@@ -1050,10 +1057,14 @@ class TopicService:
                 project_id=topic.project_id,
                 topic_id=place.room_id,
                 author=author,
-                author_type=AuthorType.human,
+                author_type=author_type,
                 content=content,
                 kind=BlockKind.doc,
             )
+        # The root records the latest editor; unchanged nodes keep their author,
+        # and _sync_doc_nodes attributes only newly written nodes to this editor.
+        doc.author = author
+        doc.author_type = author_type
         # B1: also sync the structured node tree (struct_parent children) so the
         # doc's blocks get stable ids for cross-view highlight / comments later.
         await self._sync_doc_nodes(doc, content)
@@ -1075,7 +1086,22 @@ class TopicService:
             refs=[str(doc.id)],
             # action:"doc" → the client renders the 看文档 link on this SAME
             # line — one event vocabulary for humans and 芝士 alike.
-            meta={"platform": True, "action": "doc"},
+            meta={
+                "platform": True,
+                "action": "doc",
+                "doc_version": doc.doc_version,
+                "editor_type": author_type.value,
+                "detail_label": "查看本次修改",
+                "detail": "\n".join(
+                    difflib.unified_diff(
+                        previous_content.splitlines(),
+                        content.splitlines(),
+                        fromfile="修改前",
+                        tofile="修改后",
+                        lineterm="",
+                    )
+                ),
+            },
         )
         return doc
 

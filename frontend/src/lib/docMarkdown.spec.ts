@@ -97,6 +97,16 @@ describe('round-trip corpus', () => {
     expectClean('- 外层一\n  - 内层 a\n  - 内层 b\n- 外层二\n  1. 步骤一\n  2. 步骤二')
   })
 
+  it('preserves sublists beneath numbered items, including two-digit markers', () => {
+    for (const md of ['1. 来源一\n   - 方法说明\n\n2. 来源二', '10. 来源十\n    - 方法说明\n11. 来源十一']) {
+      const rt = roundTrip(md)
+      const firstTree = editor.getJSON()
+      editor.commands.setContent(rt, { contentType: 'markdown' })
+      expect(editor.getJSON()).toEqual(firstTree)
+      expect(compareRoundTrip(md, rt).clean).toBe(true)
+    }
+  })
+
   it('task list', () => {
     expectClean('- [ ] 未完成的任务\n- [x] 已完成的任务\n- [ ] 还有一个')
   })
@@ -268,6 +278,10 @@ describe('known-lossy constructs are detected', () => {
 
   it('an indented code block keeps its indentation', () => {
     expect(normalizeMarkdown('正文\n\n    code()\n')).toContain('    code()')
+  })
+
+  it('keeps blank lines inside indented code that resembles a list', () => {
+    expect(compareRoundTrip('    - first\n\n    - second', '    - first\n    - second').clean).toBe(false)
   })
 })
 

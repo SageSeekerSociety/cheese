@@ -1098,6 +1098,31 @@ function onDropFiles(e: DragEvent) {
 }
 const composerInput = ref<{ focus?: () => void } | null>(null)
 
+const starterPrompts = [
+  { label: '查找资料', text: '帮我查找相关资料，注明来源，并整理成文档。我要了解的是：' },
+  { label: '起草文档', text: '帮我起草一份文档，先和我确认目标与读者。我想写的是：' },
+  { label: '拆解任务', text: '帮我把目标拆成可执行的任务，先给我看分工建议。我的目标是：' },
+]
+const showStarters = computed(
+  () =>
+    props.topic?.kind === 'root' &&
+    props.topic.status !== 'archived' &&
+    props.showComposer &&
+    !loadingHistory.value &&
+    !errorMsg.value &&
+    !hasMore.value &&
+    !visible.value.length &&
+    !draft.value.trim() &&
+    !outbox.value.length
+)
+
+function startDraft(text: string) {
+  if (draft.value.trim()) return
+  const agent = mentionPool.value.find((m) => m.agent)
+  draft.value = `${props.alwaysSummon ? '' : `@${agent?.label ?? '芝士'} `}${text}`
+  void nextTick(() => composerInput.value?.focus?.())
+}
+
 // @-autocomplete (§3.1.1 人也能 @): the @token being typed at the end of the
 // draft, and the teammates / topics / broadcast tokens it can complete to.
 // Mirrors TopicView's composer so the root-topic and 私聊 composers get the
@@ -1389,13 +1414,30 @@ onBeforeUnmount(() => {
         <div ref="contentRef">
           <div v-if="loadingHistory" class="text-medium-emphasis text-body-2 px-4 py-2">加载聊天记录…</div>
 
+          <section v-if="showStarters" class="chat-start px-5 py-8" aria-label="开始项目协作">
+            <h2 class="t-title mb-2">从一件具体的事开始</h2>
+            <p class="t-body c-muted mb-4">说说你想解决什么问题，@芝士 可以查资料、写文档，也能和你一起拆任务</p>
+            <div class="d-flex flex-wrap ga-2">
+              <v-btn
+                v-for="prompt in starterPrompts"
+                :key="prompt.label"
+                variant="outlined"
+                color="on-surface"
+                size="small"
+                @click="startDraft(prompt.text)"
+                >{{ prompt.label }}</v-btn
+              >
+            </div>
+            <p class="t-meta mt-3">点选后补充你的需求，再发送</p>
+          </section>
+
           <!-- Paging back through history. The row is always rendered while
                older blocks exist so the timeline's top edge does not change
                height when a fetch starts — that height change would move the
                reader mid-scroll, which is the very thing loadOlder compensates
                for. -->
           <div
-            v-else-if="hasMore"
+            v-if="!loadingHistory && hasMore"
             class="text-medium-emphasis text-body-2 px-4 py-2 text-center"
             data-testid="chat-older-loader"
           >
@@ -1489,6 +1531,10 @@ onBeforeUnmount(() => {
                   {{ ACTION_META[notice.resource].btn }}
                 </button>
               </div>
+              <details v-if="notice.detail" class="sys-more">
+                <summary>{{ notice.detailLabel || '展开详情' }}</summary>
+                <pre class="sys-detail">{{ notice.detail }}</pre>
+              </details>
             </div>
             <!-- 后端报错 (backend_log.py): 芝士 needs the whole traceback, a
                person needs to know it happened. So the line shows by default

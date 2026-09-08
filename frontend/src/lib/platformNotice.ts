@@ -108,7 +108,7 @@ export type PlatformNotice =
   /** 后端报错：本来就是目标形态，原样保留（它是这套东西的样板）。 */
   | { mode: 'backend-error'; error: BackendErrorPresentation }
   /** 芝士这轮干的活（更新了文档 / 提交了验收卡…）。 */
-  | { mode: 'action'; resource: string; text: string }
+  | { mode: 'action'; resource: string; text: string; detail?: string; detailLabel?: string }
   /**
    * 本轮摘要 (spec §8.5 变更提醒): 这一轮改了什么，外加它顺带动过的平台资源。
    *
@@ -240,7 +240,14 @@ export function platformNotice(block: Block, run: Block[] = [block]): PlatformNo
   }
 
   const resource = actionResource(block)
-  if (resource) return { mode: 'action', resource, text: actionText(block) }
+  if (resource)
+    return {
+      mode: 'action',
+      resource,
+      text: actionText(block),
+      detail: str(m?.detail),
+      detailLabel: str(m?.detail_label),
+    }
 
   const error = backendErrorPresentation(block)
   if (error) return { mode: 'backend-error', error }
@@ -322,6 +329,7 @@ export function collapseNotices(blocks: Block[]): NoticeRow[] {
 
 /** 这一行是不是「本轮里平台顺手做的事」——够格被折进本轮摘要。 */
 function summaryPart(row: NoticeRow): boolean {
+  if (row.notice?.mode === 'action' && row.notice.detail) return false
   return row.notice?.mode === 'action' || changeSummary(row.block) !== null
 }
 

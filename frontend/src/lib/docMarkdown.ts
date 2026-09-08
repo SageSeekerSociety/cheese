@@ -18,7 +18,7 @@ import type { marked } from 'marked'
 import { Extension, InputRule, mergeAttributes } from '@tiptap/core'
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import Image from '@tiptap/extension-image'
-import { TaskItem, TaskList } from '@tiptap/extension-list'
+import { ListItem, TaskItem, TaskList } from '@tiptap/extension-list'
 import { TableKit } from '@tiptap/extension-table'
 import { Markdown } from '@tiptap/markdown'
 import StarterKit from '@tiptap/starter-kit'
@@ -154,12 +154,26 @@ export interface DocExtensionsOptions {
   resolveImageSrc?: (src: string) => string
 }
 
+const DocListItem = ListItem.extend({
+  renderMarkdown(node, helpers, context) {
+    if (context.parentType !== 'orderedList' || context.meta?.parentAttrs?.type) {
+      return ListItem.config.renderMarkdown!(node, helpers, context)
+    }
+    // CommonMark nests beneath the content column: "1. " needs three spaces,
+    // "10. " needs four. The upstream helper always uses two and flattens it.
+    const start = Number(context.meta?.parentAttrs?.start ?? 1)
+    const width = `${start + (context.index ?? 0)}. `.length
+    return ListItem.config.renderMarkdown!(node, { ...helpers, indent: (text) => ' '.repeat(width) + text }, context)
+  },
+})
+
 /** The full extension list for the living-doc editor (and its tests). */
 export function docExtensions(opts: DocExtensionsOptions = {}): AnyExtension[] {
   return [
     StarterKit.configure({
       // Replaced by the lowlight-highlighted code block below.
       codeBlock: false,
+      listItem: false,
       link: {
         // No click-through plugin: in edit mode a plain click just places the
         // caret (⌘-click opens via DocPanel's delegated handler); in read
@@ -176,6 +190,7 @@ export function docExtensions(opts: DocExtensionsOptions = {}): AnyExtension[] {
     // module-only member, and nothing in the package calls it.
     Markdown.configure({ marked: docMarked as unknown as typeof marked }),
     TableKit.configure({ table: { resizable: false } }),
+    DocListItem,
     TaskList,
     TaskItem.configure({ nested: true }),
     DocImage.configure({
@@ -217,6 +232,8 @@ export function docExtensions(opts: DocExtensionsOptions = {}): AnyExtension[] {
 //      text continued at 2 spaces; only the item markers state the nesting, and
 //      those are left strict. A line that follows a BLANK line keeps its indent,
 //      which is what leaves 4-space indented code blocks strict.
+//  14. Blank lines between adjacent list-item markers are presentation-only;
+//      indentation and paragraph breaks remain strict.
 //
 // Everything else — dropped constructs, reordered content, lost alignment,
 // lost language tags, escaped-away tokens — fails the comparison.
@@ -387,8 +404,13 @@ export function normalizeMarkdown(md: string): string {
   // Collapse blank-line runs (never inside fences); trim document edges.
   const collapsed: string[] = []
   let prevBlank = false
-  for (const l of spaced) {
+  for (const [index, l] of spaced.entries()) {
     if (!l.literal && l.text === '') {
+      // List-item spacing changes tight/loose presentation, not item content.
+      // Keep paragraph breaks and list indentation strict.
+      const next = spaced.slice(index + 1).find((line) => line.text !== '')
+      const listItem = /^ {0,3}(?:[-*+]|\d+[.)])\s/
+      if (!next?.literal && listItem.test(collapsed.at(-1) ?? '') && listItem.test(next?.text ?? '')) continue
       if (prevBlank) continue
       prevBlank = true
     } else {

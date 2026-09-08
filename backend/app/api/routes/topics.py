@@ -1142,6 +1142,7 @@ async def edit_topic_doc(
         content=content,
         author=actor.handle,
         expected_version=body.expected_version,
+        author_type=AuthorType.ai if actor.is_agent else AuthorType.human,
     )
     if not actor.is_agent:
         # The notice tells 芝士 to go re-read the doc, so the doc has to BE the

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /** 点开一张卡就在房间里往下钻一层，不是跳到一个新地点。
  *
  * 一件活不是地点：做它的分身住在房间的会话里，它没有名册、没有归档、没有自己的
@@ -67,6 +68,22 @@ function card(over: Partial<RoomTask> = {}): RoomTask & { blocks: Block[] } {
 let vuetify: ReturnType<typeof createVuetify>
 
 beforeAll(() => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+  )
+  vi.stubGlobal(
+    'IntersectionObserver',
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+  )
   vuetify = createVuetify({ components, directives })
 })
 
@@ -106,6 +123,26 @@ describe('一张卡按卡渲染', () => {
   it('卡下的对话是这条活自己的', async () => {
     const { getByText } = mount()
     await waitFor(() => getByText('这条先别动 routes'))
+  })
+
+  it('renders AI deliverables as safe Markdown and keeps human messages literal', async () => {
+    getRoomTask.mockResolvedValue({
+      ...card({ brief: '**Goal**', conclusion: '[Read the report](https://example.com/report)' }),
+      blocks: [
+        block({ id: 'ai', author_type: 'ai', content: '**Result**\n\n- Ready\n\n<script>alert(1)</script>' }),
+        block({ id: 'human', content: '**keep this literal**' }),
+      ],
+    })
+    const { container, getByText } = mount()
+    await waitFor(() => getByText('Result'))
+    expect(container.querySelector('.panel-card__block-body strong')?.textContent).toBe('Goal')
+    expect(container.querySelector('[data-testid="card-conclusion"] a')?.getAttribute('href')).toBe(
+      'https://example.com/report'
+    )
+    expect(container.querySelector('.card-msg__text strong')?.textContent).toBe('Result')
+    expect(container.querySelector('.card-msg__text li')?.textContent).toBe('Ready')
+    expect(container.querySelector('script')).toBeNull()
+    expect(getByText('**keep this literal**')).toBeTruthy()
   })
 
   it('在卡下面说话走的是这张卡的地址', async () => {

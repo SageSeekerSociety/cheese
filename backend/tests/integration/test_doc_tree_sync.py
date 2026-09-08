@@ -12,6 +12,39 @@ def _project_and_topic(client) -> str:
 DOC_V1 = "# 目标\n\n搭建原型。\n\n## 约束\n\n- 数据脱敏\n- Recall@10"
 
 
+def test_document_edits_keep_each_sections_author_and_change_record(client):
+    from app.core.sandbox_auth import mint_scoped_token
+
+    tid = _project_and_topic(client)
+    pid = client.get(f"/topics/{tid}").json()["data"]["project_id"]
+    response = client.put(
+        f"/topics/{tid}/doc",
+        json={"content": DOC_V1, "author": "alice", "expected_version": 0},
+    )
+    assert response.status_code == 200, response.text
+    revised = DOC_V1.replace("搭建原型。", "先做三个路口的实地观察。")
+    response = client.put(
+        f"/topics/{tid}/doc",
+        headers={"X-Cheese-Token": mint_scoped_token(project_id=pid, topic_id=tid)},
+        json={"content": revised, "expected_version": 1},
+    )
+    assert response.status_code == 200, response.text
+    nodes = {node["content"]: node for node in _nodes(client, tid)}
+    assert nodes["# 目标"]["author"] == "alice"
+    assert nodes["# 目标"]["author_type"] == "human"
+    assert nodes["先做三个路口的实地观察。"]["author_type"] == "ai"
+    changed_author = nodes["先做三个路口的实地观察。"]["author"]
+    blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
+    edits = [
+        block for block in blocks if (block.get("meta") or {}).get("action") == "doc"
+    ]
+    change = next(block for block in edits if block["meta"]["doc_version"] == 2)
+    assert change["author"] == changed_author
+    assert change["meta"]["editor_type"] == "ai"
+    assert "-搭建原型。" in change["meta"]["detail"]
+    assert "+先做三个路口的实地观察。" in change["meta"]["detail"]
+
+
 def _nodes(client, tid: str) -> list[dict]:
     return client.get(f"/topics/{tid}/docs").json()["data"]["data"]
 
