@@ -215,6 +215,22 @@ func TestReadRvTokenFailsLoudly(t *testing.T) {
 	}
 }
 
+// The token file is written on the launcher's way to exec'ing claude, and the
+// socket is bound by the claude it then execs — so the token necessarily appears
+// before the socket, and its wait window must be at least as long as the socket's.
+// It was a sixth of it (20s vs 120s), so a first prompt for a cold screen gave up
+// on the token long before it would have given up on the socket, and a new topic
+// whose workspace was still coming up died at ~20s every time. This guards the
+// ordering, not a specific number: raise the socket window and this fails until
+// the token window follows.
+func TestTheTokenWindowIsNeverShorterThanTheSocketWindow(t *testing.T) {
+	if rvTokenWait < rvDialWindow {
+		t.Fatalf("token wait %v is shorter than the socket wait %v: a cold "+
+			"screen's first prompt will abandon the token before the socket",
+			rvTokenWait, rvDialWindow)
+	}
+}
+
 // An empty file is not a token: treating it as one would send an empty auth
 // frame and the session would refuse every prompt with no obvious cause.
 func TestReadRvTokenRejectsAnEmptyFile(t *testing.T) {

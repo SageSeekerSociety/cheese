@@ -8,12 +8,15 @@ because that checkout is only ever read.
 
 import subprocess
 import uuid
+from pathlib import Path
 
 import pytest
 
 from app.core.errors import ValidationError
 from app.domain.workspace import service as ws
 from tests.machine_work import machine_commits
+
+_MSG = "chore: land the branch under test\n\nRequested-by: alice"
 
 
 def _mkproject(client) -> uuid.UUID:
@@ -57,7 +60,7 @@ def test_topic_branch_isolated_then_merged(client):
     assert "feat.txt" not in {f["path"] for f in ws.list_files(pid)}
     assert "branch work" in ws.topic_diff(pid, tid)
 
-    assert ws.merge_topic(pid, tid)["merged"] is True
+    assert ws.merge_topic(pid, tid, message=_MSG)["merged"] is True
     # The base branch now contains the file (browsable via the API).
     files = client.get(f"/projects/{pid}/files", headers=_owner(client)).json()["data"][
         "data"
@@ -189,7 +192,7 @@ def test_merge_delivers_the_branch_and_nothing_else(client):
     wt = ws.topic_worktree(pid, tid)
     (wt / "human.txt").write_text("edited by hand, never committed\n", encoding="utf-8")
 
-    assert ws.merge_topic(pid, tid)["merged"] is True
+    assert ws.merge_topic(pid, tid, message=_MSG)["merged"] is True
     assert "pushed by the machine" in ws.read_file(pid, "committed.txt")
     with pytest.raises(ValidationError):
         ws.read_file(pid, "human.txt")
@@ -202,7 +205,7 @@ def test_merge_leaves_no_worktree_debris(client):
     pid = _mkproject(client)
     ok_tid, conflict_tid = uuid.uuid4(), uuid.uuid4()
     _native_edit(pid, ok_tid, "clean.txt", "clean merge\n")
-    assert ws.merge_topic(pid, ok_tid)["merged"] is True
+    assert ws.merge_topic(pid, ok_tid, message=_MSG)["merged"] is True
 
     # A guaranteed conflict: branch and base disagree on the same file.
     _native_edit(pid, conflict_tid, "f.txt", "branch version\n")
@@ -214,7 +217,7 @@ def test_merge_leaves_no_worktree_debris(client):
     subprocess.run(
         ["git", "-C", str(repo), "commit", "-q", "-m", "base change"], check=True
     )
-    result = ws.merge_topic(pid, conflict_tid)
+    result = ws.merge_topic(pid, conflict_tid, message=_MSG)
     assert result["merged"] is False and result["conflicts"] == ["f.txt"]
 
     merge_root = ws._merge_worktree_path(pid)
@@ -242,7 +245,7 @@ def test_concurrent_accepts_on_the_same_project_dont_block_each_other(
     hang_entered = threading.Event()
 
     def fake_run(argv, cwd, timeout, env=None):
-        if "merge" in argv and "--no-ff" in argv and hang_branch in argv:
+        if "merge" in argv and "--squash" in argv and hang_branch in argv:
             hang_entered.set()
             time.sleep(1.5)  # simulate the git process being stuck
             raise ws.GitTimeoutError("simulated hang, already confirmed dead")
@@ -253,14 +256,14 @@ def test_concurrent_accepts_on_the_same_project_dont_block_each_other(
     results: dict[str, dict] = {}
 
     def run_hang() -> None:
-        results["hang"] = ws.merge_topic(pid, hang_tid)
+        results["hang"] = ws.merge_topic(pid, hang_tid, message=_MSG)
 
     t = threading.Thread(target=run_hang)
     t.start()
     assert hang_entered.wait(timeout=5), "the hung merge never started"
 
     start = time.monotonic()
-    fast_result = ws.merge_topic(pid, fast_tid)
+    fast_result = ws.merge_topic(pid, fast_tid, message=_MSG)
     elapsed = time.monotonic() - start
 
     t.join(timeout=5)
@@ -273,3 +276,118 @@ def test_concurrent_accepts_on_the_same_project_dont_block_each_other(
     files = {f["path"] for f in ws.list_files(pid)}
     assert "fast.txt" in files
     assert "hang.txt" not in files  # the stuck merge never landed anything
+
+
+def test_merge_squashes_the_branch_into_one_authored_commit(client):
+    """拍板 #363 (2026-09-07): the platform forge merges the way the GitHub lane
+    does — the whole branch lands as ONE squash commit carrying the caller's
+    message, authored by the human the work belongs to, committed by 芝士.
+    `--no-ff` used to drag every branch commit (含芝士的自动快照) into main."""
+    from app.domain.workspace import identity
+
+    pid = _mkproject(client)
+    tid = uuid.uuid4()
+    _native_edit(pid, tid, "one.txt", "first\n")
+    _native_edit(pid, tid, "two.txt", "second\n")  # a second commit to squash
+
+    repo = ws.ensure_repo(pid)
+
+    def _count() -> int:
+        done = subprocess.run(
+            ["git", "rev-list", "--count", "main"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return int(done.stdout.strip())
+
+    before = _count()
+    message = (
+        "feat: deliver both files\n\nWhy this change exists.\n\n"
+        "Requested-by: alice\nCheese-Topic: t\nCheese-Card: c"
+    )
+    author = identity.GitIdentity("Alice", "1+alice@users.noreply.github.com")
+    result = ws.merge_topic(pid, tid, message=message, author=author)
+    assert result["merged"] is True
+
+    assert _count() == before + 1  # two branch commits → one delivery commit
+    done = subprocess.run(
+        ["git", "log", "-1", "--format=%P%x00%an%x00%ae%x00%cn%x00%ce%x00%B", "main"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    parents, a_name, a_email, c_name, c_email, body = done.stdout.split("\x00")
+    assert len(parents.split()) == 1  # a squash commit, not a merge commit
+    assert (a_name, a_email) == ("Alice", "1+alice@users.noreply.github.com")
+    assert (c_name, c_email) == (identity.CHEESE_NAME, identity.CHEESE_EMAIL)
+    assert body.strip() == message
+    # Both files delivered even though their commits are gone from main.
+    assert "first" in ws.read_file(pid, "one.txt")
+    assert "second" in ws.read_file(pid, "two.txt")
+
+
+def test_merge_without_an_author_falls_back_to_cheese(client):
+    """Nobody resolvable behind the topic (no GitHub connection) degrades to the
+    platform identity, never to an invented address."""
+    from app.domain.workspace import identity
+
+    pid = _mkproject(client)
+    tid = uuid.uuid4()
+    _native_edit(pid, tid, "a.txt", "hi\n")
+    assert ws.merge_topic(pid, tid, message=_MSG)["merged"] is True
+    done = subprocess.run(
+        ["git", "log", "-1", "--format=%an%x00%ae", "main"],
+        cwd=ws.ensure_repo(pid),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert done.stdout.strip().split("\x00") == [
+        identity.CHEESE_NAME,
+        identity.CHEESE_EMAIL,
+    ]
+
+
+def test_accepting_an_upstream_resolution_still_joins_the_histories(client):
+    """merge_topic's ONE non-squash case. A topic that resolves an upstream sync
+    conflict exists to JOIN the upstream history; squashing it would land the
+    resolved content while upstream's commits stay unreachable from base, so the
+    next sync counts itself behind, re-merges, and re-hits the same conflict —
+    forever. The proof of the join: after accepting, sync reports 已是最新."""
+    import tempfile
+
+    pid = _mkproject(client)
+    seeded = uuid.uuid4()
+    _native_edit(pid, seeded, "f.txt", "local version\n")
+    assert ws.merge_topic(pid, seeded, message=_MSG)["merged"] is True
+
+    upstream = Path(tempfile.mkdtemp(prefix="cheese-upstream-"))
+    subprocess.run(["git", "init", "-q", "-b", "main", str(upstream)], check=True)
+    (upstream / "f.txt").write_text("upstream version\n", encoding="utf-8")
+    for args in (
+        ["add", "-A"],
+        ["-c", "user.name=up", "-c", "user.email=u@p", "commit", "-q", "-m", "up"],
+    ):
+        subprocess.run(["git", *args], cwd=upstream, check=True, capture_output=True)
+
+    ws.set_upstream(pid, str(upstream))
+    synced = ws.sync_upstream(pid)
+    assert synced["synced"] is False and synced["conflicts"] == ["f.txt"]
+
+    tid = uuid.uuid4()
+    assert ws.prepare_upstream_conflict_resolution(pid, tid) == ["f.txt"]
+    wt = ws.topic_worktree(pid, tid)
+    (wt / "f.txt").write_text("resolved version\n", encoding="utf-8")
+    for args in (
+        ["add", "-A"],
+        ["-c", "user.name=芝士", "-c", "user.email=c@z.l", "commit", "-q", "-m", "fix"],
+    ):
+        subprocess.run(["git", *args], cwd=wt, check=True, capture_output=True)
+
+    assert ws.merge_topic(pid, tid, message=_MSG)["merged"] is True
+    assert "resolved version" in ws.read_file(pid, "f.txt")
+    again = ws.sync_upstream(pid)
+    assert again == {"synced": True, "commits": 0, "reason": "已是最新"}

@@ -64,10 +64,15 @@ async def list_members(project_id: uuid.UUID, db: DbSession) -> dict:
     # filters on this, and every topic's 分身 acts under its own
     # ``cheese-<topic hex>`` handle, so matching the bare string would mis-label
     # any 分身 that ever lands on a project roster.
+    # One query for the whole roster, not one per member: an `await` inside a
+    # dict comprehension reads as a batch and is not one — it was 30 round trips
+    # on a 30-person project, 10.3 ms of a 32.8 ms response. `get_by_handles`
+    # exists for exactly this and says so.
     users = UserRepository(db)
-    rows = {m.user_handle: await users.get_by_handle(m.user_handle) for m in members}
-    user_ids = [u.id for u in rows.values() if u is not None]
-    agent_ids = await AgentBindingRepository(db).agent_user_ids(user_ids)
+    rows = await users.get_by_handles([m.user_handle for m in members])
+    agent_ids = await AgentBindingRepository(db).agent_user_ids(
+        [u.id for u in rows.values()]
+    )
     items = []
     for m in members:
         d = MemberOut.model_validate(m).model_dump(mode="json")

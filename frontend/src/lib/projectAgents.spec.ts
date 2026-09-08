@@ -26,6 +26,7 @@ function memory(scope: string, scopeId: string): MemoryEntryOut {
 
 function agent(overrides: Partial<ProjectAgent> = {}): ProjectAgent {
   return {
+    configuration: { body: '', model: 'sonnet', harness: 'claude-code', skills: [], mcp_servers: [], effort: null },
     id: 'a1',
     project_id: PROJECT,
     handle: 'cheese',
@@ -33,6 +34,7 @@ function agent(overrides: Partial<ProjectAgent> = {}): ProjectAgent {
     display_name: '芝士',
     is_default: true,
     configured: true,
+    is_active: true,
     ...overrides,
   }
 }

@@ -88,17 +88,20 @@ EVENT_ROOM_MERGE: Final = "room_merge"
 EVENT_CONCLUSION_SETTLED: Final = "conclusion_settled"
 #: 话题的 Cloud 机器还在创建，这条消息先留着。
 EVENT_MACHINE_PROVISIONING: Final = "machine_provisioning"
-#: 话题绑定的机器连着失败，平台暂停向它派活（可能还换了一台）。
-EVENT_HOST_SWAP: Final = "host_swap"
+#: 话题绑定的机器连着失败，平台暂停向它派活；话题留在原机器上等人处理。
+EVENT_HOST_FAILURE: Final = "host_failure"
 #: 结论结算了，但这个话题的归档欠着 —— 它还挂着一张没决议的验收卡。
 EVENT_ARCHIVE_DEFERRED: Final = "archive_deferred"
-#: 人点了采纳，改动交给了 CI（或 PR 已开），等检查。
-EVENT_ACCEPT_AUTHORIZED: Final = "accept_authorized"
 #: 这次交付完成了。
 EVENT_ACCEPT_DONE: Final = "accept_done"
 #: 采纳没走完，停在半路 —— 开不出 PR、PR 合不上、工作区合并出错。
 EVENT_ACCEPT_STOPPED: Final = "accept_stopped"
-#: 检查全绿，但改动超出了人当初授权的范围，平台扣住不合。
+#: PR 满足项目的合并规则了（CLEAN）——通知验收人来采纳。
+EVENT_ACCEPT_READY: Final = "accept_ready"
+#: 新提交作废了已有的采纳批准（分支保护的 dismiss_stale，默认开）。
+EVENT_ACCEPT_DISMISSED: Final = "accept_dismissed"
+#: 机器在这张卡上没有可走的下一步（必跑检查迟迟没报到、反复换基追不上 main、
+#: 布防了自动合但票数不够），扣住不动，等人来定。
 EVENT_MERGE_WITHHELD: Final = "merge_withheld"
 #: PR 在 GitHub 上被关掉且没合并。
 EVENT_PR_CLOSED: Final = "pr_closed"
@@ -108,8 +111,12 @@ EVENT_FORCE_MERGED: Final = "force_merged"
 EVENT_MIGRATION_COLLISION: Final = "migration_collision"
 #: 同一批消息反复被重投进轮次，前面几次都没跑完。
 EVENT_PROMPT_REPLAYED: Final = "prompt_replayed"
+#: 有人在 PR 上留了评审意见 / 要求改动 —— 芝士要去改，不是等着。
+EVENT_PR_REVIEW: Final = "pr_review"
+#: PR 和它的 base 分支冲突了，GitHub 合不了。
+EVENT_PR_CONFLICT: Final = "pr_conflict"
 #: 本模块新增的全部类别码。`platform_error` / `backend_error` / `frontend_error`
-#: / `host_swap` / `action` 是别处已有的，不在这里重复登记。
+#: / `host_failure` / `action` 是别处已有的，不在这里重复登记。
 EVENT_TYPES: Final = frozenset(
     {
         EVENT_CI_FAILED,
@@ -133,15 +140,18 @@ EVENT_TYPES: Final = frozenset(
         EVENT_ROOM_MERGE,
         EVENT_CONCLUSION_SETTLED,
         EVENT_MACHINE_PROVISIONING,
-        EVENT_HOST_SWAP,
-        EVENT_ACCEPT_AUTHORIZED,
+        EVENT_HOST_FAILURE,
         EVENT_ACCEPT_DONE,
         EVENT_ACCEPT_STOPPED,
+        EVENT_ACCEPT_READY,
+        EVENT_ACCEPT_DISMISSED,
         EVENT_MERGE_WITHHELD,
         EVENT_PR_CLOSED,
         EVENT_FORCE_MERGED,
         EVENT_MIGRATION_COLLISION,
         EVENT_PROMPT_REPLAYED,
+        EVENT_PR_REVIEW,
+        EVENT_PR_CONFLICT,
     }
 )
 

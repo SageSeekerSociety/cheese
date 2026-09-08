@@ -27,6 +27,13 @@ from app.domain.machine.services import MachineService, customer_ref, derive_hos
 pytestmark = pytest.mark.anyio
 
 
+@pytest.fixture(autouse=True)
+def runtime_limit(monkeypatch):
+    limit = AsyncMock(return_value=2)
+    monkeypatch.setattr("app.domain.machine.services.get_machine_limit", limit)
+    return limit
+
+
 OFFERING = {
     "id": 1,
     "status": "active",
@@ -139,7 +146,7 @@ class FakeRepo:
     async def lock_topic(self, _topic_id):
         return None
 
-    async def lock_provisioning(self, _project_id, _topic_id):
+    async def lock_team_quota(self, _team_id):
         return None
 
     async def get_active_for_topic(self, topic_id):
@@ -158,6 +165,9 @@ class FakeRepo:
 
     async def list_for_project(self, project_id):
         return [r for r in self.rows if r.project_id == project_id]
+
+    async def list_for_team(self, _team_id):
+        return self.rows
 
     async def list_ai_mode_mismatch(self, desired, limit):
         return [
@@ -227,7 +237,9 @@ def build_service(client=None, project=_UNSET, repo=None):
     service._repo = repo or FakeRepo()
     service._devices = FakeDevices()
     if project is _UNSET:
-        project = SimpleNamespace(id=uuid.uuid4(), name="Cheese 自建")
+        project = SimpleNamespace(
+            id=uuid.uuid4(), name="Cheese 自建", team_id=1, settings={}
+        )
     service._projects = SimpleNamespace(get=_returning(project))
     return service
 
@@ -239,19 +251,35 @@ def _returning(value):
     return _get
 
 
-async def test_provision_clamps_a_spec_the_offering_cannot_honour():
+async def test_quota_counts_stopped_and_deleting_but_not_released_machines():
+    service = build_service()
+    project_id = uuid.uuid4()
+    for status in MachineStatus:
+        await service._repo.add(project_id=project_id, status=status)
+    await service._repo.add(
+        project_id=project_id,
+        status=MachineStatus.running,
+        released_at=datetime.now(UTC),
+    )
+    counted = await service.quota_machines(project_id)
+    assert {machine.status for machine in counted} == set(MachineStatus) - {
+        MachineStatus.deleted
+    }
+    assert len(counted) == len(MachineStatus) - 1
+
+
+async def test_provision_rejects_an_unsupported_spec_without_buying_a_machine():
     client = FakeMicroCloud()
     service = build_service(client)
-    project_id = uuid.uuid4()
-
-    await service.provision(
-        project_id=project_id, requested_by="andy", cores=64, memory_mb=1, disk_gb=9999
-    )
-
-    body = client.created[0]
-    assert body["cores"] == OFFERING["coresMax"]
-    assert body["memoryMb"] == OFFERING["memoryMbMin"]
-    assert body["diskGb"] == OFFERING["diskGbMax"]
+    with pytest.raises(ValidationError, match="超出当前供应范围"):
+        await service.provision(
+            project_id=uuid.uuid4(),
+            requested_by="andy",
+            cores=64,
+            memory_mb=1,
+            disk_gb=9999,
+        )
+    assert client.created == []
 
 
 async def test_provision_bills_the_project_not_the_person():
@@ -290,6 +318,8 @@ async def test_ensure_topic_machine_reuses_the_active_lease(monkeypatch):
         id=uuid.uuid4(),
         project_id=uuid.uuid4(),
         created_by="owner",
+        compute_profile="cloud",
+        compute_config=None,
         status=TopicStatus.active,
     )
 
@@ -318,7 +348,7 @@ async def test_ensure_topic_machine_reuses_the_active_lease(monkeypatch):
     monkeypatch.setattr("app.domain.topic.services.TopicService", _Topics)
     monkeypatch.setattr("app.domain.machine.services.IdentityService", _Identities)
     authority = AsyncMock()
-    monkeypatch.setattr(service, "require_create_authority", authority)
+    monkeypatch.setattr(service, "require_use_authority", authority)
     actor = Actor(handle="owner", user_id=1, is_agent=False, via="token")
 
     first = await service.ensure_topic_machine(topic.id, actor=actor)
@@ -359,19 +389,22 @@ async def test_ensure_topic_machine_without_authority_provisions_nothing(monkeyp
     assert client.customers == {}
 
 
-async def test_topic_machines_share_the_project_quota(monkeypatch):
-    from app.core.config import settings
+async def test_topic_machines_share_the_team_quota(monkeypatch):
     from app.domain.topic.models import TopicStatus
 
     client = FakeMicroCloud()
     project_id = uuid.uuid4()
     service = build_service(
         client,
-        project=SimpleNamespace(id=project_id, name="Quota", team_id=None),
+        project=SimpleNamespace(id=project_id, name="Quota", team_id=1, settings={}),
     )
     topics = {
         topic_id: SimpleNamespace(
-            id=topic_id, project_id=project_id, status=TopicStatus.active
+            id=topic_id,
+            project_id=project_id,
+            status=TopicStatus.active,
+            compute_profile="cloud",
+            compute_config=None,
         )
         for topic_id in (uuid.uuid4(), uuid.uuid4(), uuid.uuid4())
     }
@@ -395,15 +428,14 @@ async def test_topic_machines_share_the_project_quota(monkeypatch):
             return SimpleNamespace(id=41)
 
     service._session = _Session()
-    monkeypatch.setattr(settings, "microcloud_max_machines_per_project", 2)
     monkeypatch.setattr("app.domain.topic.services.TopicService", _Topics)
     monkeypatch.setattr("app.domain.machine.services.IdentityService", _Identities)
-    monkeypatch.setattr(service, "require_create_authority", AsyncMock())
+    monkeypatch.setattr(service, "require_use_authority", AsyncMock())
     actor = Actor("owner", 1, False, "token")
 
     for topic_id in list(topics)[:2]:
         await service.ensure_topic_machine(topic_id, actor=actor)
-    with pytest.raises(ValidationError, match="already has 2 machine"):
+    with pytest.raises(ValidationError, match="2 / 2"):
         await service.ensure_topic_machine(list(topics)[2], actor=actor)
 
     assert len(client.created) == 2
@@ -425,14 +457,30 @@ async def test_provision_reuses_the_projects_existing_account():
     )
 
 
-async def test_provision_refuses_past_the_per_project_ceiling():
-    from app.core.config import settings
+async def test_provision_uses_updated_limit_without_rebuilding_service(runtime_limit):
+    service = build_service()
+    project_id = uuid.uuid4()
+    runtime_limit.return_value = 50
+    for _ in range(50):
+        await service.provision(project_id=project_id, requested_by="owner")
+    with pytest.raises(ValidationError):
+        await service.provision(project_id=project_id, requested_by="owner")
+    runtime_limit.return_value = 51
+    await service.provision(project_id=project_id, requested_by="owner")
+    runtime_limit.return_value = 49
+    with pytest.raises(ValidationError):
+        await service.provision(project_id=project_id, requested_by="owner")
+    assert len(service._client.created) == 51
+    assert service._client.deleted == []
+
+
+async def test_provision_refuses_past_the_team_ceiling():
 
     client = FakeMicroCloud()
     service = build_service(client)
     project_id = uuid.uuid4()
 
-    for _ in range(settings.microcloud_max_machines_per_project):
+    for _ in range(2):
         await service.provision(project_id=project_id, requested_by="andy")
 
     with pytest.raises(ValidationError):
@@ -495,6 +543,31 @@ async def test_the_platform_key_never_displaces_the_humans():
     assert "ssh-ed25519 HUMANKEY andy@laptop" in authorized
     assert any("cheese-bootstrap" in line for line in authorized)
     assert len(authorized) == 2
+
+
+async def test_the_operators_key_rides_on_every_machine_the_platform_opens(
+    monkeypatch,
+):
+    """The bootstrap key is erased at enrollment; the operator's is what lets
+    someone read a Cloud machine's connector journal after a failed turn."""
+    from app.core.config import settings as app_settings
+
+    monkeypatch.setattr(
+        app_settings, "microcloud_operator_ssh_pubkey", "ssh-ed25519 OPSKEY ops@box"
+    )
+    client = FakeMicroCloud()
+    service = build_service(client)
+
+    await service.provision(
+        project_id=uuid.uuid4(),
+        requested_by="andy",
+        ssh_pubkey="ssh-ed25519 HUMANKEY andy@laptop",
+    )
+
+    authorized = client.created[0]["sshPubkey"].splitlines()
+    assert "ssh-ed25519 OPSKEY ops@box" in authorized
+    assert "ssh-ed25519 HUMANKEY andy@laptop" in authorized
+    assert len(authorized) == 3
 
 
 async def test_a_machine_asked_for_without_a_key_still_gets_the_platforms():
@@ -650,14 +723,13 @@ async def test_a_destroyed_machine_stops_occupying_the_projects_slot():
     unreclaimable: the delete returned 200 and the next create was refused for a
     machine that no longer existed.
     """
-    from app.core.config import settings
 
     client = FakeMicroCloud()
     service = build_service(client)
     project_id = uuid.uuid4()
 
     made = []
-    for _ in range(settings.microcloud_max_machines_per_project):
+    for _ in range(2):
         made.append(await service.provision(project_id=project_id, requested_by="andy"))
 
     with pytest.raises(ValidationError):
@@ -753,32 +825,31 @@ async def test_forgetting_never_destroys_a_machine_the_platform_did_not_open(cap
 # ---- built-in AI channel (→ccproxy, operator guidance) -----------------------
 
 
-async def test_provision_switches_the_ai_channel_to_ccproxy():
+async def test_provision_asks_for_the_ai_channel_in_the_create_call():
+    """The mode rides in the create body (micro-cloud#78) and nothing is asked
+    afterwards: a separate switch on a machine still provisioning was a 22s 400
+    in the turn path. What MicroCloud actually did is read back like any other
+    field, and the sweep reconciles a machine that came up elsewhere."""
     client = FakeMicroCloud()
     service = build_service(client)
 
     machine = await service.provision(project_id=uuid.uuid4(), requested_by="andy")
 
-    # newapi's default routes to a cheap non-Claude model; provision must not
-    # leave a machine there.
-    assert client.ai_switches == [(machine.machine_id, "ccproxy")]
-    assert machine.ai_mode == "ccproxy"  # UPPERCASE reply normalized
+    assert client.created[0]["aiMode"] == "ccproxy"
+    assert client.ai_switches == []
     assert machine.ai_status == AiStatus.provisioning
 
 
-async def test_provision_lands_even_when_the_switch_fails():
+async def test_provision_sends_no_ai_mode_when_none_is_configured(monkeypatch):
+    from app.core.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "microcloud_ai_mode", "")
     client = FakeMicroCloud()
-
-    async def boom(machine_id, mode):
-        raise MicroCloudError("switch endpoint down")
-
-    client.switch_ai = boom
     service = build_service(client)
 
-    machine = await service.provision(project_id=uuid.uuid4(), requested_by="andy")
+    await service.provision(project_id=uuid.uuid4(), requested_by="andy")
 
-    # Best-effort: the machine still provisions; the sweep reconciles later.
-    assert machine.ai_mode == "newapi"
+    assert "aiMode" not in client.created[0]
 
 
 async def test_sweep_reconciles_a_machine_left_on_newapi():

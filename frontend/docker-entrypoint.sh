@@ -10,6 +10,10 @@ find /usr/share/nginx/html/assets -name '*.js' -exec sed -i \
   -e "s|__VITE_CONNECTOR_WS_BASE__|${VITE_CONNECTOR_WS_BASE:-}|g" \
   {} +
 
+# Where nginx sends /api and /connector (see nginx.conf). Substituted at start,
+# like the VITE placeholders above, because nginx reads no environment itself.
+sed -i "s|__API_UPSTREAM__|${API_UPSTREAM:-backend:8081}|g" /etc/nginx/nginx.conf
+
 /usr/local/bin/check-static-assets /usr/share/nginx/html
 
 exec "$@"

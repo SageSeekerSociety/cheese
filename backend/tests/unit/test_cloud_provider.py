@@ -21,6 +21,11 @@ class _Session:
     async def __aexit__(self, *_exc):
         return False
 
+    async def get(self, *_args, **_kwargs):
+        # No `tasks` row by this id: the place is a room, and its machine is
+        # its own.
+        return None
+
     async def commit(self):
         return None
 

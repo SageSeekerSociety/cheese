@@ -30,6 +30,20 @@ from app.domain.agent import connector_build, device_link
 
 logger = logging.getLogger(__name__)
 
+
+class DeviceOffline(RuntimeError):
+    """The device has no live link, so a frame to it would go nowhere.
+
+    Raised by the awaited calls (``exec``) instead of letting them wait out
+    their timeout: ``HubDevice.send`` drops a frame to a device with no
+    transport, and a caller that then waits 35s and reports "the connector
+    did not answer" has described the opposite of what happened."""
+
+    def __init__(self, device_id: str) -> None:
+        super().__init__(f"device {device_id} is offline")
+        self.device_id = device_id
+
+
 PROTOCOL_VERSION = device_link.PROTOCOL_VERSION
 
 
@@ -71,6 +85,7 @@ class HubScreen:
     # `None` = never recorded (a screen adopted after a server restart, or a dev
     # token with no decodable expiry) → treated as fresh, never retired on it.
     credential_expires: int | None = None
+    agent_configuration: str = ""
     viewers: set[ViewerTransport] = field(default_factory=set)
 
 
@@ -78,6 +93,10 @@ class HubScreen:
 class HubDevice:
     device_id: str
     transport: DeviceTransport | None = None
+    # What a person calls this machine, as the connector route knows it at attach
+    # time. Kept here so a failure on the link can name the machine without a
+    # database read on a path that is already failing.
+    name: str = ""
     proto: int | None = None
     # What the connector said about itself in `hello`: the sha256 of its own
     # executable and the `<os>-<arch>` it was built for. Both empty from a
@@ -123,9 +142,13 @@ class DeviceHub:
 
     # -- device connection -------------------------------------------------
 
-    async def attach_device(self, device_id: str, transport: DeviceTransport) -> None:
+    async def attach_device(
+        self, device_id: str, transport: DeviceTransport, *, name: str = ""
+    ) -> None:
         device = self._device(device_id)
         device.transport = transport
+        if name:
+            device.name = name
         device.update_pushed = False
         await device.send(device_link.welcome())
 
@@ -148,6 +171,18 @@ class DeviceHub:
 
     def online_device_ids(self) -> list[str]:
         return [d.device_id for d in self._devices.values() if d.transport is not None]
+
+    def device_name(self, device_id: str) -> str:
+        """The machine's name as announced at attach, or its id when unknown."""
+        device = self._devices.get(device_id)
+        return device.name if device is not None and device.name else device_id
+
+    def last_seen_age(self, device_id: str) -> float | None:
+        """Seconds since the device last sent any frame; None when it never has."""
+        device = self._devices.get(device_id)
+        if device is None or not device.last_seen:
+            return None
+        return asyncio.get_event_loop().time() - device.last_seen
 
     # -- screens (server -> device) ----------------------------------------
 
@@ -374,8 +409,13 @@ class DeviceHub:
         timeout: float = 60,
         stdin: str | None = None,
     ) -> dict[str, Any]:
-        """One-shot command on the device → ``{stdout, stderr, exit, truncated}``."""
+        """One-shot command on the device → ``{stdout, stderr, exit, truncated}``.
+
+        Raises ``DeviceOffline`` at once when the device has no link, rather than
+        sending into the void and timing out ``timeout``+5s later."""
         device = self._device(device_id)
+        if device.transport is None:
+            raise DeviceOffline(device_id)
         device.exec_seq += 1
         eid = f"e{device.exec_seq}"
         fut: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()

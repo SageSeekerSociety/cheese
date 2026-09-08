@@ -9,6 +9,12 @@ Authorization: a member/owner of the topic's project (``proxy.may_view_topic``).
 The credential rides as ``?token=`` because a browser can set no header on a
 WebSocket; the same check runs again when the screen socket is opened, so this
 answer is a hint to the UI, never the access decision.
+
+A place is a room OR a thread in it, and both run panes: a thread's screen is
+opened under the thread's own id (``device_provider`` passes the place id as the
+screen's ``topic_id``), so the lookup below finds it as soon as the id is allowed
+to name one. The roster it is checked against is still the room's, because that
+is the only roster there is.
 """
 
 import uuid
@@ -50,11 +56,12 @@ async def terminal_status(topic_id: uuid.UUID, request: Request, db: DbSession) 
     credential is told False rather than being handed an address that would then
     refuse them, which is what left users staring at a blank frame with no way
     back to the timeline.
+
     """
-    await TopicService(db).get_or_404(topic_id)  # topic 访问校验
-    if not await proxy.may_view_topic(db, topic_id, request, COOKIE_NAME):
+    place = await TopicService(db).place_or_404(topic_id)
+    if not await proxy.may_view_topic(db, place.room_id, request, COOKIE_NAME):
         return ok({"available": False})
-    sid = _device_screen_id(topic_id)
+    sid = _device_screen_id(place.room_id)
     if sid is None:
         return ok({"available": False})
     return ok(

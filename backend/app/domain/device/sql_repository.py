@@ -203,16 +203,6 @@ class SqlDeviceRepository:
                 out.append(device)
         return out
 
-    async def list_cloud_devices_by_project(
-        self, project_id: uuid.UUID
-    ) -> list[Device]:
-        out: list[Device] = []
-        for did in await self._device_ids_by_project(project_id):
-            device = await self.get_device(did)
-            if device is not None and device.supply is Supply.cloud:
-                out.append(device)
-        return out
-
     async def list_devices_by_team(self, team_id: int) -> list[Device]:
         device_ids = (
             await self._session.scalars(

@@ -34,9 +34,48 @@ export default defineConfig({
           },
         ],
       },
+      // unplugin-fonts preloads EVERY font file in the bundle unless told not
+      // to: `custom.preload` is on by default even when no custom fonts are
+      // declared. That put 64 `<link rel="preload" as="font">` on every page,
+      // 40 of them KaTeX faces the login page never renders, each a request
+      // that competes with the app's own chunks. `families: []` is there only
+      // because the type demands it; the line that matters is `preload: false`.
+      // The @font-face rules still fetch a face the moment something uses it.
+      custom: { families: [], preload: false },
     }),
     prismjsPlugin({
-      languages: 'all',
+      // The list is what this product's code blocks actually contain — agent
+      // output and repository snippets — not what Prism offers. **Adding a
+      // grammar is a bundle decision**: `'all'` meant 297 grammars in a 569 KB
+      // chunk that every service-worker install downloaded, for languages no
+      // session here will ever emit. Anything not listed renders as
+      // unhighlighted plain text, which is the accepted trade — do not add a
+      // fallback loader; add the grammar and take the bytes knowingly.
+      //
+      // Dependencies resolve themselves (babel-plugin-prismjs runs Prism's own
+      // dependency loader), so this is top-level languages only: `markup`
+      // covers html/xml/svg, `bash` covers sh/shell, `typescript` covers ts.
+      // `vue` is not a Prism grammar at all — a ```vue block degrades to plain
+      // text and there is nothing to add for it.
+      languages: [
+        'markup',
+        'css',
+        'javascript',
+        'typescript',
+        'jsx',
+        'tsx',
+        'python',
+        'go',
+        'rust',
+        'bash',
+        'json',
+        'yaml',
+        'toml',
+        'sql',
+        'markdown',
+        'diff',
+        'docker',
+      ],
       // 配置行号插件
       plugins: ['line-numbers', 'copy-to-clipboard'],
       // 主题名
@@ -101,17 +140,30 @@ export default defineConfig({
         // huge, view-specific chunks that exceed even this are NOT precached;
         // the /assets/ runtime cache below picks them up on first online visit
         // instead, so precache stays bounded.
-        globPatterns: ['**/*.{js,css,html,svg,woff,woff2,ico,png,webmanifest}'],
-        // The Monaco language workers (editor/json/html/css/ts.worker-*.js, up
-        // to ~7 MB each) are the biggest chunks in the bundle and are purely
-        // optional — they load only inside the code editor, which is not part
-        // of the shell. Keep them OUT of precache (that is "别缓存到爆"); the
+        //
+        // `.woff` is deliberately absent while `.woff2` stays. Both formats of
+        // the same faces ship (MDI 574 KB + 394 KB, plus 20 KaTeX pairs) and no
+        // browser fetches both — the `.woff` @font-face entry is the fallback
+        // for engines with no woff2. The thing doing this precaching IS the
+        // service worker, and every SW-capable engine already had woff2 by then
+        // (Chrome 40 vs 36, Firefox 44 vs 39, Safari 11.1 vs 10, Edge 17 vs 14),
+        // so a browser that would use the `.woff` never reaches this cache at
+        // all. The files stay in dist and stay fetchable; what is gone is the
+        // unconditional download of a second copy of every face.
+        globPatterns: ['**/*.{js,css,html,svg,woff2,ico,png,webmanifest}'],
+        // Monaco is not part of the app shell: it loads only when a code panel
+        // opens. Its language workers (editor/json/html/css/ts.worker-*.js, up
+        // to ~7 MB each) were already excluded, but `monaco-*.js` — the editor
+        // itself, 4.13 MB — has no "worker-" in its name, so the size cap below
+        // waved it through and every install downloaded it. Same reason, same
+        // treatment: keep both OUT of precache (that is "别缓存到爆"); the
         // /assets/ runtime cache below picks them up on first online use.
-        globIgnores: ['**/*.worker-*.js'],
+        globIgnores: ['**/*.worker-*.js', '**/monaco-*.js'],
         // Raised from the 2 MiB default so the shell-critical `vendor` chunk
         // (~5 MB) is precached — leaving it out is exactly the "离线白屏" the
-        // spec warns against. The only files bigger than this are the Monaco
-        // workers, already excluded above.
+        // spec warns against. Do NOT tune this number to drop one specific
+        // chunk — it is a blanket rule and would take unrelated chunks with it.
+        // Anything that should not be precached goes in `globIgnores` by name.
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         cleanupOutdatedCaches: true,
         // Take control of open pages as soon as a new SW activates. With
@@ -251,7 +303,25 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
+          // Vite's dynamic-import helper (`\0vite/preload-helper.js`) is a
+          // virtual module every chunk with a lazy import shares. Left
+          // unassigned, Rollup merged it into the first manual chunk that
+          // needed it, which after the split below was `monaco`, so the entry
+          // and every route chunk imported `monaco` just to reach the helper
+          // and Monaco was back on the first paint. Pin it where the entry
+          // already goes.
+          if (id.includes('vite/preload-helper')) {
+            return 'vendor'
+          }
           if (id.includes('node_modules')) {
+            // Monaco is the largest package in node_modules and only the code
+            // panels use it, yet the catch-all `vendor` at the bottom pulled it
+            // into the one chunk every page preloads (1.29 MB gzipped, most of
+            // it Monaco). In its own chunk it is reachable only from the lazy
+            // TopicView route, so first paint no longer pays for it.
+            if (id.includes('monaco-editor')) {
+              return 'monaco'
+            }
             if (id.includes('prosemirror')) {
               return 'prosemirror'
             }

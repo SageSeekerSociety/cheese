@@ -32,10 +32,11 @@ from app.domain.agent.device_hub import device_hub
 from app.domain.agent_credential.services import ProjectAgentCredentialService
 from app.domain.authz.policy import authorize_topic_access
 from app.domain.identity.actor import Actor, TokenIdentity, resolve_actor
-from app.domain.identity.handles import UNRESOLVED_AGENT_HANDLE, topic_agent_handle
+from app.domain.identity.handles import UNRESOLVED_AGENT_HANDLE
 from app.domain.identity.services import IdentityService
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.repositories import ProjectRepository
+from app.domain.team.repositories import TeamRepository
 from app.domain.topic.models import TopicRole
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
@@ -97,9 +98,11 @@ class ActorResolver:
         topic_id: uuid.UUID | None = None,
         project_id: uuid.UUID | None = None,
     ) -> Actor:
-        """Resolve the acting identity (token > cheese > handle fallback). Raises
-        nothing — an anonymous fallback resolves to a plain ``anonymous`` actor so
-        existing callers that omitted an author keep working."""
+        """Resolve the verified identity, rejecting invalid agent credentials.
+
+        A missing credential may produce an anonymous actor; it grants no room
+        or project access. Legacy authorship fallback does not authenticate.
+        """
 
         # A scoped token that is genuinely valid but minted for ANOTHER topic /
         # project is a scope violation, not "no credential". It used to fall
@@ -108,10 +111,12 @@ class ActorResolver:
         # so presenting the wrong token beat presenting none and the write landed
         # with its author erased. Observed live: a parent topic posting a comment
         # into a child topic, recorded as ``anonymous``.
+        if self._cheese_token and topic_id is not None and project_id is None:
+            project_id = await self.project_of_topic(topic_id)
         self._reject_out_of_scope_token(topic_id=topic_id, project_id=project_id)
 
-        # A project agent credential names a project and reaches every topic in
-        # it, so the project this request acts on is what it must be judged
+        # A project credential is bounded by a project, so the project this
+        # request acts on is what it must be judged
         # against — via the topic when the route named only that. Resolved once,
         # and only when such a credential is actually presented, so ordinary
         # traffic pays for neither the parse nor the extra read.
@@ -130,6 +135,8 @@ class ActorResolver:
             # here (cheese-gated routes set author="cheese" themselves).
             if not self._cheese_token:
                 return False
+            if project_id is None:
+                return False
             # A project agent credential is the same claim widened: 芝士 acting,
             # bound to a project instead of to one turn's topic. It authenticates
             # wherever the request's project matches it, and nowhere else — a
@@ -141,33 +148,26 @@ class ActorResolver:
                 return await self._credentials.authenticate(
                     self._cheese_token, project_id=credential_project
                 )
+            claims = scoped_token_claims(self._cheese_token)
+            if not token_agent_handle(self._cheese_token):
+                return False
             return verify_scoped_token(
                 self._cheese_token,
                 project_id=str(project_id) if project_id else None,
-                topic_id=str(topic_id) if topic_id else None,
+                topic_id=(
+                    str(topic_id)
+                    if topic_id and not (claims and claims.get("s") == "project")
+                    else None
+                ),
             )
 
-        # WHO the scoped token acts as: the topic's own 分身 (claim ``a``), not the
-        # one collapsed platform account. A token minted before this claim existed —
-        # or a project-wide one — carries none, and then the ROOM answers: the 分身
-        # of the topic being acted on is the same identity a per-turn token would
-        # have named, and it is a real user row, so the write stays attributable.
-        #
-        # `cheese` is deliberately no longer that answer. It is now a real agent
-        # owning a real memory pool, so using it as "we could not tell" would put
-        # every unattributable action on the default agent's name. What is left
-        # over — no claim AND no room — is the sentinel, which owns nothing.
-        #
-        # Note this is the AUTHORSHIP axis only ("who took this action"). Which
-        # agent's memory a turn reads and writes is resolved from the topic's
-        # agent instance instead (app.domain.agent_instance.services); collapsing
-        # the two would tie memory back to the topic, which is the thing the
-        # instance layer exists to undo.
+        # The credential names a fixed participant. A project credential uses
+        # the project's root agent, never the agent of the destination room.
         agent_handle = (
             token_agent_handle(self._cheese_token) if self._cheese_token else None
         )
-        if self._cheese_token and not agent_handle and topic_id is not None:
-            agent_handle = topic_agent_handle(topic_id)
+        if credential_project is not None:
+            agent_handle = await self._credentials.agent_handle(credential_project)
         actor = await resolve_actor(
             bearer_token=self._bearer,
             verify_token=_token_verifier,
@@ -180,7 +180,17 @@ class ActorResolver:
             actor = Actor(
                 handle="anonymous", user_id=None, is_agent=False, via="handle"
             )
+        if (
+            self._cheese_token
+            and not is_global_sandbox_token(self._cheese_token)
+            and (not actor.authenticated or actor.handle == UNRESOLVED_AGENT_HANDLE)
+        ):
+            raise AuthenticationRequiredError("Agent credential is invalid or expired")
         actor = await self._recover_numeric_handle(actor)
+        if actor.authenticated and actor.user_id is None and actor.is_agent:
+            user = await UserRepository(self._session).get_by_username(actor.handle)
+            if user is not None:
+                actor = replace(actor, user_id=user.id)
         # Device-screen attribution (P3): a cheese call from inside an enrolled device's
         # screen carries that screen's token. It is a per-screen capability that proves
         # the call runs as that screen's agent — so it acts as the device agent-user
@@ -266,7 +276,7 @@ class ActorResolver:
             raise AuthenticationRequiredError("登录状态无效或已过期，请重新登录")
 
     async def require_verified_caller(
-        self, *, project_id: uuid.UUID | None = None
+        self, *, project_id: uuid.UUID | None = None, topic_id: uuid.UUID | None = None
     ) -> Actor:
         """Some verified credential must open a gated write — a session token,
         the agent's scoped token, or the global sandbox override — else 401.
@@ -280,7 +290,9 @@ class ActorResolver:
         (dev / trusted-single-host override): it opens the surface but never
         becomes an identity — same rule as ``resolve()``.
         """
-        actor = await self.resolve(fallback_handle=None, project_id=project_id)
+        actor = await self.resolve(
+            fallback_handle=None, project_id=project_id, topic_id=topic_id
+        )
         if actor.authenticated:
             return actor
         if self._bearer:
@@ -314,9 +326,16 @@ class ActorResolver:
             raise ForbiddenError("这个 token 属于别的项目，不能在这里操作")
         claimed_topic = claims.get("t")
         if (
+            claimed_topic is not None
+            and topic_id is None
+            and claims.get("s") != "project"
+        ):
+            raise ForbiddenError("This credential is restricted to one room")
+        if (
             topic_id is not None
             and claimed_topic is not None
             and claimed_topic != str(topic_id)
+            and claims.get("s") != "project"
         ):
             _log.info("token_scope_violation", kind="topic", got=claimed_topic)
             raise ForbiddenError("这个 token 属于别的话题，不能在这里操作")
@@ -368,34 +387,29 @@ class ActorResolver:
     async def authorize_topic(
         self, actor: Actor, *, project_id: uuid.UUID, topic_id: uuid.UUID
     ) -> None:
-        """Enforce topic access for authenticated actors (no-op for the handle
-        fallback / agents). Raises ForbiddenError on an outsider."""
+        """Require a verified participant with access to this room."""
         if not settings.authz_enforce_topic_access:
             return
+        self.reject_failed_credential(actor)
+        if not actor.authenticated:
+            if is_global_sandbox_token(self._cheese_token):
+                return  # Trusted development credential; anonymous access stays denied.
+            raise AuthenticationRequiredError("Login required to access a room")
         members = TopicMembershipRepository(self._session)
-        project_members = MemberRepository(self._session)
-        projects = ProjectRepository(self._session)
         topic = await TopicRepository(self._session).get(topic_id)
 
         async def topic_role(tid: uuid.UUID, handle: str) -> TopicRole | None:
             row = await members.get(topic_id=tid, member_handle=handle)
             return row.role if row is not None else None
 
-        async def roster_exists(tid: uuid.UUID) -> bool:
-            return await members.count_for_topic(tid) > 0
-
         async def is_project_member(pid: uuid.UUID, handle: str) -> bool:
-            if await project_members.get(project_id=pid, user_handle=handle):
-                return True
-            project = await projects.get(pid)
-            return project is not None and project.owner_handle == handle
+            return await self._is_project_member(pid, handle)
 
         allowed = await authorize_topic_access(
             actor,
             project_id=project_id,
             topic_id=topic_id,
             topic_role=topic_role,
-            roster_exists=roster_exists,
             is_project_member=is_project_member,
             is_private=bool(topic and topic.is_private),
         )
@@ -404,24 +418,52 @@ class ActorResolver:
             raise ForbiddenError("你不是这个话题的成员，无权在此操作")
 
     async def authorize_project(self, actor: Actor, *, project_id: uuid.UUID) -> None:
-        """Enforce project access for authenticated humans (no-op for the handle
-        fallback / agents, mirroring ``authorize_topic``). Raises ForbiddenError
-        on an outsider. This is the guard for project-scoped listings — the
-        topic list was readable by ANY logged-in caller holding a project id
-        (titles, activity, participants), which is how a non-member saw a whole
-        project's sidebar (2026-08-16)."""
+        """Require a verified participant with project membership."""
         if not settings.authz_enforce_topic_access:
             return
-        if not actor.authenticated or actor.is_agent:
-            return
-        project_members = MemberRepository(self._session)
-        if await project_members.get(project_id=project_id, user_handle=actor.handle):
-            return
-        project = await ProjectRepository(self._session).get(project_id)
-        if project is not None and project.owner_handle == actor.handle:
+        self.reject_failed_credential(actor)
+        if not actor.authenticated:
+            if is_global_sandbox_token(self._cheese_token):
+                return  # Trusted development credential; anonymous access stays denied.
+            raise AuthenticationRequiredError("Login required to access a project")
+        if await self._is_project_member(project_id, actor.handle):
             return
         _log.info("project_access_denied", handle=actor.handle, project=str(project_id))
         raise ForbiddenError("你不是这个项目的成员，无权查看")
+
+    async def _is_project_member(self, project_id: uuid.UUID, handle: str) -> bool:
+        """The one notion of 项目成员 both guards share: on the project's roster,
+        its owner, or a member of the team the project belongs to.
+
+        Those are exactly the three claims ``ProjectRepository.list_visible_to``
+        lists a project under. Until 2026-09-04 the guards accepted only the
+        first two, so a teammate saw the project in their sidebar and on the
+        team page, clicked in, and the topic list answered 403 — the listing
+        promised what the door refused. Measured on dev: a member who had
+        accepted a team invitation minutes earlier got 200 on
+        ``/projects/{id}`` and 403 on ``/topics?project_id=``.
+
+        Team membership is keyed by user id while every other authorization key
+        is the handle string (see ``_recover_numeric_handle``), so the handle is
+        resolved to its user here rather than trusting ``actor.user_id`` — a
+        session token carries none."""
+        if await MemberRepository(self._session).get(
+            project_id=project_id, user_handle=handle
+        ):
+            return True
+        project = await ProjectRepository(self._session).get(project_id)
+        if project is None:
+            return False
+        if project.owner_handle == handle:
+            return True
+        if project.team_id is None:
+            return False
+        user = await UserRepository(self._session).get_by_username(handle)
+        if user is None:
+            return False
+        return await TeamRepository(self._session).is_team_member(
+            project.team_id, user.id
+        )
 
     async def project_of_topic(self, topic_id: uuid.UUID) -> uuid.UUID | None:
         topic = await TopicRepository(self._session).get(topic_id)

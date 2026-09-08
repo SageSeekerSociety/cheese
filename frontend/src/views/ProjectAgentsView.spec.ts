@@ -38,10 +38,13 @@ import { ApiError } from '../api'
 
 import ProjectAgentsView from './ProjectAgentsView.vue'
 
+import { clearPageCache } from '@/lib/pageCache'
+
 const PROJECT = 'de808b13-ffd2-4b8a-9d1d-fba7babe389f'
 
 function agent(overrides: Partial<ProjectAgent> = {}): ProjectAgent {
   return {
+    configuration: { body: '', model: 'sonnet', harness: 'claude-code', skills: [], mcp_servers: [], effort: null },
     id: 'a1',
     project_id: PROJECT,
     handle: 'cheese',
@@ -49,6 +52,7 @@ function agent(overrides: Partial<ProjectAgent> = {}): ProjectAgent {
     display_name: '芝士',
     is_default: true,
     configured: true,
+    is_active: true,
     ...overrides,
   }
 }
@@ -87,6 +91,9 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  // 页面缓存是模块级的、跨用例活着的：不清的话上一条用例的名册会被下一条用例的
+  // 第一帧画出来（那正是「第二次进不转圈」的设计），断言就打在旧数据上。
+  clearPageCache()
   listProjectAgents.mockReset()
   listAgentTypes.mockReset().mockResolvedValue({ data: [], total: 0 })
   listMemory.mockReset().mockResolvedValue({ data: [], total: 0 })
@@ -236,6 +243,20 @@ describe('停用', () => {
     await fireEvent.click(await screen.findByRole('button', { name: '停用' }))
     await fireEvent.click(await screen.findByRole('button', { name: '取消' }))
     expect(deactivateProjectAgent).not.toHaveBeenCalled()
+  })
+
+  it('已停用的还列在名册上，标出来，并且不再给「停用」和「设为默认」', async () => {
+    // 管理页要能看到它们 —— 一个队友攒下的记忆还在，它只是不接新活了。
+    listProjectAgents.mockResolvedValue({
+      data: [agent({ id: 'a2', handle: 'reviewer', display_name: '评审', is_default: false, is_active: false })],
+      total: 1,
+    })
+    mountPage()
+
+    expect(await screen.findByText('评审')).toBeTruthy()
+    expect(screen.getByText('已停用')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '停用' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '设为默认' })).toBeNull()
   })
 
   it('确认之后才真的停用', async () => {

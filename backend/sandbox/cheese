@@ -12,16 +12,16 @@
 例:
   cheese doc set DOC.md            # 把 DOC.md 设为本话题实况文档
   cheese doc get                   # 打印本话题实况文档
-  cheese split "数据清洗"           # 派出一条支线
+  cheese split "数据清洗"           # 在本房间开一条活(开完自己起分身去做)
+  cheese bind <task_id> <agent_id>  # 告诉平台这条活归哪个分身
   cheese decision "用 item-based CF" # 记一条决策
   cheese remember "技术栈=FastAPI"  # 记入项目记忆
   cheese recall "技术选型"          # 按需检索记忆(关键词检索)
   cheese notify --title "看下" --to mentor-1 --level strong --kind decision_request --options "A|B"
   cheese accept-request mentor-1 "中期验收"  # 递验收卡
-  cheese conclude "原型完成,Recall@10=0.18"  # 支线结论回流房间
-  cheese tell "数据清洗" "口径改了,按新的来"    # 给正在跑的支线追加要求(会叫醒它)
+  cheese conclude-task <task_id>            # 收掉这条活(说它结束了)
+  cheese tell "数据清洗" "口径改了,按新的来"    # 在那条活上留一句话(不叫醒任何人)
   cheese milestone "中期汇报" --due 2026-06-20
-  cheese await "bash .claude/scripts/check.sh --full"  # 后台跑;跑完平台叫醒本话题
   cheese status                             # 平台状态快照(本轮运行状态/验收卡/闸门输出/水位)
   cheese artifact report.html               # 把产物设为本话题当前预览(进预览窗口)
   cheese serve 5173 "Vue dev server"        # 应用起在 127.0.0.1:5173 后,设为预览
@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -43,11 +44,6 @@ import urllib.request
 API = os.environ.get("CHEESE_API", "http://host.docker.internal:8099").rstrip("/")
 PROJECT = os.environ.get("CHEESE_PROJECT", "")
 TOPIC = os.environ.get("CHEESE_TOPIC", "")
-# The ROOM this turn happens in. A room's own turn has it equal to TOPIC; a
-# thread's is the room it lives in, so `ROOM != TOPIC` is exactly "this is a
-# thread". Not every runtime puts it in the environment, so an empty value means
-# "not known here", never "this is a room" — the backend is the actual rule.
-ROOM = os.environ.get("CHEESE_ROOM", "")
 AUTHOR = os.environ.get("CHEESE_AUTHOR", "cheese")
 TOKEN = os.environ.get("CHEESE_TOKEN", "")
 # The agent turn this CLI call belongs to — sent back so the blocks it creates
@@ -56,6 +52,24 @@ TURN = os.environ.get("CHEESE_TURN", "")
 # In a private chat, `remember` writes the owner's personal memory (跟着人走).
 MEMORY_SCOPE = os.environ.get("CHEESE_MEMORY_SCOPE", "project")
 OWNER = os.environ.get("CHEESE_OWNER", "")
+
+
+def _preview_base(port: int) -> str:
+    """Recognize a server mounted at the platform's advertised preview base."""
+    base = os.environ.get("CHEESE_APP_BASE", "")
+    if not base:
+        return ""
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    try:
+        conn.request("GET", "/")
+        response = conn.getresponse()
+        # Vite redirects / to its configured base. Do not follow redirects:
+        # an application's login redirect must not change the preview mount.
+        if response.status in (301, 302, 303, 307, 308) and response.getheader("Location") == base:
+            return base.rstrip("/")
+        return ""
+    finally:
+        conn.close()
 
 
 def _call(
@@ -109,9 +123,9 @@ def _doc_version_path(topic: str) -> str:
     claiming to be based on it, which is the exact overwrite the version exists
     to stop.
 
-    Lives on the session mount (host-backed, survives a container rebuild) next
-    to the await logs, for the same reason: a rebuild mid-turn must not turn a
-    read the agent really did into a read the CLI has forgotten.
+    Lives on the session mount (host-backed, survives a container rebuild): a
+    rebuild mid-turn must not turn a read the agent really did into a read the
+    CLI has forgotten.
     """
     home = os.environ.get("HOME") or "/tmp"
     session = os.path.join(home, ".claude")
@@ -283,263 +297,6 @@ def _format_status(d: dict) -> str:
     return "\n".join(lines)
 
 
-# --- await: 后台跑长任务，跑完平台自动叫醒本话题 -------------------------------
-#
-# Why this exists: ending a turn to "wait for" a background command used to
-# freeze the topic — nothing on the platform starts a new turn when a detached
-# process exits. `cheese await` registers the command with the platform, runs it
-# in a detached child here in the sandbox (where the venv/toolchain is warm), and
-# the child reports the exit code + output tail back when it finishes; the
-# platform lands that in the timeline and wakes the topic.
-#
-# The reporting token comes from registration, NOT from CHEESE_TOKEN: the
-# container's own token expires in an hour and these tasks are longer than that.
-
-_AWAIT_TAIL_BYTES = 4000
-# Same cadence the backend uses for its own at-least-once deliveries.
-_AWAIT_RETRY_DELAYS = (0, 5, 30)
-
-
-def _await_log_path(run_id: str) -> str:
-    """Where a backgrounded command's full output goes.
-
-    Two things it must not be. NOT the worktree — these logs would be committed
-    with the topic's work (a full check run's output is megabytes of it). And NOT
-    the container's own filesystem, which is where they used to go: `await` exists
-    FOR commands that run for hours, which is exactly long enough to be caught by
-    a container rebuild, and a rebuild took the log with it — the run's only
-    evidence, gone (measured 2026-08-11).
-
-    The session mount is both: host-backed (it is what carries --resume state and
-    the hook spool across rebuilds) and outside the worktree."""
-    log_dir = os.environ.get("CHEESE_AWAIT_LOGS") or ""
-    if not log_dir:
-        home = os.environ.get("HOME") or "/tmp"
-        session = os.path.join(home, ".claude")
-        # The container-local fallback is for a CLI run with no session mount at
-        # all; losing the log beats refusing to run the command.
-        log_dir = (
-            os.path.join(session, "cheese-await")
-            if os.path.isdir(session)
-            else os.path.join(home, ".cheese", "await")
-        )
-    os.makedirs(log_dir, exist_ok=True)
-    return os.path.join(log_dir, f"{run_id}.log")
-
-
-def _await_start(
-    command: str, label: str, timeout_s: int, as_check: bool = False
-) -> None:
-    """Register the command, fork the detached runner, and return immediately."""
-    import subprocess
-    import time
-
-    topic = _need("CHEESE_TOPIC", TOPIC)
-    run_id = f"{int(time.time())}-{os.getpid()}"
-    log_path = _await_log_path(run_id)
-    data = _call(
-        "POST",
-        f"/topics/{topic}/background-task",
-        {
-            "command": command,
-            "label": label,
-            "timeout_s": timeout_s,
-            "log_path": log_path,
-        },
-    ).get("data", {})
-    task_id = data.get("task_id", "")
-
-    child_env = dict(os.environ)
-    # Via env, not argv: the wake token has a long life and `ps` is world-readable.
-    child_env["CHEESE_AWAIT_TOKEN"] = data.get("wake_token", "")
-    subprocess.Popen(  # noqa: S603 — our own script, fixed argv
-        [
-            sys.executable,
-            os.path.abspath(__file__),
-            "__await-child",
-            task_id,
-            command,
-            log_path,
-            str(timeout_s),
-            "check" if as_check else "run",
-        ],
-        env=child_env,
-        cwd=os.getcwd(),
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        # Its own session, so it outlives this shell AND the turn that spawned it.
-        start_new_session=True,
-    )
-    print(
-        f"[cheese] 已在后台开跑：{data.get('label') or command}\n"
-        f"  完整输出: {log_path}\n"
-        f"  跑完平台会自动叫醒本话题，并带上退出码和输出尾巴——"
-        f"你可以安心结束本轮，不用干等（上限 {timeout_s}s）。"
-    )
-
-
-def _wait_for_heavy_lane(timeout_s: int) -> bool:
-    """Hold the room's single heavy lane, waiting for it if someone else has it.
-
-    Waiting is right HERE and wrong in a turn: `cheese await` already returned,
-    so nothing is blocked on this — the topic gets woken when the command ends,
-    whenever that is. Inside a turn the same wait would burn a whole turn's
-    compute standing still.
-
-    Gives up after a share of the command's own timeout rather than forever: a
-    command that never gets the lane should report that it did not run, not sit
-    invisible until someone goes looking.
-    """
-    import time as _time
-
-    topic = TOPIC
-    if not topic:
-        return False
-    deadline = _time.time() + max(60, min(timeout_s, 1800))
-    while _time.time() < deadline:
-        try:
-            r = _call(
-                "POST", f"/topics/{topic}/lock", {"kind": "heavy", "resource": ""}
-            )["data"]
-        except SystemExit:
-            return False  # the platform said no; running anyway beats not running
-        if r.get("acquired"):
-            return True
-        _time.sleep(5)
-    return False
-
-
-def _release_heavy_lane() -> None:
-    if not TOPIC:
-        return
-    try:
-        _call("POST", f"/topics/{TOPIC}/unlock", {"kind": "heavy", "resource": ""})
-    except SystemExit:
-        pass
-
-
-def _await_child(
-    task_id: str, command: str, log_path: str, timeout_s: int, mode: str = "run"
-) -> None:
-    """The detached runner: run the command, then report how it ended.
-
-    Never raises past this frame — a crash here is a topic that never wakes up,
-    which is the exact failure this whole path exists to remove."""
-    import signal
-    import subprocess
-    import time
-
-    started = time.time()
-    exit_code = -1
-    held_heavy = False
-    try:
-        # 重活一次只跑一个: test runs, dependency installs and dev servers fight
-        # over the machine — ports, the database, one shared venv — not over the
-        # tree, so no amount of care about which files you touch helps. This is
-        # the one lock the platform can really enforce, because THIS code is the
-        # platform's; waiting here costs nothing, since the turn that asked for
-        # it already ended.
-        held_heavy = _wait_for_heavy_lane(timeout_s)
-        with open(log_path, "wb") as log:
-            proc = subprocess.Popen(  # noqa: S602 — the agent's own command, by design
-                ["bash", "-lc", command],
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-            try:
-                exit_code = proc.wait(timeout=timeout_s)
-            except subprocess.TimeoutExpired:
-                # Kill the whole process group: a build/test runner's children
-                # would otherwise survive and keep writing to the log.
-                try:
-                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-                except OSError:
-                    proc.kill()
-                proc.wait()
-                exit_code = 124  # `timeout(1)`'s convention
-    except Exception as e:  # noqa: BLE001 — report the failure, never vanish
-        with open(log_path, "a", encoding="utf-8") as log:
-            log.write(f"\n[cheese await] 命令无法执行: {e}\n")
-    finally:
-        # Give the lane back however this ended. A lane held by a process that
-        # died is the one failure worse than the collision it prevents — though
-        # the lock's own expiry (30 minutes) is the backstop that keeps even
-        # that bounded.
-        if held_heavy:
-            _release_heavy_lane()
-
-    tail = _await_tail(log_path)
-    if mode == "check":
-        # 超时算失败: a quick check's whole value is the speed, and one that
-        # quietly grew past its budget and reported "inconclusive" would rot
-        # into a second full CI. 124 is what the timeout path above records.
-        _report_check_result(exit_code == 0, exit_code, tail)
-    _await_report(
-        task_id,
-        exit_code=exit_code,
-        tail=tail,
-        duration_s=time.time() - started,
-    )
-
-
-def _report_check_result(ok: bool, exit_code: int, tail: str) -> None:
-    """Put the result where the person about to accept will see it.
-
-    Not a gate — nothing reads it to decide anything. It is on the card because
-    a check whose result goes nowhere is a check nobody bothers to run."""
-    if not TOPIC:
-        return
-    head = "通过" if ok else ("超时" if exit_code == 124 else f"失败(exit {exit_code})")
-    try:
-        _call(
-            "POST",
-            f"/topics/{TOPIC}/check-result",
-            {"ok": ok, "detail": f"{head}\n{tail[-1500:]}"},
-        )
-    except SystemExit:
-        pass
-
-
-def _await_tail(log_path: str) -> str:
-    try:
-        with open(log_path, "rb") as f:
-            f.seek(0, os.SEEK_END)
-            f.seek(max(0, f.tell() - _AWAIT_TAIL_BYTES))
-            return f.read().decode(errors="replace")
-    except OSError as e:
-        return f"（读不到输出日志 {log_path}: {e}）"
-
-
-def _await_report(
-    task_id: str, *, exit_code: int, tail: str, duration_s: float
-) -> None:
-    """POST the result, retrying — a dropped report is a frozen topic."""
-    import time
-
-    topic = os.environ.get("CHEESE_TOPIC", "")
-    token = os.environ.get("CHEESE_AWAIT_TOKEN", "")
-    url = f"{API}/topics/{topic}/background-task/{task_id}/done"
-    body = json.dumps(
-        {"exit_code": exit_code, "tail": tail, "duration_s": duration_s}
-    ).encode()
-    for delay in _AWAIT_RETRY_DELAYS:
-        if delay:
-            time.sleep(delay)
-        req = urllib.request.Request(url, data=body, method="POST")
-        req.add_header("Content-Type", "application/json")
-        if token:
-            req.add_header("X-Cheese-Token", token)
-        try:
-            with urllib.request.urlopen(req, timeout=30) as r:
-                r.read()
-            return
-        except Exception:  # noqa: BLE001 — retry, then give up quietly
-            continue
-
-
 def _print_api_index() -> None:
     """List available operations from our FastAPI /openapi.json (like Restish,
     but built from OUR live spec). Lets `cheese api` self-describe what raw calls
@@ -628,27 +385,27 @@ def build_parser() -> argparse.ArgumentParser:
 
     ps = sub.add_parser(
         "split",
-        help="派出一条支线（分身自动开工）",
+        help="在这个房间里开一条活（开完你自己起分身去做）",
         description=(
-            "在这个房间里派出一条支线,平台立刻起一个分身去做它。\n"
+            "开一条活并给它建好任务简报文档。**它不会自己动起来**——起分身是你的事:\n"
             "\n"
-            "分身开工时能看到的只有两样东西,都来自本命令:\n"
-            "  1. --brief 的原文(标题为「拆分意图」)\n"
-            "  2. 本话题当前实况文档的快照(平台自动附上,不用你复制)\n"
-            "它看不到本话题的对话历史。简报里没写的前提,它就是不知道。\n"
+            "  1. cheese split \"标题\" --brief \"...\"   → 拿到 task id\n"
+            "  2. 用你自己的 Agent 工具起一个分身,把 --brief 的原文放进 prompt\n"
+            "  3. cheese bind <task_id> <agent_id>   → 告诉平台这条活归哪个分身\n"
             "\n"
-            "分身跑在一个独立沙箱里,工作区是从 main 新建的 git 工作树:\n"
-            "  - 本话题工作区里 gitignored 的东西(reference/、tmp/、clone 下来的\n"
-            "    参照仓库、装好的依赖)都不会跟过去,要它用就在简报里写清怎么自己弄\n"
-            "  - 它写的文件必须落在自己工作区的相对路径下,写 /tmp 会丢\n"
-            "  - 它和你并行改同一个仓库,会撞车的地方(同一个文件/同一份配置)要在\n"
-            "    简报里划成硬边界\n"
+            "第 3 步不做,这条活在界面上就永远是「没人做」,分身干的每一件事都记在\n"
+            "你(房间)头上,谁也分不出来。\n"
             "\n"
-            "split 是唯一会生出另一个 agent 的动作,没有深度/频率上限。"
+            "分身和你共用同一个工作区、同一条分支,所以:\n"
+            "  - 装好的依赖、clone 下来的参照仓库它都直接能用,不用重来一遍\n"
+            "  - 两条活整块改同一个文件会互相盖掉,拿 --paths 划开\n"
+            "\n"
+            "分身能看到的只有你放进 prompt 的东西。--brief 会存成它的任务简报文档,\n"
+            "但**它不会自动读**,记得在 prompt 里把简报原文带上。"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    ps.add_argument("title", help="这条支线的标题,≤12 字最好")
+    ps.add_argument("title", help="这条活的标题,≤12 字最好")
     ps.add_argument(
         "--paths",
         nargs="+",
@@ -663,39 +420,53 @@ def build_parser() -> argparse.ArgumentParser:
         "--brief",
         default=None,
         help=(
-            "任务简报,分身的全部起点:要干什么、硬边界(别碰哪些文件/别做哪些事)、"
+            "任务简报:要干什么、硬边界(别碰哪些文件/别做哪些事)、"
             "验收标准(做到什么程度算完)、已知但未核实的事实要标出来。"
-            "不用重复房间的实况文档(平台会自动附快照)。"
-            "不填的话分身只有标题和那份快照,基本等于让它自己猜。"
+            "它会存成这条活的任务简报文档(附一份房间实况文档快照),"
+            "**同时你要把这段原文放进分身的 prompt**——分身不会自己去读文档。"
         ),
     )
 
-    paw = sub.add_parser(
-        "await",
-        help="把长命令丢到后台跑；跑完平台自动叫醒本话题并带上退出码+输出尾巴",
+    pb = sub.add_parser(
+        "bind",
+        help="告诉平台这条活由哪个分身在做",
         description=(
-            "要等几分钟以上的命令一律走它:全量检查、构建、长跑脚本。\n"
+            "起完分身立刻调它。平台从此知道哪些事件是这条活干的:分身的每一次工具\n"
+            "调用都记进这条活的时间线,而不是混在房间的流水里。\n"
             "\n"
-            "命令在后台跑,本命令立刻返回。跑完平台会自动开一轮新的把你叫醒,"
-            "带上退出码、耗时和输出尾巴。\n"
-            "**丢给它之后就可以放心结束本轮**——别为了等它而干等或反复轮询,"
-            "那会把话题冻死。"
+            "agent_id 从你起分身时拿到的那个 id 来。绑错了不能改绑到别的活上——\n"
+            "一个分身同时只做一条活,重复绑会被拒。\n"
+            "\n"
+            "不绑的后果是无声的:活看着没人做,事件全记在房间头上。"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    paw.add_argument("command", help="要跑的命令，如 'bash .claude/scripts/check.sh'")
-    paw.add_argument("--label", default="", help="一句话说明在跑什么（唤醒时会显示）")
-    paw.add_argument(
-        "--timeout", type=int, default=3600, help="秒，超时会被杀掉并按退出码 124 回报"
-    )
+    pb.add_argument("task_id", help="cheese split 返回的那个 id")
+    pb.add_argument("agent_id", help="你起的那个分身的 id")
 
-    # Internal: the detached child _await_start forks. Not for humans/agents.
-    pawc = sub.add_parser("__await-child")
-    pawc.add_argument("task_id")
-    pawc.add_argument("command")
-    pawc.add_argument("log_path")
-    pawc.add_argument("timeout_s", type=int)
-    pawc.add_argument("mode", nargs="?", default="run", choices=["run", "check"])
+    pct = sub.add_parser(
+        "conclude-task",
+        help="收掉房间里的一条活(说它结束了)",
+        description=(
+            "分身报完成、你验过货、改动也整合进分支之后,由你说一句「这条活结束了」。\n"
+            "\n"
+            "分身自己交回来的那句话平台已经记在卡上了,不用你抄一遍。要写\n"
+            "`--conclusion` 的只有一种情况:它最后那句话是个半截(比如「测试跑起来了」),\n"
+            "而你知道真正的结论是什么。\n"
+            "\n"
+            "为什么不是分身报完成就自动收:一个分身可以报好几次完成(它把长命令丢进\n"
+            "自己的后台再停下来等,也算一次),而且还会收到来路不明的完成通知。\n"
+            "所以「完成」是给你看的信号,不是终点——**验过再收**。\n"
+            "\n"
+            "结论写摘要不写流水账。值钱的三样:做了什么、查出来但故意没做的(以及\n"
+            "为什么)、哪些结论没核实。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    pct.add_argument("task_id", help="这条活的 id")
+    pct.add_argument(
+        "--conclusion", default="", help="覆盖分身交回的那句话(默认保留它的)"
+    )
 
     sub.add_parser(
         "push-fix",
@@ -711,27 +482,6 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
-    pcheck = sub.add_parser(
-        "check",
-        help="跑一遍项目的快检(在自己的沙箱里,不占 CI runner)",
-        description=(
-            "跑项目配置的那条快检命令,结果记到本地点这棵树上,验收卡上看得见。\n\n"
-            "它**不是闸门**:红了照样能递卡,照样能采纳——决定权在 PR 上的真 CI\n"
-            "(#296)。它存在的意义是让红灯**被看见**:结果没人看的检查,没人会跑。\n\n"
-            "跑在你自己的沙箱里,走 `cheese await`,所以:占用的是本房间那条重活\n"
-            "车道(不会和别人的测试抢端口/数据库),**不占 CI runner**,并且本轮\n"
-            "立刻返回——跑完平台自动叫醒你。\n\n"
-            "**超时算失败**。快检的全部价值就是快;一条慢慢长过预算、还报「没结论」\n"
-            "的检查,会烂成第二个全量 CI。"
-        ),
-    )
-    pcheck.add_argument(
-        "--timeout",
-        type=int,
-        default=90,
-        help="时间预算(秒),超了算失败。默认 90",
-    )
-
     pclaim = sub.add_parser(
         "claim",
         help="声明这条活要碰哪些路径(可以中途追加)",
@@ -744,18 +494,26 @@ def build_parser() -> argparse.ArgumentParser:
             "  · 同一个**文件**被两条活声明 → 拒绝(这是唯一没有别的防线的情况)\n"
             "  · **目录**重叠 → 只警告(两条活都在 backend/app/domain/review/ 底下很正常)\n\n"
             "是追加,不是替换:活干着干着会碰到没预料到的文件,再 claim 一次就行。\n"
-            "简报里写路径没用——简报写完就改不了,而声明必然要长。"
+            "简报里写路径没用——简报写完就改不了,而声明必然要长。\n\n"
+            "不带 --task 就是房间自己声明:照样告诉你撞了谁,但**不记下来**——声明记在\n"
+            "卡上,房间没有卡。替一个分身声明就带上 --task <task id>,那一条会被记住,\n"
+            "别的活才看得见它。"
         ),
     )
     pclaim.add_argument("paths", nargs="+", help="路径,结尾带 / 表示目录")
+    pclaim.add_argument(
+        "--task",
+        default=None,
+        help="替这条活(而不是房间自己)声明,填 task id——只有这样才会被记下来",
+    )
 
     plock = sub.add_parser(
         "lock",
         help="整块覆盖某个文件、或跑重活之前,先占住",
         description=(
             "本房间有两把锁,**强制程度不一样,用之前要知道**:\n\n"
-            "  heavy —— **真的拦得住**。跑测试、装依赖、起 dev server 都走\n"
-            "    `cheese await`,那是平台自己的代码,所以能真的排队。\n"
+            "  heavy —— **真的拦得住**,能真的排队;你手跑测试/装依赖/起 dev server\n"
+            "    之前自己占一下,跑完还回去。\n"
             "  file  —— **只是提醒**。你的 Write 工具是你自己 harness 的,平台拦不住。\n"
             "    它的作用是:你要整块覆盖一个文件之前,能知道别人是不是正在覆盖它。\n\n"
             "两把锁都**不等待**:占不到就直接告诉你是谁占着,你可以改用 Edit、\n"
@@ -801,10 +559,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     ptitle = sub.add_parser(
         "title",
-        help="给本话题起/改标题",
-        description="话题还叫「新话题」时,据任务起一个 ≤12 字的标题。这是开工第一步。",
+        help="给本话题(或它下面的一条活)起/改标题",
+        description=(
+            "话题还叫「新话题」时,据任务起一个 ≤12 字的标题。这是开工第一步。\n"
+            "\n"
+            "--task 给这个房间里的一条活起名字:讨论升级出来的活是没有标题的,\n"
+            "只有你能给它起一个。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ptitle.add_argument("text", help="标题,≤12 字")
+    ptitle.add_argument(
+        "--task",
+        default=None,
+        help="给这条活(而不是本话题)起标题,填 task id",
+    )
 
     prem = sub.add_parser(
         "remember",
@@ -897,14 +666,13 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "成果做完了,把验收卡递给某个具体的人(不是广播)。\n"
             "\n"
-            "**只有房间递得了卡,支线递不了。** 一棵树=一个分支=一个 PR=一批活,而这批活是\n"
-            "整个房间的:递卡会把分支封口开 PR,你的兄弟支线还在往同一条分支上写。所以支线\n"
-            "做完是 `cheese conclude` 把结论交回房间,由房间统一递卡。\n"
+            "一棵树=一个分支=一个 PR=一批活,而这批活是整个房间的:递卡会把分支封口\n"
+            "开 PR。所以派出去的活不是各递各的卡——分身干完把结论交回来,你用\n"
+            "`cheese conclude-task` 替它落一条,攒够了整个房间递一次。\n"
             "\n"
-            "配了质量闸门的项目,递卡后平台会自动跑一遍检查,红了卡片会被打回、"
-            "根本到不了验收人手上。**递卡前先自己把检查跑绿**,省一个来回。\n"
-            "闸门跑在另一个容器里,只和你共享 /work,$HOME 不一样——所以「我这儿是绿的」"
-            "不等于闸门那儿是绿的。\n"
+            "递卡就开 PR,真检查(GitHub Actions)在人采纳**之前**就开始跑;满足项目\n"
+            "分支保护规则后,人点采纳=当场合并他看到的那个 commit。\n"
+            "所以**递卡前自己把测试跑绿**,跑不动的照实说是环境限制。\n"
             "\n"
             "**--subject 就是这次改动留在 git 历史里的那一行**,必填。递卡会开 PR,采纳会把\n"
             "整个分支压成一个提交,标题用的就是它。不给就递不出去——后端会当场打回并告诉你\n"
@@ -917,7 +685,24 @@ def build_parser() -> argparse.ArgumentParser:
             "so the person whose work it is gets no attribution.'\n"
             "\n"
             "--body 写**为什么**,不写做了什么的清单——diff 已经说了做了什么。显而易见的\n"
-            "改动可以不写。别写「跑通了所有测试」这类废话:提交能存在就说明它过了。"
+            "改动可以不写。别写「跑通了所有测试」这类废话:提交能存在就说明它过了。\n"
+            "\n"
+            "**--task 报这批代码是哪几条活写的**(可重复):\n"
+            "  cheese accept-request lisi \"最懂这块\" --subject '...' \\\n"
+            "    --task 3f2a...  --task 9c81...\n"
+            "它变成合并后那个提交里的 `Cheese-Task:` 行,是 `git log` 里唯一追得到\n"
+            "「哪个分身写了这次改动」的东西。平台**推不出来**:活挂在哪棵树是 split\n"
+            "那一刻定的,代码进哪个 PR 是递卡这一刻定的,一个房间跨批次干活时这两个\n"
+            "答案就不是一回事了;而沙箱里每个提交的作者都是需求方,commit 也认不出\n"
+            "分身。所以只有你说得清。\n"
+            "\n"
+            "只报**代码真的在这次 diff 里**的活。别报:一行没写的占位活、还在跑的活、\n"
+            "改动要走下一批的活。不报就一行都不写——错的署名比没有署名更糟。\n"
+            "反过来,一条活可以出现在**好几批**里:上一批交付过、之后继续往同一条分支\n"
+            "写、代码又进了这一批,就照实再报一次,它确实写了两批。\n"
+            "\n"
+            "声明只在递卡这一刻收,递出去就补不上了(卡上没有改声明的入口,同一棵树上\n"
+            "也递不出第二张卡)。忘了带只能请验收人作废这张卡、你再重递一次。"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -931,66 +716,40 @@ def build_parser() -> argparse.ArgumentParser:
     pa.add_argument(
         "--body", default=None, help="提交正文: 为什么要这次改动(不明显时才写)"
     )
-
-    pc = sub.add_parser(
-        "conclude",
-        help="支线结论回流它所在的房间",
-        description=(
-            "这条支线做完了,把结论回流到它所在的房间。房间读到的就只有这段话——"
-            "写摘要,不写流水账。\n"
-            "\n"
-            "值钱的三样:做了什么、**查出来但故意没做的(以及为什么)**、"
-            "哪些结论是没核实的。否定结论和肯定结论一样值钱,别省掉。"
+    pa.add_argument(
+        "--task",
+        action="append",
+        default=None,
+        metavar="TASK_ID",
+        help=(
+            "这批代码是哪条活写的(可重复)。写进合并后那个提交的 `Cheese-Task:`,"
+            "是**永久历史**里唯一说得清哪个分身写了这次改动的东西。"
+            "只填**代码真的在这次 diff 里**的活——没产出的占位活、还在跑、"
+            "改动要走下一批的活都别填(平台分辨不了,只能你说)。"
+            "不填就一行不写:错的署名比没有署名更糟"
         ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    pc.add_argument("conclusion", help="结论摘要,给房间看的")
 
     pt = sub.add_parser(
         "tell",
-        help="给正在跑的支线(或你所在的房间)传一句话,并叫醒它",
+        help="在你派出的一条活上留一句话",
         description=(
-            "往父子这条边上传一句话,**并且真的叫醒对方**。只有两个方向通:\n"
-            "  房间 → 它派出的支线    支线 → 它所在的房间\n"
-            "没有父子关系的两个话题之间发不通——那等于放弃话题级隔离。\n"
+            "把一句话写在你派出的某条活的时间线上。只有这一个方向:\n"
+            "  房间 → 它派出的活\n"
             "\n"
-            "它解决的是:任务简报是一次性的、写完就改不了。发现简报写错了、"
-            "口径变了、有个前提不成立,用这个追过去,别等对方交完活再返工。\n"
+            "它**不叫醒任何人**,也不需要:做那条活的分身就在你自己的会话里,\n"
+            "你直接给它发消息就是了。这条命令管的是**留痕**——你跟分身说了什么、\n"
+            "分身回了什么,写在活那边,盯着那条活的人才看得到(他们够不着分身),\n"
+            "下周翻开这条活的人也才知道中途改过什么。\n"
             "\n"
-            "多快:对方**正在跑一轮**的话,这句话直接插进它那一轮(秒级,像人在旁边\n"
-            "插话);对方闲着就叫醒它开一轮;已经有一轮在排队就搭同一轮——\n"
-            "同一个话题连收多条只处理一轮,不会被反复叫醒。命令的输出会告诉你\n"
-            "走的是哪一种。\n"
-            "长的东西写进实况文档(两边都读得到),这里只发「一条追加要求」。\n"
+            "长的东西写进实况文档(两边都读得到),这里只写「一条追加要求」。\n"
             "\n"
-            "对方是谁:地点 id、`<#id>`、或者标题都行(只在你派出的支线+你所在的房间里认)。\n"
-            "回母话题可以直接写 `parent`,不用去查它叫什么: cheese tell parent \"...\""
+            "对方是谁:活的 id、`<#id>`、或者标题都行(只认你自己派出的活)。"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    pt.add_argument("target", help="收方: 支线/房间的 id、<#id> 或标题")
+    pt.add_argument("target", help="哪条活: id、<#id> 或标题")
     pt.add_argument("message", help="要说的话")
-
-    pcc = sub.add_parser(
-        "conclusion",
-        help="结算支线回流上来的结论卡（不结算=默认采信，本轮结束自动生效）",
-        description=(
-            "结算支线回流上来的结论卡。**不结算也会生效**——本轮结束时还开着的卡"
-            "自动采信，另有 30 分钟绝对超时兜底,所以「什么都不做」等于同意。\n"
-            "只有你要改变默认结果时才用它: need-evidence 让那条支线补一条证据"
-            "(要付一整轮,且每张卡最多打回 1 次), escalate 是要人拍板。"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    pcc.add_argument(
-        "action",
-        choices=["accept", "need-evidence", "escalate"],
-        help="accept=采信(可不做,默认就会采信) / need-evidence=让那条支线补一条证据 / escalate=要人拍板",
-    )
-    pcc.add_argument("card", help="结论卡 id（消化提示里带着）")
-    pcc.add_argument(
-        "reason", nargs="?", default="", help="need-evidence/escalate 必填：要补什么/要谁拍什么板"
-    )
 
     pm = sub.add_parser(
         "milestone",
@@ -1150,49 +909,45 @@ def main() -> None:
         if a.paths:
             body["paths"] = a.paths
         r = _call("POST", f"/topics/{topic}/split", body)["data"]
-        if r.get("queued"):
-            held = "\n".join(
-                f"  · {h['title']}（主：{h.get('owner_handle') or '—'}，"
-                f"最后活动 {h.get('last_turn_at') or '未开始'}）"
-                for h in r.get("slots_held_by") or []
-            )
-            print(
-                f"已派出支线：{r['title']}（id={r['id']}），"
-                f"但本房间的 4 个额度都占着，它排在第 {r.get('queue_position') or '?'} 位，"
-                f"有额度就自动开工。\n现在占着额度的是：\n{held}"
-            )
-        else:
-            print(f"已派出支线：{r['title']}（id={r['id']}），分身已带简报自动开工")
-    elif a.cmd == "await":
-        _await_start(a.command, a.label, a.timeout)
-    elif a.cmd == "__await-child":
-        _await_child(a.task_id, a.command, a.log_path, a.timeout_s, a.mode)
-    elif a.cmd == "check":
-        proj = _need("CHEESE_PROJECT", PROJECT)
-        gate = _call("GET", f"/projects/{proj}/quality-gate").get("data") or {}
-        cmd = (gate.get("check_command") or "").strip()
-        if not cmd:
-            print(
-                "这个项目没配快检命令(quality-gate 的 check_command 是空的),"
-                "没有东西可跑。"
-            )
-        else:
-            _await_start(cmd, "快检", a.timeout, as_check=True)
-            print(
-                f"快检已经在后台跑起来了(预算 {a.timeout} 秒,超了算失败)。"
-                "跑完平台会叫醒本话题并带上结果,同时记到验收卡上。"
-                "本轮不用等它。"
-            )
+        print(
+            f"已开一条活：{r['title']}（id={r['id']}）。**它还没人做**，接下来两步：\n"
+            f"  1. 用你的 Agent 工具起一个分身，把 --brief 的原文放进 prompt\n"
+            f"  2. cheese bind {r['id']} <分身的 agent_id>"
+        )
+    elif a.cmd == "bind":
+        topic = _need("CHEESE_TOPIC", TOPIC)
+        r = _call(
+            "POST", f"/topics/{topic}/tasks/{a.task_id}/bind", {"agent_id": a.agent_id}
+        )["data"]
+        print(f"「{r['title']}」现在归分身 {r['subagent_id']}，它干的事会记到这条活上。")
+    elif a.cmd == "conclude-task":
+        topic = _need("CHEESE_TOPIC", TOPIC)
+        r = _call(
+            "POST",
+            f"/topics/{topic}/tasks/{a.task_id}/conclude",
+            {"conclusion": a.conclusion},
+        )["data"]
+        print(f"「{r['title']}」收了。结论：{(r.get('conclusion') or '（没有留话）')}")
     elif a.cmd == "claim":
         topic = _need("CHEESE_TOPIC", TOPIC)
-        r = _call("POST", f"/topics/{topic}/claim", {"paths": a.paths})["data"]
+        # 替一条活声明时走 /tasks/<id>/claim:那条会被记下来,房间自己那条只查不记
+        # (声明记在卡上,房间没有卡)。两条都走房间的地址——这一轮的 token 是按房间
+        # 签的,活没有自己的地址。
+        path = (
+            f"/topics/{topic}/tasks/{a.task}/claim"
+            if a.task
+            else f"/topics/{topic}/claim"
+        )
+        r = _call("POST", path, {"paths": a.paths})["data"]
         if r.get("refusals"):
             print("这些路径没能声明:")
             for line in r["refusals"]:
                 print(f"  ✗ {line}")
             print("把范围缩窄一点,或者等对方先做完。")
-        else:
+        elif a.task:
             print(f"已声明:{'、'.join(r.get('claimed') or a.paths)}")
+        else:
+            print(f"没撞上别人:{'、'.join(a.paths)}(房间自己的声明不记录)")
         for line in r.get("warnings") or []:
             print(f"  ⚠ {line}")
     elif a.cmd == "lock":
@@ -1224,8 +979,16 @@ def main() -> None:
         print("已记入决策记录。")
     elif a.cmd == "title":
         topic = _need("CHEESE_TOPIC", TOPIC)
-        _call("POST", f"/topics/{topic}/title", {"title": a.text})
-        print(f"话题标题已设为：{a.text}")
+        if a.task:
+            # 房间给它的活起名字。走房间的地址,因为这一轮的 token 是按房间签的,
+            # 直接拿活的 id 当地址会被判成跨话题(403)。
+            r = _call(
+                "POST", f"/topics/{topic}/tasks/{a.task}/title", {"title": a.text}
+            )["data"]
+            print(f"这条活现在叫「{r['title']}」。")
+        else:
+            _call("POST", f"/topics/{topic}/title", {"title": a.text})
+            print(f"话题标题已设为：{a.text}")
     elif a.cmd == "remember":
         proj = _need("CHEESE_PROJECT", PROJECT)
         # 带上话题：后端据此认出是哪个芝士在记，存进它自己的项目记忆
@@ -1278,65 +1041,35 @@ def main() -> None:
         print(f"已发送通知给 {a.to or '所有人'}。")
     elif a.cmd == "accept-request":
         topic = _need("CHEESE_TOPIC", TOPIC)
-        # 递卡是房间的事。The backend refuses this too — this is here so a thread
-        # that tries gets told in its own sandbox, with the command it should
-        # have run, instead of a round trip and an HTTP status to decode.
-        if ROOM and ROOM != topic:
-            print(
-                "[cheese] 递卡是房间的事，一条支线递不了。\n"
-                "一棵树=一个分支=一个 PR=一批活，而这批活是整个房间的：递卡会把分支"
-                "封口开 PR，而你的兄弟支线还在往同一条分支上写。\n"
-                "你要做的是把结论交回房间，由房间统一递卡：\n"
-                '  cheese conclude "<做了什么、故意没做什么、哪些结论没核实>"',
-                file=sys.stderr,
-            )
-            sys.exit(2)
         _call("POST", f"/topics/{topic}/accept-card",
               {"reviewer_handle": a.reviewer, "routing_reason": a.reason,
-               "change_subject": a.subject, "change_body": a.body})
+               "change_subject": a.subject, "change_body": a.body,
+               "task_ids": a.task or []})
         print(f"已把验收卡递给 {a.reviewer}。")
-    elif a.cmd == "conclude":
-        topic = _need("CHEESE_TOPIC", TOPIC)
-        _call("POST", f"/topics/{topic}/return-conclusion", {"conclusion": a.conclusion})
-        print("已把结论回流父话题。")
+        if not a.task:
+            # 别在这里说「重递一次带上 --task」：卡已经 pending，同一棵树上再递
+            # 一张会被 create_card 直接拒掉，照着做必然失败。声明只在递卡这一刻
+            # 收，补声明没有入口，唯一走得通的补救要人来动手。
+            print(
+                "这次没有 --task，合并后的提交里不会有 Cheese-Task 行——"
+                "以后翻 git log 的人查不到是哪个分身写的。\n"
+                "声明只在递卡这一刻收，这张卡上补不了，直接再递一张会被"
+                "「已有待处理的验收卡」拒掉。真要补：请验收人先作废这张卡"
+                "（作废是人的动作，你自己点不了），你再带 --task 重递。\n"
+                "下次递卡一次带上。"
+            )
     elif a.cmd == "tell":
         # URL 里的 topic 是**发方**（per-turn token 按它校验作用域）；收方在 body 里，
-        # 由后端按父子关系校验。
+        # 由后端校验它确实是这个房间派出的活。
         topic = _need("CHEESE_TOPIC", TOPIC)
         data = _call(
             "POST", f"/topics/{topic}/tell",
             {"target": a.target, "content": a.message},
         ).get("data", {})
         where = data.get("target_title") or data.get("target_topic_id") or a.target
-        print({
-            "injected": f"已插进「{where}」正在跑的那一轮——它现在就看到了。",
-            "woke": f"已传给「{where}」，它被叫醒了，马上开一轮处理。",
-            "merged": (
-                f"已传给「{where}」。它那边已经有一个待跑的轮次，这条搭同一轮"
-                "一起处理（不重复叫醒）。"
-            ),
-            "archived": (
-                f"「{where}」已归档，消息留在那边了，但**没有人被叫醒**"
-                "（归档话题不再跑轮次）。要它动起来先取消归档。"
-            ),
-        }.get(data.get("delivery"), f"已传给「{where}」。"))
-    elif a.cmd == "conclusion":
-        # 路由挂在父话题下：per-turn token 按 URL 里的 topic 校验作用域，而结算
-        # 这一步是父话题在自己那一轮做的，所以 CHEESE_TOPIC 就是收方。
-        topic = _need("CHEESE_TOPIC", TOPIC)
-        if a.action in ("need-evidence", "escalate") and not a.reason.strip():
-            print(f"[cheese] {a.action} 必须写理由", file=sys.stderr)
-            sys.exit(2)
-        body = {"decided_by": AUTHOR}
-        if a.reason:
-            body["reason"] = a.reason
-        _call("POST", f"/topics/{topic}/conclusion-cards/{a.card}/{a.action}", body)
         print(
-            {
-                "accept": "已采信该结论，那条支线收起。",
-                "need-evidence": "已让那条支线补证据（它会被叫醒一轮）。",
-                "escalate": "已升级，等人拍板。",
-            }[a.action]
+            f"已写在「{where}」上。**没有人被叫醒**——做这条活的分身在你自己的"
+            "会话里，要它动就直接给它发消息。"
         )
     elif a.cmd == "milestone":
         proj = _need("CHEESE_PROJECT", PROJECT)
@@ -1438,7 +1171,12 @@ def main() -> None:
         # written on THIS machine and read from disk by the helper — it never
         # travels on the wire, which is what keeps the platform unable to point
         # a machine at any other port.
-        rc = subprocess.call(["sh", up, str(a.port)])
+        try:
+            base = _preview_base(a.port)
+        except (OSError, http.client.HTTPException) as exc:
+            print(f"[cheese] :{a.port} 无法访问: {exc}", file=sys.stderr)
+            sys.exit(1)
+        rc = subprocess.call(["sh", up, str(a.port), base])
         if rc != 0:
             print(f"[cheese] 预览通道没能起来（{up} 退出码 {rc}）。", file=sys.stderr)
             sys.exit(1)
@@ -1456,7 +1194,13 @@ def main() -> None:
         rel = os.path.relpath(os.path.abspath(a.path), root)
         if rel.startswith(".."):  # outside the worktree — let the backend validate
             rel = a.path
-        _call("POST", f"/topics/{topic}/artifact", {"path": rel, "as": a.as_})
+        try:
+            with open(a.path, encoding="utf-8") as source:
+                content = source.read()
+        except (OSError, UnicodeError) as exc:
+            print(f"[cheese] 无法读取 {a.path}: {exc}", file=sys.stderr)
+            sys.exit(1)
+        _call("POST", f"/topics/{topic}/artifact", {"path": rel, "as": a.as_, "content": content})
         print(f"已把 {rel} 设为当前预览（{a.as_}）。")
     elif a.cmd == "api":
         if not a.method:

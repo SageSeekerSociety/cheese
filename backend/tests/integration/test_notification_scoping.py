@@ -543,16 +543,41 @@ def test_creating_with_a_scoped_token_works(client):
     """The sandbox cheese CLI path: a per-turn token scoped to this project."""
     pid = _project(client)
     tid = _topic(client, pid)
-    for token in (
-        mint_scoped_token(project_id=pid),
-        mint_scoped_token(project_id=pid, topic_id=tid),
+    for token, body in (
+        (
+            mint_scoped_token(project_id=pid, topic_id=tid, access_scope="project"),
+            _create_body(),
+        ),
+        (
+            mint_scoped_token(project_id=pid, topic_id=tid),
+            {**_create_body(), "topic_id": tid},
+        ),
     ):
         r = client.post(
             f"/projects/{pid}/alerts",
-            json=_create_body("分身发的"),
+            json=body,
             headers={"X-Cheese-Token": token},
         )
         assert r.status_code == 200, r.text
+
+
+def test_creating_alerts_requires_a_named_agent_and_matching_room(client):
+    pid = _project(client)
+    tid = _topic(client, pid)
+    other = _topic(client, pid)
+    for token, body, expected in (
+        (mint_scoped_token(project_id=pid), _create_body(), 401),
+        (mint_scoped_token(project_id=pid, topic_id=tid), _create_body(), 403),
+        (
+            mint_scoped_token(project_id=pid, topic_id=tid),
+            {**_create_body(), "topic_id": other},
+            403,
+        ),
+    ):
+        response = client.post(
+            f"/projects/{pid}/alerts", json=body, headers={"X-Cheese-Token": token}
+        )
+        assert response.status_code == expected, response.text
 
 
 def test_a_scoped_token_for_another_project_cannot_notify_here(client):

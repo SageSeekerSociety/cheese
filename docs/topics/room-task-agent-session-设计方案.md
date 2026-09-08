@@ -332,7 +332,7 @@ workflow run）。这一条**不矛盾**——#206 说的是「平台不去判�
   「这一轮改了 N 个文件（+X −Y）」的事件（`_persist_change_summary`，
   <&backend/app/domain/agent/chat.py>），点开是 diff。这条比「commit 列表」对人更有用——
   **人关心的是「这一轮做了什么」**，而不是 jj 的提交拓扑。
-- **PR 上的提交**：卡进入 `pr_open` 之后，PR 分支的 head 会随每次重推移动
+- **PR 上的提交**：卡等采纳期间，PR 分支的 head 会随每次重推移动
   （`pr_head_sha`），这个已经在卡上了，只是没渲染成「提交流」。
 
 ### 8.5 支线往房间的 PR 上提交（已落地）
@@ -523,20 +523,11 @@ hooks: {on_start: …, on_stop: …}
   规范里明文警告：**不要在 persona 里重复 base 的内容，否则用户每条消息会看到两遍**，
   并逐条列出「不要再解释」的四类内容。
 
-### 12.2 当初缺的三件事，现在都有了
+### 12.2 Project agent configuration
 
-当初的地基是 `expert_roles` / `custom_roles` 两张表——**它们已经被换掉了**，
-换成 `agent_types` ＋ `agent_instances`（<&backend/app/domain/agent_type/models.py>、
-<&backend/app/domain/agent_instance/models.py>），恰好补上了当时列的三个缺口：
+`agent_instances.configuration` stores the role instructions, model, harness, effort and existing tool settings for one project agent. Memory remains keyed by its project and stable handle. A room's `compute_profile` selects where the work runs; the agent's model selects what it requests there.
 
-| 当初缺什么 | 现在 |
-|---|---|
-| **角色只管「说什么」，不管「怎么跑」** | `agent_types` 有 `model` / `effort` / `harness` / `skills` / `mcp_servers`。三个「怎么跑」的字段都可以是 NULL，意思是「这个类型不在乎」——在这里钉一个默认值会悄悄盖掉每一个发不同模型的部署，那正好是类型不该做的事 |
-| **平台不知道 `.claude/agents/` 里有什么** | 预设以文件形式发（`library.py`），表里放人自己定义的；同名的行**遮住**同名的预设，所以改一个预设不等于把文件 fork 一份 |
-| **「出厂设置」和「自己长出来的」混在一起** | 分开了：类型不属于任何项目、不带记忆；记忆挂在 `agent_instances`（一个 agent × 一个项目一个池）。正好对应 buzz 的 persona（可分发）vs engram（community-local） |
-
-注意 `compute_profile`（在 topic 上）是**算力池**（在哪跑），不是**模型档位**（用多强的脑子）——
-两个不同的轴，别混。
+Built-in presets in `agent_type/library.py` initialize new agents. The saved `type_name` records which preset was used at creation and is not consulted when the agent runs. Users edit individual agents; there is no mutable shared role catalog or project model default. See spec §8.2 for model validation, turn boundaries and migration behavior.
 
 ### 12.3 建议：抄纪律，不抄格式
 
@@ -546,7 +537,7 @@ hooks: {on_start: …, on_stop: …}
    我们现在没有这条约定——阶段说明、CLI 规则、记忆、成员表、话题表、活文档全都每轮拼进去，
    没人说得清哪一层归谁、谁该为体积负责。
 2. **把「怎么跑」并进角色定义**：角色定义上要有 model / effort / 工具白名单。
-   这直接就是 @fulu 说的「名称、harness 工程、模型、effort」。（已落地：`agent_types`，见 §12.2。）
+   这直接就是 @fulu 说的「名称、harness 工程、模型、effort」。（见 §12.2 的实例配置。）
 3. **配置与记忆分离**：角色是出厂设置，core 记忆是它自己长出来的那部分。
    这和 §6.2 ① 那条「我们缺 core 这一层」是同一件事，应该一起做（并入 issue #187）。
 
@@ -818,9 +809,9 @@ docstring 明确把它和 split 对立着写：*"clone instead forks the source'
 - **房间自己在编辑时会卡住合并**。`_catch_up_with_branch` 只在工作区**没有 pending 改动**时快进，
   「人的未提交编辑绝不能被机器的推送扫掉」是它写死的原则；它的返回值现在有人接，
   刚移动过分支的调用方会知道工作区没跟上。
-- **和「等 CI 期间不要写工作区」撞车**。房间的卡进入 `pr_open` 之后，轮询每 60 秒会把工作区的
-  任何改动折成提交推到 PR 分支、CI 从头重排（本项目这条队列约 1.7 小时）。
-  所以房间的卡在 `pr_open` 期间，支线的合并不会即时落。
+- **不再和「等 CI 期间不要写工作区」撞车**（#718）：轮询器不再把工作区改动折成提交，
+  推送只在芝士 commit 后（`cheese push-fix`，或轮询发现本地分支 head 已前移）发生，
+  工作区里写文件不会把正在跑的 CI 掐掉重排。
 
 ### 13.5 一句话结论
 

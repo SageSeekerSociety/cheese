@@ -4,7 +4,11 @@
     <meta charset="UTF-8" />
     <link rel="icon" href="/favicon.ico" />
     <link rel="apple-touch-icon" href="/apple-touch-icon-180x180.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- `interactive-widget=resizes-content`: 软键盘弹出来时把布局视口一起缩掉,
+         于是 100% / dvh / 底部的输入框全都自己让开。不写这一条的默认行为是只缩
+         "看得见的那块"(visual viewport),页面自己毫不知情,输入框留在键盘底下。
+         不认这个键的浏览器(Safari)照旧走 lib/keyboardInset.ts 那条 JS 路。 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content" />
     <!-- Updated at runtime by src/theme.ts when the theme changes; this value
          is the light one, matching META_THEME_COLOR in that file. -->
     <meta name="theme-color" content="#F57F17" />

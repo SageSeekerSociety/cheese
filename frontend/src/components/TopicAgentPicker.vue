@@ -14,6 +14,10 @@ import { computed, ref, watch } from 'vue'
 import { getTopicAgent, listProjectAgents, setTopicAgent } from '../api'
 
 const props = defineProps<{ topicId: string; projectId: string }>()
+// 换完要说一声：这个房间的名字（名册那一行、对话里每一条它说的话）都跟着当前
+// 队友走，而那些字不住在这个组件里。不抛这个事件，屏幕上留着的是上一个队友的
+// 名字，看起来就是「换了没反应」。
+const emit = defineEmits<{ swapped: [TopicAgent] }>()
 
 const current = ref<TopicAgent | null>(null)
 const agents = ref<ProjectAgent[]>([])
@@ -41,12 +45,16 @@ const label = computed(() => {
   return current.value.inherited ? `${current.value.display_name}（默认）` : current.value.display_name
 })
 
-const others = computed(() => agents.value.filter((a) => a.id !== current.value?.instance_id))
+// 已停用的不出现在这里 —— 停用的意思就是「不再交新活给它」。它在别的房间里
+// 还在正常干活，那些房间不受影响。
+const others = computed(() => agents.value.filter((a) => a.id !== current.value?.instance_id && a.is_active !== false))
 
 async function swap(target: ProjectAgent) {
   switching.value = true
   try {
-    current.value = await setTopicAgent(props.topicId, target.id)
+    const next = await setTopicAgent(props.topicId, target.id)
+    current.value = next
+    emit('swapped', next)
   } finally {
     switching.value = false
   }

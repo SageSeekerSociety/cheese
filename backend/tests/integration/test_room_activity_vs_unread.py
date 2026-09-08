@@ -33,6 +33,7 @@ def _join(client, room_id: str, handle: str) -> None:
     r = client.post(
         f"/topics/{room_id}/members",
         json={"handle": handle, "role": "member", "actor": "alice"},
+        headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200, r.text
 
@@ -41,6 +42,19 @@ def _dispatch(client, room_id: str, title: str = "一件活") -> str:
     r = client.post(f"/topics/{room_id}/split", json={"title": title})
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
+
+
+def _say_on_card(client, room_id: str, task_id: str, who: str, text: str) -> None:
+    """在一张卡下面说话 —— 走它所在房间的地址，卡没有自己的。
+
+    和房间主线上说话走的是两条路，但落的都是 `kind=message` 的块，这正是这个文件
+    要比的东西：只有消息会被计进未读。
+    """
+    r = client.post(
+        f"/topics/{room_id}/tasks/{task_id}/messages",
+        json={"content": text, "author": who},
+    )
+    assert r.status_code == 200, r.text
 
 
 def _say(client, place_id: str, who: str, text: str) -> None:
@@ -85,7 +99,7 @@ def test_work_in_a_room_keeps_the_room_alive(client):
     before = _rooms(client, p["id"], "alice")[room_id]["last_activity_at"]
 
     task_id = _dispatch(client, room_id)
-    _say(client, task_id, "bob", "我在这条支线里干活")
+    _say_on_card(client, room_id, task_id, "bob", "我在这条活里干活")
 
     after = _rooms(client, p["id"], "alice")[room_id]["last_activity_at"]
     assert after > before, "房间里有活在跑，它却看起来一动没动"
@@ -102,7 +116,7 @@ def test_work_in_a_room_does_not_light_the_unread_badge(client):
     _join(client, room_id, "bob")
     task_id = _dispatch(client, room_id)
 
-    _say(client, task_id, "bob", "我在这条支线里干活")
+    _say_on_card(client, room_id, task_id, "bob", "我在这条活里干活")
     assert _unread(client, p["id"], room_id, "alice") == 0
 
     # 房间主线上有人说话才算未读——这一半必须还成立，否则上面那条就是把角标

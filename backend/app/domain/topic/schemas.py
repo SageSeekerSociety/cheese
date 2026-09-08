@@ -5,6 +5,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.domain.room_task.schemas import PresentationOut
 from app.domain.topic.models import TopicKind, TopicStatus
 
 
@@ -67,6 +68,10 @@ class TopicOut(BaseModel):
     # elsewhere both stay False, meaning "nobody computed this", not "no".
     i_participate: bool = False
     awaits_me: bool = False
+    # 看板上这一格 —— 同一个 `presentation` 结构，一条活和一个房间用同一套词，因为
+    # 侧栏把它们画在一起。和上面几个派生字段同一条规矩：只有 list_topics/get_topic
+    # 会填，别处是 None（「没人算过」）。
+    presentation: PresentationOut | None = None
 
 
 class UpgradeBlockIn(BaseModel):
@@ -115,7 +120,16 @@ class LockIn(BaseModel):
 
 
 class ConclusionIn(BaseModel):
-    conclusion: str = Field(min_length=1)
+    """收卡. Empty means "the worker's last word stands" — the platform already
+    wrote it on the card, so the room usually has nothing to add."""
+
+    conclusion: str = ""
+
+
+class BindSubagentIn(BaseModel):
+    """认领: which worker in this room's session is doing this piece of work."""
+
+    agent_id: str = Field(min_length=1, max_length=64)
 
 
 class RelayIn(BaseModel):
@@ -137,24 +151,3 @@ class DocEditIn(BaseModel):
     # writer with no version is a writer about to erase whatever it did not
     # read. Everything that writes here has just read the doc.
     expected_version: int
-
-
-class BackgroundTaskIn(BaseModel):
-    """`cheese await` registering a command it is about to run in its sandbox."""
-
-    command: str = Field(min_length=1, max_length=4000)
-    label: str = Field(default="", max_length=120)
-    # Wall-clock ceiling the sandbox-side child enforces; the wake token is
-    # minted to outlive it. Bounds are re-checked in awaited_tasks.register.
-    timeout_s: int = 3600
-    # Where the child is writing the command's full output, so the wake can point
-    # at it (the tail alone is bounded).
-    log_path: str = Field(default="", max_length=500)
-
-
-class BackgroundTaskDoneIn(BaseModel):
-    """The detached child reporting how the command ended."""
-
-    exit_code: int
-    tail: str = ""
-    duration_s: float = 0.0

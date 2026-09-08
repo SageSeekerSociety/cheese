@@ -151,3 +151,37 @@ def test_unconnected_project_gets_no_token(client, monkeypatch):
 def test_unscoped_caller_is_rejected(client):
     r = client.get("/sandbox/github-token", headers={"X-Cheese-Token": "nonsense"})
     assert r.status_code == 401
+
+
+def test_missing_binding_points_to_project_settings_without_requesting_pat(
+    client, monkeypatch
+):
+    project_id = str(uuid.uuid4())
+    _wire(monkeypatch, installation=None)
+    response = client.get(
+        "/sandbox/github-token",
+        headers={"X-Cheese-Token": mint_scoped_token(project_id=project_id)},
+    )
+    assert response.status_code == 503
+    message = response.json()["message"]
+    assert f"/projects/{project_id}/settings" in message
+    assert "connect their GitHub account" in message
+    assert "Do not request a PAT" in message
+
+
+def test_missing_app_config_is_distinct_from_missing_connection(client, monkeypatch):
+    project_id = str(uuid.uuid4())
+    _wire(monkeypatch, installation=_Installation("acme/widgets"))
+
+    async def unavailable(*args):
+        return None
+
+    monkeypatch.setattr(
+        "app.api.routes.github_token.github_app_tokens_for_project", unavailable
+    )
+    response = client.get(
+        "/sandbox/github-token",
+        headers={"X-Cheese-Token": mint_scoped_token(project_id=project_id)},
+    )
+    assert response.status_code == 503
+    assert "repository is connected" in response.json()["message"]

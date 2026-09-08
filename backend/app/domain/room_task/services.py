@@ -7,114 +7,18 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.domain.block.models import Block
 from app.domain.room_task.models import (
     FILE_LOCK_TTL,
     HEAVY_LOCK_TTL,
-    MAX_RESIDENT_TASKS_PER_ROOM,
     LockKind,
-    Residency,
     RoomLock,
     Task,
     TaskStatus,
     WorkTree,
 )
 from app.domain.room_task.repositories import TaskRepository, WorkTreeRepository
-
-#: A `running` row older than this is a ghost: the backend that was driving it
-#: died, and nothing else will ever move it. Generous on purpose — a real turn
-#: can be long, and freeing a slot out from under live work is worse than
-#: leaving a dead one held for a while.
-GHOST_RESIDENCY_AFTER = timedelta(hours=2)
-
-
-class ResidencyService:
-    """一个房间最多同时开 4 条后台子代理，多的排队。
-
-    The cap counts what is RUNNING, not what exists: a thread that finished its
-    turn is holding nothing, and it comes straight back if anyone speaks to it.
-    See `Residency` for why that distinction is the whole design.
-    """
-
-    def __init__(self, session: AsyncSession):
-        self._session = session
-        self._repo = TaskRepository(session)
-
-    async def admit(self, task: Task) -> bool:
-        """Give *task* a slot if the room has one; queue it if not.
-
-        Returns whether it may start now. A False is not a failure — the room is
-        busy, the task keeps its thread, its brief and its owner, and it starts
-        when a slot frees. Refusing instead would push a decision onto the
-        dispatcher about a condition that clears by itself.
-        """
-        if await self._repo.count_resident(task.room_id) >= MAX_RESIDENT_TASKS_PER_ROOM:
-            task.queued_at = task.queued_at or datetime.now(UTC)
-            await self._session.flush()
-            return False
-        task.residency = Residency.running
-        task.queued_at = None
-        task.last_turn_at = datetime.now(UTC)
-        await self._session.flush()
-        return True
-
-    async def touch(self, task: Task) -> None:
-        """A turn is running here — hold the slot and reset the ghost clock."""
-        task.residency = Residency.running
-        task.queued_at = None
-        task.last_turn_at = datetime.now(UTC)
-        await self._session.flush()
-
-    async def release(self, task: Task) -> Task | None:
-        """The turn ended: free the slot, and hand it to whoever is next.
-
-        Returns the task that just got the slot, so the caller can start it.
-        None when nobody was waiting.
-        """
-        task.residency = Residency.idle
-        await self._session.flush()
-        return await self.dequeue(task.room_id)
-
-    async def dequeue(self, room_id: uuid.UUID) -> Task | None:
-        """Start the longest-waiting queued task, if a slot is now free.
-
-        The ONLY place the queue moves. Spreading this over several call sites
-        is how two of them race and admit five.
-        """
-        if await self._repo.count_resident(room_id) >= MAX_RESIDENT_TASKS_PER_ROOM:
-            return None
-        nxt = await self._repo.next_queued(room_id)
-        if nxt is None:
-            return None
-        await self.admit(nxt)
-        return nxt
-
-    async def queue_position(self, task: Task) -> int:
-        """1-based place in its room's queue; 0 when it is not queued."""
-        if task.queued_at is None:
-            return 0
-        queued = await self._repo.list_queued(task.room_id)
-        return next((i + 1 for i, t in enumerate(queued) if t.id == task.id), 0)
-
-    async def holders(self, room_id: uuid.UUID) -> list[Task]:
-        """Who is holding this room's slots.
-
-        A room at its cap must be able to say WHO, with when each was last
-        active — "排队中" on its own tells the person nothing about which thread
-        to go and finish.
-        """
-        return await self._repo.list_resident(room_id)
-
-    async def sweep_ghosts(self) -> list[Task]:
-        """Free slots held by turns that died with the process driving them."""
-        stale = await self._repo.list_stale_resident(
-            datetime.now(UTC) - GHOST_RESIDENCY_AFTER
-        )
-        for task in stale:
-            task.residency = Residency.idle
-        if stale:
-            await self._session.flush()
-        return stale
 
 
 class WorkTreeService:
@@ -123,6 +27,8 @@ class WorkTreeService:
     def __init__(self, session: AsyncSession):
         self._session = session
         self._repo = WorkTreeRepository(session)
+        #: Did the last :meth:`ensure_open` start a new batch? See its docstring.
+        self.started_a_batch = False
 
     async def get(self, tree_id: uuid.UUID) -> WorkTree | None:
         return await self._repo.get(tree_id)
@@ -146,10 +52,18 @@ class WorkTreeService:
         worktree directory, container workdir and tmux session are
         byte-for-byte the names they already had (migration `b8e2f4a90d33`).
         Later trees get fresh ids, and therefore fresh branches.
+
+        ``started_a_batch`` on the way out says whether this call CREATED the
+        tree. It exists because starting a batch lands in two places that
+        cannot roll back together — this row, and the marker `bind_tree`
+        writes below — so a caller that might raise afterwards has to know it
+        is now holding a fact the disk already believes, and make it durable
+        (:meth:`AcceptService.create_card` is the one that does).
         """
         from app.domain.workspace import service as ws
 
         current = await self._repo.open_tree_for_room(room_id)
+        self.started_a_batch = current is None
         if current is None:
             first = not await self._repo.list_for_room(room_id)
             current = await self._repo.add(
@@ -174,6 +88,9 @@ class WorkTreeService:
     async def history(self, room_id: uuid.UUID) -> list[WorkTree]:
         return await self._repo.list_for_room(room_id)
 
+    async def trees_in_project(self, project_id: uuid.UUID) -> list[WorkTree]:
+        return await self._repo.list_for_project(project_id)
+
     async def record_check(self, tree: WorkTree, *, ok: bool, detail: str) -> WorkTree:
         """Remember what the quick check said about this tree's content.
 
@@ -196,6 +113,119 @@ class TaskService:
     async def get(self, task_id: uuid.UUID) -> Task | None:
         return await self._repo.get(task_id)
 
+    async def list_in_room(self, room_id: uuid.UUID) -> list[Task]:
+        """Every piece of work this room has dispatched, oldest first.
+
+        The rows only — `threads_for_room` is the same set with each thread's
+        conversation attached, and a caller that wants to know *which work
+        exists* should not pay for every block ever written in the room to find
+        out.
+        """
+        return await self._repo.list_for_room(room_id)
+
+    async def list_by_ids(self, task_ids: list[uuid.UUID]) -> list[Task]:
+        """These rows, oldest first, silently skipping ids that name nothing.
+
+        Ordered by the table and not by the argument, so that a set of ids
+        always renders in one fixed order however it was assembled — the caller
+        is `Cheese-Task:`, and trailer order that depended on the order someone
+        typed `--task` would make two identical declarations produce two
+        different commit messages.
+        """
+        return await self._repo.list_by_ids(task_ids)
+
+    async def mark_transcripts_archived(self, task_id: uuid.UUID, at: datetime) -> bool:
+        """Stamp the thread with when its device home's transcripts reached
+        the platform (topic/retire.py). False when no thread has this id."""
+        return await self._repo.mark_transcripts_archived(task_id, at)
+
+    async def open_by_subagent(
+        self, *, room_id: uuid.UUID, subagent_id: str
+    ) -> Task | None:
+        """The open thread in *room_id* this worker is doing, if any.
+
+        Asked once per hook event a worker produces, which is what the
+        (room_id, subagent_id) index is for.
+        """
+        return await self._repo.open_by_subagent(room_id, subagent_id)
+
+    async def bind_subagent(
+        self, *, room_id: uuid.UUID, task_id: uuid.UUID, subagent_id: str
+    ) -> Task:
+        """Say which worker in *room_id*'s session is doing *task_id*.
+
+        The room spawns a worker and then reports the id it got, because the id
+        does not exist until the worker does — nothing the platform hands out
+        in advance could name it. Everything downstream keys off this: without
+        the binding a worker's events are indistinguishable from the room's own.
+
+        Refuses rather than overwrites when the id is already doing other work
+        in this room. Reassigning it would not move the work, it would silently
+        re-address the events of a worker still running — the first thread would
+        stop receiving its own tool calls and never say why.
+        """
+        subagent_id = subagent_id.strip()
+        if not subagent_id:
+            raise ValidationError("要绑定的分身 id 是空的")
+        task = await self._repo.get(task_id)
+        if task is None or task.room_id != room_id:
+            # Same answer for "no such task" and "someone else's task": which of
+            # the two it is, is exactly what a caller poking at ids wants told.
+            raise NotFoundError("这个房间里没有这条活")
+        if task.status is not TaskStatus.open:
+            raise ConflictError("这条活已经收了，不能再绑分身")
+        held = await self._repo.open_by_subagent(room_id, subagent_id)
+        if held is not None and held.id != task.id:
+            raise ConflictError(
+                f"这个分身正在做「{held.title}」，一个分身同时只做一条活"
+            )
+        task.subagent_id = subagent_id
+        # A worker starting IS this work starting, and this is the signal the
+        # board falls back on before the worker has said anything: without it a
+        # thread reads 失联 for the whole gap between being claimed and its first
+        # tool call, which is the busiest moment it has.
+        task.last_turn_at = datetime.now(UTC)
+        await self._session.flush()
+        return task
+
+    async def record_conclusion(self, task: Task, conclusion: str) -> Task:
+        """分身交回来的那句话，落在卡上 —— overwriting whatever was there.
+
+        Called for every `SubagentStop` from a BOUND worker, and a worker stops
+        more than once: parking a long command in its own background reads as
+        finishing, and it stops again when it resumes and finishes for real. So
+        the last one is the only one worth keeping, and none of them is allowed
+        to close anything — the room decides the work is done, after reading
+        this (`cheese conclude-task`).
+        """
+        task.conclusion = conclusion
+        await self._session.flush()
+        return task
+
+    async def close_thread(self, task: Task, *, conclusion: str | None = None) -> Task:
+        """收卡 —— the room says this piece of work is over.
+
+        The room is the only thing that can say it. It read what the worker
+        handed back, folded the changes into its branch, and is the one place
+        holding both halves; the platform sees a worker stop and cannot tell
+        that from a worker pausing.
+
+        `conclusion` overrides what the worker's last stop left, for the case
+        where what came back was a fragment (a parked command's "running the
+        tests…") and the room knows the real answer. Absent, the worker keeps
+        the last word.
+
+        Idempotent: closing a closed thread keeps the first `closed_at` — the
+        moment it stopped being live is a fact, not a re-statement of intent.
+        """
+        if conclusion is not None:
+            task.conclusion = conclusion
+        if task.status is not TaskStatus.closed:
+            task.status = TaskStatus.closed
+            task.closed_at = datetime.now(UTC)
+        await self._session.flush()
+        return task
+
     async def open_thread(
         self,
         *,
@@ -204,7 +234,6 @@ class TaskService:
         title: str,
         owner_handle: str | None,
         created_by: str | None,
-        agent_instance_id: uuid.UUID | None,
     ) -> Task:
         """Open a new thread of work in a room, on the room's current tree.
 
@@ -229,7 +258,6 @@ class TaskService:
             title=title,
             owner_handle=owner_handle,
             created_by=created_by,
-            agent_instance_id=agent_instance_id,
         )
         # A thread writes to its room's tree, with its siblings. Without this the
         # workspace layer would fall back to "the tree named by the place's own
@@ -262,6 +290,19 @@ class TaskService:
             blocks = conversations.get(task.id, [])
             out.append((task, blocks[-limit:] if limit is not None else blocks))
         return out
+
+    async def blocks_for_thread(
+        self, task_id: uuid.UUID, *, limit: int | None = None
+    ) -> list[Block]:
+        """One card's conversation, oldest first, newest *limit* blocks.
+
+        The single-card counterpart of `threads_for_room`: opening one card
+        must not fan out over every other card's history to reach it, and a
+        long-lived room holds close to two hundred of them.
+        """
+        conversations = await self._repo.conversations_for_tasks([task_id])
+        blocks = conversations.get(task_id, [])
+        return blocks[-limit:] if limit is not None else blocks
 
 
 class ClaimService:

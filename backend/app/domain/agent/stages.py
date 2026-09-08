@@ -25,16 +25,14 @@ from app.domain.review.models import AcceptStatus
 class TopicStage(enum.StrEnum):
     """话题当前所处的流程阶段。值同时是 skill 的 scenario 标签后缀。"""
 
-    # 房间：它自己不带分支和验收卡，它的活是派成支线去做。
+    # 还没递卡：房间在派活、在干活，两件事是同一段。任务=分身之后跑轮次的只有
+    # 房间，所以「拆活」和「干活」不再是两个地点的两种处境，而是同一个地点同时
+    # 在做的两件事 —— 分开注入等于让房间在派活时读不到该怎么交付。
     delegating = "delegating"
-    # 一件事正在做：有分支、还没递卡（或卡被打回后回到这里）。
-    working = "working"
     # 机器闸门在跑 / 刚红。
     gate = "gate"
-    # 闸门过了，卡在等人采纳。
+    # 卡在等人采纳（PR 已在递卡时开出，采纳即当场合并，#718）。
     awaiting = "awaiting"
-    # 两阶段采纳：PR 已开，采纳人的 token 通道已打开，还在迭代。
-    pr_open = "pr_open"
     # 采纳时撞上合并冲突，等芝士解决。
     conflict = "conflict"
     # 已合并归档。
@@ -49,37 +47,32 @@ _CARD_STAGE = {
     AcceptStatus.gate_failed: TopicStage.gate,
     AcceptStatus.gate_blocked: TopicStage.gate,
     AcceptStatus.pending_gate: TopicStage.gate,
-    AcceptStatus.pr_open: TopicStage.pr_open,
     AcceptStatus.pending: TopicStage.awaiting,
 }
 
 # 同时存在多张 open 卡时，谁说了算。越靠前越「需要芝士现在动手」：冲突和红闸门
-# 是在等芝士干活，pr_open 是通道开着还能干活，pending 只是在等人——所以等人的
-# 排最后。
+# 是在等芝士干活，pending 只是在等人——所以等人的排最后。
 _CARD_PRECEDENCE = (
     AcceptStatus.conflict,
     AcceptStatus.gate_failed,
     AcceptStatus.gate_blocked,
     AcceptStatus.pending_gate,
-    AcceptStatus.pr_open,
     AcceptStatus.pending,
 )
 
 
 def resolve_stage(
     *,
-    is_room: bool,
     finished: bool,
     card_statuses: Iterable[AcceptStatus] = (),
 ) -> TopicStage:
     """算出这个地点当前所处的流程阶段。
 
-    卡状态优先于地点形态：一张活着的卡说明「现在正卡在流程的某一环」，比
-    「这是个房间还是一件活」更具体、更该被告知。没有活卡时才退回到形态判断。
+    卡状态优先：一张活着的卡说明「现在正卡在流程的某一环」，比「还没递卡」具体，
+    也更该被告知。没有活卡时才退回到那两种收尾状态。
 
-    问的是 `is_room` 而不是 `kind`：一件活已经不是 `topics` 表里的一行了，
-    `topics.kind` 从此永远回答「房间」。照着它算，每一条支线都会被当成房间、
-    拿到「拆活」那一段说明——分身会去拆它本该自己做的事。**这个错不报错。**
+    不再问「这是房间还是一件活」：跑轮次的只有房间了（一条活是房间会话里的一个
+    分身，它没有自己的会话，也就没有 system prompt 可注入）。
     """
     present = set(card_statuses)
     for candidate in _CARD_PRECEDENCE:
@@ -87,7 +80,7 @@ def resolve_stage(
             return _CARD_STAGE[candidate]
     if finished:
         return TopicStage.merged
-    return TopicStage.delegating if is_room else TopicStage.working
+    return TopicStage.delegating
 
 
 def stage_scenario(stage: TopicStage) -> str:

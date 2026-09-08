@@ -12,7 +12,7 @@ from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service, get_work_runner
 from app.api.response import ok, page
 from app.core.db import get_db
-from app.core.errors import AuthenticationRequiredError, BaseError, ValidationError
+from app.core.errors import AuthenticationRequiredError, BaseError
 from app.domain.agent.chat import ChatService
 from app.domain.agent.github_app import github_app_tokens_for_project
 from app.domain.agent.platform_notices import (
@@ -23,6 +23,7 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.agent.runtime import AgentWorkRunner
+from app.domain.identity.actor import Actor
 from app.domain.review import pr_publish
 from app.domain.review.github_pr import (
     GitHubPRClient,
@@ -34,12 +35,12 @@ from app.domain.review.schemas import (
     AcceptCardCreate,
     AcceptDecision,
     ApprovalCreate,
+    AutoMergeDecision,
     ForceMergeDecision,
     RejectDecision,
     VoidDecision,
 )
 from app.domain.review.services import AcceptService
-from app.domain.room_task.place import PlaceResolver
 from app.domain.workspace import service as ws
 
 logger = logging.getLogger("cheesex.accept")
@@ -48,25 +49,17 @@ router = APIRouter(prefix="", tags=["accept"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
-#: Refusal for a thread trying to file its room's card.
-#:
-#: 一棵树 = 一个分支 = 一个 PR = 一批活, and the batch belongs to the room: filing
-#: seals the tree, which is the room saying "this lot is done" — not a sentence
-#: one sibling gets to say for the others. A thread that files anyway seals a
-#: branch its siblings are still writing to, and the PR flies with their
-#: half-finished work on it.
-#:
-#: Long on purpose, like `_MISSING_SUBJECT` in the service: the reader is an
-#: agent one step away from doing something else, and "不允许" alone leaves it
-#: with no idea what. `cheese conclude` is the whole answer.
-_THREAD_CANNOT_FILE = (
-    "递卡是房间的事，一条支线递不了。\n"
-    "一棵树=一个分支=一个 PR=一批活，而这批活是整个房间的：递卡会把分支封口开 PR，"
-    "而你的兄弟支线还在往同一条分支上写，它们没做完的东西会跟着这个 PR 一起飞出去。\n"
-    "你要做的是把结论交回房间，由房间统一递卡：\n"
-    '  cheese conclude "<做了什么、故意没做什么、哪些结论没核实>"\n'
-    "改动照常提交到工作区就行，它和兄弟们的改动在同一条分支上，房间递卡时一起带走。"
-)
+
+async def _card_actor(
+    card_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> Actor:
+    """Bind credential scope to the card's room before review authorization."""
+    service = AcceptService(db)
+    card = await service._card_or_404(card_id)
+    topic = await service._topic_or_404(card.topic_id)
+    return await resolver.resolve(
+        fallback_handle=None, project_id=topic.project_id, topic_id=topic.id
+    )
 
 
 @router.post("/topics/{topic_id}/accept-card")
@@ -76,17 +69,6 @@ async def create_accept_card(
     db: DbSession,
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
-    # 递卡是房间的事 —— before anything else, and before the service gets as far
-    # as checking the subject. A thread is not being told its paperwork is
-    # wrong, it is being told this is not its job; leading with the subject
-    # would send it away to fix one and walk straight back into the same wall.
-    #
-    # An id that names nothing falls through on purpose: "no such topic" is the
-    # service's 404 to give, and answering it here with "you are not a room"
-    # would be a worse sentence about a different problem.
-    place = await PlaceResolver(db).resolve(topic_id)
-    if place is not None and place.is_thread:
-        raise ValidationError(_THREAD_CANNOT_FILE)
     svc = AcceptService(db)
     card = await svc.create_card(
         topic_id=topic_id,
@@ -94,6 +76,7 @@ async def create_accept_card(
         routing_reason=body.routing_reason,
         change_subject=body.change_subject,
         change_body=body.change_body,
+        task_ids=body.task_ids,
     )
     # 采纳即合并 (docs/accept-is-merge.md #296, stage 1): the card is the
     # platform's view of a PR, so filing it opens that PR right away with the
@@ -197,7 +180,7 @@ async def approve_card(
     card_id: uuid.UUID, body: ApprovalCreate, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     """主分支保护 (spec §4.4): record one human approval toward the accept."""
-    actor = await resolver.resolve(fallback_handle=body.approver_handle)
+    actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
         raise AuthenticationRequiredError("需要登录才能批准验收卡")
     svc = AcceptService(db)
@@ -214,11 +197,13 @@ async def accept_card(
     chat: Annotated[ChatService, Depends(get_chat_service)],
     runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
 ) -> dict:
-    actor = await resolver.resolve(fallback_handle=body.decided_by)
+    actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
         raise AuthenticationRequiredError("需要登录才能采纳验收卡")
     svc = AcceptService(db)
-    card = await svc.accept(card_id=card_id, decided_by=actor.handle)
+    card = await svc.accept(
+        card_id=card_id, decided_by=actor.handle, head_sha=body.head_sha
+    )
     if card.status == AcceptStatus.conflict:
         # 冲突不采纳 (spec §6.3): 芝士 first. Materialize the conflicted merge in
         # the topic's workspace, then dispatch a resolve turn. The reviewer
@@ -266,7 +251,7 @@ async def reassign_card(
     resolver: ActorResolverDep,
 ) -> dict:
     """改验收人 (spec §4.4)."""
-    actor = await resolver.resolve(fallback_handle=None)
+    actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
         raise AuthenticationRequiredError("需要登录才能改验收人")
     svc = AcceptService(db)
@@ -291,7 +276,7 @@ async def reject_card(
 
     `AcceptService.reject` only writes the row: no message, no summon. So a
     rejected topic used to sit there until a human happened to come back and
-    poke it, while a CI failure on the same card DOES summon (`_nudge_pr_fix`).
+    poke it, while a CI failure on the same card DOES summon (`_dispatch_nudges`).
     Same card, same "去改代码" verdict, opposite behaviour — the difference was
     invisible from the room.
 
@@ -299,7 +284,7 @@ async def reject_card(
     are request-scoped dependencies the domain layer has no handle on, and the
     conflict branch of `accept_card` right above already does it this way.
     """
-    actor = await resolver.resolve(fallback_handle=body.decided_by)
+    actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
         raise AuthenticationRequiredError("需要登录才能驳回验收卡")
     svc = AcceptService(db)
@@ -340,7 +325,7 @@ async def void_card(
 ) -> dict:
     """人工作废一张未决的验收卡 (pending_gate 孤儿卡出口, 2026-08-11).
 
-    这是 `pending_gate` / `conflict` / `pr_open` 唯一的人工出口——那三个状态被
+    这是 `pending_gate` / `conflict` 唯一的人工出口——这两个状态被
     accept / reject / revoke / reassign 四条路由全部拒绝，而 `create_card` 又因为
     它们拒绝再建新卡，于是整个话题递不出卡。作废把卡置为终态解开这个死锁。
 
@@ -353,7 +338,7 @@ async def void_card(
     的 `_forbid_ai`，见 tests/integration/test_accept_gate_orphan.py 的
     `test_void_requires_a_logged_in_human`。
     """
-    actor = await resolver.resolve(fallback_handle=None)
+    actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
         raise AuthenticationRequiredError("需要登录才能作废验收卡")
     svc = AcceptService(db)
@@ -381,12 +366,42 @@ async def merge_card_anyway(
     （没列进去的写路由压根不过那个中间件），真正拦住芝士的是这里的登录校验加
     `AcceptService.merge_despite_checks` 里的 `_forbid_ai`。
     """
-    actor = await resolver.resolve(fallback_handle=None)
+    actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
         raise AuthenticationRequiredError("需要登录才能人工放行合并")
     svc = AcceptService(db)
     card = await svc.merge_despite_checks(
-        card_id=card_id, decided_by=actor.handle, reason=body.reason
+        card_id=card_id,
+        decided_by=actor.handle,
+        reason=body.reason,
+        head_sha=body.head_sha,
+    )
+    return ok(await svc.describe(card))
+
+
+@router.post("/accept-cards/{card_id}/auto-merge")
+async def set_auto_merge(
+    card_id: uuid.UUID,
+    body: AutoMergeDecision,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """绿了自动合 (#718)：验收人在 BLOCKED / BEHIND 时布防，规则满足时平台以
+    布防人的名义合并；新提交作废采纳（dismiss_stale）同样解除布防。
+
+    授权类动作：actor 只来自 session token，路由**故意不进**
+    `_CHEESE_WRITE_PATHS`（同 void / merge-anyway），真正拦住芝士的是登录校验加
+    `AcceptService.arm_auto_merge` 里的 `_forbid_ai`。
+    """
+    actor = await _card_actor(card_id, db, resolver)
+    if not actor.authenticated:
+        raise AuthenticationRequiredError("需要登录才能设置自动合并")
+    svc = AcceptService(db)
+    card = await svc.arm_auto_merge(
+        card_id=card_id,
+        decided_by=actor.handle,
+        enabled=body.enabled,
+        head_sha=body.head_sha,
     )
     return ok(await svc.describe(card))
 
@@ -395,7 +410,7 @@ async def merge_card_anyway(
 async def revoke_card(
     card_id: uuid.UUID, body: AcceptDecision, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    actor = await resolver.resolve(fallback_handle=body.decided_by)
+    actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
         raise AuthenticationRequiredError("需要登录才能撤销采纳")
     svc = AcceptService(db)

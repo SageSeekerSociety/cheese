@@ -307,15 +307,21 @@ class PortSource:
     def __init__(self, path: str) -> None:
         self._path = path
 
-    def get(self) -> int:
+    def get(self) -> tuple[int, str]:
         try:
             with open(self._path) as handle:
-                raw = handle.read().strip()
+                raw, _, base = handle.read().strip().partition("\n")
         except OSError as exc:
             raise PreviewError(f"no preview port declared: {exc}") from exc
         if not raw.isdigit() or not (1 <= int(raw) <= 65535):
             raise PreviewError(f"{self._path} does not name a port")
-        return int(raw)
+        if base and (
+            not base.startswith("/")
+            or base.startswith("//")
+            or any(c in base for c in "\r\n?#")
+        ):
+            raise PreviewError(f"{self._path} does not name a local mount")
+        return int(raw), base.rstrip("/")
 
 
 class TokenSource:
@@ -446,7 +452,7 @@ class Session:
             self.send(OP_ERR, stream, str(exc).encode())
             return
         try:
-            port = self._ports.get()
+            port, base = self._ports.get()
         except PreviewError as exc:
             self.send(OP_ERR, stream, str(exc).encode())
             return
@@ -454,7 +460,7 @@ class Session:
         try:
             headers = {k: v for k, v in meta.get("headers") or []}
             conn.request(
-                meta.get("method", "GET"), meta.get("path", "/"), body, headers
+                meta.get("method", "GET"), base + meta.get("path", "/"), body, headers
             )
             response = conn.getresponse()
             self.send(
@@ -502,14 +508,14 @@ class Session:
     def _serve_ws(self, stream: int, payload: bytes) -> None:
         try:
             meta, _ = decode_meta(payload)
-            port = self._ports.get()
+            port, base = self._ports.get()
         except (ValueError, PreviewError) as exc:
             self.send(OP_ERR, stream, str(exc).encode())
             return
         headers = {k: v for k, v in meta.get("headers") or []}
         try:
             upstream, answered = open_ws(
-                f"ws://127.0.0.1:{port}{meta.get('path', '/')}", headers=headers
+                f"ws://127.0.0.1:{port}{base}{meta.get('path', '/')}", headers=headers
             )
         except (OSError, PreviewError) as exc:
             self.send(OP_ERR, stream, f"{exc}".encode())

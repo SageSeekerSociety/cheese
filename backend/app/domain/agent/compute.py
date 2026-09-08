@@ -24,6 +24,7 @@ if TYPE_CHECKING:
         EventConsumer,
         ReceiptConsumer,
         SessionRef,
+        UnreadProbe,
     )
     from app.domain.agent.harness.claude_code import Channel
 
@@ -185,6 +186,12 @@ class ComputePool:
         for runtime in self._runtimes():
             runtime.bind_receipts(consumer)
 
+    def bind_unread_probe(self, probe: "UnreadProbe") -> None:
+        """Give every runtime a way to ask whether anything it was handed is
+        still unread — the other half of the same bookkeeping."""
+        for runtime in self._runtimes():
+            runtime.bind_unread_probe(probe)
+
     def holds(self, topic_id: uuid.UUID) -> bool:
         """Does any backend still hold a live session for this topic?"""
         return any(runtime.holds(topic_id) for runtime in self._runtimes())
@@ -287,14 +294,16 @@ def build_compute_pool(cloud_channel: "Channel | None" = None) -> ComputePool:
         # One timeout policy, applied where the watching happens. The two-layer
         # shape (turn 活跃度检测) is `idle_suspect_s` of no hook and no liveness
         # evidence → only SUSPECTED wedged, then a `confirm_alive` probe until it
-        # says dead, with `hard_ceiling_s` as the unconditional backstop. It used
-        # to be a constructor argument on every transport, which is how a single
-        # 900s deadline could kill a long-but-silent turn on one of them and not
-        # the others.
+        # says dead, with `hard_ceiling_s` recorded when crossed and ending
+        # nothing. It used to be a constructor argument on every transport, which
+        # is how a single 900s deadline could kill a long-but-silent turn on one
+        # of them and not the others.
         return ClaudeCodeRuntime(
             channel,
             idle_suspect_s=settings.agent_idle_suspect_s,
             hard_ceiling_s=settings.agent_turn_hard_ceiling_s,
+            unread_grace_s=settings.agent_unread_grace_s,
+            no_progress_s=settings.agent_no_progress_s,
         )
 
     channels: list[Channel] = [DeviceChannel()]

@@ -21,7 +21,6 @@ import type { TopicPhase } from '../lib/topicState'
 import { computed, nextTick, ref, watch } from 'vue'
 
 import { getPreview, getTopicWorkSummary, listRoomTasks } from '../api'
-import { isThread, roomIdOf } from '../lib/place'
 
 import PanelChanges from './panels/PanelChanges.vue'
 import PanelOverview from './panels/PanelOverview.vue'
@@ -51,12 +50,19 @@ const props = withDefaults(
     // 手机上对话不是左边那一栏，是这条 tab 栏的第一格——一屏放不下两栏，而这两
     // 样东西本来就是平级的。开着它的时候 `chat` 插槽就是这一格的内容。
     withChat?: boolean
+    // 地址里的 `?card=` —— 非空就是总览那一格正看着一张卡。
+    openCardId?: string | null
+    // 现场那一格用它给 AI 干的每一行署名。一路透传：漏掉它不报错，只是换完
+    // 队友那一格里还写着上一个的名字。
+    agentName?: string
   }>(),
   {
     worklog: () => [],
     working: false,
     workingSince: null,
     topicList: () => [],
+    openCardId: null,
+    agentName: '芝士',
     tab: undefined,
     phase: undefined,
     withChat: false,
@@ -65,6 +71,7 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   (e: 'open-topic', topicId: string): void
+  (e: 'open-card', taskId: string | null): void
   (e: 'mention-click', handle: string): void
   (e: 'update:tab', key: string): void
 }>()
@@ -92,9 +99,6 @@ const defaultTab = computed<TabKey>(() => (props.withChat ? 'chat' : 'overview')
 // 总览。链接不该因为我们合并了界面而失效。
 const TAB_ALIASES: Record<string, TabKey> = { doc: 'overview', tasks: 'overview' }
 const active = ref<TabKey>(defaultTab.value)
-/** 打开的是房间里的一条支线，还是房间本身。 */
-const onThread = computed(() => !!props.topic && isThread(props.topic))
-
 /** The URL's answer, if it names a tab that exists (or one that used to). */
 function tabFromUrl(): TabKey | null {
   const asked = props.tab
@@ -135,10 +139,10 @@ function setTab(key: TabKey) {
 // again unless another topic is opened.
 const settled = ref(false)
 
-// 打开的是一条支线时这两格根本不存在（见 `tabIsOffered`），所以阶段也不能选它们
-// —— 选了就是把界面切到一个不在 tab 栏上的地方，屏幕上一片空白。
+// 只能选 `tabIsOffered` 真的会给出来的那几格 —— 选了一个不在 tab 栏上的，界面就
+// 切到一片空白。支线上「改动」那一格不存在（见 `tabIsOffered`），所以支线在
+// reviewing/delivering 时留在默认格；「现场」是支线自己的，照常可以选。
 function tabForPhase(phase: TopicPhase): TabKey {
-  if (onThread.value) return defaultTab.value
   if (phase === 'working') return 'site'
   if (phase === 'reviewing' || phase === 'delivering') return 'changes'
   return defaultTab.value
@@ -262,20 +266,18 @@ function markChangesSeen() {
 }
 
 // ---- 这个房间派出去了几件活 ----
-// A signal, so 任务 can carry its count while closed and can stay out of the way
-// of a room that never dispatched anything. Threads are counted for the ROOM: a
-// thread's siblings are the same list, and `/tasks` only answers for a room.
+// A signal, so 总览 can carry its count while closed and can stay out of the way
+// of a room that never dispatched anything.
 const threads = ref<{ total: number; open: number }>({ total: 0, open: 0 })
 
 async function pollThreads() {
-  const place = props.topic
-  if (!place) return
-  const roomId = roomIdOf(place)
+  const roomId = props.topic?.id
+  if (!roomId) return
   try {
-    // limit: 1 — see TaskProgress. Without it this asks for every thread's whole
+    // limit: 1 — see TaskProgress. Without it this asks for every card's whole
     // history just to count them.
     const rows = (await listRoomTasks(roomId, { limit: 1 })).data
-    if (!props.topic || roomIdOf(props.topic) !== roomId) return
+    if (props.topic?.id !== roomId) return
     threads.value = { total: rows.length, open: rows.filter((r) => r.status === 'open').length }
   } catch {
     // A failed poll is not a state — same rule as the two polls above.
@@ -289,14 +291,12 @@ function tabIsOffered(key: TabKey): boolean {
   if (key === active.value) return true
   if (key === 'chat') return props.withChat
   if (key === 'overview') return true
-  // 一批活共用一棵树，所以「改动」和「现场」只在房间那一层存在。在一条支线上给
-  // 出这两格，给的是它同伴的工作区——同一棵树、同一个会话——那不是这条活的现场，
-  // 是这个房间的，而看的人会以为屏幕上那些改动是这条活做的。
-  if (onThread.value) return false
-  // 现场 is where 芝士 works: it is there once the topic has run, and from the
+  // 改动属于**树**：一棵树 = 一个分支 = 一个 PR = 一批活，所以这份 diff 是这个
+  // 房间当前这一批一起写出来的。
+  if (key === 'changes') return summary.value.changedFiles.length > 0
+  // 现场 is where 芝士 works: it is there once the room has run, and from the
   // first moment of the first turn (before the session id is captured).
   if (key === 'site') return summary.value.hasRun || props.working
-  if (key === 'changes') return summary.value.changedFiles.length > 0
   return !!previewLatest.value
 }
 
@@ -440,7 +440,9 @@ defineExpose({ pulse, highlightTurn, openFile })
           :topic-list="topicList"
           :active="active === 'overview'"
           :refresh-tick="refreshTick"
+          :open-card-id="openCardId"
           @open-topic="emit('open-topic', $event)"
+          @open-card="emit('open-card', $event)"
           @mention-click="emit('mention-click', $event)"
           @open-file="openFile"
         />
@@ -452,6 +454,7 @@ defineExpose({ pulse, highlightTurn, openFile })
           :working="working"
           :working-since="workingSince"
           :active="active === 'site'"
+          :agent-name="agentName"
         />
         <PanelChanges
           v-if="mounted.has('changes')"

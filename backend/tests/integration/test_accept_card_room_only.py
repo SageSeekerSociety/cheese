@@ -1,13 +1,14 @@
-"""递卡是房间的事，支线递不出去。
+"""递卡是房间的事，一张卡递不出去。
 
 一棵树 = 一个分支 = 一个 PR = 一批活，而**一批**活是整个房间的。所以「这批做完了，
-开 PR」是房间说的一句话，不是房间里某一条支线能替它说的。支线各自递卡，等于兄弟们
-共同写的那条分支被其中一个人单方面封口——另外几条活还在往上写，PR 里却已经带着
-它们半截的样子飞出去了。
+开 PR」是房间说的一句话，不是房间里某一件活能替它说的。每件活各自递卡，等于兄弟们
+共同写的那条分支被其中一个单方面封口——另外几条活还在往上写，PR 里却已经带着它们
+半截的样子飞出去了。
 
-这条规则以前只写在人的嘴里，代码一个字没拦，于是三条支线全都递了卡，撞出三种不同
-的失败（一次开出空 PR 并被采纳，一次卡在 pending 推不上去，一次 422 说"已有待处理
-的验收卡"）。这个文件按**行为**盯住两面：支线递不出去，房间照常递得出去。
+这条规则以前只写在人的嘴里，代码一个字没拦，于是三条活全都递了卡，撞出三种不同的
+失败（一次开出空 PR 并被采纳，一次卡在 pending 推不上去，一次 422 说"已有待处理的
+验收卡"）。**现在它由地址空间保证**：一张卡不是地点，`/topics/{卡的 id}/accept-card`
+名下没有话题，所以那条路根本不通——而不是通了以后再判一次。
 """
 
 import uuid
@@ -43,16 +44,12 @@ def _file_card(client, place_id: str, reviewer: str = "alice"):
     )
 
 
-def test_a_thread_cannot_file_an_accept_card(client):
+def test_a_card_cannot_file_an_accept_card(client):
+    """404，而不是一条判出来的拒绝：那个 id 名下没有地点。"""
     _, room = _room(client)
-    thread = _thread(client, room)
+    card = _thread(client, room)
 
-    r = _file_card(client, thread)
-
-    assert r.status_code == 422, r.text
-    message = r.json()["message"]
-    # 光说"不允许"会让分身原地打转。错误必须告诉它下一步敲什么。
-    assert "cheese conclude" in message
+    assert _file_card(client, card).status_code == 404
 
 
 def test_the_room_itself_still_files_cards(client):
@@ -65,41 +62,23 @@ def test_the_room_itself_still_files_cards(client):
     assert r.json()["data"]["status"] == "pending"
 
 
-def test_a_thread_being_refused_does_not_use_up_the_room_s_one_card(client):
-    """拒绝必须发生在写任何东西之前。
+def test_a_refused_card_does_not_use_up_the_room_s_one_card(client):
+    """走不通必须发生在写任何东西之前。
 
-    一棵树同时只允许一张未决的卡。如果支线那次被拒之前已经把卡建进去了，房间就再也
-    递不出自己的那张——一条支线能就此把整个房间的交付卡死。
+    一棵树同时只允许一张未决的卡。如果那次不通之前已经把卡建进去了，房间就再也
+    递不出自己的那张——一件活能就此把整个房间的交付卡死。
     """
     _, room = _room(client)
-    thread = _thread(client, room)
+    card = _thread(client, room)
 
-    assert _file_card(client, thread).status_code == 422
-    assert client.get(f"/topics/{thread}/accept-card").json()["data"]["total"] == 0
+    assert _file_card(client, card).status_code == 404
+    assert client.get(f"/topics/{room}/accept-card").json()["data"]["total"] == 0
 
     r = _file_card(client, room)
     assert r.status_code == 200, r.text
 
 
-def test_a_thread_is_refused_before_the_subject_is_even_checked(client):
-    """连主题都不用带——它递不出卡这件事和它怎么写无关。
-
-    盯的是顺序：先说"这不该由你来做"，而不是先挑一遍它填的表格。挑表格会让分身以为
-    改一改还能递，于是它把主题改对、再撞一次同一堵墙。
-    """
-    _, room = _room(client)
-    thread = _thread(client, room)
-
-    r = client.post(
-        f"/topics/{thread}/accept-card",
-        json={"change_subject": "", "reviewer_handle": "alice"},
-    )
-
-    assert r.status_code == 422, r.text
-    assert "cheese conclude" in r.json()["message"]
-
-
-def test_an_id_that_names_nothing_is_still_a_404(client):
-    """拒绝支线不能顺手把"不存在"也说成"你不是房间"。"""
+def test_an_id_that_names_nothing_is_a_404_too(client):
+    """一张卡和一个不存在的 id 得到同一句话，因为对这条路来说它们是同一件事。"""
     r = _file_card(client, str(uuid.uuid4()))
     assert r.status_code == 404, r.text

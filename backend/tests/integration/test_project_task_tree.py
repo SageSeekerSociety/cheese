@@ -68,18 +68,18 @@ def test_every_thread_in_the_project_comes_back_at_once(client):
     assert {r["room_id"] for r in rows} == {room_a, room_b}
 
 
-def test_a_thread_cannot_file_so_its_row_never_grows_a_card(client):
-    """支线递卡会被拒，所以它那一行永远是没有卡的。
+def test_a_card_cannot_file_so_its_row_never_grows_a_card(client):
+    """一张卡递不出验收卡，所以它那一行永远是没有卡的。
 
-    递卡=封树开 PR，那是房间对**一批**活说的话。一条支线替兄弟们说了，PR 就带着
-    它们没做完的东西飞出去了。
+    递卡=封树开 PR，那是房间对**一批**活说的话。一件活替兄弟们说了，PR 就带着
+    它们没做完的东西飞出去了。现在这条规矩由地址空间保证：卡不是地点。
     """
     pid = _project(client)
     room = _room(client, pid, "运维")
     thread = _thread(client, room, "查一下分页接口")
 
     r = _post_card(client, thread, "fix(api): return the last row of a page")
-    assert r.status_code == 422, r.text
+    assert r.status_code == 404, r.text
 
     (row,) = _tasks(client, pid)
     assert row["card"] is None

@@ -22,9 +22,8 @@ import type { RouteRecordRaw } from 'vue-router'
 // full page. One address per document now; the old links still resolve.
 const DOC_KINDS = ['charter', 'decisions', 'weeklies'] as const
 
-// 手机上这整棵子树是一条页面栈：话题列表是唯一的一级目的地（底栏「工作区」那一格
-// 的落点），其余每一层都收起底栏并说明 ← 回哪儿去。桌面上这些 meta 全都不生效——
-// 那儿话题列表是常驻侧栏，没有"上一层"可回。
+// The topic list is the mobile workspace destination. Child pages declare their
+// parent through backTo, which is used by both desktop and mobile navigation.
 export const workspaceRoutes: RouteRecordRaw = {
   path: '/projects/:projectId',
   components: {
@@ -50,18 +49,22 @@ export const workspaceRoutes: RouteRecordRaw = {
       props: true,
       // 手机上这是页面栈的末端：底栏收起（它不是一级目的地），← 回到话题列表。
       // `barSlot`: TopicHeader（标题 + #id + 阶段）填的就是顶栏那一格，不再自己
-      // 画一条横条；← 由顶栏按 backTo 出。桌面上三者都不生效。
+      // 画一条横条；← 由顶栏按 backTo 出。
       meta: { hideTabs: true, backTo: 'workspace-project', barSlot: true },
     },
     {
-      // 在跑的活: 跨房间的一张表。房间总览答的是「这个房间在干什么」，而一个项目
-      // 有上百个房间——「现在整个项目有什么在跑」得一个个点进去才知道，于是没人
-      // 知道。桌面上侧栏常驻，手机上它是页面栈的一层，← 回话题列表。
+      // 看板: 跨房间的一块板，按「该谁动」分列。房间总览答的是「这个房间在干什么」，
+      // 而一个项目有上百个房间——「现在整个项目有什么在跑、有什么在等我」得一个个
+      // 点进去才知道，于是没人知道。桌面上侧栏常驻，手机上它是页面栈的一层，← 回
+      // 话题列表。
+      //
+      // 路由名和路径还是 running：改地址会把所有已经发出去的链接打断，而这一页答的
+      // 仍然是同一个问题——名字换了，位置没换。
       name: 'workspace-running',
       path: 'running',
       component: () => import('@/views/workspace/RunningWorkView.vue'),
       props: true,
-      meta: { title: '在跑的活', hideTabs: true, backTo: 'workspace-project' },
+      meta: { title: '看板', hideTabs: true, backTo: 'workspace-project' },
     },
     {
       name: 'workspace-dm',
@@ -96,7 +99,7 @@ export const workspaceRoutes: RouteRecordRaw = {
       path: 'agents',
       component: () => import('@/views/ProjectAgentsView.vue'),
       props: true,
-      meta: { title: 'AI 队友' },
+      meta: { title: 'AI 队友', backTo: 'workspace-project' },
     },
     {
       name: 'project-settings',

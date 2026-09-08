@@ -6,6 +6,8 @@ import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { listProjectAgents } from '../api'
+import { columnDotStyle } from '../lib/board'
+import { cancelPrefetch, prefetchOnHover } from '../lib/routePrefetch'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '../lib/topicTitle'
 import {
   ancestorPathIds,
@@ -17,8 +19,9 @@ import {
   saveOthersGroupOpen,
   visibleRows,
 } from '../lib/topicTree'
-import { avatarColor } from '../utils/avatar'
+import { avatarColor, avatarInitial } from '../utils/avatar'
 
+import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import SecondaryNavigation from './common/Navigation/SecondaryNavigation.vue'
 import CheeseAvatar from './CheeseAvatar.vue'
 
@@ -53,6 +56,10 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'select-topic', id: string): void
+  // 指针停在一行上：让父组件（拥有这一行的路由的那个）顺手把它预热了。点这一行
+  // 会发生什么由 select-topic 的接收方决定，所以「提前准备什么」也归它。
+  (e: 'hover-topic', id: string): void
+  (e: 'leave-topic'): void
   (e: 'create-topic', title: string, agentInstanceId?: string | null): void
   // 归档去向: manual archive / unarchive from the row's ⋯ actions.
   (e: 'archive-topic', id: string): void
@@ -94,13 +101,26 @@ const route = useRoute()
 
 const projectPages = [
   { key: 'overview', label: '总览', icon: 'mdi-view-agenda-outline' },
-  { key: 'workspace-running', label: '在跑的活', icon: 'mdi-play-circle-outline' },
+  { key: 'workspace-running', label: '看板', icon: 'mdi-view-column-outline' },
   { key: 'calendar', label: '日历', icon: 'mdi-calendar-outline' },
   { key: 'project-agents', label: 'AI 队友', icon: 'mdi-robot-outline' },
 ] as const
 function openProjectPage(name: string) {
   if (!props.selectedProjectId) return
   router.push({ name, params: { projectId: props.selectedProjectId } })
+}
+// 谁负责 push，谁负责预热：指针停住的时候把这个页面的代码先下下来，等真按下去时
+// 只剩下拉数据那一段。
+function hoverProjectPage(name: string) {
+  if (!props.selectedProjectId) return
+  prefetchOnHover({ router, to: { name, params: { projectId: props.selectedProjectId } } })
+}
+
+// 换项目落在项目地址本身，而不是它的某个话题：哪个话题该开着是那个项目的事
+// （手机上这个地址就是它的话题列表，桌面上它自己跳大本营）。
+function openProject(projectId: string) {
+  if (projectId === props.selectedProjectId) return
+  router.push({ name: 'workspace-project', params: { projectId } })
 }
 
 // New topic: don't ask the human for a title — create an untitled one and open
@@ -129,9 +149,10 @@ async function loadProjectAgents(pid: string | null | undefined) {
 }
 watch(() => props.selectedProjectId, loadProjectAgents, { immediate: true })
 
-// 默认那个排第一 —— 常用路径是「点开、点第一项」，不用在列表里找。
+// 默认那个排第一 —— 常用路径是「点开、点第一项」，不用在列表里找。已停用的
+// 不列：这个菜单是在给一个还没建的话题挑队友，正是停用要挡住的那件事。
 const newTopicAgents = computed(() =>
-  [...projectAgents.value].sort((a, b) => Number(b.is_default) - Number(a.is_default))
+  projectAgents.value.filter((a) => a.is_active !== false).sort((a, b) => Number(b.is_default) - Number(a.is_default))
 )
 
 // ----- Topic tree -----
@@ -149,39 +170,15 @@ function inferKind(t: Topic): string {
   return t.parent_id ? 'topic' : 'root'
 }
 
-// 边栏画的是「房间 → 房间里派出去的活」这棵树。活是 `tasks` 表的一行，不是话题，
-// 但它照样要看得见——一件活看不见，房间就会照着自己那份清单把它又做一遍。
-// 「分身」是改造前的残留标签，现在永远取不到了。
+// 边栏画的是房间。房间里派出去的活是**卡**，不是地点，看得见的地方是那个房间的
+// 看板（总览那一格）和项目级那块板 —— 一行一个房间，一件活不再占一行。
 const KIND_BADGE: Record<string, string> = {
   root: '全局',
   topic: '话题',
-  thread: '任务',
 }
 
 function kindLabel(t: Topic): string {
   return KIND_BADGE[inferKind(t)] ?? '话题'
-}
-
-/** 这一行是一件活，不是一个房间。 */
-function isThreadRow(t: Topic): boolean {
-  return t.kind === 'thread'
-}
-
-/** 一件活现在骑在哪个 PR 上 —— 「交付」这一段在树上唯一看得见的东西。 */
-function prLabel(t: Topic): string | null {
-  const n = t.card?.pr_number
-  return typeof n === 'number' ? `#${n}` : null
-}
-
-/** 一件活的交付走到哪了。没有卡 = 还在做，什么都不显示。 */
-function cardLabel(t: Topic): string | null {
-  const status = t.card?.status
-  if (!status) return null
-  if (status === 'pending') return '待验收'
-  if (status === 'pr_open') return '等 CI'
-  if (status === 'accepted') return '已采纳'
-  if (status === 'rejected') return '被打回'
-  return null
 }
 
 // Status: only show when notable (archived / draft); active is implicit. Shown
@@ -189,9 +186,6 @@ function cardLabel(t: Topic): string | null {
 function statusBadge(status: string): string | null {
   if (status === 'archived') return '已归档'
   if (status === 'draft') return '草稿'
-  // 支线只有 open / closed。收工了要说出来，不然一条做完的活在树上和在跑的
-  // 长得一模一样。
-  if (status === 'closed') return '已完成'
   return null
 }
 
@@ -240,14 +234,8 @@ const tree = computed<TreeRow[]>(() => {
 // the active list (their work isn't done).
 //
 // 但**活跟着它的房间走**：活只有 open/closed，没有「已归档」这个状态，所以房间
-// 归档时活这一行自己一个字都不变。不显式把它拿掉，房间那一行走了、挂在它下面的
-// 活却全留在活跃列表里——而拍平的树是按 depth 认父子的（见 lib/topicTree 的
-// buildNodes），于是这些活会挂到前面最近的那个房间下面，画进一个跟它毫无关系的
-// 房间，或者干脆摊在顶层。同理，房间不在这份列表里（私聊里派出去的活、房间已经
-// 不在了）的活也没有能挂的地方。要看归档房间里的活，点进那个房间。
-//
-// 子话题不一样，它有自己的归档状态：父话题归了、它还活着，那份活儿没做完，照旧
-// 留在活跃列表里——只是父行没了，深度提到 0，免得被画到隔壁那棵树底下。
+// 子话题有自己的归档状态：父话题归了、它还活着，那份活儿没做完，照旧留在活跃
+// 列表里——只是父行没了，深度提到 0，免得被画到隔壁那棵树底下。
 const activeTree = computed<TreeRow[]>(() => {
   // 深度按**留下来的那个父行**重新算，不沿用原树的：拍平的树里深度就是父子关系
   // 本身，中间少一层就得少一层缩进，否则缩进指着一行不存在的父行。
@@ -257,8 +245,6 @@ const activeTree = computed<TreeRow[]>(() => {
     if (row.topic.status === 'archived') continue
     const parentId = row.topic.parent_id
     const parentDepth = parentId ? depths.get(parentId) : undefined
-    // 房间那一行不在了，活就没有能挂的地方。
-    if (parentDepth === undefined && isThreadRow(row.topic)) continue
     const depth = parentDepth === undefined ? 0 : parentDepth + 1
     depths.set(row.topic.id, depth)
     rows.push(depth === row.depth ? row : { topic: row.topic, depth })
@@ -371,11 +357,7 @@ function awaitsOf(id: string): boolean {
 // 两组的**行是同一种形态**：同一段模板渲染，所以树形缩进、竖向引导线、16px 状态
 // 槽、未读角标、hover 的 ⋯ 一个不少。折叠组只是把一批行收起来，不是换一种行。
 //
-// 一件活不参与这个判定：它身上根本没有 `i_participate`（那是房间的字段，见
-// lib/place.ts 里合成地点时给了哪些），而判定把"字段缺失"当相关——于是**任何派
-// 过活的房间都会被它自己的活顶进「我参与的」**，哪怕后端明说这个房间与我无关。
-// 相关不相关由房间回答，活跟着它的房间走：房间上去了，它派出去的活跟着上去。
-const grouped = computed(() => partitionByRelevance(activeTree.value, (t) => !isThreadRow(t) && isMyTopic(t)))
+const grouped = computed(() => partitionByRelevance(activeTree.value, isMyTopic))
 
 function rowsOf(rows: readonly FlatRow<Topic>[]) {
   return visibleRows(rows, {
@@ -545,7 +527,31 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
               <v-icon class="rail-header__caret" size="18" icon="mdi-chevron-down" />
             </button>
           </template>
-          <v-list density="compact" nav>
+          <v-list density="compact" nav max-height="60vh">
+            <!-- 整页形态下这个菜单是**唯一**能换项目的地方：一个项目一格的那条
+                 竖 rail 只在桌面渲染，底栏「工作区」那一格只落到一个项目，于是
+                 手机上进了一个项目就再也走不到别的项目去。桌面不列——rail 已经
+                 是那个入口，同一件事有两个入口只会让人猜哪个才算数。 -->
+            <template v-if="page && projects.length > 1">
+              <v-list-subheader class="t-eyebrow">切换项目</v-list-subheader>
+              <v-list-item
+                v-for="p in projects"
+                :key="p.id"
+                :active="p.id === selectedProjectId"
+                rounded="lg"
+                @click="openProject(p.id)"
+              >
+                <template #prepend>
+                  <span class="private-avatar-slot me-3">
+                    <span class="dm-avatar project-avatar" :style="{ backgroundColor: avatarColor(p.name) }">{{
+                      avatarInitial(p.name)
+                    }}</span>
+                  </span>
+                </template>
+                <v-list-item-title class="t-body">{{ p.name }}</v-list-item-title>
+              </v-list-item>
+              <v-divider class="my-1" />
+            </template>
             <v-list-item
               prepend-icon="mdi-cog-outline"
               title="项目设置"
@@ -574,6 +580,8 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
               :class="{ 'is-active': rootTopic.id === selectedTopicId }"
               :style="ROW_INDENT"
               @click="emit('select-topic', rootTopic.id)"
+              @mouseenter="emit('hover-topic', rootTopic.id)"
+              @mouseleave="emit('leave-topic')"
             >
               <template #prepend>
                 <!-- 置顶行的槽住的是它自己的图标：# / 总览 / 日历 三个各不相同，
@@ -602,6 +610,8 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
               :class="{ 'is-active': route.name === p.key }"
               :style="ROW_INDENT"
               @click="openProjectPage(p.key)"
+              @mouseenter="hoverProjectPage(p.key)"
+              @mouseleave="cancelPrefetch()"
             >
               <template #prepend>
                 <span class="row-slot">
@@ -646,9 +656,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
             />
           </div>
 
-          <div v-if="loadingTopics" class="px-4 py-2">
-            <v-progress-circular indeterminate size="20" width="2" color="primary" />
-          </div>
+          <LoadingSkeleton v-if="loadingTopics" variant="list" class="rail-skel" />
 
           <template v-else>
             <!-- 一组都不相关的时候（刚进项目、还没参与任何话题），上组是空的。
@@ -698,6 +706,8 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                     '--guide-x': 16 + (row.depth - 1) * 20 + 'px',
                   }"
                   @click="emit('select-topic', row.topic.id)"
+                  @mouseenter="emit('hover-topic', row.topic.id)"
+                  @mouseleave="emit('leave-topic')"
                 >
                   <!-- 干净行：左边只有一个 16px 槽（状态，或顶替它的折叠开关），
                        身份靠标题本身，种类标签不要（缩进表达层级），操作 hover 才浮现。
@@ -730,12 +740,6 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                     <span v-else-if="row.topic.running" class="row-slot">
                       <span class="running-dot" title="芝士正在这个话题里工作" />
                     </span>
-                    <!-- 一件活不是一个地方。缩进说的是「它在这个房间里」，这颗
-                         记号说的是「这一行是一件活」——两者缺一，树上就分不出
-                         「房间」和「房间里在做的事」。 -->
-                    <span v-else-if="isThreadRow(row.topic)" class="row-slot">
-                      <v-icon size="13" class="thread-mark">mdi-call-split</v-icon>
-                    </span>
                     <span v-else class="row-slot" />
                   </template>
                   <v-list-item-title class="d-flex align-center topic-title">
@@ -754,6 +758,16 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                       @blur="saveRename(row.topic)"
                     />
                     <template v-else>
+                      <!-- 「该谁动」的色点，和看板上那一列同一个颜色、同一个形状
+                           （`lib/board.ts` 是唯一的来源）。侧栏和看板对不上的话，
+                           人就得在两块屏幕之间自己做一次翻译。
+                           后端没给 `presentation` 就不画——不在前端另算一个顶上。 -->
+                      <span
+                        v-if="row.topic.presentation"
+                        class="board-dot"
+                        :style="columnDotStyle(row.topic.presentation.column)"
+                        :title="row.topic.presentation.display_status"
+                      />
                       <span class="text-truncate" :class="{ 'title-unread': row.unreadTotal > 0 }">{{
                         row.topic.title
                       }}</span>
@@ -770,14 +784,6 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                       >
                         <span class="status-dot status-dot--warn" />
                         {{ statusBadge(row.topic.status) }}
-                      </span>
-                      <!-- 交付：这件活骑在哪个 PR 上，走到哪一步了。房间的交付是整条
-                           分支一张卡，不在树上；一件活的卡才挂在它自己这一行。 -->
-                      <span v-if="prLabel(row.topic)" class="thread-pr ms-2" :title="cardLabel(row.topic) ?? '已开 PR'">
-                        {{ prLabel(row.topic) }}
-                      </span>
-                      <span v-else-if="cardLabel(row.topic)" class="thread-card ms-2">
-                        {{ cardLabel(row.topic) }}
                       </span>
                     </template>
                   </v-list-item-title>
@@ -856,6 +862,8 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                 class="topic-row topic-row--archived"
                 :class="{ 'is-active': t.id === selectedTopicId }"
                 @click="emit('select-topic', t.id)"
+                @mouseenter="emit('hover-topic', t.id)"
+                @mouseleave="emit('leave-topic')"
               >
                 <template #prepend>
                   <v-icon size="16" class="me-1 c-faint" icon="mdi-archive-outline" />
@@ -912,7 +920,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
             <v-list density="compact" nav max-height="320">
               <v-list-item v-for="dm in otherDms" :key="dm.handle" @click="startDm(dm.handle)">
                 <template #prepend>
-                  <span class="private-avatar-slot">
+                  <span class="private-avatar-slot me-3">
                     <span class="dm-avatar" :style="{ backgroundColor: avatarColor(dm.handle) }">{{
                       dm.name.slice(0, 1).toUpperCase()
                     }}</span>
@@ -1149,16 +1157,16 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   color: var(--muted) !important;
 }
 
-/* 一件活骑的 PR。数字本身就是它要说的全部，所以是最轻的一档字，不抢标题。 */
-.thread-pr,
-.thread-card {
+/* 「该谁动」的色点。颜色和形状由 `lib/board.ts` 一处给出（内联样式），这里只管
+   尺寸和位置 —— scoped 样式进不了别的组件，颜色写在这儿就意味着看板和房间总览
+   各有一份，而这颗点存在的全部意义就是三处说的是同一件事。 */
+.board-dot {
   flex: none;
-  font-size: 12px;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-.thread-mark {
-  color: var(--faint);
+  width: 8px;
+  height: 8px;
+  margin-inline-end: 6px;
+  border-radius: 50%;
+  border: 2px solid var(--faint);
 }
 .topic-status {
   font-size: 11.5px;
@@ -1219,6 +1227,13 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   border-radius: 8px;
   padding: 1px 6px;
 }
+/* 话题还在路上时，先把行的形状画出来（LoadingSkeleton）。这条 rail 的底是
+   --canvas，骨架默认那档 --fill-2 压上去只有 1.083:1，等于什么都没画；--line-2 是
+   这条 rail 上「再离底一档」的那个值（选中行用的也是它），在两个主题下都看得见。 */
+.rail-skel {
+  --skel-bone: var(--line-2);
+}
+
 /* Archived rows read as "done": slightly dimmed titles. */
 .topic-row--archived :deep(.v-list-item-title) {
   color: var(--muted);
@@ -1269,9 +1284,10 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   flex: none;
   overflow: visible;
 }
-/* Human DM avatar: an initial in a muted circle, sized to match 芝士's 18px
-   avatar so both DM columns share the same icon/text lead. */
-.dm-avatar {
+/* 首字母头像：人的（.dm-avatar，圆）和项目的（.project-avatar，方）同一套底子，
+   都按 芝士 那颗 18px 头像的大小走，图标列和文字列才对得齐。 */
+.dm-avatar,
+.project-avatar {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1286,6 +1302,12 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   font-size: 10px;
   font-weight: 600;
   line-height: 1;
+}
+/* 项目头像：和人的头像同一个底子（.dm-avatar），只换形状——方头像，和桌面那条
+   竖 rail 上一个项目一格的画法是同一种语言。人是靠方/圆区分「这是个项目」还是
+   「这是个人」的，都画成圆的就混了。 */
+.project-avatar {
+  border-radius: var(--radius-sm);
 }
 /* 置顶行的图标：# / 总览 / 日历，三个各不相同所以留着；未读转琥珀。 */
 .row-glyph {

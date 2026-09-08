@@ -11,6 +11,7 @@ looking is correct the next time anyone asks.
 import logging
 import re
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,12 +23,14 @@ from app.core.errors import (
     NotFoundError,
     ValidationError,
 )
+from app.domain.agent.compute_configs import room_choice
 from app.domain.device.ccproxy_tenant import CcproxyTenantError
 from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
 from app.domain.machine import enrollment
+from app.domain.machine.limits import get_machine_limit
 from app.domain.machine.microcloud import MicroCloudClient, MicroCloudError
 from app.domain.machine.models import (
     AI_TRANSITIONAL,
@@ -72,6 +75,13 @@ def derive_hostname(project_name: str, project_id: uuid.UUID, index: int) -> str
 ENROLL_SETTLE_GRACE = timedelta(minutes=10)
 
 
+@dataclass(frozen=True, slots=True)
+class FailedLease:
+    topic_id: uuid.UUID
+    hostname: str
+    reason: str
+
+
 class MachineService:
     def __init__(
         self, session: AsyncSession, client: MicroCloudClient | None = None
@@ -90,7 +100,7 @@ class MachineService:
         self, team_id: int, actor: Actor, *, conceal_nonmember: bool = False
     ) -> None:
         """Apply the paid machine-create rule to a team-scoped Cloud choice."""
-        if actor.via != "token" or actor.is_agent or actor.user_id is None:
+        if not actor.authenticated or actor.user_id is None:
             raise AuthenticationRequiredError("Login required to create cloud machines")
         teams = team_service(self._session)
         if not await teams.is_team_member(team_id, actor.user_id):
@@ -108,14 +118,15 @@ class MachineService:
         self, project_id: uuid.UUID, actor: Actor
     ) -> None:
         """The one authorization rule for every path that can create a billed VM."""
-        if actor.via != "token" or actor.is_agent:
+        if not actor.authenticated:
             raise AuthenticationRequiredError("Login required to create cloud machines")
         project = await self._projects.get(project_id)
         if project is None:
             raise NotFoundError("Project not found")
-        if project.team_id is not None:
+        team_id = await self._projects.team_for_project(project_id)
+        if team_id is not None:
             await self.require_team_create_authority(
-                project.team_id, actor, conceal_nonmember=True
+                team_id, actor, conceal_nonmember=True
             )
             return
         # Legacy team-less project. An outsider must not learn that it exists, let
@@ -129,6 +140,22 @@ class MachineService:
             if not any(m.user_handle == actor.handle for m in roster):
                 raise NotFoundError("Project not found")
         await members.require_manager(project_id, actor)
+
+    async def require_use_authority(self, project_id: uuid.UUID, actor: Actor) -> None:
+        """Team membership authorizes room execution within the team's quota."""
+        if actor.via != "token" or actor.is_agent or actor.user_id is None:
+            raise AuthenticationRequiredError("Login required to use cloud compute")
+        project = await self._projects.get(project_id)
+        if project is None:
+            raise NotFoundError("Project not found")
+        team_id = await self._projects.team_for_project(project_id)
+        if team_id is not None:
+            if not await team_service(self._session).is_team_member(
+                team_id, actor.user_id
+            ):
+                raise ForbiddenError("只有团队成员可以使用团队云额度")
+        else:
+            await MemberService(self._session).require_manager(project_id, actor)
 
     async def _pick_offering(self) -> dict:
         offerings = await self._client.list_offerings()
@@ -182,11 +209,17 @@ class MachineService:
         if project is None:
             raise NotFoundError("project not found")
 
+        team_id = await self.quota_team_id(project_id)
+        await self._repo.lock_team_quota(team_id)
         offering = await self._pick_offering()
 
         def clamp(value: int | None, default: int, lo: str, hi: str) -> int:
             # The allowed range is per-offering, so a spec is only meaningful
             # against the offering we actually landed on.
+            if value is not None and not int(offering[lo]) <= value <= int(
+                offering[hi]
+            ):
+                raise ValidationError("所选云配置超出当前供应范围，请选择其他配置")
             return max(int(offering[lo]), min(int(offering[hi]), int(value or default)))
 
         spec = {
@@ -204,22 +237,15 @@ class MachineService:
             ),
         }
 
-        # Only machines that still exist count. A destroyed one lingers as a row
-        # until a later read confirms MicroCloud has forgotten it, and counting
-        # those would make a project's slots impossible to reclaim — delete then
-        # create would be refused for a machine that is already gone.
-        existing = [
-            m
-            for m in await self._repo.list_for_project(project_id)
-            if m.status not in GONE and m.released_at is None
-        ]
-        if len(existing) >= settings.microcloud_max_machines_per_project:
+        existing = await self.quota_machines(team_id)
+        limit = await get_machine_limit(self._session, team_id)
+        if len(existing) >= limit:
             raise ValidationError(
-                "this project already has "
-                f"{settings.microcloud_max_machines_per_project} machine(s); "
-                "delete one before provisioning another"
+                f"团队云虚拟机已使用 {len(existing)} / {limit} 台，"
+                "请先释放不再使用的机器"
             )
-        hostname = derive_hostname(project.name, project_id, len(existing) + 1)
+        project_used = sum(m.project_id == project_id for m in existing)
+        hostname = derive_hostname(project.name, project_id, project_used + 1)
 
         customer_id, account_id = await self._ensure_account(project_id)
         user = login_user or settings.microcloud_login_user
@@ -237,16 +263,32 @@ class MachineService:
             "user": user,
             **spec,
         }
+        # Ask for the AI channel at create (micro-cloud#78): a machine born on
+        # ccproxy starts its subscription login the moment it runs, instead of
+        # being set up on newapi first and switched by our sweep — one
+        # provisioning of the channel rather than two. A MicroCloud that
+        # predates the field ignores it and the sweep switches as before.
+        desired_ai_mode = (settings.microcloud_ai_mode or "").strip().lower()
+        if desired_ai_mode:
+            body["aiMode"] = desired_ai_mode
         # The platform needs its own way in to enroll the machine later, and the
         # human must not lose theirs by us taking the single key slot: both are
         # authorised, one per line, which is what authorized_keys is.
         bootstrap_private, bootstrap_public = await enrollment.generate_keypair()
-        authorized = enrollment.combine_authorized_keys(bootstrap_public, ssh_pubkey)
+        # The operator's key too: the bootstrap key is erased at enrollment, and
+        # a machine nobody can log into cannot be diagnosed (see the setting).
+        authorized = enrollment.combine_authorized_keys(
+            bootstrap_public, ssh_pubkey, settings.microcloud_operator_ssh_pubkey
+        )
         if authorized:
             body["sshPubkey"] = authorized
 
+        # No separate switch call here. MicroCloud answers 400 to a switch on a
+        # machine that is still provisioning, so asking right after create only
+        # cost the turn path a 22s refusal (measured 2026-09-02, machine 478).
+        # The mode rides in the create body above; `reconcile_ai_mode` still
+        # switches a machine that came up on the wrong channel.
         created = await self._client.create_machine(body)
-        created = await self._apply_desired_ai_mode(created)
         return await self._repo.add(
             project_id=project_id,
             topic_id=topic_id,
@@ -271,11 +313,11 @@ class MachineService:
     async def ensure_topic_machine(
         self, topic_id: uuid.UUID, *, actor: Actor | None = None
     ) -> ProjectMachine:
-        """Return/create one locked lease; the project lock serializes quota."""
+        """Return/create one locked lease; admission also locks the team's quota."""
         from app.domain.topic.services import TopicService
 
         topic = await TopicService(self._session).get_or_404(topic_id)
-        await self._repo.lock_provisioning(topic.project_id, topic_id)
+        await self._repo.lock_topic(topic_id)
         # The archive path takes the same topic lock. Re-read after waiting so a
         # first turn cannot provision from the stale pre-lock `active` state.
         await self._session.refresh(topic)
@@ -294,17 +336,25 @@ class MachineService:
             raise AuthenticationRequiredError(
                 "Cloud provisioning requires an authorized human caller"
             )
-        await self.require_create_authority(topic.project_id, actor)
+        await self.require_use_authority(topic.project_id, actor)
 
         project = await self._projects.get(topic.project_id)
         if project is None:
             raise NotFoundError("project not found")
+        choice = room_choice(topic, project.settings)
+        if choice.profile != "cloud":
+            raise ValidationError("当前房间未选择云端配置")
+        topic.compute_config = choice.model_dump()
+        topic.compute_profile = "cloud"
         agent = await IdentityService(self._session).ensure_topic_agent_user(topic_id)
         return await self.provision(
             project_id=topic.project_id,
             topic_id=topic_id,
             requested_by=actor.handle,
             owner_user_id=agent.id,
+            cores=choice.cores,
+            memory_mb=choice.memory_mb,
+            disk_gb=choice.disk_gb,
         )
 
     async def topic_machine(self, topic_id: uuid.UUID) -> ProjectMachine | None:
@@ -335,64 +385,32 @@ class MachineService:
             )
         return await self._repo.mark_released(machine, when=datetime.now(UTC))
 
-    async def replace_topic_machine(self, topic_id: uuid.UUID) -> ProjectMachine:
-        """Replace one authorized topic lease without borrowing another's VM."""
-        from app.domain.topic.services import TopicService
+    async def ready_topic_devices(
+        self, device_id: str | None = None
+    ) -> list[tuple[uuid.UUID, str]]:
+        return await self._repo.list_ready_topic_devices(device_id)
 
-        topic = await TopicService(self._session).get_or_404(topic_id)
-        await self._repo.lock_provisioning(topic.project_id, topic_id)
-        await self._session.refresh(topic)
-        if topic.status == TopicStatus.archived:
-            raise ValidationError("archived topic cannot replace cloud compute")
-        old = await self._repo.get_active_for_topic(topic_id)
-        if old is None:
-            raise ValidationError("cloud replacement requires an active topic lease")
-        requested_by = old.requested_by
-        owner_user_id = old.owner_user_id
-        if old.status not in {MachineStatus.deleting, MachineStatus.deleted}:
-            await self.destroy(old)
-        binding = await self._devices.topic_binding(topic_id)
-        if binding is not None and old.device_id == binding.device_id:
-            await self._devices.release_topic_device(
-                topic_id, reason="replacing failed topic cloud machine"
+    async def failed_topic_leases(self) -> list[FailedLease]:
+        """Topic leases that will never become ready, with the reason in words."""
+        out: list[FailedLease] = []
+        for machine in await self._repo.list_failed_topic_leases():
+            assert machine.topic_id is not None
+            reason = (
+                "MicroCloud 报告机器创建失败"
+                if machine.status == MachineStatus.error
+                else "MicroCloud 报告机器的 AI 通道配置失败"
             )
-        await self._repo.mark_released(old, when=datetime.now(UTC))
-        return await self.provision(
-            project_id=topic.project_id,
-            topic_id=topic_id,
-            requested_by=requested_by,
-            owner_user_id=owner_user_id,
-        )
-
-    async def ready_topic_devices(self) -> list[tuple[uuid.UUID, str]]:
-        return await self._repo.list_ready_topic_devices()
-
-    async def _apply_desired_ai_mode(self, created: dict) -> dict:
-        """Switch a fresh machine's built-in AI channel to the configured mode.
-
-        MicroCloud provisions on newapi, whose default routes to a cheap
-        non-Claude model — the operator guidance is ccproxy (the console's
-        →ccproxy button). Best-effort: a failure here must not fail the
-        provision, and the enrollment sweep reconciles stragglers."""
-        desired = (settings.microcloud_ai_mode or "").strip().lower()
-        current = str(created.get("aiMode") or "").lower()
-        if not desired or current == desired:
-            return created
-        try:
-            switched = await self._client.switch_ai(int(created["id"]), desired)
-        except Exception:  # noqa: BLE001 — the sweep retries; provision must land
-            logger.warning(
-                "switching machine %s AI channel to %s failed — the enrollment "
-                "sweep will retry",
-                created.get("id"),
-                desired,
+            out.append(
+                FailedLease(
+                    topic_id=machine.topic_id,
+                    hostname=machine.hostname,
+                    reason=(
+                        f"{reason}（status={machine.status}, "
+                        f"ai_status={machine.ai_status}）"
+                    ),
+                )
             )
-            return created
-        return {
-            **created,
-            "aiMode": str(switched.get("aiMode") or desired).lower(),
-            "aiStatus": str(switched.get("aiStatus") or "provisioning").lower(),
-        }
+        return out
 
     async def reconcile_ai_mode(self, limit: int = 5) -> int:
         """Level-triggered half of the →ccproxy story: any settled machine on
@@ -463,6 +481,25 @@ class MachineService:
             ai_status=_as_ai_status(remote.get("aiStatus")),
             seen_at=datetime.now(UTC),
         )
+
+    async def quota_team_id(self, project_id: uuid.UUID) -> int:
+        project = await self._projects.get(project_id)
+        if project is None:
+            raise NotFoundError("project not found")
+        team_id = project.team_id
+        if team_id is None:
+            team_id = await self._projects.team_for_project(project_id)
+        if team_id is None:
+            raise ValidationError("请先将项目关联到团队，再分配云资源")
+        return team_id
+
+    async def quota_machines(self, team_id: int) -> list[ProjectMachine]:
+        """Inventory counted by both admission and the allocation notice."""
+        return [
+            m
+            for m in await self._repo.list_for_team(team_id)
+            if m.status not in GONE and m.released_at is None
+        ]
 
     async def list_for_project(self, project_id: uuid.UUID) -> list[ProjectMachine]:
         machines = await self._repo.list_for_project(project_id)
@@ -556,6 +593,13 @@ class MachineService:
                 actor_user_id=machine.owner_user_id,
             )
 
+        # The device row and its token have to be visible to the connector route
+        # before the machine dials in, and the bootstrap below makes it dial in
+        # while this sweep's transaction is still open. Uncommitted, the first
+        # `link connect` was answered 403 (unknown device token) and only the
+        # connector's 2s retry saved the enrollment — two refusals before the
+        # accept on 2026-09-02, machine 478.
+        await self._session.commit()
         script = enrollment.bootstrap_script(
             origin=origin, token=device.token, device_id=device.device_id
         )

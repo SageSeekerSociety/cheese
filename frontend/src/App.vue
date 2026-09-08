@@ -30,7 +30,28 @@
     <v-main class="bg-background h-100">
       <div class="border-t-sm bg-background h-100 overflow-hidden">
         <div id="app-scrollable" class="app-content h-100">
-          <router-view />
+          <!-- 保活是白名单，不是黑名单。缓存一个页面组件等于把它的表单、它的
+               「上一个人是谁」一起留在内存里 —— 登录/注册/OAuth 回调/验证码那
+               几页要是被留下来，退出后再登录会看到上一个账号的填写状态。所以
+               这里只点名那些「进过一次就该立刻回来」的项目内页面，其余一律照
+               旧挂载/卸载。:max 是内存上限，别去掉。
+
+               v-memo="[]" 是这里的必需品，不是优化。带 v-slot 的 router-view 就
+               有了 slot，而 Vue 对「有 slot 的子组件」在父组件重渲染时一律强制更
+               新；RouterView 每次重渲染都给页面组件换一个新的 onVnodeUnmounted，
+               于是页面组件也跟着在**父组件的 patch 中途**重渲染。断点从桌面切到
+               手机时这个中途正好排在移动顶栏挂上之前，Home 的 Teleport 因此找不
+               到 #app-bar-slot：首页的分段 tab 消失，卸载时还会崩。空的依赖数组
+               让这棵子树不再被父组件的重渲染碰到（路由自己的重渲染照常），也就
+               是加 v-slot 之前 router-view 本来的样子。想挪动它、或者改白名单
+               之前，先看 App.keepAlive.spec.ts：那三条用例分别钉住「白名单里的
+               页面被保活」「登录页不被保活」「切路由确实换页」，把 v-memo 挪进
+               下面这个 <component> 三条会一起变红。 -->
+          <router-view v-slot="{ Component }" v-memo="[]">
+            <keep-alive :include="keptAlivePages" :max="5">
+              <component :is="Component" />
+            </keep-alive>
+          </router-view>
         </div>
       </div>
     </v-main>
@@ -40,6 +61,7 @@
       <v-card rounded="lg" class="pa-2">
         <v-card-title class="text-h6 font-weight-bold pb-1">新建项目</v-card-title>
         <v-card-text class="pb-2">
+          <ResourceLimitsNotice v-if="newProjectDialog" />
           <v-text-field
             v-model="newProjectName"
             label="项目名称"
@@ -50,6 +72,20 @@
             :disabled="creatingProject"
             @keyup.enter="confirmNewProject"
           />
+          <v-select
+            v-model="newProjectTeamId"
+            :items="newProjectTeams"
+            :item-title="teamLabel"
+            item-value="id"
+            label="所属小队"
+            variant="outlined"
+            color="primary"
+            class="mt-3"
+            hide-details
+            :loading="loadingTeams"
+            :disabled="creatingProject || loadingTeams"
+          />
+          <div class="t-meta mt-2">选「个人」只有你自己看得到</div>
           <v-alert v-if="newProjectError" type="error" density="compact" variant="tonal" class="mt-3">
             {{ newProjectError }}
           </v-alert>
@@ -87,12 +123,14 @@
 
 <script setup lang="ts">
 import type { Project } from '@/cx_types'
+import type { Team } from '@/types/teams'
 import type { NavSources } from './components/common/Navigation/destinations'
 
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useRouter } from 'vue-router'
 
+import { defaultTeamFor, teamIdInPath, useNewProjectDialog } from '@/composables/useNewProjectDialog'
 import { usePageTitle } from '@/composables/usePageTitle'
 
 import MyApp from './components/common/MyApp.vue'
@@ -106,9 +144,11 @@ import AppBar from '@/components/common/Navigation/AppBar.vue'
 import MobileAppBar from '@/components/common/Navigation/MobileAppBar.vue'
 import OfflineBanner from '@/components/common/OfflineBanner.vue'
 import VersionBadge from '@/components/common/VersionBadge.vue'
+import ResourceLimitsNotice from '@/components/ResourceLimitsNotice.vue'
 import { trackKeyboardInset } from '@/lib/keyboardInset'
 import { loadCachedProjects, saveCachedProjects } from '@/lib/projectCache'
 import { myHandle } from '@/me'
+import { TeamsApi } from '@/network/api/teams'
 import AccountService from '@/services/account'
 import { lastOpenedProjectId, useWorkspaceStore } from '@/stores/workspace'
 import { useAppTheme } from '@/theme'
@@ -143,6 +183,11 @@ router.isReady().then(async () => {
   watch([() => store.siteName, () => store.separator], updateDocumentTitle)
 })
 
+// 名字来自各自组件里的 defineOptions({ name })——它们也是唯一接了
+// useCachedResource 的五个页面，「组件还在」和「数据还在」必须成对，不然回到页
+// 面看到的是一屏永远不再刷新的旧数据。
+const keptAlivePages = ['OverviewView', 'ProjectDocsView', 'MemberView', 'CalendarView', 'ProjectAgentsView']
+
 const hideAppBar = computed(() => {
   return currentRoute.meta.hideAppBar
 })
@@ -170,6 +215,17 @@ async function loadCxProjects() {
   }
 }
 onMounted(loadCxProjects)
+
+// A project can appear from outside this dialog — made on a team page, or by
+// a teammate — and the rail would keep showing the cached list until a reload.
+// Opening a project the rail does not know is the cheapest signal that the
+// list is stale, so reload it then.
+watch(
+  () => workspace.projectId,
+  (id) => {
+    if (id && !cxProjects.value.some((p) => p.id === id)) void loadCxProjects()
+  }
+)
 
 // …and again whenever the identity changes. The rail used to load exactly once,
 // on mount — and the app normally mounts on the sign-in page, i.e. with no
@@ -208,17 +264,44 @@ const rail = computed(() => railItems(navSources.value))
 const tabs = computed(() => tabItems(navSources.value))
 // The "+" rail affordance opens an in-app dialog (no native prompt). On confirm
 // we create the project owned by the current user, refresh the rail so the new
-// tile appears, then open its workspace.
-const newProjectDialog = ref(false)
+// tile appears, then open its workspace. The same dialog is what a team page's
+// 新建项目 opens (useNewProjectDialog), with that team preselected.
+const { open: newProjectDialog, presetTeamId, show: showNewProjectDialog } = useNewProjectDialog()
 const newProjectName = ref('')
 const creatingProject = ref(false)
 const newProjectError = ref<string | null>(null)
+// 所属小队: which team the project belongs to decides who can see it. Without
+// this the rail ＋ always chose the personal team, so a project someone made
+// for their team was invisible to the rest of it.
+const newProjectTeams = ref<Team[]>([])
+const newProjectTeamId = ref<number | null>(null)
+const loadingTeams = ref(false)
+const teamLabel = (t: Team) => (t.personal ? '个人' : t.name)
 
 function createNewProject() {
+  // From a team page, that team; elsewhere the dialog falls back to 个人.
+  showNewProjectDialog(teamIdInPath(currentRoute.path))
+}
+
+watch(newProjectDialog, async (opened) => {
+  if (!opened) return
   newProjectName.value = ''
   newProjectError.value = null
-  newProjectDialog.value = true
-}
+  loadingTeams.value = true
+  try {
+    const {
+      data: { teams },
+    } = await TeamsApi.getMyTeams()
+    newProjectTeams.value = teams
+  } catch {
+    // The select simply stays empty; the backend then files the project under
+    // the personal team, which is what it did before this dialog asked.
+    newProjectTeams.value = []
+  } finally {
+    loadingTeams.value = false
+  }
+  newProjectTeamId.value = defaultTeamFor(presetTeamId.value, newProjectTeams.value)
+})
 
 async function confirmNewProject() {
   const name = newProjectName.value.trim()
@@ -226,7 +309,7 @@ async function confirmNewProject() {
   creatingProject.value = true
   newProjectError.value = null
   try {
-    const project = await createProject(name, myHandle())
+    const project = await createProject(name, myHandle(), newProjectTeamId.value ?? undefined)
     await loadCxProjects()
     newProjectDialog.value = false
     router.push(`/projects/${project.id}`)

@@ -422,3 +422,17 @@ def authenticated_user(
 @pytest.fixture
 def auth_headers(authenticated_user: CreatedUser) -> dict[str, str]:
     return {"Authorization": f"Bearer {authenticated_user.token}"}
+
+
+@pytest.fixture
+def github_binding_user(client, monkeypatch):
+    """A real project caller with a stubbed, already-linked GitHub App token."""
+    from app.domain.oauth.services import OAuthService
+    from tests.conftest import seed_user
+
+    seed_user(client, "alice")
+
+    async def token(self, user_id):
+        return "test-github-user-token"
+
+    monkeypatch.setattr(OAuthService, "get_github_user_token", token)

@@ -7,7 +7,6 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_session.models import AgentSession
-from app.domain.room_task.place import room_and_task
 
 
 class AgentSessionRepository:
@@ -23,20 +22,24 @@ class AgentSessionRepository:
         self._session = session
 
     @staticmethod
-    def _at(room_id: uuid.UUID, task_id: uuid.UUID | None):
+    def _at(room_id: uuid.UUID):
+        """One room's own conversations.
+
+        `task_id IS NULL` is not redundant with the room clause: rows a thread
+        wrote back when work was a place still sit under the same `topic_id`,
+        and leaving them in would resume the room's session from a card's
+        conversation.
+        """
         return (
             AgentSession.topic_id == room_id,
-            AgentSession.task_id.is_(None)
-            if task_id is None
-            else AgentSession.task_id == task_id,
+            AgentSession.task_id.is_(None),
         )
 
     async def resume_token(self, topic_id: uuid.UUID, agent_handle: str) -> str | None:
         """What this agent resumes its conversation in this place by."""
-        room_id, task_id = await room_and_task(self._session, topic_id)
         result = await self._session.execute(
             select(AgentSession.resume_token).where(
-                *self._at(room_id, task_id),
+                *self._at(topic_id),
                 AgentSession.agent_handle == agent_handle,
             )
         )
@@ -51,27 +54,20 @@ class AgentSessionRepository:
         (a resumed turn and the sweep's own resume are the pair that actually
         does), and losing that race must overwrite, not raise.
 
-        The conflict target names one of two PARTIAL unique indexes by repeating
-        its predicate. There is no single index over the pair to name: `task_id`
-        is NULL on every room row, NULL is not equal to NULL in a unique index,
-        and one wider index would therefore stop enforcing the room half at all.
+        The conflict target names a PARTIAL unique index by repeating its
+        predicate: `task_id` is NULL on every room row, NULL is not equal to
+        NULL in a unique index, so an index over the pair would not enforce
+        anything at all.
         """
-        room_id, task_id = await room_and_task(self._session, topic_id)
-        room_half = task_id is None
         stmt = insert(AgentSession).values(
-            topic_id=room_id,
-            task_id=task_id,
+            topic_id=topic_id,
             agent_handle=agent_handle,
             resume_token=resume_token,
         )
         await self._session.execute(
             stmt.on_conflict_do_update(
-                index_elements=[AgentSession.topic_id, AgentSession.agent_handle]
-                if room_half
-                else [AgentSession.task_id, AgentSession.agent_handle],
-                index_where=text("task_id IS NULL")
-                if room_half
-                else text("task_id IS NOT NULL"),
+                index_elements=[AgentSession.topic_id, AgentSession.agent_handle],
+                index_where=text("task_id IS NULL"),
                 set_={"resume_token": stmt.excluded.resume_token},
             )
         )
@@ -84,8 +80,7 @@ class AgentSessionRepository:
         workspace's ``has_run``) freezes on this: the first turn is still the
         first turn, whoever took it.
         """
-        room_id, task_id = await room_and_task(self._session, topic_id)
         result = await self._session.execute(
-            select(exists().where(*self._at(room_id, task_id)))
+            select(exists().where(*self._at(topic_id)))
         )
         return bool(result.scalar())

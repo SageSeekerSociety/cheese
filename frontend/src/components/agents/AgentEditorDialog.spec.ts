@@ -11,6 +11,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 const createProjectAgent = vi.fn()
 const updateProjectAgent = vi.fn()
+const getProjectAgentOptions = vi.fn()
 const updateAgentType = vi.fn()
 const createAgentType = vi.fn()
 const setProjectDefaultAgent = vi.fn()
@@ -19,6 +20,7 @@ vi.mock('../../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api')>()
   return {
     ...actual,
+    getProjectAgentOptions: () => getProjectAgentOptions(),
     createProjectAgent: (...a: unknown[]) => createProjectAgent(...a),
     updateProjectAgent: (...a: unknown[]) => updateProjectAgent(...a),
     updateAgentType: (...a: unknown[]) => updateAgentType(...a),
@@ -54,6 +56,7 @@ function mountDialog(agent: ProjectAgent | null, types: AgentType[] = [CUSTOM_TY
 async function clickSave() {
   const dialog = await screen.findByRole('dialog')
   const save = Array.from(dialog.querySelectorAll('button')).find((b) => b.textContent?.trim() === '保存')
+  await waitFor(() => expect((save as HTMLButtonElement).disabled).toBe(false))
   await fireEvent.click(save as HTMLButtonElement)
 }
 
@@ -62,6 +65,7 @@ function field(label: string): HTMLInputElement {
 }
 
 beforeAll(() => {
+  vi.stubGlobal('devicePixelRatio', 1)
   if (!('ResizeObserver' in globalThis)) {
     ;(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
       observe() {}
@@ -87,7 +91,25 @@ beforeAll(() => {
   }
 })
 
+const CONFIG = {
+  body: 'Review code',
+  model: 'sonnet',
+  harness: 'claude-code',
+  skills: [],
+  mcp_servers: [],
+  effort: null,
+}
+
 beforeEach(() => {
+  getProjectAgentOptions.mockReset().mockResolvedValue({
+    model: {
+      state: 'choosable',
+      choices: [
+        { id: 'sonnet', label: 'Sonnet', default: true },
+        { id: 'opus', label: 'Opus', default: false },
+      ],
+    },
+  })
   createProjectAgent.mockReset().mockResolvedValue({})
   updateProjectAgent.mockReset().mockResolvedValue({})
   updateAgentType.mockReset().mockResolvedValue(CUSTOM_TYPE)
@@ -129,6 +151,7 @@ describe('新建时的校验', () => {
         display_name: '代码评审',
         handle: 'reviewer-2',
         type_name: null,
+        configuration: { ...CONFIG, body: '' },
       })
     })
   })
@@ -142,6 +165,7 @@ describe('新建时的校验', () => {
         display_name: '代码评审',
         handle: undefined,
         type_name: null,
+        configuration: { ...CONFIG, body: '' },
       })
     })
   })
@@ -150,12 +174,14 @@ describe('新建时的校验', () => {
 describe('修改时', () => {
   const existing: ProjectAgent = {
     id: 'a2',
+    configuration: CONFIG,
     project_id: PROJECT,
     handle: 'reviewer',
     type_name: 'reviewer',
     display_name: '代码评审',
     is_default: false,
     configured: true,
+    is_active: true,
   }
 
   it('只改名字时不去动那个可能被别处共用的类型', async () => {
@@ -165,52 +191,56 @@ describe('修改时', () => {
     await waitFor(() => {
       expect(updateProjectAgent).toHaveBeenCalledWith(PROJECT, 'a2', {
         display_name: '严格评审',
-        type_name: 'reviewer',
+        configuration: CONFIG,
       })
     })
     expect(updateAgentType).not.toHaveBeenCalled()
   })
 
-  it('改了角色设定才写回类型', async () => {
+  it('saves role edits only on the selected agent', async () => {
     mountDialog(existing)
-    await fireEvent.update(field('角色设定'), '你负责代码评审，先看测试')
+    await fireEvent.update(field('角色设定'), 'Check security')
     await clickSave()
-    await waitFor(() => {
-      expect(updateAgentType).toHaveBeenCalledWith(
-        'reviewer',
-        expect.objectContaining({ body: '你负责代码评审，先看测试' })
-      )
-    })
+    await waitFor(() =>
+      expect(updateProjectAgent).toHaveBeenCalledWith(PROJECT, 'a2', {
+        display_name: existing.display_name,
+        configuration: { ...CONFIG, body: 'Check security' },
+      })
+    )
+    expect(updateAgentType).not.toHaveBeenCalled()
+    expect(existing.configuration.body).toBe('Review code')
   })
 
-  // 一个从没配过队友的项目，名册里只有这一条。它没有 id，但它真的在干活、
-  // 真的有记忆 —— 所以「给它换个类型」必须通，不能因为没 id 就变成死路。
-  it('项目自带的那个队友改不了名字，但换类型是通的', async () => {
-    const implicit: ProjectAgent = {
-      id: null,
-      project_id: PROJECT,
-      handle: 'cheese',
-      type_name: null,
-      display_name: '芝士',
-      is_default: true,
-      configured: false,
-    }
-    mountDialog({ ...implicit, type_name: 'reviewer' })
-    expect(field('名字').readOnly).toBe(true)
+  it('saves the selected model without changing the original draft source', async () => {
+    mountDialog(existing)
+    await waitFor(() => expect(field('模型').disabled).toBe(false))
+    await fireEvent.mouseDown(field('模型'))
+    await fireEvent.click(await screen.findByText('Opus', { selector: '.v-list-item-title' }))
     await clickSave()
+    await waitFor(() =>
+      expect(updateProjectAgent).toHaveBeenCalledWith(PROJECT, existing.id, {
+        display_name: existing.display_name,
+        configuration: { ...CONFIG, model: 'opus' },
+      })
+    )
+    expect(existing.configuration.model).toBe('sonnet')
+  })
 
-    // 走的是「按类型设默认队友」那条 —— 后端会顺手把这一行落下来，
-    // 它一直在攒的那份记忆原样跟过去。
-    await waitFor(() => {
-      expect(setProjectDefaultAgent).toHaveBeenCalledWith(PROJECT, { type_name: 'reviewer' })
-    })
+  it('keeps an unavailable saved model visible and refuses a silent replacement', async () => {
+    mountDialog({ ...existing, configuration: { ...CONFIG, model: 'unavailable-model' } })
+    await clickSave()
+    expect(await screen.findByText('请选择当前项目可用的模型')).toBeTruthy()
     expect(updateProjectAgent).not.toHaveBeenCalled()
   })
 
-  it('平台预设是只读的，改不了', async () => {
-    const preset: AgentType = { ...CUSTOM_TYPE, name: 'fullstack-engineer', title: '全栈工程', builtin: true }
-    mountDialog({ ...existing, type_name: 'fullstack-engineer' }, [preset])
-    expect(await screen.findByText('平台预设不能改')).toBeTruthy()
-    expect((field('角色设定') as unknown as HTMLTextAreaElement).readOnly).toBe(true)
+  it('edits agents created from a built-in preset without editing the preset', async () => {
+    mountDialog({ ...existing, type_name: 'fullstack-engineer' }, [
+      { ...CUSTOM_TYPE, name: 'fullstack-engineer', builtin: true },
+    ])
+    expect(field('角色设定').readOnly).toBe(false)
+    expect(screen.queryByText('平台预设不能改')).toBeNull()
+    await clickSave()
+    await waitFor(() => expect(updateProjectAgent).toHaveBeenCalled())
+    expect(createAgentType).not.toHaveBeenCalled()
   })
 })

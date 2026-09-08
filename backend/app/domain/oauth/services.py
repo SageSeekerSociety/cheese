@@ -257,6 +257,14 @@ PROVIDER_CLASSES = {
     "github_app": GitHubProvider,
 }
 
+# `github_app` is the account-LINK provider: its redirect_url is the
+# `/users/me/github-account/callback` handler, which only accepts a state the
+# platform minted for a signed-in user. Offered as a way to sign in it can never
+# produce a session, so the sign-in page must not list it. Both flows share
+# OAuthService because they share the same GitHub OAuth dance; only the purpose
+# differs (config.py keeps their settings deliberately separate for the same reason).
+LINK_ONLY_PROVIDERS = frozenset({"github_app"})
+
 
 class OAuthService:
     def __init__(
@@ -346,6 +354,11 @@ class OAuthService:
         return None
 
     def get_providers_config(self) -> list[dict]:
+        """The providers a person can SIGN IN with.
+
+        Link-only providers are configured through this same service but are
+        never offered here: the sign-in page renders every entry as a button.
+        """
         self._initialize()
         return [
             {
@@ -353,7 +366,8 @@ class OAuthService:
                 "name": p.config.name,
                 "scope": p.config.scope,
             }
-            for p in self._providers.values()
+            for provider_id, p in self._providers.items()
+            if provider_id not in LINK_ONLY_PROVIDERS
         ]
 
     def get_provider(self, provider_id: str) -> OAuthProvider:

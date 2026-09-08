@@ -4,13 +4,13 @@
 
 **Goal:** Put MicroCloud provisioning in the existing team compute-registration page and make provisioned machines usable by every project in that team, while preserving topic affinity.
 
-**Architecture:** The team owns the compute pool and its default profile. A MicroCloud machine still records one project as its billing/audit owner, but enrollment binds its Cheese device to that project's team. A project stores only the implicit last profile selected by a topic. The topic remains the only user-facing compute selector and freezes after its first turn.
+**Architecture:** The team owns resource permissions and quotas. A MicroCloud machine records one project as its billing/audit owner, while enrollment shares its device with that project's team. Projects store explicit defaults and favorites; room choices never rewrite them. See [the current project configuration plan](2026-09-07-project-compute-configs.md).
 
 **Tech Stack:** FastAPI, SQLAlchemy, Alembic, PostgreSQL, Vue 3, Vuetify, TypeScript, pytest.
 
 ---
 
-## Task 1: Persist and expose the team default
+## Task 1: Project defaults supersede team defaults
 
 **Files:**
 - Modify: `backend/app/domain/team/models.py`
@@ -18,10 +18,10 @@
 - Modify: `backend/app/api/routes/teams.py`
 - Test: `backend/tests/integration/test_team_devices.py`
 
-1. Add a nullable `team.compute_profile`; null means the platform default.
-2. Add authenticated GET and admin-only PUT endpoints at `/teams/{team_id}/compute-profile`.
-3. Scope `device` availability to online devices registered to that team.
-4. Test member read, admin write, member write denial, invalid/unavailable profile denial, and persistence.
+1. Migrate existing team and project profile defaults into explicit project configurations.
+2. Remove the team default field and endpoints; project owners and leads manage project defaults.
+3. Team membership governs resource use; adding a device to a team shares it with its projects.
+4. Verify project management permissions separately from room resource use.
 
 ## Task 2: Resolve topic compute through the documented hierarchy
 
@@ -31,8 +31,8 @@
 - Test: `backend/tests/integration/test_topic_compute_profile.py`
 - Test: `backend/tests/unit/test_compute_pool.py`
 
-1. Resolve `topic selection -> project sticky -> team default -> platform default` in both the read API and turn execution.
-2. Keep topic PUT behavior: selecting a profile materializes it on the topic and updates project sticky.
+1. Resolve `room choice -> project default -> deployment default` in both the read API and turn execution.
+2. Room selection changes only that room.
 3. Preserve the first-turn freeze (a topic with an `agent_sessions` row is pinned) and the offline-device no-drift rule.
 
 ## Task 3: Bind provisioned cloud machines to the team
@@ -56,8 +56,8 @@
 - Modify: `frontend/src/cx_types.ts`
 - Modify: `frontend/src/types/teams.ts`
 
-1. Remove the project-settings compute picker; project sticky remains implicit.
-2. Add the team default selector to the team compute page.
+1. Put defaults and favorites first in project settings.
+2. Keep permissions, quotas, and device registration on the team page.
 3. List MicroCloud machines across the team's projects, showing provisioning, AI setup, enrollment, online state, billing project, and resource size.
 4. Let team admins provision via a dialog. Select a billing project when the team has several; use 4 cores, 8 GiB RAM, and 64 GiB disk as the explicit defaults.
 5. Poll only while a machine lifecycle is transitional and stop polling on unmount.

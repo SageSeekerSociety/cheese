@@ -53,6 +53,17 @@ class FakeDevices:
         self.team_assigned.append((device_id, team_id))
 
 
+class FakeSession:
+    """Keeps a timeline of commits and bootstraps, so a test can say which came
+    first; the bootstrap fake appends to the same list."""
+
+    def __init__(self):
+        self.timeline: list[str] = []
+
+    async def commit(self):
+        self.timeline.append("commit")
+
+
 class FakeProjects:
     def __init__(self, team_id=None):
         self.team_id = team_id
@@ -112,8 +123,9 @@ def build_service(
 ):
     from app.domain.machine.services import MachineService
 
+    calls: list[dict] = []
     service = MachineService.__new__(MachineService)
-    service._session = None
+    service._session = FakeSession()
     service._repo = FakeMachineRepo()
     service._projects = FakeProjects(team_id)
     service._devices = FakeDevices()
@@ -122,9 +134,9 @@ def build_service(
     monkeypatch.setattr(
         "app.domain.machine.services.settings.connector_public_base", origin
     )
-    calls: list[dict] = []
 
     async def _run_bootstrap(*, ip, login_user, private_key, script):
+        service._session.timeline.append("bootstrap")
         calls.append(
             {"ip": ip, "user": login_user, "key": private_key, "script": script}
         )
@@ -150,6 +162,22 @@ async def test_enrollment_writes_the_credential_the_device_flow_would_have(
     assert "link connect" in script
     assert machine.device_id == "dev123"
     assert service._devices.assigned == [("dev123", machine.project_id)]
+
+
+async def test_the_credential_is_committed_before_the_machine_is_told_to_dial(
+    monkeypatch,
+):
+    """The bootstrap makes the machine dial in while the sweep's transaction is
+    still open. Until the commit, the connector route answered its hello 403
+    (unknown device token) and only the connector's retry saved enrollment
+    (2026-09-02, machine 478: two refusals before the accept)."""
+    service, _ = build_service(monkeypatch)
+
+    await service.enroll(make_machine())
+
+    timeline = service._session.timeline
+    assert "bootstrap" in timeline
+    assert timeline.index("commit") < timeline.index("bootstrap")
 
 
 async def test_a_machine_the_platform_opened_is_enrolled_as_cloud_supply(monkeypatch):
@@ -346,6 +374,7 @@ async def test_sweep_wakes_only_fully_settled_topic_machines(monkeypatch):
     from app.domain.machine.services import MachineService
 
     topic_id = uuid.uuid4()
+    failed_leases: list = []
 
     class Session:
         async def __aenter__(self):
@@ -374,6 +403,9 @@ async def test_sweep_wakes_only_fully_settled_topic_machines(monkeypatch):
 
         async def ready_topic_devices(self):
             return [(topic_id, "cloud-1")]
+
+        async def failed_topic_leases(self):
+            return list(failed_leases)
 
     monkeypatch.setattr("app.domain.machine.services.MachineService", Service)
     on_ready = AsyncMock()
@@ -549,3 +581,57 @@ def test_half_an_identity_is_rejected_rather_than_stored():
             )
             is None
         )
+
+
+async def test_sweep_hands_a_lease_microcloud_gave_up_on_to_the_room(monkeypatch):
+    """A lease whose machine or AI channel errored never reaches `on_ready`; the
+    sweep hands it to `on_failed` in the same pass, so the room stops waiting."""
+    from unittest.mock import AsyncMock
+
+    from app.domain.machine.runner import MachineEnrollmentSweeper
+    from app.domain.machine.services import FailedLease, MachineService
+
+    lease = FailedLease(
+        topic_id=uuid.uuid4(), hostname="box-9", reason="MicroCloud 报告机器创建失败"
+    )
+
+    class Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def commit(self):
+            return None
+
+    class Service:
+        available = True
+
+        def __init__(self, _session):
+            pass
+
+        async def refresh_unsettled(self):
+            return None
+
+        async def reconcile_ai_mode(self):
+            return None
+
+        async def enroll_pending(self):
+            return {"enrolled": 0, "failed": 0}
+
+        async def ready_topic_devices(self):
+            return []
+
+        async def failed_topic_leases(self):
+            return [lease]
+
+    monkeypatch.setattr("app.domain.machine.services.MachineService", Service)
+    on_ready, on_failed = AsyncMock(), AsyncMock()
+    await MachineEnrollmentSweeper(
+        Session, on_ready=on_ready, on_failed=on_failed
+    ).sweep()
+
+    on_ready.assert_not_awaited()
+    on_failed.assert_awaited_once_with([lease])
+    assert MachineService is not None

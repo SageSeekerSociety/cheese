@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
 import TopicSidebar from '@/components/TopicSidebar.vue'
+import { cancelPrefetch, prefetchOnHover } from '@/lib/routePrefetch'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -39,6 +40,16 @@ function openDocs(kind: string) {
   void router.push({ name: 'project-docs', params: { projectId: props.projectId, kind } })
 }
 
+// 指针停在一行上时，把点下去之后要等的两段先走掉：这个页面的代码，和这个话题最新
+// 那一页消息。走的是同一个 openTopic 的落点，所以预热的和点开的永远是同一个东西。
+function onHoverTopic(topicId: string) {
+  prefetchOnHover({
+    router,
+    to: { name: 'workspace-topic', params: { projectId: props.projectId, topicId } },
+    topicId,
+  })
+}
+
 async function onCreateTopic(title: string, agentInstanceId?: string | null) {
   const topic = await store.create(title, agentInstanceId)
   if (topic) openTopic(topic.id)
@@ -63,7 +74,7 @@ async function onArchiveTopic(topicId: string) {
     :width="store.railWidth"
     :projects="store.projects"
     :selected-project-id="store.projectId"
-    :topics="store.tree"
+    :topics="store.topics"
     :selected-topic-id="activeTopicId"
     :loading-topics="store.loadingTopics"
     :private-active="activeDmPeer === 'cheese'"
@@ -75,6 +86,8 @@ async function onArchiveTopic(topicId: string) {
     :private-unread-map="store.privateUnreadMap"
     @update:width="store.setRailWidth"
     @select-topic="openTopic"
+    @hover-topic="onHoverTopic"
+    @leave-topic="cancelPrefetch"
     @select-private="openDm('cheese')"
     @select-peer-dm="openDm"
     @select-docs="openDocs"

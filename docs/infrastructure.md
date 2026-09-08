@@ -38,14 +38,32 @@ private on GHCR; boxes pull with their existing GHCR auth.
 
 dev and prod (RUC) run the app as **Docker containers** (`deploy/deploy-docker.sh`
 + `deploy/compose/docker-compose.base.yml`): pull the per-commit `backend` +
-`frontend` images, migrate, `up`, health-check, auto-rollback. The frontend image
-bundles nginx (SPA + `/api` reverse-proxy), so there's **no host nginx** — the ghg
-edge (APISIX) proxies to the box on **:8080** (frontend) + **:8081** (backend),
-bound `0.0.0.0` (private net, safe). DB/Redis are **external** ghg hosts (the app
-only holds `DATABASE_URL`/`REDIS_URL`); uploads bind-mount a host dir outside the
-containers (`/home/nictheboy/shared/uploads` on prod — the 赛题 PDFs). Each box
-was cut over from bare-metal once (`deploy/{dev,prod}-docker-cutover.sh`); the old
-systemd service is kept **installed-but-disabled** as an instant rollback.
+`frontend` images, migrate, bring the app tier up, health-check, auto-rollback.
+The frontend image bundles nginx (SPA + `/api` reverse-proxy). DB/Redis are
+**external** ghg hosts (the app only holds `DATABASE_URL`/`REDIS_URL`); uploads
+bind-mount a host dir outside the containers (`/home/nictheboy/shared/uploads`
+on prod — the 赛题 PDFs). Each box was cut over from bare-metal once
+(`deploy/{dev,prod}-docker-cutover.sh`); the old systemd service is kept
+**installed-but-disabled** as an instant rollback.
+
+**On dev the backend rolls out without downtime.** The box's **:8081** is
+`cheese-api-front`, a host-network nginx from `deploy/llm-tunnel/` whose
+backend upstream comes from an include file (`~/ops/llm-tunnel/active/
+backend.conf`). With `ACTIVE_BACKEND_DIR` set in `~/ops/deploy.env`, the deploy
+script starts the new image as `cheese-backend-next` on **:18082**, waits for
+its `/healthz`, points api-front at it and reloads, recreates the compose
+`backend` (on **:18081**) behind it, points api-front back, and removes the
+temporary container. The frontend container reaches the backend through that
+same host port (`API_UPSTREAM=host.docker.internal:8081`), so its `/api` never
+sees the swap either; the ghg edge (APISIX) proxies to **:8080** (frontend) and
+**:8081** (api-front). What remains is about one second on **:8080** when the
+frontend container itself is recreated. Measured on the first rollout
+(2026-09-04): 0 failed requests on :8081 across the swap, 1 second of refused
+connections on :8080. Before it, every deploy cut the backend for the ~13 s a
+container takes to boot. A box without `ACTIVE_BACKEND_DIR` — prod (RUC),
+etrip — still recreates in place, gap included; the first deploy after
+enabling it on a box pays the old gap once, because the frontend that is still
+running resolves `backend` by compose name.
 
 ### dev — continuous deploy
 
@@ -106,6 +124,20 @@ heartbeat, backup checks) — its single slot used to serialize every heavy job
   from the dev box (`ssh ci@192.168.30.x`, dev box's `~/.ssh/id_ed25519`).
   MicroCloud does not support resizing yet — pick sizes at creation; more
   machines = ask Lg for capacity.
+- The pool shares one Proxmox disk with every other guest on pve119 (a single
+  1.7 TB SAS logical volume, thin pool `local-lvm`, no NVMe on the box), so a
+  service container's disk IO competes with MicroCloud provisioning, the
+  observability stack and everything else there. The `test` job's integration
+  two-thirds used to be bound by that disk's sync-write latency (2026-09-02: a
+  4 KB `oflag=dsync` write took 3.5 ms on runner-3, IO stall 23% of the time,
+  #668 needed five attempts to finish inside the 20-minute timeout while #667
+  had taken 7 minutes on a quiet host). Since #670 the Postgres data directory
+  of the `test` and `e2e` service containers is a 3 GB tmpfs: no disk in the
+  path, and pytest went from 7m18s (#667, quiet host) to 4m58s (#670, busy
+  host). A full run writes about 1 GB including WAL, measured locally; if the
+  suite ever outgrows the tmpfs, Postgres fails with ENOSPC and the size in the
+  workflow is the knob. The unit-test third never touched the disk and runs at
+  the same pace either way.
 - One runner slot per machine is deliberate: the workflows bind host ports
   5432/6379 for service containers, so two heavy jobs on one machine would
   collide (`port is already allocated`). Lifting this (常驻 PG/Valkey + drop the
@@ -383,6 +415,13 @@ restore/DR runbook in [`deploy/README-backup.md`](../deploy/README-backup.md).
   verify → off-site to R2 `viking/` / `prod-viking/`. Taken live, so a snapshot
   the backend wrote through is kept but named `-hot`. On `MEMORY_BACKEND=db` the
   tree is empty and the run is skipped, not failed.
+- **Transcripts** (`TRANSCRIPTS_HOST_PATH`, default
+  `/home/nictheboy/cheese-transcripts`, mounted at `/data/transcripts`): the
+  raw Claude session files of every place that ran on a device, one
+  `<project>/<place>/<timestamp>.tar.gz` per upload, shipped there before the
+  device home is deleted (`docs/where-a-turn-runs.md` §八). **Not in any
+  backup job yet** — that directory IS the data, so it needs its own line, the
+  way the memory tree above got one, if it is to survive a box rebuild.
 - **Monitoring** (code-enforced tripwires): `backup-freshness.yml` (daily, fails
   if last backup > 26h), `box-uptime.yml` (twice hourly at :25/:50, fails when
   the last **two** heartbeats both failed to complete — dev box, prod box, or
@@ -466,8 +505,9 @@ both sides ARE the same uid:
 
 **Ops consequence.** The host bind mounts (`WORKSPACES_HOST_PATH`,
 `UPLOADS_HOST_PATH`, `APPHOME_HOST_PATH` — the last one is the backend's `HOME`,
-where git reads its global config from — and `VIKING_HOST_PATH`, the openviking
-memory tree) hold files written by the pre-2026-08 backend as uid 1001.
+where git reads its global config from — `VIKING_HOST_PATH`, the openviking
+memory tree, and `TRANSCRIPTS_HOST_PATH`, the transcript archives) hold files
+written by the pre-2026-08 backend as uid 1001.
 `deploy/deploy-docker.sh` hands them over once via
 `deploy/fix-workspace-ownership.sh` before the swap —
 idempotent, marker-guarded, and it runs the chown in a throwaway root container
@@ -486,17 +526,6 @@ holding a 1001 backend on a 1000 tree: `git` refused the workspaces as
 *back* to `PREVIOUS_AGENT_UID` (1001) before starting the old image — but only
 when that run actually moved them, which the script reports to the caller.
 Rolling images back without rolling ownership back is not a rollback.
-
-`GIT_CREDENTIALS_FILE` **is** handed over with everything else, mode untouched
-(600 before, 600 after). It is operator-owned and outside git, but it is mounted
-read-only into the backend at a fixed path, so its owner has to *be* the
-backend's uid — it was 1001 only because the backend was. An earlier version of
-this script deliberately refused to move it and only checked readability; that
-protected nothing and stopped the deploy on a step whose only remedy was a sudo
-nobody in the deploy path has. The readability check survives and still fails the
-deploy loudly with the exact `chown` to run, but it now runs *after* the
-handover, so it only fires on something a chown cannot fix. The default
-`/dev/null` (feature off) is a device node and is skipped, never chowned.
 
 These scripts are exercised by `deploy/tests/` against a fake docker, gated in CI
 by `.github/workflows/deploy-scripts-test.yml` (hosted, ~1m — it must not queue

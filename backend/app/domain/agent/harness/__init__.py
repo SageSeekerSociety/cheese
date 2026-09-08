@@ -82,6 +82,17 @@ ActivityConsumer = Callable[[uuid.UUID, uuid.UUID, uuid.UUID, bool], Awaitable[N
 # design: the write is delivery, this is the receipt.
 ReceiptConsumer = Callable[[uuid.UUID, str], Awaitable[None]]
 
+# (topic) → the loop-clock reading at which the OLDEST message we injected and
+# have not seen consumed was written, or None when nothing is waiting.
+#
+# The receipt above answers "did this one land"; this answers "is anything still
+# unanswered, and since when". A session that has stopped reading its input can
+# go on producing output indefinitely, so nothing else in the liveness picture
+# notices it: the hooks keep arriving and the screen stays alive. What it cannot
+# do is take the next thing somebody typed, and that is a failure with a person
+# on the other end of it.
+UnreadProbe = Callable[[uuid.UUID], float | None]
+
 
 @dataclass(frozen=True, slots=True)
 class SessionRef:
@@ -140,6 +151,7 @@ class Opening:
     env: dict[str, str] | None = None
     memory_scope: str | None = None
     owner: str | None = None
+    agent_handle: str | None = None
 
 
 @runtime_checkable
@@ -254,8 +266,8 @@ class AgentRuntime(Protocol):
         memory_scope: str | None = None,
         owner: str | None = None,
         turn_id: uuid.UUID | None = None,
-        sandbox_image: str | None = None,
         images: list[dict] | None = None,
+        agent_handle: str | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """One turn, start to finish, as the events it produced.
 
@@ -281,6 +293,10 @@ class AgentRuntime(Protocol):
 
     def bind_receipts(self, consumer: ReceiptConsumer) -> None:
         """Where 「会话真的读到了那条消息」 goes."""
+        ...
+
+    def bind_unread_probe(self, probe: UnreadProbe) -> None:
+        """Where 「还有没有消息在等着被读」 is asked."""
         ...
 
     def holds(self, topic_id: uuid.UUID) -> bool:

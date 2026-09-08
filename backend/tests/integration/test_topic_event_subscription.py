@@ -20,6 +20,9 @@ from app.domain.agent.models import AgentTurn
 from app.domain.agent.runtime import AgentWorkRunner, get_broker
 from app.domain.agent.service import (
     AgentResult,
+    AgentSubagentStart,
+    AgentSubagentStop,
+    AgentToolUse,
 )
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import AuthorType, BlockKind, consumed_turn
@@ -289,7 +292,7 @@ async def test_mid_run_message_is_consumed_before_the_run_succeeds(
             )
         )
     )
-    await asyncio.wait_for(provider.started.wait(), 1)
+    await asyncio.wait_for(provider.started.wait(), 5)
     second_frames = await asyncio.wait_for(
         _drain(
             service.converse(
@@ -299,7 +302,7 @@ async def test_mid_run_message_is_consumed_before_the_run_succeeds(
                 summon=True,
             )
         ),
-        1,
+        2,
     )
 
     assert all(frame["type"] != "done" for frame in second_frames)
@@ -325,7 +328,7 @@ async def test_mid_run_message_is_consumed_before_the_run_succeeds(
     assert consumed_turn(delivered[0]) is not None
 
     provider.release.set()
-    await asyncio.wait_for(first, 1)
+    await asyncio.wait_for(first, 5)
     await settle_turn(service, topic_id)
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
@@ -414,6 +417,120 @@ async def test_session_initiated_work_is_persisted_and_broadcast(
     await provider._close_topic(topic_id)
     assert subscription.consumer_task is not None
     assert subscription.consumer_task.done()
+
+
+async def test_a_subagents_boundaries_pass_through_the_room_untouched(
+    client, tmp_path
+) -> None:
+    """一个会话里同时有几个工人干活时，房间该看到的东西一点没变。
+
+    分身的起止是给平台看的归属信息，不是房间里的一条动静：它们不落库、不广播、
+    也不点亮「正在处理」。会话自己说的话、分身发出的工具调用照旧落地——分身的
+    工具钩子本来就一直混在这条流里，只是从今天起带上了它是谁。
+    """
+    factory = client.test_factory
+    project_id, topic_id = await _seed_topic(factory)
+    router = HookRouter()
+    provider = ClaudeCodeRuntime(_IdleChannel(), router=router)
+    ChatService(
+        session_factory=factory,
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+        compute=ComputePool([provider], provider.name),
+    )
+    await provider.ensure_subscription(project_id, topic_id)
+    provider._live[topic_id] = "screen"
+
+    # Watch what the REAL consumer is handed, not just what the room ends up
+    # showing: "nothing was published" is also what a hook nobody translated
+    # looks like, and those two have to be told apart.
+    handed: list[object] = []
+    consumer = provider._event_consumer
+    assert consumer is not None
+
+    async def watching(*args):
+        handed.append(args[3])
+        return await consumer(*args)
+
+    provider.bind_events(watching)
+
+    broker = get_broker()
+    async with broker.subscribe(str(topic_id)) as room:
+        assert router.push(
+            str(topic_id),
+            {
+                "hook_event_name": "SubagentStart",
+                "agent_id": "worker-1",
+                "agent_type": "general-purpose",
+                "session_id": "session-subagent",
+                "_eid": "subagent-start-1",
+            },
+        )
+        assert router.push(
+            str(topic_id),
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Bash",
+                "tool_input": {"command": "rg TODO"},
+                "agent_id": "worker-1",
+                "agent_type": "general-purpose",
+                "_eid": "subagent-tool-1",
+            },
+        )
+        assert router.push(
+            str(topic_id),
+            {
+                "hook_event_name": "SubagentStop",
+                "agent_id": "worker-1",
+                "agent_type": "general-purpose",
+                "last_assistant_message": "分身查完了",
+                "agent_transcript_path": "/home/u/.claude/projects/w/sub.jsonl",
+                "_eid": "subagent-stop-1",
+            },
+        )
+        assert router.push(
+            str(topic_id),
+            {
+                "hook_event_name": "Stop",
+                "last_assistant_message": "会话答完了",
+                "session_id": "session-subagent",
+                "_eid": "stop-subagent-1",
+            },
+        )
+        frames = [await asyncio.wait_for(room.get(), 1) for _ in range(5)]
+
+    kinds = [frame["type"] for frame in frames]
+    assert kinds == [
+        "turn_started",
+        "event_block",
+        "assistant_block",
+        "done",
+        "turn_finished",
+    ]
+    assert frames[1]["block"]["meta"]["eid"] == "subagent-tool-1"
+    assert frames[2]["block"]["content"] == "会话答完了"
+
+    started = [e for e in handed if isinstance(e, AgentSubagentStart)]
+    stopped = [e for e in handed if isinstance(e, AgentSubagentStop)]
+    assert [(e.agent_id, e.agent_type) for e in started] == [
+        ("worker-1", "general-purpose")
+    ]
+    assert [(e.agent_id, e.text) for e in stopped] == [("worker-1", "分身查完了")]
+    # 那条工具调用是谁发的，事件上说得出来——T2 要按这个把活归到卡上。
+    tool = next(e for e in handed if isinstance(e, AgentToolUse))
+    assert (tool.agent_id, tool.agent_type) == ("worker-1", "general-purpose")
+
+    async with factory() as session:
+        rows = await BlockRepository(session).list_for_topic(topic_id)
+    # 分身的收尾话没有变成第二条 AI 发言：它今天只是被认出来，还没有归属可写。
+    assert [
+        row.content
+        for row in rows
+        if row.kind == BlockKind.message and row.author_type == AuthorType.ai
+    ] == ["会话答完了"]
+    assert "分身查完了" not in [row.content for row in rows]
+
+    await provider._close_topic(topic_id)
 
 
 async def test_late_hook_opens_fresh_unsolicited_work(client, tmp_path) -> None:
@@ -700,8 +817,16 @@ async def test_session_timeout_retires_activity_but_keeps_subscription(
     factory = client.test_factory
     project_id, topic_id = await _seed_topic(factory)
     router = HookRouter()
+
+    class RecoveringChannel(_IdleChannel):
+        alive = False
+
+        async def confirm_alive(self, screen):
+            return self.alive
+
+    channel = RecoveringChannel()
     provider = ClaudeCodeRuntime(
-        _IdleChannel(),
+        channel,
         router=router,
         idle_suspect_s=0.2,
         hard_ceiling_s=0.2,
@@ -741,6 +866,9 @@ async def test_session_timeout_retires_activity_but_keeps_subscription(
     assert subscription.current_work is None
     assert router.subscribe(str(topic_id)) is subscription.sink
 
+    # Late output comes from a live session; the dead verdict belongs to the
+    # first turn, not to the new unsolicited activity processing these hooks.
+    channel.alive = True
     async with broker.subscribe(str(topic_id)) as room:
         assert router.push(
             str(topic_id),

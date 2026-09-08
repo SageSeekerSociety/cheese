@@ -8,8 +8,9 @@
 所以判据不能是「跑了多久」，只能是「**开没开过口**」。第一个 `tool` /
 `assistant_block` 一到，这层就整个退场，慢的 turn 一秒都不会被砍。
 
-下面四条把这个契约钉住：短保险丝只覆盖开口前、开过口就换成真上限、
-`turn_ceiling` **不能**顶掉保险丝、以及关掉之后行为逐字回到从前。
+下面几条把这个契约钉住：短保险丝只覆盖开口前、开过口这一层就再没有截止
+（上限只记一笔，不切）、`turn_ceiling` **不能**顶掉保险丝、以及关掉保险丝
+之后这一层对一轮没有任何截止。
 """
 
 import asyncio
@@ -85,6 +86,39 @@ class _SpeaksThenHangs(_Backend):
         yield {"type": "done"}  # pragma: no cover
 
 
+class _SpeaksThenOutlivesTheCeiling(_Backend):
+    """开了口，然后干到上限之后才收尾。上限只记录不切，所以它得跑完。"""
+
+    async def frames(self):
+        yield {"type": "assistant_block", "text": "在看了"}
+        await asyncio.sleep(0.8)
+        yield {"type": "done"}
+
+
+class _MuteThenDone(_Backend):
+    """保险丝关掉时的沉默：什么都不产出，过了上限才收尾。"""
+
+    async def frames(self):
+        await asyncio.sleep(0.5)
+        yield {"type": "done"}
+
+
+async def _frames_until_done(
+    runner: AgentWorkRunner, backend: _Backend, db_factory
+) -> list[dict]:
+    """跑一轮，收下到 `done` 为止的全部 frame。"""
+    backend.session_factory = db_factory
+    topic = await a_topic(db_factory)
+    frames: list[dict] = []
+    async with runner._broker.subscribe(str(topic)) as q:
+        runner.submit(backend, topic, author="u", content="hi", summon=True)
+        while True:
+            frame = await asyncio.wait_for(q.get(), 10)
+            frames.append(frame)
+            if frame["type"] == "done":
+                return frames
+
+
 async def _error_frame(runner: AgentWorkRunner, backend: _Backend, db_factory) -> dict:
     """跑一轮，返回它最终那条 error frame。"""
     backend.session_factory = db_factory
@@ -131,33 +165,46 @@ async def test_turn_ceiling_alone_does_not_lift_the_fuse(db_factory):
 
 
 @pytest.mark.anyio
-async def test_first_output_retires_the_fuse_so_a_slow_turn_runs_its_full_ceiling(
-    db_factory,
+async def test_first_output_retires_the_fuse_and_the_ceiling_only_records(
+    db_factory, caplog
 ):
-    # 开过口的 turn 归上限管：保险丝 0.05 秒、上限 0.6 秒，它必须活过前者、
-    # 死在后者，报的也得是老那条超时话术。
+    # 开过口的 turn 这一层就不再有截止：保险丝 0.05 秒退场，上限 0.6 秒到了
+    # 只记一笔，它跑到自己的 done。过去这里断言的是「死在上限、报老那条超时话术」，
+    # 那是被改掉的性质。
     runner = AgentWorkRunner(
         InProcessBroker(), turn_timeout_s=0.6, first_output_timeout_s=0.05
     )
-    frame = await asyncio.wait_for(
-        _error_frame(runner, _SpeaksThenHangs(), db_factory), 3
-    )
-
-    assert "超时被中断" in frame["message"]
-    assert "一个字都没输出" not in frame["message"]
+    with caplog.at_level("WARNING"):
+        frames = await asyncio.wait_for(
+            _frames_until_done(runner, _SpeaksThenOutlivesTheCeiling(), db_factory), 5
+        )
+    kinds = [f["type"] for f in frames]
+    assert "error" not in kinds, frames
+    assert kinds[-1] == "done"
+    assert not any("一个字都没输出" in str(f.get("message", "")) for f in frames)
+    assert any(
+        "ceiling" in r.getMessage() and "recorded" in r.getMessage()
+        for r in caplog.records
+    ), [r.getMessage() for r in caplog.records]
 
 
 @pytest.mark.anyio
-async def test_the_fuse_can_be_turned_off(db_factory):
-    # 0 = 关掉。留这个口子是因为判据是启发式的，真出误杀要能一键回到从前——
-    # 关掉之后连话术都必须逐字是旧的那条。
+async def test_the_fuse_can_be_turned_off(db_factory, caplog):
+    # 0 = 关掉。留这个口子是因为判据是启发式的，真出误杀要能一键关掉。关掉之后
+    # 这一层对一轮就没有任何截止了：沉默的一轮跑过上限也只被记一笔，由 harness
+    # 那边的探针去判它死活。
     runner = AgentWorkRunner(
         InProcessBroker(), turn_timeout_s=0.3, first_output_timeout_s=0
     )
-    frame = await asyncio.wait_for(_error_frame(runner, _Mute(), db_factory), 3)
-
-    assert "超时被中断" in frame["message"]
-    assert "一个字都没输出" not in frame["message"]
+    with caplog.at_level("WARNING"):
+        frames = await asyncio.wait_for(
+            _frames_until_done(runner, _MuteThenDone(), db_factory), 5
+        )
+    kinds = [f["type"] for f in frames]
+    assert "error" not in kinds, frames
+    assert kinds[-1] == "done"
+    assert not any("一个字都没输出" in str(f.get("message", "")) for f in frames)
+    assert any("ceiling" in r.getMessage() for r in caplog.records)
 
 
 # --- #388 缺陷一: known-expired credential → fast-fail + the TRUE reason ---------

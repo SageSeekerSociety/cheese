@@ -6,9 +6,9 @@ import { computed, ref } from 'vue'
 import { useDisplay } from 'vuetify'
 
 import ChatPanel from '@/components/ChatPanel.vue'
+import RoomEnvironmentStatus from '@/components/RoomEnvironmentStatus.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
 import TopicComputePicker from '@/components/TopicComputePicker.vue'
-import { isThread } from '@/lib/place'
 
 // 话题的对话那一半：时间线 + 输入框 + 末尾的采纳框 + 输入框旁边的 chips。
 //
@@ -24,6 +24,9 @@ const props = defineProps<{
   // 开这个话题的那一刻还有多少条没读——对话栏用它画「以下是新消息」那条线。
   // 必须一路透传：漏掉它不会报错，只是那条线再也不出现。
   unreadOnOpen?: number
+  // 换过 AI 队友之后 +1，对话栏据此重拉名册（它显示的 AI 名字来自那份名册）。
+  // 同样必须一路透传：漏掉它不报错，只是换完队友对话里还写着上一个的名字。
+  rosterRevision?: number
 }>()
 
 const emit = defineEmits<{
@@ -47,7 +50,6 @@ const emit = defineEmits<{
 
 const { mdAndUp } = useDisplay()
 // 算力是**房间**的选择，首轮就锁死；一条支线既改不了它，问它也 404。
-const isThreadPlace = computed(() => isThread(props.topic))
 const chatRef = ref<{ connected: boolean } | null>(null)
 const acceptRef = ref<{ reload: (silent?: boolean) => Promise<void> } | null>(null)
 
@@ -69,6 +71,7 @@ defineExpose({
       :members="members"
       :topic-list="topicList"
       :unread-on-open="unreadOnOpen"
+      :roster-revision="rosterRevision"
       @turn-done="emit('turn-done')"
       @working="emit('working', $event)"
       @tool-used="emit('tool-used', $event)"
@@ -93,6 +96,12 @@ defineExpose({
          （AI 队友）和在哪跑（算力）都是话题级的设置，发第一条消息之后就不再变，
          摆在输入区上纯是占位置：队友进了成员名册（它本来就是这个房间的成员），
          算力见下面那块浮标 / 桌面的话题头。 -->
+      <!-- 环境还在准备 / 起不来：贴在输入框上沿。它说的正是「你现在发的这条
+           还没人处理」，所以要在人打字的地方看得见。总览（root）没有自己的运行
+           环境，那里不显示。 -->
+      <template #composer-notice>
+        <RoomEnvironmentStatus v-if="topic.kind !== 'root'" :project-id="topic.project_id" :topic-id="topic.id" />
+      </template>
       <template #composer-chips>
         <span v-if="topic.status === 'archived'" class="d-inline-flex align-center ga-1 c-faint archived-chip">
           <span class="status-dot status-dot--muted" />已归档
@@ -103,7 +112,7 @@ defineExpose({
     <!-- 手机上算力浮在对话上方：它是"这个话题在哪跑"，要一直看得见（整机权限
          尤其不能藏），但一行的高度在 390px 上太贵，所以它不占布局的高度。
          桌面上这块地方够宽，它长在话题头那一行里（TopicHeader）。 -->
-    <div v-if="!mdAndUp && !isThreadPlace" class="compute-float">
+    <div v-if="!mdAndUp" class="compute-float">
       <TopicComputePicker :key="topic.id" :topic-id="topic.id" />
     </div>
   </div>

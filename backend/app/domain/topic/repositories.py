@@ -4,7 +4,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Literal
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import Select, and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import (
     ColumnElement,
@@ -14,6 +14,8 @@ from sqlalchemy.sql.elements import (
 
 from app.domain.block.models import Block, BlockKind
 from app.domain.identity.handles import CHEESE_HANDLE
+from app.domain.project.environment import project_environment
+from app.domain.project.models import Project
 from app.domain.topic.models import Topic, TopicKind, TopicProgress, TopicReadState
 
 TopicSortField = Literal["updated_at", "title", "last_activity_at"]
@@ -77,8 +79,10 @@ class TopicRepository:
         upgraded_from_block_id: uuid.UUID | None = None,
         agent_instance_id: uuid.UUID | None = None,
     ) -> Topic:
+        project = await self._session.get(Project, project_id)
         topic = Topic(
             project_id=project_id,
+            environment=project_environment(project.settings if project else None),
             title=title,
             parent_id=parent_id,
             kind=kind,
@@ -109,24 +113,68 @@ class TopicRepository:
         filters the flat list, so a kept topic's parent may be filtered out;
         callers that rebuild the tree should not combine it with the filter.
         """
+        stmt = self._project_topics_stmt(
+            project_id, sort=sort, order=order, active_since=active_since
+        )
+        return list((await self._session.scalars(stmt)).all())
+
+    def _project_topics_stmt(
+        self,
+        project_id: uuid.UUID,
+        *,
+        sort: TopicSortField | None,
+        order: SortOrder,
+        active_since: datetime | None,
+    ) -> Select[tuple[Topic]]:
+        """The one definition of "this project's topic tree, flat, in order".
+
+        Shared so ``list_for_project`` and ``list_for_project_with_activity``
+        cannot drift into filtering or ordering the same list differently.
+        """
         # Private chats are not part of the topic tree.
         stmt = select(Topic).where(
             Topic.project_id == project_id, Topic.is_private.is_(False)
         )
         if active_since is not None:
             stmt = stmt.where(_last_activity() >= active_since)
-        stmt = stmt.order_by(_order_by(sort, order))
-        return list((await self._session.scalars(stmt)).all())
+        return stmt.order_by(_order_by(sort, order))
+
+    async def list_for_project_with_activity(
+        self,
+        project_id: uuid.UUID,
+        *,
+        sort: TopicSortField | None = None,
+        order: SortOrder = "asc",
+        active_since: datetime | None = None,
+    ) -> list[tuple[Topic, datetime]]:
+        """The same list, each row paired with its 最后活动时间 — in ONE query.
+
+        The list endpoint needs both, and asking for them separately made the
+        database derive ``_last_activity`` twice over the same topics: once to
+        sort by it, once to report it. Selecting it alongside the rows it
+        already sorted costs nothing extra, because it is the expression the
+        ORDER BY evaluates anyway.
+
+        Separate from ``list_for_project`` rather than replacing it: that one's
+        ``list[Topic]`` is what mentions, the agent's context builders and the
+        dashboard want, and none of them look at last activity.
+        """
+        stmt = self._project_topics_stmt(
+            project_id, sort=sort, order=order, active_since=active_since
+        ).add_columns(_last_activity())
+        rows = (await self._session.execute(stmt)).all()
+        return [(topic, last) for topic, last in rows]
 
     async def last_activity_for_topics(
         self, topic_ids: list[uuid.UUID]
     ) -> dict[uuid.UUID, datetime]:
         """{topic_id: last activity} for a batch of topics, in ONE query.
 
-        Kept off ``list_for_project`` so its return type stays ``list[Topic]``
-        for the callers that only want the rows (mentions, the agent's context
-        builders, the dashboard); the list endpoint joins the two by id, the
-        same way it joins the unread counts.
+        For callers holding topics they did not get from
+        ``list_for_project_with_activity`` — a single room's header opened by
+        deep link, which has one topic and no list to have derived it with.
+        A caller that is about to list a project's topics should use that
+        method instead and get both from one query.
         """
         if not topic_ids:
             return {}
@@ -170,8 +218,10 @@ class TopicRepository:
         # Title is a rendering hint only; the sidebar/ChatPanel show the peer's
         # own name from the roster. Deterministic, no NL parsing (CLAUDE.md §4).
         title = f"私聊 · {owner} · {peer}" if peer else f"与芝士私聊 · {owner}"
+        project = await self._session.get(Project, project_id)
         topic = Topic(
             project_id=project_id,
+            environment=project_environment(project.settings if project else None),
             title=title,
             kind=TopicKind.topic,
             created_by=user_handle,
@@ -189,6 +239,28 @@ class TopicRepository:
             select(Topic).where(Topic.parent_id == parent_id).order_by(Topic.created_at)
         )
         return list((await self._session.scalars(stmt)).all())
+
+    async def archival_for_project(
+        self, project_id: uuid.UUID
+    ) -> dict[uuid.UUID, datetime | None]:
+        """Every topic of the project — private chats included, since they have
+        directories too — mapped to when it was archived (None while active).
+        What the storage sweep reconciles the disk against."""
+        stmt = select(Topic.id, Topic.archived_at).where(Topic.project_id == project_id)
+        return dict((await self._session.execute(stmt)).tuples().all())
+
+    async def mark_transcripts_archived(
+        self, topic_id: uuid.UUID, at: datetime
+    ) -> bool:
+        """Record that the topic's raw session files reached the platform.
+        False when no topic has this id."""
+        stamped = await self._session.execute(
+            update(Topic)
+            .where(Topic.id == topic_id)
+            .values(transcripts_archived_at=at)
+            .returning(Topic.id)
+        )
+        return stamped.scalar() is not None
 
     async def count_for_project(self, project_id: uuid.UUID) -> int:
         stmt = (

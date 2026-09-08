@@ -381,7 +381,7 @@ WCAG AA 要求正文 ≥ 4.5:1、大字号与图形 ≥ 3:1。深色主题实测
 | **固定调色板闸门** | **模板属性和 script 里的 `color="grey-*"` / `bg-white` / `text-grey-*`（见 1.2）** | **`.claude/scripts/check-repo-rules.sh`** |
 | 存量棘轮 | 以上全部只拦**新增**，存量冻结在基线里且只能减少 | `frontend/stylelint-baseline.json`、`frontend/palette-baseline.json` |
 
-**为什么固定调色板要单独一道闸门**：stylelint 只解析 CSS。`<template>` 的属性、`class` 里的工具类、`<script>` 里的 prop 默认值，它一个都看不见——所以 1.2 说的那一整类问题，此前没有任何闸门能发现，直到深色模式上线才暴露。这道闸门是纯文本匹配（bash + grep），跟着 `check-repo-rules.sh` 一起跑在 `task check`、验收卡的质量闸门和 CI 的 Repo Guards 里。
+**为什么固定调色板要单独一道闸门**：stylelint 只解析 CSS。`<template>` 的属性、`class` 里的工具类、`<script>` 里的 prop 默认值，它一个都看不见——所以 1.2 说的那一整类问题，此前没有任何闸门能发现，直到深色模式上线才暴露。这道闸门是纯文本匹配（bash + grep），跟着 `check-repo-rules.sh` 一起跑在 `task check` 和 CI 的 Repo Guards 里。
 
 **为什么要棘轮（ratchet）**：闸门上线那天，stylelint 这一侧的存量是 524 处（88 个文件），固定调色板名是 111 处（40 个文件）。规则一上线就全红的话，唯一的结局是被人关掉。棘轮把存量冻进基线，新增的一律拦下，修好了跑一次更新命令让基线单调下降。这个模式抄的是仓库里已有的 `tsc-ratchet.mjs`。**基线只能降不能升**——`--update-palette-baseline` 发现你想把某个文件的额度调高时会直接拒绝并告诉你是哪个文件。
 
@@ -518,3 +518,147 @@ bash .claude/scripts/check-repo-rules.sh --self-test                # 证明闸�
 ### 8.9 这条没有闸门
 
 颜色和圆角有 stylelint 拦着，文案没有——它是判断题，机器判不了。所以它靠 review 和这份文档。写新页面时把 8.0 那张正反例表当检查清单过一遍就够了。
+
+---
+
+## 9. 动效
+
+界面上**会动的东西**也是设计的一部分。这一节和第 8 节一样没有机器闸门——写页面前看一眼。
+
+### 9.0 一句话原则
+
+> **安静是默认，动是例外。会动的东西只有两种：人刚做了一件事，或者机器正在做一件事。**
+
+这是第 0 节那条原则在时间轴上的样子。琥珀的道理是「一屏只有一个东西是琥珀色时，不用思考就知道该点哪」；动效的道理一模一样——**一屏里动的东西越少，那个动着的东西就越说得出话**。一块板上每张卡都会随鼠标浮起来的时候，「这条活正在跑」就没法靠动来表达了，因为满屏都在动。
+
+### 9.1 hover 只改颜色，不改位置
+
+指针扫过一个东西，它可以变底色、变边框色、变文字色。**它不可以移动。**
+
+**为什么**：产品这半边是高密度列表——侧栏一屏几十条话题，聊天一屏几十条消息，看板一列十几张卡。鼠标从上往下扫过去，每一行抬 2px，人眼看到的是**整列在跳**，而不是"我指到了哪一行"。指到哪一行本来就由底色说清楚了，位移在这里只添乱。
+
+反过来，一屏只有三五个大卡片的页面（营销页、空状态），抬升不会造成这种效果——但那不构成一条例外，因为**同一个产品的两半用两套动作语言，人是感觉得到的**，只是说不出哪里怪。
+
+```css
+/* 对 */
+.card:hover { background: var(--fill); border-color: var(--line-2); }
+
+/* 错 —— 高密度列表里，这一行让整列跟着指针跳 */
+.card:hover { transform: translateY(-2px); box-shadow: var(--shadow-1); }
+```
+
+### 9.2 位置的变化，只留给真的发生了变化的时刻
+
+位移不是不能用，是**贵**。它该留给那些"事情真的变了"的瞬间：
+
+| 可以动位置 | 因为 |
+|---|---|
+| 开关的拨柄滑到另一头 | 状态真的翻了 |
+| 抽屉/弹层进出 | 一个东西真的出现或消失了 |
+| 新消息插进列表 | 列表真的多了一条 |
+| 展开 / 收起 | 高度真的变了 |
+
+hover 不在这张表里：指针路过一个东西，那个东西并没有发生任何变化。
+
+### 9.3 时长三档
+
+| 档 | 用在哪 |
+|---|---|
+| `0.12s` | **回应指针**：hover / focus 的颜色、底色、边框变化 |
+| `0.2s` | **出现与消失**：淡入淡出、展开收起 |
+| `0.3s` | **整块的进出**：抽屉、弹层、侧栏 |
+
+**现状**：树里的主力值是 0.2s 和 0.3s，另有 0.12s / 0.15s / 0.25s 少量分布。0.15 和 0.12 是同一件事的两种写法，往 0.12 收；0.25 往 0.2 或 0.3 收，看它是"出现"还是"整块进出"。
+
+自己数一遍：
+
+```bash
+cd frontend
+grep -rhoE "(transition|animation)[^;]*?[0-9.]+m?s" src/ --include=*.vue --include=*.css --include=*.scss \
+  | grep -oE "[0-9.]+m?s" | sort | uniq -c | sort -rn
+```
+
+**缓动**：默认 `ease`，不用换——树里 235 处都是它，换一个只会让新写的那处和周围不是一套。无限循环的用 `ease-in-out`（两头慢，循环起来不突兀）。`linear` 只给真的匀速的东西：旋转、进度条、扫光。
+
+**时长目前是字面量，不是 token。** 圆角和颜色有变量是因为它们要跟主题走，时长不跟任何东西走，三个数记住即可。要不要变成 token 是以后的事，别顺手加。
+
+### 9.4 永远写具体属性，不写 `transition: all`
+
+```css
+/* 对 */
+transition: background-color 0.12s ease, border-color 0.12s ease;
+
+/* 错 */
+transition: all 0.2s ease;
+```
+
+**为什么**：`all` 会把 `width` / `height` / `padding` / `top` 这些**布局属性**一起带上。浏览器为它们做过渡意味着每一帧都要重新算布局，放在一个几十行的列表里就是实打实的卡顿。而且读代码的人看不出这行到底想让什么动——一年后没人敢删它，因为不知道删了会坏哪。
+
+自己数一遍：
+
+```bash
+cd frontend && grep -rln "transition: all" src/
+```
+
+### 9.5 一直在动的东西，必须自己关掉
+
+`style.css` 底部有一条全局兜底，在系统开了「减弱动效」时把所有时长压到 `0.001ms`。**那条对无限循环的动画不够用**——一个 1.6 秒的呼吸被压成 0.001ms 的无限循环，不是停下来，是变成高频闪烁，比原来更糟，而这正是那个系统设置要保护的人最受不了的东西。
+
+所以凡是写了 `infinite` 的地方，自己再写一条：
+
+```css
+@media (prefers-reduced-motion: reduce) {
+  .running-dot { animation: none; }
+}
+```
+
+并且**关掉动画之后，它表达的信息必须还在**。看板上「正在运行」那颗点关掉动画后仍然是一颗实心点、旁边那些是空心圈——区别不靠动。如果关掉动画那个东西就什么都不说了，说明一开始就该用别的方式表达。
+
+自己数一遍（`infinite` 出现的文件，减去写了 `prefers-reduced-motion` 的）：
+
+```bash
+cd frontend
+grep -rln "infinite" src/ --include=*.vue --include=*.css --include=*.scss
+grep -rln "prefers-reduced-motion" src/
+```
+
+### 9.6 没人碰也在动的东西，删掉
+
+判据：**这个动画在说什么？** 说不出正在发生的任何一件事，它就是装饰。
+
+- 说得出的：加载骨架的扫光（正在等）、运行中的呼吸点（正在跑）、进度条（正在推进）。
+- 说不出的：页面上一个上下浮动的图形、一条永远在流动的渐变、纯装饰的入场淡入。
+
+装饰性动画的代价不是好不好看，是**它把「有东西在动」这个信号用掉了**。屏幕上一直有东西在动的时候，真正开始动的那个东西就不再引人注意。
+
+### 9.7 两半边现在不是一套（收敛方向）
+
+老社区那半边（`views/spaces` `views/tasks` `views/projects` `components/discussions`）大量使用 hover 抬升配 `transition: all`；工作台这半边基本只改颜色。**方向是两边都往 9.1–9.4 收**，不是让工作台去学老社区。
+
+数当前差距：
+
+```bash
+cd frontend
+python3 - <<'PY'
+import re, pathlib
+files = set()
+for p in pathlib.Path('src').rglob('*'):
+    if p.suffix not in ('.vue', '.css', '.scss') or not p.is_file():
+        continue
+    s = p.read_text(encoding='utf-8', errors='ignore')
+    for m in re.finditer(r'([^{}]*:hover[^{}]*)\{([^{}]*)\}', s):
+        body = m.group(2)
+        if re.search(r'transform\s*:\s*[^;]*translate[XY]?\(\s*-?[0-9.]+', body):
+            # translate(-50%) 是居中定位，不是抬升
+            if 'translateY(-50%)' in body or 'translateX(-50%)' in body:
+                continue
+            files.add(str(p))
+print(len(files), 'files with a hover lift')
+for f in sorted(files):
+    print(' ', f)
+PY
+```
+
+### 9.8 这一节没有闸门
+
+时长和位移能不能机器判，是个还没答的问题：`transition: all` 好查，「这个动画在说什么」不好查。所以这一节和第 8 节一样靠人——写页面时过一遍 9.1、9.4、9.5 这三条就够挡住绝大多数，`frontend-design` skill 把它们做成了一次可以跑完的体检。

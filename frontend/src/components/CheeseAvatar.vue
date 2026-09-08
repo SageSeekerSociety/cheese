@@ -1,13 +1,25 @@
 <script setup lang="ts">
-// 芝士's avatar — one identity everywhere (spec §8.4 人格唯一). A confident dark
-// mark: solid --ink rounded-square + white 芝 glyph. NOT amber (amber is a rare
+// AI 队友的头像 — one identity everywhere (spec §8.4 人格唯一). A confident dark
+// mark: solid --ink rounded-square + white glyph. NOT amber (amber is a rare
 // accent, never an avatar). Rounded-square 8px to match the human avatars.
-withDefaults(defineProps<{ size?: number | string }>(), { size: 28 })
+//
+// 字取名字的第一个字，因为一个项目可以有好几个 AI 队友：写死的「芝」会让换过
+// 队友的房间里，头像和它旁边的名字对不上。
+import { computed } from 'vue'
+
+import { avatarInitial } from '../utils/avatar'
+
+const props = withDefaults(defineProps<{ size?: number | string; name?: string }>(), {
+  size: 28,
+  name: '芝士',
+})
+
+const glyph = computed(() => avatarInitial(props.name))
 </script>
 
 <template>
   <div class="cheese-avatar" :style="{ width: size + 'px', height: size + 'px' }">
-    <span class="cheese-avatar__glyph">芝</span>
+    <span class="cheese-avatar__glyph">{{ glyph }}</span>
   </div>
 </template>
 

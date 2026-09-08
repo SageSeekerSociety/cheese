@@ -26,10 +26,6 @@
 #   AGENT_UID / AGENT_GID   target ownership (default 1000, must match
 #                           app.domain.workspace.service.AGENT_UID)
 #   FORCE_OWNERSHIP_FIX     set to 1 to ignore the marker and re-walk
-#   SECRET_FILE_PATHS       space-separated single FILES that are mounted into
-#                           the backend and must be readable by it — e.g. the
-#                           git credential store. Handed over like everything
-#                           else (mode untouched), then re-checked.
 #   OWNERSHIP_REPORT_FILE   if set, `migrated` or `noop` is written here so the
 #                           caller can tell whether this run actually moved
 #                           files — a rollback must only hand them back if it did.
@@ -88,54 +84,6 @@ for path in "$@"; do
       chown $AGENT_UID:$AGENT_GID /target/$MARKER
       echo \"\$changed entries re-owned\"
     " || { log "ERROR: ownership handover failed for $path"; exit 1; }
-done
-
-# Secret files ARE handed over too — this reverses the first version of this
-# script, which only checked them.
-#
-# The reasoning then was "chowning somebody's private credential file out from
-# under them is not this script's call". That was wrong about what the file is.
-# It is mounted read-only into the backend at a fixed path and chmod 600, so its
-# owner must BE the backend's uid — it was 1001 only because the backend was
-# 1001. Refusing to move it protected nothing and left the deploy stopped on a
-# step whose only remedy was a sudo nobody in the deploy path has: on 2026-08-11
-# it aborted deploy-dev after the trees had already changed hands, which is the
-# exact half-migrated state the ownership walk exists to avoid (run 31466502982).
-#
-# The mode is deliberately left alone — 600 before, 600 after; only the owner
-# moves. The readability check stays and still fails the deploy loudly, but now
-# it runs AFTER the handover, so it only fires on something a chown cannot fix
-# (a mount option, an unreadable parent). Silently losing private-repo push to
-# the "git prompts fail cleanly" fallback is still the failure being stopped.
-for path in ${SECRET_FILE_PATHS:-}; do
-  [ -e "$path" ] || { log "skip $path (absent)"; continue; }
-  # `/dev/null` is the "feature off" default and every other non-regular file is
-  # somebody else's device node: never take ownership of one.
-  if [ ! -f "$path" ]; then
-    log "skip $path (not a regular file — nothing to hand over)"
-    continue
-  fi
-  if [ "$(stat -c '%u:%g' "$path" 2>/dev/null || echo unknown)" = "$AGENT_UID:$AGENT_GID" ]; then
-    log "skip $path (already owned by $AGENT_UID:$AGENT_GID)"
-  else
-    log "handing $path over to $AGENT_UID:$AGENT_GID (mode unchanged)…"
-    # Best-effort: the readability check below is the gate, so a chown that
-    # cannot land reports as the thing the operator actually cares about.
-    docker run --rm --user 0 --entrypoint sh \
-      -v "$path:/secret" "$IMAGE" -c "chown $AGENT_UID:$AGENT_GID /secret" \
-      >/dev/null 2>&1 \
-      || log "WARNING: could not hand $path over — the check below decides"
-  fi
-  if docker run --rm --user "$AGENT_UID:$AGENT_GID" --entrypoint sh \
-      -v "$path:/probe:ro" "$IMAGE" -c 'head -c 1 /probe >/dev/null 2>&1 || test ! -s /probe' \
-      >/dev/null 2>&1; then
-    log "ok: $path is readable as $AGENT_UID"
-  else
-    log "ERROR: $path is still not readable as uid $AGENT_UID after the handover —"
-    log "       the backend would silently lose whatever it configures. Fix with:"
-    log "           sudo chown $AGENT_UID:$AGENT_GID $path"
-    exit 1
-  fi
 done
 
 log "done"
