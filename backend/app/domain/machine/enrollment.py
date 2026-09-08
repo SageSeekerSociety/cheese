@@ -19,10 +19,12 @@ import logging
 import os
 import tempfile
 
+from app.domain.agent import connector_build
 from app.domain.agent.harness.claude_code import (
     CLAUDE_MIN_VERSION,
     CLAUDE_PINNED_VERSION,
 )
+from app.domain.machine import claude_dist
 
 logger = logging.getLogger("cheese.machine.enrollment")
 
@@ -269,6 +271,76 @@ async def run_bootstrap(
         key_path = os.path.join(tmp, "bootstrap")
         with open(os.open(key_path, os.O_CREAT | os.O_WRONLY, 0o600), "w") as handle:
             handle.write(private_key)
+        ssh = ["ssh", "-i", key_path, *SSH_OPTS, f"{login_user}@{ip}"]
+
+        async def run(*command: str) -> bytes:
+            child = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                output, _ = await asyncio.wait_for(
+                    child.communicate(), timeout=SSH_TIMEOUT_S
+                )
+            except TimeoutError as exc:
+                child.kill()
+                await child.wait()
+                raise EnrollmentError("Claude transfer timed out") from exc
+            if child.returncode:
+                raise EnrollmentError(
+                    f"Claude transfer failed ({child.returncode}): "
+                    f"{output.decode()[-300:]}"
+                )
+            return output
+
+        # Cloud guests can reach us over SSH while their public HTTP download is
+        # too slow for enrollment. Reuse the platform's verified cache and the
+        # existing bootstrap credential; no extra listener or guest credential.
+        pin = CLAUDE_PINNED_VERSION
+        remote_dir = ".local/share/claude/versions"
+        facts = (
+            (
+                await run(
+                    *ssh,
+                    "uname -m; if ldd /bin/ls 2>&1 | grep -q musl; "
+                    "then echo musl; else echo glibc; fi; "
+                    f'mkdir -p "$HOME/{remote_dir}"; '
+                    f'if test -x "$HOME/{remote_dir}/{pin}"; then echo present; fi',
+                )
+            )
+            .decode()
+            .splitlines()
+        )
+        if "present" not in facts:
+            arch = {
+                "x86_64": "x64",
+                "amd64": "x64",
+                "aarch64": "arm64",
+                "arm64": "arm64",
+            }.get(facts[0] if facts else "")
+            if arch is None:
+                raise EnrollmentError("unsupported cloud machine architecture")
+            platform = f"linux-{arch}" + ("-musl" if "musl" in facts else "")
+            try:
+                binary = await claude_dist.ensure_cached(
+                    connector_build.dist_dir(), pin, platform
+                )
+            except claude_dist.ClaudeDistError as exc:
+                raise EnrollmentError("platform Claude binary unavailable") from exc
+            await run(
+                "scp",
+                "-i",
+                key_path,
+                *SSH_OPTS,
+                str(binary),
+                f"{login_user}@{ip}:{remote_dir}/{pin}.ssh-new",
+            )
+            await run(
+                *ssh,
+                f'chmod +x "$HOME/{remote_dir}/{pin}.ssh-new" && '
+                f'mv "$HOME/{remote_dir}/{pin}.ssh-new" "$HOME/{remote_dir}/{pin}"',
+            )
         command = [
             "ssh",
             "-i",
