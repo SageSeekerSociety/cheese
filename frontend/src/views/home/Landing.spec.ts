@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import Landing from './Landing.vue'
 
+import HomeRoutes from '@/router/home'
 import AccountService from '@/services/account'
 
 vi.mock('@/services/account', () => ({ default: reactive({ loggedIn: false }) }))
@@ -14,16 +15,19 @@ afterEach(() => {
   AccountService.loggedIn = false
 })
 
-async function mount() {
+async function mount(path = '/') {
   const router = createRouter({
     history: createMemoryHistory(),
-    routes: [
-      { path: '/', component: Landing },
-      { path: '/spaces', name: 'HomeSpaces', component: { template: '<div>空间</div>' } },
-    ],
+    routes: HomeRoutes.children!.map((route) => ({
+      path: `/${route.path}`,
+      name: route.name,
+      meta: route.meta,
+      beforeEnter: route.beforeEnter,
+      component: route.meta?.publicLanding ? Landing : { template: '<div>Workspace</div>' },
+    })),
   })
-  await router.push('/')
-  const view = render(Landing, { global: { plugins: [router], stubs: { VIcon: true } } })
+  await router.push(path)
+  const view = render({ template: '<router-view />' }, { global: { plugins: [router], stubs: { VIcon: true } } })
   return { ...view, router }
 }
 
@@ -52,5 +56,37 @@ describe('公开首页', () => {
     const { router } = await mount()
     AccountService.loggedIn = true
     await waitFor(() => expect(router.currentRoute.value.name).toBe('HomeSpaces'))
+  })
+
+  it('keeps the introduction accessible to signed-in users and links back to work', async () => {
+    AccountService.loggedIn = true
+    const view = await mount('/about')
+    expect(view.router.currentRoute.value.path).toBe('/about')
+    expect(view.getByRole('heading', { level: 1 }).textContent).toContain('真正')
+    const links = view.getAllByRole('link', { name: '进入工作台' })
+    expect(links).toHaveLength(3)
+    for (const link of links) expect(link.getAttribute('href')).toBe('/')
+    await view.router.push(links[0].getAttribute('href')!)
+    expect(view.router.currentRoute.value.name).toBe('HomeSpaces')
+  })
+
+  it('updates the introduction actions after session restoration without navigating away', async () => {
+    const view = await mount('/about')
+    for (const link of view.getAllByRole('link', { name: '开始体验' })) {
+      expect(link.getAttribute('href')).toBe('/account/signin')
+    }
+    AccountService.loggedIn = true
+    await waitFor(() => expect(view.getAllByRole('link', { name: '进入工作台' })).toHaveLength(3))
+    expect(view.router.currentRoute.value.path).toBe('/about')
+  })
+
+  it('shows the public homepage when a signed-out user returns from work', async () => {
+    AccountService.loggedIn = true
+    const view = await mount('/')
+    expect(view.router.currentRoute.value.name).toBe('HomeSpaces')
+    AccountService.loggedIn = false
+    await view.router.push('/')
+    expect(view.router.currentRoute.value.path).toBe('/')
+    expect(view.getAllByRole('link', { name: '开始体验' })).toHaveLength(3)
   })
 })
