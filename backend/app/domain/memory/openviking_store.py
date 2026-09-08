@@ -78,6 +78,78 @@ def memories_uri(
     return f"viking://user/{scope_user_id(scope, scope_id, layer)}/memories"
 
 
+# Where the model keys come from when the openviking-specific settings are left
+# unset. The gateway token speaks the Anthropic protocol to OUR gateway, while
+# the two endpoints below point straight at the model vendor — so this fallback
+# hands over a key that will be rejected, without anyone having configured
+# anything wrong. Naming it is what lets a failed probe say "and this is where
+# the key came from" instead of just "401".
+FALLBACK_KEY_SETTING = "anthropic_auth_token"
+
+
+@dataclass(frozen=True)
+class ModelEndpoint:
+    """One OpenAI-protocol endpoint ov.conf points OpenViking at.
+
+    Anything that wants to *check* these endpoints has to describe them exactly
+    as ov.conf does — same URL, same key, same model — or it checks something
+    else and then reports on it confidently. So ``_write_conf`` and the probe
+    in ``endpoint_probe`` both build from :func:`model_endpoints`, and neither
+    can drift away from the other on its own.
+    """
+
+    role: str  # "embedding" | "chat"
+    api_base: str
+    api_key: str | None
+    # Which setting supplied ``api_key`` — a real name, ``FALLBACK_KEY_SETTING``
+    # or "unset". The probe reports it, because "which key did you use" is the
+    # first question a 401 raises and the answer is not otherwise recoverable.
+    key_setting: str
+    model: str
+    extra_body: dict[str, Any]
+    dimension: int | None = None
+    encoding_format: str | None = None
+
+
+def _resolve_key(configured: str | None, setting: str) -> tuple[str | None, str]:
+    if configured:
+        return configured, setting
+    if settings.anthropic_auth_token:
+        return settings.anthropic_auth_token, FALLBACK_KEY_SETTING
+    return None, "unset"
+
+
+def model_endpoints() -> list[ModelEndpoint]:
+    """The two endpoints the openviking backend calls, as configured right now."""
+    emb_key, emb_setting = _resolve_key(
+        settings.openviking_embedding_api_key, "openviking_embedding_api_key"
+    )
+    llm_key, llm_setting = _resolve_key(
+        settings.openviking_llm_api_key, "openviking_llm_api_key"
+    )
+    return [
+        ModelEndpoint(
+            role="embedding",
+            api_base=settings.openviking_embedding_api_base,
+            api_key=emb_key,
+            key_setting=emb_setting,
+            model=settings.openviking_embedding_model,
+            extra_body={},
+            dimension=settings.openviking_embedding_dimension,
+            encoding_format="float",
+        ),
+        ModelEndpoint(
+            role="chat",
+            api_base=settings.openviking_llm_api_base,
+            api_key=llm_key,
+            key_setting=llm_setting,
+            model=settings.openviking_llm_model,
+            # Zhipu GLM: don't burn tokens on thinking for extraction calls.
+            extra_body={"thinking": {"type": "disabled"}},
+        ),
+    ]
+
+
 @dataclass
 class MemoryHit:
     """One search hit: L0 abstract + address for on-demand L2 read."""
@@ -110,8 +182,7 @@ class _OpenVikingRuntime:
 
         data_dir = Path(settings.openviking_data_dir).resolve()
         data_dir.mkdir(parents=True, exist_ok=True)
-        llm_key = settings.openviking_llm_api_key or settings.anthropic_auth_token
-        emb_key = settings.openviking_embedding_api_key or settings.anthropic_auth_token
+        embedding, chat = model_endpoints()
         conf = {
             "default_account": _ACCOUNT,
             "default_user": "platform",
@@ -119,21 +190,20 @@ class _OpenVikingRuntime:
             "embedding": {
                 "dense": {
                     "provider": "openai",
-                    "api_base": settings.openviking_embedding_api_base,
-                    "api_key": emb_key,
-                    "model": settings.openviking_embedding_model,
-                    "dimension": settings.openviking_embedding_dimension,
+                    "api_base": embedding.api_base,
+                    "api_key": embedding.api_key,
+                    "model": embedding.model,
+                    "dimension": embedding.dimension,
                     "input": "text",
-                    "encoding_format": "float",
+                    "encoding_format": embedding.encoding_format,
                 }
             },
             "vlm": {
                 "provider": "openai",
-                "api_base": settings.openviking_llm_api_base,
-                "api_key": llm_key,
-                "model": settings.openviking_llm_model,
-                # Zhipu GLM: don't burn tokens on thinking for extraction calls.
-                "extra_request_body": {"thinking": {"type": "disabled"}},
+                "api_base": chat.api_base,
+                "api_key": chat.api_key,
+                "model": chat.model,
+                "extra_request_body": chat.extra_body,
             },
         }
         conf_path = data_dir / "ov.conf"

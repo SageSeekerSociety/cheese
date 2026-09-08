@@ -71,7 +71,9 @@ export const workspaceRoutes: RouteRecordRaw = {
       path: 'dm/:peer',
       component: () => import('@/views/workspace/DmView.vue'),
       props: true,
-      meta: { title: '私聊', hideTabs: true, backTo: 'workspace-project' },
+      // ← 回成员页，不回话题列表：私聊只有一个入口，就是名册。手机顶栏那颗 ←
+      // 读的是这里，桌面上私聊头里那颗读的是 DmView，两颗指同一个地方。
+      meta: { title: '私聊', hideTabs: true, backTo: 'project-members' },
     },
     {
       name: 'project-docs',
@@ -107,6 +109,15 @@ export const workspaceRoutes: RouteRecordRaw = {
       component: () => import('@/views/ProjectSettingsView.vue'),
       props: true,
       meta: { title: '项目设置', hideTabs: true, backTo: 'workspace-project' },
+    },
+    {
+      // 名册页和单人主页共用 `members` 这一段路径，父子关系就是它们的关系：
+      // /members 是「有谁」，/members/:handle 是「他是谁」。
+      name: 'project-members',
+      path: 'members',
+      component: () => import('@/views/workspace/ProjectMembersView.vue'),
+      props: true,
+      meta: { title: '成员', hideTabs: true, backTo: 'workspace-project' },
     },
     {
       name: 'member',

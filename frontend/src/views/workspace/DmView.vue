@@ -69,6 +69,12 @@ function handleStateChanged(resource: string) {
   if (resource === 'topics') void store.refreshTopics()
 }
 
+// 私聊是从名册点进来的，所以 ← 回名册。手机上顶栏那颗 ← 走的是路由 meta 的
+// backTo，两边指的是同一个地方。
+function backToMembers() {
+  void router.push({ name: 'project-members', params: { projectId: props.projectId } })
+}
+
 function openTopic(topicId: string) {
   void router.push({ name: 'workspace-topic', params: { projectId: props.projectId, topicId } })
 }
@@ -108,9 +114,11 @@ async function handleUpgradeMessage(messageId: string) {
       :pr-header="false"
       :always-summon="peerHandle === null"
       :title-override="title"
+      back-label="成员"
       :members="store.members"
       :topic-list="store.topics"
       :show-composer="true"
+      @back="backToMembers"
       @turn-done="handleTurnDone"
       @state-changed="handleStateChanged"
       @mention-click="handleMentionClick"

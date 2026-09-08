@@ -5,7 +5,6 @@ import { useDisplay } from 'vuetify'
 
 import TopicSidebar from '@/components/TopicSidebar.vue'
 import { cancelPrefetch, prefetchOnHover } from '@/lib/routePrefetch'
-import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 // 项目侧栏, rendered through the app-wide `sidebar` named view so it survives
@@ -27,14 +26,10 @@ const store = useWorkspaceStore()
 
 // Active state is read off the URL, never off a local flag.
 const activeTopicId = computed(() => (route.name === 'workspace-topic' ? String(route.params.topicId) : null))
-const activeDmPeer = computed(() => (route.name === 'workspace-dm' ? String(route.params.peer) : null))
 const activeDocs = computed(() => (route.name === 'project-docs' ? String(route.params.kind) : null))
 
 function openTopic(topicId: string) {
   void router.push({ name: 'workspace-topic', params: { projectId: props.projectId, topicId } })
-}
-function openDm(peer: string) {
-  void router.push({ name: 'workspace-dm', params: { projectId: props.projectId, peer } })
 }
 function openDocs(kind: string) {
   void router.push({ name: 'project-docs', params: { projectId: props.projectId, kind } })
@@ -66,8 +61,8 @@ async function onArchiveTopic(topicId: string) {
 </script>
 
 <template>
-  <!-- `store.tree` 而不是 `store.topics`：侧栏画的是房间**加上**房间里派出去的
-       活，而 topics 只有房间（@话题 补全和文档里的 <#id> 解析读的是那一份）。 -->
+  <!-- 私聊不在这里了：名册和它的未读都归成员页，侧栏只在「成员」那一行上挂一个
+       未读总数（privateUnreadMap 传的就是给它算总数用的）。 -->
   <TopicSidebar
     v-if="page || mdAndUp"
     :page="page"
@@ -77,10 +72,6 @@ async function onArchiveTopic(topicId: string) {
     :topics="store.topics"
     :selected-topic-id="activeTopicId"
     :loading-topics="store.loadingTopics"
-    :private-active="activeDmPeer === 'cheese'"
-    :members="store.members"
-    :me-handle="myHandle()"
-    :active-peer="activeDmPeer === 'cheese' ? null : activeDmPeer"
     :active-docs="activeDocs"
     :unread-map="store.unreadMap"
     :private-unread-map="store.privateUnreadMap"
@@ -88,8 +79,6 @@ async function onArchiveTopic(topicId: string) {
     @select-topic="openTopic"
     @hover-topic="onHoverTopic"
     @leave-topic="cancelPrefetch"
-    @select-private="openDm('cheese')"
-    @select-peer-dm="openDm"
     @select-docs="openDocs"
     @archive-topic="onArchiveTopic"
     @unarchive-topic="store.unarchive"

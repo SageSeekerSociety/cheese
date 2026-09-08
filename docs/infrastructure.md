@@ -12,8 +12,8 @@ separate data — don't conflate them.
 
 | Env | Public | App host | DB | Stack | Deploys via |
 |---|---|---|---|---|---|
-| **dev / test** | xiaoyuer's test domain | `cheese-dev-env1-app` (192.168.16.5, ghg private net) | `cheese-dev-env1-postgresql` (192.168.16.7) | bare-metal (systemd + local `.venv`) | **auto on merge to `main`** |
-| **prod (RUC)** | `cheese.ruc.edu.cn` | `cheese-prod-app` (192.168.16.8, ghg private net) | `cheese-prod-postgresql` (192.168.16.10) | bare-metal (systemd + local `.venv`) | **published GitHub Release → approval** |
+| **dev / test** | xiaoyuer's test domain | `cheese-dev-env1-app` (192.168.16.5, ghg private net) | `cheese-dev-env1-postgresql` (192.168.16.7) | Docker Compose (`deploy/deploy-docker.sh`) | **auto on merge to `main`** |
+| **prod (RUC)** | `cheese.ruc.edu.cn` | `cheese-prod-app` (192.168.16.8, ghg private net) | `cheese-prod-postgresql` (192.168.16.10) | Docker Compose (`deploy/deploy-docker.sh`) | **published GitHub Release → approval** |
 | **etrip** | `etrip.cn` | `etrip` (8.217.1.152, Aliyun HK) | in-container `cheese_prod_postgres` (paradedb) + `cheesex-pg` | Docker Compose (`/opt/cheese-deploy`) | **published GitHub Release → approval** |
 
 Notes:
@@ -245,15 +245,32 @@ Changing backend env (e.g. enabling an OAuth provider):
    bash deploy/deploy-docker.sh "$SHA"
    ```
 
-3. The box holds no ghcr login outside workflow runs (deploy-dev.yml logs in
-   per-run). If the pull is denied, use local-image mode:
+3. **The pull will be denied** — the box holds no ghcr login outside workflow
+   runs (`deploy-dev.yml` logs in per-run and logs out after). The cheapest fix
+   is not to run the script by hand at all: **dispatch `Deploy (dev/test box)`
+   manually** (Actions → that workflow → Run workflow → `main`). It logs into
+   ghcr, runs this same script on the self-hosted runner that lives ON the box,
+   and reads the very `.env` you just edited. Check first that `main`'s HEAD is
+   the sha you want redeployed, since a dispatch deploys the ref's HEAD rather
+   than what is currently running, and that HEAD is not a docs-only commit (the
+   `Skip docs-only commits` step would no-op the deploy).
+
+   To stay on the command line, log in and re-run step 2 unchanged:
 
    ```bash
-   DEPLOY_APP_IMAGE_SOURCE=local \
-   BACKEND_IMAGE=ghcr.io/sageseekersociety/cheese/backend:$SHA \
-   FRONTEND_IMAGE=ghcr.io/sageseekersociety/cheese/frontend:$SHA \
-   bash deploy/deploy-docker.sh "$SHA"
+   docker login ghcr.io -u <github user>   # password = PAT with read:packages
    ```
+
+   `DEPLOY_APP_IMAGE_SOURCE=local` does **not** substitute for that login on a
+   box that runs agents. It covers the two app images only; the agent runtime
+   images are launched through docker.sock, so compose cannot hold them and the
+   script pulls `SANDBOX_IMAGE` unconditionally whenever
+   `AGENT_RUNTIME_IMAGES_REQUIRED` is true — which the subscription overlay
+   makes it. Local mode gets you past `pull backend frontend` and straight into
+   the identical denial one step later. Do not reach for
+   `AGENT_RUNTIME_IMAGES_REQUIRED=false` to skip it either: that same block
+   creates the image-retainer containers that keep the next `docker image prune
+   -a` from reclaiming the sandbox image out from under every turn.
 
 4. Verify: container env via `docker inspect` (parse the JSON — don't split on
    commas, values like `OAUTH_ENABLED_PROVIDERS=ruc,github_app` get chopped),
@@ -291,17 +308,100 @@ docker exec -w /app cheese-backend-1 \
 
 Two things to know before flipping it:
 
-- **That directory IS the database.** Not Postgres, not the image. It is
-  excluded from the PG backup job, so if these memories are to survive a box
-  rebuild it needs its own backup line.
+- **That directory IS the database.** Not Postgres, not the image. The PG backup
+  job does not cover it; it has a backup line of its own
+  (`cheese-viking-backup.timer`, every 6h, off-site to R2 — see
+  `deploy/README-backup.md`). Installing that timer is part of the same manual
+  runbook as the DB backup, so confirm it is actually running on this box before
+  you flip the switch, not after.
 - **The key buys extraction, not just vectors.** Every remembered fact costs a
   chat call (OpenViking's extractor) plus embedding calls. A key that only
   works on the embedding endpoint gets you a backend that stores nothing.
 
+#### Checking that it actually came up
+
+A wrong key does not raise anything. Extraction runs in a background task
+inside OpenViking and the read path returns empty on error, so a rejected key
+looks *exactly* like the db backend: no memories, no complaint. So the backend
+calls both endpoints itself at boot and reports what happened. Two places to
+look, in this order:
+
+1. **The container log, right after the redeploy.** On success:
+
+   ```
+   memory: openviking model endpoints answered — embedding at …, chat at …
+   ```
+
+   On failure it is an `ERROR` line naming the endpoint, the HTTP status, the
+   vendor's own message, and — the part that usually is the answer — *which
+   setting the key came from*. `key from anthropic_auth_token` means the
+   openviking keys were never set and it fell back to the agent gateway's
+   token, which these endpoints will always reject.
+
+2. **`/health/detailed`, any time after.** `checks.memory` carries the same
+   verdict, per endpoint, with a `checked_at`; it is re-probed in the
+   background every 5 minutes, so a key that expires later shows up here too.
+
+   ```bash
+   docker exec cheese-backend-1 curl -s localhost:8081/health/detailed \
+     | jq .checks.memory
+   ```
+
+A failing memory check makes `/health/detailed` report `degraded`, and that is
+all it does: it does **not** 503 `/readyz` and does **not** touch `/healthz`,
+which is the container health check and therefore the deploy's rollback gate.
+Turning "the model vendor is having a bad afternoon" into a rolled-back release
+would cost more than the silence this check exists to break.
+
+One more thing the probe catches that a key test would not: it compares the
+width of the vector it gets back against `OPENVIKING_EMBEDDING_DIMENSION`.
+OpenViking does not ask the endpoint for a specific width, so a model whose
+native width differs from the configured one gives you a working key and a
+broken index.
+
 `backend/tests/integration/test_openviking_fake_endpoint.py` exercises this
 whole path against a local stand-in endpoint, so the wiring is verifiable
 without a key — but it says nothing about extraction quality, which is exactly
-what the real key is for.
+what the real key is for. The self-check has its own key-less coverage in
+`backend/tests/integration/test_memory_endpoint_probe.py`.
+
+### Turning on 记忆整理 / dreaming (#187)
+
+Independent of the openviking switch above, and much cheaper to try: dreaming
+reads the **db** backend's existing rows (`memory_entries`, `memory_dreams`), so
+it needs no vendor key and does not care what `MEMORY_BACKEND` is set to. One
+line, then the same redeploy as any other env change:
+
+```
+DREAM_ENABLED=true
+```
+
+It hangs off the idle-screen reaper (`scheduler/service.py`), which is what
+sets the pace — and the pace surprises people:
+
+- The reaper sweeps every `SANDBOX_REAP_INTERVAL_SECONDS` (**1h** default).
+- A topic must have had no block activity for `IDLE_REAP_HOURS` (**8h**) before
+  it is even a candidate.
+- At most `DREAM_MAX_PER_SWEEP` (**1**) topic is organized per sweep; topics
+  with fewer than `DREAM_MIN_BLOCKS` (**20**) blocks are skipped as not worth a
+  turn.
+
+So the first pass lands **no sooner than 8 hours** after the flip, and the
+backlog drains at roughly one topic an hour. Seeing nothing happen for an
+afternoon is the expected behaviour, not a failed deploy — check
+`docker logs cheese-backend-1 | grep 记忆整理` rather than re-flipping anything.
+
+**It only reaches topics that ran on a self-hosted device.** A Cloud turn
+leaves no screen behind and the idle-screen reaper is the only sweep there is,
+so a box with no online devices will never dream no matter what the flag says.
+Confirm there is one before concluding the flag is broken:
+
+```bash
+docker logs cheese-backend-1 --since 1h 2>&1 | grep 'shipped to device'
+```
+
+It **spends model budget** on a background trigger — about one agent turn per
+organized topic. That is the whole reason it is off by default.
 
 ## Backups
 
@@ -311,13 +411,17 @@ restore/DR runbook in [`deploy/README-backup.md`](../deploy/README-backup.md).
 - **DB**: hourly `pg_dump -Fc` → verify → off-site to Cloudflare R2 (bucket
   `cheese-db-backups`). Prefixes: `db/` (dev), `prod-db/` (prod), `etrip/`.
 - **Uploads** (prod, local disk): hourly additive mirror to R2 `prod-uploads/`.
+- **Memory** (`VIKING_HOST_PATH`, the openviking tree): 6-hourly full tar →
+  verify → off-site to R2 `viking/` / `prod-viking/`. Taken live, so a snapshot
+  the backend wrote through is kept but named `-hot`. On `MEMORY_BACKEND=db` the
+  tree is empty and the run is skipped, not failed.
 - **Transcripts** (`TRANSCRIPTS_HOST_PATH`, default
   `/home/nictheboy/cheese-transcripts`, mounted at `/data/transcripts`): the
   raw Claude session files of every place that ran on a device, one
   `<project>/<place>/<timestamp>.tar.gz` per upload, shipped there before the
   device home is deleted (`docs/where-a-turn-runs.md` §八). **Not in any
-  backup job yet** — like the memory tree, that directory IS the data, and it
-  needs its own line if it is to survive a box rebuild.
+  backup job yet** — that directory IS the data, so it needs its own line, the
+  way the memory tree above got one, if it is to survive a box rebuild.
 - **Monitoring** (code-enforced tripwires): `backup-freshness.yml` (daily, fails
   if last backup > 26h), `box-uptime.yml` (twice hourly at :25/:50, fails when
   the last **two** heartbeats both failed to complete — dev box, prod box, or
