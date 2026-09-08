@@ -1054,7 +1054,8 @@ class DeviceChannel(Channel):
                 if before.get("state") == "pending" and screen is prior_screen:
                     return screen
                 try:
-                    start_deadline = time.monotonic() + 60
+                    polling_started = time.monotonic()
+                    start_deadline = polling_started + 60
                     async with asyncio.timeout(3660):
                         while True:
                             status = await environment_status(
@@ -1081,7 +1082,11 @@ class DeviceChannel(Channel):
                                 or status.get("attempt") != before.get("attempt")
                             ):
                                 raise EnvironmentPreparationError(status)
-                            await asyncio.sleep(2)
+                            # Fast launches should not sit behind a two-second
+                            # poll; long installers keep the low-frequency checks.
+                            await asyncio.sleep(
+                                0.2 if time.monotonic() - polling_started < 10 else 2
+                            )
                 except asyncio.CancelledError:
                     await asyncio.shield(
                         environment_status(
