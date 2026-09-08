@@ -14,6 +14,7 @@ import uuid
 
 import pytest
 
+from app.domain.identity.handles import topic_agent_handle
 from app.domain.review import pr_text
 from app.domain.topic.models import Topic
 from app.domain.workspace import identity
@@ -42,7 +43,7 @@ def a_full_delivery():
     card = type("Card", (), {"id": uuid.uuid4(), "change_body": "为什么这么改。"})()
     who = identity.Attribution(
         handle="alice",
-        author=identity.agent_identity(identity.topic_agent_handle(room.id)),
+        author=identity.agent_identity(topic_agent_handle(room.id)),
         requester=identity.GitIdentity("Alice", "1+alice@users.noreply.github.com"),
         coauthors=(identity.GitIdentity("Bob", "2+bob@users.noreply.github.com"),),
         tasks=(

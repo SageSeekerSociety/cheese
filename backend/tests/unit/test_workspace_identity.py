@@ -1,16 +1,11 @@
-"""Commit authorship: who a topic's commits belong to on GitHub.
-
-The bug these close: every platform commit was authored by
-`芝士 <cheese@zhishi.local>`, an address no GitHub account owns, so the work
-landed as a grey unlinked name — no avatar, no link, no contribution credit for
-the person who asked for it.
-"""
+"""Git identities and human role trailers for agent-authored deliveries."""
 
 import uuid
 from types import SimpleNamespace
 
 import pytest
 
+from app.domain.identity.handles import topic_agent_handle
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.workspace import identity
 
@@ -85,6 +80,11 @@ def _roster_owner(monkeypatch, answer):
         return found
 
     monkeypatch.setattr(TopicMemberService, "owner_of", _owner_of)
+
+    async def _agent_of(_self, topic_id):
+        return topic_agent_handle(topic_id)
+
+    monkeypatch.setattr(TopicMemberService, "resolve_agent_handle", _agent_of)
 
 
 def _connected(monkeypatch, accounts: dict[str, tuple[str, str]]):
@@ -167,7 +167,7 @@ async def test_the_parent_rooms_owner_is_credited_when_the_child_is_someone_else
     assert who.requester == identity.GitIdentity(
         "bob", "42+bob@users.noreply.github.com"
     )
-    assert who.author == identity.agent_identity(identity.topic_agent_handle(child.id))
+    assert who.author == identity.agent_identity(topic_agent_handle(child.id))
     assert who.coauthors == ()
 
 
@@ -421,4 +421,4 @@ async def test_declared_reporter_and_code_contributor_have_distinct_git_trailers
     assert "Reviewed-by: reviewer <reviewer@zhishi.local>" in parsed
     assert "Co-authored-by: coder <42+coder@users.noreply.github.com>" in parsed
     assert "Co-authored-by: requester" not in parsed
-    assert who.author == identity.agent_identity(identity.topic_agent_handle(topic.id))
+    assert who.author == identity.agent_identity(topic_agent_handle(topic.id))
