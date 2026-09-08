@@ -1369,6 +1369,7 @@ def _provider_with_ledger():
     [
         # 每次 resume、每次自动 compact 都会再发一遍，是线上最常撞到的那个。
         ("SessionStart", {"hook_event_name": "SessionStart", "session_id": "s1"}),
+        ("MessageDisplay", {"hook_event_name": "MessageDisplay", "delta": "done"}),
         ("UserPromptSubmit", {"hook_event_name": "UserPromptSubmit", "prompt": "hi"}),
         (
             "PostToolUse",

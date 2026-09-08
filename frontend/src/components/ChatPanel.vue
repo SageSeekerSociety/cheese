@@ -593,6 +593,9 @@ function openSocket(topicId: string) {
     connected.value = true
     retryDelayMs = 1000 // healthy again → next outage starts backoff fresh
     errorMsg.value = null
+    // State frames are transient. A doc saved while disconnected may have no
+    // remaining turn to replay it; refresh through the panel's conflict guard.
+    emit('state-changed', 'doc')
     flushOutbox() // 断线期间打的字，连上就自己走
   }
   ws.onclose = () => {

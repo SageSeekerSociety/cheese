@@ -31,16 +31,22 @@ const topic = {
 
 let vuetify: ReturnType<typeof createVuetify>
 let history: unknown[] = []
+const sockets: { onopen?: () => void }[] = []
 
 beforeAll(() => {
   vuetify = createVuetify({ components, directives })
 })
 
 beforeEach(() => {
+  sockets.length = 0
   localStorage.setItem('cheesex.me', JSON.stringify({ id: '1', handle: 'me', name: 'me', token: '' }))
   vi.stubGlobal(
     'WebSocket',
     class {
+      constructor() {
+        sockets.push(this)
+      }
+      onopen?: () => void
       close() {}
       send() {}
       addEventListener() {}
@@ -64,6 +70,17 @@ beforeEach(() => {
 const settle = () => new Promise((r) => setTimeout(r, 0))
 
 describe('对话栏的接线', () => {
+  it('连接建立后刷新文档，补上离线时错过的保存通知', async () => {
+    history = []
+    const { emitted } = render(Column, {
+      props: { topic, members: [], topicList: [] },
+      global: { plugins: [vuetify, createPinia()] },
+    })
+    await settle()
+    sockets.at(-1)?.onopen?.()
+    expect(emitted()['state-changed']).toContainEqual(['doc'])
+  })
+
   it('未读数一路透传到对话栏，新消息线才画得出来', async () => {
     history = [
       {

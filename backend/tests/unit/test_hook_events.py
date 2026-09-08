@@ -528,6 +528,16 @@ def test_stop_completes_its_partial_summary_before_it_reaches_chat():
     )
 
 
+def test_display_after_stop_does_not_start_another_turn():
+    assembler = MessageAssembler()
+    assembler.translate({"hook_event_name": "Stop", "last_assistant_message": "Done."})
+    assert assembler.translate(_flush("late", 0, "Done.", final=True)) == []
+    assembler.translate({"hook_event_name": "UserPromptSubmit"})
+    events = assembler.translate(_flush("next", 0, "Done.", final=True))
+    assert len(events) == 1
+    assert isinstance(events[0], AgentMessage)
+
+
 def test_an_unstamped_hook_falls_back_to_now():
     """The live path handles a hook as it arrives, so it stamps nothing and
     'now' is the honest answer. Only a backfill pass has to say otherwise."""

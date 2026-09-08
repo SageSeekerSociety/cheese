@@ -18,6 +18,12 @@ The shared product owns teams, projects, conversations, work items, documents an
 
 ## Verification
 
+Execution text belongs in the existing activity panel. Persist MessageDisplay
+events there immediately; publish Stop's final answer once in the conversation.
+Keep document edit notices, failures and existing `cheese ask` cards live. A
+missing Stop must not promote an unfinished process note to a final answer.
+Verify both hook orders and preserve recoverable progress across restarts.
+
 Run the affected frontend tests, lint and type checks, and backend registration, protocol and document regressions. Inspect desktop and narrow layouts through web-plane. Record the real local application using synthetic student accounts: apply as a team, enter the generated workspace, request AI research and a draft, edit as another teammate, inspect work records, and reload to check persistence. The video must identify any unverified steps; a local student login does not prove fresh institutional SSO.
 
 Produce a local PDF with actual revised views and remaining design decisions. Submit the fixes in a PR. The approved scope prioritizes this Cheese demonstration; it excludes the legacy portal and production data changes.

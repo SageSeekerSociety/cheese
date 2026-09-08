@@ -73,7 +73,7 @@ async def test_settle_lands_parked_stop_and_finishes_the_turn(
     client, tmp_path, monkeypatch
 ):
     """MessageDisplay + Stop parked while nobody listened: the settle lands the
-    message once (the Stop's copy of the same text is deduped), saves the
+    final reply once and retains its execution log, saves the
     finished session pointer, and empties the spool."""
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
     factory = client.test_factory
@@ -101,7 +101,7 @@ async def test_settle_lands_parked_stop_and_finishes_the_turn(
     )
 
     landed = await svc.settle_spool(tid)
-    assert landed == 1  # the message once — Stop's twin text deduped
+    assert landed == 2  # retained progress plus exactly one public final
 
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
@@ -112,6 +112,9 @@ async def test_settle_lands_parked_stop_and_finishes_the_turn(
         if b.kind == BlockKind.message and b.content == "收尾汇报：都做完了"
     ]
     assert len(finals) == 1
+    progress = [b for b in rows if (b.meta or {}).get("progress")]
+    assert len(progress) == 1
+    assert progress[0].meta["in_room"] is False
     assert finals[0].meta.get("backfilled") is True
     assert resumes_by == "s-done"  # the next summon resumes the FINISHED session
     # The settle read to the end. Reading no longer deletes — the files live out

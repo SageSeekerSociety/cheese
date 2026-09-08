@@ -2,8 +2,8 @@
 
 This is the platform "shell" around 芝士: it persists the conversation as
 blocks (append-only history, spec H1), injects project memory into the agent's
-context (spec §8.4 带记忆回答), lands each completed assistant message as its
-own block (Slack-style discrete messages, no token streaming), and stores the
+context (spec §8.4 带记忆回答), retains execution notes in activity blocks,
+publishes the final reply as a chat message, and stores the
 resumable session id on the topic.
 
 DB writes happen in short transactions around the (long) streaming call so we
@@ -2252,11 +2252,10 @@ class ChatService:
                 continuation_id=(state.continuation_id if state is not None else None),
                 at=event.at,
                 task_id=task_id,
+                as_progress=True,
             )
             if payload is not None:
-                if state is not None:
-                    state.assistant_count += 1
-                frame = {"type": "assistant_block", "block": payload}
+                frame = {"type": "event_block", "block": payload}
         elif isinstance(event, AgentToolUse):
             name = event.name.replace("mcp__cheese__", "")
             args = event.input or {}
@@ -2359,13 +2358,15 @@ class ChatService:
                 )
                 if payload is not None:
                     frame = {"type": "event_block", "block": payload}
-            elif event.text.strip() and not result_text_seen:
+            elif event.text.strip():
+                # MessageDisplay is the execution log. Stop publishes the final
+                # reply even when the same text already appeared in that log.
                 payload = await self._persist_assistant_message(
                     project_id=project_id,
                     topic_id=topic_id,
                     text=event.text,
                     turn_id=turn_id,
-                    reply_to=None,
+                    reply_to=state.reply_to if state is not None else None,
                     roster=state.roster if state is not None else None,
                     topic_refs=state.topic_refs if state is not None else [],
                     eid=eid,
@@ -2758,11 +2759,12 @@ class ChatService:
         continuation_id: uuid.UUID | None = None,
         at: datetime | None = None,
         task_id: uuid.UUID | None = None,
+        as_progress: bool = False,
     ) -> dict | None:
-        """Persist ONE discrete 芝士 message (Slack-style): committed the moment
-        the SDK reports the AssistantMessage complete, so a turn lands as
-        several complete messages instead of one growing streamed bubble.
-        Handles the same mention canonicalization / notify / refs as before.
+        """Persist a final chat reply or an execution-log entry immediately.
+
+        Progress remains available in the activity panel without notifying
+        mentioned members. Final replies retain normal chat notifications.
         ``eid`` (hooks path) is stamped into meta so the spool reconcile can
         dedup a backfilled copy against this live one; ``eids`` carries every
         constituent flush id of a coalesced message, and any one of them
@@ -2772,9 +2774,11 @@ class ChatService:
         landed in an earlier attempt at the same work (④ 重发): the re-sent
         turn re-narrating "我先看一下 X" must not post a second copy of it. The
         caller treats None as "nothing to broadcast"."""
-        meta: dict | None = None
+        meta: dict | None = (
+            {"in_room": False, "progress": True} if as_progress else None
+        )
         if eid:
-            meta = {"eid": eid}
+            meta = {**(meta or {}), "eid": eid}
         if len(eids) > 1:
             meta = {**(meta or {}), "eids": list(eids)}
         if backfilled:
@@ -2807,7 +2811,9 @@ class ChatService:
             # disagree no matter where the process dies.
             if continuation_id is not None and not await idem.claim(
                 session,
-                action_key(continuation_id, "message", text),
+                action_key(
+                    continuation_id, "progress" if as_progress else "message", text
+                ),
                 action="message",
                 scope_id=str(topic_id),
             ):
@@ -2832,7 +2838,7 @@ class ChatService:
                 author=author,
                 author_type=AuthorType.ai,
                 content=text,
-                kind=BlockKind.message,
+                kind=BlockKind.event if as_progress else BlockKind.message,
                 reply_to=reply_to,
                 turn_id=turn_id,
                 meta=meta,
@@ -2841,7 +2847,7 @@ class ChatService:
             # <@handle> mentions in 芝士's message → strong notify (the token is
             # the single source of truth: what's shown = who's notified).
             # Hallucinated handles get flagged in 现场, never silently no-op.
-            if topic is not None:
+            if topic is not None and not as_progress:
                 resolved, unresolved = await self._notify_mentions(
                     session, topic, author, text, roster
                 )
@@ -3329,13 +3335,10 @@ class ChatService:
                     backfilled=True,
                     at=message.at,
                     task_id=await self._work_of_worker(topic_id, message.agent_id),
+                    as_progress=True,
                 )
                 seen.add(fallback_eid)
                 seen.update(message.eids)
-                # Feed the Stop's text dedup even when this copy itself was
-                # suppressed — the text exists either way. Stored form, so it
-                # is comparable with `known_texts` seeded from the DB.
-                known_texts.add(_canon(message.text))
                 return block_payload
 
             for spooled_event in spooled:
@@ -3361,7 +3364,7 @@ class ChatService:
                         block_payload = await _land_message(partial, eid)
                         if block_payload is not None:
                             recovered += 1
-                            yield {"type": "assistant_block", "block": block_payload}
+                            yield {"type": "event_block", "block": block_payload}
                     if result.session_id:
                         # The finished session is what the next summon must
                         # resume — without this the topic keeps pointing at
@@ -3399,7 +3402,7 @@ class ChatService:
                         if block_payload is None:
                             continue
                         recovered += 1
-                        yield {"type": "assistant_block", "block": block_payload}
+                        yield {"type": "event_block", "block": block_payload}
                         continue
                     if isinstance(event, AgentSubagentStart | AgentSubagentStop):
                         # A worker's closing message reaches the platform exactly
@@ -3480,7 +3483,7 @@ class ChatService:
                         block_payload = await _land_message(partial, partial.eid or "")
                         if block_payload is not None:
                             recovered += 1
-                            yield {"type": "assistant_block", "block": block_payload}
+                            yield {"type": "event_block", "block": block_payload}
                     pending = set()
             # Reading is not consuming: the cursor moves over the events that
             # reached the timeline, and retention — not this pass — is what

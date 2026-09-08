@@ -364,6 +364,7 @@ class MessageAssembler:
     def __init__(self) -> None:
         self._pending: dict[str, _PendingMessage] = {}
         self._done: dict[str, None] = {}
+        self._last_stop_text: str | None = None
 
     def add(self, hook: dict) -> AgentMessage | None:
         """Fold one MessageDisplay payload in. Returns the completed message,
@@ -435,13 +436,25 @@ class MessageAssembler:
         into the assembler (a completed message emerges as ONE event), a Stop
         first drains whatever is still buffered so nothing dies with the
         buffer, and every other hook passes through ``translate_hook``."""
-        if _hook_event_name(hook) == "MessageDisplay":
+        name = _hook_event_name(hook)
+        if name in {"UserPromptSubmit", "PreToolUse"}:
+            self._last_stop_text = None
+        if name == "MessageDisplay":
             message = self.add(hook)
+            if (
+                message is not None
+                and message.agent_id is None
+                and message.text.strip() == self._last_stop_text
+            ):
+                # A late display of the reply Stop already delivered must not
+                # open a new, unsolicited turn after the session finished.
+                return []
             return [message] if message is not None else []
         event = translate_hook(hook)
         if event is None:
             return []
         if isinstance(event, AgentResult):
+            self._last_stop_text = None if event.is_error else event.text.strip()
             messages = self.drain()
             if messages and not event.is_error:
                 last = messages[-1]
