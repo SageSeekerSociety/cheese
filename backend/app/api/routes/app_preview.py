@@ -89,7 +89,14 @@ def _rewrite_html(body: bytes, prefix: str) -> bytes:
         text = body.decode("utf-8")
     except UnicodeDecodeError:
         return body
-    return _ROOT_ABSOLUTE_ATTR.sub(rf"\g<1>{prefix}/", text).encode("utf-8")
+    mounted = tuple(prefix + end for end in ("/", '"', "'", "?", "#"))
+
+    def replace(match: re.Match) -> str:
+        if text.startswith(mounted, match.end() - 1):
+            return match.group(0)
+        return f"{match.group(1)}{prefix}/"
+
+    return _ROOT_ABSOLUTE_ATTR.sub(replace, text).encode("utf-8")
 
 
 def _upstream_path(path: str, conn: Request | WebSocket) -> str:

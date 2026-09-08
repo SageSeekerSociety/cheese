@@ -1962,6 +1962,12 @@ async def set_artifact(
     if mime is None:
         allowed = "、".join(_ARTIFACT_MIME)
         raise ValidationError(f"暂不支持的类型 {as_!r}（可选：{allowed}）")
+    if as_ != "app" and "content" in body:
+        content = body["content"]
+        if not isinstance(content, str):
+            raise ValidationError("content 必须是文本")
+        # A remote machine's file is not in the backend worktree until published.
+        ws.write_file(place.project_id, path, content, topic_id=topic_id)
     block = await BlockRepository(db).add(
         project_id=place.project_id,
         topic_id=topic_id,  # the place; `add` splits it
