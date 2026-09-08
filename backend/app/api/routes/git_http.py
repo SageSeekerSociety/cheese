@@ -297,10 +297,10 @@ async def branch_for_place(
 #: comma-terminated list is dropped by the same rule.
 _A_COMMIT = re.compile(r"\A[0-9a-f]{40}(?:[0-9a-f]{24})?\Z")
 
-#: How many of a clone's commits are looked at. The batch tip a device is
-#: sitting on is whatever it delivered last, so it is within this batch's own
-#: commits — deep enough to cover a long batch, short enough that the URL stays
-#: well inside what proxies and servers accept on a request line.
+#: How many of the reported commits are looked at, however many arrive. The tip
+#: a clone is sitting on is whatever it delivered last, so it is within this
+#: batch's own commits — deep enough to cover a long batch, and a ceiling on how
+#: much work one URL can ask this endpoint to do.
 _HOW_FAR_BACK = 100
 
 
