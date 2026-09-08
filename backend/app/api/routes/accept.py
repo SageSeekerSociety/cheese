@@ -23,6 +23,7 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.agent.runtime import AgentWorkRunner
+from app.domain.identity.actor import Actor
 from app.domain.review import pr_publish
 from app.domain.review.github_pr import (
     GitHubPRClient,
@@ -47,6 +48,18 @@ logger = logging.getLogger("cheesex.accept")
 router = APIRouter(prefix="", tags=["accept"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
+
+
+async def _card_actor(
+    card_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> Actor:
+    """Bind credential scope to the card's room before review authorization."""
+    service = AcceptService(db)
+    card = await service._card_or_404(card_id)
+    topic = await service._topic_or_404(card.topic_id)
+    return await resolver.resolve(
+        fallback_handle=None, project_id=topic.project_id, topic_id=topic.id
+    )
 
 
 @router.post("/topics/{topic_id}/accept-card")
@@ -167,7 +180,7 @@ async def approve_card(
     card_id: uuid.UUID, body: ApprovalCreate, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     """主分支保护 (spec §4.4): record one human approval toward the accept."""
-    actor = await resolver.resolve(fallback_handle=body.approver_handle)
+    actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
         raise AuthenticationRequiredError("需要登录才能批准验收卡")
     svc = AcceptService(db)
@@ -184,7 +197,7 @@ async def accept_card(
     chat: Annotated[ChatService, Depends(get_chat_service)],
     runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
 ) -> dict:
-    actor = await resolver.resolve(fallback_handle=body.decided_by)
+    actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
         raise AuthenticationRequiredError("需要登录才能采纳验收卡")
     svc = AcceptService(db)
@@ -238,7 +251,7 @@ async def reassign_card(
     resolver: ActorResolverDep,
 ) -> dict:
     """改验收人 (spec §4.4)."""
-    actor = await resolver.resolve(fallback_handle=None)
+    actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
         raise AuthenticationRequiredError("需要登录才能改验收人")
     svc = AcceptService(db)
@@ -271,7 +284,7 @@ async def reject_card(
     are request-scoped dependencies the domain layer has no handle on, and the
     conflict branch of `accept_card` right above already does it this way.
     """
-    actor = await resolver.resolve(fallback_handle=body.decided_by)
+    actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
         raise AuthenticationRequiredError("需要登录才能驳回验收卡")
     svc = AcceptService(db)
@@ -325,7 +338,7 @@ async def void_card(
     的 `_forbid_ai`，见 tests/integration/test_accept_gate_orphan.py 的
     `test_void_requires_a_logged_in_human`。
     """
-    actor = await resolver.resolve(fallback_handle=None)
+    actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
         raise AuthenticationRequiredError("需要登录才能作废验收卡")
     svc = AcceptService(db)
@@ -353,7 +366,7 @@ async def merge_card_anyway(
     （没列进去的写路由压根不过那个中间件），真正拦住芝士的是这里的登录校验加
     `AcceptService.merge_despite_checks` 里的 `_forbid_ai`。
     """
-    actor = await resolver.resolve(fallback_handle=None)
+    actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
         raise AuthenticationRequiredError("需要登录才能人工放行合并")
     svc = AcceptService(db)
@@ -380,7 +393,7 @@ async def set_auto_merge(
     `_CHEESE_WRITE_PATHS`（同 void / merge-anyway），真正拦住芝士的是登录校验加
     `AcceptService.arm_auto_merge` 里的 `_forbid_ai`。
     """
-    actor = await resolver.resolve(fallback_handle=None)
+    actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
         raise AuthenticationRequiredError("需要登录才能设置自动合并")
     svc = AcceptService(db)
@@ -397,7 +410,7 @@ async def set_auto_merge(
 async def revoke_card(
     card_id: uuid.UUID, body: AcceptDecision, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    actor = await resolver.resolve(fallback_handle=body.decided_by)
+    actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
         raise AuthenticationRequiredError("需要登录才能撤销采纳")
     svc = AcceptService(db)
