@@ -14,14 +14,29 @@ GitHub's own protection page works.
 ## The shape
 
 ```
-芝士 finishes, having run the checks itself (that is part of doing the work)
-   → the platform opens a PR with the App's credential          no human token
-      → the card is created as the view of that PR              diff + checks
-         → CI runs whatever .github/workflows declares
-            → the card mirrors the PR's merge state             CLEAN/UNSTABLE/…
-               → 采纳 = call the merge API, sha=the head shown  right now
-                  → the topic is marked delivered, and stays active
+芝士 makes the batch's first commit
+   → the platform opens a DRAFT PR for that batch                有东西就有 PR
+      → CI runs whatever .github/workflows declares
+         → 芝士 finishes, having run the checks itself
+            → 递卡: the PR leaves draft, the card is its view    diff + checks
+               → the card mirrors the PR's merge state          CLEAN/UNSTABLE/…
+                  → 采纳 = call the merge API, sha=the head shown right now
+                     → the topic is marked delivered, and stays active
 ```
+
+The PR opens at the batch's FIRST COMMIT, not when a card is filed (#718 拍板①):
+draft is GitHub's word for 进行中, and having a PR from the start is what lets CI
+run and a reviewer look before anybody is asked to accept anything. `cheese
+ready` takes it out of draft without filing a card, for work worth showing that
+nobody is being asked to accept yet; 递卡 does the same flip as a side effect,
+because asking someone to look at it is what 递卡 means.
+
+The platform never sees that first commit — a 分身 commits inside the shared
+worktree, with no push and no webhook — so it is OBSERVED rather than hooked:
+`pr_publish.sweep_draft_prs` runs on the PR poller's clock and looks for a batch
+whose branch is ahead of main. The cost is at most one tick of latency plus the
+time this pass spends on the batches ahead of it, and the reason that is
+acceptable is written where the sweep is.
 
 The card's state IS the merge state (`merge_state.compute_merge_state`, mirrored
 by the poller onto `AcceptCard.merge_state`): `CLEAN`, `UNSTABLE`, `BLOCKED`,
@@ -90,8 +105,10 @@ per-project rules replaced all of it.
 
 ## Answers to the questions this raises
 
-**One card, one PR.** More commits update the same PR — that is what PR
-iteration is. The workspace's commits reach the PR on demand (`cheese
+**One BATCH, one PR.** The PR belongs to the tree (`work_trees.pr_number`),
+which is what「一棵树 = 一个分支 = 一个 PR = 一批活」has meant all along; the card
+adopts it rather than opening a second. More commits update the same PR — that is
+what PR iteration is. The workspace's commits reach the PR on demand (`cheese
 push-fix`); the poller never pushes on a timer (a 60-second pusher raced the
 agent and cancelled its own CI runs).
 

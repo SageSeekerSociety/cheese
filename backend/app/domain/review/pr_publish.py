@@ -1,14 +1,21 @@
-"""Open a real GitHub PR for a green accept card (PR-based accept, #188 §5.1).
+"""每一批活在 GitHub 上的那个 PR —— 开出来、改文案、翻出 draft。
 
-Dispatched fire-and-forget when a card turns `pending` (born pending on
-projects without a gate, or promoted by a green gate). Pushes the topic branch
-to the upstream and opens (or finds) the PR, then records pr_number/pr_url on
-the card. The background dispatch is best-effort: any failure leaves the card
-PR-less. Acceptance does NOT fall back to a local merge for such a card any
-more — the accept path retries this publish synchronously via
-`open_pr_for_card` and stops, visibly, if opening the PR still fails
-(AcceptService._publish_pr_for_accept): a merge commit direct-pushed to main
-with no PR is exactly what #296 exists to end.
+Two moments put a PR here, and they are not alternatives:
+
+- **有东西就有 PR** (#718 拍板①). The batch's FIRST COMMIT opens a DRAFT PR, with
+  no card and nobody asked to accept anything yet — draft is GitHub's word for
+  进行中. `sweep_draft_prs` does it, and its docstring says why the platform has
+  to OBSERVE that commit rather than hook it.
+- **递卡** dispatches `open_pr_for_card` fire-and-forget: it pushes the branch,
+  ADOPTS the draft PR that is already there (or opens one, for a batch that had
+  none), rewrites its title and body from the card, and takes it out of draft —
+  递卡 means「请人来看」. The background dispatch is best-effort: any failure
+  leaves the card PR-less, visibly (`PR_OPEN_FAILED_PREFIX`).
+
+Acceptance does NOT fall back to a local merge for a PR-less card — the accept
+path retries the publish synchronously via `open_pr_for_card` and stops, visibly,
+if opening the PR still fails (AcceptService._publish_pr_for_accept): a merge
+commit direct-pushed to main with no PR is exactly what #296 exists to end.
 
 Same task-reference pattern as review/gate.py.
 """
