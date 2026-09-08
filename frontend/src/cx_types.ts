@@ -234,7 +234,6 @@ export type WsServerFrame =
   | { type: 'user_block'; block: Block }
   // A block's reactions changed (someone toggled / 芝士's ✅ receipt landed).
   | { type: 'reaction'; block_id: string; reactions: ReactionAgg[] }
-  | { type: 'tool'; name: string; input: Record<string, unknown> }
   // `restored` = this is the checklist a PREVIOUS turn left behind, replayed at
   // turn start; without the flag the UI cannot tell it from live progress.
   | { type: 'todo'; items: TodoItem[]; restored?: boolean }

@@ -151,18 +151,17 @@ const props = withDefaults(
 )
 
 // Surface AI activity so the parent can refresh the living doc / topic list
-// without a manual reload (spec §7.1 实时联动). `tool-used` fires per tool call
-// (carries the short tool name); `turn-done` fires when a turn completes.
+// without a manual reload (spec §7.1 实时联动). `turn-done` fires when a turn
+// completes.
 const emit = defineEmits<{
-  (e: 'tool-used', name: string, input?: Record<string, unknown>): void
   // A cheese command changed a platform resource (doc/decision/topics/...) —
   // the parent refreshes that panel live, mid-turn.
   (e: 'state-changed', resource: string): void
   (e: 'turn-done'): void
   // 芝士 是不是正在这个话题里干活。跟着轮次生命周期走（summon / turn_started /
-  // turn_active 开，turn_finished / done / error 关），不是跟着第一个工具调用
-  // 走：工具帧是干活的**证据**，不是干活的**开始**，而右边那格「现场」得在开工
-  // 那一刻就在那儿——它就是用来看它在干什么的。
+  // turn_active 开，turn_finished / done / error 关），不是跟着它第一次动手
+  // 走：干出来的东西是干活的**证据**，不是干活的**开始**，而右边那格「现场」得
+  // 在开工那一刻就在那儿——它就是用来看它在干什么的。
   (e: 'working', working: boolean): void
   // ⤴ 升级为话题 (eval A1): the parent upgrades this message block into a topic.
   (e: 'upgrade-message', messageId: string): void
@@ -657,11 +656,6 @@ function handleFrame(frame: WsServerFrame) {
       // Someone toggled an emoji / 芝士's ✅ receipt landed — update the chip
       // row in place (the frame carries the block's full fresh aggregate).
       applyReactions(frame.block_id, frame.reactions)
-      break
-    case 'tool':
-      // 工作细节不进对话流 — the live feed belongs to the 现场 drawer. Hand
-      // the parent the full call so it can build the live worklog line.
-      emit('tool-used', frame.name.replace(/^mcp__cheese__/, ''), frame.input)
       break
     case 'todo':
       // Working-log checklist, updated in place. `restored` marks the replay of
