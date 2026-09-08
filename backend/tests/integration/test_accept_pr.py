@@ -922,6 +922,18 @@ def test_disarming_never_needs_a_fresh_look(client, app_world):
 
 
 # ---- 卡面从没显示过任何版本（刚递上来的 PR 卡） ---------------------------
+
+
+def test_github_card_without_a_pr_does_not_claim_checks_are_clean(client, app_world):
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    _make_card(client, tid)
+    card = _cards(client, tid)[0]
+    assert card["pr_number"] is None
+    assert card["merge_state"]["state"] == "unknown"
+    assert card["has_external_checks"] is True
+
+
 #
 # 上面那一节的前提是「卡面显示过某个 sha」。刚递上来的卡还没有：轮询器 60s 才跑
 # 一跳，`pr_head_sha` 在那之前一直是空的，前端因此送上来一个空的 head。

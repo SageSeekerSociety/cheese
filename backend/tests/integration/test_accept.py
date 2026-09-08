@@ -384,6 +384,7 @@ def test_accept_squashes_the_delivery_with_the_cards_words(client):
     assert r.status_code == 200
     card = r.json()["data"]
     assert card["merge_state"]["state"] == "clean"
+    assert card["has_external_checks"] is False
     assert card["merge_state"]["who"] == "human"
 
     before = subprocess.run(

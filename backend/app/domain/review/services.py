@@ -857,17 +857,14 @@ class AcceptService:
         level = notes.note_level(card.note_code, card.note)
         data["note_level"] = level.value if level else None
         data["approvals"] = await self._repo.list_approver_handles(card.id)
-        topic = await self._topics.get(card.topic_id)
-        project = (
-            await self._projects.get(topic.project_id) if topic is not None else None
-        )
+        topic = await self._topic_or_404(card.topic_id)
+        project = await self._projects.get(topic.project_id)
+        forge = await self._resolve_forge(topic.project_id)
+        data["has_external_checks"] = forge.has_external_checks
         data["approvals_required"] = approvals_required_of(project)
-        # 卡上的状态＝合并态 (#718)。骑 PR 的卡读轮询器的镜像（还没镜像过 =
-        # unknown，下一拍收敛）；未绑 GitHub 的项目 (#363 拍板) 分支保护默认
-        # 关、没有检查可读，卡直接是 CLEAN —— 唯一会推翻它的信号是「上次合并
-        # 撞了冲突」（conflict 状态）→ dirty。who 恒为 human：那里的采纳本来
-        # 就纯粹是人的判断。
-        if card.pr_number is not None:
+        # External checks stay unknown until the PR has a mirrored state.
+        # Local acceptance has no checks; only a recorded merge conflict blocks it.
+        if forge.has_external_checks:
             mirror = card.merge_state if isinstance(card.merge_state, dict) else None
             data["merge_state"] = mirror or {
                 "state": "unknown",
@@ -876,7 +873,11 @@ class AcceptService:
                     {
                         "kind": "no_signal",
                         "checks": [],
-                        "detail": "平台还没看过这个 PR 的合并态",
+                        "detail": (
+                            "平台还没看过这个 PR 的合并态"
+                            if card.pr_number is not None
+                            else "PR 尚未创建，检查状态未知"
+                        ),
                     }
                 ],
                 "head_sha": card.pr_head_sha,
@@ -905,6 +906,7 @@ class AcceptService:
         data["auto_merge"] = {
             "allowed": (
                 branch_protection_of(project).auto_merge_allowed
+                and forge.has_external_checks
                 and card.pr_number is not None
             ),
             "armed_by": card.auto_merge_armed_by,

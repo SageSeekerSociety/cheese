@@ -635,6 +635,7 @@ export interface AcceptCard {
   // 合并态 (#718): what stands between this card and the trunk, and whose move
   // it is. Always present — a platform-lane card carries who="human".
   merge_state: MergeStateInfo
+  has_external_checks: boolean
   auto_merge: AutoMergeInfo
   // 两阶段采纳 (PR迭代式) only: which repo the PR lives in and the commit CI is
   // being queried against.
