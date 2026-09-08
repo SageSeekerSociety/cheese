@@ -340,6 +340,7 @@ PROVIDER_UNREACHABLE_CODE = "provider_unreachable"
 PROVIDER_OVERLOADED_CODE = "provider_overloaded"
 MODEL_LIMIT_REACHED_CODE = "model_limit_reached"
 RESPONSE_TRUNCATED_CODE = "response_truncated"
+TOOL_UNAVAILABLE_CODE = "tool_unavailable"
 
 #: 一条 CLI 提示最长能有多长。真实样本最长的一条 120 字符出头;留三倍余量,再长
 #: 就不是提示而是内容了。
@@ -372,6 +373,18 @@ _CLI_NOTICES: tuple[tuple[re.Pattern[str], str], ...] = (
             re.I,
         ),
         RESPONSE_TRUNCATED_CODE,
+    ),
+    # 「我还没有 X 的权限,请批准一下」—— 在这个平台上根本没有人能批准:那个
+    # 授权框画在容器的终端里,房间里的人够不着。所以它出现本身就说明配置不对,
+    # 而它读起来却像一句正常的请求 —— 一个故障伪装成了一句话,最坏的一种。
+    (
+        re.compile(
+            r"^(I don'?t have permission to use\b"
+            r"|No response requested\.?$"
+            r"|Tool ran without output)",
+            re.I,
+        ),
+        TOOL_UNAVAILABLE_CODE,
     ),
 )
 

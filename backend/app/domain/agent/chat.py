@@ -37,6 +37,7 @@ from app.domain.agent.platform_failures import (
     PROVIDER_OVERLOADED_CODE,
     PROVIDER_UNREACHABLE_CODE,
     RESPONSE_TRUNCATED_CODE,
+    TOOL_UNAVAILABLE_CODE,
     TURN_TIMEOUT_MESSAGE,
     classify_cli_notice,
     classify_platform_failure,
@@ -630,6 +631,13 @@ _CLI_NOTICE_COPY: dict[str, tuple[str, str, str, str]] = {
         WHO_HUMAN,
         "这不是等一等就能好的:要换一个模型,或者等额度恢复。重试无效。",
     ),
+    TOOL_UNAVAILABLE_CODE: (
+        "芝士想用的一个工具没能用上",
+        SEVERITY_WARN,
+        WHO_PLATFORM,
+        "它在等一个没有人能给的授权 —— 那个框画在容器的终端里，房间里够不着。"
+        "这说明这台机器上的工具配置不对，要人去看，重试不会有变化。",
+    ),
     RESPONSE_TRUNCATED_CODE: (
         "上面那条回复没说完就断了",
         SEVERITY_WARN,
@@ -637,6 +645,27 @@ _CLI_NOTICE_COPY: dict[str, tuple[str, str, str, str]] = {
         "上面那条可能是半截。要它接着说就再 @ 它一次。",
     ),
 }
+
+
+# 聊天区是给人读的。芝士主要说中文,偶尔会漏出一句英文 —— 实测 200 个会话里
+# 682 条,占聊天区消息的 15%,而且 98.5% 是 200 字以内、动手前随口一句的过场话
+# (「Now the tests:」)。漏的正是那种它没意识到在对人说话的时刻。
+#
+# 这些不翻译、也不删,只是**不占聊天区**:照常落库、照常在历史里,`meta.in_room`
+# 为 False,前端不显示。信息一条不丢,读的人不用在英文里找中文。
+#
+# 判据是「通篇没有汉字**且**确实是拿字母写的」。后半个条件不是多余的:一条只有
+# 表情或数字的短消息(「✅」)同样没有汉字,但它不是英文,藏它是这条规则的副作用,
+# 不是它的目的。
+_HAS_LATIN = re.compile(r"[A-Za-z]")
+
+
+def _stays_out_of_the_room(text: str) -> bool:
+    """这条 AI 消息该不该在聊天区露面。"""
+    return not _HAS_CJK_TEXT.search(text) and bool(_HAS_LATIN.search(text))
+
+
+_HAS_CJK_TEXT = re.compile(r"[一-鿿]")
 
 
 def _cli_notice(text: str) -> tuple[str, dict] | None:
@@ -2819,8 +2848,11 @@ class ChatService:
                 task_id=task_id,
             )
         meta: dict | None = None
+        if _stays_out_of_the_room(text):
+            # 落库,但不露面。删掉它才是信息丢失 —— 那 15% 里有少数带着真结论。
+            meta = {"in_room": False}
         if eid:
-            meta = {"eid": eid}
+            meta = {**(meta or {}), "eid": eid}
         if len(eids) > 1:
             meta = {**(meta or {}), "eids": list(eids)}
         if backfilled:

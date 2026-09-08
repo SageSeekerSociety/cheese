@@ -42,7 +42,10 @@ import { platformErrorPresentation } from './platformEvents'
  * 「露不露面」和「谁写的」是两件事，过去挤在 `author_type` 一个字段里：
  * system 出现、ai 不出现。于是一条确实由芝士产生、又该让人看见的事件无法表达，
  * 而任何想知道作者的人读到的是一个在回答别的问题的字段。现在它自己有一格；没有
- * 这一格的事件都露面 —— 平台其它所有写入方都是往房间里说话。
+ * 这一格的都露面 —— 平台其它所有写入方都是往房间里说话。
+ *
+ * 对**消息**同样生效：一条通篇没有中文的 AI 消息不占聊天区（后端在落库时就打上
+ * 这一格）。它照常存着、照常在历史里，只是聊天区不显示 —— 藏起来，不是删掉。
  */
 function showsInRoom(block: Block): boolean {
   return meta(block)?.in_room !== false
@@ -293,13 +296,16 @@ export interface NoticeRow {
 export function collapseNotices(blocks: Block[]): NoticeRow[] {
   const rows: NoticeRow[] = []
   for (const block of blocks) {
+    // 露不露面先问，再问它是什么 —— 这一格从来就不是事件专有的（见 showsInRoom
+    // 的注释：它单独立一格，正是因为「谁写的」和「露不露面」是两个问题）。放在
+    // 分支外面，芝士自己写的、但不该占住聊天区的那种消息才藏得住。
+    if (!showsInRoom(block)) continue
     if (block.kind !== 'event') {
       if (block.kind === 'message' || block.kind === 'attachment') {
         rows.push({ block, run: [block], notice: null })
       }
       continue
     }
-    if (!showsInRoom(block)) continue
     if (str(meta(block)?.event_type) === 'frontend_error') continue
 
     const prev = rows[rows.length - 1]

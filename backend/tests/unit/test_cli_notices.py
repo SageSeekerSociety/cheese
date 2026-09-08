@@ -1,11 +1,14 @@
-"""CLI 自己印在对话里的英文提示，不该顶着芝士的名字发出去。
+"""聊天区里那些不该以芝士的名义出现的英文。
+
+两类，处理办法不同：CLI 自己印的换成中文故障卡（归属错了比语言错了更糟），
+芝士自己写的通篇英文则落库但不露面（不翻译、不删，只是不占聊天区）。
 
 用例里的每一句都是从真实会话记录里抓出来的原文，不是编的 —— 前两句在 200 个
 会话里出现了 57 次。归属比语言更要紧：一个平台故障被读成 AI 的回答，谁也不知道
 该找谁。
 """
 
-from app.domain.agent.chat import _cli_notice
+from app.domain.agent.chat import _cli_notice, _stays_out_of_the_room
 from app.domain.agent.platform_failures import (
     MODEL_LIMIT_REACHED_CODE,
     PROVIDER_OVERLOADED_CODE,
@@ -27,13 +30,19 @@ def test_the_two_most_common_ones_are_recognised():
 
 
 def test_the_rest_of_the_real_ones():
-    assert classify_cli_notice(
-        "API Error: 502 Bad Gateway. This is a server-side issue, usually "
-        "temporary — try again in a moment."
-    ) == PROVIDER_OVERLOADED_CODE
-    assert classify_cli_notice(
-        "API Error: 529 Overloaded. This is a server-side issue, usually temporary."
-    ) == PROVIDER_OVERLOADED_CODE
+    assert (
+        classify_cli_notice(
+            "API Error: 502 Bad Gateway. This is a server-side issue, usually "
+            "temporary — try again in a moment."
+        )
+        == PROVIDER_OVERLOADED_CODE
+    )
+    assert (
+        classify_cli_notice(
+            "API Error: 529 Overloaded. This is a server-side issue, usually temporary."
+        )
+        == PROVIDER_OVERLOADED_CODE
+    )
     assert (
         classify_cli_notice("You've reached your Fable limit. /model to switch models.")
         == MODEL_LIMIT_REACHED_CODE
@@ -108,3 +117,32 @@ def test_an_overload_says_it_is_worth_retrying():
     _, meta = result
     assert meta["severity"] == "warn"
     assert meta["who"] == "platform"
+
+
+# ---- 通篇没有中文的 AI 消息：落库，但不占聊天区 ----
+
+
+def test_an_all_english_line_stays_out_of_the_room():
+    # 实测这类占聊天区消息的 15%，98.5% 是这种动手前随口一句。
+    assert _stays_out_of_the_room("Now the tests:")
+    assert _stays_out_of_the_room("While that installs, let me survey the code.")
+
+
+def test_one_chinese_character_is_enough_to_show_it():
+    # 用户定的线就是这条：只要不是整句英文就照常显示。
+    assert not _stays_out_of_the_room("跑一下 the full suite")
+    assert not _stays_out_of_the_room("确认了——deadlock from my own run.")
+
+
+def test_a_message_with_no_letters_is_not_english():
+    # 「没有汉字」不等于「是英文」。一条只有表情或数字的短消息藏起来，是这条
+    # 规则的副作用，不是它的目的。
+    assert not _stays_out_of_the_room("✅")
+    assert not _stays_out_of_the_room("👍 +1")
+    assert not _stays_out_of_the_room("")
+
+
+def test_code_and_paths_alone_still_count_as_english():
+    # 真实数据里 682 条没有一条是纯代码块（芝士贴代码总是包在中文里），所以这
+    # 条不会误伤；但真出现了，藏起来也不丢 —— 它还在库里。
+    assert _stays_out_of_the_room("backend/app/domain/agent/chat.py")
