@@ -530,7 +530,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                 @click="openProject(p.id)"
               >
                 <template #prepend>
-                  <span class="private-avatar-slot">
+                  <span class="private-avatar-slot me-3">
                     <span class="dm-avatar project-avatar" :style="{ backgroundColor: avatarColor(p.name) }">{{
                       avatarInitial(p.name)
                     }}</span>
@@ -902,7 +902,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
             <v-list density="compact" nav max-height="320">
               <v-list-item v-for="dm in otherDms" :key="dm.handle" @click="startDm(dm.handle)">
                 <template #prepend>
-                  <span class="private-avatar-slot">
+                  <span class="private-avatar-slot me-3">
                     <span class="dm-avatar" :style="{ backgroundColor: avatarColor(dm.handle) }">{{
                       dm.name.slice(0, 1).toUpperCase()
                     }}</span>
