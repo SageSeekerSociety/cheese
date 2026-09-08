@@ -673,7 +673,7 @@ async def get_private_chat(
     if actor.authenticated:
         await resolver.authorize_project(actor, project_id=project_id)
         participants = {user_handle, peer_handle} - {None}
-        if actor.is_agent or actor.handle not in participants:
+        if actor.handle not in participants:
             raise ForbiddenError("只能打开自己参与的私聊")
     topic = await TopicService(db).get_or_create_private(
         project_id=project_id, user_handle=user_handle, peer_handle=peer_handle
@@ -801,17 +801,15 @@ async def set_model_profile(project_id: uuid.UUID, body: dict, db: DbSession) ->
 async def require_project_steward(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> str:
-    """The verified human owner/lead of a project, or a 404 that hides it.
+    """The verified owner/lead of a project, or a 404 that hides it.
 
-    A sandbox-scoped agent token is deliberately not accepted: an agent that
-    could configure the command judging its own work has a review bypass (and,
-    before gate isolation, a host-command primitive), and an agent that could
-    reassign ``owner_handle`` could hand itself the project.
+    People and agents need the same management role. A credential alone does
+    not grant authority to change ownership or the project's checks.
 
     Returns the caller's handle so a route can record who acted.
     """
     actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    if not actor.authenticated or actor.via != "token" or actor.is_agent:
+    if not actor.authenticated:
         raise NotFoundError("Project not found")
     handle = actor.handle
     project = await ProjectRepository(db).get(project_id)
@@ -956,8 +954,8 @@ async def set_branch_protection(
 
     ``approvals_required`` predates this block and stays at
     ``settings["approvals_required"]`` — read and written here, never moved,
-    never dual-written. Writes need a verified human owner/lead: an agent that
-    could loosen the rules judging its own merges has a review bypass.
+    never dual-written. Writes need a verified owner/lead. Assigning this role
+    to an agent grants the same authority to change review requirements.
     """
     project = await ProjectRepository(db).get(project_id)
     if project is None:

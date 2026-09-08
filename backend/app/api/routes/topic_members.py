@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import ActorResolverDep
 from app.api.response import ok, page
 from app.core.db import get_db
+from app.core.errors import AuthenticationRequiredError
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.schemas import (
     TopicMemberCreate,
@@ -73,8 +74,9 @@ async def add_topic_member(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    # A verified token pins the acting handle; body.actor is the Phase-0 fallback.
-    who = await resolver.resolve(fallback_handle=body.actor, topic_id=topic_id)
+    who = await resolver.resolve(fallback_handle=None, topic_id=topic_id)
+    if not who.authenticated:
+        raise AuthenticationRequiredError("A verified member identity is required")
     member = await TopicMemberService(db).add(
         topic_id=topic_id, handle=body.handle, role=body.role, actor=who.handle
     )
@@ -90,7 +92,9 @@ async def update_topic_member_role(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    who = await resolver.resolve(fallback_handle=body.actor, topic_id=topic_id)
+    who = await resolver.resolve(fallback_handle=None, topic_id=topic_id)
+    if not who.authenticated:
+        raise AuthenticationRequiredError("A verified member identity is required")
     member = await TopicMemberService(db).update_role(
         topic_id=topic_id, handle=handle, role=body.role, actor=who.handle
     )
@@ -102,11 +106,12 @@ async def update_topic_member_role(
 async def remove_topic_member(
     topic_id: uuid.UUID,
     handle: str,
-    actor: str,
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    who = await resolver.resolve(fallback_handle=actor, topic_id=topic_id)
+    who = await resolver.resolve(fallback_handle=None, topic_id=topic_id)
+    if not who.authenticated:
+        raise AuthenticationRequiredError("A verified member identity is required")
     await TopicMemberService(db).remove(
         topic_id=topic_id, handle=handle, actor=who.handle
     )

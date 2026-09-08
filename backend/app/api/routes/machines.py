@@ -46,16 +46,16 @@ async def _require_project_access(
     *,
     mutate: bool,
 ) -> Actor:
-    """Authorize the human before exposing or spending team compute.
+    """Authorize the participant before exposing or spending team compute.
 
     Machine reads contain the private address of provisioned infrastructure, and
     creates/deletes mutate a prepaid MicroCloud account. Team members may inspect
     their shared pool; only team owners/admins may spend or destroy it. Legacy
-    team-less projects retain their owner/lead rules. Agents cannot allocate
-    persistent paid infrastructure on a human's behalf.
+    team-less projects retain their owner/lead rules. Agent identities need
+    those same explicitly assigned roles.
     """
     actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    if not actor.authenticated or actor.via != "token" or actor.is_agent:
+    if not actor.authenticated:
         raise AuthenticationRequiredError("Login required to manage project machines")
 
     if mutate:

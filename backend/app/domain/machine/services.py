@@ -98,7 +98,7 @@ class MachineService:
         self, team_id: int, actor: Actor, *, conceal_nonmember: bool = False
     ) -> None:
         """Apply the paid machine-create rule to a team-scoped Cloud choice."""
-        if actor.via != "token" or actor.is_agent or actor.user_id is None:
+        if not actor.authenticated or actor.user_id is None:
             raise AuthenticationRequiredError("Login required to create cloud machines")
         teams = team_service(self._session)
         if not await teams.is_team_member(team_id, actor.user_id):
@@ -116,7 +116,7 @@ class MachineService:
         self, project_id: uuid.UUID, actor: Actor
     ) -> None:
         """The one authorization rule for every path that can create a billed VM."""
-        if actor.via != "token" or actor.is_agent:
+        if not actor.authenticated:
             raise AuthenticationRequiredError("Login required to create cloud machines")
         project = await self._projects.get(project_id)
         if project is None:

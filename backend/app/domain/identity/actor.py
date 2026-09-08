@@ -51,9 +51,8 @@ class Actor:
     @property
     def authenticated(self) -> bool:
         """True when the actor came from a verified credential (token or the
-        agent's scoped token), False for the Phase-0 handle fallback. Authorization
-        enforces membership/role only for authenticated actors — the fallback stays
-        permissive so pre-token callers keep working."""
+        agent's scoped token), False for a caller-supplied handle. A claimed
+        handle can describe authorship but grants no membership or role."""
         return self.via in ("token", "cheese")
 
 

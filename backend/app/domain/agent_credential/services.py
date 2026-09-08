@@ -1,33 +1,9 @@
-"""Project agent credentials: issuing, revoking, and authenticating them.
+"""Project credentials authenticate the fixed agent of the project's root room.
 
-**The credential belongs to the project, not to the person who issued it.**
-
-That is the whole design, and it is the opposite of a delegation. A delegated
-credential answers "whose agent is this?" and derives its reach from that
-person; this one answers "which project is this?" and derives its reach from the
-project. The difference is not philosophical:
-
-* 芝士 is a participant, not a proxy. It has its own context and its own
-  mistakes, and filing those under a member's name is the wrong account.
-* 芝士 is shared. Five people talk to the same 芝士 in one room, so "whose
-  permissions does it use?" has no answer — by the speaker, and its abilities
-  flicker with whoever opens their mouth; by the room's creator, and it is
-  arbitrarily stronger or weaker than the person sitting next to them.
-* Issuers come and go. A lead who issues a credential and then leaves the
-  project does not take the project's agent down with them, and does not leave
-  behind a credential that quietly still carries their old reach.
-
-So the credential names ``project_id`` and nothing else, and what it can do is
-what a member of that project can do — no per-route grant list, no permission
-subsetting. Safety is not a smaller permission set; it is that everything the
-agent does is written down under 芝士 and is undoable.
-
-**Revocation is stateless.** The credential carries the project's credential
-*generation* (``epoch``); the project stores the current generation in its
-``settings`` blob. Revoking bumps it, and every credential ever issued for that
-project stops verifying on the next request. No table, no migration, no row to
-forget to delete — and no way for a revoked credential to survive because some
-cache had not caught up.
+The principal does not change with the destination or inherit the issuer's
+roles. Its current memberships grant access; issuance creates no membership.
+The signed project and credential generation bound the credential. Revoking
+increments that generation and invalidates every previous project credential.
 """
 
 import uuid
@@ -43,6 +19,7 @@ from app.core.sandbox_auth import (
     mint_project_agent_credential,
     project_agent_claims,
 )
+from app.domain.identity.handles import topic_agent_handle
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.repositories import TopicRepository
@@ -82,6 +59,17 @@ class ProjectAgentCredentialService:
         if project is None:
             raise NotFoundError("Project not found")
         return project
+
+    async def agent_handle(self, project_id: uuid.UUID) -> str | None:
+        """The project's fixed agent identity, independent of the target room.
+
+        Its existing memberships grant access; holding this credential never
+        creates a membership or borrows another room's agent seat.
+        """
+        project = await self._projects.get(project_id)
+        if project is None or project.root_topic_id is None:
+            return None
+        return topic_agent_handle(project.root_topic_id)
 
     async def issue(
         self, *, project_id: uuid.UUID, expires_in_days: int | None = None
@@ -168,17 +156,6 @@ class ProjectAgentCredentialService:
             return None
         topic = await self._topics.get(parsed)
         return topic.project_id if topic is not None else None
-
-    async def opens_gate(
-        self, token: str, *, project_id: str | None, topic_id: str | None
-    ) -> bool:
-        """Whether this credential opens the cheese write-surface for this URL."""
-        if project_agent_claims(token) is None:
-            return False
-        target = await self.project_of_request(project_id=project_id, topic_id=topic_id)
-        if target is None:
-            return False
-        return await self.authenticate(token, project_id=target)
 
 
 def _as_uuid(value: str) -> uuid.UUID | None:

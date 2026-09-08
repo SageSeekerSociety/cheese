@@ -173,6 +173,7 @@ def test_unsummoned_messages_reach_next_summon_with_labels(stub_hooks, client):
     client.post(
         f"/topics/{topic_id}/members",
         json={"handle": "bob", "role": "member", "actor": "alice"},
+        headers=session_auth_headers("alice"),
     )
     with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
         ws.send_json({"type": "message", "content": "先随便说一句", "summon": False})

@@ -1317,11 +1317,14 @@ async def set_topic_compute_profile(
 
 
 @router.post("/{topic_id}/ask")
-async def ask_options(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
+async def ask_options(
+    topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
+) -> dict:
     """芝士 asks an option question IN the chat (cheese ask): a message block
     whose meta.options renders as one-click buttons. Structured interaction —
     the answer comes back as data, never parsed from prose (spec §14.5)."""
     place = await TopicService(db).place_or_404(topic_id)
+    actor = await _actor_in_place(resolver, place)
     question = (body.get("question") or "").strip()
     options = [str(o).strip() for o in (body.get("options") or []) if str(o).strip()]
     if not question:
@@ -1333,10 +1336,18 @@ async def ask_options(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
         # The place id: `add` splits it, so a thread's question is asked in the
         # thread rather than shouted into the room around it.
         topic_id=topic_id,
-        author=await TopicMemberService(db).resolve_agent_handle(
-            topic_id, room_id=place.room_id
+        author=(
+            actor.handle
+            if actor.authenticated
+            else await TopicMemberService(db).resolve_agent_handle(
+                topic_id, room_id=place.room_id
+            )
         ),
-        author_type=AuthorType.ai,
+        author_type=(
+            AuthorType.human
+            if actor.authenticated and not actor.is_agent
+            else AuthorType.ai
+        ),
         content=question,
         kind=BlockKind.message,
         meta={"options": options},
@@ -1431,7 +1442,7 @@ async def record_decision(
 ) -> dict:
     """记录关键决策到决策记录 (spec §7.1) — used by the `cheese decision` CLI."""
     place = await TopicService(db).place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
+    actor = await _actor_in_place(resolver, place)
     decision = (body.get("decision") or "").strip()
     if not decision:
         raise ValidationError("decision 不能为空")
@@ -1452,10 +1463,18 @@ async def record_decision(
     block = await BlockRepository(db).add(
         project_id=place.project_id,
         topic_id=topic_id,  # the place; `add` splits it
-        author=await TopicMemberService(db).resolve_agent_handle(
-            topic_id, room_id=place.room_id
+        author=(
+            actor.handle
+            if actor.authenticated
+            else await TopicMemberService(db).resolve_agent_handle(
+                topic_id, room_id=place.room_id
+            )
         ),
-        author_type=AuthorType.ai,
+        author_type=(
+            AuthorType.human
+            if actor.authenticated and not actor.is_agent
+            else AuthorType.ai
+        ),
         content=decision,
         kind=BlockKind.decision,
         refs=[str(topic_id)],
@@ -2057,7 +2076,9 @@ async def upload_attachment(
     """Upload a file into the topic's worktree (uploads/…). Returns the
     {path, mime} the client then references when sending the message."""
     topic = await TopicService(db).get_or_404(topic_id)
-    await resolver.require_verified_caller(project_id=topic.project_id)
+    await resolver.require_verified_caller(
+        project_id=topic.project_id, topic_id=topic_id
+    )
     actor = await resolver.resolve(
         fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
     )
@@ -2098,7 +2119,9 @@ async def attachment_raw(
     to images so this can never serve executable HTML from the worktree."""
     topic = await TopicService(db).get_or_404(topic_id)
     if download:
-        await resolver.require_verified_caller(project_id=topic.project_id)
+        await resolver.require_verified_caller(
+            project_id=topic.project_id, topic_id=topic_id
+        )
     actor = await resolver.resolve(
         fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
     )

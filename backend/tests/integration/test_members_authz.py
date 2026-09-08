@@ -108,7 +108,11 @@ def test_agent_scoped_token_cannot_write_the_roster(client):
     the missing check."""
     pid = _project(client)
     _seed_member(client, pid, "bob", "member")
-    scoped = {"X-Cheese-Token": mint_scoped_token(project_id=pid)}
+    scoped = {
+        "X-Cheese-Token": mint_scoped_token(
+            project_id=pid, agent_handle="unprivileged-agent"
+        )
+    }
 
     assert _add(client, pid, "carol", headers=scoped).status_code == 403
     r = client.put(

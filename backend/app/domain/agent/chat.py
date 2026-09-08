@@ -3537,12 +3537,14 @@ class ChatService:
         that names none declines to choose, and the project's pick still
         applies — so the override is `agent or project`, never a blank winning."""
         agent_model: str | None = None
+        acting_agent: str | None = None
         environment = None
         async with self._sessions() as session:
             project = await ProjectRepository(session).get(project_id)
             if topic_id is not None and project is not None:
                 topic = await TopicRepository(session).get(topic_id)
                 if topic is not None:
+                    acting_agent = await self._agent_handle(session, topic_id)
                     # Overview coordinates repairs even when project setup fails.
                     environment = (
                         EnvironmentConfig().snapshot()
@@ -3555,6 +3557,8 @@ class ChatService:
                     )
                     await session.commit()
         kwargs: dict = {}
+        if acting_agent is not None:
+            kwargs["agent_handle"] = acting_agent
         if environment is not None:
             kwargs["env"] = {"CHEESE_ENVIRONMENT": json.dumps(environment)}
         if provider.builds_model_env:
@@ -4340,6 +4344,7 @@ class ChatService:
                     owner=private_owner if is_private else None,
                     model=model_kwargs.get("model"),
                     env=model_kwargs.get("env"),
+                    agent_handle=acting_agent,
                 ),
                 work_id=turn_id,
                 images=turn_images or None,
