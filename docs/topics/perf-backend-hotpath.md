@@ -817,6 +817,10 @@ blocks 表的 +14%。索引条数持平（8 → 8）。
 | `backend/app/domain/topic/{repositories,services}.py`、`api/routes/topics.py` | `_last_activity()` 从算两遍改成排序那一趟顺带 select 出来 |
 | `frontend/nginx.conf` | 补 `gzip_proxied any;`（补悬崖，不是修 bug——今天没人加 `Via`，压缩一直是开着的） |
 | `backend/tests/integration/test_hot_path_queries.py` | 8 条测试，见下 |
+| `backend/tests/contract/test_api_addressing_contract.py` | +1 条：压缩不能因为前面多一层代理就静默失效 |
+
+索引落地后 `blocks` 的最终占用：堆 497 MB + 索引 214 MB = 711 MB
+（索引条数 8 → 8，净增约 87 MB）。
 
 ## 测试
 
@@ -831,6 +835,12 @@ blocks 表的 +14%。索引条数持平（8 → 8）。
 - **删掉单列索引之后，按 topic_id 查仍然走索引**（级联删除依赖这条路）。
 - 外加行为不变的功能断言：花名册的 `name`/`agent`/`avatar_id`、
   每一行都有 `last_activity_at`、在房间里说话会把它顶到列表最前面。
+
+还有一条在 `tests/contract/test_api_addressing_contract.py`（那个文件已经有
+读 `nginx.conf` 做断言的先例）：`gzip_proxied` 不能是 `off` 或缺失。
+两条都验过「删掉修复它会红」——**一个两边都绿的测试等于没写**：
+把 `members.py` 改回逐个查，往返次数那条立刻失败；
+把 `gzip_proxied any;` 删掉，压缩那条立刻失败。
 
 关于 `Heap Fetches: 0`：它是这条索引最值钱的性质，但**测试里没有断言它**。
 index-only scan 要求 visibility map 是新的，那需要一次 `VACUUM`，
