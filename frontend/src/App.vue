@@ -1,5 +1,6 @@
 <template>
-  <my-app>
+  <router-view v-if="currentRoute.meta.publicLanding" />
+  <my-app v-else>
     <!-- 桌面端：使用 StatusBar -->
     <template v-if="$vuetify.display.mdAndUp">
       <keep-alive>
@@ -177,6 +178,12 @@ const projectListWarning = ref('')
 const showProjectListWarning = ref(false)
 
 async function loadCxProjects() {
+  // Public visitors have no project list; a 401 here would interrupt the landing page.
+  if (!AccountService.loggedIn) {
+    cxProjects.value = []
+    showProjectListWarning.value = false
+    return
+  }
   try {
     cxProjects.value = (await listProjects()).data
     saveCachedProjects(myHandle(), cxProjects.value)
