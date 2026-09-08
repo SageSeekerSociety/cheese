@@ -86,7 +86,7 @@ async function load(opts: { silent?: boolean; reload?: boolean } = {}) {
       loadedArtifact = null
       return
     }
-    const identity = `${art.kind ?? 'file'}:${art.artifact_id ?? art.path}:${art.url ?? ''}`
+    const identity = `${art.kind ?? 'file'}:${art.artifact_id ?? art.path}:${art.url ?? ''}:${art.version ?? ''}`
     const unchanged = identity === loadedArtifact && art.url === previewUrl.value
     previewAppNote.value = art.kind === 'app' ? art.path : ''
     previewTunnelUp.value = !!art.tunnel_up

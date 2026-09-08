@@ -506,6 +506,8 @@ export interface FileContent {
 // GET /topics/{id}/preview (spec §9.1): the artifact 芝士 pointed at as the
 // topic's current preview. Null when 芝士 hasn't set one.
 export interface PreviewInfo {
+  /** Content fingerprint for refreshing an updated static preview. */
+  version?: string | null
   // File and app previews share an isolated topic content origin.
   kind?: 'file' | 'app'
   path: string
