@@ -94,45 +94,36 @@ The alternative mode, `newapi`, is MicroCloud's default when the create call car
 `MICROCLOUD_AI_MODE` is `ccproxy` and why the sweep still switches a machine found on
 `newapi`.
 
+## Warm capacity
+
+`MICROCLOUD_WARM_POOL_SIZE` sets the number of unused default CPU machines prepared by
+this deployment (0 disables replenishment; maximum 5). These machines use a platform
+account and have no team binding. The room's existing permission and quota checks run
+before a durable reservation is written. The reservation counts against team quota
+while MicroCloud confirms the claim. Only then does Cheese bind the connected device
+to the room's team.
+
+The pool worker runs separately from ordinary machine enrollment. It resumes
+interrupted creation and claims, retires unused machines after
+`MICROCLOUD_WARM_MAX_AGE_SECONDS`, and waits for provider deletion before replacing
+them. Claimed machines never return to the pool. After five failed cleanup attempts,
+the retained record prevents replacement from hiding an unresolved billed machine.
+
+This first version prepares the deployment's default offering with ccproxy AI mode.
+It does not prepare every cloud specification. Configure a small pool only after the
+provider claim endpoint is deployed. Measure command readiness separately from project
+setup and model response; no startup latency has been established by the functional tests.
+
 ## Shipping a change to MicroCloud
 
-MicroCloud has no written release procedure of its own; this is the one Lg described and
-that was run end to end for 0.4.1 (2026-09-02).
+Follow the upstream [release procedure](https://github.com/micro-teams/micro-cloud/blob/main/RELEASING.md)
+and [deployment instructions](https://github.com/micro-teams/micro-cloud/blob/main/deploy/README.md).
+The current repository rules require an approval from its code-reviewers team and a
+passing `test-compose` check. Push access alone does not satisfy that review requirement.
 
-1. **Branch on the fork, open the PR upstream.** Fork `andylizf/micro-cloud`, PR against
-   `micro-teams/micro-cloud`. Kotlin/Spring; interfaces are generated from
-   `MicroCloud-API.yml`, so an API change starts there. Tests need a Postgres on :5432 with
-   schema `microcloud` (`ddl-auto=update`), e.g. a throwaway pgserver.
-2. **Merge it yourself.** Lg's rule: merge when you judge it ready; there is no review
-   wait. Branch protection refuses `gh pr merge`, so use the REST endpoint:
-   `gh api -X PUT repos/micro-teams/micro-cloud/pulls/<n>/merge -f merge_method=merge`.
-3. **Take the bundle from main's CI.** The main build uploads one artifact (retention 1 day).
-   The ops agent cannot use the artifact page (it needs a GitHub login), so hand it the
-   direct download URL: the `Location` of
-   `curl -sI -H "Authorization: Bearer $(gh auth token)" https://api.github.com/repos/micro-teams/micro-cloud/actions/artifacts/<id>/zip`
-   That is an Azure SAS URL that expires within minutes, so fetch it right before sending.
-4. **Hand it to the ops agent.** The only MicroCloud operator is the agent `MicroCloud运维`
-   on [microteams.app](https://microteams.app), group chat `/chats/252`; the message is one line:
-   「更新 <url>」. It downloads, deploys to `microcloud-prod`, checks the
-   service, and reports in the chat. Its download truncated once at 41 MB with HTTP 200;
-   it resumes with `curl -C -` and checks `unzip -t`, and it helps to say so. The site is
-   Flutter web: through web-plane (profile `main`, lane `microteams`), enable semantics
-   with `eval "document.querySelector('flt-semantics-placeholder').click()"` before the
-   first `snapshot`.
-5. **Templates do not follow the bundle by themselves.** An LXC machine runs the
-   `init-machine.py` **baked into the rootfs template on Proxmox** (pve119,
-   `local:vztmpl/debian13.tar.zst`), and since micro-cloud#83 both templates also carry the
-   Claude Code binary, so a change under `templates/` needs the LXC template re-uploaded
-   (CI builds it on every push to `main` and nightly; the ops agent uploads with
-   `POST /machine/template/<id>/upload {placementId}`) and the VM template re-baked (the
-   agent does that from the console, about four minutes). Proxmox refuses to overwrite the
-   LXC file, so the old one has to be moved away first by root on pve119 (into a dated
-   `cache.bak-*` directory next to it); the ops agent's token is scoped to the cheese-dev
-   pool and cannot do that.
-6. **Verify on dev**, then **bump and release.** Once the change has run stably: bump the
-   patch version with `scripts/version.sh <x.y.z>`, PR, merge, hand that bundle to the ops
-   agent the same way, then
-   `gh release create v<x.y.z> --repo micro-teams/micro-cloud --target <merge sha> --generate-notes`.
-
-Cheese follows the moment MicroCloud is deployed: nothing on our side pins a MicroCloud
-version, so a MicroCloud regression shows up in the next Cloud topic on dev.
+Generate Kotlin API models from `MicroCloud-API.yml`, run the Maven build with
+PostgreSQL, and retain the generated schema changes. Deploy the approved main-branch
+bundle before enabling Cheese's warm pool. The documented deployment route hands the
+build artifact to the MicroCloud operations agent; follow the session's authorization
+rules before sending that message. Template changes require a separate upload, as
+described upstream.

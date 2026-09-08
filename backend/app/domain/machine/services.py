@@ -91,6 +91,9 @@ class MachineService:
         self._projects = ProjectRepository(session)
         self._client = client or MicroCloudClient()
         self._devices = sql_device_service(session)
+        from app.domain.machine.warm import WarmPoolService
+
+        self._warm_pool = WarmPoolService(session, self._client)
 
     @property
     def available(self) -> bool:
@@ -271,6 +274,16 @@ class MachineService:
         desired_ai_mode = (settings.microcloud_ai_mode or "").strip().lower()
         if desired_ai_mode:
             body["aiMode"] = desired_ai_mode
+        if topic_id is not None and owner_user_id is not None and not ssh_pubkey:
+            warm = await self._warm_pool.reserve(
+                body=body,
+                project_id=project_id,
+                topic_id=topic_id,
+                requested_by=requested_by,
+                owner_user_id=owner_user_id,
+            )
+            if warm is not None:
+                return warm
         # The platform needs its own way in to enroll the machine later, and the
         # human must not lose theirs by us taking the single key slot: both are
         # authorised, one per line, which is what authorized_keys is.
@@ -326,6 +339,7 @@ class MachineService:
 
         existing = await self._repo.get_active_for_topic(topic_id)
         if existing is not None:
+            await self._warm_pool.finish_claim(existing)
             if _still_moving(existing) or _stale(existing):
                 await self.refresh(existing)
             if existing.status not in GONE:
@@ -445,6 +459,9 @@ class MachineService:
     async def refresh(self, machine: ProjectMachine) -> ProjectMachine:
         """Bring one row in line with MicroCloud. Never raises for a provider
         problem: a machine we can't reach is reported `unknown`, not lost."""
+        if machine.warm_claim_pending:
+            # Provider RUNNING says nothing about whether room assignment completed.
+            return machine
         settled_before = not _still_moving(machine)
         try:
             remote = await self._client.get_machine(machine.machine_id)

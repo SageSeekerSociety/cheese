@@ -65,6 +65,11 @@ class MicroCloudClient:
             return None
         return response.json()
 
+    async def claim_warm_machine(
+        self, machine_id: int, body: dict[str, Any]
+    ) -> dict[str, Any]:
+        return await self._call("POST", f"/machine/{machine_id}/claim", body)
+
     # --- offerings -------------------------------------------------------
 
     async def list_offerings(self) -> list[dict[str, Any]]:

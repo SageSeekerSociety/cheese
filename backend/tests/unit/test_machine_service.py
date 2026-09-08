@@ -134,6 +134,7 @@ class FakeRepo:
         self.rows: list[SimpleNamespace] = []
 
     async def add(self, **kwargs):
+        kwargs.setdefault("warm_claim_pending", False)
         kwargs.setdefault("last_seen_at", None)
         kwargs.setdefault("released_at", None)
         row = SimpleNamespace(id=uuid.uuid4(), device_id=None, **kwargs)
@@ -236,6 +237,9 @@ def build_service(client=None, project=_UNSET, repo=None):
     service._client = client or FakeMicroCloud()
     service._repo = repo or FakeRepo()
     service._devices = FakeDevices()
+    service._warm_pool = SimpleNamespace(
+        reserve=AsyncMock(return_value=None), finish_claim=AsyncMock(return_value=False)
+    )
     if project is _UNSET:
         project = SimpleNamespace(
             id=uuid.uuid4(), name="Cheese 自建", team_id=1, settings={}
