@@ -422,6 +422,8 @@ class WarmPoolService:
             device = await self.session.get(DeviceRow, row.device_id)
             assert device is not None
             assert row.bootstrap_key is not None
+            device.cloud_control_private = settings.microcloud_direct_control
+            await self.session.commit()
             script = enrollment.bootstrap_script(
                 origin=settings.connector_public_base,
                 token=device.token,

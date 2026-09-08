@@ -6,8 +6,6 @@ bare executable), so it's loaded by path.
 
 import importlib.util
 import json
-import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
@@ -74,41 +72,20 @@ def test_artifact_publishes_the_local_file_from_a_subdirectory(monkeypatch, tmp_
     ]
 
 
-@pytest.mark.parametrize("location", ["/api/topics/room/app/", "/login", None])
-def test_serve_registers_the_mount_only_when_the_app_redirects_to_it(
-    monkeypatch, location
-):
+def test_serve_declares_only_the_port_and_registers_the_app(monkeypatch):
     cli = _load()
-
-    class App(BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(302 if location else 200)
-            if location:
-                self.send_header("Location", location)
-            self.end_headers()
-
-        def log_message(self, *_args):
-            pass
-
-    app = ThreadingHTTPServer(("127.0.0.1", 0), App)
-    thread = threading.Thread(target=app.serve_forever)
-    thread.start()
-    port = app.server_address[1]
-    monkeypatch.setenv("CHEESE_APP_BASE", "/api/topics/room/app/")
     monkeypatch.setenv("CHEESE_PREVIEW_UP", "/preview-up")
     monkeypatch.setattr(cli, "TOPIC", "room")
-    monkeypatch.setattr(cli.sys, "argv", ["cheese", "serve", str(port)])
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "serve", "5173", "Vue dev server"])
     calls = []
+    api_calls = []
     monkeypatch.setattr(cli.subprocess, "call", lambda args: calls.append(args) or 0)
-    monkeypatch.setattr(cli, "_call", lambda *args: {})
-    try:
-        cli.main()
-        mount = "/api/topics/room/app" if location == "/api/topics/room/app/" else ""
-        assert calls == [["sh", "/preview-up", str(port), mount]]
-    finally:
-        app.shutdown()
-        app.server_close()
-        thread.join()
+    monkeypatch.setattr(cli, "_call", lambda *args: api_calls.append(args) or {})
+    cli.main()
+    assert calls == [["sh", "/preview-up", "5173"]]
+    assert api_calls == [
+        ("POST", "/topics/room/artifact", {"path": "Vue dev server", "as": "app"})
+    ]
 
 
 @pytest.mark.parametrize(

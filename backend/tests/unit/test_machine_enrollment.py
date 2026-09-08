@@ -541,6 +541,26 @@ def test_bootstrap_is_valid_shell():
     assert checked.returncode == 0, checked.stderr
 
 
+@pytest.mark.parametrize("direct", [False, True])
+def test_enrollment_config_routes_cloud_control_without_changing_api_identity(
+    monkeypatch, direct
+):
+    import json
+
+    monkeypatch.setattr(enrollment.settings, "microcloud_direct_control", direct)
+    script = enrollment.bootstrap_script(
+        origin="https://cheese.test/api", token="test-token", device_id="test-device"
+    )
+    config = json.loads(script.split("<<'CHEESE_CONFIG_EOF'\n", 1)[1].split("\n", 1)[0])
+    assert config["base"] == "https://cheese.test/api/connector"
+    assert config["token"] == "test-token"
+    assert config["device_id"] == "test-device"
+    if direct:
+        assert config["ws"] == "ws://127.0.0.1:18080/connector/agent"
+    else:
+        assert "ws" not in config
+
+
 # --- the machine's ccproxy identity ----------------------------------------
 # Read during the bootstrap because that is the only moment the platform is on
 # the machine over ssh: `mark_enrolled` erases the bootstrap key. The meter

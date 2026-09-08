@@ -569,6 +569,10 @@ from app.domain.site.hosting import SiteHostMiddleware  # noqa: E402
 
 app.add_middleware(SiteHostMiddleware, platform=app)
 
+from app.api.preview_host import PreviewHostMiddleware  # noqa: E402
+
+app.add_middleware(PreviewHostMiddleware, platform=app)
+
 
 loaded_routers = _discover_routers(app)
 

@@ -195,7 +195,8 @@
             <v-date-input
               v-model="deadline"
               :label="t('tasks.form.deadline')"
-              required
+              clearable
+              hint="留空表示不设置报名截止时间"
               density="comfortable"
               v-bind="deadlineProps"
               :allowed-dates="isAllowedDates"
@@ -728,7 +729,7 @@ const { handleSubmit, defineField, isSubmitting } = useForm({
         name: z.string().min(1).max(100),
         submitterType: z.enum(['USER', 'TEAM']),
         registrationStartAt: z.date().optional().nullable(),
-        deadline: z.date(),
+        deadline: z.date().nullable(),
         defaultDeadline: z.number().int().default(30),
         rank: z.number().int().min(1).max(3),
         topics: z.array(z.number()).optional(),
@@ -769,7 +770,9 @@ const { handleSubmit, defineField, isSubmitting } = useForm({
       : null,
     deadline: props.initialData?.deadline
       ? new Date(props.initialData.deadline)
-      : new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+      : props.isEditing
+        ? null
+        : new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
     requireRealName: props.initialData?.requireRealName ?? false,
     categoryId: props.initialData?.categoryId ?? props.selectedCategoryId ?? undefined,
     minTeamSize: props.initialData?.minTeamSize ?? 1,
@@ -842,9 +845,9 @@ const submitForm = handleSubmit((values) => {
 
 const submitFormData = (values: any) => {
   const descriptionText = pendingSubmissionData.value?.descriptionText ?? descriptionEditor.value?.editor?.getText()
-  const deadlineDate = new Date(values.deadline)
+  const deadlineDate = values.deadline ? new Date(values.deadline) : null
   const registrationStartAtDate = values.registrationStartAt ? new Date(values.registrationStartAt) : null
-  deadlineDate.setHours(23, 59, 59, 999)
+  deadlineDate?.setHours(23, 59, 59, 999)
 
   // 根据原始格式决定保存的描述内容
   let savedDescription: string
@@ -867,7 +870,8 @@ const submitFormData = (values: any) => {
     description: savedDescription,
     intro: truncateString(introText, 255),
     registrationStartAt: registrationStartAtDate ? registrationStartAtDate.getTime() : null,
-    deadline: deadlineDate.getTime(),
+    deadline: deadlineDate?.getTime() ?? null,
+    ...(props.isEditing ? { hasDeadline: deadlineDate !== null } : {}),
     resubmittable: true,
     editable: true,
     requireRealName: requireRealName.value,

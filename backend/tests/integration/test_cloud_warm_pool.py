@@ -169,11 +169,13 @@ def test_nonmember_cannot_claim_and_unassigned_device_has_no_team(warm_case):
     assert cloud.created == []
 
 
+@pytest.mark.parametrize("direct", [False, True])
 def test_background_preparation_waits_for_ai_then_connects_before_ready(
-    warm_case, monkeypatch
+    warm_case, monkeypatch, direct
 ):
     client, _, _, cloud = warm_case
     monkeypatch.setattr(settings, "microcloud_warm_pool_size", 1)
+    monkeypatch.setattr(settings, "microcloud_direct_control", direct)
     monkeypatch.setattr(settings, "connector_public_base", "https://example.invalid")
     bootstrap = AsyncMock(return_value="Connected.")
     monkeypatch.setattr("app.domain.machine.warm.enrollment.run_bootstrap", bootstrap)
@@ -204,6 +206,10 @@ def test_background_preparation_waits_for_ai_then_connects_before_ready(
             assert row.bootstrap_key is None
             assert row.enrolled_at is not None
             assert (await session.scalars(select(DeviceTeamRow))).all() == []
+
+        async with client.test_factory() as session:
+            device = await session.get(DeviceRow, "warm-test")
+            assert device.cloud_control_private is direct
 
     asyncio.run(run())
     bootstrap.assert_awaited_once()

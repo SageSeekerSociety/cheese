@@ -195,6 +195,10 @@ jobs:
           driver-opts: |
             image=${{ env.BUILDKIT_IMAGE }}
           buildkitd-config-inline: |
+            # The runner's UDP resolver returns fake IPs; TCP reaches public DNS.
+            [dns]
+              nameservers = ["1.1.1.1", "1.0.0.1"]
+              options = ["use-vc"]
             [registry."docker.io"]
               mirrors = ["mirror.gcr.io"]
           # This is a persistent, single-runner box. Preserve the named
@@ -293,6 +297,10 @@ jobs:
           driver-opts: |
             image=${{ env.BUILDKIT_IMAGE }}
           buildkitd-config-inline: |
+            # The runner's UDP resolver returns fake IPs; TCP reaches public DNS.
+            [dns]
+              nameservers = ["1.1.1.1", "1.0.0.1"]
+              options = ["use-vc"]
             [registry."docker.io"]
               mirrors = ["mirror.gcr.io"]
           keep-state: true
@@ -380,6 +388,10 @@ jobs:
           driver-opts: |
             image=${{ env.BUILDKIT_IMAGE }}
           buildkitd-config-inline: |
+            # The runner's UDP resolver returns fake IPs; TCP reaches public DNS.
+            [dns]
+              nameservers = ["1.1.1.1", "1.0.0.1"]
+              options = ["use-vc"]
             [registry."docker.io"]
               mirrors = ["mirror.gcr.io"]
           keep-state: true

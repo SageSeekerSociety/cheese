@@ -14,6 +14,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -25,6 +26,7 @@ from app.core.errors import (
 )
 from app.domain.agent.compute_configs import room_choice
 from app.domain.device.ccproxy_tenant import CcproxyTenantError
+from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
@@ -608,6 +610,13 @@ class MachineService:
                 device.device_id,
                 machine.project_id,
                 actor_user_id=machine.owner_user_id,
+            )
+
+        if settings.microcloud_direct_control:
+            await self._session.execute(
+                update(DeviceRow)
+                .where(DeviceRow.device_id == device.device_id)
+                .values(cloud_control_private=True)
             )
 
         # The device row and its token have to be visible to the connector route
