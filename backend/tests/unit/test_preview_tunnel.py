@@ -246,12 +246,14 @@ def test_it_relays_a_websocket_to_the_declared_port(port_file, base):
         peer.send(wire.OP_WS_OPEN, 8, wire.encode_meta({"path": "/hmr", "headers": []}))
         op, stream, _payload = peer.recv()
         assert (op, stream) == (wire.OP_WS_OK, 8)
-        assert seen == [f"{base}/hmr"]
 
         peer.send(wire.OP_WS_MSG, 8, bytes([wire.WS_TEXT]) + b"reload")
         op, stream, payload = peer.recv()
         assert (op, stream) == (wire.OP_WS_MSG, 8)
         assert payload == bytes([wire.WS_TEXT]) + b"reload", payload
+        # The handshake can finish before the server handler runs. Its echo
+        # proves it has recorded the path; WS_OK alone does not.
+        assert seen == [f"{base}/hmr"]
 
         peer.send(wire.OP_WS_MSG, 8, bytes([wire.WS_BINARY]) + b"\x00\xff")
         _op, _stream, payload = peer.recv()

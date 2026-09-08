@@ -150,11 +150,8 @@ exit 0
 """
 
 
-# How long a turn waits for ANY sign the prompt was received before calling it
-# undelivered. Generous enough for a busy container to schedule the hook,
-# far short of the turn ceiling — the point is that "nothing arrived" is
-# reported in seconds instead of being indistinguishable from "still working"
-# for fifteen minutes (dev, 2026-08-08).
+# Initial silence before probing the process after an accepted prompt write.
+# A missing hook alone cannot establish whether the session consumed the input.
 DELIVERY_TIMEOUT_S = 25.0
 # The sentence itself lives in platform_failures, next to the classifier that
 # recognises it — a copy here would drift and the failure would silently go back
@@ -450,11 +447,10 @@ async def monitor_session_activity(
     tracker = tracker if tracker is not None else ActivityTracker(last_at=start)
     if tracker.last_progress_at is None:
         tracker.last_progress_at = start
-    # Until something comes back, we have no evidence the prompt was received at
-    # all: it went into the rendezvous socket, whose protocol has no positive ack
-    # (written and not refused is all "delivered" means). So the first wait is
-    # short. Any hook clears it — `UserPromptSubmit` is the direct receipt, and
-    # any other activity proves delivery just as well.
+    # The transport already accepted the prompt before this monitor starts.
+    # Its consumption receipt may wait behind work the session is still doing.
+    # Before the first hook, use the shorter silence window to PROBE liveness;
+    # absence of a hook cannot turn an accepted write into a delivery failure.
     delivered = False
     delivery_deadline = start + delivery_timeout_s
 
@@ -512,9 +508,9 @@ async def monitor_session_activity(
         `PreToolUse` has not been read yet, and the verdict would fire on a
         session that is, one line later, discovered to be inside a tool.
 
-        Three gates on it. `delivered`: until the session has taken its first
-        prompt there is no unread injection, only an undelivered prompt, which
-        has its own verdict. `in_tool`: input is read at tool boundaries, so
+        Three gates on it. `delivered`: before the first hook there is no
+        evidence of consumption; that silence is handled by the liveness probe.
+        `in_tool`: input is read at tool boundaries, so
         while a tool is in flight the clock does not run at all. And the clock
         starts from the tool's RETURN when there was one, not from the
         injection: a message that sat behind a 40-minute command gets its grace
@@ -579,17 +575,21 @@ async def monitor_session_activity(
         except TimeoutError:
             if not delivered:
                 if now() >= delivery_deadline:
+                    alive = await confirm_alive() if confirm_alive is not None else True
+                    if alive:
+                        delivery_deadline = now() + confirm_poll_s
+                        continue
                     logger.warning(
-                        "no hook within %.0fs of the prompt — ending as "
-                        "undelivered; the claude may still hold it queued (%s)",
-                        delivery_timeout_s,
+                        "screen declared dead before its first hook after %.0fs "
+                        "— ending the session (%s)",
+                        now() - start,
                         context,
                     )
                     yield AgentResult(
-                        text=delivery_message,
+                        text=timeout_message,
                         session_id=resume_session_id,
                         is_error=True,
-                        failure_code=PROMPT_UNDELIVERED_CODE,
+                        failure_code=TURN_TIMEOUT_CODE,
                     )
                     return
                 continue
@@ -1922,11 +1922,8 @@ class ClaudeCodeRuntime:
                     tracker=tracker,
                     confirm_alive=lambda: self._channel.confirm_alive(screen),
                     # ready=False means the screen HOLDS the prompt until the
-                    # session can take it — a queued prompt is not an undelivered
-                    # one, so the 25s dead-session verdict does not apply (it
-                    # misfired exactly when a wake-up summon landed while the
-                    # previous turn still ran, 2026-08-16 09:21). The no-output
-                    # bound keeps a genuinely dead screen from waiting forever.
+                    # session can take it. Give cold startup the longer idle
+                    # window before the first liveness probe.
                     delivery_timeout_s=(
                         self._idle_suspect_s if ready is False else DELIVERY_TIMEOUT_S
                     ),
