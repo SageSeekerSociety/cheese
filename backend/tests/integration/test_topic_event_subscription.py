@@ -472,8 +472,13 @@ async def test_an_all_english_message_lands_but_stays_out_of_the_room(
             },
         )
         await asyncio.wait_for(room.get(), 1)  # turn_started
+        progress_frame = await asyncio.wait_for(room.get(), 1)
         message_frame = await asyncio.wait_for(room.get(), 1)
 
+    assert progress_frame["type"] == "event_block"
+    assert progress_frame["block"]["content"] == "Now the tests:"
+    assert progress_frame["block"]["meta"]["in_room"] is False
+    assert progress_frame["block"]["meta"]["progress"] is True
     assert message_frame["type"] == "assistant_block"
     assert message_frame["block"]["meta"]["in_room"] is False
 
