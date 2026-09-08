@@ -229,7 +229,9 @@ describe('回到一个保活着的页面', () => {
       },
     })
     const show = ref(true)
-    const app = createApp(defineComponent({ setup: () => () => h(KeepAlive, null, { default: () => (show.value ? h(Child) : null) }) }))
+    const app = createApp(
+      defineComponent({ setup: () => () => h(KeepAlive, null, { default: () => (show.value ? h(Child) : null) }) })
+    )
     apps.push(app)
     app.mount(document.createElement('div'))
     await settle()

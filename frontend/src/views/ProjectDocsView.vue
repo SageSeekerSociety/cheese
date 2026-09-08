@@ -156,7 +156,6 @@ function topicTo(topicId: string | null | undefined) {
   if (!topicId) return { name: 'workspace-project', params: { projectId: props.projectId } }
   return { name: 'workspace-topic', params: { projectId: props.projectId, topicId } }
 }
-
 </script>
 
 <template>

@@ -66,7 +66,6 @@ function countdownDotClass(d: string | null): string {
   if (n <= 3) return 'status-dot--warn'
   return 'status-dot--ok'
 }
-
 </script>
 
 <template>

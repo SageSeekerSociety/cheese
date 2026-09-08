@@ -86,7 +86,6 @@ function openProject(p: ProfileProject) {
     params: { projectId: p.project_id, handle: props.handle },
   })
 }
-
 </script>
 
 <template>

@@ -183,13 +183,7 @@ router.isReady().then(async () => {
 // 名字来自各自组件里的 defineOptions({ name })——它们也是唯一接了
 // useCachedResource 的五个页面，「组件还在」和「数据还在」必须成对，不然回到页
 // 面看到的是一屏永远不再刷新的旧数据。
-const keptAlivePages = [
-  'OverviewView',
-  'ProjectDocsView',
-  'MemberView',
-  'CalendarView',
-  'ProjectAgentsView',
-]
+const keptAlivePages = ['OverviewView', 'ProjectDocsView', 'MemberView', 'CalendarView', 'ProjectAgentsView']
 
 const hideAppBar = computed(() => {
   return currentRoute.meta.hideAppBar

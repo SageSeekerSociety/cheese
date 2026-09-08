@@ -290,7 +290,7 @@ async function confirmDeactivate() {
       </v-card>
     </v-container>
 
-    <AgentEditorDialog v-model="editorOpen" :project-id="projectId" :agent="editing" :types="types" @saved="load" />
+    <AgentEditorDialog v-model="editorOpen" :project-id="projectId" :agent="editing" :types="types" @saved="refresh" />
 
     <v-dialog :model-value="deactivateTarget !== null" max-width="440" @update:model-value="deactivateTarget = null">
       <v-card v-if="deactivateTarget" class="pa-5">
