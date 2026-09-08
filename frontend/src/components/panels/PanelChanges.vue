@@ -26,6 +26,7 @@ import {
 } from '../../api'
 import { parseDiffLines, splitDiffByFile } from '../../lib/diff'
 import CodeEditor from '../CodeEditor.vue'
+import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -541,9 +542,7 @@ defineExpose({ openFile })
       />
     </div>
 
-    <div v-if="loading" class="d-flex justify-center py-8">
-      <v-progress-circular indeterminate color="primary" size="28" />
-    </div>
+    <LoadingSkeleton v-if="loading" variant="list" />
     <v-alert v-else-if="errorMsg" type="error" density="compact" class="ma-4">
       {{ errorMsg }}
     </v-alert>

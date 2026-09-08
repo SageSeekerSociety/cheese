@@ -6,6 +6,7 @@ import { useRouter } from 'vue-router'
 
 import { getPrivateChat } from '@/api'
 import ChatPanel from '@/components/ChatPanel.vue'
+import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -93,9 +94,7 @@ async function handleUpgradeMessage(messageId: string) {
 
 <template>
   <div class="dm-view d-flex flex-column fill-height" style="min-width: 0">
-    <div v-if="loading" class="flex-grow-1 d-flex align-center justify-center">
-      <v-progress-circular indeterminate color="primary" />
-    </div>
+    <LoadingSkeleton v-if="loading" variant="chat" class="flex-grow-1 pt-4" />
     <v-alert v-else-if="error" type="error" density="comfortable" class="ma-3">
       {{ error }}
     </v-alert>

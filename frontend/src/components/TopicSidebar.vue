@@ -20,6 +20,7 @@ import {
 } from '../lib/topicTree'
 import { avatarColor } from '../utils/avatar'
 
+import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import SecondaryNavigation from './common/Navigation/SecondaryNavigation.vue'
 import CheeseAvatar from './CheeseAvatar.vue'
 
@@ -609,9 +610,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
             />
           </div>
 
-          <div v-if="loadingTopics" class="px-4 py-2">
-            <v-progress-circular indeterminate size="20" width="2" color="primary" />
-          </div>
+          <LoadingSkeleton v-if="loadingTopics" variant="list" />
 
           <template v-else>
             <!-- 一组都不相关的时候（刚进项目、还没参与任何话题），上组是空的。

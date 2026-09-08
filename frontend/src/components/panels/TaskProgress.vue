@@ -18,6 +18,7 @@ import { computed, ref, watch } from 'vue'
 import { listRoomTasks, listRoomTrees } from '../../api'
 import { BOARD_COLUMNS, columnDotStyle, columnLabel, compareTasks } from '../../lib/board'
 import { relTime } from '../../lib/relTime'
+import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -279,9 +280,7 @@ const hiddenBatches = computed(() => batches.value.length - shownBatches.value.l
         </button>
       </template>
 
-      <div v-if="loading && !rows.length" class="d-flex justify-center py-4">
-        <v-progress-circular indeterminate color="primary" size="20" />
-      </div>
+      <LoadingSkeleton v-if="loading && !rows.length" variant="list" :rows="3" />
 
       <div v-else-if="errorMsg" class="px-3 py-2 t-body c-muted">{{ errorMsg }}</div>
 

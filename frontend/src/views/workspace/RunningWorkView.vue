@@ -18,6 +18,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { listProjectTasks } from '@/api'
+import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
 import { BOARD_COLUMNS, columnDotStyle, columnLabel, compareTasks } from '@/lib/board'
 import { relTime } from '@/lib/relTime'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -125,9 +126,7 @@ function openTask(task: RoomTask) {
       </p>
     </header>
 
-    <div v-if="loading && !rows.length" class="d-flex justify-center py-10">
-      <v-progress-circular indeterminate color="primary" size="28" />
-    </div>
+    <LoadingSkeleton v-if="loading && !rows.length" variant="list" class="py-4" />
 
     <div v-else-if="errorMsg" class="pa-6 t-body c-muted">
       {{ errorMsg }}

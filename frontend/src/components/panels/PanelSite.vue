@@ -12,6 +12,7 @@ import { getTerminal, getTranscript, SITE_PAGE_SIZE } from '../../api'
 import { countLines, isLongSiteEntry, shouldFollowTail, shouldKeepPinning, SITE_CLAMP_LINES } from '../../lib/siteLog'
 import { isPlatformEvent, summarizeActions, toolLabel } from '../../lib/toolLabels'
 import CheeseAvatar from '../CheeseAvatar.vue'
+import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 import DeviceLiveViewer from '../DeviceLiveViewer.vue'
 
 const props = withDefaults(
@@ -244,9 +245,7 @@ function eventPlatform(b: Block): boolean {
 
 <template>
   <div ref="scrollRef" class="panel-site" @scroll="onSiteScroll">
-    <div v-if="loading" class="d-flex justify-center py-8">
-      <v-progress-circular indeterminate color="primary" size="28" />
-    </div>
+    <LoadingSkeleton v-if="loading" variant="chat" />
     <v-alert v-else-if="errorMsg" type="error" density="compact" class="ma-4">
       {{ errorMsg }}
     </v-alert>
