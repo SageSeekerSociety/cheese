@@ -52,7 +52,12 @@ PKG = "app.domain.agent.harness.claude_code"
 _LEDGER: dict[str, tuple[str, ...]] = {
     # --- 边缘：适配器对外的那条边 ---
     "app.api.routes.sandbox": ("append_event", "hook_router"),
-    "app.domain.machine.enrollment": ("CLAUDE_MIN_VERSION", "CLAUDE_PINNED_VERSION"),
+    # Enrollment prepares native caches before a warm machine becomes available.
+    "app.domain.machine.enrollment": (
+        "CLAUDE_MIN_VERSION",
+        "CLAUDE_PINNED_VERSION",
+        "build_startup_cache_prepare",
+    ),
     # --- 装配：池子在这里把 runtime 和 channel 拼起来，也只在这里 ---
     "app.domain.agent.compute": ("Channel", "ClaudeCodeRuntime"),
     "app.domain.agent.device_hub": (

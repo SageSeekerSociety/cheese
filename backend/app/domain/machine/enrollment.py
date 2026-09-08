@@ -18,14 +18,13 @@ import json
 import logging
 import os
 import tempfile
-from pathlib import Path
 
 from app.core.config import settings
 from app.domain.agent import connector_build
 from app.domain.agent.harness.claude_code import (
     CLAUDE_MIN_VERSION,
     CLAUDE_PINNED_VERSION,
-    startup_cache,
+    build_startup_cache_prepare,
 )
 from app.domain.machine import claude_dist
 
@@ -112,11 +111,7 @@ def bootstrap_script(
     pinned_version = CLAUDE_PINNED_VERSION
     cache_script = ""
     if prepare_native_cache:
-        cache_source = Path(startup_cache.__file__).read_text()
-        cache_script = (
-            f'python3 - prepare "$HOME" "{pinned_version}" <<\'CHEESE_NATIVE_CACHE\'\n'
-            f"{cache_source}\nCHEESE_NATIVE_CACHE\n"
-        )
+        cache_script = build_startup_cache_prepare(pinned_version)
     return f"""set -eu
 arch=$(uname -m)
 case "$arch" in

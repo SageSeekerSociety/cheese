@@ -13,6 +13,14 @@ FILES = ("remote-settings.json", "policy-limits.json")
 MAX_AGE = 3600
 
 
+def build_startup_cache_prepare(version: str) -> str:
+    source = Path(__file__).read_text()
+    return (
+        f'python3 - prepare "$HOME" "{version}" <<\'CHEESE_NATIVE_CACHE\'\n'
+        f"{source}\nCHEESE_NATIVE_CACHE\n"
+    )
+
+
 def identity(owner: Path) -> tuple[dict, str]:
     env = json.loads((owner / ".claude/settings.json").read_text())["env"]
     if not env.get("CLAUDE_CODE_OAUTH_TOKEN"):
