@@ -316,6 +316,44 @@ without a key — but it says nothing about extraction quality, which is exactly
 what the real key is for. The self-check has its own key-less coverage in
 `backend/tests/integration/test_memory_endpoint_probe.py`.
 
+### Turning on 记忆整理 / dreaming (#187)
+
+Independent of the openviking switch above, and much cheaper to try: dreaming
+reads the **db** backend's existing rows (`memory_entries`, `memory_dreams`), so
+it needs no vendor key and does not care what `MEMORY_BACKEND` is set to. One
+line, then the same redeploy as any other env change:
+
+```
+DREAM_ENABLED=true
+```
+
+It hangs off the idle-screen reaper (`scheduler/service.py`), which is what
+sets the pace — and the pace surprises people:
+
+- The reaper sweeps every `SANDBOX_REAP_INTERVAL_SECONDS` (**1h** default).
+- A topic must have had no block activity for `IDLE_REAP_HOURS` (**8h**) before
+  it is even a candidate.
+- At most `DREAM_MAX_PER_SWEEP` (**1**) topic is organized per sweep; topics
+  with fewer than `DREAM_MIN_BLOCKS` (**20**) blocks are skipped as not worth a
+  turn.
+
+So the first pass lands **no sooner than 8 hours** after the flip, and the
+backlog drains at roughly one topic an hour. Seeing nothing happen for an
+afternoon is the expected behaviour, not a failed deploy — check
+`docker logs cheese-backend-1 | grep 记忆整理` rather than re-flipping anything.
+
+**It only reaches topics that ran on a self-hosted device.** A Cloud turn
+leaves no screen behind and the idle-screen reaper is the only sweep there is,
+so a box with no online devices will never dream no matter what the flag says.
+Confirm there is one before concluding the flag is broken:
+
+```bash
+docker logs cheese-backend-1 --since 1h 2>&1 | grep 'shipped to device'
+```
+
+It **spends model budget** on a background trigger — about one agent turn per
+organized topic. That is the whole reason it is off by default.
+
 ## Backups
 
 Every box runs the same scripts (only the R2 prefix and host differ); details and
