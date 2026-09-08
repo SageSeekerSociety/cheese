@@ -21,6 +21,9 @@
 #   TRANSCRIPTS_HOST_PATH  host dir holding the transcript archives uploaded
 #                      from device homes (same treatment; default in compose)
 #   PROJECT            compose project name              (default cheese)
+#   ACTIVE_FRONTEND_DIR  optional api-front active directory. Enable only after
+#                      ingress targets FRONTEND_PROXY_PORT (default 18080).
+#   FRONTEND_PORT_NEXT  temporary frontend port (default 18084, loopback only)
 #   DEPLOY_APP_IMAGE_SOURCE  registry (default) or local. In local mode,
 #                      BACKEND_IMAGE and FRONTEND_IMAGE must name existing images.
 #   DEPLOY_PULL_ATTEMPTS         how many times to try each pull   (default 3)
@@ -452,6 +455,11 @@ BACKEND_PORT_NEXT="${BACKEND_PORT_NEXT:-18082}"
 BACKEND_START_TIMEOUT="${DEPLOY_BACKEND_START_TIMEOUT:-180}"
 DRAIN_SECONDS="${DEPLOY_DRAIN_SECONDS:-5}"
 NEXT_BACKEND="${PROJECT}-backend-next"
+# Opt in only after the public ingress uses the standing frontend proxy.
+ACTIVE_FRONTEND_DIR="${ACTIVE_FRONTEND_DIR:-}"
+FRONTEND_PROXY_PORT="${FRONTEND_PROXY_PORT:-18080}"
+FRONTEND_PORT_NEXT="${FRONTEND_PORT_NEXT:-18084}"
+NEXT_FRONTEND="${PROJECT}-frontend-next"
 
 switch_active_backend() {
   local target="$1" tmp
@@ -485,7 +493,7 @@ wait_for_healthz() {
 
 rollout_backend() {
   docker rm -f "$NEXT_BACKEND" >/dev/null 2>&1 || true
-  log "starting the next backend as $NEXT_BACKEND on :$BACKEND_PORT_NEXT…"
+  log "starting the next backend as $NEXT_BACKEND on :${BACKEND_PORT_NEXT}…"
   # A one-off from the service definition: same image, env file, mounts and
   # network as the compose backend, but no published port of its own except
   # the one given here, so it cannot collide with the running one.
@@ -498,7 +506,7 @@ rollout_backend() {
     fail "$NEXT_BACKEND never answered /healthz within ${BACKEND_START_TIMEOUT}s; the running backend was not touched"
   fi
   switch_active_backend "127.0.0.1:${BACKEND_PORT_NEXT}"
-  log "recreating backend on the new image behind $NEXT_BACKEND…"
+  log "recreating backend on the new image behind ${NEXT_BACKEND}…"
   dc up -d --no-deps backend \
     || fail "compose up backend failed; $NEXT_BACKEND is still serving on :$BACKEND_PORT_NEXT and api-front points at it"
   if ! wait_for_healthz "$BACKEND_PORT" "the recreated backend"; then
@@ -512,12 +520,70 @@ rollout_backend() {
   log "$NEXT_BACKEND removed; backend rollout complete"
 }
 
+switch_active_frontend() {
+  local port="$1" previous
+  previous="$(cat "$ACTIVE_FRONTEND_DIR/sites-frontend.conf")"
+  bash "$HERE/llm-tunnel/configure-frontend.sh" "$ACTIVE_FRONTEND_DIR" "$port" "$FRONTEND_PROXY_PORT"
+  if ! docker exec "$API_FRONT_CONTAINER" nginx -t; then
+    printf '%s\n' "$previous" > "$ACTIVE_FRONTEND_DIR/sites-frontend.conf"
+    fail "frontend proxy configuration rejected; running nginx was not reloaded"
+  fi
+  docker exec "$API_FRONT_CONTAINER" nginx -s reload \
+    || fail "frontend proxy reload failed; both frontends remain running"
+  log "frontend proxy now sends traffic to :$port"
+}
+
+wait_for_frontend() {
+  local port="$1" container="$2" waited=0 step="$HEALTH_INTERVAL_SECONDS"
+  [ "$step" -gt 0 ] 2>/dev/null || step=1
+  while [ "$waited" -lt "$BACKEND_START_TIMEOUT" ]; do
+    if docker exec "$container" /usr/local/bin/check-static-assets /usr/share/nginx/html >/dev/null 2>&1 \
+      && curl -fsS -m 3 "http://127.0.0.1:$port/" >/dev/null 2>&1; then
+      log "$container serves complete frontend assets on :$port after ${waited}s"
+      return 0
+    fi
+    sleep "$HEALTH_INTERVAL_SECONDS"
+    waited=$((waited + step))
+  done
+  return 1
+}
+
+rollout_frontend() {
+  [ -f "$ACTIVE_FRONTEND_DIR/sites-frontend.conf" ] || fail "frontend proxy must be configured before enabling rollout"
+  # A failed prior switch may still be using this container. Never remove it
+  # automatically while the standing proxy names its port.
+  if grep -Fq "server 127.0.0.1:$FRONTEND_PORT_NEXT;" "$ACTIVE_FRONTEND_DIR/sites-frontend.conf"; then
+    fail "frontend proxy is still on :$FRONTEND_PORT_NEXT from a previous rollout; recover it before redeploying"
+  fi
+  docker rm -f "$NEXT_FRONTEND" >/dev/null 2>&1 || true
+  dc run -d --no-deps --name "$NEXT_FRONTEND" -p "127.0.0.1:$FRONTEND_PORT_NEXT:80" frontend >/dev/null \
+    || fail "could not start next frontend; running frontend was not touched"
+  if ! wait_for_frontend "$FRONTEND_PORT_NEXT" "$NEXT_FRONTEND"; then
+    docker rm -f "$NEXT_FRONTEND" >/dev/null 2>&1 || true
+    fail "next frontend is unhealthy; running frontend was not touched"
+  fi
+  switch_active_frontend "$FRONTEND_PORT_NEXT"
+  # Let requests already assigned to the old frontend finish before replacing it.
+  sleep "$DRAIN_SECONDS"
+  dc up -d --no-deps frontend || fail "frontend recreate failed; next frontend remains serving"
+  wait_for_frontend "${FRONTEND_PORT:-8080}" "$(service_container frontend)" \
+    || fail "recreated frontend is unhealthy; next frontend remains serving"
+  switch_active_frontend "${FRONTEND_PORT:-8080}"
+  sleep "$DRAIN_SECONDS"
+  docker rm -f "$NEXT_FRONTEND" >/dev/null 2>&1 || true
+  log "frontend rollout complete"
+}
+
 if [ -n "$ACTIVE_BACKEND_DIR" ]; then
   [ -d "$ACTIVE_BACKEND_DIR" ] \
     || fail "ACTIVE_BACKEND_DIR=$ACTIVE_BACKEND_DIR does not exist — run deploy/llm-tunnel/up.sh first"
   rollout_backend
-  log "bringing up frontend…"
-  dc up -d --no-deps frontend || fail "compose up frontend failed"
+  if [ -n "$ACTIVE_FRONTEND_DIR" ]; then
+    rollout_frontend
+  else
+    log "bringing up frontend…"
+    dc up -d --no-deps frontend || fail "compose up frontend failed"
+  fi
 else
   log "bringing up backend + frontend…"
   dc up -d backend frontend || fail "compose up failed"
@@ -552,7 +618,7 @@ if [ "$code" != ok ]; then
     # once the box is past the migration the previous image shares the current
     # uid and handing anything back would be the thing that breaks it.
     if [ "${OWNERSHIP_MIGRATED:-no}" = yes ]; then
-      log "handing the bind mounts back to ${PREVIOUS_AGENT_UID:-1001} before starting $PREV_SHA…"
+      log "handing the bind mounts back to ${PREVIOUS_AGENT_UID:-1001} before starting ${PREV_SHA}…"
       AGENT_UID="${PREVIOUS_AGENT_UID:-1001}" \
       AGENT_GID="${PREVIOUS_AGENT_GID:-1001}" \
       FORCE_OWNERSHIP_FIX=1 \
