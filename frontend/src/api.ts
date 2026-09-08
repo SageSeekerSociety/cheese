@@ -2,6 +2,7 @@
 // ApiEnvelope; these helpers unwrap `data` and surface non-200 codes as errors.
 import type {
   AcceptCard,
+  AgentConfiguration,
   AgentType,
   ApiEnvelope,
   Block,
@@ -13,7 +14,6 @@ import type {
   Contributions,
   EnvironmentConfig,
   EnvironmentStatus,
-  ExecProfiles,
   FileContent,
   GitCommit,
   GithubConnection,
@@ -646,17 +646,6 @@ export function getProjectCredits(projectId: string): Promise<ProjectCredits> {
 
 // ---- 题目匹配市场 (spec §13 阶段 6) ----
 
-// AI 模型池: the project's current profile + the ones it may select.
-export function getExecutionProfiles(projectId: string): Promise<ExecProfiles> {
-  return request<ExecProfiles>(`/projects/${encodeURIComponent(projectId)}/execution-profiles`)
-}
-export function setExecutionProfile(projectId: string, profile: string): Promise<{ current: string }> {
-  return request(`/projects/${encodeURIComponent(projectId)}/execution-profile`, {
-    method: 'PUT',
-    body: JSON.stringify({ profile }),
-  })
-}
-
 // 算力池: the project's current compute pool + the deployed ones it may select.
 export function getComputeProfiles(projectId: string): Promise<ComputeProfiles> {
   return request<ComputeProfiles>(`/projects/${encodeURIComponent(projectId)}/compute-profiles`)
@@ -734,18 +723,6 @@ export function deleteProjectMachine(
   })
 }
 
-// 订阅模型: the project's current Claude model + the ones it may select. Same
-// shape as compute pools; a project picks Sonnet 5 (default) or Opus 5.
-export function getModelProfiles(projectId: string): Promise<ComputeProfiles> {
-  return request<ComputeProfiles>(`/projects/${encodeURIComponent(projectId)}/model-profiles`)
-}
-export function setModelProfile(projectId: string, profile: string): Promise<{ current: string }> {
-  return request(`/projects/${encodeURIComponent(projectId)}/model-profile`, {
-    method: 'PUT',
-    body: JSON.stringify({ profile }),
-  })
-}
-
 // 会话级算力 (v4): a topic's own compute选择, switchable until its first turn.
 export function getTopicComputeProfile(topicId: string): Promise<TopicComputeProfile> {
   return request<TopicComputeProfile>(`/topics/${encodeURIComponent(topicId)}/compute-profile`)
@@ -790,15 +767,6 @@ export function setTopicComputeProfile(
   })
 }
 
-// Which type the project's default agent wears; an empty name clears it. The
-// agent itself stays — and so does the memory it has been accumulating.
-export function setProjectAgentType(projectId: string, typeName: string): Promise<ProjectAgent> {
-  return request(`/projects/${encodeURIComponent(projectId)}/default-agent`, {
-    method: 'PUT',
-    body: JSON.stringify({ type_name: typeName }),
-  })
-}
-
 // ---- AI 队友 (agent 类型与实例) ----
 //
 // 「不能停用最后一个」and the like are the backend's to enforce; these are plain
@@ -826,49 +794,22 @@ export interface AgentFieldOptions {
 
 export type AgentTypeOptions = Record<string, AgentFieldOptions>
 
-export function getAgentTypeOptions(): Promise<AgentTypeOptions> {
-  return request<AgentTypeOptions>('/agent-types/options')
+export function getProjectAgentOptions(projectId: string): Promise<AgentTypeOptions> {
+  return request<AgentTypeOptions>(`/projects/${encodeURIComponent(projectId)}/agent-options`)
 }
 
-// The merged type catalog: platform presets + this project's custom types.
+// Built-in starting configurations, copied only when creating an agent.
 export function listAgentTypes(): Promise<ListPayload<AgentType>> {
   return request<ListPayload<AgentType>>('/agent-types')
 }
 
-export interface AgentTypeInput {
-  title?: string
-  description?: string
-  body?: string
-  skills?: string[]
-  mcp_servers?: string[]
-  model?: string | null
-  effort?: string | null
-  harness?: string | null
-  // Who authored the type — the backend records it and shows it in the catalog.
-  created_by?: string
-}
-
-export function createAgentType(payload: AgentTypeInput & { name: string; body: string }): Promise<AgentType> {
-  return request<AgentType>('/agent-types', { method: 'POST', body: JSON.stringify(payload) })
-}
-
-export function updateAgentType(name: string, payload: AgentTypeInput): Promise<AgentType> {
-  return request<AgentType>(`/agent-types/${encodeURIComponent(name)}`, {
-    method: 'PUT',
-    body: JSON.stringify(payload),
-  })
-}
-
-// The agents this project has. A project that never configured one still gets a
-// row back — the implicit 芝士, `configured: false` — because it is really
-// working in every room and owns a real memory pool.
 export function listProjectAgents(projectId: string): Promise<ListPayload<ProjectAgent>> {
   return request<ListPayload<ProjectAgent>>(`/projects/${encodeURIComponent(projectId)}/agents`)
 }
 
 export function createProjectAgent(
   projectId: string,
-  payload: { display_name: string; handle?: string; type_name?: string | null }
+  payload: { display_name: string; handle?: string; type_name?: string | null; configuration: AgentConfiguration }
 ): Promise<ProjectAgent> {
   return request<ProjectAgent>(`/projects/${encodeURIComponent(projectId)}/agents`, {
     method: 'POST',
@@ -879,7 +820,7 @@ export function createProjectAgent(
 export function updateProjectAgent(
   projectId: string,
   agentId: string,
-  payload: { display_name?: string; type_name?: string | null }
+  payload: { display_name?: string; configuration?: AgentConfiguration }
 ): Promise<ProjectAgent> {
   return request<ProjectAgent>(`/projects/${encodeURIComponent(projectId)}/agents/${encodeURIComponent(agentId)}`, {
     method: 'PUT',
@@ -896,13 +837,8 @@ export function deactivateProjectAgent(projectId: string, agentId: string): Prom
   )
 }
 
-// Which agent a new topic gets. `instance_id` picks a different agent (a
-// different memory pool); `type_name` re-skins the one the project already has,
-// so the pool it has been filling stays its own.
-export function setProjectDefaultAgent(
-  projectId: string,
-  body: { instance_id?: string | null; type_name?: string | null }
-): Promise<ProjectAgent> {
+// Select the existing agent that new rooms start with.
+export function setProjectDefaultAgent(projectId: string, body: { instance_id: string }): Promise<ProjectAgent> {
   return request<ProjectAgent>(`/projects/${encodeURIComponent(projectId)}/default-agent`, {
     method: 'PUT',
     body: JSON.stringify(body),
