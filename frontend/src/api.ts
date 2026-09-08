@@ -30,6 +30,7 @@ import type {
   ProjectAgent,
   ProjectCredits,
   ProjectEnvironmentInfo,
+  ProjectInvitation,
   ProjectMemberRow,
   ProjectOverview,
   ProjectSite,
@@ -1403,6 +1404,41 @@ export function removeProjectMember(projectId: string, handle: string): Promise<
     `/projects/${encodeURIComponent(projectId)}/members/${encodeURIComponent(handle)}`,
     { method: 'DELETE' }
   )
+}
+
+// ---- 邀请：加人这件事要两个人同意 --------------------------------------------
+// 进了项目就看得见这个项目的全部话题，那是别人的工作内容，所以从界面上加人得由
+// 被加的那个人点头。`addProjectMember` 那条路仍然在，它是接受之后真正把人放上名册
+// 的那一步，也是脚本用的原语——界面上走的是这里。
+
+export function inviteProjectMember(projectId: string, handle: string, role: string): Promise<ProjectInvitation> {
+  return request<ProjectInvitation>(`/projects/${encodeURIComponent(projectId)}/invitations`, {
+    method: 'POST',
+    body: JSON.stringify({ user_handle: handle, role }),
+  })
+}
+
+export function listProjectInvitations(projectId: string): Promise<ListPayload<ProjectInvitation>> {
+  return request<ListPayload<ProjectInvitation>>(`/projects/${encodeURIComponent(projectId)}/invitations`)
+}
+
+// 等我答复的邀请。没有 project 那一层是刻意的：被邀请的人还不在那个项目里，一个
+// 项目作用域的接口他根本够不着。
+export function listMyInvitations(): Promise<ListPayload<ProjectInvitation>> {
+  return request<ListPayload<ProjectInvitation>>('/me/invitations')
+}
+
+export function respondToInvitation(invitationId: string, accept: boolean): Promise<ProjectInvitation> {
+  return request<ProjectInvitation>(`/invitations/${encodeURIComponent(invitationId)}/respond`, {
+    method: 'POST',
+    body: JSON.stringify({ accept }),
+  })
+}
+
+export function revokeInvitation(invitationId: string): Promise<ProjectInvitation> {
+  return request<ProjectInvitation>(`/invitations/${encodeURIComponent(invitationId)}`, {
+    method: 'DELETE',
+  })
 }
 
 // ---- 话题成员名册 (群聊房间的地基, fusion-design §3) --------------------------

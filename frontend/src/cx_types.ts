@@ -332,6 +332,20 @@ export interface ProjectMemberRow {
   [key: string]: unknown
 }
 
+/** 一张「请你加入这个项目」的邀请，等对方回答。 */
+export interface ProjectInvitation {
+  id: string
+  project_id: string
+  invitee_handle: string
+  inviter_handle: string
+  role: string
+  status: 'pending' | 'accepted' | 'declined' | 'revoked'
+  created_at: string
+  responded_at?: string | null
+  /** 后端不回项目名，界面上要显示得自己从项目列表里配；配不到就退成 id。 */
+  [key: string]: unknown
+}
+
 // 话题成员名册 (fusion-design §3): a topic's group-room roster. Roles are
 // owner/admin/member (distinct from ProjectMemberRow's lead/member/mentor);
 // `agent` marks 芝士 (the AI member) so the UI can badge it.

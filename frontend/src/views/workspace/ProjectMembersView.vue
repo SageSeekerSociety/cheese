@@ -8,17 +8,25 @@
 // 一行 = 一个人 = 两件事：找到他（点开是他的主页，右边是私聊），和管理他（角色、
 // 移出）。管理动作只对 owner / lead 出现，这条判断在后端也各做一次
 // （membership/services.py），前端藏起来只是为了不给人一个必定失败的按钮。
-import type { ProjectMemberRow } from '@/cx_types'
+import type { ProjectInvitation, ProjectMemberRow } from '@/cx_types'
 
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { getAvatarUrl } from '@/utils/materials'
 
-import { addProjectMember, listProjectAgents, removeProjectMember, updateProjectMemberRole } from '@/api'
+import {
+  inviteProjectMember,
+  listProjectAgents,
+  listProjectInvitations,
+  removeProjectMember,
+  revokeInvitation,
+  updateProjectMemberRole,
+} from '@/api'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { label, PROJECT_ROLE } from '@/labels'
-import { myHandle } from '@/me'
+import { me as meRef, myHandle } from '@/me'
+import { UserApi } from '@/network/api/users'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 defineOptions({ name: 'ProjectMembersView' })
@@ -64,6 +72,34 @@ watch(
   { immediate: true }
 )
 
+// 发出去还没被答复的邀请。它们**不在名册上**——那正是这个功能的意义：进了项目就
+// 看得见全部话题，所以得由被邀请的人点头。这一段让邀请方看得见自己在等谁。
+const invitations = ref<ProjectInvitation[]>([])
+const revoking = ref<string | null>(null)
+async function refreshInvitations() {
+  const pid = props.projectId
+  try {
+    const payload = await listProjectInvitations(pid)
+    if (props.projectId === pid) invitations.value = payload.data
+  } catch {
+    // 拿不到就不显示这一段，名册本身照常——它不该被一个附属列表拖垮。
+  }
+}
+watch(() => props.projectId, refreshInvitations, { immediate: true })
+
+async function takeBack(inv: ProjectInvitation) {
+  revoking.value = inv.id
+  error.value = null
+  try {
+    await revokeInvitation(inv.id)
+    await refreshInvitations()
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : '撤回失败'
+  } finally {
+    revoking.value = null
+  }
+}
+
 const query = ref('')
 const busyHandle = ref<string | null>(null)
 const error = ref<string | null>(null)
@@ -80,8 +116,24 @@ function matches(m: ProjectMemberRow): boolean {
 
 // AI 队友也在项目名册上，但它们不是「人」：没有角色可升降，也不该混在人堆里
 // 排序。它们单独一段，管理入口在 AI 队友那一页。
-const people = computed(() => store.members.filter((m) => !m.agent && matches(m)))
-const agents = computed(() => store.members.filter((m) => m.agent && matches(m)))
+// 名册表里存的是**除所有者以外**的人：这个仓里「谁是所有者」记在项目上
+// (Project.owner_handle)，不是一行成员数据。所以他得在这里补出来——否则一个刚建
+// 好的项目会对着它的主人说「还没有成员」，而他正是那个唯一确定在这儿的人。
+const roster = computed<ProjectMemberRow[]>(() => {
+  const rows = store.members
+  if (!ownerHandle.value || rows.some((m) => m.user_handle === ownerHandle.value)) return rows
+  const owner: ProjectMemberRow = { user_handle: ownerHandle.value, role: 'lead', name: ownerName.value }
+  return [owner, ...rows]
+})
+
+// 所有者的显示名：名册上没有他，所以得从别处捞——是我自己就用我自己的名字，
+// 否则退回 handle。写不出名字不影响这一行存在。
+const ownerName = computed<string>(() =>
+  ownerHandle.value === me.value ? meRef.value?.name || ownerHandle.value : ownerHandle.value
+)
+
+const people = computed(() => roster.value.filter((m) => !m.agent && matches(m)))
+const agents = computed(() => roster.value.filter((m) => m.agent && matches(m)))
 
 const groups = computed(() =>
   ROLES.map((role) => ({
@@ -91,7 +143,7 @@ const groups = computed(() =>
   })).filter((g) => g.rows.length > 0)
 )
 
-const myRole = computed(() => store.members.find((m) => m.user_handle === me.value)?.role ?? null)
+const myRole = computed(() => roster.value.find((m) => m.user_handle === me.value)?.role ?? null)
 const canManage = computed(() => me.value === ownerHandle.value || myRole.value === 'lead')
 
 // 项目所有者和自己这两行不带管理动作：把所有者降职会让项目没人管得了，而把
@@ -147,21 +199,76 @@ function confirmRemove() {
 }
 
 // ---- 邀请 ----
+// 按 uid 邀请，而不是按 handle：uid 是个人主页地址里那个数字，找得到、抄得准；
+// handle 得对方自己告诉你，而且打错一个字母的后果是「查无此人」还是「加错了人」
+// 完全看运气。
+//
+// 所以填完先去查这个人存不存在，把查到的名字摆出来给人确认——邀请是个加人进项目
+// 的动作，「我以为我加的是他」这种错必须在按下按钮之前就露出来。
 const inviteOpen = ref(false)
-const inviteHandle = ref('')
+const inviteUid = ref('')
 const inviteRole = ref<Role>('member')
 const inviting = ref(false)
+const lookingUp = ref(false)
+const foundUser = ref<{ id: number; username: string; nickname: string } | null>(null)
+const lookupError = ref<string | null>(null)
+let lookupTimer: ReturnType<typeof setTimeout> | null = null
+let lookupSeq = 0
+
+async function lookupUid(raw: string) {
+  const uid = Number(raw.trim())
+  foundUser.value = null
+  lookupError.value = null
+  if (!raw.trim()) return
+  if (!Number.isInteger(uid) || uid < 1) {
+    lookupError.value = 'uid 是一个数字，在对方个人主页的地址里'
+    return
+  }
+  const seq = ++lookupSeq
+  lookingUp.value = true
+  try {
+    const {
+      data: { user },
+    } = await UserApi.getUserInfo(uid)
+    // 打字比请求快：只认最后一次发出去的那一个，否则先回来的旧结果会盖掉新的。
+    if (seq !== lookupSeq) return
+    if (!user) throw new Error('没有这个人')
+    foundUser.value = { id: user.id, username: user.username, nickname: user.nickname }
+  } catch {
+    if (seq !== lookupSeq) return
+    lookupError.value = `找不到 uid ${uid} 这个人`
+  } finally {
+    if (seq === lookupSeq) lookingUp.value = false
+  }
+}
+
+watch(inviteUid, (raw) => {
+  if (lookupTimer) clearTimeout(lookupTimer)
+  lookupTimer = setTimeout(() => void lookupUid(raw), 350)
+})
+
+// 已经在名册上的人不能再邀请一次——后端会拒，但那是按下按钮之后才知道。
+const alreadyMember = computed(
+  () => !!foundUser.value && roster.value.some((m) => m.user_handle === foundUser.value?.username)
+)
+
+function resetInvite() {
+  inviteOpen.value = false
+  inviteUid.value = ''
+  inviteRole.value = 'member'
+  foundUser.value = null
+  lookupError.value = null
+}
+
 async function submitInvite() {
-  const handle = inviteHandle.value.trim().replace(/^@/, '')
-  if (!handle) return
+  const user = foundUser.value
+  if (!user || alreadyMember.value) return
   inviting.value = true
   error.value = null
   try {
-    await addProjectMember(props.projectId, handle, inviteRole.value)
-    await store.refreshMembers()
-    inviteOpen.value = false
-    inviteHandle.value = ''
-    inviteRole.value = 'member'
+    await inviteProjectMember(props.projectId, user.username, inviteRole.value)
+    await refreshInvitations()
+    resetInvite()
   } catch (e) {
     error.value = e instanceof Error ? e.message : '邀请失败'
   } finally {
@@ -196,7 +303,7 @@ async function submitInvite() {
       </p>
 
       <v-text-field
-        v-if="store.members.length > 8"
+        v-if="roster.length > 8"
         v-model="query"
         density="compact"
         variant="outlined"
@@ -271,6 +378,26 @@ async function submitInvite() {
         </v-card>
       </div>
 
+      <div v-if="invitations.length" class="mb-6">
+        <div class="t-eyebrow mb-2">等待接受 · {{ invitations.length }}</div>
+        <v-card v-for="inv in invitations" :key="inv.id" class="mb-2" variant="outlined">
+          <div class="d-flex align-center pa-3">
+            <UserAvatar :name="inv.invitee_handle" :size="36" class="mr-3" />
+            <div class="min-w-0">
+              <div class="d-flex align-center ga-2">
+                <span class="t-title text-truncate">@{{ inv.invitee_handle }}</span>
+                <span class="chip-neutral">{{ label(PROJECT_ROLE, inv.role) }}</span>
+              </div>
+              <div class="t-meta c-muted">{{ inv.inviter_handle }} 邀请 · 还没答复</div>
+            </div>
+            <v-spacer />
+            <v-btn v-if="canManage" variant="text" size="small" :loading="revoking === inv.id" @click="takeBack(inv)">
+              撤回
+            </v-btn>
+          </div>
+        </v-card>
+      </div>
+
       <div v-if="agents.length" class="mb-6">
         <div class="t-eyebrow mb-2">AI 队友 · {{ agents.length }}</div>
         <v-card v-for="a in agents" :key="a.user_handle" class="mb-2" variant="outlined">
@@ -305,27 +432,48 @@ async function submitInvite() {
         </v-card>
       </div>
 
-      <div v-if="store.members.length === 0" class="text-center py-10">
+      <div v-if="roster.length === 0" class="text-center py-10">
         <v-icon size="34" class="mb-3 c-muted">mdi-account-group-outline</v-icon>
         <div class="t-body c-muted">还没有成员</div>
       </div>
     </v-container>
 
-    <v-dialog v-model="inviteOpen" max-width="440">
+    <v-dialog v-model="inviteOpen" max-width="440" @update:model-value="(v) => !v && resetInvite()">
       <v-card>
         <v-card-title class="t-title pt-4">邀请成员</v-card-title>
         <v-card-text>
-          <p class="t-body c-muted mb-4">填对方的 handle（用户名）。加进来之后他能看到这个项目的全部话题</p>
+          <p class="t-body c-muted mb-5">
+            填对方的
+            uid（个人主页地址里那个数字）。邀请发出去之后，要他自己接受才算加入——进来之后他能看到这个项目的全部话题
+          </p>
           <v-text-field
-            v-model="inviteHandle"
-            label="handle"
-            placeholder="如 zhangheng"
-            prefix="@"
+            v-model="inviteUid"
+            label="uid"
+            placeholder="如 1024"
+            type="number"
+            inputmode="numeric"
             density="comfortable"
             variant="outlined"
             autofocus
+            :loading="lookingUp"
+            :error-messages="lookupError ? [lookupError] : []"
+            class="mb-2"
             @keyup.enter="submitInvite"
           />
+          <!-- 查到了谁，在按下按钮之前先摆出来。邀请是个把人加进项目的动作，
+               「我以为我加的是他」这种错必须在这里就露出来，不能等加完了才发现。 -->
+          <div v-if="foundUser" class="found-user mb-5">
+            <UserAvatar :name="foundUser.nickname || foundUser.username" :size="32" class="mr-3" />
+            <div class="min-w-0">
+              <div class="t-body" style="font-weight: 500; color: var(--ink)">
+                {{ foundUser.nickname || foundUser.username }}
+              </div>
+              <div class="t-meta c-muted">@{{ foundUser.username }}</div>
+            </div>
+            <v-spacer />
+            <span v-if="alreadyMember" class="t-meta c-muted">已经在项目里</span>
+          </div>
+          <div v-else class="mb-5" />
           <v-select
             v-model="inviteRole"
             :items="ROLES.map((r) => ({ title: label(PROJECT_ROLE, r), value: r }))"
@@ -337,12 +485,12 @@ async function submitInvite() {
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" @click="inviteOpen = false">取消</v-btn>
+          <v-btn variant="text" @click="resetInvite">取消</v-btn>
           <v-btn
             color="primary"
             variant="flat"
             :loading="inviting"
-            :disabled="!inviteHandle.trim()"
+            :disabled="!foundUser || alreadyMember"
             @click="submitInvite"
           >
             邀请
@@ -384,6 +532,15 @@ async function submitInvite() {
 }
 /* 私聊按钮 + 它右上角那颗未读。按钮本身是 icon 按钮，徽标压在它的右上角，
    所以这个槽是定位参照系。 */
+/* 查到的那个人：一行头像 + 名字，压在输入框和角色之间，所以两边都留了呼吸。 */
+.found-user {
+  display: flex;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--fill);
+}
 .dm-slot {
   position: relative;
   display: inline-flex;

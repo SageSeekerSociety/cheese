@@ -489,8 +489,11 @@ def test_full_launcher_installs_platform_cli_without_network(tmp_path):
     claude.write_text('#!/bin/sh\necho "2.1.261 (Claude Code)"\n')
     claude.chmod(0o755)
     env["CHEESE_TOKEN_EXPIRES"] = str(int(time.time()) + 3600)
+    # Devices execute a shipped file; Linux rejects this script's size in argv.
+    launcher = tmp_path / "launch.sh"
+    launcher.write_text(device_launch.build_launch_script())
     result = subprocess.run(
-        ["sh", "-c", device_launch.build_launch_script()],
+        ["sh", str(launcher)],
         env=env,
         capture_output=True,
         text=True,
