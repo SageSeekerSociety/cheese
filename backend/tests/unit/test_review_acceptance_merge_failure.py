@@ -56,6 +56,7 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
         owner_handle="owner",
     )
     session = AsyncMock()
+    session.scalars.return_value = SimpleNamespace(all=lambda: [])
     service = AcceptService(session)
     service._repo = AsyncMock()
     service._repo.get.return_value = card

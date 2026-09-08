@@ -134,7 +134,8 @@ def pr_trailers(
         # URL is a frontend change (a deep link that resolves an accept card),
         # not a string change here.
         lines.append(f"Cheese-Card: {card.id}")
-    lines.append(f"Cheese-Agent: {topic_agent_handle(topic.id)}")
+    acting = who.author.name if who and who.author else topic_agent_handle(topic.id)
+    lines.append(f"Cheese-Agent: {acting}")
     lines.extend(task_trailer(topic, item) for item in (who.tasks if who else ()))
     coauthors = who.coauthors if who else ()
     credited = [line for line in map(identity.coauthored_by, coauthors) if line]
