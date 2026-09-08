@@ -93,6 +93,8 @@ class SplitIn(BaseModel):
     # 递卡: the setting can change between the two, and the person a piece of
     # work was handed to is a fact about that moment.
     reviewer_handle: str | None = Field(default=None, max_length=64)
+    reporter_handle: str | None = Field(default=None, max_length=64)
+    contributor_handles: list[str] = Field(default_factory=list)
 
 
 class ClaimIn(BaseModel):
@@ -129,6 +131,8 @@ class ConclusionIn(BaseModel):
     wrote it on the card, so the room usually has nothing to add."""
 
     conclusion: str = ""
+    reporter_handle: str | None = Field(default=None, max_length=64)
+    contributor_handles: list[str] | None = None
 
 
 class BindSubagentIn(BaseModel):

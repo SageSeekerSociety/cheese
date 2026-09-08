@@ -1662,6 +1662,9 @@ def build_screen_launch(
         # launcher falls back to 芝士 — the same default the in-repo snapshot
         # path uses, so both surfaces agree.
         env["CHEESE_GIT_AUTHOR_NAME"], env["CHEESE_GIT_AUTHOR_EMAIL"] = git_author
+        env["GIT_AUTHOR_NAME"], env["GIT_AUTHOR_EMAIL"] = git_author
+        env["GIT_COMMITTER_NAME"] = "芝士"
+        env["GIT_COMMITTER_EMAIL"] = "cheese@zhishi.local"
     if extra_env:
         env.update(extra_env)
     return command, env

@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain.room_task.models import TaskStatus
 
@@ -35,6 +35,8 @@ class TaskOut(BaseModel):
     # 谁来验收这条活 —— 派活那一刻定下的 (#718 设置表)。NULL 表示派出去时既没
     # 点名、项目也没有默认验收人，递卡时必须自己点一个。
     reviewer_handle: str | None = None
+    reporter_handle: str | None = None
+    contributor_handles: list[str] = Field(default_factory=list)
     created_by: str | None = None
     # 这条活在哪棵树上干 — many tasks share one, and that tree is the batch
     # that opens one PR. A task has no branch of its own any more.

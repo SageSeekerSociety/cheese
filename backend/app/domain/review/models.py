@@ -105,9 +105,7 @@ class AcceptCard(UuidPk, Timestamps, Base):
     # (Nothing in this repository's history carries a wrong trailer; the
     # trailers did not exist when those PRs merged. What is wrong is the
     # inference, measured against real data before it could write anything.)
-    # Nor can the commits be asked: every commit in the sandbox is
-    # authored by the requester and co-authored by the model, so the range says
-    # nothing about which 分身 typed it.
+    # Commit authors identify the room's agent, not its individual tasks.
     #
     # There is no automatic filling-in, and that is the point. Every rule a
     # machine could apply — the tree's members, "everything not claimed by an

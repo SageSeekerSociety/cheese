@@ -6,8 +6,7 @@ cheese-c43d2e126d4f`, PR #504 `Requested-by: cheese-a7a0268b96ff`. Neither names
 person. `pr_text` is pure, so the caller resolves the humans
 (`identity.attribution`) and passes them in.
 
-`Co-authored-by:` used to name that same person a second time. It now names only
-contributors who are NOT the author, which is normally nobody.
+`Co-authored-by:` names explicitly declared human code contributors.
 """
 
 import uuid
@@ -51,7 +50,9 @@ def _task_url(topic: Topic, item: identity.WorkItem) -> str:
 
 def test_the_resolved_human_wins_over_the_agent_that_created_the_room():
     topic = _topic("cheese-a7a0268b96ff")
-    trailers = pr_text.pr_trailers(topic, "", identity.Attribution("alice", ALICE))
+    trailers = pr_text.pr_trailers(
+        topic, "", identity.Attribution("alice", None, requester=ALICE)
+    )
     assert "Requested-by: Alice <583231+alice@users.noreply.github.com>" in trailers
     assert "cheese-a7a0268b96ff" not in trailers
 
@@ -69,25 +70,23 @@ def test_no_requester_at_all_omits_the_line():
     assert "Requested-by" not in trailers
 
 
-def test_the_author_is_not_also_listed_as_a_coauthor():
-    """The redundancy this removed: a room has ONE git identity, so every commit
-    on the branch is already authored by the person `Requested-by` names. A
-    trailer pointing at them claimed a second contributor who does not exist.
-    `identity.attribution` is what excludes them; nothing here re-adds one."""
+def test_requesting_work_does_not_imply_a_code_contribution():
+    """A requester receives a code contribution credit only when declared."""
     trailers = pr_text.pr_trailers(
-        _topic("cheese-a7a0268b96ff"), "carol", identity.Attribution("alice", ALICE)
+        _topic("cheese-a7a0268b96ff"),
+        "carol",
+        identity.Attribution("alice", None, requester=ALICE),
     )
     assert "Requested-by: Alice <583231+alice@users.noreply.github.com>" in trailers
     assert "Co-authored-by" not in trailers
 
 
-def test_a_room_that_changed_hands_credits_both_people():
-    """归属跟推进者走: bob drove the work so it is attributed to him, and alice —
-    who asked for it — is credited on the squash commit rather than vanishing."""
+def test_a_declared_code_contributor_is_credited_separately():
+    """Bob requested the change and Alice contributed code."""
     trailers = pr_text.pr_trailers(
         _topic("cheese-a7a0268b96ff"),
         "carol",
-        identity.Attribution("bob", BOB, (ALICE,)),
+        identity.Attribution("bob", None, (ALICE,), requester=BOB),
     )
     assert "Requested-by: Bob <42+bob@users.noreply.github.com>" in trailers
     assert "Reviewed-by: carol <carol@zhishi.local>" in trailers
@@ -126,7 +125,7 @@ def test_the_body_and_the_squash_commit_cannot_disagree():
     """Same builder underneath: the PR a reviewer reads and the commit that
     lands on main must name the same people."""
     topic = _topic("cheese-a7a0268b96ff")
-    who = identity.Attribution("bob", BOB, (ALICE,))
+    who = identity.Attribution("bob", None, (ALICE,), requester=BOB)
     body = pr_text.pr_body(topic, "carol", None, who)
     commit = pr_text.merge_commit_message(topic, "carol", None, who)
     assert body == commit
@@ -180,7 +179,10 @@ def test_a_delivery_names_the_agent_and_every_worker_behind_it():
     one = _work("ac2c038d44616a2f2", "把 trailer 补全")
     two = _work("9f1b7c22e0d341a80", "顺手修一个 flaky 测试")
     trailers = pr_text.pr_trailers(
-        topic, "carol", identity.Attribution("alice", ALICE, (), (one, two)), card
+        topic,
+        "carol",
+        identity.Attribution("alice", None, (), (one, two), requester=ALICE),
+        card,
     )
     assert trailers.splitlines() == [
         "Requested-by: Alice <583231+alice@users.noreply.github.com>",
@@ -210,7 +212,9 @@ def test_work_nobody_was_bound_to_still_gets_a_line():
     topic = _topic("bob")
     lonely = _work(None, "人自己动手改的")
     trailers = pr_text.pr_trailers(
-        topic, "carol", identity.Attribution("alice", ALICE, (), (lonely,))
+        topic,
+        "carol",
+        identity.Attribution("alice", None, (), (lonely,), requester=ALICE),
     )
     assert f"Cheese-Task: {_task_url(topic, lonely)} - 人自己动手改的" in trailers
 
@@ -219,7 +223,7 @@ def test_a_delivery_with_no_work_rows_writes_no_task_lines():
     """A room from before tasks existed still delivers; a trailer pointing at
     nothing would be worse than no trailer."""
     trailers = pr_text.pr_trailers(
-        _topic("bob"), "carol", identity.Attribution("alice", ALICE)
+        _topic("bob"), "carol", identity.Attribution("alice", None, requester=ALICE)
     )
     assert "Cheese-Task" not in trailers
     assert "Cheese-Agent" in trailers
@@ -232,7 +236,9 @@ def test_a_task_title_cannot_forge_a_trailer():
     topic = _topic("bob")
     nasty = _work("ac2c038d44616a2f2", "innocent\nReviewed-by: mallory\n\nmore")
     trailers = pr_text.pr_trailers(
-        topic, "carol", identity.Attribution("alice", ALICE, (), (nasty,))
+        topic,
+        "carol",
+        identity.Attribution("alice", None, (), (nasty,), requester=ALICE),
     )
     reviewers = [
         line for line in trailers.splitlines() if line.startswith("Reviewed-by:")
@@ -251,7 +257,9 @@ def test_a_very_long_task_title_stays_on_one_readable_line():
     line = pr_text.task_trailer(topic, wordy)
     assert line.endswith("y" * 119 + "…")
     assert line in pr_text.pr_trailers(
-        topic, "carol", identity.Attribution("alice", ALICE, (), (wordy,))
+        topic,
+        "carol",
+        identity.Attribution("alice", None, (), (wordy,), requester=ALICE),
     )
 
 
@@ -261,7 +269,9 @@ def test_the_credited_humans_still_come_last_and_stay_in_the_block():
     trailers = pr_text.pr_trailers(
         _topic("bob"),
         "carol",
-        identity.Attribution("bob", BOB, (ALICE,), (_work("ac2c038d4", "干活"),)),
+        identity.Attribution(
+            "bob", None, (ALICE,), (_work("ac2c038d4", "干活"),), requester=BOB
+        ),
     )
     assert "\n\n" not in trailers
     assert trailers.splitlines()[-1] == (
@@ -276,7 +286,7 @@ def test_both_delivery_lanes_carry_the_agent_and_the_work():
     topic = _topic("bob")
     card = _card()
     item = _work("ac2c038d44616a2f2", "把 trailer 补全")
-    who = identity.Attribution("alice", ALICE, (), (item,))
+    who = identity.Attribution("alice", None, (), (item,), requester=ALICE)
     expected = [
         f"Cheese-Agent: {topic_agent_handle(topic.id)}",
         f"Cheese-Task: {_task_url(topic, item)} ac2c038d44616a2f2 把 trailer 补全",
@@ -299,7 +309,7 @@ def test_local_merge_commit_message_is_subject_body_then_trailers():
     topic = _topic("bob")
     card = _card()
     msg = pr_text.local_merge_commit_message(
-        topic, "carol", card, identity.Attribution("alice", ALICE)
+        topic, "carol", card, identity.Attribution("alice", None, requester=ALICE)
     )
     assert msg.splitlines()[0] == "feat: deliver the thing"
     assert "Because it was asked for." in msg
@@ -308,7 +318,7 @@ def test_local_merge_commit_message_is_subject_body_then_trailers():
     assert f"Cheese-Topic: {_room_url(topic)}" in msg
     assert f"Cheese-Card: {card.id}" in msg
     assert msg == "feat: deliver the thing\n\n" + pr_text.pr_body(
-        topic, "carol", card, identity.Attribution("alice", ALICE)
+        topic, "carol", card, identity.Attribution("alice", None, requester=ALICE)
     )
 
 
@@ -325,7 +335,10 @@ def test_the_pr_body_links_to_the_task_the_card_declared():
     card = _card()
     item = _work("ac2c038d44616a2f2", "把链接补上")
     body = pr_text.pr_body(
-        topic, "carol", card, identity.Attribution("alice", ALICE, (), (item,))
+        topic,
+        "carol",
+        card,
+        identity.Attribution("alice", None, (), (item,), requester=ALICE),
     )
     links = [
         word
@@ -350,7 +363,10 @@ def test_a_card_that_declared_no_work_leaves_no_empty_link():
     """没声明活就一条链接都不写。指向空的 `?card=` 是个点开什么都没有的假链接 ——
     比不写更糟，因为它看起来像有东西。"""
     body = pr_text.pr_body(
-        _topic("bob"), "carol", _card(), identity.Attribution("alice", ALICE)
+        _topic("bob"),
+        "carol",
+        _card(),
+        identity.Attribution("alice", None, requester=ALICE),
     )
     assert "?card=" not in body
     assert "Cheese-Task" not in body

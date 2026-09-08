@@ -33,6 +33,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import (
     ARRAY,
+    JSON,
     Boolean,
     DateTime,
     Enum,
@@ -285,6 +286,11 @@ class Task(UuidPk, Timestamps, Base):
     # old policy. NULL when the project had no default and nobody named one —
     # then the card must name a reviewer itself.
     reviewer_handle: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Explicit credit declarations; ownership does not prove either contribution.
+    reporter_handle: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    contributor_handles: Mapped[list[str]] = mapped_column(
+        JSON, default=list, server_default="[]", nullable=False
+    )
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # 这条活在哪棵树上干. Many tasks share one tree — 一棵树 = 一个分支 =
     # 一个 PR = 一批活 — so this is what says which batch the work belongs to,

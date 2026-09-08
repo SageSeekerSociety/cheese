@@ -253,6 +253,28 @@ class TaskService:
         await self._session.flush()
         return task
 
+    async def set_credits(
+        self,
+        task: Task,
+        *,
+        reporter_handle: str | None,
+        contributor_handles: list[str],
+    ) -> None:
+        """Record declared human contributions after validating their accounts."""
+        from app.domain.identity.handles import names_a_person
+        from app.domain.user.services import user_by_handle
+
+        contributors = list(dict.fromkeys(contributor_handles))
+        for handle in contributors + ([reporter_handle] if reporter_handle else []):
+            if (
+                not names_a_person(handle)
+                or await user_by_handle(self._session, handle) is None
+            ):
+                raise ValidationError(f"贡献署名必须指向真实用户：{handle}")
+        task.reporter_handle = reporter_handle
+        task.contributor_handles = contributors
+        await self._session.flush()
+
     async def close_thread(self, task: Task, *, conclusion: str | None = None) -> Task:
         """收卡 —— the room says this piece of work is over.
 
@@ -286,6 +308,8 @@ class TaskService:
         owner_handle: str | None,
         created_by: str | None,
         reviewer_handle: str | None = None,
+        reporter_handle: str | None = None,
+        contributor_handles: list[str] | None = None,
     ) -> Task:
         """Open a new thread of work in a room, on the room's current tree.
 
@@ -311,6 +335,11 @@ class TaskService:
             owner_handle=owner_handle,
             reviewer_handle=reviewer_handle,
             created_by=created_by,
+        )
+        await self.set_credits(
+            task,
+            reporter_handle=reporter_handle,
+            contributor_handles=contributor_handles or [],
         )
         # A thread writes to its room's tree, with its siblings. Without this the
         # workspace layer would fall back to "the tree named by the place's own

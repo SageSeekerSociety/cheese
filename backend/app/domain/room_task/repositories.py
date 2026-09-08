@@ -170,6 +170,8 @@ class TaskRepository:
         owner_handle: str | None,
         created_by: str | None,
         reviewer_handle: str | None = None,
+        reporter_handle: str | None = None,
+        contributor_handles: list[str] | None = None,
     ) -> Task:
         """A new thread in *room_id*, working on *tree_id*.
 
@@ -185,6 +187,8 @@ class TaskRepository:
             title=title,
             owner_handle=owner_handle,
             reviewer_handle=reviewer_handle,
+            reporter_handle=reporter_handle,
+            contributor_handles=contributor_handles or [],
             created_by=created_by,
         )
         self._session.add(task)

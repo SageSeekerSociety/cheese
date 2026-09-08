@@ -42,7 +42,8 @@ def a_full_delivery():
     card = type("Card", (), {"id": uuid.uuid4(), "change_body": "为什么这么改。"})()
     who = identity.Attribution(
         handle="alice",
-        author=identity.GitIdentity("Alice", "1+alice@users.noreply.github.com"),
+        author=identity.agent_identity(identity.topic_agent_handle(room.id)),
+        requester=identity.GitIdentity("Alice", "1+alice@users.noreply.github.com"),
         coauthors=(identity.GitIdentity("Bob", "2+bob@users.noreply.github.com"),),
         tasks=(
             identity.WorkItem(
@@ -98,6 +99,7 @@ def test_the_emails_and_the_urls_are_still_one_parseable_block(a_full_delivery):
         who.coauthors,
         who.tasks,
         identity.GitIdentity("Wang", "7+wang@users.noreply.github.com"),
+        requester=who.requester,
     )
 
     message = pr_text.local_merge_commit_message(room, "wangchangxin", card, who)

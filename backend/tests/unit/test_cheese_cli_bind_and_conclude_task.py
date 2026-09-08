@@ -93,3 +93,25 @@ def test_conclude_task_can_overwrite_what_the_worker_left(monkeypatch):
     )
 
     assert calls[0][2] == {"conclusion": "分页改成 cursor，旧接口没动"}
+
+
+def test_conclude_task_declares_actual_contributors(monkeypatch):
+    calls = _run(
+        monkeypatch,
+        [
+            "conclude-task",
+            _TASK,
+            "--reported-by",
+            "alice",
+            "--contributor",
+            "bob",
+            "--contributor",
+            "carol",
+        ],
+        {"id": _TASK, "title": "Fix pagination"},
+    )
+    assert calls[0][2] == {
+        "conclusion": "",
+        "reporter_handle": "alice",
+        "contributor_handles": ["bob", "carol"],
+    }

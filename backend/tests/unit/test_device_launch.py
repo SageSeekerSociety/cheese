@@ -90,9 +90,36 @@ def test_build_screen_launch_shapes_command_and_env():
     assert env["CHEESE_HOME"] == "/dev/home" and env["CHEESE_WORK"] == "/dev/work"
     assert env["CLAUDE_MODEL"] == "glm-5.2"
     assert env["ANTHROPIC_BASE_URL"] == "http://gw"
-    # The gates are written by the launch script itself; nothing is passed for a
-    # separate interpreter to read back.
     assert "CHEESE_CLAUDE_GATES" not in env
+
+
+def test_agent_authors_real_commit_and_platform_commits_it(tmp_path):
+    import os
+    import subprocess
+
+    _, env = device_launch.build_screen_launch(
+        hook_url="http://h/hooks",
+        hook_token="test",
+        home_dir=str(tmp_path),
+        work_dir=str(tmp_path),
+        model="test",
+        git_author=("ops", "ops@agent.cheese.local"),
+    )
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "Fix"],
+        cwd=tmp_path,
+        env={**os.environ, **env},
+        check=True,
+        capture_output=True,
+    )
+    actual = subprocess.check_output(
+        ["git", "log", "-1", "--format=%an <%ae>%n%cn <%ce>"], cwd=tmp_path, text=True
+    )
+    assert actual.splitlines() == [
+        "ops <ops@agent.cheese.local>",
+        "芝士 <cheese@zhishi.local>",
+    ]
 
 
 def test_the_room_bounds_how_deep_and_how_wide_its_work_can_go():

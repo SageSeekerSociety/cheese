@@ -702,6 +702,20 @@ async def conclude_task(
         if text
         else None
     )
+    if {"reporter_handle", "contributor_handles"} & body.model_fields_set:
+        await tasks.set_credits(
+            task,
+            reporter_handle=(
+                body.reporter_handle
+                if "reporter_handle" in body.model_fields_set
+                else task.reporter_handle
+            ),
+            contributor_handles=(
+                body.contributor_handles
+                if body.contributor_handles is not None
+                else task.contributor_handles
+            ),
+        )
     task = await tasks.close_thread(task, conclusion=conclusion)
     out = TaskOut.model_validate(task).model_dump(mode="json")
     await db.commit()
@@ -1673,6 +1687,8 @@ async def split_topic(
         # in the service because it needs the project row; the route only says
         # whether anybody named somebody.
         reviewer_handle=body.reviewer_handle,
+        reporter_handle=body.reporter_handle,
+        contributor_handles=body.contributor_handles,
         # 归属跟推进者走: who is DRIVING this room right now. 芝士 splits under her
         # own handle, so `created_by` names the robot and the person who asked for
         # the split is nowhere in the request — the runner is the only place that

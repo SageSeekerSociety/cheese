@@ -645,8 +645,7 @@ class AcceptService:
         The platform cannot derive it: a task's `tree_id` records which batch
         was open when `cheese split` ran, not where its code eventually landed,
         so the tree's membership names whoever happened to be sitting on it —
-        and the commits cannot be asked either, since inside the sandbox they
-        are all authored by the requester and co-authored by the model.
+        and commit authors identify the room's agent, not its individual tasks.
 
         Exactly ONE thing is checkable, and it is checked rather than trusted,
         because a wrong `Cheese-Task:` is permanent and reads exactly like a
@@ -1284,7 +1283,7 @@ class AcceptService:
         #
         # The platform forge squashes (#363), same shape as the GitHub lane's
         # product: one commit, the card's subject and body, the pr_text
-        # trailers, authored by the requester (committer stays 芝士). The
+        # trailers, authored by the acting agent (committer stays 芝士). The
         # message and author are resolved HERE because merge_topic has no DB
         # session to read the card or the roster with.
         from app.domain.workspace import service as ws

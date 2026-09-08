@@ -1467,7 +1467,7 @@ def _merge_ref_into_base(
     silently merging on top of a stale base.
 
     `squash=True` lands the whole ref as ONE commit on `base` (#363): the
-    author knob names the human the work belongs to (falling back to 芝士),
+    author knob names the acting agent (falling back to 芝士),
     the committer stays 芝士, same two-knob split as every commit the
     platform makes (`workspace.identity`). A ref that adds nothing —
     already merged, or content-identical — lands no commit at all and still
@@ -1600,8 +1600,7 @@ def merge_topic(
 
     The caller writes the commit: `message` is the whole squash message
     (subject + body + trailers — `pr_text.local_merge_commit_message`), and
-    `author` names the human the work belongs to, exactly as the GitHub lane's
-    squash product is authored by the requester. Both live with the accept card,
+    `author` names the acting agent. The author and message belong to the accept card,
     which this module cannot reach (no DB session here) — that is why they are
     parameters and not lookups. Committer stays 芝士 regardless.
 

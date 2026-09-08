@@ -113,7 +113,6 @@ from app.domain.topic.repositories import TopicProgressRepository, TopicReposito
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.credits import usage_to_credits
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
-from app.domain.workspace import identity as ws_identity
 from app.domain.workspace import service as ws
 
 ACTIVITY_SKILLS = ["conversation-style", "activity-digestion", "doc-form"]
@@ -3646,7 +3645,11 @@ class ChatService:
             else config.model
         )
         config_hash = hashlib.sha256(
-            json.dumps(agent.configuration, sort_keys=True).encode()
+            # Author environment is fixed at process birth, like model configuration.
+            json.dumps(
+                {"agent": agent.configuration, "git_author": acting_agent},
+                sort_keys=True,
+            ).encode()
         ).hexdigest()
         kwargs: dict = {"model": model, "env": {"CHEESE_AGENT_CONFIG": config_hash}}
         if acting_agent is not None:
@@ -4008,12 +4011,6 @@ class ChatService:
                     exclude_id=topic.id,
                 )
             project_id = topic.project_id
-            # Who this topic's commits are authored by. Refreshed every turn
-            # rather than once at creation: people connect GitHub after their
-            # first topic, and topics that predate this have no record at all.
-            # Best-effort by construction — see workspace/identity.py.
-            if not is_private:
-                await ws_identity.sync_for_topic(session, topic)
             # This agent's conversation here, not just any: a room may host
             # several agents and each resumes its own (agent_session/models.py).
             # Looked up under the same key the turn that stores it writes under

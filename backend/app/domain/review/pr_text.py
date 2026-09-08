@@ -98,45 +98,10 @@ def pr_trailers(
     who: identity.Attribution | None = None,
     card: AcceptCard | None = None,
 ) -> str:
-    """Who this change belongs to, in the machine-readable form git and GitHub
-    both already understand. Requested-by = 话题归属的真人
-    (`identity.requester_handle`), Reviewed-by = 批准人 (AcceptCard.decided_by),
-    Cheese-Topic = the room it came out of, Cheese-Card = the accept card that
-    delivered it (#189) — the room says where it was made, the card says which
-    delivery of that room's work this commit is.
+    """Render contribution roles and delivery links as one Git trailer block.
 
-    `Cheese-Agent` and `Cheese-Task` answer the other half of #189: WHICH 芝士
-    wrote this. Nothing else in the commit can say — the git author is the human
-    the work belongs to, and `Co-authored-by: Claude Fable 5` is on every commit
-    Claude Code writes for anyone, anywhere, so between them a reader learns who
-    asked and what model typed, and nothing about which instance of this platform
-    did it or which piece of work it was. `Cheese-Agent` is the room's 分身
-    handle, the same name it posts under and holds a token as; `Cheese-Task` is
-    one line per piece of work the card DECLARED it delivers, naming the worker
-    that did it — a card that declared none writes none, because a name that is
-    merely plausible is worse in permanent history than no name at all.
-
-    The agent handle is derived here rather than passed in because it is a pure
-    function of the room (`topic_agent_handle`) — routing it through the caller's
-    DB resolution would only create a way for the line to go missing. The task
-    lines cannot be: they are rows, so they arrive on `who`.
-
-    `who` is resolved by the caller (`identity.attribution`) because it needs a DB
-    session and this module is pure — as ONE object, so the requester and the
-    co-authors cannot come from two different resolutions and name the same person
-    twice. None (a caller with no session to resolve with) falls back to
-    `Topic.created_by`, which is what this used to read unconditionally — and which
-    on a 分身-split room is the 分身's own `cheese-<hex12>` handle, not a person
-    (PR #500, #504).
-
-    `Co-authored-by` names the contributors who are NOT this commit's author —
-    normally nobody, and then no such line is written. It used to name the author
-    itself on every change, which was pure noise: a room has one git identity, so
-    the trailer pointed at the person the commit was already authored by. It earns
-    its place when a room changed hands, where the work is attributed to whoever
-    drove it and the original requester would otherwise vanish from the history —
-    squash-merging collapses the branch into ONE commit, so a trailer is the only
-    place a second contributor survives with an avatar, a link and credit."""
+    Reporters and code contributors come only from explicitly declared tasks;
+    ownership does not imply either role. Agent and task links identify the work."""
     lines = []
     requester = (who.handle if who else None) or topic.created_by
     # `Name <email>`, not a bare handle (#189). A handle names a string; an
@@ -146,8 +111,10 @@ def pr_trailers(
     # fabricated GitHub address (`identity.platform_identity`): a degrade that
     # admits itself beats one that looks linkable and points at nobody.
     if requester:
-        asker = identity.as_trailer(requester, who.author if who else None)
+        asker = identity.as_trailer(requester, who.requester if who else None)
         lines.append(f"Requested-by: {asker}")
+    for reporter in who.reporters if who else ():
+        lines.append(f"Reported-by: {reporter}")
     if decided_by:
         # Empty when the PR is being OPENED (pr_publish): nobody has accepted
         # yet, and `Reviewed-by:` with a blank or a merely-routed name would

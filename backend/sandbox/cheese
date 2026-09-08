@@ -406,6 +406,11 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ps.add_argument("title", help="这条活的标题,≤12 字最好")
+    ps.add_argument("--reported-by", default=None, help="实际报告问题的用户 handle")
+    ps.add_argument(
+        "--contributor", action="append", default=[],
+        help="实际共同改代码的用户 handle，可重复指定",
+    )
     ps.add_argument(
         "--paths",
         nargs="+",
@@ -473,6 +478,11 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     pct.add_argument("task_id", help="这条活的 id")
+    pct.add_argument("--reported-by", default=None, help="实际报告问题的用户 handle")
+    pct.add_argument(
+        "--contributor", action="append", default=None,
+        help="实际共同改代码的用户 handle，可重复指定",
+    )
     pct.add_argument(
         "--conclusion", default="", help="覆盖分身交回的那句话(默认保留它的)"
     )
@@ -977,6 +987,10 @@ def main() -> None:
     elif a.cmd == "split":
         topic = _need("CHEESE_TOPIC", TOPIC)
         body = {"title": a.title, "created_by": AUTHOR}
+        if a.reported_by:
+            body["reporter_handle"] = a.reported_by
+        if a.contributor:
+            body["contributor_handles"] = a.contributor
         if a.brief:
             body["brief"] = a.brief
         if a.paths:
@@ -1005,10 +1019,15 @@ def main() -> None:
         print(f"「{r['title']}」现在归分身 {r['subagent_id']}，它干的事会记到这条活上。")
     elif a.cmd == "conclude-task":
         topic = _need("CHEESE_TOPIC", TOPIC)
+        body = {"conclusion": a.conclusion}
+        if a.reported_by is not None:
+            body["reporter_handle"] = a.reported_by
+        if a.contributor is not None:
+            body["contributor_handles"] = a.contributor
         r = _call(
             "POST",
             f"/topics/{topic}/tasks/{a.task_id}/conclude",
-            {"conclusion": a.conclusion},
+            body,
         )["data"]
         print(f"「{r['title']}」收了。结论：{(r.get('conclusion') or '（没有留话）')}")
     elif a.cmd == "claim":
