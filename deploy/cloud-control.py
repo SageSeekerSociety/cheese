@@ -13,21 +13,19 @@ from pathlib import Path
 INVENTORY = '''
 import asyncio, json, os
 import asyncpg
-from app.core.config import settings
 async def main():
-    if not settings.microcloud_direct_control:
-        print("[]")
-        return
     connection = await asyncpg.connect(os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://"))
     try:
         rows = await connection.fetch("""
             select machine_id, device_id, ip, login_user from project_machines
             where released_at is null and status not in ('deleted', 'deleting', 'error')
               and device_id is not null and ip is not null
+              and device_id in (select device_id from device where cloud_control_private)
             union
             select machine_id, device_id, ip, create_request->>'user' as login_user
             from warm_machines where state in ('preparing', 'ready')
               and machine_id is not null and device_id is not null and ip is not null
+              and device_id in (select device_id from device where cloud_control_private)
         """)
         print(json.dumps([dict(row) for row in rows]))
     finally:
