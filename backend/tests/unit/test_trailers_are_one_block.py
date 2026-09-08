@@ -85,10 +85,10 @@ def test_a_blank_line_before_the_co_author_would_swallow_the_rest(a_full_deliver
 
 
 def test_the_emails_and_the_urls_are_still_one_parseable_block(a_full_delivery):
-    """#189 加了两样东西：`Requested-by`/`Reviewed-by` 带身份邮箱，
-    `Cheese-Topic`/`Cheese-Card` 是可点开的地址。
+    """三处 trailer 的**取值**变过：`Requested-by`/`Reviewed-by` 带身份邮箱、
+    `Cheese-Topic` 是房间地址、`Cheese-Task` 是那条活的地址。
 
-    两样都是**值**变了，块不许因此断开 —— 一个 `Name <email>` 或一个带查询串的
+    每一处都只是值变了，块不许因此断开 —— 一个 `Name <email>` 或一个带查询串的
     URL 都在 git 的 trailer 语法之内，而「为了好看加一行」正是刚修掉的那个 bug。
     """
     room, card, who = a_full_delivery
@@ -120,6 +120,14 @@ def test_the_emails_and_the_urls_are_still_one_parseable_block(a_full_delivery):
     assert str(room.id) in by_token["Cheese-Topic"]
     # 卡没有能打开它的路由，所以它老老实实是个 id，不是一条打不开的链接。
     assert by_token["Cheese-Card"] == str(card.id)
+    # 活有路由：地址、分身、标题仍是三段，两次 split 照样拆得开，而活的 id 还能从
+    # 地址里取出来 —— 审计脚本要的就是这个。
+    where, subagent, title = by_token["Cheese-Task"].split(" ", 2)
+    assert (subagent, title) == ("abc123", "写了这一批")
+    from urllib.parse import parse_qs, urlparse
+
+    assert parse_qs(urlparse(where).query)["card"] == [str(who.tasks[0].task_id)]
+    assert urlparse(where).path.endswith(f"/topics/{room.id}")
 
 
 def test_somebody_without_github_gets_the_platforms_own_address(a_full_delivery):

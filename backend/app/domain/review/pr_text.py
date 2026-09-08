@@ -25,8 +25,19 @@ NO_SUBAGENT = "-"
 MAX_TASK_TITLE = 120
 
 
-def task_trailer(item: identity.WorkItem) -> str:
-    """One `Cheese-Task:` line — which piece of work, and which 分身 did it.
+def task_trailer(topic: Topic, item: identity.WorkItem) -> str:
+    """One `Cheese-Task:` line — which piece of work, which 分身 did it, and a
+    URL that opens that work.
+
+    The URL is the room's page with `?card=<task_id>`, which is a route that
+    resolves: `TopicView.vue` reads that query and drills the overview panel down
+    to the TASK it names. That is the whole difference from `Cheese-Card`, which
+    stays a bare id — an accept card has no route, so a URL built from one would
+    look clickable and open nothing.
+
+    The id is still greppable out of permanent history: `?card=` is a fixed
+    prefix in front of it, so `grep -o 'card=[0-9a-f-]*'` gets what
+    `Cheese-Task: <uuid>` used to hand over directly.
 
     Squashed onto one line, always. A trailer block ends at the first line that
     is not a trailer, so a newline inside a task's title would not merely look
@@ -37,10 +48,12 @@ def task_trailer(item: identity.WorkItem) -> str:
     title = " ".join(item.title.split())
     if len(title) > MAX_TASK_TITLE:
         title = f"{title[: MAX_TASK_TITLE - 1]}…"
-    # No spaces in the id either: it is the second of three whitespace-separated
-    # fields, so one would silently push the title into the 分身's place.
+    # Still three whitespace-separated fields, so two splits still take the line
+    # apart: a URL has no spaces in it, and the 分身 id keeps having its own
+    # stripped out — one there would silently push the title into its place.
     subagent = "".join((item.subagent_id or "").split()) or NO_SUBAGENT
-    return f"Cheese-Task: {item.task_id} {subagent} {title}".rstrip()
+    where = f"{_room_url(topic)}?card={item.task_id}"
+    return f"Cheese-Task: {where} {subagent} {title}".rstrip()
 
 
 def fallback_subject(topic: Topic) -> str:
@@ -153,7 +166,7 @@ def pr_trailers(
         # not a string change here.
         lines.append(f"Cheese-Card: {card.id}")
     lines.append(f"Cheese-Agent: {topic_agent_handle(topic.id)}")
-    lines.extend(task_trailer(item) for item in (who.tasks if who else ()))
+    lines.extend(task_trailer(topic, item) for item in (who.tasks if who else ()))
     coauthors = who.coauthors if who else ()
     credited = [line for line in map(identity.coauthored_by, coauthors) if line]
     # ONE block, no blank line before the co-authors. There used to be one, with

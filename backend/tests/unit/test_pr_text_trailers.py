@@ -43,6 +43,12 @@ def _work(subagent_id: str | None, title: str) -> identity.WorkItem:
     return identity.WorkItem(uuid.uuid4(), subagent_id, title)
 
 
+def _task_url(topic: Topic, item: identity.WorkItem) -> str:
+    """哪条活 —— 一个真能打开的地址。`?card=<task_id>` 是房间页面上的一层下钻，
+    收的就是 task id（`TopicView.vue` 的 `onOpenCard`）。"""
+    return f"{_room_url(topic)}?card={item.task_id}"
+
+
 def test_the_resolved_human_wins_over_the_agent_that_created_the_room():
     topic = _topic("cheese-a7a0268b96ff")
     trailers = pr_text.pr_trailers(topic, "", identity.Attribution("alice", ALICE))
@@ -182,8 +188,8 @@ def test_a_delivery_names_the_agent_and_every_worker_behind_it():
         f"Cheese-Topic: {_room_url(topic)}",
         f"Cheese-Card: {card.id}",
         f"Cheese-Agent: {topic_agent_handle(topic.id)}",
-        f"Cheese-Task: {one.task_id} ac2c038d44616a2f2 把 trailer 补全",
-        f"Cheese-Task: {two.task_id} 9f1b7c22e0d341a80 顺手修一个 flaky 测试",
+        f"Cheese-Task: {_task_url(topic, one)} ac2c038d44616a2f2 把 trailer 补全",
+        f"Cheese-Task: {_task_url(topic, two)} 9f1b7c22e0d341a80 顺手修一个 flaky 测试",
     ]
 
 
@@ -206,7 +212,7 @@ def test_work_nobody_was_bound_to_still_gets_a_line():
     trailers = pr_text.pr_trailers(
         topic, "carol", identity.Attribution("alice", ALICE, (), (lonely,))
     )
-    assert f"Cheese-Task: {lonely.task_id} - 人自己动手改的" in trailers
+    assert f"Cheese-Task: {_task_url(topic, lonely)} - 人自己动手改的" in trailers
 
 
 def test_a_delivery_with_no_work_rows_writes_no_task_lines():
@@ -233,7 +239,7 @@ def test_a_task_title_cannot_forge_a_trailer():
     ]
     assert reviewers == ["Reviewed-by: carol <carol@zhishi.local>"]
     assert (
-        f"Cheese-Task: {nasty.task_id} ac2c038d44616a2f2 "
+        f"Cheese-Task: {_task_url(topic, nasty)} ac2c038d44616a2f2 "
         "innocent Reviewed-by: mallory more"
     ) in trailers
     assert len(trailers.splitlines()) == 5  # one line per trailer, no strays
@@ -242,7 +248,7 @@ def test_a_task_title_cannot_forge_a_trailer():
 def test_a_very_long_task_title_stays_on_one_readable_line():
     topic = _topic("bob")
     wordy = _work("ac2c038d44616a2f2", "y" * 400)
-    line = pr_text.task_trailer(wordy)
+    line = pr_text.task_trailer(topic, wordy)
     assert line.endswith("y" * 119 + "…")
     assert line in pr_text.pr_trailers(
         topic, "carol", identity.Attribution("alice", ALICE, (), (wordy,))
@@ -273,7 +279,7 @@ def test_both_delivery_lanes_carry_the_agent_and_the_work():
     who = identity.Attribution("alice", ALICE, (), (item,))
     expected = [
         f"Cheese-Agent: {topic_agent_handle(topic.id)}",
-        f"Cheese-Task: {item.task_id} ac2c038d44616a2f2 把 trailer 补全",
+        f"Cheese-Task: {_task_url(topic, item)} ac2c038d44616a2f2 把 trailer 补全",
     ]
     github = pr_text.merge_commit_message(topic, "carol", card, who)
     local = pr_text.local_merge_commit_message(topic, "carol", card, who)
@@ -304,3 +310,42 @@ def test_local_merge_commit_message_is_subject_body_then_trailers():
     assert msg == "feat: deliver the thing\n\n" + pr_text.pr_body(
         topic, "carol", card, identity.Attribution("alice", ALICE)
     )
+
+
+def test_the_pr_body_links_to_the_task_the_card_declared():
+    """声明了活的卡，正文里要有一条**打得开**的链接指向那条活。
+
+    这里不比字符串，而是把链接拆开看它指到哪：路径是这个房间的页面，`card` 查询是
+    那条活的 id —— 这正是 `?card=` 那层下钻收的东西。一个 uuid 在 PR 正文里是死胡
+    同，除非读的人已经知道这个平台的路由。
+    """
+    from urllib.parse import parse_qs, urlparse
+
+    topic = _topic("bob")
+    card = _card()
+    item = _work("ac2c038d44616a2f2", "把链接补上")
+    body = pr_text.pr_body(
+        topic, "carol", card, identity.Attribution("alice", ALICE, (), (item,))
+    )
+    links = [
+        word
+        for line in body.splitlines()
+        if line.startswith("Cheese-Task:")
+        for word in line.split()
+        if word.startswith("http")
+    ]
+    assert len(links) == 1, body
+    where = urlparse(links[0])
+    assert where.scheme in ("http", "https")
+    assert where.path == f"/projects/{topic.project_id}/topics/{topic.id}"
+    assert parse_qs(where.query)["card"] == [str(item.task_id)]
+
+
+def test_a_card_that_declared_no_work_leaves_no_empty_link():
+    """没声明活就一条链接都不写。指向空的 `?card=` 是个点开什么都没有的假链接 ——
+    比不写更糟，因为它看起来像有东西。"""
+    body = pr_text.pr_body(
+        _topic("bob"), "carol", _card(), identity.Attribution("alice", ALICE)
+    )
+    assert "?card=" not in body
+    assert "Cheese-Task" not in body

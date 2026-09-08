@@ -25,6 +25,18 @@ from tests.integration.conftest import session_auth_headers
 from tests.machine_work import machine_commits
 
 
+def _task_line(pid: str, room: str, task: str, subagent: str, title: str) -> str:
+    """`Cheese-Task:` 一条活写一行：**打得开的地址**、分身、标题。
+
+    地址是房间页面加 `?card=<task_id>` —— 房间页读这个查询串，把总览那一格下钻到
+    它点名的那条活。活的 id 仍在地址里，`card=` 后面那一段就是。
+    """
+    from app.core.config import settings
+
+    where = f"{settings.frontend_url.rstrip('/')}/projects/{pid}/topics/{room}"
+    return f"Cheese-Task: {where}?card={task} {subagent} {title}"
+
+
 def _project(client) -> str:
     return client.post("/projects", json={"name": "P"}).json()["data"]["id"]
 
@@ -135,8 +147,10 @@ def test_the_landed_commit_names_the_agent_and_every_worker_declared(client):
 
     body = _landed_body(pid)
     assert f"Cheese-Agent: cheese-{uuid.UUID(room).hex[:12]}" in body
-    assert f"Cheese-Task: {mine} ac2c038d44616a2f2 补 trailer" in body
-    assert f"Cheese-Task: {theirs} 9f1b7c22e0d341a80 顺手修 flaky 测试" in body
+    assert _task_line(pid, room, mine, "ac2c038d44616a2f2", "补 trailer") in body
+    assert (
+        _task_line(pid, room, theirs, "9f1b7c22e0d341a80", "顺手修 flaky 测试") in body
+    )
     # The trailers that were already there did not move over to make room.
     assert f"/topics/{room}" in body
     assert f"Cheese-Card: {card['id']}" in body
@@ -202,7 +216,9 @@ def test_work_delivered_in_a_later_batch_is_named_on_that_batch(client):
     _next_batch(client, pid, room)
     second = _batch(client, pid, room, "feat: the second batch", [later])
 
-    assert f"Cheese-Task: {later} bbbb1111bbbb1111b 代码走下一批的活" in second
+    assert (
+        _task_line(pid, room, later, "bbbb1111bbbb1111b", "代码走下一批的活") in second
+    )
 
 
 def test_the_earlier_batch_is_not_signed_by_work_that_had_not_landed_yet(client):
@@ -213,7 +229,9 @@ def test_the_earlier_batch_is_not_signed_by_work_that_had_not_landed_yet(client)
 
     first = _batch(client, pid, room, "feat: the first batch", [earlier])
 
-    assert f"Cheese-Task: {earlier} aaaa0000aaaa0000a 上一批写完的活" in first
+    assert (
+        _task_line(pid, room, earlier, "aaaa0000aaaa0000a", "上一批写完的活") in first
+    )
     assert later not in first
 
 
@@ -230,7 +248,7 @@ def test_a_placeholder_task_that_wrote_no_code_is_never_signed_on(client):
 
     body = _batch(client, pid, room, "feat: deliver only what was written", [real])
 
-    assert f"Cheese-Task: {real} cccc2222cccc2222c 真的写了代码" in body
+    assert _task_line(pid, room, real, "cccc2222cccc2222c", "真的写了代码") in body
     assert placeholder not in body
 
 
@@ -247,11 +265,11 @@ def test_work_still_running_is_not_signed_onto_the_batch_going_out_now(client):
     _bind(client, room, running, "eeee4444eeee4444e")
 
     now = _batch(client, pid, room, "feat: land only the finished half", [done])
-    assert f"Cheese-Task: {done} dddd3333dddd3333d 这批做完的活" in now
+    assert _task_line(pid, room, done, "dddd3333dddd3333d", "这批做完的活") in now
     assert running not in now
 
     later = _batch(client, pid, room, "feat: land the other half", [running])
-    assert f"Cheese-Task: {running} eeee4444eeee4444e 还在跑的活" in later
+    assert _task_line(pid, room, running, "eeee4444eeee4444e", "还在跑的活") in later
 
 
 def test_an_undeclared_delivery_lands_with_no_task_trailer_at_all(client):
@@ -280,7 +298,7 @@ def test_work_no_worker_ever_took_still_appears_when_it_is_declared(client):
 
     body = _batch(client, pid, room, "feat: deliver work nobody claimed", [unclaimed])
 
-    assert f"Cheese-Task: {unclaimed} - 没人认领的活" in body
+    assert _task_line(pid, room, unclaimed, "-", "没人认领的活") in body
 
 
 def test_a_delivery_with_no_work_at_all_still_lands(client):
@@ -353,7 +371,7 @@ def test_work_that_keeps_going_is_named_on_every_batch_it_wrote(client):
     _next_batch(client, pid, room)
     second = _batch(client, pid, room, "feat: the second half", [kept_going])
 
-    line = f"Cheese-Task: {kept_going} aaaa0000aaaa0000a 两批都写了的活"
+    line = _task_line(pid, room, kept_going, "aaaa0000aaaa0000a", "两批都写了的活")
     assert line in first
     assert line in second
 
@@ -385,9 +403,9 @@ def test_the_only_way_to_add_a_claim_to_a_filed_card_is_void_and_refile(client):
 
     card = _deliver(client, room, "feat: name them after all", [mine])
     _accept(client, card["id"])
-    assert f"Cheese-Task: {mine} cccc2222cccc2222c 递卡时忘了报的活" in _landed_body(
-        pid
-    )
+    assert _task_line(
+        pid, room, mine, "cccc2222cccc2222c", "递卡时忘了报的活"
+    ) in _landed_body(pid)
 
 
 def test_naming_the_same_work_twice_on_one_card_writes_one_trailer(client):
@@ -400,7 +418,7 @@ def test_naming_the_same_work_twice_on_one_card_writes_one_trailer(client):
 
     body = _batch(client, pid, room, "feat: name it twice", [once, once])
 
-    line = f"Cheese-Task: {once} bbbb1111bbbb1111b 被报了两遍的活"
+    line = _task_line(pid, room, once, "bbbb1111bbbb1111b", "被报了两遍的活")
     assert body.count(line) == 1
 
 
