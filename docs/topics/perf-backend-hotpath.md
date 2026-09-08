@@ -807,6 +807,48 @@ blocks 表的 +14%。索引条数持平（8 → 8）。
   234 → 157 ms），但加了复合索引之后这条路不再需要。它是否还有别的读者
   没有查，**没动**。
 
+## 测试套跑了什么，以及我第一次跑错了
+
+`backend`：ruff 干净、`ruff format` 干净、pyright **0 errors**、
+`.claude/scripts/check-repo-rules.sh` PASS、**unit 3715 passed / 1 skipped**。
+
+integration + contract 跑了三遍，值得把过程写下来，因为**第一遍是我自己跑错的**：
+
+| 跑法 | 结果 |
+|---|---|
+| ① 改动后，但机器上同时跑着我的压测 | **10 failed**, 1889 passed |
+| ② 改动**前**（e6a373e，独立 worktree + 独立 PG） | **1 failed**, 1890 passed |
+| ③ 改动后，机器安静、独立 PG + 独立 Redis | **1 failed**, 1899 passed |
+
+②和③的失败集合**逐字相同**，只有一条：
+`test_market_api.py::test_market_lists_ai_and_compute_pools`。
+它和代码无关，是**环境限制**——这个沙箱没有配 AI 凭据：
+
+```
+settings.anthropic_auth_token → False
+registry.selectable(None)     → []      # 于是 ai_default["available"] 为 False
+```
+
+改动前后一模一样地失败，所以它不是这轮引入的。
+
+**①那 10 条里多出来的 9 条是我的跑法错了，不是代码错了。** 两条独立证据：
+
+1. **顺序**：失败的 `test_delivery_trace` / `test_device_supply_storage` /
+   `test_discussion` 在目录里排第 54/55/57，我新加的 `test_hot_path_queries`
+   排第 77——**它们比我的新测试先跑**，不可能被它污染。
+2. **共享 Redis**：跑①的时候我的压测后端正连着
+   `redis://127.0.0.1:56379/0`，和测试套**同一个实例、同一个库号**。
+   `tests/conftest.py` 专门写过为什么 Redis 必须按 worker 隔离
+   （key 按 user id 分区，而 user id 每个库都从 1 重新开始）——
+   一个活着的后端往同一个 Redis 库里写，正是那段注释在防的污染。
+   同一个 Postgres 上还并行跑着我的写入压测、级联删除压测和 VACUUM。
+
+③把这两个因素都去掉之后，那 9 条全绿。
+
+**教训值得留下**：性能测量和测试套抢同一个 Redis / Postgres，
+会把测量误差变成「测试红了」，而红的还都是些看不出关联的文件——
+最容易让人误以为是自己的改动坏了什么。
+
 ## 本轮改了什么
 
 | 文件 | 改动 |
