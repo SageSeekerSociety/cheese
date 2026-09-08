@@ -18,7 +18,6 @@ import uuid
 from tests.integration.conftest import session_auth_headers
 from tests.machine_work import machine_commits
 
-
 _written = itertools.count()
 
 

@@ -15,6 +15,7 @@ import subprocess
 import time
 import uuid as _uuid
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -507,9 +508,7 @@ def app_world(client, monkeypatch):
             return pr
 
         async def update_pr(self, number: int, *, title: str, body: str) -> dict:
-            recorded["patched"].append(
-                {"number": number, "title": title, "body": body}
-            )
+            recorded["patched"].append({"number": number, "title": title, "body": body})
             for pr in recorded["prs_by_head"].values():
                 if pr["number"] == number:
                     pr.update(title=title, body=body)
@@ -2179,8 +2178,8 @@ def test_a_batch_that_merged_after_the_list_was_taken_gets_no_pr(
     的分支开 PR，开出来的是一个谁也合不掉的 PR。这里把那个窗口做成确定性的 ——
     名单已经取到，然后这一批在别的会话里合并并提交，之后巡检才轮到它。
     """
-    from app.domain.room_task.services import WorkTreeService
     from app.domain.review import pr_publish
+    from app.domain.room_task.services import WorkTreeService
 
     pid, tid = _room_with_work(client)
     original = WorkTreeService.open_without_pr
@@ -2239,9 +2238,7 @@ def test_one_batch_failing_does_not_cost_the_next_one_its_pr(
     assert _disk_branch(second_tid) in [o["head"] for o in sweeping["opened"]]
 
 
-def test_filing_a_card_takes_the_batchs_pr_out_of_draft(
-    client, sweeping, monkeypatch
-):
+def test_filing_a_card_takes_the_batchs_pr_out_of_draft(client, sweeping, monkeypatch):
     """递卡的语义就是「请人来看」，所以卡一递出去，PR 就不再是 draft。
 
     这条要的正是 `app_world` 默认关掉的那件事（递卡时 fire-and-forget 开 PR），
@@ -2287,9 +2284,7 @@ def test_ready_flips_the_draft_and_changes_nothing_else(client, sweeping):
     assert _cards(client, tid) == []  # 也没有顺手递一张卡
 
 
-def test_ready_on_a_pr_that_is_not_a_draft_says_so_instead_of_failing(
-    client, sweeping
-):
+def test_ready_on_a_pr_that_is_not_a_draft_says_so_instead_of_failing(client, sweeping):
     """本来就 ready 就是调用方想要的状态。为它抛异常只会教会分身别用这条命令。"""
     pid, tid = _room_with_work(client)
     _sweep(client)
@@ -2489,3 +2484,142 @@ def test_a_batch_being_merged_right_now_does_not_get_a_second_pr(client, sweepin
 
     assert swept.get("opened") == 0, swept
     assert [o for o in sweeping["opened"] if o["draft"]] == []
+
+
+# ============== 一个长命的 clone 跨过一次采纳 ================================
+#
+# 上面那几条用 `machine_commits`，它每次都重新 clone、重新读 marker —— 真实的
+# 机器不是这样。一块屏幕活很久，它的环境在**启动那一刻**就定死了，而
+# `CHEESE_GIT_BRANCH` 就在里面：房间交付、下一批换了分支，同一块屏幕还在往那条
+# 已经被 squash 进 main 的分支上推，`git push` 每次都成功，钩子每次都报 ok。
+# 本仓库自己的房间就一直在往旧的 `topic/6764aaf3` 上推。
+#
+# 所以下面这条**不许**重启进程、也不许改 env：同一个 clone、同一份脚本、同一组
+# 环境变量，跨过一次真实采纳继续提交，推出去的必须是新一批的分支。
+
+
+def _platform_over_http(client, pid: str):
+    """把平台那条「现在写哪条分支」的路由放到一个真 socket 上。
+
+    脚本用的是 `curl`，所以它需要一个真的 HTTP 地址；答案本身仍然由平台的路由
+    算出来（这里只是把它送出门），所以测的不是一个编出来的桩。
+    """
+    import json as _json
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    from app.core.sandbox_auth import mint_scoped_token
+
+    token = mint_scoped_token(project_id=pid)
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802 — BaseHTTPRequestHandler's own spelling
+            answer = client.get(self.path, headers={"X-Cheese-Token": token})
+            body = _json.dumps(answer.json().get("data") or {}).encode()
+            self.send_response(answer.status_code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, token
+
+
+def _long_lived_clone(tmp: Path, repo: Path, branch: str) -> Path:
+    work = tmp / "work"
+    subprocess.run(
+        ["git", "clone", "-q", str(repo), str(work)], check=True, capture_output=True
+    )
+    for args in (
+        ["config", "user.email", "c@z"],
+        ["config", "user.name", "芝士"],
+        ["checkout", "-q", "-B", branch, f"origin/{branch}"],
+    ):
+        subprocess.run(["git", *args], cwd=work, capture_output=True)
+    return work
+
+
+def test_a_long_lived_screen_stops_pushing_onto_the_batch_it_already_delivered(
+    client, app_world, tmp_path
+):
+    import os
+
+    from app.api.routes.git_http import _configure_for_push
+    from app.domain.agent.harness.claude_code.device_launch import build_launch_script
+    from app.domain.workspace import service as ws
+
+    fake = app_world["fake"]
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    assert client.post(f"/topics/{tid}/split", json={"title": "活"}).status_code == 200
+    repo = ws.ensure_repo(_uuid.UUID(pid))
+    machine_commits(_uuid.UUID(pid), _uuid.UUID(tid), {"first.txt": "batch one\n"})
+    _configure_for_push(repo)
+    first_branch = _disk_branch(tid)
+
+    server, token = _platform_over_http(client, pid)
+    work = _long_lived_clone(tmp_path, repo, first_branch)
+    sync = tmp_path / "cheese-sync"
+    sync.write_text(
+        build_launch_script(sync_on_stop=True).split("'SYNC'")[1].split("SYNC")[0]
+    )
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "cheese-hook").write_text("#!/bin/sh\ncat >/dev/null\n")
+    (bindir / "cheese-hook").chmod(0o755)
+    host, port = server.server_address[:2]
+    # 屏幕启动那一刻的环境，从此**一个字都不改**。
+    env = {
+        **os.environ,
+        "PATH": f"{bindir}:{os.environ['PATH']}",
+        "CHEESE_WORK": str(work),
+        "CHEESE_TOPIC": tid,
+        "CHEESE_TOKEN": token,
+        "CHEESE_GIT_REMOTE": f"http://{host}:{port}/projects/{pid}/git",
+        "CHEESE_GIT_BRANCH": first_branch,  # 上一批的分支，冻在这里
+    }
+
+    def _turn_ends(what: str) -> None:
+        (work / f"{what}.txt").write_text(f"{what}\n")
+        subprocess.run(["git", "add", "-A"], cwd=work, capture_output=True)
+        subprocess.run(["git", "commit", "-qm", what], cwd=work, capture_output=True)
+        done = subprocess.run(
+            ["sh", str(sync)], env=env, capture_output=True, text=True, timeout=60
+        )
+        assert done.returncode == 0, done.stderr
+
+    try:
+        _turn_ends("before")
+        assert "before.txt" in _tree_of(repo, first_branch)
+
+        # 真的走一次采纳：卡、PR、合并。房间从此写下一批。
+        cid = _make_card(client, tid)
+        head_sha = _give_card_a_pr(client, app_world, tid, cid, 7)
+        fake.check_state_by_sha[head_sha] = ("success", "全绿")
+        assert _accept(client, cid).status_code == 200
+        second_branch = _disk_branch(tid)
+        assert second_branch != first_branch
+
+        # 同一个 clone、同一份脚本、同一组环境变量，下一轮结束。
+        _turn_ends("after")
+    finally:
+        server.shutdown()
+
+    assert "after.txt" in _tree_of(repo, second_branch)
+    assert "after.txt" not in _tree_of(repo, first_branch), (
+        "这一轮的提交又落在了已经交付掉的那条分支上"
+    )
+
+
+def _tree_of(repo: Path, branch: str) -> str:
+    done = subprocess.run(
+        ["git", "-C", str(repo), "ls-tree", "-r", "--name-only", branch],
+        capture_output=True,
+        text=True,
+    )
+    return done.stdout

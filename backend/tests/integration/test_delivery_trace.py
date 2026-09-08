@@ -402,3 +402,36 @@ def test_naming_the_same_work_twice_on_one_card_writes_one_trailer(client):
 
     line = f"Cheese-Task: {once} bbbb1111bbbb1111b 被报了两遍的活"
     assert body.count(line) == 1
+
+
+def test_git_itself_parses_the_trailers_on_the_commit_that_landed(client):
+    """不是「这行字面量在不在消息里」，是「git 认不认」。
+
+    一个 trailer 块在空行处结束，而 `git interpret-trailers --parse` 只读最后
+    一块。所以整套 trailer 之间只要有一个空行，上半截就整个消失 —— 消息里看着
+    还在，`git log --format='%(trailers)'` 里没有，任何按 trailer 做的审计都查
+    不到。真实的 `1c298199a` 就是这么丢掉一半的。
+    """
+    pid = _project(client)
+    room = _room(client, pid)
+    mine = _dispatch(client, room, "写了这一批")
+    _bind(client, room, mine, "ac2c038d44616a2f2")
+
+    landed = _batch(client, pid, room, "feat: parse me with real git", [mine])
+
+    parsed = subprocess.run(
+        ["git", "interpret-trailers", "--parse"],
+        input=landed,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    tokens = {line.split(":", 1)[0] for line in parsed.splitlines() if line.strip()}
+    assert tokens == {
+        "Requested-by",
+        "Reviewed-by",
+        "Cheese-Topic",
+        "Cheese-Card",
+        "Cheese-Agent",
+        "Cheese-Task",
+    }

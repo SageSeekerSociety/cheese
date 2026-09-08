@@ -634,7 +634,21 @@ CHEESE_SYNC_SCRIPT = r"""#!/bin/sh
 [ -n "${CHEESE_GIT_REMOTE:-}" ] || exit 0
 [ -d "$CHEESE_WORK/.git" ] || exit 0
 cd "$CHEESE_WORK" || exit 0
+# Which branch this place writes to RIGHT NOW, asked rather than remembered.
+# The screen's environment is fixed when it starts, so `CHEESE_GIT_BRANCH` names
+# whichever batch was open then — and a room that delivers moves to a new batch
+# on a new branch while the same screen keeps running. Trusting the env var made
+# every later turn push onto a branch that had already been squashed into main:
+# `git push` succeeds, the hook reports ok, and the work is on a branch main can
+# never reach. The env var stays as the fallback, for the case where the platform
+# cannot be reached at all — pushing to the last known branch beats not pushing.
 branch="${CHEESE_GIT_BRANCH:-main}"
+if [ -n "${CHEESE_GIT_REMOTE:-}" ] && [ -n "${CHEESE_TOPIC:-}" ]; then
+  now="$(curl -fsS --max-time 10 -H "X-Cheese-Token: $CHEESE_TOKEN" \
+    "$CHEESE_GIT_REMOTE/branch/$CHEESE_TOPIC" 2>/dev/null \
+    | sed -n 's/.*"branch"[ ]*:[ ]*"\([^"]*\)".*/\1/p')"
+  [ -n "$now" ] && branch="$now"
+fi
 head="$(git rev-parse --verify -q HEAD 2>/dev/null || true)"
 failed=""
 tried=""

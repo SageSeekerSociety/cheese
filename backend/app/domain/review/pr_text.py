@@ -133,10 +133,10 @@ def pr_trailers(
     # a comment claiming git wanted it; git wants the opposite. A blank line ENDS
     # a trailer block, and `git interpret-trailers --parse` reads only the LAST
     # one — so the separator did not group these trailers, it threw away every
-    # trailer above it. Fed the real merge commit `1c298199a`, git parses four of
-    # its trailers and drops the rest. Nothing caught it because the tests asked
-    # whether the text contained the line, and it did; only git disagreed. That
-    # is why the regression for this runs `git interpret-trailers` for real.
+    # trailer above it: on a change with a co-author, git saw `Co-authored-by`
+    # and nothing else. Nothing caught it because the tests asked whether the
+    # text contained the line, and it did; only git disagreed — which is why the
+    # regression for this runs `git interpret-trailers` for real.
     lines.extend(credited)
     return "\n".join(lines)
 

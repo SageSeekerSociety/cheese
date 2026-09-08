@@ -18,9 +18,13 @@ import os
 import subprocess
 import uuid
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import APIRouter, Header, Request, Response
+from fastapi import APIRouter, Depends, Header, Request, Response
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.response import ok
+from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.core.sandbox_auth import verify_scoped_token
 from app.domain.workspace import service as ws
@@ -154,6 +158,36 @@ async def _cgi(
     return Response(
         content=payload, status_code=status, headers=headers, media_type=media
     )
+
+
+@router.get("/{project_id}/git/branch/{topic_id}")
+async def branch_for_place(
+    project_id: uuid.UUID,
+    topic_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    x_cheese_token: str | None = Header(default=None, alias="X-Cheese-Token"),
+) -> dict:
+    """Which branch this place writes to **right now**.
+
+    A device's screen is long-lived and its environment is fixed at launch, so
+    `CHEESE_GIT_BRANCH` is a snapshot of the batch that was open when the screen
+    started. A room delivers, the batch merges, the next one opens on a new
+    branch — and the screen keeps pushing everything it does onto the branch
+    that already landed, silently, for as long as it lives. That is not a
+    hypothetical: this repository's own room did exactly that.
+
+    So the branch is ASKED FOR at push time instead of remembered. Sitting in
+    `git_http` because it belongs to the same conversation and the same
+    credential as the push it precedes: the device already holds a
+    project-scoped token and already talks to this router to push.
+    """
+    _repo_for(project_id, x_cheese_token)
+    from app.domain.room_task.place import PlaceResolver
+
+    place = await PlaceResolver(db).resolve(topic_id)
+    if place is None or place.branch_name is None:
+        raise NotFoundError("这个地点现在没有可写的分支")
+    return ok({"branch": place.branch_name, "tree_id": str(place.tree_id)})
 
 
 @router.get("/{project_id}/git/info/refs")

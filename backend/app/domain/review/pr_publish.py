@@ -276,7 +276,16 @@ async def _draft_pr_for_one_tree(session: AsyncSession, tree_id: uuid.UUID) -> b
     tree = await trees.claim_for_pr(tree_id)
     if tree is None:
         return False
-    if await AcceptCardRepository(session).list_for_tree(tree.id):
+    cards = AcceptCardRepository(session)
+    # Plus the room's tree-less cards. A card filed before trees existed keeps
+    # `tree_id IS NULL` (migration `e4c9a2f60b18` left it that way wherever the
+    # backfill had no honest value), and one of them can still be riding a live
+    # PR on this very branch. Asking the tree alone makes that card invisible —
+    # and then this opens a SECOND PR on the branch its PR is already on, which
+    # is the same hole `create_card`'s own guard was widened to close.
+    if await cards.list_for_tree(tree.id) or await cards.list_treeless_for_topic(
+        tree.room_id
+    ):
         return False
     pr = await _open_draft_for_tree(session, tree)
     if pr is None:

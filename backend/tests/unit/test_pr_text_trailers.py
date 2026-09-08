@@ -72,15 +72,17 @@ def test_a_room_that_changed_hands_credits_both_people():
     assert "Co-authored-by: Alice <583231+alice@users.noreply.github.com>" in trailers
 
 
-def test_every_coauthor_gets_its_own_line_in_the_last_block():
-    """git reads trailers from the LAST paragraph, and GitHub reads one
-    `Co-authored-by` per line — so more than one credit must not collapse into a
-    single line or drift out of that block."""
+def test_every_coauthor_gets_its_own_line_in_the_one_block():
+    """GitHub reads one `Co-authored-by` per line, so two credits must not
+    collapse into one line — and they must stay in the SAME block as everything
+    else. git reads trailers from the last paragraph, so a blank line put here
+    to separate the credits would not group them, it would delete every trailer
+    above it (see tests/unit/test_trailers_are_one_block.py, which asks git)."""
     trailers = pr_text.pr_trailers(
         _topic(None), "carol", identity.Attribution("dave", None, (ALICE, BOB))
     )
-    last_block = trailers.split("\n\n")[-1].splitlines()
-    assert last_block == [
+    assert "\n\n" not in trailers
+    assert trailers.splitlines()[-2:] == [
         "Co-authored-by: Alice <583231+alice@users.noreply.github.com>",
         "Co-authored-by: Bob <42+bob@users.noreply.github.com>",
     ]
@@ -231,17 +233,18 @@ def test_a_very_long_task_title_stays_on_one_readable_line():
     )
 
 
-def test_the_credited_humans_still_come_last_in_their_own_block():
-    """git reads `Co-authored-by` from the LAST paragraph, so the new machine
-    trailers must not push a credit out of it or land between the credits."""
+def test_the_credited_humans_still_come_last_and_stay_in_the_block():
+    """The machine trailers must not land between the credits or push one out of
+    the block git reads."""
     trailers = pr_text.pr_trailers(
         _topic("bob"),
         "carol",
         identity.Attribution("bob", BOB, (ALICE,), (_work("ac2c038d4", "干活"),)),
     )
-    assert trailers.split("\n\n")[-1].splitlines() == [
+    assert "\n\n" not in trailers
+    assert trailers.splitlines()[-1] == (
         "Co-authored-by: Alice <583231+alice@users.noreply.github.com>"
-    ]
+    )
 
 
 def test_both_delivery_lanes_carry_the_agent_and_the_work():

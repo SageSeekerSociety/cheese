@@ -2178,8 +2178,7 @@ class AcceptService:
             return {
                 "ready": False,
                 "reason": (
-                    "这个房间还没有 PR —— 先提交点东西"
-                    "（有提交平台就会开一个 draft PR）"
+                    "这个房间还没有 PR —— 先提交点东西（有提交平台就会开一个 draft PR）"
                 ),
             }
         client = await self._app_pr_client(topic)

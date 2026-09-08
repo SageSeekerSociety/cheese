@@ -146,6 +146,9 @@ export interface RoomTask {
   title: string
   status: string
   owner_handle?: string | null
+  // 谁来验收这条活 —— 派活那一刻定下的（显式指定，否则项目的默认验收人）。递卡
+  // 沿用它。null 表示派出去时谁也没指定、项目也没设默认，递卡时得自己点名。
+  reviewer_handle?: string | null
   created_by?: string | null
   branch_name?: string | null
   // 派它出去时说的那份要求，和分身交回来的那句话。两样都住在卡上：简报以前存在
