@@ -31,7 +31,9 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.add_column("work_trees", sa.Column("delivered_head", sa.String(64), nullable=True))
+    op.add_column(
+        "work_trees", sa.Column("delivered_head", sa.String(64), nullable=True)
+    )
 
 
 def downgrade() -> None:
