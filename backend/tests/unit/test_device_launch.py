@@ -1472,5 +1472,5 @@ def test_a_machine_and_a_container_fetch_the_same_way():
 
 def _claude_json_from(script: str) -> dict:
     """The `.claude.json` the launch script writes, as the shell would leave it."""
-    line = next(l for l in script.splitlines() if "hasCompletedOnboarding" in l)
+    line = next(x for x in script.splitlines() if "hasCompletedOnboarding" in x)
     return json.loads(line.replace("$CHEESE_WORK", "/work"))
