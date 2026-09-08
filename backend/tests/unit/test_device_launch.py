@@ -185,7 +185,7 @@ def test_drainer_lives_inside_the_claude_tmux_session():
     # The drainer may appear inline or via the $DRAINCMD variable the script
     # defines right above (both expand to `sh .../cheese-drain`).
     assert "cheese-drain" in wrapper or "$DRAINCMD" in wrapper
-    assert wrapper.endswith("& exec $CLAUDE")
+    assert wrapper.endswith("& exec $ENVIRONMENT_CMD$CLAUDE")
     proc = subprocess.run(["sh", "-n"], input=script, capture_output=True, text=True)
     assert proc.returncode == 0, proc.stderr
 
@@ -232,7 +232,7 @@ def test_no_tmux_branch_keeps_the_drainer_in_claudes_own_tree():
     script = device_launch.build_launch_script()
     no_tmux = script.split("\nelse\n", 1)[1]  # outer else only (inner is indented)
     assert 'sh "$HOME/.claude/cheese-drain"' in no_tmux
-    assert 'eval "exec $CLAUDE"' in no_tmux
+    assert 'eval "exec $ENVIRONMENT_CMD$CLAUDE"' in no_tmux
 
 
 def _write_drainer(tmp_path, *, curl_response: str) -> tuple:
@@ -512,6 +512,19 @@ def test_a_valid_inner_session_is_adopted_without_relaunch(tmp_path):
     assert _tokexp_file(home).read_text().strip() == str(good), "expiry left intact"
 
 
+def test_explicit_environment_application_restarts_a_process_without_a_receipt(
+    tmp_path,
+):
+    home, env, log = _stub_tmux_env(tmp_path)
+    good = int(time.time()) + 100_000
+    _run_block(env, expiry=good)
+    marker = home / ".claude/environment-restart"
+    marker.touch()
+    _run_block(env, expiry=good)
+    assert log.read_text().split().count("new") == 2
+    assert not marker.exists()
+
+
 def test_create_passes_the_fresh_credential_explicitly_via_dash_e(tmp_path):
     """The new session must be handed THIS launch's token with -e, not left to
     inherit it — inheritance is exactly what pulls the stale frozen-global token."""
@@ -539,6 +552,88 @@ def _tmux_ge_30() -> bool:
     out = subprocess.run(["tmux", "-V"], capture_output=True, text=True).stdout
     m = re.search(r"(\d+)\.(\d+)", out)
     return bool(m) and (int(m.group(1)), int(m.group(2))) >= (3, 0)
+
+
+@pytest.mark.skipif(not _tmux_ge_30(), reason="needs a real tmux >= 3.0")
+def test_environment_prepares_once_on_attach_and_runs_startup_after_reset(tmp_path):
+    import json
+    import shutil
+    import sys
+
+    from app.domain.agent import environment_runner
+    from app.domain.project.environment import EnvironmentConfig
+
+    socket = f"/tmp/ce{os.getpid()}.sock"  # noqa: S108 — test-owned tmux socket
+    home = tmp_path / "home"
+    helpers = home / ".claude"
+    helpers.mkdir(parents=True)
+    work = tmp_path / "work"
+    subprocess.run(["git", "init", "-q", str(work)], check=True)
+    shutil.copy(environment_runner.__file__, helpers / "cheese-environment.py")
+    (helpers / "cheese-drain").write_text("#!/bin/sh\nexit 0\n")
+    agent = tmp_path / "fake agent.sh"
+    agent.write_text(
+        "#!/bin/sh\ntest -f startup || exit 1\necho agent >> agents\nexec sleep 60\n"
+    )
+    agent.chmod(0o755)
+    config = EnvironmentConfig(
+        setup_script="echo setup >> setup", startup_script="echo startup >> startup"
+    )
+    env = {
+        **os.environ,
+        "HOME": str(home),
+        "CHEESE_WORK": str(work),
+        "TMUX": f"{socket},1,0",
+        "CLAUDE": f'"{agent}"',
+        "CHEESE_ENVIRONMENT": json.dumps(config.snapshot()),
+        "CHEESE_TOKEN_EXPIRES": str(int(time.time()) + 3600),
+    }
+
+    def attach():
+        script = device_launch.build_launch_script()
+        prefix = (
+            'ENVIRONMENT_CMD=""'
+            + script.split('ENVIRONMENT_CMD=""', 1)[1].split('[ -s "$CHEESE_SP" ]', 1)[
+                0
+            ]
+        )
+        subprocess.run(
+            ["sh", "-c", prefix + _tmux_hosting_block()],
+            env=env,
+            capture_output=True,
+            timeout=10,
+        )
+
+    def wait_agents(count):
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if (work / "agents").exists() and len(
+                (work / "agents").read_text().splitlines()
+            ) == count:
+                return
+            time.sleep(0.05)
+        pytest.fail("agent did not start after preparation")
+
+    try:
+        attach()
+        wait_agents(1)
+        attach()
+        assert (work / "startup").read_text() == "startup\n"
+        reset = subprocess.run(
+            [sys.executable, str(helpers / "cheese-environment.py"), "reset"],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert reset.returncode == 0, reset.stderr
+        assert (work / "agents").exists()
+        attach()
+        wait_agents(2)
+        assert (work / "setup").read_text() == "setup\n"
+        assert (work / "startup").read_text() == "startup\nstartup\n"
+    finally:
+        subprocess.run(["tmux", "-S", socket, "kill-server"], capture_output=True)
 
 
 @pytest.mark.skipif(not _tmux_ge_30(), reason="needs a real tmux >= 3.0")
@@ -700,7 +795,7 @@ def test_the_helper_starts_inside_the_session_and_before_claude():
     claude reads HTTPS_PROXY once and calls out immediately, so a helper that is
     still binding loses that race and the screen boots unauthenticated."""
     script = _launch_with_tunnel()
-    assert "$TUP$PUP $DRAINCMD & exec $CLAUDE" in script
+    assert "$TUP$PUP $DRAINCMD & exec $ENVIRONMENT_CMD$CLAUDE" in script
     assert 'TUP="sh \\"$HOME/.claude/cheese-tunnel-up\\" >/dev/null 2>&1;"' in script
     # The wait itself, in the up-script — and NOT via bash's /dev/tcp: this runs
     # under `sh`, which is dash on the machine images, where that redirect fails
@@ -936,6 +1031,41 @@ def test_a_session_born_on_a_different_contract_is_retired():
     # Both reasons retire, and neither is allowed to mask the other.
     assert "RETIRE=1" in script
     assert script.count("RETIRE=1") >= 2
+
+
+def test_surviving_inner_session_detects_an_agent_edit(tmp_path):
+    import os
+    import subprocess
+    import time
+
+    script = device_launch.build_launch_script()
+    config_dir = tmp_path / ".claude"
+    config_dir.mkdir()
+    (config_dir / "settings.json").write_text("{}")
+    (config_dir / "cheese-machine.token").write_text("unchanged-ticket")
+    (config_dir / "agent-configuration").write_text("original-config")
+    env = {
+        **os.environ,
+        "HOME": str(tmp_path),
+        "REAL_HOME": str(tmp_path),
+        "SESSION": "test-session",
+        "TOKEXP": str(int(time.time()) + 3600),
+    }
+    start = script.rindex('    cat "$REAL_HOME/.claude/settings.json"')
+    record = script[start : script.index("    # Hand THIS launch", start)]
+    subprocess.run(["bash", "-c", record], env=env, check=True)
+    start = script.index('    CFGF="$HOME/.claude/$SESSION.cfg"')
+    gate = script[start : script.index("    # The connector's server", start)]
+    for config, retired in [("original-config", "0"), ("edited-config", "1")]:
+        (config_dir / "agent-configuration").write_text(config)
+        result = subprocess.run(
+            ["bash", "-c", gate + '\nprintf "%s" "$RETIRE"'],
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert result.stdout == retired
 
 
 def test_the_launcher_adopts_that_ticket_as_the_model_credential():

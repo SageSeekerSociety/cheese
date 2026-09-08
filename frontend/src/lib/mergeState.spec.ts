@@ -46,11 +46,7 @@ describe('mergeBadgeOf', () => {
     expect(mergeBadgeOf(ms('blocked', 'human'))).toEqual({ label: '等采纳', column: 'needs_you' })
   })
 
-  it('平台 lane 没有信号时不画状态行', () => {
-    expect(mergeBadgeOf(ms('unknown', 'human'))).toBeNull()
-  })
-
-  it('绑了 GitHub 的卡 unknown 是「还没看过」，中性展示', () => {
+  it('unknown 是「还没看过」，中性展示（平台 lane 恒是 clean/dirty，#363 拍板，走不到这档）', () => {
     expect(mergeBadgeOf(ms('unknown', 'platform'))).toEqual({ label: '状态更新中', column: 'delivering' })
   })
 })

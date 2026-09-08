@@ -11,6 +11,8 @@ never hold a transaction open across the model round-trip.
 """
 
 import asyncio
+import hashlib
+import json
 import logging
 import re
 import shutil
@@ -24,7 +26,7 @@ from datetime import UTC, datetime
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
-from app.core.errors import GatewayUnavailableError, NotFoundError
+from app.core.errors import GatewayUnavailableError, NotFoundError, ValidationError
 from app.core.text import markdown_preview
 from app.domain.agent.compute import ComputePool, ComputeProvider
 from app.domain.agent.gateway import LlmGateway, drain_new_usage
@@ -61,6 +63,11 @@ from app.domain.agent.service import (
 )
 from app.domain.agent.skills import DEFAULT_CHAT_SKILLS, load_scenario, load_skills
 from app.domain.agent.stages import TopicStage, resolve_stage, stage_scenario
+from app.domain.agent.supply import SUBSCRIPTION, resolve_pool
+from app.domain.agent_instance.configuration import (
+    AgentConfiguration,
+    validate_configuration,
+)
 from app.domain.agent_instance.services import (
     IMPLICIT_DEFAULT,
     AgentInstanceService,
@@ -88,6 +95,7 @@ from app.domain.memory.models import MemoryScope
 from app.domain.memory.store import RecallResult, memory_store, recall_pools
 from app.domain.mentions import expand_mention_names
 from app.domain.milestone.repositories import MilestoneRepository
+from app.domain.project.environment import EnvironmentConfig, pin_environment
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
@@ -1112,7 +1120,11 @@ def _strip_platform_notice(text: str) -> str:
     return text.replace(PLATFORM_NOTICE, "【平台·用户原文】")
 
 
-def _attachment_prompt_line(author: str, path: str, *, embeds_images: bool) -> str:
+def _attachment_prompt_line(
+    author: str, path: str, *, embeds_images: bool, mime: str = "image/png"
+) -> str:
+    if not mime.startswith("image/"):
+        return f"[{author}] 发来一个文件：{path}。请用适合该格式的工具读取文件内容。"
     if embeds_images:
         return (
             f"[{author}] 发来一张图片（图片内容已附在本条消息里；"
@@ -1144,7 +1156,9 @@ def _prompt_line(b, *, embeds_images: bool) -> str:
     invented. Saying "去打开这个文件" fails safe: worst case it reports it could
     not read the path."""
     if b.kind == BlockKind.attachment:
-        return _attachment_prompt_line(b.author, b.content, embeds_images=embeds_images)
+        return _attachment_prompt_line(
+            b.author, b.content, embeds_images=embeds_images, mime=b.mime_type or ""
+        )
     return f"[{b.author}]: {_strip_platform_notice(b.content)}"
 
 
@@ -1569,7 +1583,9 @@ class ChatService:
             if attachment.get("path")
         ]
         lines.extend(
-            _attachment_prompt_line(author, image["path"], embeds_images=True)
+            _attachment_prompt_line(
+                author, image["path"], embeds_images=True, mime=image["media_type"]
+            )
             for image in images
         )
         line = "\n".join(lines)
@@ -1685,6 +1701,17 @@ class ChatService:
     def has_running_turn(self, topic_id: uuid.UUID) -> bool:
         """Whether this process currently owns live work for the topic."""
         return topic_id in self._active_turn_ids
+
+    @asynccontextmanager
+    async def edit_environment(self, topic_id: uuid.UUID) -> AsyncIterator[None]:
+        """Prevent a new prompt from racing an explicit environment change."""
+        lock = self._lock_for(topic_id)
+        if lock.locked() or self.has_running_turn(topic_id):
+            raise ValidationError("房间正在工作，请结束当前工作后再应用环境配置")
+        async with lock:
+            if self.has_running_turn(topic_id):
+                raise ValidationError("房间正在工作，请稍后重试")
+            yield
 
     def session_took_over(self, topic_id: uuid.UUID, turn_id: uuid.UUID) -> bool:
         """Did the live session take responsibility for THIS turn's indicator?
@@ -3488,77 +3515,63 @@ class ChatService:
         project_id: uuid.UUID,
         provider: ComputeProvider,
         topic_id: uuid.UUID | None = None,
+        *,
+        agent: ResolvedAgent | None = None,
     ) -> tuple[dict, str]:
-        """Per-turn overrides for the agent call, resolved from project.settings:
-        the ExecutionProfile → model+env (design §2), and the sandbox image (spec
-        §9.1 environment — a project can run on cheesex-dev for dogfooding). model
-        is skipped when no registry is configured (the agent uses its default); the
-        image is resolved regardless (it's independent of the AI profile).
+        """Resolve a turn's explicit agent model, model environment and usage route.
 
-        Also returns the turn's supply ROUTE — where its model traffic actually
-        goes, which names the ONE authoritative meter (issue #218):
-
-          "gateway"      LiteLLM, directly or via /llm from a machine; metered by
-                         the gateway spend log, never by provider-reported
-                         numbers (double count).
-          "subscription" the metering proxy; metered by its usage log.
-          "native"       profile-pinned credentials; the SDK's own usage report
-                         is all there is.
-
-        The route is a fact about where the PROVIDER actually sends the turn's
-        traffic, so it is asked of the provider: a backend that builds its own
-        model environment (``builds_model_env``) rides the deployment's supply —
-        the metering proxy under a subscription, /llm → gateway without one — and
-        is metered by that supply's log. Labeling a turn "subscription" while its
-        traffic went through /llm was a real bug once, and so was the reverse:
-        the label must follow the traffic, in both directions.
-
-        The model a turn runs on is the AGENT's before it is the project's: an
-        agent whose type names a model runs on that model in every room it
-        works in, which is the whole of "the model follows the agent". A type
-        that names none declines to choose, and the project's pick still
-        applies — so the override is `agent or project`, never a blank winning."""
-        agent_model: str | None = None
+        Machine providers assemble their own scoped credentials. Other providers
+        retain their gateway/profile transport, with the agent's saved model.
+        The optional agent snapshot keeps model and role consistent within a turn.
+        """
+        environment = None
         async with self._sessions() as session:
             project = await ProjectRepository(session).get(project_id)
-            if topic_id is not None and project is not None:
-                topic = await TopicRepository(session).get(topic_id)
-                if topic is not None:
-                    agents = AgentInstanceService(session)
-                    agent_model = await agents.model(
-                        await agents.for_topic(topic, project)
-                    )
-        kwargs: dict = {}
-        image = (project.settings or {}).get("sandbox_image") if project else None
-        if image:
-            kwargs["sandbox_image"] = image
-        if provider.builds_model_env:
-            # A machine's model env is that machine's backend's own affair —
-            # handing it this box's profile env would put a box-local URL and a
-            # raw provider key on hardware that is not this process, whoever
-            # rents it. Under the subscription the backend builds the
-            # metering-proxy env itself; only the project's model pick travels
-            # from here, as the --model alias ("" = the subscription's default,
-            # no flag). Without the subscription it gets the backend's /llm route
-            # + its scoped token, and the backend swaps in the project's virtual
-            # key per request (routes/llm_proxy).
-            if settings.subscription_enabled:
-                choice = agent_model or (
-                    (project.settings or {}).get("subscription_model")
-                    if project
-                    else None
+            if project is None:
+                raise NotFoundError("Project not found")
+            topic = await TopicRepository(session).get(topic_id) if topic_id else None
+            if topic is not None:
+                # Overview remains available to repair failed project setup.
+                environment = (
+                    EnvironmentConfig().snapshot()
+                    if topic.kind == TopicKind.root
+                    else await pin_environment(session, project_id, topic.id)
                 )
-                kwargs["model"] = subscription_model_alias(choice)
-                return kwargs, "subscription"
-            return kwargs, "gateway"
+                await session.commit()
+            if agent is None:
+                agents = AgentInstanceService(session)
+                agent = (
+                    await agents.for_topic(topic, project)
+                    if topic
+                    else await agents.for_project(project)
+                )
+            config = AgentConfiguration.model_validate(agent.configuration)
+            validate_configuration(config, project.settings)
+            supply = resolve_pool(
+                project.settings, subscription_enabled=settings.subscription_enabled
+            )
+        model = (
+            subscription_model_alias(config.model)
+            if supply == SUBSCRIPTION
+            else config.model
+        )
+        config_hash = hashlib.sha256(
+            json.dumps(agent.configuration, sort_keys=True).encode()
+        ).hexdigest()
+        kwargs: dict = {"model": model, "env": {"CHEESE_AGENT_CONFIG": config_hash}}
+        if environment is not None:
+            kwargs["env"]["CHEESE_ENVIRONMENT"] = json.dumps(environment)
+        if provider.builds_model_env:
+            return kwargs, supply
         pool_route = True
         if self._profiles is not None:
             profile = self._profiles.resolve(
                 project.settings if project else None,
                 project.owner_handle if project else None,
             )
-            kwargs["model"] = profile.model
-            kwargs["env"] = profile.full_env()
+            kwargs["env"].update(profile.full_env())
+            kwargs["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"] = model
+            kwargs["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"] = model
             # Only the pool profile routes through the gateway; the testing
             # (native Claude) profiles pin their own base_url + credentials.
             pool_route = profile.base_url == settings.anthropic_base_url
@@ -3875,8 +3888,7 @@ class ChatService:
                 )
             projects_repo = ProjectRepository(session)
             project = await projects_repo.get(topic.project_id)
-            # The persona comes from the AGENT working here, via its type — the
-            # room's own agent if it has one, else the project's default.
+            # Read the selected agent once so this turn's role and model agree.
             agents = AgentInstanceService(session)
             agent = (
                 await agents.for_topic(topic, project)
@@ -4202,7 +4214,9 @@ class ChatService:
         # Compute: a provider owns the per-topic sandbox + execution (spec §9.1).
         # In a private chat, `cheese remember` targets the owner's personal memory
         # (spec §8.4). The provider runs a plain model turn when no Docker (tests).
-        model_kwargs, route = await self._model_kwargs(project_id, provider, topic_id)
+        model_kwargs, route = await self._model_kwargs(
+            project_id, provider, topic_id, agent=prepared.agent
+        )
         # Remembered for the turns this session starts by itself. A route is a
         # fact about where a SESSION's traffic goes, not about one prompt, and a
         # self-started turn has no prompt to resolve it from — it rides the same
@@ -4349,6 +4363,11 @@ class ChatService:
                 False,
                 False,
             )
+            status = getattr(exc, "environment_status", None)
+            if status is not None:
+                from app.domain.project.environment_recovery import report_failure
+
+                await report_failure(self, project_id, topic_id, status)
             return
         # Internal frame: `send` returned, so the transport accepted
         # the write — which IS delivery (#563, per #487's contract that a
@@ -4359,6 +4378,11 @@ class ChatService:
         # and so calls a prompt that landed two seconds earlier undelivered
         # and re-sends it. Nothing but the runtime acts on this, so it never
         # reaches the broker.
+        from app.domain.project.environment_recovery import close_recovery
+
+        async with self._sessions() as session:
+            await close_recovery(session, topic_id)
+            await session.commit()
         yield {"type": "prompt_delivered"}
         if ready is False:
             marked_work_id = marked_work_ids[-1] if marked_work_ids else turn_id
@@ -4678,7 +4702,8 @@ class ChatService:
                 ),
             )
             agents = AgentInstanceService(session)
-            role = await agents.system_prompt(await agents.for_project(project))
+            agent = await agents.for_project(project)
+            role = await agents.system_prompt(agent)
             compute_id = _resolve_compute_id(
                 project.settings,
                 team_compute_profile=await _team_compute_profile(session, project),
@@ -4725,9 +4750,11 @@ class ChatService:
             prompt=prompt,
             system_prompt=system_prompt,
             resume_session_id=None,
-            **(await self._model_kwargs(project_id, provider, project.root_topic_id))[
-                0
-            ],
+            **(
+                await self._model_kwargs(
+                    project_id, provider, project.root_topic_id, agent=agent
+                )
+            )[0],
         ):
             if isinstance(event, AgentResult):
                 final_text = event.text

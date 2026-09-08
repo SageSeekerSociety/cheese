@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import re
 import uuid
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -36,12 +35,10 @@ from app.domain.agent.market import (
     COMPUTE_CLOUD,
     compute_default_name,
     compute_selectable,
-    subscription_model_default,
-    subscription_model_ids,
-    subscription_model_listings,
 )
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.runtime import AgentWorkRunner
+from app.domain.agent_instance.configuration import AgentConfiguration
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.schemas import (
     AgentInstanceCreate,
@@ -277,6 +274,7 @@ def _agent_out(
         handle=agent.handle,
         type_name=agent.type_name,
         display_name=agent.display_name,
+        configuration=AgentConfiguration.model_validate(agent.configuration),
         is_default=is_default,
         configured=agent.instance_id is not None,
         is_active=is_active,
@@ -285,16 +283,10 @@ def _agent_out(
 
 @router.get("/{project_id}/agents")
 async def list_project_agents(project_id: uuid.UUID, db: DbSession) -> dict:
-    """The agents this project has, and which one a new topic gets.
-
-    A project that never configured one is not empty: it still has an implicit
-    芝士 (``configured: false``), and that agent owns a real memory pool. Hiding
-    it would make the settings page claim there is no agent while one is
-    plainly working in every room.
-    """
+    """The project's saved agents, including its default for new rooms."""
     project = await ProjectService(db).get_or_404(project_id)
     service = AgentInstanceService(db)
-    default = await service.for_project(project)
+    await service.for_project(project)
     rows = await service.list_for_project(project_id)
     items = [
         _agent_out(
@@ -305,10 +297,6 @@ async def list_project_agents(project_id: uuid.UUID, db: DbSession) -> dict:
         )
         for row in rows
     ]
-    # Synthesized only when nothing materialized it yet. Listing both would show
-    # two agents under one handle, reading as two teammates where there is one.
-    if default.instance_id is None and not any(item["is_default"] for item in items):
-        items.insert(0, _agent_out(project_id, default, is_default=True))
     return ok(page(items, len(items)))
 
 
@@ -321,15 +309,34 @@ async def create_project_agent(
     service = AgentInstanceService(db)
     instance = await service.create(
         project_id=project_id,
-        handle=body.handle or body.type_name or IMPLICIT_DEFAULT.handle,
+        handle=body.handle or f"agent-{uuid.uuid4().hex[:8]}",
         type_name=body.type_name,
         display_name=body.display_name,
+        configuration=body.configuration,
     )
     await db.flush()
     return ok(
         _agent_out(
             project_id, AgentInstanceService.resolved(instance), is_default=False
         )
+    )
+
+
+@router.get("/{project_id}/agent-options")
+async def project_agent_options(project_id: uuid.UUID, db: DbSession) -> dict:
+    from app.domain.agent_instance.configuration import model_choices
+
+    project = await ProjectService(db).get_or_404(project_id)
+    choices = model_choices(project.settings)
+    return ok(
+        {
+            "model": {
+                "state": "choosable" if choices else "unavailable",
+                "choices": choices,
+                "reason": "" if choices else "当前项目没有可用模型，请检查模型服务",
+                "note": "",
+            }
+        }
     )
 
 
@@ -340,7 +347,7 @@ async def update_project_agent(
     body: AgentInstanceUpdate,
     db: DbSession,
 ) -> dict:
-    """Rename an agent, or put it in another type.
+    """Edit one agent's name and saved configuration.
 
     ``handle`` is not editable and is not accepted here: it keys the memory
     pool, so changing it would hand the agent an empty one and orphan
@@ -352,8 +359,8 @@ async def update_project_agent(
     fields = body.model_fields_set
     if "display_name" in fields and body.display_name is not None:
         await service.rename(instance, body.display_name)
-    if "type_name" in fields:
-        await service.set_type(instance, body.type_name)
+    if body.configuration is not None:
+        await service.configure(instance, body.configuration)
     await db.flush()
     return ok(
         _agent_out(
@@ -387,25 +394,13 @@ async def deactivate_project_agent(
 async def set_project_default_agent(
     project_id: uuid.UUID, body: ProjectDefaultAgentIn, db: DbSession
 ) -> dict:
-    """Which agent a new topic in this project gets.
-
-    Two ways in, because they are two different intents. ``instance_id`` picks a
-    different agent — a different memory pool. ``type_name`` re-skins the one
-    the project already has, which is what "which persona does 芝士 wear here"
-    means: the pool it has been filling stays its own.
-    """
+    """Select the existing agent that new rooms start with."""
     project = await ProjectService(db).get_or_404(project_id)
     service = AgentInstanceService(db)
-    if body.instance_id is not None:
-        instance = await service.get_in_project(
-            project_id=project_id, instance_id=body.instance_id
-        )
-        agent = await service.set_project_default(project, instance)
-    else:
-        instance = await service.materialize_default(project)
-        await service.set_type(instance, body.type_name)
-        await db.flush()
-        agent = await service.for_project(project)
+    instance = await service.get_in_project(
+        project_id=project_id, instance_id=body.instance_id
+    )
+    agent = await service.set_project_default(project, instance)
     return ok(_agent_out(project_id, agent, is_default=True))
 
 
@@ -682,42 +677,6 @@ async def get_private_chat(
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
 
 
-# --- ExecutionProfile (design §2): which model/provider this project runs on ---
-
-
-@router.get("/{project_id}/execution-profiles")
-async def list_execution_profiles(
-    project_id: uuid.UUID, db: DbSession, registry: Registry
-) -> dict:
-    """Profiles this project may select (credentialed + permitted for its owner),
-    plus the current selection. Default = our AI pool."""
-    project = await ProjectRepository(db).get(project_id)
-    if project is None:
-        raise NotFoundError("Project not found")
-    current = (project.settings or {}).get("execution_profile") or "default"
-    profiles = [asdict(v) for v in registry.selectable(project.owner_handle)]
-    return ok({"current": current, "profiles": profiles})
-
-
-@router.put("/{project_id}/execution-profile")
-async def set_execution_profile(
-    project_id: uuid.UUID, body: dict, db: DbSession, registry: Registry
-) -> dict:
-    """Set the project's execution profile. Only a profile that's selectable for
-    this owner is accepted (a testing-tier profile on a non-dogfood project is
-    rejected — review Finding 7)."""
-    project = await ProjectRepository(db).get(project_id)
-    if project is None:
-        raise NotFoundError("Project not found")
-    name = (body.get("profile") or "").strip() or "default"
-    allowed = {v.name for v in registry.selectable(project.owner_handle)}
-    if name not in allowed:
-        raise ValidationError(f"执行档案 {name!r} 对本项目不可用")
-    project.settings = {**(project.settings or {}), "execution_profile": name}
-    await db.flush()
-    return ok({"current": name})
-
-
 # --- Compute pool (design §3): which machine runs this project's sandbox ---
 
 
@@ -756,109 +715,6 @@ async def set_compute_profile(
     project.settings = {**(project.settings or {}), "compute_profile": name}
     await db.flush()
     return ok({"current": name})
-
-
-# --- Project default model, scoped to the project's resolved supply. ---
-
-
-@router.get("/{project_id}/model-profiles")
-async def list_model_profiles(project_id: uuid.UUID, db: DbSession) -> dict:
-    """Only offer Claude model choices when this project uses the subscription."""
-    from app.domain.agent.supply import SUBSCRIPTION, resolve_pool
-
-    project = await ProjectRepository(db).get(project_id)
-    if project is None:
-        raise NotFoundError("Project not found")
-    supply = resolve_pool(
-        project.settings, subscription_enabled=settings.subscription_enabled
-    )
-    if supply != SUBSCRIPTION:
-        return ok({"supply": supply, "current": None, "profiles": []})
-    current = (project.settings or {}).get(
-        "subscription_model"
-    ) or subscription_model_default()
-    return ok(
-        {
-            "supply": supply,
-            "current": current,
-            "profiles": [asdict(v) for v in subscription_model_listings()],
-        }
-    )
-
-
-@router.put("/{project_id}/model-profile")
-async def set_model_profile(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
-    """Set the project's subscription model. Only a known model id is accepted."""
-    from app.domain.agent.supply import SUBSCRIPTION, resolve_pool
-
-    project = await ProjectRepository(db).get(project_id)
-    if project is None:
-        raise NotFoundError("Project not found")
-    if (
-        resolve_pool(
-            project.settings, subscription_enabled=settings.subscription_enabled
-        )
-        != SUBSCRIPTION
-    ):
-        raise ValidationError("当前项目使用平台模型池，无法选择 Claude 订阅模型")
-    name = (body.get("profile") or "").strip() or subscription_model_default()
-    if name not in subscription_model_ids():
-        raise ValidationError(f"模型 {name!r} 不可选")
-    project.settings = {**(project.settings or {}), "subscription_model": name}
-    await db.flush()
-    return ok({"current": name})
-
-
-# --- Environment (spec §9.1): which sandbox image runs this project's agent ---
-
-# A docker image reference, e.g. "cheesex-dev:v0". Kept strict so the value can't
-# smuggle anything into the sandbox shim's `docker run "$SBX_IMAGE"`.
-_IMAGE_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._/-]*(:[a-zA-Z0-9._-]+)?$")
-
-# Curated env images the UI offers. The default (None) = the pool's base image;
-# cheesex-dev bakes this repo's toolchain for dogfooding on 知是 itself.
-_SANDBOX_IMAGE_OPTIONS = [
-    {"image": "cheesex-dev:v0", "label": "cheesex-dev（本仓库工具链 · dogfooding）"},
-]
-
-
-@router.get("/{project_id}/sandbox-image")
-async def get_sandbox_image(project_id: uuid.UUID, db: DbSession) -> dict:
-    """The project's env image: `current` (None = using the pool default),
-    the `default` base image, and a few curated `options`."""
-    project = await ProjectRepository(db).get(project_id)
-    if project is None:
-        raise NotFoundError("Project not found")
-    current = (project.settings or {}).get("sandbox_image")
-    return ok(
-        {
-            "current": current,
-            "default": settings.sandbox_image,
-            "options": _SANDBOX_IMAGE_OPTIONS,
-        }
-    )
-
-
-@router.put("/{project_id}/sandbox-image")
-async def set_sandbox_image(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
-    """Point a project at a specific env image (e.g. cheesex-dev:v0 for dogfooding),
-    or clear it (empty → back to the pool default)."""
-    project = await ProjectRepository(db).get(project_id)
-    if project is None:
-        raise NotFoundError("Project not found")
-    image = (body.get("image") or "").strip()
-    new_settings = {**(project.settings or {})}
-    if not image:
-        new_settings.pop("sandbox_image", None)  # revert to the pool default
-        current = None
-    else:
-        if not _IMAGE_RE.match(image):
-            raise ValidationError(f"镜像名不合法：{image!r}")
-        new_settings["sandbox_image"] = image
-        current = image
-    project.settings = new_settings
-    await db.flush()
-    return ok({"current": current})
 
 
 # --- Project stewardship: who answers for a project ---------------------------

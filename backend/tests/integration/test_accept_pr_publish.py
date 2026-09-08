@@ -168,12 +168,15 @@ def pr_world(monkeypatch):
         ),
     )
 
-    def _local_merge(pid, tid):
+    def _local_merge(pid, tid, **_kwargs):
         recorded["local_merges"].append(tid)
         return {"merged": False, "noop": True, "reason": "no topic branch"}
 
     monkeypatch.setattr(ws, "merge_topic", _local_merge)
     monkeypatch.setattr(ws, "prepare_conflict_resolution", lambda pid, tid: ["a.py"])
+    # 递卡在绑定项目上会探测树分支（有活才有卡）；这个 world 里项目是绑定的
+    # （App tokens + GitHub upstream），默认让分支存在，个别测试自己覆盖成 False。
+    monkeypatch.setattr(ws, "topic_branch_exists", lambda pid, tid: True)
     _ = review_services  # imported for proximity; accept() resolves ws at call time
     return recorded
 
@@ -341,8 +344,18 @@ def test_pr_checks_survives_a_failure_outside_the_github_calls(client, monkeypat
     assert r.json()["data"]["available"] is False
 
 
-def test_prless_card_never_touches_github(client, pr_world):
-    """App 机制关着（默认测试世界）：无 PR 卡照旧走本地合并，不碰 GitHub。"""
+def test_prless_card_never_touches_github(client, pr_world, monkeypatch):
+    """App 机制关着（项目没有任何 App 安装 → 未绑定）：无 PR 卡走本地合并，
+    不碰 GitHub。pr_world 默认给了假 App tokens（绑定态），这里显式还原成
+    「没有安装」——绑定态下一张开不出 PR 的交付卡如今会停下（见
+    test_accept_pr.py 的 branchless 回归用例），而这个测试要说的是另一件事：
+    真正没接 App 的项目，本地合并就是它的采纳，GitHub 一次都不该被碰。"""
+    from app.domain.agent import github_app
+
+    async def _no_tokens(_pid, _session):
+        return None
+
+    monkeypatch.setattr(github_app, "github_app_tokens_for_project", _no_tokens)
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)  # no PR seeded
@@ -397,16 +410,28 @@ def _enable_app_pr(monkeypatch) -> None:
     monkeypatch.setattr(ws, "upstream_default_branch", lambda repo, **_: "main")
 
 
-def test_discussion_topic_on_bound_project_accepts_without_forge_label(
+def test_legacy_discussion_card_on_bound_project_accepts_without_forge_label(
     client, pr_world, monkeypatch
 ):
-    """绑定了 GitHub 的项目里的讨论型话题：没有分支、没有可进 PR 的改动——
-    本地合并 no-op 完成采纳，什么都没绕过，也不该戴「未接 GitHub」的标。"""
+    """绑定了 GitHub 的项目里的存量纯讨论卡（change_subject 为 NULL，递于
+    subject 必填之前）：没有分支、没有交付主张——本地合并 no-op 完成采纳，
+    什么都没绕过，也不该戴「未接 GitHub」的标。（带交付主张的卡在同样的
+    分支缺失下必须停下——见 test_accept_pr.py 的回归用例。）"""
+    from app.domain.review.repositories import AcceptCardRepository
     from app.domain.workspace import service as ws
 
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)
+
+    async def _strip_subject() -> None:
+        async with client.test_factory() as session:
+            card = await AcceptCardRepository(session).get(uuid.UUID(cid))
+            assert card is not None
+            card.change_subject = None
+            await session.commit()
+
+    asyncio.run(_strip_subject())
     _enable_app_pr(monkeypatch)
     monkeypatch.setattr(ws, "topic_branch_exists", lambda pid_, tid_: False)
 
@@ -484,7 +509,7 @@ def test_unbound_project_with_github_upstream_pushes_nothing(
     # A real merge this time (the default pr_world merge is a no-op), so the
     # push-back step actually runs and can be watched.
     monkeypatch.setattr(
-        ws, "merge_topic", lambda pid_, tid_: {"merged": True, "commit": "abc"}
+        ws, "merge_topic", lambda pid_, tid_, **_kw: {"merged": True, "commit": "abc"}
     )
     monkeypatch.setattr(ws, "_base_branch", lambda repo: "main")
     git_calls: list[tuple] = []

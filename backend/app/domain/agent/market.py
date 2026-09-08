@@ -235,18 +235,14 @@ def visibility_listings() -> list[PoolListing]:
     ]
 
 
-# --- Subscription model (parallel to compute pool): which Claude model a
-# project's subscription turns use. Only meaningful when the subscription path is
-# deployed; a project picks it the same way it picks a compute pool. ------------
-# (id, label, description, --model alias, is-default). The default carries no
-# alias ("") so it uses the subscription's own default (Sonnet 5) with no --model
-# — the proven path; Opus is the explicit opt-in.
+# Models available to agents using the subscription supply.
+# (id, label, description, explicit --model identifier, creation default).
 _SUB_MODELS: list[tuple[str, str, str, str, bool]] = [
     (
         "sonnet",
         "Claude Sonnet 5",
         "均衡：足够聪明，最省订阅额度，适合绝大多数项目。",
-        "",
+        "claude-sonnet-5",
         True,
     ),
     # Full model ids from here down, not CLI aliases: Fable falls back to
@@ -303,13 +299,13 @@ def subscription_model_default() -> str:
 
 
 def subscription_model_alias(mid: str | None) -> str:
-    """The Claude `--model` alias for a selection id ('' = no flag → subscription
-    default). An unknown id falls back to the default (no flag), never an error —
-    a stale stored selection must not break a turn."""
+    """The explicit Claude model identifier for a saved selection; unknown ids fail."""
     for m, _l, _d, alias, _dflt in _SUB_MODELS:
         if m == mid:
             return alias
-    return ""
+    from app.core.errors import ValidationError
+
+    raise ValidationError(f"未知订阅模型 {mid!r}")
 
 
 def subscription_model_ids() -> set[str]:

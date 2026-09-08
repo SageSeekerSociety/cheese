@@ -5,8 +5,8 @@
  *
  *   1. clean 画绿勾、采纳亮；非 clean 的 GitHub lane 卡采纳灰，红了哪个检查
  *      在卡上看得见；
- *   2. 平台 lane（没绑 GitHub，who 恒 human）的采纳从不按状态灰——那里的采纳
- *      纯粹是人的判断；
+ *   2. 平台 lane（没绑 GitHub，who 恒 human）的卡直接是 CLEAN（#363 拍板：
+ *      没有检查可读），画绿勾，采纳从不按状态灰——那里的采纳纯粹是人的判断；
  *   3. 绿了自动合的开关只在项目允许、且卡停在 blocked/behind 时出现，已布防
  *      的卡写明是谁开的，点开关打的是 auto-merge 端点。
  */
@@ -21,6 +21,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getAcceptCards = vi.fn()
 const setAutoMerge = vi.fn()
+const acceptCard = vi.fn()
 
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
@@ -29,6 +30,10 @@ vi.mock('../../api', async () => {
     getAcceptCards: (...a: unknown[]) => getAcceptCards(...a),
     getPrChecks: vi.fn().mockResolvedValue({ available: false }),
     setAutoMerge: (...a: unknown[]) => setAutoMerge(...a),
+    acceptCard: (...a: unknown[]) => acceptCard(...a),
+    // 采纳之后组件会连带刷新话题行（store.refreshTopicRow）。它自己吞异常，
+    // 但不挡住这里真的去连一个没人监听的端口，报一屏 ECONNREFUSED。
+    getTopic: vi.fn().mockResolvedValue({ id: 't1', status: 'active' }),
   }
 })
 
@@ -68,7 +73,11 @@ function card(over: Partial<AcceptCard>): AcceptCard {
     approvals_required: 1,
     pr_number: null,
     pr_url: null,
-    merge_state: mergeState({}),
+    // 平台 lane 的常态（#363 拍板）：没有检查可读，后端直接下发 clean。
+    merge_state: mergeState({
+      state: 'clean',
+      reasons: [{ kind: 'no_obstacle', checks: [], detail: '可以合并' }],
+    }),
     auto_merge: { allowed: false, armed_by: null, armed_at: null },
     ...over,
   } as AcceptCard
@@ -104,6 +113,30 @@ beforeEach(() => {
   setActivePinia(createPinia())
   getAcceptCards.mockReset()
   setAutoMerge.mockReset()
+  acceptCard.mockReset()
+})
+
+describe('合的是人看到的那个 commit', () => {
+  it('采纳带上卡面渲染时的那个 head sha', async () => {
+    // 轮询器每分钟把卡刷到 PR 的新 head，屏幕上那份不会跟着变。不声明看的是
+    // 哪一版，服务端就只能拿数据库里的那个去合——合进去的会是没人看过的代码。
+    const seen = 'sha-the-reviewer-actually-read'
+    const card = githubCard({
+      merge_state: mergeState({
+        state: 'clean',
+        who: 'human',
+        head_sha: seen,
+        reasons: [{ kind: 'no_obstacle', checks: [], detail: '可以合并' }],
+      }),
+    })
+    acceptCard.mockResolvedValue({ ...card, status: 'accepted' })
+    const { container } = await mountWith([card])
+
+    await fireEvent.click(acceptButton(container))
+    await flush()
+
+    expect(acceptCard).toHaveBeenCalledWith(card.id, expect.any(String), seen)
+  })
 })
 
 describe('卡上的状态直接用合并态', () => {
@@ -187,30 +220,53 @@ describe('卡上的状态直接用合并态', () => {
     expect(acceptButton(container).disabled).toBe(true)
   })
 
-  it('unstable：GitHub 说能合但检查红着——芝士处理中，采纳灰', async () => {
+  it('unstable：红的都不在必跑名单——采纳亮，但红了哪个照样念出来', async () => {
+    // 按钮亮不亮跟后端的采纳闸门是同一条线：unstable 后端会合，按钮就不能灰
+    // （灰着而后端会合，等于把一条走得通的路藏起来）。红了哪个检查、以及它
+    // 「不在必跑名单」，都留在按钮上方的依据行里——亮不等于不说。
     const { container } = await mountWith([
       githubCard({
         merge_state: mergeState({
           state: 'unstable',
           who: 'agent',
-          reasons: [{ kind: 'check_failed', checks: ['lint'], detail: '检查未通过' }],
+          reasons: [
+            { kind: 'github_verdict', checks: [], detail: '有检查没过，但都不在必跑名单，可以采纳' },
+            { kind: 'check_failed', checks: ['lint'], detail: '检查红了：lint' },
+          ],
         }),
       }),
     ])
 
     expect(container.textContent).toContain('芝士处理中')
+    expect(container.textContent).toContain('不在必跑名单')
     expect(container.textContent).toContain('lint')
+    expect(acceptButton(container).disabled).toBe(false)
+  })
+
+  it('blocked 必跑检查在跑：采纳灰——没有结论不是通过', async () => {
+    const { container } = await mountWith([
+      githubCard({
+        merge_state: mergeState({
+          state: 'blocked',
+          who: 'ci',
+          reasons: [{ kind: 'ci_running', checks: ['test'], detail: 'CI 还在跑：test' }],
+        }),
+      }),
+    ])
+
+    expect(container.textContent).toContain('等 CI')
     expect(acceptButton(container).disabled).toBe(true)
   })
 })
 
 describe('平台 lane：采纳纯粹是人的判断', () => {
-  it('没有信号也恒可点，且不画一行「未知」吓人', async () => {
+  it('未绑项目的卡直接是 CLEAN：绿勾 + 可以合并，采纳亮（#363 拍板）', async () => {
     const { container } = await mountWith([card({})])
 
+    expect(container.textContent).toContain('可以合并')
+    expect(container.querySelector('.mdi-check-circle')).toBeTruthy()
     expect(acceptButton(container).disabled).toBe(false)
     expect(container.textContent).not.toContain('状态更新中')
-    expect(container.textContent).not.toContain('可以合并')
   })
 
   it('上次合并撞了冲突的卡照样能点重试', async () => {
@@ -296,7 +352,9 @@ describe('绿了自动合的开关', () => {
     // Vuetify 的开关把模型更新挂在原生 input 事件上（VSelectionControl.onInput）。
     await fireEvent.input(input)
     await flush()
-    expect(setAutoMerge).toHaveBeenCalledWith(armed.id, false)
+    // 布防等于提前采纳，所以这个开关也声明「我看的是哪一版」（见「合的是人看到
+    // 的那个 commit」那一组）。
+    expect(setAutoMerge).toHaveBeenCalledWith(armed.id, false, armed.merge_state.head_sha)
   })
 })
 

@@ -16,7 +16,9 @@ Per request:
   5. let the device commit and push its own worktree back over git smart-HTTP.
 """
 
+import asyncio
 import hashlib
+import json
 import logging
 import time
 import uuid
@@ -72,6 +74,15 @@ _LAUNCHER_SHIP_TIMEOUT_S = 30
 DeviceResolver = Callable[
     [uuid.UUID, uuid.UUID], Awaitable["tuple[str, int, str] | None"]
 ]
+
+
+class EnvironmentPreparationError(ScreenSetupError):
+    def __init__(self, status: dict):
+        self.environment_status = status
+        super().__init__(
+            "环境准备失败，芝士还没有开始处理这条消息。",
+            failure_code="environment_preparation_failed",
+        )
 
 
 def _git_author(project_id: uuid.UUID, topic_id: uuid.UUID) -> tuple[str, str] | None:
@@ -365,6 +376,37 @@ DEVICE_HOME_ROOT = "$HOME/.cheese/home"
 
 def device_home_dir(project_id: uuid.UUID, place_id: uuid.UUID) -> str:
     return f"{DEVICE_HOME_ROOT}/{project_id}/{place_id}"
+
+
+async def environment_status(
+    hub: DeviceHub,
+    device_id: str,
+    project_id: uuid.UUID,
+    topic_id: uuid.UUID,
+    *,
+    action: str = "status",
+) -> dict:
+    home = device_home_dir(project_id, topic_id)
+    reset_marker = (
+        'mkdir -p "$HOME/.claude"; touch "$HOME/.claude/environment-restart"; '
+        if action == "reset"
+        else ""
+    )
+    result = await hub.exec(
+        device_id,
+        [
+            "sh",
+            "-c",
+            f'export HOME="{home}"; '
+            'if [ -f "$HOME/.claude/cheese-environment.py" ]; then '
+            f'python3 "$HOME/.claude/cheese-environment.py" {action} || exit $?; '
+            "else printf '%s' '{\"state\":\"pending\"}'; fi; " + reset_marker,
+        ],
+        timeout=10,
+    )
+    if result.get("exit") != 0:
+        raise ScreenSetupError("无法读取机器上的环境准备状态")
+    return json.loads(result.get("stdout") or '{"state":"pending"}')
 
 
 class DeviceChannel(Channel):
@@ -694,6 +736,21 @@ class DeviceChannel(Channel):
         (``confirm_alive``); an explicitly dead one is closed and reopened under a
         fresh sid the connector must Spawn, rather than reasserted into a corpse."""
         existing = self._existing_screen(device_id, topic_id)
+        if existing is not None and (env or {}).get("CHEESE_ENVIRONMENT"):
+            status = await environment_status(
+                self._hub, device_id, project_id, topic_id
+            )
+            if status["state"] == "preparing":
+                return existing
+        configuration = (env or {}).get("CHEESE_AGENT_CONFIG", "")
+        if (
+            existing is not None
+            and configuration
+            and existing.agent_configuration != configuration
+        ):
+            # Called between turns. A running CLI cannot adopt a changed model or role.
+            await self._hub.close_screen(existing.device_id, existing.sid)
+            existing = None
         if existing is not None and self._credential_is_stale(existing):
             # #388 缺陷二: the screen is still alive, but the credential its `claude`
             # was LAUNCHED with has expired (or is within the retire margin). That
@@ -826,6 +883,9 @@ class DeviceChannel(Channel):
             ):
                 merged.pop(k, None)
             merged.update(sub.env)
+            if connect_proxy_url:
+                # The meter accepts model hosts, not package registries.
+                merged["CHEESE_MODEL_PROXY"] = "1"
             if via_tunnel:
                 # Read by the launch script: it writes the helper and the token
                 # file, and starts the helper before `claude`. Carried on the env
@@ -858,7 +918,7 @@ class DeviceChannel(Channel):
             provider = provider_env.api_key_provider(
                 gateway_base=f"{self._public_base}/llm",
                 key=token,
-                model=settings.agent_model,
+                model=launch.model or settings.agent_model,
             )
             model_env = {**provider.env, **(env or {})}
             # Same stamp on the gateway path: the model credential is the scoped
@@ -926,6 +986,7 @@ class DeviceChannel(Channel):
         # later turn's reuse gate (and the zero-output fuse) can tell a live
         # credential from a dead one without re-deriving it.
         screen.credential_expires = credential_expires
+        screen.agent_configuration = configuration
         return screen
 
     # --- turn --------------------------------------------------------------
@@ -969,6 +1030,12 @@ class DeviceChannel(Channel):
         assert isinstance(precheck, tuple)  # from our precheck
         device_id, agent_user_id, agent_handle = precheck
         try:
+            before = (
+                await environment_status(self._hub, device_id, project_id, topic_id)
+                if (env or {}).get("CHEESE_ENVIRONMENT")
+                else {}
+            )
+            prior_screen = self._existing_screen(device_id, topic_id)
             screen = await self._ensure_screen(
                 device_id=device_id,
                 agent_user_id=agent_user_id,
@@ -980,7 +1047,50 @@ class DeviceChannel(Channel):
                 launch=launch,
             )
             self._subscription_devices[topic_id] = device_id
+            if (env or {}).get("CHEESE_ENVIRONMENT"):
+                # A process started before this feature keeps its environment
+                # until its next restart; it has no preparation receipt yet.
+                if before.get("state") == "pending" and screen is prior_screen:
+                    return screen
+                try:
+                    start_deadline = time.monotonic() + 60
+                    async with asyncio.timeout(3660):
+                        while True:
+                            status = await environment_status(
+                                self._hub, device_id, project_id, topic_id
+                            )
+                            if status["state"] == "ready":
+                                break
+                            if status["state"] == "stopped" and status.get(
+                                "attempt"
+                            ) != before.get("attempt"):
+                                raise ScreenSetupError(
+                                    "环境已准备完成，但芝士启动后退出，请查看房间终端"
+                                )
+                            if (
+                                status["state"] == "pending"
+                                or status.get("attempt") == before.get("attempt")
+                                and before.get("state") != "preparing"
+                            ) and time.monotonic() >= start_deadline:
+                                raise ScreenSetupError(
+                                    "环境执行器未启动，请查看房间终端"
+                                )
+                            if status["state"] == "failed" and (
+                                before.get("state") == "preparing"
+                                or status.get("attempt") != before.get("attempt")
+                            ):
+                                raise EnvironmentPreparationError(status)
+                            await asyncio.sleep(2)
+                except asyncio.CancelledError:
+                    await asyncio.shield(
+                        environment_status(
+                            self._hub, device_id, project_id, topic_id, action="cancel"
+                        )
+                    )
+                    raise
             return screen
+        except EnvironmentPreparationError:
+            raise
         except Exception as exc:  # noqa: BLE001 — any setup failure ends the turn
             # str(exc) is EMPTY for a bare TimeoutError — the failure that used to
             # reach the room as 「device 后端启动失败：」 with nothing after the

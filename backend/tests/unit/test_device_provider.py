@@ -161,7 +161,13 @@ async def test_turn_streams_hook_events_until_stop():
     assert isinstance(events[2], AgentResult) and events[2].text == "2"
 
 
-async def test_every_device_image_is_staged_before_rendezvous_prompt(monkeypatch):
+@pytest.mark.parametrize(
+    ("path", "mime"),
+    [("uploads/img-a.png", "image/png"), ("uploads/需求 文档.pdf", "application/pdf")],
+)
+async def test_every_device_image_is_staged_before_rendezvous_prompt(
+    monkeypatch, path, mime
+):
     hub = FakeHub()
     router = HookRouter()
     provider = _provider(hub, router, uuid.uuid4())
@@ -179,12 +185,12 @@ async def test_every_device_image_is_staged_before_rendezvous_prompt(monkeypatch
         prompt="[u] sent an image",
         system_prompt="",
         resume_session_id=None,
-        images=[{"path": "uploads/img-a.png", "media_type": "image/png"}],
+        images=[{"path": path, "media_type": mime}],
     )
     await asyncio.sleep(0.05)
 
-    assert hub.files == [("s1", "uploads/img-a.png", b"exact-image-bytes")]
-    assert hub.prompts == [["[u] sent an image\n\n@uploads/img-a.png"]]
+    assert hub.files == [("s1", path, b"exact-image-bytes")]
+    assert hub.prompts == [[f"[u] sent an image\n\n@{path}"]]
     router.push(
         str(topic_id), {"hook_event_name": "Stop", "last_assistant_message": "ok"}
     )
@@ -1138,7 +1144,9 @@ async def test_subscription_screen_env_has_no_gateway_and_no_real_credential(
     # deepseek/gateway model pin — the exact env dev observed is impossible.
     assert "ANTHROPIC_BASE_URL" not in env
     assert env["ANTHROPIC_AUTH_TOKEN"] == ""
-    assert not [k for k in env if "MODEL" in k]
+    # This marks the model-only proxy for script preparation; no model is pinned.
+    assert [k for k in env if "MODEL" in k] == ["CHEESE_MODEL_PROXY"]
+    assert env["CHEESE_MODEL_PROXY"] == "1"
     assert "UPSTREAM-PROVIDER-KEY" not in repr(env)
     # The login credential is a scoped cheese token the proxy can verify —
     # never a real subscription credential.
@@ -1666,6 +1674,37 @@ async def test_a_reused_screen_with_a_live_credential_is_adopted(monkeypatch):
     assert hub.reasserted == ["s1"]
     assert hub.closed == []
     assert [s.sid for s in hub.opened] == ["s1"]
+
+
+@pytest.mark.anyio
+async def test_agent_config_change_replaces_screen_at_next_launch(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "subscription_enabled", False)
+    hub = ReuseGateHub()
+    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
+    pid, tid = uuid.uuid4(), uuid.uuid4()
+
+    async def ensure(config):
+        return await provider._ensure_screen(
+            device_id="dev1",
+            agent_user_id=1,
+            agent_handle="cheese",
+            project_id=pid,
+            topic_id=tid,
+            token="tok",
+            env={"CHEESE_AGENT_CONFIG": config},
+            launch=ClaudeLaunch(system_prompt="", model="requested-model"),
+        )
+
+    first = await ensure("original")
+    assert await ensure("original") is first
+    second = await ensure("edited")
+    assert second.sid != first.sid
+    assert hub.closed == [first.sid]
+    assert second.agent_configuration == "edited"
+    assert hub.envs[-1]["CLAUDE_MODEL"] == "requested-model"
+    assert hub.envs[-1]["ANTHROPIC_DEFAULT_SONNET_MODEL"] == "requested-model"
 
 
 def test_topic_credential_expiry_reads_the_live_screens_stamp():

@@ -215,7 +215,7 @@ async def _pr_text(
     if place is None:
         return branch, f"Cheese-Topic: {topic_id}"
     topic = place.room
-    who = await identity.attribution(session, topic)
+    who = await identity.attribution(session, topic, card=card)
     # No approver yet — the PR opens when the card is FILED, and 采纳 is what
     # merges it. `Reviewed-by` is written onto the squash commit at merge time,
     # by whoever actually clicks.

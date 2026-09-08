@@ -666,7 +666,24 @@ def build_parser() -> argparse.ArgumentParser:
             "so the person whose work it is gets no attribution.'\n"
             "\n"
             "--body 写**为什么**,不写做了什么的清单——diff 已经说了做了什么。显而易见的\n"
-            "改动可以不写。别写「跑通了所有测试」这类废话:提交能存在就说明它过了。"
+            "改动可以不写。别写「跑通了所有测试」这类废话:提交能存在就说明它过了。\n"
+            "\n"
+            "**--task 报这批代码是哪几条活写的**(可重复):\n"
+            "  cheese accept-request lisi \"最懂这块\" --subject '...' \\\n"
+            "    --task 3f2a...  --task 9c81...\n"
+            "它变成合并后那个提交里的 `Cheese-Task:` 行,是 `git log` 里唯一追得到\n"
+            "「哪个分身写了这次改动」的东西。平台**推不出来**:活挂在哪棵树是 split\n"
+            "那一刻定的,代码进哪个 PR 是递卡这一刻定的,一个房间跨批次干活时这两个\n"
+            "答案就不是一回事了;而沙箱里每个提交的作者都是需求方,commit 也认不出\n"
+            "分身。所以只有你说得清。\n"
+            "\n"
+            "只报**代码真的在这次 diff 里**的活。别报:一行没写的占位活、还在跑的活、\n"
+            "改动要走下一批的活。不报就一行都不写——错的署名比没有署名更糟。\n"
+            "反过来,一条活可以出现在**好几批**里:上一批交付过、之后继续往同一条分支\n"
+            "写、代码又进了这一批,就照实再报一次,它确实写了两批。\n"
+            "\n"
+            "声明只在递卡这一刻收,递出去就补不上了(卡上没有改声明的入口,同一棵树上\n"
+            "也递不出第二张卡)。忘了带只能请验收人作废这张卡、你再重递一次。"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -679,6 +696,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pa.add_argument(
         "--body", default=None, help="提交正文: 为什么要这次改动(不明显时才写)"
+    )
+    pa.add_argument(
+        "--task",
+        action="append",
+        default=None,
+        metavar="TASK_ID",
+        help=(
+            "这批代码是哪条活写的(可重复)。写进合并后那个提交的 `Cheese-Task:`,"
+            "是**永久历史**里唯一说得清哪个分身写了这次改动的东西。"
+            "只填**代码真的在这次 diff 里**的活——没产出的占位活、还在跑、"
+            "改动要走下一批的活都别填(平台分辨不了,只能你说)。"
+            "不填就一行不写:错的署名比没有署名更糟"
+        ),
     )
 
     pt = sub.add_parser(
@@ -994,8 +1024,21 @@ def main() -> None:
         topic = _need("CHEESE_TOPIC", TOPIC)
         _call("POST", f"/topics/{topic}/accept-card",
               {"reviewer_handle": a.reviewer, "routing_reason": a.reason,
-               "change_subject": a.subject, "change_body": a.body})
+               "change_subject": a.subject, "change_body": a.body,
+               "task_ids": a.task or []})
         print(f"已把验收卡递给 {a.reviewer}。")
+        if not a.task:
+            # 别在这里说「重递一次带上 --task」：卡已经 pending，同一棵树上再递
+            # 一张会被 create_card 直接拒掉，照着做必然失败。声明只在递卡这一刻
+            # 收，补声明没有入口，唯一走得通的补救要人来动手。
+            print(
+                "这次没有 --task，合并后的提交里不会有 Cheese-Task 行——"
+                "以后翻 git log 的人查不到是哪个分身写的。\n"
+                "声明只在递卡这一刻收，这张卡上补不了，直接再递一张会被"
+                "「已有待处理的验收卡」拒掉。真要补：请验收人先作废这张卡"
+                "（作废是人的动作，你自己点不了），你再带 --task 重递。\n"
+                "下次递卡一次带上。"
+            )
     elif a.cmd == "tell":
         # URL 里的 topic 是**发方**（per-turn token 按它校验作用域）；收方在 body 里，
         # 由后端校验它确实是这个房间派出的活。

@@ -52,8 +52,7 @@ SANDBOX_IMAGE = "python:3.12-slim"
 # today, so both sides must still be the same uid.
 #
 # 1000 = `node` in the sandbox image (node:22 + USER node, started with
-# `--user node`), which is the side we do not fully control — a project can
-# point `sandbox_image` at any other node-based image. The backend image is
+# `--user node`). The backend image is
 # built to match (backend/Dockerfile); tests/unit/test_workspace_uid_alignment.py
 # pins all three together.
 AGENT_UID = 1000
@@ -1353,6 +1352,20 @@ def _sync_shared_checkout(repo: Path, base: str, sha: str) -> None:
 _MERGE_RETRY_LIMIT = 5
 
 
+def _staged_is_empty(wt: Path) -> bool:
+    """Whether a `merge --squash` staged nothing (already merged, or the branch
+    is content-identical to the base)."""
+    return (
+        subprocess.run(
+            ["git", "diff", "--cached", "--quiet"],
+            cwd=wt,
+            capture_output=True,
+            timeout=20,
+        ).returncode
+        == 0
+    )
+
+
 def _merge_ref_into_base(
     project_id: uuid.UUID,
     repo: Path,
@@ -1362,6 +1375,8 @@ def _merge_ref_into_base(
     *,
     allow_unrelated_histories: bool = False,
     sync_checkout: bool = True,
+    squash: bool = False,
+    author: identity_mod.GitIdentity | None = None,
 ) -> dict:
     """Merge `merge_ref` into `base` without ever running the merge itself in
     the project's shared working directory. The merge happens in a throwaway
@@ -1371,6 +1386,13 @@ def _merge_ref_into_base(
     (`update-ref old new`) — if another accept landed on `base` in the
     meantime, this retries against the new tip rather than clobbering it or
     silently merging on top of a stale base.
+
+    `squash=True` lands the whole ref as ONE commit on `base` (#363): the
+    author knob names the human the work belongs to (falling back to 芝士),
+    the committer stays 芝士, same two-knob split as every commit the
+    platform makes (`workspace.identity`). A ref that adds nothing —
+    already merged, or content-identical — lands no commit at all and still
+    reports merged, matching what the merge form did for an ancestor.
 
     `sync_checkout=False` for a `base` that is NOT the project's base branch.
     The shared directory mirrors the base tip and nothing else; pointing it at a
@@ -1389,16 +1411,18 @@ def _merge_ref_into_base(
         with _isolated_worktree(project_id, repo, old_sha) as wt:
             args = [
                 "-c",
-                "user.name=芝士",
+                f"user.name={identity_mod.CHEESE_NAME}",
                 "-c",
-                "user.email=cheese@zhishi.local",
+                f"user.email={identity_mod.CHEESE_EMAIL}",
                 "merge",
-                "--no-ff",
-                "-q",
             ]
+            args += ["--squash"] if squash else ["--no-ff"]
+            args.append("-q")
             if allow_unrelated_histories:
                 args.append("--allow-unrelated-histories")
-            args += ["-m", message, merge_ref]
+            if not squash:  # --squash refuses -m: there is no commit yet
+                args += ["-m", message]
+            args.append(merge_ref)
             try:
                 _git(wt, *args)
             except ValidationError as exc:
@@ -1411,14 +1435,41 @@ def _merge_ref_into_base(
                 except ValidationError:
                     conflicts = []
                 try:
-                    _git(wt, "merge", "--abort")
+                    # A conflicted --squash leaves no MERGE_HEAD to abort, so
+                    # reset instead; the worktree is discarded either way, this
+                    # only keeps the conflict listing above honest next attempt.
+                    if squash:
+                        _git(wt, "reset", "-q", "--hard")
+                    else:
+                        _git(wt, "merge", "--abort")
                 except ValidationError:
                     pass
                 reason = (
                     "合并冲突：" + "、".join(conflicts[:20]) if conflicts else str(exc)
                 )
                 return {"merged": False, "reason": reason, "conflicts": conflicts}
-            new_sha = _git(wt, "rev-parse", "HEAD").strip()
+            if squash and _staged_is_empty(wt):
+                # Nothing to deliver (branch already merged / content-identical):
+                # minting an empty commit would put a delivery in history that
+                # delivered nothing.
+                new_sha = old_sha
+            elif squash:
+                _git(
+                    wt,
+                    "-c",
+                    f"user.name={identity_mod.CHEESE_NAME}",
+                    "-c",
+                    f"user.email={identity_mod.CHEESE_EMAIL}",
+                    "commit",
+                    "-q",
+                    "--author",
+                    str(author or identity_mod.CHEESE_IDENTITY),
+                    "-m",
+                    message,
+                )
+                new_sha = _git(wt, "rev-parse", "HEAD").strip()
+            else:
+                new_sha = _git(wt, "rev-parse", "HEAD").strip()
         try:
             _git(repo, "update-ref", f"refs/heads/{base}", new_sha, old_sha)
         except ValidationError:
@@ -1456,13 +1507,37 @@ def _merge_ref_into_base(
     }
 
 
-def merge_topic(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
-    """采纳 = merge (spec §6.3): merge the topic's branch into the base branch.
+def merge_topic(
+    project_id: uuid.UUID,
+    topic_id: uuid.UUID,
+    *,
+    message: str,
+    author: identity_mod.GitIdentity | None = None,
+) -> dict:
+    """采纳 = merge (spec §6.3): SQUASH the topic's branch into the base branch,
+    one commit per accepted delivery — the platform forge's merge has the same
+    shape as the GitHub lane's (#363), instead of `--no-ff` dragging every
+    branch commit (including 芝士's auto-snapshots) into main.
+
+    The caller writes the commit: `message` is the whole squash message
+    (subject + body + trailers — `pr_text.local_merge_commit_message`), and
+    `author` names the human the work belongs to, exactly as the GitHub lane's
+    squash product is authored by the requester. Both live with the accept card,
+    which this module cannot reach (no DB session here) — that is why they are
+    parameters and not lookups. Committer stays 芝士 regardless.
 
     Whatever is on the branch is what gets merged, and nothing is added to it on
     the way in. Work that was never committed was never delivered — the person
     who wrote it decides when it becomes a commit, and until they do it is not
     in the diff anyone reviewed either.
+
+    The ONE branch that still merges with `--no-ff`: a topic that completes an
+    upstream sync (`prepare_upstream_conflict_resolution`), recognizable as the
+    upstream tip being an ancestor of the branch but not of the base. Its whole
+    point is joining the upstream history — squashing it lands the resolved
+    CONTENT while leaving upstream's commits unreachable from base, so the next
+    `sync_upstream` still counts itself behind, re-merges, and hits the very
+    conflict the topic just resolved, forever.
 
     On conflict it aborts and reports, never half-merges."""
     repo = ensure_repo(project_id)
@@ -1476,9 +1551,38 @@ def merge_topic(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
             "noop": True,
             "reason": "topic is the base branch",
         }
-    return _merge_ref_into_base(
-        project_id, repo, base, branch, f"chore: merge {branch} into {base}"
+    tip = _known_upstream_tip(repo)
+    joins_upstream = (
+        tip is not None
+        and _is_ancestor(repo, tip, branch)
+        and not _is_ancestor(repo, tip, base)
     )
+    return _merge_ref_into_base(
+        project_id,
+        repo,
+        base,
+        branch,
+        message,
+        squash=not joins_upstream,
+        author=author,
+    )
+
+
+def _known_upstream_tip(repo: Path) -> str | None:
+    """The last-fetched upstream tip's sha, or None when the project has no
+    upstream (or it was never fetched). Non-raising counterpart of
+    `_upstream_ref`, for callers that only need to know whether a branch
+    carries the upstream history."""
+    for name in (DEFAULT_BRANCH, "master"):
+        probe = subprocess.run(
+            ["git", "rev-parse", "--verify", "-q", f"{UPSTREAM_REMOTE}/{name}"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+        )
+        if probe.returncode == 0:
+            return probe.stdout.strip()
+    return None
 
 
 def _is_ancestor(repo: Path, ref: str, of: str) -> bool:
@@ -1710,8 +1814,9 @@ def prepare_upstream_conflict_resolution(
     had diverged simply could not pull, and every later sync hit the same wall.
 
     Accepting the resulting topic finishes the sync: the merge commit 芝士 makes
-    carries upstream as a parent, so `merge_topic` folding it into base brings
-    the upstream history along with the resolution."""
+    carries upstream as a parent, and `merge_topic` recognizes such a branch and
+    folds it in with a real merge (its one non-squash case), so base gains the
+    upstream history along with the resolution."""
     repo = ensure_repo(project_id)
     # A commit id rather than a ref name: `upstream/main` means nothing inside
     # the worktree until it fetches, and a raw sha needs no name at all.

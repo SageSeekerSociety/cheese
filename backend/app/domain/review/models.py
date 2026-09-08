@@ -89,6 +89,42 @@ class AcceptCard(UuidPk, Timestamps, Base):
     tree_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("work_trees.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # 这批交付是哪几条活干出来的 —— 递卡的那一刻，由递卡方说 (#189)。The ids of
+    # `tasks` rows, and the whole of what `Cheese-Task:` writes into permanent
+    # history.
+    #
+    # It is DECLARED and not derived, because nothing here can derive it. A
+    # task's `tree_id` is fixed when `cheese split` runs and says which batch it
+    # joined THEN; which branch its code ends up on is decided when the room
+    # files a card, and a room that keeps working across two batches makes those
+    # two different answers. Enumerating the delivering tree's members therefore
+    # credits whoever happened to be sitting on that tree: run it over this
+    # project's own room/task/tree data as of 2026-09-08 and one delivery comes
+    # out wrong in both directions — three tasks that contributed nothing named
+    # on a PR, and the task that actually wrote it named on the previous one.
+    # (Nothing in this repository's history carries a wrong trailer; the
+    # trailers did not exist when those PRs merged. What is wrong is the
+    # inference, measured against real data before it could write anything.)
+    # Nor can the commits be asked: every commit in the sandbox is
+    # authored by the requester and co-authored by the model, so the range says
+    # nothing about which 分身 typed it.
+    #
+    # There is no automatic filling-in, and that is the point. Every rule a
+    # machine could apply — the tree's members, "everything not claimed by an
+    # earlier card" — establishes only that a task EXISTS and was not filed
+    # before; neither can establish that its code is in this diff. A placeholder
+    # task that wrote no code, and a sibling still running whose work goes out
+    # next batch, both pass those tests and would be signed onto a change they
+    # contributed nothing to. So an undeclared delivery carries no
+    # `Cheese-Task:` line at all: a wrong name in permanent history is worse
+    # than no name, because an audit believes it.
+    #
+    # A JSON list rather than a join table for the same reason `nudge_state`
+    # is one: it is read and written whole, always by the card that owns it, and
+    # never queried across cards.
+    delivered_task_ids: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, default=list, server_default="[]"
+    )
     # Routed reviewer (spec C5): the specific person asked to accept.
     reviewer_handle: Mapped[str] = mapped_column(String(64), index=True)
     # Why this reviewer was suggested (最懂/没参与/有空), for transparency.

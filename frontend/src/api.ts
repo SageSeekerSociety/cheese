@@ -2,6 +2,7 @@
 // ApiEnvelope; these helpers unwrap `data` and surface non-200 codes as errors.
 import type {
   AcceptCard,
+  AgentConfiguration,
   AgentType,
   ApiEnvelope,
   Block,
@@ -11,7 +12,8 @@ import type {
   ChatAttachment,
   ComputeProfiles,
   Contributions,
-  ExecProfiles,
+  EnvironmentConfig,
+  EnvironmentStatus,
   FileContent,
   GitCommit,
   GithubConnection,
@@ -21,19 +23,18 @@ import type {
   MarketPools,
   MemberSummary,
   MilestoneFull,
-  ModelProfiles,
   OAuthConnectionInfo,
   PrChecks,
   PreviewInfo,
   Project,
   ProjectAgent,
   ProjectCredits,
+  ProjectEnvironmentInfo,
   ProjectMemberRow,
   ProjectOverview,
   ReactionAgg,
   RoomTask,
   RoomTree,
-  SandboxImageInfo,
   Topic,
   TopicComputeProfile,
   TopicMemberRow,
@@ -645,17 +646,6 @@ export function getProjectCredits(projectId: string): Promise<ProjectCredits> {
 
 // ---- 题目匹配市场 (spec §13 阶段 6) ----
 
-// AI 模型池: the project's current profile + the ones it may select.
-export function getExecutionProfiles(projectId: string): Promise<ExecProfiles> {
-  return request<ExecProfiles>(`/projects/${encodeURIComponent(projectId)}/execution-profiles`)
-}
-export function setExecutionProfile(projectId: string, profile: string): Promise<{ current: string }> {
-  return request(`/projects/${encodeURIComponent(projectId)}/execution-profile`, {
-    method: 'PUT',
-    body: JSON.stringify({ profile }),
-  })
-}
-
 // 算力池: the project's current compute pool + the deployed ones it may select.
 export function getComputeProfiles(projectId: string): Promise<ComputeProfiles> {
   return request<ComputeProfiles>(`/projects/${encodeURIComponent(projectId)}/compute-profiles`)
@@ -692,17 +682,6 @@ export function deleteProjectMachine(
   })
 }
 
-// Model choices follow the project's resolved supply.
-export function getModelProfiles(projectId: string): Promise<ModelProfiles> {
-  return request<ModelProfiles>(`/projects/${encodeURIComponent(projectId)}/model-profiles`)
-}
-export function setModelProfile(projectId: string, profile: string): Promise<{ current: string }> {
-  return request(`/projects/${encodeURIComponent(projectId)}/model-profile`, {
-    method: 'PUT',
-    body: JSON.stringify({ profile }),
-  })
-}
-
 // 会话级算力 (v4): a topic's own compute选择, switchable until its first turn.
 export function getTopicComputeProfile(topicId: string): Promise<TopicComputeProfile> {
   return request<TopicComputeProfile>(`/topics/${encodeURIComponent(topicId)}/compute-profile`)
@@ -720,15 +699,6 @@ export function setTopicComputeProfile(
   return request(`/topics/${encodeURIComponent(topicId)}/compute-profile`, {
     method: 'PUT',
     body: JSON.stringify(profile === 'device' ? { profile, device_id: deviceId } : { profile }),
-  })
-}
-
-// Which type the project's default agent wears; an empty name clears it. The
-// agent itself stays — and so does the memory it has been accumulating.
-export function setProjectAgentType(projectId: string, typeName: string): Promise<ProjectAgent> {
-  return request(`/projects/${encodeURIComponent(projectId)}/default-agent`, {
-    method: 'PUT',
-    body: JSON.stringify({ type_name: typeName }),
   })
 }
 
@@ -759,49 +729,22 @@ export interface AgentFieldOptions {
 
 export type AgentTypeOptions = Record<string, AgentFieldOptions>
 
-export function getAgentTypeOptions(): Promise<AgentTypeOptions> {
-  return request<AgentTypeOptions>('/agent-types/options')
+export function getProjectAgentOptions(projectId: string): Promise<AgentTypeOptions> {
+  return request<AgentTypeOptions>(`/projects/${encodeURIComponent(projectId)}/agent-options`)
 }
 
-// The merged type catalog: platform presets + this project's custom types.
+// Built-in starting configurations, copied only when creating an agent.
 export function listAgentTypes(): Promise<ListPayload<AgentType>> {
   return request<ListPayload<AgentType>>('/agent-types')
 }
 
-export interface AgentTypeInput {
-  title?: string
-  description?: string
-  body?: string
-  skills?: string[]
-  mcp_servers?: string[]
-  model?: string | null
-  effort?: string | null
-  harness?: string | null
-  // Who authored the type — the backend records it and shows it in the catalog.
-  created_by?: string
-}
-
-export function createAgentType(payload: AgentTypeInput & { name: string; body: string }): Promise<AgentType> {
-  return request<AgentType>('/agent-types', { method: 'POST', body: JSON.stringify(payload) })
-}
-
-export function updateAgentType(name: string, payload: AgentTypeInput): Promise<AgentType> {
-  return request<AgentType>(`/agent-types/${encodeURIComponent(name)}`, {
-    method: 'PUT',
-    body: JSON.stringify(payload),
-  })
-}
-
-// The agents this project has. A project that never configured one still gets a
-// row back — the implicit 芝士, `configured: false` — because it is really
-// working in every room and owns a real memory pool.
 export function listProjectAgents(projectId: string): Promise<ListPayload<ProjectAgent>> {
   return request<ListPayload<ProjectAgent>>(`/projects/${encodeURIComponent(projectId)}/agents`)
 }
 
 export function createProjectAgent(
   projectId: string,
-  payload: { display_name: string; handle?: string; type_name?: string | null }
+  payload: { display_name: string; handle?: string; type_name?: string | null; configuration: AgentConfiguration }
 ): Promise<ProjectAgent> {
   return request<ProjectAgent>(`/projects/${encodeURIComponent(projectId)}/agents`, {
     method: 'POST',
@@ -812,7 +755,7 @@ export function createProjectAgent(
 export function updateProjectAgent(
   projectId: string,
   agentId: string,
-  payload: { display_name?: string; type_name?: string | null }
+  payload: { display_name?: string; configuration?: AgentConfiguration }
 ): Promise<ProjectAgent> {
   return request<ProjectAgent>(`/projects/${encodeURIComponent(projectId)}/agents/${encodeURIComponent(agentId)}`, {
     method: 'PUT',
@@ -829,27 +772,33 @@ export function deactivateProjectAgent(projectId: string, agentId: string): Prom
   )
 }
 
-// Which agent a new topic gets. `instance_id` picks a different agent (a
-// different memory pool); `type_name` re-skins the one the project already has,
-// so the pool it has been filling stays its own.
-export function setProjectDefaultAgent(
-  projectId: string,
-  body: { instance_id?: string | null; type_name?: string | null }
-): Promise<ProjectAgent> {
+// Select the existing agent that new rooms start with.
+export function setProjectDefaultAgent(projectId: string, body: { instance_id: string }): Promise<ProjectAgent> {
   return request<ProjectAgent>(`/projects/${encodeURIComponent(projectId)}/default-agent`, {
     method: 'PUT',
     body: JSON.stringify(body),
   })
 }
 
-// 环境 (spec §9.1): which sandbox image runs this project's agent.
-export function getSandboxImage(projectId: string): Promise<SandboxImageInfo> {
-  return request<SandboxImageInfo>(`/projects/${encodeURIComponent(projectId)}/sandbox-image`)
+export function getProjectEnvironment(projectId: string): Promise<ProjectEnvironmentInfo> {
+  return request(`/projects/${encodeURIComponent(projectId)}/environment`)
 }
-export function setSandboxImage(projectId: string, image: string): Promise<{ current: string | null }> {
-  return request(`/projects/${encodeURIComponent(projectId)}/sandbox-image`, {
+export function saveProjectEnvironment(
+  projectId: string,
+  config: Omit<EnvironmentConfig, 'revision'>
+): Promise<EnvironmentConfig> {
+  return request(`/projects/${encodeURIComponent(projectId)}/environment`, {
     method: 'PUT',
-    body: JSON.stringify({ image }),
+    body: JSON.stringify(config),
+  })
+}
+export function getRoomEnvironment(projectId: string, roomId: string): Promise<EnvironmentStatus> {
+  return request(`/projects/${encodeURIComponent(projectId)}/environment/rooms/${encodeURIComponent(roomId)}`)
+}
+export function applyRoomEnvironment(projectId: string, roomId: string, latest: boolean): Promise<EnvironmentStatus> {
+  return request(`/projects/${encodeURIComponent(projectId)}/environment/rooms/${encodeURIComponent(roomId)}/apply`, {
+    method: 'POST',
+    body: JSON.stringify({ latest }),
   })
 }
 
@@ -975,9 +924,9 @@ export function toggleReaction(
   )
 }
 
-// ---- 图片输入 (chat image attachments) ----
+// ---- Chat attachments ----
 
-// Upload a chat image into the topic's worktree. NOTE: raw fetch, not
+// Upload a file into the topic's worktree. NOTE: raw fetch, not
 // request() — multipart needs the browser to set the boundary header itself.
 export async function uploadAttachment(topicId: string, file: File): Promise<ChatAttachment> {
   const form = new FormData()
@@ -997,6 +946,20 @@ export async function uploadAttachment(topicId: string, file: File): Promise<Cha
 // <img src=…> URL for an uploaded attachment (binary raw endpoint).
 export function attachmentRawUrl(topicId: string, path: string): string {
   return `${BASE}/topics/${encodeURIComponent(topicId)}/attachments/raw?path=${encodeURIComponent(path)}`
+}
+
+// Downloads carry the same credentials as API requests, including token-only sessions.
+export async function downloadFile(rawUrl: string, filename: string): Promise<void> {
+  const res = await fetch(`${rawUrl}&download=true`, { headers: authHeaders() })
+  if (!res.ok) throw new Error(`下载失败（HTTP ${res.status}）`)
+  const url = URL.createObjectURL(await res.blob())
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
 // Living-doc helpers (spec §2.2 docs-out/docs-in). `content` is markdown.
@@ -1220,10 +1183,15 @@ export function getPrChecks(topicId: string): Promise<PrChecks> {
   return request<PrChecks>(`/topics/${encodeURIComponent(topicId)}/pr-checks`)
 }
 
-export function acceptCard(cardId: string, decidedBy: string): Promise<AcceptCard> {
+// 合的是人看到的那个 commit：会触发合并的三个入口（采纳 / 人工放行 / 布防）都
+// 带上卡片渲染时 `merge_state.head_sha` 的值。轮询器每分钟把卡刷到 PR 的新
+// head，屏幕上那份不会自己变——不声明看的是哪一版，点下去合的就可能是一段没人
+// 看过的代码。后端拿它和卡当前的 head 对，不一致就 422 让人重新看过。
+// null 是合法值：卡还没被镜像过 head，或者根本不骑 PR（平台 lane）。
+export function acceptCard(cardId: string, decidedBy: string, headSha: string | null): Promise<AcceptCard> {
   return request<AcceptCard>(`/accept-cards/${encodeURIComponent(cardId)}/accept`, {
     method: 'POST',
-    body: JSON.stringify({ decided_by: decidedBy }),
+    body: JSON.stringify({ decided_by: decidedBy, head_sha: headSha }),
   })
 }
 
@@ -1249,20 +1217,20 @@ export function revokeCard(cardId: string, decidedBy: string): Promise<AcceptCar
 // server-side (never the body) and the card records who / when / what the
 // checks said / why. Only the project's override list (owner/lead when
 // unconfigured) may call it, and 芝士 is refused outright.
-export function mergeCardAnyway(cardId: string, reason: string): Promise<AcceptCard> {
+export function mergeCardAnyway(cardId: string, reason: string, headSha: string | null): Promise<AcceptCard> {
   return request<AcceptCard>(`/accept-cards/${encodeURIComponent(cardId)}/merge-anyway`, {
     method: 'POST',
-    body: JSON.stringify({ reason }),
+    body: JSON.stringify({ reason, head_sha: headSha }),
   })
 }
 
 // 绿了自动合 (#718): arm/disarm auto-merge on a pending card. Reviewer-side
 // switch, only meaningful on a project with auto_merge_allowed; the actor is
 // the session user server-side, and 新提交作废采纳 disarms it again.
-export function setAutoMerge(cardId: string, enabled: boolean): Promise<AcceptCard> {
+export function setAutoMerge(cardId: string, enabled: boolean, headSha: string | null): Promise<AcceptCard> {
   return request<AcceptCard>(`/accept-cards/${encodeURIComponent(cardId)}/auto-merge`, {
     method: 'POST',
-    body: JSON.stringify({ enabled }),
+    body: JSON.stringify({ enabled, head_sha: headSha }),
   })
 }
 

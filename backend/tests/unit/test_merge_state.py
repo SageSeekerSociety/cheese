@@ -235,9 +235,14 @@ def test_red_and_missing_are_both_reported():
     assert _checks(verdict, "required_check_missing") == ("test",)
 
 
-def test_required_check_still_running_is_waiting_on_ci():
-    """必跑检查报到了、还在跑 → 等 CI。issue 的表把它归在 UNSTABLE，靠
-    reason 和「检查红了」分开。"""
+def test_required_check_still_running_blocks_and_waits_on_ci():
+    """必跑检查报到了、还在跑 → **blocked**，等 CI。
+
+    它必须挡住合并，而不是像检查红了那样只是「不好看」：一个还没跑完的必跑检查
+    没有结论，而没有结论不是通过（#465/#468 对「缺席」的判词，对「在跑」一字不
+    改）。归成 unstable 时它会落进采纳闸门的放行集合 `("clean", "unstable")`，
+    配了必跑检查、test 还 in_progress 的 PR 于是照样合得掉。
+    reason 仍是 ci_running：等的还是 CI，谁的活不变。"""
     verdict = compute_merge_state(
         github_mergeable_state="unstable",
         github_mergeable=True,
@@ -246,8 +251,22 @@ def test_required_check_still_running_is_waiting_on_ci():
         required_checks=[TEST_GLOB],
     )
 
-    assert verdict.state == "unstable"
+    assert verdict.state == "blocked"
     assert _checks(verdict, "ci_running") == ("test",)
+
+
+def test_a_running_check_nobody_requires_still_merges():
+    """在跑的检查不在必跑名单上 → 不挡：名单是「哪些检查的结论必须等」的全部
+    答案，名单外的检查在跑不构成任何人的义务。"""
+    verdict = compute_merge_state(
+        github_mergeable_state="unstable",
+        github_mergeable=True,
+        check_runs=[_running("style"), _green("test")],
+        changed_paths=["backend/app/main.py"],
+        required_checks=[TEST_GLOB],
+    )
+
+    assert verdict.state == "unstable"
 
 
 # ---- 平台补位：strict / behind ----------------------------------------------
@@ -514,13 +533,14 @@ class TestWhoseMove:
         assert whose_move(v) == "platform"
 
     def test_ci_running_is_nobodys_summon(self):
+        """必跑检查在跑挡着合并（blocked），但不叫任何人 —— 等 CI 而已。"""
         v = self._verdict(
             github_mergeable_state="unstable",
             github_mergeable=True,
             check_runs=[_running("test")],
             required_checks=[RequiredCheck(name="test")],
         )
-        assert v.state == "unstable"
+        assert v.state == "blocked"
         assert whose_move(v) == "ci"
 
     def test_required_check_red_summons_the_agent(self):

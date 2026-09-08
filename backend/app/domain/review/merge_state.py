@@ -13,9 +13,14 @@ check runs / 改动文件清单 / 与基线的 ancestry）和项目的分支保�
   注解，不改变 state。
 - **判定不了的平台补位**（``github_enforces=False``）：必跑检查有红 → blocked
   （哪个红写进 reason）；必跑检查缺席 → blocked（等 CI；**缺席是 pending，
-  不是通过**，#468/#465）；strict 且落后基线 → behind；GitHub 说 dirty（或
-  ``mergeable is False``）→ dirty；unstable 但红的不在必跑名单（或名单为空）
-  → unstable，可采纳。
+  不是通过**，#468/#465）；必跑检查还在跑 → blocked（同上：结论还不存在就不是
+  通过，reason 仍是「CI 还在跑」）；strict 且落后基线 → behind；GitHub 说
+  dirty（或 ``mergeable is False``）→ dirty；unstable 但红的不在必跑名单（或
+  名单为空）→ unstable，可采纳。
+
+  于是 ``unstable`` 只剩「有检查没过，但没有一个是必跑的」这一种含义——采纳闸门
+  和自动合并布防放行 ``("clean", "unstable")``，正因为这两档里没有任何一个必跑
+  检查还欠着结论。
 - **draft**：无论哪种模式都是 blocked（GitHub 对 draft 的合并接口直接拒绝），
   reason kind 为 ``draft``。REST 的 ``mergeable_state == "draft"`` 和调用方
   显式传入 ``draft=True`` 等价。
@@ -309,7 +314,8 @@ def compute_merge_state(
         )
 
     # 必跑名单（#468/#470 语义）：红 → blocked；缺席/skipped → blocked（等
-    # CI，缺席是 pending 不是通过）；还在跑 → 后面归入「等 CI」的 unstable。
+    # CI，缺席是 pending 不是通过）；还在跑 → 也是 blocked（见下面 `running`
+    # 那段），只是要先让 strict 的 behind 有机会先说话。
     red: list[str] = []
     missing: list[str] = []
     running: list[str] = []
@@ -365,11 +371,16 @@ def compute_merge_state(
             ),
         )
 
-    # 必跑检查在跑：等 CI。issue 的表把它归在 UNSTABLE（GitHub 也是），靠
-    # reason 和「检查红了」分开。
+    # 必跑检查在跑：**blocked**，等 CI。一个必跑检查还没跑完，它的结论就还
+    # 不存在，而「结论不存在」和「缺席」是同一件事——都不是通过（#465/#468）。
+    # 归成 unstable 曾经让它掉进采纳闸门的放行集合 `("clean", "unstable")`，
+    # 于是配了必跑检查、测试还 in_progress 的 PR 照样合得掉。真 GitHub 的分支
+    # 保护下 required-pending 也正是 BLOCKED。
+    # reason 不变（ci_running / 「CI 还在跑」）：等的还是 CI，显示语言和「谁的
+    # 活」标签（whose_move → ci）都不动。
     if running:
         return MergeVerdict(
-            state="unstable",
+            state="blocked",
             reasons=(
                 MergeReason(
                     kind="ci_running",
@@ -387,17 +398,19 @@ def compute_merge_state(
                 reasons=(MergeReason(kind="no_obstacle", detail="可以合并"),),
             )
         case "unstable":
-            # 红的（若有）不在必跑名单里，或名单为空 → 可采纳；注解如实说
-            # 哪个红、哪个在跑，给「谁的活」标签用。
-            annotations = _check_annotations(check_runs)
+            # 必跑名单在上面已经整份放行过了，所以到这里「红的（若有）不在必跑
+            # 名单里，或名单为空」是**已知**的，而不是猜的——这句话必须说出口：
+            # 采纳按钮在这一档是亮的，人要决定的正是「明知有检查红着，要不要
+            # 照样采纳」，而那取决于红的那个是不是必跑的。
+            # 注解跟在后面如实说哪个红了，「谁的活」标签也由它算。
             return MergeVerdict(
                 state="unstable",
-                reasons=annotations
-                or (
+                reasons=(
                     MergeReason(
                         kind="github_verdict",
-                        detail="GitHub 的裁决：unstable（有检查没过，但不在必跑名单）",
+                        detail="有检查没过，但都不在必跑名单，可以采纳",
                     ),
+                    *_check_annotations(check_runs),
                 ),
             )
         case "blocked" | "behind" as word:

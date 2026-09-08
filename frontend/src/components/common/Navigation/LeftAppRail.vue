@@ -134,7 +134,22 @@
         </v-card-text>
       </v-card>
     </v-menu>
-    <v-btn v-else to="/account/signin" variant="tonal" color="primary" prepend-icon="mdi-account">登录</v-btn>
+    <v-btn
+      v-else
+      to="/account/signin"
+      variant="text"
+      color="on-surface-variant"
+      width="48"
+      height="48"
+      min-width="0"
+      stacked
+      class="pa-0"
+    >
+      <template #prepend>
+        <v-icon icon="mdi-login" size="20" />
+      </template>
+      登录
+    </v-btn>
   </v-navigation-drawer>
 </template>
 

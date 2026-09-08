@@ -19,10 +19,34 @@ class AcceptCardCreate(BaseModel):
     # so that message — not `Field required` — is what comes back.
     change_subject: str | None = Field(default=None, max_length=255)
     change_body: str | None = None
+    # 这批交付是哪几条活干出来的 (#189) — the room naming the work whose code is
+    # actually in this change, which is the one thing about a delivery the
+    # platform cannot see for itself. Becomes `Cheese-Task:` in permanent
+    # history, so an id that does not belong to this room is refused rather
+    # than written. Appearing in an earlier delivery is not a reason to refuse
+    # it: one piece of work can be delivered, keep being written, and land
+    # again in the next batch — it really did write both.
+    #
+    # Empty by default and empty is allowed: nothing is inferred from silence,
+    # because every inference available ("on the delivering tree", "not yet
+    # claimed") proves only that a task row exists — not that its code is here.
+    # An undeclared delivery lands with no `Cheese-Task:` line, which is honest.
+    task_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
+#: 合的是**人看到的**那个 commit：每个会触发合并的写入口都带上前端渲染这张卡
+#: 时卡面显示的 head sha（`merge_state.head_sha`）。它不是给服务端「用哪个 sha
+#: 合并」的建议，而是给它「我看的是哪一版」的声明——服务端拿它和卡当前的
+#: `pr_head_sha` 对；不一致就是「你看的那版已经不在了」，请求被拒、人重新看过
+#: 再点。没有它的话，轮询器在渲染和点击之间把卡刷到新 head，点下去合的就是一
+#: 段没有人看过的代码。None 是合法值：卡还没被轮询器镜像过 head（刚递的卡）、
+#: 或者根本不骑 PR（平台 lane）时，卡面显示的就是「没有 sha」。
+_SEEN_HEAD_FIELD = Field(default=None, max_length=64)
 
 
 class AcceptDecision(BaseModel):
     decided_by: str = Field(min_length=1, max_length=64)
+    head_sha: str | None = _SEEN_HEAD_FIELD
 
 
 class RejectDecision(BaseModel):
@@ -46,6 +70,7 @@ class ForceMergeDecision(BaseModel):
     whatever the caller typed."""
 
     reason: str = Field(default="", max_length=2000)
+    head_sha: str | None = _SEEN_HEAD_FIELD
 
 
 class AutoMergeDecision(BaseModel):
@@ -53,6 +78,7 @@ class AutoMergeDecision(BaseModel):
     采纳，布防人是谁必须由平台认定。"""
 
     enabled: bool
+    head_sha: str | None = _SEEN_HEAD_FIELD
 
 
 class ApprovalCreate(BaseModel):

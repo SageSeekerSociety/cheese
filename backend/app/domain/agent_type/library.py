@@ -1,15 +1,7 @@
-"""The built-in agent types, shipped as files.
+"""Built-in starting configurations for new project agents.
 
-An agent *type* is 出厂设置: everything true about an agent before it has worked
-anywhere — who it is (the system prompt), what it can reach (skills, MCP
-servers) and how it runs (model, effort, harness). It carries no memory and
-belongs to no project, which is exactly what makes it shareable across them.
-
-Types are defined Claude Code agents-style: a markdown file with YAML
-frontmatter whose body is the system prompt. Presets ship as files in
-``presets/``; anything a person defines lives in the ``agent_types`` table.
-Resolution order is custom (DB) > preset file > None — a custom type shadows a
-preset of the same name, so a project can override a preset without forking it.
+Presets ship as Markdown files in ``presets/``. Creation copies their values
+onto an agent; existing agents never resolve their configuration through here.
 """
 
 from dataclasses import dataclass, field
@@ -19,11 +11,7 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class AgentTypeDef:
-    """One agent type, however it was defined (preset file or DB row).
-
-    The two sources resolve to this same shape on purpose: every consumer asks
-    "what is this type" and must not care which half of the catalog answered.
-    """
+    """One built-in starting configuration."""
 
     name: str
     title: str

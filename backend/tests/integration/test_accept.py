@@ -114,7 +114,7 @@ def test_merge_exception_leaves_card_and_topic_retryable(client, monkeypatch):
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)
 
-    def fail_merge(*_args):
+    def fail_merge(*_args, **_kwargs):
         raise RuntimeError("git object database unavailable")
 
     monkeypatch.setattr(ws, "merge_topic", fail_merge)
@@ -341,3 +341,137 @@ def test_revoke_404_for_missing_card(client):
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 404
+
+
+def _main_log(pid: str, fmt: str) -> str:
+    import subprocess
+
+    from app.domain.workspace import service as ws
+
+    return subprocess.run(
+        ["git", "log", "-1", f"--format={fmt}", "main"],
+        cwd=ws.ensure_repo(uuid.UUID(pid)),
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+
+
+def test_accept_squashes_the_delivery_with_the_cards_words(client):
+    """拍板 #363 (2026-09-07): an unbound project's accept lands ONE squash
+    commit whose subject/body are the card's and whose trailers are pr_text's —
+    same shape as the GitHub lane's product — with 芝士 as the committer. And
+    before anything merges, the card reads CLEAN: no checks exist to wait for,
+    so nothing may dress the wait up as an unknown (#718 的词表)."""
+    import subprocess
+
+    from app.domain.workspace import service as ws
+    from tests.machine_work import machine_commits
+
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    machine_commits(uuid.UUID(pid), uuid.UUID(tid), {"a.txt": "one\n"})
+    machine_commits(uuid.UUID(pid), uuid.UUID(tid), {"b.txt": "two\n"})
+
+    r = client.post(
+        f"/topics/{tid}/accept-card",
+        json={
+            "change_subject": "feat: deliver a and b",
+            "change_body": "Two files, one delivery.",
+            "reviewer_handle": "alice",
+        },
+    )
+    assert r.status_code == 200
+    card = r.json()["data"]
+    assert card["merge_state"]["state"] == "clean"
+    assert card["merge_state"]["who"] == "human"
+
+    before = subprocess.run(
+        ["git", "rev-list", "--count", "main"],
+        cwd=ws.ensure_repo(uuid.UUID(pid)),
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    r = client.post(
+        f"/accept-cards/{card['id']}/accept",
+        json={"decided_by": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200
+
+    after = subprocess.run(
+        ["git", "rev-list", "--count", "main"],
+        cwd=ws.ensure_repo(uuid.UUID(pid)),
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert int(after) == int(before) + 1  # two branch commits → one on main
+
+    body = _main_log(pid, "%B")
+    assert body.splitlines()[0] == "feat: deliver a and b"
+    assert "Two files, one delivery." in body
+    assert "Reviewed-by: alice" in body
+    assert f"Cheese-Topic: {tid}" in body
+    assert f"Cheese-Card: {card['id']}" in body
+    parents = _main_log(pid, "%P").split()
+    assert len(parents) == 1  # squashed, not a merge commit
+    committer = _main_log(pid, "%cn %ce").strip()
+    assert committer == "芝士 cheese@zhishi.local"
+
+
+def test_conflict_card_reads_dirty(client):
+    """The one signal an unbound project has: the last merge hit a conflict.
+    The card then says dirty (芝士处理中), not clean."""
+    import subprocess
+
+    from app.domain.workspace import service as ws
+    from tests.machine_work import machine_commits
+
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    machine_commits(uuid.UUID(pid), uuid.UUID(tid), {"f.txt": "branch version\n"})
+    repo = ws.ensure_repo(uuid.UUID(pid))
+    (repo / "f.txt").write_text("base version\n", encoding="utf-8")
+    for args in (
+        ["add", "-A"],
+        ["-c", "user.name=x", "-c", "user.email=x@y", "commit", "-q", "-m", "base"],
+    ):
+        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+    cid = _make_card(client, tid)
+    r = client.post(
+        f"/accept-cards/{cid}/accept",
+        json={"decided_by": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200
+    assert r.json()["data"]["status"] == "conflict"
+
+    card = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"][0]
+    assert card["merge_state"]["state"] == "dirty"
+    assert card["merge_state"]["who"] == "human"
+
+    # The conflicted accept already materialized the merge (markers committed
+    # on the branch) and dispatched 芝士 — resolving is an ordinary commit in
+    # the topic worktree, and the retry then squashes cleanly.
+    wt = ws.topic_worktree(uuid.UUID(pid), uuid.UUID(tid))
+    assert "<<<<<<<" in (wt / "f.txt").read_text(encoding="utf-8")
+    (wt / "f.txt").write_text("resolved version\n", encoding="utf-8")
+    for args in (
+        ["add", "-A"],
+        ["-c", "user.name=芝士", "-c", "user.email=c@z.l", "commit", "-q", "-m", "fix"],
+    ):
+        subprocess.run(["git", *args], cwd=wt, check=True, capture_output=True)
+
+    r = client.post(
+        f"/accept-cards/{cid}/accept",
+        json={"decided_by": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200
+    assert r.json()["data"]["status"] == "accepted"
+    assert "resolved version" in ws.read_file(uuid.UUID(pid), "f.txt")
+    parents = _main_log(pid, "%P").split()
+    assert len(parents) == 1  # the retry still lands ONE squash commit

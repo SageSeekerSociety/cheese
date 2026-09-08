@@ -252,7 +252,7 @@ export type WsServerFrame =
   // answered) — replace it in the timeline.
   | { type: 'block_updated'; block: Block }
 
-// 图片输入: an uploaded worktree image the message carries. `path` comes from
+// An uploaded worktree file the message carries. `path` comes from
 // POST /topics/{id}/attachments; the WS frame only references it (no binary).
 export interface ChatAttachment {
   path: string
@@ -269,7 +269,7 @@ export interface WsClientMessage {
   // session post as 匿名者 — so the client no longer names itself at all.
   summon: boolean
   reply_to?: string // B3: thread this message under another
-  attachments?: ChatAttachment[] // 图片输入 (uploaded first, referenced here)
+  attachments?: ChatAttachment[] // Uploaded first, referenced here.
   // 乐观渲染的对账号：客户端给自己这一次发送起的 id，后端原样戳回块的 meta 上。
   // 靠文本对账是不行的——落库那一步会把 @名字 改写成 <@handle>。
   client_id?: string
@@ -715,30 +715,10 @@ export interface ProjectCredits {
 // ---- 题目匹配市场 (spec §13 阶段 6: Space 发布题目, 团队应征) ----
 
 // A selectable AI execution profile (GET /projects/{id}/execution-profiles).
-export interface ExecProfileOption {
-  name: string
-  label: string
-  tier: string
-  model: string
-  available: boolean
-}
-
-// GET /projects/{id}/execution-profiles
-export interface ExecProfiles {
-  current: string
-  profiles: ExecProfileOption[]
-}
-
 // GET /projects/{id}/compute-profiles
 export interface ComputeProfiles {
   current: string
   profiles: PoolListing[]
-}
-
-export interface ModelProfiles {
-  supply: 'subscription' | 'gateway'
-  current: string | null
-  profiles: (Omit<PoolListing, 'kind'> & { kind: 'model' })[]
 }
 
 export type ProjectMachineStatus =
@@ -821,16 +801,28 @@ export interface TopicComputeProfile {
   visibility: TopicComputeVisibility
 }
 
-// GET /projects/{id}/sandbox-image (spec §9.1 environment): which image runs the
-// project's agent. current=null → using the pool default base image.
-export interface SandboxImageOption {
-  image: string
-  label: string
+export interface EnvironmentConfig {
+  setup_script: string
+  startup_script: string
+  variables: Record<string, string>
+  revision: string
 }
-export interface SandboxImageInfo {
-  current: string | null
-  default: string
-  options: SandboxImageOption[]
+export interface ProjectEnvironmentInfo {
+  config: EnvironmentConfig
+  can_edit: boolean
+  rooms: { id: string; title: string; revision: string | null }[]
+}
+export interface EnvironmentStatus {
+  busy?: boolean
+  state: 'pending' | 'preparing' | 'ready' | 'stopped' | 'failed' | 'offline'
+  recovery_state?: 'requested' | 'retrying' | 'needs_help' | 'closed' | null
+  stage?: string
+  log?: string
+  error?: string
+  exit_code?: number | null
+  pinned_revision?: string | null
+  started_at?: string
+  finished_at?: string | null
 }
 
 // 当前用户 (Phase 0 极简登录): what /users/login returns and what we keep locally.
@@ -953,16 +945,7 @@ export interface DeviceApproval {
 
 // ---- AI 队友 (agent 类型与实例) ----
 //
-// Three layers, three lifetimes (docs/topics/room-task-agent-session-设计方案.md
-// §12): a TYPE is 出厂设置 and belongs to no project; an INSTANCE is that type
-// working inside one project, and it owns the memory it accumulated there; a
-// session is where one conversation got to and may be thrown away.
-//
-// So "how this agent behaves" (system prompt, skills, MCP, model, effort,
-// harness) is on the TYPE, and "who it is here" (name, handle, memory) is on the
-// INSTANCE. The management page shows both, which is why it reads two endpoints.
-
-// GET /agent-types — presets merged with the project's custom types.
+// GET /agent-types: built-in starting configurations for new agents.
 export interface AgentType {
   name: string
   title: string
@@ -982,8 +965,18 @@ export interface AgentType {
 }
 
 // GET /projects/{id}/agents — one agent working in this project.
+export interface AgentConfiguration {
+  body: string
+  model: string
+  harness: string
+  skills: string[]
+  mcp_servers: string[]
+  effort: string | null
+}
+
 export interface ProjectAgent {
-  // Null for the implicit 芝士 a project has before anyone configured one.
+  configuration: AgentConfiguration
+  // Current project rosters always return saved IDs; nullable for older clients.
   id: string | null
   project_id: string
   // The memory pool key inside the project (`{project}:{handle}`).
@@ -992,7 +985,7 @@ export interface ProjectAgent {
   display_name: string
   // What a new topic in this project gets.
   is_default: boolean
-  // False = it resolves and owns a memory pool, but there is no row to edit.
+  // Retained for older clients; current project roster entries are always saved.
   configured: boolean
   // False = 已停用. Still listed and still working in the topics that already
   // have it — just not offered when picking an agent for new work.
