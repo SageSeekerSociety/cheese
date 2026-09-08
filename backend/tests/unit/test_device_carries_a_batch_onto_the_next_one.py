@@ -52,7 +52,7 @@ class _Platform:
         outer = self
 
         class _Handler(BaseHTTPRequestHandler):
-            def do_GET(self):  # noqa: N802 — BaseHTTPRequestHandler's own spelling
+            def do_POST(self):  # noqa: N802
                 body = json.dumps(outer.payload).encode()
                 self.send_response(200)
                 self.send_header("Content-Length", str(len(body)))

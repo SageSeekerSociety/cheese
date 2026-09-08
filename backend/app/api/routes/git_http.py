@@ -22,7 +22,7 @@ import uuid
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, Request, Response
+from fastapi import APIRouter, Body, Depends, Header, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.response import ok
@@ -164,12 +164,13 @@ async def _cgi(
 
 
 @router.get("/{project_id}/git/branch/{topic_id}")
+@router.post("/{project_id}/git/branch/{topic_id}")
 async def branch_for_place(
     project_id: uuid.UUID,
     topic_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
     on: str = "",
-    heads: str = "",
+    heads: str = Body(default="", media_type="text/plain"),
     x_cheese_token: str | None = Header(default=None, alias="X-Cheese-Token"),
 ) -> dict:
     """Which branch this place writes to **right now**, and how to get onto it.
@@ -291,21 +292,12 @@ async def branch_for_place(
     )
 
 
-#: 一个 commit 长这样，别的都不是。The list arrives in a URL a device wrote, and
-#: every entry goes on to be an argument to `git merge-base` — so what is not a
-#: full hex object name never reaches git. The trailing empty field of a
-#: comma-terminated list is dropped by the same rule.
+# Only full hex object names count as reported commits.
 _A_COMMIT = re.compile(r"\A[0-9a-f]{40}(?:[0-9a-f]{24})?\Z")
-
-#: How many of the reported commits are looked at, however many arrive. The tip
-#: a clone is sitting on is whatever it delivered last, so it is within this
-#: batch's own commits — deep enough to cover a long batch, and a ceiling on how
-#: much work one URL can ask this endpoint to do.
-_HOW_FAR_BACK = 100
 
 
 def _commits_a_clone_reported(heads: str) -> list[str]:
-    return [c for c in heads.split(",") if _A_COMMIT.match(c)][:_HOW_FAR_BACK]
+    return [c for c in heads.split() if _A_COMMIT.match(c)]
 
 
 @router.get("/{project_id}/git/info/refs")

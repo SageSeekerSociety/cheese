@@ -50,11 +50,12 @@ class _TheRealPlatform:
         outer = self
 
         class _Handler(BaseHTTPRequestHandler):
-            def do_GET(self):  # noqa: N802 — BaseHTTPRequestHandler's own spelling
+            def do_POST(self):  # noqa: N802
                 query = self.path.partition("?")[2]
-                answer = client.get(
+                answer = client.post(
                     f"{url}?{query}" if query else url,
-                    headers={"X-Cheese-Token": token},
+                    content=self.rfile.read(int(self.headers["Content-Length"])),
+                    headers={"X-Cheese-Token": token, "Content-Type": "text/plain"},
                 )
                 outer.asked.append(query)
                 body = answer.content
@@ -210,8 +211,13 @@ def _pr_would_show(repo: Path, base: str, head: str) -> list[str]:
 
 
 @pytest.mark.timeout(300)
+@pytest.mark.parametrize(
+    ("late_push", "extra_commits"),
+    [(False, 0), (True, 0), (False, 101)],
+    ids=["renamed", "remote-tip-advanced", "long-local-history"],
+)
 def test_renaming_the_branch_does_not_make_a_delivered_batch_look_new(
-    client, tmp_path, monkeypatch
+    client, tmp_path, monkeypatch, late_push, extra_commits
 ):
     """andylizf 的复现，一步不差。
 
@@ -243,6 +249,16 @@ def test_renaming_the_branch_does_not_make_a_delivered_batch_look_new(
     # 只改名字。一个提交都不动。
     _git(work, "branch", "-m", "dev/agent-work")
     _commit(work, "two.txt", "batch two\n")
+    for index in range(extra_commits):
+        _commit(work, "two.txt", f"batch two revision {index}\n")
+    if late_push:
+        other = root / "late-pusher"
+        _git(root, "clone", "-q", str(repo), str(other))
+        _git(other, "checkout", "-q", first)
+        _git(other, "config", "user.email", "other@z")
+        _git(other, "config", "user.name", "other")
+        _commit(other, "late.txt", "pushed after the batch was delivered\n")
+        _git(other, "push", "-q", "origin", first)
 
     platform = _TheRealPlatform(
         client,
@@ -313,10 +329,14 @@ def test_a_dev_branch_that_was_never_a_batch_still_pushes_normally(
 
 def _ask(client, pid: str, room: str, *, on: str, heads: list[str]) -> dict:
     """把 device 那一问原样问一遍：我在哪条分支上，我手里有哪些提交。"""
-    answer = client.get(
+    answer = client.post(
         f"/projects/{pid}/git/branch/{room}",
-        params={"on": on, "heads": ",".join(heads)},
-        headers={"X-Cheese-Token": mint_scoped_token(project_id=pid)},
+        params={"on": on},
+        content="\n".join(heads),
+        headers={
+            "X-Cheese-Token": mint_scoped_token(project_id=pid),
+            "Content-Type": "text/plain",
+        },
     )
     assert answer.status_code == 200, answer.text
     return answer.json()["data"]

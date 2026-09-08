@@ -36,7 +36,7 @@ def _branch_server(answer: str | None):
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
     class _Handler(BaseHTTPRequestHandler):
-        def do_GET(self):  # noqa: N802 — BaseHTTPRequestHandler's own spelling
+        def do_POST(self):  # noqa: N802
             if answer is None:
                 self.send_response(404)
                 self.end_headers()

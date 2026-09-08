@@ -2515,8 +2515,12 @@ def _platform_over_http(client, pid: str):
     token = mint_scoped_token(project_id=pid)
 
     class _Handler(BaseHTTPRequestHandler):
-        def do_GET(self):  # noqa: N802 — BaseHTTPRequestHandler's own spelling
-            answer = client.get(self.path, headers={"X-Cheese-Token": token})
+        def do_POST(self):  # noqa: N802
+            answer = client.post(
+                self.path,
+                content=self.rfile.read(int(self.headers["Content-Length"])),
+                headers={"X-Cheese-Token": token, "Content-Type": "text/plain"},
+            )
             body = _json.dumps(answer.json().get("data") or {}).encode()
             self.send_response(answer.status_code)
             self.send_header("Content-Type", "application/json")

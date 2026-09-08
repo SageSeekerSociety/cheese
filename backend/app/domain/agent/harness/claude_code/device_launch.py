@@ -654,11 +654,14 @@ asked_on="${last_branch:-$here}"
 #
 # 提交改不了名字：平台手里有每一批交付时记下的 head、以及那条分支上被推到的 tip，
 # 拿这里的 HEAD 及其祖先去对，命中的就是一个旧批次，无论它现在叫什么。
-heads="$(git rev-list --max-count=100 HEAD 2>/dev/null | tr '\n' ',' || true)"
 answer=""
 if [ -n "${CHEESE_BRANCH_URL:-}" ]; then
-  answer="$(curl -fsS --max-time 10 -H "X-Cheese-Token: ${CHEESE_TOKEN:-}" \
-    "$CHEESE_BRANCH_URL?on=$asked_on&heads=$heads" 2>/dev/null || true)"
+  # A long-lived clone can carry a delivered batch arbitrarily far behind HEAD.
+  # Send its complete ancestry in the body rather than truncating a URL.
+  answer="$(git rev-list HEAD 2>/dev/null | \
+    curl -fsS --max-time 10 -H "X-Cheese-Token: ${CHEESE_TOKEN:-}" \
+    -H 'Content-Type: text/plain' --data-binary @- \
+    "$CHEESE_BRANCH_URL?on=$asked_on" 2>/dev/null || true)"
 fi
 cheese_field() {
   printf '%s' "$answer" | sed -n "s/.*\"$1\"[ ]*:[ ]*\"\([^\"]*\)\".*/\1/p"

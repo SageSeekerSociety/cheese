@@ -2022,10 +2022,10 @@ def batches_a_clone_stands_on(
     branch can be renamed with `git branch -m` without a single commit moving,
     so a clone's own branch name proves nothing about what its history carries.
 
-    Two facts here identify a batch and neither can be renamed: the commit the
-    platform recorded it delivering, and where its branch in THIS repo points —
-    the tip the delivering device actually pushed, which is what covers the
-    batches that merged with no `delivered_head` recorded at all.
+    Match the ancestry of its recorded delivery and its retained branch. A later
+    push can advance that branch beyond any commit the original clone knows.
+    This identifies the batch only; the recorded delivered_head remains the
+    sole content boundary for carrying work onto the next batch.
 
     A commit the base branch already reaches is not evidence: it is on main by
     ancestry, so a PR opened on top of it shows none of it a second time. Every
@@ -2043,8 +2043,11 @@ def batches_a_clone_stands_on(
     tips = _branch_tips(repo)
     carried: set[str] = set()
     for branch, delivered_head in delivered.items():
-        marks = {m for m in (delivered_head, tips.get(branch, "")) if m in wanted}
-        if any(not _is_ancestor(repo, mark, base) for mark in marks):
+        roots = {m for m in (delivered_head, tips.get(branch, "")) if m}
+        if not roots:
+            continue
+        marks = _git(repo, "rev-list", *sorted(roots), "--not", base).splitlines()
+        if wanted.intersection(marks):
             carried.add(branch)
     return carried
 
