@@ -213,15 +213,32 @@ Changing backend env (e.g. enabling an OAuth provider):
    bash deploy/deploy-docker.sh "$SHA"
    ```
 
-3. The box holds no ghcr login outside workflow runs (deploy-dev.yml logs in
-   per-run). If the pull is denied, use local-image mode:
+3. **The pull will be denied** — the box holds no ghcr login outside workflow
+   runs (`deploy-dev.yml` logs in per-run and logs out after). The cheapest fix
+   is not to run the script by hand at all: **dispatch `Deploy (dev/test box)`
+   manually** (Actions → that workflow → Run workflow → `main`). It logs into
+   ghcr, runs this same script on the self-hosted runner that lives ON the box,
+   and reads the very `.env` you just edited. Check first that `main`'s HEAD is
+   the sha you want redeployed, since a dispatch deploys the ref's HEAD rather
+   than what is currently running, and that HEAD is not a docs-only commit (the
+   `Skip docs-only commits` step would no-op the deploy).
+
+   To stay on the command line, log in and re-run step 2 unchanged:
 
    ```bash
-   DEPLOY_APP_IMAGE_SOURCE=local \
-   BACKEND_IMAGE=ghcr.io/sageseekersociety/cheese/backend:$SHA \
-   FRONTEND_IMAGE=ghcr.io/sageseekersociety/cheese/frontend:$SHA \
-   bash deploy/deploy-docker.sh "$SHA"
+   docker login ghcr.io -u <github user>   # password = PAT with read:packages
    ```
+
+   `DEPLOY_APP_IMAGE_SOURCE=local` does **not** substitute for that login on a
+   box that runs agents. It covers the two app images only; the agent runtime
+   images are launched through docker.sock, so compose cannot hold them and the
+   script pulls `SANDBOX_IMAGE` unconditionally whenever
+   `AGENT_RUNTIME_IMAGES_REQUIRED` is true — which the subscription overlay
+   makes it. Local mode gets you past `pull backend frontend` and straight into
+   the identical denial one step later. Do not reach for
+   `AGENT_RUNTIME_IMAGES_REQUIRED=false` to skip it either: that same block
+   creates the image-retainer containers that keep the next `docker image prune
+   -a` from reclaiming the sandbox image out from under every turn.
 
 4. Verify: container env via `docker inspect` (parse the JSON — don't split on
    commas, values like `OAUTH_ENABLED_PROVIDERS=ruc,github_app` get chopped),
