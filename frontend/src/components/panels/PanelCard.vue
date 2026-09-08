@@ -112,7 +112,7 @@ async function send() {
       </button>
     </header>
 
-    <LoadingSkeleton v-if="loading && !card" variant="text" class="px-3 py-2" />
+    <LoadingSkeleton v-if="loading && !card" variant="text" :rows="4" class="pt-2" />
 
     <div v-else-if="!card" class="px-3 py-4 t-body c-muted">
       {{ errorMsg ?? '这个房间里没有这条活' }}

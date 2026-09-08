@@ -6,7 +6,6 @@ import { useRouter } from 'vue-router'
 
 import { getPrivateChat } from '@/api'
 import ChatPanel from '@/components/ChatPanel.vue'
-import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -94,12 +93,15 @@ async function handleUpgradeMessage(messageId: string) {
 
 <template>
   <div class="dm-view d-flex flex-column fill-height" style="min-width: 0">
-    <LoadingSkeleton v-if="loading" variant="chat" class="flex-grow-1 pt-4" />
-    <v-alert v-else-if="error" type="error" density="comfortable" class="ma-3">
+    <!-- 取会话这一步不画加载态。私聊要等两次：先拿到这个会话，再拿它的历史；
+         头和输入框是 ChatPanel 带进来的，所以画在这里的骨架站的是头将要占的位置，
+         等 ChatPanel 一进来就被顶下去——正是这条骨架要消灭的那种跳动。历史那一段
+         由 ChatPanel 自己的骨架接手，它在消息真正会出现的地方。 -->
+    <v-alert v-if="error" type="error" density="comfortable" class="ma-3">
       {{ error }}
     </v-alert>
     <ChatPanel
-      v-else
+      v-else-if="topic"
       class="flex-grow-1"
       style="min-height: 0"
       :topic="topic"

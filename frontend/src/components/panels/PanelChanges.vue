@@ -26,7 +26,6 @@ import {
 } from '../../api'
 import { parseDiffLines, splitDiffByFile } from '../../lib/diff'
 import CodeEditor from '../CodeEditor.vue'
-import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -542,7 +541,12 @@ defineExpose({ openFile })
       />
     </div>
 
-    <LoadingSkeleton v-if="loading" variant="list" />
+    <!-- 转圈，不是骨架：这块地方长出来的是一套工具（150px 文件树 + 右边一格），
+         而右边那一格可能是差异、编辑器、一张图，也可能是「只读 / 二进制」提示——
+         等的是什么形状，这里并不知道。判据同 PanelPreview。 -->
+    <div v-if="loading" class="d-flex justify-center py-8">
+      <v-progress-circular indeterminate color="primary" size="28" />
+    </div>
     <v-alert v-else-if="errorMsg" type="error" density="compact" class="ma-4">
       {{ errorMsg }}
     </v-alert>

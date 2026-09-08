@@ -126,9 +126,7 @@ function openTask(task: RoomTask) {
       </p>
     </header>
 
-    <LoadingSkeleton v-if="loading && !rows.length" variant="list" class="py-4" />
-
-    <div v-else-if="errorMsg" class="pa-6 t-body c-muted">
+    <div v-if="errorMsg" class="pa-6 t-body c-muted">
       {{ errorMsg }}
       <v-btn class="ms-2" size="small" variant="text" @click="load">重试</v-btn>
     </div>
@@ -143,7 +141,11 @@ function openTask(task: RoomTask) {
             <span class="board-col__name t-body">{{ col.label }}</span>
             <span class="board-col__count t-meta">{{ inColumn(col.key).length }}</span>
           </header>
-          <ul class="board-col__list">
+          <!-- 活还在路上时，列已经在这儿了：列本身是固定的（三列 + 列头），会变的
+               只有里面装什么。所以加载态画在列**里面**，板的框架一开始就是最终的
+               样子，卡到齐的那一刻没有任何东西挪位置。 -->
+          <LoadingSkeleton v-if="loading && !rows.length" variant="entry" :rows="2" class="board-col__skel" />
+          <ul v-else class="board-col__list">
             <li v-for="row in inColumn(col.key)" :key="row.id">
               <button type="button" class="board-card" @click="openTask(row)">
                 <span class="board-card__title t-body">{{ row.title }}</span>
@@ -204,6 +206,11 @@ function openTask(task: RoomTask) {
   flex: 0 0 auto;
   padding: 0 10px 10px;
 }
+/* 统计那一行在活到齐之前是空的，但位置得留着：一个空 <p> 高度为 0，字一出现整块
+   板就往下掉一行。 */
+.board__head p {
+  min-height: 19px;
+}
 .board__sep {
   color: var(--faint);
   margin: 0 4px;
@@ -252,6 +259,11 @@ function openTask(task: RoomTask) {
   list-style: none;
   margin: 0;
   padding: 8px;
+}
+/* 骨架顶掉的是 ul，所以它得自己补上那圈 8px —— 骨头自带左右各 8px 的外边距，
+   卡片的 10px 内边距由骨架那边的 .skel__entry 出。 */
+.board-col__skel {
+  padding-block: 8px;
 }
 
 .board-card {

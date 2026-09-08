@@ -610,7 +610,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
             />
           </div>
 
-          <LoadingSkeleton v-if="loadingTopics" variant="list" />
+          <LoadingSkeleton v-if="loadingTopics" variant="list" class="rail-skel" />
 
           <template v-else>
             <!-- 一组都不相关的时候（刚进项目、还没参与任何话题），上组是空的。
@@ -1177,6 +1177,13 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   border-radius: 8px;
   padding: 1px 6px;
 }
+/* 话题还在路上时，先把行的形状画出来（LoadingSkeleton）。这条 rail 的底是
+   --canvas，骨架默认那档 --fill-2 压上去只有 1.083:1，等于什么都没画；--line-2 是
+   这条 rail 上「再离底一档」的那个值（选中行用的也是它），在两个主题下都看得见。 */
+.rail-skel {
+  --skel-bone: var(--line-2);
+}
+
 /* Archived rows read as "done": slightly dimmed titles. */
 .topic-row--archived :deep(.v-list-item-title) {
   color: var(--muted);

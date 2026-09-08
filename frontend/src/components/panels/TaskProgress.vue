@@ -280,7 +280,7 @@ const hiddenBatches = computed(() => batches.value.length - shownBatches.value.l
         </button>
       </template>
 
-      <LoadingSkeleton v-if="loading && !rows.length" variant="list" :rows="3" />
+      <LoadingSkeleton v-if="loading && !rows.length" variant="entry" :rows="3" class="pb-2" />
 
       <div v-else-if="errorMsg" class="px-3 py-2 t-body c-muted">{{ errorMsg }}</div>
 
