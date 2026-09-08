@@ -443,7 +443,8 @@ async function submitInvite() {
         <v-card-title class="t-title pt-4">邀请成员</v-card-title>
         <v-card-text>
           <p class="t-body c-muted mb-5">
-            填对方的 uid（个人主页地址里那个数字）。加进来之后他能看到这个项目的全部话题
+            填对方的
+            uid（个人主页地址里那个数字）。邀请发出去之后，要他自己接受才算加入——进来之后他能看到这个项目的全部话题
           </p>
           <v-text-field
             v-model="inviteUid"
