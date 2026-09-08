@@ -955,7 +955,6 @@ class DeviceChannel(Channel):
             # own prefix; afterwards it injected `<origin>/api/api` and every
             # `cheese` command in a device sandbox 404'd with 话题不存在.
             api_base=self._public_base,
-            cli_url=f"{self._public_base}/sandbox/cli/cheese",
             project_id=str(project_id),
             topic_id=str(topic_id),
             author=agent_handle,

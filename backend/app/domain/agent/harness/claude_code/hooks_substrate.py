@@ -23,6 +23,7 @@ Also here, all transport-free and unit-testable without Docker or a device:
 
 import asyncio
 import logging
+import time
 import uuid
 import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -1726,7 +1727,13 @@ class ClaudeCodeRuntime:
         started with, so the opening matters only on the call that turns out to
         be a cold start, and no caller can know in advance which one that is.
         """
+        started = time.monotonic()
         precheck = await self._channel.precheck(session.project_id, session.topic_id)
+        logger.info(
+            "session setup phase=precheck topic=%s elapsed_ms=%d",
+            session.topic_id,
+            (time.monotonic() - started) * 1000,
+        )
         token = mint_scoped_token(
             project_id=str(session.project_id),
             topic_id=str(session.topic_id),
@@ -1748,6 +1755,11 @@ class ClaudeCodeRuntime:
                 resume_session_id=opening.resume_token,
             ),
             precheck=precheck,
+        )
+        logger.info(
+            "session setup phase=screen topic=%s elapsed_ms=%d",
+            session.topic_id,
+            (time.monotonic() - started) * 1000,
         )
         subscription = await self.ensure_subscription(
             session.project_id, session.topic_id
@@ -1799,7 +1811,14 @@ class ClaudeCodeRuntime:
             start_task=False,
         )
         try:
+            delivery_started = time.monotonic()
             ready = await self._channel.send_prompt(screen, prompt)
+            logger.info(
+                "session setup phase=prompt topic=%s duration_ms=%d ready=%s",
+                topic_id,
+                (time.monotonic() - delivery_started) * 1000,
+                ready,
+            )
         except BaseException:
             if starts_activity:
                 await self._end_session_activity(

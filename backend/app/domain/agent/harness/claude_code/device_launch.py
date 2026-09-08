@@ -26,6 +26,7 @@ from pathlib import Path
 # this module's launcher and its callers build on it.
 from app.core.config import GATEWAY_MOUNT
 from app.domain.agent import environment_runner, machine_tunnel, preview_tunnel
+from app.domain.agent.harness.claude_code import event_drain
 from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD
 from app.domain.agent.harness.claude_code.hooks_substrate import CHEESE_HOOK_SCRIPT
 from app.domain.agent.harness.claude_code.session_launch import hooks_settings
@@ -465,34 +466,9 @@ printf '%s\\n' "$WANT" > "$STAMPF"
 """
 
 
-CHEESE_DRAIN_SCRIPT = """#!/bin/sh
-echo $$ > "$0.pid" 2>/dev/null || true
-while true; do
-  if [ -n "$CHEESE_DRAIN_TETHER" ] && ! kill -0 "$CHEESE_DRAIN_TETHER" 2>/dev/null
-  then
-    exit 0
-  fi
-  [ -r "$0.env" ] || { sleep 5; continue; }
-  . "$0.env"
-  [ -n "$CHEESE_HOOK_SPOOL" ] || { sleep 5; continue; }
-  for f in "$CHEESE_HOOK_SPOOL"/[0-9]*; do
-    [ -e "$f" ] || continue
-    resp="$(curl -s -m 10 -X POST -H 'Content-Type: application/json' \\
-      -H "X-Cheese-Token: $CHEESE_TOKEN" -H "X-Cheese-Event-Id: ${f##*.}" \\
-      --data-binary @"$f" "$CHEESE_HOOK_URL" 2>/dev/null)"
-    # Deleting the ONLY copy, so only on the backend's word that it wrote the
-    # event to its own disk — which is what a 200 from /sandbox/hooks means.
-    case "$resp" in *'"code":200'*) rm -f "$f";; esac
-  done
-  # Retention, NOT a wildcard: `.seq` is the spool's sequence hint, and reaping
-  # it would send the next event's name back to 1 — sorting it before everything
-  # still waiting to be sent. Events and their claim files age out; bookkeeping
-  # does not.
-  find "$CHEESE_HOOK_SPOOL" -type f \\( -name '[0-9]*' -o -name '.n[0-9]*' \\) \\
-    -mmin +1440 -delete 2>/dev/null
-  sleep 1
-done
-"""
+def build_drain_script() -> str:
+    source = Path(event_drain.__file__).read_text(encoding="utf-8")
+    return "#!/bin/sh\nexec python3 - \"$0\" <<'PY'\n" + source + "\nPY\n"
 
 
 # Bringing a device's workspace up, kept out of the launcher's f-string (and
@@ -955,7 +931,10 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
     sync_script = CHEESE_SYNC_SCRIPT
     workspace_bringup = CHEESE_WORKSPACE_BRINGUP
     settings_reconcile = CHEESE_SETTINGS_RECONCILE
-    drain_script = CHEESE_DRAIN_SCRIPT
+    drain_script = build_drain_script()
+    cli_source = (Path(__file__).resolve().parents[5] / "sandbox" / "cheese").read_text(
+        encoding="utf-8"
+    )
     # Shipped by reading the module's own bytes rather than by keeping a second
     # copy here: it is a real, linted, unit-tested module precisely so there is
     # only one version of it to be wrong.
@@ -1037,15 +1016,12 @@ chmod +x "$HOME/.claude/cheese-usage"
 cat > "$HOME/.claude/cheese-hook" <<'SH'
 {_CHEESE_HOOK_SCRIPT}SH
 chmod +x "$HOME/.claude/cheese-hook"
-# The `cheese` platform-action CLI (accept cards / docs / decisions / memory): the
-# local sandbox bakes it into the image; a device fetches it from the backend, gated
-# by the same scoped token. Best-effort — a device without it (or without python3)
-# can still do code work, just not platform actions. On PATH via $HOME/.claude below.
-if [ -n "$CHEESE_CLI_URL" ]; then
-  curl -s -m 10 -H "X-Cheese-Token: $CHEESE_TOKEN" "$CHEESE_CLI_URL" \\
-    > "$HOME/.claude/cheese" 2>/dev/null && [ -s "$HOME/.claude/cheese" ] \\
-    && chmod +x "$HOME/.claude/cheese" || rm -f "$HOME/.claude/cheese"
-fi
+# Ship the platform CLI with the launcher over the existing device connection.
+# A separate public HTTP download added 0.39-1.24s to measured launches and
+# could block each launch for its 10s timeout.
+cat > "$HOME/.claude/cheese" <<'CHEESE_PLATFORM_CLI'
+{cli_source}CHEESE_PLATFORM_CLI
+chmod +x "$HOME/.claude/cheese"
 export PATH="$HOME/.claude:$PATH"
 # Give every device the topic branch: a real checkout it can push back from so
 # 采纳 sees what the agent wrote. It runs here, after the forwarder is on PATH,
@@ -1504,7 +1480,6 @@ if command -v tmux >/dev/null 2>&1; then
       "CHEESE_TOKEN=$CHEESE_TOKEN" "CHEESE_HOOK_URL=$CHEESE_HOOK_URL" \\
       "CHEESE_API=$CHEESE_API" "CHEESE_PROJECT=$CHEESE_PROJECT" \\
       "CHEESE_TOPIC=$CHEESE_TOPIC" "CHEESE_AUTHOR=$CHEESE_AUTHOR" \\
-      "CHEESE_CLI_URL=$CHEESE_CLI_URL" \\
       "CHEESE_TUNNEL_URL=$CHEESE_TUNNEL_URL" \\
       "CHEESE_TUNNEL_PORT=$CHEESE_TUNNEL_PORT" \\
       "CHEESE_PREVIEW_URL=$CHEESE_PREVIEW_URL" \\
@@ -1585,7 +1560,6 @@ def build_screen_launch(
     resume_session_id: str | None = None,
     extra_env: dict[str, str] | None = None,
     api_base: str | None = None,
-    cli_url: str | None = None,
     project_id: str | None = None,
     topic_id: str | None = None,
     author: str | None = None,
@@ -1600,9 +1574,8 @@ def build_screen_launch(
     ``command`` is a self-contained ``bash -lc`` launcher; ``env`` carries the hook
     wiring + home/work dirs + model + any provider (gateway) vars, and — for a
     screen with a topic — where its rendezvous socket lives. When
-    ``cli_url``/``api_base`` and the
-    ``project_id``/``topic_id`` context are given, the launcher also fetches the
-    ``cheese`` platform-action CLI (accept cards / docs / decisions / memory) and wires
+    ``api_base`` and the ``project_id``/``topic_id`` context are given, the
+    bundled ``cheese`` CLI (accept cards / docs / decisions / memory) uses
     its ``CHEESE_*`` env — the same actions the in-container agent has locally."""
     script = build_launch_script(
         sync_on_stop=bool(git_remote), system_prompt=system_prompt, ca_pem=ca_pem
@@ -1633,8 +1606,6 @@ def build_screen_launch(
         env["CHEESE_RESUME_SESSION"] = resume_session_id
     # Platform-action CLI wiring: the `cheese` script reads these (X-Cheese-Token =
     # CHEESE_TOKEN, the SAME scoped token the hook forwarder uses).
-    if cli_url:
-        env["CHEESE_CLI_URL"] = cli_url
     if api_base:
         env["CHEESE_API"] = api_base
     if project_id:
