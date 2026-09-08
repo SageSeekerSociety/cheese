@@ -692,16 +692,20 @@ def _build_participant_user_info(
     *,
     user_map: dict | None = None,
     profile_map: dict | None = None,
+    team_map: dict | None = None,
 ) -> dict:
-    """Build a full User-shaped dict for the participant field.
-
-    For USER-type memberships, returns the complete user payload
-    (id, username, nickname, avatarId, intro, etc.) so the frontend
-    can render participant names/avatars. For TEAM-type, returns id only
-    (team info is enriched separately).
-    """
+    """Build the user or team identity displayed on a registration."""
     user_map = user_map or {}
     profile_map = profile_map or {}
+    team_map = team_map or {}
+    if membership.is_team and membership.member_id in team_map:
+        team = team_map[membership.member_id]
+        return {
+            "id": team.id,
+            "name": team.name,
+            "avatarId": team.avatar_id,
+            "intro": team.intro,
+        }
     if not membership.is_team and membership.member_id in user_map:
         user = user_map[membership.member_id]
         profile = profile_map.get(membership.member_id)
@@ -714,6 +718,7 @@ def _build_participant_user_info(
             "id": user.id,
             "username": user.username,
             "nickname": nickname,
+            "name": nickname,
             "avatarId": profile.avatar_id if profile else None,
             "intro": profile.intro if profile else "",
         }
@@ -742,7 +747,7 @@ def _membership_to_api_model(
     )
 
     participant = participant_info or {"id": membership.member_id}
-    member = {"id": membership.member_id}
+    member = participant
 
     approved_map = {0: "APPROVED", 1: "DISAPPROVED", 2: "NONE"}
     approved_str = approved_map.get(membership.approved, "NONE")
@@ -2483,6 +2488,8 @@ async def get_task_participants(
     )
 
     user_ids = [m.member_id for m in memberships if not m.is_team]
+    team_ids = [m.member_id for m in memberships if m.is_team]
+    team_map = await TeamRepository(session=db).get_by_ids(team_ids)
     user_map: dict = {}
     profile_map: dict = {}
     if user_ids:
@@ -2494,7 +2501,7 @@ async def get_task_participants(
     participants = []
     for m in memberships:
         participant_info = _build_participant_user_info(
-            m, user_map=user_map, profile_map=profile_map
+            m, user_map=user_map, profile_map=profile_map, team_map=team_map
         )
         participants.append(
             _membership_to_api_model(m, participant_info=participant_info)
@@ -2524,6 +2531,9 @@ async def get_task_participant(
         raise NotFoundError("Participant not found")
     user_map: dict = {}
     profile_map: dict = {}
+    team_map = {}
+    if membership.is_team:
+        team_map = await TeamRepository(session=db).get_by_ids([membership.member_id])
     if not membership.is_team:
         user_repo = UserRepository(session=db)
         profile_repo = UserProfileRepository(session=db)
@@ -2532,7 +2542,7 @@ async def get_task_participant(
             [membership.member_id]
         )
     participant_info = _build_participant_user_info(
-        membership, user_map=user_map, profile_map=profile_map
+        membership, user_map=user_map, profile_map=profile_map, team_map=team_map
     )
     return {
         "code": 200,
