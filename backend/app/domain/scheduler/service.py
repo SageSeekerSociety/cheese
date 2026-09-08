@@ -338,7 +338,7 @@ class SchedulerService:
         return dict(await pr_publish.sweep_draft_prs(self._sessions))
 
     async def poll_open_prs(self) -> dict:
-        """合并态轮询 (#718): advance every pending card that rides a PR one
+        """Reconcile returned batches and advance pending PR cards (#718) one
         step — mirror its merge state, send the events the 「谁的活」 table
         names, and merge an armed auto-merge card whose rules are satisfied
         (AcceptService.advance_pr_card). One DB transaction per card so one

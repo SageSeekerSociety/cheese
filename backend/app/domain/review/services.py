@@ -800,7 +800,7 @@ class AcceptService:
         return cards, len(cards)
 
     async def open_pr_card_ids(self) -> list[uuid.UUID]:
-        """等着被镜像/推进的验收卡 id（pending 且骑着 PR）—— 调度器每轮的输入。
+        """Pending PR cards and returned batches awaiting external merge.
 
         只回 id 不回对象：调度器一张卡一个事务，跨事务复用 ORM 对象拿到的是过期状态。
         「哪张卡算在等」是本领域的知识，所以判断留在这里，而不是让调度器自己去查
@@ -2016,7 +2016,7 @@ class AcceptService:
     async def advance_pr_card(
         self, card_id: uuid.UUID, *, chat_service, runner
     ) -> None:
-        """One polling step for a card awaiting accept on a PR (#718). The
+        """Observe external merges and advance pending PR cards (#718). The
         poller does three things and nothing else: mirror the merge state
         onto the card, send the events the 「谁的活」 table names (deduped
         through the nudge ledger), and merge a card whose auto-merge is armed
@@ -2024,8 +2024,23 @@ class AcceptService:
         SchedulerService.poll_open_prs(); never raises for a transient GitHub
         hiccup — the next poll just retries."""
         card = await self._card_or_404(card_id)
-        if card.status != AcceptStatus.pending or card.pr_number is None:
+        if (
+            card.status not in (AcceptStatus.pending, AcceptStatus.rejected)
+            or card.pr_number is None
+        ):
             return
+        if card.status == AcceptStatus.rejected:
+            tree = (
+                await WorkTreeService(self._session).get(card.tree_id)
+                if card.tree_id is not None
+                else None
+            )
+            if (
+                card.pr_merged_at is not None
+                or tree is None
+                or tree.status not in (TreeStatus.open, TreeStatus.sealed)
+            ):
+                return
         topic = await self._topic_or_404(card.topic_id)
         try:
             owner, repo = await self._pr_repo_of(card, topic)
@@ -2043,7 +2058,10 @@ class AcceptService:
             )
             # Without this the card just sits there forever and looks
             # identical to "CI still running" — no signal anyone's token died.
-            if card.note_code is not notes.NoteCode.poll_paused:
+            if (
+                card.status == AcceptStatus.pending
+                and card.note_code is not notes.NoteCode.poll_paused
+            ):
                 notes.record(
                     card,
                     notes.NoteCode.poll_paused,
@@ -2059,7 +2077,10 @@ class AcceptService:
         # — see the 2026-08-10 note in `_ci_nudge`). Only this exact prefix is
         # cleared; 重推失败 /
         # 拒绝合并 / 检查未通过 notes describe live conditions and stay put.
-        if card.note_code in (notes.NoteCode.poll_paused, notes.NoteCode.poll_failed):
+        if card.status == AcceptStatus.pending and card.note_code in (
+            notes.NoteCode.poll_paused,
+            notes.NoteCode.poll_failed,
+        ):
             notes.clear(card)
             await self._session.flush()
 
@@ -2067,7 +2088,7 @@ class AcceptService:
 
         client = github_pr.default_client()
         try:
-            await self._poll_pending_card(
+            await self._poll_pr_card(
                 card=card,
                 topic=topic,
                 owner=owner,
@@ -2090,7 +2111,8 @@ class AcceptService:
             # That is how #575/#582 sat green-but-unmerged with nothing on
             # screen to explain it. Same treatment the credential branch above
             # already gets, for the same reason.
-            self._note_poll_failed(card, exc)
+            if card.status == AcceptStatus.pending:
+                self._note_poll_failed(card, exc)
             await self._session.flush()
 
     async def _mark_cards_tree_merged(
@@ -2404,7 +2426,7 @@ class AcceptService:
             f"读不到这个 PR 的状态，卡暂时推不动（下一轮还会重试）：{detail}",
         )
 
-    async def _poll_pending_card(
+    async def _poll_pr_card(
         self,
         *,
         card: AcceptCard,
@@ -2431,7 +2453,30 @@ class AcceptService:
             owner=owner, repo=repo, number=number, token=creds.read
         )
         if status.merged:
+            if card.status == AcceptStatus.rejected:
+                # The review remains a return. GitHub establishes a separate
+                # fact about the batch, including the head that actually landed.
+                card.pr_merged_at = status.merged_at or datetime.now(UTC)
+                await self._mark_cards_tree_merged(card, delivered_head=status.head_sha)
+                sync_note = await self._sync_merged_base(topic)
+                await self._session.flush()
+                self._notify_merge_result(
+                    topic,
+                    f"PR #{number} 已在 GitHub 合并，批次已关闭；"
+                    f"原退回记录保留{sync_note}",
+                    meta=notice(
+                        EVENT_ACCEPT_DONE,
+                        severity=SEVERITY_INFO,
+                        who=WHO_PLATFORM,
+                        detail=card.pr_url or "",
+                    ),
+                )
+                return
             await self._settle_external_merge(card=card, topic=topic, status=status)
+            return
+        if card.status == AcceptStatus.rejected:
+            # Observing an external merge must never re-arm, approve, update,
+            # or merge a returned delivery, even when its checks are green.
             return
         if status.state == "closed":
             self._note_pr_closed_unmerged(card=card, topic=topic)
@@ -3195,29 +3240,7 @@ class AcceptService:
             else "已合并"
         )
         settled = f"PR #{card.pr_number} {how}：{card.pr_url}"
-        # 合完同步本地 base (#718 点名的旧账): the merge happened on GitHub, so
-        # the platform's own main is now behind it — pull it down here, in the
-        # same act, instead of leaving the workspace stale until the next
-        # scheduled sync. Best-effort: the merge is already a fact, so a sync
-        # failure annotates the note (and its recurring conflict has its own
-        # dispatch, workspace/upstream_conflict.py) rather than failing the
-        # accept.
-        try:
-            from app.domain.agent.github_app import github_app_read_token_for_project
-            from app.domain.workspace import service as ws
-
-            token = await github_app_read_token_for_project(
-                topic.project_id, self._session
-            )
-            synced = await asyncio.to_thread(
-                ws.sync_upstream, topic.project_id, token=token
-            )
-            if not synced.get("synced"):
-                settled += f"；本地同步待补：{synced.get('reason', '')}"
-                if synced.get("conflicts"):
-                    settled += "；到项目里点一次「同步上游」，芝士会去解这个冲突"
-        except Exception as exc:  # noqa: BLE001 — never fail the accept itself
-            settled += f"；本地同步待补：{exc}"
+        settled += await self._sync_merged_base(topic)
         notes.record(card, None, f"{headline}；{settled}" if headline else settled)
         await self._release_billed_compute(topic)
         # 交付完成 ≠ 话题结束 (#442 decision 1)：话题保持 active，归档由人来做。
@@ -3244,6 +3267,31 @@ class AcceptService:
                 detail_label="交付说明",
             ),
         )
+
+    async def _sync_merged_base(self, topic: Topic) -> str:
+        """Refresh local main after a known merge, returning any failure to show.
+
+        A fetch failure cannot undo the merge. Both acceptance and a returned
+        batch's external merge report it without rewriting that fact.
+        """
+        try:
+            from app.domain.agent.github_app import github_app_read_token_for_project
+            from app.domain.workspace import service as ws
+
+            token = await github_app_read_token_for_project(
+                topic.project_id, self._session
+            )
+            synced = await asyncio.to_thread(
+                ws.sync_upstream, topic.project_id, token=token
+            )
+            if not synced.get("synced"):
+                note = f"；本地同步待补：{synced.get('reason', '')}"
+                if synced.get("conflicts"):
+                    note += "；到项目里点一次「同步上游」，芝士会去解这个冲突"
+                return note
+        except Exception as exc:  # noqa: BLE001 — the merge already happened
+            return f"；本地同步待补：{exc}"
+        return ""
 
     async def _resolve_forge(self, project_id: uuid.UUID) -> "forge_mod.Forge":
         """Which forge this project's accept goes through — the one place the
