@@ -1194,7 +1194,21 @@ def test_the_tunnel_password_stays_the_scoped_token():
     start = script.index("<<TUNNELTOK\n") + len("<<TUNNELTOK\n")
     written = script[start : script.index("\nTUNNELTOK", start)]
 
-    assert written.strip() == "$CHEESE_TOKEN"
+    import subprocess
+
+    for connect, expected in [("place-rc-token", "place-rc-token"), ("", "hook-token")]:
+        result = subprocess.run(
+            ["/bin/bash", "-c", "cat <<EOF\n" + written + "\nEOF"],
+            env={
+                "CHEESE_CONNECT_TOKEN": connect,
+                "CHEESE_TOKEN": "hook-token",
+                "CLAUDE_CODE_OAUTH_TOKEN": "machine-ticket",
+            },
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert result.stdout.strip() == expected
 
 
 def test_a_changed_machine_ticket_retires_the_session_that_baked_the_old_one():

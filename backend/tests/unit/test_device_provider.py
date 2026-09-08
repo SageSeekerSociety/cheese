@@ -1153,6 +1153,9 @@ async def test_subscription_screen_env_has_no_gateway_and_no_real_credential(
     claims = scoped_token_claims(env["CLAUDE_CODE_OAUTH_TOKEN"])
     assert claims is not None
     assert claims["p"] == str(project) and claims["t"] == str(topic)
+    assert claims["rc"] == 1
+    assert env["CHEESE_CONNECT_TOKEN"] == env["CLAUDE_CODE_OAUTH_TOKEN"]
+    assert env["CHEESE_CONNECT_TOKEN"] != env["CHEESE_TOKEN"]
 
 
 @pytest.mark.anyio

@@ -3645,7 +3645,12 @@ class ChatService:
             else config.model
         )
         config_hash = hashlib.sha256(
-            json.dumps(agent.configuration, sort_keys=True).encode()
+            # Reopen an old terminal at the next turn boundary when the native
+            # RC launch contract changes; reattaching cannot add CLI arguments.
+            (
+                json.dumps(agent.configuration, sort_keys=True)
+                + (":native-rc-v1" if supply == SUBSCRIPTION else "")
+            ).encode()
         ).hexdigest()
         kwargs: dict = {"model": model, "env": {"CHEESE_AGENT_CONFIG": config_hash}}
         if acting_agent is not None:
