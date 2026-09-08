@@ -182,6 +182,7 @@ watch([loggedIn, () => route.name], ([isLoggedIn, routeName]) => {
             <br />
             交付真正的成果。
           </h2>
+          <p class="demo-tagline">你的团队，和一个持续参与的 AI 队友。</p>
         </div>
         <p>
           需求、分工、运行与成果，在同一个项目里衔接。

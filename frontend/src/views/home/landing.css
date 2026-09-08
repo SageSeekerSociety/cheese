@@ -457,6 +457,12 @@ h1 {
   color: var(--muted);
 }
 
+.demo-tagline {
+  margin-top: 16px;
+  font-size: 20px;
+  color: var(--muted);
+}
+
 .demo-tabs {
   gap: 0;
 }
@@ -1497,6 +1503,10 @@ footer > span {
 
   .section-intro > p {
     margin-top: 20px;
+    font-size: 16px;
+  }
+
+  .demo-tagline {
     font-size: 16px;
   }
 
