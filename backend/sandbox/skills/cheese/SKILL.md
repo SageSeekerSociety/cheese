@@ -42,9 +42,11 @@ description: 在 CheeseX(知是)平台里改"平台状态"时用。代码/文件
 - `git checkout HEAD -- <文件>` 报 `fatal: your current branch appears to be broken`:是 HEAD 指坏了,不是仓库坏了。`git symbolic-ref HEAD refs/heads/<你的分支>` 就好,**别 rebase**。
 - `gh` 必须显式带 `-R <owner>/<repo>`:工作区连的是平台的仓不是 GitHub,它推断不出你说的是哪个 GitHub 仓库。
 
-**推到 GitHub、开 PR,凭据你手上就有。** 平台那条路上面已经交代完了(采纳走的就是它);GitHub 是另一个地方,要写全 URL:`export GH_TOKEN=$(cheese gh-token)` 之后 `git push https://x-access-token:$GH_TOKEN@github.com/<owner>/<repo> HEAD:<分支>`,开 PR 用 `gh api repos/<owner>/<repo>/pulls -f head=<分支> -f base=<主干> -f title=… -f body=…`。仓库名、能不能推、能不能开 PR,`cheese gh-token` 的 stderr 里都有。**开之前先 `cheese status` 看一眼这个话题在平台侧有没有已经开着的 PR**——别开出第二条并行的路径来。
+**推到 GitHub、开 PR，先运行 `cheese gh-token` 检查仓库连接。** 平台那条路上面已经交代完了(采纳走的就是它);GitHub 是另一个地方,要写全 URL:`export GH_TOKEN=$(cheese gh-token)` 之后 `git push https://x-access-token:$GH_TOKEN@github.com/<owner>/<repo> HEAD:<分支>`,开 PR 用 `gh api repos/<owner>/<repo>/pulls -f head=<分支> -f base=<主干> -f title=… -f body=…`。仓库名、能不能推、能不能开 PR,`cheese gh-token` 的 stderr 里都有。**开之前先 `cheese status` 看一眼这个话题在平台侧有没有已经开着的 PR**——别开出第二条并行的路径来。
 
-**远端你自己去读,别把「已推送 / 已合并 / 冲突解决了 / CI 绿了」当断言说出口。** `cheese gh-token` 给的不是一张只能看 CI 的票——它带的是平台 GitHub App 在这个仓库上被授予的**全部**权限,一项不减,stderr 会逐项列出等级(`contents: write` 和 `contents: read` 是两回事)并把对应的命令直接打出来,照抄就行。所以没有「我没办法看」这回事了:读一眼,读到什么说什么。真出过事——有一轮报告「改动已经进了 PR 分支」,而分支根本没动、冲突还在;它不是在撒谎,是当时确实看不见。
+**未连接仓库时**，按 `cheese gh-token` 返回的项目设置链接，请项目 owner/lead 先「连接 GitHub 账号」，再「连接 GitHub 仓库」。已连接但提示平台 App 未配置时，报告平台配置故障。不要让用户在聊天里提供 PAT，也不要让用户执行内部命令。
+
+**远端你自己去读,别把「已推送 / 已合并 / 冲突解决了 / CI 绿了」当断言说出口。** `cheese gh-token` 给的不是一张只能看 CI 的票——它带的是平台 GitHub App 在这个仓库上被授予的**全部**权限,一项不减,stderr 会逐项列出等级(`contents: write` 和 `contents: read` 是两回事)并把对应的命令直接打出来,照抄就行。连接和权限有效时，先读取远端状态，再报告结果。真出过事——有一轮报告「改动已经进了 PR 分支」,而分支根本没动、冲突还在;它不是在撒谎,是当时确实看不见。
 
 **你的工作区可能落后于主干。** 动一个别人也在改的文件前,先跟主干比一下。在陈旧的基上编辑,对 git 来说是一次普通修改而**不是**冲突——会干净地合并掉别人已经合进去的改动,没有任何检查会拦你。所以改到不是你创建的文件时,在报告里说一句,平台侧的集成检查会覆盖它。
 
