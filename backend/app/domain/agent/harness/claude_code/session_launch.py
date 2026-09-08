@@ -63,45 +63,6 @@ GATES_FILE = ".claude.json"
 SYSTEM_PROMPT_FILE = "cheese-system-prompt.md"
 
 
-# The fetch layer, as an MCP server rather than the built-in WebFetch.
-#
-# WebFetch has no timeout: when its fetch/decode path fails to settle, the tool
-# call never returns and never errors. Measured here on 2.1.224 against
-# https://www.skills.sh/ — two of two attempts hung (1,028 s and 390 s), both
-# ended by hand, while a LARGER page (996 KB Wikipedia) returned in 5 s, so size
-# is not the trigger. Upstream anthropics/claude-code#86910 is open, and no
-# CHANGELOG entry between 2.1.117 and 2.1.263 touches the hang.
-#
-# Nothing in Claude Code bounds that tool: the binary carries no WebFetch
-# timeout knob (BASH_DEFAULT_TIMEOUT_MS is Bash's, API_TIMEOUT_MS is the API's).
-# An MCP server is the only fetch path we can put a deadline on, which is the
-# whole reason this exists — not better extraction.
-#
-# The official server, measured against the same pages: the page that hangs
-# WebFetch forever returns in 6.8 s, a Chinese article in 2.9 s, a robots.txt
-# refusal in 0.3 s, a dead host in 5.1 s. Nothing unbounded. It also truncates
-# to max_length and pages via start_index, so one document cannot flood a turn
-# the way a full page can (a 999 KB page extracts to 33k tokens whole).
-#
-# robots.txt stays ENFORCED. Measured across nine real URLs, --ignore-robots-txt
-# changed the outcome for one of them, and that one returned article metadata
-# rather than the article: the sites that refuse a crawler refuse it at the HTTP
-# layer too (zhihu answers 403 either way). The flag is a norm to trade away for
-# nothing, so it is not traded.
-def mcp_servers() -> dict:
-    """MCP servers every sandbox gets, whatever repo it is hosting.
-
-    Planted by the platform, never by the repo: a hosted repository must not have
-    to add a `.mcp.json` to be fetched from safely.
-    """
-    return {
-        "fetch": {
-            "command": "uvx",
-            "args": ["mcp-server-fetch"],
-        }
-    }
-
-
 def hooks_settings(extra_stop: list[str] | None = None) -> dict:
     """``~/.claude/settings.json`` for a hooks-driven session: pre-accept the
     bypass disclaimer AND forward every structured event to our hook endpoint via
@@ -125,14 +86,13 @@ def hooks_settings(extra_stop: list[str] | None = None) -> dict:
     ]
     return {
         "skipDangerousModePermissionPrompt": True,
-        # Deadlines for the two tool paths that can otherwise hang a turn open.
-        # MCP_TOOL_TIMEOUT bounds every MCP tool call (the fetch server above);
-        # the stream watchdog bounds a summarisation stream that stops
-        # delivering. Neither reaches the built-in WebFetch, which is why the
-        # fetch server exists — a reporter on #86910 measured the watchdog
-        # making no difference when the stall is in WebFetch's own page fetch.
+        # A summarisation stream that stops delivering is the one hang shape a
+        # setting can still bound. WebFetch's own hang is NOT this: measured on
+        # 2.1.224/2.1.261, its page fetch is bounded (60 s) and so is its domain
+        # preflight (10 s) — the unbounded step is the model call it makes on the
+        # extracted text, and no knob reaches that. Kept because it is one line
+        # and covers a different failure, not because it fixes #86910.
         "env": {
-            "MCP_TOOL_TIMEOUT": "60000",
             "CLAUDE_ENABLE_STREAM_WATCHDOG": "1",
         },
         # Previews belong in Cheese, not on claude.ai via the Artifact tool.
@@ -249,7 +209,6 @@ def _gates(workdir: str) -> str:
             # Legacy fallback, still honored; it migrates to
             # skipDangerousModePermissionPrompt on first run.
             "bypassPermissionsModeAccepted": True,
-            "mcpServers": mcp_servers(),
             "projects": {
                 workdir: {
                     "hasTrustDialogAccepted": True,

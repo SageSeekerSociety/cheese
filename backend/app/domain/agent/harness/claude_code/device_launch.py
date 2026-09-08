@@ -28,10 +28,7 @@ from app.core.config import GATEWAY_MOUNT
 from app.domain.agent import environment_runner, machine_tunnel, preview_tunnel
 from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD
 from app.domain.agent.harness.claude_code.hooks_substrate import CHEESE_HOOK_SCRIPT
-from app.domain.agent.harness.claude_code.session_launch import (
-    hooks_settings,
-    mcp_servers,
-)
+from app.domain.agent.harness.claude_code.session_launch import hooks_settings
 
 # First-launch gates (Claude Code 2.1.x) for $CLAUDE_CONFIG_DIR/.claude.json,
 # kept here as the readable statement of what the launch script writes inline.
@@ -732,10 +729,6 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
     tunnel_up = CHEESE_TUNNEL_UP
     preview_helper = Path(preview_tunnel.__file__).read_text().rstrip("\n") + "\n"
     preview_up = CHEESE_PREVIEW_UP
-    # Same servers the container path plants, from the same function: a device
-    # that fetched differently from a container would be a second thing to be
-    # wrong. Inlined into the heredoc below, which the shell expands.
-    mcp_servers_json = json.dumps(mcp_servers(), ensure_ascii=False)
     settings_json = json.dumps(
         hooks_settings(
             ["cheese-sync", "cheese-usage"] if sync_on_stop else ["cheese-usage"]
@@ -789,7 +782,7 @@ export CLAUDE_CONFIG_DIR="$HOME/.claude"
 # dir let a non-interactive run proceed), and a file at $HOME/.claude.json would
 # just be dead weight in the isolated home.
 cat > "$CLAUDE_CONFIG_DIR/.claude.json" <<JSON
-{{"hasCompletedOnboarding":true,"autoUpdates":false,"bypassPermissionsModeAccepted":true,"mcpServers":{mcp_servers_json},"projects":{{"$CHEESE_WORK":{{"hasTrustDialogAccepted":true,"hasCompletedProjectOnboarding":true}}}}}}
+{{"hasCompletedOnboarding":true,"autoUpdates":false,"bypassPermissionsModeAccepted":true,"projects":{{"$CHEESE_WORK":{{"hasTrustDialogAccepted":true,"hasCompletedProjectOnboarding":true}}}}}}
 JSON
 cat > "$HOME/.claude/settings.json" <<'JSON'
 {settings_json}

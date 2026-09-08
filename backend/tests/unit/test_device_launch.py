@@ -1430,44 +1430,44 @@ def test_declaring_a_port_writes_it_on_the_machine(tmp_path):
     assert (tmp_path / ".claude/cheese-preview.port").read_text().strip() == "5173"
 
 
-def test_every_sandbox_gets_a_fetch_tool_it_can_time_out():
-    """A hosted repo must be fetchable-from safely without adding a `.mcp.json`
-    of its own, and the fetch path must be one a deadline can reach.
+def test_no_mcp_server_is_planted_in_a_sandbox():
+    """The platform plants NO MCP server, on either delivery path.
 
-    The built-in WebFetch is neither: it is unconfigurable and it can hang a
-    turn open indefinitely (anthropics/claude-code#86910, reproduced here on
-    2.1.224 — two of two attempts on one URL hung for 1,028 s and 390 s, while a
-    larger page returned in 5 s). So the platform plants a fetch server and the
-    timeout that bounds it.
+    An earlier revision planted `mcp-server-fetch` to get a fetch path a
+    deadline could reach. Measured against the same pages, that server extracts
+    badly where it matters (a list-style page yields 622 characters against
+    24,000+ from a converter that does not guess at "main content") and returns
+    the raw page instead of an answer (33k tokens for one Wikipedia article,
+    against tens of tokens from WebFetch's own summarisation). Claude Code's own
+    tool description also tells the model to PREFER an MCP fetch tool whenever
+    one exists, so planting one does not add a fallback — it replaces the better
+    default. Fetching moves to a platform-side service instead.
     """
-    settings = device_launch.hooks_settings()
-    assert settings["env"]["MCP_TOOL_TIMEOUT"], "an MCP tool call must have a deadline"
-
     script = device_launch.build_launch_script(
         sync_on_stop=True, system_prompt="", ca_pem=""
     )
-    gates = _claude_json_from(script)
-    assert "fetch" in gates["mcpServers"], "the machine plants no fetch server"
+    assert "mcpServers" not in _claude_json_from(script)
 
-
-def test_a_machine_and_a_container_fetch_the_same_way():
-    """Two delivery paths, one fetch behaviour — a device that fetched
-    differently from a container is a second thing to be wrong."""
     from app.domain.agent.harness.claude_code.session_launch import (
         build_session_launch,
     )
 
-    script = device_launch.build_launch_script(
-        sync_on_stop=True, system_prompt="", ca_pem=""
-    )
-    machine = _claude_json_from(script)["mcpServers"]
-
     spec = build_session_launch(config_dir="/cfg", workdir="/work", system_prompt="x")
     container = json.loads(
         next(f.content for f in spec.files if f.name == ".claude.json")
-    )["mcpServers"]
+    )
+    assert "mcpServers" not in container
 
-    assert machine == container
+
+def test_a_summarisation_stream_that_stalls_is_bounded():
+    """The one hang shape a setting still reaches.
+
+    Not WebFetch's own hang: measured on 2.1.224 and 2.1.261, its page fetch is
+    bounded (60 s) and its domain preflight is bounded (10 s); the step with no
+    deadline is the model call it makes on the extracted text, which no setting
+    reaches. This asserts the watchdog we CAN set stays set.
+    """
+    assert device_launch.hooks_settings()["env"]["CLAUDE_ENABLE_STREAM_WATCHDOG"]
 
 
 def _claude_json_from(script: str) -> dict:
