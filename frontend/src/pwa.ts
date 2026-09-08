@@ -5,11 +5,10 @@
  * config in vite.config.ts (`registerType: 'autoUpdate'`, `injectRegister:
  * false` — we register here so nothing is injected into index.html twice).
  *
- * autoUpdate semantics: when a new deploy's SW installs, it takes control
- * (skipWaiting + clientsClaim, set by the plugin) and `registerSW` reloads the
- * page — so a running tab picks up new code without a manual refresh, which is
- * the "有网就自动转出来" half of the offline story. The default `onNeedReload`
- * is `window.location.reload()`; we keep it.
+ * A new worker must finish precaching before it activates. The plugin reloads
+ * on update activation; until then a controlled tab can still run its old
+ * entry. Public navigations fetch current HTML separately in vite.config.ts,
+ * while workspace navigation retains its offline shell.
  *
  * The whole thing is a no-op unless the browser supports service workers and
  * the build produced one (the virtual module resolves to a stub otherwise), so
