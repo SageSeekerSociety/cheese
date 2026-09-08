@@ -53,11 +53,11 @@ describe('project settings', () => {
       await vi.waitFor(() => expect(wrapper.element.textContent).toContain('暂无必须通过的检查'))
       expect(wrapper.element.textContent?.includes('GitHub 已在执行以下规则')).toBe(enforced)
       const fields = (label: string) => {
-        const row = [...wrapper.element.querySelectorAll('.bp-row')].find(
+        const row = Array.from(wrapper.element.querySelectorAll('.bp-row')).find(
           (element) => element.querySelector('.bp-label')?.textContent === label
         )
         expect(row, label).toBeDefined()
-        const inputs = [...row!.querySelectorAll<HTMLInputElement>('input')]
+        const inputs = Array.from(row!.querySelectorAll<HTMLInputElement>('input'))
         expect(inputs.length, label).toBeGreaterThan(0)
         return inputs
       }
