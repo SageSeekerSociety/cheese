@@ -689,8 +689,8 @@ def _prompt_with_native_images(
     if lost:
         named = "、".join(lost)
         parts.append(
-            f"【平台】本轮有 {len(lost)} 张图片没能送到这台机器上（{named}），"
-            "你手上没有它们的内容。回复时直说没收到图，不要猜图里是什么。"
+            f"【平台】本轮有 {len(lost)} 个附件没能送到这台机器上（{named}），"
+            "你手上没有它们的内容。回复时直说没收到附件，不要猜测文件内容。"
         )
     return "\n\n".join(parts)
 

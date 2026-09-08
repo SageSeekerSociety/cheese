@@ -252,7 +252,7 @@ export type WsServerFrame =
   // answered) — replace it in the timeline.
   | { type: 'block_updated'; block: Block }
 
-// 图片输入: an uploaded worktree image the message carries. `path` comes from
+// An uploaded worktree file the message carries. `path` comes from
 // POST /topics/{id}/attachments; the WS frame only references it (no binary).
 export interface ChatAttachment {
   path: string
@@ -269,7 +269,7 @@ export interface WsClientMessage {
   // session post as 匿名者 — so the client no longer names itself at all.
   summon: boolean
   reply_to?: string // B3: thread this message under another
-  attachments?: ChatAttachment[] // 图片输入 (uploaded first, referenced here)
+  attachments?: ChatAttachment[] // Uploaded first, referenced here.
   // 乐观渲染的对账号：客户端给自己这一次发送起的 id，后端原样戳回块的 meta 上。
   // 靠文本对账是不行的——落库那一步会把 @名字 改写成 <@handle>。
   client_id?: string

@@ -14,7 +14,16 @@ import type { FileDiff } from '../../lib/diff'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 
-import { ApiError, getGitDiff, getGitLog, listFiles, readFile, workspaceFileRawUrl, writeFile } from '../../api'
+import {
+  ApiError,
+  downloadFile,
+  getGitDiff,
+  getGitLog,
+  listFiles,
+  readFile,
+  workspaceFileRawUrl,
+  writeFile,
+} from '../../api'
 import { parseDiffLines, splitDiffByFile } from '../../lib/diff'
 import CodeEditor from '../CodeEditor.vue'
 
@@ -45,6 +54,14 @@ const loading = ref(false)
 // A background re-fetch: spins only the 刷新 button, never replaces the panel.
 const refreshing = ref(false)
 const errorMsg = ref<string | null>(null)
+async function downloadOpenFile() {
+  if (!openRawUrl.value || !openPath.value) return
+  try {
+    await downloadFile(openRawUrl.value, openPath.value.split('/').pop() || 'file')
+  } catch (e) {
+    errorMsg.value = e instanceof Error ? e.message : '下载失败'
+  }
+}
 
 // ---- Git: commit log + working-tree diff ----
 const gitCommits = ref<GitCommit[]>([])
@@ -549,6 +566,15 @@ defineExpose({ openFile })
         </span>
         <span v-if="fileDirty" class="file-bar__dot" title="未保存" />
         <v-spacer />
+        <v-btn
+          v-if="openPath"
+          size="x-small"
+          variant="text"
+          prepend-icon="mdi-download-outline"
+          @click="downloadOpenFile"
+        >
+          下载
+        </v-btn>
         <!-- 看 diff / 改文件是同一个文件的两面，只有改过的文件才有两面。 -->
         <div v-if="openDiff" class="seg seg--sm">
           <button
@@ -663,14 +689,7 @@ defineExpose({ openFile })
               {{ openPath }} · {{ fmtBytes(fileBytes) }}
               <template v-if="!fileTooLarge"> —— 按文本打开会损坏它，因此这里只读 </template>
             </div>
-            <v-btn
-              size="small"
-              variant="tonal"
-              class="mt-3"
-              :href="openRawUrl || undefined"
-              target="_blank"
-              rel="noopener"
-            >
+            <v-btn size="small" variant="tonal" class="mt-3" @click="downloadOpenFile">
               <v-icon size="16" class="me-1">mdi-download-outline</v-icon>
               下载原文件
             </v-btn>
