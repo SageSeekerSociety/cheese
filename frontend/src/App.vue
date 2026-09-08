@@ -43,7 +43,10 @@
                手机时这个中途正好排在移动顶栏挂上之前，Home 的 Teleport 因此找不
                到 #app-bar-slot：首页的分段 tab 消失，卸载时还会崩。空的依赖数组
                让这棵子树不再被父组件的重渲染碰到（路由自己的重渲染照常），也就
-               是加 v-slot 之前 router-view 本来的样子。 -->
+               是加 v-slot 之前 router-view 本来的样子。想挪动它、或者改白名单
+               之前，先看 App.keepAlive.spec.ts：那三条用例分别钉住「白名单里的
+               页面被保活」「登录页不被保活」「切路由确实换页」，把 v-memo 挪进
+               下面这个 <component> 三条会一起变红。 -->
           <router-view v-slot="{ Component }" v-memo="[]">
             <keep-alive :include="keptAlivePages" :max="5">
               <component :is="Component" />
