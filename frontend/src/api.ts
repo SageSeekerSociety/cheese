@@ -33,6 +33,8 @@ import type {
   ProjectInvitation,
   ProjectMemberRow,
   ProjectOverview,
+  ProjectSite,
+  ProjectSiteInfo,
   ReactionAgg,
   RoomTask,
   RoomTree,
@@ -486,6 +488,26 @@ export function listProjectsForTask(taskId: number): Promise<ListPayload<Project
 // Single project card (includes `summary`, the 一页纸总结).
 export function getProject(projectId: string): Promise<Project> {
   return request<Project>(`/projects/${encodeURIComponent(projectId)}`)
+}
+
+export function getProjectSite(projectId: string): Promise<ProjectSiteInfo> {
+  return request<ProjectSiteInfo>(`/projects/${encodeURIComponent(projectId)}/site`)
+}
+
+export function publishProjectSite(
+  projectId: string,
+  body: { directory: string; expected_source_revision: string }
+): Promise<ProjectSite> {
+  return request<ProjectSite>(`/projects/${encodeURIComponent(projectId)}/site`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export function requestSiteSession(projectId: string): Promise<{ url: string; grant: string }> {
+  return request<{ url: string; grant: string }>(`/projects/${encodeURIComponent(projectId)}/site-session`, {
+    method: 'POST',
+  })
 }
 
 // NOTE: there is deliberately no `generateSummary` wrapper here. The POST it
