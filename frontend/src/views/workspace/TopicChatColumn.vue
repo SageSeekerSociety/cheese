@@ -6,7 +6,6 @@ import { computed, ref } from 'vue'
 import { useDisplay } from 'vuetify'
 
 import ChatPanel from '@/components/ChatPanel.vue'
-import RoomEnvironmentStatus from '@/components/RoomEnvironmentStatus.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
 import TopicComputePicker from '@/components/TopicComputePicker.vue'
 
@@ -96,12 +95,6 @@ defineExpose({
          （AI 队友）和在哪跑（算力）都是话题级的设置，发第一条消息之后就不再变，
          摆在输入区上纯是占位置：队友进了成员名册（它本来就是这个房间的成员），
          算力见下面那块浮标 / 桌面的话题头。 -->
-      <!-- 环境还在准备 / 起不来：贴在输入框上沿。它说的正是「你现在发的这条
-           还没人处理」，所以要在人打字的地方看得见。总览（root）没有自己的运行
-           环境，那里不显示。 -->
-      <template #composer-notice>
-        <RoomEnvironmentStatus v-if="topic.kind !== 'root'" :project-id="topic.project_id" :topic-id="topic.id" />
-      </template>
       <template #composer-chips>
         <span v-if="topic.status === 'archived'" class="d-inline-flex align-center ga-1 c-faint archived-chip">
           <span class="status-dot status-dot--muted" />已归档

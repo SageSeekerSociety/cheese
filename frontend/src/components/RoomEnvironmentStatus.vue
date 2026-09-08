@@ -1,14 +1,16 @@
 <script setup lang="ts">
-// 这个房间的运行环境还没准备好 —— 说的是「你现在打的这条，芝士还接不到」。
+// 这个房间的运行环境还没准备好 —— 也就是「你现在做什么都不会有反应」。
 //
-// 所以它住在**输入框上沿**（ChatPanel 的 composer-notice slot），不在页顶也不在
-// 时间线里：摆进时间线会被后面的消息顶走，而它最该被看见的时刻正是人在打字的那
-// 一刻；摆到页顶则会横跨工作面板、还把话题标题挤下去，可改动/现场/预览那半边跟
-// 它没有关系。
+// 它是**房间级**的状态，所以住在话题标题下面，四格（对话/改动/现场/预览）里都看
+// 得见。它一度被挪进对话栏的输入框上沿，理由是「这句话是关于你要发的那条消息
+// 的」——那个读法是错的：环境没起来时改动、现场、预览同样全是空的，人可能正在
+// 任何一格里等，而那时候屏幕上什么都不说。
 //
-// 它是**状态**不是消息：会自己消失（准备好了就没了），所以不能是时间线上的一
-// 条——一条会消失的消息让人怀疑自己看错了，一条不消失的「正在准备」第二天就是
-// 假话。
+// 但也不放回标题**上面**（它最早在那儿）：一个会消失的临时状态不该把常驻的标题
+// 挤下去。标题之下、四格之上，是这两条约束唯一的交点。
+//
+// 也不进时间线：它是状态不是消息。会消失的消息让人怀疑自己看错了，不消失的
+// 「正在准备」第二天就是假话，而且后面两条消息就能把它顶走。
 import type { EnvironmentStatus } from '../cx_types'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
@@ -18,6 +20,18 @@ import { getRoomEnvironment } from '../api'
 const props = defineProps<{ projectId: string; topicId: string }>()
 const status = ref<EnvironmentStatus | null>(null)
 const logOpen = ref(false)
+/** 连着几次没拉到状态。 */
+const misses = ref(0)
+/** 拉不到状态要连错两次才说话。
+ *
+ *  一次就报会让一下网络抖动闪出一条错；而一直不说，则是这个组件最坏的失败方式
+ *  —— 它的职责就是解释「芝士为什么没反应」，平台整个挂掉的时候它反而第一个安静
+ *  下来（那正是 2026-09-08 那次 502 的现场：界面上一个字都没有）。
+ *
+ *  两次听起来很松，其实不是：`api.ts` 对 GET 的 502 自己还会退避重试两次，所以
+ *  这里的一次「失败」已经是三次请求、一秒多。连着两次 ≈ 12 秒、六次请求 —— 穿得
+ *  过抖动，短过一个人开始怀疑自己。 */
+const MISS_LIMIT = 2
 let timer: ReturnType<typeof setTimeout> | undefined
 let generation = 0
 
@@ -27,14 +41,18 @@ watch(
     const current = ++generation
     clearTimeout(timer)
     status.value = null
+    misses.value = 0
     logOpen.value = false
     async function refresh() {
       try {
         const result = await getRoomEnvironment(props.projectId, props.topicId)
-        if (current === generation) status.value = result
+        if (current === generation) {
+          status.value = result
+          misses.value = 0
+        }
       } catch {
-        // The room remains usable while its machine status is unavailable.
-        if (current === generation) status.value = null
+        // 不清 status：连错两次之前，屏幕上留着上一次读到的样子，比闪成空白诚实。
+        if (current === generation) misses.value += 1
       } finally {
         if (current === generation) timer = setTimeout(refresh, 5000)
       }
@@ -49,25 +67,51 @@ onBeforeUnmount(() => {
   clearTimeout(timer)
 })
 
-const preparing = computed(() => status.value?.state === 'preparing')
+const st = computed(() => status.value?.state)
 const retrying = computed(() => status.value?.recovery_state === 'retrying')
-const failed = computed(() => status.value?.state === 'failed' && !retrying.value)
-const shown = computed(() => preparing.value || retrying.value || failed.value)
 
-/** 主句。准备中和重启中都是「在进行」，失败是「停住了」。 */
+/** 「机器还在往前走，等着就行」的那几种。
+ *
+ *  `pending` 以前不画，而它恰恰是一个**新话题的起始状态**（房间还没绑设备，或者
+ *  机器上还没铺好环境脚本）——于是最需要解释的那几十秒里，屏幕上一个字都没有。 */
+const working = computed(() => st.value === 'pending' || st.value === 'preparing' || retrying.value)
+
+/** 「停在这儿了，要人管」的那几种。
+ *
+ *  `offline` 以前也不画，而它比失败更需要说出来：绑的那台机器不在线，芝士收不到
+ *  任何消息，**而且这不会自己好** —— 没有人去连机器，这个房间就永远这样。 */
+const stuck = computed(() => (st.value === 'failed' || st.value === 'offline') && !retrying.value)
+
+/** 连着拉不到状态。读不到本身就是信息：它多半意味着平台这会儿不正常。 */
+const unreachable = computed(() => misses.value >= MISS_LIMIT)
+
+const shown = computed(() => unreachable.value || working.value || stuck.value)
+/** 只有「在往前走」才画那条动的线；停住了和读不到都不该还有东西在动。 */
+const moving = computed(() => !unreachable.value && working.value)
+
+// `stopped` 不在上面任何一组里：它由设备端脚本返回，语义（是人停的？还是崩了？）
+// 我没核实，宁可继续不画，也不猜一句话贴到用户脸上。要补它得先去看
+// cheese-environment.py 到底什么时候返这个值。
+
+/** 主句。 */
 const line = computed(() => {
-  if (preparing.value) {
+  if (unreachable.value) return '暂时读不到运行环境状态'
+  if (st.value === 'pending') return '正在准备运行环境，完成后芝士会继续处理你的消息'
+  if (st.value === 'preparing') {
     return status.value?.stage === 'setup'
       ? '正在安装工具，完成后芝士会继续处理你的消息'
       : '正在准备项目，完成后芝士会继续处理你的消息'
   }
   if (retrying.value) return '总览芝士已修正环境配置，正在重新启动'
+  if (st.value === 'offline') return '运行设备已离线，芝士接不到你的消息'
   return '环境准备失败，芝士还没有开始处理这条消息'
 })
 
-/** 失败时的下一步。一句，跟在主句后面的小字。 */
+/** 停住时的下一步。一句，跟在主句后面的小字。 */
 const nextStep = computed(() => {
-  if (!failed.value) return ''
+  if (unreachable.value) return '这多半是平台正忙或暂时不可用，会自己重试'
+  if (!stuck.value) return ''
+  if (st.value === 'offline') return '请重新连接这台设备，或在运行环境设置中换一台'
   if (status.value?.recovery_state === 'requested') return '已交给总览芝士检查，可在总览查看处理情况'
   if (status.value?.recovery_state === 'needs_help') return '自动处理未能恢复环境，请在总览查看需要的协助'
   return '请查看安装日志，或在运行环境设置中修改配置并安排重试'
@@ -75,7 +119,7 @@ const nextStep = computed(() => {
 </script>
 
 <template>
-  <div v-if="shown" class="env" :class="{ 'env--failed': failed }" role="status">
+  <div v-if="shown" class="env" :class="{ 'env--stuck': stuck, 'env--unreachable': unreachable }" role="status">
     <div class="env__row">
       <!-- 记号色只做记号（设计系统 §1.5）：这一颗是点，字用的是 -ink 那一档。 -->
       <span class="env__dot" aria-hidden="true" />
@@ -88,7 +132,7 @@ const nextStep = computed(() => {
     <pre v-if="logOpen && status?.log" class="env__log">{{ status.log }}</pre>
     <!-- 进行中的那条细线贴在下沿，1px 高。它替掉的是一条横跨整个屏幕的
          v-progress-linear——那东西的信息量只有「还在跑」，却是整屏最吵的一个。 -->
-    <span v-if="preparing || retrying" class="env__bar" aria-hidden="true" />
+    <span v-if="moving" class="env__bar" aria-hidden="true" />
   </div>
 </template>
 
@@ -102,7 +146,7 @@ const nextStep = computed(() => {
   overflow: hidden;
 }
 /* 失败要显眼：这是唯一需要人去做点什么的状态。 */
-.env--failed {
+.env--stuck {
   border-color: var(--danger);
   background: var(--danger-wash);
 }
@@ -119,7 +163,7 @@ const nextStep = computed(() => {
   border-radius: 50%;
   background: var(--ok);
 }
-.env--failed .env__dot {
+.env--stuck .env__dot {
   background: var(--danger);
 }
 .env__line {
@@ -130,7 +174,7 @@ const nextStep = computed(() => {
   font-size: 13px;
   color: var(--muted);
 }
-.env--failed .env__line {
+.env--stuck .env__line {
   color: var(--danger-ink);
 }
 .env__toggle {
@@ -149,7 +193,7 @@ const nextStep = computed(() => {
   background: var(--fill-2);
   color: var(--text);
 }
-.env--failed .env__toggle:hover {
+.env--stuck .env__toggle:hover {
   background: var(--surface);
 }
 .env__next {
@@ -170,6 +214,15 @@ const nextStep = computed(() => {
   font-family: var(--font-mono);
   font-size: 12px;
   color: var(--text);
+}
+
+/* 读不到状态：中性，比「停住了」轻一档。它说的不是这个房间坏了，是我们这会儿看
+   不清 —— 把它画成红的会让人去修一个可能根本不存在的问题。 */
+.env--unreachable .env__dot {
+  background: var(--faint);
+}
+.env--unreachable .env__next {
+  color: var(--muted);
 }
 
 /* 进行中：一条 1px 的线在下沿来回扫。 */

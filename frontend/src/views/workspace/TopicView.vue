@@ -9,6 +9,7 @@ import { useDisplay } from 'vuetify'
 import { usePageTitle } from '@/composables/usePageTitle'
 
 import { getTopicAgent } from '@/api'
+import RoomEnvironmentStatus from '@/components/RoomEnvironmentStatus.vue'
 import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
 import { formatToolAction, isPlatformAction, toolLabel } from '@/lib/toolLabels'
@@ -335,6 +336,16 @@ watch(
         @agent-swapped="rosterRevision += 1"
       />
 
+      <!-- 「这个房间还没准备好」——横跨四格，因为环境没起来时改动/现场/预览同样
+           都是空的，人可能正在任何一格里等。在标题**之下**：一个会消失的临时状态
+           不该把常驻的标题挤下去。总览（root）没有自己的运行环境，那里不显示。 -->
+      <RoomEnvironmentStatus
+        v-if="selectedTopic.kind !== 'root'"
+        class="env-strip"
+        :project-id="projectId"
+        :topic-id="topicId"
+      />
+
       <div class="panes d-flex flex-grow-1" style="min-width: 0; min-height: 0; position: relative">
         <!-- 桌面：对话是左边那一栏，和工作面板之间有一条可拖的分隔。 -->
         <TopicChatColumn
@@ -397,6 +408,13 @@ watch(
 </template>
 
 <style scoped>
+/* 这条不参与伸缩：它有内容时占自己那点高度，没内容时整个不在 DOM 里，四格的高度
+   都不会因为它变来变去。 */
+.env-strip {
+  flex: 0 0 auto;
+  margin: 8px 12px 0;
+}
+
 .topic-view {
   flex: 1 1 auto;
   overflow: hidden;
