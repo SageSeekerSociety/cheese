@@ -22,8 +22,10 @@ class AcceptCardCreate(BaseModel):
     # 这批交付是哪几条活干出来的 (#189) — the room naming the work whose code is
     # actually in this change, which is the one thing about a delivery the
     # platform cannot see for itself. Becomes `Cheese-Task:` in permanent
-    # history, so an id that does not belong to this room, or that an already
-    # accepted card claimed, is refused rather than written.
+    # history, so an id that does not belong to this room is refused rather
+    # than written. Appearing in an earlier delivery is not a reason to refuse
+    # it: one piece of work can be delivered, keep being written, and land
+    # again in the next batch — it really did write both.
     #
     # Empty by default and empty is allowed: nothing is inferred from silence,
     # because every inference available ("on the delivering tree", "not yet
