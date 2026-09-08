@@ -1112,6 +1112,116 @@ async def test_cancelling_a_consumer_during_activity_cleanup_stops_it():
         await provider._close_topic(topic_id)
 
 
+# --- 关闭不能把一次消费拦腰砍断 ---------------------------------------------
+#
+# 关掉一个话题的理由从来都不受这边控制：设备掉线、屏幕死了、工作区被回收，或者
+# 一个测试自己收尾。而消费一条钩子是**要写库**的——这一轮的消息、这一轮的账、这
+# 一轮的结束。关闭如果就地把消费者 cancel 掉，写到一半的那条语句连同它的连接一
+# 起被撕掉，留下一轮记了一半的账。下面两条把两个已经在真实运行里撞到过的时刻分
+# 别钉住。
+
+
+async def _let_the_close_reach_its_decision() -> None:
+    """把事件循环让给别人，反复地让，且不看表。
+
+    `asyncio.sleep(0)` 是一次让步而不是一段延时：每一趟都把此刻就绪的任务全部推
+    到它们的下一个挂起点。十趟远多于「取消一个消费者」需要的两趟，所以这之后读到
+    的是一个**已经做完的决定**，不是一场赛跑。
+    """
+    for _ in range(10):
+        await asyncio.sleep(0)
+
+
+async def _one_topic_mid_hook(provider, router, project_id, topic_id):
+    """Start a turn and hand its Stop to the consumer."""
+    await provider.send(
+        SessionRef(project_id=project_id, topic_id=topic_id),
+        "go",
+        Opening(system_prompt=""),
+        work_id=_uuid.uuid4(),
+        on_mark=lambda _work_id: None,
+    )
+    router.push(
+        str(topic_id),
+        {
+            "hook_event_name": "Stop",
+            "last_assistant_message": "done",
+            "session_id": "s1",
+        },
+    )
+
+
+async def test_closing_lets_a_half_written_hook_finish_landing():
+    """关闭撞上「这条钩子正在写库」时，必须等它写完。"""
+    router = HookRouter()
+    provider = ClaudeCodeRuntime(
+        _AliveScreen(), router=router, idle_suspect_s=30, hard_ceiling_s=30
+    )
+    writing = asyncio.Event()
+    release = asyncio.Event()
+    landed: list[str] = []
+
+    async def consume(_p, _t, _work_id, event, _eid, _seen, _unsolicited):
+        # The barrier stands where a persist would be: the consumer is inside
+        # this hook, with a write it has not finished.
+        writing.set()
+        await release.wait()
+        landed.append(getattr(event, "text", ""))
+
+    provider.bind_events(consume)
+    project_id, topic_id = _uuid.uuid4(), _uuid.uuid4()
+    await _one_topic_mid_hook(provider, router, project_id, topic_id)
+    await asyncio.wait_for(writing.wait(), timeout=5)
+
+    close = asyncio.create_task(provider._close_topic(topic_id))
+    await _let_the_close_reach_its_decision()
+    release.set()
+    await asyncio.wait_for(close, timeout=5)
+
+    assert landed == ["done"], "关闭把一条写到一半的钩子砍断了，这一轮的账丢了"
+
+
+async def test_closing_lets_a_turn_finish_reporting_that_it_ended():
+    """关闭撞上「这一轮正在收尾」时，必须等它收完。
+
+    收尾自己会**先**把 `subscription.activity` 清空、**后**才去把「这一轮结束了」
+    报出去，所以那个标志位不能代替这件事：关闭读到 None 的时候，收尾可能还在半空
+    中。真实运行里撞到的就是这一刻——消费者停在收尾里，关闭看一眼标志位就直接
+    cancel。
+    """
+    router = HookRouter()
+    provider = ClaudeCodeRuntime(
+        _AliveScreen(), router=router, idle_suspect_s=30, hard_ceiling_s=30
+    )
+    ending = asyncio.Event()
+    release = asyncio.Event()
+    reported: list[bool] = []
+
+    async def on_activity(_p, _t, _work_id, active):
+        if active:
+            reported.append(True)
+            return
+        ending.set()
+        await release.wait()
+        reported.append(False)
+
+    async def consume(*_args, **_kwargs):
+        return None
+
+    provider.bind_activity(on_activity)
+    provider.bind_events(consume)
+    project_id, topic_id = _uuid.uuid4(), _uuid.uuid4()
+    await _one_topic_mid_hook(provider, router, project_id, topic_id)
+    await asyncio.wait_for(ending.wait(), timeout=5)
+
+    close = asyncio.create_task(provider._close_topic(topic_id))
+    await _let_the_close_reach_its_decision()
+    release.set()
+    await asyncio.wait_for(close, timeout=5)
+
+    assert reported == [True, False], "关闭把正在进行的收尾砍断了：报了开始却没报结束"
+
+
 async def test_every_turn_reported_started_is_also_reported_finished():
     """一轮报了开始，就必须报结束——哪怕它是烂尾的。
 
