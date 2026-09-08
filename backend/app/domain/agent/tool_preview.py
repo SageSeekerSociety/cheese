@@ -5,16 +5,18 @@
 
 三条规则，各自针对一种读不懂：
 
-- **Bash 优先用模型自己写的 ``description``**，而不是命令原文。Claude Code 的
-  Bash 工具本来就要求填这个字段，一句话说明这条命令在干什么 —— 它就是现成的
-  现场文案，之前被丢掉了。命令原文顶不上它：绝对路径开头的 ``cd`` 一段就能把
-  预览占满，读的人看不出这一步在干什么。
+- **Bash 按「中文说明 → 中文模板 → 英文说明 → 命令原文」四档往下退。** Claude
+  Code 的 Bash 工具本来就要求填 ``description``，一句话说明这条命令在干什么 ——
+  它就是现成的现场文案，之前被整个丢掉了。但它多半是英文写的，所以英文的那份
+  不直接用：先让下面的解析器试一次，认得出来就走中文模板（既是中文又更准），
+  认不出来才退回那句英文 —— 它仍然胜过一行 shell。命令原文是最后一档：绝对路径
+  开头的 ``cd`` 一段就能把预览占满，读的人看不出这一步在干什么。
 - **文件路径剪成工作区相对路径。** 设备上的 checkout 一律在
   ``…/.cheese/work/<project>/<topic>/`` 下，这个前缀比预览的长度上限还长，不剪
   掉的话「读取文件」后面跟的是一串 uuid，看不出读的是哪个文件。
-- **没有 description 的 Bash，把没信息量的前置段落剥掉**（``cd``、``export``、
-  开头的 ``VAR=值``）。剩下那段的头一个词认得出来的，顺带把动词也换成更贴切的
-  那个（``action``）—— 认不出来就原样显示，不猜：动词说错比英文更难读。
+- **解析命令时先把没信息量的前置段落剥掉**（``cd``、``export``、开头的
+  ``VAR=值``）。剩下那段的头一个词认得出来的，连动词一起换成更贴切的那个
+  （``action``）—— 认不出来就原样显示，不猜：动词说错比英文更难读。
 
 ``action`` 只是「按哪个工具的标签来显示」，``tool`` 仍然如实记录真正跑的是哪个
 工具。两者分开，是因为「跑了什么」和「怎么称呼它」是两个问题，合成一个字段就
@@ -30,6 +32,10 @@ from dataclasses import dataclass
 
 #: 预览的长度上限。现场是一行，不是一段。
 PREVIEW_MAX = 120
+
+#: 「这句话是中文吗」—— 有没有汉字就够了，不需要语言识别库。判错的代价只是多走
+#: 一次解析器，而解析器认不出来时又会退回原文，两头都不会把话说坏。
+_HAS_CHINESE = re.compile(r"[一-鿿]")
 
 #: 每个设备 checkout 共享的那截路径。``device_provider._work_dir`` 拼的是同一个
 #: 形状；那边没有改成引用这里，是因为剪不掉前缀并不会出错 —— 走的是下面按段保留
@@ -241,7 +247,11 @@ def _first_operand(head: str, tokens: list[str]) -> str:
 
 
 def command_preview(command: str, *, work_dir: str = "") -> ToolPreview:
-    """一条 shell 命令在现场怎么写（模型没写 description 时的退路）。"""
+    """一条 shell 命令在现场怎么写。
+
+    说明是英文、或者压根没写说明时都走这里。``action`` 非空表示认出来了，调用方
+    可以据此决定要不要用它顶掉那句英文。
+    """
     meaningful = ""
     tokens: list[str] = []
     for segment in _split_segments(command):
@@ -283,9 +293,17 @@ def tool_preview(name: str, args: dict, *, work_dir: str = "") -> ToolPreview:
         return ToolPreview()
     if name == "Bash":
         described = _collapse(args.get("description") or "")
+        if described and _HAS_CHINESE.search(described):
+            return ToolPreview(described[:PREVIEW_MAX])
+        # 英文的说明不直接显示：先让解析器试一次，认出来就走中文模板。一句英文
+        # 句子比命令原文好读，但比「读取文件 · backend/app/main.py」差 —— 后者
+        # 既是中文又更准。认不出来才退回那句英文，它仍然胜过一行 shell。
+        parsed = command_preview(str(args.get("command") or ""), work_dir=work_dir)
+        if parsed.action is not None:
+            return parsed
         if described:
             return ToolPreview(described[:PREVIEW_MAX])
-        return command_preview(str(args.get("command") or ""), work_dir=work_dir)
+        return parsed
     key = _TOOL_ARG.get(name)
     if key is None or args.get(key) is None:
         return ToolPreview()

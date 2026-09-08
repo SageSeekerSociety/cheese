@@ -22,13 +22,50 @@ ABS = f"/home/someone/{WORK}"
 # ---- Bash: 模型自己写的说明就是现成的现场文案 ----
 
 
-def test_bash_prefers_the_models_own_description():
+def test_bash_prefers_the_models_own_chinese_description():
     preview = tool_preview(
         "Bash",
-        {"command": f"cd {ABS}; grep -rn TODO backend/", "description": "找一下待办"},
+        {"command": f"cd {ABS}; docker compose up -d", "description": "把数据库拉起来"},
         work_dir=WORK,
     )
-    assert preview == ToolPreview("找一下待办")
+    assert preview == ToolPreview("把数据库拉起来")
+
+
+# ---- 英文说明不直接显示：先让解析器试一次 ----
+
+
+def test_an_english_description_loses_to_a_chinese_template():
+    # 「读取文件 · backend/app/main.py」既是中文又比一句英文更准。
+    preview = tool_preview(
+        "Bash",
+        {"command": f"cd {ABS}; cat backend/app/main.py", "description": "Read main"},
+        work_dir=WORK,
+    )
+    assert preview == ToolPreview("backend/app/main.py", "Read")
+
+
+def test_an_english_description_still_beats_a_raw_command():
+    # 解析器认不出来时，那句英文仍然胜过一行 shell —— 别为了「不要英文」把可读的
+    # 句子换成不可读的命令。
+    preview = tool_preview(
+        "Bash",
+        {
+            "command": f"cd {ABS}; docker inspect -f '{{{{.State.Pid}}}}' api",
+            "description": "Look up the container pid",
+        },
+        work_dir=WORK,
+    )
+    assert preview == ToolPreview("Look up the container pid")
+
+
+def test_a_chinese_description_is_never_overridden_by_the_parser():
+    # 模型已经用中文说清楚了要干什么，模板再准也不该顶掉它 —— 它知道「为什么」。
+    preview = tool_preview(
+        "Bash",
+        {"command": "cat backend/app/main.py", "description": "看看启动时都装了什么"},
+        work_dir=WORK,
+    )
+    assert preview == ToolPreview("看看启动时都装了什么")
 
 
 def test_bash_falls_back_to_the_command_when_nothing_described_it():
@@ -45,8 +82,8 @@ def test_bash_description_is_collapsed_and_capped():
 
 
 def test_blank_description_is_not_a_description():
-    preview = tool_preview("Bash", {"command": "ls -la", "description": "   "})
-    assert preview.text == "ls -la"
+    preview = tool_preview("Bash", {"command": "make release", "description": "   "})
+    assert preview.text == "make release"
 
 
 # ---- 路径：读的人要看得出改的是哪个文件 ----
