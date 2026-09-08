@@ -35,9 +35,11 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 API = os.environ.get("CHEESE_API", "http://host.docker.internal:8099").rstrip("/")
@@ -313,6 +315,129 @@ def source_fingerprint() -> str:
         return "unknown"
 
 
+def _chat_message_text(block: dict) -> str:
+    """Keep typed payloads visible, including fields added by future messages."""
+    lines = [
+        f"[{block.get('created_at', '')}] {block.get('author', '')} "
+        f"({block.get('author_type', '')}, {block.get('kind', '')}) id={block['id']}"
+    ]
+    for key, value in block.items():
+        if key in {"id", "created_at", "author", "author_type", "kind", "content"}:
+            continue
+        if value is not None and value != [] and value != {}:
+            lines.append(
+                f"{key}: {json.dumps(value, ensure_ascii=False, sort_keys=True)}"
+            )
+    lines.append(block.get("content") or "")
+    return "\n".join(lines)
+
+
+def _chat_command(a, *, action=None, value=None, cursor=None, offset=None) -> str:
+    args = ["cheese", "chat", action or a.action]
+    selected = a.value if value is None else value
+    if selected is not None:
+        args.append(selected)
+    args.extend(["--topic", a.topic or TOPIC])
+    if action != "get":
+        for flag, val in (
+            ("--task", a.task),
+            ("--kind", a.kind),
+            ("--author", a.author),
+        ):
+            if val is not None:
+                args.extend([flag, val])
+        args.extend(["--limit", str(a.limit)])
+    if cursor:
+        args.extend(["--after" if a.after else "--before", cursor])
+    if offset is not None:
+        args.extend(["--offset", str(offset), "--length", str(a.length)])
+    return shlex.join(args)
+
+
+def _chat_read(a, parser) -> None:
+    if not 1 <= a.limit <= 500 or not 1 <= a.length <= 12000 or a.offset < 0:
+        parser.error("chat: limit must be 1..500, length 1..12000, offset >= 0")
+    if a.action == "list" and a.value is not None:
+        parser.error("chat list takes no message ID; use chat get or chat replies")
+    if a.action != "list" and not (a.value or "").strip():
+        parser.error(f"chat {a.action} requires a message ID or search text")
+    if a.action != "get" and (a.offset or a.length != 12000):
+        parser.error("--offset and --length apply to chat get")
+    if a.action == "get" and (a.before or a.after or a.kind or a.author):
+        parser.error("chat get reads one message; use chat list for filters")
+    if a.json and (a.offset or a.length != 12000):
+        parser.error("--json returns complete data; omit --offset and --length")
+    topic = a.topic or _need("CHEESE_TOPIC", TOPIC)
+    base = f"/topics/{urllib.parse.quote(topic, safe='')}/history"
+    if a.action == "get":
+        block = _call("GET", base + "/" + urllib.parse.quote(a.value, safe=""))["data"]
+        if a.task is not None and block.get("task_id") != a.task:
+            parser.error("Message does not belong to --task")
+        if a.json:
+            print(json.dumps(block, ensure_ascii=False))
+            return
+        text = _chat_message_text(block)
+        end = a.offset + a.length
+        print(text[a.offset : end])
+        if end < len(text):
+            print(f"\n[More text: {_chat_command(a, action='get', offset=end)}]")
+        return
+    params = {"limit": a.limit}
+    for key, val in (
+        ("before", a.before),
+        ("after", a.after),
+        ("task_id", a.task),
+        ("kind", a.kind),
+        ("author", a.author),
+    ):
+        if val is not None:
+            params[key] = val
+    if a.action == "search":
+        params["q"] = a.value
+    if a.action == "replies":
+        params["reply_to"] = a.value
+    data = _call("GET", base + "?" + urllib.parse.urlencode(params))["data"]
+    if a.json:
+        print(json.dumps(data, ensure_ascii=False))
+        return
+
+    def preview(block):
+        text = _chat_message_text(block)
+        if len(text) > 1500:
+            text = (
+                text[:1500]
+                + "\n[Truncated; "
+                + _chat_command(a, action="get", value=block["id"])
+                + "]"
+            )
+        return text
+
+    remaining = 12000
+    if parent := data.get("reply_to"):
+        parent_text = "Replying to:\n" + preview(parent) + "\n"
+        print(parent_text)
+        remaining -= len(parent_text) + 1
+    blocks = data.get("data") or []
+    if not blocks:
+        print("No messages matched this conversation and filter.")
+        return
+    # Walk from the requested edge. The next cursor must refer to the last
+    # displayed block, including when the text budget cuts a server page short.
+    selected = []
+    for block in blocks if a.after else reversed(blocks):
+        text = preview(block)
+        if selected and len(text) + 2 > remaining:
+            break
+        selected.append((block, text))
+        remaining -= len(text) + 2
+    if not a.after:
+        selected.reverse()
+    print("\n\n".join(text for _, text in selected))
+    if data.get("has_more") or len(selected) < len(blocks):
+        cursor = selected[-1 if a.after else 0][0]["id"]
+        print(f"\n[More messages: {_chat_command(a, cursor=cursor)}]")
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="cheese",
@@ -340,6 +465,64 @@ def build_parser() -> argparse.ArgumentParser:
             "话题标题会被渲染成文档大标题,正文别再用一级标题重复一遍。"
         ),
     )
+    pchat = sub.add_parser(
+        "chat",
+        help="Read and search chat history, replies and reactions",
+        description=(
+            "Read stored messages without waking the agent or marking messages consumed. "
+            "Defaults to the newest 50 records in the current room, oldest first. "
+            "Use --task for a task card. Text pages have a 12000-character budget, "
+            "plus continuation commands, with 1500-character message previews. "
+            "Search matches a literal substring (case-insensitive) in content, "
+            "metadata and quoted text; it searches all stored records in the scope, "
+            "not just the latest page. Replies lists direct replies and their source; "
+            "follow each reply ID for nested replies. Attachments are references only. "
+            "Use --json for complete fields, including structured message metadata "
+            "and reaction authors; redirect large JSON output to a workspace file."
+        ),
+    )
+    pchat.add_argument(
+        "action",
+        nargs="?",
+        default="list",
+        choices=["list", "get", "replies", "search"],
+        help="list: recent records; get: one record; replies: direct replies; search: literal text",
+    )
+    pchat.add_argument(
+        "value", nargs="?", help="Message ID for get/replies, literal text for search"
+    )
+    pchat.add_argument("--topic", help="Room ID (default: CHEESE_TOPIC)")
+    pchat.add_argument(
+        "--task", help="Read one task card's records instead of the room timeline"
+    )
+    pchat.add_argument(
+        "--limit", type=int, default=50, help="Records per page, 1..500 (default: 50)"
+    )
+    cursors = pchat.add_mutually_exclusive_group()
+    cursors.add_argument("--before", help="Read records older than this message ID")
+    cursors.add_argument(
+        "--after", help="Read records newer than this message ID, oldest first"
+    )
+    pchat.add_argument(
+        "--kind",
+        help="Filter by stored type, e.g. message, attachment, event, comment, doc_node",
+    )
+    pchat.add_argument("--author", help="Filter by exact author handle")
+    pchat.add_argument(
+        "--json",
+        action="store_true",
+        help="Complete JSON for the requested page/message; text limits do not apply",
+    )
+    pchat.add_argument(
+        "--offset", type=int, default=0, help="Character offset for get (default: 0)"
+    )
+    pchat.add_argument(
+        "--length",
+        type=int,
+        default=12000,
+        help="Characters per get, 1..12000 (default: 12000)",
+    )
+
     pdsub = pd.add_subparsers(dest="doccmd", required=True)
     pdset = pdsub.add_parser(
         "set",
@@ -851,9 +1034,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    a = build_parser().parse_args()
+    parser = build_parser()
+    a = parser.parse_args()
 
-    if a.cmd == "doc" and a.doccmd == "set":
+    if a.cmd == "chat":
+        _chat_read(a, parser)
+    elif a.cmd == "doc" and a.doccmd == "set":
         topic = _need("CHEESE_TOPIC", TOPIC)
         with open(a.file, encoding="utf-8") as f:
             content = f.read()
