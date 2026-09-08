@@ -148,6 +148,8 @@ async def resolve_pinned_device(
     chosen = await service.topic_binding(topic_id)
     if chosen is not None:
         device_id = chosen.device_id
+        if not await service.serves_project(device_id, project_id):
+            raise ScreenSetupError("设备已移出团队或项目，请联系设备所有者")
         if await service.get_hosted_device(device_id) is None:
             raise ScreenSetupError(DEVICE_NOT_HOSTED_MESSAGE)
         if not is_online(device_id):

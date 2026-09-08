@@ -41,6 +41,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'toggle-focus'): void
   (e: 'open-topic', topicId: string): void
+  // 这个话题换了 AI 队友。对话栏要重拉名册——它显示的 AI 名字来自那份名册。
+  (e: 'agent-swapped'): void
 }>()
 
 const { mdAndUp } = useDisplay()
@@ -134,6 +136,7 @@ watch(
         :project-id="topic.project_id"
         :project-members="members"
         :me="me"
+        @agent-swapped="emit('agent-swapped')"
       />
 
       <!-- 用量: was the 资源 drawer. -->

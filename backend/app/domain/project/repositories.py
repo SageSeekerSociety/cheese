@@ -13,6 +13,7 @@ from app.domain.project.models import (
     ProjectGitInstallation,
     ProjectMember,
 )
+from app.domain.team.models import Team
 from app.domain.user.models import User, UserProfile
 
 
@@ -43,6 +44,19 @@ class ProjectRepository:
 
     async def get(self, project_id: uuid.UUID) -> Project | None:
         return await self._session.get(Project, project_id)
+
+    async def team_for_project(self, project_id: uuid.UUID) -> int | None:
+        """The owning team, including a personal team's older unassigned projects."""
+        project = await self.get(project_id)
+        if project is None:
+            return None
+        if project.team_id is not None:
+            return project.team_id
+        return await self._session.scalar(
+            select(Team.id)
+            .join(User, User.id == Team.personal_owner_user_id)
+            .where(User.username == project.owner_handle, Team.deleted_at.is_(None))
+        )
 
     async def get_by_team(self, team_id: int) -> Project | None:
         """The AI-workspace project for a 知是 Team (P4 native link), newest first."""

@@ -27,8 +27,11 @@ const props = withDefaults(
     // This tab is the one on screen. Load happens on the rising edge, exactly
     // like opening the old drawer did.
     active?: boolean
+    // 这个房间现在交给的那个 AI 队友叫什么。一个项目可以有好几个队友，房间随时
+    // 能换，所以这里不能写死「芝士」——这一栏和对话栏说的是同一个人。
+    agentName?: string
   }>(),
-  { worklog: () => [], working: false, workingSince: null, active: false }
+  { worklog: () => [], working: false, workingSince: null, active: false, agentName: '芝士' }
 )
 
 const loading = ref(false)
@@ -199,7 +202,7 @@ watch(
 )
 
 function authorLabel(b: Block): string {
-  return b.author_type === 'ai' ? '芝士' : b.author
+  return b.author_type === 'ai' ? props.agentName : b.author
 }
 
 function fmtTime(iso: string): string {
