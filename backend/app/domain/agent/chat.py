@@ -33,7 +33,13 @@ from app.domain.agent.gateway import LlmGateway, drain_new_usage
 from app.domain.agent.harness import Opening, SessionRef, runtime_for
 from app.domain.agent.market import subscription_model_alias
 from app.domain.agent.platform_failures import (
+    MODEL_LIMIT_REACHED_CODE,
+    PROVIDER_OVERLOADED_CODE,
+    PROVIDER_UNREACHABLE_CODE,
+    RESPONSE_TRUNCATED_CODE,
+    TOOL_UNAVAILABLE_CODE,
     TURN_TIMEOUT_MESSAGE,
+    classify_cli_notice,
     classify_platform_failure,
 )
 from app.domain.agent.platform_notices import (
@@ -64,6 +70,7 @@ from app.domain.agent.service import (
 from app.domain.agent.skills import DEFAULT_CHAT_SKILLS, load_scenario, load_skills
 from app.domain.agent.stages import TopicStage, resolve_stage, stage_scenario
 from app.domain.agent.supply import SUBSCRIPTION, resolve_pool
+from app.domain.agent.tool_preview import ToolPreview, tool_preview, work_subpath
 from app.domain.agent_instance.configuration import (
     AgentConfiguration,
     validate_configuration,
@@ -265,15 +272,6 @@ _TOOL_VERB = {
     "write_file": "写文件",
     "record_decision": "记录决策",
 }
-_TOOL_ARG = {
-    "update_doc": "content",
-    "remember": "fact",
-    "notify": "title",
-    "request_accept": "reviewer_handle",
-    "pin_milestone": "title",
-    "write_file": "path",
-    "record_decision": "decision",
-}
 
 
 # Native Claude Code tools (sandbox mode) → 现场 labels. Systematic: every tool
@@ -303,41 +301,17 @@ _TOOL_VERB.update(
         "ToolSearch": "查找工具",
     }
 )
-_TOOL_ARG.update(
-    {
-        "Bash": "command",
-        "Write": "file_path",
-        "Edit": "file_path",
-        "Read": "file_path",
-        "Glob": "pattern",
-        "Grep": "pattern",
-        "WebSearch": "query",
-        "WebFetch": "url",
-        "Agent": "description",
-        "Task": "description",
-        "NotebookEdit": "notebook_path",
-        "Skill": "skill",
-        "ToolSearch": "query",
-    }
-)
 
 
-def _tool_arg_preview(name: str, args: dict) -> str:
-    """Whitespace-collapsed preview of the tool's most telling argument."""
-    key = _TOOL_ARG.get(name)
-    if key and isinstance(args, dict) and args.get(key) is not None:
-        return " ".join(str(args[key]).split())[:120]
-    return ""
-
-
-def _format_tool_event(name: str, args: dict) -> str:
+def _format_tool_event(name: str, preview: ToolPreview) -> str:
     """Human-readable FALLBACK text for an event block (old clients / old rows).
 
     The UI renders from the structured meta (see _tool_event_meta); this baked
-    string only shows when meta is absent."""
-    verb = _TOOL_VERB.get(name, name)
-    preview = _tool_arg_preview(name, args)
-    return f"{verb}\n{preview}" if preview else verb
+    string only shows when meta is absent. Both are built from the SAME
+    ToolPreview, so the baked line and the rendered one cannot describe the
+    call differently."""
+    verb = _TOOL_VERB.get(preview.action or name, name)
+    return f"{verb}\n{preview.text}" if preview.text else verb
 
 
 # 现场圆点分级: a PLATFORM action (amber dot) vs plain work (neutral dot).
@@ -356,14 +330,22 @@ def _is_platform_tool(raw_name: str, args: dict) -> bool:
     return False
 
 
-def _tool_event_meta(name: str, args: dict, *, platform: bool) -> dict:
+def _tool_event_meta(name: str, preview: ToolPreview, *, platform: bool) -> dict:
     """Structured payload persisted on an event block: the UI translates the
     tool name and colors the dot from these fields at DISPLAY time, so a verb
-    missing from today's table is never baked in untranslated forever."""
+    missing from today's table is never baked in untranslated forever.
+
+    ``as_tool`` rides alongside ``tool`` rather than replacing it: ``tool`` says
+    what actually ran, ``as_tool`` says whose label reads better (a Bash
+    `cat foo.py` is still a Bash call, but 「读取文件」 is what it did). NOT named
+    ``action`` — that key already means "which platform resource this card points
+    at" (see the frontend's platformNotice), and one name answering two questions
+    is how a card ends up pointing at a resource called "Read"."""
     meta: dict = {"tool": name, "platform": platform}
-    preview = _tool_arg_preview(name, args)
-    if preview:
-        meta["arg"] = preview
+    if preview.text:
+        meta["arg"] = preview.text
+    if preview.action:
+        meta["as_tool"] = preview.action
     return meta
 
 
@@ -619,6 +601,85 @@ def _turn_failure_notice(text: str, code: str | None) -> tuple[str, dict]:
             part for part in (hint, f"服务原话：\n{detail}" if detail else "") if part
         )
         or None,
+        detail_label="详细说明",
+    )
+
+
+# CLI 自己印在对话里的那几句英文,换成平台自己的中文提示卡。
+#
+# 它们过去顶着芝士的名字发出来,读的人看到的是「芝士在说英文报错」,而实际上
+# 芝士根本没说话 —— 是它脚下的 CLI 印的。归属错了比语言错了更糟:一个平台故障
+# 被读成 AI 的回答,谁也不知道该找谁。
+#
+# 英文原话一个字都不丢,收进「服务原话」的折叠区 —— 它是唯一的一份。
+_CLI_NOTICE_COPY: dict[str, tuple[str, str, str, str]] = {
+    PROVIDER_UNREACHABLE_CODE: (
+        "芝士连不上 AI 服务，这一步没做成",
+        SEVERITY_ERROR,
+        WHO_PLATFORM,
+        "这个多半不会自己好:要么是这台机器上的隧道助手掉了,要么是中继在丢连接。"
+        "先重新 @ 它一次;还是连不上就该找人看机器,不要反复重试。",
+    ),
+    PROVIDER_OVERLOADED_CODE: (
+        "AI 服务暂时过载，这一步没做成",
+        SEVERITY_WARN,
+        WHO_PLATFORM,
+        "服务端的事,通常一会儿就好。稍后再 @ 它一次。",
+    ),
+    MODEL_LIMIT_REACHED_CODE: (
+        "这个模型的额度用完了",
+        SEVERITY_ERROR,
+        WHO_HUMAN,
+        "这不是等一等就能好的:要换一个模型,或者等额度恢复。重试无效。",
+    ),
+    TOOL_UNAVAILABLE_CODE: (
+        "芝士想用的一个工具没能用上",
+        SEVERITY_WARN,
+        WHO_PLATFORM,
+        "它在等一个没有人能给的授权 —— 那个框画在容器的终端里，房间里够不着。"
+        "这说明这台机器上的工具配置不对，要人去看，重试不会有变化。",
+    ),
+    RESPONSE_TRUNCATED_CODE: (
+        "上面那条回复没说完就断了",
+        SEVERITY_WARN,
+        WHO_PLATFORM,
+        "上面那条可能是半截。要它接着说就再 @ 它一次。",
+    ),
+}
+
+
+# 聊天区是给人读的。芝士主要说中文,偶尔会漏出一句英文 —— 实测 200 个会话里
+# 682 条,占聊天区消息的 15%,而且 98.5% 是 200 字以内、动手前随口一句的过场话
+# (「Now the tests:」)。漏的正是那种它没意识到在对人说话的时刻。
+#
+# 这些不翻译、也不删,只是**不占聊天区**:照常落库、照常在历史里,`meta.in_room`
+# 为 False,前端不显示。信息一条不丢,读的人不用在英文里找中文。
+#
+# 判据是「通篇没有汉字**且**确实是拿字母写的」。后半个条件不是多余的:一条只有
+# 表情或数字的短消息(「✅」)同样没有汉字,但它不是英文,藏它是这条规则的副作用,
+# 不是它的目的。
+_HAS_LATIN = re.compile(r"[A-Za-z]")
+
+
+def _stays_out_of_the_room(text: str) -> bool:
+    """这条 AI 消息该不该在聊天区露面。"""
+    return not _HAS_CJK_TEXT.search(text) and bool(_HAS_LATIN.search(text))
+
+
+_HAS_CJK_TEXT = re.compile(r"[一-鿿]")
+
+
+def _cli_notice(text: str) -> tuple[str, dict] | None:
+    """整条消息其实是 CLI 印的一句英文提示时,给出该发的中文提示卡;否则 None。"""
+    failure = classify_cli_notice(text)
+    if failure is None:
+        return None
+    line, severity, who, hint = _CLI_NOTICE_COPY[failure]
+    return line, notice(
+        EVENT_TURN_FAILED,
+        severity=severity,
+        who=who,
+        detail=f"{hint}\n\n服务原话：\n{text.strip()}",
         detail_label="详细说明",
     )
 
@@ -2768,9 +2829,31 @@ class ChatService:
         landed in an earlier attempt at the same work (④ 重发): the re-sent
         turn re-narrating "我先看一下 X" must not post a second copy of it. The
         caller treats None as "nothing to broadcast"."""
+        # 有些「助手消息」根本不是芝士说的 —— 是它脚下的 CLI 把自己的英文提示
+        # 当成助手输出印了出来。拦在这里而不是调用方:活路径、补投、spool 回填
+        # 三条路都经过这个方法,拦在门口才不会有一条漏网。
+        as_notice = _cli_notice(text)
+        if as_notice is not None:
+            line, notice_meta = as_notice
+            return await self._persist_room_event(
+                project_id=project_id,
+                topic_id=topic_id,
+                content=line,
+                meta=notice_meta,
+                turn_id=turn_id,
+                eid=eid,
+                backfilled=backfilled,
+                platform_unsolicited=platform_unsolicited,
+                in_room=True,
+                author_type=AuthorType.system,
+                task_id=task_id,
+            )
         meta: dict | None = None
+        if _stays_out_of_the_room(text):
+            # 落库,但不露面。删掉它才是信息丢失 —— 那 15% 里有少数带着真结论。
+            meta = {"in_room": False}
         if eid:
-            meta = {"eid": eid}
+            meta = {**(meta or {}), "eid": eid}
         if len(eids) > 1:
             meta = {**(meta or {}), "eids": list(eids)}
         if backfilled:
@@ -2911,11 +2994,14 @@ class ChatService:
         spool reconcile can dedup a backfilled copy against this live one. Returns
         the persisted block payload so a caller (live path or spool reconcile) can
         broadcast it as a WS frame."""
+        preview = tool_preview(
+            name, tool_input, work_dir=work_subpath(project_id, topic_id)
+        )
         return await self._persist_room_event(
             project_id=project_id,
             topic_id=topic_id,
-            content=_format_tool_event(name, tool_input),
-            meta=_tool_event_meta(name, tool_input, platform=platform),
+            content=_format_tool_event(name, preview),
+            meta=_tool_event_meta(name, preview, platform=platform),
             turn_id=turn_id,
             eid=eid,
             backfilled=backfilled,

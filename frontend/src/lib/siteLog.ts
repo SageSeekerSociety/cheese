@@ -33,21 +33,6 @@ export function countLines(content: string): number {
 }
 
 /**
- * Whether an incoming entry should pull the view down with it.
- *
- * Same rule the chat pane uses: follow the tail only when the reader is already
- * parked at it. Someone who scrolled up to read something is reading it —
- * yanking them to the bottom because 芝士 emitted another tool line is worse
- * than making them scroll back down themselves.
- */
-export function shouldFollowTail(
-  el: { scrollTop: number; scrollHeight: number; clientHeight: number },
-  threshold = 80
-): boolean {
-  return el.scrollHeight - el.scrollTop - el.clientHeight < threshold
-}
-
-/**
  * How many frames the tail-pin may keep re-pinning while the panel is still
  * growing. ~30 frames ≈ 500ms at 60fps, and it stops the moment the height
  * holds steady for one frame — measured, the panel settles in about 120ms.

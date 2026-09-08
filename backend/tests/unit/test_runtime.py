@@ -1617,7 +1617,8 @@ async def test_a_turn_that_keeps_calling_tools_outlives_its_ceiling(db_factory):
             # 四轮各 0.2 秒：总共 0.8 秒，是上限的两倍多，但从没有 0.3 秒
             # 里一次工具都不调。
             for _ in range(4):
-                yield {"type": "tool", "name": "Read"}
+                # 一次工具调用今天落成的就是这个 —— 现场那条时间线上的一块。
+                yield {"type": "event_block", "block": {"meta": {"tool": "Read"}}}
                 await asyncio.sleep(0.2)
             yield {"type": "done"}
 

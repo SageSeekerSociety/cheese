@@ -12,7 +12,6 @@ import { getTopicAgent } from '@/api'
 import RoomEnvironmentStatus from '@/components/RoomEnvironmentStatus.vue'
 import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
-import { formatToolAction, isPlatformAction, toolLabel } from '@/lib/toolLabels'
 import { topicPhase } from '@/lib/topicState'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -137,7 +136,6 @@ const composerReady = computed(() => !!chatColumn.value?.connected)
 const chatEvents = {
   'turn-done': handleTurnDone,
   working: handleWorking,
-  'tool-used': handleToolUsed,
   'state-changed': handleStateChanged,
   'mention-click': handleMentionClick,
   'open-file': (path: string) => panelRef.value?.openFile?.(path),
@@ -148,13 +146,8 @@ const chatEvents = {
   review: () => onPanelTab('changes'),
 }
 
-// 施工现场 live feed for the current topic — the 现场 tab shows it with a pulsing
-// dot while the turn runs; cleared when the turn ends (the persisted transcript
-// takes over as the durable record).
-// platform: amber dot (cheese platform action) vs neutral dot (plain work).
-const worklog = ref<{ label: string; text: string; platform: boolean }[]>([])
+// 芝士 是不是正在这个话题里干活 —— 话题头上的状态词和工作面板的 tab 都读它。
 const working = ref(false)
-const workingSince = ref<number | null>(null)
 
 // ---- 话题此刻处在哪一段 (规则 3/4) ----
 // The accept card owns its own data, but not the one word that summarises it:
@@ -177,24 +170,16 @@ watch(
 )
 
 // 芝士 开工 / 收工，由对话栏按轮次生命周期报上来。这是 `working` 唯一的开关：
-// 「现场」那一格的存在与否读它，所以它必须在开工那一刻就翻过来——而不是等到第一
-// 个工具帧。一条 @芝士 开出来的 agent 可能先想上半分钟才动手，那半分钟里右边什
+// 「现场」那一格的存在与否读它，所以它必须在开工那一刻就翻过来——而不是等到它第
+// 一次动手。一条 @芝士 开出来的 agent 可能先想上半分钟才动手，那半分钟里右边什
 // 么都没有，除非刷新一次页面。
 function handleWorking(now: boolean) {
-  if (now) {
-    if (!working.value) workingSince.value = Date.now()
-    working.value = true
-  } else {
-    working.value = false
-    workingSince.value = null
-  }
+  working.value = now
 }
 
 function handleTurnDone() {
-  // The live feed's job is over — the persisted 现场 transcript is the record.
+  // 这一轮干完了 —— 现场那条时间线就是它留下的记录。
   working.value = false
-  workingSince.value = null
-  worklog.value = []
   activityTick.value += 1
   void store.refreshTopics()
   // 芝士's reply landed after our read cursor — the user is watching this
@@ -245,20 +230,6 @@ function handleMentionClick(handle: string) {
   void router.push({ name: 'member', params: { projectId: props.projectId, handle } })
 }
 
-function handleToolUsed(name: string, input?: Record<string, unknown>) {
-  worklog.value.push({
-    label: toolLabel(name),
-    text: formatToolAction(name, input),
-    platform: isPlatformAction(name, input),
-  })
-  if (name === 'update_doc') {
-    activityTick.value += 1
-  } else if (name === 'request_accept') {
-    // 芝士 递出验收卡: refresh the banner so it shows up immediately.
-    chatColumn.value?.reloadAccept()
-  }
-}
-
 // ⤴ 升级 from a message bubble (eval A1). 房间里的消息变成这个房间的一张卡，
 // 私聊里的变成一个新房间——两种落点，两种去处。
 async function handleUpgradeMessage(messageId: string) {
@@ -297,9 +268,7 @@ watch(
 watch(
   () => props.topicId,
   async (id) => {
-    worklog.value = []
     working.value = false
-    workingSince.value = null
     if (!id) return
     unreadOnOpen.value = store.unreadMap[id] ?? 0
     // 这个 id 在侧栏那张表里找不到的话，直接问它——支线走的永远是这条路。
@@ -374,9 +343,7 @@ watch(
           :style="{ flex: '1 1 0', minWidth: 0 }"
           :topic="selectedTopic"
           :activity-tick="activityTick"
-          :worklog="worklog"
           :working="working"
-          :working-since="workingSince"
           :topic-list="store.topics"
           :tab="panelTab"
           :phase="phase"
