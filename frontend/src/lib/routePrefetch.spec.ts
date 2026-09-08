@@ -7,9 +7,9 @@
  */
 import type { BlockPage } from '@/api'
 
+import { createMemoryHistory, createRouter } from 'vue-router'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createMemoryHistory, createRouter } from 'vue-router'
 
 vi.mock('@/me', () => ({ myHandle: () => 'alice' }))
 
