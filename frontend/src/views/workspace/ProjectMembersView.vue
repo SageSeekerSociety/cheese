@@ -10,12 +10,12 @@
 // （membership/services.py），前端藏起来只是为了不给人一个必定失败的按钮。
 import type { ProjectMemberRow } from '@/cx_types'
 
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { getAvatarUrl } from '@/utils/materials'
 
-import { addProjectMember, removeProjectMember, updateProjectMemberRole } from '@/api'
+import { addProjectMember, listProjectAgents, removeProjectMember, updateProjectMemberRole } from '@/api'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { label, PROJECT_ROLE } from '@/labels'
 import { myHandle } from '@/me'
@@ -32,6 +32,37 @@ const store = useWorkspaceStore()
 const me = computed(() => myHandle())
 const project = computed(() => store.projects.find((p) => p.id === props.projectId) ?? null)
 const ownerHandle = computed<string>(() => String(project.value?.owner_handle ?? ''))
+
+// 私聊的未读全部落在这一页上：侧栏那一栏撤掉之后，「成员」那一行只说有几条，
+// 是谁找你由这里的每一颗私聊按钮各自说。
+function unreadWith(handle: string): number {
+  return store.privateUnreadMap?.[handle] ?? 0
+}
+
+// 99 以上不再往上数：徽标的宽度会把它旁边的东西挤走，而「到底是 100 还是 137」
+// 对一个「该去看看了」的信号毫无意义。侧栏那一颗用的是同一条规矩。
+function countLabel(n: number): string {
+  return n > 99 ? '99+' : String(n)
+}
+
+// 和芝士那一间私聊今天只有一间（后端按 private_peer 为空存的），答话的是项目的
+// 默认队友。所以私聊按钮只长在默认那一行上——长在每一行会是句假话：点开的是同
+// 一间对话，而队友有好几个。
+const defaultAgentHandle = ref<string | null>(null)
+watch(
+  () => props.projectId,
+  async (pid) => {
+    defaultAgentHandle.value = null
+    try {
+      const agents = (await listProjectAgents(pid)).data
+      if (props.projectId !== pid) return
+      defaultAgentHandle.value = agents.find((a) => a.is_default)?.handle ?? null
+    } catch {
+      // 拿不到就没有私聊按钮，页面其余部分照常——名册不该被一个可选接口拖垮。
+    }
+  },
+  { immediate: true }
+)
 
 const query = ref('')
 const busyHandle = ref<string | null>(null)
@@ -81,6 +112,12 @@ function openProfile(m: ProjectMemberRow) {
 // 私聊行完全一样（同一个地址），所以从这里开的会话就是侧栏里的那一条。
 function openDm(m: ProjectMemberRow) {
   void router.push({ name: 'workspace-dm', params: { projectId: props.projectId, peer: m.user_handle } })
+}
+
+// 和芝士那一间的地址是字面量 `cheese`，不是队友的 handle —— 后端存的是
+// 「private_peer 为空」的那一间，一个人一间，跟具体哪个队友无关。
+function openCheeseDm() {
+  void router.push({ name: 'workspace-dm', params: { projectId: props.projectId, peer: 'cheese' } })
 }
 
 async function run(handle: string, fn: () => Promise<unknown>) {
@@ -188,15 +225,19 @@ async function submitInvite() {
               <div class="t-meta c-muted">@{{ m.user_handle }}</div>
             </div>
             <v-spacer />
-            <v-btn
-              v-if="m.user_handle !== me"
-              variant="text"
-              size="small"
-              icon="mdi-message-outline"
-              aria-label="私聊"
-              title="私聊"
-              @click.stop="openDm(m)"
-            />
+            <span v-if="m.user_handle !== me" class="dm-slot">
+              <v-btn
+                variant="text"
+                size="small"
+                icon="mdi-message-outline"
+                aria-label="私聊"
+                title="私聊"
+                @click.stop="openDm(m)"
+              />
+              <span v-if="unreadWith(m.user_handle) > 0" class="dm-unread">
+                {{ countLabel(unreadWith(m.user_handle)) }}
+              </span>
+            </span>
             <v-menu v-if="manageable(m)" location="bottom end">
               <template #activator="{ props: menuProps }">
                 <v-btn
@@ -240,6 +281,19 @@ async function submitInvite() {
               <div class="t-meta c-muted">@{{ a.user_handle }}</div>
             </div>
             <v-spacer />
+            <span v-if="a.user_handle === defaultAgentHandle" class="dm-slot">
+              <v-btn
+                variant="text"
+                size="small"
+                icon="mdi-message-outline"
+                aria-label="私聊"
+                title="私聊"
+                @click.stop="openCheeseDm()"
+              />
+              <span v-if="unreadWith('cheese') > 0" class="dm-unread">
+                {{ countLabel(unreadWith('cheese')) }}
+              </span>
+            </span>
             <v-btn
               variant="text"
               size="small"
@@ -327,5 +381,25 @@ async function submitInvite() {
 }
 .min-w-0 {
   min-width: 0;
+}
+/* 私聊按钮 + 它右上角那颗未读。按钮本身是 icon 按钮，徽标压在它的右上角，
+   所以这个槽是定位参照系。 */
+.dm-slot {
+  position: relative;
+  display: inline-flex;
+}
+/* 未读 = 裸的琥珀数字，没有底色。这不是随手选的样式：侧栏那颗徽标同款，而它的
+   注释里写着红圆和石墨药丸都被否过。同一个产品里未读只能有一种读法，这里再造
+   一颗红药丸，人就得学两遍「什么算没看」。 */
+.dm-unread {
+  position: absolute;
+  top: -2px;
+  inset-inline-end: -2px;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  pointer-events: none;
 }
 </style>

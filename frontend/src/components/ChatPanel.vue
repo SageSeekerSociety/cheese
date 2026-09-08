@@ -129,6 +129,9 @@ const props = withDefaults(
     // Header label override for a 私聊 whose stored title is a bookkeeping key
     // (e.g. a person DM's canonical "私聊 · a · b"): show the peer's name instead.
     titleOverride?: string | null
+    // 标题左边那颗 ←，以及它旁边的字。私聊是从名册点进来的，而名册页在桌面上
+    // 不是侧栏的一行，所以没有这颗按钮就只能靠浏览器后退回去。null = 不画。
+    backLabel?: string | null
     // 开这个话题的那一刻还有多少条没读（只数别人发的，和侧栏角标同一口径）。
     // 由 host 在 markRead 之前捕获——一旦 markRead 跑过，这个数就没了。
     unreadOnOpen?: number
@@ -145,6 +148,7 @@ const props = withDefaults(
     members: () => [],
     topicList: () => [],
     titleOverride: null,
+    backLabel: null,
     unreadOnOpen: 0,
     rosterRevision: 0,
   }
@@ -154,6 +158,8 @@ const props = withDefaults(
 // without a manual reload (spec §7.1 实时联动). `tool-used` fires per tool call
 // (carries the short tool name); `turn-done` fires when a turn completes.
 const emit = defineEmits<{
+  // 标题左边那颗 ← 被按了。去哪儿由拥有这个地址的人决定，不是这里。
+  (e: 'back'): void
   (e: 'tool-used', name: string, input?: Record<string, unknown>): void
   // A cheese command changed a platform resource (doc/decision/topics/...) —
   // the parent refreshes that panel live, mid-turn.
@@ -1396,6 +1402,17 @@ onBeforeUnmount(() => {
       <!-- Plain chat header — normal chat (飞书私聊 / 本体): title + 已连接 -->
       <div v-else-if="!hideHeader" class="pr-header px-4 py-3">
         <div class="d-flex align-center ga-2">
+          <v-btn
+            v-if="backLabel"
+            variant="text"
+            size="small"
+            density="comfortable"
+            prepend-icon="mdi-arrow-left"
+            class="c-muted"
+            @click="emit('back')"
+          >
+            {{ backLabel }}
+          </v-btn>
           <span class="pr-title t-title">{{ titleOverride || topic.title }}</span>
           <v-spacer />
           <span

@@ -7,15 +7,16 @@
 import type { Component } from 'vue'
 import type { ProjectMemberRow } from '@/cx_types'
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
+import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const addProjectMember = vi.fn()
 const updateProjectMemberRole = vi.fn()
 const removeProjectMember = vi.fn()
+const listProjectAgents = vi.fn()
 
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
@@ -24,6 +25,7 @@ vi.mock('@/api', async () => {
     addProjectMember: (...a: unknown[]) => addProjectMember(...a),
     updateProjectMemberRole: (...a: unknown[]) => updateProjectMemberRole(...a),
     removeProjectMember: (...a: unknown[]) => removeProjectMember(...a),
+    listProjectAgents: (...a: unknown[]) => listProjectAgents(...a),
   }
 })
 
@@ -35,9 +37,11 @@ vi.mock('@/me', () => ({ myHandle: () => meHandle }))
 
 const refreshMembers = vi.fn()
 let members: ProjectMemberRow[] = []
+let privateUnreadMap: Record<string, number> = {}
 vi.mock('@/stores/workspace', () => ({
   useWorkspaceStore: () => ({
     members,
+    privateUnreadMap,
     projects: [{ id: 'p1', name: 'P1', created_at: '', owner_handle: 'alice' }],
     refreshMembers,
   }),
@@ -86,6 +90,10 @@ beforeEach(() => {
   addProjectMember.mockReset().mockResolvedValue({})
   updateProjectMemberRole.mockReset().mockResolvedValue({})
   removeProjectMember.mockReset().mockResolvedValue({ deleted: true })
+  listProjectAgents
+    .mockReset()
+    .mockResolvedValue({ data: [{ handle: 'cheese-x', display_name: '芝士', is_default: true }] })
+  privateUnreadMap = {}
   meHandle = 'alice'
   members = [
     member({ user_handle: 'alice', name: '爱丽丝', role: 'lead' }),
@@ -178,5 +186,47 @@ describe('成员页', () => {
     await fireEvent.update(await screen.findByLabelText('handle'), '@zhangheng')
     await fireEvent.click(await screen.findByRole('button', { name: '邀请' }))
     await waitFor(() => expect(addProjectMember).toHaveBeenCalledWith('p1', 'zhangheng', 'member'))
+  })
+})
+
+// 侧栏那一段私聊撤掉之后，未读只剩两个落点：侧栏「成员」那一行上的总数，和这一页
+// 上每个人自己那一颗。这一组守的是第二个——它错了的表现是「知道有人找你，但点进来
+// 看不出是谁」，而那正是把这一段搬过来的全部理由。
+describe('成员页：私聊未读', () => {
+  it('谁有未读，红点就长在谁那颗私聊按钮上', async () => {
+    privateUnreadMap = { ligan: 3 }
+    const { container } = mount()
+    await waitFor(() => expect(rowFor(container, 'ligan').querySelector('.dm-unread')).toBeTruthy())
+    expect(rowFor(container, 'ligan').querySelector('.dm-unread')?.textContent?.trim()).toBe('3')
+    // 没有未读的人不该也挂一个
+    expect(rowFor(container, 'mentor1').querySelector('.dm-unread')).toBeNull()
+  })
+
+  it('和芝士那一间的私聊只长在默认队友那一行上——它今天只有一间', async () => {
+    privateUnreadMap = { cheese: 2 }
+    const { container, getByText } = mount()
+    const agentRow = await waitFor(() => {
+      const el = Array.from(container.querySelectorAll('.v-card')).find((c) =>
+        (c.textContent ?? '').includes('@cheese-x')
+      )
+      if (!el?.querySelector('[aria-label="私聊"]')) throw new Error('还没渲染出队友的私聊按钮')
+      return el
+    })
+    expect(agentRow.querySelector('.dm-unread')?.textContent?.trim()).toBe('2')
+    await fireEvent.click(agentRow.querySelector('[aria-label="私聊"]') as Element)
+    // 地址是字面量 cheese，不是队友的 handle——后端存的是「没有 peer」的那一间。
+    expect(push).toHaveBeenCalledWith({ name: 'workspace-dm', params: { projectId: 'p1', peer: 'cheese' } })
+    expect(getByText('AI 队友 · 1')).toBeTruthy()
+  })
+
+  it('拿不到队友名单时这一页照样能用，只是没有和芝士私聊的入口', async () => {
+    listProjectAgents.mockRejectedValue(new Error('boom'))
+    const { container } = mount()
+    await waitFor(() => expect(rowFor(container, 'ligan')).toBeTruthy())
+    const agentRow = Array.from(container.querySelectorAll('.v-card')).find((c) =>
+      (c.textContent ?? '').includes('@cheese-x')
+    )
+    expect(agentRow).toBeTruthy()
+    expect(agentRow?.querySelector('[aria-label="私聊"]')).toBeNull()
   })
 })
