@@ -20,8 +20,9 @@ from app.domain.agent.harness.claude_code import device_launch, warm_session
 
 @pytest.mark.parametrize("workspace_exit", [0, 7])
 @pytest.mark.parametrize("adoption_exit", [0, 9])
+@pytest.mark.parametrize("stage_exit", [0, 13])
 def test_warm_checkout_overlaps_configuration_but_precedes_adoption(
-    tmp_path, monkeypatch, workspace_exit, adoption_exit
+    tmp_path, monkeypatch, workspace_exit, adoption_exit, stage_exit
 ):
     owner = tmp_path / "owner"
     home = tmp_path / "room"
@@ -29,8 +30,12 @@ def test_warm_checkout_overlaps_configuration_but_precedes_adoption(
     warm = owner / ".cheese/native-warm"
     warm.mkdir(parents=True)
     (warm / "state.json").write_text("{}")
+    (warm / "ready").touch()
     (warm.parent / "warm-native-runner.py").write_text(
         "import os, sys\nfrom pathlib import Path\n"
+        "def _native_alive(state):\n    return True\n"
+        "def stage(*args, **kwargs):\n"
+        f"    if {stage_exit}: raise SystemExit({stage_exit})\n"
         "def adopt_room(directory):\n"
         "    assert (Path(os.environ['CHEESE_WORK']) / 'complete').exists()\n"
         "    (Path(os.environ['HOME']) / 'adopted').touch()\n"
@@ -68,11 +73,18 @@ def test_warm_checkout_overlaps_configuration_but_precedes_adoption(
                 "CHEESE_WORK": str(work),
                 "CHEESE_PROJECT": str(uuid.uuid4()),
                 "CHEESE_TOPIC": str(uuid.uuid4()),
+                "CHEESE_RV_SOCK": str(tmp_path / "rv.sock"),
+                "CHEESE_RV_TOKEN_FILE": str(tmp_path / "rv.token"),
             },
             stdout=output,
             stderr=output,
         )
         try:
+            if stage_exit:
+                assert process.wait(timeout=5) == stage_exit
+                assert not (work / "waiting").exists()
+                assert not (home / "adopted").exists()
+                return
             deadline = time.monotonic() + 3
             while not (home / ".claude/cheese-drain.env").exists():
                 assert process.poll() is None
@@ -88,9 +100,55 @@ def test_warm_checkout_overlaps_configuration_but_precedes_adoption(
                 workspace_exit == 0 and adoption_exit == 0
             )
         finally:
-            (work / "release").touch()
+            if work.exists():
+                (work / "release").touch()
             if process.poll() is None:
                 process.wait(timeout=5)
+
+
+@pytest.mark.parametrize("ready", [False, True])
+def test_unavailable_spare_still_prepares_an_ordinary_workspace(
+    tmp_path, monkeypatch, ready
+):
+    owner = tmp_path / "owner"
+    warm = owner / ".cheese/native-warm"
+    warm.mkdir(parents=True)
+    (warm / "state.json").write_text("{}")
+    if ready:
+        (warm / "ready").touch()
+    (warm.parent / "warm-native-runner.py").write_text(
+        "def _native_alive(state):\n    return False\n"
+        "def stage(*args, **kwargs):\n    raise SystemExit(99)\n"
+    )
+    binary = owner / ".cheese/claude/versions" / device_launch.CLAUDE_PINNED_VERSION
+    binary.parent.mkdir(parents=True)
+    binary.write_text("#!/bin/sh\necho '2.1.261 (fixture)'\n")
+    binary.chmod(0o700)
+    work = tmp_path / "work"
+    monkeypatch.setattr(
+        device_launch,
+        "CHEESE_WORKSPACE_BRINGUP",
+        'touch "$CHEESE_WORK/ordinary-workspace"\nreturn 42\n',
+    )
+    script = tmp_path / "launch.sh"
+    script.write_text(device_launch.build_launch_script())
+    result = subprocess.run(
+        ["sh", str(script)],
+        env={
+            "PATH": os.environ["PATH"],
+            "HOME": str(owner),
+            "CHEESE_HOME": str(tmp_path / "home"),
+            "CHEESE_WORK": str(work),
+            "CHEESE_PROJECT": str(uuid.uuid4()),
+            "CHEESE_TOPIC": str(uuid.uuid4()),
+        },
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 42, result.stderr
+    assert (work / "ordinary-workspace").exists()
+    assert not (warm / "binding.json").exists()
 
 
 def test_native_claim_replaces_all_provider_proxy_variants(tmp_path, monkeypatch):

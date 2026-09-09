@@ -1014,12 +1014,28 @@ if [ -f "$REAL_HOME/.cheese/native-warm/binding.json" ]; then
   python3 "$REAL_HOME/.cheese/warm-native-runner.py" recover-room \\
     "$REAL_HOME/.cheese/native-warm"
 fi
-if [ -f "$REAL_HOME/.cheese/native-warm/state.json" ] \\
-  && python3 "$REAL_HOME/.cheese/warm-native-runner.py" available \\
-    "$REAL_HOME/.cheese/native-warm"; then
-  python3 "$REAL_HOME/.cheese/warm-native-runner.py" stage-environment \\
-    "$REAL_HOME/.cheese/native-warm" "$CH" "$CW"
-  WARM_ROOT="$REAL_HOME/.cheese/native-warm"
+# Reuse one interpreter for the check and staging, including on existing spares.
+if [ -f "$REAL_HOME/.cheese/native-warm/state.json" ]; then
+  WARM_ROOT="$(python3 - "$REAL_HOME/.cheese/native-warm" "$CH" "$CW" \\
+    <<'CHEESE_WARM_STAGE'
+import json, os, runpy, sys
+from pathlib import Path
+directory = Path(sys.argv[1])
+runner = runpy.run_path(str(directory.parent / "warm-native-runner.py"))
+state = json.loads((directory / "state.json").read_text())
+if (directory / "ready").exists() and runner["_native_alive"](state):
+    runner["stage"](
+        directory,
+        project_id=os.environ["CHEESE_PROJECT"],
+        topic_id=os.environ["CHEESE_TOPIC"],
+        home=Path(sys.argv[2]),
+        work=Path(sys.argv[3]),
+        rendezvous=Path(os.environ["CHEESE_RV_SOCK"]),
+        token_file=Path(os.environ["CHEESE_RV_TOKEN_FILE"]),
+    )
+    print(directory)
+CHEESE_WARM_STAGE
+)"
 fi
 export HOME="$CH" CHEESE_WORK="$CW"
 mkdir -p "$HOME" "$CHEESE_WORK"
