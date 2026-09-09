@@ -167,16 +167,24 @@ async def fetch(
 
     won = await climb()
     if won is None:
-        # Say which rungs were tried and how each one refused. "Could not read
-        # this page" with no trail is the answer that makes a fetch service
-        # impossible to improve.
+        # No rung cleared the bar, but "not much prose" and "nothing" are
+        # different answers. A short page that is genuinely short — a Q&A with
+        # few replies, a minimal example page — is readable; a challenge
+        # interstitial is not. Take the fullest thing any rung came back with
+        # and, if it is above the floor, answer from it.
         best = max(attempts, key=lambda a: a.substantive, default=None)
-        return FetchOutcome(
-            url=url,
-            ok=False,
-            text=(best.text[:MAX_RAW_CHARS] if best and best.text else ""),
-            attempts=attempts,
-        )
+        if best is not None and best.substantive >= layers.MIN_USABLE:
+            won = best
+        else:
+            # Say which rungs were tried and how each one refused. "Could not
+            # read this page" with no trail is the answer that makes a fetch
+            # service impossible to improve.
+            return FetchOutcome(
+                url=url,
+                ok=False,
+                text=(best.text[:MAX_RAW_CHARS] if best and best.text else ""),
+                attempts=attempts,
+            )
 
     if prompt and distill:
         base_url, token, model = distill
