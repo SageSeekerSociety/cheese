@@ -1,0 +1,12 @@
+{
+  "name": "cheese-docs-site",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vitepress dev .",
+    "build": "vitepress build . && python3 ../scripts/emit_llms.py .vitepress/dist"
+  },
+  "devDependencies": {
+    "vitepress": "^1.6.4"
+  }
+}

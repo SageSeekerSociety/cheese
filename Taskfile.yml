@@ -16,6 +16,9 @@ includes:
   e2e:
     taskfile: ./e2e/Taskfile.yml
     dir: ./e2e
+  docs:
+    taskfile: ./docs/manual/Taskfile.yml
+    dir: ./docs/manual
 
 tasks:
   default:
