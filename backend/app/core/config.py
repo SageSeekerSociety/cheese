@@ -103,6 +103,8 @@ class Settings(BaseSettings):
     # GLM: base_url=https://open.bigmodel.cn/api/anthropic, token=ZHIPU_API_KEY.
     # Swapping to LiteLLM / Anthropic later is just env, no code change.
     agent_model: str = "glm-5.2"
+    # Experimental central sessions bind each topic to a remote executor.
+    agent_execution_targets: dict[str, dict] = {}
     anthropic_base_url: str | None = None
     anthropic_auth_token: str | None = None
     # Model aliases the CLI may resolve internally; map them to the provider.

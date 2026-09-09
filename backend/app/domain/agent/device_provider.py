@@ -742,7 +742,12 @@ class DeviceChannel(Channel):
         (``confirm_alive``); an explicitly dead one is closed and reopened under a
         fresh sid the connector must Spawn, rather than reasserted into a corpse."""
         existing = self._existing_screen(device_id, topic_id)
-        if existing is not None and (env or {}).get("CHEESE_ENVIRONMENT"):
+        execution_target = settings.agent_execution_targets.get(str(topic_id))
+        if (
+            existing is not None
+            and (env or {}).get("CHEESE_ENVIRONMENT")
+            and not execution_target
+        ):
             status = environment_before
             if status is None:
                 status = await environment_status(
@@ -751,6 +756,8 @@ class DeviceChannel(Channel):
             if status["state"] == "preparing":
                 return existing
         configuration = (env or {}).get("CHEESE_AGENT_CONFIG", "")
+        if execution_target:
+            configuration += json.dumps(execution_target, sort_keys=True)
         if (
             existing is not None
             and configuration
@@ -908,6 +915,8 @@ class DeviceChannel(Channel):
         # the preview rides the path the connector proved, so a deployment that
         # can host a device can host a preview with nothing further to set.
         model_env["CHEESE_PREVIEW_URL"] = _preview_ws_url(api_base)
+        if execution_target:
+            model_env["CHEESE_AGENT_CONFIG"] = configuration
         command, screen_env = build_screen_launch(
             hook_url=f"{api_base}/sandbox/hooks/{topic_id}",
             hook_token=token,
@@ -938,6 +947,7 @@ class DeviceChannel(Channel):
             git_branch=ws.branch_for_tree(ws.tree_for_place(topic_id)),
             system_prompt=launch.system_prompt,
             ca_pem=ca_pem,
+            execution_target=execution_target,
         )
         if existing is None:
             command = await self._ship_launcher(device_id, topic_id, command)
@@ -1018,10 +1028,13 @@ class DeviceChannel(Channel):
         can host whatever it is handed, and this one cannot."""
         assert isinstance(precheck, tuple)  # from our precheck
         device_id, agent_user_id, agent_handle = precheck
+        prepares_environment = bool((env or {}).get("CHEESE_ENVIRONMENT")) and not (
+            settings.agent_execution_targets.get(str(topic_id))
+        )
         try:
             before = (
                 await environment_status(self._hub, device_id, project_id, topic_id)
-                if (env or {}).get("CHEESE_ENVIRONMENT")
+                if prepares_environment
                 else {}
             )
             prior_screen = self._existing_screen(device_id, topic_id)
@@ -1037,7 +1050,7 @@ class DeviceChannel(Channel):
                 environment_before=before,
             )
             self._subscription_devices[topic_id] = device_id
-            if (env or {}).get("CHEESE_ENVIRONMENT"):
+            if prepares_environment:
                 # A process started before this feature keeps its environment
                 # until its next restart; it has no preparation receipt yet.
                 # Reasserting a live screen does not rerun its environment. A new

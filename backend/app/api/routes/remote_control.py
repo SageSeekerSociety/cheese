@@ -1,5 +1,6 @@
 """Native RC worker transport and Cheese's authenticated controller API."""
 
+import asyncio
 import json
 import time
 import uuid
@@ -12,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
 from app.api.response import ok
+from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -20,6 +22,10 @@ from app.core.errors import (
     ValidationError,
 )
 from app.core.sandbox_auth import scoped_token_claims
+from app.domain.agent.harness.claude_code.remote_execution.client import (
+    REMOTE_CONTROLS,
+    RemoteClient,
+)
 from app.domain.agent.remote_control import CONTROLS, store
 from app.domain.topic.services import TopicService
 
@@ -237,9 +243,16 @@ async def control_state(
 ) -> dict:
     await controller(topic_id, db, resolver)
     session = await store().current(str(topic_id))
-    return ok(
+    result = (
         await store().snapshot(session) if session else {"connected": False, "id": None}
     )
+    target = settings.agent_execution_targets.get(str(topic_id))
+    if session and target:
+        tasks = await asyncio.to_thread(
+            RemoteClient(target).control, {"subtype": "background_tasks"}
+        )
+        result["tasks"].update({task["task_id"]: task for task in tasks["tasks"]})
+    return ok(result)
 
 
 class ControlIn(BaseModel):
@@ -266,18 +279,24 @@ async def control(
     wait: float = Query(default=15, ge=0, le=30),
 ) -> dict:
     actor = await controller(topic_id, db, resolver)
-    await selected_session(topic_id, data.session_id)
+    session = await selected_session(topic_id, data.session_id)
     if data.request.get("subtype") not in CONTROLS:
         raise ValidationError("Unsupported RC control; see the session's controls list")
-    command = await store().enqueue(
-        data.session_id,
-        {
-            "type": "control_request",
-            "request_id": data.request_id,
-            "request": data.request,
-        },
-        actor.handle,
-    )
+    payload = {
+        "type": "control_request",
+        "request_id": data.request_id,
+        "request": data.request,
+    }
+    target = settings.agent_execution_targets.get(str(topic_id))
+    remote_control = data.request.get("subtype") in REMOTE_CONTROLS
+    if data.request.get("subtype") == "stop_task":
+        remote_control = str(data.request.get("task_id", "")).startswith("remote-")
+    if target and remote_control:
+        command = await store().execute_remote(session, payload, actor.handle, target)
+    else:
+        if target and data.request.get("subtype") == "interrupt":
+            await asyncio.to_thread(RemoteClient(target).control, data.request)
+        command = await store().enqueue(data.session_id, payload, actor.handle)
     result = await store().result(data.session_id, data.request_id, wait)
     command = await store().command(data.session_id, data.request_id) or command
     return ok(

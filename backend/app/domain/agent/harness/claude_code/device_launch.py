@@ -28,6 +28,9 @@ from app.domain.agent import environment_runner, machine_tunnel, preview_tunnel
 from app.domain.agent.harness.claude_code import event_drain, startup_cache
 from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD
 from app.domain.agent.harness.claude_code.hooks_substrate import CHEESE_HOOK_SCRIPT
+from app.domain.agent.harness.claude_code.remote_execution import (
+    client as execution_client,
+)
 from app.domain.agent.harness.claude_code.session_launch import hooks_settings
 from app.domain.agent.skills import native_skill_files
 
@@ -920,6 +923,7 @@ def build_launch_script(
     system_prompt: str = "",
     ca_pem: str = "",
     remote_control: bool = False,
+    remote_execution: bool = False,
 ) -> str:
     """The ``bash -lc`` body run as the screen's program. It reads a few env vars the
     screen is created with: ``CHEESE_HOME`` (isolated config/home dir),
@@ -987,6 +991,27 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
         if remote_control
         else CLAUDE_BASE_ARGS
     )
+    execution_setup = ""
+    pinned_version = (
+        execution_client.PINNED_VERSION if remote_execution else CLAUDE_PINNED_VERSION
+    )
+    minimum_version = pinned_version if remote_execution else CLAUDE_MIN_VERSION
+    if remote_execution:
+        source_dir = Path(execution_client.__file__).parent
+        execution_setup = 'mkdir -p "$HOME/.claude/remote-execution"\n'
+        for name in ("client.py", "proxy.js"):
+            execution_setup += (
+                f'cat > "$HOME/.claude/remote-execution/{name}" '
+                "<<'CHEESE_EXECUTION_SOURCE'\n"
+                + (source_dir / name).read_text()
+                + "\nCHEESE_EXECUTION_SOURCE\n"
+            )
+        execution_setup += """printf '%s' "$CHEESE_EXECUTION_TARGET" \\
+  > "$HOME/.claude/remote-target.json"
+EXECUTOR_CLIENT="$HOME/.claude/remote-execution/client.py"
+EXECUTOR_TARGET="$HOME/.claude/remote-target.json"
+CLAUDE="python3 \\"$EXECUTOR_CLIENT\\" bootstrap \\"$EXECUTOR_TARGET\\" $CLAUDE"
+"""
     # The settings.json / cheese-hook heredocs are quoted ('JSON'/'SH') so the shell
     # never expands them. ~/.claude.json is written by the shell (see below) so a
     # machine without node can still launch.
@@ -1214,7 +1239,7 @@ fi
 # has a claude. Non-fatal: the chain below still runs, and the floor check
 # still refuses a build that is too old. A screen created without CHEESE_API
 # skips this and behaves as before.
-_pin="$REAL_HOME/.cheese/claude/versions/{CLAUDE_PINNED_VERSION}"
+_pin="$REAL_HOME/.cheese/claude/versions/{pinned_version}"
 if [ ! -x "$_pin" ] && [ -n "${{CHEESE_API:-}}" ]; then
   case "$(uname -m)" in
     x86_64|amd64) _carch=x64 ;;
@@ -1233,12 +1258,12 @@ if [ ! -x "$_pin" ] && [ -n "${{CHEESE_API:-}}" ]; then
     fi
     mkdir -p "$(dirname "$_pin")"
     if curl -fsSL --retry 3 --retry-delay 2 -m 300 \\
-        "${{CHEESE_API%/}}/connector/claude/{CLAUDE_PINNED_VERSION}/$_cplat/claude" \\
+        "${{CHEESE_API%/}}/connector/claude/{pinned_version}/$_cplat/claude" \\
         -o "$_pin.new" && [ -s "$_pin.new" ]; then
       chmod +x "$_pin.new" && mv "$_pin.new" "$_pin"
     else
       rm -f "$_pin.new"
-      echo "cheese-launch: could not fetch claude {CLAUDE_PINNED_VERSION} for \\
+      echo "cheese-launch: could not fetch claude {pinned_version} for \\
 $_cplat from the platform; trying what the machine has" >&2
     fi
   fi
@@ -1254,10 +1279,10 @@ if [ -z "$CLAUDE_BIN" ]; then
   exit 1
 fi
 CLAUDE_V="$("$CLAUDE_BIN" --version 2>/dev/null | head -n 1 | awk '{{print $1}}')"
-if [ -z "$CLAUDE_V" ] || [ "$(printf '%s\\n%s\\n' "{CLAUDE_MIN_VERSION}" "$CLAUDE_V" \\
-    | sort -V | head -n 1)" != "{CLAUDE_MIN_VERSION}" ]; then
+if [ -z "$CLAUDE_V" ] || [ "$(printf '%s\\n%s\\n' "{minimum_version}" "$CLAUDE_V" \\
+    | sort -V | head -n 1)" != "{minimum_version}" ]; then
   echo "cheese-launch: claude ${{CLAUDE_V:-unknown}} at $CLAUDE_BIN is older than \\
-{CLAUDE_MIN_VERSION}, and the platform's pinned build is not at $_pin; prompt \\
+{minimum_version}, and the platform's pinned build is not at $_pin; prompt \\
 delivery needs the rendezvous socket of a newer claude." >&2
   exit 1
 fi
@@ -1330,6 +1355,7 @@ if [ -n "${{CHEESE_ENVIRONMENT:-}}" ]; then
   ENVIRONMENT_CMD="python3 \\"$HOME/.claude/cheese-environment.py\\" "
 fi
 [ -s "$CHEESE_SP" ] && CLAUDE="$CLAUDE --append-system-prompt-file \\"$CHEESE_SP\\""
+{execution_setup}
 if command -v tmux >/dev/null 2>&1; then
   # WHICH tmux server hosts the inner session decides who is able to wipe it.
   # The machine's DEFAULT server belongs to the person whose machine this is:
@@ -1604,6 +1630,7 @@ def build_screen_launch(
     git_branch: str | None = None,
     system_prompt: str = "",
     ca_pem: str = "",
+    execution_target: dict | None = None,
 ) -> tuple[list[str], dict[str, str]]:
     """Assemble ``(command, env)`` for ``DeviceHub.open_screen``.
 
@@ -1614,10 +1641,11 @@ def build_screen_launch(
     bundled ``cheese`` CLI (accept cards / docs / decisions / memory) uses
     its ``CHEESE_*`` env — the same actions the in-container agent has locally."""
     script = build_launch_script(
-        sync_on_stop=bool(git_remote),
+        sync_on_stop=bool(git_remote) and execution_target is None,
         system_prompt=system_prompt,
         ca_pem=ca_pem,
         remote_control=(extra_env or {}).get("CHEESE_REMOTE_CONTROL") == "1",
+        remote_execution=execution_target is not None,
     )
     command = ["bash", "-lc", script]
     env: dict[str, str] = {
@@ -1681,6 +1709,16 @@ def build_screen_launch(
         env["GIT_COMMITTER_EMAIL"] = "cheese@zhishi.local"
     if extra_env:
         env.update(extra_env)
+    if execution_target is not None:
+        env["CHEESE_EXECUTION_TARGET"] = json.dumps(execution_target)
+        # The assigned executor already owns the checkout and its environment.
+        for name in (
+            "CHEESE_GIT_REMOTE",
+            "CHEESE_GIT_BRANCH",
+            "CHEESE_BRANCH_URL",
+            "CHEESE_ENVIRONMENT",
+        ):
+            env.pop(name, None)
     return command, env
 
 

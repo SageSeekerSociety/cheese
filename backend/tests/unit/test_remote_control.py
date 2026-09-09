@@ -1,8 +1,13 @@
 """RC transport behavior against Redis, including process-independent recovery."""
 
 import asyncio
+import json
+import shutil
+import subprocess
+import sys
 import time
 import uuid
+from pathlib import Path
 
 import pytest
 from redis.asyncio import Redis
@@ -13,6 +18,76 @@ from app.core.config import settings
 from app.core.errors import AuthenticationRequiredError, ConflictError, ForbiddenError
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.remote_control import RemoteControl, key
+
+
+@pytest.fixture
+def executor(tmp_path):
+    workspace = tmp_path / "remote"
+    workspace.mkdir()
+    (workspace / "sample.txt").write_text("REMOTE_CONTENT")
+    runtime = (
+        Path(__file__).parents[2]
+        / "app/domain/agent/harness/claude_code/remote_execution/runtime.py"
+    )
+    target = {
+        "command": [sys.executable, str(runtime)],
+        "state": str(tmp_path / "state"),
+    }
+    subprocess.run(
+        [*target["command"], "start", "--state", target["state"]],
+        input=json.dumps(
+            {"workspace": str(workspace), "claude": shutil.which("claude")}
+        ),
+        text=True,
+        check=True,
+        capture_output=True,
+        timeout=15,
+    )
+    try:
+        yield target, workspace
+    finally:
+        subprocess.run(
+            [*target["command"], "stop", "--state", target["state"]],
+            check=True,
+            capture_output=True,
+            timeout=15,
+        )
+
+
+async def test_remote_file_control_is_journalled_without_central_execution(
+    rc, executor
+):
+    service, create = rc
+    session = await create()
+    target, workspace = executor
+    payload = {
+        "type": "control_request",
+        "request_id": "remote-preview",
+        "request": {"subtype": "read_file", "path": "sample.txt"},
+    }
+    await service.execute_remote(session, payload, "alice", target)
+    result = await service.result(session["id"], "remote-preview")
+    assert result["response"]["contents"] == "REMOTE_CONTENT"
+    assert await service.redis.xlen(key(session["id"], "in")) == 0
+    (workspace / "sample.txt").write_text("CHANGED_AFTER_RESPONSE")
+    await RemoteControl(service.redis).execute_remote(session, payload, "alice", target)
+    assert await service.result(session["id"], "remote-preview") == result
+
+
+async def test_remote_file_control_records_unavailable_executor_error(rc, executor):
+    service, create = rc
+    session = await create()
+    target, _ = executor
+    target = target | {"state": target["state"] + "-unavailable"}
+    payload = {
+        "type": "control_request",
+        "request_id": "remote-error",
+        "request": {"subtype": "read_file", "path": "sample.txt"},
+    }
+    await service.execute_remote(session, payload, "alice", target)
+    result = await service.result(session["id"], "remote-error")
+    assert result["subtype"] == "error"
+    assert await service.redis.xlen(key(session["id"], "in")) == 0
 
 
 @pytest.fixture
