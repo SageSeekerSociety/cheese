@@ -81,15 +81,26 @@ order: 1            # 组内排第几
 
 写成 `/concepts#task` 这种**不带 `/docs` 前缀**的形式。VitePress 自己会补上前缀（`base: '/docs/'`），源码里再写一遍会变成 `/docs/docs/…`，它的死链检查会当场拦下。给模型的那份 `.md` 里，这些链接会被改写成完整地址，因为它是被单独抓走的、身边没有前缀可依。
 
-## 发布到 okcheese.com/docs（还没做）
+## 图片
 
-前端就是 Vite 打出来的静态文件塞进 nginx，所以文档只要落进 `dist/docs/` 就能用。要动的是三处：
+图片文件放 `docs/manual/public/images/`，正文里按 `/images/xxx.png` 引用（不带 `/docs` 前缀，和站内链接同一个规则——VitePress 自己补 `base`）。守卫会检查这个文件真的存在：路径写错了页面照常构建、照常发布，只是那张图不显示，又是一个「坏掉的样子和没坏一模一样」。
 
-1. 构建时把 `docs/manual/.vitepress/dist` 放进 `frontend/public/docs/`——`public/` 是 Vite 原样搬运的目录，不用改 Dockerfile。
-2. `frontend/nginx.conf` 的 `try_files` 加一段 `$uri.html`。VitePress 开了 `cleanUrls`，`/docs/quickstart` 对应的文件是 `quickstart.html`；不补这一段，请求会掉进 SPA 的兜底 `index.html`，读者看到的是应用而不是文档。
-3. 同一个文件里给 `.md` 声明 `text/markdown`。nginx 默认不认这个后缀，会当二进制让浏览器下载；而且 Claude Code 的抓取有一条"content-type 是 text/markdown 就直接读原文"的快路，类型写对才吃得到。
+**alt 文字要能独立说明这张图在讲什么**，这一条比在别处更要紧：芝士读的是这一页的 `.md`，而一张图对它来说**只有 alt 那句话**——它看不到图。所以 `![截图]` 等于什么都没说；写 `![打开项目后的第一屏是看板，不是聊天]`。
 
-**别忘了第 1 步会静默失败**：镜像照样构建成功，只是 `/docs` 变成 404。`frontend/scripts/check-static-assets.sh` 是现成的地方，加一条"`docs/index.html` 必须存在"，就能把它变成一次响亮的失败。
+顺带一提，`.md` 里的图片地址会被自动改写成完整网址，和站内链接一样，因为那份是被单独抓走的。
+
+## 它是怎么发到 okcheese.com/docs 的
+
+站是活的。这一节记的是它怎么接起来的——动到下面任何一处之前先读：
+
+1. **VitePress 直接写进 `frontend/public/docs/`**（见 `.vitepress/config.mts` 的 `outDir`）。`public/` 是 Vite 原样搬进 `dist/` 的目录，所以说明书跟着前端镜像走，不用改 Dockerfile，也不用第二个服务。
+2. **`frontend/nginx.conf` 里 `/docs/` 的 `try_files` 带 `$uri.html`。** VitePress 开了 `cleanUrls`，`/docs/quickstart` 对应的文件是 `quickstart.html`；少了这一段，请求会掉进 SPA 的兜底 `index.html`——读者按着我们自己发出去的链接点进来，看到的是应用而不是那一页，而且不会有任何报错。
+3. **同一个文件里 `.md` 声明成 `text/markdown`。** nginx 自带的 mime.types 没有这个后缀，不声明就是二进制、浏览器直接下载。（注意：Claude Code 那条「content-type 是 text/markdown 就跳过二级模型直读」的快路还要求域名在它内置的白名单里，我们不在，所以这里改对不省那次模型调用——值得做的是前两个理由。）
+4. **CI 在 docker build 之前构建说明书**（`.github/workflows/build.yml` 的 build-frontend）。构建上下文是 `frontend/`，文档源码不在里面，所以这一步只能在外面做。它需要 `actions/setup-node` 才有能用的 corepack，而 `package.json` 里那行 `packageManager` 是用来钉住 pnpm 大版本的——锁文件是 pnpm 9 写的，不钉会拉到最新的 11。
+
+**第 1 步会静默失败**：忘了构建，镜像照样成功，只是 `/docs` 变 404。所以 `frontend/scripts/check-static-assets.sh` 里有一条硬断言要求 `docs/index.html` 和 `docs/llms.txt` 存在——缺说明书就让镜像构建失败。
+
+另外 `docs/**` 已经排除出 PWA 的预缓存和导航兜底（`frontend/vite.config.ts`），eslint 也忽略 `public/docs/**`：前者会让每次安装多下一整本手册、并在离线时把文档地址显示成应用，后者会让 lint 报出几百条别人框架的错。
 
 ## 页面
 
