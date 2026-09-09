@@ -39,6 +39,7 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
+import uuid
 
 API = os.environ.get("CHEESE_API", "http://host.docker.internal:8099").rstrip("/")
 PROJECT = os.environ.get("CHEESE_PROJECT", "")
@@ -332,6 +333,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = p.add_subparsers(dest="cmd", required=True)
 
+    pchat = sub.add_parser(
+        "chat",
+        help="主动向当前聊天发送消息",
+        description="用 send 发布用户可见消息。普通输出和最终答复只留在执行现场。",
+    )
+    chatsub = pchat.add_subparsers(dest="chatcmd", required=True)
+    psend = chatsub.add_parser("send", help="发布消息；普通输出不会自动进入聊天")
+    psend.add_argument("content", nargs="?", help="要发送的消息")
+    psend.add_argument("--file", help="从 UTF-8 文件读取；- 表示标准输入")
+    psend.add_argument("--reply-to", help="回复当前聊天中的消息 ID")
+    psend.add_argument("--request-id", type=uuid.UUID, help="重试时沿用同一个请求 ID")
+
     pd = sub.add_parser(
         "doc",
         help="实况文档",
@@ -387,6 +400,11 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ps.add_argument("title", help="这条活的标题,≤12 字最好")
+    ps.add_argument("--reported-by", default=None, help="实际报告问题的用户 handle")
+    ps.add_argument(
+        "--contributor", action="append", default=[],
+        help="实际共同改代码的用户 handle，可重复指定",
+    )
     ps.add_argument(
         "--paths",
         nargs="+",
@@ -395,6 +413,15 @@ def build_parser() -> argparse.ArgumentParser:
             "这条活要碰哪些路径(结尾带 / 表示目录)。一批活共用同一棵树,"
             "两条活整块覆盖同一个文件时后写的会**无声**盖掉先写的;声明了才拦得住。"
             "中途还能用 `cheese claim` 追加"
+        ),
+    )
+    ps.add_argument(
+        "--reviewer",
+        default=None,
+        help=(
+            "这条活将来由谁验收(`cheese members` 查准确 handle)。"
+            "不写就用项目设置里的默认验收人;两个都没有就先空着,递卡时再点名。"
+            "递卡沿用这里定下的人,除非你递卡时显式指定别人"
         ),
     )
     ps.add_argument(
@@ -445,6 +472,11 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     pct.add_argument("task_id", help="这条活的 id")
+    pct.add_argument("--reported-by", default=None, help="实际报告问题的用户 handle")
+    pct.add_argument(
+        "--contributor", action="append", default=None,
+        help="实际共同改代码的用户 handle，可重复指定",
+    )
     pct.add_argument(
         "--conclusion", default="", help="覆盖分身交回的那句话(默认保留它的)"
     )
@@ -706,11 +738,26 @@ def build_parser() -> argparse.ArgumentParser:
             "写、代码又进了这一批,就照实再报一次,它确实写了两批。\n"
             "\n"
             "声明只在递卡这一刻收,递出去就补不上了(卡上没有改声明的入口,同一棵树上\n"
-            "也递不出第二张卡)。忘了带只能请验收人作废这张卡、你再重递一次。"
+            "也递不出第二张卡)。忘了带就等这张卡进终态再带 --task 重递 —— **被驳回**\n"
+            "和**被作废**都算(两条都得人来点),而驳回本来就是可以重递的。\n"
+            "\n"
+            "**--subject / --body 不一样:递出去还能改**,用 `cheese describe`。评审说\n"
+            "「这句话不对」的时候改卡,平台会把 PR 正文一起改掉;只在 GitHub 上改 PR\n"
+            "正文没用——合进 main 的是卡上这一份。署名之所以不能改,是因为它是对\n"
+            "**事实**的断言(谁写的代码);描述是对改动的**说明**,改它正是评审要的。"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    pa.add_argument("reviewer", help="验收人的 handle(用 `cheese members` 查准确值)")
+    pa.add_argument(
+        "reviewer",
+        nargs="?",
+        default=None,
+        help=(
+            "验收人的 handle(用 `cheese members` 查准确值)。"
+            "不写就用项目设置里的默认验收人;两个都没有会当场打回。"
+            "要写 reason 就必须先写 reviewer(两个都是位置参数)"
+        ),
+    )
     pa.add_argument("reason", nargs="?", default="", help="为什么找这个人验收")
     pa.add_argument(
         "--subject",
@@ -732,6 +779,55 @@ def build_parser() -> argparse.ArgumentParser:
             "改动要走下一批的活都别填(平台分辨不了,只能你说)。"
             "不填就一行不写:错的署名比没有署名更糟"
         ),
+    )
+
+    pdesc = sub.add_parser(
+        "describe",
+        help="改这张待处理验收卡的提交标题/正文(PR 正文一起改)",
+        description=(
+            "更正你递出去那张卡的 --subject / --body。评审说「这句话不对」时用它。\n"
+            "\n"
+            "改的是**卡**,不是 GitHub 上那份 PR 正文——卡才是两者共同的源头:\n"
+            "PR 正文是它渲染出来的,采纳时压进 main 的那个提交也是它写的。只在\n"
+            "GitHub 上改 PR 正文,合进去的仍然是递卡那一刻的快照,于是 main 的历史\n"
+            "里留下一句评审早就指出不对的话(#735 就是这么发生的)。改卡,平台顺手\n"
+            "把 PR 正文也改掉,两边不可能各说各话。\n"
+            "\n"
+            "只在卡还没被采纳时能改。采纳之后 main 上那个提交已经存在了,改卡没有\n"
+            "意义——那种情况在房间里记一条更正。\n"
+            "\n"
+            "**--task 的署名改不了,也不给改**:署名是对事实的断言(哪个分身写的),\n"
+            "事后能改就等于能往别人头上安署名;描述是对改动的说明,改它正是评审要的。\n"
+            "\n"
+            "谁在什么时候把它从什么改成了什么,会记在房间里。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    pdesc.add_argument(
+        "--subject", default=None, help="新的提交标题(Conventional Commits,当场校验)"
+    )
+    pdesc.add_argument(
+        "--body",
+        default=None,
+        help="新的提交正文(写为什么)。传空串就是把正文清空;不传就是不动它",
+    )
+
+    sub.add_parser(
+        "ready",
+        help="把这批活的 draft PR 翻成 ready(只翻这一件事)",
+        description=(
+            "说一句「这份东西可以看了」。\n"
+            "\n"
+            "有东西就有 PR:这批活第一次提交之后,平台就给它开了一个 draft PR\n"
+            "(draft 是 GitHub 里「进行中」的意思)。这条命令把它翻成 ready。\n"
+            "\n"
+            "它**只**做这一件事:不合并、不改署名、不动 PR 别的任何字段,也不递卡。\n"
+            "要把活交给某个人验收,那是 `cheese accept-request`——它自己也会顺手把\n"
+            "draft 翻掉,所以递卡之前不用先跑这条。\n"
+            "\n"
+            "本来就不是 draft 的 PR,跑它不算错,会直说「本来就不是 draft」。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
     pt = sub.add_parser(
@@ -765,9 +861,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser(
         "members",
-        help="列出项目成员(名字+handle+角色)",
+        help="列出当前话题成员(名字+handle+角色)",
         description=(
-            "列出项目成员。点名前先跑一次核对写法——名字和成员表不一致时,"
+            "列出当前话题可点名的成员。点名前先跑一次核对写法——名字和成员表不一致时,"
             "平台会在现场标红「没能通知到」,而且那条提醒真的没送出去。"
         ),
     )
@@ -814,10 +910,9 @@ def build_parser() -> argparse.ArgumentParser:
             "     静默跳到下一个,你以为起好了,报上来的那个却没人应答)\n"
             "  3. 把那个端口报给这条命令\n"
             "\n"
-            "页面经后端反代挂在 $CHEESE_APP_BASE 这个子路径下。会发根绝对资源 URL\n"
-            "的 dev server(vite 的 /@vite/client)要按这个 base 起,否则用户那边\n"
-            "只有一个白框:\n"
-            "  vite --base=$CHEESE_APP_BASE --strictPort --port <端口>\n"
+            "每个话题使用独立的预览地址，应用可直接从根路径运行，\n"
+            "无需为了预览修改资源路径。例如:\n"
+            "  vite --strictPort --port <端口>\n"
             "\n"
             "平台会当场从自己这边敲一次那个端口;敲不通就直接拒绝,不会给用户留一个\n"
             "白框。这台机器不是平台的,预览走的是这台机器主动拨出去的一条隧道——所以\n"
@@ -876,7 +971,30 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     a = build_parser().parse_args()
 
-    if a.cmd == "doc" and a.doccmd == "set":
+    if a.cmd == "chat" and a.chatcmd == "send":
+        topic = _need("CHEESE_TOPIC", TOPIC)
+        if (a.content is None) == (a.file is None):
+            raise SystemExit("请提供消息正文或 --file，二选一。")
+        if a.file == "-":
+            content = sys.stdin.read()
+        elif a.file:
+            with open(a.file, encoding="utf-8") as source:
+                content = source.read()
+        else:
+            content = a.content
+        if not content.strip():
+            raise SystemExit("消息不能为空。")
+        request_id = str(a.request_id or uuid.uuid4())
+        print(
+            f"[cheese] request_id={request_id}；重试请带 --request-id {request_id}",
+            file=sys.stderr,
+        )
+        body = {"content": content, "request_id": request_id}
+        if a.reply_to:
+            body["reply_to"] = a.reply_to
+        result = _call("POST", f"/topics/{topic}/messages", body)
+        print(json.dumps(result["data"], ensure_ascii=False))
+    elif a.cmd == "doc" and a.doccmd == "set":
         topic = _need("CHEESE_TOPIC", TOPIC)
         with open(a.file, encoding="utf-8") as f:
             content = f.read()
@@ -908,15 +1026,29 @@ def main() -> None:
     elif a.cmd == "split":
         topic = _need("CHEESE_TOPIC", TOPIC)
         body = {"title": a.title, "created_by": AUTHOR}
+        if a.reported_by:
+            body["reporter_handle"] = a.reported_by
+        if a.contributor:
+            body["contributor_handles"] = a.contributor
         if a.brief:
             body["brief"] = a.brief
         if a.paths:
             body["paths"] = a.paths
+        # 不写 --reviewer = 用项目默认验收人。同 accept-request：别塞空串，
+        # 「没说」和「说了空的」在后端是两件事。
+        if a.reviewer:
+            body["reviewer_handle"] = a.reviewer
         r = _call("POST", f"/topics/{topic}/split", body)["data"]
+        who = r.get("reviewer_handle")
         print(
             f"已开一条活：{r['title']}（id={r['id']}）。**它还没人做**，接下来两步：\n"
             f"  1. 用你的 Agent 工具起一个分身，把 --brief 的原文放进 prompt\n"
-            f"  2. cheese bind {r['id']} <分身的 agent_id>"
+            f"  2. cheese bind {r['id']} <分身的 agent_id>\n"
+            + (
+                f"验收人：{who}（递卡时不指定就用它）"
+                if who
+                else "这条活还没有验收人（项目也没设默认），递卡时要点名一个。"
+            )
         )
     elif a.cmd == "bind":
         topic = _need("CHEESE_TOPIC", TOPIC)
@@ -926,10 +1058,15 @@ def main() -> None:
         print(f"「{r['title']}」现在归分身 {r['subagent_id']}，它干的事会记到这条活上。")
     elif a.cmd == "conclude-task":
         topic = _need("CHEESE_TOPIC", TOPIC)
+        body = {"conclusion": a.conclusion}
+        if a.reported_by is not None:
+            body["reporter_handle"] = a.reported_by
+        if a.contributor is not None:
+            body["contributor_handles"] = a.contributor
         r = _call(
             "POST",
             f"/topics/{topic}/tasks/{a.task_id}/conclude",
-            {"conclusion": a.conclusion},
+            body,
         )["data"]
         print(f"「{r['title']}」收了。结论：{(r.get('conclusion') or '（没有留话）')}")
     elif a.cmd == "claim":
@@ -1060,13 +1197,39 @@ def main() -> None:
         }
         _call("POST", f"/projects/{proj}/alerts", body)
         print(f"已发送通知给 {a.to or '所有人'}。")
+    elif a.cmd == "ready":
+        topic = _need("CHEESE_TOPIC", TOPIC)
+        r = _call("POST", f"/topics/{topic}/ready")["data"]
+        if r.get("ready"):
+            print(f"PR #{r['pr_number']} 已从 draft 翻成 ready：{r.get('pr_url') or ''}")
+        else:
+            print(r.get("reason") or "没有可以翻的 PR。")
+    elif a.cmd == "describe":
+        topic = _need("CHEESE_TOPIC", TOPIC)
+        if a.subject is None and a.body is None:
+            print("[cheese] describe 至少要给 --subject 或 --body", file=sys.stderr)
+            sys.exit(2)
+        body = {}
+        if a.subject is not None:
+            body["change_subject"] = a.subject
+        if a.body is not None:
+            body["change_body"] = a.body
+        r = _call("POST", f"/topics/{topic}/accept-card/describe", body)["data"]
+        print(
+            f"验收卡的描述已更正（PR 正文同步改掉了）。现在的标题："
+            f"{r.get('change_subject') or '（空）'}"
+        )
     elif a.cmd == "accept-request":
         topic = _need("CHEESE_TOPIC", TOPIC)
-        _call("POST", f"/topics/{topic}/accept-card",
-              {"reviewer_handle": a.reviewer, "routing_reason": a.reason,
-               "change_subject": a.subject, "change_body": a.body,
-               "task_ids": a.task or []})
-        print(f"已把验收卡递给 {a.reviewer}。")
+        payload = {"routing_reason": a.reason, "change_subject": a.subject,
+                   "change_body": a.body, "task_ids": a.task or []}
+        # 不写验收人 = 用项目默认验收人。**不要**在这里塞一个空串:后端把
+        # 「没说」和「说了空的」当同一件事处理会掩盖真正的空输入,而它给的
+        # 那句打回文案正是这条命令唯一能帮上忙的地方。
+        if a.reviewer:
+            payload["reviewer_handle"] = a.reviewer
+        r = _call("POST", f"/topics/{topic}/accept-card", payload)["data"]
+        print(f"已把验收卡递给 {r.get('reviewer_handle') or a.reviewer}。")
         if not a.task:
             # 别在这里说「重递一次带上 --task」：卡已经 pending，同一棵树上再递
             # 一张会被 create_card 直接拒掉，照着做必然失败。声明只在递卡这一刻
@@ -1075,8 +1238,9 @@ def main() -> None:
                 "这次没有 --task，合并后的提交里不会有 Cheese-Task 行——"
                 "以后翻 git log 的人查不到是哪个分身写的。\n"
                 "声明只在递卡这一刻收，这张卡上补不了，直接再递一张会被"
-                "「已有待处理的验收卡」拒掉。真要补：请验收人先作废这张卡"
-                "（作废是人的动作，你自己点不了），你再带 --task 重递。\n"
+                "「已有待处理的验收卡」拒掉。真要补：等这张卡进终态再带 --task 重递 —— "
+                "**被驳回**和**被作废**都算，两条都是人的动作（你自己点不了），"
+                "而驳回本来就是可以重递的。\n"
                 "下次递卡一次带上。"
             )
     elif a.cmd == "tell":
@@ -1163,11 +1327,11 @@ def main() -> None:
             )
         print("\n".join(lines), file=sys.stderr)
     elif a.cmd == "members":
-        proj = _need("CHEESE_PROJECT", PROJECT)
-        d = _call("GET", f"/projects/{proj}/members").get("data", {})
+        topic = _need("CHEESE_TOPIC", TOPIC)
+        d = _call("GET", f"/topics/{topic}/members").get("data", {})
         rows = d.get("data", d) if isinstance(d, dict) else d
         for m in rows:
-            h = m.get("user_handle")
+            h = m.get("member_handle")
             print(f"- {m.get('name')}（{m.get('role')}）→ 在消息里写 <@{h}> 点名 ta")
     elif a.cmd == "status":
         topic = _need("CHEESE_TOPIC", TOPIC)
@@ -1210,7 +1374,13 @@ def main() -> None:
         rel = os.path.relpath(os.path.abspath(a.path), root)
         if rel.startswith(".."):  # outside the worktree — let the backend validate
             rel = a.path
-        _call("POST", f"/topics/{topic}/artifact", {"path": rel, "as": a.as_})
+        try:
+            with open(a.path, encoding="utf-8") as source:
+                content = source.read()
+        except (OSError, UnicodeError) as exc:
+            print(f"[cheese] 无法读取 {a.path}: {exc}", file=sys.stderr)
+            sys.exit(1)
+        _call("POST", f"/topics/{topic}/artifact", {"path": rel, "as": a.as_, "content": content})
         print(f"已把 {rel} 设为当前预览（{a.as_}）。")
     elif a.cmd == "api":
         if not a.method:

@@ -99,12 +99,19 @@ const mergeBadge = computed(() => {
   if (!card || card.status === 'conflict') return null
   return mergeBadgeOf(card.merge_state)
 })
-const mergeReasons = computed(() => (pendingCard.value ? visibleReasons(pendingCard.value.merge_state) : []))
-// 平台 lane (#363)：没绑 GitHub 的项目，采纳纯粹是人的判断，按钮从不按状态灰。
+const mergeReasons = computed(() => {
+  const card = pendingCard.value
+  if (!card) return []
+  return card.has_external_checks && card.pr_number === null
+    ? card.merge_state.reasons
+    : visibleReasons(card.merge_state)
+})
+// Projects without external checks leave acceptance to the reviewer.
 const platformLane = computed(() => {
   const card = pendingCard.value
-  return !!card && card.merge_state.who === 'human' && card.pr_number === null
+  return !!card && !card.has_external_checks
 })
+const needsPr = computed(() => !!pendingCard.value?.has_external_checks && pendingCard.value.pr_number === null)
 // 按钮亮不亮，跟后端的采纳闸门是同一条线（domain/review/merge_state.py +
 // services.py）：`clean` 与 `unstable` 后端会合，按钮就亮；`blocked` /
 // `behind` / `dirty` / `unknown` 后端会 422 拒，按钮就灰，title 说明为什么。
@@ -115,7 +122,7 @@ const platformLane = computed(() => {
 const MERGEABLE_STATES = ['clean', 'unstable']
 const acceptBlockedTitle = computed<string | null>(() => {
   const card = pendingCard.value
-  if (!card || platformLane.value) return null
+  if (!card || platformLane.value || needsPr.value) return null
   if (MERGEABLE_STATES.includes(card.merge_state.state)) return null
   const why = mergeReasons.value.map((r) => r.detail).filter(Boolean)
   return ['现在采纳不会合并', ...why].join('：')
@@ -200,9 +207,18 @@ watch(
       void loadPrChecks()
       prPollTimer = window.setInterval(() => {
         void loadPrChecks()
-        // 交付中卡本身也在变（合并时间、note、最终 accepted），跟着一起刷新，否则
-        // 界面会停在采纳那一刻的快照上直到用户手动切话题。
-        if (deliveringCard.value) void loadAcceptCard(true)
+        // 卡本身也跟着刷——待采纳和交付中都要，而且理由是同一个：**这张卡是快照，
+        // 而它描述的东西还在变**，界面不重新读就会停在它到达的那一刻。
+        //
+        // 交付中那一支变的是合并时间、note、最终 accepted。
+        //
+        // 待采纳那一支变的是 `merge_state`，而它决定采纳按钮亮不亮：递卡的一瞬间
+        // PR 刚从草稿翻成待看，GitHub 还没算完能不能合，后端如实给 `unknown` ——
+        // 不可采纳，注释里写着「下一轮读到真值自然收敛」（domain/review/
+        // merge_state.py）。可这里原本没有下一轮，于是那颗按钮就一直灰着，验收人
+        // 只能靠刷新页面或切一次话题才点得动。实测 #888：01:23 还是 unstable，
+        // 01:24 已经 clean，后端确实在收敛，看不见的是界面。
+        void loadAcceptCard(true)
       }, 15000)
     } else if (!active && prPollTimer !== null) {
       window.clearInterval(prPollTimer)
@@ -255,7 +271,7 @@ async function onAcceptCard() {
     }
     await Promise.all([loadAcceptCard(), store.refreshTopicRow(props.topicId)])
   } catch (e) {
-    store.reportError(e, '采纳失败')
+    store.reportError(e, needsPr.value ? '创建 PR 未完成' : '采纳失败')
     // 被拒的原因可能正是「你看到的版本已过时」——那就把屏幕换成新的那一版，
     // 否则人只能对着同一张旧卡再点一次，再被拒一次。
     await loadAcceptCard(true)
@@ -595,7 +611,7 @@ defineExpose({ reload: loadAcceptCard })
               prepend-icon="mdi-check"
               @click="onAcceptCard"
             >
-              {{ pendingCard.status === 'conflict' ? '重试采纳' : '采纳' }}
+              {{ needsPr ? '创建 PR' : pendingCard.status === 'conflict' ? '重试采纳' : '采纳' }}
             </v-btn>
           </span>
           <v-btn

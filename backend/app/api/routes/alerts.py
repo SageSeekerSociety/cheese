@@ -61,7 +61,9 @@ async def create_notification(
     the dev override, or a signed-in human; never an anonymous drive-by. The
     route checks the credential itself rather than leaning on the middleware
     gate alone (see ``require_verified_caller``)."""
-    await resolver.require_verified_caller(project_id=project_id)
+    await resolver.require_verified_caller(
+        project_id=project_id, topic_id=body.topic_id
+    )
     # `alerts.topic_id` is a FK to `topics`, and a thread is not a row there —
     # so the place id every agent has (`$CHEESE_TOPIC`, a thread's id for a
     # 分身) violated the constraint and `cheese notify` 500ed for all of them.

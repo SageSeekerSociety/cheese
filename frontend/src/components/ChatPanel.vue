@@ -53,7 +53,8 @@ import type {
   WsServerFrame,
 } from '../cx_types'
 
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { useDisplay } from 'vuetify'
 import { useEventListener } from '@vueuse/core'
 
 import {
@@ -65,11 +66,14 @@ import {
   listBlocks,
   listRoomTasks,
   listTopicMembers,
+  summonAgent,
   toggleReaction as apiToggleReaction,
 } from '../api'
 import { usePendingAttachments } from '../lib/attachments'
 import { cachedWindow, setCachedWindow } from '../lib/blockCache'
 import { mergeRefreshedTail, PAGE_SIZE, prependOlder, scrollTopAfterPrepend, shouldLoadOlder } from '../lib/blockPaging'
+import { parseDiffLines } from '../lib/diff'
+import { expandMentions as expandMentionNames } from '../lib/expandMentions'
 import { collapseNotices } from '../lib/platformNotice'
 import {
   coalesceSplitFencedCodeBlocks,
@@ -82,6 +86,8 @@ import { myHandle } from '../me'
 import { avatarColor, avatarInitial } from '../utils/avatar'
 import { getAvatarUrl } from '../utils/materials'
 
+import LoadingSkeleton from './common/LoadingSkeleton.vue'
+import AgentControls from './AgentControls.vue'
 import CheeseAvatar from './CheeseAvatar.vue'
 import DispatchedMarker from './DispatchedMarker.vue'
 import TimelineMark from './TimelineMark.vue'
@@ -89,12 +95,17 @@ import TimelineMark from './TimelineMark.vue'
 // Message rendering (markdown / plain / reference chips) lives in
 // ../lib/renderMessage so it's unit-testable; here we just bind the
 // handle→name and id→title maps filled from the roster / topics props.
-const mentionNames: Record<string, string> = {}
-const topicTitles: Record<string, string> = {}
+const mentionNames = reactive<Record<string, string>>({})
+const topicTitles = reactive<Record<string, string>>({})
 const refMaps = { mentionNames, topicTitles }
 
 function renderMarkdown(text: string): string {
   return renderMarkdownWith(text, refMaps)
+}
+
+function docDiffText(line: string): string {
+  const text = line.slice(1)
+  return /^(?:\s|&nbsp;)*$/.test(text) ? '' : text
 }
 
 function renderPlain(text: string): string {
@@ -127,9 +138,16 @@ const props = withDefaults(
     // Header label override for a 私聊 whose stored title is a bookkeeping key
     // (e.g. a person DM's canonical "私聊 · a · b"): show the peer's name instead.
     titleOverride?: string | null
+    // 标题左边那颗 ←，以及它旁边的字。私聊是从名册点进来的，而名册页在桌面上
+    // 不是侧栏的一行，所以没有这颗按钮就只能靠浏览器后退回去。null = 不画。
+    backLabel?: string | null
     // 开这个话题的那一刻还有多少条没读（只数别人发的，和侧栏角标同一口径）。
     // 由 host 在 markRead 之前捕获——一旦 markRead 跑过，这个数就没了。
     unreadOnOpen?: number
+    // 换 AI 队友之后 +1。房间的名册（谁在这儿、以及那个 AI 队友现在叫什么）由
+    // 这个组件自己拉，而换队友的按钮长在话题头上——两边够不着，所以由上面的人
+    // 说一声「过期了，重拉」。
+    rosterRevision?: number
   }>(),
   {
     alwaysSummon: false,
@@ -139,23 +157,26 @@ const props = withDefaults(
     members: () => [],
     topicList: () => [],
     titleOverride: null,
+    backLabel: null,
     unreadOnOpen: 0,
+    rosterRevision: 0,
   }
 )
 
 // Surface AI activity so the parent can refresh the living doc / topic list
-// without a manual reload (spec §7.1 实时联动). `tool-used` fires per tool call
-// (carries the short tool name); `turn-done` fires when a turn completes.
+// without a manual reload (spec §7.1 实时联动). `turn-done` fires when a turn
+// completes.
 const emit = defineEmits<{
-  (e: 'tool-used', name: string, input?: Record<string, unknown>): void
+  // 标题左边那颗 ← 被按了。去哪儿由拥有这个地址的人决定，不是这里。
+  (e: 'back'): void
   // A cheese command changed a platform resource (doc/decision/topics/...) —
   // the parent refreshes that panel live, mid-turn.
   (e: 'state-changed', resource: string): void
   (e: 'turn-done'): void
   // 芝士 是不是正在这个话题里干活。跟着轮次生命周期走（summon / turn_started /
-  // turn_active 开，turn_finished / done / error 关），不是跟着第一个工具调用
-  // 走：工具帧是干活的**证据**，不是干活的**开始**，而右边那格「现场」得在开工
-  // 那一刻就在那儿——它就是用来看它在干什么的。
+  // turn_active 开，turn_finished / done / error 关），不是跟着它第一次动手
+  // 走：干出来的东西是干活的**证据**，不是干活的**开始**，而右边那格「现场」得
+  // 在开工那一刻就在那儿——它就是用来看它在干什么的。
   (e: 'working', working: boolean): void
   // ⤴ 升级为话题 (eval A1): the parent upgrades this message block into a topic.
   (e: 'upgrade-message', messageId: string): void
@@ -200,7 +221,22 @@ async function loadRoster() {
   }
 }
 
-watch(() => props.topic?.id, loadRoster, { immediate: true })
+watch(() => [props.topic?.id, props.rosterRevision], loadRoster, { immediate: true })
+
+// 这个房间现在交给的是哪个 AI 队友。名册那一行说了算（后端把芝士那一行的名字
+// 解析成当前队友的名字）。界面上任何一处写死「芝士」，换完队友都不会变，看起来
+// 就是「换人没生效」——这正是它被报上来的样子。
+const agentName = computed(() => {
+  const seat = roomMembers.value.find((m) => m.agent)
+  return seat?.name || seat?.member_handle || '芝士'
+})
+
+// 输入框那一行提示语。和芝士私聊时它**不能**说「交给它做」：私聊不占机器，那边
+// 的芝士没有工具，读不了文件也跑不了命令。一句承诺它做不到的事的提示语，换来的
+// 是一次「我试了但做不了」，而人只会记得是它没做成。
+const composerHint = computed(() =>
+  props.alwaysSummon ? `和${agentName.value}聊聊…（要它干活去开话题）` : `输入消息，@${agentName.value} 交给它做`
+)
 
 /** @ 得到的人：这个房间里的，加上项目里还没进这个房间的。 */
 const mentionPool = computed(() => {
@@ -574,6 +610,9 @@ function openSocket(topicId: string) {
     connected.value = true
     retryDelayMs = 1000 // healthy again → next outage starts backoff fresh
     errorMsg.value = null
+    // State frames are transient. A doc saved while disconnected may have no
+    // remaining turn to replay it; refresh through the panel's conflict guard.
+    emit('state-changed', 'doc')
     flushOutbox() // 断线期间打的字，连上就自己走
   }
   ws.onclose = () => {
@@ -642,11 +681,6 @@ function handleFrame(frame: WsServerFrame) {
       // Someone toggled an emoji / 芝士's ✅ receipt landed — update the chip
       // row in place (the frame carries the block's full fresh aggregate).
       applyReactions(frame.block_id, frame.reactions)
-      break
-    case 'tool':
-      // 工作细节不进对话流 — the live feed belongs to the 现场 drawer. Hand
-      // the parent the full call so it can build the live worklog line.
-      emit('tool-used', frame.name.replace(/^mcp__cheese__/, ''), frame.input)
       break
     case 'todo':
       // Working-log checklist, updated in place. `restored` marks the replay of
@@ -1045,7 +1079,7 @@ const memberByHandle = computed(() => {
 // 「显示成昵称」只能在这里做：查名册，查不到（退出项目的人、anonymous 兜底
 // 作者）就把 handle 原样显示出来。
 function displayName(m: Block): string {
-  if (m.author_type === 'ai') return '芝士'
+  if (m.author_type === 'ai') return agentName.value
   return memberByHandle.value.get(m.author)?.name || m.author
 }
 // 真头像加载失败过的 handle —— 退回彩色首字母，不留破图。
@@ -1105,6 +1139,31 @@ function onDropFiles(e: DragEvent) {
   onComposerDrop(e)
 }
 const composerInput = ref<{ focus?: () => void } | null>(null)
+
+const starterPrompts = [
+  { label: '查找资料', text: '帮我查找相关资料，注明来源，并整理成文档。我要了解的是：' },
+  { label: '起草文档', text: '帮我起草一份文档，先和我确认目标与读者。我想写的是：' },
+  { label: '拆解任务', text: '帮我把目标拆成可执行的任务，先给我看分工建议。我的目标是：' },
+]
+const showStarters = computed(
+  () =>
+    props.topic?.kind === 'root' &&
+    props.topic.status !== 'archived' &&
+    props.showComposer &&
+    !loadingHistory.value &&
+    !errorMsg.value &&
+    !hasMore.value &&
+    !visible.value.length &&
+    !draft.value.trim() &&
+    !outbox.value.length
+)
+
+function startDraft(text: string) {
+  if (draft.value.trim()) return
+  const agent = mentionPool.value.find((m) => m.agent)
+  draft.value = `${props.alwaysSummon ? '' : `@${agent?.label ?? '芝士'} `}${text}`
+  void nextTick(() => composerInput.value?.focus?.())
+}
 
 // @-autocomplete (§3.1.1 人也能 @): the @token being typed at the end of the
 // draft, and the teammates / topics / broadcast tokens it can complete to.
@@ -1169,27 +1228,21 @@ function pickMention(item: MentionItem) {
 }
 
 // Human composer: turn a friendly "@名字 / @话题名 / @handle" into the canonical
-// token (<@handle> / <#topicId>) at send time — longest patterns first so
-// substrings don't mis-match. The backend re-canonicalizes as a backstop, so a
-// name typed without picking from the menu still resolves.
+// token (<@handle> / <#topicId>) at send time. The rules live in the shared
+// module so this stays identical to the backend's backstop.
 function expandMentions(text: string): string {
-  const subs: { pat: string; token: string }[] = [
-    { pat: '@all', token: '<@all>' },
-    { pat: '@here', token: '<@here>' },
-    ...mentionPool.value.flatMap((m) => [
-      { pat: `@${m.label}`, token: `<@${m.handle}>` },
-      { pat: `@${m.handle}`, token: `<@${m.handle}>` },
-    ]),
-    ...props.topicList.filter((t) => t.kind !== 'root').map((t) => ({ pat: `@${t.title}`, token: `<#${t.id}>` })),
-  ].sort((a, b) => b.pat.length - a.pat.length)
-  let out = text
-  for (const s of subs) out = out.split(s.pat).join(s.token)
-  return out
+  return expandMentionNames(
+    text,
+    mentionPool.value,
+    props.topicList.filter((t) => t.kind !== 'root')
+  )
 }
 
 // 图片输入: paste (screenshot) or pick images; they upload to the topic's
 // worktree immediately and wait in a preview strip until send.
 const fileInput = ref<HTMLInputElement | null>(null)
+const imageInput = ref<HTMLInputElement | null>(null)
+const { mdAndUp } = useDisplay()
 const {
   pending: pendingAtts,
   uploading: attsUploading,
@@ -1207,6 +1260,11 @@ const {
 function pickFiles() {
   fileInput.value?.click()
 }
+// 手机上单开一个「照片」：系统的文件选择器里翻相册要好几步，而 accept=image/*
+// 直接进相册/相机。桌面上不给这一颗——那儿贴一张截图或者拖进来就完事了。
+function pickImages() {
+  imageInput.value?.click()
+}
 function onFilePicked(e: Event) {
   const input = e.target as HTMLInputElement
   if (input.files?.length) void addFiles(Array.from(input.files))
@@ -1223,9 +1281,102 @@ function mentionsAgent(expanded: string): boolean {
   return mentionPool.value.some((m) => m.agent && expanded.includes(`<@${m.handle}>`))
 }
 
-function sendDraft() {
+// 房间里那位芝士 —— @ 补全名单上带 agent 标记的那一行。
+const agentMention = computed(() => mentionPool.value.find((m) => m.agent) ?? null)
+
+// 这条草稿现在叫不叫它。**读的是正文**，不是一个单独存着的开关值：真相只有一条，
+// 入口可以有三个（手打 @、点按钮、⌘/Ctrl+Enter 都是往正文里写同一个 @）。
+// 独立开关是另一回事 —— 那种东西能和正文说不一样的话（开关亮着、正文里没有 @），
+// 那时候「这条到底算不算叫了它」谁也答不上来，而只有开关那条是通的。
+const summonOn = computed(() => props.alwaysSummon || mentionsAgent(expandMentions(draft.value)))
+// 这个房间的芝士是谁，现在知道了吗。
+const summonReady = computed(() => agentMention.value !== null)
+
+// 名册还没到的时候不能替人写这个 @：召唤与否是浏览器按**能不能把名字解析成
+// handle** 算出来的，此刻解析不出来，写进去的 @ 只是一行字，消息照发、它照样不
+// 动。所以这两个入口在那一瞬间是关着的（见 `summonReady`），宁可少一个入口，
+// 也不要一个点了不算数的入口。
+function withAgentMention(text: string): string {
+  const agent = agentMention.value
+  if (!agent || mentionsAgent(expandMentions(text))) return text
+  return `@${agent.label} ${text}`
+}
+
+// 「交给芝士」这颗按钮：它不改任何隐藏状态，它只是替你打那五个字，写完你看得见、
+// 也能自己删掉。
+function toggleSummon() {
+  const agent = agentMention.value
+  if (!summonOn.value) {
+    draft.value = withAgentMention(draft.value)
+  } else if (agent) {
+    // 只摘掉第一处。正文里别处还提着它（「照 @芝士 说的改」）是在说事，不是在
+    // 叫它，取消这一次召唤不该顺手把那句话也改了。
+    for (const pat of [`@${agent.label}`, `@${agent.handle}`]) {
+      const at = draft.value.indexOf(pat)
+      if (at < 0) continue
+      const after = at + pat.length
+      draft.value = draft.value.slice(0, at) + draft.value.slice(draft.value[after] === ' ' ? after + 1 : after)
+      break
+    }
+  }
+  void nextTick(() => composerInput.value?.focus?.())
+}
+
+// ---- 忘了 @ 的补救 ----
+// 房间里最后一句话是对着人说的，芝士就不会动 —— 这是它该有的样子（没 @ 不等于
+// 没说，那条消息在待读窗口里等着下一轮捎上）。真正伤人的是**房间里没有任何东西
+// 说明这一点**：一个人贴完需求等了八分钟，追问「你有看到我的问题嘛」，全程没人
+// 接、也没有一行字告诉他为什么。这一行就是那行字，外加一次点击。
+//
+// 所以文案不能写「它还没看到」：那条消息不会丢，只是不会**现在**动。
+const summonBusy = ref(false)
+// 已经为哪条消息按过这一下。按完就把提示收起来，包括后端回「本来就不必」的那两
+// 种情况 —— 点了一下什么都没变，看起来和坏掉一模一样。
+const summonedFor = ref<string | null>(null)
+function showSummonHint(m: Block, i: number): boolean {
+  if (summonedFor.value === m.id) return false
+  if (props.alwaysSummon || !props.showComposer) return false
+  if (props.topic?.status === 'archived') return false
+  // 已经在跑的那一轮会自己把没 @ 的消息接过去（后端 submit_message 的 merge
+  // 分支），这时候提示「没人接」是假的。
+  if (awaitingReply.value || outbox.value.length) return false
+  if (i !== rows.value.length - 1) return false
+  if (m.author_type !== 'human') return false
+  if (m.kind !== 'message' && m.kind !== 'attachment') return false
+  // 一次发送可能落成好几块（一句话 + 几张图），而叫没叫它写在那句话里。只看最后
+  // 一块的话，配了图的那次发送永远会被判成「没叫」——图片块的正文是一个文件路径，
+  // 它 @ 不到任何人。所以看的是同一个人连在一起的这一串。
+  for (let k = rows.value.length - 1; k >= 0; k -= 1) {
+    const b = rows.value[k].block
+    if (b.author_type !== 'human' || b.author !== m.author) break
+    if (mentionsAgent(b.content)) return false
+  }
+  return true
+}
+async function summonNow() {
+  const id = props.topic?.id
+  if (!id || summonBusy.value) return
+  summonBusy.value = true
+  try {
+    const res = await summonAgent(id)
+    // started=false 说明这一下本来就不必花钱（房间已经在干活，或者别人先 @ 过
+    // 了）。两种都不是错，但两种都得让界面动一下。
+    summonedFor.value = rows.value.at(-1)?.block.id ?? null
+    if (res.started) awaitingReply.value = true
+  } catch (e) {
+    errorMsg.value = e instanceof Error ? e.message : '没能叫醒它，请重试'
+  } finally {
+    summonBusy.value = false
+  }
+}
+
+// `summon: true` = ⌘/Ctrl+Enter「发送并交给它」。它把 @ 写进正文再发，而不是在帧
+// 上把 summon 悄悄置真：时间线上那条消息必须自己说明它叫了谁，否则读的人看到的
+// 是一条谁也没 @ 的消息，芝士却动了。
+function sendDraft(opts?: { summon?: boolean }) {
   if (attsUploading.value) return
-  const content = expandMentions(draft.value)
+  if (!draft.value.trim() && !pendingAtts.value.length) return
+  const content = expandMentions(opts?.summon ? withAgentMention(draft.value) : draft.value)
   if (send(content, props.alwaysSummon || mentionsAgent(content), pendingAtts.value.slice())) {
     draft.value = ''
     clearPendingAtts()
@@ -1288,6 +1439,13 @@ function onComposerKey(e: KeyboardEvent) {
   // Only act on Enter from the focused composer textarea itself.
   const t = e.target as HTMLElement | null
   if (!t || t.tagName !== 'TEXTAREA' || document.activeElement !== t) return
+  // ⌘/Ctrl+Enter = 发送并交给芝士，正文里一个 @ 都不用打。判断排在 @-菜单前面：
+  // 打到一半的 @ 不该把这个已经说清楚的「交给它」变成一次选人。
+  if ((e.metaKey || e.ctrlKey) && summonReady.value) {
+    e.preventDefault()
+    sendDraft({ summon: true })
+    return
+  }
   // While the @-menu is open, Enter picks the first match instead of sending.
   if (mentionMatches.value.length) {
     e.preventDefault()
@@ -1374,6 +1532,17 @@ onBeforeUnmount(() => {
       <!-- Plain chat header — normal chat (飞书私聊 / 本体): title + 已连接 -->
       <div v-else-if="!hideHeader" class="pr-header px-4 py-3">
         <div class="d-flex align-center ga-2">
+          <v-btn
+            v-if="backLabel"
+            variant="text"
+            size="small"
+            density="comfortable"
+            prepend-icon="mdi-arrow-left"
+            class="c-muted"
+            @click="emit('back')"
+          >
+            {{ backLabel }}
+          </v-btn>
           <span class="pr-title t-title">{{ titleOverride || topic.title }}</span>
           <v-spacer />
           <span
@@ -1396,7 +1565,24 @@ onBeforeUnmount(() => {
         <!-- Single wrapper so a ResizeObserver can watch the timeline's total
              content height (rows + streaming bubble + timeline-end slot). -->
         <div ref="contentRef">
-          <div v-if="loadingHistory" class="text-medium-emphasis text-body-2 px-4 py-2">加载聊天记录…</div>
+          <LoadingSkeleton v-if="loadingHistory" variant="chat" />
+
+          <section v-if="showStarters" class="chat-start px-5 py-8" aria-label="开始项目协作">
+            <h2 class="t-title mb-2">从一件具体的事开始</h2>
+            <p class="t-body c-muted mb-4">说说你想解决什么问题，@芝士 可以查资料、写文档，也能和你一起拆任务</p>
+            <div class="d-flex flex-wrap ga-2">
+              <v-btn
+                v-for="prompt in starterPrompts"
+                :key="prompt.label"
+                variant="outlined"
+                color="on-surface"
+                size="small"
+                @click="startDraft(prompt.text)"
+                >{{ prompt.label }}</v-btn
+              >
+            </div>
+            <p class="t-meta mt-3">点选后补充你的需求，再发送</p>
+          </section>
 
           <!-- Paging back through history. The row is always rendered while
                older blocks exist so the timeline's top edge does not change
@@ -1404,7 +1590,7 @@ onBeforeUnmount(() => {
                reader mid-scroll, which is the very thing loadOlder compensates
                for. -->
           <div
-            v-else-if="hasMore"
+            v-if="!loadingHistory && hasMore"
             class="text-medium-emphasis text-body-2 px-4 py-2 text-center"
             data-testid="chat-older-loader"
           >
@@ -1498,6 +1684,25 @@ onBeforeUnmount(() => {
                   {{ ACTION_META[notice.resource].btn }}
                 </button>
               </div>
+              <details v-if="notice.detail" class="sys-more">
+                <summary>{{ notice.detailLabel || '展开详情' }}</summary>
+                <div v-if="notice.resource === 'doc'" class="doc-edit-diff" aria-label="文档修改对比">
+                  <template v-for="(line, index) in parseDiffLines(notice.detail)" :key="index">
+                    <div
+                      v-if="(line.kind === 'add' || line.kind === 'del') && docDiffText(line.text)"
+                      class="doc-edit-line"
+                      :class="`doc-edit-line--${line.kind}`"
+                      :aria-label="line.kind === 'add' ? '新增' : line.kind === 'del' ? '删除' : undefined"
+                    >
+                      <span class="doc-edit-mark" aria-hidden="true">{{
+                        line.kind === 'add' ? '+' : line.kind === 'del' ? '−' : ' '
+                      }}</span>
+                      <span>{{ docDiffText(line.text) }}</span>
+                    </div>
+                  </template>
+                </div>
+                <pre v-else class="sys-detail">{{ notice.detail }}</pre>
+              </details>
             </div>
             <!-- 后端报错 (backend_log.py): 芝士 needs the whole traceback, a
                person needs to know it happened. So the line shows by default
@@ -1560,7 +1765,7 @@ onBeforeUnmount(() => {
               <!-- avatar gutter: only on the first of a run -->
               <div class="im-gutter">
                 <template v-if="isRunStart(i)">
-                  <CheeseAvatar v-if="m.author_type === 'ai'" :size="28" />
+                  <CheeseAvatar v-if="m.author_type === 'ai'" :size="28" :name="displayName(m)" />
                   <!-- 真头像；取不到或加载失败退回按 handle 哈希的彩色首字母。
                      底色的种子继续用 handle（换成昵称会让每个人的颜色都变）,
                      变的只有色块里的字。 -->
@@ -1639,6 +1844,14 @@ onBeforeUnmount(() => {
                   <v-icon size="13">mdi-arrow-top-right</v-icon>
                   已升级为话题，点击查看
                 </button>
+                <!-- 忘了 @ 的补救：房间里最后一句是对着人说的，芝士就不会动，
+                   而在这一行出现之前，房间里没有任何东西说明这一点。 -->
+                <div v-if="showSummonHint(m, i)" class="summon-hint">
+                  <span class="summon-hint-text">这条没叫{{ agentName }}，它不会现在动</span>
+                  <button type="button" class="summon-hint-btn" :disabled="summonBusy" @click="summonNow">
+                    让它现在就看
+                  </button>
+                </div>
                 <!-- Emoji reaction chips (Slack): count per emoji, own reactions
                    highlighted; click toggles. 芝士's ✅ receipt lands here too. -->
                 <div v-if="m.reactions?.length" class="rx-row">
@@ -1727,11 +1940,11 @@ onBeforeUnmount(() => {
              working-log checklist stays visible for the whole turn. -->
           <div v-if="awaitingReply || todoItems.length" class="im-row">
             <div class="im-gutter">
-              <CheeseAvatar :size="28" />
+              <CheeseAvatar :size="28" :name="agentName" />
             </div>
             <div class="im-main">
               <div class="im-meta">
-                <span class="im-name">芝士</span>
+                <span class="im-name">{{ agentName }}</span>
               </div>
 
               <!-- Working-log checklist (芝士's tasks, §3.1.1). Live during a
@@ -1748,7 +1961,7 @@ onBeforeUnmount(() => {
 
               <!-- Instant ack before the first message / during cold start -->
               <div v-if="awaitingReply" class="im-text">
-                <span class="text-medium-emphasis">芝士正在处理…</span>
+                <span class="text-medium-emphasis">{{ agentName }}正在处理…</span>
                 <span class="caret" />
               </div>
             </div>
@@ -1780,6 +1993,7 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Built-in composer (private chat / standalone use). -->
+      <AgentControls v-if="topic" :topic-id="topic.id" :active="true" questions-only />
       <template v-if="showComposer">
         <div
           class="composer pa-2 px-3"
@@ -1851,8 +2065,12 @@ onBeforeUnmount(() => {
               hide-details
               density="comfortable"
               class="composer-input"
-              :placeholder="alwaysSummon ? '告诉芝士要做什么…' : '输入消息，@芝士 交给它做'"
-              :title="enterSends ? 'Enter 发送，Shift+Enter 换行，可直接粘贴图片' : '可直接粘贴图片'"
+              :placeholder="composerHint"
+              :title="
+                enterSends
+                  ? `Enter 发送，Shift+Enter 换行，⌘/Ctrl+Enter 发送并交给${agentName}，可直接粘贴图片`
+                  : '可直接粘贴图片'
+              "
               @keydown="onComposerKey"
               @paste="onComposerPaste"
               @compositionstart="onCompositionStart"
@@ -1861,7 +2079,19 @@ onBeforeUnmount(() => {
             <!-- 下面一行：动作靠左，发送靠右。发送是这一行唯一的主操作，所以它是
                唯一的实心按钮，其余一律是安静的图标。 -->
             <div class="composer-actions d-flex align-center ga-1">
-              <input ref="fileInput" type="file" multiple class="d-none" @change="onFilePicked" />
+              <!-- 这两个 input 是藏起来的，但**不能**用 display:none / visibility:hidden：
+                   iOS Safari 拒绝用脚本打开一个被隐藏掉的文件选择框，按钮点下去
+                   毫无反应。所以按 .visually-hidden 的老办法藏——留在布局里、只是
+                   看不见。旁边 components/common/FileSelect.vue 里也是这么藏的。 -->
+              <input ref="fileInput" type="file" multiple class="visually-hidden" @change="onFilePicked" />
+              <input
+                ref="imageInput"
+                type="file"
+                accept="image/*"
+                multiple
+                class="visually-hidden"
+                @change="onFilePicked"
+              />
               <!-- 附件上传走的是 HTTP，和聊天那条 socket 是两回事：socket 断着的
                  时候图片照样传得上去，所以这里不跟着 `connected` 一起禁用。 -->
               <v-btn
@@ -1870,13 +2100,46 @@ onBeforeUnmount(() => {
                 variant="text"
                 size="small"
                 color="medium-emphasis"
-                title="上传文件或图片（每个文件最大 10MB）"
+                title="上传文件（每个最大 10MB）"
                 @click="pickFiles"
+              />
+              <!-- 手机上多一颗「照片」：那儿没有截图可贴、也没有东西可拖，从文件
+                   选择器里翻相册要绕好几步。 -->
+              <v-btn
+                v-if="!mdAndUp"
+                class="composer-icon"
+                icon="mdi-image-outline"
+                variant="text"
+                size="small"
+                color="medium-emphasis"
+                title="发送照片"
+                @click="pickImages"
               />
               <v-spacer />
               <!-- 算力说的是「这条消息会在哪儿跑」，属于发送这一侧，不和左边那两个
                  「这条消息本身」的动作并列。它是设置不是动作，所以最安静。 -->
               <slot name="composer-chips" />
+              <!-- 「交给芝士」：它不是一个自己存着状态的开关，它是正文的镜子——
+                 点一下把 @ 写进输入框（你看得见、也能自己删），手打 @ 它就自己
+                 亮。一个能和正文说不一样的话的开关（亮着、正文里却没有 @），会
+                 让「这条到底算不算叫了它」变成没人答得上来的问题。 -->
+              <button
+                v-if="!alwaysSummon"
+                type="button"
+                class="summon-btn"
+                :class="{ 'summon-btn--on': summonOn }"
+                :disabled="!summonReady"
+                :aria-pressed="summonOn"
+                :title="
+                  summonOn
+                    ? `正文里已经 @ 了${agentName}，点这里取消`
+                    : `交给${agentName}（也可以直接按 ⌘/Ctrl+Enter 发送并交给它）`
+                "
+                @click="toggleSummon"
+              >
+                <v-icon size="14">mdi-at</v-icon>
+                <span class="summon-btn-label">交给{{ agentName }}</span>
+              </button>
               <!-- 断线时照样能发：消息进发件箱、立刻显示，连上就自己走 (§14.1)。
                  按 `connected` 禁用会把「打字」和「后端此刻在不在」绑在一起。 -->
               <v-btn
@@ -1887,7 +2150,7 @@ onBeforeUnmount(() => {
                 size="small"
                 title="发送"
                 :disabled="attsUploading || (!draft.trim() && !pendingAtts.length)"
-                @click="sendDraft"
+                @click="sendDraft()"
               />
             </div>
           </div>
@@ -1994,6 +2257,32 @@ details.sys-row > summary::-webkit-details-marker {
   font-size: 12px;
   color: var(--faint);
   margin-top: 4px;
+}
+.doc-edit-diff {
+  margin-top: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  font-size: 13px;
+  color: var(--text);
+}
+.doc-edit-line {
+  display: flex;
+  gap: 8px;
+  padding: 4px 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.doc-edit-mark {
+  flex: 0 0 1em;
+}
+.doc-edit-line--add {
+  background: var(--ok-wash);
+  color: var(--ok-ink);
+}
+.doc-edit-line--del {
+  background: var(--danger-wash);
+  color: var(--danger-ink);
 }
 .sys-detail {
   margin: 4px 0 6px;
@@ -2184,6 +2473,69 @@ details.sys-row > summary::-webkit-details-marker {
 .composer-send {
   width: 28px;
   height: 28px;
+}
+/* 「交给芝士」。它和发送并排，但绝不能也是实心琥珀——一行里只有一个实心块，
+   那个位置是发送的。亮起来只改一条描边和墨色，形态不变。 */
+.summon-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  font-size: 13px;
+  line-height: 1;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    color 0.12s ease,
+    border-color 0.12s ease,
+    background-color 0.12s ease;
+}
+.summon-btn:hover:not(:disabled) {
+  background: var(--fill);
+  color: var(--text);
+}
+.summon-btn:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.summon-btn--on {
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+/* 窄屏上只留那个 @ 图标：这一行右边还站着算力和发送，三个都带字就换行了。 */
+@media (max-width: 480px) {
+  .summon-btn-label {
+    display: none;
+  }
+}
+
+/* 忘了 @ 的补救行。它属于那条消息（和正文左对齐），不是一条平台行——平台行说的
+   是平台做了什么，这一行说的是**你**还差一步。 */
+.summon-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--faint);
+}
+.summon-hint-btn {
+  padding: 2px 8px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  cursor: pointer;
+}
+.summon-hint-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+.summon-hint-btn:disabled {
+  cursor: default;
+  opacity: 0.6;
 }
 
 /* @-autocomplete popup — mirrors TopicView's composer picker. */

@@ -24,11 +24,12 @@ from pathlib import Path
 # substrate — identical for the local (tmux) and remote (device) backends so it
 # can't drift (fusion-design §8.6). Re-exported here (`hooks_settings`) because
 # this module's launcher and its callers build on it.
-from app.core.config import GATEWAY_MOUNT
 from app.domain.agent import environment_runner, machine_tunnel, preview_tunnel
+from app.domain.agent.harness.claude_code import event_drain, startup_cache
 from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD
 from app.domain.agent.harness.claude_code.hooks_substrate import CHEESE_HOOK_SCRIPT
 from app.domain.agent.harness.claude_code.session_launch import hooks_settings
+from app.domain.agent.skills import native_skill_files
 
 # First-launch gates (Claude Code 2.1.x) for $CLAUDE_CONFIG_DIR/.claude.json,
 # kept here as the readable statement of what the launch script writes inline.
@@ -228,10 +229,17 @@ print("ok (ticket extracted)")
 # precise even with several screens on one machine.
 #
 # Prints exactly one of `alive` / `dead` / `unknown`. The caller treats ONLY an
-# explicit `dead` as fatal; `unknown` (no /proc, an unreadable environ) and any
+# explicit `dead` as fatal; `unknown` (unsupported process metadata) and any
 # exec error are read conservatively as alive, so a probe hiccup never false-kills.
 DEVICE_ALIVE_PROBE = r"""topic="${CHEESE_ALIVE_TOPIC:-}"
 [ -n "$topic" ] || { echo unknown; exit 0; }
+# A prepared process acquired its topic after exec; its original /proc environ
+# cannot identify that assignment. Check the durable binding and native pane.
+if [ -f "$HOME/.cheese/native-warm/state.json" ]; then
+  warm_status="$(python3 "$HOME/.cheese/warm-native-runner.py" probe-topic \
+    "$HOME/.cheese/native-warm" "$topic" 2>/dev/null)"
+  case "$warm_status" in alive|dead) echo "$warm_status"; exit 0;; esac
+fi
 # Linux: match the topic on each process's own environ → per-topic precise. The
 # connector (same user as the screen it spawned) can read that same-uid /proc entry.
 if [ -d /proc ] && [ -r /proc/self/environ ]; then
@@ -246,8 +254,21 @@ if [ -d /proc ] && [ -r /proc/self/environ ]; then
   # /proc was readable but no live `claude` carries this topic → its process is gone.
   echo dead; exit 0
 fi
-# No /proc (non-Linux) or an unreadable environ: no per-topic view, so never assert
-# death — report unknown and let the caller keep the turn alive to the hard ceiling.
+# macOS has no /proc. Read the environment of candidate Claude processes via
+# ps, without emitting it: a dead Mac session must not be adopted on retry.
+if [ "$(uname -s)" = Darwin ]; then
+  processes="$(ps -axo pid=,comm= 2>/dev/null)" || { echo unknown; exit 0; }
+  pids="$(printf '%s\n' "$processes" | awk '
+    $2 == "claude" || $0 ~ /\/claude\/versions\// || $0 ~ /\/claude$/ {print $1}')"
+  for pid in $pids; do
+    if ps eww -p "$pid" -o command= 2>/dev/null \
+      | grep -Eq "(^| )CHEESE_TOPIC=$topic( |$)"; then
+      echo alive; exit 0
+    fi
+  done
+  echo dead; exit 0
+fi
+# No supported per-topic view: keep an uncertain session alive.
 echo unknown
 """
 
@@ -421,7 +442,8 @@ WAITPY
 # declaring the preview — waits on the BACKEND side, where the helper's arrival is
 # actually observable.
 CHEESE_PREVIEW_UP = """#!/bin/sh
-# $1, optional: the port to declare before bringing the helper up. `cheese serve`
+# $1, optional: the port.
+# `cheese serve`
 # passes it and nothing else does, which is what keeps the file layout of the
 # preview helper entirely inside the launcher — the CLI knows only this script.
 PORTF="$HOME/.claude/cheese-preview.port"
@@ -451,34 +473,9 @@ printf '%s\\n' "$WANT" > "$STAMPF"
 """
 
 
-CHEESE_DRAIN_SCRIPT = """#!/bin/sh
-echo $$ > "$0.pid" 2>/dev/null || true
-while true; do
-  if [ -n "$CHEESE_DRAIN_TETHER" ] && ! kill -0 "$CHEESE_DRAIN_TETHER" 2>/dev/null
-  then
-    exit 0
-  fi
-  [ -r "$0.env" ] || { sleep 5; continue; }
-  . "$0.env"
-  [ -n "$CHEESE_HOOK_SPOOL" ] || { sleep 5; continue; }
-  for f in "$CHEESE_HOOK_SPOOL"/[0-9]*; do
-    [ -e "$f" ] || continue
-    resp="$(curl -s -m 10 -X POST -H 'Content-Type: application/json' \\
-      -H "X-Cheese-Token: $CHEESE_TOKEN" -H "X-Cheese-Event-Id: ${f##*.}" \\
-      --data-binary @"$f" "$CHEESE_HOOK_URL" 2>/dev/null)"
-    # Deleting the ONLY copy, so only on the backend's word that it wrote the
-    # event to its own disk — which is what a 200 from /sandbox/hooks means.
-    case "$resp" in *'"code":200'*) rm -f "$f";; esac
-  done
-  # Retention, NOT a wildcard: `.seq` is the spool's sequence hint, and reaping
-  # it would send the next event's name back to 1 — sorting it before everything
-  # still waiting to be sent. Events and their claim files age out; bookkeeping
-  # does not.
-  find "$CHEESE_HOOK_SPOOL" -type f \\( -name '[0-9]*' -o -name '.n[0-9]*' \\) \\
-    -mmin +1440 -delete 2>/dev/null
-  sleep 1
-done
-"""
+def build_drain_script() -> str:
+    source = Path(event_drain.__file__).read_text(encoding="utf-8")
+    return "#!/bin/sh\nexec python3 - \"$0\" <<'PY'\n" + source + "\nPY\n"
 
 
 # Bringing a device's workspace up, kept out of the launcher's f-string (and
@@ -634,13 +631,251 @@ CHEESE_SYNC_SCRIPT = r"""#!/bin/sh
 [ -n "${CHEESE_GIT_REMOTE:-}" ] || exit 0
 [ -d "$CHEESE_WORK/.git" ] || exit 0
 cd "$CHEESE_WORK" || exit 0
-branch="${CHEESE_GIT_BRANCH:-main}"
-head="$(git rev-parse --verify -q HEAD 2>/dev/null || true)"
+# Which branch this place writes to RIGHT NOW, asked rather than remembered.
+# The screen's environment is fixed when it starts, so `CHEESE_GIT_BRANCH` names
+# whichever batch was open then — and a room that delivers moves to a new batch
+# on a new branch while the same screen keeps running. Trusting that env var made
+# every later turn push onto a branch that had already been squashed into main:
+# `git push` succeeds, the hook reports ok, and the work is on a branch main can
+# never reach.
+#
+# So there is NO fallback to it. "I could not find out which batch this is" and
+# "it is still the batch this screen started on" are different facts, and using
+# the second for the first is precisely the mis-delivery being removed here —
+# with a green report on top of it. Unknown is reported as a failure; the
+# snapshot ref below is written either way, so nothing the agent wrote is lost.
+# 「我上次发布到哪条分支」—— 这个同步器**自己**留下的状态，不是 HEAD。
+#
+# HEAD 永远不动（衔接是用 plumbing 做的），所以从第三批起，本地分支名说的还是第
+# 一批。拿它去问平台，平台答的永远是第一批交付了什么 —— 一个真实系统里不存在的
+# 输入，而且答案是错的。这个同步器唯一知道的真相是它自己上次把什么推到了哪里。
+here="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+mine_dir="$CHEESE_WORK/.git/cheese-sync"
+mkdir -p "$mine_dir" 2>/dev/null || true
+last_branch="$(cat "$mine_dir/branch" 2>/dev/null || true)"
+asked_on="${last_branch:-$here}"
+# 名字之外，把**提交**一起报上去。`git branch -m` 改一个名字，一个提交都不动 ——
+# 光凭名字问的话，一台历史长在已经 squash 进 main 的那一批上的机器，只要分支被改
+# 过名（我们自己的工作区此刻就是这个形状），平台就只能答「这个名字从来不是本房间
+# 的批次」，于是普通推送、报 ok，而新一批的 PR 把上一批的改动又展示一遍。
+#
+# 提交改不了名字：平台手里有每一批交付时记下的 head、以及那条分支上被推到的 tip，
+# 拿这里的 HEAD 及其祖先去对，命中的就是一个旧批次，无论它现在叫什么。
+answer=""
+if [ -n "${CHEESE_BRANCH_URL:-}" ]; then
+  # A long-lived clone can carry a delivered batch arbitrarily far behind HEAD.
+  # Send its complete ancestry in the body rather than truncating a URL.
+  answer="$(git rev-list HEAD 2>/dev/null | \
+    curl -fsS --max-time 10 -H "X-Cheese-Token: ${CHEESE_TOKEN:-}" \
+    -H 'Content-Type: text/plain' --data-binary @- \
+    "$CHEESE_BRANCH_URL?on=$asked_on" 2>/dev/null || true)"
+fi
+cheese_field() {
+  printf '%s' "$answer" | sed -n "s/.*\"$1\"[ ]*:[ ]*\"\([^\"]*\)\".*/\1/p"
+}
+branch="$(cheese_field branch)"
+base="$(cheese_field base)"
+base_sha="$(cheese_field base_sha)"
+on_head="$(cheese_field on_head)"
+# 平台认出来的那一批**叫什么**。下面所有本地记录（`published/` `local-at/`）都是
+# 按分支名存的，是这个同步器自己写下的，改名改不到它们 —— 所以认出旧批次之后要按
+# 平台给的那个名字去找，而不是按这个 clone 现在的分支名。答案里没这个字段（平台
+# 没认出任何一批）就还是问出去的那个名字。
+on_branch="$(cheese_field on_branch)"
+asked_on="${on_branch:-$asked_on}"
+merged=""
+# JSON whitespace is not part of the fact: `"on_merged":true` and
+# `"on_merged": true` are the same answer, and a pattern that only matched one of
+# them would silently read「那一批已经合了」as「没合」and skip the graft entirely.
+case "$(printf '%s' "$answer" | tr -d ' ')" in
+  *'"on_merged":true'*) merged=1;;
+esac
+local_head="$(git rev-parse --verify -q HEAD 2>/dev/null || true)"
+# 接不上去的时候写进 detail 的那段话。它写的是可以直接粘的命令：接不上去意味着这
+# 台机器上有平台那边没有的东西，而「重新 clone」会把工作区连同它一起删掉 —— 所以
+# 这段话先说没交付的提交怎么接到新一批上并推出去，再说未提交的改动落在哪个 ref、
+# 用什么命令捞回来，「重新 clone」放在最后一句、两件事都做完之后。
+#
+# 顺序也是能走通的那个：rebase 拒绝在脏工作区上跑，所以先接提交（未跟踪的文件不
+# 挡它）再谈捞快照；反过来先把快照 checkout 回来，那次 rebase 就跑不了了。
+#
+# 整段不写双引号：它最后拼进 JSON 的 `"detail":"%s"`，一个引号就让这条报告解析不
+# 了 —— 而失败的时候它是唯一还能传出去的东西。
+#
+# $1 是「从哪个提交往后是还没交付的」，空字符串表示平台没记下那一批交出去的是哪个
+# commit。其余的（$branch / $asked_on / $base / $base_sha）从调用处的上下文取。
+cheese_recovery() {
+  printf 'Nothing is lost yet, and re-cloning now would delete what is only '
+  printf 'here. '
+  if [ -n "$1" ]; then
+    printf 'The commits this machine has not delivered are %s..HEAD: commit ' \
+      "$1"
+    printf 'any modified file first (a rebase refuses on a dirty tree), then '
+    printf 'git fetch origin %s && git rebase --onto %s %s puts them on the ' \
+      "${base:-main}" "${base_sha:-FETCH_HEAD}" "$1"
+    printf 'base of %s, and git push origin HEAD:refs/heads/%s delivers ' \
+      "$branch" "$branch"
+    printf 'them. '
+  else
+    printf 'Which of the commits here are already delivered cannot be told '
+    printf 'from this machine, because the platform recorded no delivered '
+    printf 'commit for %s: git log --oneline %s..HEAD lists every commit ' \
+      "$asked_on" "${base_sha:-origin/${base:-main}}"
+    printf 'since the base of %s, and git cherry-pick puts the ones this ' \
+      "$branch"
+    printf 'batch added onto a branch started at %s. ' \
+      "${base_sha:-origin/${base:-main}}"
+  fi
+  printf 'Uncommitted work leaves the machine in this same turn, to '
+  printf 'refs/cheese/snapshots/%s: git fetch origin ' "$branch"
+  printf 'refs/cheese/snapshots/%s && git checkout FETCH_HEAD -- . brings it ' \
+    "$branch"
+  printf 'back in a fresh clone. Re-clone only after both.'
+}
+head="$local_head"
 failed=""
 tried=""
-if [ -n "$head" ]; then
+detail=""
+lease=""
+graft=""
+anchor=""
+# 上一批交付了，房间换到了下一批 —— 把这个 clone 的活接到新一批上。
+#
+# 不接的话，这里的每一个新提交都还长在上一批的提交上，而上一批是被 squash 进
+# main 的：新分支上会重新带着上一批的改动，PR 的三点 diff 把它们再展示一遍，squash
+# 正文再声称一遍。**祖先关系答不了这件事**（squash 提交不是被压的那条分支的后代），
+# 所以「上一批合进去了没有」「它交出去的是哪个 commit」「新一批从哪个 commit 起」
+# 三件事都是平台**告诉**这里的。
+#
+# 三方合并的**基线是这个 clone 自己的那个提交** —— 我上次发布到上一批分支时，本地
+# HEAD 是什么。只有它能让这次合并说的是「交付之后我写的东西」：拿天然共同祖先当基
+# 线，上一批的改动会被再算一遍；拿远端那条分支的 tip 当基线，main 上这个 clone 从
+# 来没有过的文件会被当成「我删掉的」而真的删掉。
+#
+# 基线在**一批之内只定一次**（`refs/cheese/anchor/<branch>`）。每轮重新定的话，
+# 这一批早先几轮的改动会在下一次改写里消失。
+#
+# 全程 plumbing：不碰工作区、不碰 index、不动 HEAD。分身正在看的文件、`git status`
+# 的输出、二分到一半的状态，一个字节都不变。未提交的东西不进分支（进下面的快照
+# ref）：未提交的内容变成「已交付」是另一个方向的错。
+if [ -n "$local_head" ] && [ -n "$branch" ]; then
+  anchor="$(git rev-parse -q --verify "refs/cheese/anchor/$branch" 2>/dev/null \
+    || true)"
+  if [ -n "$anchor" ]; then
+    graft=1  # 这一批已经在衔接了，继续用同一个基线
+  elif [ -n "$merged" ] && [ "$asked_on" != "$branch" ]; then
+    # 平台认出这个 clone 的历史长在这个房间**已经合进 main** 的某一批上
+    #（`$asked_on`），而房间现在写的是另一批（`$branch`）。「合没合」只有平台说得
+    # 出：squash 提交不是被压的那条分支的后代，祖先关系对「交付了」和「从没交付」
+    # 给的是同一个答案。
+    #
+    # 认的是**上报的那些提交**，不是名字：本地分支名随手就能改（`git branch -m` 一
+    # 个提交都不动），而提交改不了名。本地记录（`$last_branch`）和当前分支名只是多
+    # 给平台一个候选，判据是平台拿提交对出来的那一批。所以一台在这个同步器开始写
+    # `refs/cheese/*` 之前就在跑、又被改过分支名的机器 —— 看起来和「从没发布过」一
+    # 模一样 —— 照样会走到这里。按名字判的那一版，这种机器走的是普通推送：新分支从
+    # 上一批的提交上长出来，把那一批已经进了 main 的改动再交付一次，还报
+    # `status=ok`。
+    #
+    # 反过来，上报的提交里没有任何一批的交付点时（分身自己起的 `dev/…`、或者 clone
+    # 时落在的基线分支），普通推送才是对的：没有哪一批从它交付出去过，也就没有要衔
+    # 接的东西。
+    #
+    # 到了这里就只有「接得上」和「说清楚接不上」两条路 —— 没有「不衔接地推过去」。
+    graft=1
+    anchor="$(git rev-parse -q --verify "refs/cheese/local-at/$asked_on" \
+      2>/dev/null || true)"
+    published="$(git rev-parse -q --verify "refs/cheese/published/$asked_on" \
+      2>/dev/null || true)"
+    if [ -z "$on_head" ]; then
+      # 那一批合了，但合的时候没人记下「交出去的是哪个 commit」（`delivered_head`
+      # 不回填的那些老批次）。**交付边界不知道**。
+      #
+      # 不知道就拒绝，不猜。这里的提交长在一批已经进了 main 的历史上，普通推送就是
+      # 把那批改动再交付一次；而没有边界也做不了三方合并 —— 拿什么当基线都是猜。
+      tried=1; failed=1
+      detail="$asked_on was merged without recording the commit it delivered, \
+so where it ends and $branch begins is unknown here. $(cheese_recovery '')"
+    elif [ -z "$anchor" ]; then
+      tried=1; failed=1
+      detail="this machine has no record of what it published to $asked_on, \
+so it cannot tell which of its commits that batch already delivered. \
+$(cheese_recovery "$on_head")"
+    elif [ "$on_head" != "$published" ]; then
+      # 交付出去的不是我推上去的那个 commit —— 别人也往那条分支推过东西，而我的
+      # 基线只覆盖我自己写的部分，照它接过去会把别人那份悄悄丢掉。
+      tried=1; failed=1
+      detail="what $asked_on delivered is not what this machine published to \
+it, so carrying this batch over would drop whatever else went into that \
+delivery. $(cheese_recovery "$on_head")"
+    fi
+  fi
+fi
+if [ -n "$graft" ] && [ -z "$failed" ]; then
+  git fetch -q origin "${base:-main}" >/dev/null 2>&1 || true
+  if [ -z "$base_sha" ]; then
+    tried=1; failed=1
+    detail="the platform did not say where $branch starts"
+  elif ! git rev-parse -q --verify "$base_sha^{commit}" >/dev/null 2>&1; then
+    tried=1; failed=1
+    detail="this clone does not have the commit $branch starts from"
+  # The EXIT STATUS is the answer, not the output: `merge-tree` prints a tree
+  # oid for a conflicted merge too — one full of conflict markers — so reading
+  #「有输出就是成功」would push exactly the thing this is here to refuse.
+  elif ! grafted_tree="$(git merge-tree --write-tree --merge-base="$anchor" \
+    "$base_sha" "$local_head" 2>/dev/null)"; then
+    tried=1; failed=1
+    detail="conflict grafting onto $branch"
+  elif ! grafted="$(git commit-tree "$grafted_tree" -p "$base_sha" \
+    -m "cheese: carry this batch onto $branch" 2>/dev/null)"; then
+    tried=1; failed=1
+    detail="could not build the commit that carries this batch onto $branch"
+  else
+    head="$grafted"
+    # 比较基准是**这个同步器自己上次发布到这条分支的那个 SHA**，不是「现在远端是
+    # 什么」。现读的值不是 lease —— 它把别人**在我们读之前**就推上去的提交当成
+    # 「预期值」，然后理直气壮地覆盖掉。CAS 只挡得住读之后的竞争。
+    #
+    # 从没往这条分支发布过（新一批的第一次），基准就是「它不该存在」。远端已经
+    # 有了，说明别人先开工了：拒绝，不猜。
+    lease="$(git rev-parse -q --verify "refs/cheese/published/$branch" \
+      2>/dev/null || true)"
+    remote_now="$(git ls-remote origin "refs/heads/$branch" 2>/dev/null | cut -f1)"
+    if [ "$remote_now" != "$lease" ]; then
+      tried=1; failed=1
+      detail="$branch moved on the remote since this machine last published it"
+    fi
+  fi
+fi
+if [ -z "$branch" ]; then
+  # Not knowing is a failure, loudly. The commits stay on the machine and in the
+  # snapshot ref below; what must never happen is a push onto a guess.
   tried=1
-  git push -q origin "$head:refs/heads/$branch" >/dev/null 2>&1 || failed=1
+  failed=1
+  detail="could not learn which batch this place is writing to"
+elif [ -z "$failed" ] && [ -n "$head" ]; then
+  tried=1
+  if [ -n "$graft" ] && [ -n "$lease" ]; then
+    # 这是这条脚本里唯一一次改写**分支**（下面那个快照 ref 也是强推，但它是一次性
+    # 的草稿地址，不是任何人的交付）。新分支上的历史要从 base 重新长出来。
+    git push -q --force-with-lease="refs/heads/$branch:$lease" origin \
+      "$head:refs/heads/$branch" >/dev/null 2>&1 || failed=1
+  else
+    # 平常的推送、以及衔接的第一次（那条分支本来就该不存在）都**不带 -f**。远端有
+    # 别人的提交时被拒，就该被拒：房间里另一个分身、平台的 push-fix、人手动推的
+    # 东西，都不该被这一轮无声抹掉。拒了如实报失败。
+    git push -q origin "$head:refs/heads/$branch" >/dev/null 2>&1 || failed=1
+  fi
+  if [ -z "$failed" ]; then
+    # 推成功了才记。下一轮要用的三样都在这里定下来：这条分支上「我推的是什么」
+    # （lease 基准）、「我本地当时到哪了」（下一批的基线）、以及这一批的基线。
+    git update-ref "refs/cheese/published/$branch" "$head" 2>/dev/null || true
+    git update-ref "refs/cheese/local-at/$branch" "$local_head" 2>/dev/null || true
+    if [ -n "$graft" ] && [ -n "$anchor" ]; then
+      git update-ref "refs/cheese/anchor/$branch" "$anchor" 2>/dev/null || true
+    fi
+    printf '%s' "$branch" > "$mine_dir/branch" 2>/dev/null || true
+  fi
 fi
 # The scratch index lives inside .git so it is never something the agent can see
 # and never a path git would try to add to itself.
@@ -670,20 +905,28 @@ if [ -n "$tree" ] && [ "$tree" != "$headtree" ]; then
 fi
 if [ -n "$snapshot" ]; then
   tried=1
-  git push -q -f origin "$snapshot:refs/cheese/snapshots/$branch" >/dev/null 2>&1 \
+  # Keyed by the topic when the batch could not be learned: the uncommitted work
+  # has to leave the machine either way, and a ref name is not the place to
+  # guess which branch it belongs to.
+  snapref="${branch:-topic-${CHEESE_TOPIC:-unknown}}"
+  git push -q -f origin "$snapshot:refs/cheese/snapshots/$snapref" >/dev/null 2>&1 \
     || failed=1
 fi
 [ -n "$tried" ] || exit 0
 if [ -n "$failed" ]; then status=failed; else status=ok; fi
 {
   printf '{"hook_event_name":"CheeseSync","status":"%s",' "$status"
-  printf '"commit":"%s","snapshot":"%s","branch":"%s"}' "$head" "$snapshot" "$branch"
+  printf '"commit":"%s","snapshot":"%s","branch":"%s","detail":"%s"}' \
+    "$head" "$snapshot" "$branch" "$detail"
 } | cheese-hook >/dev/null 2>&1 || true
 """
 
 
 def build_launch_script(
-    sync_on_stop: bool = False, system_prompt: str = "", ca_pem: str = ""
+    sync_on_stop: bool = False,
+    system_prompt: str = "",
+    ca_pem: str = "",
+    remote_control: bool = False,
 ) -> str:
     """The ``bash -lc`` body run as the screen's program. It reads a few env vars the
     screen is created with: ``CHEESE_HOME`` (isolated config/home dir),
@@ -718,7 +961,17 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
     sync_script = CHEESE_SYNC_SCRIPT
     workspace_bringup = CHEESE_WORKSPACE_BRINGUP
     settings_reconcile = CHEESE_SETTINGS_RECONCILE
-    drain_script = CHEESE_DRAIN_SCRIPT
+    startup_cache_source = Path(startup_cache.__file__).read_text()
+    skill_setup = "\n".join(
+        f'mkdir -p "$CLAUDE_CONFIG_DIR/{Path(name).parent}"\n'
+        f"cat > \"$CLAUDE_CONFIG_DIR/{name}\" <<'CHEESE_NATIVE_SKILL'\n"
+        f"{content}\nCHEESE_NATIVE_SKILL"
+        for name, content in native_skill_files().items()
+    )
+    drain_script = build_drain_script()
+    cli_source = (Path(__file__).resolve().parents[5] / "sandbox" / "cheese").read_text(
+        encoding="utf-8"
+    )
     # Shipped by reading the module's own bytes rather than by keeping a second
     # copy here: it is a real, linted, unit-tested module precisely so there is
     # only one version of it to be wrong.
@@ -731,9 +984,15 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
     preview_up = CHEESE_PREVIEW_UP
     settings_json = json.dumps(
         hooks_settings(
-            ["cheese-sync", "cheese-usage"] if sync_on_stop else ["cheese-usage"]
+            ["cheese-sync", "cheese-usage"] if sync_on_stop else ["cheese-usage"],
+            remote_control=remote_control,
         ),
         ensure_ascii=False,
+    )
+    claude_args = (
+        " --dangerously-skip-permissions --remote-control Cheese"
+        if remote_control
+        else CLAUDE_BASE_ARGS
     )
     # The settings.json / cheese-hook heredocs are quoted ('JSON'/'SH') so the shell
     # never expands them. ~/.claude.json is written by the shell (see below) so a
@@ -746,9 +1005,22 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
 # POSIX-only from here: the connector's tmux joins argv with spaces and
 # re-parses through /bin/sh (dash on Debian/Ubuntu) — bashisms die silently.
 REAL_HOME="$HOME"
-CH="${{CHEESE_HOME:-$REAL_HOME}}"; CW="${{CHEESE_WORK:-$REAL_HOME}}"
+CH="${{CHEESE_HOME:?Cheese session home is required}}"
+CW="${{CHEESE_WORK:?Cheese work directory is required}}"
 case "$CH" in "\\$HOME"*) CH="$REAL_HOME${{CH#\\$HOME}}";; esac
 case "$CW" in "\\$HOME"*) CW="$REAL_HOME${{CW#\\$HOME}}";; esac
+WARM_ROOT=""
+if [ -f "$REAL_HOME/.cheese/native-warm/binding.json" ]; then
+  python3 "$REAL_HOME/.cheese/warm-native-runner.py" recover-room \\
+    "$REAL_HOME/.cheese/native-warm"
+fi
+if [ -f "$REAL_HOME/.cheese/native-warm/state.json" ] \\
+  && python3 "$REAL_HOME/.cheese/warm-native-runner.py" available \\
+    "$REAL_HOME/.cheese/native-warm"; then
+  python3 "$REAL_HOME/.cheese/warm-native-runner.py" stage-environment \\
+    "$REAL_HOME/.cheese/native-warm" "$CH" "$CW"
+  WARM_ROOT="$REAL_HOME/.cheese/native-warm"
+fi
 export HOME="$CH" CHEESE_WORK="$CW"
 mkdir -p "$HOME" "$CHEESE_WORK"
 # Canonicalize to absolutes (resolve symlinks) so nothing depends on cwd —
@@ -769,6 +1041,8 @@ cat > "$HOME/.claude/cheese-environment.py" <<'CHEESE_ENV_PY'
 # owner's settings.json to be routed at all, hijacking every claude the owner
 # starts by hand. With it, the owner's files are never read and never written.
 export CLAUDE_CONFIG_DIR="$HOME/.claude"
+export DISABLE_AUTOUPDATER=1
+{skill_setup}
 {ca_block}
 # Written by the shell, not node: a machine whose `claude` is the native binary
 # has no node at all (MicroCloud's Debian image is exactly that), and under
@@ -781,9 +1055,11 @@ export CLAUDE_CONFIG_DIR="$HOME/.claude"
 # claude reads the onboarding/trust gates from THERE (verified — the gate in the
 # dir let a non-interactive run proceed), and a file at $HOME/.claude.json would
 # just be dead weight in the isolated home.
+if [ -z "$WARM_ROOT" ]; then
 cat > "$CLAUDE_CONFIG_DIR/.claude.json" <<JSON
 {{"hasCompletedOnboarding":true,"autoUpdates":false,"bypassPermissionsModeAccepted":true,"projects":{{"$CHEESE_WORK":{{"hasTrustDialogAccepted":true,"hasCompletedProjectOnboarding":true}}}}}}
 JSON
+fi
 cat > "$HOME/.claude/settings.json" <<'JSON'
 {settings_json}
 JSON
@@ -800,15 +1076,12 @@ chmod +x "$HOME/.claude/cheese-usage"
 cat > "$HOME/.claude/cheese-hook" <<'SH'
 {_CHEESE_HOOK_SCRIPT}SH
 chmod +x "$HOME/.claude/cheese-hook"
-# The `cheese` platform-action CLI (accept cards / docs / decisions / memory): the
-# local sandbox bakes it into the image; a device fetches it from the backend, gated
-# by the same scoped token. Best-effort — a device without it (or without python3)
-# can still do code work, just not platform actions. On PATH via $HOME/.claude below.
-if [ -n "$CHEESE_CLI_URL" ]; then
-  curl -s -m 10 -H "X-Cheese-Token: $CHEESE_TOKEN" "$CHEESE_CLI_URL" \\
-    > "$HOME/.claude/cheese" 2>/dev/null && [ -s "$HOME/.claude/cheese" ] \\
-    && chmod +x "$HOME/.claude/cheese" || rm -f "$HOME/.claude/cheese"
-fi
+# Ship the platform CLI with the launcher over the existing device connection.
+# A separate public HTTP download added 0.39-1.24s to measured launches and
+# could block each launch for its 10s timeout.
+cat > "$HOME/.claude/cheese" <<'CHEESE_PLATFORM_CLI'
+{cli_source}CHEESE_PLATFORM_CLI
+chmod +x "$HOME/.claude/cheese"
 export PATH="$HOME/.claude:$PATH"
 # Give every device the topic branch: a real checkout it can push back from so
 # 采纳 sees what the agent wrote. It runs here, after the forwarder is on PATH,
@@ -881,14 +1154,11 @@ mv "$HOME/.claude/cheese-drain.env.tmp" "$HOME/.claude/cheese-drain.env"
 if [ -n "${{CHEESE_TUNNEL_URL:-}}" ]; then
   cat > "$HOME/.claude/cheese-tunnel.py" <<'TUNNELPY'
 {tunnel_helper}TUNNELPY
-  # CHEESE_TOKEN, deliberately — not CLAUDE_CODE_OAUTH_TOKEN. The helper's token
-  # answers "which project is opening this tunnel, and may it spend", which is
-  # the scoped cheese token's job and nothing else's. They used to be the same
-  # string, so reading either worked by accident; on an enrolled machine
-  # CLAUDE_CODE_OAUTH_TOKEN is now the machine's ccproxy ticket, and stamping
-  # THAT as the CONNECT password would get every tunnel refused with 407.
+  # Use the place-scoped CONNECT credential, including its RC claim. The hook
+  # token can have project scope; the machine OAuth ticket is never a tunnel
+  # credential. A missing CONNECT token must not fall back to either one.
   cat > "$HOME/.claude/cheese-tunnel.token.tmp" <<TUNNELTOK
-$CHEESE_TOKEN
+$CHEESE_CONNECT_TOKEN
 TUNNELTOK
   chmod 600 "$HOME/.claude/cheese-tunnel.token.tmp"
   mv "$HOME/.claude/cheese-tunnel.token.tmp" "$HOME/.claude/cheese-tunnel.token"
@@ -965,7 +1235,7 @@ fi
 # has a claude. Non-fatal: the chain below still runs, and the floor check
 # still refuses a build that is too old. A screen created without CHEESE_API
 # skips this and behaves as before.
-_pin="$REAL_HOME/.local/share/claude/versions/{CLAUDE_PINNED_VERSION}"
+_pin="$REAL_HOME/.cheese/claude/versions/{CLAUDE_PINNED_VERSION}"
 if [ ! -x "$_pin" ] && [ -n "${{CHEESE_API:-}}" ]; then
   case "$(uname -m)" in
     x86_64|amd64) _carch=x64 ;;
@@ -1028,7 +1298,11 @@ if [ -n "${{CHEESE_RV_TOKEN_FILE:-}}" ]; then
   CLAUDE_BG_RV_AUTH="$(cat "$CHEESE_RV_TOKEN_FILE" 2>/dev/null || true)"
   export CLAUDE_BG_BACKEND CLAUDE_BG_RENDEZVOUS_SOCK CLAUDE_BG_RV_AUTH
 fi
-CLAUDE="\\"$CLAUDE_BIN\\"{CLAUDE_BASE_ARGS}"
+python3 - restore "$REAL_HOME" "$CLAUDE_V" \\
+  "$CLAUDE_CONFIG_DIR" <<'CHEESE_NATIVE_CACHE'
+{startup_cache_source}
+CHEESE_NATIVE_CACHE
+CLAUDE="\\"$CLAUDE_BIN\\"{claude_args}"
 [ -n "$CLAUDE_MODEL" ] && CLAUDE="$CLAUDE --model $CLAUDE_MODEL"
 # 上一段对话接在哪儿。A screen is retired and reopened for reasons that have
 # nothing to do with the conversation — an expired credential, a `claude` that
@@ -1077,6 +1351,11 @@ if [ -n "${{CHEESE_ENVIRONMENT:-}}" ]; then
   ENVIRONMENT_CMD="python3 \\"$HOME/.claude/cheese-environment.py\\" "
 fi
 [ -s "$CHEESE_SP" ] && CLAUDE="$CLAUDE --append-system-prompt-file \\"$CHEESE_SP\\""
+if [ -n "$WARM_ROOT" ]; then
+  python3 "$REAL_HOME/.cheese/warm-native-runner.py" adopt-room "$WARM_ROOT"
+  exec python3 "$REAL_HOME/.cheese/warm-native-runner.py" attach \\
+    "$WARM_ROOT" "$CHEESE_PROJECT" "$CHEESE_TOPIC"
+fi
 if command -v tmux >/dev/null 2>&1; then
   # WHICH tmux server hosts the inner session decides who is able to wipe it.
   # The machine's DEFAULT server belongs to the person whose machine this is:
@@ -1111,14 +1390,8 @@ if command -v tmux >/dev/null 2>&1; then
   SESSION="cheese_$(printf '%s' "$CHEESE_WORK" | cksum | cut -d' ' -f1)"
   python3 -c 'import json,sys; json.dump(sys.argv[1:], open(sys.argv[3], "w"))' \\
     "$CHEESE_TMUX_SOCK" "$SESSION" "$HOME/.claude/environment-session.json"
-  # An agent session is never the owner's to carry. One sitting on the default
-  # server is ours all the same, and it is not harmless: it holds this topic's
-  # rendezvous socket, spool and work tree, so leaving it running means a second
-  # claude answering for this topic forever. Retire it. `has-session` never
-  # starts a server, so a machine with no default server keeps not having one.
-  if tmux has-session -t "$SESSION" 2>/dev/null; then
-    tmux kill-session -t "$SESSION" 2>/dev/null || true
-  fi
+  # A matching name on the owner's default server does not prove ownership.
+  # Only the connector's private server belongs to this launch.
   # A surviving inner session runs the `claude` it was BORN with, and claude
   # reads its model credential (CLAUDE_CODE_OAUTH_TOKEN / the HTTPS_PROXY
   # password) ONCE at startup — it never re-reads it. So the fresh scoped token
@@ -1135,6 +1408,9 @@ if command -v tmux >/dev/null 2>&1; then
   # margin is deliberately small: it only rejects an already-dead-or-dying token,
   # never a healthy one, so a short-lived credential (the gateway path's hour) is
   # re-minted at most once an hour rather than on every turn.
+  # Configuration is checked at the turn boundary, including after backend restart.
+  printf '%s' "${{CHEESE_AGENT_CONFIG:-}}" > "$HOME/.claude/agent-configuration"
+  printf '%s' {shlex.quote(claude_args)} > "$HOME/.claude/launch-contract"
   EXPFILE="$HOME/.claude/$SESSION.tokexp"
   if atmux has-session -t "$SESSION" 2>/dev/null; then
     TOKEXP="$(cat "$EXPFILE" 2>/dev/null || true)"
@@ -1154,7 +1430,9 @@ if command -v tmux >/dev/null 2>&1; then
     # is what makes a rotation reach the process. On a device with no ticket the
     # file is absent and this is the old checksum unchanged, so nothing churns.
     CFGNOW="$(cat "$REAL_HOME/.claude/settings.json" \\
-      "$HOME/.claude/cheese-machine.token" 2>/dev/null | cksum | cut -d" " -f1)"
+      "$HOME/.claude/cheese-machine.token" \\
+      "$HOME/.claude/agent-configuration" \\
+      "$HOME/.claude/launch-contract" 2>/dev/null | cksum | cut -d" " -f1)"
     CFGWAS="$(cat "$CFGF" 2>/dev/null || true)"
     RETIRE=0
     [ -f "$HOME/.claude/environment-restart" ] && RETIRE=1
@@ -1221,7 +1499,9 @@ if command -v tmux >/dev/null 2>&1; then
     # tell a stale-credential session from a good one and retire only the stale.
     printf '%s\\n' "${{CHEESE_TOKEN_EXPIRES:-0}}" > "$EXPFILE" 2>/dev/null || true
     cat "$REAL_HOME/.claude/settings.json" \\
-      "$HOME/.claude/cheese-machine.token" 2>/dev/null | cksum | cut -d" " -f1 \\
+      "$HOME/.claude/cheese-machine.token" \\
+      "$HOME/.claude/agent-configuration" \\
+      "$HOME/.claude/launch-contract" 2>/dev/null | cksum | cut -d" " -f1 \\
       > "$HOME/.claude/$SESSION.cfg" 2>/dev/null || true
     # Hand THIS launch's credential / routing / attribution env to the new session
     # EXPLICITLY with -e, never by inheritance. tmux seeds a new session's env from
@@ -1263,12 +1543,10 @@ if command -v tmux >/dev/null 2>&1; then
       "CHEESE_TOKEN=$CHEESE_TOKEN" "CHEESE_HOOK_URL=$CHEESE_HOOK_URL" \\
       "CHEESE_API=$CHEESE_API" "CHEESE_PROJECT=$CHEESE_PROJECT" \\
       "CHEESE_TOPIC=$CHEESE_TOPIC" "CHEESE_AUTHOR=$CHEESE_AUTHOR" \\
-      "CHEESE_CLI_URL=$CHEESE_CLI_URL" \\
       "CHEESE_TUNNEL_URL=$CHEESE_TUNNEL_URL" \\
       "CHEESE_TUNNEL_PORT=$CHEESE_TUNNEL_PORT" \\
       "CHEESE_PREVIEW_URL=$CHEESE_PREVIEW_URL" \\
-      "CHEESE_PREVIEW_UP=$CHEESE_PREVIEW_UP" \\
-      "CHEESE_APP_BASE=$CHEESE_APP_BASE"; do
+      "CHEESE_PREVIEW_UP=$CHEESE_PREVIEW_UP"; do
       # An empty value = a var this launch didn't set; skip it (a same-mode box's
       # frozen-global copy already matches, and forcing empty could flip modes).
       case "$_kv" in *=) ;; *) set -- "$@" -e "$_kv" ;; esac
@@ -1344,7 +1622,6 @@ def build_screen_launch(
     resume_session_id: str | None = None,
     extra_env: dict[str, str] | None = None,
     api_base: str | None = None,
-    cli_url: str | None = None,
     project_id: str | None = None,
     topic_id: str | None = None,
     author: str | None = None,
@@ -1359,12 +1636,14 @@ def build_screen_launch(
     ``command`` is a self-contained ``bash -lc`` launcher; ``env`` carries the hook
     wiring + home/work dirs + model + any provider (gateway) vars, and — for a
     screen with a topic — where its rendezvous socket lives. When
-    ``cli_url``/``api_base`` and the
-    ``project_id``/``topic_id`` context are given, the launcher also fetches the
-    ``cheese`` platform-action CLI (accept cards / docs / decisions / memory) and wires
+    ``api_base`` and the ``project_id``/``topic_id`` context are given, the
+    bundled ``cheese`` CLI (accept cards / docs / decisions / memory) uses
     its ``CHEESE_*`` env — the same actions the in-container agent has locally."""
     script = build_launch_script(
-        sync_on_stop=bool(git_remote), system_prompt=system_prompt, ca_pem=ca_pem
+        sync_on_stop=bool(git_remote),
+        system_prompt=system_prompt,
+        ca_pem=ca_pem,
+        remote_control=(extra_env or {}).get("CHEESE_REMOTE_CONTROL") == "1",
     )
     command = ["bash", "-lc", script]
     env: dict[str, str] = {
@@ -1392,19 +1671,12 @@ def build_screen_launch(
         env["CHEESE_RESUME_SESSION"] = resume_session_id
     # Platform-action CLI wiring: the `cheese` script reads these (X-Cheese-Token =
     # CHEESE_TOKEN, the SAME scoped token the hook forwarder uses).
-    if cli_url:
-        env["CHEESE_CLI_URL"] = cli_url
     if api_base:
         env["CHEESE_API"] = api_base
     if project_id:
         env["CHEESE_PROJECT"] = project_id
     if topic_id:
         env["CHEESE_TOPIC"] = topic_id
-        # Where a preview of this place's running app will be mounted for the
-        # browser. The agent needs it BEFORE it starts a dev server, because a
-        # server that emits root-absolute asset URLs (vite's `/@vite/client`)
-        # has to be started under this base or the panel shows a white frame.
-        env["CHEESE_APP_BASE"] = f"{GATEWAY_MOUNT}/topics/{topic_id}/app/"
         # Where this screen's prompts arrive. The launcher turns these two into
         # Claude Code's own CLAUDE_BG_* trio and mints the token; the connector
         # reads the same two to dial. Keyed on the topic so an adopted screen
@@ -1418,11 +1690,21 @@ def build_screen_launch(
         # Every device clones and pushes its own independent topic tree.
         env["CHEESE_GIT_REMOTE"] = git_remote
         env["CHEESE_GIT_BRANCH"] = git_branch or "main"
+        if topic_id:
+            # Where `cheese-sync` asks which batch this place is writing to. The
+            # ADDRESS is fixed at launch and that is fine — it names the place,
+            # which does not change; the branch it answers with is the thing that
+            # does, which is exactly why `CHEESE_GIT_BRANCH` cannot be trusted
+            # after the room delivers once.
+            env["CHEESE_BRANCH_URL"] = f"{git_remote}/branch/{topic_id}"
     if git_author:
         # Who the turn's commits belong to (workspace/identity.py). Absent, the
         # launcher falls back to 芝士 — the same default the in-repo snapshot
         # path uses, so both surfaces agree.
         env["CHEESE_GIT_AUTHOR_NAME"], env["CHEESE_GIT_AUTHOR_EMAIL"] = git_author
+        env["GIT_AUTHOR_NAME"], env["GIT_AUTHOR_EMAIL"] = git_author
+        env["GIT_COMMITTER_NAME"] = "芝士"
+        env["GIT_COMMITTER_EMAIL"] = "cheese@zhishi.local"
     if extra_env:
         env.update(extra_env)
     return command, env

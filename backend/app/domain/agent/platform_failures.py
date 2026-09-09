@@ -321,3 +321,82 @@ def classify_platform_failure(
     if is_runtime_image_missing(value):
         return RUNTIME_IMAGE_MISSING
     return None
+
+
+# --- CLI 自己印在对话里的英文提示 -------------------------------------------
+#
+# 上面那些故障都走异常或 `AgentResult`。这一类不走:它们是 Claude Code 自己
+# **当成助手输出**印出来的一句话,于是原样落进房间,看起来像芝士在用英文说
+# 「API Error: Unable to connect to API (ConnectionRefused)」。实测 200 个会话
+# 里 88 条,而且高度集中 —— 去重之后就几句,前两句占了 57 条。
+#
+# 这正是本模块开头说的第一类:「别人写的句子,平台没法让它变结构化,只能匹配
+# 它的文本」。识别出来之后它们该走平台提示卡,不该顶着芝士的名字发英文。
+#
+# 匹配**整条消息**,不是子串:芝士自己用中文讨论一个报错时会把原话引在句子里,
+# 那条消息是它的话,不能被换掉。所以三个条件缺一不可 —— 通篇没有汉字、短、且
+# 从已知的开头起头。
+PROVIDER_UNREACHABLE_CODE = "provider_unreachable"
+PROVIDER_OVERLOADED_CODE = "provider_overloaded"
+MODEL_LIMIT_REACHED_CODE = "model_limit_reached"
+RESPONSE_TRUNCATED_CODE = "response_truncated"
+TOOL_UNAVAILABLE_CODE = "tool_unavailable"
+
+#: 一条 CLI 提示最长能有多长。真实样本最长的一条 120 字符出头;留三倍余量,再长
+#: 就不是提示而是内容了。
+_CLI_NOTICE_MAX = 300
+
+_CLI_NOTICES: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(
+            r"^API Error:.*\b(ConnectionRefused|ECONNRESET|Connection refused)\b",
+            re.I,
+        ),
+        PROVIDER_UNREACHABLE_CODE,
+    ),
+    (
+        re.compile(r"^API Error:\s*(502|503|529)\b", re.I),
+        PROVIDER_OVERLOADED_CODE,
+    ),
+    (
+        re.compile(r"^API Error:.*\b(Overloaded|Bad Gateway)\b", re.I),
+        PROVIDER_OVERLOADED_CODE,
+    ),
+    (
+        re.compile(r"^You'?ve reached your .*\blimit\b", re.I),
+        MODEL_LIMIT_REACHED_CODE,
+    ),
+    (
+        re.compile(
+            r"^(API Error:\s*)?(Response stalled mid-stream"
+            r"|The response stopped arriving)",
+            re.I,
+        ),
+        RESPONSE_TRUNCATED_CODE,
+    ),
+    # 「我还没有 X 的权限,请批准一下」—— 在这个平台上根本没有人能批准:那个
+    # 授权框画在容器的终端里,房间里的人够不着。所以它出现本身就说明配置不对,
+    # 而它读起来却像一句正常的请求 —— 一个故障伪装成了一句话,最坏的一种。
+    (
+        re.compile(
+            r"^(I don'?t have permission to use\b"
+            r"|No response requested\.?$"
+            r"|Tool ran without output)",
+            re.I,
+        ),
+        TOOL_UNAVAILABLE_CODE,
+    ),
+)
+
+_HAS_CJK = re.compile(r"[一-鿿]")
+
+
+def classify_cli_notice(text: str) -> str | None:
+    """整条消息其实是 CLI 自己印的一句英文提示时,它属于哪一类;否则 None。"""
+    line = text.strip()
+    if not line or len(line) > _CLI_NOTICE_MAX or _HAS_CJK.search(line):
+        return None
+    for pattern, failure in _CLI_NOTICES:
+        if pattern.search(line):
+            return failure
+    return None

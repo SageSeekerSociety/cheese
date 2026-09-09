@@ -14,11 +14,11 @@ import * as directives from 'vuetify/directives'
 import { cleanup, render, screen, waitFor } from '@testing-library/vue'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const getAgentTypeOptions = vi.fn()
+const getProjectAgentOptions = vi.fn()
 
 vi.mock('../../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api')>()
-  return { ...actual, getAgentTypeOptions: () => getAgentTypeOptions() }
+  return { ...actual, getProjectAgentOptions: () => getProjectAgentOptions() }
 })
 
 import AgentEditorDialog from './AgentEditorDialog.vue'
@@ -40,6 +40,7 @@ const CUSTOM_TYPE: AgentType = {
 
 const AGENT: ProjectAgent = {
   id: 'a1',
+  configuration: { body: 'Review', model: 'sonnet', harness: 'claude-code', skills: [], mcp_servers: [], effort: null },
   project_id: PROJECT,
   handle: 'reviewer',
   type_name: 'reviewer',
@@ -114,7 +115,7 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
-  getAgentTypeOptions.mockReset().mockResolvedValue(OPTIONS)
+  getProjectAgentOptions.mockReset().mockResolvedValue(OPTIONS)
 })
 
 afterEach(cleanup)
@@ -122,7 +123,7 @@ afterEach(cleanup)
 describe('只提供真的会生效的设置', () => {
   it('后端说某个字段不可选，就不给它输入框', async () => {
     mountDialog()
-    await waitFor(() => expect(getAgentTypeOptions).toHaveBeenCalled())
+    await waitFor(() => expect(getProjectAgentOptions).toHaveBeenCalled())
     // 「思考深度」和「外部工具」在这一版都没有消费方 —— 它们的旧输入框曾经在
     // 这里，填了完全不生效，是这次改动要消灭的东西。
     await waitFor(() => expect(screen.queryByLabelText('思考深度')).toBeNull())
@@ -131,7 +132,7 @@ describe('只提供真的会生效的设置', () => {
 
   it('也不给它留一句说明 —— 界面上不为不存在的功能留位置', async () => {
     mountDialog()
-    await waitFor(() => expect(getAgentTypeOptions).toHaveBeenCalled())
+    await waitFor(() => expect(getProjectAgentOptions).toHaveBeenCalled())
     // 「暂不可设置：思考深度 —— …」这种说明曾经在这里。它比空输入框好不了多少：
     // 人照样会去理解一个还不存在的功能，然后等它。理由留在后端目录里给代码读。
     expect(screen.queryByText(/暂不可设置/)).toBeNull()
@@ -146,11 +147,10 @@ describe('只提供真的会生效的设置', () => {
     expect(await screen.findByLabelText('模型')).toBeTruthy()
   })
 
-  it('目录取不到时，不渲染选择器也不宣布任何限制', async () => {
-    getAgentTypeOptions.mockRejectedValue(new Error('boom'))
+  it('shows a load error and prevents saving without available models', async () => {
+    getProjectAgentOptions.mockRejectedValue(new Error('Model catalog unavailable'))
     mountDialog()
-    await waitFor(() => expect(getAgentTypeOptions).toHaveBeenCalled())
-    // 一次网络失败不该被人读成「这个功能被砍了」，所以也不解释，就是不渲染。
-    expect(screen.queryByLabelText('模型')).toBeNull()
+    expect(await screen.findByText('Model catalog unavailable')).toBeTruthy()
+    expect((screen.getByText('保存').closest('button') as HTMLButtonElement).disabled).toBe(true)
   })
 })

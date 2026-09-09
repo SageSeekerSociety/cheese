@@ -1,39 +1,5 @@
-"""Who a topic's commits are authored by.
+"""Resolve agent authors and explicitly declared human contribution credits."""
 
-Every commit the platform makes used to be authored by `芝士
-<cheese@zhishi.local>` — an address that belongs to no GitHub account, so on
-GitHub the work showed up as a grey unlinked name: no avatar, no link, no
-contribution credit for the person who asked for it and approved it. This module
-resolves the human behind a topic to a git identity GitHub *can* link, and
-persists it next to the workspace so the synchronous launch path (which has no
-DB session) can read it.
-
-The address is GitHub's `<id>+<login>@users.noreply.github.com` form. It is the
-only email guaranteed to resolve to the account: a user's real email may be
-private, unverified, or simply different from the one they signed up with, and
-any of those makes the commit unlinked again. The numeric id is what GitHub
-matches on, which is why the login alone is not enough.
-
-Who this names: the human the topic BELONGS TO — its roster owner, see
-`requester_handle`. They are the one accountable for the change; the agent typed
-it. That the agent typed it is not hidden, and not left to be inferred either:
-the delivery commit carries `Cheese-Agent:` (which 分身) and one `Cheese-Task:`
-per piece of work the card declares it delivers (which worker inside it),
-resolved by `work_items`. The platform's own commits (repo init, upstream
-merges) keep the 芝士 identity because nobody asked for those.
-
-Accountable is not the same as sole contributor. A room can change hands — one
-person opens it, it stalls, someone else picks it up and the sub-topics split out
-of THEIR turns belong to them (`TopicService.dispatch_task`). The person who
-asked in the first place still did something, so they come back as
-`Co-authored-by:`; see `coauthor_handles`.
-
-Author and committer are two knobs, and they carry different facts: the author is
-the human this work belongs to (`GIT_AUTHOR_*`), the committer is 芝士, which is
-who actually ran `git commit` (`GIT_COMMITTER_*`).
-"""
-
-import json
 import logging
 import uuid
 from dataclasses import dataclass
@@ -48,12 +14,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("cheesex.workspace.identity")
 
-#: The platform's own identity — the fallback whenever the human behind a topic
-#: has no linked GitHub account, and the committer on every commit regardless.
+#: The platform identity used for mechanical commit operations.
 CHEESE_NAME = "芝士"
 CHEESE_EMAIL = "cheese@zhishi.local"
-
-_IDENTITY_FILE = "git-identity.json"
 
 
 @dataclass(frozen=True)
@@ -87,28 +50,29 @@ class WorkItem:
     #: task can honestly have none.
     subagent_id: str | None
     title: str
+    reporter_handle: str | None = None
+    contributor_handles: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
 class Attribution:
-    """Who a change belongs to, as the PR body and the squash commit say it.
+    """Agent author and independently resolved human contribution roles."""
 
-    One object rather than four loose values because they are only correct
-    together: `coauthors` means "credited, and not `author`", so a caller that
-    took them from different resolutions could name the same person twice or lose
-    a credit. Every field may be empty — nobody on the roster, nobody with a
-    GitHub account to link to, no work rows behind the delivery — and that is a
-    normal, silent degrade, never a reason to fail a merge."""
-
-    #: `Requested-by:`, the git author of the branch's commits, and the account
-    #: the PR is opened under. See `requester_handle`.
+    #: The human requester handle.
     handle: str | None
-    #: `handle`'s git identity, or None when they never connected GitHub.
+    #: The platform agent that authored the work.
     author: GitIdentity | None
-    #: `Co-authored-by:`, one line each. See `coauthor_handles`.
+    #: Explicitly declared human code contributors.
     coauthors: tuple[GitIdentity, ...] = ()
     #: `Cheese-Task:`, one line each. See `work_items`.
     tasks: tuple[WorkItem, ...] = ()
+    #: `Reviewed-by:`'s git identity — the accepter's, when they connected
+    #: GitHub. Resolved here rather than at the trailer builder for the same
+    #: reason as `author`: that module is pure, so anything needing a session
+    #: arrives already resolved.
+    reviewer: GitIdentity | None = None
+    requester: GitIdentity | None = None
+    reporters: tuple[GitIdentity, ...] = ()
 
 
 __all__ = [
@@ -119,32 +83,53 @@ __all__ = [
     "GitIdentity",
     "WorkItem",
     "attribution",
-    "coauthor_handles",
     "coauthored_by",
     "identity_from_profile",
-    "identity_path",
+    "as_trailer",
     "noreply_email",
-    "read",
-    "remember",
+    "platform_identity",
     "requester_handle",
     "resolve_for_handle",
     "session_dir",
-    "sync_for_topic",
     "work_items",
 ]
 
 
 def session_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
-    """Host directory holding this topic's per-session sidecars (the await log
-    spool, the command spool, and the git identity below). One definition so the
-    three never drift apart."""
+    """Directory for this room's session logs and command spools."""
     return (
         Path(settings.workspace_root) / ".sessions" / str(project_id) / topic_id.hex[:8]
     ).resolve()
 
 
-def identity_path(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
-    return session_dir(project_id, topic_id) / _IDENTITY_FILE
+def platform_identity(handle: str) -> GitIdentity:
+    """The address for somebody who never connected GitHub (#189).
+
+    A trailer has to name a person, and a bare handle names a string. This is
+    the honest degrade: the platform's own domain, the same one 芝士 commits
+    under, so it is a well-formed address that git and GitHub both accept and
+    that no reader can mistake for a real mailbox or for a GitHub account. What
+    it must NEVER be is a fabricated `users.noreply.github.com` address — that
+    one LOOKS linkable and points at nobody, which is worse than admitting we
+    have no account for them.
+    """
+    return GitIdentity(handle, f"{handle}@{CHEESE_EMAIL.split('@', 1)[1]}")
+
+
+def agent_identity(handle: str) -> GitIdentity:
+    """The acting platform agent, without inventing a GitHub account."""
+    return GitIdentity(handle, f"{handle}@agent.cheese.local")
+
+
+def as_trailer(handle: str | None, resolved: "GitIdentity | None") -> str:
+    """`Name <email>` for a trailer — resolved identity first, platform address
+    otherwise, and the bare handle only when there is no handle to build from."""
+    if resolved is not None:
+        return f"{resolved.name} <{resolved.email}>"
+    if not handle:
+        return ""
+    who = platform_identity(handle)
+    return f"{who.name} <{who.email}>"
 
 
 def noreply_email(github_user_id: str, login: str) -> str:
@@ -169,9 +154,7 @@ def identity_from_profile(
 
 
 async def resolve_for_handle(session: Any, handle: str) -> GitIdentity | None:
-    """The git identity of a platform user, by handle. None when they exist but
-    never connected GitHub — the caller then keeps the 芝士 identity rather than
-    inventing an address.
+    """The linked Git identity of a platform user, or None without a connection.
 
     The connection lookup belongs to the oauth domain and is asked for as a
     service call, not by reaching into its repositories (the ratchet in
@@ -190,33 +173,7 @@ async def resolve_for_handle(session: Any, handle: str) -> GitIdentity | None:
 async def requester_handle(
     session: Any, topic: "Topic", *, task_id: uuid.UUID | None = None
 ) -> str | None:
-    """The handle of the human a topic's work belongs to — the one name behind
-    `Requested-by:`, the git author of its commits, and the account the PR is
-    opened under.
-
-    NOT ``topic.created_by``. A 分身 splits its sub-topics under its OWN handle
-    (``cheese-<hex12>``, see ``identity.handles``), so on every split topic
-    ``created_by`` names a robot that has no GitHub account, and every one of
-    those attributions silently degraded: the PR opened as ``cheesex-app[bot]``,
-    its body said ``Requested-by: cheese-a7a0268b``, and the commits carried no
-    ``Co-authored-by`` at all (PR #500, #504). The roster already knows better —
-    ``TopicService.dispatch_task`` walks a ladder (the splitter if human, else
-    the human whose turn the split came out of, else the parent room's owner, else
-    the project's) precisely to seed a real human as the child's owner. This reads
-    that answer instead of re-deriving it.
-
-    For a THREAD (``task_id``) the answer is `tasks.owner_handle` — a thread has
-    no roster at all, so reading one gets the ROOM's owner, and every piece of
-    work in a room would be attributed to whoever opened the room. That is the
-    same silent degradation as the robot handle, one level over.
-
-    Falls back to ``created_by``, which is what every caller used before: a room
-    a human opened directly is unaffected (owner and creator are the same
-    person), and a room where no human can be found behaves exactly as it does
-    today rather than worse. Best-effort by construction — attribution must
-    never be the reason a PR fails to open, so a broken roster read is logged
-    and swallowed.
-    """
+    """Resolve the requester from task ownership, then the room roster."""
     if task_id is not None:
         thread = await _thread(session, task_id)
         if thread is not None:
@@ -254,41 +211,6 @@ async def _roster_owner(session: Any, topic_id: uuid.UUID) -> str | None:
         return None
 
 
-async def coauthor_handles(
-    session: Any,
-    topic: "Topic",
-    *,
-    besides: str | None,
-    task_id: uuid.UUID | None = None,
-) -> list[str]:
-    """Humans who should be credited on this change but are not the one it is
-    attributed to (`besides`, normally `requester_handle`'s answer).
-
-    Exactly one candidate today: the ROOM's owner. When a room changes
-    hands, the work dispatched out of the new driver's turns belongs to the new
-    driver — that is what makes their accept card land on someone who is still
-    working on it — but the person who asked for the thing in the first place did
-    not stop having asked, and `Co-authored-by:` is where git records that.
-
-    Deliberately NOT "everyone who spoke in the parent room": a trailer is a claim
-    that someone contributed to this change, and handing it to every passer-by
-    inflates the credit until it means nothing.
-
-    Returns empty for a top-level room, which is the ordinary case and the reason
-    `Co-authored-by:` stopped being written on most changes: one room has one git
-    identity, so a self-referential trailer naming the commit's own author added
-    nothing but noise."""
-    # A thread's "one level up" is its room; a room's is the project root, which
-    # has no owner to credit — hence the empty answer for rooms, unchanged.
-    up = topic.id if task_id is not None else topic.parent_id
-    if up is None:
-        return []
-    owner = await _roster_owner(session, up)
-    if not owner or looks_like_agent_handle(owner) or owner == besides:
-        return []
-    return [owner]
-
-
 async def work_items(session: Any, card: Any) -> tuple[WorkItem, ...]:
     """Every piece of work this delivery carries, oldest first — read from what
     the card DECLARES (`AcceptCard.delivered_task_ids`), and from nowhere else.
@@ -323,7 +245,13 @@ async def work_items(session: Any, card: Any) -> tuple[WorkItem, ...]:
     from app.domain.room_task.services import TaskService
 
     return tuple(
-        WorkItem(task.id, task.subagent_id or None, task.title or "")
+        WorkItem(
+            task.id,
+            task.subagent_id or None,
+            task.title or "",
+            getattr(task, "reporter_handle", None),
+            tuple(getattr(task, "contributor_handles", None) or ()),
+        )
         for task in await TaskService(session).list_by_ids(declared)
     )
 
@@ -340,29 +268,13 @@ def _as_uuid(raw: Any) -> uuid.UUID | None:
 
 
 async def attribution(
-    session: Any, topic: "Topic", *, card: Any = None
+    session: Any, topic: "Topic", *, card: Any = None, decided_by: str | None = None
 ) -> "Attribution":
-    """Everything a PR body and a squash commit need to say about who a change
-    belongs to, resolved in ONE place.
+    """Resolve the agent author and credits from this delivery's declared tasks.
 
-    Takes the CARD rather than a thread id: the card is what a delivery IS, and
-    it carries both halves of the answer — the thread it was filed for (whose
-    owner the change belongs to) and the work it declares it delivers (which 分身
-    wrote it). Passing them separately is how a caller ends up resolving the
-    humans from one card and the machines from another.
+    Ownership alone never establishes a code contribution or a bug report."""
+    from app.domain.topic_membership.services import TopicMemberService
 
-    The human answers are correlated — a co-author is defined as "credited but not
-    the author" — so they are resolved together rather than at each call site;
-    that is how the PR-opening path and the three merge paths are kept from
-    disagreeing about the same change. `tasks` rides along for the same reason:
-    `pr_text` is pure, so anything needing a session has to arrive already
-    resolved, and one object means the humans and the machines behind a change
-    cannot come from two different reads of it.
-
-    Best-effort, and each part fails on its own: attribution must never take a
-    merge down, but one broken lookup must not cost more than it has to either —
-    losing `Requested-by:` because a co-author's account could not be read would
-    make the credit the trailer exists for the thing that destroys it."""
     task_id = getattr(card, "task_id", None)
     handle: str | None = None
     try:
@@ -371,22 +283,9 @@ async def attribution(
         logger.warning(
             "could not resolve the requester for topic %s", topic.id, exc_info=True
         )
-    author = await _identity_of(session, handle)
-    coauthors: list[GitIdentity] = []
-    try:
-        for who in await coauthor_handles(
-            session, topic, besides=handle, task_id=task_id
-        ):
-            found = await _identity_of(session, who)
-            # `!= author` again on the resolved identity, not just on the handle:
-            # two handles can be connected to the same GitHub account, and a
-            # trailer naming the commit's own author is the noise this removed.
-            if found is not None and found != author and found not in coauthors:
-                coauthors.append(found)
-    except Exception:  # noqa: BLE001 — same rule, narrower blast radius
-        logger.warning(
-            "could not resolve co-authors for topic %s", topic.id, exc_info=True
-        )
+    requester = await _identity_of(session, handle)
+    acting = await TopicMemberService(session).resolve_agent_handle(topic.id)
+    author = agent_identity(acting)
     tasks: tuple[WorkItem, ...] = ()
     try:
         tasks = await work_items(session, card)
@@ -394,7 +293,25 @@ async def attribution(
         logger.warning(
             "could not resolve the work behind topic %s", topic.id, exc_info=True
         )
-    return Attribution(handle, author, tuple(coauthors), tasks)
+    coauthors: list[GitIdentity] = []
+    reporters: list[GitIdentity] = []
+    for item in tasks:
+        for person, credits in [
+            *[(person, coauthors) for person in item.contributor_handles],
+            *([(item.reporter_handle, reporters)] if item.reporter_handle else []),
+        ]:
+            found = await _identity_of(session, person) or platform_identity(person)
+            if found not in credits:
+                credits.append(found)
+    return Attribution(
+        handle,
+        author,
+        tuple(coauthors),
+        tasks,
+        await _identity_of(session, decided_by),
+        requester,
+        tuple(reporters),
+    )
 
 
 async def _identity_of(session: Any, handle: str | None) -> GitIdentity | None:
@@ -409,75 +326,8 @@ async def _identity_of(session: Any, handle: str | None) -> GitIdentity | None:
         return None
 
 
-def read(project_id: uuid.UUID, topic_id: uuid.UUID) -> GitIdentity | None:
-    """The remembered author for this topic. Synchronous and DB-free on purpose:
-    the machine that commits reads it while launching a screen, with no session."""
-    try:
-        raw = identity_path(project_id, topic_id).read_text("utf-8")
-    except OSError:
-        return None
-    try:
-        data = json.loads(raw)
-        return GitIdentity(str(data["name"]), str(data["email"]))
-    except (ValueError, KeyError, TypeError):
-        logger.warning("unreadable git identity for topic %s", topic_id)
-        return None
-
-
-def remember(project_id: uuid.UUID, topic_id: uuid.UUID, identity: GitIdentity) -> None:
-    """Persist the author for this topic. Best-effort: a workspace that cannot
-    hold the sidecar still commits, just under the 芝士 identity."""
-    if read(project_id, topic_id) == identity:
-        return  # unchanged — don't rewrite the file on every turn
-    path = identity_path(project_id, topic_id)
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps({"name": identity.name, "email": identity.email}),
-            encoding="utf-8",
-        )
-    except OSError:
-        logger.warning("could not persist git identity for topic %s", topic_id)
-
-
-async def sync_for_topic(
-    session: Any, topic: "Topic", *, task_id: uuid.UUID | None = None
-) -> None:
-    """Refresh the remembered author from the DB. Called once per turn — the
-    connection can appear (someone links GitHub mid-project) or change, and a
-    place created before this existed has no sidecar at all.
-
-    Takes the place rather than a handle so that WHO the work belongs to is
-    decided in one place (`requester_handle`) instead of at each call site —
-    passing ``topic.created_by`` here is what left every 分身-dispatched thread
-    committing as 芝士.
-
-    The sidecar is keyed by the PLACE, because that is what the worktree is
-    keyed by: two threads in one room commit as two different people when they
-    belong to two different people."""
-    handle = await requester_handle(session, topic, task_id=task_id)
-    if not handle:
-        return
-    try:
-        identity = await resolve_for_handle(session, handle)
-    except Exception:  # noqa: BLE001 — authorship must never fail a turn
-        logger.exception("could not resolve git identity for %s", handle)
-        return
-    if identity is not None:
-        remember(topic.project_id, task_id or topic.id, identity)
-
-
 def coauthored_by(identity: GitIdentity | None) -> str | None:
-    """One `Co-authored-by:` line — the trailer GitHub reads when it decides who
-    a commit belongs to. Squash-merging collapses a whole topic branch into ONE
-    commit, so this is the only lever that credits a contributor who is not that
-    commit's author on the thing that actually lands on main.
-
-    None for 芝士 (拍板 2026-08-17): every commit on this platform is one she
-    typed, so the trailer would be true of every change and therefore carry no
-    information, and `cheese@zhishi.local` links to no GitHub account — it would
-    only pollute the repo's contributor list. `Cheese-Topic:` in the PR body is
-    already the traceable record of where a change came from."""
+    """Format a declared human code contributor as a Git trailer."""
     if identity is None or identity == CHEESE_IDENTITY:
         return None
     return f"Co-authored-by: {identity.name} <{identity.email}>"

@@ -32,7 +32,10 @@
           <template #text>
             <p>该赛题不允许重复提交，您已经提交过作品。</p>
             <div class="mt-2">
-              <v-btn color="primary" variant="text" :to="{ name: 'TasksSubmissions', params: { taskId: taskData.id } }"
+              <v-btn
+                color="primary"
+                variant="text"
+                :to="{ name: 'TasksSubmissions', params: { spaceId: taskData.space?.id, taskId: taskData.id } }"
                 >查看我的提交记录</v-btn
               >
             </div>
@@ -211,7 +214,7 @@
 
 <script setup lang="ts">
 import type { TaskParticipationIdentity, TaskParticipationInfo } from '@/network/api/tasks/types'
-import type { Task, TaskMembership } from '@/types'
+import type { Task } from '@/types'
 
 import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -220,7 +223,6 @@ import { throttle } from 'lodash-es'
 
 import { AttachmentsApi } from '@/network/api/attachments'
 import { TasksApi } from '@/network/api/tasks'
-import AccountService from '@/services/account'
 
 const CountdownTimer = defineAsyncComponent(() => import('@/components/common/CountdownTimer.vue'))
 
@@ -237,7 +239,6 @@ const uploadProgress = ref(0)
 const currentFileName = ref('')
 const uploadSpeed = ref('0 KB/s')
 const timeRemaining = ref('')
-const participants = ref<TaskMembership[]>([])
 const selectedIdentityId = ref<number | null>(null)
 
 // 计算有效的提交身份（已通过审核且可提交的）
@@ -270,21 +271,8 @@ const submissionContent = ref<{ contentText?: string; contentAttachment?: File }
   props.taskData?.submissionSchema?.map(() => ({ contentText: '', contentAttachment: undefined })) || []
 )
 
-const fetchParticipants = async (queryRealNameInfo = false) => {
-  if (!props.taskData) return
-  const { data } = await TasksApi.getParticipants(props.taskData.id, { queryRealNameInfo })
-  participants.value = data.participants
-}
-
 // 用户截止时间
-const userDeadline = computed(() => {
-  if (!props.taskData || !currentIdentity.value) return null
-
-  // 获取当前参与身份对应的成员的截止时间
-  const participantInfo = participants.value.find((p) => p.id === currentIdentity.value?.id)
-
-  return participantInfo?.deadline || null
-})
+const userDeadline = computed(() => currentIdentity.value?.deadline ?? null)
 
 // 是否已达到提交次数上限（对于不可重复提交的任务）
 const reachedSubmissionLimit = computed(() => {
@@ -323,8 +311,6 @@ const updateProgress = throttle((progressEvent: any) => {
 // 初始化提交内容
 onMounted(() => {
   if (props.taskData) {
-    fetchParticipants()
-
     // 如果有有效的提交身份，初始化选择第一个
     if (submissionIdentities.value.length > 0) {
       selectedIdentityId.value = submissionIdentities.value[0].id
@@ -445,7 +431,7 @@ const submitTask = async () => {
     // 跳转到提交记录页面
     router.push({
       name: 'TasksSubmissions',
-      params: { taskId: props.taskData.id },
+      params: { spaceId: props.taskData.space?.id, taskId: props.taskData.id },
     })
   } catch (error) {
     toast.error(`提交失败: ${error instanceof Error ? error.message : '未知错误'}`)

@@ -25,6 +25,7 @@ vi.mock('../../api', async () => {
     ...actual,
     listBlocks: (...a: unknown[]) => listBlocks(...a),
     getProgress: vi.fn().mockResolvedValue({ items: [], updated_at: null }),
+    listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     chatWsUrl: () => 'ws://test/ws',
     attachmentRawUrl: () => '',
     answerOptions: vi.fn(),
@@ -337,6 +338,43 @@ describe('平台提示：事故卡的正文压成一行', () => {
 })
 
 describe('向后兼容：库里存量的老事件一个都不能变样', () => {
+  it('shows the document edit diff even beside another action in the same AI turn', async () => {
+    const doc = event('', '芝士 编辑了文档', {
+      action: 'doc',
+      detail_label: '查看本次修改',
+      detail: '--- 修改前\n+++ 修改后\n-旧方案\n+实地调研方案',
+    })
+    const task = event('', '芝士 拆分了任务', { action: 'tasks' })
+    doc.turn_id = 'same-turn'
+    task.turn_id = 'same-turn'
+    const { container } = mountRoom([doc, task])
+    await flush()
+    const details = container.querySelector('.action-card details')!
+    expect(details.querySelector('summary')!.textContent).toBe('查看本次修改')
+    expect(details.querySelector('.doc-edit-line--del')!.textContent).toContain('旧方案')
+    expect(details.querySelector('.doc-edit-line--add')!.textContent).toContain('实地调研方案')
+    expect(details.textContent).not.toContain('--- 修改前')
+    expect(container.querySelectorAll('.action-card')).toHaveLength(2)
+  })
+
+  it('omits empty lines and their encoding from an old document change', async () => {
+    const { container } = mountRoom([
+      event('', '芝士 编辑了文档', {
+        action: 'doc',
+        detail: '--- 修改前\n+++ 修改后\n@@ -1 +1 @@\n <!-- PLAN -->\n 未修改的说明\n-&nbsp;\n+调查安排',
+      }),
+    ])
+    await flush()
+    const diff = container.querySelector('.doc-edit-diff')!
+    expect(diff.textContent).not.toContain('空行')
+    expect(diff.querySelectorAll('.doc-edit-line')).toHaveLength(1)
+    expect(diff.textContent).toContain('调查安排')
+    expect(diff.textContent).not.toContain('&nbsp;')
+    expect(diff.textContent).not.toContain('PLAN')
+    expect(diff.textContent).not.toContain('未修改的说明')
+    expect(diff.textContent).not.toContain('@@')
+  })
+
   it('meta=null 的老事件还是那条居中灰字', async () => {
     const { container } = mountRoom([event('', '话题已归档', null)])
     await flush()

@@ -67,8 +67,14 @@ jobs:
       - name: App-tier deploy contract
         run: bash deploy/tests/test-app-tier-health.sh
 
+      - name: Cloud control connection lifecycle
+        run: python3 deploy/tests/test_cloud_control.py
+
       - name: Workspace ownership handover
         run: bash deploy/tests/test-workspace-ownership.sh
 
       - name: Disk-pressure guard
         run: bash deploy/tests/test-disk-pressure-guard.sh
+
+      - name: Openviking memory backup
+        run: bash deploy/tests/test-viking-backup.sh

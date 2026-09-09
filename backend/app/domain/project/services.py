@@ -1,17 +1,23 @@
 """Project business logic."""
 
+import logging
 import uuid
+from datetime import UTC
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError
 from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.project.models import AiMode, Project
+from app.domain.project.models import AiMode, Project, ProjectRole
 from app.domain.project.repositories import ProjectRepository
+from app.domain.task.models import Task, TaskMembership
 from app.domain.topic.models import TopicKind
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.repositories import ComputeGrantRepository
+
+logger = logging.getLogger(__name__)
 
 
 class ProjectService:
@@ -50,17 +56,13 @@ class ProjectService:
             team_id=team_id,
             external_task_id=external_task_id,
         )
-        # 接受协议 (#370, 时机决定 (i)): a project created FROM a 赛题 accepts its
-        # 项目集's terms at that moment — the institution's 资源包 is issued and
-        # its default expert role inherited. This used to happen when a project
-        # linked a cheesex `task`, a parallel hierarchy with no UI to create it;
-        # the 赛题 page's 「从这道赛题创建项目」 button is where it really happens.
-        # Deliberately NOT at 领取 time: a team claims a 赛题 before any project
-        # exists, and nothing yet needs "a team holding unspent credits".
+        # Apply task terms when eligible; a pending application gets a workspace
+        # now and receives its competition resources when approved.
         if external_task_id is not None:
             await self._accept_task_protocol(project, external_task_id)
         if agent_type:
             await self._set_agent_type(project, agent_type)
+        await AgentInstanceService(self._session).materialize_default(project)
         root = await self._topics.add(
             project_id=project.id,
             title=f"{name} · 项目总览",
@@ -68,11 +70,9 @@ class ProjectService:
             created_by=owner_handle,
         )
         await self._repo.set_root_topic(project, root.id)
+        await self._seed_roster(project)
         # 总览 = 项目本体: its roster mirrors the whole project (fusion-design §3).
-        # Seed it with every current project member + 芝士. At create-time the
-        # ProjectMember rows may not exist yet (added separately); seed_root is
-        # idempotent, so the owner + 芝士 are seeded now and any members already
-        # present are folded in.
+        # Seed it with every current project member + 芝士.
         member_handles = [
             m["handle"] for m in await self._repo.list_members(project.id)
         ]
@@ -80,6 +80,49 @@ class ProjectService:
             root.id, owner_handle=owner_handle, member_handles=member_handles
         )
         return project
+
+    async def _seed_roster(self, project: Project) -> None:
+        """新项目的名册：这个小队里的其他人。
+
+        项目本来就归小队（项目归团队 v4），所以一个小队开的项目，队里的人默认就是
+        项目成员——让他们一个一个再被邀请一遍，等于把「我们是一个队」这件事重说
+        一次。个人项目落在个人小队上，那里只有建项目的人自己，所以这条规则在那儿
+        什么也不做。
+
+        **建项目的人不写进这张表**，尽管他显然是这个项目的人。这不是遗漏：这个仓
+        里「谁是所有者」记在 ``Project.owner_handle`` 上，成员表存的是**其他**人，
+        很多地方按这个前提写（包括「把所有者加进名册」这个动作本身）。把他也塞进
+        来会让那些调用变成插重复键。所以名册上少他一行，是界面该补的事，不是这里。
+
+        每一步都尽量往下做：解析不出用户的 handle（agent、测试夹具）不该让建项目
+        整个失败——名册可以事后补，项目建不出来就什么都没有了。
+        """
+        from app.domain.membership.services import MemberService
+        from app.domain.team.services import team_service
+        from app.domain.user.repositories import UserRepository
+
+        members = MemberService(self._session)
+        if project.team_id is None:
+            return
+        try:
+            relations = await team_service(self._session).get_team_members(
+                project.team_id
+            )
+            users = await UserRepository(session=self._session).get_by_ids(
+                [r.user_id for r in relations]
+            )
+        except Exception:  # noqa: BLE001 — 名册补得上，项目建不出来就没了
+            logger.exception("seeding roster from team %s failed", project.team_id)
+            return
+        for relation in relations:
+            user = users.get(relation.user_id)
+            if user is None or user.username == project.owner_handle:
+                continue
+            await members.ensure_member(
+                project_id=project.id,
+                user_handle=user.username,
+                role=ProjectRole.member,
+            )
 
     async def _resolve_personal_team_id(self, owner_handle: str) -> int | None:
         """owner_handle == User.username (fusion A1) → that user's personal team,
@@ -93,6 +136,48 @@ class ProjectService:
             return None
         team = await team_service(self._session).ensure_personal_team(user.id)
         return team.id
+
+    async def for_participation(
+        self, *, task: Task, membership: TaskMembership, owner_handle: str
+    ) -> Project:
+        """Open the team's registration workspace, reusing it on reapplication."""
+
+        # Serialize registration workspace creation for this task. Two teammates
+        # submitting together must not leave two projects for one application.
+        await self._session.execute(
+            select(Task.id).where(Task.id == task.id).with_for_update()
+        )
+        team_id = (
+            membership.member_id
+            if membership.is_team
+            else await self._resolve_personal_team_id(owner_handle)
+        )
+        projects = await self._repo.list_for_external_task(task.id)
+        for project in projects:
+            if project.team_id == team_id and team_id is not None:
+                return project
+        project = await self.create(
+            name=task.name[:200],
+            owner_handle=owner_handle,
+            team_id=team_id,
+            external_task_id=task.id,
+        )
+        from app.domain.topic.services import TopicService
+
+        # The original requirements may be rich-text JSON. Keep their canonical
+        # page reachable instead of copying serialized editor data into Markdown.
+        brief = (
+            f"## 赛题要求\n\n{task.intro}\n\n"
+            f"[查看完整赛题要求](/spaces/{task.space_id}/tasks/{task.id})"
+        )
+        if task.deadline:
+            deadline = task.deadline.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
+            brief += f"\n\n提交截止时间：{deadline}"
+        assert project.root_topic_id is not None  # create() always seeds the root.
+        root = await self._topics.get(project.root_topic_id)
+        assert root is not None
+        await TopicService(self._session).seed_brief_doc(root, brief)
+        return project
 
     async def _set_agent_type(self, project: Project, type_name: str) -> None:
         """Give this project's default agent a type (its persona).
@@ -113,6 +198,10 @@ class ProjectService:
         走这里或 :meth:`get_or_404`，不要直接构造 ``ProjectRepository``。
         """
         return await self._repo.get(project_id)
+
+    async def team_for_project(self, project_id: uuid.UUID) -> int | None:
+        """Resolve quota ownership, including older personal-team projects."""
+        return await self._repo.team_for_project(project_id)
 
     async def get_or_404(self, project_id: uuid.UUID) -> Project:
         project = await self.get(project_id)
@@ -148,8 +237,8 @@ class ProjectService:
         Resolves the terms from the 赛题's 项目集 (with the 赛题's own override,
         option (c)) and does the two things accepting a protocol means: inherit
         the default expert role when the project has none, and issue the 资源包's
-        compute credits. A project with NO grant stays unmetered — spec §4 项目
-        自治 — so an unlinked project is untouched by all of this.
+        compute credits restricted to this project. Shared team grants are
+        managed separately and remain available to unlinked projects too.
 
         Best-effort: a 赛题 that has gone missing, or one whose 项目集 offers
         nothing, leaves the project exactly as it was. Creating a project must
@@ -162,6 +251,29 @@ class ProjectService:
         task = await self._session.get(Task, task_id)
         if task is None:
             return
+        from app.domain.task.models import TaskMembership
+        from app.domain.user.models import User
+
+        member_id = project.team_id
+        if task.submitter_type == 0:
+            member_id = await self._session.scalar(
+                select(User.id).where(User.username == project.owner_handle)
+            )
+        membership = await self._session.scalar(
+            select(TaskMembership)
+            .where(
+                TaskMembership.task_id == task_id,
+                TaskMembership.member_id == member_id,
+                TaskMembership.is_team == (task.submitter_type == 1),
+                TaskMembership.deleted_at.is_(None),
+            )
+            .order_by(TaskMembership.created_at.desc())
+            .limit(1)
+        )
+        # An application can prepare its workspace before approval, but cannot
+        # claim the competition's resource pack while it is pending/rejected.
+        if membership is not None and membership.approved != 0:
+            return
         category = (
             await self._session.get(SpaceCategory, task.category_id)
             if getattr(task, "category_id", None)
@@ -173,9 +285,35 @@ class ProjectService:
         agent = await AgentInstanceService(self._session).for_project(project)
         if protocol.default_role and agent.type_name is None:
             await self._set_agent_type(project, protocol.default_role)
-        if protocol.compute_credits > 0:
+        grants = await self._grants.list_for_project(project.id)
+        if protocol.compute_credits > 0 and not any(
+            grant.source_task_id == task_id for grant in grants
+        ):
             await self._grants.grant(
                 project_id=project.id,
                 source_task_id=task_id,
                 credits_total=protocol.compute_credits,
             )
+
+    async def activate_participation(
+        self, *, task: Task, membership: TaskMembership
+    ) -> None:
+        """Release the task's resources to its workspace after approval."""
+        if membership.approved != 0:
+            return
+        from app.domain.user.models import User
+
+        owner = None
+        if not membership.is_team:
+            owner = await self._session.get(User, membership.member_id)
+        for project in await self._repo.list_for_external_task(task.id):
+            belongs = (
+                project.team_id == membership.member_id
+                if membership.is_team
+                else owner is not None and project.owner_handle == owner.username
+            )
+            if belongs:
+                await self._session.execute(
+                    select(Project.id).where(Project.id == project.id).with_for_update()
+                )
+                await self._accept_task_protocol(project, task.id)

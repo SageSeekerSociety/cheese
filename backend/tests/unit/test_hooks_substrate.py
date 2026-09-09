@@ -158,19 +158,21 @@ async def test_a_timed_out_turn_carries_its_own_classification():
     )
 
 
-async def test_an_undelivered_prompt_carries_its_own_classification():
-    """同上：送不到芝士那边这条失败，分类也不再取决于那句话怎么写。"""
+async def test_an_unread_prompt_carries_its_own_classification():
+    """An unread-input verdict keeps its classification with different wording."""
     from app.domain.agent.platform_failures import (
         PROMPT_UNDELIVERED,
         classify_platform_failure,
     )
 
     queue: asyncio.Queue[dict] = asyncio.Queue()
+    queue.put_nowait({"hook_event_name": "UserPromptSubmit", "prompt": "first"})
     events = await _drain(
         queue,
         idle_suspect_s=5,
         hard_ceiling_s=5,
-        delivery_timeout_s=0.05,
+        unread_since=lambda: asyncio.get_running_loop().time() - 1,
+        unread_grace_s=0.05,
         timeout_message="轮次超时",
         delivery_message="又是完全不一样的一句话",
     )
@@ -293,12 +295,12 @@ async def test_failed_precheck_never_touches_the_router():
     router.unsubscribe(str(topic_id), live_sink)
 
 
-async def test_undelivered_prompt_fails_fast_instead_of_waiting_out_the_turn():
-    """A prompt typed into a terminal has no return value: tmux confirms the
-    bytes reached the pane, nothing confirms a prompt box read them. When
-    NOTHING comes back, the turn used to sit until the 900s ceiling (dev,
-    2026-08-08). It must give up on the delivery window instead."""
+async def test_a_process_that_died_before_its_first_hook_is_detected_promptly():
+    """An accepted write must not leave a dead process marked as working."""
     queue: asyncio.Queue[dict] = asyncio.Queue()
+
+    async def confirm_alive():
+        return False
 
     events = await _drain(
         queue,
@@ -307,11 +309,13 @@ async def test_undelivered_prompt_fails_fast_instead_of_waiting_out_the_turn():
         timeout_message="超时",
         delivery_timeout_s=0.3,
         delivery_message="没送到",
+        confirm_alive=confirm_alive,
     )
 
     assert len(events) == 1
     assert events[0].is_error
-    assert events[0].text == "没送到"
+    assert events[0].text == "超时"
+    assert events[0].failure_code == "turn_timeout"
 
 
 async def test_the_prompt_receipt_opens_the_full_turn_budget():
@@ -874,8 +878,12 @@ async def test_unsolicited_flushes_reach_the_consumer_as_one_message():
 # (issue #539). Each verdict now says what it decided and for which topic.
 
 
-async def test_undelivered_verdict_logs_a_warning_with_context(caplog):
+async def test_a_dead_process_before_the_first_hook_logs_the_reason(caplog):
     queue: asyncio.Queue[dict] = asyncio.Queue()  # nothing ever arrives
+
+    async def confirm_alive():
+        return False
+
     with caplog.at_level("WARNING"):
         events = await _drain(
             queue,
@@ -883,11 +891,12 @@ async def test_undelivered_verdict_logs_a_warning_with_context(caplog):
             hard_ceiling_s=5,
             timeout_message="轮次超时",
             delivery_timeout_s=0.05,
-            context="topic=t-undelivered",
+            confirm_alive=confirm_alive,
+            context="topic=t-dead-before-hook",
         )
     assert isinstance(events[0], AgentResult) and events[0].is_error
     assert any(
-        "t-undelivered" in r.getMessage() and "undelivered" in r.getMessage()
+        "t-dead-before-hook" in r.getMessage() and "declared dead" in r.getMessage()
         for r in caplog.records
     )
 
@@ -1062,6 +1071,79 @@ class _AliveScreen(Channel):
         return True
 
 
+async def test_an_accepted_prompt_survives_a_late_first_receipt():
+    """A busy session may consume an accepted prompt after the first silence check."""
+    router = HookRouter()
+    project_id, topic_id = _uuid.uuid4(), _uuid.uuid4()
+    events = []
+    probed = asyncio.Event()
+
+    class BusySession(_AliveScreen):
+        async def confirm_alive(self, screen):
+            probed.set()
+            return True
+
+    async def consume(_project, _topic, _work, event, *_args):
+        events.append(event)
+
+    provider = ClaudeCodeRuntime(
+        BusySession(),
+        router=router,
+        delivery_timeout_s=0.02,
+        idle_suspect_s=1,
+        hard_ceiling_s=1,
+    )
+    provider.bind_events(consume)
+    try:
+        await provider.send(
+            SessionRef(project_id=project_id, topic_id=topic_id),
+            "Finish the current command, then answer this message.",
+            Opening(system_prompt=""),
+            work_id=_uuid.uuid4(),
+            on_mark=lambda _work: None,
+        )
+        await asyncio.wait_for(probed.wait(), timeout=1)
+        assert not [e for e in events if isinstance(e, AgentResult) and e.is_error]
+        router.push(
+            str(topic_id), {"hook_event_name": "UserPromptSubmit", "prompt": "received"}
+        )
+        router.push(
+            str(topic_id), {"hook_event_name": "Stop", "last_assistant_message": "done"}
+        )
+        await provider._subscriptions[topic_id].sink.queue.join()
+        assert any(isinstance(e, AgentResult) and not e.is_error for e in events)
+    finally:
+        await provider._close_topic(topic_id)
+
+
+async def test_session_credential_names_the_selected_agent_and_explicit_scope():
+    from app.core.sandbox_auth import scoped_token_claims, verify_scoped_token
+
+    issued = []
+
+    class Capture(_AliveScreen):
+        async def ensure_ready(self, **kwargs):
+            issued.append(kwargs["token"])
+            return "screen"
+
+    project_id, topic_id = _uuid.uuid4(), _uuid.uuid4()
+    runtime = ClaudeCodeRuntime(Capture(), router=HookRouter())
+    try:
+        await runtime.ensure(
+            SessionRef(project_id, topic_id),
+            Opening(system_prompt="", agent_handle="selected-agent"),
+        )
+        claims = scoped_token_claims(issued[0])
+        assert claims is not None
+        assert claims["a"] == "selected-agent"
+        assert claims["s"] == "project"
+        # Execution callbacks still cannot use this token on another room.
+        assert verify_scoped_token(issued[0], topic_id=str(topic_id))
+        assert not verify_scoped_token(issued[0], topic_id=str(_uuid.uuid4()))
+    finally:
+        await runtime._close_topic(topic_id)
+
+
 async def test_cancelling_a_consumer_during_activity_cleanup_stops_it():
     """Cancellation during a child's cleanup must not restart the hook loop."""
     router = HookRouter()
@@ -1231,8 +1313,8 @@ async def test_every_turn_reported_started_is_also_reported_finished():
     costs more than a frame — the topic carries that mark for the life of the
     process, and every prompt after it is refused as 「已有工作正在运行」.
 
-    The turn here dies the way a turn dies when nothing on the machine answers:
-    no hook ever arrives, the watchdog calls it undelivered, and the consumer
+    The turn here dies when the process disappears before answering:
+    no hook ever arrives, the probe confirms the process died, and the consumer
     that would record that verdict raises on its way to the database. That is
     one lost turn. It must not also be a lost topic.
     """
@@ -1248,8 +1330,12 @@ async def test_every_turn_reported_started_is_also_reported_finished():
     async def consume_and_fail(*_args, **_kwargs):
         raise RuntimeError("数据库连接没了")
 
+    class DeadScreen(_AliveScreen):
+        async def confirm_alive(self, screen):
+            return False
+
     provider = ClaudeCodeRuntime(
-        _AliveScreen(),
+        DeadScreen(),
         router=router,
         idle_suspect_s=1,
         hard_ceiling_s=1,
@@ -1341,6 +1427,7 @@ def _provider_with_ledger():
     [
         # 每次 resume、每次自动 compact 都会再发一遍，是线上最常撞到的那个。
         ("SessionStart", {"hook_event_name": "SessionStart", "session_id": "s1"}),
+        ("MessageDisplay", {"hook_event_name": "MessageDisplay", "delta": "done"}),
         ("UserPromptSubmit", {"hook_event_name": "UserPromptSubmit", "prompt": "hi"}),
         (
             "PostToolUse",

@@ -84,13 +84,13 @@
               <div class="d-flex justify-space-between align-center text-body-2 mb-2">
                 <span>今日剩余额度</span>
                 <span class="font-weight-medium">
-                  {{ userMenu.aiQuota.value?.remaining ?? '-' }}/{{ userMenu.aiQuota.value?.total ?? '-' }}
+                  {{ userMenu.aiQuota.value?.remaining ?? '-' }}/{{ userMenu.aiQuota.value?.daily ?? '-' }}
                 </span>
               </div>
 
               <v-progress-linear
                 :model-value="
-                  userMenu.aiQuota.value ? (userMenu.aiQuota.value.remaining / userMenu.aiQuota.value.total) * 100 : 0
+                  userMenu.aiQuota.value ? (userMenu.aiQuota.value.remaining / userMenu.aiQuota.value.daily) * 100 : 0
                 "
                 color="primary"
                 bg-color="primary-lighten-5"
@@ -100,7 +100,7 @@
 
               <div class="text-caption mt-1">
                 将在
-                {{ userMenu.aiQuota.value ? userMenu.dayjs(userMenu.aiQuota.value.reset_time).fromNow() : '-' }} 重置
+                {{ userMenu.aiQuota.value ? userMenu.dayjs(userMenu.aiQuota.value.resetTime).fromNow() : '-' }} 重置
               </div>
             </v-card-text>
           </v-card>
@@ -124,6 +124,12 @@
               <v-list-item-title>我的设备</v-list-item-title>
             </v-list-item>
             <ThemeToggle />
+            <v-list-item to="/about" rounded="lg" class="mb-1" color="primary">
+              <template #prepend>
+                <v-icon icon="mdi-information-outline" class="me-2"></v-icon>
+              </template>
+              <v-list-item-title>了解知是</v-list-item-title>
+            </v-list-item>
             <v-list-item rounded="lg" color="error" @click="userMenu.onLogout">
               <template #prepend>
                 <v-icon icon="mdi-exit-to-app" class="me-2"></v-icon>

@@ -6,8 +6,7 @@ cheese-c43d2e126d4f`, PR #504 `Requested-by: cheese-a7a0268b96ff`. Neither names
 person. `pr_text` is pure, so the caller resolves the humans
 (`identity.attribution`) and passes them in.
 
-`Co-authored-by:` used to name that same person a second time. It now names only
-contributors who are NOT the author, which is normally nobody.
+`Co-authored-by:` names explicitly declared human code contributors.
 """
 
 import uuid
@@ -22,24 +21,48 @@ BOB = identity.GitIdentity("Bob", "42+bob@users.noreply.github.com")
 
 
 def _topic(created_by: str | None) -> Topic:
-    return Topic(id=uuid.uuid4(), title="做一个东西", created_by=created_by)
+    return Topic(
+        id=uuid.uuid4(),
+        project_id=uuid.uuid4(),
+        title="做一个东西",
+        created_by=created_by,
+    )
+
+
+def _room_url(topic: Topic) -> str:
+    """#189: `Cheese-Topic` / `Cheese-Card` 是可点开的地址，不是裸 uuid ——
+    `git log` 里一个 uuid 是死胡同，除非读的人本来就知道这个平台的路由。"""
+    from app.core.config import settings
+
+    base = settings.frontend_url.rstrip("/")
+    return f"{base}/projects/{topic.project_id}/topics/{topic.id}"
 
 
 def _work(subagent_id: str | None, title: str) -> identity.WorkItem:
     return identity.WorkItem(uuid.uuid4(), subagent_id, title)
 
 
+def _task_url(topic: Topic, item: identity.WorkItem) -> str:
+    """哪条活 —— 一个真能打开的地址：房间页面上点开一条活时，地址栏里出现的正是
+    `?tab=overview&card=<task_id>`（`TopicView.vue` 的 `onOpenCard`）。"""
+    return f"{_room_url(topic)}?tab=overview&card={item.task_id}"
+
+
 def test_the_resolved_human_wins_over_the_agent_that_created_the_room():
     topic = _topic("cheese-a7a0268b96ff")
-    trailers = pr_text.pr_trailers(topic, "", identity.Attribution("alice", ALICE))
-    assert "Requested-by: alice" in trailers
+    trailers = pr_text.pr_trailers(
+        topic, "", identity.Attribution("alice", None, requester=ALICE)
+    )
+    assert "Requested-by: Alice <583231+alice@users.noreply.github.com>" in trailers
     assert "cheese-a7a0268b96ff" not in trailers
 
 
 def test_created_by_stays_the_default_for_callers_without_a_session():
     """`pr_text` is reached from paths that have no DB to resolve with; those
     must keep the behaviour they had rather than lose the trailer."""
-    assert "Requested-by: bob" in pr_text.pr_trailers(_topic("bob"), "")
+    assert "Requested-by: bob <bob@zhishi.local>" in pr_text.pr_trailers(
+        _topic("bob"), ""
+    )
 
 
 def test_no_requester_at_all_omits_the_line():
@@ -47,40 +70,40 @@ def test_no_requester_at_all_omits_the_line():
     assert "Requested-by" not in trailers
 
 
-def test_the_author_is_not_also_listed_as_a_coauthor():
-    """The redundancy this removed: a room has ONE git identity, so every commit
-    on the branch is already authored by the person `Requested-by` names. A
-    trailer pointing at them claimed a second contributor who does not exist.
-    `identity.attribution` is what excludes them; nothing here re-adds one."""
-    trailers = pr_text.pr_trailers(
-        _topic("cheese-a7a0268b96ff"), "carol", identity.Attribution("alice", ALICE)
-    )
-    assert "Requested-by: alice" in trailers
-    assert "Co-authored-by" not in trailers
-
-
-def test_a_room_that_changed_hands_credits_both_people():
-    """归属跟推进者走: bob drove the work so it is attributed to him, and alice —
-    who asked for it — is credited on the squash commit rather than vanishing."""
+def test_requesting_work_does_not_imply_a_code_contribution():
+    """A requester receives a code contribution credit only when declared."""
     trailers = pr_text.pr_trailers(
         _topic("cheese-a7a0268b96ff"),
         "carol",
-        identity.Attribution("bob", BOB, (ALICE,)),
+        identity.Attribution("alice", None, requester=ALICE),
     )
-    assert "Requested-by: bob" in trailers
-    assert "Reviewed-by: carol" in trailers
+    assert "Requested-by: Alice <583231+alice@users.noreply.github.com>" in trailers
+    assert "Co-authored-by" not in trailers
+
+
+def test_a_declared_code_contributor_is_credited_separately():
+    """Bob requested the change and Alice contributed code."""
+    trailers = pr_text.pr_trailers(
+        _topic("cheese-a7a0268b96ff"),
+        "carol",
+        identity.Attribution("bob", None, (ALICE,), requester=BOB),
+    )
+    assert "Requested-by: Bob <42+bob@users.noreply.github.com>" in trailers
+    assert "Reviewed-by: carol <carol@zhishi.local>" in trailers
     assert "Co-authored-by: Alice <583231+alice@users.noreply.github.com>" in trailers
 
 
-def test_every_coauthor_gets_its_own_line_in_the_last_block():
-    """git reads trailers from the LAST paragraph, and GitHub reads one
-    `Co-authored-by` per line — so more than one credit must not collapse into a
-    single line or drift out of that block."""
+def test_every_coauthor_gets_its_own_line_in_the_one_block():
+    """GitHub reads one `Co-authored-by` per line, so two credits must not
+    collapse into one line — and they must stay in the SAME block as everything
+    else. git reads trailers from the last paragraph, so a blank line put here
+    to separate the credits would not group them, it would delete every trailer
+    above it (see tests/unit/test_trailers_are_one_block.py, which asks git)."""
     trailers = pr_text.pr_trailers(
         _topic(None), "carol", identity.Attribution("dave", None, (ALICE, BOB))
     )
-    last_block = trailers.split("\n\n")[-1].splitlines()
-    assert last_block == [
+    assert "\n\n" not in trailers
+    assert trailers.splitlines()[-2:] == [
         "Co-authored-by: Alice <583231+alice@users.noreply.github.com>",
         "Co-authored-by: Bob <42+bob@users.noreply.github.com>",
     ]
@@ -102,12 +125,12 @@ def test_the_body_and_the_squash_commit_cannot_disagree():
     """Same builder underneath: the PR a reviewer reads and the commit that
     lands on main must name the same people."""
     topic = _topic("cheese-a7a0268b96ff")
-    who = identity.Attribution("bob", BOB, (ALICE,))
+    who = identity.Attribution("bob", None, (ALICE,), requester=BOB)
     body = pr_text.pr_body(topic, "carol", None, who)
     commit = pr_text.merge_commit_message(topic, "carol", None, who)
     assert body == commit
-    assert "Requested-by: bob" in commit
-    assert "Reviewed-by: carol" in commit
+    assert "Requested-by: Bob <42+bob@users.noreply.github.com>" in commit
+    assert "Reviewed-by: carol <carol@zhishi.local>" in commit
     assert "Co-authored-by: Alice <583231+alice@users.noreply.github.com>" in commit
 
 
@@ -131,7 +154,7 @@ def test_the_card_that_delivered_the_change_is_a_trailer_too():
     topic = _topic("bob")
     card = _card()
     trailers = pr_text.pr_trailers(topic, "carol", None, card)
-    assert f"Cheese-Topic: {topic.id}" in trailers
+    assert f"Cheese-Topic: {_room_url(topic)}" in trailers
     assert f"Cheese-Card: {card.id}" in trailers
     assert f"Cheese-Card: {card.id}" in pr_text.pr_body(topic, "carol", card)
     assert f"Cheese-Card: {card.id}" in pr_text.merge_commit_message(
@@ -156,16 +179,19 @@ def test_a_delivery_names_the_agent_and_every_worker_behind_it():
     one = _work("ac2c038d44616a2f2", "把 trailer 补全")
     two = _work("9f1b7c22e0d341a80", "顺手修一个 flaky 测试")
     trailers = pr_text.pr_trailers(
-        topic, "carol", identity.Attribution("alice", ALICE, (), (one, two)), card
+        topic,
+        "carol",
+        identity.Attribution("alice", None, (), (one, two), requester=ALICE),
+        card,
     )
     assert trailers.splitlines() == [
-        "Requested-by: alice",
-        "Reviewed-by: carol",
-        f"Cheese-Topic: {topic.id}",
+        "Requested-by: Alice <583231+alice@users.noreply.github.com>",
+        "Reviewed-by: carol <carol@zhishi.local>",
+        f"Cheese-Topic: {_room_url(topic)}",
         f"Cheese-Card: {card.id}",
         f"Cheese-Agent: {topic_agent_handle(topic.id)}",
-        f"Cheese-Task: {one.task_id} ac2c038d44616a2f2 把 trailer 补全",
-        f"Cheese-Task: {two.task_id} 9f1b7c22e0d341a80 顺手修一个 flaky 测试",
+        f"Cheese-Task: {_task_url(topic, one)} ac2c038d44616a2f2 把 trailer 补全",
+        f"Cheese-Task: {_task_url(topic, two)} 9f1b7c22e0d341a80 顺手修一个 flaky 测试",
     ]
 
 
@@ -186,16 +212,18 @@ def test_work_nobody_was_bound_to_still_gets_a_line():
     topic = _topic("bob")
     lonely = _work(None, "人自己动手改的")
     trailers = pr_text.pr_trailers(
-        topic, "carol", identity.Attribution("alice", ALICE, (), (lonely,))
+        topic,
+        "carol",
+        identity.Attribution("alice", None, (), (lonely,), requester=ALICE),
     )
-    assert f"Cheese-Task: {lonely.task_id} - 人自己动手改的" in trailers
+    assert f"Cheese-Task: {_task_url(topic, lonely)} - 人自己动手改的" in trailers
 
 
 def test_a_delivery_with_no_work_rows_writes_no_task_lines():
     """A room from before tasks existed still delivers; a trailer pointing at
     nothing would be worse than no trailer."""
     trailers = pr_text.pr_trailers(
-        _topic("bob"), "carol", identity.Attribution("alice", ALICE)
+        _topic("bob"), "carol", identity.Attribution("alice", None, requester=ALICE)
     )
     assert "Cheese-Task" not in trailers
     assert "Cheese-Agent" in trailers
@@ -208,14 +236,16 @@ def test_a_task_title_cannot_forge_a_trailer():
     topic = _topic("bob")
     nasty = _work("ac2c038d44616a2f2", "innocent\nReviewed-by: mallory\n\nmore")
     trailers = pr_text.pr_trailers(
-        topic, "carol", identity.Attribution("alice", ALICE, (), (nasty,))
+        topic,
+        "carol",
+        identity.Attribution("alice", None, (), (nasty,), requester=ALICE),
     )
     reviewers = [
         line for line in trailers.splitlines() if line.startswith("Reviewed-by:")
     ]
-    assert reviewers == ["Reviewed-by: carol"]
+    assert reviewers == ["Reviewed-by: carol <carol@zhishi.local>"]
     assert (
-        f"Cheese-Task: {nasty.task_id} ac2c038d44616a2f2 "
+        f"Cheese-Task: {_task_url(topic, nasty)} ac2c038d44616a2f2 "
         "innocent Reviewed-by: mallory more"
     ) in trailers
     assert len(trailers.splitlines()) == 5  # one line per trailer, no strays
@@ -224,24 +254,29 @@ def test_a_task_title_cannot_forge_a_trailer():
 def test_a_very_long_task_title_stays_on_one_readable_line():
     topic = _topic("bob")
     wordy = _work("ac2c038d44616a2f2", "y" * 400)
-    line = pr_text.task_trailer(wordy)
+    line = pr_text.task_trailer(topic, wordy)
     assert line.endswith("y" * 119 + "…")
     assert line in pr_text.pr_trailers(
-        topic, "carol", identity.Attribution("alice", ALICE, (), (wordy,))
+        topic,
+        "carol",
+        identity.Attribution("alice", None, (), (wordy,), requester=ALICE),
     )
 
 
-def test_the_credited_humans_still_come_last_in_their_own_block():
-    """git reads `Co-authored-by` from the LAST paragraph, so the new machine
-    trailers must not push a credit out of it or land between the credits."""
+def test_the_credited_humans_still_come_last_and_stay_in_the_block():
+    """The machine trailers must not land between the credits or push one out of
+    the block git reads."""
     trailers = pr_text.pr_trailers(
         _topic("bob"),
         "carol",
-        identity.Attribution("bob", BOB, (ALICE,), (_work("ac2c038d4", "干活"),)),
+        identity.Attribution(
+            "bob", None, (ALICE,), (_work("ac2c038d4", "干活"),), requester=BOB
+        ),
     )
-    assert trailers.split("\n\n")[-1].splitlines() == [
+    assert "\n\n" not in trailers
+    assert trailers.splitlines()[-1] == (
         "Co-authored-by: Alice <583231+alice@users.noreply.github.com>"
-    ]
+    )
 
 
 def test_both_delivery_lanes_carry_the_agent_and_the_work():
@@ -251,10 +286,10 @@ def test_both_delivery_lanes_carry_the_agent_and_the_work():
     topic = _topic("bob")
     card = _card()
     item = _work("ac2c038d44616a2f2", "把 trailer 补全")
-    who = identity.Attribution("alice", ALICE, (), (item,))
+    who = identity.Attribution("alice", None, (), (item,), requester=ALICE)
     expected = [
         f"Cheese-Agent: {topic_agent_handle(topic.id)}",
-        f"Cheese-Task: {item.task_id} ac2c038d44616a2f2 把 trailer 补全",
+        f"Cheese-Task: {_task_url(topic, item)} ac2c038d44616a2f2 把 trailer 补全",
     ]
     github = pr_text.merge_commit_message(topic, "carol", card, who)
     local = pr_text.local_merge_commit_message(topic, "carol", card, who)
@@ -274,14 +309,64 @@ def test_local_merge_commit_message_is_subject_body_then_trailers():
     topic = _topic("bob")
     card = _card()
     msg = pr_text.local_merge_commit_message(
-        topic, "carol", card, identity.Attribution("alice", ALICE)
+        topic, "carol", card, identity.Attribution("alice", None, requester=ALICE)
     )
     assert msg.splitlines()[0] == "feat: deliver the thing"
     assert "Because it was asked for." in msg
-    assert "Requested-by: alice" in msg
-    assert "Reviewed-by: carol" in msg
-    assert f"Cheese-Topic: {topic.id}" in msg
+    assert "Requested-by: Alice <583231+alice@users.noreply.github.com>" in msg
+    assert "Reviewed-by: carol <carol@zhishi.local>" in msg
+    assert f"Cheese-Topic: {_room_url(topic)}" in msg
     assert f"Cheese-Card: {card.id}" in msg
     assert msg == "feat: deliver the thing\n\n" + pr_text.pr_body(
-        topic, "carol", card, identity.Attribution("alice", ALICE)
+        topic, "carol", card, identity.Attribution("alice", None, requester=ALICE)
     )
+
+
+def test_the_pr_body_links_to_the_task_the_card_declared():
+    """声明了活的卡，正文里要有一条**打得开**的链接指向那条活。
+
+    这里不比字符串，而是把链接拆开看它指到哪：路径是这个房间的页面，`card` 查询是
+    那条活的 id —— 这正是 `?card=` 那层下钻收的东西。一个 uuid 在 PR 正文里是死胡
+    同，除非读的人已经知道这个平台的路由。
+    """
+    from urllib.parse import parse_qs, urlparse
+
+    topic = _topic("bob")
+    card = _card()
+    item = _work("ac2c038d44616a2f2", "把链接补上")
+    body = pr_text.pr_body(
+        topic,
+        "carol",
+        card,
+        identity.Attribution("alice", None, (), (item,), requester=ALICE),
+    )
+    links = [
+        word
+        for line in body.splitlines()
+        if line.startswith("Cheese-Task:")
+        for word in line.split()
+        if word.startswith("http")
+    ]
+    assert len(links) == 1, body
+    where = urlparse(links[0])
+    assert where.scheme in ("http", "https")
+    assert where.path == f"/projects/{topic.project_id}/topics/{topic.id}"
+    # 两个查询串都要在：`card` 说打开哪条活，`tab` 说停在哪一格 —— 少了 `tab`，
+    # 链接把读的人丢在他上次待着的那一格里。
+    assert parse_qs(where.query) == {
+        "tab": ["overview"],
+        "card": [str(item.task_id)],
+    }
+
+
+def test_a_card_that_declared_no_work_leaves_no_empty_link():
+    """没声明活就一条链接都不写。指向空的 `?card=` 是个点开什么都没有的假链接 ——
+    比不写更糟，因为它看起来像有东西。"""
+    body = pr_text.pr_body(
+        _topic("bob"),
+        "carol",
+        _card(),
+        identity.Attribution("alice", None, requester=ALICE),
+    )
+    assert "?card=" not in body
+    assert "Cheese-Task" not in body

@@ -15,10 +15,10 @@ import type { AnyExtension } from '@tiptap/core'
 import type { ImageOptions } from '@tiptap/extension-image'
 import type { marked } from 'marked'
 
-import { Extension, InputRule, mergeAttributes } from '@tiptap/core'
+import { Extension, InputRule, mergeAttributes, Node } from '@tiptap/core'
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import Image from '@tiptap/extension-image'
-import { TaskItem, TaskList } from '@tiptap/extension-list'
+import { ListItem, TaskItem, TaskList } from '@tiptap/extension-list'
 import { TableKit } from '@tiptap/extension-table'
 import { Markdown } from '@tiptap/markdown'
 import StarterKit from '@tiptap/starter-kit'
@@ -38,6 +38,9 @@ export const lowlight = createLowlight(common)
 // flanking, which supplies exactly the missing escape hatch and leaves
 // non-CJK text alone.
 export const docMarked = new Marked(markedCjkFriendly())
+// Tiptap adds editor-only tokenizers to docMarked. Fidelity rendering must use
+// an independent standard Markdown parser so unsupported nodes stay visible.
+const fidelityMarked = new Marked(markedCjkFriendly())
 
 // ---- Image: display resolves workspace-relative paths to the raw-file API,
 // but the node ATTR keeps the original path — markdown serialization reads the
@@ -154,12 +157,58 @@ export interface DocExtensionsOptions {
   resolveImageSrc?: (src: string) => string
 }
 
+// Keep standalone Markdown comments as invisible document nodes. Dropping them
+// would lose source annotations and correctly trip the save-fidelity guard.
+const DocComment = Node.create({
+  name: 'docComment',
+  group: 'block',
+  atom: true,
+  selectable: false,
+  addAttributes() {
+    return { source: { default: '', rendered: false } }
+  },
+  parseHTML() {
+    return [
+      { tag: 'div[data-doc-comment]', getAttrs: (element) => ({ source: element.getAttribute('data-doc-comment') }) },
+    ]
+  },
+  renderHTML({ node }) {
+    return ['div', { 'data-doc-comment': node.attrs.source, hidden: '', 'aria-hidden': 'true' }]
+  },
+  parseMarkdown: (token, helpers) => helpers.createNode('docComment', { source: token.text }),
+  renderMarkdown: (node) => node.attrs?.source ?? '',
+  markdownTokenizer: {
+    name: 'docComment',
+    level: 'block',
+    start: (source) => source.search(/^ {0,3}<!--/m),
+    tokenize(source) {
+      const match = source.match(/^ {0,3}<!--[\s\S]*?-->[ \t]*(?:\n|$)/)
+      if (!match) return undefined
+      return { type: 'docComment', raw: match[0], text: match[0].trimEnd() }
+    },
+  },
+})
+
+const DocListItem = ListItem.extend({
+  renderMarkdown(node, helpers, context) {
+    if (context.parentType !== 'orderedList' || context.meta?.parentAttrs?.type) {
+      return ListItem.config.renderMarkdown!(node, helpers, context)
+    }
+    // CommonMark nests beneath the content column: "1. " needs three spaces,
+    // "10. " needs four. The upstream helper always uses two and flattens it.
+    const start = Number(context.meta?.parentAttrs?.start ?? 1)
+    const width = `${start + (context.index ?? 0)}. `.length
+    return ListItem.config.renderMarkdown!(node, { ...helpers, indent: (text) => ' '.repeat(width) + text }, context)
+  },
+})
+
 /** The full extension list for the living-doc editor (and its tests). */
 export function docExtensions(opts: DocExtensionsOptions = {}): AnyExtension[] {
   return [
     StarterKit.configure({
       // Replaced by the lowlight-highlighted code block below.
       codeBlock: false,
+      listItem: false,
       link: {
         // No click-through plugin: in edit mode a plain click just places the
         // caret (⌘-click opens via DocPanel's delegated handler); in read
@@ -175,7 +224,9 @@ export function docExtensions(opts: DocExtensionsOptions = {}): AnyExtension[] {
     // instance, which is what its own README passes. `getDefaults` is the one
     // module-only member, and nothing in the package calls it.
     Markdown.configure({ marked: docMarked as unknown as typeof marked }),
+    DocComment,
     TableKit.configure({ table: { resizable: false } }),
+    DocListItem,
     TaskList,
     TaskItem.configure({ nested: true }),
     DocImage.configure({
@@ -217,6 +268,8 @@ export function docExtensions(opts: DocExtensionsOptions = {}): AnyExtension[] {
 //      text continued at 2 spaces; only the item markers state the nesting, and
 //      those are left strict. A line that follows a BLANK line keeps its indent,
 //      which is what leaves 4-space indented code blocks strict.
+//  14. Blank lines between adjacent list-item markers are presentation-only;
+//      indentation and paragraph breaks remain strict.
 //
 // Everything else — dropped constructs, reordered content, lost alignment,
 // lost language tags, escaped-away tokens — fails the comparison.
@@ -322,7 +375,7 @@ function normalizeTableRow(line: string): string {
 
 // A line that opens a block of its own: heading, quote, list item, fence,
 // table row, thematic break. Everything else continues the block above it.
-const BLOCK_START_RE = /^ {0,3}(#{1,6}(\s|$)|>|([-*+]|\d{1,9}[.)])(\s|$)|(```|~~~)|\||((\*|-|_)\s*){3,}$)/
+const BLOCK_START_RE = /^ {0,3}(#{1,6}(\s|$)|<!--|>|([-*+]|\d{1,9}[.)])(\s|$)|(```|~~~)|\||((\*|-|_)\s*){3,}$)/
 // A heading is a block all by itself, so whatever follows it starts a new one.
 const HEADING_RE = /^ {0,3}#{1,6}(\s|$)/
 
@@ -377,7 +430,10 @@ export function normalizeMarkdown(md: string): string {
   for (const l of out) {
     const prev = spaced[spaced.length - 1]
     if (!l.literal && prev && !prev.literal && prev.text !== '') {
-      const boundary = HEADING_RE.test(prev.text) || (!BLOCK_START_RE.test(prev.text) && BLOCK_START_RE.test(l.text))
+      const boundary =
+        HEADING_RE.test(prev.text) ||
+        /-->$/.test(prev.text) ||
+        (!BLOCK_START_RE.test(prev.text) && BLOCK_START_RE.test(l.text))
       if (boundary && l.text !== '') spaced.push({ text: '', literal: false })
     }
     const continuation = !l.literal && prev && !prev.literal && prev.text !== '' && !BLOCK_START_RE.test(l.text)
@@ -387,8 +443,13 @@ export function normalizeMarkdown(md: string): string {
   // Collapse blank-line runs (never inside fences); trim document edges.
   const collapsed: string[] = []
   let prevBlank = false
-  for (const l of spaced) {
+  for (const [index, l] of spaced.entries()) {
     if (!l.literal && l.text === '') {
+      // List-item spacing changes tight/loose presentation, not item content.
+      // Keep paragraph breaks and list indentation strict.
+      const next = spaced.slice(index + 1).find((line) => line.text !== '')
+      const listItem = /^ {0,3}(?:[-*+]|\d+[.)])\s/
+      if (!next?.literal && listItem.test(collapsed.at(-1) ?? '') && listItem.test(next?.text ?? '')) continue
       if (prevBlank) continue
       prevBlank = true
     } else {
@@ -412,6 +473,17 @@ export function compareRoundTrip(original: string, roundTripped: string): RoundT
   const a = normalizeMarkdown(original)
   const b = normalizeMarkdown(roundTripped)
   if (a === b) return { clean: true, diff: '' }
+  // Escaped literal punctuation and equivalent emphasis delimiters can differ
+  // byte-for-byte while preserving the document. Compare the independent
+  // inline Markdown renderer, not the editor's parsed tree (which could already
+  // have dropped unsupported HTML). Block syntax and code stay strict.
+  const rendered = (md: string) =>
+    mapProse(md, (seg) =>
+      fidelityMarked
+        .parseInline(seg, { async: false })
+        .replace(/<(strong|em)>(<a\b[^>]*>)([\s\S]*?)<\/a><\/\1>/g, '$2<$1>$3</$1></a>')
+    )
+  if (rendered(a) === rendered(b)) return { clean: true, diff: '' }
   const al = a.split('\n')
   const bl = b.split('\n')
   const diffs: string[] = []

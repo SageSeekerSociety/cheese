@@ -2,8 +2,8 @@
 
 This is the platform "shell" around 芝士: it persists the conversation as
 blocks (append-only history, spec H1), injects project memory into the agent's
-context (spec §8.4 带记忆回答), lands each completed assistant message as its
-own block (Slack-style discrete messages, no token streaming), and stores the
+context (spec §8.4 带记忆回答), retains execution notes in activity blocks,
+publishes deliberately sent chat messages, and stores the
 resumable session id on the topic.
 
 DB writes happen in short transactions around the (long) streaming call so we
@@ -11,6 +11,8 @@ never hold a transaction open across the model round-trip.
 """
 
 import asyncio
+import codecs
+import hashlib
 import json
 import logging
 import re
@@ -32,7 +34,13 @@ from app.domain.agent.gateway import LlmGateway, drain_new_usage
 from app.domain.agent.harness import Opening, SessionRef, runtime_for
 from app.domain.agent.market import subscription_model_alias
 from app.domain.agent.platform_failures import (
+    MODEL_LIMIT_REACHED_CODE,
+    PROVIDER_OVERLOADED_CODE,
+    PROVIDER_UNREACHABLE_CODE,
+    RESPONSE_TRUNCATED_CODE,
+    TOOL_UNAVAILABLE_CODE,
     TURN_TIMEOUT_MESSAGE,
+    classify_cli_notice,
     classify_platform_failure,
 )
 from app.domain.agent.platform_notices import (
@@ -60,8 +68,14 @@ from app.domain.agent.service import (
     AgentUsage,
     proves_output,
 )
-from app.domain.agent.skills import DEFAULT_CHAT_SKILLS, load_scenario, load_skills
+from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE, load_scenario, load_skills
 from app.domain.agent.stages import TopicStage, resolve_stage, stage_scenario
+from app.domain.agent.supply import SUBSCRIPTION, resolve_pool
+from app.domain.agent.tool_preview import ToolPreview, tool_preview, work_subpath
+from app.domain.agent_instance.configuration import (
+    AgentConfiguration,
+    validate_configuration,
+)
 from app.domain.agent_instance.services import (
     IMPLICIT_DEFAULT,
     AgentInstanceService,
@@ -94,18 +108,16 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task.place import Place, PlaceResolver
-from app.domain.team.repositories import TeamRepository
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic.repositories import TopicProgressRepository, TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.credits import usage_to_credits
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
-from app.domain.workspace import identity as ws_identity
 from app.domain.workspace import service as ws
 
-ACTIVITY_SKILLS = ["conversation-style", "activity-digestion", "doc-form"]
-HEARTBEAT_SKILLS = ["heartbeat", "conversation-style"]
-PRIVATE_SKILLS = ["private-chat", "conversation-style"]
+ACTIVITY_SKILLS = ["chat", "activity-digestion", "doc-form"]
+HEARTBEAT_SKILLS = ["heartbeat", "chat"]
+PRIVATE_SKILLS = ["private-chat"]
 
 CHEESE_AUTHOR = "cheese"
 
@@ -139,6 +151,8 @@ class _HookWorkState:
     user_text: str
     started_at: datetime
     assistant_count: int = 0
+    last_chat_at: datetime | None = None
+    progress_reminded: bool = False
     todo: list[dict] = field(default_factory=list)
     #: 每个分身自己那份清单，按它做的那条活分开。Claude Code 的任务编号是**每个
     #: agent 各数各的**，都从 1 开始，所以几份清单混进一个 list 里不只是看着乱：
@@ -204,8 +218,9 @@ class _TurnContext:
     topic_refs_for_prompt: list[dict]
 
     # Which machine, and whether it reports its own liveness (which decides who
-    # owns this turn's clock — see the `turn_ceiling` frame).
-    provider: ComputeProvider
+    # owns this turn's clock — see the `turn_ceiling` frame). None = 这一轮不落在
+    # 任何一台机器上：私聊是一段对话，走 plain_chat 那条路（后端自己问一次模型）。
+    provider: ComputeProvider | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -259,15 +274,6 @@ _TOOL_VERB = {
     "write_file": "写文件",
     "record_decision": "记录决策",
 }
-_TOOL_ARG = {
-    "update_doc": "content",
-    "remember": "fact",
-    "notify": "title",
-    "request_accept": "reviewer_handle",
-    "pin_milestone": "title",
-    "write_file": "path",
-    "record_decision": "decision",
-}
 
 
 # Native Claude Code tools (sandbox mode) → 现场 labels. Systematic: every tool
@@ -297,41 +303,17 @@ _TOOL_VERB.update(
         "ToolSearch": "查找工具",
     }
 )
-_TOOL_ARG.update(
-    {
-        "Bash": "command",
-        "Write": "file_path",
-        "Edit": "file_path",
-        "Read": "file_path",
-        "Glob": "pattern",
-        "Grep": "pattern",
-        "WebSearch": "query",
-        "WebFetch": "url",
-        "Agent": "description",
-        "Task": "description",
-        "NotebookEdit": "notebook_path",
-        "Skill": "skill",
-        "ToolSearch": "query",
-    }
-)
 
 
-def _tool_arg_preview(name: str, args: dict) -> str:
-    """Whitespace-collapsed preview of the tool's most telling argument."""
-    key = _TOOL_ARG.get(name)
-    if key and isinstance(args, dict) and args.get(key) is not None:
-        return " ".join(str(args[key]).split())[:120]
-    return ""
-
-
-def _format_tool_event(name: str, args: dict) -> str:
+def _format_tool_event(name: str, preview: ToolPreview) -> str:
     """Human-readable FALLBACK text for an event block (old clients / old rows).
 
     The UI renders from the structured meta (see _tool_event_meta); this baked
-    string only shows when meta is absent."""
-    verb = _TOOL_VERB.get(name, name)
-    preview = _tool_arg_preview(name, args)
-    return f"{verb}\n{preview}" if preview else verb
+    string only shows when meta is absent. Both are built from the SAME
+    ToolPreview, so the baked line and the rendered one cannot describe the
+    call differently."""
+    verb = _TOOL_VERB.get(preview.action or name, name)
+    return f"{verb}\n{preview.text}" if preview.text else verb
 
 
 # 现场圆点分级: a PLATFORM action (amber dot) vs plain work (neutral dot).
@@ -350,14 +332,22 @@ def _is_platform_tool(raw_name: str, args: dict) -> bool:
     return False
 
 
-def _tool_event_meta(name: str, args: dict, *, platform: bool) -> dict:
+def _tool_event_meta(name: str, preview: ToolPreview, *, platform: bool) -> dict:
     """Structured payload persisted on an event block: the UI translates the
     tool name and colors the dot from these fields at DISPLAY time, so a verb
-    missing from today's table is never baked in untranslated forever."""
+    missing from today's table is never baked in untranslated forever.
+
+    ``as_tool`` rides alongside ``tool`` rather than replacing it: ``tool`` says
+    what actually ran, ``as_tool`` says whose label reads better (a Bash
+    `cat foo.py` is still a Bash call, but 「读取文件」 is what it did). NOT named
+    ``action`` — that key already means "which platform resource this card points
+    at" (see the frontend's platformNotice), and one name answering two questions
+    is how a card ends up pointing at a resource called "Read"."""
     meta: dict = {"tool": name, "platform": platform}
-    preview = _tool_arg_preview(name, args)
-    if preview:
-        meta["arg"] = preview
+    if preview.text:
+        meta["arg"] = preview.text
+    if preview.action:
+        meta["as_tool"] = preview.action
     return meta
 
 
@@ -443,7 +433,11 @@ def _diff_file_stats(diff: str) -> list[dict]:
     for line in diff.splitlines():
         header = _DIFF_HEADER_RE.match(line)
         if header is not None:
-            current = {"path": header.group("path"), "added": 0, "removed": 0}
+            path = header.group("path")
+            if line.endswith('"'):
+                # Git quotes UTF-8 bytes with C-style octal escapes.
+                path = codecs.escape_decode(path.encode())[0].decode()
+            current = {"path": path, "added": 0, "removed": 0}
             stats.append(current)
             in_hunk = False
             continue
@@ -537,6 +531,7 @@ _CHEESE_RESOURCE = {
     "conclude": "topics",
     "milestone": "milestone",
     "accept-request": "accept",
+    "describe": "accept",
     "notify": "notify",
 }
 
@@ -564,24 +559,11 @@ _TRANSIENT_HTTP = {408, 429, 500, 502, 503, 504, 529}
 def _resolve_compute_id(
     project_settings: dict | None,
     topic_compute_profile: str | None = None,
-    team_compute_profile: str | None = None,
 ) -> str | None:
-    """The compute pool a turn runs on (execution-architecture v4 会话级选择): the
-    topic's own selection wins, else the project's sticky memory, then the team's
-    default, else None (the ComputePool default). An id that isn't deployed here
-    is ignored by ``ComputePool.select`` and degrades to the default — never breaks
-    a turn."""
-    if topic_compute_profile:
-        return topic_compute_profile
-    return (project_settings or {}).get("compute_profile") or team_compute_profile
+    """A room keeps its choice; otherwise use the explicit project default."""
+    from app.domain.agent.compute_configs import project_configs
 
-
-async def _team_compute_profile(session: AsyncSession, project) -> str | None:
-    """Load the owning team's default without making Project own the setting."""
-    if project is None or project.team_id is None:
-        return None
-    team = await TeamRepository(session).get_by_id(project.team_id)
-    return team.compute_profile if team is not None else None
+    return topic_compute_profile or project_configs(project_settings).default.profile
 
 
 def _turn_failure_notice(text: str, code: str | None) -> tuple[str, dict]:
@@ -626,6 +608,64 @@ def _turn_failure_notice(text: str, code: str | None) -> tuple[str, dict]:
             part for part in (hint, f"服务原话：\n{detail}" if detail else "") if part
         )
         or None,
+        detail_label="详细说明",
+    )
+
+
+# CLI 自己印在对话里的那几句英文,换成平台自己的中文提示卡。
+#
+# 它们过去顶着芝士的名字发出来,读的人看到的是「芝士在说英文报错」,而实际上
+# 芝士根本没说话 —— 是它脚下的 CLI 印的。归属错了比语言错了更糟:一个平台故障
+# 被读成 AI 的回答,谁也不知道该找谁。
+#
+# 英文原话一个字都不丢,收进「服务原话」的折叠区 —— 它是唯一的一份。
+_CLI_NOTICE_COPY: dict[str, tuple[str, str, str, str]] = {
+    PROVIDER_UNREACHABLE_CODE: (
+        "芝士连不上 AI 服务，这一步没做成",
+        SEVERITY_ERROR,
+        WHO_PLATFORM,
+        "这个多半不会自己好:要么是这台机器上的隧道助手掉了,要么是中继在丢连接。"
+        "先重新 @ 它一次;还是连不上就该找人看机器,不要反复重试。",
+    ),
+    PROVIDER_OVERLOADED_CODE: (
+        "AI 服务暂时过载，这一步没做成",
+        SEVERITY_WARN,
+        WHO_PLATFORM,
+        "服务端的事,通常一会儿就好。稍后再 @ 它一次。",
+    ),
+    MODEL_LIMIT_REACHED_CODE: (
+        "这个模型的额度用完了",
+        SEVERITY_ERROR,
+        WHO_HUMAN,
+        "这不是等一等就能好的:要换一个模型,或者等额度恢复。重试无效。",
+    ),
+    TOOL_UNAVAILABLE_CODE: (
+        "芝士想用的一个工具没能用上",
+        SEVERITY_WARN,
+        WHO_PLATFORM,
+        "它在等一个没有人能给的授权 —— 那个框画在容器的终端里，房间里够不着。"
+        "这说明这台机器上的工具配置不对，要人去看，重试不会有变化。",
+    ),
+    RESPONSE_TRUNCATED_CODE: (
+        "上面那条回复没说完就断了",
+        SEVERITY_WARN,
+        WHO_PLATFORM,
+        "上面那条可能是半截。要它接着说就再 @ 它一次。",
+    ),
+}
+
+
+def _cli_notice(text: str) -> tuple[str, dict] | None:
+    """整条消息其实是 CLI 印的一句英文提示时,给出该发的中文提示卡;否则 None。"""
+    failure = classify_cli_notice(text)
+    if failure is None:
+        return None
+    line, severity, who, hint = _CLI_NOTICE_COPY[failure]
+    return line, notice(
+        EVENT_TURN_FAILED,
+        severity=severity,
+        who=who,
+        detail=f"{hint}\n\n服务原话：\n{text.strip()}",
         detail_label="详细说明",
     )
 
@@ -1106,6 +1146,21 @@ def platform_prompt(content: str) -> str:
     return f"{PLATFORM_NOTICE}\n{content}"
 
 
+def publication_prompt(content: str) -> str:
+    """Carry the chat contract on new and resumed terminal input alike."""
+    return (
+        content
+        + "\n\n"
+        + platform_prompt(
+            "普通输出和最终答复都不会自动发到聊天。请用 cheese chat send 发送给用户。"
+            "收到需要回应的用户消息（包括排队或执行中追加的消息）时，能直接回答就发答案；"
+            "需要继续处理就先说明你理解的意思和接下来要做什么，再继续。"
+            "重要进展、改方向、阻碍和完成结果也要主动发消息。"
+            "巡检按 heartbeat 的通知规则发言；分身向主 agent 回报。"
+        )
+    )
+
+
 def _strip_platform_notice(text: str) -> str:
     """Neutralize the platform marker inside HUMAN text, so a person cannot type
     a message that reads as a platform instruction. The marker is the one thing
@@ -1316,8 +1371,8 @@ class ChatService:
         # project.settings (single-process reality, like the topic locks).
         self._gateway = gateway
         self._gateway_lock = asyncio.Lock()
-        # Load the conversation skills once (spec §8.3 product "soul").
-        self._skills = load_skills(DEFAULT_CHAT_SKILLS)
+        # Keep the publication contract present before native skills are invoked.
+        self._skills = NATIVE_CHAT_GUIDANCE
         # Prompt construction is serialized per topic. The lock is released as
         # soon as an interactive provider injects the prompt; non-interactive
         # providers still hold it while running because they cannot accept a
@@ -1582,7 +1637,7 @@ class ChatService:
             )
             for image in images
         )
-        line = "\n".join(lines)
+        line = publication_prompt("\n".join(lines))
         # Register BEFORE the write so a fast receipt cannot race the entry
         # (#539 decision A). The receipt is still the consumed boundary — it
         # just no longer gates the delivery verdict: write-accept is delivery,
@@ -1612,6 +1667,50 @@ class ChatService:
                 pending.remove(entry)
             return False
         return True
+
+    async def remind_silent_turns(self) -> int:
+        """Queue an internal reminder while a room response is still running."""
+        now = datetime.now(UTC)
+        due = [
+            state
+            for state in self._hook_work.values()
+            # Background inspections have their own notification policy. Only
+            # work answering a person owes a periodic chat update.
+            if state.reply_to is not None
+            and not state.is_private
+            and not state.progress_reminded
+            and (now - (state.last_chat_at or state.started_at)).total_seconds()
+            >= settings.chat_progress_reminder_after_s
+            and self._active_turn_ids.get(state.topic_id) == state.work_id
+        ]
+
+        async def remind(state: _HookWorkState) -> bool:
+            if (
+                self._hook_work.get((state.topic_id, state.work_id)) is not state
+                or self._active_turn_ids.get(state.topic_id) != state.work_id
+            ):
+                return False
+            try:
+                # Once per silent stretch. Only a new publication re-arms this;
+                # tool output and duplicate send requests do not.
+                state.progress_reminded = True
+                # A blocked terminal must not hold up reminders in other rooms.
+                async with asyncio.timeout(5):
+                    return await self.notify_running_turn(
+                        state.topic_id,
+                        "If you are still working on a response and have not "
+                        "posted an update since this reminder was queued, "
+                        "use cheese chat send to tell the user what is known "
+                        "and what you are waiting for. If you have finished, "
+                        "ignore this reminder.",
+                    )
+            except Exception:  # noqa: BLE001 — one room must not stop the sweep
+                logger.exception(
+                    "chat progress reminder failed (topic=%s)", state.topic_id
+                )
+                return False
+
+        return sum(await asyncio.gather(*(remind(state) for state in due)))
 
     async def notify_running_turn(self, topic_id: uuid.UUID, notice: str) -> bool:
         """Tell the turn already running on this topic that the world changed
@@ -1695,6 +1794,20 @@ class ChatService:
     def has_running_turn(self, topic_id: uuid.UUID) -> bool:
         """Whether this process currently owns live work for the topic."""
         return topic_id in self._active_turn_ids
+
+    async def has_unread_human_input(self, topic_id: uuid.UUID) -> bool:
+        """Whether anything a person said is still waiting to reach 芝士.
+
+        「忘了 @」的补救按钮问的就是这一句，所以它必须和真正组装 prompt 时问的
+        是同一个问题 —— 同一个 `_pending_human_blocks`，不是一份近似的复制品。
+        一份复制品会在窗口语义改动时悄悄和它分叉，而分叉的表现是按钮说「它还没
+        看到」、点下去却什么也没有可读，白烧一轮。
+        """
+        async with self._sessions() as session:
+            history = await BlockRepository(session).list_for_topic(
+                topic_id, task_id=None
+            )
+            return bool(_pending_human_blocks(history))
 
     @asynccontextmanager
     async def edit_environment(self, topic_id: uuid.UUID) -> AsyncIterator[None]:
@@ -1992,7 +2105,8 @@ class ChatService:
         return {
             (block.content or "").strip()
             for block in blocks
-            if block.kind == BlockKind.message and block.author_type == AuthorType.ai
+            if block.author_type == AuthorType.ai
+            and (block.kind == BlockKind.message or (block.meta or {}).get("progress"))
         }
 
     def schedule_spool_settle(self, topic_id: uuid.UUID, delay_s: float = 2.0) -> None:
@@ -2257,9 +2371,7 @@ class ChatService:
                 task_id=task_id,
             )
             if payload is not None:
-                if state is not None:
-                    state.assistant_count += 1
-                frame = {"type": "assistant_block", "block": payload}
+                frame = {"type": "event_block", "block": payload}
         elif isinstance(event, AgentToolUse):
             name = event.name.replace("mcp__cheese__", "")
             args = event.input or {}
@@ -2362,13 +2474,15 @@ class ChatService:
                 )
                 if payload is not None:
                     frame = {"type": "event_block", "block": payload}
-            elif event.text.strip() and not result_text_seen:
+            elif event.text.strip():
+                # Terminal output stays in activity, including Stop text.
+                # Tool-free private chat has no CLI and publishes its reply here.
                 payload = await self._persist_assistant_message(
                     project_id=project_id,
                     topic_id=topic_id,
                     text=event.text,
                     turn_id=turn_id,
-                    reply_to=None,
+                    reply_to=state.reply_to if state is not None else None,
                     roster=state.roster if state is not None else None,
                     topic_refs=state.topic_refs if state is not None else [],
                     eid=eid,
@@ -2376,11 +2490,17 @@ class ChatService:
                     continuation_id=(
                         state.continuation_id if state is not None else None
                     ),
+                    publish=bool(state and state.is_private),
                 )
                 if payload is not None:
                     if state is not None:
                         state.assistant_count += 1
-                    frame = {"type": "assistant_block", "block": payload}
+                    frame = {
+                        "type": "assistant_block"
+                        if payload["kind"] == "message"
+                        else "event_block",
+                        "block": payload,
+                    }
         if frame is not None:
             await broker.publish(channel, frame)
             if frame["type"] in ("assistant_block", "event_block", "todo"):
@@ -2498,6 +2618,7 @@ class ChatService:
                 )
             if not result.is_error:
                 await blocks.mark_consumed(list(state.pending_ids), state.work_id)
+            published_text = await blocks.published_text_for_turn(state.work_id)
             await session.commit()
 
         changeset = await self._turn_changeset(
@@ -2523,7 +2644,7 @@ class ChatService:
                 private_owner=state.private_owner,
                 agent_pool=state.agent_pool,
                 user_text=state.user_text,
-                assistant_text=result.text,
+                assistant_text=published_text,
             )
         return action_frames
 
@@ -2761,11 +2882,13 @@ class ChatService:
         continuation_id: uuid.UUID | None = None,
         at: datetime | None = None,
         task_id: uuid.UUID | None = None,
+        publish: bool = False,
+        author: str | None = None,
+        publication_id: str | None = None,
     ) -> dict | None:
-        """Persist ONE discrete 芝士 message (Slack-style): committed the moment
-        the SDK reports the AssistantMessage complete, so a turn lands as
-        several complete messages instead of one growing streamed bubble.
-        Handles the same mention canonicalization / notify / refs as before.
+        """Persist output immediately; only explicit publications enter chat.
+
+        Terminal output remains in activity without notifying mentioned members.
         ``eid`` (hooks path) is stamped into meta so the spool reconcile can
         dedup a backfilled copy against this live one; ``eids`` carries every
         constituent flush id of a coalesced message, and any one of them
@@ -2775,9 +2898,31 @@ class ChatService:
         landed in an earlier attempt at the same work (④ 重发): the re-sent
         turn re-narrating "我先看一下 X" must not post a second copy of it. The
         caller treats None as "nothing to broadcast"."""
-        meta: dict | None = None
+        # 有些「助手消息」根本不是芝士说的 —— 是它脚下的 CLI 把自己的英文提示
+        # 当成助手输出印了出来。拦在这里而不是调用方:活路径、补投、spool 回填
+        # 三条路都经过这个方法,拦在门口才不会有一条漏网。
+        as_progress = not publish
+        as_notice = None if publish else _cli_notice(text)
+        if as_notice is not None:
+            line, notice_meta = as_notice
+            return await self._persist_room_event(
+                project_id=project_id,
+                topic_id=topic_id,
+                content=line,
+                meta=notice_meta,
+                turn_id=turn_id,
+                eid=eid,
+                backfilled=backfilled,
+                platform_unsolicited=platform_unsolicited,
+                in_room=True,
+                author_type=AuthorType.system,
+                task_id=task_id,
+            )
+        meta: dict | None = (
+            {"in_room": False, "progress": True} if as_progress else None
+        )
         if eid:
-            meta = {"eid": eid}
+            meta = {**(meta or {}), "eid": eid}
         if len(eids) > 1:
             meta = {**(meta or {}), "eids": list(eids)}
         if backfilled:
@@ -2787,6 +2932,27 @@ class ChatService:
         known_ids = [e for e in dict.fromkeys((eid, *eids)) if e]
         async with self._sessions() as session:
             blocks = BlockRepository(session)
+            publication_key = None
+            publication_input = {
+                "text": text,
+                "reply_to": str(reply_to) if reply_to else None,
+            }
+            if publication_id is not None:
+                publication_key = action_key(
+                    topic_id, "chat-publish", author or "", publication_id
+                )
+                if not await idem.claim(
+                    session,
+                    publication_key,
+                    action="chat-publish",
+                    scope_id=str(topic_id),
+                ):
+                    previous = await idem.stored_result(session, publication_key)
+                    if previous is None or previous["input"] != publication_input:
+                        from app.core.errors import ConflictError
+
+                        raise ConflictError("request_id was used for another message")
+                    return previous["block"]
             if known_ids and await blocks.has_any_eid(topic_id, known_ids):
                 return None
             # `has_any_eid` alone is a SELECT followed by an INSERT, and the same
@@ -2810,7 +2976,9 @@ class ChatService:
             # disagree no matter where the process dies.
             if continuation_id is not None and not await idem.claim(
                 session,
-                action_key(continuation_id, "message", text),
+                action_key(
+                    continuation_id, "progress" if as_progress else "message", text
+                ),
                 action="message",
                 scope_id=str(topic_id),
             ):
@@ -2827,7 +2995,7 @@ class ChatService:
                     else await ProjectRepository(session).list_members(project_id)
                 )
             text = _expand_mention_names(text, roster, topic_refs)
-            author = await self._agent_handle(session, topic_id)
+            author = author or await self._agent_handle(session, topic_id)
             block = await blocks.add(
                 project_id=project_id,
                 topic_id=topic_id,
@@ -2835,7 +3003,7 @@ class ChatService:
                 author=author,
                 author_type=AuthorType.ai,
                 content=text,
-                kind=BlockKind.message,
+                kind=BlockKind.event if as_progress else BlockKind.message,
                 reply_to=reply_to,
                 turn_id=turn_id,
                 meta=meta,
@@ -2844,7 +3012,7 @@ class ChatService:
             # <@handle> mentions in 芝士's message → strong notify (the token is
             # the single source of truth: what's shown = who's notified).
             # Hallucinated handles get flagged in 现场, never silently no-op.
-            if topic is not None:
+            if topic is not None and not as_progress:
                 resolved, unresolved = await self._notify_mentions(
                     session, topic, author, text, roster
                 )
@@ -2867,7 +3035,18 @@ class ChatService:
                         meta={"in_room": False},
                     )
             payload = _block_payload(BlockOut.model_validate(block))
+            if publication_key is not None:
+                await idem.record_result(
+                    session,
+                    publication_key,
+                    {"input": publication_input, "block": payload},
+                )
             await session.commit()
+        if publish and task_id is None and turn_id is not None:
+            state = self._hook_work.get((topic_id, turn_id))
+            if state is not None:
+                state.last_chat_at = datetime.now(UTC)
+                state.progress_reminded = False
         return payload
 
     async def _persist_progress(
@@ -2918,11 +3097,14 @@ class ChatService:
         spool reconcile can dedup a backfilled copy against this live one. Returns
         the persisted block payload so a caller (live path or spool reconcile) can
         broadcast it as a WS frame."""
+        preview = tool_preview(
+            name, tool_input, work_dir=work_subpath(project_id, topic_id)
+        )
         return await self._persist_room_event(
             project_id=project_id,
             topic_id=topic_id,
-            content=_format_tool_event(name, tool_input),
-            meta=_tool_event_meta(name, tool_input, platform=platform),
+            content=_format_tool_event(name, preview),
+            meta=_tool_event_meta(name, preview, platform=platform),
             turn_id=turn_id,
             eid=eid,
             backfilled=backfilled,
@@ -3295,7 +3477,8 @@ class ChatService:
             known_texts = {
                 (b.content or "").strip()
                 for b in blocks
-                if b.kind == BlockKind.message and b.author_type == AuthorType.ai
+                if b.author_type == AuthorType.ai
+                and (b.kind == BlockKind.message or (b.meta or {}).get("progress"))
             }
             recovered = 0
 
@@ -3335,9 +3518,6 @@ class ChatService:
                 )
                 seen.add(fallback_eid)
                 seen.update(message.eids)
-                # Feed the Stop's text dedup even when this copy itself was
-                # suppressed — the text exists either way. Stored form, so it
-                # is comparable with `known_texts` seeded from the DB.
                 known_texts.add(_canon(message.text))
                 return block_payload
 
@@ -3364,7 +3544,7 @@ class ChatService:
                         block_payload = await _land_message(partial, eid)
                         if block_payload is not None:
                             recovered += 1
-                            yield {"type": "assistant_block", "block": block_payload}
+                            yield {"type": "event_block", "block": block_payload}
                     if result.session_id:
                         # The finished session is what the next summon must
                         # resume — without this the topic keeps pointing at
@@ -3390,11 +3570,11 @@ class ChatService:
                     )
                     seen.add(eid)
                     seen.update(carried)
-                    known_texts.add(stop_text)
+                    known_texts.add(_canon(stop_text))
                     if block_payload is None:
                         continue
                     recovered += 1
-                    yield {"type": "assistant_block", "block": block_payload}
+                    yield {"type": "event_block", "block": block_payload}
                     continue
                 for event in events:
                     if isinstance(event, AgentMessage):
@@ -3402,7 +3582,7 @@ class ChatService:
                         if block_payload is None:
                             continue
                         recovered += 1
-                        yield {"type": "assistant_block", "block": block_payload}
+                        yield {"type": "event_block", "block": block_payload}
                         continue
                     if isinstance(event, AgentSubagentStart | AgentSubagentStop):
                         # A worker's closing message reaches the platform exactly
@@ -3483,7 +3663,7 @@ class ChatService:
                         block_payload = await _land_message(partial, partial.eid or "")
                         if block_payload is not None:
                             recovered += 1
-                            yield {"type": "assistant_block", "block": block_payload}
+                            yield {"type": "event_block", "block": block_payload}
                     pending = set()
             # Reading is not consuming: the cursor moves over the events that
             # reached the timeline, and retention — not this pass — is what
@@ -3507,83 +3687,84 @@ class ChatService:
     async def _model_kwargs(
         self,
         project_id: uuid.UUID,
-        provider: ComputeProvider,
+        provider: ComputeProvider | None,
         topic_id: uuid.UUID | None = None,
+        *,
+        agent: ResolvedAgent | None = None,
     ) -> tuple[dict, str]:
-        """Per-turn overrides for the agent call, resolved from project.settings:
-        the ExecutionProfile and the room's pinned environment configuration.
+        """Resolve a turn's explicit agent model, model environment and usage route.
 
-        Also returns the turn's supply ROUTE — where its model traffic actually
-        goes, which names the ONE authoritative meter (issue #218):
+        Machine providers assemble their own scoped credentials. Other providers
+        retain their gateway/profile transport, with the agent's saved model.
+        The optional agent snapshot keeps model and role consistent within a turn.
 
-          "gateway"      LiteLLM, directly or via /llm from a machine; metered by
-                         the gateway spend log, never by provider-reported
-                         numbers (double count).
-          "subscription" the metering proxy; metered by its usage log.
-          "native"       profile-pinned credentials; the SDK's own usage report
-                         is all there is.
-
-        The route is a fact about where the PROVIDER actually sends the turn's
-        traffic, so it is asked of the provider: a backend that builds its own
-        model environment (``builds_model_env``) rides the deployment's supply —
-        the metering proxy under a subscription, /llm → gateway without one — and
-        is metered by that supply's log. Labeling a turn "subscription" while its
-        traffic went through /llm was a real bug once, and so was the reverse:
-        the label must follow the traffic, in both directions.
-
-        The model a turn runs on is the AGENT's before it is the project's: an
-        agent whose type names a model runs on that model in every room it
-        works in, which is the whole of "the model follows the agent". A type
-        that names none declines to choose, and the project's pick still
-        applies — so the override is `agent or project`, never a blank winning."""
-        agent_model: str | None = None
+        ``provider=None`` means there is no machine in this turn at all (私聊 走
+        plain_chat): the platform is the one about to call the model, so it needs
+        the same base_url + key a sandbox would have been handed. That is exactly
+        the not-``builds_model_env`` branch, so it falls through to it rather than
+        growing a second way to answer the same question.
+        """
+        acting_agent: str | None = None
         environment = None
         async with self._sessions() as session:
             project = await ProjectRepository(session).get(project_id)
-            if topic_id is not None and project is not None:
-                topic = await TopicRepository(session).get(topic_id)
-                if topic is not None:
-                    # Overview coordinates repairs even when project setup fails.
-                    environment = (
-                        EnvironmentConfig().snapshot()
-                        if topic.kind == TopicKind.root
-                        else await pin_environment(session, project_id, topic_id)
-                    )
-                    agents = AgentInstanceService(session)
-                    agent_model = await agents.model(
-                        await agents.for_topic(topic, project)
-                    )
-                    await session.commit()
-        kwargs: dict = {}
-        if environment is not None:
-            kwargs["env"] = {"CHEESE_ENVIRONMENT": json.dumps(environment)}
-        if provider.builds_model_env:
-            # A machine's model env is that machine's backend's own affair —
-            # handing it this box's profile env would put a box-local URL and a
-            # raw provider key on hardware that is not this process, whoever
-            # rents it. Under the subscription the backend builds the
-            # metering-proxy env itself; only the project's model pick travels
-            # from here, as the --model alias ("" = the subscription's default,
-            # no flag). Without the subscription it gets the backend's /llm route
-            # + its scoped token, and the backend swaps in the project's virtual
-            # key per request (routes/llm_proxy).
-            if settings.subscription_enabled:
-                choice = agent_model or (
-                    (project.settings or {}).get("subscription_model")
-                    if project
-                    else None
+            if project is None:
+                raise NotFoundError("Project not found")
+            topic = await TopicRepository(session).get(topic_id) if topic_id else None
+            if topic is not None:
+                acting_agent = await self._agent_handle(session, topic.id)
+                # Overview remains available to repair failed project setup.
+                environment = (
+                    EnvironmentConfig().snapshot()
+                    if topic.kind == TopicKind.root
+                    else await pin_environment(session, project_id, topic.id)
                 )
-                kwargs["model"] = subscription_model_alias(choice)
-                return kwargs, "subscription"
-            return kwargs, "gateway"
+                await session.commit()
+            if agent is None:
+                agents = AgentInstanceService(session)
+                agent = (
+                    await agents.for_topic(topic, project)
+                    if topic
+                    else await agents.for_project(project)
+                )
+            config = AgentConfiguration.model_validate(agent.configuration)
+            validate_configuration(config, project.settings)
+            supply = resolve_pool(
+                project.settings, subscription_enabled=settings.subscription_enabled
+            )
+        model = (
+            subscription_model_alias(config.model)
+            if supply == SUBSCRIPTION
+            else config.model
+        )
+        config_hash = hashlib.sha256(
+            # Author identity, chat skills, and native RC arguments are installed
+            # at process birth; refresh them together at the next task boundary.
+            (
+                json.dumps(
+                    {"agent": agent.configuration, "git_author": acting_agent},
+                    sort_keys=True,
+                )
+                + ":explicit-chat-v3-native-skills"
+                + (":native-rc-v1" if supply == SUBSCRIPTION else "")
+            ).encode()
+        ).hexdigest()
+        kwargs: dict = {"model": model, "env": {"CHEESE_AGENT_CONFIG": config_hash}}
+        if acting_agent is not None:
+            kwargs["agent_handle"] = acting_agent
+        if environment is not None:
+            kwargs["env"]["CHEESE_ENVIRONMENT"] = json.dumps(environment)
+        if provider is not None and provider.builds_model_env:
+            return kwargs, supply
         pool_route = True
         if self._profiles is not None:
             profile = self._profiles.resolve(
                 project.settings if project else None,
                 project.owner_handle if project else None,
             )
-            kwargs["model"] = profile.model
-            kwargs["env"] = {**kwargs.get("env", {}), **profile.full_env()}
+            kwargs["env"].update(profile.full_env())
+            kwargs["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"] = model
+            kwargs["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"] = model
             # Only the pool profile routes through the gateway; the testing
             # (native Claude) profiles pin their own base_url + credentials.
             pool_route = profile.base_url == settings.anthropic_base_url
@@ -3871,6 +4052,8 @@ class ChatService:
             ]
 
             is_private = topic.is_private
+            # 这一轮走不走「不占机器」那条路。私聊默认走，走不通再退回机器。
+            is_plain = True
             private_owner = topic.private_owner
             acting_agent = await self._agent_handle(session, topic.id)
             doc_root = None if is_private else await blocks.doc_root(place.room_id)
@@ -3900,8 +4083,7 @@ class ChatService:
                 )
             projects_repo = ProjectRepository(session)
             project = await projects_repo.get(topic.project_id)
-            # The persona comes from the AGENT working here, via its type — the
-            # room's own agent if it has one, else the project's default.
+            # Read the selected agent once so this turn's role and model agree.
             agents = AgentInstanceService(session)
             agent = (
                 await agents.for_topic(topic, project)
@@ -3927,12 +4109,6 @@ class ChatService:
                     exclude_id=topic.id,
                 )
             project_id = topic.project_id
-            # Who this topic's commits are authored by. Refreshed every turn
-            # rather than once at creation: people connect GitHub after their
-            # first topic, and topics that predate this have no record at all.
-            # Best-effort by construction — see workspace/identity.py.
-            if not is_private:
-                await ws_identity.sync_for_topic(session, topic)
             # This agent's conversation here, not just any: a room may host
             # several agents and each resumes its own (agent_session/models.py).
             # Looked up under the same key the turn that stores it writes under
@@ -3974,89 +4150,115 @@ class ChatService:
                     card_statuses=[c.status for c in open_cards],
                 )
             )
-            # Which compute this topic runs on (v4): topic → project sticky → team.
-            compute_id = _resolve_compute_id(
-                project.settings if project else None,
-                topic.compute_profile,
-                await _team_compute_profile(session, project),
-            )
-            provider = self._compute.select(
-                provider_id=compute_id, harness=wanted_harness
-            )
-            if provider is None:
-                # The machine is fine; what runs on it is not what this agent's
-                # type asked for. Running Claude Code anyway would answer as an
-                # agent nobody configured — say so instead, and leave the type
-                # to be fixed. (One harness ships, so today this needs a row
-                # written before the field was validated at all.)
-                return _TurnBail(
-                    [
-                        {
-                            "type": "event_block",
-                            "block": await self._bail_notice(
-                                project_id=topic.project_id,
-                                topic_id=topic_id,
-                                turn_id=turn_id,
-                                session=session,
-                                text=(
-                                    f"这个 agent 的类型要求用 {wanted_harness} "
-                                    "跑，而本话题选的机器上没有部署它，本轮没有开始。"
-                                ),
-                            ),
-                        },
-                        {"type": "done"},
-                    ]
+            # 私聊不落在任何一台机器上。机器是**按话题**分配的，而私聊是一段
+            # 对话——照常走下去，每个人的私聊都在替一段对话占着一台机器（配了
+            # Cloud 的部署上就是一台云主机）。执行那一半据此改走 plain_chat：
+            # 后端自己向模型问一次。代价是明写的，也是选定的——私聊里的芝士
+            # **没有任何工具**，读不了文件、跑不了命令，要它干活得去开话题。
+            #
+            # 但要先问一句这条路走不走得通：它要后端手里有出口和凭据，而走订阅的
+            # 部署没有（订阅凭据是机器上的 OAuth token）。走不通就照旧占一台机器。
+            # **不占机器是优化，不是承诺**——一间坏掉的私聊比一台被占着的机器糟
+            # 得多。
+            provider: ComputeProvider | None = None
+            if is_private and await self._plain_chat_route(project_id) is None:
+                is_plain = False
+            if not (is_private and is_plain):
+                # Resolve the room choice, then the explicit project default.
+                compute_id = _resolve_compute_id(
+                    project.settings if project else None,
+                    topic.compute_profile,
                 )
-            if provider.provisions_machine:
-                ready, waiting_text = await provider.prepare_topic(
-                    project_id=project_id,
-                    topic_id=topic_id,
-                    actor=provision_actor,
+                if compute_id == "device" and topic.compute_config is None:
+                    from app.domain.agent.compute_configs import (
+                        bind_room_device_choice,
+                    )
+
+                    await bind_room_device_choice(
+                        session, topic, project.settings if project else None
+                    )
+                provider = self._compute.select(
+                    provider_id=compute_id, harness=wanted_harness
                 )
-                if topic.compute_profile is None:
-                    topic.compute_profile = provider.name
-                if not ready:
-                    cloud_events = [
-                        block
-                        for block in history
-                        if (block.meta or {}).get("event_type") == "cloud_provisioning"
-                    ]
-                    waiting_payload = None
-                    if (
-                        not cloud_events
-                        or (cloud_events[-1].meta or {}).get("state") != "waiting"
-                    ):
-                        waiting_block = await blocks.add(
-                            project_id=project_id,
-                            topic_id=topic_id,
-                            author="system",
-                            author_type=AuthorType.system,
-                            content=waiting_text,
-                            kind=BlockKind.event,
-                            turn_id=turn_id,
-                            meta={
-                                # 这条已有自己的 event_type / state，前端按它渲染；
-                                # 补上轻重和「谁在管」，等待就不必再靠一个 ⏳ 说话。
-                                "severity": SEVERITY_INFO,
-                                "who": WHO_PLATFORM,
-                                "detail": (
-                                    "本话题会保留这条消息，机器就绪后自动继续。"
+                if provider is None:
+                    # The machine is fine; what runs on it is not what this agent's
+                    # type asked for. Running Claude Code anyway would answer as an
+                    # agent nobody configured — say so instead, and leave the type
+                    # to be fixed. (One harness ships, so today this needs a row
+                    # written before the field was validated at all.)
+                    return _TurnBail(
+                        [
+                            {
+                                "type": "event_block",
+                                "block": await self._bail_notice(
+                                    project_id=topic.project_id,
+                                    topic_id=topic_id,
+                                    turn_id=turn_id,
+                                    session=session,
+                                    text=(
+                                        f"这个 agent 的类型要求用 {wanted_harness} "
+                                        "跑，而本话题选的机器上没有部署它，本轮没有开始。"
+                                    ),
                                 ),
-                                "detail_label": "接下来会发生什么",
-                                "event_type": "cloud_provisioning",
-                                "state": "waiting",
                             },
+                            {"type": "done"},
+                        ]
+                    )
+                if provider.provisions_machine:
+                    ready, waiting_text = await provider.prepare_topic(
+                        project_id=project_id,
+                        topic_id=topic_id,
+                        actor=provision_actor,
+                    )
+                    if topic.compute_profile is None:
+                        topic.compute_profile = provider.name
+                    if not ready:
+                        cloud_events = [
+                            block
+                            for block in history
+                            if (block.meta or {}).get("event_type")
+                            == "cloud_provisioning"
+                        ]
+                        waiting_payload = None
+                        if (
+                            not cloud_events
+                            or (cloud_events[-1].meta or {}).get("state") != "waiting"
+                        ):
+                            waiting_block = await blocks.add(
+                                project_id=project_id,
+                                topic_id=topic_id,
+                                author="system",
+                                author_type=AuthorType.system,
+                                content=waiting_text,
+                                kind=BlockKind.event,
+                                turn_id=turn_id,
+                                meta={
+                                    # 这条已有自己的 event_type / state，前端按它渲染；
+                                    # 补上轻重和「谁在管」，等待就不必再靠一个 ⏳ 说话。
+                                    "severity": SEVERITY_INFO,
+                                    "who": WHO_PLATFORM,
+                                    "detail": (
+                                        "本话题会保留这条消息，机器就绪后自动继续。"
+                                    ),
+                                    "detail_label": "接下来会发生什么",
+                                    "event_type": "cloud_provisioning",
+                                    "state": "waiting",
+                                },
+                            )
+                            waiting_payload = _block_payload(
+                                BlockOut.model_validate(waiting_block)
+                            )
+                        await session.commit()
+                        frames: list[dict] = []
+                        if waiting_payload is not None:
+                            frames.append(
+                                {"type": "event_block", "block": waiting_payload}
+                            )
+                        frames.append(
+                            {"type": "waiting", "state": "cloud_provisioning"}
                         )
-                        waiting_payload = _block_payload(
-                            BlockOut.model_validate(waiting_block)
-                        )
-                    await session.commit()
-                    frames: list[dict] = []
-                    if waiting_payload is not None:
-                        frames.append({"type": "event_block", "block": waiting_payload})
-                    frames.append({"type": "waiting", "state": "cloud_provisioning"})
-                    frames.append({"type": "done"})
-                    return _TurnBail(frames)
+                        frames.append({"type": "done"})
+                        return _TurnBail(frames)
             # The prompt is built HERE, not where `pending` was computed: an
             # attachment line has to describe how the image reaches 芝士 on THIS
             # backend, and that is only knowable once the provider is picked.
@@ -4067,9 +4269,14 @@ class ChatService:
             # No pending human block ⇒ nobody spoke: this is a resume nudge,
             # a kickoff or a returned conclusion. Say so, rather than handing
             # 芝士 bare text that looks like a person's message.
+            # provider is None ⇒ 私聊那条路，它只发文字。默认值 True 在这里会变成
+            # 一句谎：提示词会告诉芝士「图片内容已附在本条消息里」，而它什么也没
+            # 收到——那种情况下它不会报错，它会编出图里有什么。
+            embeds_images = (
+                False if provider is None else getattr(provider, "embeds_images", True)
+            )
             backlog = "\n".join(
-                _prompt_line(b, embeds_images=getattr(provider, "embeds_images", True))
-                for b in pending
+                _prompt_line(b, embeds_images=embeds_images) for b in pending
             )
             prompt_text = backlog or platform_prompt(content)
             # 平台指令不会被待读消息挤掉。A platform turn EXISTS because of its
@@ -4104,9 +4311,11 @@ class ChatService:
             # killing the turn at the generic `agent_turn_timeout_s`. Without this
             # the device's own two-layer fix is dead on arrival — the outer guard
             # still kills at 900s.
-            if topic.compute_profile is None:
+            # 私聊没有机器，所以也不该在它身上钉一台。钉了就是给一段永远不会用到
+            # 机器的对话记上一台机器，而这一行本来是给「以后别换机器」用的。
+            if provider is not None and topic.compute_profile is None:
                 # v4 affinity red line: materialize the effective target BEFORE
-                # the first provider call. A later team-default/sticky change must
+                # the first provider call. A later project-default change must
                 # never move an existing work tree or resumable Claude session.
                 topic.compute_profile = provider.name
                 await session.commit()
@@ -4196,8 +4405,11 @@ class ChatService:
         # `agent_turn_timeout_s` (turn 活跃度检测). It is the HARNESS's number:
         # how long a silence may last before it means something is wrong depends
         # on what is producing the output, not on the machine underneath it.
-        runtime = runtime_for(provider)
-        yield {"type": "turn_ceiling", "seconds": runtime.hard_ceiling_s}
+        # provider is None ⇒ 私聊：这一轮没有会话，也就没有「静默多久算卡住」这个
+        # 问题——请求自己的生命周期就是这一轮的生命周期。
+        runtime = None if provider is None else runtime_for(provider)
+        if runtime is not None:
+            yield {"type": "turn_ceiling", "seconds": runtime.hard_ceiling_s}
         skills = load_skills(PRIVATE_SKILLS) if is_private else self._skills
         system_prompt = _build_system_prompt(
             self._base_prompt,
@@ -4224,10 +4436,38 @@ class ChatService:
                 else None
             ),
         )
+        # 这一轮没有机器 ⇒ 私聊走 plain_chat：后端自己问一次模型，把回答当成这一轮
+        # 的最终结果交给**同一个**消费口。落库、推帧、结算、记忆抽取因此全部照旧，
+        # 换掉的只是「谁产生了那段文字」。
+        #
+        # 岔在 `_model_kwargs` **之前**，因为那个函数按项目选的池给模型名：走订阅
+        # 时它给的是只有机器上那条链认识的别名，拿去问网关必然 404。
+        if provider is None:
+            await self._run_plain_chat(
+                project_id=project_id,
+                topic_id=topic_id,
+                turn_id=turn_id,
+                user_block_id=user_block_id,
+                system_prompt=system_prompt,
+                agent=prepared.agent,
+                pending_ids=pending_ids,
+                prompt_text=prompt_text,
+                private_owner=private_owner,
+                acting_agent=acting_agent,
+                agent_pool=agent_pool,
+                continuation_id=continuation_id,
+            )
+            yield {"type": "prompt_delivered"}
+            return
+
+        prompt_text = publication_prompt(prompt_text)
+
         # Compute: a provider owns the per-topic sandbox + execution (spec §9.1).
         # In a private chat, `cheese remember` targets the owner's personal memory
         # (spec §8.4). The provider runs a plain model turn when no Docker (tests).
-        model_kwargs, route = await self._model_kwargs(project_id, provider, topic_id)
+        model_kwargs, route = await self._model_kwargs(
+            project_id, provider, topic_id, agent=prepared.agent
+        )
         # Remembered for the turns this session starts by itself. A route is a
         # fact about where a SESSION's traffic goes, not about one prompt, and a
         # self-started turn has no prompt to resolve it from — it rides the same
@@ -4329,6 +4569,9 @@ class ChatService:
             if prompt_text not in state.user_text:
                 state.user_text = f"{state.user_text}\n{prompt_text}"
 
+        # 走到这里 provider 一定有（私聊那条路在上面就 return 了），runtime 因此也
+        # 一定有；写出来是给类型检查看的，也是给下一个在这中间插东西的人看的。
+        assert runtime is not None
         try:
             ready = await runtime.send(
                 SessionRef(project_id, topic_id),
@@ -4340,6 +4583,7 @@ class ChatService:
                     owner=private_owner if is_private else None,
                     model=model_kwargs.get("model"),
                     env=model_kwargs.get("env"),
+                    agent_handle=acting_agent,
                 ),
                 work_id=turn_id,
                 images=turn_images or None,
@@ -4405,6 +4649,156 @@ class ChatService:
             if payload is not None:
                 yield {"type": "event_block", "block": payload}
         return
+
+    # ---- 私聊：一次不落地的模型调用 ----------------------------------------
+    # 房间里的一轮活是「在一台机器上开一个会话」，因为它要读文件、跑命令、开 PR。
+    # 私聊不做这些事，而机器是按话题分配的——照原样走下去，每个人的私聊都在替一段
+    # 对话占着一台机器。这里换成后端自己问一次模型，然后把回答交给和会话那条路
+    # **同一个**消费口（`_consume_hook_event`）：落库、推帧、结算、记忆抽取因此一样
+    # 也不少，换掉的只是「谁产生了那段文字」。
+
+    #: 一次私聊调用带上多少条历史。这条路是无状态的（没有会话记住上下文），所以
+    #: 上下文得每次自己带；截断是必须的，而尾部才是对话，所以取最新的这些。
+    _PLAIN_HISTORY_BLOCKS = 40
+
+    async def _plain_chat_messages(
+        self, topic_id: uuid.UUID, prompt_text: str
+    ) -> list[dict[str, str]]:
+        """把这间私聊的近况整理成 messages。
+
+        只取人说的和芝士说的（`kind=message`）：系统事件是平台在说话，不是对话的一
+        部分，把它们混进来等于让芝士以为对面的人说过那些话。相邻的同角色合并，因为
+        Anthropic 协议要求 user/assistant 交替。
+        """
+        async with self._sessions() as session:
+            page = await BlockRepository(session).page_for_topic(
+                topic_id, limit=self._PLAIN_HISTORY_BLOCKS, kinds=[BlockKind.message]
+            )
+        messages: list[dict[str, str]] = []
+        for block in page.items:
+            if not (block.content or "").strip():
+                continue
+            role = "assistant" if block.author_type == AuthorType.ai else "user"
+            if messages and messages[-1]["role"] == role:
+                messages[-1]["content"] += f"\n{block.content}"
+            else:
+                messages.append({"role": role, "content": block.content})
+        # 这一轮的话可能还没落库（也可能落了但被上面的截断切掉了），补在末尾；已经
+        # 在里面就不重复。协议要求最后一条是 user。
+        if not messages or messages[-1]["role"] != "user":
+            messages.append({"role": "user", "content": prompt_text})
+        elif prompt_text.strip() and prompt_text not in messages[-1]["content"]:
+            messages[-1]["content"] += f"\n{prompt_text}"
+        # 第一条必须是 user：一段以芝士的话开头的历史（比如上一轮它先说了什么）会被
+        # 出口直接拒掉。
+        while messages and messages[0]["role"] != "user":
+            messages.pop(0)
+        return messages
+
+    async def _plain_chat_route(self, project_id: uuid.UUID) -> tuple[str, str] | None:
+        """私聊那条路的出口 (base_url, key)，没有就 None。
+
+        只认网关，**不看项目选的是哪个池**。这是刻意的：订阅那条路的凭据是机器上的
+        OAuth token，后端手里根本没有；而私聊要的从来不是一台机器上的 Claude Code，
+        只是一次模型调用。凭据仍是项目自己的虚拟 key，所以这条路和沙箱那条路计费在
+        同一个口子上。
+
+        网关没配的部署上返回 None，私聊就退回去照旧占一台机器——不占机器是优化，
+        不是承诺。
+        """
+        from app.domain.agent import plain_chat
+
+        if self._gateway is None:
+            return None
+        env = await self._gateway_project_env(project_id)
+        if not env:
+            return None
+        key = env.get("ANTHROPIC_AUTH_TOKEN")
+        base = settings.anthropic_base_url
+        if not isinstance(key, str) or not isinstance(base, str):
+            return None
+        return plain_chat.route_from_env(
+            {"ANTHROPIC_BASE_URL": base, "ANTHROPIC_AUTH_TOKEN": key}
+        )
+
+    async def _run_plain_chat(
+        self,
+        *,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID,
+        turn_id: uuid.UUID,
+        user_block_id: uuid.UUID | None,
+        system_prompt: str,
+        agent: ResolvedAgent,
+        pending_ids: list[uuid.UUID],
+        prompt_text: str,
+        private_owner: str | None,
+        acting_agent: str,
+        agent_pool: tuple[MemoryScope, str] | None,
+        continuation_id: uuid.UUID | None,
+    ) -> None:
+        """跑完私聊这一轮：问一次模型，把结果（或失败）交给统一的消费口。"""
+        from app.domain.agent import plain_chat
+
+        # 这一轮的记账上下文。会话那条路由 `_register_work` 在收到第一个 hook 时建，
+        # 私聊没有 hook，所以在这里自己建——没有它，结果落得下去，这一轮的账却结不
+        # 掉（用量、turn 关闭都挂在它上面）。
+        # roster 传 []：私聊没有名册，而 None 的意思是「没组装过提示词，去库里读」。
+        state = _HookWorkState(
+            project_id=project_id,
+            topic_id=topic_id,
+            work_id=turn_id,
+            pending_ids=set(pending_ids),
+            reply_to=user_block_id,
+            roster=[],
+            topic_refs=[],
+            continuation_id=continuation_id,
+            # 这条路只从网关走，所以用量也从网关那边结（同沙箱那条路）。
+            route="gateway",
+            is_private=True,
+            private_owner=private_owner,
+            acting_agent=acting_agent,
+            agent_pool=agent_pool,
+            user_text=prompt_text,
+            started_at=datetime.now(UTC),
+        )
+        self._hook_work[(topic_id, turn_id)] = state
+
+        try:
+            target = await self._plain_chat_route(project_id)
+            if target is None:
+                # 组装那一半刚问过同一句并据此跳过了机器，所以到这里还没有出口，
+                # 说明网关在这两步之间掉了。说清楚，而不是拿一个空 Bearer 去撞
+                # 401——那种失败会被读成「模型出问题了」。
+                raise plain_chat.PlainChatUnavailable(
+                    "模型出口刚刚还在，现在拿不到项目的网关凭据了，这一轮没有发出去"
+                )
+            base_url, api_key = target
+            # 模型名直接取队友自己配的那个，不经 `_model_kwargs`：走订阅的项目在那
+            # 里会被换成一个只有机器上那条链认识的别名，拿去问网关必然 404。
+            config = AgentConfiguration.model_validate(agent.configuration)
+            reply = await plain_chat.ask(
+                base_url=base_url,
+                api_key=api_key,
+                model=config.model,
+                system_prompt=system_prompt,
+                messages=await self._plain_chat_messages(topic_id, prompt_text),
+            )
+        except plain_chat.PlainChatUnavailable as exc:
+            logger.warning("plain chat failed (topic=%s): %s", topic_id, exc)
+            result = AgentResult(text=str(exc), session_id=None, is_error=True)
+        else:
+            result = AgentResult(
+                text=reply.text,
+                session_id=None,
+                usage=AgentUsage(
+                    input_tokens=reply.input_tokens,
+                    output_tokens=reply.output_tokens,
+                ),
+            )
+        await self._consume_hook_event(
+            project_id, topic_id, turn_id, result, None, False, False
+        )
 
     def _schedule_memory_extraction(
         self,
@@ -4514,7 +4908,6 @@ class ChatService:
             topic_id = topic.id
             compute_id = _resolve_compute_id(
                 project.settings,
-                team_compute_profile=await _team_compute_profile(session, project),
             )
             await session.commit()
 
@@ -4553,18 +4946,9 @@ class ChatService:
                 final_text = event.text
                 new_session_id = event.session_id
 
-        # --- tx2: persist 芝士's summary + session ---
+        # Chat was published explicitly; terminal output belongs to hook activity.
         async with self._sessions() as session:
             topics = TopicRepository(session)
-            blocks = BlockRepository(session)
-            await blocks.add(
-                project_id=project_id,
-                topic_id=topic_id,
-                author=await self._agent_handle(session, topic_id),
-                author_type=AuthorType.ai,
-                content=final_text,
-                kind=BlockKind.message,
-            )
             topic = await topics.get(topic_id)
             if topic is not None and new_session_id:
                 agent = await self._resolved_agent(session, topic)
@@ -4613,7 +4997,6 @@ class ChatService:
             root_topic_id = project.root_topic_id
             compute_id = _resolve_compute_id(
                 project.settings,
-                team_compute_profile=await _team_compute_profile(session, project),
             )
 
         topic_lines = "\n".join(
@@ -4713,10 +5096,10 @@ class ChatService:
                 ),
             )
             agents = AgentInstanceService(session)
-            role = await agents.system_prompt(await agents.for_project(project))
+            agent = await agents.for_project(project)
+            role = await agents.system_prompt(agent)
             compute_id = _resolve_compute_id(
                 project.settings,
-                team_compute_profile=await _team_compute_profile(session, project),
             )
 
         topic_lines = "\n".join(
@@ -4738,7 +5121,7 @@ class ChatService:
         )
         system_prompt = _build_system_prompt(
             self._base_prompt,
-            load_skills(["conversation-style"]),
+            "",  # This call returns a project summary, without chat publication.
             None,
             [],
             role,
@@ -4760,9 +5143,11 @@ class ChatService:
             prompt=prompt,
             system_prompt=system_prompt,
             resume_session_id=None,
-            **(await self._model_kwargs(project_id, provider, project.root_topic_id))[
-                0
-            ],
+            **(
+                await self._model_kwargs(
+                    project_id, provider, project.root_topic_id, agent=agent
+                )
+            )[0],
         ):
             if isinstance(event, AgentResult):
                 final_text = event.text

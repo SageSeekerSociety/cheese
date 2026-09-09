@@ -24,6 +24,12 @@ def _mkproject(client) -> uuid.UUID:
     return uuid.UUID(resp["data"]["id"])
 
 
+def _mktopic(client, pid: uuid.UUID) -> uuid.UUID:
+    response = client.post("/topics", json={"project_id": str(pid), "title": "Files"})
+    assert response.status_code == 200
+    return uuid.UUID(response.json()["data"]["id"])
+
+
 def _owner(client) -> dict[str, str]:
     """These routes return the source, so they need a caller with a claim on the
     project; the tests used to reach them with no credential at all."""
@@ -96,7 +102,7 @@ def test_file_endpoints_survive_the_agent_committing(client):
     this one. Same uid on both sides → the endpoints keep answering.
     """
     pid = _mkproject(client)
-    tid = uuid.uuid4()
+    tid = _mktopic(client, pid)
     _native_edit(pid, tid, "note.md", "hello\n")
 
     wt = ws.topic_worktree(pid, tid)
@@ -132,7 +138,7 @@ def test_file_endpoints_survive_the_agent_committing(client):
     assert body.status_code == 200
 
     # A second topic in the same project — the blast radius that made this a P0.
-    other = uuid.uuid4()
+    other = _mktopic(client, pid)
     _native_edit(pid, other, "other.md", "still fine\n")
     assert (
         client.get(

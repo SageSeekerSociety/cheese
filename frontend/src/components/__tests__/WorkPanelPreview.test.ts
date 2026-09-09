@@ -27,15 +27,19 @@ vi.mock('../CodeEditor.vue', () => ({
 
 const getPreview = vi.fn()
 const readFile = vi.fn()
-const primeAppPreview = vi.fn()
+const requestPreviewSession = vi.fn()
 
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
     ...actual,
-    getPreview: (...a: unknown[]) => getPreview(...a),
+    getPreview: (...a: unknown[]) =>
+      getPreview(...a).then(
+        (preview: Record<string, unknown> | null) =>
+          preview && { ...preview, url: preview.kind === 'app' ? preview.url : 'https://preview-topic-a.example/' }
+      ),
     readFile: (...a: unknown[]) => readFile(...a),
-    primeAppPreview: (...a: unknown[]) => primeAppPreview(...a),
+    requestPreviewSession: (...a: unknown[]) => requestPreviewSession(...a),
     getDoc: vi.fn().mockResolvedValue({ markdown: '', title: '' }),
     putDoc: vi.fn().mockResolvedValue({}),
     getComments: vi.fn().mockResolvedValue({ data: [], total: 0 }),
@@ -47,6 +51,8 @@ vi.mock('../../api', async () => {
     getTerminal: vi.fn().mockResolvedValue({ available: false }),
     getTopicUsage: vi.fn().mockResolvedValue(null),
     getProjectUsage: vi.fn().mockResolvedValue(null),
+    listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
+    listRoomTrees: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     // 规则 1: the tabs a topic offers follow what it actually holds. These suites
     // are about the tabs' CONTENT, so they mount a topic that holds everything.
     getTopicWorkSummary: vi.fn().mockResolvedValue({ changed_files: ['a.py'], has_run: true }),
@@ -98,7 +104,11 @@ beforeEach(() => {
   vi.clearAllMocks()
   getPreview.mockResolvedValue(null)
   readFile.mockResolvedValue({ path: 'report.html', content: '<p>hi</p>' })
-  primeAppPreview.mockResolvedValue({ ready: true })
+  requestPreviewSession.mockResolvedValue({
+    url: 'https://preview-topic-a.example/_cheese/session',
+    grant: 'preview-only',
+  })
+  vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(() => {})
 })
 
 describe('预览面板：运行中的应用到不了的时候说什么', () => {
@@ -136,12 +146,12 @@ describe('预览面板：运行中的应用到不了的时候说什么', () => {
     expect(container.textContent).toContain('服务多半已经退出')
   })
 
-  it('应用活着 → 嵌的是反代路径，而不是机器上的地址', async () => {
+  it('应用活着 → 向独立来源提交预览授权', async () => {
     getPreview.mockResolvedValue({
       kind: 'app',
       path: 'Vue dev server',
       mime: 'application/x-cheesex-app',
-      url: '/api/topics/topic-A/app/',
+      url: 'https://preview-topic-a.example/',
       tunnel_up: true,
       artifact_id: 'a1',
     })
@@ -150,11 +160,52 @@ describe('预览面板：运行中的应用到不了的时候说什么', () => {
     await openPreview(container)
 
     const frame = container.querySelector('iframe.preview-frame') as HTMLIFrameElement | null
-    expect(frame?.getAttribute('src')).toBe('/api/topics/topic-A/app/')
+    expect(frame?.getAttribute('src')).toBeNull()
+    expect(frame?.getAttribute('name')).toBeTruthy()
+    expect(HTMLFormElement.prototype.submit).toHaveBeenCalledOnce()
     // 授权先落地，否则 iframe 的第一个请求就 404 —— 白框。
-    expect(primeAppPreview).toHaveBeenCalledWith('topic-A')
-    // 页面是芝士写的：给了 same-origin 就等于把会话 token 交出去。
-    expect(frame?.getAttribute('sandbox')).not.toContain('allow-same-origin')
+    expect(requestPreviewSession).toHaveBeenCalledWith('topic-A')
+    // The named form targets an isolated content origin, so storage can work.
+    expect(frame?.getAttribute('sandbox')).toContain('allow-same-origin')
+  })
+})
+
+describe('预览面板：文件读回来了但没有内容', () => {
+  it('大文件不再受文本编辑器读取上限限制，直接从独立来源加载', async () => {
+    getPreview.mockResolvedValue({ kind: 'file', path: 'report.html', mime: 'text/html', artifact_id: 'a1' })
+    readFile.mockResolvedValue({
+      path: 'report.html',
+      content: null,
+      version: null,
+      bytes: 2_113_182,
+      binary: false,
+      too_large: true,
+    })
+    const { container } = mountPanel()
+    await flush()
+    await openPreview(container)
+
+    expect(container.textContent).not.toContain('太大')
+    expect(container.querySelector('iframe.preview-frame')).toBeTruthy()
+    expect(requestPreviewSession).toHaveBeenCalledWith('topic-A')
+  })
+
+  it('文件不是文本 → 说的是它读不了，不是它太大', async () => {
+    getPreview.mockResolvedValue({ kind: 'file', path: 'shot.bin', mime: 'text/html', artifact_id: 'a1' })
+    readFile.mockResolvedValue({
+      path: 'shot.bin',
+      content: null,
+      version: 'v1',
+      bytes: 2048,
+      binary: true,
+      too_large: false,
+    })
+    const { container } = mountPanel()
+    await flush()
+    await openPreview(container)
+
+    expect(container.textContent).toContain('不是文本')
+    expect(container.textContent).not.toContain('太大')
   })
 })
 

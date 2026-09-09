@@ -43,6 +43,7 @@ from app.domain.agent import clone
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD, DISALLOWED_TOOLS
 from app.domain.agent.harness.launch import LaunchSpec, ScreenPlace, SessionFile
+from app.domain.agent.skills import native_skill_files
 
 # THE isolation boundary between two claudes on one machine: claude reads AND
 # writes its config — settings.json, .claude.json, the transcripts --resume
@@ -63,7 +64,9 @@ GATES_FILE = ".claude.json"
 SYSTEM_PROMPT_FILE = "cheese-system-prompt.md"
 
 
-def hooks_settings(extra_stop: list[str] | None = None) -> dict:
+def hooks_settings(
+    extra_stop: list[str] | None = None, *, remote_control: bool = False
+) -> dict:
     """``~/.claude/settings.json`` for a hooks-driven session: pre-accept the
     bypass disclaimer AND forward every structured event to our hook endpoint via
     a COMMAND hook (``cheese-hook``).
@@ -97,11 +100,12 @@ def hooks_settings(extra_stop: list[str] | None = None) -> dict:
         },
         # Previews belong in Cheese, not on claude.ai via the Artifact tool.
         "enableArtifact": False,
-        # Tools with no way out of this platform (AskUserQuestion — see
-        # cli.DISALLOWED_TOOLS). Also passed as --disallowedTools on the
-        # launch line; a deny rule that only lives in one of the two is a deny
-        # rule that a future launcher tweak can silently drop.
-        "permissions": {"deny": list(DISALLOWED_TOOLS)},
+        # Native questions need the RC answer channel. Without it, keep the
+        # matching CLI deny rule so a question cannot strand the turn.
+        "permissions": {"deny": [] if remote_control else list(DISALLOWED_TOOLS)},
+        # Set before the first turn: changing this later cannot remove a URL
+        # already present in the conversation's model-visible history.
+        **({"attribution": {"sessionUrl": False}} if remote_control else {}),
         "hooks": {
             "SessionStart": plain,
             # The consumption receipt. A prompt reaches the session over its
@@ -190,6 +194,10 @@ def build_session_launch(
             SessionFile(GATES_FILE, _gates(workdir), 0o666),
             # Ours alone; claude only reads it.
             SessionFile(SYSTEM_PROMPT_FILE, system_prompt, 0o644),
+            *(
+                SessionFile(name, content, 0o644)
+                for name, content in native_skill_files().items()
+            ),
         ),
     )
 

@@ -51,6 +51,7 @@ from app.domain.agent.platform_failures import (
     DEVICE_OFFLINE_MESSAGE,
     HOST_UNREACHABLE_CODE,
 )
+from app.domain.device.models import DeviceRow
 from app.domain.device.service import DeviceService
 from app.domain.device.supply import (
     Supply,
@@ -83,15 +84,6 @@ class EnvironmentPreparationError(ScreenSetupError):
             "环境准备失败，芝士还没有开始处理这条消息。",
             failure_code="environment_preparation_failed",
         )
-
-
-def _git_author(project_id: uuid.UUID, topic_id: uuid.UUID) -> tuple[str, str] | None:
-    """Who this topic's commits belong to, for a machine that owns its own tree
-    and commits with plain git. None → the launcher's 芝士 default."""
-    from app.domain.workspace import identity as ws_identity
-
-    found = ws_identity.read(project_id, topic_id)
-    return None if found is None else (found.name, found.email)
 
 
 # #358 · what a turn gets when its only/pinned machine is enrolled as the boxed
@@ -148,6 +140,8 @@ async def resolve_pinned_device(
     chosen = await service.topic_binding(topic_id)
     if chosen is not None:
         device_id = chosen.device_id
+        if not await service.serves_project(device_id, project_id):
+            raise ScreenSetupError("设备已移出团队或项目，请联系设备所有者")
         if await service.get_hosted_device(device_id) is None:
             raise ScreenSetupError(DEVICE_NOT_HOSTED_MESSAGE)
         if not is_online(device_id):
@@ -580,6 +574,22 @@ class DeviceChannel(Channel):
                 return screen
         return None
 
+    async def _device_api_base(self, device_id: str) -> str:
+        factory = self._session_factory
+        if factory is None:
+            from app.core.db import async_session_factory
+
+            factory = async_session_factory
+        async with factory() as session:
+            device = await session.get(DeviceRow, device_id)
+            if (
+                device
+                and device.supply == Supply.cloud
+                and device.cloud_control_private
+            ):
+                return "http://127.0.0.1:18080"
+        return self._public_base
+
     async def _device_ccproxy_upstream(self, device_id: str) -> str:
         """The ccproxy identity this DEVICE brings, '' when it brings none.
 
@@ -613,11 +623,6 @@ class DeviceChannel(Channel):
         translating a backend path into the device's namespace.
         """
         return f"$HOME/.cheese/work/{project_id}/{topic_id}"
-
-    def _hook_url(self, topic_id: uuid.UUID) -> str:
-        # Reuse the existing sandbox hook endpoint (scoped-token auth + shared
-        # hook_router), so the device path adds no second hook surface.
-        return f"{self._public_base}/sandbox/hooks/{topic_id}"
 
     def _no_proxy_hosts(self) -> str:
         """What the screen's HTTPS_PROXY must NOT capture: the backend itself
@@ -715,6 +720,7 @@ class DeviceChannel(Channel):
         token: str,
         env: dict[str, str] | None,
         launch: LaunchPlan,
+        environment_before: dict | None = None,
     ) -> HubScreen:
         """Reuse the topic's screen on the device, or open a fresh one running
         ``claude`` with our hooks (the device-side launcher creates its home/work dirs
@@ -737,11 +743,22 @@ class DeviceChannel(Channel):
         fresh sid the connector must Spawn, rather than reasserted into a corpse."""
         existing = self._existing_screen(device_id, topic_id)
         if existing is not None and (env or {}).get("CHEESE_ENVIRONMENT"):
-            status = await environment_status(
-                self._hub, device_id, project_id, topic_id
-            )
+            status = environment_before
+            if status is None:
+                status = await environment_status(
+                    self._hub, device_id, project_id, topic_id
+                )
             if status["state"] == "preparing":
                 return existing
+        configuration = (env or {}).get("CHEESE_AGENT_CONFIG", "")
+        if (
+            existing is not None
+            and configuration
+            and existing.agent_configuration != configuration
+        ):
+            # Called between turns. A running CLI cannot adopt a changed model or role.
+            await self._hub.close_screen(existing.device_id, existing.sid)
+            existing = None
         if existing is not None and self._credential_is_stale(existing):
             # #388 缺陷二: the screen is still alive, but the credential its `claude`
             # was LAUNCHED with has expired (or is within the retire margin). That
@@ -760,49 +777,6 @@ class DeviceChannel(Channel):
             # the next summon instead of an unrunnable screen being reused forever.
             await self._hub.close_screen(existing.device_id, existing.sid)
             existing = None
-        if existing is not None and not await self.confirm_alive(existing):
-            # The hub still has a screen for this topic, but the `claude` behind it
-            # is GONE — its tmux session was killed out from under a STILL-RUNNING
-            # connector (an orphan sweep, a `tmux kill-server`, a crash). Reasserting
-            # (adopt-create, #369) does NOT bring it back: the frozen connector,
-            # finding the sid still in its own in-memory session map, only
-            # re-attaches and returns — it re-Spawns the launcher ONLY
-            # for a sid it has forgotten, i.e. after IT restarted (cli host.go
-            # createSession). #369 rebuilds a screen a CONNECTOR restart lost; it
-            # cannot rebuild one whose `claude` died while the connector lived. The
-            # turn would then prompt a dead pane and die in the 25s
-            # "会话没有任何反应" delivery timeout, reaching no model — which on a
-            # subscription deployment silently never
-            # bills a turn (#325 G2). Drop the stale screen (session.close makes the
-            # connector forget the sid too) so the code below OPENS a fresh one under
-            # a NEW sid the connector cannot short-circuit and must Spawn: the
-            # launcher runs, `claude` restarts, hooks flow. Only an explicit `dead`
-            # reading forces this (see `confirm_alive`) — an alive, `unknown`, or
-            # probe-hiccup screen is still reasserted, exactly as before.
-            await self._hub.close_screen(existing.device_id, existing.sid)
-            existing = None
-        if existing is not None and await self._tunnel_helper_is_down(existing):
-            # The third way a reused screen can be alive and unusable, and the one
-            # that had no gate: its `claude` runs, its credential is fresh, and the
-            # machine-local tunnel helper its HTTPS_PROXY points at is GONE. That
-            # helper is started ONLY by `cheese-tunnel-up`, which runs ONLY as the
-            # launcher's prefix — and reuse reasserts (an adopt-create)
-            # instead of relaunching, so nothing on either side ever restarts it.
-            # `claude` read that HTTPS_PROXY once at startup and never re-reads it,
-            # so every turn from then on dies with `API Error: Unable to connect to
-            # API (ConnectionRefused)` while `confirm_alive` keeps answering
-            # `alive` — the same "live process + dead dependency" shape the
-            # credential gate above exists for, on the other dependency.
-            #
-            # Measured 2026-08-18: the dev box's standing data plane was swapped
-            # (#573) under five still-running screens. Every subsequent turn failed,
-            # one topic replayed the same 28-message batch 30 times at ~3 minutes a
-            # try, and no re-@ could ever have fixed it — the only cure was a fresh
-            # launch, which nothing was able to ask for. Retire the screen here so
-            # the OPEN below Spawns one whose launcher runs `cheese-tunnel-up`
-            # again.
-            await self._hub.close_screen(existing.device_id, existing.sid)
-            existing = None
         # Device-side paths (the launcher mkdir -p's them). Kept under a stable per
         # project/topic root so the screen's git-backed work persists across turns.
         # The home MUST be per topic, not per project: every hook event lands in
@@ -815,6 +789,7 @@ class DeviceChannel(Channel):
         # turns show zero output.
         home_dir = device_home_dir(project_id, topic_id)
         work_dir = self._work_dir(project_id, topic_id)
+        api_base = await self._device_api_base(device_id)
         ca_pem = ""
         if settings.subscription_enabled:
             # Every request from every machine reached this way runs on the
@@ -842,6 +817,7 @@ class DeviceChannel(Channel):
                 project_id=str(project_id),
                 topic_id=str(topic_id),
                 ttl_s=SESSION_TOKEN_TTL_S,
+                remote_control=True,
             )
             tunnel_url = settings.subscription_tunnel_url.strip()
             via_tunnel = uses_tunnel(tunnel_url=tunnel_url)
@@ -874,6 +850,15 @@ class DeviceChannel(Channel):
             ):
                 merged.pop(k, None)
             merged.update(sub.env)
+            merged["CHEESE_REMOTE_CONTROL"] = "1"
+            # The tunnel's CONNECT credential must carry the same place and RC
+            # claims as the direct proxy URL; CHEESE_TOKEN authenticates hooks.
+            merged["CHEESE_CONNECT_TOKEN"] = session_token
+            # These scopes describe the Cheese control credential. The model
+            # provider still authenticates inference at its existing proxy hop.
+            merged["CLAUDE_CODE_OAUTH_SCOPES"] = (
+                "user:inference user:profile user:sessions:claude_code"
+            )
             if connect_proxy_url:
                 # The meter accepts model hosts, not package registries.
                 merged["CHEESE_MODEL_PROXY"] = "1"
@@ -909,7 +894,7 @@ class DeviceChannel(Channel):
             provider = provider_env.api_key_provider(
                 gateway_base=f"{self._public_base}/llm",
                 key=token,
-                model=settings.agent_model,
+                model=launch.model or settings.agent_model,
             )
             model_env = {**provider.env, **(env or {})}
             # Same stamp on the gateway path: the model credential is the scoped
@@ -922,9 +907,9 @@ class DeviceChannel(Channel):
         # reaches for hooks, git and the CLI rather than configured separately:
         # the preview rides the path the connector proved, so a deployment that
         # can host a device can host a preview with nothing further to set.
-        model_env["CHEESE_PREVIEW_URL"] = _preview_ws_url(self._public_base)
+        model_env["CHEESE_PREVIEW_URL"] = _preview_ws_url(api_base)
         command, screen_env = build_screen_launch(
-            hook_url=self._hook_url(topic_id),
+            hook_url=f"{api_base}/sandbox/hooks/{topic_id}",
             hook_token=token,
             home_dir=home_dir,
             work_dir=work_dir,
@@ -943,19 +928,32 @@ class DeviceChannel(Channel):
             # another `/api` was right only while the 2.0 routes carried their
             # own prefix; afterwards it injected `<origin>/api/api` and every
             # `cheese` command in a device sandbox 404'd with 话题不存在.
-            api_base=self._public_base,
-            cli_url=f"{self._public_base}/sandbox/cli/cheese",
+            api_base=api_base,
             project_id=str(project_id),
             topic_id=str(topic_id),
             author=agent_handle,
-            git_author=_git_author(project_id, topic_id),
+            git_author=(agent_handle, f"{agent_handle}@agent.cheese.local"),
             # Every device owns its checkout and syncs through authenticated git.
-            git_remote=f"{self._public_base}/projects/{project_id}/git",
+            git_remote=f"{api_base}/projects/{project_id}/git",
             git_branch=ws.branch_for_tree(ws.tree_for_place(topic_id)),
             system_prompt=launch.system_prompt,
             ca_pem=ca_pem,
         )
-        command = await self._ship_launcher(device_id, topic_id, command)
+        if existing is None:
+            command = await self._ship_launcher(device_id, topic_id, command)
+        else:
+            # These device requests are independent. Finish all three before
+            # adopting or replacing the screen, without adding their round trips.
+            alive, tunnel_down, command = await asyncio.gather(
+                self.confirm_alive(existing),
+                self._tunnel_helper_is_down(existing),
+                self._ship_launcher(device_id, topic_id, command),
+            )
+            if not alive or tunnel_down:
+                # Adopt-create cannot restart a dead process or its tunnel while
+                # the connector still knows the sid. A new sid runs the launcher.
+                await self._hub.close_screen(existing.device_id, existing.sid)
+                existing = None
         if existing is not None:
             # A reassert keeps the CURRENTLY-RUNNING `claude`, which still holds the
             # credential it was born with — so the recorded birth expiry must NOT be
@@ -977,6 +975,7 @@ class DeviceChannel(Channel):
         # later turn's reuse gate (and the zero-output fuse) can tell a live
         # credential from a dead one without re-deriving it.
         screen.credential_expires = credential_expires
+        screen.agent_configuration = configuration
         return screen
 
     # --- turn --------------------------------------------------------------
@@ -1035,15 +1034,22 @@ class DeviceChannel(Channel):
                 token=token,
                 env=env,
                 launch=launch,
+                environment_before=before,
             )
             self._subscription_devices[topic_id] = device_id
             if (env or {}).get("CHEESE_ENVIRONMENT"):
                 # A process started before this feature keeps its environment
                 # until its next restart; it has no preparation receipt yet.
-                if before.get("state") == "pending" and screen is prior_screen:
+                # Reasserting a live screen does not rerun its environment. A new
+                # screen must still wait for its own preparation attempt below.
+                if (
+                    before.get("state") in {"pending", "ready"}
+                    and screen is prior_screen
+                ):
                     return screen
                 try:
-                    start_deadline = time.monotonic() + 60
+                    polling_started = time.monotonic()
+                    start_deadline = polling_started + 60
                     async with asyncio.timeout(3660):
                         while True:
                             status = await environment_status(
@@ -1070,7 +1076,11 @@ class DeviceChannel(Channel):
                                 or status.get("attempt") != before.get("attempt")
                             ):
                                 raise EnvironmentPreparationError(status)
-                            await asyncio.sleep(2)
+                            # Fast launches should not sit behind a two-second
+                            # poll; long installers keep the low-frequency checks.
+                            await asyncio.sleep(
+                                0.2 if time.monotonic() - polling_started < 10 else 2
+                            )
                 except asyncio.CancelledError:
                     await asyncio.shield(
                         environment_status(

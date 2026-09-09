@@ -82,6 +82,11 @@ class Settings(BaseSettings):
     # the compose file may claim it.
     deployed_via_compose: bool = False
     frontend_url: str = "http://localhost:5200"
+    # Dedicated content domain, outside the platform's registrable domain.
+    # Empty until its wildcard DNS/TLS and host-preserving gateway are ready.
+    sites_domain: str = ""
+    sites_scheme: str = "https"
+    sites_port: int | None = None
     # OAuth browser-flow landing pages (must match the frontend router).
     frontend_oauth_success_path: str = "/account/oauth/success"
     frontend_oauth_error_path: str = "/account/oauth/error"
@@ -165,8 +170,9 @@ class Settings(BaseSettings):
     agent_default_profile: str = "default"
     agent_system_prompt: str = (
         "你是「芝士」，知是平台里的 AI 队友。你贯穿一个项目的全过程，"
-        "了解项目的话题、决策和进展。回答要说人话，让零基础的同学也能看懂，"
-        "少说废话。当你引用项目记忆里的事实时，自然地点明依据。"
+        "了解项目的话题、决策和进展。用自然清楚的语言交流，"
+        "根据读者补齐必要背景和陌生术语，少说废话。"
+        "当你引用项目记忆里的事实时，自然地点明依据。"
     )
     # Working directory for the agent's git-backed workspace (one repo per project).
     workspace_root: str = "./.workspaces"
@@ -352,6 +358,11 @@ class Settings(BaseSettings):
     microcloud_default_cores: int = 2
     microcloud_default_memory_mb: int = 4096
     microcloud_default_disk_gb: int = 20
+    # Prepare the default CPU offering; zero disables replenishment.
+    microcloud_warm_pool_size: int = Field(default=0, ge=0, le=5)
+    # Requires deploy/cloud-control.py on the backend host before enrollment.
+    microcloud_direct_control: bool = False
+    microcloud_warm_max_age_seconds: int = Field(default=3600, ge=300, le=86400)
     microcloud_login_user: str = "cheese"
     # An operator's SSH public key, authorised on every machine the platform
     # opens, next to the one-shot bootstrap key. That key is erased the moment
@@ -364,9 +375,6 @@ class Settings(BaseSettings):
     # bills compute against this; 0 disables top-ups (an operator funds it by hand).
     microcloud_account_name: str = "compute"
     microcloud_initial_funds: float = 1000.0
-    # A ceiling per project: provisioning is one API call, and nothing else here
-    # stops a loop from filling a Proxmox node.
-    microcloud_max_machines_per_project: int = 2
     # How long a SETTLED machine may go without being re-checked against
     # MicroCloud. Zero would put a provider round-trip on every read; never
     # would let a machine destroyed upstream sit here as `running` forever
@@ -527,6 +535,8 @@ class Settings(BaseSettings):
     # finds a killed turn, and its whole purpose is catching the case where
     # nothing else will ever look — a turn dying without the process dying.
     orphan_sweep_interval_s: int = 300
+    chat_progress_check_interval_s: int = 15
+    chat_progress_reminder_after_s: int = Field(default=600, gt=0)
     # How long a registered turn may produce nothing — no block, no frame —
     # before the sweep calls it wedged and tears it down. See
     # AgentWorkRunner.SILENT_TURN_S for why 30 minutes and not less.

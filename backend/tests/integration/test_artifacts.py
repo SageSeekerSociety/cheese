@@ -1,13 +1,52 @@
 """Render-by-type: 芝士 points at a renderable artifact (cheese artifact),
 which becomes the topic's current preview (spec §9.1)."""
 
+import uuid
 
-def _topic(client) -> tuple[str, str]:
-    p = client.post("/projects", json={"name": "P"}).json()["data"]
+import pytest
+
+from app.core.config import settings
+
+
+@pytest.fixture(autouse=True)
+def content_domain(monkeypatch):
+    monkeypatch.setattr(settings, "sites_domain", "content.example.com")
+    monkeypatch.setattr(settings, "sites_scheme", "https")
+
+
+def _topic(client, owner: str | None = None) -> tuple[str, str]:
+    p = client.post("/projects", json={"name": "P", "owner_handle": owner}).json()[
+        "data"
+    ]
     t = client.post("/topics", json={"project_id": p["id"], "title": "T"}).json()[
         "data"
     ]
     return p["id"], t["id"]
+
+
+def test_a_remote_artifact_is_readable_without_a_git_push(client):
+    from tests.integration.conftest import session_auth_headers
+
+    pid, tid = _topic(client, "alice")
+    html = "<h1>Result from the remote machine</h1>"
+    response = client.post(
+        f"/topics/{tid}/artifact",
+        json={
+            "path": "site/report.html",
+            "content": html,
+        },
+    )
+    assert response.status_code == 200, response.text
+    response = client.get(
+        f"/projects/{pid}/file",
+        headers=session_auth_headers("alice"),
+        params={
+            "topic": tid,
+            "path": "site/report.html",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["content"] == html
 
 
 def test_artifact_sets_current_preview(client):
@@ -39,6 +78,26 @@ def test_artifact_type_maps_to_mime(client):
     assert client.get(f"/topics/{tid}/preview").json()["data"]["mime"] == (
         "image/svg+xml"
     )
+
+
+@pytest.mark.parametrize("size", [100, 1024 * 1024 + 1])
+def test_editing_the_same_artifact_changes_preview_version(client, size):
+    from app.domain.workspace import service as ws
+
+    pid, tid = _topic(client)
+    project, topic = uuid.UUID(pid), uuid.UUID(tid)
+    ws.write_file_bytes(project, "report.html", b"a" * size, topic)
+    response = client.post(f"/topics/{tid}/artifact", json={"path": "report.html"})
+    assert response.status_code == 200
+    first = client.get(f"/topics/{tid}/preview").json()["data"]
+    assert first["version"]
+    ws.write_file_bytes(project, "report.html", b"a" * size, topic)
+    unchanged = client.get(f"/topics/{tid}/preview").json()["data"]
+    assert unchanged["version"] == first["version"]
+    ws.write_file_bytes(project, "report.html", b"b" * size, topic)
+    edited = client.get(f"/topics/{tid}/preview").json()["data"]
+    assert edited["artifact_id"] == first["artifact_id"]
+    assert edited["version"] != first["version"]
 
 
 def test_latest_artifact_wins(client):
@@ -159,7 +218,9 @@ def test_app_artifact_and_preview(client):
         assert d["kind"] == "app" and d["path"] == "Vue dev server"
         # The backend's reverse proxy — never an address on the machine, which is
         # somebody's laptop behind NAT and means nothing to a browser here.
-        assert d["url"] == f"/api/topics/{tid}/app/", d
+        assert (
+            d["url"] == f"https://preview-{tid.replace('-', '')}.content.example.com/"
+        ), d
         assert "127.0.0.1" not in (d["url"] or ""), "a machine address leaked out"
         assert d["tunnel_up"] is True
     finally:

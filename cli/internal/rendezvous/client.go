@@ -89,6 +89,9 @@ var ErrRejected = errors.New("rendezvous: frame rejected by session")
 
 // Options configure a Client. Zero values are sensible.
 type Options struct {
+	// InitialPrompt follows authentication on the same ordered connection.
+	// Dial waits for either frame to be refused before returning the client.
+	InitialPrompt string
 	// WaitForSocket bounds how long Dial waits for the socket file to appear.
 	// A freshly launched claude needs seconds (image pull, node boot, TUI
 	// mount) before it binds, and treating that startup as a failure is what
@@ -167,12 +170,18 @@ func Dial(ctx context.Context, path, token string, opts Options) (*Client, error
 			conn.Close()
 			return nil, fmt.Errorf("rendezvous: handshake: %w", err)
 		}
+	}
+	if opts.InitialPrompt != "" {
+		if err := c.write(Frame{Type: TypeReply, Text: opts.InitialPrompt}); err != nil {
+			conn.Close()
+			return nil, err
+		}
+	}
+	if token != "" || opts.InitialPrompt != "" {
 		select {
 		case kind := <-c.rejects:
-			if kind == TypeAuthRejected {
-				conn.Close()
-				return nil, fmt.Errorf("%w: %s", ErrRejected, kind)
-			}
+			conn.Close()
+			return nil, fmt.Errorf("%w: %s", ErrRejected, kind)
 		case <-time.After(rejectWindow):
 		case <-ctx.Done():
 			conn.Close()

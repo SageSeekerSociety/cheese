@@ -226,9 +226,20 @@
 /* 视口高度：dvh，减掉软键盘盖住的那一截。
    `vh` 在手机上是地址栏**展开时**的高度，所以 100vh 总比看得见的那块高一截，
    页面底部（底栏、输入框）被顶到屏幕外面。`dvh` 修的是地址栏那一半；键盘那一半
-   浏览器不报进任何 CSS 单位里，只报在 visualViewport 上——见 lib/keyboardInset.ts。
-   `--keyboard-inset` 没有键盘时是 0px，所以桌面上这条等于 min-height: 100dvh。 */
-.v-application__wrap {
+   Safari 不报进任何 CSS 单位里，只报在 visualViewport 上——见 lib/keyboardInset.ts。
+   （Chrome 走 index.html 里的 `interactive-widget=resizes-content`，布局视口自己
+   就缩了，于是那个变量是 0px，两条路加起来不会减两次。）
+
+   写 `height` 而不是只写 `min-height`：下限管不住比它高的内容——内容一撑，整个
+   外壳就跟着长回键盘底下去，减法白做。定高还让底下那一串 `h-100`/`fill-height`
+   有个确定的百分比基准，输入框才真的跟着抬起来。
+   没有键盘时 `--keyboard-inset` 是 0px，所以桌面上这条等于 height: 100dvh。 */
+/* 选择器写成两级不是排版洁癖：Vuetify 自己那条 `.v-application__wrap` 里带着
+   `min-height: 100dvh`，和单级选择器同特异性、又注入在我们后面，于是它赢——
+   外壳永远是满屏高，减法一行也没落地。这正是这套代码写好之后从没起过作用的
+   原因，改高度之前先得改赢它。 */
+.v-application .v-application__wrap {
+  height: calc(100dvh - var(--keyboard-inset, 0px));
   min-height: calc(100dvh - var(--keyboard-inset, 0px));
 }
 
@@ -410,6 +421,110 @@ button:not(.v-btn) {
 }
 .page-container--wide {
   max-width: var(--page-w-wide);
+}
+
+/* 渲染出来的 markdown（v-html 塞进来的那一份：总览的概要、项目文档的正文）。
+   一份定义，两处用。以前这段样式在两个页面里各抄了一遍、注释还互称「镜像」，
+   于是凡是只补进其中一份的东西就只在一半的页面上生效——代码块的 `overflow-x`
+   就只写在了项目文档那一份里，手机上总览的概要里一条长链接、一段命令直接冲出
+   屏幕被切掉，够不着也读不全。窄屏保护写在这里，两处一起管。 */
+.md-content {
+  font-size: 0.95rem;
+  line-height: 1.7;
+  /* 长链接、长路径这类中间没有断点的东西，宁可从中间断开也不许撑破容器。 */
+  overflow-wrap: anywhere;
+}
+.md-content p {
+  margin: 0 0 8px;
+}
+.md-content p:last-child {
+  margin-bottom: 0;
+}
+.md-content h1,
+.md-content h2,
+.md-content h3 {
+  font-weight: 600;
+  margin: 14px 0 6px;
+}
+.md-content h1 {
+  font-size: 1.4em;
+}
+.md-content h2 {
+  font-size: 1.2em;
+}
+.md-content h3 {
+  font-size: 1.05em;
+}
+.md-content ul,
+.md-content ol {
+  margin: 4px 0;
+  padding-left: 20px;
+}
+.md-content li {
+  margin: 2px 0;
+}
+.md-content li::marker {
+  color: var(--faint);
+}
+.md-content a {
+  color: var(--accent-ink);
+  text-decoration: none;
+}
+.md-content a:hover {
+  text-decoration: underline;
+}
+.md-content code {
+  font-family: var(--font-mono);
+  background: var(--fill);
+  padding: 0.5px 5px;
+  border-radius: var(--radius-sm);
+  font-size: 0.88em;
+}
+/* 代码块自己横向滚，不推着页面走。 */
+.md-content pre {
+  background: var(--fill);
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  max-width: 100%;
+  overflow-x: auto;
+}
+.md-content pre code {
+  background: none;
+  padding: 0;
+}
+/* 表格同理：窄屏上列压不下去就让它自己滚，不要把整页撑宽。 */
+.md-content table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+.md-content img {
+  max-width: 100%;
+  height: auto;
+}
+.md-content blockquote {
+  margin: 6px 0;
+  padding-left: 12px;
+  border-left: 2px solid var(--line-2);
+  color: var(--muted);
+}
+
+/* 藏起来但仍然存在：读屏读得到，脚本也点得动。
+   给文件选择框用的时候这不是洁癖而是硬要求——iOS Safari 拒绝用脚本打开一个
+   display:none / visibility:hidden 的 <input type=file>，按钮点下去毫无反应。
+   这里只用透明 + 缩到 1px，不用 clip-path：被裁剪掉的输入框在一部分旧 WebKit
+   上同样打不开，而这条规则存在的全部意义就是让它打得开。 */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  opacity: 0;
+  border: 0;
 }
 
 /* Crisp keyboard focus (a11y floor) — soft amber ring. */

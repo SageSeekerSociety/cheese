@@ -384,6 +384,7 @@ def test_accept_squashes_the_delivery_with_the_cards_words(client):
     assert r.status_code == 200
     card = r.json()["data"]
     assert card["merge_state"]["state"] == "clean"
+    assert card["has_external_checks"] is False
     assert card["merge_state"]["who"] == "human"
 
     before = subprocess.run(
@@ -412,8 +413,8 @@ def test_accept_squashes_the_delivery_with_the_cards_words(client):
     body = _main_log(pid, "%B")
     assert body.splitlines()[0] == "feat: deliver a and b"
     assert "Two files, one delivery." in body
-    assert "Reviewed-by: alice" in body
-    assert f"Cheese-Topic: {tid}" in body
+    assert "Reviewed-by: alice <alice@zhishi.local>" in body
+    assert f"/topics/{tid}" in body
     assert f"Cheese-Card: {card['id']}" in body
     parents = _main_log(pid, "%P").split()
     assert len(parents) == 1  # squashed, not a merge commit

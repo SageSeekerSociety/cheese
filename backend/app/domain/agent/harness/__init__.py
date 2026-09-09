@@ -151,6 +151,7 @@ class Opening:
     env: dict[str, str] | None = None
     memory_scope: str | None = None
     owner: str | None = None
+    agent_handle: str | None = None
 
 
 @runtime_checkable
@@ -266,6 +267,7 @@ class AgentRuntime(Protocol):
         owner: str | None = None,
         turn_id: uuid.UUID | None = None,
         images: list[dict] | None = None,
+        agent_handle: str | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """One turn, start to finish, as the events it produced.
 

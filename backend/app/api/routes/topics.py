@@ -1,5 +1,6 @@
 """Topic routes."""
 
+import asyncio
 import re
 import shutil
 import uuid
@@ -10,9 +11,9 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Query, UploadFile
 from fastapi.responses import Response
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api import proxy
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.deps import (
     get_broker,
@@ -23,7 +24,7 @@ from app.api.deps import (
 from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
-from app.core.errors import NotFoundError, ValidationError
+from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.domain.agent.chat import (
     ChatService,
     thread_relay_prompt,
@@ -70,7 +71,6 @@ from app.domain.room_task.services import (
     TaskService,
     WorkTreeService,
 )
-from app.domain.team.repositories import TeamRepository
 from app.domain.topic.doc_change import summarize_doc_change
 from app.domain.topic.models import Topic
 from app.domain.topic.relay import TopicRelayService
@@ -278,11 +278,10 @@ async def list_topics(
     actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     service = TopicService(db)
-    topics, total = await service.list_for_project(
+    topics, last_activity, total = await service.list_for_project(
         project_id, sort=sort, order=order, active_since=active_since
     )
     running_ids = runner.running_topic_ids()
-    last_activity = await service.last_activity_for_topics([t.id for t in topics])
     relevance = await service.relevance_for_topics(topics, _viewer(actor))
     cards = await _live_room_cards(db, [t.id for t in topics])
     # 一次，给整页用同一个「现在几点」——见 list_project_tasks 里同一行的理由。
@@ -704,6 +703,20 @@ async def conclude_task(
         if text
         else None
     )
+    if {"reporter_handle", "contributor_handles"} & body.model_fields_set:
+        await tasks.set_credits(
+            task,
+            reporter_handle=(
+                body.reporter_handle
+                if "reporter_handle" in body.model_fields_set
+                else task.reporter_handle
+            ),
+            contributor_handles=(
+                body.contributor_handles
+                if body.contributor_handles is not None
+                else task.contributor_handles
+            ),
+        )
     task = await tasks.close_thread(task, conclusion=conclusion)
     out = TaskOut.model_validate(task).model_dump(mode="json")
     await db.commit()
@@ -1139,16 +1152,29 @@ async def edit_topic_doc(
     # read saw is the version the accepted write replaced.
     previous = await BlockRepository(db).doc_root(place.room_id)
     was = previous.content if previous else ""
-    doc = await TopicService(db).edit_doc(
+    doc, notice = await TopicService(db).edit_doc(
         topic_id=topic_id,
         content=content,
         author=actor.handle,
         expected_version=body.expected_version,
+        author_type=AuthorType.ai if actor.is_agent else AuthorType.human,
     )
-    if not actor.is_agent:
+    # Publish only committed edits: connected teammates can immediately read
+    # the new document and the same persisted contribution record.
+    await db.commit()
+    broker = get_broker()
+    if notice is not None:
+        await broker.publish(
+            str(place.room_id),
+            {
+                "type": "event_block",
+                "block": BlockOut.model_validate(notice).model_dump(mode="json"),
+            },
+        )
+    await broker.publish(str(place.room_id), {"type": "state", "resource": "doc"})
+    if not actor.is_agent and notice is not None:
         # The notice tells 芝士 to go re-read the doc, so the doc has to BE the
         # new one by the time it does — same ordering as the comment route.
-        await db.commit()
         # 芝士's own `cheese doc set` is not news to 芝士.
         await chat.notify_running_turn(
             topic_id,
@@ -1165,15 +1191,7 @@ async def get_topic_compute_profile(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """The compute this topic runs on (execution-architecture v4 会话级选择).
-
-    `current` is the effective pool
-    (topic choice → project sticky → team default → platform default).
-    `locked` is true once the topic has run (some agent has a session here) — the
-    picker freezes then, matching the device-affinity boundary. `sticky` is the
-    effective starting
-    choice for a new topic (project memory, then team default); `profiles` include
-    unavailable targets so a locked offline device still has a readable label."""
+    """Room choice, project favorites and the matching execution lock."""
     topic = await TopicService(db).get_or_404(topic_id)
     actor = await resolver.resolve(
         fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
@@ -1182,12 +1200,12 @@ async def get_topic_compute_profile(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
     project = await ProjectRepository(db).get(topic.project_id)
-    sticky = (project.settings or {}).get("compute_profile") if project else None
-    team_default = None
-    if project is not None and project.team_id is not None:
-        team = await TeamRepository(db).get_by_id(project.team_id)
-        team_default = team.compute_profile if team is not None else None
-    current = topic.compute_profile or sticky or team_default or compute_default_name()
+    from app.domain.agent.compute_configs import project_configs, room_choice
+    from app.domain.machine.repositories import ProjectMachineRepository
+
+    configs = project_configs(project.settings if project else None)
+    choice = room_choice(topic, project.settings if project else None)
+    current = choice.profile
     device_online = await project_device_online(db, topic.project_id)
     device_service = sql_device_service(db)
     devices = await device_service.list_devices_for_project(topic.project_id)
@@ -1198,12 +1216,20 @@ async def get_topic_compute_profile(
     # a visible safety badge for a Hosted Machine turn instead of the platform
     # granting whole-machine access silently (原则八).
     binding = await device_service.topic_binding(topic_id)
+    if current == COMPUTE_DEVICE and binding is not None:
+        choice.device_id = binding.device_id
+        if topic.compute_config is None:
+            named = next((d for d in devices if d.device_id == binding.device_id), None)
+            choice.name = named.name if named else "自有设备"
     effective_visibility: str | None = None
     if binding is not None:
         effective_visibility = binding.visibility.value
     return ok(
         {
             "current": current,
+            "choice": choice.model_dump(),
+            "project_default": configs.default.model_dump(),
+            "favorites": [v.model_dump() for v in configs.favorites],
             # A machine id only has selection meaning under the self-hosted pool.
             # Cloud also records its connector in device_topic, but that endpoint is
             # an implementation detail of the freshly provisioned topic machine, not
@@ -1211,7 +1237,7 @@ async def get_topic_compute_profile(
             "device_id": (
                 binding.device_id
                 if current == COMPUTE_DEVICE and binding is not None
-                else None
+                else choice.device_id
             ),
             "devices": [
                 {
@@ -1221,9 +1247,11 @@ async def get_topic_compute_profile(
                 }
                 for device in devices
             ],
-            "locked": await AgentSessionService(db).has_run(topic_id),
+            "locked": bool(
+                await AgentSessionService(db).has_run(topic_id)
+                or await ProjectMachineRepository(db).get_active_for_topic(topic_id)
+            ),
             "inherited": topic.compute_profile is None,
-            "sticky": sticky or team_default or compute_default_name(),
             "profiles": [
                 asdict(v)
                 for v in compute_listings(settings, device_online=device_online)
@@ -1246,10 +1274,16 @@ async def get_topic_compute_profile(
 async def set_topic_compute_profile(
     topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """Pick the topic's compute pool. Allowed only before the first turn (no agent
-    has a session here yet); once the topic has run the pin is frozen so its work
-    tree / session never move. The choice also updates the project's sticky default, so
-    the next new topic inherits it (spec v4: 选了之后持久化，除非新 session 又改)."""
+    """Change only this room before its first resource allocation or session."""
+    from pydantic import ValidationError as SchemaError
+
+    from app.domain.agent.compute_configs import (
+        ComputeChoice,
+        standard_choice,
+        validate_choice,
+    )
+    from app.domain.machine.repositories import ProjectMachineRepository
+
     topic = await TopicService(db).get_or_404(topic_id)
     actor = await resolver.resolve(
         fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
@@ -1257,9 +1291,25 @@ async def set_topic_compute_profile(
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
-    if await AgentSessionService(db).has_run(topic_id):
+    await ProjectMachineRepository(db).lock_topic(topic_id)
+    if await AgentSessionService(db).has_run(
+        topic_id
+    ) or await ProjectMachineRepository(db).get_active_for_topic(topic_id):
         raise ValidationError("话题已开始，算力已锁定；新建话题可另选算力")
     name = (body.get("profile") or "").strip() or compute_default_name()
+    try:
+        choice = ComputeChoice.model_validate(
+            body.get("choice")
+            or {
+                **standard_choice(name).model_dump(),
+                "profile": name,
+                "device_id": body.get("device_id"),
+            }
+        )
+    except SchemaError as exc:
+        raise ValidationError("算力配置无效，请检查名称、设备和资源规格") from exc
+    name = choice.profile
+    body = {**body, "device_id": choice.device_id}
     raw_device_id = body.get("device_id")
     if raw_device_id is not None and not isinstance(raw_device_id, str):
         raise ValidationError("device_id 必须是字符串")
@@ -1275,7 +1325,9 @@ async def set_topic_compute_profile(
     if name not in allowed and not (name == COMPUTE_DEVICE and device_id is not None):
         raise ValidationError(f"算力池 {name!r} 尚未接入，暂不可选")
     if name == COMPUTE_CLOUD:
-        await MachineService(db).require_create_authority(topic.project_id, actor)
+        await MachineService(db).require_use_authority(topic.project_id, actor)
+    if body.get("choice"):
+        await validate_choice(db, topic.project_id, choice)
 
     device_service = sql_device_service(db)
     if device_id is not None:
@@ -1302,13 +1354,12 @@ async def set_topic_compute_profile(
         )
 
     topic.compute_profile = name
-    project = await ProjectRepository(db).get(topic.project_id)
-    if project is not None:
-        project.settings = {**(project.settings or {}), "compute_profile": name}
+    topic.compute_config = choice.model_dump()
     await db.flush()
     return ok(
         {
             "current": name,
+            "choice": choice.model_dump(),
             "device_id": device_id if name == COMPUTE_DEVICE else None,
             "locked": False,
             "inherited": False,
@@ -1316,12 +1367,77 @@ async def set_topic_compute_profile(
     )
 
 
+class ChatPublishIn(BaseModel):
+    content: str = Field(min_length=1, max_length=100000)
+    request_id: uuid.UUID
+    reply_to: uuid.UUID | None = None
+
+
+@router.post("/{topic_id}/messages", operation_id="chat-publish")
+async def publish_chat_message(
+    topic_id: uuid.UUID,
+    body: ChatPublishIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+) -> dict:
+    """Publish an agent-authored message without starting a model turn."""
+    place = await TopicService(db).place_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=place.room_id, project_id=place.project_id
+    )
+    if not actor.authenticated or not actor.is_agent:
+        raise ForbiddenError("An authenticated agent must publish this message")
+    await resolver.authorize_topic(
+        actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
+    )
+    content = body.content.strip()
+    if not content:
+        raise ValidationError("content must not be blank")
+    if body.reply_to is not None:
+        parent = await BlockRepository(db).get(body.reply_to)
+        if (
+            parent is None
+            or parent.topic_id != place.room_id
+            or parent.task_id is not None
+        ):
+            raise ValidationError("reply_to must belong to this conversation")
+    content = await canonicalize_refs(
+        db, place.project_id, content, exclude_topic_id=place.room_id
+    )
+    # The input request can finish while its terminal session is still working.
+    runner = get_work_runner()
+    work = runner.live_work_for_topic(place.room_id)
+    turn_id = uuid.UUID(work["turn_id"]) if work is not None else None
+    payload = await chat._persist_assistant_message(
+        project_id=place.project_id,
+        topic_id=place.room_id,
+        text=content,
+        turn_id=turn_id,
+        reply_to=body.reply_to,
+        roster=None,
+        topic_refs=[],
+        publish=True,
+        author=actor.handle,
+        publication_id=str(body.request_id),
+    )
+    await get_broker().publish(
+        str(topic_id), {"type": "assistant_block", "block": payload}
+    )
+    if turn_id is not None:
+        runner.note_session_output(turn_id, tool=False)
+    return ok(payload)
+
+
 @router.post("/{topic_id}/ask")
-async def ask_options(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
+async def ask_options(
+    topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
+) -> dict:
     """芝士 asks an option question IN the chat (cheese ask): a message block
     whose meta.options renders as one-click buttons. Structured interaction —
     the answer comes back as data, never parsed from prose (spec §14.5)."""
     place = await TopicService(db).place_or_404(topic_id)
+    actor = await _actor_in_place(resolver, place)
     question = (body.get("question") or "").strip()
     options = [str(o).strip() for o in (body.get("options") or []) if str(o).strip()]
     if not question:
@@ -1333,10 +1449,18 @@ async def ask_options(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
         # The place id: `add` splits it, so a thread's question is asked in the
         # thread rather than shouted into the room around it.
         topic_id=topic_id,
-        author=await TopicMemberService(db).resolve_agent_handle(
-            topic_id, room_id=place.room_id
+        author=(
+            actor.handle
+            if actor.authenticated
+            else await TopicMemberService(db).resolve_agent_handle(
+                topic_id, room_id=place.room_id
+            )
         ),
-        author_type=AuthorType.ai,
+        author_type=(
+            AuthorType.human
+            if actor.authenticated and not actor.is_agent
+            else AuthorType.ai
+        ),
         content=question,
         kind=BlockKind.message,
         meta={"options": options},
@@ -1347,6 +1471,54 @@ async def ask_options(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
         str(topic_id), {"type": "assistant_block", "block": payload}
     )
     return ok(payload)
+
+
+@router.post("/{topic_id}/summon")
+async def summon_agent(
+    topic_id: uuid.UUID,
+    body: dict,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
+) -> dict:
+    """叫芝士读一遍还没交到它手上的消息 —— 忘了 @ 的那一条的补救。
+
+    没 @ 的消息从来不会丢：它在待读窗口里等着下一轮把它捎上（没 @ 不等于没说）。
+    但「等下一轮」在一个安静的房间里等于永远，而房间安静恰恰是忘了 @ 之后的常态。
+    这个接口只做一件事：现在就开那一轮。它**不再发一条消息**，因为那条消息已经
+    在时间线上了——补发一条一模一样的，读的人要自己分辨哪条是真的。
+
+    两种情况下它什么都不做，并如实说明是哪一种：房间已经在干活（正在跑的那一轮
+    会自己把没 @ 的消息接过去），或者根本没有待读的东西（有人先 @ 过了）。两种
+    都不是错误，只是这一下不需要花钱。
+    """
+    place = await TopicService(db).place_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=body.get("author"),
+        topic_id=place.room_id,
+        project_id=place.project_id,
+    )
+    await resolver.authorize_topic(
+        actor, project_id=place.project_id, topic_id=place.room_id
+    )
+    if chat.has_running_turn(place.room_id):
+        return ok({"started": False, "reason": "working"})
+    if not await chat.has_unread_human_input(place.room_id):
+        return ok({"started": False, "reason": "nothing_pending"})
+    # content 在有待读消息时会被待读窗口取代（_converse_impl 的 backlog 分支），
+    # 这里正是要那个结果：芝士收到的东西和「当时就 @ 了它」一模一样。这句只在
+    # 待读窗口刚好被别人清空的缝隙里当兜底。
+    runner.submit(
+        chat,
+        place.room_id,
+        author="system",
+        content="有人请你看一下房间里还没读到的消息，照常处理。",
+        summon=True,
+        nudge_event=f"<@{actor.handle}> 叫芝士来看前面的消息",
+        provision_actor=actor,
+    )
+    return ok({"started": True})
 
 
 @router.post("/blocks/{block_id}/answer")
@@ -1431,7 +1603,7 @@ async def record_decision(
 ) -> dict:
     """记录关键决策到决策记录 (spec §7.1) — used by the `cheese decision` CLI."""
     place = await TopicService(db).place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
+    actor = await _actor_in_place(resolver, place)
     decision = (body.get("decision") or "").strip()
     if not decision:
         raise ValidationError("decision 不能为空")
@@ -1452,10 +1624,18 @@ async def record_decision(
     block = await BlockRepository(db).add(
         project_id=place.project_id,
         topic_id=topic_id,  # the place; `add` splits it
-        author=await TopicMemberService(db).resolve_agent_handle(
-            topic_id, room_id=place.room_id
+        author=(
+            actor.handle
+            if actor.authenticated
+            else await TopicMemberService(db).resolve_agent_handle(
+                topic_id, room_id=place.room_id
+            )
         ),
-        author_type=AuthorType.ai,
+        author_type=(
+            AuthorType.human
+            if actor.authenticated and not actor.is_agent
+            else AuthorType.ai
+        ),
         content=decision,
         kind=BlockKind.decision,
         refs=[str(topic_id)],
@@ -1614,6 +1794,12 @@ async def split_topic(
         created_by=actor.handle if actor.handle != "anonymous" else body.created_by,
         brief=body.brief,
         paths=body.paths,
+        # 显式指定优先，没指定就用项目默认验收人 (#718 设置表)。The resolution is
+        # in the service because it needs the project row; the route only says
+        # whether anybody named somebody.
+        reviewer_handle=body.reviewer_handle,
+        reporter_handle=body.reporter_handle,
+        contributor_handles=body.contributor_handles,
         # 归属跟推进者走: who is DRIVING this room right now. 芝士 splits under her
         # own handle, so `created_by` names the robot and the person who asked for
         # the split is nowhere in the request — the runner is the only place that
@@ -1938,6 +2124,12 @@ async def set_artifact(
     if mime is None:
         allowed = "、".join(_ARTIFACT_MIME)
         raise ValidationError(f"暂不支持的类型 {as_!r}（可选：{allowed}）")
+    if as_ != "app" and "content" in body:
+        content = body["content"]
+        if not isinstance(content, str):
+            raise ValidationError("content 必须是文本")
+        # A remote machine's file is not in the backend worktree until published.
+        ws.write_file(place.project_id, path, content, topic_id=topic_id)
     block = await BlockRepository(db).add(
         project_id=place.project_id,
         topic_id=topic_id,  # the place; `add` splits it
@@ -1967,6 +2159,8 @@ async def get_preview(
     art = await BlockRepository(db).latest_artifact(place.room_id)
     if art is None:
         return ok(None)
+    from app.api.preview_host import preview_origin
+
     if art.mime_type == _ARTIFACT_MIME["app"]:
         # Knocked on LIVE, through the tunnel, every time the panel asks. A
         # declared preview is not a running one: the agent's dev server exits,
@@ -1980,12 +2174,8 @@ async def get_preview(
                 "kind": "app",
                 "path": art.content,
                 "mime": art.mime_type,
-                # Root-relative: the backend's reverse proxy, reachable from any
-                # browser. There is no machine-local address to hand out — that
-                # is the whole reason the tunnel exists.
-                "url": (
-                    proxy.browser_path(f"/topics/{topic_id}/app/") if alive else None
-                ),
+                # Every executable preview stays outside the platform origin.
+                "url": (preview_origin(topic_id) + "/" if alive else None),
                 "tunnel_up": tunnel_up,
                 "artifact_id": str(art.id),
             }
@@ -1993,6 +2183,10 @@ async def get_preview(
     return ok(
         {
             "kind": "file",
+            "url": preview_origin(topic_id) + "/",
+            "version": await asyncio.to_thread(
+                ws.preview_file_version, place.project_id, topic_id, art.content
+            ),
             "path": art.content,
             "mime": art.mime_type,
             # Which artifact this is, so a client can tell "芝士 pointed at
@@ -2000,31 +2194,6 @@ async def get_preview(
             # the same path is a new preview too, so the path cannot carry this.
             "artifact_id": str(art.id),
         }
-    )
-
-
-@router.get("/{topic_id}/preview/raw")
-async def get_preview_raw(
-    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> Response:
-    """The current file artifact served as a real page — 在新窗口打开 (Claude
-    Artifacts style). CSP `sandbox allow-scripts` keeps it an opaque origin so
-    artifact JS can't call our API as the user."""
-    topic = await TopicService(db).get_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
-    )
-    await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
-    )
-    art = await BlockRepository(db).latest_artifact(topic_id)
-    if art is None or art.mime_type == _ARTIFACT_MIME["app"]:
-        raise NotFoundError("没有可打开的文件 artifact")
-    data = ws.read_file_bytes(topic.project_id, art.content, topic_id=topic_id)
-    return Response(
-        content=data,
-        media_type=art.mime_type or "text/html",
-        headers={"Content-Security-Policy": "sandbox allow-scripts"},
     )
 
 
@@ -2057,7 +2226,9 @@ async def upload_attachment(
     """Upload a file into the topic's worktree (uploads/…). Returns the
     {path, mime} the client then references when sending the message."""
     topic = await TopicService(db).get_or_404(topic_id)
-    await resolver.require_verified_caller(project_id=topic.project_id)
+    await resolver.require_verified_caller(
+        project_id=topic.project_id, topic_id=topic_id
+    )
     actor = await resolver.resolve(
         fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
     )
@@ -2098,7 +2269,9 @@ async def attachment_raw(
     to images so this can never serve executable HTML from the worktree."""
     topic = await TopicService(db).get_or_404(topic_id)
     if download:
-        await resolver.require_verified_caller(project_id=topic.project_id)
+        await resolver.require_verified_caller(
+            project_id=topic.project_id, topic_id=topic_id
+        )
     actor = await resolver.resolve(
         fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
     )

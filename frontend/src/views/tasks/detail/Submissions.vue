@@ -72,7 +72,7 @@
             <v-btn
               color="primary"
               rounded="pill"
-              :to="{ name: 'TasksSubmit', params: { taskId: taskData.id } }"
+              :to="{ name: 'TasksSubmit', params: { spaceId: taskData.space?.id, taskId: taskData.id } }"
               class="px-8"
             >
               前往提交

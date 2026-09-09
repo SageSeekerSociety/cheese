@@ -40,6 +40,7 @@ def periodic_jobs(
     sessions: SessionFactory,
 ) -> list[PeriodicRunner]:
     from app.domain import backend_log
+    from app.domain.machine.warm import sweep_warm_pool
     from app.domain.notification.maintenance import (
         drain_email_queue,
         finalize_expired_aggregations,
@@ -63,6 +64,17 @@ def periodic_jobs(
         PeriodicRunner(
             "pr poll", settings.accept_pr_poll_interval_s, scheduler.poll_open_prs
         ),
+        # 有东西就有 PR (#718 拍板①): a batch's draft PR opens at its first
+        # commit, and the platform can only OBSERVE that commit (a 分身 commits
+        # in the shared worktree — no push, no webhook, nothing to intercept).
+        # Same clock as the poller above on purpose: this is the other half of
+        # "watch the PRs", and a second interval setting would be one more knob
+        # to get wrong.
+        PeriodicRunner(
+            "draft pr sweep",
+            settings.accept_pr_poll_interval_s,
+            scheduler.open_draft_prs,
+        ),
         # 自动同步上游: keeps each linked project's base current so accepting can
         # actually push. Conflicts hand off to 芝士 the same way the manual button
         # does, and an open resolution task is reused rather than duplicated.
@@ -79,6 +91,11 @@ def periodic_jobs(
             settings.orphan_sweep_interval_s,
             scheduler.sweep_orphan_turns,
         ),
+        PeriodicRunner(
+            "chat progress reminder",
+            settings.chat_progress_check_interval_s,
+            scheduler.remind_silent_turns,
+        ),
         # 闸门孤儿卡扫底: the same blind spot one layer down — a gate task can die
         # under a process that keeps running, and then the card waits forever
         # (see review/gate_sweep.py's module docstring).
@@ -93,6 +110,11 @@ def periodic_jobs(
             "machine enrollment sweep",
             settings.machine_enroll_interval_seconds,
             machines.sweep,
+        ),
+        PeriodicRunner(
+            "cloud warm pool",
+            settings.machine_enroll_interval_seconds,
+            lambda: sweep_warm_pool(sessions),
         ),
         # Subscription turns are metered at the proxy; this tails its log into
         # resource_usage + credits (issue #218). Off unless the log path is set.

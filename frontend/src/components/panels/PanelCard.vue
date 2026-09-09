@@ -9,11 +9,14 @@
 import type { Block, RoomTask } from '../../cx_types'
 
 import { computed, nextTick, ref, watch } from 'vue'
+import DOMPurify from 'dompurify'
 
 import { getRoomTask, sayOnRoomTask } from '../../api'
 import { columnDotStyle } from '../../lib/board'
+import { markdown } from '../../lib/markdown'
 import { relTime } from '../../lib/relTime'
 import { myHandle } from '../../me'
+import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -84,6 +87,10 @@ const dotStyle = computed(() => (card.value ? columnDotStyle(card.value.presenta
 /** 对话里值得显示的块。事件（工具调用）留给「现场」，这里只放说过的话。 */
 const said = computed(() => (card.value?.blocks ?? []).filter((b) => b.kind === 'message' && (b.content || '').trim()))
 
+function renderMarkdown(text: string): string {
+  return DOMPurify.sanitize(markdown.parse(text, { async: false, breaks: true }))
+}
+
 async function send() {
   const room = props.roomId
   const id = props.cardId
@@ -111,9 +118,7 @@ async function send() {
       </button>
     </header>
 
-    <div v-if="loading && !card" class="d-flex justify-center py-6">
-      <v-progress-circular indeterminate color="primary" size="20" />
-    </div>
+    <LoadingSkeleton v-if="loading && !card" variant="brief" />
 
     <div v-else-if="!card" class="px-3 py-4 t-body c-muted">
       {{ errorMsg ?? '这个房间里没有这条活' }}
@@ -146,18 +151,23 @@ async function send() {
            它说做完了什么 → 过程」。 -->
       <div v-if="card.brief" class="panel-card__block">
         <div class="panel-card__block-head t-meta">简报</div>
-        <div class="panel-card__block-body t-body">{{ card.brief }}</div>
+        <div class="panel-card__block-body card-markdown t-body" v-html="renderMarkdown(card.brief)" />
       </div>
       <div v-if="card.conclusion" class="panel-card__block" data-testid="card-conclusion">
         <div class="panel-card__block-head t-meta">结论</div>
-        <div class="panel-card__block-body t-body">{{ card.conclusion }}</div>
+        <div class="panel-card__block-body card-markdown t-body" v-html="renderMarkdown(card.conclusion)" />
       </div>
 
       <div ref="timelineRef" class="panel-card__timeline">
         <div v-if="!said.length" class="px-1 py-2 t-meta c-muted">这条活还没有人说过话。</div>
         <div v-for="b in said" :key="b.id" class="card-msg">
           <span class="card-msg__who t-meta">{{ b.author }}</span>
-          <span class="card-msg__text t-body">{{ b.content }}</span>
+          <div
+            v-if="b.author_type === 'ai'"
+            class="card-msg__text card-markdown t-body"
+            v-html="renderMarkdown(b.content)"
+          />
+          <span v-else class="card-msg__text t-body">{{ b.content }}</span>
         </div>
       </div>
 
@@ -261,6 +271,45 @@ async function send() {
 .card-msg__text {
   color: var(--ink);
   white-space: pre-wrap;
+}
+.card-markdown {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.card-markdown :deep(p) {
+  margin: 0 0 8px;
+}
+.card-markdown :deep(ul),
+.card-markdown :deep(ol) {
+  padding-left: 20px;
+  margin: 4px 0;
+}
+.card-markdown :deep(a) {
+  color: var(--ink);
+  text-decoration: underline;
+}
+.card-markdown :deep(pre),
+.card-markdown :deep(table) {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.card-markdown :deep(table) {
+  display: block;
+  border-collapse: collapse;
+}
+.card-markdown :deep(th),
+.card-markdown :deep(td) {
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+}
+.card-markdown :deep(pre) {
+  padding: 8px;
+  background: var(--fill);
+  white-space: pre;
+}
+.card-markdown :deep(img) {
+  max-width: 100%;
+  height: auto;
 }
 .panel-card__say {
   display: flex;

@@ -126,7 +126,7 @@ def test_version_floor_compares_semver_the_right_way_round():
 def test_launcher_prefers_the_pinned_build():
     script = device_launch.build_launch_script()
     assert device_launch.CLAUDE_PINNED_VERSION in script
-    assert ".local/share/claude/versions/" in script
+    assert ".cheese/claude/versions/" in script
     # PATH stays as the last resort so a device that pins nothing still runs —
     # but it is still subject to the floor above.
     assert "command -v claude" in script

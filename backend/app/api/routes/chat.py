@@ -13,8 +13,8 @@ Protocol (unchanged frontend contract):
             "attachments"?: [{"path": str, "mime": str}]}
   server → user_block / reaction / tool / todo / state / event_block /
            assistant_block / error / done
-(No token streaming: 芝士 speaks in discrete assistant_block messages — one per
-completed SDK AssistantMessage — Slack-style.)
+(No token streaming: explicit chat publications arrive as assistant_block
+messages; terminal output arrives as activity event_block records.)
 
 The `?token=` is not optional and a socket the connect check refuses is closed
 (1008) after one `error` frame carrying `code: auth_required` (no token),

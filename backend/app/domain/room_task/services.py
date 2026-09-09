@@ -16,6 +16,7 @@ from app.domain.room_task.models import (
     RoomLock,
     Task,
     TaskStatus,
+    TreeStatus,
     WorkTree,
 )
 from app.domain.room_task.repositories import TaskRepository, WorkTreeRepository
@@ -71,10 +72,60 @@ class WorkTreeService:
                 room_id=room_id,
                 tree_id=room_id if first else None,
             )
+            await self._move_open_work_onto(current)
         # The workspace layer is sync and DB-free, so it cannot ask which tree a
         # room is on. Tell it — same arrangement `bind_room` uses for boxes.
         ws.bind_tree(room_id, current.id)
         return current
+
+    async def _move_open_work_onto(self, tree: WorkTree) -> None:
+        """Carry threads off a LANDED batch and onto the new one.
+
+        A thread outlives a batch: the room delivers, and the worker that is
+        still going keeps writing — into the NEXT batch, because the one it was
+        dispatched into has landed and its branch is finished. `tree_id` is
+        where a thread's files are (see :class:`Task`), so it has to follow, or
+        the thread names a worktree nobody is writing in, and its claims are
+        checked against a batch nobody is on.
+
+        Two things deliberately do NOT move:
+
+        - a CLOSED thread. Its tree is history — it says which batch that work
+          went out in, and moving it would rewrite that.
+        - a thread on a SEALED batch. Sealed means the PR is in flight and the
+          tree IS its content; those threads finish the turn they are in and
+          stop (`TreeStatus`). Merged is the opposite situation — the branch is
+          finished, so staying is what would be wrong.
+        """
+        from app.domain.workspace import service as ws
+
+        for task in await TaskRepository(self._session).list_for_room(tree.room_id):
+            if task.status is not TaskStatus.open or task.tree_id == tree.id:
+                continue
+            was = await self._repo.get(task.tree_id)
+            # `==`, not `is` — see AcceptService._mark_cards_tree_merged.
+            if was is None or was.status != TreeStatus.merged:
+                continue
+            task.tree_id = tree.id
+            ws.bind_tree(task.id, tree.id)
+        await self._session.flush()
+
+    async def open_without_pr(self) -> list[WorkTree]:
+        """Batches taking work that have no PR yet — the draft-PR sweep's input
+        (#718 拍板①). See :meth:`WorkTreeRepository.open_without_pr`."""
+        return await self._repo.open_without_pr()
+
+    async def claim_for_pr(self, tree_id: uuid.UUID) -> WorkTree | None:
+        """Lock this batch and hand it back only if it still wants a PR —
+        see :meth:`WorkTreeRepository.claim_for_pr`."""
+        return await self._repo.claim_for_pr(tree_id)
+
+    async def record_pr(
+        self, tree: WorkTree, *, number: int, url: str | None
+    ) -> WorkTree:
+        """Remember which PR this batch is being written into."""
+        await self._repo.record_pr(tree, number=number, url=url)
+        return tree
 
     async def seal(self, tree: WorkTree) -> WorkTree:
         return await self._repo.seal(tree)
@@ -202,6 +253,28 @@ class TaskService:
         await self._session.flush()
         return task
 
+    async def set_credits(
+        self,
+        task: Task,
+        *,
+        reporter_handle: str | None,
+        contributor_handles: list[str],
+    ) -> None:
+        """Record declared human contributions after validating their accounts."""
+        from app.domain.identity.handles import names_a_person
+        from app.domain.user.services import user_by_handle
+
+        contributors = list(dict.fromkeys(contributor_handles))
+        for handle in contributors + ([reporter_handle] if reporter_handle else []):
+            if (
+                not names_a_person(handle)
+                or await user_by_handle(self._session, handle) is None
+            ):
+                raise ValidationError(f"贡献署名必须指向真实用户：{handle}")
+        task.reporter_handle = reporter_handle
+        task.contributor_handles = contributors
+        await self._session.flush()
+
     async def close_thread(self, task: Task, *, conclusion: str | None = None) -> Task:
         """收卡 —— the room says this piece of work is over.
 
@@ -234,6 +307,9 @@ class TaskService:
         title: str,
         owner_handle: str | None,
         created_by: str | None,
+        reviewer_handle: str | None = None,
+        reporter_handle: str | None = None,
+        contributor_handles: list[str] | None = None,
     ) -> Task:
         """Open a new thread of work in a room, on the room's current tree.
 
@@ -257,7 +333,13 @@ class TaskService:
             tree_id=tree.id,
             title=title,
             owner_handle=owner_handle,
+            reviewer_handle=reviewer_handle,
             created_by=created_by,
+        )
+        await self.set_credits(
+            task,
+            reporter_handle=reporter_handle,
+            contributor_handles=contributor_handles or [],
         )
         # A thread writes to its room's tree, with its siblings. Without this the
         # workspace layer would fall back to "the tree named by the place's own

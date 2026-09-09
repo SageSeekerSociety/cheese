@@ -32,6 +32,11 @@ def _no_device_identity(monkeypatch):
 
     monkeypatch.setattr(DeviceChannel, "_device_ccproxy_upstream", none)
 
+    async def public_base(self, _device_id):
+        return self._public_base
+
+    monkeypatch.setattr(DeviceChannel, "_device_api_base", public_base)
+
 
 class FakeHub:
     """Minimal DeviceHub stand-in recording what the provider drives."""
@@ -356,6 +361,51 @@ async def test_second_turn_reasserts_the_screen_instead_of_trusting_the_registry
     assert len(hub.opened) == 1  # the topic keeps ONE screen …
     assert hub.reasserted == [hub.opened[0].sid]  # … re-asserted on reuse
     assert hub.prompts == [["turn 0"], ["turn 1"]]
+
+
+async def test_reuse_checks_and_launcher_transfer_do_not_wait_for_each_other(
+    monkeypatch,
+):
+    hub = FakeHub()
+    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
+    arguments = dict(
+        device_id="dev1",
+        agent_user_id=1,
+        agent_handle="cheese",
+        project_id=uuid.uuid4(),
+        topic_id=uuid.uuid4(),
+        token="tok",
+        env=None,
+        launch=ClaudeLaunch(system_prompt=""),
+    )
+    screen = await provider._ensure_screen(**arguments)
+    entered = set()
+    ready = asyncio.Event()
+
+    async def operation(name, result):
+        entered.add(name)
+        if len(entered) == 3:
+            ready.set()
+        await ready.wait()
+        assert hub.reasserted == []
+        return result
+
+    async def alive(_screen):
+        return await operation("alive", True)
+
+    async def tunnel(_screen):
+        return await operation("tunnel", False)
+
+    async def ship(*_arguments):
+        return await operation("launcher", ["bash", "launch.sh"])
+
+    monkeypatch.setattr(provider, "confirm_alive", alive)
+    monkeypatch.setattr(provider, "_tunnel_helper_is_down", tunnel)
+    monkeypatch.setattr(provider, "_ship_launcher", ship)
+    reused = await asyncio.wait_for(provider._ensure_screen(**arguments), timeout=2)
+    assert reused is screen
+    assert entered == {"alive", "tunnel", "launcher"}
+    assert hub.reasserted == [screen.sid]
 
 
 class DeadClaudeHub(FakeHub):
@@ -763,7 +813,10 @@ def test_device_hook_set_pushes_while_local_container_hook_set_does_not():
 
 
 @pytest.mark.anyio
-async def test_every_machine_facing_url_is_the_base_plus_a_route_that_exists():
+@pytest.mark.parametrize("direct", [False, True])
+async def test_every_machine_facing_url_is_the_base_plus_a_route_that_exists(
+    monkeypatch, direct
+):
     """Each URL handed to a device must be `{public_base}/<a real backend path>`.
 
     That is the contract `settings.connector_public_base` states — the base maps
@@ -804,9 +857,14 @@ async def test_every_machine_facing_url_is_the_base_plus_a_route_that_exists():
             return await super().open_screen(device_id, command, **kw)
 
     # The production shape: behind the gateway the base carries the `/api` mount.
-    base = "http://cheese.test/api"
+    base = "http://127.0.0.1:18080" if direct else "http://cheese.test/api"
     hub = RecordingHub()
-    provider = DeviceChannel(hub=hub, public_base=base)
+    provider = DeviceChannel(hub=hub, public_base="http://cheese.test/api")
+
+    async def api_base(_device_id):
+        return base
+
+    monkeypatch.setattr(provider, "_device_api_base", api_base)
     await provider._ensure_screen(
         device_id="dev1",
         agent_user_id=1,
@@ -1153,6 +1211,9 @@ async def test_subscription_screen_env_has_no_gateway_and_no_real_credential(
     claims = scoped_token_claims(env["CLAUDE_CODE_OAUTH_TOKEN"])
     assert claims is not None
     assert claims["p"] == str(project) and claims["t"] == str(topic)
+    assert claims["rc"] == 1
+    assert env["CHEESE_CONNECT_TOKEN"] == env["CLAUDE_CODE_OAUTH_TOKEN"]
+    assert env["CHEESE_CONNECT_TOKEN"] != env["CHEESE_TOKEN"]
 
 
 @pytest.mark.anyio
@@ -1674,6 +1735,37 @@ async def test_a_reused_screen_with_a_live_credential_is_adopted(monkeypatch):
     assert hub.reasserted == ["s1"]
     assert hub.closed == []
     assert [s.sid for s in hub.opened] == ["s1"]
+
+
+@pytest.mark.anyio
+async def test_agent_config_change_replaces_screen_at_next_launch(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "subscription_enabled", False)
+    hub = ReuseGateHub()
+    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
+    pid, tid = uuid.uuid4(), uuid.uuid4()
+
+    async def ensure(config):
+        return await provider._ensure_screen(
+            device_id="dev1",
+            agent_user_id=1,
+            agent_handle="cheese",
+            project_id=pid,
+            topic_id=tid,
+            token="tok",
+            env={"CHEESE_AGENT_CONFIG": config},
+            launch=ClaudeLaunch(system_prompt="", model="requested-model"),
+        )
+
+    first = await ensure("original")
+    assert await ensure("original") is first
+    second = await ensure("edited")
+    assert second.sid != first.sid
+    assert hub.closed == [first.sid]
+    assert second.agent_configuration == "edited"
+    assert hub.envs[-1]["CLAUDE_MODEL"] == "requested-model"
+    assert hub.envs[-1]["ANTHROPIC_DEFAULT_SONNET_MODEL"] == "requested-model"
 
 
 def test_topic_credential_expiry_reads_the_live_screens_stamp():

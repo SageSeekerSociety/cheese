@@ -1,7 +1,7 @@
 // 组件级行为测试：侧栏装了什么、装在哪一段里。
 //
-// 这一份守的是 P1「项目侧栏内容配比」的四条验收——置顶导航组、私聊固底、项目
-// 文档收成一行、行操作收进一颗 ⋯——都是"屏幕上还剩下什么"的问题，所以全部
+// 这一份守的是 P1「项目侧栏内容配比」的几条验收——置顶导航组、私聊未读的落点、
+// 项目文档收成一行、行操作收进一颗 ⋯——都是"屏幕上还剩下什么"的问题，所以全部
 // 从渲染结果上断言，不去读组件内部状态。
 // （TopicSidebar.collapse.spec.ts 守的是子话题折叠，两份互不重叠。）
 import type { Component } from 'vue'
@@ -82,9 +82,6 @@ function mount(inner: Record<string, unknown> = {}) {
         topics,
         selectedTopicId: null,
         loadingTopics: false,
-        privateActive: false,
-        members,
-        meHandle: 'me',
         ...inner,
       },
     },
@@ -136,10 +133,18 @@ beforeAll(() => {
 })
 
 describe('C1 置顶导航组', () => {
-  it('全局 / 总览 / 看板 / 日历 / AI 队友 是与话题行同语法的列表行，不再是 pills', () => {
+  it('全局 / 总览 / 看板 / 日历 / AI 队友 / 成员 是与话题行同语法的列表行，不再是 pills', () => {
     const { container } = mount()
     expect(container.querySelector('.proj-pages')).toBeNull()
-    expect(titlesIn(container, '.pinned-row')).toEqual(['全局', '总览', '看板', '日历', 'AI 队友'])
+    expect(titlesIn(container, '.pinned-row')).toEqual([
+      '全局',
+      '总览',
+      '看板',
+      '日历',
+      '导出与发布',
+      'AI 队友',
+      '成员',
+    ])
   })
 
   it('点项目名不打开任何房间——它开的是项目菜单', async () => {
@@ -170,26 +175,38 @@ describe('C1 置顶导航组', () => {
   })
 })
 
-describe('C3 私聊固底', () => {
-  it('私聊住在尾段，不在中段那个唯一的滚动容器里', () => {
-    const { container } = mount()
-    const foot = container.querySelector('.rail-foot')
-    if (!foot) throw new Error('没有找到侧栏尾段')
-    expect(foot.querySelector('.private-row')).not.toBeNull()
-    const scroll = container.querySelector('.rail-scroll')
-    if (!scroll) throw new Error('没有找到侧栏中段的滚动容器')
-    expect(scroll.querySelector('.private-row')).toBeNull()
+describe('私聊的未读落在「成员」那一行上', () => {
+  // 侧栏原来有一整段私聊（芝士 + 有未读的人）。它撤掉了，名册和每个人的未读都归
+  // 成员页——但「有人找你」必须仍然在主导航上亮，否则私聊变成一个只有主动去翻才
+  // 发现的功能。所以这一组钉的是：那一段真的没了，而未读没有跟着一起没。
+  function pinnedRow(container: Element, label: string): Element {
+    const row = Array.from(container.querySelectorAll('.pinned-row')).find(
+      (el) => el.querySelector('.v-list-item-title')?.textContent?.trim() === label
+    )
+    if (!row) throw new Error(`没有找到置顶行: ${label}`)
+    return row
+  }
+
+  it('侧栏里不再有私聊那一段', () => {
+    const { container } = mount({ privateUnreadMap: { cheese: 1, zhang: 2 } })
+    expect(container.querySelector('.rail-foot')).toBeNull()
+    expect(container.querySelector('.private-row')).toBeNull()
+    expect(titlesIn(container, '.pinned-row')).not.toContain('芝士')
   })
 
-  it('默认只有芝士常驻，全员名单不再铺在侧栏里', () => {
-    const { container } = mount()
-    expect(titlesIn(container, '.private-row')).toEqual(['芝士'])
+  it('有人私聊你 → 「成员」那一行上亮一个数，是所有私聊未读的总和', () => {
+    const { container } = mount({ privateUnreadMap: { cheese: 1, zhang: 2, li: 3 } })
+    expect(pinnedRow(container, '成员').querySelector('.unread-badge')?.textContent?.trim()).toBe('6')
   })
 
-  it('有未读的人、以及正在聊的那一个，才会出现在列表里', () => {
-    const { container } = mount({ privateUnreadMap: { zhang: 2 }, activePeer: 'li' })
-    expect(titlesIn(container, '.private-row')).toEqual(['芝士', '张衡', '李甘'])
-    expect(titlesIn(container, '.private-row')).not.toContain('蔡松洋')
+  it('没有未读就不亮——徽标不是常驻装饰', () => {
+    const { container } = mount()
+    expect(pinnedRow(container, '成员').querySelector('.unread-badge')).toBeNull()
+  })
+
+  it('话题的未读不会漏到「成员」那一行上——两种未读不是一回事', () => {
+    const { container } = mount({ unreadMap: { a: 4 } })
+    expect(pinnedRow(container, '成员').querySelector('.unread-badge')).toBeNull()
   })
 })
 

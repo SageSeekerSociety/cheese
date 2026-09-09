@@ -47,7 +47,7 @@ export function useTaskData() {
         },
         {
           title: truncateString(taskData.value?.name, 12),
-          to: { name: 'TasksDetail', params: { taskId: taskData.value?.id } },
+          to: { name: 'TasksDetail', params: { spaceId: taskData.value.space.id, taskId: taskData.value.id } },
         },
       ]
     }
@@ -110,7 +110,7 @@ export function useTaskData() {
       registrationStartAt: taskData.value.registrationStartAt
         ? new Date(taskData.value.registrationStartAt).getTime()
         : null,
-      deadline: new Date(taskData.value.deadline).getTime(),
+      deadline: taskData.value.deadline,
       resubmittable: taskData.value.resubmittable,
       editable: taskData.value.editable,
       description: parseDescription(taskData.value.description),

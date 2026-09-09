@@ -4,12 +4,105 @@ import contextlib
 import json
 import os
 import re
+import shutil
 import subprocess
+import sys
+import tempfile
 import time
+import uuid
 
 import pytest
 
-from app.domain.agent.harness.claude_code import device_launch
+from app.domain.agent.harness.claude_code import device_launch, warm_session
+
+
+@pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux is required")
+def test_prepared_topic_is_dead_when_only_its_drainer_survives(tmp_path):
+    directory = tmp_path / ".cheese/native-warm"
+    directory.mkdir(parents=True)
+    runner = directory.parent / "warm-native-runner.py"
+    shutil.copyfile(warm_session.__file__, runner)
+    topic = str(uuid.uuid4())
+    (directory / "binding.json").write_text(json.dumps({"topic_id": topic}))
+    with tempfile.TemporaryDirectory(prefix="cw-") as socket_dir:
+        socket_path = socket_dir + "/s"
+
+        def tmux(*args):
+            return subprocess.check_output(
+                ["tmux", "-S", socket_path, *args], text=True
+            ).strip()
+
+        try:
+            pane = tmux(
+                "-f",
+                "/dev/null",
+                "new-session",
+                "-d",
+                "-P",
+                "-F",
+                "#{pane_id}",
+                "-s",
+                "native-warm",
+                "sleep 30",
+            )
+            (directory / "state.json").write_text(
+                json.dumps({"socket": socket_path, "pane": pane})
+            )
+            tmux(
+                "new-window",
+                "-d",
+                "-t",
+                "native-warm",
+                "-n",
+                "cheese-drain",
+                "sleep 30",
+            )
+
+            def probe():
+                return subprocess.check_output(
+                    ["sh", "-c", device_launch.DEVICE_ALIVE_PROBE],
+                    text=True,
+                    env={
+                        **os.environ,
+                        "HOME": str(tmp_path),
+                        "CHEESE_ALIVE_TOPIC": topic,
+                    },
+                ).strip()
+
+            assert probe() == "alive"
+            tmux("kill-pane", "-t", pane)
+            assert tmux("list-panes", "-a", "-F", "#{pane_dead}") == "0"
+            assert probe() == "dead"
+        finally:
+            subprocess.run(
+                ["tmux", "-S", socket_path, "kill-server"], capture_output=True
+            )
+
+
+def test_liveness_probe_distinguishes_a_running_topic_from_an_exited_one(tmp_path):
+    executable = tmp_path / "claude"
+    # A symlink keeps Python's libraries reachable under the process name.
+    # Renamed Nix sleep and copied macOS system binaries can exit immediately.
+    executable.symlink_to(sys.executable)
+    topic = str(uuid.uuid4())
+    process = subprocess.Popen(
+        [str(executable), "-c", "import time; time.sleep(30)"],
+        env={**os.environ, "CHEESE_TOPIC": topic},
+    )
+
+    def probe():
+        return subprocess.check_output(
+            ["sh", "-c", device_launch.DEVICE_ALIVE_PROBE],
+            env={**os.environ, "CHEESE_ALIVE_TOPIC": topic},
+            text=True,
+        ).strip()
+
+    try:
+        assert probe() == "alive"
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
+    assert probe() == "dead"
 
 
 def test_hooks_settings_wire_command_hook_to_forwarder():
@@ -60,19 +153,42 @@ def test_build_screen_launch_shapes_command_and_env():
     assert 'SESSION="cheese_$(printf' in script
     assert 'new-session -d -s "$SESSION" -c "$CHEESE_WORK"' in script
     assert "CHEESE_HOOK_SPOOL" in script
-    # The drainer deletes only on DURABLE acceptance (code:200 = live delivery or
-    # server-side parking), with a 24h age cap for an unreachable backend.
-    assert '"code":200' in script
-    assert "-mmin +1440" in script
     # Env carries the hook wiring, home/work, model, and the gateway var.
     assert env["CHEESE_HOOK_URL"] == "http://h/sandbox/hooks/T"
     assert env["CHEESE_TOKEN"] == "scoped-tok"
     assert env["CHEESE_HOME"] == "/dev/home" and env["CHEESE_WORK"] == "/dev/work"
     assert env["CLAUDE_MODEL"] == "glm-5.2"
     assert env["ANTHROPIC_BASE_URL"] == "http://gw"
-    # The gates are written by the launch script itself; nothing is passed for a
-    # separate interpreter to read back.
     assert "CHEESE_CLAUDE_GATES" not in env
+
+
+def test_agent_authors_real_commit_and_platform_commits_it(tmp_path):
+    import os
+    import subprocess
+
+    _, env = device_launch.build_screen_launch(
+        hook_url="http://h/hooks",
+        hook_token="test",
+        home_dir=str(tmp_path),
+        work_dir=str(tmp_path),
+        model="test",
+        git_author=("ops", "ops@agent.cheese.local"),
+    )
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "Fix"],
+        cwd=tmp_path,
+        env={**os.environ, **env},
+        check=True,
+        capture_output=True,
+    )
+    actual = subprocess.check_output(
+        ["git", "log", "-1", "--format=%an <%ae>%n%cn <%ce>"], cwd=tmp_path, text=True
+    )
+    assert actual.splitlines() == [
+        "ops <ops@agent.cheese.local>",
+        "芝士 <cheese@zhishi.local>",
+    ]
 
 
 def test_the_room_bounds_how_deep_and_how_wide_its_work_can_go():
@@ -202,8 +318,6 @@ def test_adopt_rerun_revives_a_dead_drainer_but_never_doubles_a_live_one():
     assert 'kill -0 "$DRAIN_PID"' in script
     assert 'tmux new-window -d -t "$SESSION" -n cheese-drain' in script
     assert "CHEESE_DRAIN_TETHER=$TETHER" in script
-    # The loop honors the tether, so the revived window closes when claude goes.
-    assert 'kill -0 "$CHEESE_DRAIN_TETHER"' in _drain_body()
 
 
 def test_drainer_config_is_rewritten_each_launch_and_read_each_pass():
@@ -220,11 +334,6 @@ def test_drainer_config_is_rewritten_each_launch_and_read_each_pass():
         'CHEESE_TOKEN="$CHEESE_TOKEN"',
     ):
         assert line in script
-    body = _drain_body()
-    assert '. "$0.env"' in body
-    assert body.index("while true") < body.index('. "$0.env"'), (
-        "the config must be sourced inside the loop, not once at startup"
-    )
 
 
 def test_no_tmux_branch_keeps_the_drainer_in_claudes_own_tree():
@@ -273,14 +382,66 @@ def test_drainer_delivers_the_spool_and_deletes_only_on_code_200(tmp_path):
         proc.wait(timeout=5)
 
 
-def test_drainer_keeps_an_unacknowledged_event(tmp_path):
-    drain, spool, env = _write_drainer(tmp_path, curl_response='{"code":500}')
+@pytest.mark.parametrize("response", ['{"code":500}', '{"code":2000}', "invalid"])
+def test_drainer_keeps_an_unacknowledged_event(tmp_path, response):
+    drain, spool, env = _write_drainer(tmp_path, curl_response=response)
     event = spool / "1700000000.ev1"
     event.write_text('{"hook_event_name":"Stop"}')
     proc = subprocess.Popen(["sh", str(drain)], env=env)
     try:
         time.sleep(1.0)  # a couple of passes
         assert event.exists(), "an unacknowledged event must stay spooled"
+    finally:
+        proc.terminate()
+        proc.wait(timeout=5)
+
+
+def test_running_drainer_uses_rotated_delivery_configuration(tmp_path):
+    drain, spool, env = _write_drainer(tmp_path, curl_response='{"code":200}')
+    calls = tmp_path / "calls"
+    (tmp_path / "bin/curl").write_text(
+        f'#!/bin/sh\nprintf "%s\\n" "$@" >> "{calls}"\necho \'{{"code":200}}\'\n'
+    )
+    proc = subprocess.Popen(["sh", str(drain)], env=env)
+    try:
+        for token in ("first-token", "rotated-token"):
+            staged = tmp_path / "config.new"
+            staged.write_text(
+                f'CHEESE_HOOK_SPOOL="{spool}"\n'
+                f'CHEESE_HOOK_URL="http://backend.test/{token}"\n'
+                f'CHEESE_TOKEN="{token}"\n'
+            )
+            staged.replace(tmp_path / "cheese-drain.env")
+            event = spool / f"0000000000000000001.{token}"
+            event.write_text("{}")
+            deadline = time.monotonic() + 5
+            while event.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert not event.exists()
+            assert f"X-Cheese-Token: {token}" in calls.read_text()
+            assert f"http://backend.test/{token}" in calls.read_text()
+    finally:
+        proc.terminate()
+        proc.wait(timeout=5)
+
+
+def test_drainer_prunes_expired_events_without_resetting_sequence(tmp_path):
+    drain, spool, env = _write_drainer(tmp_path, curl_response='{"code":500}')
+    expired = [spool / "0000000000000000001.old", spool / ".n0000000000000000001"]
+    sequence = spool / ".seq"
+    for path in [*expired, sequence]:
+        path.write_text("1")
+        os.utime(path, (time.time() - 90000, time.time() - 90000))
+    fresh = spool / "0000000000000000002.fresh"
+    fresh.write_text("{}")
+    proc = subprocess.Popen(["sh", str(drain)], env=env)
+    try:
+        deadline = time.monotonic() + 5
+        while any(path.exists() for path in expired) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert all(not path.exists() for path in expired)
+        assert fresh.exists()
+        assert sequence.read_text() == "1"
     finally:
         proc.terminate()
         proc.wait(timeout=5)
@@ -391,6 +552,7 @@ def _stub_tmux_env(tmp_path):
         **os.environ,
         "PATH": f"{bindir}:{os.environ['PATH']}",
         "HOME": str(home),
+        "CHEESE_HOME": str(home),
         "CHEESE_WORK": str(work),
         "CLAUDE": "claude --model x",
         "TMUX": f"{STUB_SOCK},1,0",
@@ -412,10 +574,100 @@ def _run_block(env, expiry):
     return proc
 
 
+def test_full_launcher_installs_platform_cli_without_network(tmp_path):
+    home, env, _log = _stub_tmux_env(tmp_path)
+    bindir = tmp_path / "bin"
+    network = tmp_path / "network.calls"
+    curl = bindir / "curl"
+    curl.write_text(f'#!/bin/sh\necho attempted >> "{network}"\nexit 1\n')
+    curl.chmod(0o755)
+    claude = home / ".local/bin/claude"
+    claude.parent.mkdir(parents=True)
+    claude.write_text('#!/bin/sh\necho "2.1.261 (Claude Code)"\n')
+    claude.chmod(0o755)
+    env["CHEESE_TOKEN_EXPIRES"] = str(int(time.time()) + 3600)
+    # Devices execute a shipped file; Linux rejects this script's size in argv.
+    launcher = tmp_path / "launch.sh"
+    launcher.write_text(device_launch.build_launch_script())
+    result = subprocess.run(
+        ["sh", str(launcher)],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert not network.exists(), "room startup must not fetch the platform CLI"
+    installed = home / ".claude/cheese"
+    source = (
+        device_launch.Path(device_launch.__file__).resolve().parents[5]
+        / "sandbox/cheese"
+    )
+    assert installed.read_bytes() == source.read_bytes()
+    result = subprocess.run(
+        [str(installed), "--help"], env=env, capture_output=True, text=True, timeout=5
+    )
+    assert result.returncode == 0, result.stderr
+    assert "usage:" in result.stdout
+
+
 def _tokexp_file(home):
     files = list((home / ".claude").glob("*.tokexp"))
     assert len(files) == 1, files
     return files[0]
+
+
+def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_path):
+    owner, env, _log = _stub_tmux_env(tmp_path)
+    work = tmp_path / "project"
+    config = work / ".claude"
+    config.mkdir(parents=True)
+    protected = [
+        owner / ".claude/settings.json",
+        owner / ".claude/CLAUDE.md",
+        owner / ".zshrc",
+        owner / ".gitconfig",
+        work / "CLAUDE.md",
+        config / "settings.json",
+        config / "skills/owner-skill/SKILL.md",
+    ]
+    for path in protected:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}" if path.suffix == ".json" else "owner content\n")
+    before = {path: path.read_bytes() for path in protected}
+    project_entries = set(work.rglob("*"))
+    original_entries = set(owner.iterdir())
+    session = owner / ".cheese/home/room"
+    env.update(
+        CHEESE_HOME=str(session),
+        CHEESE_WORK=str(work),
+        CHEESE_API="https://fixture.invalid",
+        CHEESE_TOKEN_EXPIRES=str(int(time.time()) + 3600),
+    )
+    curl = tmp_path / "bin/curl"
+    curl.write_text(
+        '#!/bin/sh\nwhile [ "$#" -gt 0 ]; do\n'
+        'if [ "$1" = "-o" ]; then shift; dest="$1"; fi\nshift\ndone\n'
+        'printf \'#!/bin/sh\\necho "2.1.261 (Claude Code)"\\n\' > "$dest"\n'
+    )
+    curl.chmod(0o755)
+    launcher = tmp_path / "launch.sh"
+    launcher.write_text(device_launch.build_launch_script())
+    result = subprocess.run(
+        ["sh", str(launcher)], env=env, capture_output=True, text=True, timeout=15
+    )
+    assert result.returncode == 0, result.stderr
+    assert {path: path.read_bytes() for path in protected} == before
+    assert set(owner.iterdir()) - original_entries == {owner / ".cheese"}
+    assert set(work.rglob("*")) == project_entries
+    assert (
+        owner / ".cheese/claude/versions" / device_launch.CLAUDE_PINNED_VERSION
+    ).is_file()
+    for name in ("cheese-chat", "cheese-docs"):
+        assert (session / ".claude/skills" / name / "SKILL.md").is_file()
+    args = (tmp_path / "newsession.args").read_text()
+    assert "--dangerously-skip-permissions" in args
+    assert f"CLAUDE_CONFIG_DIR={session}/.claude" in args
 
 
 def test_the_agent_session_never_lands_on_the_machine_owners_tmux_server(tmp_path):
@@ -432,24 +684,19 @@ def test_the_agent_session_never_lands_on_the_machine_owners_tmux_server(tmp_pat
         f"an inner tmux command went to a server we do not own: {sockets}"
     )
     on_default = [s for s in log.read_text().split() if s.startswith("default:")]
-    assert not [s for s in on_default if s not in ("default:has-session",)], (
-        f"the machine owner's server was used for more than a look: {on_default}"
-    )
+    assert not on_default, f"the machine owner's server was used: {on_default}"
 
 
-def test_a_session_left_on_the_machine_owners_server_is_retired(tmp_path):
-    """An agent session sitting on the default server is ours wherever it came
-    from, and it is not inert: it holds this topic's rendezvous socket, spool and
-    work tree, so leaving it means a second claude answering for this topic. The
-    launch takes it down instead of hosting alongside it."""
+def test_a_matching_session_on_the_machine_owners_server_is_untouched(tmp_path):
+    """A Cheese-shaped name does not grant ownership of a user's session."""
     home, env, log = _stub_tmux_env(tmp_path)
     open(env["STUB_OWNER_MARK"], "w").close()  # one is squatting there
 
     _run_block(env, expiry=int(time.time()) + 100_000)
 
     steps = log.read_text().split()
-    assert "default:kill-session" in steps, "the misplaced session was left running"
-    assert not os.path.exists(env["STUB_OWNER_MARK"])
+    assert not any(step.startswith("default:") for step in steps)
+    assert os.path.exists(env["STUB_OWNER_MARK"])
     assert "new" in steps, "and this launch still hosts its own claude"
 
 
@@ -1034,6 +1281,41 @@ def test_a_session_born_on_a_different_contract_is_retired():
     assert script.count("RETIRE=1") >= 2
 
 
+def test_surviving_inner_session_detects_an_agent_edit(tmp_path):
+    import os
+    import subprocess
+    import time
+
+    script = device_launch.build_launch_script()
+    config_dir = tmp_path / ".claude"
+    config_dir.mkdir()
+    (config_dir / "settings.json").write_text("{}")
+    (config_dir / "cheese-machine.token").write_text("unchanged-ticket")
+    (config_dir / "agent-configuration").write_text("original-config")
+    env = {
+        **os.environ,
+        "HOME": str(tmp_path),
+        "REAL_HOME": str(tmp_path),
+        "SESSION": "test-session",
+        "TOKEXP": str(int(time.time()) + 3600),
+    }
+    start = script.rindex('    cat "$REAL_HOME/.claude/settings.json"')
+    record = script[start : script.index("    # Hand THIS launch", start)]
+    subprocess.run(["bash", "-c", record], env=env, check=True)
+    start = script.index('    CFGF="$HOME/.claude/$SESSION.cfg"')
+    gate = script[start : script.index("    # The connector's server", start)]
+    for config, retired in [("original-config", "0"), ("edited-config", "1")]:
+        (config_dir / "agent-configuration").write_text(config)
+        result = subprocess.run(
+            ["bash", "-c", gate + '\nprintf "%s" "$RETIRE"'],
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert result.stdout == retired
+
+
 def test_the_launcher_adopts_that_ticket_as_the_model_credential():
     """It has to reach claude through the process environment, because the file
     that would otherwise carry it is in a home claude does not read."""
@@ -1057,7 +1339,19 @@ def test_the_tunnel_password_stays_the_scoped_token():
     start = script.index("<<TUNNELTOK\n") + len("<<TUNNELTOK\n")
     written = script[start : script.index("\nTUNNELTOK", start)]
 
-    assert written.strip() == "$CHEESE_TOKEN"
+    for connect in ["place-rc-token", ""]:
+        result = subprocess.run(
+            ["/bin/bash", "-c", "cat <<EOF\n" + written + "\nEOF"],
+            env={
+                "CHEESE_CONNECT_TOKEN": connect,
+                "CHEESE_TOKEN": "hook-token",
+                "CLAUDE_CODE_OAUTH_TOKEN": "machine-ticket",
+            },
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert result.stdout.strip() == connect
 
 
 def test_a_changed_machine_ticket_retires_the_session_that_baked_the_old_one():
@@ -1427,7 +1721,7 @@ def test_declaring_a_port_writes_it_on_the_machine(tmp_path):
         text=True,
     )
     assert result.returncode == 0, result.stderr
-    assert (tmp_path / ".claude/cheese-preview.port").read_text().strip() == "5173"
+    assert (tmp_path / ".claude/cheese-preview.port").read_text() == "5173\n"
 
 
 def test_no_mcp_server_is_planted_in_a_sandbox():

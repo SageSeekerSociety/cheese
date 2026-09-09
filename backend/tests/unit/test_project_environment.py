@@ -52,6 +52,61 @@ def test_finished_agent_is_stopped_not_failed_preparation(tmp_path):
     assert "error" not in result
 
 
+@pytest.mark.parametrize("failure", ["setup", "adoption", None])
+def test_prepared_agent_adoption_follows_project_setup(tmp_path, monkeypatch, failure):
+    home, work = tmp_path / "home", tmp_path / "work"
+    home.mkdir()
+    work.mkdir()
+    subprocess.run(["git", "init", "-q", str(work)], check=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("CHEESE_WORK", str(work))
+    monkeypatch.setenv("CHEESE_ENVIRONMENT", "fixture")
+    config = EnvironmentConfig(
+        setup_script="exit 9" if failure == "setup" else "echo setup > setup-done",
+        startup_script='printf "%s" "$PROJECT_VALUE" > startup-value',
+        variables={"PROJECT_VALUE": "project-specific"},
+    )
+    adopted = []
+    root = home / ".cheese-environment"
+    with subprocess.Popen(["sleep", "30"]) as native:
+        try:
+
+            def adopt(environment, directory):
+                assert directory == work.resolve()
+                assert (work / "setup-done").read_text() == "setup\n"
+                assert (work / "startup-value").read_text() == "project-specific"
+                assert environment["PROJECT_VALUE"] == "project-specific"
+                assert "CHEESE_ENVIRONMENT" not in environment
+                assert environment_runner.read_status(root)["state"] == "preparing"
+                adopted.append(native.pid)
+                if failure == "adoption":
+                    raise RuntimeError("room binding failed")
+                return native.pid
+
+            code = environment_runner.run(config.snapshot(), root, [], adopt=adopt)
+            if failure == "setup":
+                assert code == 9
+                assert not adopted
+                assert environment_runner.read_status(root)["state"] == "failed"
+            elif failure == "adoption":
+                assert code == 1
+                assert adopted == [native.pid]
+                result = environment_runner.read_status(root)
+                assert result["state"] == "failed"
+                assert result["error"] == "room binding failed"
+            else:
+                assert code == 0
+                assert adopted == [native.pid]
+                result = environment_runner.read_status(root)
+                assert result["state"] == "ready"
+                assert result["pid"] == native.pid
+        finally:
+            native.terminate()
+            native.wait(timeout=5)
+    if failure is None:
+        assert environment_runner.read_status(root)["state"] == "stopped"
+
+
 def test_dead_installer_is_failed_preparation(tmp_path):
     import signal
 
@@ -296,3 +351,153 @@ async def test_reconnect_to_preparing_process_never_probes_it_as_dead(monkeypatc
     )
     assert actual is screen
     channel.confirm_alive.assert_not_awaited()
+
+
+async def test_reconnect_uses_initial_environment_read_until_next_poll(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from app.domain.agent import device_provider
+
+    channel = device_provider.DeviceChannel.__new__(device_provider.DeviceChannel)
+    channel._hub = object()
+    channel._subscription_devices = {}
+    screen = object()
+    channel._existing_screen = lambda *args: screen
+    channel.confirm_alive = AsyncMock()
+    read = AsyncMock(side_effect=[{"state": "preparing"}, {"state": "ready"}])
+    monkeypatch.setattr(device_provider, "environment_status", read)
+    actual = await channel.ensure_ready(
+        project_id="project",
+        topic_id="topic",
+        token="token",
+        env={"CHEESE_ENVIRONMENT": "{}"},
+        memory_scope=None,
+        owner=None,
+        turn_id=None,
+        launch=None,
+        precheck=("machine", 1, "agent"),
+    )
+    assert actual is screen
+    assert read.await_count == 2
+    channel.confirm_alive.assert_not_awaited()
+
+
+@pytest.mark.parametrize("replacement", [False, True])
+@pytest.mark.parametrize("next_state", ["ready", "failed"])
+async def test_ready_environment_is_rechecked_only_after_screen_replacement(
+    monkeypatch, replacement, next_state
+):
+    from unittest.mock import AsyncMock
+
+    from app.domain.agent import device_provider
+
+    channel = device_provider.DeviceChannel.__new__(device_provider.DeviceChannel)
+    channel._hub = object()
+    channel._subscription_devices = {}
+    original = object()
+    screen = object() if replacement else original
+    channel._existing_screen = lambda *args: original
+    channel._ensure_screen = AsyncMock(return_value=screen)
+    read = AsyncMock(
+        side_effect=[
+            {"state": "ready", "attempt": "old"},
+            {"state": next_state, "attempt": "new"},
+        ]
+    )
+    monkeypatch.setattr(device_provider, "environment_status", read)
+    request = channel.ensure_ready(
+        project_id="project",
+        topic_id="topic",
+        token="token",
+        env={"CHEESE_ENVIRONMENT": "{}"},
+        memory_scope=None,
+        owner=None,
+        turn_id=None,
+        launch=None,
+        precheck=("machine", 1, "agent"),
+    )
+    if replacement and next_state == "failed":
+        with pytest.raises(device_provider.EnvironmentPreparationError):
+            await request
+    else:
+        assert await request is screen
+    assert read.await_count == (2 if replacement else 1)
+
+
+async def test_fast_environment_is_observed_without_two_second_wait(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from app.domain.agent import device_provider
+
+    channel = device_provider.DeviceChannel.__new__(device_provider.DeviceChannel)
+    channel._hub = object()
+    channel._subscription_devices = {}
+    channel._existing_screen = lambda *args: None
+    screen = object()
+    channel._ensure_screen = AsyncMock(return_value=screen)
+    started = time.monotonic()
+
+    async def read(*args, **kwargs):
+        state = "ready" if time.monotonic() - started >= 0.05 else "pending"
+        return {"state": state, "attempt": "new" if state == "ready" else None}
+
+    monkeypatch.setattr(device_provider, "environment_status", read)
+    actual = await channel.ensure_ready(
+        project_id="project",
+        topic_id="topic",
+        token="token",
+        env={"CHEESE_ENVIRONMENT": "{}"},
+        memory_scope=None,
+        owner=None,
+        turn_id=None,
+        launch=None,
+        precheck=("machine", 1, "agent"),
+    )
+    assert actual is screen
+    assert time.monotonic() - started < 1
+
+
+async def test_long_environment_returns_to_low_frequency_checks(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from app.domain.agent import device_provider
+
+    clock = SimpleNamespace(seconds=0.0)
+    reads = []
+
+    async def sleep(seconds):
+        clock.seconds += seconds
+
+    async def read(*args, **kwargs):
+        reads.append(clock.seconds)
+        return {
+            "state": "ready" if clock.seconds >= 14 else "preparing",
+            "attempt": "new",
+        }
+
+    channel = device_provider.DeviceChannel.__new__(device_provider.DeviceChannel)
+    channel._hub = object()
+    channel._subscription_devices = {}
+    channel._existing_screen = lambda *args: None
+    screen = object()
+    channel._ensure_screen = AsyncMock(return_value=screen)
+    monkeypatch.setattr(
+        device_provider, "time", SimpleNamespace(monotonic=lambda: clock.seconds)
+    )
+    monkeypatch.setattr(device_provider.asyncio, "sleep", sleep)
+    monkeypatch.setattr(device_provider, "environment_status", read)
+    actual = await channel.ensure_ready(
+        project_id="project",
+        topic_id="topic",
+        token="token",
+        env={"CHEESE_ENVIRONMENT": "{}"},
+        memory_scope=None,
+        owner=None,
+        turn_id=None,
+        launch=None,
+        precheck=("machine", 1, "agent"),
+    )
+    assert actual is screen
+    assert 14 <= clock.seconds < 16
+    assert len([at for at in reads if at >= 10]) <= 3

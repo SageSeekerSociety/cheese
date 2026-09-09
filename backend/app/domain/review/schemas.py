@@ -9,7 +9,12 @@ from app.domain.review.models import AcceptStatus
 
 
 class AcceptCardCreate(BaseModel):
-    reviewer_handle: str = Field(min_length=1, max_length=64)
+    # 未指定就用项目默认验收人 (#718 设置表「任务默认 reviewer」). Optional here
+    # and resolved in the service — same reason `change_subject` is: the thing
+    # that has to reach the filer when nobody is named AND the project has no
+    # default is a sentence telling them how to fix it, not pydantic's
+    # `Field required`.
+    reviewer_handle: str | None = Field(default=None, max_length=64)
     routing_reason: str = ""
     # What the change IS, in Conventional Commits form — becomes the PR title
     # and the squash commit subject. REQUIRED since 2026-08-17, but enforced in
@@ -32,6 +37,20 @@ class AcceptCardCreate(BaseModel):
     # claimed") proves only that a task row exists — not that its code is here.
     # An undeclared delivery lands with no `Cheese-Task:` line, which is honest.
     task_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
+class AcceptCardDescribe(BaseModel):
+    """更正一张待处理验收卡的描述（追加 D）。
+
+    没有 `task_ids`，而且不该有：署名是对事实的断言，改它等于往别人头上安署名；
+    描述是对这次改动的说明，评审本来就是要求改它的。理由写在
+    `AcceptService.redescribe` 里。
+    """
+
+    change_subject: str | None = Field(default=None, max_length=255)
+    #: None = 不动正文（只改标题）；空串 = 把正文清空。这两件事不一样，所以
+    #: 「没传」和「传了空的」必须能区分，默认值才是 None 而不是 ""。
+    change_body: str | None = None
 
 
 #: 合的是**人看到的**那个 commit：每个会触发合并的写入口都带上前端渲染这张卡

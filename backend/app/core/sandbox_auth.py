@@ -27,6 +27,7 @@ import secrets
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Literal
 
 from app.core.config import settings
 from app.domain.identity.handles import topic_agent_handle
@@ -54,6 +55,8 @@ def mint_scoped_token(
     topic_id: str | None = None,
     ttl_s: int = _SCOPED_TTL_S,
     agent_handle: str | None = None,
+    access_scope: Literal["topic", "project"] = "topic",
+    remote_control: bool = False,
 ) -> str:
     """Mint an HMAC token scoped to a project (+ optional topic), expiring in ttl_s.
 
@@ -70,8 +73,18 @@ def mint_scoped_token(
         "exp": int(time.time()) + ttl_s,
     }
     actor = agent_handle or (topic_agent_handle(topic_id) if topic_id else None)
+    if access_scope == "project":
+        if not actor:
+            raise ValueError("Project participant access requires an agent identity")
+        # The origin topic still binds execution callbacks. Collaboration routes
+        # may use project scope only after checking this actor's actual roles.
+        payload["s"] = "project"
     if actor:
         payload["a"] = actor
+    if remote_control:
+        if not topic_id:
+            raise ValueError("RC credentials require a place")
+        payload["rc"] = 1
     raw = json.dumps(payload, separators=(",", ":")).encode()
     body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
     return f"{body}.{_sign(body)}"

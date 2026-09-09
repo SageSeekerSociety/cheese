@@ -8,9 +8,33 @@ export interface Project {
   summary?: string
   // The project's root topic (= 本体 / 大本营). Its living doc is the 章程.
   root_topic_id?: string
+  /** 建这个项目的人。名册上他那一行不带任何管理动作——没人能把他降职或移出。 */
+  owner_handle?: string | null
+  /**
+   * 这个项目归哪个小队（项目归团队 v4）。历史遗留的行是 null——新建项目一律会落到
+   * 创建者的个人小队。顶栏那颗 ← 在没记到来路时拿它当兜底。
+   */
+  team_id?: number | null
   [key: string]: unknown
   /** 这个项目是从哪道赛题创建的（1.0 `task` 的整数 id）；不来自赛题时为 null。 */
   external_task_id?: number | null
+}
+
+export interface ProjectSite {
+  id: string
+  url: string
+  source_revision: string
+  directory: string
+  published_at: string
+  published_by: string
+}
+
+export interface ProjectSiteInfo {
+  can_publish: boolean
+  source_revision: string | null
+  candidates: { directory: string; entry_file: string }[]
+  site: ProjectSite | null
+  unavailable_reason?: string | null
 }
 
 export interface Topic {
@@ -71,6 +95,10 @@ export interface BlockMeta {
   tool?: string
   arg?: string
   platform?: boolean
+  // 现场那一行的动词覆盖：值是「标签更贴切的那个工具名」（Bash 跑的 `cat x.py`
+  // 显示成「读取文件」）。和 `action` 是两回事 —— 那个答的是「这张平台动作卡指
+  // 向哪个资源」，共用一个键就会让卡片指向一个叫 Read 的资源。
+  as_tool?: string
   action?: string
   event_type?: string
   code?: string
@@ -146,6 +174,9 @@ export interface RoomTask {
   title: string
   status: string
   owner_handle?: string | null
+  // 谁来验收这条活 —— 派活那一刻定下的（显式指定，否则项目的默认验收人）。递卡
+  // 沿用它。null 表示派出去时谁也没指定、项目也没设默认，递卡时得自己点名。
+  reviewer_handle?: string | null
   created_by?: string | null
   branch_name?: string | null
   // 派它出去时说的那份要求，和分身交回来的那句话。两样都住在卡上：简报以前存在
@@ -230,7 +261,6 @@ export type WsServerFrame =
   | { type: 'user_block'; block: Block }
   // A block's reactions changed (someone toggled / 芝士's ✅ receipt landed).
   | { type: 'reaction'; block_id: string; reactions: ReactionAgg[] }
-  | { type: 'tool'; name: string; input: Record<string, unknown> }
   // `restored` = this is the checklist a PREVIOUS turn left behind, replayed at
   // turn start; without the flag the UI cannot tell it from live progress.
   | { type: 'todo'; items: TodoItem[]; restored?: boolean }
@@ -298,6 +328,8 @@ export interface ProjectMember {
 export interface ProjectMemberRow {
   user_handle: string
   role: string
+  source?: 'team'
+  team_id?: number
   name?: string
   // 这个人**自己选的**头像素材 id（getAvatarUrl 拼成 /avatars/{id}）。两种情况
   // 为 null：名册行背后没有 fusion 用户档案，或者他从来没设过头像（档案还指着
@@ -310,6 +342,20 @@ export interface ProjectMemberRow {
   [key: string]: unknown
 }
 
+/** 一张「请你加入这个项目」的邀请，等对方回答。 */
+export interface ProjectInvitation {
+  id: string
+  project_id: string
+  invitee_handle: string
+  inviter_handle: string
+  role: string
+  status: 'pending' | 'accepted' | 'declined' | 'revoked'
+  created_at: string
+  responded_at?: string | null
+  /** 后端不回项目名，界面上要显示得自己从项目列表里配；配不到就退成 id。 */
+  [key: string]: unknown
+}
+
 // 话题成员名册 (fusion-design §3): a topic's group-room roster. Roles are
 // owner/admin/member (distinct from ProjectMemberRow's lead/member/mentor);
 // `agent` marks 芝士 (the AI member) so the UI can badge it.
@@ -318,7 +364,12 @@ export interface TopicMemberRow {
   topic_id: string
   member_handle: string
   role: 'owner' | 'admin' | 'member'
+  // 芝士那一行上，这是**这个房间现在交给的那个队友**的名字（换队友就跟着变），
+  // 不是座位账号的昵称 —— 座位昵称是建号时写死的常量，永远是「芝士」。
   name?: string
+  // 这个人**自己挑的**头像素材 id，同 ProjectMemberRow.avatar_id：没挑过就是
+  // null，画彩色首字母。别拿它去取 /avatars/default。
+  avatar_id?: number | null
   agent?: boolean
   created_at: string
 }
@@ -465,14 +516,13 @@ export interface FileContent {
 // GET /topics/{id}/preview (spec §9.1): the artifact 芝士 pointed at as the
 // topic's current preview. Null when 芝士 hasn't set one.
 export interface PreviewInfo {
-  // kind=file → render the file's content; kind=app → iframe straight to the app
-  // the agent started on its machine, carried here over that machine's preview
-  // tunnel (url, live-resolved on every fetch).
+  /** Content fingerprint for refreshing an updated static preview. */
+  version?: string | null
+  // File and app previews share an isolated topic content origin.
   kind?: 'file' | 'app'
   path: string
   mime: string | null
-  // kind=app: the backend's reverse-proxy path (root-relative), or null when the
-  // app isn't answering. `tunnel_up` separates "那台机器没有把预览通道拨出来" from
+  // Isolated content URL for files and live apps; null when the app is offline. `tunnel_up` separates "那台机器没有把预览通道拨出来" from
   // "通道在，但应用没在跑" — without it both look like an empty white frame.
   url?: string | null
   tunnel_up?: boolean
@@ -590,6 +640,7 @@ export interface AcceptCard {
   // 合并态 (#718): what stands between this card and the trunk, and whose move
   // it is. Always present — a platform-lane card carries who="human".
   merge_state: MergeStateInfo
+  has_external_checks: boolean
   auto_merge: AutoMergeInfo
   // 两阶段采纳 (PR迭代式) only: which repo the PR lives in and the commit CI is
   // being queried against.
@@ -697,14 +748,17 @@ export interface MarketNodes {
 // One credit grant (issued when the project linked an institutional task).
 export interface ComputeGrantRow {
   id: string
-  source_task_id: string | null
+  project_id: string | null
+  source_task_id: number | null
   credits_total: number
   credits_used: number
   created_at: string
 }
 
-// GET /projects/{id}/credits — unlimited=true means no grants (自治项目).
+// Shared team grants plus credits restricted to the requesting project.
 export interface ProjectCredits {
+  team_id: number | null
+  tokens_per_credit: number
   unlimited: boolean
   credits_total: number
   credits_used: number
@@ -715,20 +769,6 @@ export interface ProjectCredits {
 // ---- 题目匹配市场 (spec §13 阶段 6: Space 发布题目, 团队应征) ----
 
 // A selectable AI execution profile (GET /projects/{id}/execution-profiles).
-export interface ExecProfileOption {
-  name: string
-  label: string
-  tier: string
-  model: string
-  available: boolean
-}
-
-// GET /projects/{id}/execution-profiles
-export interface ExecProfiles {
-  current: string
-  profiles: ExecProfileOption[]
-}
-
 // GET /projects/{id}/compute-profiles
 export interface ComputeProfiles {
   current: string
@@ -798,19 +838,20 @@ export interface TopicComputeDevice {
 }
 
 // GET /topics/{id}/compute-profile — a topic's session-level compute选择 (v4).
-// `current` is effective (topic → project sticky → team default → platform);
+// `current` is effective (room choice → project default → deployment default);
 // `locked` freezes the picker once the topic has run (session started);
-// `inherited` = still following project/team/platform defaults (no own choice yet);
-// `sticky` = project sticky if present, otherwise the team/platform default;
+// `inherited` = still following the project default (no own choice yet);
 // `device_id` is the self-hosted machine pinned to this topic, or null while
 // 「系统挑一台」still waits for the first turn to choose one.
 export interface TopicComputeProfile {
+  choice: ComputeChoice
+  project_default: ComputeChoice
+  favorites: ComputeChoice[]
   current: string
   device_id: string | null
   devices: TopicComputeDevice[]
   locked: boolean
   inherited: boolean
-  sticky: string
   profiles: PoolListing[]
   visibility: TopicComputeVisibility
 }
@@ -837,6 +878,23 @@ export interface EnvironmentStatus {
   pinned_revision?: string | null
   started_at?: string
   finished_at?: string | null
+}
+
+export interface ComputeChoice {
+  name: string
+  profile: 'cloud' | 'device'
+  device_id: string | null
+  cores: number | null
+  memory_mb: number | null
+  disk_gb: number | null
+}
+
+export interface ProjectComputeConfigs {
+  default: ComputeChoice
+  favorites: ComputeChoice[]
+  can_manage: boolean
+  devices: TopicComputeDevice[]
+  cloud_available: boolean
 }
 
 // 当前用户 (Phase 0 极简登录): what /users/login returns and what we keep locally.
@@ -959,16 +1017,7 @@ export interface DeviceApproval {
 
 // ---- AI 队友 (agent 类型与实例) ----
 //
-// Three layers, three lifetimes (docs/topics/room-task-agent-session-设计方案.md
-// §12): a TYPE is 出厂设置 and belongs to no project; an INSTANCE is that type
-// working inside one project, and it owns the memory it accumulated there; a
-// session is where one conversation got to and may be thrown away.
-//
-// So "how this agent behaves" (system prompt, skills, MCP, model, effort,
-// harness) is on the TYPE, and "who it is here" (name, handle, memory) is on the
-// INSTANCE. The management page shows both, which is why it reads two endpoints.
-
-// GET /agent-types — presets merged with the project's custom types.
+// GET /agent-types: built-in starting configurations for new agents.
 export interface AgentType {
   name: string
   title: string
@@ -988,8 +1037,18 @@ export interface AgentType {
 }
 
 // GET /projects/{id}/agents — one agent working in this project.
+export interface AgentConfiguration {
+  body: string
+  model: string
+  harness: string
+  skills: string[]
+  mcp_servers: string[]
+  effort: string | null
+}
+
 export interface ProjectAgent {
-  // Null for the implicit 芝士 a project has before anyone configured one.
+  configuration: AgentConfiguration
+  // Current project rosters always return saved IDs; nullable for older clients.
   id: string | null
   project_id: string
   // The memory pool key inside the project (`{project}:{handle}`).
@@ -998,7 +1057,7 @@ export interface ProjectAgent {
   display_name: string
   // What a new topic in this project gets.
   is_default: boolean
-  // False = it resolves and owns a memory pool, but there is no row to edit.
+  // Retained for older clients; current project roster entries are always saved.
   configured: boolean
   // False = 已停用. Still listed and still working in the topics that already
   // have it — just not offered when picking an agent for new work.

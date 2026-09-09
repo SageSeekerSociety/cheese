@@ -16,7 +16,13 @@ FROM node:22-bookworm-slim
 # image looks like it already has it, but anything that spawns the binary —
 # `subprocess.run(["kill", ...])`, `pgrep`, `ps` — gets FileNotFoundError
 # instead. `ssh-keygen` is the same shape: no shell fallback exists at all.
+# Reuse the backend's HTTPS mirror; apt cannot reach Debian's CDN here.
+# Node slim has no system CA bundle. Its bundled roots let apt verify HTTPS
+# until ca-certificates installs the distribution's bundle in this same layer.
 RUN --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    mkdir -p /etc/ssl/certs && \
+    node -p 'require("tls").rootCertificates.join("\n")' > /etc/ssl/certs/ca-certificates.crt && \
+    sed -i 's|http://deb.debian.org|https://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources && \
     apt-get update && apt-get install -y --no-install-recommends \
       git ca-certificates curl xz-utils python3 python3-pip \
       build-essential pkg-config ripgrep jq less unzip \

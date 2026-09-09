@@ -81,8 +81,8 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 
 ### 3.1 对话与召唤 @芝士  ✅
 
-- **行为**：输入栏发消息，默认**不** @芝士（人与人对话）；点 `@芝士` 芝士才回复。所有消息都会进库；**未 @ 的消息芝士下次被召唤时也会看到**，每条带 `[发言人]:` 标签（多人话题里芝士能分清谁说的，Batch I）。
-- **实现**：WebSocket `GET /api/topics/{id}/chat`（`backend/app/api/routes/chat.py`）。
+- **行为**：输入栏发消息，默认**不** @芝士（人与人对话）；**正文里 @ 了它**它才回复——输入栏的「交给芝士」按钮和 ⌘/Ctrl+Enter 是把那个 @ 写进正文的两个入口，不是另一个开关。所有消息都会进库；**未 @ 的消息芝士下次被召唤时也会看到**，每条带 `[发言人]:` 标签（多人话题里芝士能分清谁说的，Batch I）。房间里最后一句没 @ 它时，那条消息下面出现一次「让它现在就看」，点了就地开一轮（不补发消息）。
+- **实现**：WebSocket `GET /api/topics/{id}/chat`（`backend/app/api/routes/chat.py`）；补救那一下是 `POST /api/topics/{id}/summon`——它只开一轮，让待读窗口把那条消息捎上，房间已经在干活或没有待读内容时它什么都不做并说明是哪一种。
   帧：`user_block` → `delta`*（流式 token）→ `tool`*（工具调用：原生 Bash/Write/Edit/Read + cheese Skill）→ `assistant_block` → `done`（或 `error`）。
   编排：`ChatService.converse`（`backend/app/domain/agent/chat.py`）：tx1 存用户块+拼带标签的上下文+加载记忆 → 流式（不持事务）→ tx2 存 🔧 事件块 + 芝士消息 + token 用量。每话题一把 `asyncio.Lock` 串行。
 

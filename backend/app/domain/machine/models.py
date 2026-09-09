@@ -13,6 +13,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     DateTime,
     Enum,
     ForeignKey,
@@ -22,6 +23,7 @@ from sqlalchemy import (
     Text,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -79,6 +81,33 @@ GONE = {MachineStatus.deleted}
 MAX_ENROLL_ATTEMPTS = 5
 
 
+class WarmMachine(UuidPk, Timestamps, Base):
+    """Unused platform capacity; claim intent survives a provider timeout."""
+
+    __tablename__ = "warm_machines"
+
+    state: Mapped[str] = mapped_column(String(16), default="preparing", index=True)
+    machine_id: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True, unique=True
+    )
+    # Includes the public bootstrap key, never a user credential. Persist before create.
+    create_request: Mapped[dict] = mapped_column(JSONB)
+    bootstrap_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    device_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    ip: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    ccproxy_upstream: Mapped[str | None] = mapped_column(Text, nullable=True)
+    enrolled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    claimed_machine_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("project_machines.id", ondelete="SET NULL"),
+        nullable=True,
+        unique=True,
+    )
+
+
 class ProjectMachine(UuidPk, Timestamps, Base):
     __tablename__ = "project_machines"
     __table_args__ = (
@@ -92,6 +121,9 @@ class ProjectMachine(UuidPk, Timestamps, Base):
 
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    warm_claim_pending: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
     )
     # NULL is a manually provisioned legacy/project machine. A Cloud-pool row is
     # leased to exactly one topic until archive stamps released_at.

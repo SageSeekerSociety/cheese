@@ -13,6 +13,7 @@
 """
 
 import contextlib
+import hashlib
 import logging
 import os
 import re
@@ -20,11 +21,11 @@ import shutil
 import subprocess
 import time
 import uuid
-from collections.abc import Iterator
-from pathlib import Path
+from collections.abc import Collection, Iterator
+from pathlib import Path, PurePosixPath
 
 from app.core.config import settings
-from app.core.errors import ConflictError, ValidationError
+from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.domain.agent.platform_failures import WORKSPACE_VCS_PERMS_CODE
 from app.domain.workspace import identity as identity_mod
 from app.domain.workspace.textfile import (
@@ -919,6 +920,98 @@ def read_file_bytes(
         raise WorkspacePermissionError(_uid_split_hint(f"读 {path}: {exc}")) from exc
 
 
+def read_preview_file(
+    project_id: uuid.UUID, topic_id: uuid.UUID, entry: str, relative: str
+) -> bytes:
+    """Read web assets only inside the explicitly selected artifact's directory."""
+    parts = relative.split("/")
+    if not relative or any(
+        not part or part.startswith(".") or "\\" in part or "\x00" in part
+        for part in parts
+    ):
+        raise ValidationError("preview path unavailable")
+    tree = _tree(project_id, topic_id)
+    directory = _safe_path(tree, str(PurePosixPath(entry).parent))
+    target = _safe_path(directory, relative)
+    return read_file_bytes(project_id, str(target.relative_to(tree)), topic_id)
+
+
+def preview_file_version(
+    project_id: uuid.UUID, topic_id: uuid.UUID, entry: str
+) -> str | None:
+    """Track HTML edits without loading a large artifact into the editor API."""
+    target = _safe_path(_tree(project_id, topic_id), entry)
+    try:
+        with target.open("rb") as source:
+            return hashlib.file_digest(source, "sha256").hexdigest()[:16]
+    except OSError:
+        # The metadata still names a missing/unreadable artifact; the file API
+        # supplies its existing detailed error state to the preview panel.
+        return None
+
+
+def accepted_revision(project_id: uuid.UUID) -> str:
+    """Pin the project's accepted branch, without reading its mutable checkout."""
+    repo = ensure_repo(project_id)
+    return _git(repo, "rev-parse", f"{_base_branch(repo)}^{{commit}}").strip()
+
+
+def committed_files(project_id: uuid.UUID, revision: str) -> list[dict]:
+    """List the exact tree, including build directories hidden by the file panel."""
+    if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", revision):
+        raise ValidationError("invalid commit revision")
+    out = _git(ensure_repo(project_id), "ls-tree", "-r", "-z", "-l", revision)
+    files = []
+    for entry in out.split("\0"):
+        if not entry:
+            continue
+        meta, path = entry.split("\t", 1)
+        mode, kind, oid, size = meta.split()
+        files.append(
+            {
+                "path": path,
+                "mode": mode,
+                "kind": kind,
+                "oid": oid,
+                "bytes": int(size) if size != "-" else 0,
+            }
+        )
+    return files
+
+
+def read_committed_blobs(
+    project_id: uuid.UUID, object_ids: list[str]
+) -> dict[str, bytes]:
+    """Read known blob ids in one binary-safe git call; callers bound tree sizes."""
+    ids = list(dict.fromkeys(object_ids))
+    if not ids:
+        return {}
+    if any(not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", oid) for oid in ids):
+        raise ValidationError("invalid git object")
+    result = subprocess.run(
+        ["git", "cat-file", "--batch"],
+        cwd=ensure_repo(project_id),
+        input=("\n".join(ids) + "\n").encode(),
+        capture_output=True,
+        timeout=60,
+    )
+    if result.returncode:
+        raise ValidationError("无法读取已采纳版本的文件")
+    data = result.stdout
+    offset = 0
+    blobs = {}
+    for oid in ids:
+        end = data.index(b"\n", offset)
+        header = data[offset:end].decode("ascii").split()
+        if len(header) != 3 or header[0] != oid or header[1] != "blob":
+            raise ValidationError("发布文件不是普通 Git 文件")
+        size = int(header[2])
+        offset = end + 1
+        blobs[oid] = data[offset : offset + size]
+        offset += size + 1
+    return blobs
+
+
 def write_file_bytes(
     project_id: uuid.UUID, path: str, data: bytes, topic_id: uuid.UUID | None = None
 ) -> None:
@@ -973,6 +1066,23 @@ def git_log(
         if len(parts) == 3:
             rows.append({"hash": parts[0], "author": parts[1], "message": parts[2]})
     return rows
+
+
+def accepted_commit_revision(project_id: uuid.UUID, ref: str) -> str:
+    """Resolve a public history selection without exposing unaccepted room work."""
+    if ref.startswith("-"):
+        raise ValidationError("invalid ref")
+    repo = ensure_repo(project_id)
+    try:
+        revision = _git(
+            repo, "rev-parse", "--verify", "--end-of-options", f"{ref}^{{commit}}"
+        ).strip()
+        _git(
+            repo, "merge-base", "--is-ancestor", revision, accepted_revision(project_id)
+        )
+    except ValidationError as exc:
+        raise NotFoundError("Commit not found in accepted project history") from exc
+    return revision
 
 
 def git_diff(project_id: uuid.UUID, ref: str | None = None) -> str:
@@ -1388,7 +1498,7 @@ def _merge_ref_into_base(
     silently merging on top of a stale base.
 
     `squash=True` lands the whole ref as ONE commit on `base` (#363): the
-    author knob names the human the work belongs to (falling back to 芝士),
+    author knob names the acting agent (falling back to 芝士),
     the committer stays 芝士, same two-knob split as every commit the
     platform makes (`workspace.identity`). A ref that adds nothing —
     already merged, or content-identical — lands no commit at all and still
@@ -1521,8 +1631,7 @@ def merge_topic(
 
     The caller writes the commit: `message` is the whole squash message
     (subject + body + trailers — `pr_text.local_merge_commit_message`), and
-    `author` names the human the work belongs to, exactly as the GitHub lane's
-    squash product is authored by the requester. Both live with the accept card,
+    `author` names the acting agent. The author and message belong to the accept card,
     which this module cannot reach (no DB session here) — that is why they are
     parameters and not lookups. Committer stays 芝士 regardless.
 
@@ -1944,10 +2053,20 @@ def push_topic_branch(project_id: uuid.UUID, topic_id: uuid.UUID, token: str) ->
     The branch as it stands is what the PR carries. --force-with-lease: a
     re-push after a conflict fix must move the remote branch, but never trample
     one somebody else moved."""
+    return push_branch(project_id, branch_for_tree(tree_for_place(topic_id)), token)
+
+
+def push_branch(project_id: uuid.UUID, branch: str, token: str) -> str:
+    """:func:`push_topic_branch`, named by BRANCH instead of by place.
+
+    The draft-PR sweep (#718) walks `work_trees` rows and has a tree in hand,
+    not a place. Going through a place would mean trusting the on-disk
+    「这个房间写哪棵树」marker to agree with the row it just read — and the
+    sweep's whole job is to act on trees the room may not be pointing at yet.
+    """
     repo = ensure_repo(project_id)
     if get_upstream(project_id) is None:
         raise ValidationError("未关联上游仓库，无法推分支")
-    branch = branch_for_tree(tree_for_place(topic_id))
     if not _branch_exists(repo, branch):
         raise ValidationError("话题没有分支，无法推送")
     _git(
@@ -1962,10 +2081,97 @@ def push_topic_branch(project_id: uuid.UUID, topic_id: uuid.UUID, token: str) ->
     return branch
 
 
+def branch_has_commits(project_id: uuid.UUID, branch: str) -> bool:
+    """Does *branch* exist and hold anything the base branch does not?
+
+    :func:`has_undelivered_commits` asked by branch — the fact the draft-PR
+    sweep needs, because "有东西" is exactly "this branch is ahead of main",
+    and a batch whose branch is empty (or does not exist yet) has nothing a PR
+    could carry.
+    """
+    repo = ensure_repo(project_id)
+    base = _base_branch(repo)
+    if not _branch_exists(repo, branch) or not _branch_exists(repo, base):
+        return False
+    return not _is_ancestor(repo, branch, base)
+
+
+def base_branch_head(project_id: uuid.UUID) -> tuple[str, str]:
+    """(name, sha) of the branch a new batch starts from.
+
+    The SHA is given out rather than left to be derived, because after a squash
+    merge it CANNOT be derived from the delivered branch: the squash commit is
+    not a descendant of anything the delivering clone has, so no ancestry
+    question a device can ask has a true answer. A device grafting its next
+    batch onto the base has to be TOLD which commit that is.
+    """
+    repo = ensure_repo(project_id)
+    branch = _base_branch(repo)
+    sha = _git(repo, "rev-parse", "-q", "--verify", branch).strip()
+    return branch, sha
+
+
 def pr_base_branch(project_id: uuid.UUID) -> str:
     """两阶段采纳 (PR迭代式): the base branch a topic's PR should target — same
     branch merge_topic() would merge into locally."""
     return _base_branch(ensure_repo(project_id))
+
+
+def batches_a_clone_stands_on(
+    project_id: uuid.UUID,
+    delivered: dict[str, str],
+    reported: Collection[str],
+) -> set[str]:
+    """Of these batches, the ones whose delivered work a clone is built on top of.
+
+    `delivered` maps a batch's branch to the commit recorded when it merged
+    (empty for the batches that merged before that was recorded); `reported` is
+    the commits the clone says it has — its HEAD and that commit's ancestors.
+    The answer is the branches, but the QUESTION is only ever about commits: a
+    branch can be renamed with `git branch -m` without a single commit moving,
+    so a clone's own branch name proves nothing about what its history carries.
+
+    Match the ancestry of its recorded delivery and its retained branch. A later
+    push can advance that branch beyond any commit the original clone knows.
+    This identifies the batch only; the recorded delivered_head remains the
+    sole content boundary for carrying work onto the next batch.
+
+    A commit the base branch already reaches is not evidence: it is on main by
+    ancestry, so a PR opened on top of it shows none of it a second time. Every
+    clone of this project carries those, so counting them would refuse the first
+    push of every freshly made branch. It matters concretely because a merge
+    that joins upstream history is NOT squashed (`merge_topic`), and neither is
+    a PR merged on GitHub with a merge commit: in both, the batch's own tip ends
+    up an ancestor of main.
+    """
+    wanted = {c for c in reported if c}
+    if not wanted:
+        return set()
+    repo = ensure_repo(project_id)
+    base = _base_branch(repo)
+    tips = _branch_tips(repo)
+    carried: set[str] = set()
+    for branch, delivered_head in delivered.items():
+        roots = {m for m in (delivered_head, tips.get(branch, "")) if m}
+        if not roots:
+            continue
+        marks = _git(repo, "rev-list", *sorted(roots), "--not", base).splitlines()
+        if wanted.intersection(marks):
+            carried.add(branch)
+    return carried
+
+
+def _branch_tips(repo: Path) -> dict[str, str]:
+    """Every branch in this repo and the commit it points at, in one call."""
+    listed = _git(
+        repo, "for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads/"
+    )
+    tips: dict[str, str] = {}
+    for line in listed.splitlines():
+        name, _, sha = line.partition(" ")
+        if name and sha:
+            tips[name] = sha
+    return tips
 
 
 def has_undelivered_commits(project_id: uuid.UUID, topic_id: uuid.UUID) -> bool:

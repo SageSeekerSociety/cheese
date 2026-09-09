@@ -13,6 +13,7 @@ from app.domain.project.models import (
     ProjectGitInstallation,
     ProjectMember,
 )
+from app.domain.team.models import Team, TeamUserRelation
 from app.domain.user.models import User, UserProfile
 
 
@@ -43,6 +44,19 @@ class ProjectRepository:
 
     async def get(self, project_id: uuid.UUID) -> Project | None:
         return await self._session.get(Project, project_id)
+
+    async def team_for_project(self, project_id: uuid.UUID) -> int | None:
+        """The owning team, including a personal team's older unassigned projects."""
+        project = await self.get(project_id)
+        if project is None:
+            return None
+        if project.team_id is not None:
+            return project.team_id
+        return await self._session.scalar(
+            select(Team.id)
+            .join(User, User.id == Team.personal_owner_user_id)
+            .where(User.username == project.owner_handle, Team.deleted_at.is_(None))
+        )
 
     async def get_by_team(self, team_id: int) -> Project | None:
         """The AI-workspace project for a 知是 Team (P4 native link), newest first."""
@@ -135,7 +149,7 @@ class ProjectRepository:
             .where(ProjectMember.project_id == project_id)
         )
         rows = (await self._session.execute(stmt)).all()
-        return [
+        members = [
             {
                 "handle": h,
                 "role": str(role),
@@ -144,6 +158,46 @@ class ProjectRepository:
             }
             for (h, role, name, avatar_id, avatar_type) in rows
         ]
+        project = await self.get(project_id)
+        if project is None or project.team_id is None:
+            return members
+        # Team access is inherited at read time, including teammates who join
+        # after registration. Do not persist a second grant that survives leaving.
+        team_rows = (
+            await self._session.execute(
+                select(
+                    User.username,
+                    UserProfile.nickname,
+                    UserProfile.avatar_id,
+                    Avatar.avatar_type,
+                    TeamUserRelation.created_at,
+                )
+                .join(TeamUserRelation, TeamUserRelation.user_id == User.id)
+                .outerjoin(UserProfile, UserProfile.user_id == User.id)
+                .outerjoin(Avatar, Avatar.id == UserProfile.avatar_id)
+                .where(
+                    TeamUserRelation.team_id == project.team_id,
+                    TeamUserRelation.deleted_at.is_(None),
+                    User.deleted_at.is_(None),
+                )
+            )
+        ).all()
+        explicit = {m["handle"] for m in members}
+        for handle, name, avatar_id, avatar_type, created_at in team_rows:
+            if handle == project.owner_handle or handle in explicit:
+                continue
+            members.append(
+                {
+                    "handle": handle,
+                    "role": "member",
+                    "name": name or handle,
+                    "avatar_id": None if avatar_type == "default" else avatar_id,
+                    "source": "team",
+                    "team_id": project.team_id,
+                    "created_at": created_at.isoformat(),
+                }
+            )
+        return members
 
     async def list_ids_for_space_tasks(self, space_id: int) -> list[uuid.UUID]:
         """Project ids for every 赛题 published under this Space (机构看板).

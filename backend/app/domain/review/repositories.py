@@ -3,10 +3,11 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.review.models import AcceptApproval, AcceptCard, AcceptStatus
+from app.domain.room_task.models import TreeStatus, WorkTree
 from app.domain.topic.models import Topic, TopicStatus
 
 
@@ -310,8 +311,7 @@ class AcceptCardRepository:
         return list((await self._session.scalars(stmt)).all())
 
     async def list_awaiting_merge_on_active_topics(self) -> list[AcceptCard]:
-        """Every card the merge-state poller mirrors (#718): pending, riding a
-        PR, on a topic still alive.
+        """Pending PRs and returned batches that can still merge externally.
 
         孤儿卡修复 (2026-08-10): the topic's status is part of the predicate, not
         just the card's. Without the join this returned cards on ARCHIVED topics
@@ -324,10 +324,32 @@ class AcceptCardRepository:
         stmt = (
             select(AcceptCard)
             .join(Topic, Topic.id == AcceptCard.topic_id)
+            .outerjoin(WorkTree, WorkTree.id == AcceptCard.tree_id)
             .where(
-                AcceptCard.status == AcceptStatus.pending,
+                or_(
+                    AcceptCard.status == AcceptStatus.pending,
+                    and_(
+                        AcceptCard.status == AcceptStatus.rejected,
+                        AcceptCard.pr_merged_at.is_(None),
+                        WorkTree.status.in_((TreeStatus.open, TreeStatus.sealed)),
+                    ),
+                ),
                 AcceptCard.pr_number.is_not(None),
                 Topic.status != TopicStatus.archived,
             )
+            .order_by(
+                (AcceptCard.status == AcceptStatus.pending).desc(),
+                AcceptCard.created_at.desc(),
+            )
         )
-        return list((await self._session.scalars(stmt)).all())
+        cards = []
+        seen_trees: set[uuid.UUID] = set()
+        for card in (await self._session.scalars(stmt)).all():
+            # A resubmitted batch belongs to its pending card; otherwise use
+            # its latest return instead of polling every historical review.
+            if card.tree_id is not None:
+                if card.tree_id in seen_trees:
+                    continue
+                seen_trees.add(card.tree_id)
+            cards.append(card)
+        return cards

@@ -38,7 +38,9 @@ async def _ai_messages(factory, topic_id: uuid.UUID) -> list[str]:
     return [
         b.content
         for b in blocks
-        if b.author_type == AuthorType.ai and b.kind == BlockKind.message
+        if b.author_type == AuthorType.ai
+        and b.kind == BlockKind.event
+        and (b.meta or {}).get("progress")
     ]
 
 

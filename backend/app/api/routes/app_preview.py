@@ -1,65 +1,23 @@
-"""运行环境预览: the app the agent started on its machine, shown in the browser.
+"""Carry HTTP and HMR over the machine dial-out tunnel.
 
-Two ends of one thing, so they live together.
-
-**The machine's end** (``WS /preview/tunnel``) is dialled OUT by the helper
-``cheese serve`` starts, authenticated by the same scoped cheese token the turn
-already carries. Nothing is ever dialled INTO a machine: every one of them is
-someone else's, behind NAT, with zero inbound ports — which is exactly why the
-old preview (a port the backend's own docker had published on its own host) has
-nothing left to read.
-
-**The browser's end** (``/topics/{id}/app…``) reverse-proxies through that
-tunnel, HTTP and WebSocket alike, so a dev server's HMR socket connects too.
-
-**Sub-path caveat.** The app is served under ``/api/topics/{id}/app/``, so a page
-that asks for its assets by *root-absolute* path (``/assets/x.js``,
-``/@vite/client``) would miss. Root-absolute URLs in proxied HTML are rewritten
-onto the prefix, which covers static servers and a plain dev-server index; an app
-whose JS builds root-absolute URLs at runtime still needs to be started under a
-matching base (vite: ``--base=$CHEESE_APP_BASE``).
-
-**Who may look.** A member or owner of the topic's project — ``may_view_topic``,
-the same gate the 现场 terminal answers with. That is deliberately not a new
-boundary: whoever can open this can already TYPE into a shell on that machine
-through the 现场 viewer, so a read-only view of one loopback port on it grants
-nothing further. What the preview must never do is hand the page itself a
-credential, and it does not: the iframe carries no ``?token=`` (agent-authored
-JavaScript can read ``location.search`` even sandboxed) — only an HttpOnly cookie
-scoped to this one path.
+Content hosts authorize viewers.
 """
 
 import asyncio
 import re
 import uuid
-from typing import Annotated
-from urllib.parse import urlencode
+from http.cookies import CookieError, SimpleCookie
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import Response
-from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from app.api import proxy
-from app.api.response import ok
-from app.core.db import get_db
-from app.core.errors import NotFoundError
 from app.core.sandbox_auth import scoped_token_claims
 from app.domain.agent import preview_tunnel as wire
 from app.domain.agent.preview_hub import PreviewStream, preview_hub
 
-router = APIRouter(prefix="/topics", tags=["preview"])
 tunnel_router = APIRouter(prefix="/preview", tags=["preview"])
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
-
-# Shared with the terminal proxy: one name, but each is path-scoped to its own
-# prefix, so they never see each other's cookie.
-COOKIE_NAME = "cheesex_proxy"
-
-# ``src="/x"`` / ``href='/x'`` / ``action="/x"`` — but never ``//host`` (protocol
-# relative) and never an already-absolute URL.
-_ROOT_ABSOLUTE_ATTR = re.compile(r"""(\s(?:src|href|action)\s*=\s*["'])/(?!/)""")
 
 # Handshake headers that belong to THIS leg and must not be relayed to the next
 # one. The machine performs its own handshake to the app, so a forwarded key or
@@ -73,38 +31,52 @@ _WS_HANDSHAKE_OWNED = {
     "sec-websocket-extensions",
     "sec-websocket-accept",
 }
+_PREVIEW_COOKIES = {"__Host-cheese-preview", "cheese-preview-local"}
 
 
-def _prefix(topic_id: uuid.UUID) -> str:
-    """What the BROWSER asks for — the gateway mount plus this route's own path.
-    The page resolves its assets against ``location.pathname``, which never saw
-    the gateway's strip, so both the cookie scope and the URL rewriting below
-    have to speak the browser's language rather than the route's."""
-    return proxy.browser_path(f"/topics/{topic_id}/app")
+def _upstream_path(conn: Request | WebSocket) -> str:
+    """The app owns the entire preview origin, including its query parameters."""
+    return conn.url.path + ("?" + conn.url.query if conn.url.query else "")
 
 
-def _rewrite_html(body: bytes, prefix: str) -> bytes:
-    """Point the page's root-absolute asset URLs at the proxy prefix."""
+def _app_headers(conn: Request | WebSocket) -> list[tuple[str, str]]:
+    # Platform login credentials never enter the content origin. Authorization
+    # here belongs to the application; only Cheese's reserved proof is removed.
+    headers = [
+        (key, value)
+        for key, value in conn.headers.items()
+        if key.lower() not in proxy.DROP_HEADERS | {"host", "cookie", "accept-encoding"}
+        and not key.lower().startswith("x-cheese-")
+    ]
+    cookies = [
+        part.strip()
+        for part in conn.headers.get("cookie", "").split(";")
+        if "=" in part and part.split("=", 1)[0].strip() not in _PREVIEW_COOKIES
+    ]
+    if cookies:
+        headers.append(("cookie", "; ".join(cookies)))
+    return headers
+
+
+def _app_cookies(value: str) -> list[str]:
+    # Supported Python versions do not recognize CHIPS' valueless attribute.
+    value = re.sub(r";\s*Partitioned\s*(?=;|$)", "", value, flags=re.I)
+    parsed: SimpleCookie = SimpleCookie()
     try:
-        text = body.decode("utf-8")
-    except UnicodeDecodeError:
-        return body
-    return _ROOT_ABSOLUTE_ATTR.sub(rf"\g<1>{prefix}/", text).encode("utf-8")
-
-
-def _upstream_path(path: str, conn: Request | WebSocket) -> str:
-    """What to ask the app for: the sub-path and the caller's own query string,
-    minus our credential.
-
-    Dropping ``token`` is the same rule the cookie exists for. The page is
-    written by the agent, and a session token that reaches it — in a query string
-    it can read back, or in a request its own server logs — is the one thing this
-    surface must never hand over. A caller may still present one (that is how an
-    iframe authenticates before the cookie lands); it just stops here.
-    """
-    kept = [(k, v) for k, v in conn.query_params.multi_items() if k != "token"]
-    query = urlencode(kept)
-    return f"/{path}?{query}" if query else f"/{path}"
+        parsed.load(value)
+    except CookieError:
+        return []
+    result = []
+    for name, cookie in parsed.items():
+        if name in _PREVIEW_COOKIES:
+            continue
+        # Ordinary Lax sessions cannot log in inside the cross-site panel.
+        # Partition the app session by top-level site and keep it host-only.
+        cookie["domain"] = ""
+        cookie["secure"] = True
+        cookie["samesite"] = "None"
+        result.append(cookie.OutputString() + "; Partitioned")
+    return result
 
 
 # --- the machine's end ---------------------------------------------------------
@@ -180,102 +152,39 @@ async def preview_tunnel(
 # --- the browser's end ---------------------------------------------------------
 
 
-@router.get("/{topic_id}/app-session")
-async def app_session(
-    topic_id: uuid.UUID, request: Request, response: Response, db: DbSession
-) -> dict:
-    """Mint the cookie the preview iframe will authenticate with, then say ready.
-
-    The iframe deliberately carries NO ``?token=``. Unlike the terminal, the app
-    frame renders whatever the agent chose to serve, and a query string is
-    readable by that page's own JavaScript (``location.search``) even inside a
-    sandboxed frame — which would hand arbitrary agent-authored code the viewer's
-    session token. An HttpOnly, path-scoped cookie is not readable by it, and
-    same-origin requests carry it on their own.
-
-    The frontend calls this (with its normal ``Authorization`` header) right
-    before it sets the iframe's src.
-    """
-    if not await proxy.may_view_topic(db, topic_id, request, COOKIE_NAME):
-        raise NotFoundError("没有可预览的应用")
-    # Hard-coded rather than derived from this request's path: THIS route is
-    # reached through the gateway's `/api`-stripping prefix while the iframe is
-    # not, so only the proxy's own public path is the right scope.
-    proxy.attach_cookie(
-        response, request, cookie_name=COOKIE_NAME, cookie_path=_prefix(topic_id)
-    )
-    return ok({"ready": True})
-
-
-@router.api_route(
-    "/{topic_id}/app", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]
-)
-@router.api_route(
-    "/{topic_id}/app/{path:path}",
-    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"],
-)
-async def app_proxy_http(
-    topic_id: uuid.UUID, request: Request, db: DbSession, path: str = ""
-) -> Response:
-    """Reverse-proxy one request to the topic's running app, over its tunnel."""
-    # 404 rather than 403: an unauthorized caller learns nothing about whether the
-    # topic or its app exists.
-    if not await proxy.may_view_topic(db, topic_id, request, COOKIE_NAME):
-        return Response(status_code=404, content=b"preview unavailable")
+async def relay_http(topic_id: uuid.UUID, request: Request) -> Response:
+    """Forward an already authorized content-host request without URL rewriting."""
     upstream = await preview_hub.request(
         topic_id,
         method=request.method,
-        path=_upstream_path(path, request),
-        headers=proxy.forwardable_request_headers(request),
+        path=_upstream_path(request),
+        headers=_app_headers(request),
         body=await request.body(),
     )
     if upstream is None:
         return Response(status_code=404, content=b"preview unavailable")
-    kept = [(k, v) for k, v in upstream.headers if k.lower() not in proxy.DROP_HEADERS]
+    kept = [
+        (k, v)
+        for k, v in upstream.headers
+        if k.lower() not in proxy.DROP_HEADERS | {"x-frame-options"}
+    ]
     media_type = next((v for k, v in kept if k.lower() == "content-type"), None)
     body = upstream.body
-    if (media_type or "").startswith("text/html"):
-        body = _rewrite_html(body, _prefix(topic_id))
     response = Response(content=body, status_code=upstream.status)
-    # Appended one at a time rather than handed over as a dict: an app may send
-    # the same header twice (Set-Cookie is the usual one) and a dict silently
-    # keeps only the last.
+    # Keep application sessions without allowing an app to replace preview auth.
     for name, value in kept:
-        if name.lower() != "content-type":
+        if name.lower() == "set-cookie":
+            for cookie in _app_cookies(value):
+                response.headers.append("set-cookie", cookie)
+        elif name.lower() != "content-type":
             response.headers.append(name, value)
     if media_type:
         response.headers["content-type"] = media_type
-    # Assignment, not append: the app may have sent one of its own, and a
-    # response carrying this header twice is rejected outright. The frame is
-    # sandboxed without `allow-same-origin`, so the browser gives it an opaque
-    # origin and stamps `Origin: null` on everything it fetches — including
-    # `<script type="module">`, which unlike a classic script tag is always
-    # fetched in CORS mode. Absent this header the browser discards a perfectly
-    # good 200 on arrival and a module-script app never runs a line. Opening it
-    # wide costs nothing: an opaque origin holds no cookie and no storage to
-    # leak, so there is nothing here the sandbox was not already withholding.
-    response.headers["access-control-allow-origin"] = "*"
-    return proxy.attach_cookie(
-        response, request, cookie_name=COOKIE_NAME, cookie_path=_prefix(topic_id)
-    )
+    return response
 
 
-@router.websocket("/{topic_id}/app/{path:path}")
-async def app_proxy_ws(
-    websocket: WebSocket, topic_id: uuid.UUID, db: DbSession, path: str = ""
-) -> None:
-    """Reverse-proxy a WebSocket to the topic's app — dev servers push HMR over
-    one, and without it the page reloads forever trying to reconnect."""
-    allowed = await proxy.may_view_topic(db, topic_id, websocket, COOKIE_NAME)
-    # Release the authz read-transaction before the (long-lived) pump. A get_db
-    # session injected into a WebSocket route is only finalized when the socket
-    # closes, so leaving it open parks it `idle in transaction` for the whole
-    # preview session — the #356 footgun: an idle-in-txn read lock blocked
-    # device/topic-table migrations (ACCESS EXCLUSIVE) until they timed out.
-    await db.commit()
-    if not allowed:
-        await websocket.close(code=1008)
-        return
+async def relay_ws(websocket: WebSocket, topic_id: uuid.UUID) -> None:
+    """Pump the authorized preview's HMR socket without holding a DB session."""
     stream = preview_hub.open_stream(topic_id)
     if stream is None:
         await websocket.close(code=1011)
@@ -285,10 +194,10 @@ async def app_proxy_ws(
             wire.OP_WS_OPEN,
             wire.encode_meta(
                 {
-                    "path": _upstream_path(path, websocket),
+                    "path": _upstream_path(websocket),
                     "headers": [
                         [k, v]
-                        for k, v in proxy.forwardable_request_headers(websocket)
+                        for k, v in _app_headers(websocket)
                         if k.lower() not in _WS_HANDSHAKE_OWNED
                     ],
                 }
@@ -351,7 +260,12 @@ async def _pump(browser: WebSocket, stream: PreviewStream) -> None:
 
     up = asyncio.create_task(browser_to_app())
     down = asyncio.create_task(app_to_browser())
-    _, pending = await asyncio.wait({up, down}, return_when=asyncio.FIRST_COMPLETED)
-    for task in pending:
-        task.cancel()
-    await stream.send(wire.OP_CLOSE)
+    try:
+        await asyncio.wait({up, down}, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        # Session expiry also cancels this pump; reap both directions before
+        # releasing its stream so a dormant HMR connection cannot leak tasks.
+        for task in (up, down):
+            task.cancel()
+        await asyncio.gather(up, down, return_exceptions=True)
+        await stream.send(wire.OP_CLOSE)

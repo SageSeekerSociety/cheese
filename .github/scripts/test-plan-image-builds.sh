@@ -9,9 +9,10 @@ trap 'rm -rf "$test_repo"' EXIT
 git -C "$test_repo" init -q
 git -C "$test_repo" config user.email test@example.com
 git -C "$test_repo" config user.name test
-mkdir -p "$test_repo/backend/app" "$test_repo/backend/sandbox" \
+mkdir -p "$test_repo/backend/app" "$test_repo/backend/sandbox/skills/cheese" \
   "$test_repo/frontend/src" "$test_repo/cli" "$test_repo/docs"
 touch "$test_repo/backend/app/main.py" "$test_repo/backend/sandbox/cheese" \
+  "$test_repo/backend/sandbox/skills/cheese/SKILL.md" \
   "$test_repo/frontend/src/main.ts" "$test_repo/cli/main.go" "$test_repo/docs/readme.md"
 git -C "$test_repo" add .
 git -C "$test_repo" commit -qm base
@@ -55,6 +56,10 @@ assert_plan 'backend=true,sandbox=false,frontend=false' "$base_sha"
 git -C "$test_repo" switch -q --detach "$base_sha"
 commit_path backend/sandbox/cheese
 assert_plan 'backend=true,sandbox=true,frontend=false' "$base_sha"
+
+git -C "$test_repo" switch -q --detach "$base_sha"
+commit_path backend/sandbox/skills/cheese/SKILL.md
+assert_plan 'backend=true,sandbox=false,frontend=false' "$base_sha"
 
 git -C "$test_repo" switch -q --detach "$base_sha"
 commit_path cli/main.go

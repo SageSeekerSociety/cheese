@@ -64,6 +64,7 @@ class _Client:
 
 def _machine(**kw):
     base = dict(
+        warm_claim_pending=False,
         id=uuid.uuid4(),
         machine_id=207,
         status=MachineStatus.running,

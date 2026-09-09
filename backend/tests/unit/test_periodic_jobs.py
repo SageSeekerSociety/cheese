@@ -62,6 +62,29 @@ async def test_one_failing_cycle_does_not_end_the_loop():
         await runner.stop()
 
 
+async def test_a_cancellation_raised_inside_a_job_does_not_end_the_loop():
+    """A job that cancels something of its own raises CancelledError without
+    anyone having asked the runner to stop. Ending the loop there would take the
+    job out for the life of the process, silently."""
+    cycles = 0
+
+    async def job() -> None:
+        nonlocal cycles
+        cycles += 1
+        if cycles == 1:
+            raise asyncio.CancelledError
+
+    runner = PeriodicRunner(name="cancels-itself", interval_seconds=0.01, job=job)
+    runner.start()
+    for _ in range(200):
+        await asyncio.sleep(0.01)
+        if cycles >= 3:
+            break
+    await runner.stop()
+
+    assert cycles >= 3, "the loop stopped at the cancellation raised inside the job"
+
+
 async def test_interval_zero_means_this_box_does_not_run_it():
     ran = False
 
@@ -107,8 +130,10 @@ def _jobs():
         tick=_noop,
         reap_idle_device_screens=_noop,
         poll_open_prs=_noop,
+        open_draft_prs=_noop,
         sync_upstreams=_noop,
         sweep_orphan_turns=_noop,
+        remind_silent_turns=_noop,
         sweep_abandoned_gates=_noop,
     )
     return periodic_jobs(
@@ -124,6 +149,7 @@ def _jobs():
         ("notification finalize", "notification_finalize_interval_s"),
         ("notification email drain", "notification_email_drain_interval_s"),
         ("task deadline sweep", "task_deadline_sweep_interval_s"),
+        ("chat progress reminder", "chat_progress_check_interval_s"),
         # Same shape of absence one layer down: a worktree and a device home
         # nobody removes is a disk that fills at 1-4 GB a topic (141 GB and
         # 162 GB on the dev box, 2026-09-03) with no error anywhere.

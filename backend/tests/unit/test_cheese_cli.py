@@ -25,6 +25,69 @@ def _load():
     return mod
 
 
+def test_members_reads_the_current_topic_roster(monkeypatch, capsys):
+    cli = _load()
+    monkeypatch.setattr(cli, "TOPIC", "room")
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "members"])
+    calls = []
+
+    def request(method, path):
+        calls.append((method, path))
+        return {
+            "data": {
+                "data": [{"member_handle": "alice", "name": "Alice", "role": "owner"}]
+            }
+        }
+
+    monkeypatch.setattr(cli, "_call", request)
+    cli.main()
+    assert calls == [("GET", "/topics/room/members")]
+    assert "Alice（owner）→ 在消息里写 <@alice>" in capsys.readouterr().out
+
+
+def test_artifact_publishes_the_local_file_from_a_subdirectory(monkeypatch, tmp_path):
+    cli = _load()
+    folder = tmp_path / "site"
+    folder.mkdir()
+    (folder / "report.html").write_text("<h1>Published result</h1>")
+    monkeypatch.chdir(folder)
+    monkeypatch.setenv("CHEESE_WORKTREE_ROOT", str(tmp_path))
+    monkeypatch.setattr(cli, "TOPIC", "room")
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "artifact", "report.html"])
+    calls = []
+    monkeypatch.setattr(cli, "_call", lambda *args: calls.append(args))
+
+    cli.main()
+
+    assert calls == [
+        (
+            "POST",
+            "/topics/room/artifact",
+            {
+                "path": "site/report.html",
+                "as": "html",
+                "content": "<h1>Published result</h1>",
+            },
+        )
+    ]
+
+
+def test_serve_declares_only_the_port_and_registers_the_app(monkeypatch):
+    cli = _load()
+    monkeypatch.setenv("CHEESE_PREVIEW_UP", "/preview-up")
+    monkeypatch.setattr(cli, "TOPIC", "room")
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "serve", "5173", "Vue dev server"])
+    calls = []
+    api_calls = []
+    monkeypatch.setattr(cli.subprocess, "call", lambda args: calls.append(args) or 0)
+    monkeypatch.setattr(cli, "_call", lambda *args: api_calls.append(args) or {})
+    cli.main()
+    assert calls == [["sh", "/preview-up", "5173"]]
+    assert api_calls == [
+        ("POST", "/topics/room/artifact", {"path": "Vue dev server", "as": "app"})
+    ]
+
+
 @pytest.mark.parametrize(
     "base",
     ("http://host.docker.internal:8099", "https://cheese.example/api"),
@@ -225,9 +288,12 @@ def test_accept_request_without_a_subject_never_reaches_the_backend(
 def test_accept_request_sends_the_subject_it_was_given(monkeypatch):
     cli = _load()
     sent: list[dict] = []
-    monkeypatch.setattr(
-        cli, "_call", lambda m, p, d=None: sent.append({"p": p, "d": d})
-    )
+
+    def _call(m, p, d=None):
+        sent.append({"p": p, "d": d})
+        return {"data": {"reviewer_handle": "alice"}}
+
+    monkeypatch.setattr(cli, "_call", _call)
     monkeypatch.setattr(cli, "TOPIC", "t-1")
     monkeypatch.setattr(
         cli.sys,
@@ -247,6 +313,38 @@ def test_accept_request_sends_the_subject_it_was_given(monkeypatch):
     [call] = sent
     assert call["p"] == "/topics/t-1/accept-card"
     assert call["d"]["change_subject"] == "fix(accept): require a commit subject"
+    assert call["d"]["reviewer_handle"] == "alice"
+
+
+def test_accept_request_without_a_reviewer_lets_the_backend_pick_the_default(
+    monkeypatch,
+):
+    """未指定验收人 = 用项目默认验收人 (#718 设置表).
+
+    The CLI must not invent a value for the field — not the empty string
+    either. "Nobody was named" and "somebody typed an empty name" have to stay
+    distinguishable at the backend, because only one of them may fall through
+    to the project default.
+    """
+    cli = _load()
+    sent: list[dict] = []
+
+    def _call(m, p, d=None):
+        sent.append({"p": p, "d": d})
+        return {"data": {"reviewer_handle": "bob"}}
+
+    monkeypatch.setattr(cli, "_call", _call)
+    monkeypatch.setattr(cli, "TOPIC", "t-1")
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        ["cheese", "accept-request", "--subject", "fix(x): y"],
+    )
+
+    cli.main()
+
+    [call] = sent
+    assert "reviewer_handle" not in call["d"]
 
 
 def _subparsers(parser):

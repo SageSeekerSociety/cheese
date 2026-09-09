@@ -25,8 +25,21 @@ NO_SUBAGENT = "-"
 MAX_TASK_TITLE = 120
 
 
-def task_trailer(item: identity.WorkItem) -> str:
-    """One `Cheese-Task:` line — which piece of work, and which 分身 did it.
+def task_trailer(topic: Topic, item: identity.WorkItem) -> str:
+    """One `Cheese-Task:` line — which piece of work, which 分身 did it, and a
+    URL that opens that work.
+
+    The URL is the room's page with `?tab=overview&card=<task_id>` — the exact
+    query the room writes when somebody clicks that piece of work, so following
+    it lands where clicking lands. Both halves are needed: the page reads `card`
+    to know WHICH work to drill into and `tab` to know which panel to be on, and
+    a link with only `card` opens whichever tab the reader last had. That is the
+    whole difference from `Cheese-Card`, which stays a bare id — an accept card
+    has no route, so a URL built from one would look clickable and open nothing.
+
+    The id is still greppable out of permanent history: `card=` is a fixed
+    prefix in front of it, so `grep -o 'card=[0-9a-f-]*'` gets what
+    `Cheese-Task: <uuid>` used to hand over directly.
 
     Squashed onto one line, always. A trailer block ends at the first line that
     is not a trailer, so a newline inside a task's title would not merely look
@@ -37,10 +50,12 @@ def task_trailer(item: identity.WorkItem) -> str:
     title = " ".join(item.title.split())
     if len(title) > MAX_TASK_TITLE:
         title = f"{title[: MAX_TASK_TITLE - 1]}…"
-    # No spaces in the id either: it is the second of three whitespace-separated
-    # fields, so one would silently push the title into the 分身's place.
+    # Still three whitespace-separated fields, so two splits still take the line
+    # apart: a URL has no spaces in it, and the 分身 id keeps having its own
+    # stripped out — one there would silently push the title into its place.
     subagent = "".join((item.subagent_id or "").split()) or NO_SUBAGENT
-    return f"Cheese-Task: {item.task_id} {subagent} {title}".rstrip()
+    where = f"{_room_url(topic)}?tab=overview&card={item.task_id}"
+    return f"Cheese-Task: {where} {subagent} {title}".rstrip()
 
 
 def fallback_subject(topic: Topic) -> str:
@@ -68,70 +83,71 @@ def change_subject(card: AcceptCard | None, topic: Topic) -> str:
     return subject or fallback_subject(topic)
 
 
+def _room_url(topic: Topic) -> str:
+    """Where a reader can open this room. Base from configuration, never a
+    literal: the same commit text is produced by every deployment."""
+    from app.core.config import settings
+
+    base = settings.frontend_url.rstrip("/")
+    return f"{base}/projects/{topic.project_id}/topics/{topic.id}"
+
+
 def pr_trailers(
     topic: Topic,
     decided_by: str,
     who: identity.Attribution | None = None,
     card: AcceptCard | None = None,
 ) -> str:
-    """Who this change belongs to, in the machine-readable form git and GitHub
-    both already understand. Requested-by = 话题归属的真人
-    (`identity.requester_handle`), Reviewed-by = 批准人 (AcceptCard.decided_by),
-    Cheese-Topic = the room it came out of, Cheese-Card = the accept card that
-    delivered it (#189) — the room says where it was made, the card says which
-    delivery of that room's work this commit is.
+    """Render contribution roles and delivery links as one Git trailer block.
 
-    `Cheese-Agent` and `Cheese-Task` answer the other half of #189: WHICH 芝士
-    wrote this. Nothing else in the commit can say — the git author is the human
-    the work belongs to, and `Co-authored-by: Claude Fable 5` is on every commit
-    Claude Code writes for anyone, anywhere, so between them a reader learns who
-    asked and what model typed, and nothing about which instance of this platform
-    did it or which piece of work it was. `Cheese-Agent` is the room's 分身
-    handle, the same name it posts under and holds a token as; `Cheese-Task` is
-    one line per piece of work the card DECLARED it delivers, naming the worker
-    that did it — a card that declared none writes none, because a name that is
-    merely plausible is worse in permanent history than no name at all.
-
-    The agent handle is derived here rather than passed in because it is a pure
-    function of the room (`topic_agent_handle`) — routing it through the caller's
-    DB resolution would only create a way for the line to go missing. The task
-    lines cannot be: they are rows, so they arrive on `who`.
-
-    `who` is resolved by the caller (`identity.attribution`) because it needs a DB
-    session and this module is pure — as ONE object, so the requester and the
-    co-authors cannot come from two different resolutions and name the same person
-    twice. None (a caller with no session to resolve with) falls back to
-    `Topic.created_by`, which is what this used to read unconditionally — and which
-    on a 分身-split room is the 分身's own `cheese-<hex12>` handle, not a person
-    (PR #500, #504).
-
-    `Co-authored-by` names the contributors who are NOT this commit's author —
-    normally nobody, and then no such line is written. It used to name the author
-    itself on every change, which was pure noise: a room has one git identity, so
-    the trailer pointed at the person the commit was already authored by. It earns
-    its place when a room changed hands, where the work is attributed to whoever
-    drove it and the original requester would otherwise vanish from the history —
-    squash-merging collapses the branch into ONE commit, so a trailer is the only
-    place a second contributor survives with an avatar, a link and credit."""
+    Reporters and code contributors come only from explicitly declared tasks;
+    ownership does not imply either role. Agent and task links identify the work."""
     lines = []
     requester = (who.handle if who else None) or topic.created_by
+    # `Name <email>`, not a bare handle (#189). A handle names a string; an
+    # address names a person — GitHub renders an avatar and a link for one it
+    # recognises, and `git log --author` / `shortlog` can group by it. Somebody
+    # who never connected GitHub gets the platform's own domain rather than a
+    # fabricated GitHub address (`identity.platform_identity`): a degrade that
+    # admits itself beats one that looks linkable and points at nobody.
     if requester:
-        lines.append(f"Requested-by: {requester}")
+        asker = identity.as_trailer(requester, who.requester if who else None)
+        lines.append(f"Requested-by: {asker}")
+    for reporter in who.reporters if who else ():
+        lines.append(f"Reported-by: {reporter}")
     if decided_by:
         # Empty when the PR is being OPENED (pr_publish): nobody has accepted
         # yet, and `Reviewed-by:` with a blank or a merely-routed name would
         # claim a review that has not happened.
-        lines.append(f"Reviewed-by: {decided_by}")
-    lines.append(f"Cheese-Topic: {topic.id}")
+        seen_it = identity.as_trailer(decided_by, who.reviewer if who else None)
+        lines.append(f"Reviewed-by: {seen_it}")
+    # The ROOM is a URL (#189): a uuid in `git log` is a dead end unless the
+    # reader already knows this platform's routes, and this line exists so that
+    # somebody auditing a commit can get to where the change was made.
+    lines.append(f"Cheese-Topic: {_room_url(topic)}")
     if card is not None:
+        # The CARD stays a bare id, deliberately. There is no route that opens an
+        # accept card: `?card=` on the room's page takes a TASK id
+        # (TopicView.vue), so hanging the card's id off it would produce a link
+        # that looks clickable and opens nothing — worse than an id, because an
+        # id is honestly a lookup key while a dead link is a claim. Making it a
+        # URL is a frontend change (a deep link that resolves an accept card),
+        # not a string change here.
         lines.append(f"Cheese-Card: {card.id}")
-    lines.append(f"Cheese-Agent: {topic_agent_handle(topic.id)}")
-    lines.extend(task_trailer(item) for item in (who.tasks if who else ()))
+    acting = who.author.name if who and who.author else topic_agent_handle(topic.id)
+    lines.append(f"Cheese-Agent: {acting}")
+    lines.extend(task_trailer(topic, item) for item in (who.tasks if who else ()))
     coauthors = who.coauthors if who else ()
     credited = [line for line in map(identity.coauthored_by, coauthors) if line]
-    if credited:
-        lines.append("")  # blank line: git wants trailers in one block, and
-        lines.extend(credited)  # Co-authored-by is read from the LAST block
+    # ONE block, no blank line before the co-authors. There used to be one, with
+    # a comment claiming git wanted it; git wants the opposite. A blank line ENDS
+    # a trailer block, and `git interpret-trailers --parse` reads only the LAST
+    # one — so the separator did not group these trailers, it threw away every
+    # trailer above it: on a change with a co-author, git saw `Co-authored-by`
+    # and nothing else. Nothing caught it because the tests asked whether the
+    # text contained the line, and it did; only git disagreed — which is why the
+    # regression for this runs `git interpret-trailers` for real.
+    lines.extend(credited)
     return "\n".join(lines)
 
 

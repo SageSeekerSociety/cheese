@@ -23,6 +23,7 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.agent.runtime import AgentWorkRunner
+from app.domain.identity.actor import Actor
 from app.domain.review import pr_publish
 from app.domain.review.github_pr import (
     GitHubPRClient,
@@ -32,6 +33,7 @@ from app.domain.review.github_pr import (
 from app.domain.review.models import AcceptStatus
 from app.domain.review.schemas import (
     AcceptCardCreate,
+    AcceptCardDescribe,
     AcceptDecision,
     ApprovalCreate,
     AutoMergeDecision,
@@ -47,6 +49,18 @@ logger = logging.getLogger("cheesex.accept")
 router = APIRouter(prefix="", tags=["accept"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
+
+
+async def _card_actor(
+    card_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> Actor:
+    """Bind credential scope to the card's room before review authorization."""
+    service = AcceptService(db)
+    card = await service._card_or_404(card_id)
+    topic = await service._topic_or_404(card.topic_id)
+    return await resolver.resolve(
+        fallback_handle=None, project_id=topic.project_id, topic_id=topic.id
+    )
 
 
 @router.post("/topics/{topic_id}/accept-card")
@@ -97,6 +111,48 @@ async def push_fix(topic_id: uuid.UUID, db: DbSession) -> dict:
     result = await svc.push_fix(topic_id)
     await db.commit()
     return ok(result)
+
+
+@router.post("/topics/{topic_id}/ready")
+async def mark_ready(topic_id: uuid.UUID, db: DbSession) -> dict:
+    """把这批活的 draft PR 翻成 ready —— 只翻这一件事 (#718 拍板①)。
+
+    有东西就有 PR：第一次提交时平台就开了一个 draft PR（draft 是 GitHub 里
+    「进行中」的意思）。这条路由是它的另一半——说一句「可以看了」。它不合并、
+    不改署名、不动 PR 的任何别的字段，也不递卡：递卡是把活交给某个具体的人，
+    那是另一件事，而且它自己也会顺手把 draft 翻掉。
+    """
+    result = await AcceptService(db).mark_ready(topic_id)
+    await db.commit()
+    return ok(result)
+
+
+@router.post("/topics/{topic_id}/accept-card/describe")
+async def describe_card(
+    topic_id: uuid.UUID,
+    body: AcceptCardDescribe,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """更正待处理验收卡的描述，并把 PR 正文一起改掉。
+
+    评审说「这句话不对」的时候，能改的必须是**卡**，因为卡才是 PR 正文和最终
+    squash 正文共同的源头。只改 GitHub 上那份 PR 正文的话，合进 main 的仍然是
+    递卡那一刻的快照——#735 就是这么在 `1c298199a` 里留下一句与事实不符的
+    历史陈述的。
+
+    署名（`Cheese-Task:`）没有这样的入口，而且不该有：见
+    `AcceptService.redescribe` 的 docstring。
+    """
+    actor = await resolver.resolve(fallback_handle=None, topic_id=topic_id)
+    card = await AcceptService(db).redescribe(
+        topic_id,
+        actor=actor.handle,
+        change_subject=body.change_subject,
+        change_body=body.change_body,
+    )
+    await db.commit()
+    return ok(await AcceptService(db).describe(card))
 
 
 @router.get("/topics/{topic_id}/accept-card")
@@ -167,7 +223,7 @@ async def approve_card(
     card_id: uuid.UUID, body: ApprovalCreate, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     """主分支保护 (spec §4.4): record one human approval toward the accept."""
-    actor = await resolver.resolve(fallback_handle=body.approver_handle)
+    actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
         raise AuthenticationRequiredError("需要登录才能批准验收卡")
     svc = AcceptService(db)
@@ -184,7 +240,7 @@ async def accept_card(
     chat: Annotated[ChatService, Depends(get_chat_service)],
     runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
 ) -> dict:
-    actor = await resolver.resolve(fallback_handle=body.decided_by)
+    actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
         raise AuthenticationRequiredError("需要登录才能采纳验收卡")
     svc = AcceptService(db)
@@ -238,7 +294,7 @@ async def reassign_card(
     resolver: ActorResolverDep,
 ) -> dict:
     """改验收人 (spec §4.4)."""
-    actor = await resolver.resolve(fallback_handle=None)
+    actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
         raise AuthenticationRequiredError("需要登录才能改验收人")
     svc = AcceptService(db)
@@ -271,7 +327,7 @@ async def reject_card(
     are request-scoped dependencies the domain layer has no handle on, and the
     conflict branch of `accept_card` right above already does it this way.
     """
-    actor = await resolver.resolve(fallback_handle=body.decided_by)
+    actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
         raise AuthenticationRequiredError("需要登录才能驳回验收卡")
     svc = AcceptService(db)
@@ -325,7 +381,7 @@ async def void_card(
     的 `_forbid_ai`，见 tests/integration/test_accept_gate_orphan.py 的
     `test_void_requires_a_logged_in_human`。
     """
-    actor = await resolver.resolve(fallback_handle=None)
+    actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
         raise AuthenticationRequiredError("需要登录才能作废验收卡")
     svc = AcceptService(db)
@@ -353,7 +409,7 @@ async def merge_card_anyway(
     （没列进去的写路由压根不过那个中间件），真正拦住芝士的是这里的登录校验加
     `AcceptService.merge_despite_checks` 里的 `_forbid_ai`。
     """
-    actor = await resolver.resolve(fallback_handle=None)
+    actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
         raise AuthenticationRequiredError("需要登录才能人工放行合并")
     svc = AcceptService(db)
@@ -380,7 +436,7 @@ async def set_auto_merge(
     `_CHEESE_WRITE_PATHS`（同 void / merge-anyway），真正拦住芝士的是登录校验加
     `AcceptService.arm_auto_merge` 里的 `_forbid_ai`。
     """
-    actor = await resolver.resolve(fallback_handle=None)
+    actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
         raise AuthenticationRequiredError("需要登录才能设置自动合并")
     svc = AcceptService(db)
@@ -397,7 +453,7 @@ async def set_auto_merge(
 async def revoke_card(
     card_id: uuid.UUID, body: AcceptDecision, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    actor = await resolver.resolve(fallback_handle=body.decided_by)
+    actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
         raise AuthenticationRequiredError("需要登录才能撤销采纳")
     svc = AcceptService(db)

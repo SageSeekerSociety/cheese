@@ -1,33 +1,19 @@
-"""运行环境预览 over the machine's own tunnel — the route that makes an app the
-agent started on someone else's laptop reachable from a browser.
-
-Every machine a turn runs on is behind NAT with zero inbound ports, so there is
-no address the platform can dial. What these pin is the replacement transport:
-the machine dials out, the browser's requests ride that connection, and the
-authorization posture stays exactly the 现场 terminal's — no wider.
-
-They talk to the REAL hub over the REAL frame codec; only the machine at the far
-end is a stand-in, and it answers the way the shipped helper does.
-"""
+"""Browser traffic reaches app previews through the real machine tunnel codec."""
 
 import uuid
 
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
-from app.api.routes import app_preview
+from app.api.preview_host import cookie_name, preview_origin
+from app.core.config import settings
 from app.domain.agent import preview_tunnel as wire
 from app.domain.agent.preview_hub import preview_hub
-from tests.integration.test_connector_viewer import _login
+from tests.integration.conftest import session_auth_headers
 
 
 class FakeMachine:
-    """A machine whose helper answers every request with one canned response.
-
-    Speaks the same frames the shipped helper speaks — the test's whole point is
-    that the route and the helper agree on the wire, so nothing here is allowed
-    to short-circuit it.
-    """
+    """Answer requests using the frames sent by the machine helper."""
 
     def __init__(
         self,
@@ -41,6 +27,7 @@ class FakeMachine:
         self.content_type = content_type
         self.extra_headers = extra_headers or []
         self.asked: list[str] = []
+        self.requests: list[tuple[dict, bytes]] = []
         self.topic_id: uuid.UUID | None = None
 
     def attach(self, topic_id: uuid.UUID) -> "FakeMachine":
@@ -57,8 +44,9 @@ class FakeMachine:
         op, stream, payload = wire.decode(data)
         if op != wire.OP_REQ:
             return
-        meta, _ = wire.decode_meta(payload)
+        meta, body = wire.decode_meta(payload)
         self.asked.append(f"{meta['method']} {meta['path']}")
+        self.requests.append((meta, body))
         preview_hub.on_frame(
             self.topic_id,
             wire.encode(
@@ -79,170 +67,8 @@ class FakeMachine:
         preview_hub.on_frame(self.topic_id, wire.encode(wire.OP_END, stream))
 
 
-def _project_topic(client, handle: str = "alice"):
-    project = client.post(
-        "/projects", json={"name": "P", "owner_handle": handle}
-    ).json()["data"]
-    topic = client.post(
-        "/topics", json={"project_id": project["id"], "title": "t"}
-    ).json()["data"]
-    return project, topic
-
-
-def test_the_app_proxy_requires_a_credential(client):
-    """The app is whatever the agent started on that machine — a topic UUID must
-    not be enough to read it."""
-    topic_id = uuid.uuid4()
-    machine = FakeMachine().attach(topic_id)
-    try:
-        resp = client.get(f"/topics/{topic_id}/app/")
-    finally:
-        machine.detach()
-
-    assert resp.status_code == 404, resp.text
-    assert not machine.asked, "the request reached the app without any credential"
-
-
-def test_a_member_reaches_the_app(client):
-    _project, topic = _project_topic(client)
-    token = _login(client, "alice")
-    machine = FakeMachine().attach(uuid.UUID(topic["id"]))
-    try:
-        resp = client.get(f"/topics/{topic['id']}/app/index.html?x=1&token={token}")
-    finally:
-        machine.detach()
-
-    assert resp.status_code == 200, resp.text
-    assert resp.content == b"<html><body>hi</body></html>", resp.content
-    # The query string travels with the request — a dev server routes on it —
-    # but the credential does NOT. The page is written by the agent, and a
-    # session token reaching it (readable in `location.search`, logged by its own
-    # server) is the one thing this surface exists to prevent.
-    assert machine.asked == ["GET /index.html?x=1"], machine.asked
-    assert token not in machine.asked[0]
-
-
-def test_the_sandboxed_frame_is_allowed_to_read_what_it_fetched(client):
-    """The frame is sandboxed WITHOUT ``allow-same-origin``, so the browser gives
-    it an opaque origin and every sub-request it makes carries ``Origin: null``.
-
-    A ``<script type="module">`` — how essentially every current frontend loads
-    itself — is always fetched in CORS mode, unlike a classic script tag. Without
-    this header the browser throws away a perfectly good 200 the moment it
-    arrives and the app never executes a line, which reads as a blank preview.
-    """
-    _project, topic = _project_topic(client)
-    token = _login(client, "alice")
-    machine = FakeMachine(b"export const x = 1", content_type="text/javascript").attach(
-        uuid.UUID(topic["id"])
-    )
-    try:
-        resp = client.get(
-            f"/topics/{topic['id']}/app/main.js?token={token}",
-            headers={"Origin": "null"},
-        )
-    finally:
-        machine.detach()
-
-    assert resp.status_code == 200, resp.text
-    assert resp.headers["access-control-allow-origin"] == "*", dict(resp.headers)
-
-
-def test_the_apps_own_cors_header_does_not_survive_next_to_ours(client):
-    """A dev server that sets its own ``Access-Control-Allow-Origin`` (vite does)
-    must not leave two of them on the way out: a browser rejects a response
-    carrying the header twice, so a passthrough would break exactly the apps that
-    tried hardest to be reachable."""
-    _project, topic = _project_topic(client)
-    token = _login(client, "alice")
-    machine = FakeMachine(
-        b"export const x = 1",
-        content_type="text/javascript",
-        extra_headers=[["access-control-allow-origin", "http://localhost:5173"]],
-    ).attach(uuid.UUID(topic["id"]))
-    try:
-        resp = client.get(
-            f"/topics/{topic['id']}/app/main.js?token={token}",
-            headers={"Origin": "null"},
-        )
-    finally:
-        machine.detach()
-
-    assert resp.headers.get_list("access-control-allow-origin") == ["*"], dict(
-        resp.headers
-    )
-
-
-def test_root_absolute_asset_urls_are_moved_onto_the_proxy_prefix(client):
-    """The app is served under a sub-path, so a page asking for `/assets/x.js`
-    would miss the machine entirely and hit the platform SPA instead."""
-    _project, topic = _project_topic(client)
-    token = _login(client, "alice")
-    machine = FakeMachine(
-        b'<html><script src="/main.js"></script><a href="//x/y"></a>'
-    ).attach(uuid.UUID(topic["id"]))
-    try:
-        body = client.get(f"/topics/{topic['id']}/app/?token={token}").text
-    finally:
-        machine.detach()
-
-    assert f'src="/api/topics/{topic["id"]}/app/main.js"' in body, body  # 浏览器侧
-    assert 'href="//x/y"' in body, "protocol-relative URLs must be left alone"
-
-
-def test_the_app_page_leaves_a_cookie_scoped_to_its_own_path(client):
-    """Assets and HMR are fetched by the page itself and carry no query string."""
-    _project, topic = _project_topic(client)
-    token = _login(client, "alice")
-    machine = FakeMachine().attach(uuid.UUID(topic["id"]))
-    try:
-        resp = client.get(f"/topics/{topic['id']}/app/?token={token}")
-    finally:
-        machine.detach()
-
-    cookie = resp.headers.get("set-cookie", "")
-    assert app_preview.COOKIE_NAME in cookie, cookie
-    assert f"Path=/api/topics/{topic['id']}/app" in cookie, cookie
-
-
-def test_the_handshake_mints_the_cookie_so_no_token_rides_in_the_iframe_url(client):
-    """The frame renders whatever 芝士 chose to serve. A ``?token=`` in its src is
-    readable by that page's own JS (``location.search``) even sandboxed, so the
-    credential is handed over as an HttpOnly cookie by a separate call that uses
-    the normal Authorization header instead."""
-    _project, topic = _project_topic(client)
-    token = _login(client, "alice")
-
-    resp = client.get(
-        f"/topics/{topic['id']}/app-session",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-
-    assert resp.status_code == 200, resp.text
-    cookie = resp.headers.get("set-cookie", "")
-    assert app_preview.COOKIE_NAME in cookie, cookie
-    assert f"Path=/api/topics/{topic['id']}/app" in cookie, cookie
-    assert "HttpOnly" in cookie, cookie
-
-
-def test_the_handshake_refuses_a_stranger(client):
-    resp = client.get(f"/topics/{uuid.uuid4()}/app-session")
-    assert resp.status_code == 404, resp.text
-
-
-def test_no_tunnel_is_a_404_not_a_crash(client):
-    """The machine is offline, or never carried a preview out at all."""
-    _project, topic = _project_topic(client)
-    token = _login(client, "alice")
-
-    resp = client.get(f"/topics/{topic['id']}/app/?token={token}")
-
-    assert resp.status_code == 404, resp.text
-
-
 class EchoingMachine(FakeMachine):
-    """Also accepts a WebSocket and echoes what it is sent — a dev server's HMR
-    socket reduced to the only thing the proxy has to get right."""
+    """Accept HMR connections and echo text and binary frames."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -271,48 +97,310 @@ class EchoingMachine(FakeMachine):
         await super().send_bytes(data)
 
 
-def test_the_hmr_socket_reaches_the_app_and_carries_both_directions(client):
-    """A dev server pushes reloads over a WebSocket. Without this leg the page
-    loads once and then reconnects forever, which reads as a broken preview."""
-    _project, topic = _project_topic(client)
-    token = _login(client, "alice")
-    machine = EchoingMachine().attach(uuid.UUID(topic["id"]))
+@pytest.fixture
+def preview_config(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "workspace"))
+    monkeypatch.setattr(settings, "sites_domain", "sites.localhost")
+    monkeypatch.setattr(settings, "sites_scheme", "http")
+    monkeypatch.setattr(settings, "sites_port", None)
+    monkeypatch.setattr(settings, "frontend_url", "http://platform.localhost")
+
+
+def _project_topic(client, handle: str = "alice"):
+    auth = session_auth_headers(handle)
+    response = client.post(
+        "/projects", json={"name": "Preview", "owner_handle": handle}, headers=auth
+    )
+    assert response.status_code == 200, response.text
+    project = response.json()["data"]
+    response = client.post(
+        "/topics", json={"project_id": project["id"], "title": "Preview"}, headers=auth
+    )
+    assert response.status_code == 200, response.text
+    return project, response.json()["data"]
+
+
+def _open_preview(client, topic_id, handle="alice", path="/"):
+    response = client.post(
+        f"/topics/{topic_id}/preview-session", headers=session_auth_headers(handle)
+    )
+    assert response.status_code == 200, response.text
+    grant = response.json()["data"]
+    exchange = client.post(
+        grant["url"],
+        data={"grant": grant["grant"], "path": path},
+        headers={"Origin": settings.frontend_url},
+        follow_redirects=False,
+    )
+    assert exchange.status_code == 303, exchange.text
+    return grant, exchange
+
+
+@pytest.fixture
+def app_preview(client, preview_config):
+    project, topic = _project_topic(client)
+    topic_id = uuid.UUID(topic["id"])
+    machine = EchoingMachine().attach(topic_id)
     try:
+        response = client.post(
+            f"/topics/{topic_id}/artifact",
+            json={"path": "http://localhost:5173", "as": "app"},
+            headers=session_auth_headers("alice"),
+        )
+        assert response.status_code == 200, response.text
+        machine.asked.clear()
+        machine.requests.clear()
+        yield project, topic_id, machine
+    finally:
+        machine.detach()
+
+
+def test_app_requires_preview_cookie_before_contacting_machine(client, app_preview):
+    _, topic_id, machine = app_preview
+    origin = preview_origin(topic_id)
+    for headers in ({}, session_auth_headers("alice")):
+        response = client.get(origin + "/", headers=headers)
+        assert response.status_code == 401, response.text
+    assert not machine.asked
+
+
+@pytest.mark.parametrize(
+    ("path", "mime", "body"),
+    [
+        ("/", "text/html", b'<script type="module" src="/main.js"></script>'),
+        ("/main.js", "text/javascript", b'import "/dependency.js";'),
+        ("/style.css", "text/css", b'body { background: url("/image.svg") }'),
+        ("/image.svg", "image/svg+xml", b'<svg xmlns="http://www.w3.org/2000/svg"/>'),
+    ],
+)
+def test_app_assets_keep_root_urls_bytes_and_query(
+    client, app_preview, path, mime, body
+):
+    _, topic_id, machine = app_preview
+    _open_preview(client, topic_id)
+    machine.body, machine.content_type = body, mime
+    response = client.get(preview_origin(topic_id) + path + "?x=1&token=app-value&x=2")
+    assert response.status_code == 200, response.text
+    assert response.content == body
+    assert response.headers["content-type"].startswith(mime)
+    assert machine.asked == [f"GET {path}?x=1&token=app-value&x=2"]
+    assert "set-cookie" not in response.headers
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["cross-origin-resource-policy"] == "same-origin"
+
+
+@pytest.mark.parametrize("method", ["POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
+def test_app_methods_body_and_api_paths_reach_only_the_app(client, app_preview, method):
+    _, topic_id, machine = app_preview
+    _open_preview(client, topic_id)
+    preview_cookie = client.cookies.get(cookie_name())
+    machine.body = b"upstream app response"
+    machine.status = 202
+    machine.extra_headers = [["x-app-response", "yes"]]
+    response = client.request(
+        method,
+        preview_origin(topic_id) + "/api/projects?token=app-value&v=one%2Ftwo",
+        content=b"\x00\xffpayload",
+        headers={
+            "Authorization": "Bearer app-access-token",
+            "Cookie": f"{cookie_name()}={preview_cookie}; app-session=app-cookie",
+            "X-Cheese-Token": "platform-secret",
+            "X-App-Request": "yes",
+            "Content-Type": "application/octet-stream",
+        },
+    )
+    assert response.status_code == 202, response.text
+    assert response.content == b"upstream app response"
+    assert response.headers["x-app-response"] == "yes"
+    assert "set-cookie" not in response.headers
+    meta, body = machine.requests[-1]
+    assert meta["method"] == method
+    assert meta["path"] == "/api/projects?token=app-value&v=one%2Ftwo"
+    assert body == b"\x00\xffpayload"
+    headers = {key.lower(): value for key, value in meta["headers"]}
+    assert headers["x-app-request"] == "yes"
+    assert headers["authorization"] == "Bearer app-access-token"
+    assert headers["cookie"] == "app-session=app-cookie"
+    assert not any(key.startswith("x-cheese-") for key in headers)
+    assert preview_cookie not in str(meta)
+
+
+@pytest.mark.parametrize(
+    "same_site",
+    ["", "; SameSite=Lax", "; SameSite=Strict", "; SameSite=None; Partitioned"],
+)
+def test_app_login_cookies_are_host_only_and_cannot_replace_preview_access(
+    client, app_preview, monkeypatch, same_site
+):
+    monkeypatch.setattr(settings, "sites_scheme", "https")
+    _, topic_id, machine = app_preview
+    _open_preview(client, topic_id)
+    preview_cookie = client.cookies.get(cookie_name())
+    machine.extra_headers = [
+        [
+            "set-cookie",
+            "app-session=logged-in; Domain=sites.localhost; Path=/;"
+            " HttpOnly; Max-Age=3600" + same_site,
+        ],
+        ["set-cookie", "cheese-preview-local=forged; Path=/"],
+        ["set-cookie", "__Host-cheese-preview=forged; Secure; Path=/"],
+    ]
+    origin = preview_origin(topic_id)
+    response = client.post(origin + "/login", content=b"app login")
+    assert response.status_code == 200, response.text
+    cookies = response.headers.get_list("set-cookie")
+    assert len(cookies) == 1, cookies
+    assert cookies[0].startswith("app-session=logged-in;")
+    assert "domain=" not in cookies[0].lower()
+    assert "httponly" in cookies[0].lower()
+    assert "Secure" in cookies[0]
+    assert "SameSite=None" in cookies[0]
+    assert cookies[0].count("Partitioned") == 1
+    assert "Max-Age=3600" in cookies[0]
+    assert "Path=/" in cookies[0]
+    assert client.cookies.get(cookie_name()) == preview_cookie
+    assert client.get(origin + "/account").status_code == 200
+    meta, _ = machine.requests[-1]
+    headers = {key.lower(): value for key, value in meta["headers"]}
+    assert headers["cookie"] == "app-session=logged-in"
+
+
+@pytest.mark.parametrize("sender", ["other-preview", "platform", "external"])
+def test_cross_origin_posts_cannot_use_an_existing_preview_session(
+    client, app_preview, sender
+):
+    _, topic_id, machine = app_preview
+    _open_preview(client, topic_id)
+    origin = preview_origin(topic_id)
+    sender_origin = {
+        "other-preview": preview_origin(uuid.uuid4()),
+        "platform": settings.frontend_url,
+        "external": "https://attacker.example",
+    }[sender]
+    response = client.post(
+        origin + "/delete-account",
+        headers={"Origin": sender_origin},
+        data={"confirm": "yes"},
+    )
+    assert response.status_code == 403, response.text
+    assert not machine.asked
+    response = client.post(
+        origin + "/save", headers={"Origin": origin}, content=b"same-origin edit"
+    )
+    assert response.status_code == 200, response.text
+    assert machine.asked == ["POST /save"]
+    assert machine.requests[-1][1] == b"same-origin edit"
+
+
+@pytest.mark.parametrize("site", ["same-site", "cross-site"])
+def test_cross_origin_subresources_without_origin_do_not_reach_app(
+    client, app_preview, site
+):
+    _, topic_id, machine = app_preview
+    _open_preview(client, topic_id)
+    origin = preview_origin(topic_id)
+    response = client.get(
+        origin + "/logout",
+        headers={"Sec-Fetch-Site": site, "Sec-Fetch-Mode": "no-cors"},
+    )
+    assert response.status_code == 403
+    assert not machine.asked
+    response = client.get(
+        origin + "/asset.js",
+        headers={"Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "no-cors"},
+    )
+    assert response.status_code == 200
+    assert machine.asked == ["GET /asset.js"]
+
+
+def test_offline_app_returns_404(client, app_preview):
+    _, topic_id, machine = app_preview
+    _open_preview(client, topic_id)
+    machine.detach()
+    assert client.get(preview_origin(topic_id) + "/").status_code == 404
+
+
+def test_hmr_preserves_query_subprotocol_and_both_frame_types(client, app_preview):
+    _, topic_id, machine = app_preview
+    _open_preview(client, topic_id)
+    origin = preview_origin(topic_id)
+    preview_cookie = client.cookies.get(cookie_name())
+    with client.websocket_connect(
+        origin.replace("http://", "ws://") + "/@vite/client?token=app-value&x=1&x=2",
+        headers={
+            "Origin": origin,
+            "Authorization": "Bearer app-access-token",
+            "Cookie": f"{cookie_name()}={preview_cookie}; app-session=app-cookie",
+            "X-Cheese-Token": "platform-secret",
+        },
+        subprotocols=["vite-hmr"],
+    ) as socket:
+        assert socket.accepted_subprotocol == "vite-hmr"
+        socket.send_text("ping")
+        assert socket.receive_text() == "ping"
+        socket.send_bytes(b"\x00\x01")
+        assert socket.receive_bytes() == b"\x00\x01"
+    assert machine.ws_path == "/@vite/client?token=app-value&x=1&x=2"
+    forwarded = {key.lower(): value for key, value in machine.ws_headers}
+    assert forwarded["sec-websocket-protocol"] == "vite-hmr"
+    assert forwarded["authorization"] == "Bearer app-access-token"
+    assert forwarded["cookie"] == "app-session=app-cookie"
+    assert not forwarded.keys() & {
+        "x-cheese-token",
+        "sec-websocket-key",
+        "sec-websocket-version",
+        "sec-websocket-extensions",
+    }
+
+
+@pytest.mark.parametrize(
+    "has_cookie,origin_header", [(False, "preview"), (True, "platform")]
+)
+def test_hmr_refuses_missing_cookie_or_cross_origin(
+    client, app_preview, has_cookie, origin_header
+):
+    _, topic_id, machine = app_preview
+    if has_cookie:
+        _open_preview(client, topic_id)
+    origin = preview_origin(topic_id)
+    with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect(
-            f"/topics/{topic['id']}/app/@vite/client?token={token}",
-            subprotocols=["vite-hmr"],
-        ) as ws:
-            ws.send_text("ping")
-            assert ws.receive_text() == "ping"
-            ws.send_bytes(b"\x00\x01")
-            assert ws.receive_bytes() == b"\x00\x01"
-    finally:
-        machine.detach()
-
-    assert machine.ws_path == "/@vite/client", machine.ws_path
-    forwarded = {k.lower() for k, _ in machine.ws_headers}
-    # This leg's own handshake stops here: the machine performs its own, and a
-    # relayed key or a negotiated compression extension corrupts that one.
-    assert not forwarded & {"sec-websocket-key", "sec-websocket-extensions"}
-    # The subprotocol is the exception — it is negotiated end to end.
-    assert "sec-websocket-protocol" in forwarded
+            origin.replace("http://", "ws://") + "/ws",
+            headers={
+                "Origin": origin
+                if origin_header == "preview"
+                else settings.frontend_url
+            },
+        ) as socket:
+            socket.receive_text()
+    assert machine.ws_path == ""
 
 
-def test_the_hmr_socket_refuses_a_caller_without_a_credential(client):
-    _project, topic = _project_topic(client)
-    machine = EchoingMachine().attach(uuid.UUID(topic["id"]))
-    try:
-        with pytest.raises(WebSocketDisconnect):
-            with client.websocket_connect(f"/topics/{topic['id']}/app/ws") as ws:
-                ws.receive_text()
-    finally:
-        machine.detach()
-    assert machine.ws_path == "", "the handshake reached the app unauthenticated"
+def test_membership_revocation_blocks_http_and_new_hmr_connection(client, app_preview):
+    project, topic_id, machine = app_preview
+    owner = session_auth_headers("alice")
+    added = client.post(
+        f"/projects/{project['id']}/members",
+        json={"user_handle": "bob", "role": "member"},
+        headers=owner,
+    )
+    assert added.status_code == 200, added.text
+    _open_preview(client, topic_id, "bob")
+    origin = preview_origin(topic_id)
+    assert client.get(origin + "/").status_code == 200
+    removed = client.delete(f"/projects/{project['id']}/members/bob", headers=owner)
+    assert removed.status_code == 200, removed.text
+    machine.asked.clear()
+    assert client.get(origin + "/main.js").status_code == 404
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect(
+            origin.replace("http://", "ws://") + "/ws", headers={"Origin": origin}
+        ) as socket:
+            socket.receive_text()
+    assert not machine.asked and machine.ws_path == ""
 
 
 def test_the_tunnel_refuses_a_caller_that_cannot_name_a_topic(client):
-    """Whoever dials in decides what the room sees, so the token IS the routing
-    table: no valid topic claim, no tunnel."""
     with pytest.raises(WebSocketDisconnect):
-        with client.websocket_connect("/preview/tunnel?token=not-a-token") as ws:
-            ws.receive_bytes()
+        with client.websocket_connect("/preview/tunnel?token=not-a-token") as socket:
+            socket.receive_bytes()

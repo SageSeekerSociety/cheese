@@ -1,183 +1,157 @@
 <script setup lang="ts">
-// 预览 tab (spec §9.1): the artifact 芝士 pointed at (`cheese artifact`),
-// rendered by its mimeType — or the app it started (`cheese serve`), iframed
-// through the backend's reverse proxy onto that machine's preview tunnel. The
-// platform NEVER guesses a preview.
-//
-// The 「有新内容」 dot does NOT live here: it has to be right even while this tab
-// is closed, which makes it a signal, and signals belong to WorkPanel. This
-// component only reports the artifact id it just rendered (`loaded`), and the
-// container decides what that means for the dot.
 import type { FileContent, PreviewInfo } from '../../cx_types'
 
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
+import { useFullscreen } from '@vueuse/core'
 
-import { BASE as API_BASE, getPreview, primeAppPreview, readFile } from '../../api'
+import { getPreview, readFile, requestPreviewSession } from '../../api'
+import { postPreviewSession } from '../../lib/previewSession'
 
 const props = withDefaults(
   defineProps<{
     topicId: string | null
     projectId: string | null
     active?: boolean
-    // Bumped by WorkPanel when a turn ends — the moment 芝士 has just finished
-    // pointing at things. Silent re-fetch.
     refreshTick?: number
   }>(),
   { active: false, refreshTick: 0 }
 )
-
-const emit = defineEmits<{
-  // The artifact this tab has now actually shown the reader (null = none).
-  (e: 'loaded', artifactId: string | null): void
-}>()
-
+const emit = defineEmits<{ (e: 'loaded', artifactId: string | null): void }>()
+const panelElement = ref<HTMLElement | null>(null)
+const frameName = `cheese-preview-${useId()}`
+const {
+  isFullscreen: previewFull,
+  isSupported: fullscreenSupported,
+  toggle: toggleFullscreen,
+} = useFullscreen(panelElement)
+const fullscreenError = ref('')
 const loading = ref(false)
-// A background re-fetch: spins only the 刷新 button, never replaces the panel.
 const refreshing = ref(false)
-
-// 预览: the artifact 芝士 pointed at — its file, mimeType, and whether it was
-// AI-designated.
 const previewFile = ref<FileContent | null>(null)
-const previewMime = ref<string>('text/html')
+const previewMime = ref('text/html')
 const previewNamed = ref(false)
-// 运行环境预览: the agent declared a RUNNING app (`cheese serve`) — iframe the
-// backend's reverse-proxy path instead of rendering file content. Null while the
-// app isn't answering; `previewTunnelUp` then says whether the machine is even
-// carrying a preview out, so the two cases can read differently.
-const previewAppUrl = ref<string | null>(null)
-const previewAppNote = ref<string>('')
+const previewUrl = ref<string | null>(null)
+const previewAppNote = ref('')
 const previewTunnelUp = ref(false)
-// What 芝士 named, app or file — so a read failure can say WHICH artifact broke.
-const previewNamedPath = ref<string>('')
-// Failures, kept apart from "nothing is set". Collapsing them (the old
-// `.catch(() => null)` on both calls) reported every backend error and every
-// unreadable file as "芝士还没有指定预览" — a broken panel that looked idle, so
-// nobody reported it.
+const previewNamedPath = ref('')
 const previewError = ref<string | null>(null)
 const previewReadError = ref<string | null>(null)
-
-// 全屏预览 (Claude Artifacts style): the same content, workspace-covering. It is
-// a Vuetify dialog, so the overlay stack owns its z-index and Esc — the old
-// hand-rolled `position: fixed; z-index: 2400` + window keydown listener was
-// re-implementing both, badly (a plain div is never focused, so its own
-// @keydown.esc could not fire).
-const previewFull = ref(false)
+let loadedArtifact: string | null = null
+let generation = 0
 
 function openPreviewInNewTab() {
-  if (previewAppUrl.value) {
-    window.open(previewAppUrl.value, '_blank', 'noopener')
-  } else if (previewFile.value && props.topicId) {
-    // Served with CSP sandbox (opaque origin) — a real tab, not our origin.
-    window.open(`${API_BASE}/topics/${props.topicId}/preview/raw`, '_blank', 'noopener')
+  if (props.topicId) window.open(`/previews/${encodeURIComponent(props.topicId)}`, '_blank', 'noopener')
+}
+
+async function fullscreen() {
+  fullscreenError.value = ''
+  try {
+    // Fullscreen keeps the same browsing context, including unsaved app state.
+    await toggleFullscreen()
+  } catch {
+    fullscreenError.value = '无法进入全屏，请在新标签页打开'
   }
 }
 
-async function load(opts: { silent?: boolean } = {}) {
+async function load(opts: { silent?: boolean; reload?: boolean } = {}) {
+  // Metadata polling must not cancel an explicit refresh's pending grant.
+  if (opts.silent && !opts.reload && (loading.value || refreshing.value)) return
   const tid = props.topicId
   const pid = props.projectId
   if (!tid || !pid) return
+  const current = ++generation
+  const stillCurrent = () => current === generation && props.topicId === tid
   if (opts.silent) refreshing.value = true
   else loading.value = true
   try {
-    // A silent re-fetch must NOT blank these first. Clearing `previewAppUrl`
-    // unmounts the iframe, so the running app the reader is looking at would
-    // reload from scratch every refresh tick; below, each value is only assigned
-    // when it actually changed, for the same reason.
-    if (!opts.silent) {
-      previewAppUrl.value = null
-      previewAppNote.value = ''
-      previewTunnelUp.value = false
-      previewError.value = null
-      previewReadError.value = null
-      previewNamedPath.value = ''
-    }
     let art: PreviewInfo | null
     try {
       art = await getPreview(tid)
     } catch (e) {
-      if (props.topicId !== tid) return
-      // "The backend errored" is its own state — not "nothing is set".
-      previewNamed.value = false
-      previewFile.value = null
+      if (!stillCurrent()) return
+      previewUrl.value = null
       previewError.value = e instanceof Error ? e.message : '加载失败'
       return
     }
-    if (props.topicId !== tid) return
+    if (!stillCurrent()) return
     previewError.value = null
+    previewReadError.value = null
+    previewNamed.value = !!art
+    previewNamedPath.value = art?.path ?? ''
     emit('loaded', art?.artifact_id ?? null)
-    if (art && art.kind === 'app') {
-      previewNamed.value = true
-      previewAppNote.value = art.path
-      previewNamedPath.value = art.path
-      previewTunnelUp.value = !!art.tunnel_up
-      previewReadError.value = null
+    if (!art) {
+      previewUrl.value = null
       previewFile.value = null
-      // Only on a url the frame does not already have: the proxy re-attaches the
-      // cookie on every request it forwards, so an app already on screen keeps
-      // its own credential alive and re-priming it each refresh tick would be a
-      // request that buys nothing.
-      if (art.url && art.url !== previewAppUrl.value) {
-        // The frame carries no credential of its own (a ?token= would be
-        // readable by whatever the agent is serving), so hand the browser the
-        // scoped cookie FIRST — otherwise its very first request 404s and the
-        // panel is back to showing a white box.
-        try {
-          await primeAppPreview(tid)
-        } catch (e) {
-          if (props.topicId !== tid) return
-          previewError.value = e instanceof Error ? e.message : '预览授权失败'
-          return
-        }
-        if (props.topicId !== tid) return
-      }
-      previewAppUrl.value = art.url ?? null
-    } else if (art) {
-      previewNamed.value = true
-      previewNamedPath.value = art.path
-      previewMime.value = art.mime || 'text/html'
-      previewAppUrl.value = null
       previewAppNote.value = ''
-      try {
-        const content = await readFile(pid, art.path, tid)
-        // Guard against a topic switch mid-flight — this await was the one fetch
-        // in the drawer without it, so a slow read could paint topic A's
-        // artifact into topic B's panel.
-        if (props.topicId !== tid) return
-        previewReadError.value = null
-        // Same anti-flicker rule: an identical string reassigned would still
-        // rebind `srcdoc` and reload the artifact, losing whatever state the
-        // reader had built up inside it.
-        if (content.content !== previewFile.value?.content || content.path !== previewFile.value?.path) {
-          previewFile.value = content
-        }
-      } catch (e) {
-        if (props.topicId !== tid) return
-        previewFile.value = null
-        previewReadError.value = e instanceof Error ? e.message : '读不到这个文件'
+      loadedArtifact = null
+      return
+    }
+    const identity = `${art.kind ?? 'file'}:${art.artifact_id ?? art.path}:${art.url ?? ''}:${art.version ?? ''}`
+    const unchanged = identity === loadedArtifact && art.url === previewUrl.value
+    previewAppNote.value = art.kind === 'app' ? art.path : ''
+    previewTunnelUp.value = !!art.tunnel_up
+    if (art.kind === 'app') {
+      previewFile.value = null
+      if (!art.url) {
+        previewUrl.value = null
+        loadedArtifact = null
+        return
       }
     } else {
-      previewNamed.value = false
-      previewFile.value = null
-      previewAppUrl.value = null
+      previewMime.value = art.mime || 'text/html'
+      try {
+        const content = await readFile(pid, art.path, tid)
+        if (!stillCurrent()) return
+        previewFile.value = content
+      } catch (e) {
+        if (!stillCurrent()) return
+        previewUrl.value = null
+        previewFile.value = null
+        previewReadError.value = e instanceof Error ? e.message : '读不到这个文件'
+        return
+      }
+      if (!stillCurrent()) return
+      if (previewFile.value.content === null && !previewFile.value.too_large) {
+        previewUrl.value = null
+        return
+      }
+    }
+    if (unchanged && !opts.reload) return
+    if (!art.url) {
+      previewUrl.value = null
+      previewError.value = '预览地址暂不可用'
+      return
+    }
+    try {
+      const session = await requestPreviewSession(tid)
+      if (!stillCurrent()) return
+      previewUrl.value = art.url
+      // Mount the named frame before POSTing: a missing target opens a new tab.
+      loading.value = false
+      await nextTick()
+      if (!stillCurrent()) return
+      postPreviewSession(session, { target: frameName })
+      loadedArtifact = identity
+    } catch (e) {
+      if (!stillCurrent()) return
+      previewUrl.value = null
+      previewError.value = e instanceof Error ? e.message : '预览授权失败'
     }
   } finally {
-    if (props.topicId === tid) {
+    if (stillCurrent()) {
       loading.value = false
       refreshing.value = false
     }
   }
 }
 
-// Opening the tab loads it, exactly like opening the drawer used to.
 watch(
   () => props.active,
-  (on) => {
-    if (on) void load()
+  (active) => {
+    if (active) void load({ silent: !!previewUrl.value })
   },
   { immediate: true }
 )
-
-// A turn ended: 芝士 repointed the preview, or the app it started died.
 watch(
   () => props.refreshTick,
   () => {
@@ -185,8 +159,7 @@ watch(
   }
 )
 
-// It also goes stale while you watch it, so re-fetch on a timer while on screen.
-const REFRESH_MS = 20_000
+// Poll metadata only; an unchanged artifact never receives a new form POST.
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 function stopAutoRefresh() {
   if (refreshTimer) clearInterval(refreshTimer)
@@ -194,43 +167,50 @@ function stopAutoRefresh() {
 }
 watch(
   () => props.active,
-  (on) => {
+  (active) => {
     stopAutoRefresh()
-    if (!on) return
+    if (!active) return
     refreshTimer = setInterval(() => {
-      // A hidden tab polling forever is pure waste — it re-fetches on the next
-      // tick after it comes back anyway.
-      if (typeof document !== 'undefined' && document.hidden) return
-      void load({ silent: true })
-    }, REFRESH_MS)
+      if (!document.hidden) void load({ silent: true })
+    }, 20_000)
   },
   { immediate: true }
 )
-onBeforeUnmount(stopAutoRefresh)
-
-// Topic switch: a stale frame or error would otherwise be attributed to the
-// topic just opened.
+onBeforeUnmount(() => {
+  generation += 1
+  stopAutoRefresh()
+})
 watch(
   () => props.topicId,
   () => {
-    previewAppUrl.value = null
+    generation += 1
+    previewUrl.value = null
     previewAppNote.value = ''
     previewNamedPath.value = ''
     previewFile.value = null
     previewError.value = null
     previewReadError.value = null
     previewNamed.value = false
-    previewFull.value = false
+    loadedArtifact = null
     if (props.active) void load()
   }
 )
 </script>
 
 <template>
-  <div class="panel-preview">
+  <div ref="panelElement" class="panel-preview">
     <div class="preview-head">
+      <v-btn
+        v-if="projectId"
+        :to="{ name: 'project-delivery', params: { projectId } }"
+        size="small"
+        variant="text"
+        class="c-muted"
+      >
+        导出与发布
+      </v-btn>
       <v-spacer />
-      <template v-if="previewAppUrl || previewFile">
+      <template v-if="previewUrl || previewFile">
         <v-btn
           icon="mdi-open-in-new"
           size="small"
@@ -240,12 +220,13 @@ watch(
           @click="openPreviewInNewTab"
         />
         <v-btn
-          icon="mdi-arrow-expand-all"
+          v-if="fullscreenSupported && previewUrl"
+          :icon="previewFull ? 'mdi-fullscreen-exit' : 'mdi-arrow-expand-all'"
           size="small"
           variant="text"
           class="c-muted"
-          title="全屏预览"
-          @click="previewFull = true"
+          :title="previewFull ? '退出全屏' : '全屏预览'"
+          @click="fullscreen"
         />
       </template>
       <v-btn
@@ -255,25 +236,29 @@ watch(
         class="c-muted"
         title="刷新"
         :loading="refreshing"
-        @click="load({ silent: true })"
+        @click="load({ silent: true, reload: true })"
       />
     </div>
+
+    <v-alert v-if="fullscreenError" type="warning" density="compact">{{ fullscreenError }}</v-alert>
 
     <div v-if="loading" class="d-flex justify-center py-8">
       <v-progress-circular indeterminate color="primary" size="28" />
     </div>
 
-    <div v-else-if="previewAppUrl" class="preview-wrap">
-      <!-- 运行环境预览: the live app, carried out of its machine over the tunnel -->
+    <div v-else-if="previewUrl" class="preview-wrap">
       <div class="preview-bar text-caption px-3 pt-2">
-        <span class="text-medium-emphasis">{{ previewAppNote }}</span>
-        <v-chip size="x-small" variant="tonal" class="ms-2">运行中的应用</v-chip>
+        <span class="text-medium-emphasis">{{ previewAppNote || previewFile?.path }}</span>
+        <v-chip v-if="previewAppNote" size="x-small" variant="tonal" class="ms-2">运行中的应用</v-chip>
+        <v-chip v-else size="x-small" variant="outlined" class="ms-2">{{ previewMime }}</v-chip>
       </div>
-      <!-- The app rides the backend's reverse proxy, so it is on OUR origin:
-           allow-same-origin would hand whatever the agent is serving our
-           localStorage (session token) and our API cookies. Opaque origin only —
-           same posture as the file artifact below. -->
-      <iframe class="preview-frame" :src="previewAppUrl ?? undefined" sandbox="allow-scripts allow-forms" />
+      <!-- The form supplies a scoped grant; neither src nor srcdoc carries content. -->
+      <iframe
+        :name="frameName"
+        class="preview-frame"
+        title="话题预览"
+        sandbox="allow-scripts allow-forms allow-same-origin"
+      />
     </div>
     <div v-else-if="previewError" class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-error mb-2">mdi-alert-circle-outline</v-icon>
@@ -301,58 +286,19 @@ watch(
         跑这个话题的机器现在没有把预览通道拨出来（机器离线，或者这一轮还没开始）。再 @ 芝士一次即可重新拉起。
       </div>
     </div>
-    <div v-else-if="previewFile" class="preview-wrap">
-      <div class="preview-bar text-caption px-3 pt-2">
-        <span class="text-medium-emphasis">{{ previewFile.path }}</span>
-        <v-chip v-if="previewNamed" size="x-small" color="primary" variant="tonal" class="ms-2">芝士指定</v-chip>
-        <v-chip size="x-small" variant="outlined" class="ms-1">
-          {{ previewMime }}
-        </v-chip>
-      </div>
-      <!-- allow-scripts WITHOUT allow-same-origin (Claude Artifacts posture):
-           interactive artifacts run their JS, but in an opaque origin that
-           cannot touch the platform page. -->
-      <iframe class="preview-frame" :srcdoc="previewFile.content ?? ''" sandbox="allow-scripts" />
+    <div v-else-if="previewFile && previewFile.content === null" class="text-center text-medium-emphasis py-8">
+      <v-icon size="32" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
+      <div>这个文件不是文本</div>
+      <div class="text-caption mt-1">{{ previewFile.path }} 无法作为网页显示，可以在新窗口打开</div>
+      <v-btn class="mt-3" size="small" variant="tonal" prepend-icon="mdi-open-in-new" @click="openPreviewInNewTab">
+        在新窗口打开
+      </v-btn>
     </div>
     <div v-else class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-disabled mb-2">mdi-eye-off-outline</v-icon>
       <div>暂无预览</div>
       <div class="text-caption mt-1">芝士做出网页、图表等可看的成果时，会放到这里。</div>
     </div>
-
-    <!-- 全屏预览: same artifact, workspace-covering. Vuetify's overlay owns the
-         stacking and the Esc key. -->
-    <v-dialog v-model="previewFull" fullscreen transition="dialog-bottom-transition">
-      <div class="preview-full">
-        <div class="preview-full__bar">
-          <span class="preview-full__title">
-            {{ previewAppUrl ? previewAppNote || '运行中的应用' : previewFile?.path }}
-          </span>
-          <v-spacer />
-          <v-btn
-            icon="mdi-open-in-new"
-            size="small"
-            variant="text"
-            class="c-muted"
-            title="在新标签页打开"
-            @click="openPreviewInNewTab"
-          />
-          <v-btn icon="mdi-close" size="small" variant="text" class="c-muted" @click="previewFull = false" />
-        </div>
-        <iframe
-          v-if="previewAppUrl"
-          class="preview-full__frame"
-          :src="previewAppUrl"
-          sandbox="allow-scripts allow-forms"
-        />
-        <iframe
-          v-else-if="previewFile"
-          class="preview-full__frame"
-          :srcdoc="previewFile.content ?? ''"
-          sandbox="allow-scripts"
-        />
-      </div>
-    </v-dialog>
   </div>
 </template>
 
@@ -401,29 +347,8 @@ watch(
   /* stylelint-disable-next-line color-no-hex -- see the reason above */
   background: #fff;
 }
-.preview-full {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  background: var(--surface);
-}
-.preview-full__bar {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--line-2);
-}
-.preview-full__title {
-  font-size: 0.85rem;
-  color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.preview-full__frame {
-  flex: 1;
-  border: 0;
+.panel-preview:fullscreen {
   width: 100%;
+  height: 100%;
 }
 </style>

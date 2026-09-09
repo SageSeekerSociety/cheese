@@ -57,6 +57,10 @@ from app.domain.agent.harness.claude_code.session_launch import (
     harness_of,
     hooks_settings,
 )
+from app.domain.agent.harness.claude_code.startup_cache import (
+    build_startup_cache_prepare,
+)
+from app.domain.agent.harness.claude_code.warm_session import build_warm_session_prepare
 
 __all__ = [
     "CLAUDE_MIN_VERSION",
@@ -77,6 +81,8 @@ __all__ = [
     "append_event",
     "build_screen_launch",
     "build_session_launch",
+    "build_startup_cache_prepare",
+    "build_warm_session_prepare",
     "drop_device_subscriptions",
     "drop_screen_subscriptions",
     "drop_topic_subscriptions",

@@ -40,6 +40,7 @@ describe('the project frame', () => {
     ['/calendar', 'calendar'],
     ['/agents', 'project-agents'],
     ['/settings', 'project-settings'],
+    ['/delivery', 'project-delivery'],
     ['/members/lisi', 'member'],
   ])('renders %s inside the frame, not beside it', (suffix, name) => {
     const resolved = router().resolve(`/projects/${PROJECT}${suffix === '/' ? '' : suffix}`)
@@ -103,11 +104,12 @@ describe('页面栈的末端', () => {
   it('列表之外的每一层都收起底栏，并说明回哪一层', () => {
     const paths = [
       `/projects/${PROJECT}/topics/t1`,
-      `/projects/${PROJECT}/dm/cheese`,
       `/projects/${PROJECT}/docs/charter`,
       `/projects/${PROJECT}/overview`,
       `/projects/${PROJECT}/calendar`,
       `/projects/${PROJECT}/settings`,
+      `/projects/${PROJECT}/delivery`,
+      `/projects/${PROJECT}/members`,
       `/projects/${PROJECT}/members/alice`,
     ]
     for (const path of paths) {
@@ -115,6 +117,14 @@ describe('页面栈的末端', () => {
       expect(leaf.meta.hideTabs, path).toBe(true)
       expect(leaf.meta.backTo, path).toBe('workspace-project')
     }
+  })
+
+  // 私聊是唯一一层不回话题列表的：它只有一个入口——名册。回话题列表等于把人
+  // 送到一个他没来过的地方，而那一层再也走不回他刚才在的那份名单。
+  it('私聊回的是成员页，不是话题列表', () => {
+    const leaf = leafOf(`/projects/${PROJECT}/dm/cheese`)
+    expect(leaf.meta.hideTabs).toBe(true)
+    expect(leaf.meta.backTo).toBe('project-members')
   })
 
   it('话题列表那一层自己是一级目的地，底栏留着', () => {
@@ -127,5 +137,28 @@ describe('页面栈的末端', () => {
     expect(leafOf(`/projects/${PROJECT}`).meta.barSlot).toBe(true)
     expect(leafOf(`/projects/${PROJECT}/topics/t1`).meta.barSlot).toBe(true)
     expect(leafOf(`/projects/${PROJECT}/dm/cheese`).meta.barSlot).toBeUndefined()
+  })
+})
+
+// 顶栏那颗 ← 靠这个标记回答「这一跳是不是从项目外面走进来的」。它是 meta 上的一
+// 个布尔值：删掉不会编译失败、不会渲染出错，只会让从小队点进项目之后 ← 悄悄消
+// 失——而那正是这套机制存在的原因。
+describe('项目框自己举的手', () => {
+  it('框那条记录带着 projectFrame，框里每一层都继承得到', () => {
+    for (const path of ['', '/running', `/topics/${TOPIC}`, '/settings']) {
+      const matched = router().resolve(`/projects/${PROJECT}${path}`).matched
+      expect(
+        matched.some((r) => r.meta.projectFrame === true),
+        path
+      ).toBe(true)
+    }
+  })
+
+  it('项目外面的地址不带这个标记', () => {
+    expect(
+      router()
+        .resolve('/teams/12')
+        .matched.some((r) => r.meta.projectFrame === true)
+    ).toBe(false)
   })
 })

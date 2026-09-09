@@ -60,6 +60,58 @@ class InstantScreen(StubChannel):
         self.stops(topic_id, "done", session_id="s-affinity")
 
 
+class ProcessNotesScreen(StubChannel):
+    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+        self.acknowledges(topic_id, prompt)
+        self.hook(
+            topic_id,
+            hook_event_name="MessageDisplay",
+            delta="Read workspace files.",
+            _eid="process",
+        )
+        self.hook(
+            topic_id,
+            hook_event_name="MessageDisplay",
+            delta="The plan is ready.",
+            _eid="display",
+        )
+        self.stops(topic_id, "The plan is ready.", session_id="s-notes")
+
+
+@pytest.mark.anyio
+async def test_execution_notes_are_retained_outside_public_replies(client, tmp_path):
+    factory = client.test_factory
+    svc = ChatService(
+        session_factory=factory,
+        compute=stub_compute(ProcessNotesScreen()),
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        tid = topic.id
+        await session.commit()
+    async for _ in svc.converse(
+        topic_id=tid, author="u", content="Write a plan", summon=True
+    ):
+        pass
+    await settle_turn(svc, tid)
+    async with factory() as session:
+        rows = await BlockRepository(session).list_for_topic(tid)
+    replies = [
+        b.content
+        for b in rows
+        if b.kind == BlockKind.message and b.author_type == AuthorType.ai
+    ]
+    assert replies == []
+    notes = [b for b in rows if (b.meta or {}).get("progress")]
+    assert [b.content for b in notes] == ["Read workspace files.", "The plan is ready."]
+    assert all(b.kind == BlockKind.event and b.meta["in_room"] is False for b in notes)
+
+
 @pytest.mark.anyio
 async def test_first_turn_materializes_inherited_compute_before_running(
     client, tmp_path
@@ -347,7 +399,9 @@ async def test_summon_during_active_work_is_injected_without_a_second_done(
     # Pre-fix this blocked until the active run finished.
     frames = await asyncio.wait_for(summoned("user-2", "等一下，先别跑"), 2)
     assert all(frame["type"] != "done" for frame in frames)
-    assert provider.delivered == ["[user-2]: 等一下，先别跑"]
+    assert [p.split("\n\n", 1)[0] for p in provider.delivered] == [
+        "[user-2]: 等一下，先别跑"
+    ]
     # Injected, not queued: still exactly one active run.
     assert provider.runs == 1
 
@@ -448,7 +502,7 @@ async def test_failed_live_delivery_reports_error_then_queues_work(client, tmp_p
     await asyncio.wait_for(first, 5)
     second_frames = await asyncio.wait_for(second, 5)
     assert provider.runs == 2
-    assert provider.delivered == ["[user-2]: 第二件事"]
+    assert [p.split("\n\n", 1)[0] for p in provider.delivered] == ["[user-2]: 第二件事"]
 
     fallback_frames = [
         frame
