@@ -4,6 +4,7 @@ import contextlib
 import json
 import os
 import re
+import shlex
 import shutil
 import socket
 import subprocess
@@ -331,11 +332,8 @@ def test_hooks_settings_wire_command_hook_to_forwarder():
     for event in events:
         entry = s["hooks"][event][0]
         assert entry["hooks"][0] == {"type": "command", "command": "cheese-hook"}
-    # Both denied tools can leave a turn with no way to end: AskUserQuestion
-    # draws its picker in the screen's terminal where no remote user can reach
-    # it, and WebFetch has a step with no deadline. Denied in settings as well
-    # as on the launch line — a deny in only one of the two is not a deny.
-    assert set(s["permissions"]["deny"]) == {"AskUserQuestion", "WebFetch"}
+    # The remote user cannot reach the terminal's native option picker.
+    assert set(s["permissions"]["deny"]) == {"AskUserQuestion"}
 
 
 def test_build_screen_launch_shapes_command_and_env():
@@ -868,6 +866,28 @@ def test_full_launcher_installs_platform_cli_without_network(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert not network.exists(), "room startup must not fetch the platform CLI"
+    transport = home / ".claude/webfetch_transport.cjs"
+    assert (
+        transport.read_bytes()
+        == (
+            device_launch.Path(device_launch.__file__).with_name(
+                "webfetch_transport.cjs"
+            )
+        ).read_bytes()
+    )
+    environment = subprocess.run(
+        [
+            "sh",
+            "-c",
+            '. "$1"; printf "%s" "$BUN_OPTIONS"',
+            "fixture",
+            str(home / ".claude/cheese-session-env"),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "--preload=" + str(transport) in shlex.split(environment.stdout)
     installed = home / ".claude/cheese"
     source = (
         device_launch.Path(device_launch.__file__).resolve().parents[5]
@@ -2024,13 +2044,7 @@ def test_no_mcp_server_is_planted_in_a_sandbox():
 
 
 def test_a_summarisation_stream_that_stalls_is_bounded():
-    """The one hang shape a setting still reaches.
-
-    Not WebFetch's own hang: measured on 2.1.224 and 2.1.261, its page fetch is
-    bounded (60 s) and its domain preflight is bounded (10 s); the step with no
-    deadline is the model call it makes on the extracted text, which no setting
-    reaches. This asserts the watchdog we CAN set stays set.
-    """
+    """Keep the model-stream watchdog enabled alongside page-fetch handling."""
     assert device_launch.hooks_settings()["env"]["CLAUDE_ENABLE_STREAM_WATCHDOG"]
 
 
@@ -2040,31 +2054,18 @@ def _claude_json_from(script: str) -> dict:
     return json.loads(line.replace("$CHEESE_WORK", "/work"))
 
 
-def test_webfetch_is_denied_on_both_delivery_paths():
-    """WebFetch can hang a turn open with no way out, so it is denied outright.
-
-    Measured on this platform: two of two attempts on one page ran 1,028 s and
-    390 s and were ended by hand, while a larger page returned in 5 s. Reading
-    the binary shows why nothing on our side can bound it — the page fetch is
-    capped at 60 s and the domain preflight at 10 s, but the model call made on
-    the extracted text has no timeout at all.
-
-    `cheese fetch` is the replacement and is not a downgrade: end to end across
-    20 real sites it reads 19, every rung of it is bounded, and on the page that
-    hung for 17 minutes it answers in 10 seconds.
-
-    The deny has to hold on BOTH paths — the launch command and the settings
-    file — because a deny that lives in only one of them is not a deny.
-    """
+def test_repaired_webfetch_is_available_on_both_delivery_paths():
+    """Both launch methods expose the native tool with its transport preload."""
     from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD
     from app.domain.agent.harness.claude_code.session_launch import (
         build_session_launch,
     )
 
-    assert "WebFetch" in CLAUDE_BASE_CMD, "the launch command must carry the deny"
+    assert "WebFetch" not in CLAUDE_BASE_CMD
 
     spec = build_session_launch(config_dir="/cfg", workdir="/work", system_prompt="x")
     settings = json.loads(
         next(f.content for f in spec.files if f.name == "settings.json")
     )
-    assert "WebFetch" in settings["permissions"]["deny"]
+    assert "WebFetch" not in settings["permissions"]["deny"]
+    assert "--preload=" in spec.env["BUN_OPTIONS"]
