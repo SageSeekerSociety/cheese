@@ -10,6 +10,7 @@ import os
 import signal
 import subprocess
 import sys
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -58,6 +59,19 @@ def read_status(directory: Path) -> dict:
             stream.seek(max(0, log_path.stat().st_size - 32768))
             data["log"] = stream.read().decode(errors="replace")
     return data
+
+
+def wait_status(directory: Path) -> dict:
+    """Observe short preparations locally instead of waiting for another RPC."""
+    deadline = time.monotonic() + 0.5
+    while True:
+        status = read_status(directory)
+        if status["state"] not in {"pending", "preparing"}:
+            return status
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return status
+        time.sleep(min(0.05, remaining))
 
 
 def run(config, directory, command, *, adopt=None):
@@ -242,7 +256,11 @@ if __name__ == "__main__":
             os.kill(status["pid"], signal.SIGTERM)
         print(json.dumps(status))
     elif sys.argv[1:] == ["status"]:
-        print(json.dumps(read_status(root)))
+        # Old shipped helpers ignore this opt-in and retain ordinary status reads.
+        reader = (
+            wait_status if os.environ.get("CHEESE_STATUS_WAIT") == "1" else read_status
+        )
+        print(json.dumps(reader(root)))
     else:
         config = json.loads(os.environ["CHEESE_ENVIRONMENT"])
         raise SystemExit(run(config, root, sys.argv[1:]))
