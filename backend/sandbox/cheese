@@ -61,10 +61,16 @@ def _call(
     *,
     token: str | None = None,
     tolerate: tuple[int, ...] = (),
+    timeout: int = 20,
 ) -> dict:
     """Call the platform. Any HTTP error is fatal, except the statuses in
     `tolerate` — those come back as ``{"ok": False, "status": ..., "error": ...}``
-    for a caller that has something better to say than the raw response."""
+    for a caller that has something better to say than the raw response.
+
+    ``timeout`` is generous by default because these calls are small. One is
+    not: reading a web page can climb a ladder of fetch strategies ending in a
+    real browser, which measured 22 s on a page that answered and longer on one
+    that had to try every rung. That caller passes its own."""
     url = f"{API}{path}"
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, method=method)
@@ -75,7 +81,7 @@ def _call(
     if TURN:
         req.add_header("X-Cheese-Turn", TURN)
     try:
-        with urllib.request.urlopen(req, timeout=20) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.load(r)
     except urllib.error.HTTPError as e:
         raw = e.read().decode(errors="replace")
@@ -1136,7 +1142,10 @@ def main() -> None:
         body = {"url": a.url, "topic": TOPIC, "project": PROJECT}
         if a.prompt:
             body["prompt"] = a.prompt
-        data = _call("POST", "/fetch", body).get("data", {})
+        # Long, because this is the one slow call: the platform tries a ladder
+        # of strategies and the last rung renders the page in a real browser.
+        # The platform bounds every rung, so this only has to outlast them.
+        data = _call("POST", "/fetch", body, timeout=240).get("data", {})
         if not data.get("ok"):
             # 逐级说清楚怎么失败的。只说"读不到"的话,下次没人知道该改哪一级。
             print(f"[cheese] 读不到 {a.url}", file=sys.stderr)
