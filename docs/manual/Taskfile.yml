@@ -19,4 +19,4 @@ tasks:
     deps: [install]
     cmds:
       - pnpm exec vitepress build .
-      - python3 ../../scripts/emit_llms.py .vitepress/dist
+      - python3 ../../scripts/emit_llms.py ../../frontend/public/docs

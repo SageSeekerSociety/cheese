@@ -85,6 +85,6 @@ tmp/
 .playwright-cli/
 
 # 说明书站的构建产物与依赖（站的根就是 docs/manual）
-docs/manual/.vitepress/dist/
+frontend/public/docs/
 docs/manual/.vitepress/cache/
 docs/manual/node_modules/

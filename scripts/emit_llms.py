@@ -28,6 +28,8 @@ ROOT = Path(__file__).resolve().parents[1]
 MANUAL = ROOT / "docs" / "manual"
 SITE = "https://okcheese.com"
 BASE = f"{SITE}/docs"
+# 侧边栏的分组顺序 —— 与 docs/manual/.vitepress/config.mts 里的 GROUPS 一致。
+GROUPS = ["开始", "基础", "干活", "产出", "资源"]
 
 
 def _anchor_rules():
@@ -71,7 +73,7 @@ def emit(dist: Path) -> int:
     # 顺序跟侧边栏一致：读者看到的次序和模型拿到的次序不该是两回事。
     sources.sort(key=lambda p: (int(field(p.read_text("utf-8"), "order") or 999), p.name))
 
-    pages: list[tuple[str, str, str]] = []  # (slug, title, summary)
+    pages: list[tuple[str, str, str, str]] = []  # (slug, title, summary, group)
     for path in sources:
         raw = path.read_text(encoding="utf-8")
         body = raw.split("---\n", 2)[2] if raw.startswith("---\n") else raw
@@ -83,19 +85,31 @@ def emit(dist: Path) -> int:
         summary = next(
             (a["summary"] for a in anchors if a["page"] == path.stem and a["summary"]), ""
         )
-        pages.append((path.stem, title, summary))
+        pages.append((path.stem, title, summary, field(raw, "group") or "其他"))
 
+    # 分组和顺序跟侧边栏一模一样 —— 人看到的目录和模型拿到的目录不该是两回事,
+    # 否则「文档里第三部分那页」这种话在两边指的不是同一页。
     lines = [
         "# 知是 · 使用说明",
         "",
         "> 知是是一个你和 AI 队友一起做项目的地方。这份文档讲怎么用它：从建第一个",
         "> 项目，到把 AI 干出来的活合并进主分支。",
         "",
-        "## 文档",
-        "",
-        *[f"- [{title}]({BASE}/{slug}.md): {summary}" for slug, title, summary in pages],
-        "",
     ]
+    seen: list[str] = []
+    for _, _, _, group in pages:
+        if group not in seen:
+            seen.append(group)
+    order = [g for g in GROUPS if g in seen] + [g for g in seen if g not in GROUPS]
+    for group in order:
+        lines += [f"## {group}", ""]
+        lines += [
+            f"- [{title}]({BASE}/{slug}.md): {summary}"
+            for slug, title, summary, g in pages
+            if g == group
+        ]
+        lines.append("")
+
     (dist / "llms.txt").write_text("\n".join(lines), encoding="utf-8")
 
     # 平台上没有「把这一份带走」的入口：工作区文件只能一个一个下载，git 服务

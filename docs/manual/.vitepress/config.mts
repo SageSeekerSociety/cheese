@@ -7,10 +7,16 @@ import { defineConfig } from 'vitepress'
 // 它就出现在导航里。order 决定顺序，缺了就排到最后（按文件名）。
 const CONTENT = path.resolve(__dirname, '..')
 
-function pages() {
+// 侧边栏按功能分组。组的顺序写死在这里(它是产品的叙事顺序,不该由文件名决定);
+// 组内顺序看 order。加一页 = 新建一个 .md 并写好 frontmatter,配置不用动。
+const GROUPS = ['开始', '基础', '干活', '产出', '资源']
+
+type Page = { text: string; link: string; order: number; group: string; file: string }
+
+function pages(): Page[] {
   return fs
     .readdirSync(CONTENT)
-    // index.md 是首页，README.md 是写给维护者的规矩 —— 都不是说明书的一页。
+    // index.md 是首页,README.md 是写给维护者的规矩 —— 都不是说明书的一页。
     .filter((f) => f.endsWith('.md') && !['README.md', 'index.md'].includes(f))
     .map((f) => {
       const raw = fs.readFileSync(path.join(CONTENT, f), 'utf8')
@@ -20,10 +26,23 @@ function pages() {
         text: field('title') ?? f.replace(/\.md$/, ''),
         link: `/${f.replace(/\.md$/, '')}`,
         order: Number(field('order') ?? 999),
+        group: field('group') ?? '其他',
         file: f,
       }
     })
     .sort((a, b) => a.order - b.order || a.file.localeCompare(b.file))
+}
+
+function sidebar() {
+  const all = pages()
+  const seen = [...new Set(all.map((p) => p.group))]
+  // 认识的组按 GROUPS 排;新起的组排在后面,而不是消失 —— 一页因为组名写错就从
+  // 导航里蒸发,是这里最难发现的一种错。
+  const order = [...GROUPS.filter((g) => seen.includes(g)), ...seen.filter((g) => !GROUPS.includes(g))]
+  return order.map((g) => ({
+    text: g,
+    items: all.filter((p) => p.group === g).map(({ text, link }) => ({ text, link })),
+  }))
 }
 
 export default defineConfig({
@@ -33,14 +52,16 @@ export default defineConfig({
   // 站挂在 okcheese.com/docs 下，不是根 —— 所有内部链接由此生成。
   base: '/docs/',
   srcExclude: ['README.md', 'node_modules/**'],
-  outDir: './.vitepress/dist',
+  // 输出到前端的 public/：Vite 把这个目录原样搬进 dist，nginx 直接就托上了，
+  // 不用改 Dockerfile，也不用第二个服务。
+  outDir: '../../frontend/public/docs',
   // cleanUrls 生成 /docs/quickstart（没有 .html 后缀）。前端那台 nginx 的
   // try_files 要能补上 .html，见 docs/manual/README.md 的发布那一节。
   cleanUrls: true,
   lastUpdated: true,
   themeConfig: {
     nav: [{ text: '进入知是', link: 'https://okcheese.com/' }],
-    sidebar: [{ text: '使用说明', items: pages().map(({ text, link }) => ({ text, link })) }],
+    sidebar: sidebar(),
     search: { provider: 'local' },
     outline: { level: [2, 3], label: '本页内容' },
     editLink: {
