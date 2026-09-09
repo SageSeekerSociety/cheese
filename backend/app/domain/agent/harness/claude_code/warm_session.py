@@ -23,6 +23,7 @@ from pathlib import Path
 
 def build_warm_session_prepare(version: str, *, ca_pem: str = "") -> str:
     source = Path(__file__).read_text()
+    transport = Path(__file__).with_name("webfetch_transport.cjs").read_text()
     certificate = (
         "cat > \"$HOME/.cheese/warm-proxy-ca.pem\" <<'CHEESE_WARM_CA'\n"
         + ca_pem.rstrip("\n")
@@ -32,6 +33,8 @@ def build_warm_session_prepare(version: str, *, ca_pem: str = "") -> str:
     )
     return (
         'mkdir -p "$HOME/.cheese"\n'
+        "cat > \"$HOME/.cheese/webfetch_transport.cjs\" <<'CHEESE_WEBFETCH'\n"
+        f"{transport}\nCHEESE_WEBFETCH\n"
         "cat > \"$HOME/.cheese/warm-native-runner.py\" <<'CHEESE_WARM_RUNNER'\n"
         f"{source}\nCHEESE_WARM_RUNNER\n"
         + certificate
@@ -77,6 +80,12 @@ def prepare(directory: Path, binary: Path, environment: dict[str, str]) -> dict:
             raise ValueError("Warm session credentials or binary changed")
         if not _native_alive(state):
             raise RuntimeError("Prepared native process is no longer running")
+        # Refresh recovery assets without restarting a live spare.
+        _write(directory / "runner.py", Path(__file__).read_text())
+        _write(
+            directory / "webfetch_transport.cjs",
+            Path(__file__).with_name("webfetch_transport.cjs").read_text(),
+        )
     else:
         directory.mkdir(parents=True, exist_ok=False)
         directory.chmod(0o700)
@@ -106,6 +115,9 @@ def prepare(directory: Path, binary: Path, environment: dict[str, str]) -> dict:
         (directory / "rv.token").write_text(secrets.token_urlsafe(32))
         (directory / "environment.json").write_text(json.dumps(environment))
         (directory / "runner.py").write_text(Path(__file__).read_text())
+        (directory / "webfetch_transport.cjs").write_text(
+            Path(__file__).with_name("webfetch_transport.cjs").read_text()
+        )
         (config / ".claude.json").write_text(
             json.dumps(
                 {
@@ -169,6 +181,8 @@ def run(directory: Path) -> None:
         "CLAUDE_BG_BACKEND": "daemon",
         "CLAUDE_BG_CLAIM_AUTH": state["claim_auth"],
     }
+    preload = shlex.quote(str(directory / "webfetch_transport.cjs"))
+    env["BUN_OPTIONS"] = (env.get("BUN_OPTIONS", "") + f" --preload={preload}").strip()
     os.chdir(state["work"])
     os.execve(
         state["binary"],

@@ -27,6 +27,7 @@ def test_the_launch_names_the_files_claude_reads_before_it_starts():
         "settings.json",
         ".claude.json",
         "cheese-system-prompt.md",
+        "webfetch_transport.cjs",
         "skills/cheese-chat/SKILL.md",
         "skills/cheese-docs/SKILL.md",
     }
@@ -38,6 +39,7 @@ def test_the_launch_names_the_files_claude_reads_before_it_starts():
     assert launch.env == {
         "CLAUDE_CONFIG_DIR": "/sessions/x",
         "CHEESE_HARNESS": "claude-code",
+        "BUN_OPTIONS": "--preload=/sessions/x/webfetch_transport.cjs",
     }
     assert "--append-system-prompt-file /sessions/x/cheese-system-prompt.md" in (
         launch.command
@@ -87,16 +89,8 @@ def test_a_subagent_finishing_does_not_hand_the_tree_back():
     ]
 
 
-def test_hooks_settings_deny_the_tools_that_can_hang_a_turn():
-    """Both denied tools share one failure: a turn that calls them may never end.
-
-    AskUserQuestion draws its picker inside the screen's terminal, out of every
-    user's reach, so the model waits forever for a keypress nobody can make.
-    WebFetch has a step with no deadline — measured, two of two attempts on one
-    page ran 1,028 s and 390 s — and nothing on our side reaches it.
-
-    Both hooks backends read this settings.json, so the deny belongs here, next
-    to the hook wiring."""
+def test_hooks_settings_deny_unreachable_prompt_ui_and_allow_webfetch():
+    """The terminal picker is unreachable; repaired WebFetch remains available."""
     denied = hooks_settings()["permissions"]["deny"]
     assert "AskUserQuestion" in denied
-    assert "WebFetch" in denied
+    assert "WebFetch" not in denied
