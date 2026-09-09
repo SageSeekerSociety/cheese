@@ -1857,3 +1857,49 @@ def test_declaring_a_port_writes_it_on_the_machine(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert (tmp_path / ".claude/cheese-preview.port").read_text() == "5173\n"
+
+
+def test_no_mcp_server_is_planted_in_a_sandbox():
+    """The platform plants NO MCP server, on either delivery path.
+
+    An earlier revision planted `mcp-server-fetch` to get a fetch path a
+    deadline could reach. Measured against the same pages, that server extracts
+    badly where it matters (a list-style page yields 622 characters against
+    24,000+ from a converter that does not guess at "main content") and returns
+    the raw page instead of an answer (33k tokens for one Wikipedia article,
+    against tens of tokens from WebFetch's own summarisation). Claude Code's own
+    tool description also tells the model to PREFER an MCP fetch tool whenever
+    one exists, so planting one does not add a fallback — it replaces the better
+    default. Fetching moves to a platform-side service instead.
+    """
+    script = device_launch.build_launch_script(
+        sync_on_stop=True, system_prompt="", ca_pem=""
+    )
+    assert "mcpServers" not in _claude_json_from(script)
+
+    from app.domain.agent.harness.claude_code.session_launch import (
+        build_session_launch,
+    )
+
+    spec = build_session_launch(config_dir="/cfg", workdir="/work", system_prompt="x")
+    container = json.loads(
+        next(f.content for f in spec.files if f.name == ".claude.json")
+    )
+    assert "mcpServers" not in container
+
+
+def test_a_summarisation_stream_that_stalls_is_bounded():
+    """The one hang shape a setting still reaches.
+
+    Not WebFetch's own hang: measured on 2.1.224 and 2.1.261, its page fetch is
+    bounded (60 s) and its domain preflight is bounded (10 s); the step with no
+    deadline is the model call it makes on the extracted text, which no setting
+    reaches. This asserts the watchdog we CAN set stays set.
+    """
+    assert device_launch.hooks_settings()["env"]["CLAUDE_ENABLE_STREAM_WATCHDOG"]
+
+
+def _claude_json_from(script: str) -> dict:
+    """The `.claude.json` the launch script writes, as the shell would leave it."""
+    line = next(x for x in script.splitlines() if "hasCompletedOnboarding" in x)
+    return json.loads(line.replace("$CHEESE_WORK", "/work"))

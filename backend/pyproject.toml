@@ -12,6 +12,13 @@ dependencies = [
     "claude-agent-sdk>=0.2.101",
     "fastapi>=0.137.0",
     "httpx>=0.28.1",
+    # Fetching the web for an agent (app.domain.fetch). markdownify converts a
+    # page without deciding what its "main content" is — the readability-style
+    # extractors discard list pages wholesale. curl_cffi carries a real browser
+    # TLS fingerprint, which is the only thing that gets past a class of sites
+    # that refuse on JA3 alone.
+    "markdownify>=0.13",
+    "curl-cffi>=0.7",
     "meilisearch-python-sdk>=7.1.4",
     "openviking>=0.4.7",
     "pydantic>=2.13.4",
