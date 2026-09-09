@@ -1006,6 +1006,15 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
 # POSIX-only from here: the connector's tmux joins argv with spaces and
 # re-parses through /bin/sh (dash on Debian/Ubuntu) — bashisms die silently.
 REAL_HOME="$HOME"
+# Bash exposes this clock without spawning date. Other shells skip diagnostics.
+# Append across relaunches; only phase names and timestamps enter this file.
+cheese_launch_phase() {{
+  [ -n "${{EPOCHREALTIME:-}}" ] || return 0
+  [ -d "$REAL_HOME/.cheese/launch" ] || return 0
+  printf '%s %s\\n' "$EPOCHREALTIME" "$1" \\
+    >> "$REAL_HOME/.cheese/launch/$CHEESE_TOPIC.timing" 2>/dev/null || :
+}}
+cheese_launch_phase started
 CH="${{CHEESE_HOME:?Cheese session home is required}}"
 CW="${{CHEESE_WORK:?Cheese work directory is required}}"
 case "$CH" in "\\$HOME"*) CH="$REAL_HOME${{CH#\\$HOME}}";; esac
@@ -1039,6 +1048,7 @@ CHEESE_WARM_STAGE
 )"
 fi
 export HOME="$CH" CHEESE_WORK="$CW"
+cheese_launch_phase warm_staged
 mkdir -p "$HOME" "$CHEESE_WORK"
 # Canonicalize to absolutes (resolve symlinks) so nothing depends on cwd —
 # the tmux-hosted claude below runs from a fresh server with its own cwd.
@@ -1113,6 +1123,7 @@ cheese_prepare_workspace() {{
 {workspace_bringup}
 }}
 WORKSPACE_PID=""
+cheese_launch_phase files_written
 if [ -n "$WARM_ROOT" ]; then
   # The checkout and isolated-home files are independent. Join before adoption
   # so native initialization still sees the complete project and its rules.
@@ -1135,6 +1146,7 @@ rm -f "$HOME/.claude/cheese-machine.token"
 CHEESE_ROUTE="$(python3 "$HOME/.claude/cheese-settings-reconcile.py" \\
   "$REAL_HOME/.claude/settings.json" \\
   "$HOME/.claude/cheese-machine.token" 2>&1 || echo "reconcile-crashed")"
+cheese_launch_phase credentials_reconciled
 # The model credential claude will actually use, asserted into the process
 # environment — which is authoritative now that CLAUDE_CONFIG_DIR keeps claude
 # out of the owner's settings.json (whose env block used to override us).
@@ -1309,6 +1321,7 @@ if [ -z "$CLAUDE_BIN" ]; then
   exit 1
 fi
 CLAUDE_V="$("$CLAUDE_BIN" --version 2>/dev/null | head -n 1 | awk '{{print $1}}')"
+cheese_launch_phase version_checked
 if [ -z "$CLAUDE_V" ] || [ "$(printf '%s\\n%s\\n' "{CLAUDE_MIN_VERSION}" "$CLAUDE_V" \\
     | sort -V | head -n 1)" != "{CLAUDE_MIN_VERSION}" ]; then
   echo "cheese-launch: claude ${{CLAUDE_V:-unknown}} at $CLAUDE_BIN is older than \\
@@ -1336,6 +1349,7 @@ python3 - restore "$REAL_HOME" "$CLAUDE_V" \\
   "$CLAUDE_CONFIG_DIR" <<'CHEESE_NATIVE_CACHE'
 {startup_cache_source}
 CHEESE_NATIVE_CACHE
+cheese_launch_phase cache_restored
 CLAUDE="\\"$CLAUDE_BIN\\"{claude_args}"
 [ -n "$CLAUDE_MODEL" ] && CLAUDE="$CLAUDE --model $CLAUDE_MODEL"
 # 上一段对话接在哪儿。A screen is retired and reopened for reasons that have
@@ -1387,6 +1401,7 @@ fi
 [ -s "$CHEESE_SP" ] && CLAUDE="$CLAUDE --append-system-prompt-file \\"$CHEESE_SP\\""
 if [ -n "$WARM_ROOT" ]; then
   wait "$WORKSPACE_PID"
+  cheese_launch_phase workspace_ready
   # Reuse the loaded helper for adoption and terminal attachment. The shipped
   # helper already exposes both operations, including on existing warm machines.
   exec python3 - "$REAL_HOME/.cheese/warm-native-runner.py" \\
