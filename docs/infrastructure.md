@@ -376,25 +376,16 @@ line, then the same redeploy as any other env change:
 DREAM_ENABLED=true
 ```
 
-It hangs off the idle-screen reaper (`scheduler/service.py`), which is what
-sets the pace — and the pace surprises people:
+Memory consolidation runs independently of resource cleanup:
 
-- The reaper sweeps every `SANDBOX_REAP_INTERVAL_SECONDS` (**1h** default).
-- A topic must have had no block activity for `IDLE_REAP_HOURS` (**8h**) before
-  it is even a candidate.
-- At most `DREAM_MAX_PER_SWEEP` (**1**) topic is organized per sweep; topics
-  with fewer than `DREAM_MIN_BLOCKS` (**20**) blocks are skipped as not worth a
-  turn.
+- `SANDBOX_REAP_INTERVAL_SECONDS` remains the compatibility name for its interval
+  (one hour by default); it no longer releases idle rooms.
+- `SANDBOX_IDLE_HOURS` sets the required inactivity (eight hours by default).
+  Existing idle time counts immediately; enabling dreams does not start a new wait.
+- Each pass consolidates memory for at most `DREAM_MAX_PER_SWEEP` rooms (one by
+  default). `DREAM_MIN_BLOCKS` defaults to twenty. Rooms keep their sessions.
 
-So the first pass lands **no sooner than 8 hours** after the flip, and the
-backlog drains at roughly one topic an hour. Seeing nothing happen for an
-afternoon is the expected behaviour, not a failed deploy — check
-`docker logs cheese-backend-1 | grep 记忆整理` rather than re-flipping anything.
-
-**It only reaches topics that ran on a self-hosted device.** A Cloud turn
-leaves no screen behind and the idle-screen reaper is the only sweep there is,
-so a box with no online devices will never dream no matter what the flag says.
-Confirm there is one before concluding the flag is broken:
+To inspect the running job:
 
 ```bash
 docker logs cheese-backend-1 --since 1h 2>&1 | grep 'shipped to device'
@@ -415,16 +406,13 @@ restore/DR runbook in [`deploy/README-backup.md`](../deploy/README-backup.md).
   verify → off-site to R2 `viking/` / `prod-viking/`. Taken live, so a snapshot
   the backend wrote through is kept but named `-hot`. On `MEMORY_BACKEND=db` the
   tree is empty and the run is skipped, not failed.
-- **Transcripts** (`TRANSCRIPTS_HOST_PATH`, default
-  `/home/nictheboy/cheese-transcripts`, mounted at `/data/transcripts`): the
-  raw Claude session files of every place that ran on a device, one
-  `<project>/<place>/<timestamp>.tar.gz` per upload, shipped there before the
-  device home is deleted (`docs/where-a-turn-runs.md` §八). That directory IS
-  the data: hourly additive mirror to R2 `transcripts/` / `prod-transcripts/`
-  (`cheese-transcripts-mirror.timer`, running the uploads mirror's script). The
-  archives are written once and never modified, so they need neither the tar nor
-  the hot-snapshot care the memory tree above takes, and the mirror never
-  deletes remotely, so R2 stays a superset of the box.
+- **Transcripts**: live collection writes immutable original byte ranges and source
+  identity records directly to the private `TRANSCRIPT_S3_BUCKET`, alongside a
+  PostgreSQL index. Existing tar archives remain in `TRANSCRIPTS_HOST_PATH`
+  (`/home/nictheboy/cheese-transcripts`, mounted at `/data/transcripts`) and keep
+  their hourly additive R2 mirror through `cheese-transcripts-mirror.timer`.
+  Neither archived-room cleanup nor this mirror deletes retained transcript objects.
+  See [archived-room cleanup deployment](../deploy/README-room-cleanup.md).
 - **Monitoring** (code-enforced tripwires): `backup-freshness.yml` (daily, fails
   if last backup > 26h), `box-uptime.yml` (twice hourly at :25/:50, fails when
   the last **two** heartbeats both failed to complete — dev box, prod box, or

@@ -21,6 +21,7 @@ import os
 import subprocess
 import time
 import uuid
+from types import SimpleNamespace
 
 from app.domain.agent.harness.claude_code import device_launch
 from app.domain.agent.harness.claude_code.hook_events import HookRouter
@@ -203,6 +204,13 @@ async def test_a_turn_hands_the_machine_the_conversation_to_continue(monkeypatch
         return self._public_base
 
     monkeypatch.setattr(DeviceChannel, "_device_api_base", public_base)
+
+    async def active_room(_self, topic_id):
+        return SimpleNamespace(id=topic_id, resource_id=None)
+
+    monkeypatch.setattr(
+        "app.domain.topic.services.TopicService.lock_for_execution", active_room
+    )
     opened = asyncio.Event()
 
     class RecordingHub(FakeHub):

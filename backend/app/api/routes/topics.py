@@ -72,7 +72,7 @@ from app.domain.room_task.services import (
     WorkTreeService,
 )
 from app.domain.topic.doc_change import summarize_doc_change
-from app.domain.topic.models import Topic
+from app.domain.topic.models import Topic, TopicKind
 from app.domain.topic.relay import TopicRelayService
 from app.domain.topic.repositories import SortOrder, TopicSortField
 from app.domain.topic.schemas import (
@@ -227,6 +227,7 @@ def _topic_out(
     relevance: dict[uuid.UUID, TopicRelevance] | None = None,
     cards: dict[uuid.UUID, AcceptCard] | None = None,
     now: datetime | None = None,
+    managed_ids: set[uuid.UUID] | None = None,
 ) -> dict:
     """TopicOut plus the signals the ORM row cannot carry: the in-memory
     turn-running flag (separate from `status`/归档 — see TopicOut.running: a
@@ -239,6 +240,9 @@ def _topic_out(
     in and the one phrase to print on it, derived from the same facts the row
     already carries plus its live card (`room_task/presentation.py`)."""
     out = TopicOut.model_validate(topic)
+    out.can_archive = topic.kind != TopicKind.root and topic.id in (
+        managed_ids or set()
+    )
     # Assign before dumping so the instant is serialized by the same schema as
     # created_at/updated_at — a hand-rolled isoformat() here rendered "+00:00"
     # where every other timestamp in the payload says "Z".
@@ -284,10 +288,18 @@ async def list_topics(
     running_ids = runner.running_topic_ids()
     relevance = await service.relevance_for_topics(topics, _viewer(actor))
     cards = await _live_room_cards(db, [t.id for t in topics])
+    managed = (
+        await TopicMemberService(db).managed_topic_ids(
+            [t.id for t in topics], actor.handle
+        )
+        if actor.authenticated
+        else set()
+    )
     # 一次，给整页用同一个「现在几点」——见 list_project_tasks 里同一行的理由。
     now = datetime.now(UTC)
     items = [
-        _topic_out(t, running_ids, last_activity, relevance, cards, now) for t in topics
+        _topic_out(t, running_ids, last_activity, relevance, cards, now, managed)
+        for t in topics
     ]
     return ok(page(items, total))
 
@@ -324,8 +336,20 @@ async def get_topic(
     last_activity = await service.last_activity_for_topics([topic.id])
     relevance = await service.relevance_for_topics([topic], _viewer(actor))
     cards = await _live_room_cards(db, [topic.id])
+    managed = (
+        await TopicMemberService(db).managed_topic_ids([topic.id], actor.handle)
+        if actor.authenticated
+        else set()
+    )
     return ok(
-        _topic_out(topic, runner.running_topic_ids(), last_activity, relevance, cards)
+        _topic_out(
+            topic,
+            runner.running_topic_ids(),
+            last_activity,
+            relevance,
+            cards,
+            managed_ids=managed,
+        )
     )
 
 
@@ -1715,9 +1739,40 @@ async def archive_topic(
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
-    by = (body.get("by") or "anonymous").strip() or "anonymous"
-    topic = await TopicService(db).archive(topic_id, by=by)
+    if not actor.authenticated:
+        raise ForbiddenError("归档需要登录")
+    await TopicMemberService(db).require_archive_manager(topic_id, actor.handle)
+    topic = await TopicService(db).archive(topic_id, by=actor.handle)
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
+
+
+@router.get("/{topic_id}/cleanup")
+async def cleanup_status(
+    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    from app.domain.topic.models import RoomCleanup
+
+    topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id, enforce=True
+    )
+    operation = (
+        await db.get(RoomCleanup, topic.cleanup_id) if topic.cleanup_id else None
+    )
+    if operation is None:
+        return ok({"state": "not_scheduled"})
+    return ok(
+        {
+            "state": operation.state,
+            "due_at": operation.due_at.isoformat(),
+            "reason": operation.last_error,
+            "resources": len(operation.resources),
+            "removed": sum(bool(entry.get("removed")) for entry in operation.resources),
+        }
+    )
 
 
 @router.post("/{topic_id}/unarchive")
@@ -1735,8 +1790,10 @@ async def unarchive_topic(
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
-    by = (body.get("by") or "anonymous").strip() or "anonymous"
-    topic = await TopicService(db).unarchive(topic_id, by=by)
+    if not actor.authenticated:
+        raise ForbiddenError("取消归档需要登录")
+    await TopicMemberService(db).require_archive_manager(topic_id, actor.handle)
+    topic = await TopicService(db).unarchive(topic_id, by=actor.handle)
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
 
 

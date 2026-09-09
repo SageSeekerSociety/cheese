@@ -73,6 +73,7 @@ class HubScreen:
     agent_handle: str
     project_id: uuid.UUID | None = None
     topic_id: uuid.UUID | None = None
+    resource_id: uuid.UUID | None = None
     hook_key: str = ""
     # UNIX expiry of the model credential the screen's `claude` was LAUNCHED with
     # (its `CHEESE_TOKEN_EXPIRES`). A bare `claude` reads that credential — the

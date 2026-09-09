@@ -5,12 +5,30 @@ import os
 import subprocess
 import sys
 import time
+import uuid
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from pydantic import ValidationError
 
 from app.domain.agent import environment_runner
 from app.domain.project.environment import EnvironmentConfig
+
+
+@pytest.fixture(autouse=True)
+def active_room_admission(monkeypatch):
+    from app.domain.agent.device_provider import DeviceChannel
+
+    async def active_room(_self, topic_id):
+        return SimpleNamespace(id=topic_id, resource_id=None)
+
+    monkeypatch.setattr(
+        "app.domain.topic.services.TopicService.lock_for_execution", active_room
+    )
+    monkeypatch.setattr(
+        DeviceChannel, "_session_factory", Mock(return_value=AsyncMock()), raising=False
+    )
 
 
 def launch(tmp_path, config, command=None, *, checkout=True):
@@ -255,8 +273,8 @@ async def test_channels_ignore_old_failure_but_wait_for_new_attempt(
     monkeypatch.setattr(device_provider, "environment_status", read)
     monkeypatch.setattr(device_provider.asyncio, "sleep", AsyncMock())
     actual = await channel.ensure_ready(
-        project_id="project",
-        topic_id="topic",
+        project_id=uuid.UUID(int=1),
+        topic_id=uuid.UUID(int=2),
         token="token",
         env={"CHEESE_ENVIRONMENT": "{}"},
         memory_scope=None,
@@ -288,8 +306,8 @@ async def test_reconnect_to_preparing_process_never_probes_it_as_dead(monkeypatc
         device_id="machine",
         agent_user_id=1,
         agent_handle="agent",
-        project_id="project",
-        topic_id="topic",
+        project_id=uuid.UUID(int=1),
+        topic_id=uuid.UUID(int=2),
         token="token",
         env={"CHEESE_ENVIRONMENT": "{}"},
         launch=None,
@@ -312,8 +330,8 @@ async def test_reconnect_uses_initial_environment_read_until_next_poll(monkeypat
     read = AsyncMock(side_effect=[{"state": "preparing"}, {"state": "ready"}])
     monkeypatch.setattr(device_provider, "environment_status", read)
     actual = await channel.ensure_ready(
-        project_id="project",
-        topic_id="topic",
+        project_id=uuid.UUID(int=1),
+        topic_id=uuid.UUID(int=2),
         token="token",
         env={"CHEESE_ENVIRONMENT": "{}"},
         memory_scope=None,
@@ -351,8 +369,8 @@ async def test_ready_environment_is_rechecked_only_after_screen_replacement(
     )
     monkeypatch.setattr(device_provider, "environment_status", read)
     request = channel.ensure_ready(
-        project_id="project",
-        topic_id="topic",
+        project_id=uuid.UUID(int=1),
+        topic_id=uuid.UUID(int=2),
         token="token",
         env={"CHEESE_ENVIRONMENT": "{}"},
         memory_scope=None,
@@ -388,8 +406,8 @@ async def test_fast_environment_is_observed_without_two_second_wait(monkeypatch)
 
     monkeypatch.setattr(device_provider, "environment_status", read)
     actual = await channel.ensure_ready(
-        project_id="project",
-        topic_id="topic",
+        project_id=uuid.UUID(int=1),
+        topic_id=uuid.UUID(int=2),
         token="token",
         env={"CHEESE_ENVIRONMENT": "{}"},
         memory_scope=None,
@@ -433,8 +451,8 @@ async def test_long_environment_returns_to_low_frequency_checks(monkeypatch):
     monkeypatch.setattr(device_provider.asyncio, "sleep", sleep)
     monkeypatch.setattr(device_provider, "environment_status", read)
     actual = await channel.ensure_ready(
-        project_id="project",
-        topic_id="topic",
+        project_id=uuid.UUID(int=1),
+        topic_id=uuid.UUID(int=2),
         token="token",
         env={"CHEESE_ENVIRONMENT": "{}"},
         memory_scope=None,

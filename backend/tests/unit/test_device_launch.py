@@ -270,6 +270,62 @@ def test_drainer_config_is_rewritten_each_launch_and_read_each_pass():
         assert line in script
 
 
+def test_adoption_upgrades_only_the_old_sender_process(tmp_path):
+    import threading
+    from pathlib import Path
+
+    home = tmp_path / "home"
+    native_home = home / ".claude"
+    native_home.mkdir(parents=True)
+    drain = native_home / "cheese-drain"
+    drain.write_text(
+        "#!/bin/sh\nexec python3 - \"$0\" <<'PY'\n"
+        "import os, sys, time\nfrom pathlib import Path\n"
+        "Path(sys.argv[1] + '.pid').write_text(str(os.getpid()))\n"
+        "while True: time.sleep(1)\nPY\n"
+    )
+    old = subprocess.Popen(["sh", str(drain)])
+    native = subprocess.Popen(["sleep", "30"])
+    reaper = threading.Thread(target=old.wait)
+    reaper.start()
+    try:
+        deadline = time.monotonic() + 5
+        while not Path(str(drain) + ".pid").exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert Path(str(drain) + ".pid").exists()
+        drain.write_text(_drain_body())
+        script = device_launch.build_launch_script()
+        adoption = script.split('    DRAIN_PID="', 1)[1].split("\n  else\n", 1)[0]
+        log = tmp_path / "tmux-calls"
+        wrapper = (
+            'set -e\natmux() { printf "%s\\n" "$*" >> "$TEST_LOG"; }\n'
+            + '    DRAIN_PID="'
+            + adoption
+        )
+        result = subprocess.run(
+            ["sh", "-c", wrapper],
+            env={
+                **os.environ,
+                "HOME": str(home),
+                "SESSION": "fixture",
+                "TEST_LOG": str(log),
+            },
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        assert result.returncode == 0, result.stderr
+        assert old.poll() is not None
+        assert native.poll() is None
+        assert "new-window -d -t fixture -n cheese-drain" in log.read_text()
+    finally:
+        for process in (old, native):
+            if process.poll() is None:
+                process.terminate()
+            process.wait(timeout=5)
+        reaper.join(timeout=5)
+
+
 def test_no_tmux_branch_keeps_the_drainer_in_claudes_own_tree():
     """Without tmux, claude stays in the launcher's process tree — a drainer
     backgrounded there genuinely shares its fate, so that shape stays."""
@@ -359,11 +415,12 @@ def test_running_drainer_uses_rotated_delivery_configuration(tmp_path):
         proc.wait(timeout=5)
 
 
-def test_drainer_prunes_expired_events_without_resetting_sequence(tmp_path):
+def test_drainer_prunes_only_claims_and_keeps_unacknowledged_events(tmp_path):
     drain, spool, env = _write_drainer(tmp_path, curl_response='{"code":500}')
-    expired = [spool / "0000000000000000001.old", spool / ".n0000000000000000001"]
+    expired = [spool / ".n0000000000000000001"]
+    unacknowledged = spool / "0000000000000000001.old"
     sequence = spool / ".seq"
-    for path in [*expired, sequence]:
+    for path in [*expired, sequence, unacknowledged]:
         path.write_text("1")
         os.utime(path, (time.time() - 90000, time.time() - 90000))
     fresh = spool / "0000000000000000002.fresh"
@@ -374,6 +431,7 @@ def test_drainer_prunes_expired_events_without_resetting_sequence(tmp_path):
         while any(path.exists() for path in expired) and time.monotonic() < deadline:
             time.sleep(0.01)
         assert all(not path.exists() for path in expired)
+        assert unacknowledged.exists()
         assert fresh.exists()
         assert sequence.read_text() == "1"
     finally:

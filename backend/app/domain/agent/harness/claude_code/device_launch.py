@@ -468,7 +468,7 @@ printf '%s\\n' "$WANT" > "$STAMPF"
 
 def build_drain_script() -> str:
     source = Path(event_drain.__file__).read_text(encoding="utf-8")
-    return "#!/bin/sh\nexec python3 - \"$0\" <<'PY'\n" + source + "\nPY\n"
+    return '#!/bin/sh\nexec python3 - "$0" "$@" <<\'PY\'\n' + source + "\nPY\n"
 
 
 # Bringing a device's workspace up, kept out of the launcher's f-string (and
@@ -1458,6 +1458,26 @@ if command -v tmux >/dev/null 2>&1; then
         || true
     fi
     DRAIN_PID="$(cat "$HOME/.claude/cheese-drain.pid" 2>/dev/null || true)"
+    # Upgrade only the sender; the native agent and its context keep running.
+    DRAIN_WANT="$(cksum "$HOME/.claude/cheese-drain" | cut -d' ' -f1)"
+    DRAIN_HAVE="$(cat "$HOME/.claude/cheese-drain.version" 2>/dev/null || true)"
+    if [ -n "$DRAIN_PID" ] && kill -0 "$DRAIN_PID" 2>/dev/null &&
+       [ "$DRAIN_WANT" != "$DRAIN_HAVE" ]; then
+      case "$(ps -p "$DRAIN_PID" -o args=)" in
+        *" - $HOME/.claude/cheese-drain"*)
+          kill "$DRAIN_PID"
+          DRAIN_WAIT=0
+          while kill -0 "$DRAIN_PID" 2>/dev/null && [ "$DRAIN_WAIT" -lt 10 ]; do
+            sleep 1
+            DRAIN_WAIT=$((DRAIN_WAIT + 1))
+          done
+          if kill -0 "$DRAIN_PID" 2>/dev/null; then
+            echo "Spool sender has not stopped for upgrade" >&2; exit 1
+          fi
+          ;;
+        *) echo "Refusing to replace an unidentified spool sender" >&2; exit 1 ;;
+      esac
+    fi
     if [ -z "$DRAIN_PID" ] || ! kill -0 "$DRAIN_PID" 2>/dev/null; then
       TETHER="$(atmux list-panes -s -t "$SESSION" -F '#{{pane_pid}}' \\
         2>/dev/null | head -n 1)"

@@ -57,6 +57,7 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
     )
     session = AsyncMock()
     session.scalars.return_value = SimpleNamespace(all=lambda: [])
+    session.execute.return_value = SimpleNamespace(scalar_one_or_none=lambda: None)
     service = AcceptService(session)
     service._repo = AsyncMock()
     service._repo.get.return_value = card
@@ -68,7 +69,6 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
     service._topic_or_404 = AsyncMock(return_value=topic)
     service._projects = AsyncMock()
     service._projects.get.return_value = project
-    service._machines = AsyncMock()
     service._enforce_protocol = AsyncMock()
     # Unbound project: the platform is the forge and the local merge is the
     # accept (#363) — the lane under test here.
@@ -224,8 +224,7 @@ async def test_successful_merge_notifies_room(monkeypatch):
     assert card.status == AcceptStatus.accepted
     assert topic.status == TopicStatus.active
     assert topic.accepted_by == "alice"
-    # 计费云 VM 仍然在交付时回收（它没有 reaper），容器/设备屏不再动。
-    service._machines.release_topic_machine.assert_awaited_once_with(topic.id)
+    # Delivery retains the open room's Cloud machine.
     await _drain_notify()
     notify.assert_awaited_once()
     _, kwargs = notify.await_args

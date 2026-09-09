@@ -305,12 +305,30 @@ async def test_topic_release_deletes_once_and_stamps_the_lease():
         project_id=uuid.uuid4(), topic_id=topic_id, requested_by="owner"
     )
 
-    released = await service.release_topic_machine(topic_id)
-    repeated = await service.release_topic_machine(topic_id)
+    await service.release_archived_machine(machine.id)
+    await service.release_archived_machine(machine.id)
 
     assert client.deleted == [machine.machine_id]
-    assert released is machine and released.released_at is not None
-    assert repeated is None
+    assert machine.released_at is not None
+
+
+async def test_cloud_release_preserves_unrecognized_device_directories(monkeypatch):
+    client = FakeMicroCloud()
+    service = build_service(client)
+    machine = await service.provision(
+        project_id=uuid.uuid4(), topic_id=uuid.uuid4(), requested_by="owner"
+    )
+    machine.device_id = "cloud"
+    service._devices.list_topic_bindings = AsyncMock(return_value=[])
+    inventory = AsyncMock(return_value=[("home", "unknown-project", "old-room")])
+    monkeypatch.setattr(
+        "app.domain.agent.device_provider.list_device_storage", inventory
+    )
+    from app.core.errors import ConflictError
+
+    with pytest.raises(ConflictError, match="still contains"):
+        await service.release_archived_machine(machine.id)
+    assert client.deleted == []
 
 
 async def test_ensure_topic_machine_reuses_the_active_lease(monkeypatch):
@@ -342,7 +360,7 @@ async def test_ensure_topic_machine_reuses_the_active_lease(monkeypatch):
         def __init__(self, _session):
             pass
 
-        async def get_or_404(self, _topic_id):
+        async def lock_for_execution(self, _topic_id):
             return topic
 
     service._session = _Session()
@@ -381,7 +399,7 @@ async def test_ensure_topic_machine_without_authority_provisions_nothing(monkeyp
         def __init__(self, _session):
             pass
 
-        async def get_or_404(self, _topic_id):
+        async def lock_for_execution(self, _topic_id):
             return topic
 
     service._session = _Session()
@@ -421,7 +439,7 @@ async def test_topic_machines_share_the_team_quota(monkeypatch):
         def __init__(self, _session):
             pass
 
-        async def get_or_404(self, topic_id):
+        async def lock_for_execution(self, topic_id):
             return topics[topic_id]
 
     class _Identities:
