@@ -2,6 +2,7 @@ package terminal
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -203,4 +204,109 @@ func TestChunkEnd(t *testing.T) {
 	if got := chunkEnd([]byte{0x80, 0x80, 0x80, 0x80}, 2); got != 2 {
 		t.Errorf("chunkEnd of invalid UTF-8 = %d, want 2 (no stall)", got)
 	}
+}
+
+// windowSize reads what tmux thinks the session's window measures right now —
+// the size the hosted program is actually rendering into, and the one every
+// attached viewer sees.
+func windowSize(t *testing.T, m *Manager, session string) (int, int) {
+	t.Helper()
+	var out bytes.Buffer
+	cmd := m.tmux("display-message", "-p", "-t", session, "#{window_width} #{window_height}")
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("display-message: %v", err)
+	}
+	var cols, rows int
+	if _, err := fmt.Sscanf(strings.TrimSpace(out.String()), "%d %d", &cols, &rows); err != nil {
+		t.Fatalf("看不懂 tmux 报的窗口尺寸 %q: %v", out.String(), err)
+	}
+	return cols, rows
+}
+
+// requireUsable fails when the window is too small for a program to render
+// anything readable into. 10x1 is not a hypothetical: it is what a browser
+// terminal reports in the moment before its container has been laid out.
+func requireUsable(t *testing.T, what string, cols, rows int) {
+	t.Helper()
+	if cols < 20 || rows < 5 {
+		t.Errorf("%s：窗口被压成 %dx%d，程序没法在里面渲染出任何能读的东西", what, cols, rows)
+	}
+}
+
+// TestDegenerateViewerSizeDoesNotSquashTheScreen covers the failure the whole
+// screen relay exists to avoid: a viewer that reports a nonsense size makes the
+// screen unreadable FOR EVERYONE, because tmux sizes a window to its most
+// recently attached client (window-size latest) and a screen is shared. Measured
+// on the dev box 2026-09-09: 125 of 181 live screens sat below 10 rows, one with
+// a real viewer attached at 92x49 looking at a 10x1 window and reporting the
+// agent as dead.
+//
+// Three ways a size enters the connector, one assertion each: the size a screen
+// is created with, the size a viewer attaches with, and the size a viewer
+// resizes to mid-session.
+func TestDegenerateViewerSizeDoesNotSquashTheScreen(t *testing.T) {
+	if _, err := findTmux(); err != nil {
+		t.Skip("no tmux available")
+	}
+	isolate(t)
+	m, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	defer m.KillServer()
+
+	t.Run("创建时给的尺寸是退化的", func(t *testing.T) {
+		if _, err := m.Spawn("born-tiny", []string{"sleep", "60"}, nil, 10, 1); err != nil {
+			t.Fatalf("Spawn: %v", err)
+		}
+		cols, rows := windowSize(t, m, "born-tiny")
+		requireUsable(t, "用 10x1 创建的屏", cols, rows)
+	})
+
+	t.Run("观看者以退化尺寸接上来", func(t *testing.T) {
+		s, err := m.Spawn("viewer-tiny", []string{"sleep", "60"}, nil, 120, 40)
+		if err != nil {
+			t.Fatalf("Spawn: %v", err)
+		}
+		c, err := s.Attach(10, 1, func([]byte) {})
+		if err != nil {
+			t.Fatalf("Attach: %v", err)
+		}
+		defer c.Close()
+		// tmux 把窗口调到新客户端的尺寸是异步的，给它一点时间落定。
+		var cols, rows int
+		for i := 0; i < 40; i++ {
+			cols, rows = windowSize(t, m, "viewer-tiny")
+			if cols < 20 || rows < 5 {
+				break // 已经坏了，不用再等
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
+		requireUsable(t, "有观看者以 10x1 接上来之后", cols, rows)
+	})
+
+	t.Run("观看者中途缩到退化尺寸", func(t *testing.T) {
+		s, err := m.Spawn("resize-tiny", []string{"sleep", "60"}, nil, 120, 40)
+		if err != nil {
+			t.Fatalf("Spawn: %v", err)
+		}
+		c, err := s.Attach(100, 30, func([]byte) {})
+		if err != nil {
+			t.Fatalf("Attach: %v", err)
+		}
+		defer c.Close()
+		if err := c.Resize(10, 1); err != nil {
+			t.Fatalf("Resize: %v", err)
+		}
+		var cols, rows int
+		for i := 0; i < 40; i++ {
+			cols, rows = windowSize(t, m, "resize-tiny")
+			if cols < 20 || rows < 5 {
+				break
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
+		requireUsable(t, "观看者中途缩到 10x1 之后", cols, rows)
+	})
 }
