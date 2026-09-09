@@ -395,10 +395,10 @@ jobs:
       # fails if this step did not happen.
       - name: Build the user manual into the image context
         run: |
-          corepack enable
           cd docs/manual
-          pnpm install --frozen-lockfile
-          pnpm exec vitepress build .
+          # The runner cannot install shims beside its root-owned Node binary.
+          corepack pnpm@9.15.3 install --frozen-lockfile
+          corepack pnpm@9.15.3 exec vitepress build .
           python3 ../../scripts/emit_llms.py ../../frontend/public/docs
 
       - name: Set up Docker Buildx
