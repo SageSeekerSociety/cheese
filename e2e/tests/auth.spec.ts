@@ -31,3 +31,24 @@ test.describe('Login', () => {
     expect(accessToken).toBeFalsy();
   });
 });
+
+test.describe('English login', () => {
+  test.use({ locale: 'en-US' });
+
+  test('keeps the selected language after reload and signs in through the English form', async ({ page }) => {
+    await page.goto('/account/signin');
+    await expect(page.getByRole('heading', { name: 'Sign in', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: '切换到中文' }).click();
+    await page.getByRole('button', { name: 'Switch to English' }).click();
+    await page.reload();
+    await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+    await page.getByLabel('Username').fill(DEMO_USERNAME);
+    await page.getByLabel('Password', { exact: true }).fill(DEMO_PASSWORD);
+    await page.getByRole('checkbox').check();
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+
+    await expect(page.getByText('Signed in', { exact: true })).toBeVisible();
+    await expect(page.locator('.app-rail-item:not(.app-rail-item--add)').first()).toBeVisible();
+    expect(await page.evaluate(() => localStorage.getItem('accessToken'))).toBeTruthy();
+  });
+});
