@@ -273,9 +273,11 @@ def test_hooks_settings_wire_command_hook_to_forwarder():
     for event in events:
         entry = s["hooks"][event][0]
         assert entry["hooks"][0] == {"type": "command", "command": "cheese-hook"}
-    # The picker AskUserQuestion draws in the screen's terminal is unreachable
-    # for a remote user too — denied in settings as well as on the launch line.
-    assert s["permissions"]["deny"] == ["AskUserQuestion"]
+    # Both denied tools can leave a turn with no way to end: AskUserQuestion
+    # draws its picker in the screen's terminal where no remote user can reach
+    # it, and WebFetch has a step with no deadline. Denied in settings as well
+    # as on the launch line — a deny in only one of the two is not a deny.
+    assert set(s["permissions"]["deny"]) == {"AskUserQuestion", "WebFetch"}
 
 
 def test_build_screen_launch_shapes_command_and_env():
