@@ -1364,9 +1364,29 @@ fi
 [ -s "$CHEESE_SP" ] && CLAUDE="$CLAUDE --append-system-prompt-file \\"$CHEESE_SP\\""
 if [ -n "$WARM_ROOT" ]; then
   wait "$WORKSPACE_PID"
-  python3 "$REAL_HOME/.cheese/warm-native-runner.py" adopt-room "$WARM_ROOT"
-  exec python3 "$REAL_HOME/.cheese/warm-native-runner.py" attach \\
-    "$WARM_ROOT" "$CHEESE_PROJECT" "$CHEESE_TOPIC"
+  # Reuse the loaded helper for adoption and terminal attachment. The shipped
+  # helper already exposes both operations, including on existing warm machines.
+  exec python3 - "$REAL_HOME/.cheese/warm-native-runner.py" \\
+    "$WARM_ROOT" 3<&0 <<'WARM_ATTACH'
+import os
+import runpy
+import sys
+from pathlib import Path
+
+# The heredoc carries code; tmux and environment scripts still need the PTY.
+os.dup2(3, 0)
+os.close(3)
+runner = runpy.run_path(sys.argv[1])
+directory = Path(sys.argv[2])
+code = runner["adopt_room"](directory)
+if code:
+    raise SystemExit(code)
+terminal = runner["connection"](
+    directory, os.environ["CHEESE_PROJECT"], os.environ["CHEESE_TOPIC"]
+)
+os.environ.pop("TMUX", None)
+os.execvp("tmux", terminal["command"])
+WARM_ATTACH
 fi
 if command -v tmux >/dev/null 2>&1; then
   # WHICH tmux server hosts the inner session decides who is able to wipe it.
