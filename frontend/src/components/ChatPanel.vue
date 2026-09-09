@@ -1296,10 +1296,17 @@ const agentMention = computed(() => mentionPool.value.find((m) => m.agent) ?? nu
 // 独立开关是另一回事 —— 那种东西能和正文说不一样的话（开关亮着、正文里没有 @），
 // 那时候「这条到底算不算叫了它」谁也答不上来，而只有开关那条是通的。
 const summonOn = computed(() => props.alwaysSummon || mentionsAgent(expandMentions(draft.value)))
+// 这个房间的芝士是谁，现在知道了吗。
+const summonReady = computed(() => agentMention.value !== null)
 
+// 名册还没到的时候不能替人写这个 @：召唤与否是浏览器按**能不能把名字解析成
+// handle** 算出来的，此刻解析不出来，写进去的 @ 只是一行字，消息照发、它照样不
+// 动。所以这两个入口在那一瞬间是关着的（见 `summonReady`），宁可少一个入口，
+// 也不要一个点了不算数的入口。
 function withAgentMention(text: string): string {
-  if (mentionsAgent(expandMentions(text))) return text
-  return `@${agentMention.value?.label ?? '芝士'} ${text}`
+  const agent = agentMention.value
+  if (!agent || mentionsAgent(expandMentions(text))) return text
+  return `@${agent.label} ${text}`
 }
 
 // 「交给芝士」这颗按钮：它不改任何隐藏状态，它只是替你打那五个字，写完你看得见、
@@ -1433,7 +1440,7 @@ function onComposerKey(e: KeyboardEvent) {
   if (!t || t.tagName !== 'TEXTAREA' || document.activeElement !== t) return
   // ⌘/Ctrl+Enter = 发送并交给芝士，正文里一个 @ 都不用打。判断排在 @-菜单前面：
   // 打到一半的 @ 不该把这个已经说清楚的「交给它」变成一次选人。
-  if (e.metaKey || e.ctrlKey) {
+  if ((e.metaKey || e.ctrlKey) && summonReady.value) {
     e.preventDefault()
     sendDraft({ summon: true })
     return
@@ -2120,6 +2127,7 @@ onBeforeUnmount(() => {
                 type="button"
                 class="summon-btn"
                 :class="{ 'summon-btn--on': summonOn }"
+                :disabled="!summonReady"
                 :aria-pressed="summonOn"
                 :title="
                   summonOn
@@ -2484,9 +2492,13 @@ details.sys-row > summary::-webkit-details-marker {
     border-color 0.12s ease,
     background-color 0.12s ease;
 }
-.summon-btn:hover {
+.summon-btn:hover:not(:disabled) {
   background: var(--fill);
   color: var(--text);
+}
+.summon-btn:disabled {
+  cursor: default;
+  opacity: 0.5;
 }
 .summon-btn--on {
   border-color: var(--accent);

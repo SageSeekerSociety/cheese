@@ -80,6 +80,14 @@ describe('输入区的两行', () => {
   // 「交给芝士」是这一行唯一带字的一颗，而它恰恰是「这条消息」的动作：它决定
   // 这条消息叫不叫它。带字是故意的——一个光秃秃的 @ 图标猜不出来，而「怎么叫
   // 它」正是这个产品里最该一眼看见的事。窄屏上那三个字由 CSS 收起来。
+  // 名册还没到（或这个房间根本没有芝士的座位）时，浏览器解析不出它的 handle，
+  // 替人写进正文的那个 @ 就只是一行字：消息照发、它照样不动。所以这一瞬间这颗
+  // 按钮是关着的——少一个入口，好过一个点了不算数的入口。
+  it('还不知道芝士是谁的时候，「交给芝士」是关着的', () => {
+    const btn = composer().querySelector<HTMLButtonElement>('.summon-btn')!
+    expect(btn.disabled).toBe(true)
+  })
+
   it('这一行只放这条消息自己的动作', () => {
     const actions = composer().querySelector('.composer-actions')!
     expect(actions.textContent?.replace(/\s/g, '')).toBe('交给芝士')

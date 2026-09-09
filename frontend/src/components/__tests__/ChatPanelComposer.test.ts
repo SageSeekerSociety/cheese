@@ -352,6 +352,37 @@ describe('对话栏自己的输入栏', () => {
     expect(sent).toHaveLength(0)
   })
 
+  // 同一条规矩对快捷键也成立：名册还没到就别假装召唤，那一下发出去的消息里没有
+  // 任何能解析成 handle 的东西，芝士不会动，而按的人以为自己叫了它。
+  it('还不知道芝士是谁的时候，⌘/Ctrl+Enter 只是普通发送', async () => {
+    const api = await import('../../api')
+    vi.mocked(api.listTopicMembers).mockResolvedValue({
+      data: [{ id: 'm1', member_handle: 'alice', name: 'Alice', role: 'owner', agent: false }],
+      total: 1,
+    } as Awaited<ReturnType<typeof api.listTopicMembers>>)
+
+    const vuetify = createVuetify({ components, directives })
+    const { container } = render(ChatPanel, {
+      props: {
+        topic: topic('topic-summon-unknown'),
+        showComposer: true,
+        hideHeader: true,
+        // 项目名册上也没有芝士那一行——这个房间此刻确实不知道它是谁。
+        members: [{ user_handle: 'alice', name: 'Alice', role: 'lead' }],
+      },
+      global: { plugins: [vuetify] },
+    })
+    await flush()
+
+    const box = composerBox(container)!
+    box.focus()
+    await fireEvent.update(box, '看看这个')
+    await fireEvent.keyDown(box, { key: 'Enter', metaKey: true })
+    await flush()
+
+    expect(JSON.parse(sent[0].payload)).toMatchObject({ content: '看看这个', summon: false })
+  })
+
   it('@ 一个人不会把芝士叫起来', async () => {
     const { container } = mountPanel({}, 'topic-B')
     await flush()
