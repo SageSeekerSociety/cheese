@@ -486,6 +486,7 @@ def _stub_tmux_env(tmp_path):
         **os.environ,
         "PATH": f"{bindir}:{os.environ['PATH']}",
         "HOME": str(home),
+        "CHEESE_HOME": str(home),
         "CHEESE_WORK": str(work),
         "CLAUDE": "claude --model x",
         "TMUX": f"{STUB_SOCK},1,0",
@@ -550,6 +551,59 @@ def _tokexp_file(home):
     return files[0]
 
 
+def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_path):
+    owner, env, _log = _stub_tmux_env(tmp_path)
+    work = tmp_path / "project"
+    config = work / ".claude"
+    config.mkdir(parents=True)
+    protected = [
+        owner / ".claude/settings.json",
+        owner / ".claude/CLAUDE.md",
+        owner / ".zshrc",
+        owner / ".gitconfig",
+        work / "CLAUDE.md",
+        config / "settings.json",
+        config / "skills/owner-skill/SKILL.md",
+    ]
+    for path in protected:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}" if path.suffix == ".json" else "owner content\n")
+    before = {path: path.read_bytes() for path in protected}
+    project_entries = set(work.rglob("*"))
+    original_entries = set(owner.iterdir())
+    session = owner / ".cheese/home/room"
+    env.update(
+        CHEESE_HOME=str(session),
+        CHEESE_WORK=str(work),
+        CHEESE_API="https://fixture.invalid",
+        CHEESE_TOKEN_EXPIRES=str(int(time.time()) + 3600),
+    )
+    curl = tmp_path / "bin/curl"
+    curl.write_text(
+        '#!/bin/sh\nwhile [ "$#" -gt 0 ]; do\n'
+        'if [ "$1" = "-o" ]; then shift; dest="$1"; fi\nshift\ndone\n'
+        'printf \'#!/bin/sh\\necho "2.1.261 (Claude Code)"\\n\' > "$dest"\n'
+    )
+    curl.chmod(0o755)
+    launcher = tmp_path / "launch.sh"
+    launcher.write_text(device_launch.build_launch_script())
+    result = subprocess.run(
+        ["sh", str(launcher)], env=env, capture_output=True, text=True, timeout=15
+    )
+    assert result.returncode == 0, result.stderr
+    assert {path: path.read_bytes() for path in protected} == before
+    assert set(owner.iterdir()) - original_entries == {owner / ".cheese"}
+    assert set(work.rglob("*")) == project_entries
+    assert (
+        owner / ".cheese/claude/versions" / device_launch.CLAUDE_PINNED_VERSION
+    ).is_file()
+    for name in ("cheese-chat", "cheese-docs"):
+        assert (session / ".claude/skills" / name / "SKILL.md").is_file()
+    args = (tmp_path / "newsession.args").read_text()
+    assert "--dangerously-skip-permissions" in args
+    assert f"CLAUDE_CONFIG_DIR={session}/.claude" in args
+
+
 def test_the_agent_session_never_lands_on_the_machine_owners_tmux_server(tmp_path):
     """A Hosted machine is someone's own laptop. If our claude lives in their
     DEFAULT tmux server then their `tmux kill-server` takes every agent on the
@@ -564,24 +618,19 @@ def test_the_agent_session_never_lands_on_the_machine_owners_tmux_server(tmp_pat
         f"an inner tmux command went to a server we do not own: {sockets}"
     )
     on_default = [s for s in log.read_text().split() if s.startswith("default:")]
-    assert not [s for s in on_default if s not in ("default:has-session",)], (
-        f"the machine owner's server was used for more than a look: {on_default}"
-    )
+    assert not on_default, f"the machine owner's server was used: {on_default}"
 
 
-def test_a_session_left_on_the_machine_owners_server_is_retired(tmp_path):
-    """An agent session sitting on the default server is ours wherever it came
-    from, and it is not inert: it holds this topic's rendezvous socket, spool and
-    work tree, so leaving it means a second claude answering for this topic. The
-    launch takes it down instead of hosting alongside it."""
+def test_a_matching_session_on_the_machine_owners_server_is_untouched(tmp_path):
+    """A Cheese-shaped name does not grant ownership of a user's session."""
     home, env, log = _stub_tmux_env(tmp_path)
     open(env["STUB_OWNER_MARK"], "w").close()  # one is squatting there
 
     _run_block(env, expiry=int(time.time()) + 100_000)
 
     steps = log.read_text().split()
-    assert "default:kill-session" in steps, "the misplaced session was left running"
-    assert not os.path.exists(env["STUB_OWNER_MARK"])
+    assert not any(step.startswith("default:") for step in steps)
+    assert os.path.exists(env["STUB_OWNER_MARK"])
     assert "new" in steps, "and this launch still hosts its own claude"
 
 

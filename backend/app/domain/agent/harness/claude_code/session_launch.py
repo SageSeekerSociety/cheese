@@ -43,6 +43,7 @@ from app.domain.agent import clone
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD, DISALLOWED_TOOLS
 from app.domain.agent.harness.launch import LaunchSpec, ScreenPlace, SessionFile
+from app.domain.agent.skills import native_skill_files
 
 # THE isolation boundary between two claudes on one machine: claude reads AND
 # writes its config — settings.json, .claude.json, the transcripts --resume
@@ -184,6 +185,10 @@ def build_session_launch(
             SessionFile(GATES_FILE, _gates(workdir), 0o666),
             # Ours alone; claude only reads it.
             SessionFile(SYSTEM_PROMPT_FILE, system_prompt, 0o644),
+            *(
+                SessionFile(name, content, 0o644)
+                for name, content in native_skill_files().items()
+            ),
         ),
     )
 

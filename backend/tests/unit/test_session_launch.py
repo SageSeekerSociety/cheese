@@ -23,7 +23,13 @@ def test_the_launch_names_the_files_claude_reads_before_it_starts():
         config_dir="/sessions/x", workdir="/topics/t", system_prompt="你是芝士。"
     )
     planted = {f.name: f.content for f in launch.files}
-    assert set(planted) == {"settings.json", ".claude.json", "cheese-system-prompt.md"}
+    assert set(planted) == {
+        "settings.json",
+        ".claude.json",
+        "cheese-system-prompt.md",
+        "skills/cheese-chat/SKILL.md",
+        "skills/cheese-docs/SKILL.md",
+    }
     assert planted["cheese-system-prompt.md"] == "你是芝士。"
     assert json.loads(planted["settings.json"])["enableArtifact"] is False
     # The config dir isolates one claude from another on a machine; the harness

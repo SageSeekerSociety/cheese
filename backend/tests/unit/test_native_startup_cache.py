@@ -14,7 +14,7 @@ def initialized(tmp_path, monkeypatch):
         "env": {"CLAUDE_CODE_OAUTH_TOKEN": "machine-a", "HTTPS_PROXY": "http://proxy"}
     }
     (settings_dir / "settings.json").write_text(json.dumps(settings))
-    binary = owner / ".local/share/claude/versions/test-version"
+    binary = owner / ".cheese/claude/versions/test-version"
     binary.parent.mkdir(parents=True)
     binary.write_text(
         "#!/usr/bin/env python3\n"

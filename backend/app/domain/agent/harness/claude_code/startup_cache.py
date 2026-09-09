@@ -43,7 +43,7 @@ def prepare(owner: Path, version: str) -> None:
         (config / ".claude.json").write_text(
             json.dumps({"hasCompletedOnboarding": True})
         )
-        binary = owner / ".local/share/claude/versions" / version
+        binary = owner / ".cheese/claude/versions" / version
         with (directory / "native-startup-init.log").open("ab") as log:
             log.write(f"{time.time()} initializing {version}\n".encode())
             log.flush()
