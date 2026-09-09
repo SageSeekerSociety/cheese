@@ -393,6 +393,8 @@ jobs:
           # Link into a writable directory instead: the pnpm VERSION still
           # comes from docs/manual's `packageManager` field, which is the whole
           # reason to go through corepack rather than install pnpm by hand.
+          # corepack links into this directory but does not create it.
+          mkdir -p "$RUNNER_TEMP/corepack"
           corepack enable --install-directory "$RUNNER_TEMP/corepack"
           export PATH="$RUNNER_TEMP/corepack:$PATH"
           cd docs/manual
