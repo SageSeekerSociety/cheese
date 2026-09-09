@@ -11,11 +11,11 @@
 //
 // 每行一条活：色点 +「第 N 件：做什么」+ 小字写状态短语和负责人。屏幕上每一个状态
 // 词都是后端算好的 `presentation.display_status`，这一段一个都不推。
-import type { Block, BoardColumn, RoomTask, RoomTree, Topic } from '../../cx_types'
+import type { Block, BoardColumn, RoomTask, Topic } from '../../cx_types'
 
 import { computed, ref, watch } from 'vue'
 
-import { listRoomTasks, listRoomTrees } from '../../api'
+import { listRoomTasks } from '../../api'
 import { BOARD_COLUMNS, columnDotStyle, columnLabel, compareTasks } from '../../lib/board'
 import { relTime } from '../../lib/relTime'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
@@ -40,7 +40,6 @@ const emit = defineEmits<{
 type ThreadRow = RoomTask & { blocks?: Block[] }
 
 const rows = ref<ThreadRow[]>([])
-const trees = ref<RoomTree[]>([])
 const loading = ref(false)
 const errorMsg = ref<string | null>(null)
 // 默认展开：你打开一个房间的第一个问题就是「现在有什么在动」，折起来等于不答。
@@ -70,14 +69,6 @@ async function load() {
     errorMsg.value = '任务列表加载失败'
   } finally {
     if (props.topic?.id === roomId) loading.value = false
-  }
-  // 这一批封没封口，是另一个问题，也是另一条请求 —— 它失败了不该把整份清单变成
-  // 一句「加载失败」，所以拿不到就当没有提示，清单照常。
-  try {
-    const batches = await listRoomTrees(roomId)
-    if (props.topic?.id === roomId) trees.value = batches.data
-  } catch {
-    trees.value = []
   }
 }
 
@@ -134,79 +125,6 @@ function inColumn(column: BoardColumn): ThreadRow[] {
 const doneRows = computed(() => inColumn('done'))
 /** 这个房间此刻有几件在等人。它排在标题旁边，因为这是打开一个房间最该先看到的数。 */
 const needsYouCount = computed(() => (byColumn.value.get('needs_you') ?? []).length)
-
-// ---- 封口期 ----
-// 一棵树 = 一个分支 = 一个 PR = 一批活。递卡的那一刻这一批封口，房间开下一棵接着
-// 干 —— 这正是房间不再被一个在飞的 PR 冻住的原因。但代价是「我现在写的东西进的
-// 是哪一批」变成了一个真问题，而封了口的房间和没封口的在屏幕上长得一模一样：
-// 「我改了半天，改动怎么不在 PR 上」就是这么来的。
-const sealed = computed(() => trees.value.filter((t) => t.status === 'sealed'))
-/** 最新那一棵。房间现在写的东西进的就是它。 */
-const current = computed<RoomTree | null>(() => trees.value[0] ?? null)
-// 只在真的有一批在飞的时候说话。房间只有一棵开着的树时，「进这一批」是废话。
-const sealNotice = computed(() => {
-  if (!sealed.value.length) return null
-  const n = sealed.value.length
-  const riding = sealed.value.map((t) => t.card?.pr_number).filter((x): x is number => !!x)
-  return {
-    count: n,
-    prs: riding,
-    // 最新那一棵还开着 = 现在写的进的是下一批；最新那一棵就是封了口的那棵 =
-    // 这个房间此刻整个在封口期，写什么都得等它。
-    nextIsOpen: current.value?.status === 'open',
-  }
-})
-
-// ---- 批次清单 ----
-// 上面那行提示只说「现在写的进哪一批」；它答不了「我那条活最后从哪个 PR 出去」。
-// 一个房间干久了会有好几批、好几个 PR，而在这份清单之前 PR 号只在当前那张验收卡
-// 上出现过一次 —— 于是多个 PR 一并存就分不清哪个是哪个。这一段按批次列出来：
-// 每批什么状态、骑在哪个 PR 上、里面有几件活。
-const BATCH_STATE_LABEL: Record<RoomTree['status'], string> = {
-  open: '在收活',
-  sealed: '已封口 · CI 在跑',
-  merged: '已合并',
-}
-
-/** 批次编号 —— 和活的编号同一个道理：按开出来的先后，老的是 1，不跟着排序变。 */
-const batchNumberOf = computed(() => {
-  const byBirth = [...trees.value].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))
-  return new Map(byBirth.map((t, i) => [t.id, i + 1]))
-})
-
-/** 一批最后一次动的时间：合了看合的时候，封了看封的时候，还开着就是它开出来的时候。 */
-function batchTime(t: RoomTree): string | null {
-  if (t.status === 'merged') return t.merged_at ?? t.sealed_at ?? t.created_at
-  if (t.status === 'sealed') return t.sealed_at ?? t.created_at
-  return t.created_at
-}
-
-const batches = computed(() =>
-  trees.value.map((t) => ({
-    id: t.id,
-    n: batchNumberOf.value.get(t.id) ?? 0,
-    status: t.status,
-    stateLabel: BATCH_STATE_LABEL[t.status] ?? t.status,
-    prNumber: t.card?.pr_number ?? null,
-    prUrl: t.card?.pr_url ?? null,
-    // 这一批里有几件派出去的活。活自己带着它干在哪棵树上，所以不用再问一次后端。
-    taskCount: rows.value.filter((r) => r.tree_id === t.id).length,
-    // 快检谁也不拦，但红了得让将要验收的人看见。
-    checkFailed: t.last_check_ok === false,
-    // 最新那一棵还开着 = 现在写的东西进的就是它。
-    isCurrent: t.id === current.value?.id && t.status === 'open',
-    at: batchTime(t),
-  }))
-)
-
-// 只有一批、而且它还没开出 PR 的时候，「哪一批」根本不是个问题，这一段是纯噪声。
-const showBatches = computed(() => batches.value.length > 1 || batches.value.some((b) => b.prNumber))
-
-// 老批次折起来，但**说出折了几批** —— 悄悄截断会让人以为这就是全部。
-const BATCH_HEAD = 5
-const allBatches = ref(false)
-const shownBatches = computed(() => (allBatches.value ? batches.value : batches.value.slice(0, BATCH_HEAD)))
-const hiddenBatches = computed(() => batches.value.length - shownBatches.value.length)
 </script>
 
 <template>
@@ -221,65 +139,7 @@ const hiddenBatches = computed(() => batches.value.length - shownBatches.value.l
       </span>
     </button>
 
-    <!-- 封口期提示。在清单外面而不是里面：它说的是「你现在写的东西去哪儿」，
-         对这个房间的每一条活都成立，而且折起来也该看得见。 -->
-    <div v-if="sealNotice" class="seal-notice t-meta" data-testid="seal-notice">
-      <v-icon size="14">mdi-lock-outline</v-icon>
-      <span>
-        <template v-if="sealNotice.nextIsOpen">
-          有 {{ sealNotice.count }} 批已封口在跑 CI<template v-if="sealNotice.prs.length"
-            >（{{ sealNotice.prs.map((n) => `#${n}`).join('、') }}）</template
-          >；现在写的进下一批。
-        </template>
-        <template v-else>
-          这一批已封口<template v-if="sealNotice.prs.length"
-            >（{{ sealNotice.prs.map((n) => `#${n}`).join('、') }}）</template
-          >，内容就是 CI 正在检查的东西 —— 现在别再往里写。
-        </template>
-      </span>
-    </div>
-
     <div v-if="open" class="task-progress__body">
-      <!-- 批次。在活的清单之上，因为它是那份清单的坐标系：一条活最后从哪个 PR
-           出去，取决于它在哪一批。房间自己写的东西也在批次里，所以一批可以一件
-           派出去的活都没有 —— 那时候不写件数，别编。 -->
-      <template v-if="showBatches">
-        <div class="task-progress__group t-meta">批次 · 一批活出一个 PR（{{ batches.length }}）</div>
-        <ul class="task-progress__list" data-testid="batch-list">
-          <li v-for="b in shownBatches" :key="b.id">
-            <div class="batch-row" :data-testid="`batch-${b.id}`">
-              <span class="ring" :class="`ring--batch-${b.status}`" :title="b.stateLabel" aria-hidden="true" />
-              <span class="task-row__text">
-                <span class="task-row__line1 t-body">
-                  第 {{ b.n }} 批 · {{ b.stateLabel }}
-                  <a
-                    v-if="b.prNumber && b.prUrl"
-                    class="batch-row__pr"
-                    :href="b.prUrl"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    >PR #{{ b.prNumber }}</a
-                  >
-                  <span v-else-if="b.prNumber" class="batch-row__pr">PR #{{ b.prNumber }}</span>
-                  <span v-else class="batch-row__pr c-faint">还没开 PR</span>
-                </span>
-                <span class="task-row__line2 t-meta">
-                  <span v-if="b.taskCount">{{ b.taskCount }} 件活</span>
-                  <span v-if="b.taskCount" class="task-row__sep">·</span>
-                  <span>{{ relTime(b.at) }}</span>
-                  <span v-if="b.checkFailed" class="batch-row__check">快检没过</span>
-                  <span v-if="b.isCurrent" class="task-row__here-tag">现在写的进这一批</span>
-                </span>
-              </span>
-            </div>
-          </li>
-        </ul>
-        <!-- 折起来的批次要说出有几批，不然看起来就是全部。 -->
-        <button v-if="hiddenBatches" type="button" class="batch-more t-meta" @click="allBatches = true">
-          还有 {{ hiddenBatches }} 批更早的
-        </button>
-      </template>
-
       <LoadingSkeleton v-if="loading && !rows.length" variant="entry" :rows="3" class="pb-2" />
 
       <div v-else-if="errorMsg" class="px-3 py-2 t-body c-muted">{{ errorMsg }}</div>
@@ -381,13 +241,6 @@ const hiddenBatches = computed(() => batches.value.length - shownBatches.value.l
   max-height: 40vh;
   overflow-y: auto;
 }
-.seal-notice {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 6px 12px 8px;
-  color: var(--muted);
-}
 .task-progress__group {
   display: flex;
   align-items: center;
@@ -459,25 +312,12 @@ const hiddenBatches = computed(() => batches.value.length - shownBatches.value.l
   color: var(--faint);
 }
 
-/* 批次那几行。不是按钮：一批活没有「打开」这回事，能点的只有它的 PR。 */
-.batch-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  width: 100%;
-  padding: 6px 10px;
-}
 .batch-row__pr {
   color: var(--muted);
 }
 a.batch-row__pr:hover {
   color: var(--ink);
   text-decoration: underline;
-}
-/* 快检红了不拦任何人（PR 上真的 CI 才拦），但要验收的人得看见。用 -ink 那一档：
-   `--danger` 本身是给点和边框的，当正文在浅色下对比度不够。 */
-.batch-row__check {
-  color: var(--danger-ink);
 }
 .batch-more {
   display: block;
@@ -486,9 +326,6 @@ a.batch-row__pr:hover {
   text-align: left;
   color: var(--muted);
   cursor: pointer;
-}
-.batch-more:hover {
-  color: var(--ink);
 }
 
 /* 色点：颜色和形状都由 `lib/board.ts` 一处给出（内联样式），这里只管尺寸 ——
@@ -517,14 +354,7 @@ a.batch-row__pr:hover {
   border-radius: 50%;
   border: 2px solid var(--faint);
 }
-.ring--batch-open {
-  border-color: var(--ok);
-}
 .ring--batch-sealed {
   border-color: var(--warn);
-}
-.ring--batch-merged {
-  border-color: var(--ok);
-  background: var(--ok);
 }
 </style>

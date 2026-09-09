@@ -17,6 +17,7 @@ import { markdown } from '../../lib/markdown'
 import { relTime } from '../../lib/relTime'
 import { myHandle } from '../../me'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
+import TopicAcceptCard from '../TopicAcceptCard.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -129,6 +130,7 @@ async function send() {
         <span class="board-dot" :style="dotStyle" aria-hidden="true" />
         <span class="t-body panel-card__name">{{ card.title }}</span>
       </div>
+      <TopicAcceptCard :topic-id="card.room_id" :task-id="card.id" topic-status="active" />
       <div class="panel-card__meta t-meta">
         <span data-testid="card-status">{{ card.presentation.display_status }}</span>
         <span class="panel-card__sep">·</span>
@@ -137,12 +139,12 @@ async function send() {
         <span class="panel-card__sep">·</span>
         <span>{{ relTime(card.updated_at) }}</span>
         <a
-          v-if="card.card?.pr_number && card.card?.pr_url"
+          v-if="card.pr_number && card.pr_url"
           class="panel-card__pr"
-          :href="card.card.pr_url"
+          :href="card.pr_url"
           target="_blank"
           rel="noopener noreferrer"
-          >PR #{{ card.card.pr_number }}</a
+          >PR #{{ card.pr_number }}</a
         >
       </div>
 

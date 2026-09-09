@@ -67,7 +67,7 @@ async def _seed_room(factory) -> tuple[uuid.UUID, uuid.UUID]:
 async def _dispatch(factory, project_id, room_id, title: str) -> uuid.UUID:
     async with factory() as session:
         task = await TopicService(session).dispatch_task(
-            place_id=room_id, title=title, created_by="u1"
+            place_id=room_id, title=title, created_by="u1", reviewer_handle="u1"
         )
         await session.commit()
         return task.id

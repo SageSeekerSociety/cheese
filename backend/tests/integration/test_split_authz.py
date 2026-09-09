@@ -39,7 +39,9 @@ def test_split_outsider_token_denied(client):
     outsider = _login("mallory")
     r = client.post(
         f"/topics/{tid}/split",
-        json={"title": "偷偷拆一个", "created_by": "mallory"},
+        json=dict(
+            reviewer_handle="alice", **{"title": "偷偷拆一个", "created_by": "mallory"}
+        ),
         headers=_bearer(outsider),
     )
     assert r.status_code == 403
@@ -51,7 +53,7 @@ def test_split_owner_allowed_and_the_work_belongs_to_them(client):
     token = _login("alice")
     r = client.post(
         f"/topics/{tid}/split",
-        json={"title": "子任务"},
+        json=dict(reviewer_handle="alice", **{"title": "子任务"}),
         headers=_bearer(token),
     )
     assert r.status_code == 200
@@ -71,7 +73,10 @@ def test_a_thread_does_not_get_a_roster_of_its_own(client):
     _, tid = _project_topic(client, owner="alice")
     before = {m["member_handle"] for m in _members(client, tid)}
 
-    task = client.post(f"/topics/{tid}/split", json={"title": "子任务"}).json()["data"]
+    task = client.post(
+        f"/topics/{tid}/split",
+        json=dict(reviewer_handle="alice", **{"title": "子任务"}),
+    ).json()["data"]
 
     assert task["owner_handle"] is not None
     # The thread is not a topic, so there is nothing with a roster to ask about.
@@ -86,7 +91,10 @@ def test_split_ignores_forged_created_by_in_body(client):
     token = _login("alice")
     r = client.post(
         f"/topics/{tid}/split",
-        json={"title": "子任务", "created_by": "mallory-forged"},
+        json=dict(
+            reviewer_handle="alice",
+            **{"title": "子任务", "created_by": "mallory-forged"},
+        ),
         headers=_bearer(token),
     )
     assert r.status_code == 200
@@ -105,7 +113,10 @@ def test_split_by_cheese_agent_defaults_owner_to_parent_owner(client):
     _, tid = _project_topic(client, owner="alice")
     r = client.post(
         f"/topics/{tid}/split",
-        json={"title": "分身拆出的子任务", "created_by": "cheese"},
+        json=dict(
+            reviewer_handle="alice",
+            **{"title": "分身拆出的子任务", "created_by": "cheese"},
+        ),
     )
     assert r.status_code == 200
 
@@ -116,7 +127,10 @@ def test_split_with_no_identified_human_still_gets_parent_owner(client):
     """Even a bare Phase-0 call with no `created_by` at all (no token, no body
     field) must not leave the work ownerless."""
     _, tid = _project_topic(client, owner="alice")
-    r = client.post(f"/topics/{tid}/split", json={"title": "无发起人拆分"})
+    r = client.post(
+        f"/topics/{tid}/split",
+        json=dict(reviewer_handle="alice", **{"title": "无发起人拆分"}),
+    )
     assert r.status_code == 200
 
     assert r.json()["data"]["owner_handle"] == "alice"
@@ -150,7 +164,7 @@ def test_project_member_can_split_even_if_not_on_topic_roster(client):
 
     r = client.post(
         f"/topics/{tid}/split",
-        json={"title": "bob 拆的子任务"},
+        json=dict(reviewer_handle="alice", **{"title": "bob 拆的子任务"}),
         headers=_bearer(token),
     )
     assert r.status_code == 200

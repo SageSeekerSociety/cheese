@@ -23,12 +23,16 @@ from pathlib import Path
 from app.domain.workspace.service import (
     SANDBOX_TOPICS_ROOT,
     _worktree_path,
+    bind_task,
     gate_workdir_for,
     sandbox_topic_workdir,
 )
 
 
-def test_the_gate_lands_on_the_exact_path_the_sandbox_used():
+def test_the_gate_lands_on_the_exact_path_the_sandbox_used(tmp_path, monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "workspace_root", str(tmp_path))
     """闸门算出来的容器内路径，必须和沙箱的工作目录逐字相同。
 
     差一个字符，venv 里所有 console script 的 shebang 就都指不到东西。
@@ -37,6 +41,12 @@ def test_the_gate_lands_on_the_exact_path_the_sandbox_used():
 
     for _ in range(4):  # 目录名由话题 id 派生，多取几个 id 免得撞上巧合
         topic_id = uuid.uuid4()
+        bind_task(
+            topic_id,
+            branch=f"topic/{topic_id.hex[:8]}",
+            directory=f"topic_{topic_id.hex[:8]}",
+            base="main",
+        )
         assert gate_workdir_for(_worktree_path(project_id, topic_id)) == (
             sandbox_topic_workdir(topic_id)
         )

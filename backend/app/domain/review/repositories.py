@@ -7,7 +7,7 @@ from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.review.models import AcceptApproval, AcceptCard, AcceptStatus
-from app.domain.room_task.models import TreeStatus, WorkTree
+from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic, TopicStatus
 
 
@@ -24,14 +24,14 @@ class AcceptCardRepository:
         status: AcceptStatus = AcceptStatus.pending,
         change_subject: str | None = None,
         change_body: str | None = None,
-        tree_id: uuid.UUID | None = None,
+        task_id: uuid.UUID | None = None,
         delivered_task_ids: list[uuid.UUID] | None = None,
     ) -> AcceptCard:
         # 递卡是房间的事 —— 一棵树 = 一个分支 = 一个 PR = 一批活, and the batch
         # belongs to the room, not to any one card in it.
         card = AcceptCard(
             topic_id=topic_id,
-            tree_id=tree_id,
+            task_id=task_id,
             reviewer_handle=reviewer_handle,
             routing_reason=routing_reason,
             status=status,
@@ -72,7 +72,7 @@ class AcceptCardRepository:
     async def get(self, card_id: uuid.UUID) -> AcceptCard | None:
         return await self._session.get(AcceptCard, card_id)
 
-    async def list_for_tree(self, tree_id: uuid.UUID) -> list[AcceptCard]:
+    async def list_for_task(self, task_id: uuid.UUID) -> list[AcceptCard]:
         """Every card that has ever delivered this tree, newest first.
 
         The scope "one card at a time" is really about: a tree has one branch
@@ -81,24 +81,7 @@ class AcceptCardRepository:
         """
         stmt = (
             select(AcceptCard)
-            .where(AcceptCard.tree_id == tree_id)
-            .order_by(AcceptCard.created_at.desc())
-        )
-        return list((await self._session.scalars(stmt)).all())
-
-    async def list_treeless_for_topic(self, topic_id: uuid.UUID) -> list[AcceptCard]:
-        """This place's cards that belong to no tree, newest first.
-
-        Cards filed before trees existed carry `tree_id IS NULL`, and the
-        backfill (migration `e4c9a2f60b18`) deliberately left it that way for
-        every card whose tree was never created — there was no honest value to
-        invent. They are still real: one from that era can be riding a live
-        PR. Anything scoped to a tree has to ask for them separately or
-        pretend they are not there.
-        """
-        stmt = (
-            select(AcceptCard)
-            .where(AcceptCard.topic_id == topic_id, AcceptCard.tree_id.is_(None))
+            .where(AcceptCard.task_id == task_id)
             .order_by(AcceptCard.created_at.desc())
         )
         return list((await self._session.scalars(stmt)).all())
@@ -114,7 +97,6 @@ class AcceptCardRepository:
             select(AcceptCard)
             .where(
                 AcceptCard.topic_id == topic_id,
-                AcceptCard.task_id.is_(None),
             )
             .order_by(AcceptCard.created_at.desc())
         )
@@ -159,30 +141,6 @@ class AcceptCardRepository:
             # Ordered oldest-first, so the last write per key is the newest.
             if card.task_id is not None:
                 latest[card.task_id] = card
-        return latest
-
-    async def latest_by_tree(
-        self, tree_ids: list[uuid.UUID]
-    ) -> dict[uuid.UUID, AcceptCard]:
-        """The newest card on each of these trees, in ONE query.
-
-        A tree is a batch and a batch opens one PR, so this is how a room says
-        which PR its sealed batch is riding — the question 「这一批封口了，在哪儿
-        跑着」 has no other answer: the card belongs to the tree, not to any one
-        of the threads that wrote it.
-        """
-        if not tree_ids:
-            return {}
-        stmt = (
-            select(AcceptCard)
-            .where(AcceptCard.tree_id.in_(tree_ids))
-            .order_by(AcceptCard.created_at, AcceptCard.id)
-        )
-        latest: dict[uuid.UUID, AcceptCard] = {}
-        for card in (await self._session.scalars(stmt)).all():
-            # Ordered oldest-first, so the last write per key is the newest.
-            if card.tree_id is not None:
-                latest[card.tree_id] = card
         return latest
 
     async def list_live_for_places(
@@ -324,14 +282,14 @@ class AcceptCardRepository:
         stmt = (
             select(AcceptCard)
             .join(Topic, Topic.id == AcceptCard.topic_id)
-            .outerjoin(WorkTree, WorkTree.id == AcceptCard.tree_id)
+            .outerjoin(Task, Task.id == AcceptCard.task_id)
             .where(
                 or_(
                     AcceptCard.status == AcceptStatus.pending,
                     and_(
                         AcceptCard.status == AcceptStatus.rejected,
                         AcceptCard.pr_merged_at.is_(None),
-                        WorkTree.status.in_((TreeStatus.open, TreeStatus.sealed)),
+                        Task.status == TaskStatus.open,
                     ),
                 ),
                 AcceptCard.pr_number.is_not(None),
@@ -347,9 +305,9 @@ class AcceptCardRepository:
         for card in (await self._session.scalars(stmt)).all():
             # A resubmitted batch belongs to its pending card; otherwise use
             # its latest return instead of polling every historical review.
-            if card.tree_id is not None:
-                if card.tree_id in seen_trees:
+            if card.task_id is not None:
+                if card.task_id in seen_trees:
                     continue
-                seen_trees.add(card.tree_id)
+                seen_trees.add(card.task_id)
             cards.append(card)
         return cards

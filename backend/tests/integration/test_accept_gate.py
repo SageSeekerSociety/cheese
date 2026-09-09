@@ -12,6 +12,7 @@ card-lifecycle rules (one live card per topic, terminal states stay terminal)
 hold without any gate in between.
 """
 
+from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import session_auth_headers
 
 
@@ -34,7 +35,8 @@ def _make_topic(client, project_id: str) -> str:
 
 def _file_card(client, topic_id: str, reviewer: str = "alice") -> dict:
     r = client.post(
-        f"/topics/{topic_id}/accept-card",
+        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
+        headers=delivery_headers(client, topic_id),
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": reviewer,
@@ -89,7 +91,8 @@ def test_second_card_still_blocked_while_first_is_pending(client):
     assert first["status"] == "pending"
 
     r = client.post(
-        f"/topics/{tid}/accept-card",
+        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
+        headers=delivery_headers(client, tid),
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "bob",

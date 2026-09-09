@@ -107,6 +107,7 @@ async def dispatch(
             place_id=room.id,
             title=RESOLUTION_TITLE,
             created_by=requested_by,
+            reviewer_handle=requested_by,
         )
         await db.flush()
     except Exception:  # noqa: BLE001 — never turn a reported conflict into a 500

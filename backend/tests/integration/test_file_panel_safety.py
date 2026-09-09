@@ -9,6 +9,7 @@ import hashlib
 import uuid
 
 from app.domain.workspace import service as ws
+from tests.delivery import delivery_task_id
 
 BINARY = bytes(range(256)) * 8
 
@@ -30,9 +31,9 @@ def _owner(client) -> dict[str, str]:
     return {"Authorization": f"Bearer {_login(client, 'alice')}"}
 
 
-def _put(pid: uuid.UUID, topic: uuid.UUID, path: str, data: bytes) -> None:
+def _put(client, pid: uuid.UUID, topic: uuid.UUID, path: str, data: bytes) -> None:
     """Put a file into the topic's worktree the way a turn would."""
-    target = ws.topic_worktree(pid, topic) / path
+    target = ws.topic_worktree(pid, delivery_task_id(client, topic)) / path
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(data)
 
@@ -40,11 +41,15 @@ def _put(pid: uuid.UUID, topic: uuid.UUID, path: str, data: bytes) -> None:
 def test_reading_a_binary_file_returns_no_text_to_edit(client):
     pid = _mkproject(client)
     tid = _mktopic(client, pid)
-    _put(pid, tid, "app.bin", BINARY)
+    _put(client, pid, tid, "app.bin", BINARY)
 
     body = client.get(
         f"/projects/{pid}/file",
-        params={"path": "app.bin", "topic": str(tid)},
+        params={
+            "path": "app.bin",
+            "topic": str(tid),
+            "task": str(delivery_task_id(client, tid)),
+        },
         headers=_owner(client),
     ).json()["data"]
 
@@ -56,39 +61,45 @@ def test_reading_a_binary_file_returns_no_text_to_edit(client):
 def test_saving_over_a_binary_file_is_rejected_and_the_bytes_survive(client):
     pid = _mkproject(client)
     tid = _mktopic(client, pid)
-    _put(pid, tid, "app.bin", BINARY)
+    _put(client, pid, tid, "app.bin", BINARY)
     before = hashlib.md5(BINARY).hexdigest()
 
     resp = client.put(
         f"/projects/{pid}/file",
-        params={"topic": str(tid)},
+        params={"topic": str(tid), "task": str(delivery_task_id(client, tid))},
         json={"path": "app.bin", "content": "文本"},
         headers=_owner(client),
     )
 
     assert resp.status_code >= 400
-    after = (ws.topic_worktree(pid, tid) / "app.bin").read_bytes()
+    after = (
+        ws.topic_worktree(pid, delivery_task_id(client, tid)) / "app.bin"
+    ).read_bytes()
     assert hashlib.md5(after).hexdigest() == before
 
 
 def test_a_save_that_lost_the_race_answers_409_and_changes_nothing(client):
     pid = _mkproject(client)
     tid = _mktopic(client, pid)
-    _put(pid, tid, "note.txt", "原始内容\n".encode())
+    _put(client, pid, tid, "note.txt", "原始内容\n".encode())
     headers = _owner(client)
 
     read = client.get(
         f"/projects/{pid}/file",
-        params={"path": "note.txt", "topic": str(tid)},
+        params={
+            "path": "note.txt",
+            "topic": str(tid),
+            "task": str(delivery_task_id(client, tid)),
+        },
         headers=headers,
     ).json()["data"]
 
     # 芝士 writes the same file while the human is typing.
-    _put(pid, tid, "note.txt", "芝士这一轮写的\n".encode())
+    _put(client, pid, tid, "note.txt", "芝士这一轮写的\n".encode())
 
     resp = client.put(
         f"/projects/{pid}/file",
-        params={"topic": str(tid)},
+        params={"topic": str(tid), "task": str(delivery_task_id(client, tid))},
         json={
             "path": "note.txt",
             "content": read["content"] + "人加的\n",
@@ -98,31 +109,39 @@ def test_a_save_that_lost_the_race_answers_409_and_changes_nothing(client):
     )
 
     assert resp.status_code == 409
-    disk = (ws.topic_worktree(pid, tid) / "note.txt").read_text(encoding="utf-8")
+    disk = (
+        ws.topic_worktree(pid, delivery_task_id(client, tid)) / "note.txt"
+    ).read_text(encoding="utf-8")
     assert disk == "芝士这一轮写的\n"
 
 
 def test_a_save_carrying_the_current_version_goes_through(client):
     pid = _mkproject(client)
     tid = _mktopic(client, pid)
-    _put(pid, tid, "note.txt", "原始内容\n".encode())
+    _put(client, pid, tid, "note.txt", "原始内容\n".encode())
     headers = _owner(client)
 
     read = client.get(
         f"/projects/{pid}/file",
-        params={"path": "note.txt", "topic": str(tid)},
+        params={
+            "path": "note.txt",
+            "topic": str(tid),
+            "task": str(delivery_task_id(client, tid)),
+        },
         headers=headers,
     ).json()["data"]
 
     resp = client.put(
         f"/projects/{pid}/file",
-        params={"topic": str(tid)},
+        params={"topic": str(tid), "task": str(delivery_task_id(client, tid))},
         json={"path": "note.txt", "content": "人写的\n", "version": read["version"]},
         headers=headers,
     )
 
     assert resp.status_code == 200
-    disk = (ws.topic_worktree(pid, tid) / "note.txt").read_text(encoding="utf-8")
+    disk = (
+        ws.topic_worktree(pid, delivery_task_id(client, tid)) / "note.txt"
+    ).read_text(encoding="utf-8")
     assert disk == "人写的\n"
     # The panel can keep saving without re-reading.
     assert resp.json()["data"]["version"]
@@ -131,12 +150,14 @@ def test_a_save_carrying_the_current_version_goes_through(client):
 def test_a_dangling_symlink_does_not_500_the_file_listing(client):
     pid = _mkproject(client)
     tid = _mktopic(client, pid)
-    _put(pid, tid, "real.txt", b"ok\n")
-    (ws.topic_worktree(pid, tid) / "dangling").symlink_to("/nonexistent/target")
+    _put(client, pid, tid, "real.txt", b"ok\n")
+    (ws.topic_worktree(pid, delivery_task_id(client, tid)) / "dangling").symlink_to(
+        "/nonexistent/target"
+    )
 
     resp = client.get(
         f"/projects/{pid}/files",
-        params={"topic": str(tid)},
+        params={"topic": str(tid), "task": str(delivery_task_id(client, tid))},
         headers=_owner(client),
     )
 

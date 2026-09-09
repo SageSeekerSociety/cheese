@@ -61,9 +61,9 @@ from app.domain.review.merge_state import MergeVerdict, Who, whose_move
 from app.domain.review.models import AcceptCard, AcceptStatus, GateOutcome
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.review.schemas import AcceptCardOut
-from app.domain.room_task.models import Task, TreeStatus
+from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.place import PlaceResolver
-from app.domain.room_task.services import TaskService, WorkTreeService
+from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.repositories import TopicRepository
 from app.domain.webhook import service as webhook_service
@@ -448,220 +448,62 @@ class AcceptService:
         self,
         *,
         topic_id: uuid.UUID,
+        task_id: uuid.UUID,
         reviewer_handle: str | None = None,
         routing_reason: str = "",
         change_subject: str | None = None,
         change_body: str | None = None,
-        task_ids: list[uuid.UUID] | None = None,
     ) -> AcceptCard:
         topic = await self._topic_or_404(topic_id)
-        # Before anything else touches the DB: a missing or malformed subject is
-        # the filer's to fix in the same breath, and it is the one thing here
-        # that ends up in permanent history.
-        #
-        # 2026-08-17: omitting it used to be allowed, and `pr_text` quietly
-        # filled in `chore: <话题标题>`. PR #500 is what that looks like from the
-        # outside — a chat-room name as the title of a merged change. The
-        # fallback stays (rows filed before `change_subject` existed still have
-        # NULL), but nothing new is allowed to reach it.
-        change_subject = (change_subject or "").strip()
-        if not change_subject:
+        task = await TaskService(self._session).require_in_room(topic_id, task_id)
+        if topic.status == TopicStatus.archived:
+            raise ValidationError("话题已归档，不能再提交验收")
+        if task.status != TaskStatus.open or not task.branch_name:
+            raise ValidationError("这条任务已结束或没有工作分支")
+        subject = (change_subject or "").strip()
+        if not subject:
             raise ValidationError(_MISSING_SUBJECT)
         try:
-            change_subject = commit_message.check_subject(change_subject)
+            subject = commit_message.check_subject(subject)
         except commit_message.InvalidSubject as exc:
             raise ValidationError(str(exc)) from exc
-        # 归档是人主动收起来的话题，工作面跟着冻结。它不再是"交付完成"的同义词
-        # (#442 decision 1) —— 那一半由下面的 `accepted` 卡挡着。
-        if topic.status == TopicStatus.archived:
-            raise ValidationError("话题已归档，不能再递验收卡")
-        # Whose work this is, as the room says (#189). Checked here — before a
-        # tree is opened or a row is written — because a bad id is the filer's
-        # to fix in the same breath, and because what it ends up as is a line in
-        # permanent history.
-        delivered = await self._declared_work(topic, task_ids or [])
-        # One card at a time, not a broadcast (spec §4.4): re-route / wait
-        # instead of stacking a new one.
-        #
-        # 2026-08-10: the guard used to cover only pending/pending_gate, so a
-        # card stuck on a merge `conflict` did not block a second card. The
-        # frontend only ever renders the NEWEST card, so the older one — and
-        # the PR it was driving — vanished from the UI.
-        # Every non-terminal status blocks now; `gate_failed` and `gate_blocked`
-        # deliberately do not (a red gate voids the card, and re-递卡 after fixing
-        # IS the flow — same for a gate that never ran: 芝士 fixes the check
-        # environment and re-files. Adding either here locks 芝士 out for good).
-        # 一棵树一个 PR: the thing that may not happen twice at once is two PRs
-        # on ONE branch. Asking the room instead would refuse a second batch its
-        # own PR, which is precisely what a second tree exists to allow.
-        trees = WorkTreeService(self._session)
-        tree = await trees.ensure_open(project_id=topic.project_id, room_id=topic.id)
-        if trees.started_a_batch:
-            # 开一批活落在两个地方，而它们不能一起回滚：`work_trees` 的行，和
-            # `ws.bind_tree` 在磁盘上写的「这个房间写哪棵树」。这个方法底下还有
-            # 好几道会 raise 的闸（空树守卫首当其冲），raise 走的是请求事务的
-            # 回滚 —— 行没了，映射还在，房间从此指着一棵不存在的树。
-            #
-            # 而那道空树守卫恰恰要**点名一条分支**让人把提交推上去。它报的名字
-            # 来自刚开的这棵树，422 又把这棵树烧掉，下次递卡开的是另一棵、报的
-            # 是另一个名字 —— 照着推永远白推（房间 2026-09-08 实测）。
-            #
-            # 所以这一行先落地，跟这次递卡成不成没有关系。它本来就与递卡无关：
-            # 房间开着一棵空树是每两批活之间的常态，而磁盘已经这么认为了。
-            await self._session.commit()
-        # Plus this place's tree-less cards. A card filed before trees existed
-        # kept `tree_id IS NULL` wherever the backfill had no honest value to
-        # give it, so asking the tree alone makes a live card from that era
-        # invisible — and a second card would open a second PR on the same
-        # branch. That is exactly the failure the guard was widened for on
-        # 2026-08-10, arriving by a new route.
-        existing = [
-            *await self._repo.list_for_tree(tree.id),
-            *await self._repo.list_treeless_for_topic(topic_id),
-        ]
+        existing = await self._repo.list_for_task(task.id)
         blocking = next(
             (c for c in existing if c.status in _CARD_BLOCKS_NEW_CARD), None
         )
         if blocking is not None:
             raise ValidationError(_BLOCKED_BY_CARD_MESSAGES[blocking.status])
-        # 有活才有卡：这张卡带的 change_subject 是交付主张，绑定 GitHub 的项目
-        # 会拿它去开 PR，而 PR 要有分支可骑。树的分支不存在时 PR 开不出来，本地
-        # 合并也是 no-op——2026-09-07 卡 40be3e1a 就这样被标成 accepted，而改动
-        # 其实被推到了别的分支，没有合进任何地方。在递卡这一刻就拒绝，并点名该
-        # 推哪条分支。Best-effort：绑定状态或分支探测出错不拦递卡——采纳路径上
-        # 的 `_stop_accept_no_branch` 才是硬闸门（那边判定不了会 fail closed）。
         from app.domain.workspace import service as ws
 
-        try:
-            tree_branch_missing = await self._github_bound(
-                topic.project_id
-            ) and not await asyncio.to_thread(
-                ws.topic_branch_exists, topic.project_id, topic_id
-            )
-        except Exception:  # noqa: BLE001 — 判定不了不拦递卡
-            tree_branch_missing = False
-        if tree_branch_missing:
-            branch = await asyncio.to_thread(
-                lambda: ws.branch_for_tree(ws.tree_for_place(topic_id))
-            )
-            raise ValidationError(
-                f"这棵树的分支（{branch}）上没有任何提交，没有东西可以交付。"
-                f"改动可能被提交到了别的分支——把提交推上 {branch} 后再递卡。"
-            )
-        # Nothing to deliver is a fact about the branch, so ask the branch. It
-        # used to be inferred from "this topic already had a card accepted",
-        # which is true only until somebody commits again — and rooms do, that
-        # is what a room is for. Only for a topic that HAS delivered before:
-        # a first card on a branch with no commits is a different failure
-        # (nothing was ever written) and the PR path already reports it with
-        # the detail this check cannot see.
-        if any(c.status == AcceptStatus.accepted for c in existing):
-            has_new = await asyncio.to_thread(
-                ws.has_undelivered_commits, topic.project_id, topic_id
-            )
-            if not has_new:
-                raise ValidationError(_NOTHING_TO_DELIVER)
-        # 采纳即合并 (docs/accept-is-merge.md #296, stage 1): the card is always
-        # born `pending`. The old machine gate (`check_command` → born
-        # `pending_gate`, platform runs the check, only green promotes to
-        # pending) is retired: a card is the platform's view of a PR, and real
-        # CI on that PR — not a private platform check — is what decides whether
-        # a change is good. `pending_gate`/`gate_failed`/`gate_blocked` are no
-        # longer entered; existing rows keep their historical values and their
-        # exits (review/gate_sweep.py, AcceptService.void) stay in place.
-        # 递卡沿用派活时定的验收人 (#718 设置表)。The work this card says it
-        # carries is the right set to ask — a batch's tree also holds threads
-        # whose code is NOT in this delivery, and routing by those would hand
-        # the card to somebody whose work is not in it. An undeclared delivery
-        # falls back to everyone on the batch, which is the best available
-        # answer when the card names nothing.
-        tasks = TaskService(self._session)
-        handed_to = (
-            await tasks.list_by_ids(delivered)
-            if delivered
-            else await WorkTreeService(self._session).tasks_on(tree.id)
-        )
+        if not await asyncio.to_thread(
+            ws.branch_has_commits,
+            task.project_id,
+            task.branch_name,
+            base=task.base_branch,
+        ):
+            raise ValidationError(f"任务分支 {task.branch_name} 没有可交付的提交")
         reviewer_handle = await self._reviewer_or_project_default(
             await self._projects.get(topic.project_id),
             reviewer_handle,
-            from_work=handed_to,
+            from_work=[task],
         )
         card = await self._repo.add(
             topic_id=topic_id,
+            task_id=task.id,
             reviewer_handle=reviewer_handle,
             routing_reason=routing_reason,
-            tree_id=tree.id,
             status=AcceptStatus.pending,
-            change_subject=change_subject,
-            change_body=(change_body or None),
-            delivered_task_ids=delivered,
+            change_subject=subject,
+            change_body=change_body or None,
+            delivered_task_ids=[task.id],
         )
-        # 这批活的 PR 早就开着了 (#718 拍板①)：draft PR 在这棵树第一次提交时就
-        # 开出来了，卡认领它，而不是再开一个。GitHub 那边也认领得了（一条 head
-        # 上只能有一个开着的 PR，`open_pr` 撞上 422 会去找它），但那要一次失败的
-        # POST 加一次 GET 才知道号码；树上记着，卡当场就有 PR 可显示。
-        if tree.pr_number is not None:
-            card.pr_number = tree.pr_number
-            card.pr_url = tree.pr_url
-        await self._warn_about_a_second_pending_migration(topic)
+        card.pr_number, card.pr_url = task.pr_number, task.pr_url
+        await self._warn_about_a_second_pending_migration(topic, task.id)
         return card
 
-    async def _declared_work(
-        self, topic: Topic, task_ids: list[uuid.UUID]
-    ) -> list[uuid.UUID]:
-        """The work this delivery says it carries, validated (#189).
-
-        The room declares it, because the room is the only party that knows.
-        The platform cannot derive it: a task's `tree_id` records which batch
-        was open when `cheese split` ran, not where its code eventually landed,
-        so the tree's membership names whoever happened to be sitting on it —
-        and commit authors identify the room's agent, not its individual tasks.
-
-        Exactly ONE thing is checkable, and it is checked rather than trusted,
-        because a wrong `Cheese-Task:` is permanent and reads exactly like a
-        right one: **the work belongs to THIS room**. A pasted id from another
-        room's brief would otherwise credit that room's worker on this change.
-
-        **为什么没有防重复。** 这里曾经还拦一条：「这条活被某张已采纳的卡声明过
-        了」。它跟本仓写明的语义直接冲突 —— `TaskStatus` 的 docstring 说 a task
-        can be delivered and still open (someone keeps pushing to the same
-        branch)。连续交付是既有语义：一条活参与上一批、之后继续写代码、真实地写
-        进下一批，是长命房间的常态，那条校验会把这条**真实**的声明拒掉。同一条
-        活出现在两次交付的历史里不是错误，它确实写了两批的代码。
-
-        剩下唯一算得上「同一批被署了两次」的形状，也不需要一条校验来防：
-        - 一次请求里报两遍 —— 下面的 `dict.fromkeys` 去重，它跟报一遍说的是同
-          一件事；
-        - 一棵树上两张卡各报一次 —— 一张卡采纳后树就 merged，`ensure_open` 给下
-          一批开的是新树，所以「同一棵树的第二张卡」只在前一张 **rejected /
-          voided** 之后才存在（`_CARD_BLOCKS_NEW_CARD` 只拦非终态）。那两种前一
-          张卡都没有交付过任何东西，重递并重报正是补救的路，拦它才是错的。
-
-        「重复署名却没有新贡献」是另一回事，而平台判不了它：能被机器判定的只有
-        分支上有没有新提交，那道闸已经在 `_NOTHING_TO_DELIVER`。再发明一条近似
-        规则，只会重新开始拒真放假。
-
-        What is deliberately NOT checked is whether the work "looks finished" —
-        a closed thread can have delivered nothing and an open one can have
-        written the whole change, so any such rule would reject true
-        declarations while still admitting false ones.
-
-        Empty in, empty out, and no inference: an undeclared delivery lands with
-        no `Cheese-Task:` line at all. One card naming the same work twice is
-        deduped rather than refused — it says nothing different from naming it
-        once.
-        """
-        wanted = list(dict.fromkeys(task_ids))
-        if not wanted:
-            return []
-        in_room = await TaskService(self._session).list_in_room(topic.id)
-        mine = {t.id for t in in_room}
-        for task_id in wanted:
-            if task_id not in mine:
-                raise ValidationError(_NOT_THIS_ROOMS_WORK.format(task_id=task_id))
-        return wanted
-
-    async def _warn_about_a_second_pending_migration(self, topic: Topic) -> None:
+    async def _warn_about_a_second_pending_migration(
+        self, topic: Topic, task_id: uuid.UUID
+    ) -> None:
         """两张未决卡各带一个新迁移 → 在房间里说一声 (#314).
 
         The narrow, clean half of "two rooms doing the same work". Two branches
@@ -689,7 +531,7 @@ class AcceptService:
                 return []
             return [p for p in added if _ALEMBIC_VERSIONS_DIR in p]
 
-        mine = migrations(topic.id)
+        mine = migrations(task_id)
         if not mine:
             return
         others = await self._repo.list_live_in_project(
@@ -698,7 +540,9 @@ class AcceptService:
         collisions = [
             other
             for other in others
-            if other.topic_id != topic.id and migrations(other.topic_id)
+            if other.task_id is not None
+            and other.task_id != task_id
+            and migrations(other.task_id)
         ]
         if not collisions:
             return
@@ -890,8 +734,8 @@ class AcceptService:
         # red one has to be in front of the person about to accept. A check
         # whose result goes nowhere is a check nobody runs.
         tree = (
-            await WorkTreeService(self._session).get(card.tree_id)
-            if card.tree_id is not None
+            await TaskService(self._session).get(card.task_id)
+            if card.task_id is not None
             else None
         )
         data["quick_check"] = (
@@ -1265,6 +1109,9 @@ class AcceptService:
         # session to read the card or the roster with.
         from app.domain.workspace import service as ws
 
+        if card.task_id is None:
+            raise ValidationError("历史验收卡没有可合并的任务")
+        await TaskService(self._session).require_in_room(topic.id, card.task_id)
         who = await identity.attribution(
             self._session, topic, card=card, decided_by=decided_by
         )
@@ -1272,7 +1119,7 @@ class AcceptService:
             merged = await asyncio.to_thread(
                 ws.merge_topic,
                 topic.project_id,
-                topic.id,
+                card.task_id,
                 message=pr_text.local_merge_commit_message(
                     topic, decided_by, card, who
                 ),
@@ -1368,6 +1215,7 @@ class AcceptService:
         # 交付完成 ≠ 话题结束 (#442 decision 1). accepted_by/accepted_at 是这一刻
         # 自动打上的交付标记；status 不动，归档只由人来做（POST /topics/{id}/archive）。
         await self._stamp_delivery(card, topic, by=decided_by, at=now)
+        await self._mark_task_merged(card, delivered_head=merged.get("delivered_head"))
 
         await self._session.flush()
         await self._session.refresh(card)
@@ -1416,7 +1264,7 @@ class AcceptService:
         from app.domain.workspace import service as ws
 
         repo_path = ws.ensure_repo(project_id)
-        branch = ws.branch_for_tree(ws.tree_for_place(topic_id))
+        branch = ws.branch_for_task(topic_id)
         result = subprocess.run(
             ["git", "-C", str(repo_path), "rev-parse", "--verify", "-q", branch],
             capture_output=True,
@@ -1508,11 +1356,13 @@ class AcceptService:
         scope. `_advance_pr_checks`'s up-front merged-check now returns before
         this function on the first tick that observes the merge, so the loop —
         and the noise — stops on its own."""
-        from app.domain.review import github_pr
         from app.domain.workspace import service as ws
 
+        if card.task_id is None:
+            raise ValidationError("历史验收卡没有可同步的任务")
+        await TaskService(self._session).require_in_room(topic.id, card.task_id)
         local_head = await asyncio.to_thread(
-            self._local_topic_branch_head, topic.project_id, topic.id
+            self._local_topic_branch_head, topic.project_id, card.task_id
         )
         if local_head is None or local_head in (card.pr_head_sha, remote_head):
             return False
@@ -1552,13 +1402,13 @@ class AcceptService:
             pushed = await asyncio.to_thread(
                 ws.push_topic_branch_for_github_pr,
                 topic.project_id,
-                topic.id,
+                card.task_id,
                 owner=owner,
                 repo=repo,
                 # The PR's own head branch when the caller could read it off
                 # the PR; the derived name only as a fallback (that is what
                 # the personal-token lane's PRs are always called anyway).
-                remote_branch=remote_branch or github_pr.pr_branch_name(topic.id),
+                remote_branch=remote_branch or ws.branch_for_task(card.task_id),
                 token=token,
             )
         except ValidationError as exc:
@@ -1780,7 +1630,7 @@ class AcceptService:
         if status.merged:
             # 有人已经在 GitHub 上合了这个 PR —— 同一件事，照单收下。
             card.pr_merged_at = status.merged_at or datetime.now(UTC)
-            await self._mark_cards_tree_merged(card, delivered_head=status.head_sha)
+            await self._mark_task_merged(card, delivered_head=status.head_sha)
             if status.merge_commit_sha:
                 card.pr_head_sha = status.merge_commit_sha
             return await self._conclude_pr_accept(
@@ -1878,7 +1728,7 @@ class AcceptService:
             raise ValidationError(f"GitHub 拒绝合并 PR #{number}：{reason}")
 
         card.pr_merged_at = datetime.now(UTC)
-        await self._mark_cards_tree_merged(card, delivered_head=seen)
+        await self._mark_task_merged(card, delivered_head=seen)
         card.pr_head_sha = result.sha  # the merge commit, for the record
         return await self._conclude_pr_accept(card, topic, decided_by)
 
@@ -2003,14 +1853,14 @@ class AcceptService:
             return
         if card.status == AcceptStatus.rejected:
             tree = (
-                await WorkTreeService(self._session).get(card.tree_id)
-                if card.tree_id is not None
+                await TaskService(self._session).get(card.task_id)
+                if card.task_id is not None
                 else None
             )
             if (
                 card.pr_merged_at is not None
                 or tree is None
-                or tree.status not in (TreeStatus.open, TreeStatus.sealed)
+                or tree.status != TaskStatus.open
             ):
                 return
         topic = await self._topic_or_404(card.topic_id)
@@ -2098,50 +1948,21 @@ class AcceptService:
                 self._note_poll_failed(card, exc)
             await self._session.flush()
 
-    async def _mark_cards_tree_merged(
+    async def _mark_task_merged(
         self, card: AcceptCard, *, delivered_head: str | None = None
     ) -> None:
-        """The batch landed — so close it AND start the next one, here.
-
-        The tree row stays: the work that produced it still points here, and a
-        task whose tree vanished could not say where its changes went.
-
-        Opening the next batch in the same breath is the load-bearing half.
-        Marking a tree `merged` used to be the whole of it, and the on-disk
-        「这个房间写哪棵树」marker (`ws.bind_tree`) kept naming the tree that had
-        just landed until somebody happened to call `ensure_open` — which is
-        递卡, i.e. the END of the next batch. Everything in between wrote to a
-        delivered branch: the room commits, `git log` looks healthy, and the
-        commits sit on a branch whose PR is already squashed into main, so they
-        are ahead of nothing and reachable from nothing. That is not a
-        hypothetical — this repository's own room sat on `topic/229e3403` after
-        its PR merged as `1c298199a`, with its head not an ancestor of main.
-
-        A room is between batches most of the time and holding an empty open
-        tree is that state's normal shape (`create_card` already commits one on
-        sight), so there is nothing to defer: the moment a batch lands is
-        exactly the moment the room needs somewhere else to write.
-        """
-        if card.tree_id is None:
+        if card.task_id is None:
             return
-        trees = WorkTreeService(self._session)
-        tree = await trees.get(card.tree_id)
-        if tree is None:
-            return
-        # `==`, not `is`: `WorkTree.status` is a plain String column, so a row
-        # loaded from the database carries a `str` and an identity comparison is
-        # False for every value it could hold.
-        if tree.status != TreeStatus.merged:
-            await trees.mark_merged(tree)
-        # 交出去的是哪个 commit，在这一刻记死。Passed in rather than read off the
-        # card, because the card's `pr_head_sha` becomes the MERGE commit moments
-        # later and which of the two a reader gets would then depend on statement
-        # order. See `WorkTree.delivered_head` for why the branch's tip is not an
-        # acceptable substitute.
-        if delivered_head and not tree.delivered_head:
-            tree.delivered_head = delivered_head[:64]
-            await self._session.flush()
-        await trees.ensure_open(project_id=tree.project_id, room_id=tree.room_id)
+        task = await TaskService(self._session).require_in_room(
+            card.topic_id, card.task_id
+        )
+        task.status = TaskStatus.closed
+        task.closed_at = task.closed_at or datetime.now(UTC)
+        task.accepted_at = task.accepted_at or datetime.now(UTC)
+        task.accepted_by = task.accepted_by or card.decided_by
+        if delivered_head and not task.delivered_head:
+            task.delivered_head = delivered_head[:64]
+        await self._session.flush()
 
     async def _app_pr_client(self, topic: Topic):  # noqa: ANN202 — GitHubPRClient
         """The App-token client for this project's upstream, or None when the
@@ -2160,68 +1981,31 @@ class AcceptService:
             return None
         return GitHubPRClient(*parsed, tokens)
 
-    async def _live_pr_number(self, place_id: uuid.UUID, topic: Topic) -> int | None:
-        """Which PR this place is writing into right now.
-
-        The card first, because a filed card IS the delivery and its
-        `pr_number` is what every other path here already trusts; the room's
-        open batch second, which is the answer BEFORE anyone files a card —
-        the draft PR opened at the first commit (#718 拍板①) hangs there.
-        """
-        cards = await self._repo.list_live_for_places(
-            [place_id], statuses=(AcceptStatus.pending,)
-        )
-        for card in cards:
-            if card.pr_number is not None:
-                return card.pr_number
-        tree = await WorkTreeService(self._session).current(topic.id)
-        return tree.pr_number if tree is not None else None
-
-    async def mark_ready(self, place_id: uuid.UUID) -> dict:
-        """`cheese ready`: take this batch's PR out of draft. Nothing else.
-
-        Not a delivery and not an accept — it flips one boolean on GitHub, the
-        one that means「这份东西可以看了」. 递卡 flips the same boolean (递卡 的
-        语义就是请人来看) and does the rest; this exists for the case where the
-        work is worth showing before anybody is ready to ask for a review.
-
-        Flipping it is the one thing here that REST cannot do — see
-        `GitHubPRClient.mark_ready_for_review`, which is why a GraphQL request
-        appears in this codebase at all.
-
-        Returns a dict the CLI prints rather than raising for "there was
-        nothing to flip": a PR that is already ready is the state the caller
-        wanted, and an exception for it would teach agents to avoid the
-        command. A FAILED flip does raise — a draft that silently stayed draft
-        is a delivery sitting where no reviewer will look for it.
-        """
-        topic = await self._topic_or_404(place_id)
-        number = await self._live_pr_number(place_id, topic)
-        if number is None:
-            return {
-                "ready": False,
-                "reason": (
-                    "这个房间还没有 PR —— 先提交点东西（有提交平台就会开一个 draft PR）"
-                ),
-            }
+    async def mark_ready(self, room_id: uuid.UUID, task_id: uuid.UUID) -> dict:
+        """Mark this task's PR ready; acceptance remains a separate human action."""
+        task = await TaskService(self._session).require_in_room(room_id, task_id)
+        if task.status != TaskStatus.open or not task.branch_name:
+            raise ValidationError("这条任务已结束或没有工作分支")
+        topic = await self._topic_or_404(room_id)
+        if topic.status == TopicStatus.archived:
+            raise ValidationError("话题已归档，不能提交验收")
+        if task.pr_number is None:
+            return {"ready": False, "reason": "任务还没有 PR，请先提交并同步代码"}
         client = await self._app_pr_client(topic)
         if client is None:
-            return {"ready": False, "reason": "这个项目没有绑定 GitHub，没有 PR 可以翻"}
-        view = await client.pr_view(number)
-        url = str(view.get("html_url") or "")
-        if not view.get("draft"):
-            return {
-                "ready": False,
-                "already": True,
-                "pr_number": number,
-                "pr_url": url,
-                "reason": f"PR #{number} 本来就不是 draft",
-            }
-        node_id = str(view.get("node_id") or "")
-        if not node_id:
-            raise ValidationError(f"GitHub 没给 PR #{number} 的 node_id，翻不了 ready")
-        await client.mark_ready_for_review(node_id)
-        return {"ready": True, "pr_number": number, "pr_url": url}
+            return {"ready": False, "reason": "这个项目没有绑定 GitHub"}
+        view = await client.pr_view(task.pr_number)
+        if view.get("draft"):
+            node_id = str(view.get("node_id") or "")
+            if not node_id:
+                raise ValidationError("GitHub 未返回 PR 的 node_id")
+            await client.mark_ready_for_review(node_id)
+        return {
+            "ready": True,
+            "already": not bool(view.get("draft")),
+            "pr_number": task.pr_number,
+            "pr_url": task.pr_url,
+        }
 
     async def redescribe(
         self,
@@ -2326,7 +2110,7 @@ class AcceptService:
         work was already pushed" learns to stop calling this.
         """
         cards = await self._repo.list_live_for_places(
-            [place_id], statuses=(AcceptStatus.pending,)
+            [place_id], statuses=(AcceptStatus.pending, AcceptStatus.conflict)
         )
         cards = [c for c in cards if c.pr_number is not None]
         if not cards:
@@ -2440,7 +2224,7 @@ class AcceptService:
                 # The review remains a return. GitHub establishes a separate
                 # fact about the batch, including the head that actually landed.
                 card.pr_merged_at = status.merged_at or datetime.now(UTC)
-                await self._mark_cards_tree_merged(card, delivered_head=status.head_sha)
+                await self._mark_task_merged(card, delivered_head=status.head_sha)
                 sync_note = await self._sync_merged_base(topic)
                 await self._session.flush()
                 self._notify_merge_result(
@@ -2538,7 +2322,7 @@ class AcceptService:
             conflict = self._conflict_nudge(card=card, status=status)
             if conflict is not None:
                 pending.append(conflict)
-        self._dispatch_nudges(
+        await self._dispatch_nudges(
             card=card,
             topic=topic,
             pending=pending,
@@ -2781,7 +2565,7 @@ class AcceptService:
             await self._session.flush()
             return
         if result.sha is None:
-            self._note_merge_blocked(
+            await self._note_merge_blocked(
                 card=card,
                 topic=topic,
                 reason=result.blocked_reason or "",
@@ -2791,7 +2575,7 @@ class AcceptService:
             await self._session.flush()
             return
         card.pr_merged_at = datetime.now(UTC)
-        await self._mark_cards_tree_merged(card, delivered_head=card.pr_head_sha)
+        await self._mark_task_merged(card, delivered_head=card.pr_head_sha)
         card.pr_head_sha = result.sha
         await self._repo.add_approval(card.id, armer)
         card.decided_by = armer
@@ -2852,7 +2636,7 @@ class AcceptService:
         fact, and since #206 that fact is the whole of what the platform waits
         for."""
         card.pr_merged_at = status.merged_at or datetime.now(UTC)
-        await self._mark_cards_tree_merged(card, delivered_head=status.head_sha)
+        await self._mark_task_merged(card, delivered_head=status.head_sha)
         if status.merge_commit_sha:
             # Nice to have, not required: nothing downstream looks a run up by
             # this sha any more, it is just the truest record of what landed.
@@ -2894,7 +2678,7 @@ class AcceptService:
             ),
         )
 
-    def _note_merge_blocked(
+    async def _note_merge_blocked(
         self,
         *,
         card: AcceptCard,
@@ -2929,31 +2713,41 @@ class AcceptService:
         # GitHub 的原话是外部字符串，而它要被贴进芝士的终端（见
         # `pr_signals.sanitize_external`）。
         reason = pr_signals.sanitize_external(reason)
-        note = f"PR #{card.pr_number} 检查全绿，但 GitHub 拒绝合并：{reason}"
+        note = f"PR #{card.pr_number} GitHub 拒绝合并：{reason}"
         if card.note == note:
             return
         notes.record(card, notes.NoteCode.merge_refused, note)
         logger.warning("PR merge refused for card %s: %s", card.id, reason)
+        task = (
+            await TaskService(self._session).get(card.task_id) if card.task_id else None
+        )
+        actionable = task is not None and task.status == TaskStatus.open
+        action = (
+            f'先执行 cd "$(cheese worktree {card.task_id})" 进入任务目录。'
+            "检查 GitHub 返回的具体原因；若是冲突，确认 PR 当前目标分支后再合入，"
+            "解决并验证后提交，用 cheese push-fix 更新原 PR。"
+            "采纳由人决定；只有人已启用自动合并且项目条件满足时才会自动合并。\n"
+            "如果原因不是冲突（比如仓库禁用了这种合并方式），工作区里改不动，"
+            "请在话题里说清楚卡在哪、需要谁做什么。"
+            if actionable
+            else "原任务已关闭或不存在；如需继续修改，请由新任务承接。"
+        )
         runner.submit(
             chat_service,
             topic.id,
             author="system",
             content=(
-                f"PR #{card.pr_number}（{card.pr_url}）的检查全绿，"
-                "但 GitHub 拒绝合并：\n"
+                f"任务 {card.task_id} 的 PR #{card.pr_number}（{card.pr_url}）"
+                "被 GitHub 拒绝合并：\n"
                 f"```\n{reason[:1500]}\n```\n"
-                "最常见的原因是这个分支和主分支冲突了。请在这个话题的工作区里把主分支"
-                "合并进来、解决冲突后提交（不需要、也没法自己推到 GitHub），平台会自动"
-                "把新提交同步到这个 PR，检查会自动重新跑，能合并时平台会自动合并。\n"
-                "如果原因不是冲突（比如仓库禁用了这种合并方式），工作区里改不动，"
-                "请在话题里说清楚卡在哪、需要谁做什么。"
+                f"{action}"
             ),
-            summon=True,
+            summon=actionable,
             # 平台提示统一契约: the room gets one line; GitHub's own words ride in
             # `meta.detail` (nothing is dropped — `reason` is quoted whole, under
             # the same 1500-char bound the message body always used). `content`
             # above is unchanged and still goes to 芝士 as the prompt.
-            nudge_event=f"PR #{card.pr_number} 全绿，但 GitHub 拒绝合并",
+            nudge_event=f"PR #{card.pr_number} 被 GitHub 拒绝合并",
             nudge_meta=notice(
                 EVENT_MERGE_REFUSED,
                 severity=SEVERITY_ERROR,
@@ -3010,9 +2804,10 @@ class AcceptService:
                 f"PR #{card.pr_number}（{card.pr_url}）的{stage}检查没通过：\n"
                 f"```\n{clean[:_NUDGE_TAIL_LIMIT]}\n```\n"
                 f"{_ci_log_howto(f'{owner}/{repo}')}"
-                "请在这个话题的工作区里修复问题并提交（不需要、也没法自己推到 "
-                "GitHub），平台会自动把新提交同步到这个 PR，检查会自动重新跑；"
-                "转绿后平台会自动合并 PR。"
+                "先根据检查结论和日志判断原因；代码问题才在对应任务目录修复、验证并提交，"
+                "用 cheese push-fix 更新原 PR。取消或等待授权的检查先处理其运行状态。"
+                "说明改动和验证结果；采纳由人决定，只有人已启用自动合并且"
+                "项目条件满足时才会自动合并。"
             ),
             # 平台提示统一契约: the room sees one line and the excerpt rides in
             # `meta.detail`, under the same `_NUDGE_TAIL_LIMIT` bound the message
@@ -3088,8 +2883,8 @@ class AcceptService:
             content=(
                 f"{head}（PR #{card.pr_number}，{card.pr_url}）：\n"
                 f"{body}\n\n"
-                "请在这个话题的工作区里按意见改并提交（不需要、也没法自己推到 "
-                "GitHub），平台会自动把新提交同步到这个 PR。如果你不同意某条意见，"
+                "在对应任务目录按意见修改、验证并提交，用 cheese push-fix 更新原 PR。"
+                "如果你不同意某条意见，"
                 "在话题里说清理由，让人来定。"
             ),
             detail=body,
@@ -3102,7 +2897,7 @@ class AcceptService:
     def _conflict_nudge(
         self, *, card: AcceptCard, status
     ) -> pr_signals.PendingNudge | None:
-        """「这个 PR 和主分支冲突了」排成一条待发。
+        """「这个 PR 和目标分支冲突了」排成一条待发。
 
         判据是 GitHub 的 `mergeable is False` —— **不是** falsy。它在 GitHub 还没
         算完的时候是 None，而刚推完一次的 PR 每次都会经过那个 None：把 None 当冲
@@ -3111,9 +2906,7 @@ class AcceptService:
         没有上限。冲突和 CI 失败一样是客观的：解掉它就消失，所以多叫几轮不会白叫
         （评审意见不是，见 `REVIEW_NUDGE_LIMIT`）。
 
-        叠加 PR（stacked PR）在这里不需要判断：一棵树 = 一个分支 = 一个 PR，而
-        `pr_base_branch()` 永远给仓库的默认分支，所以我们开出去的 PR 不可能叠在另
-        一个没合的 PR 上。没有这个概念就不造一个出来。
+        A dependent task can target its parent's branch; use the PR's actual base.
         """
         if getattr(status, "mergeable", None) is not False:
             return None
@@ -3124,21 +2917,20 @@ class AcceptService:
             kind=pr_signals.NudgeKind.conflict,
             # commit 变了就重新算一次：芝士推了一次合并上来，冲突还在，那是新事实。
             signature=pr_signals.signature("conflict", card.pr_head_sha or ""),
-            event=f"PR #{card.pr_number} 和主分支冲突了",
+            event=f"PR #{card.pr_number} 和目标分支冲突了",
             content=(
-                f"PR #{card.pr_number}（{card.pr_url}）的{where}和主分支冲突了，"
+                f"PR #{card.pr_number}（{card.pr_url}）的{where}和目标分支冲突了，"
                 "GitHub 现在合不了它。\n"
-                "请在这个话题的工作区里把主分支合并进来、解决冲突后提交"
-                "（不需要、也没法自己推到 GitHub），平台会自动把新提交同步到这个 "
-                "PR，检查会自动重新跑。\n"
+                "先确认 PR 当前目标分支，在对应任务目录合入该分支、解决冲突并验证。"
+                "提交后用 cheese push-fix 更新原 PR，说明处理结果。\n"
                 "如果冲突解不动、或者不该由你来解，在话题里说清楚卡在哪。"
             ),
-            note=f"PR #{card.pr_number} 和主分支冲突，已叫芝士来解",
+            note=f"PR #{card.pr_number} 和目标分支冲突，已叫芝士来解",
             note_code=notes.NoteCode.merge_conflict,
             event_type=EVENT_PR_CONFLICT,
         )
 
-    def _dispatch_nudges(
+    async def _dispatch_nudges(
         self,
         *,
         card: AcceptCard,
@@ -3163,6 +2955,10 @@ class AcceptService:
         fresh = [p for p in pending if not ledger.already_sent(p.kind, p.signature)]
         if not fresh:
             return
+        task = (
+            await TaskService(self._session).get(card.task_id) if card.task_id else None
+        )
+        actionable = task is not None and task.status == TaskStatus.open
         for nudge in fresh:
             if nudge.capped:
                 continue
@@ -3170,8 +2966,14 @@ class AcceptService:
                 chat_service,
                 topic.id,
                 author="system",
-                content=nudge.content,
-                summon=True,
+                content=(
+                    f"任务 {card.task_id}："
+                    f'先执行 cd "$(cheese worktree {card.task_id})"。\n' + nudge.content
+                    if actionable
+                    else f"{nudge.event}。原任务已关闭或不存在；"
+                    "如需继续修改，请由新任务承接。"
+                ),
+                summon=actionable,
                 nudge_event=nudge.event,
                 nudge_meta=notice(
                     nudge.event_type,
@@ -3370,9 +3172,10 @@ class AcceptService:
 
         card_id = card.id
         subject = (card.change_subject or "").strip()
-        branch = await asyncio.to_thread(
-            lambda: ws.branch_for_tree(ws.tree_for_place(topic.id))
-        )
+        if card.task_id is None:
+            raise ValidationError("历史交付卡没有关联任务，请新建任务后交付")
+        task_id = card.task_id
+        branch = await asyncio.to_thread(ws.branch_for_task, task_id)
         note = (
             f"{_ACCEPT_NO_BRANCH_PREFIX}（{branch}），开不出能承载"
             f"「{subject}」的 PR。改动可能被提交到了别的分支——"
@@ -3559,8 +3362,7 @@ class AcceptService:
         card.decided_at = datetime.now(UTC)
 
         # 撤销的是这次**验收记录**，不是这次合并 —— PR 已经在 main 上了，git 层面
-        # revoke 什么都没撤。所以这里只清交付标记（话题回到"还没交付过"，因此
-        # 又能递卡）。
+        # revoke 什么都没撤。只清采纳标记；任务仍然关闭，后续修改用新任务交付。
         #
         # 归档状态一律不动，这是 2026-08-17 的对称面：`TopicService.unarchive` 的
         # docstring 说「取消归档不改写采纳记录，那要用撤回采纳」；反过来同理——
@@ -3711,7 +3513,7 @@ class AcceptService:
             f"（{verdict}；合并时检查状态：{checks_at_merge}）{tail_reason}"
         )
         card.pr_merged_at = now
-        await self._mark_cards_tree_merged(card, delivered_head=seen_head)
+        await self._mark_task_merged(card, delivered_head=seen_head)
         card.pr_head_sha = result.sha
         await self._repo.add_approval(card.id, decided_by)
         card.decided_by = decided_by

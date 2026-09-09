@@ -30,7 +30,7 @@ vi.mock('../CodeEditor.vue', () => ({
     props: ['modelValue', 'filename', 'readonly'],
     emits: ['update:modelValue', 'save'],
     template:
-      '<textarea class="stub-editor" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
+      '<textarea class="stub-editor" :readonly="readonly" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
   },
 }))
 
@@ -43,6 +43,19 @@ vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
     ...actual,
+    listRoomTasks: vi.fn().mockImplementation((room: string) =>
+      Promise.resolve({
+        data: ['one', 'two'].map((name, index) => ({
+          id: index === 0 ? `task-${room}` : `task-${room}-two`,
+          title: name,
+          status: 'open',
+          branch_name: `task/${name}`,
+          presentation: { column: 'building', display_status: '运行中' },
+          blocks: [],
+        })),
+        total: 2,
+      })
+    ),
     listFiles: (...a: unknown[]) => listFiles(...a),
     readFile: (...a: unknown[]) => readFile(...a),
     writeFile: (...a: unknown[]) => writeFile(...a),
@@ -64,6 +77,7 @@ vi.mock('../../api', async () => {
   }
 })
 
+import { listRoomTasks } from '../../api'
 import WorkPanel from '../WorkPanel.vue'
 
 function topic(id: string): Topic {
@@ -78,7 +92,18 @@ function mountPanel(id: string) {
   const vuetify = createVuetify({ components, directives })
   return render(WorkPanel, {
     props: { topic: topic(id), activityTick: 0 },
-    global: { plugins: [vuetify] },
+    global: {
+      plugins: [vuetify],
+      stubs: {
+        VSelect: {
+          props: ['modelValue', 'items'],
+          emits: ['update:modelValue'],
+          template: `<select class="task-select" :value="modelValue" @change="$emit('update:modelValue', $event.target.value)">
+          <option value="">Accepted code</option><option v-for="task in items" :key="task.id" :value="task.id">{{ task.title }}</option>
+        </select>`,
+        },
+      },
+    },
   })
 }
 
@@ -103,6 +128,9 @@ async function openFilesTool(container: Element) {
   const tab = buttons(container).find((b) => b.getAttribute('title')?.startsWith('改动'))
   expect(tab, '找不到 改动 tab').toBeTruthy()
   await fireEvent.click(tab!)
+  await flush()
+  const selector = container.querySelector('.task-select') as HTMLSelectElement
+  await fireEvent.update(selector, selector.options[1].value)
   await flush()
   const seg = buttonByText(container, '全部文件')
   expect(seg, '找不到 全部文件 范围').toBeTruthy()
@@ -175,7 +203,7 @@ describe('文件面板', () => {
     await flush()
 
     expect(writeFile).toHaveBeenCalledTimes(1)
-    expect(writeFile).toHaveBeenCalledWith('p1', 'a.py', '在 B 里改的\n', 'topic-B', 'vB')
+    expect(writeFile).toHaveBeenCalledWith('p1', 'a.py', '在 B 里改的\n', 'topic-B', 'vB', 'task-topic-B')
   })
 
   it('保存时带上读到的版本，好让后端拦住抢跑的写', async () => {
@@ -188,7 +216,102 @@ describe('文件面板', () => {
     await fireEvent.click(buttonByText(container, '保存')!)
     await flush()
 
-    expect(writeFile).toHaveBeenCalledWith('p1', 'a.py', '人改过的\n', 'topic-A', 'v1')
+    expect(writeFile).toHaveBeenCalledWith('p1', 'a.py', '人改过的\n', 'topic-A', 'v1', 'task-topic-A')
+  })
+
+  it('项目已采纳的文本仍显示全文，并保持只读', async () => {
+    const { container } = mountPanel('topic-A')
+    await flush()
+    await openFilesTool(container)
+    const selector = container.querySelector('.task-select') as HTMLSelectElement
+    await fireEvent.update(selector, '')
+    await flush()
+    await fireEvent.click(buttonByText(container, '全部文件')!)
+    await flush()
+    expect(editor(container)!.value).toBe('A 话题的内容\n')
+    expect(editor(container)!.readOnly).toBe(true)
+    expect(container.textContent).not.toContain('二进制文件，不能按文本编辑')
+    expect(writeFile).not.toHaveBeenCalled()
+  })
+
+  it('任务关闭后刷新会保留文本，但禁止继续保存', async () => {
+    const { container } = mountPanel('topic-A')
+    await flush()
+    await openFilesTool(container)
+    expect(editor(container)!.readOnly).toBe(false)
+    vi.mocked(listRoomTasks).mockResolvedValueOnce({
+      data: [
+        {
+          id: 'task-topic-A',
+          project_id: 'p1',
+          room_id: 'topic-A',
+          title: 'one',
+          status: 'closed',
+          branch_name: 'task/one',
+          blocks: [],
+          created_at: '2026-09-09T00:00:00Z',
+          updated_at: '2026-09-09T00:00:00Z',
+          presentation: { column: 'done', display_status: '已完成' },
+        },
+      ],
+      total: 1,
+    })
+    await fireEvent.click(container.querySelector('button[title="刷新"]')!)
+    await flush()
+    expect(editor(container)!.readOnly).toBe(true)
+    expect(editor(container)!.value).toBe('A 话题的内容\n')
+    await fireEvent.update(editor(container)!, 'late edit')
+    const save = buttonByText(container, '保存')
+    if (save) await fireEvent.click(save)
+    await flush()
+    expect(writeFile).not.toHaveBeenCalled()
+  })
+
+  it('房间归档后，已打开的任务文件变成只读', async () => {
+    const { container, rerender } = mountPanel('topic-A')
+    await flush()
+    await openFilesTool(container)
+    expect(editor(container)!.readOnly).toBe(false)
+    await rerender({ topic: { ...topic('topic-A'), status: 'archived' }, activityTick: 0 })
+    await flush()
+    expect(editor(container)!.readOnly).toBe(true)
+    expect(editor(container)!.value).toBe('A 话题的内容\n')
+  })
+
+  it('同一房间切换任务后，旧任务的迟到文件响应不会覆盖新任务', async () => {
+    let finishOldRead!: (value: FileContent) => void
+    readFile.mockImplementation((_project, path, _room, task) => {
+      if (task === 'task-topic-A') {
+        return new Promise<FileContent>((resolve) => {
+          finishOldRead = resolve
+        })
+      }
+      return Promise.resolve(textFile(path, '第二条任务\n', 'v-task-two'))
+    })
+    const { container } = mountPanel('topic-A')
+    await flush()
+    await openFilesTool(container)
+    expect(finishOldRead).toBeTypeOf('function')
+    const selector = container.querySelector('.task-select') as HTMLSelectElement
+    await fireEvent.update(selector, 'task-topic-A-two')
+    await flush()
+    await fireEvent.click(buttonByText(container, '全部文件')!)
+    await flush()
+    finishOldRead(textFile('a.py', '迟到的第一条任务\n', 'v-old'))
+    await flush()
+    expect(editor(container)!.value).toBe('第二条任务\n')
+    await fireEvent.update(editor(container)!, '只修改第二条任务\n')
+    await flush()
+    await fireEvent.click(buttonByText(container, '保存')!)
+    await flush()
+    expect(writeFile).toHaveBeenCalledWith(
+      'p1',
+      'a.py',
+      '只修改第二条任务\n',
+      'topic-A',
+      'v-task-two',
+      'task-topic-A-two'
+    )
   })
 
   it('二进制文件只读打开，根本不给保存按钮', async () => {
@@ -249,7 +372,7 @@ describe('文件面板', () => {
     writeFile.mockResolvedValue({ path: 'a.py', version: 'v3' })
     await fireEvent.click(overwrite!)
     await flush()
-    expect(writeFile).toHaveBeenLastCalledWith('p1', 'a.py', '人改过的\n', 'topic-A', null)
+    expect(writeFile).toHaveBeenLastCalledWith('p1', 'a.py', '人改过的\n', 'topic-A', null, 'task-topic-A')
   })
 })
 
@@ -292,6 +415,9 @@ new file mode 100644
     const tab = buttons(container).find((b) => b.getAttribute('title')?.startsWith('改动'))
     expect(tab, '找不到 改动 tab').toBeTruthy()
     await fireEvent.click(tab!)
+    await flush()
+    const selector = container.querySelector('.task-select') as HTMLSelectElement
+    await fireEvent.update(selector, selector.options[1].value)
     await flush()
   }
 
@@ -342,7 +468,7 @@ new file mode 100644
     await fireEvent.click(buttonByText(container, '保存')!)
     await flush()
 
-    expect(writeFile).toHaveBeenCalledWith('p1', 'a.py', '改一行\n', 'topic-A', 'v1')
+    expect(writeFile).toHaveBeenCalledWith('p1', 'a.py', '改一行\n', 'topic-A', 'v1', 'task-topic-A')
   })
 
   it('没动过的文件没有两面可切，直接就是可编辑的全文', async () => {

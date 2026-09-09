@@ -2,12 +2,12 @@
 
 Two moments put a PR here, and they are not alternatives:
 
-- **有东西就有 PR** (#718 拍板①). The batch's FIRST COMMIT opens a DRAFT PR, with
+- **有东西就有 PR** (#718 拍板①). The task's FIRST COMMIT opens a DRAFT PR, with
   no card and nobody asked to accept anything yet — draft is GitHub's word for
   进行中. `sweep_draft_prs` does it, and its docstring says why the platform has
   to OBSERVE that commit rather than hook it.
 - **递卡** dispatches `open_pr_for_card` fire-and-forget: it pushes the branch,
-  ADOPTS the draft PR that is already there (or opens one, for a batch that had
+  ADOPTS the draft PR that is already there (or opens one, for a task that had
   none), rewrites its title and body from the card, and takes it out of draft —
   递卡 means「请人来看」. The background dispatch is best-effort: any failure
   leaves the card PR-less, visibly (`PR_OPEN_FAILED_PREFIX`).
@@ -24,6 +24,7 @@ import asyncio
 import logging
 import uuid
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
@@ -133,17 +134,21 @@ async def open_pr_for_card(
     if parsed is None:
         return None  # not a GitHub https upstream — PR path not applicable
     owner, repo_name = parsed
-    if not await asyncio.to_thread(ws.topic_branch_exists, project_id, topic_id):
+    from app.domain.review.repositories import AcceptCardRepository
+    from app.domain.room_task.services import TaskService
+
+    card = await AcceptCardRepository(session).get(card_id)
+    if card is None or card.task_id is None:
+        return None
+    task = await TaskService(session).require_in_room(topic_id, card.task_id)
+    if not await asyncio.to_thread(ws.topic_branch_exists, project_id, task.id):
         return None  # discussion-only topic — nothing a PR could carry
 
     token, _ = await tokens.write_token()
-    branch = await asyncio.to_thread(ws.push_topic_branch, project_id, topic_id, token)
-    base = (
-        await asyncio.to_thread(
-            lambda: ws.upstream_default_branch(ws.ensure_repo(project_id), token=token)
-        )
-        or ws.DEFAULT_BRANCH
-    )
+    branch = await asyncio.to_thread(ws.push_topic_branch, project_id, task.id, token)
+    base = task.base_branch
+    if base is None:
+        raise ValueError("Task has no target branch")
 
     title, body = await _pr_text(
         session, card_id=card_id, topic_id=topic_id, branch=branch
@@ -160,7 +165,7 @@ async def open_pr_for_card(
         # thing here that is guaranteed to work.
         as_user_token=await _requester_token(session, topic_id),
     )
-    # The PR very often already exists by now: the batch's draft PR was opened
+    # The PR very often already exists by now: the task's draft PR was opened
     # at its first commit (#718 拍板①) and `open_pr` adopts it rather than
     # failing on GitHub's "already exists". An adopted PR still carries the
     # placeholder words the draft opened with, so the card's own subject/body
@@ -198,71 +203,126 @@ async def sync_pr_text(
 
 
 async def sweep_draft_prs(session_factory: async_sessionmaker) -> dict[str, int]:
-    """有东西就有 PR (#718 拍板①): open a draft PR for every batch that has
-    commits and no PR yet.
+    """Open draft PRs for task branches with commits and no existing PR.
 
-    **Why a sweep and not a hook on the commit.** The platform never sees the
-    commit. A 分身 commits inside the shared worktree — no push, no webhook, no
-    tool the platform can intercept — so there is no event to hang this on, only
-    a fact to observe: the batch's branch is ahead of main. Observing it also
-    makes the answer indifferent to HOW the commit arrived (in the worktree,
-    over `git push` to `git_http`, by a human on the host), which an interception
-    at any one of those three could never be.
-
-    **The cost is latency, and here is its actual bound.** A first commit waits
-    at most `accept_pr_poll_interval_s` (the tick this shares with the PR
-    poller — one clock for the two things that watch PRs, rather than a second
-    knob to get wrong) PLUS the time this pass spends on the trees ahead of it,
-    because the trees are walked one at a time and each one that qualifies costs
-    a branch check, a push and two GitHub round trips. So the bound grows
-    LINEARLY with the number of open batches that have commits and no PR, and
-    quoting the interval alone would understate it. In practice that number is
-    tiny — a batch acquires its PR on the first tick after its first commit and
-    then never qualifies again, so the steady state is "the batches that started
-    in the last tick", not "every open batch". It would become a problem if a
-    project ever had hundreds of rooms committing for the first time inside one
-    interval; at that point this wants batching by project, not a shorter tick.
-
-    Per-tree isolation, in a session of its own. A shared session would not
-    merely lose one tree's work: a failed write leaves the transaction dirty, so
-    every tree after it fails too — one project's missing App installation would
-    silently cost every other room its PR, which is exactly the shape of failure
-    a sweep exists to prevent.
+    Commits arrive from different executors through Git; the shared PR poller
+    observes them after synchronization. Delay is one poll interval plus the
+    time spent on earlier tasks in this pass. Each task uses its own session
+    so a failed write cannot poison the remaining deliveries.
     """
-    from app.domain.room_task.services import WorkTreeService
+    from app.domain.room_task.services import TaskService
 
     counts = {"opened": 0, "skipped": 0, "failed": 0}
+    await retarget_completed_dependencies(session_factory)
     if not enabled():
         return counts
     async with session_factory() as session:
-        wanted = [t.id for t in await WorkTreeService(session).open_without_pr()]
-    for tree_id in wanted:
+        wanted = [t.id for t in await TaskService(session).open_without_pr()]
+    for task_id in wanted:
         try:
             async with session_factory() as session:
-                opened = await _draft_pr_for_one_tree(session, tree_id)
+                opened = await _draft_pr_for_one_task(session, task_id)
                 await session.commit()
-        except Exception:  # noqa: BLE001 — one bad tree must not end the sweep
+        except Exception:  # noqa: BLE001 — one bad task must not end the sweep
             counts["failed"] += 1
-            logger.warning("draft PR not opened for tree %s", tree_id, exc_info=True)
+            logger.warning("draft PR not opened for task %s", task_id, exc_info=True)
             continue
         counts["opened" if opened else "skipped"] += 1
     return counts
 
 
-async def _draft_pr_for_one_tree(session: AsyncSession, tree_id: uuid.UUID) -> bool:
-    """Open and record this batch's draft PR. False = there was nothing to do.
+async def retarget_completed_dependencies(session_factory: async_sessionmaker) -> None:
+    """Retry child PR retargeting without rolling back a parent's completed merge."""
+    from sqlalchemy.orm import aliased
 
-    **A batch anybody has filed a card on is not this sweep's business**, and
-    that — not the row lock — is what keeps it off a merged branch. The tree's
+    from app.domain.review.repositories import AcceptCardRepository
+    from app.domain.room_task.models import Task, TaskStatus
+    from app.domain.room_task.services import TaskService
+
+    parent = aliased(Task)
+    async with session_factory() as session:
+        wanted = list(
+            await session.scalars(
+                select(Task.id)
+                .join(parent, Task.base_task_id == parent.id)
+                .where(
+                    Task.status == TaskStatus.open,
+                    parent.status == TaskStatus.closed,
+                    (
+                        parent.accepted_at.is_not(None)
+                        | parent.delivered_head.is_not(None)
+                    ),
+                    Task.base_branch == parent.branch_name,
+                )
+            )
+        )
+    for task_id in wanted:
+        try:
+            async with session_factory() as session:
+                task = await session.get(Task, task_id, with_for_update=True)
+                if (
+                    task is None
+                    or task.status != TaskStatus.open
+                    or task.base_task_id is None
+                ):
+                    continue
+                ancestor = await TaskService(session).get(task.base_task_id)
+                if ancestor is None or (
+                    ancestor.accepted_at is None and ancestor.delivered_head is None
+                ):
+                    continue
+                TaskService._bind_workspace(ancestor)
+                base = ancestor.base_branch
+                if base is None:
+                    raise ValueError("Parent task has no target branch")
+                if task.pr_number is not None:
+                    from app.domain.review.services import AcceptService
+                    from app.domain.topic.models import Topic
+
+                    room = await session.get(Topic, task.room_id)
+                    if room is None:
+                        raise ValueError("Task room is missing")
+                    client = await AcceptService(session)._app_pr_client(room)
+                    if client is None:
+                        raise RuntimeError(
+                            "Cannot retarget the task PR without its GitHub connection"
+                        )
+                    await client.update_pr(task.pr_number, base=base)
+                task.base_branch = base
+                TaskService._bind_workspace(task)
+                cards = AcceptCardRepository(session)
+                for card in await cards.list_for_task(task.id):
+                    if card.status in ("pending", "conflict"):
+                        await cards.clear_approvals(card.id)
+                        card.auto_merge_armed_by = None
+                        card.auto_merge_armed_at = None
+                        card.note = (
+                            f"父任务已采纳，目标分支改为 {base}；"
+                            "请集成目标分支并重新验证。"
+                        )
+                await session.commit()
+        except Exception:
+            logger.warning(
+                "Task %s target branch update failed; retry next sweep",
+                task_id,
+                exc_info=True,
+            )
+
+
+async def _draft_pr_for_one_task(session: AsyncSession, task_id: uuid.UUID) -> bool:
+    """Open and record this task's draft PR. False = there was nothing to do.
+
+    **A task anybody has filed a card on is not this sweep's business**, and
+    that — not the row lock — is what keeps it off a merged branch. The task's
     `status` cannot answer "has this been merged on GitHub", because the merge
     happens FIRST and the row is updated after
     (`AcceptService._merge_pr_for_accept`: merge API, then
-    `_mark_cards_tree_merged`). A sweep holding the row lock in between sees
+    `_mark_task_merged`). A sweep holding the row lock in between sees
     `open` while the branch is, on GitHub, already squashed into main — and
     opens a PR nobody can ever close by merging it. Locking the row makes that
     window deterministic instead of removing it. The card does remove it: a
     filed card is the delivery, from that moment the PR belongs to it
-    (`open_pr_for_card`), and no batch is ever merged without one. So the
+    (`open_pr_for_card`), and no task is ever merged without one. So the
     question this asks is the question that has a stable answer.
 
     Every merging path goes through a card — the ordinary accept, an
@@ -271,63 +331,42 @@ async def _draft_pr_for_one_tree(session: AsyncSession, tree_id: uuid.UUID) -> b
     same one check.
 
     The row is still locked and re-read, for the narrower job it can actually
-    do: two overlapping passes over one tree must not both open a PR. The second
+    do: two overlapping passes over one task must not both open a PR. The second
     sees `pr_number` set. Even if it somehow did not, `open_pr` adopts the PR
     already open on that head rather than creating a second — that is the belt,
     this is the braces.
     """
     from app.domain.review.repositories import AcceptCardRepository
-    from app.domain.room_task.services import WorkTreeService
+    from app.domain.room_task.services import TaskService
 
-    trees = WorkTreeService(session)
-    tree = await trees.claim_for_pr(tree_id)
-    if tree is None:
+    tasks = TaskService(session)
+    task = await tasks.claim_for_pr(task_id)
+    if task is None:
         return False
     cards = AcceptCardRepository(session)
-    # Plus the room's tree-less cards, but only the ones still in flight. A card
-    # filed before trees existed keeps `tree_id IS NULL` (migration
-    # `e4c9a2f60b18` left it that way wherever the backfill had no honest
-    # value), and one of those can still be riding a live PR on this very
-    # branch — asking the tree alone makes it invisible, and then this opens a
-    # SECOND PR on the branch its PR is already on.
-    #
-    # Live is the whole of it, though. Counting an accepted / rejected / voided
-    # tree-less card would mean one piece of a room's ancient history switched
-    # draft PRs off for that room FOREVER: every later batch, on every later
-    # branch, silently PR-less. A card in a terminal state holds no PR anybody
-    # is going to merge.
-    from app.domain.review.services import _CARD_BLOCKS_NEW_CARD
-
-    live_treeless = [
-        c
-        for c in await cards.list_treeless_for_topic(tree.room_id)
-        if c.status in _CARD_BLOCKS_NEW_CARD
-    ]
-    if await cards.list_for_tree(tree.id) or live_treeless:
+    if await cards.list_for_task(task.id):
         return False
-    pr = await _open_draft_for_tree(session, tree)
+    pr = await _open_draft_for_task(session, task)
     if pr is None:
         return False
-    await trees.record_pr(
-        tree, number=int(pr["number"]), url=str(pr.get("html_url") or "")
+    await tasks.record_pr(
+        task, number=int(pr["number"]), url=str(pr.get("html_url") or "")
     )
     return True
 
 
-async def _open_draft_for_tree(session: AsyncSession, tree) -> dict | None:  # noqa: ANN001
-    """The draft PR for one batch, or None when this batch cannot have one yet.
+async def _open_draft_for_task(session: AsyncSession, task) -> dict | None:  # noqa: ANN001
+    """The draft PR for one task, or None when this task cannot have one yet.
 
     None (not an error) for: a project with no App installation, a non-GitHub
     upstream, and — the ordinary case, on every tick — a branch with nothing on
-    it. 有东西才有 PR: an empty batch is the state a room sits in between
-    deliveries, and opening a PR for it would put an empty diff in front of a
-    reviewer.
+    it. A newly created task has no changes to review until its first commit.
     """
     from app.domain.review import pr_text
     from app.domain.room_task.place import PlaceResolver
     from app.domain.workspace import identity
 
-    project_id = tree.project_id
+    project_id = task.project_id
     tokens = await github_app_tokens_for_project(project_id, session)
     if tokens is None:
         return None
@@ -335,22 +374,19 @@ async def _open_draft_for_tree(session: AsyncSession, tree) -> dict | None:  # n
     parsed = parse_github_repo(upstream)
     if parsed is None:
         return None
-    branch = ws.branch_for_tree(tree.id)
-    if not await asyncio.to_thread(ws.branch_has_commits, project_id, branch):
+    branch = task.branch_name
+    if not await asyncio.to_thread(
+        ws.branch_has_commits, project_id, branch, base=task.base_branch
+    ):
         return None
-    place = await PlaceResolver(session).resolve(tree.room_id)
+    place = await PlaceResolver(session).resolve(task.room_id)
     if place is None:
         return None
     room = place.room
 
     token, _ = await tokens.write_token()
     await asyncio.to_thread(ws.push_branch, project_id, branch, token)
-    base = (
-        await asyncio.to_thread(
-            lambda: ws.upstream_default_branch(ws.ensure_repo(project_id), token=token)
-        )
-        or ws.DEFAULT_BRANCH
-    )
+    base = task.base_branch
     who = await identity.attribution(session, room)
     client = GitHubPRClient(*parsed, tokens)
     pr = await client.open_pr(
@@ -359,15 +395,15 @@ async def _open_draft_for_tree(session: AsyncSession, tree) -> dict | None:  # n
         # No `Reviewed-by` and no card: nobody has accepted, and the subject
         # this change will land under is not written until somebody files a
         # card. `WIP:` says both — and 递卡 replaces it (`sync_pr_text`).
-        title=f"WIP: {room.title or branch}"[:255],
+        title=f"WIP: {task.title or branch}"[:255],
         body=pr_text.pr_body(room, "", None, who),
         as_user_token=await _requester_token(session, room.id),
         draft=True,
     )
     logger.info(
-        "draft PR #%s opened for tree %s (%s)",
+        "draft PR #%s opened for task %s (%s)",
         pr.get("number"),
-        tree.id,
+        task.id,
         pr.get("html_url"),
     )
     return pr
@@ -439,19 +475,19 @@ async def _pr_text(
 async def record_pr(
     session_factory: async_sessionmaker, *, card_id: uuid.UUID, pr: dict
 ) -> None:
-    """Write the opened PR onto the card AND onto the batch it delivers.
+    """Write the opened PR onto the card AND onto the task it delivers.
 
     Both, because both answer questions somebody asks: the card is what a
-    reviewer opens, and the tree is what the draft-PR sweep consults to know
-    this batch already has one. Writing only the card left a delivered batch
-    looking, to the sweep, like a batch that had never had a PR.
+    reviewer opens, and the task is what the draft-PR sweep consults to know
+    this task already has one. Writing only the card left a delivered task
+    looking, to the sweep, like a task that had never had a PR.
 
     Clears a `PR_OPEN_FAILED_PREFIX` note from an earlier failed publish — the
     card rides a PR now, and a stale「开 PR 失败」would contradict the pr_number
     sitting next to it.
     """
     from app.domain.review.repositories import AcceptCardRepository
-    from app.domain.room_task.services import WorkTreeService
+    from app.domain.room_task.services import TaskService
 
     async with session_factory() as session:
         card = await AcceptCardRepository(session).get(card_id)
@@ -464,11 +500,11 @@ async def record_pr(
         card.pr_url = url
         if card.note_code is notes.NoteCode.pr_open_failed:
             notes.clear(card)
-        if card.tree_id is not None:
-            trees = WorkTreeService(session)
-            tree = await trees.get(card.tree_id)
-            if tree is not None and tree.pr_number is None:
-                await trees.record_pr(tree, number=number, url=url)
+        if card.task_id is not None:
+            tasks = TaskService(session)
+            task = await tasks.get(card.task_id)
+            if task is not None and task.pr_number is None:
+                await tasks.record_pr(task, number=number, url=url)
         await session.commit()
 
 

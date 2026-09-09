@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import shlex
 import uuid
 from typing import Annotated
 
@@ -42,6 +43,8 @@ from app.domain.review.schemas import (
     VoidDecision,
 )
 from app.domain.review.services import AcceptService
+from app.domain.room_task.models import TaskStatus
+from app.domain.room_task.services import TaskService
 from app.domain.workspace import service as ws
 
 logger = logging.getLogger("cheesex.accept")
@@ -63,13 +66,32 @@ async def _card_actor(
     )
 
 
-@router.post("/topics/{topic_id}/accept-card")
+async def _task_actor(
+    topic_id: uuid.UUID, task_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> Actor:
+    topic = await AcceptService(db)._topic_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, project_id=topic.project_id, topic_id=topic_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
+    if not actor.authenticated:
+        raise AuthenticationRequiredError()
+    await TaskService(db).require_in_room(topic_id, task_id)
+    return actor
+
+
+@router.post("/topics/{topic_id}/tasks/{task_id}/accept-card")
 async def create_accept_card(
     topic_id: uuid.UUID,
+    task_id: uuid.UUID,
+    resolver: ActorResolverDep,
     body: AcceptCardCreate,
     db: DbSession,
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
+    await _task_actor(topic_id, task_id, db, resolver)
     svc = AcceptService(db)
     card = await svc.create_card(
         topic_id=topic_id,
@@ -77,7 +99,7 @@ async def create_accept_card(
         routing_reason=body.routing_reason,
         change_subject=body.change_subject,
         change_body=body.change_body,
-        task_ids=body.task_ids,
+        task_id=task_id,
     )
     # 采纳即合并 (docs/accept-is-merge.md #296, stage 1): the card is the
     # platform's view of a PR, so filing it opens that PR right away with the
@@ -85,6 +107,7 @@ async def create_accept_card(
     # gate. Fire-and-forget; the POST must not block on the push/open. The old
     # machine-gate dispatch is retired (cards are never born `pending_gate`
     # any more — see AcceptService.create_card).
+    await db.commit()
     if pr_publish.enabled():
         project_id = await svc.project_id_for_topic(topic_id)
         pr_publish.dispatch(
@@ -96,40 +119,30 @@ async def create_accept_card(
     return ok(await svc.describe(card))
 
 
-@router.post("/topics/{topic_id}/push-fix")
-async def push_fix(topic_id: uuid.UUID, db: DbSession) -> dict:
-    """Put this place's branch on the PR it is riding, right now.
-
-    The agent commits and pushes its own work; this is how it then says the
-    branch is worth showing, instead of waiting out the next CI poll.
-
-    `topic_id` is a PLACE. A thread pushes the tree it shares with its room,
-    which is the same tree either way; naming the place keeps the per-turn token
-    scoped to the caller like every other cheese write path.
-    """
-    svc = AcceptService(db)
-    result = await svc.push_fix(topic_id)
+@router.post("/topics/{topic_id}/tasks/{task_id}/push-fix")
+async def push_fix(
+    topic_id: uuid.UUID, task_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    await _task_actor(topic_id, task_id, db, resolver)
+    result = await AcceptService(db).push_fix(task_id)
     await db.commit()
     return ok(result)
 
 
-@router.post("/topics/{topic_id}/ready")
-async def mark_ready(topic_id: uuid.UUID, db: DbSession) -> dict:
-    """把这批活的 draft PR 翻成 ready —— 只翻这一件事 (#718 拍板①)。
-
-    有东西就有 PR：第一次提交时平台就开了一个 draft PR（draft 是 GitHub 里
-    「进行中」的意思）。这条路由是它的另一半——说一句「可以看了」。它不合并、
-    不改署名、不动 PR 的任何别的字段，也不递卡：递卡是把活交给某个具体的人，
-    那是另一件事，而且它自己也会顺手把 draft 翻掉。
-    """
-    result = await AcceptService(db).mark_ready(topic_id)
+@router.post("/topics/{topic_id}/tasks/{task_id}/ready")
+async def mark_ready(
+    topic_id: uuid.UUID, task_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    await _task_actor(topic_id, task_id, db, resolver)
+    result = await AcceptService(db).mark_ready(topic_id, task_id)
     await db.commit()
     return ok(result)
 
 
-@router.post("/topics/{topic_id}/accept-card/describe")
+@router.post("/topics/{topic_id}/tasks/{task_id}/accept-card/describe")
 async def describe_card(
     topic_id: uuid.UUID,
+    task_id: uuid.UUID,
     body: AcceptCardDescribe,
     db: DbSession,
     resolver: ActorResolverDep,
@@ -144,9 +157,9 @@ async def describe_card(
     署名（`Cheese-Task:`）没有这样的入口，而且不该有：见
     `AcceptService.redescribe` 的 docstring。
     """
-    actor = await resolver.resolve(fallback_handle=None, topic_id=topic_id)
+    actor = await _task_actor(topic_id, task_id, db, resolver)
     card = await AcceptService(db).redescribe(
-        topic_id,
+        task_id,
         actor=actor.handle,
         change_subject=body.change_subject,
         change_body=body.change_body,
@@ -156,14 +169,28 @@ async def describe_card(
 
 
 @router.get("/topics/{topic_id}/accept-card")
-async def list_accept_cards(topic_id: uuid.UUID, db: DbSession) -> dict:
+async def list_accept_cards(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    task: uuid.UUID | None = None,
+) -> dict:
     svc = AcceptService(db)
     cards, total = await svc.list_for_topic(topic_id)
+    if task is not None:
+        await _task_actor(topic_id, task, db, resolver)
+        cards = [card for card in cards if card.task_id == task]
+        total = len(cards)
     return ok(page([await svc.describe(c) for c in cards], total))
 
 
 @router.get("/topics/{topic_id}/pr-checks")
-async def topic_pr_checks(topic_id: uuid.UUID, db: DbSession) -> dict:
+async def topic_pr_checks(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    task: uuid.UUID | None = None,
+) -> dict:
     """PR-based accept (#188 §5.1): live PR + check-run state for the newest
     card that rides a PR. Display only — never blocks anything. Answers
     {"available": false} instead of erroring so every caller (card UI, CLI)
@@ -175,8 +202,10 @@ async def topic_pr_checks(topic_id: uuid.UUID, db: DbSession) -> dict:
     posting a traceback into the room (`report_unhandled_to_room`). That is
     how a GitHub TLS blip turned into a wall of stack traces on 2026-08-17.
     The failure is still logged, and its reason is handed to the caller."""
+    if task is not None:
+        await _task_actor(topic_id, task, db, resolver)
     try:
-        return ok(await _pr_checks_payload(topic_id, db))
+        return ok(await _pr_checks_payload(topic_id, db, task_id=task))
     except BaseError:
         raise  # 404 for a topic that does not exist stays a 404
     except Exception as exc:  # noqa: BLE001 — display-only endpoint, see above
@@ -184,10 +213,19 @@ async def topic_pr_checks(topic_id: uuid.UUID, db: DbSession) -> dict:
         return ok({"available": False, "reason": f"{type(exc).__name__}: {exc}"[:200]})
 
 
-async def _pr_checks_payload(topic_id: uuid.UUID, db: AsyncSession) -> dict:
+async def _pr_checks_payload(
+    topic_id: uuid.UUID, db: AsyncSession, *, task_id: uuid.UUID | None = None
+) -> dict:
     svc = AcceptService(db)
     cards, _ = await svc.list_for_topic(topic_id)
-    card = next((c for c in cards if c.pr_number is not None), None)
+    card = next(
+        (
+            c
+            for c in cards
+            if c.pr_number is not None and (task_id is None or c.task_id == task_id)
+        ),
+        None,
+    )
     if card is None or card.pr_number is None:
         return {"available": False}
     topic = await svc._topic_or_404(topic_id)
@@ -203,9 +241,9 @@ async def _pr_checks_payload(topic_id: uuid.UUID, db: AsyncSession) -> dict:
     try:
         view = await client.pr_view(card.pr_number)
         head_sha = (view.get("head") or {}).get("sha")
-        checks = await client.check_runs(
-            head_sha or ws.branch_for_tree(ws.tree_for_place(topic_id))
-        )
+        if not head_sha:
+            return {"available": False, "reason": "PR has no head commit"}
+        checks = await client.check_runs(head_sha)
     except GitHubPRError as exc:
         return {"available": False, "reason": str(exc)[:200]}
     return {
@@ -252,34 +290,53 @@ async def accept_card(
         # the topic's workspace, then dispatch a resolve turn. The reviewer
         # retries accept when 芝士 reports done.
         topic_id = card.topic_id
+        task = await TaskService(db).get(card.task_id) if card.task_id else None
+        actionable = task is not None and task.status == TaskStatus.open
+        files = None
+        preparation = "未取得冲突文件清单，需检查任务分支与目标分支。"
         try:
-            files = ws.prepare_conflict_resolution(
+            if not actionable or card.task_id is None:
+                raise ValueError("验收卡没有可执行的任务")
+            files = await asyncio.to_thread(
+                ws.prepare_conflict_resolution,
                 (await AcceptService(db)._topic_or_404(topic_id)).project_id,
-                topic_id,
+                card.task_id,
             )
+            preparation = "平台已在任务分支准备冲突提交。"
         except Exception:  # noqa: BLE001 — dispatch anyway; the agent can dig
             logger.exception("prepare_conflict_resolution failed for %s", topic_id)
-            files = []
-        listing = "、".join(files[:15]) or "（见工作区冲突标记）"
+        listing = "、".join(files[:15]) if files else "未取得冲突文件清单"
+        action = "原任务已关闭或不存在；如需继续修改，请由新任务承接。"
+        if actionable and task is not None:
+            branch = shlex.quote(f"origin/{task.branch_name}")
+            action = (
+                f'先执行 cd "$(cheese worktree {card.task_id})"，该命令会获取平台分支。'
+                "先保留本地未提交的工作，"
+                f"再执行 git merge {branch} 合入平台任务分支。"
+                "若平台未准备成功，检查并合入任务实际目标分支。"
+                "解决冲突标记，保留双方意图，跑相关测试并提交。"
+                f"执行 cheese sync --task {card.task_id} 并确认成功。"
+                + ("再用 cheese push-fix 更新原 PR。" if card.pr_number else "")
+                + "简短汇报解决思路和验证结果，请验收人重新点采纳。"
+            )
         runner.submit(
             chat,
             topic_id,
             author="system",
             content=(
-                "采纳这个话题时合并冲突了，暂时没归档。平台已把主分支合进你的工作区，"
-                f"冲突标记就在这些文件里：{listing}。请打开这些文件解决所有 "
-                "<<<<<<< 冲突标记（保留双方意图，语义化合并，不要机械二选一），"
-                "跑相关测试确认没破坏，然后简短汇报解决思路——验收人会重新点采纳。"
+                f"采纳任务 {card.task_id} 时合并冲突了。{preparation}"
+                f"冲突文件：{listing}。{action}"
             ),
-            summon=True,
+            summon=actionable,
             # 平台提示统一契约: 一行给房间，冲突文件清单进 meta.detail。detail 给的
             # 是**完整**清单（content 里那份为了可读只列前 15 个），收起来不等于删掉。
-            nudge_event=f"采纳时合并冲突，{len(files)} 个文件，芝士在解",
+            nudge_event="采纳时合并冲突"
+            + (f"，{len(files)} 个文件" if files is not None else "，未取得文件清单"),
             nudge_meta=notice(
                 EVENT_ACCEPT_CONFLICT,
                 severity=SEVERITY_WARN,
                 who=WHO_CHEESE,
-                detail="\n".join(files) or "（见工作区冲突标记）",
+                detail="\n".join(files) if files else preparation,
                 detail_label="冲突文件",
             ),
         )
@@ -338,19 +395,26 @@ async def reject_card(
     reason = (card.note or "").strip()
     # 理由必须过去，否则芝士只知道"被退了"、不知道退在哪，只能猜着重做一遍。
     reason_line = f"他给的理由：{reason}" if reason else "他没写理由。"
+    task = await TaskService(db).get(card.task_id) if card.task_id else None
+    actionable = task is not None and task.status == TaskStatus.open
+    action = (
+        f'先执行 cd "$(cheese worktree {card.task_id})" 进入任务目录。'
+        "照着这条理由改，改完重新递卡（驳回不阻塞重递）。"
+        "理由看不懂或者你不同意，在对话里说清分歧，请人决定。"
+        if actionable
+        else "原任务已关闭或不存在；如需继续修改，请由新任务承接。"
+    )
     await db.commit()  # the card's new state must be readable by the woken turn
     runner.submit(
         chat,
         topic_id,
         author="system",
         content=(
-            f"{decided_by} 驳回了你递的验收卡。{reason_line}\n"
-            "话题没归档，工作区还是你的：照着这条理由改，改完重新递卡"
-            "（驳回不阻塞重递）。理由看不懂或者你不同意，别默默按自己的理解改 —— "
-            "在对话里简短回一句问清楚。"
+            f"{decided_by} 驳回了任务 {card.task_id} 的验收卡。{reason_line}\n{action}"
         ),
-        summon=True,
-        nudge_event=f"{decided_by} 驳回了验收卡，芝士去改",
+        summon=actionable,
+        nudge_event=f"{decided_by} 驳回了验收卡"
+        + ("，芝士去改" if actionable else "，原任务已结束"),
         nudge_meta=notice(
             EVENT_CARD_REJECTED,
             severity=SEVERITY_WARN,

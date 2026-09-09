@@ -33,7 +33,7 @@ def _room(client, owner: str = "alice") -> tuple[str, str]:
 def _split(client, room_id: str, owner: str = "alice", title: str = "一条活") -> dict:
     r = client.post(
         f"/topics/{room_id}/split",
-        json={"title": title, "brief": "干这个"},
+        json=dict(reviewer_handle="alice", **{"title": title, "brief": "干这个"}),
         headers=_bearer(owner),
     )
     assert r.status_code == 200, r.text
@@ -125,7 +125,7 @@ def test_a_finished_thread_cannot_be_bound(client):
     _, room_id = _room(client)
     task = _split(client, room_id)
     closed = client.post(
-        f"/topics/{room_id}/tasks/{task['id']}/conclude",
+        f"/topics/{room_id}/tasks/{task['id']}/close",
         json={"conclusion": "做完了"},
         headers=_bearer("alice"),
     )
@@ -162,7 +162,7 @@ def test_a_card_cannot_bind_or_conclude_itself(client):
 
     for path, body in (
         (f"/topics/{task['id']}/tasks/{task['id']}/bind", {"agent_id": "w"}),
-        (f"/topics/{task['id']}/tasks/{task['id']}/conclude", {"conclusion": "做完了"}),
+        (f"/topics/{task['id']}/tasks/{task['id']}/close", {"conclusion": "做完了"}),
     ):
         r = client.post(path, json=body, headers=_bearer("alice"))
         assert r.status_code == 404, (path, r.status_code, r.text)
@@ -179,7 +179,7 @@ def test_the_room_closing_a_card_is_what_ends_the_work(client):
     )
 
     r = client.post(
-        f"/topics/{room_id}/tasks/{task['id']}/conclude",
+        f"/topics/{room_id}/tasks/{task['id']}/close",
         json={"conclusion": "分页改成 cursor，旧接口没动"},
         headers=_bearer("alice"),
     )
@@ -218,7 +218,7 @@ def test_closing_without_a_word_keeps_what_the_worker_handed_back(client, stub_h
     _pump(client, room_id)
 
     r = client.post(
-        f"/topics/{room_id}/tasks/{task['id']}/conclude",
+        f"/topics/{room_id}/tasks/{task['id']}/close",
         json={},
         headers=_bearer("alice"),
     )
@@ -232,7 +232,7 @@ def test_closing_a_thread_of_another_room_is_refused(client):
     task = _split(client, room_b)
 
     r = client.post(
-        f"/topics/{room_a}/tasks/{task['id']}/conclude",
+        f"/topics/{room_a}/tasks/{task['id']}/close",
         json={"conclusion": "做完了"},
         headers=_bearer("alice"),
     )
@@ -242,7 +242,7 @@ def test_closing_a_thread_of_another_room_is_refused(client):
 def test_closing_something_that_is_not_a_thread_is_refused(client):
     _, room_id = _room(client)
     r = client.post(
-        f"/topics/{room_id}/tasks/{uuid.uuid4()}/conclude",
+        f"/topics/{room_id}/tasks/{uuid.uuid4()}/close",
         json={"conclusion": "做完了"},
         headers=_bearer("alice"),
     )

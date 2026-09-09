@@ -17,12 +17,12 @@
   cheese decision "用 item-based CF" # 记一条决策
   cheese remember "技术栈=FastAPI"  # 记入项目记忆
   cheese recall "技术选型"          # 按需检索记忆(关键词检索)
-  cheese notify --title "看下" --to mentor-1 --level strong --kind decision_request --options "A|B"
-  cheese accept-request mentor-1 "中期验收"  # 递验收卡
-  cheese conclude-task <task_id>            # 收掉这条活(说它结束了)
+  cheese notify --title "看下" --to mentor-1 --level strong
+  cheese accept-request mentor-1 "验收证据" --subject "feat: add report"
+  cheese close-task <task_id>                # 放弃或撤销任务
   cheese tell "数据清洗" "口径改了,按新的来"    # 在那条活上留一句话(不叫醒任何人)
   cheese milestone "中期汇报" --due 2026-06-20
-  cheese status                             # 平台状态快照(本轮运行状态/验收卡/闸门输出/水位)
+  cheese status                             # 平台状态快照
   cheese artifact report.html               # 把产物设为本话题当前预览(进预览窗口)
   cheese serve 5173 "Vue dev server"        # 应用起在 127.0.0.1:5173 后,设为预览
   cheese artifact chart.svg --as svg        # SVG 同理
@@ -31,15 +31,19 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import urllib.error
 import urllib.request
 import uuid
+from datetime import UTC, datetime
+from pathlib import Path
 
 API = os.environ.get("CHEESE_API", "http://host.docker.internal:8099").rstrip("/")
 PROJECT = os.environ.get("CHEESE_PROJECT", "")
@@ -98,6 +102,242 @@ def _call(
     except Exception as e:  # noqa: BLE001
         print(f"[cheese] {method} {path} 出错: {e}", file=sys.stderr)
         sys.exit(1)
+
+
+def _task_root() -> Path:
+    return Path.home() / ".cheese" / "tasks"
+
+
+def _task_id(explicit: str | None = None) -> str:
+    if explicit:
+        return str(uuid.UUID(explicit))
+    result = subprocess.run(
+        ["git", "rev-parse", "--git-path", "cheese-task.json"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        marker = Path(result.stdout.strip())
+        if marker.is_file():
+            return str(uuid.UUID(json.loads(marker.read_text())["task_id"]))
+    raise SystemExit("[cheese] 请在任务工作目录内执行，或指定 --task <id>")
+
+
+def _git_task(
+    cwd: Path, *args: str, extra_env: dict | None = None, input_text: str | None = None
+) -> str:
+    env = {
+        key: value for key, value in os.environ.items() if not key.startswith("GIT_")
+    }
+    # The credential only travels in the child's environment, never argv or
+    # repository config. This cache is owned by Cheese, not a user's checkout.
+    env.update(
+        {
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "http.extraHeader",
+            "GIT_CONFIG_VALUE_0": f"X-Cheese-Token: {TOKEN}",
+        }
+    )
+    if extra_env:
+        env.update(extra_env)
+    result = subprocess.run(
+        ["git", "-C", str(cwd), *args],
+        env=env,
+        input=input_text,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    if result.returncode:
+        raise RuntimeError(result.stderr.strip())
+    return result.stdout.strip()
+
+
+def _task_worktree(task_id: str) -> Path:
+    task_id = str(uuid.UUID(task_id))
+    project = _need("CHEESE_PROJECT", PROJECT)
+    data = _call("GET", f"/projects/{project}/git/tasks/{task_id}")["data"]
+    if data["room_id"] != TOPIC:
+        raise SystemExit("[cheese] 这条任务不属于当前房间")
+    if data["closed"]:
+        raise SystemExit("[cheese] 这条任务已结束，请创建新任务")
+    cache = Path.home() / ".cheese" / "repositories"
+    cache.mkdir(parents=True, exist_ok=True)
+    repo = cache / f"{project}.git"
+    task_dir = _task_root() / task_id
+    task_dir.parent.mkdir(parents=True, exist_ok=True)
+    remote = os.environ.get("CHEESE_GIT_REMOTE") or f"{API}/projects/{project}/git"
+    # Native subagents can request worktrees concurrently. Serialize creation
+    # so an interrupted clone cannot be mistaken for a complete repository.
+    with (cache / f"{project}.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if not repo.exists():
+            _git_task(cache, "init", "--bare", str(repo))
+        if "origin" not in _git_task(repo, "remote").splitlines():
+            _git_task(repo, "remote", "add", "origin", remote)
+        _git_task(
+            repo,
+            "fetch",
+            "origin",
+            f"refs/heads/{data['branch']}:refs/remotes/origin/{data['branch']}",
+        )
+        _git_task(
+            repo,
+            "fetch",
+            "origin",
+            f"refs/heads/{data['base']}:refs/remotes/origin/{data['base']}",
+        )
+        if not (task_dir / ".git").exists():
+            existing = _git_task(repo, "branch", "--list", data["branch"])
+            create = [] if existing else ["-b", data["branch"]]
+            start = (
+                data["branch"] if existing else f"refs/remotes/origin/{data['branch']}"
+            )
+            _git_task(repo, "worktree", "prune")
+            _git_task(
+                repo,
+                "worktree",
+                "add",
+                *create,
+                str(task_dir),
+                start,
+            )
+        marker = Path(
+            _git_task(task_dir, "rev-parse", "--git-path", "cheese-task.json")
+        )
+        if not marker.is_absolute():
+            marker = task_dir / marker
+        marker.write_text(json.dumps(data))
+        _git_task(
+            repo, "config", "user.name", os.environ.get("GIT_AUTHOR_NAME", AUTHOR)
+        )
+        _git_task(
+            repo,
+            "config",
+            "user.email",
+            os.environ.get("GIT_AUTHOR_EMAIL", f"{AUTHOR}@agent.cheese.local"),
+        )
+        hooks = repo / "hooks"
+        hook = hooks / "post-commit"
+        hook.write_text("#!/bin/sh\nexec cheese sync\n")
+        hook.chmod(0o755)
+    return task_dir
+
+
+def _report_task_sync(
+    task_id: str, status: str, *, head: str | None = None, branch: str | None = None
+) -> None:
+    """The installed hook durably spools failures for the room's visible warning."""
+    hook = shutil.which("cheese-hook")
+    if hook is None:
+        return  # A human using the CLI directly already receives its exit status.
+    payload = {
+        "hook_event_name": "CheeseSync",
+        "status": status,
+        "branch": branch or f"任务 {task_id}",
+        "task_id": task_id,
+        "commit": head,
+    }
+    try:
+        result = subprocess.run(
+            [hook],
+            input=json.dumps(payload),
+            text=True,
+            capture_output=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        result = None
+    if result is None or result.returncode:
+        print(
+            f"[cheese] 同步通知未送达，任务 {task_id} 的 cheese-sync.log 保留了结果",
+            file=sys.stderr,
+        )
+
+
+def _sync_task(task_id: str) -> None:
+    task_id = str(uuid.UUID(task_id))
+    worktree = _task_root() / task_id
+    if not (worktree / ".git").exists():
+        worktree = _task_worktree(task_id)
+    admin = Path(_git_task(worktree, "rev-parse", "--absolute-git-dir"))
+    log = admin / "cheese-sync.log"
+    with log.open("a") as record:
+        # A post-commit hook and the room's Stop hook can arrive together.
+        fcntl.flock(record, fcntl.LOCK_EX)
+        record.write(f"{datetime.now(UTC).isoformat()} start task={task_id}\n")
+        record.flush()
+        branch = None
+        try:
+            project = _need("CHEESE_PROJECT", PROJECT)
+            data = _call("GET", f"/projects/{project}/git/tasks/{task_id}")["data"]
+            if data["room_id"] != TOPIC:
+                raise RuntimeError("Task belongs to another room")
+            branch = _git_task(worktree, "symbolic-ref", "--short", "HEAD")
+            if branch != data["branch"]:
+                raise RuntimeError(
+                    f"Expected task branch {data['branch']}, found {branch}"
+                )
+            head = _git_task(worktree, "rev-parse", "HEAD")
+            # Keep unfinished work off the PR. An alternate index preserves the
+            # worker's staging choices while backing up its files at turn end.
+            snapshot_env = {"GIT_INDEX_FILE": str(admin / "cheese-snapshot-index")}
+            _git_task(worktree, "read-tree", "HEAD", extra_env=snapshot_env)
+            _git_task(worktree, "add", "-A", extra_env=snapshot_env)
+            tree = _git_task(worktree, "write-tree", extra_env=snapshot_env)
+            snapshot = (
+                head
+                if tree == _git_task(worktree, "rev-parse", "HEAD^{tree}")
+                else _git_task(
+                    worktree,
+                    "commit-tree",
+                    tree,
+                    "-p",
+                    head,
+                    input_text=f"Work in progress for task {task_id}\n",
+                )
+            )
+            _git_task(
+                worktree,
+                "push",
+                "origin",
+                f"{snapshot}:refs/cheese/snapshots/task/{task_id}/{snapshot}",
+            )
+            if data["closed"]:
+                record.write(
+                    f"{datetime.now(UTC).isoformat()} archived snapshot={snapshot}; "
+                    "delivery is closed\n"
+                )
+                return
+            _git_task(worktree, "push", "origin", f"{head}:refs/heads/{branch}")
+            record.write(
+                f"{datetime.now(UTC).isoformat()} success head={head} "
+                f"snapshot={snapshot}\n"
+            )
+            _report_task_sync(task_id, "ok", head=head, branch=branch)
+        except BaseException as exc:
+            record.write(
+                f"{datetime.now(UTC).isoformat()} failed {type(exc).__name__}: {exc}\n"
+            )
+            _report_task_sync(task_id, "failed", branch=branch)
+            raise
+
+
+def _sync_all_tasks() -> None:
+    root = _task_root()
+    if not root.exists():
+        return
+    failed = []
+    for worktree in sorted(root.iterdir()):
+        if not (worktree / ".git").exists():
+            continue
+        try:
+            _sync_task(worktree.name)
+        except (Exception, SystemExit) as exc:
+            failed.append(worktree.name)
+            print(f"[cheese] 任务 {worktree.name} 同步失败：{exc}", file=sys.stderr)
+    if failed:
+        raise SystemExit(1)
 
 
 def _doc_version_path(topic: str) -> str:
@@ -166,7 +406,9 @@ def _api_root() -> str:
     return API
 
 
-def _raw_request(method: str, path: str, data: str | None, out: str | None = None) -> None:
+def _raw_request(
+    method: str, path: str, data: str | None, out: str | None = None
+) -> None:
     """Raw API escape hatch (fusion-design §5.2): hit our backend directly with
     the container's existing auth (CHEESE_TOKEN), printing the response body
     verbatim. NOT a no-auth backdoor — it still carries the token, and the
@@ -260,9 +502,7 @@ def _format_status(d: dict) -> str:
                 )
         if c.get("status") == "gate_failed" and c.get("gate_output_tail"):
             lines.append("  闸门输出（尾部）:")
-            lines.extend(
-                "    " + ln for ln in c["gate_output_tail"].splitlines()[-15:]
-            )
+            lines.extend("    " + ln for ln in c["gate_output_tail"].splitlines()[-15:])
     bg = d.get("background") or {}
     for t in bg.get("tasks") or []:
         lines.append(
@@ -385,60 +625,31 @@ def build_parser() -> argparse.ArgumentParser:
 
     ps = sub.add_parser(
         "split",
-        help="在这个房间里开一条活（开完你自己起分身去做）",
-        description=(
-            "开一条活并给它建好任务简报文档。**它不会自己动起来**——起分身是你的事:\n"
-            "\n"
-            "  1. cheese split \"标题\" --brief \"...\"   → 拿到 task id\n"
-            "  2. 用你自己的 Agent 工具起一个分身,把 --brief 的原文放进 prompt\n"
-            "  3. cheese bind <task_id> <agent_id>   → 告诉平台这条活归哪个分身\n"
-            "\n"
-            "第 3 步不做,这条活在界面上就永远是「没人做」,分身干的每一件事都记在\n"
-            "你(房间)头上,谁也分不出来。\n"
-            "\n"
-            "分身和你共用同一个工作区、同一条分支,所以:\n"
-            "  - 装好的依赖、clone 下来的参照仓库它都直接能用,不用重来一遍\n"
-            "  - 两条活整块改同一个文件会互相盖掉,拿 --paths 划开\n"
-            "\n"
-            "分身能看到的只有你放进 prompt 的东西。--brief 会存成它的任务简报文档,\n"
-            "但**它不会自动读**,记得在 prompt 里把简报原文带上。"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        help="创建任务及其独立工作分支",
+        description="创建任务、独立分支和工作目录；执行者由调用者安排。",
     )
-    ps.add_argument("title", help="这条活的标题,≤12 字最好")
-    ps.add_argument("--reported-by", default=None, help="实际报告问题的用户 handle")
+    ps.add_argument("title", help="任务标题")
+    ps.add_argument("--brief", help="任务目标、约束及验收标准")
+    ps.add_argument("--reviewer", help="验收人的 handle；省略时取项目默认值")
+    ps.add_argument("--base-task", help="依赖的任务；PR 以该任务分支为目标")
+    ps.add_argument("--reported-by", help="需求提出者的 handle")
     ps.add_argument(
-        "--contributor", action="append", default=[],
-        help="实际共同改代码的用户 handle，可重复指定",
+        "--contributor", action="append", default=[], help="实际贡献者的 handle，可重复"
     )
-    ps.add_argument(
-        "--paths",
-        nargs="+",
-        default=None,
-        help=(
-            "这条活要碰哪些路径(结尾带 / 表示目录)。一批活共用同一棵树,"
-            "两条活整块覆盖同一个文件时后写的会**无声**盖掉先写的;声明了才拦得住。"
-            "中途还能用 `cheese claim` 追加"
-        ),
+    pwork = sub.add_parser(
+        "worktree",
+        help="准备任务工作目录并输出路径",
+        description="准备已有任务的工作目录，输出路径；不会改变当前 shell 的目录。",
     )
-    ps.add_argument(
-        "--reviewer",
-        default=None,
-        help=(
-            "这条活将来由谁验收(`cheese members` 查准确 handle)。"
-            "不写就用项目设置里的默认验收人;两个都没有就先空着,递卡时再点名。"
-            "递卡沿用这里定下的人,除非你递卡时显式指定别人"
-        ),
+    pwork.add_argument("task_id", help="任务 UUID")
+    psync = sub.add_parser(
+        "sync",
+        help="同步任务提交并备份未提交的文件",
+        description="同步已提交代码并备份未提交文件；默认从当前目录识别任务。",
     )
-    ps.add_argument(
-        "--brief",
-        default=None,
-        help=(
-            "任务简报:要干什么、硬边界(别碰哪些文件/别做哪些事)、"
-            "验收标准(做到什么程度算完)、已知但未核实的事实要标出来。"
-            "它会存成这条活的任务简报文档(附一份房间实况文档快照),"
-            "**同时你要把这段原文放进分身的 prompt**——分身不会自己去读文档。"
-        ),
+    psync.add_argument("--task", help="任务 UUID；省略时取当前任务目录")
+    psync.add_argument(
+        "--all", action="store_true", help="同步本房间机器上已有的全部任务目录"
     )
 
     pb = sub.add_parser(
@@ -459,47 +670,22 @@ def build_parser() -> argparse.ArgumentParser:
     pb.add_argument("agent_id", help="你起的那个分身的 id")
 
     pct = sub.add_parser(
-        "conclude-task",
-        help="收掉房间里的一条活(说它结束了)",
-        description=(
-            "分身报完成、你验过货、改动也整合进分支之后,由你说一句「这条活结束了」。\n"
-            "\n"
-            "分身自己交回来的那句话平台已经记在卡上了,不用你抄一遍。要写\n"
-            "`--conclusion` 的只有一种情况:它最后那句话是个半截(比如「测试跑起来了」),\n"
-            "而你知道真正的结论是什么。\n"
-            "\n"
-            "为什么不是分身报完成就自动收:一个分身可以报好几次完成(它把长命令丢进\n"
-            "自己的后台再停下来等,也算一次),而且还会收到来路不明的完成通知。\n"
-            "所以「完成」是给你看的信号,不是终点——**验过再收**。\n"
-            "\n"
-            "结论写摘要不写流水账。值钱的三样:做了什么、查出来但故意没做的(以及\n"
-            "为什么)、哪些结论没核实。"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        "close-task",
+        help="结束不再继续的任务；交付请提交验收",
+        description="放弃或撤销任务；正常交付在采纳成功后自动关闭。",
     )
-    pct.add_argument("task_id", help="这条活的 id")
-    pct.add_argument("--reported-by", default=None, help="实际报告问题的用户 handle")
+    pct.add_argument("task_id", help="任务 UUID")
+    pct.add_argument("--conclusion", default="", help="关闭原因或最终说明")
+    pct.add_argument("--reported-by", help="需求提出者的 handle")
     pct.add_argument(
-        "--contributor", action="append", default=None,
-        help="实际共同改代码的用户 handle，可重复指定",
+        "--contributor", action="append", help="实际贡献者的 handle，可重复"
     )
-    pct.add_argument(
-        "--conclusion", default="", help="覆盖分身交回的那句话(默认保留它的)"
-    )
-
-    sub.add_parser(
+    pfix = sub.add_parser(
         "push-fix",
-        help="把工作区现在的样子推到本话题正在等 CI 的那个 PR 上",
-        description=(
-            "把工作区**现在**的样子折成提交,推到本话题正在等 CI 的那个 PR。\n\n"
-            "为什么要有这条命令:平台的 CI 轮询**不再**每 60 秒替你提交一次了。\n"
-            "它以前会,后果是你在等 CI 期间随便写个文件(哪怕只是改实况文档)都会\n"
-            "变成一个提交、推上去、把正在跑的那轮 CI 掐掉重排——实测一个 PR 上\n"
-            "跑了 17 次后端测试,其中 14 次是被掐掉的。\n\n"
-            "所以推送现在是**你说了算**:修完红的检查,自己说一声。\n"
-            "没有在等 CI 的 PR、或者工作区没有新东西,它会直说,不算错误。"
-        ),
+        help="将任务的新提交同步到它的 PR",
+        description="把指定任务的新提交推到其现有 PR 并刷新验收状态。",
     )
+    pfix.add_argument("--task", help="任务 UUID；省略时取当前任务目录")
 
     pfetch = sub.add_parser(
         "fetch",
@@ -524,69 +710,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="想从这一页里知道什么(带上它就返回答案而不是整页,省大量上下文)",
     )
 
-    pclaim = sub.add_parser(
-        "claim",
-        help="声明这条活要碰哪些路径(可以中途追加)",
-        description=(
-            "说清楚你这条活要动哪些路径,并当场看到还有谁在同一块地方干活。\n\n"
-            "为什么要声明:一批活共用**同一棵树**(同一个工作目录)。两条活整块覆盖\n"
-            "同一个文件时,后写的直接盖掉先写的,**没有任何工具会报错**——你要到很久\n"
-            "以后才会发现某个改动「莫名其妙回退了」。\n\n"
-            "规则:结尾带 `/` 的算目录,否则算文件。\n"
-            "  · 同一个**文件**被两条活声明 → 拒绝(这是唯一没有别的防线的情况)\n"
-            "  · **目录**重叠 → 只警告(两条活都在 backend/app/domain/review/ 底下很正常)\n\n"
-            "是追加,不是替换:活干着干着会碰到没预料到的文件,再 claim 一次就行。\n"
-            "简报里写路径没用——简报写完就改不了,而声明必然要长。\n\n"
-            "不带 --task 就是房间自己声明:照样告诉你撞了谁,但**不记下来**——声明记在\n"
-            "卡上,房间没有卡。替一个分身声明就带上 --task <task id>,那一条会被记住,\n"
-            "别的活才看得见它。"
-        ),
-    )
-    pclaim.add_argument("paths", nargs="+", help="路径,结尾带 / 表示目录")
-    pclaim.add_argument(
-        "--task",
-        default=None,
-        help="替这条活(而不是房间自己)声明,填 task id——只有这样才会被记下来",
-    )
-
     plock = sub.add_parser(
         "lock",
-        help="整块覆盖某个文件、或跑重活之前,先占住",
-        description=(
-            "本房间有两把锁,**强制程度不一样,用之前要知道**:\n\n"
-            "  heavy —— **真的拦得住**,能真的排队;你手跑测试/装依赖/起 dev server\n"
-            "    之前自己占一下,跑完还回去。\n"
-            "  file  —— **只是提醒**。你的 Write 工具是你自己 harness 的,平台拦不住。\n"
-            "    它的作用是:你要整块覆盖一个文件之前,能知道别人是不是正在覆盖它。\n\n"
-            "两把锁都**不等待**:占不到就直接告诉你是谁占着,你可以改用 Edit、\n"
-            "换个文件、或者下一轮再来——干等会白白烧掉一整轮的算力。\n\n"
-            "两把锁都**不能防止 lost update**(你读了旧内容 → 别人改完 → 你按旧内容覆盖):\n"
-            "那一段发生在上锁之前。防这个的是 `Edit`——它匹配它以为在那儿的文本,\n"
-            "别人动过就当场报错。"
-        ),
+        help="占用房间的重任务资源",
+        description="占用房间内的重资源锁，占用者是一条任务；忙时直接报告。",
     )
-    plock.add_argument(
-        "kind", choices=["file", "heavy"], help="file=整块覆盖某个文件;heavy=跑重活"
-    )
-    plock.add_argument(
-        "resource", nargs="?", default="", help="要占住的文件路径(heavy 不用填)"
-    )
-
+    plock.add_argument("kind", choices=["heavy"], help="heavy：房间共享的重资源")
+    plock.add_argument("--task", help="任务 UUID；省略时取当前任务目录")
     punlock = sub.add_parser(
         "unlock",
-        help="把锁还回去",
-        description=(
-            "把 `cheese lock` 占住的东西还回去。占不到锁的时候不用还——"
-            "你本来就没占着。锁本身有超时(file 60 秒,heavy 30 分钟),"
-            "所以就算忘了还,也不会把别人永久挡在外面。"
-        ),
+        help="释放房间的重任务资源",
+        description="释放指定任务持有的重资源锁。",
     )
-    punlock.add_argument(
-        "kind", choices=["file", "heavy"], help="要还的是哪一把,和当初占的一致"
-    )
-    punlock.add_argument(
-        "resource", nargs="?", default="", help="当初占的那个文件路径(heavy 不用填)"
-    )
+    punlock.add_argument("kind", choices=["heavy"], help="heavy：房间共享的重资源")
+    punlock.add_argument("--task", help="任务 UUID；省略时取当前任务目录")
 
     pdec = sub.add_parser(
         "decision",
@@ -699,142 +836,41 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     pask.add_argument("question", help="问题,一句话问清楚")
-    pask.add_argument("--option", action="append", required=True,
-                      help="一个选项,可重复 2-4 次(少于 2 或多于 4 会被拒)")
+    pask.add_argument(
+        "--option",
+        action="append",
+        required=True,
+        help="一个选项,可重复 2-4 次(少于 2 或多于 4 会被拒)",
+    )
 
     pa = sub.add_parser(
         "accept-request",
-        help="递验收卡给某人",
-        description=(
-            "成果做完了,把验收卡递给某个具体的人(不是广播)。\n"
-            "\n"
-            "一棵树=一个分支=一个 PR=一批活,而这批活是整个房间的:递卡会把分支封口\n"
-            "开 PR。所以派出去的活不是各递各的卡——分身干完把结论交回来,你用\n"
-            "`cheese conclude-task` 替它落一条,攒够了整个房间递一次。\n"
-            "\n"
-            "递卡就开 PR,真检查(GitHub Actions)在人采纳**之前**就开始跑;满足项目\n"
-            "分支保护规则后,人点采纳=当场合并他看到的那个 commit。\n"
-            "所以**递卡前自己把测试跑绿**,跑不动的照实说是环境限制。\n"
-            "\n"
-            "**--subject 就是这次改动留在 git 历史里的那一行**,必填。递卡会开 PR,采纳会把\n"
-            "整个分支压成一个提交,标题用的就是它。不给就递不出去——后端会当场打回并告诉你\n"
-            "该怎么写。\n"
-            "\n"
-            "写法(Conventional Commits, 英文祈使句, ≤72 字符, 不加句号):\n"
-            "  cheese accept-request lisi \"最懂这块\" \\\n"
-            "    --subject 'fix(accept): open the PR as the requester, not the bot' \\\n"
-            "    --body 'PRs opened with the App token belong to the bot on GitHub,\n"
-            "so the person whose work it is gets no attribution.'\n"
-            "\n"
-            "--body 写**为什么**,不写做了什么的清单——diff 已经说了做了什么。显而易见的\n"
-            "改动可以不写。别写「跑通了所有测试」这类废话:提交能存在就说明它过了。\n"
-            "\n"
-            "**--task 报这批代码是哪几条活写的**(可重复):\n"
-            "  cheese accept-request lisi \"最懂这块\" --subject '...' \\\n"
-            "    --task 3f2a...  --task 9c81...\n"
-            "它变成合并后那个提交里的 `Cheese-Task:` 行,是 `git log` 里唯一追得到\n"
-            "「哪个分身写了这次改动」的东西。平台**推不出来**:活挂在哪棵树是 split\n"
-            "那一刻定的,代码进哪个 PR 是递卡这一刻定的,一个房间跨批次干活时这两个\n"
-            "答案就不是一回事了;而沙箱里每个提交的作者都是需求方,commit 也认不出\n"
-            "分身。所以只有你说得清。\n"
-            "\n"
-            "只报**代码真的在这次 diff 里**的活。别报:一行没写的占位活、还在跑的活、\n"
-            "改动要走下一批的活。不报就一行都不写——错的署名比没有署名更糟。\n"
-            "反过来,一条活可以出现在**好几批**里:上一批交付过、之后继续往同一条分支\n"
-            "写、代码又进了这一批,就照实再报一次,它确实写了两批。\n"
-            "\n"
-            "声明只在递卡这一刻收,递出去就补不上了(卡上没有改声明的入口,同一棵树上\n"
-            "也递不出第二张卡)。忘了带就等这张卡进终态再带 --task 重递 —— **被驳回**\n"
-            "和**被作废**都算(两条都得人来点),而驳回本来就是可以重递的。\n"
-            "\n"
-            "**--subject / --body 不一样:递出去还能改**,用 `cheese describe`。评审说\n"
-            "「这句话不对」的时候改卡,平台会把 PR 正文一起改掉;只在 GitHub 上改 PR\n"
-            "正文没用——合进 main 的是卡上这一份。署名之所以不能改,是因为它是对\n"
-            "**事实**的断言(谁写的代码);描述是对改动的**说明**,改它正是评审要的。"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        help="提交当前任务的 PR 给验收人",
+        description="为一条任务请求人工验收，沿用任务的 PR。",
     )
     pa.add_argument(
-        "reviewer",
-        nargs="?",
-        default=None,
-        help=(
-            "验收人的 handle(用 `cheese members` 查准确值)。"
-            "不写就用项目设置里的默认验收人;两个都没有会当场打回。"
-            "要写 reason 就必须先写 reviewer(两个都是位置参数)"
-        ),
-    )
-    pa.add_argument("reason", nargs="?", default="", help="为什么找这个人验收")
-    pa.add_argument(
-        "--subject",
-        required=True,
-        help="必填。这次改动的提交标题: `type(scope): description`,英文,≤72 字符",
+        "reviewer", nargs="?", help="验收人的 handle；省略时沿用任务上的人选"
     )
     pa.add_argument(
-        "--body", default=None, help="提交正文: 为什么要这次改动(不明显时才写)"
+        "reason", nargs="?", default="", help="验收证据和需要对方检查的内容"
     )
-    pa.add_argument(
-        "--task",
-        action="append",
-        default=None,
-        metavar="TASK_ID",
-        help=(
-            "这批代码是哪条活写的(可重复)。写进合并后那个提交的 `Cheese-Task:`,"
-            "是**永久历史**里唯一说得清哪个分身写了这次改动的东西。"
-            "只填**代码真的在这次 diff 里**的活——没产出的占位活、还在跑、"
-            "改动要走下一批的活都别填(平台分辨不了,只能你说)。"
-            "不填就一行不写:错的署名比没有署名更糟"
-        ),
-    )
-
+    pa.add_argument("--subject", required=True, help="英文 Conventional Commit 标题")
+    pa.add_argument("--body", help="改动原因和验证说明")
+    pa.add_argument("--task", help="任务 id；默认读取当前任务工作目录")
     pdesc = sub.add_parser(
         "describe",
-        help="改这张待处理验收卡的提交标题/正文(PR 正文一起改)",
-        description=(
-            "更正你递出去那张卡的 --subject / --body。评审说「这句话不对」时用它。\n"
-            "\n"
-            "改的是**卡**,不是 GitHub 上那份 PR 正文——卡才是两者共同的源头:\n"
-            "PR 正文是它渲染出来的,采纳时压进 main 的那个提交也是它写的。只在\n"
-            "GitHub 上改 PR 正文,合进去的仍然是递卡那一刻的快照,于是 main 的历史\n"
-            "里留下一句评审早就指出不对的话(#735 就是这么发生的)。改卡,平台顺手\n"
-            "把 PR 正文也改掉,两边不可能各说各话。\n"
-            "\n"
-            "只在卡还没被采纳时能改。采纳之后 main 上那个提交已经存在了,改卡没有\n"
-            "意义——那种情况在房间里记一条更正。\n"
-            "\n"
-            "**--task 的署名改不了,也不给改**:署名是对事实的断言(哪个分身写的),\n"
-            "事后能改就等于能往别人头上安署名;描述是对改动的说明,改它正是评审要的。\n"
-            "\n"
-            "谁在什么时候把它从什么改成了什么,会记在房间里。"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        help="修改当前任务的验收说明及 PR 正文",
+        description="修改当前任务尚未采纳的卡及 PR 的标题或正文。",
     )
-    pdesc.add_argument(
-        "--subject", default=None, help="新的提交标题(Conventional Commits,当场校验)"
-    )
-    pdesc.add_argument(
-        "--body",
-        default=None,
-        help="新的提交正文(写为什么)。传空串就是把正文清空;不传就是不动它",
-    )
-
-    sub.add_parser(
+    pdesc.add_argument("--subject", help="英文 Conventional Commits 标题，最多 72 字符")
+    pdesc.add_argument("--body", help="改动原因和验证说明")
+    pdesc.add_argument("--task", help="任务 UUID；省略时取当前任务目录")
+    pready = sub.add_parser(
         "ready",
-        help="把这批活的 draft PR 翻成 ready(只翻这一件事)",
-        description=(
-            "说一句「这份东西可以看了」。\n"
-            "\n"
-            "有东西就有 PR:这批活第一次提交之后,平台就给它开了一个 draft PR\n"
-            "(draft 是 GitHub 里「进行中」的意思)。这条命令把它翻成 ready。\n"
-            "\n"
-            "它**只**做这一件事:不合并、不改署名、不动 PR 别的任何字段,也不递卡。\n"
-            "要把活交给某个人验收,那是 `cheese accept-request`——它自己也会顺手把\n"
-            "draft 翻掉,所以递卡之前不用先跑这条。\n"
-            "\n"
-            "本来就不是 draft 的 PR,跑它不算错,会直说「本来就不是 draft」。"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        help="把当前任务的 PR 标记为可以审阅",
+        description="只把指定任务已有的 draft PR 标记为可评审。",
     )
+    pready.add_argument("--task", help="任务 UUID；省略时取当前任务目录")
 
     pt = sub.add_parser(
         "tell",
@@ -843,10 +879,7 @@ def build_parser() -> argparse.ArgumentParser:
             "把一句话写在你派出的某条活的时间线上。只有这一个方向:\n"
             "  房间 → 它派出的活\n"
             "\n"
-            "它**不叫醒任何人**,也不需要:做那条活的分身就在你自己的会话里,\n"
-            "你直接给它发消息就是了。这条命令管的是**留痕**——你跟分身说了什么、\n"
-            "分身回了什么,写在活那边,盯着那条活的人才看得到(他们够不着分身),\n"
-            "下周翻开这条活的人也才知道中途改过什么。\n"
+            "这条命令只记录消息，不启动或唤醒执行者。\n"
             "\n"
             "长的东西写进实况文档(两边都读得到),这里只写「一条追加要求」。\n"
             "\n"
@@ -877,20 +910,20 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "gh-token",
         help="铸一个 GitHub token(约1小时过期); stderr 会带上仓库名、"
-             "这个 token 到底能干什么,以及对应的具体命令",
+        "这个 token 到底能干什么,以及对应的具体命令",
         description=(
             "铸一个 token 操作这个仓库:`GH_TOKEN=$(cheese gh-token) gh api "
             "repos/<owner/repo>/issues/187`\n"
             "\n"
             "**先看 stderr 那几行再动手**。token 能干什么不是固定的——它带的就是平台\n"
             "GitHub App 在这个仓库上被授予的全部权限,一项不减,所以能力清单由铸出来的\n"
-            "那一刻的 stderr 说了算。不要凭印象假设「只能查 CI」而去找人贴 issue 正文,\n"
-            "也不要假设推分支/开 PR 得交给平台。stderr 会按当前实际权限打出可以直接抄的\n"
-            "命令(check-runs / job 日志 / issue / PR / 仓库文件 / 推分支 / 开 PR)。\n"
+            "那一刻的 stderr 说了算。先核实权限再读 issue 正文。\n"
+            "stderr 列出 CI、日志、issue、PR 和仓库文件的读取命令。\n"
             "\n"
             "`gh` 推断不出这是哪个仓库(工作区是平台自己那个仓的工作树,不是 GitHub 的),"
             "**必须显式带 -R owner/repo**(或用 "
-            "`gh api repos/<owner>/<repo>/...` 的全路径写法)。仓库名和过期时间不用自己猜,"
+            "`gh api repos/<owner>/<repo>/...` 的全路径写法)。"
+            "仓库名和过期时间不用自己猜,"
             "stderr 里就有;stdout 只有 token 本身,所以 `GH_TOKEN=$(cheese gh-token)` "
             "照常能用。"
         ),
@@ -927,8 +960,9 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     psv.add_argument("port", type=int, help="应用监听的端口,如 5173")
-    psv.add_argument("note", nargs="?", default="app",
-                     help="一句话说明在跑什么,如 'Vue dev server'")
+    psv.add_argument(
+        "note", nargs="?", default="app", help="一句话说明在跑什么,如 'Vue dev server'"
+    )
 
     part = sub.add_parser(
         "artifact",
@@ -940,8 +974,13 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     part.add_argument("path", help="工作区相对路径,如 report.html")
-    part.add_argument("--as", dest="as_", default="html", choices=["html", "svg"],
-                      help="渲染类型(默认 html)")
+    part.add_argument(
+        "--as",
+        dest="as_",
+        default="html",
+        choices=["html", "svg"],
+        help="渲染类型(默认 html)",
+    )
 
     papi = sub.add_parser(
         "api",
@@ -1038,31 +1077,38 @@ def main() -> None:
             body["contributor_handles"] = a.contributor
         if a.brief:
             body["brief"] = a.brief
-        if a.paths:
-            body["paths"] = a.paths
+        if a.base_task:
+            body["base_task_id"] = a.base_task
         # 不写 --reviewer = 用项目默认验收人。同 accept-request：别塞空串，
         # 「没说」和「说了空的」在后端是两件事。
         if a.reviewer:
             body["reviewer_handle"] = a.reviewer
         r = _call("POST", f"/topics/{topic}/split", body)["data"]
-        who = r.get("reviewer_handle")
+        worktree = _task_worktree(r["id"])
         print(
-            f"已开一条活：{r['title']}（id={r['id']}）。**它还没人做**，接下来两步：\n"
-            f"  1. 用你的 Agent 工具起一个分身，把 --brief 的原文放进 prompt\n"
-            f"  2. cheese bind {r['id']} <分身的 agent_id>\n"
-            + (
-                f"验收人：{who}（递卡时不指定就用它）"
-                if who
-                else "这条活还没有验收人（项目也没设默认），递卡时要点名一个。"
-            )
+            f"任务：{r['title']}\nid={r['id']}\n工作目录：{worktree}\n"
+            f"验收人：{r.get('reviewer_handle') or '待指定'}"
         )
+        print(
+            "进入工作目录后执行任务。使用原生分身时，把任务简报和此目录交给它，"
+            "再用 cheese bind 绑定。"
+        )
+    elif a.cmd == "worktree":
+        print(_task_worktree(a.task_id))
+    elif a.cmd == "sync":
+        if a.all:
+            _sync_all_tasks()
+        else:
+            _sync_task(_task_id(a.task))
     elif a.cmd == "bind":
         topic = _need("CHEESE_TOPIC", TOPIC)
         r = _call(
             "POST", f"/topics/{topic}/tasks/{a.task_id}/bind", {"agent_id": a.agent_id}
         )["data"]
-        print(f"「{r['title']}」现在归分身 {r['subagent_id']}，它干的事会记到这条活上。")
-    elif a.cmd == "conclude-task":
+        print(
+            f"「{r['title']}」现在归分身 {r['subagent_id']}，它干的事会记到这条活上。"
+        )
+    elif a.cmd == "close-task":
         topic = _need("CHEESE_TOPIC", TOPIC)
         body = {"conclusion": a.conclusion}
         if a.reported_by is not None:
@@ -1071,36 +1117,16 @@ def main() -> None:
             body["contributor_handles"] = a.contributor
         r = _call(
             "POST",
-            f"/topics/{topic}/tasks/{a.task_id}/conclude",
+            f"/topics/{topic}/tasks/{a.task_id}/close",
             body,
         )["data"]
         print(f"「{r['title']}」收了。结论：{(r.get('conclusion') or '（没有留话）')}")
-    elif a.cmd == "claim":
-        topic = _need("CHEESE_TOPIC", TOPIC)
-        # 替一条活声明时走 /tasks/<id>/claim:那条会被记下来,房间自己那条只查不记
-        # (声明记在卡上,房间没有卡)。两条都走房间的地址——这一轮的 token 是按房间
-        # 签的,活没有自己的地址。
-        path = (
-            f"/topics/{topic}/tasks/{a.task}/claim"
-            if a.task
-            else f"/topics/{topic}/claim"
-        )
-        r = _call("POST", path, {"paths": a.paths})["data"]
-        if r.get("refusals"):
-            print("这些路径没能声明:")
-            for line in r["refusals"]:
-                print(f"  ✗ {line}")
-            print("把范围缩窄一点,或者等对方先做完。")
-        elif a.task:
-            print(f"已声明:{'、'.join(r.get('claimed') or a.paths)}")
-        else:
-            print(f"没撞上别人:{'、'.join(a.paths)}(房间自己的声明不记录)")
-        for line in r.get("warnings") or []:
-            print(f"  ⚠ {line}")
     elif a.cmd == "lock":
         topic = _need("CHEESE_TOPIC", TOPIC)
         r = _call(
-            "POST", f"/topics/{topic}/lock", {"kind": a.kind, "resource": a.resource}
+            "POST",
+            f"/topics/{topic}/lock",
+            {"kind": a.kind, "task_id": _task_id(a.task)},
         )["data"]
         if r.get("acquired"):
             print(f"占住了({a.kind} {a.resource or ''})".rstrip())
@@ -1110,12 +1136,16 @@ def main() -> None:
     elif a.cmd == "unlock":
         topic = _need("CHEESE_TOPIC", TOPIC)
         r = _call(
-            "POST", f"/topics/{topic}/unlock", {"kind": a.kind, "resource": a.resource}
+            "POST",
+            f"/topics/{topic}/unlock",
+            {"kind": a.kind, "task_id": _task_id(a.task)},
         )["data"]
         print("已归还。" if r.get("released") else "你本来就没占着它。")
     elif a.cmd == "push-fix":
         topic = _need("CHEESE_TOPIC", TOPIC)
-        r = _call("POST", f"/topics/{topic}/push-fix")["data"]
+        task = _task_id(a.task)
+        _sync_task(task)
+        r = _call("POST", f"/topics/{topic}/tasks/{task}/push-fix")["data"]
         if r.get("pushed"):
             print(f"已推到 PR #{r['pr_number']}：{r.get('pr_url') or ''}")
         else:
@@ -1151,7 +1181,9 @@ def main() -> None:
             print(f"[cheese] 读不到 {a.url}", file=sys.stderr)
             print(f"[cheese] 各级结果: {data.get('trail', '(无)')}", file=sys.stderr)
             if data.get("text"):
-                print("[cheese] 抓到的残缺内容如下(可能是验证页/登录墙):", file=sys.stderr)
+                print(
+                    "[cheese] 抓到的残缺内容如下(可能是验证页/登录墙):", file=sys.stderr
+                )
                 print(data["text"][:2000])
             sys.exit(1)
         print(data.get("text", ""))
@@ -1180,12 +1212,18 @@ def main() -> None:
         if MEMORY_SCOPE == "personal" and OWNER:
             body["scope"] = "user"
             body["owner"] = OWNER
-        hits = _call("POST", f"/projects/{proj}/memory/search", body).get("data", {}).get("hits", [])
+        hits = (
+            _call("POST", f"/projects/{proj}/memory/search", body)
+            .get("data", {})
+            .get("hits", [])
+        )
         if not hits:
             # 关键词检索没命中 ≠ 没有这条记忆。说清楚这一点,否则一次空结果就会被
             # 当成"确认不存在",然后一头撞上那条记忆本来要拦住的坑。
-            print("没有找到相关记忆。（关键词检索,不是语义检索：换个说法、"
-                  "或只用其中一两个关键词再试一次）")
+            print(
+                "没有找到相关记忆。（关键词检索,不是语义检索：换个说法、"
+                "或只用其中一两个关键词再试一次）"
+            )
         for h in hits:
             print(f"- {h.get('abstract', '')}")
     elif a.cmd == "ask":
@@ -1203,16 +1241,24 @@ def main() -> None:
         if a.options:
             payload["options"] = [o.strip() for o in a.options.split("|") if o.strip()]
         body = {
-            "level": a.level, "kind": a.kind, "title": a.title, "body": a.body,
-            "target_handle": a.to, "topic_id": TOPIC or None, "payload": payload,
+            "level": a.level,
+            "kind": a.kind,
+            "title": a.title,
+            "body": a.body,
+            "target_handle": a.to,
+            "topic_id": TOPIC or None,
+            "payload": payload,
         }
         _call("POST", f"/projects/{proj}/alerts", body)
         print(f"已发送通知给 {a.to or '所有人'}。")
     elif a.cmd == "ready":
         topic = _need("CHEESE_TOPIC", TOPIC)
-        r = _call("POST", f"/topics/{topic}/ready")["data"]
+        task = _task_id(a.task)
+        r = _call("POST", f"/topics/{topic}/tasks/{task}/ready")["data"]
         if r.get("ready"):
-            print(f"PR #{r['pr_number']} 已从 draft 翻成 ready：{r.get('pr_url') or ''}")
+            print(
+                f"PR #{r['pr_number']} 已从 draft 翻成 ready：{r.get('pr_url') or ''}"
+            )
         else:
             print(r.get("reason") or "没有可以翻的 PR。")
     elif a.cmd == "describe":
@@ -1225,41 +1271,37 @@ def main() -> None:
             body["change_subject"] = a.subject
         if a.body is not None:
             body["change_body"] = a.body
-        r = _call("POST", f"/topics/{topic}/accept-card/describe", body)["data"]
+        task = _task_id(a.task)
+        r = _call("POST", f"/topics/{topic}/tasks/{task}/accept-card/describe", body)[
+            "data"
+        ]
         print(
             f"验收卡的描述已更正（PR 正文同步改掉了）。现在的标题："
             f"{r.get('change_subject') or '（空）'}"
         )
     elif a.cmd == "accept-request":
         topic = _need("CHEESE_TOPIC", TOPIC)
-        payload = {"routing_reason": a.reason, "change_subject": a.subject,
-                   "change_body": a.body, "task_ids": a.task or []}
+        payload = {
+            "routing_reason": a.reason,
+            "change_subject": a.subject,
+            "change_body": a.body,
+        }
         # 不写验收人 = 用项目默认验收人。**不要**在这里塞一个空串:后端把
         # 「没说」和「说了空的」当同一件事处理会掩盖真正的空输入,而它给的
         # 那句打回文案正是这条命令唯一能帮上忙的地方。
         if a.reviewer:
             payload["reviewer_handle"] = a.reviewer
-        r = _call("POST", f"/topics/{topic}/accept-card", payload)["data"]
+        task = _task_id(a.task)
+        _sync_task(task)
+        r = _call("POST", f"/topics/{topic}/tasks/{task}/accept-card", payload)["data"]
         print(f"已把验收卡递给 {r.get('reviewer_handle') or a.reviewer}。")
-        if not a.task:
-            # 别在这里说「重递一次带上 --task」：卡已经 pending，同一棵树上再递
-            # 一张会被 create_card 直接拒掉，照着做必然失败。声明只在递卡这一刻
-            # 收，补声明没有入口，唯一走得通的补救要人来动手。
-            print(
-                "这次没有 --task，合并后的提交里不会有 Cheese-Task 行——"
-                "以后翻 git log 的人查不到是哪个分身写的。\n"
-                "声明只在递卡这一刻收，这张卡上补不了，直接再递一张会被"
-                "「已有待处理的验收卡」拒掉。真要补：等这张卡进终态再带 --task 重递 —— "
-                "**被驳回**和**被作废**都算，两条都是人的动作（你自己点不了），"
-                "而驳回本来就是可以重递的。\n"
-                "下次递卡一次带上。"
-            )
     elif a.cmd == "tell":
         # URL 里的 topic 是**发方**（per-turn token 按它校验作用域）；收方在 body 里，
         # 由后端校验它确实是这个房间派出的活。
         topic = _need("CHEESE_TOPIC", TOPIC)
         data = _call(
-            "POST", f"/topics/{topic}/tell",
+            "POST",
+            f"/topics/{topic}/tell",
             {"target": a.target, "content": a.message},
         ).get("data", {})
         where = data.get("target_title") or data.get("target_topic_id") or a.target
@@ -1324,18 +1366,10 @@ def main() -> None:
                 "[cheese] 读工作区以外的仓库文件: "
                 f"gh api repos/{repo}/contents/<path>?ref=<branch>"
             )
-        # 有写权限就把交付那一步也写出来。少了这两行,一个能推、能开 PR 的 agent 照样
-        # 会以为最后一步得交给平台或者人 —— 而它并不会为了确认这件事去试一次。
-        if "contents: write" in perms:
-            lines.append(
-                "[cheese] 推分支(凭据走 URL,token 一小时后自然失效): git push "
-                f"https://x-access-token:$GH_TOKEN@github.com/{repo} HEAD:<分支>"
-            )
-        if "pull_requests: write" in perms:
-            lines.append(
-                f"[cheese] 开 PR: gh api repos/{repo}/pulls -f head=<分支> "
-                "-f base=<主干> -f title=<标题> -f body=<正文>"
-            )
+        lines.append(
+            "[cheese] 任务交付：在任务目录提交后 cheese sync；"
+            "已有 PR 用 cheese push-fix，平台沿用该任务的 PR。"
+        )
         print("\n".join(lines), file=sys.stderr)
     elif a.cmd == "members":
         topic = _need("CHEESE_TOPIC", TOPIC)
@@ -1359,9 +1393,11 @@ def main() -> None:
             # when it has shipped the helper. A running app cannot reach the
             # panel from here, so say so instead of filing a record that would
             # render as a white frame.
-            print("[cheese] 这个运行环境没有预览通道,运行中的应用到不了预览面板。\n"
-                  "[cheese] 要给人看结果,用 cheese artifact <文件> 点名一个网页或 SVG。",
-                  file=sys.stderr)
+            print(
+                "[cheese] 这个运行环境没有预览通道,运行中的应用到不了预览面板。\n"
+                "[cheese] 要给人看结果,用 cheese artifact <文件> 点名一个网页或 SVG。",
+                file=sys.stderr,
+            )
             sys.exit(2)
         # Declare the port and bring the tunnel up in one step. The port is
         # written on THIS machine and read from disk by the helper — it never
@@ -1391,15 +1427,21 @@ def main() -> None:
         except (OSError, UnicodeError) as exc:
             print(f"[cheese] 无法读取 {a.path}: {exc}", file=sys.stderr)
             sys.exit(1)
-        _call("POST", f"/topics/{topic}/artifact", {"path": rel, "as": a.as_, "content": content})
+        _call(
+            "POST",
+            f"/topics/{topic}/artifact",
+            {"path": rel, "as": a.as_, "content": content},
+        )
         print(f"已把 {rel} 设为当前预览（{a.as_}）。")
     elif a.cmd == "api":
         if not a.method:
             _print_api_index()
             return
         if not a.path:
-            print("[cheese] api 需要一个路径,如 cheese api GET /topics/<id>/blocks",
-                  file=sys.stderr)
+            print(
+                "[cheese] api 需要一个路径,如 cheese api GET /topics/<id>/blocks",
+                file=sys.stderr,
+            )
             sys.exit(2)
         if a.data is not None:
             try:

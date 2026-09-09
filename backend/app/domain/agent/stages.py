@@ -36,7 +36,7 @@ class TopicStage(enum.StrEnum):
     # 采纳时撞上合并冲突，等芝士解决。
     conflict = "conflict"
     # 已合并归档。
-    merged = "merged"
+    archived = "archived"
 
 
 # 卡状态 → 阶段。`gate_failed` 和 `pending_gate` 合并成一段：闸门红了要做的事
@@ -79,7 +79,7 @@ def resolve_stage(
         if candidate in present:
             return _CARD_STAGE[candidate]
     if finished:
-        return TopicStage.merged
+        return TopicStage.archived
     return TopicStage.delegating
 
 

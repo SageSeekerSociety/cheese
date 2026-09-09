@@ -110,6 +110,7 @@ export interface BlockMeta {
 }
 
 export interface Block {
+  task_id?: string | null
   id: string
   topic_id: string
   kind: string
@@ -177,7 +178,7 @@ export interface RoomTask {
   status: string
   owner_handle?: string | null
   // 谁来验收这条活 —— 派活那一刻定下的（显式指定，否则项目的默认验收人）。递卡
-  // 沿用它。null 表示派出去时谁也没指定、项目也没设默认，递卡时得自己点名。
+  // 沿用它。null 只可能来自历史记录。
   reviewer_handle?: string | null
   created_by?: string | null
   branch_name?: string | null
@@ -186,10 +187,13 @@ export interface RoomTask {
   // 于是那份文档从播种那一刻起就再没人改过。
   brief?: string
   conclusion?: string | null
-  // 它干在哪一批上。一棵树 = 一个分支 = 一个 PR = 一批活，所以这是「我这条活最后
-  // 会从哪个 PR 出去」的答案，也是总览把活和 PR 对上的唯一依据。
-  tree_id?: string | null
-  // 交付，和 `status` 不是同一个问题：活可以已交付但还开着，也可以关掉却什么都没交付。
+  base_branch?: string | null
+  base_task_id?: string | null
+  historical_delivery_id?: string | null
+  pr_number?: number | null
+  pr_url?: string | null
+  delivered_head?: string | null
+  // 采纳会关闭任务；单独关闭任务不代表已交付。
   accepted_by?: string | null
   accepted_at?: string | null
   closed_at?: string | null
@@ -226,22 +230,6 @@ export type BoardColumn = 'building' | 'delivering' | 'needs_you' | 'done' | 'ar
 export interface Presentation {
   column: BoardColumn
   display_status: string
-}
-
-/** 一批活 —— 一棵树 = 一个分支 = 一个 PR。房间封口一批、开下一批，所以一个房间
- *  同时可以有好几棵，但只有一棵是 `open` 的。 */
-export interface RoomTree {
-  id: string
-  status: 'open' | 'sealed' | 'merged'
-  created_at: string
-  sealed_at?: string | null
-  merged_at?: string | null
-  // 快检最后一次说了什么，关于这棵树现在的内容。它谁也不拦（#296 定了由 PR 上
-  // 真的 CI 决定），在这里只是为了让红的那次被将要验收的人看见。
-  last_check_at?: string | null
-  last_check_ok?: boolean | null
-  last_check_detail?: string
-  card?: ThreadCard | null
 }
 
 /** 一条支线绑着的验收卡，窄到只剩一行侧栏放得下的东西：活到哪一步、骑在哪个 PR 上。 */
@@ -613,6 +601,7 @@ export interface AutoMergeInfo {
 
 export interface AcceptCard {
   id: string
+  task_id?: string | null
   topic_id: string
   reviewer_handle: string
   routing_reason: string

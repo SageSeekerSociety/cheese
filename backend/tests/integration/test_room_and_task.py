@@ -7,6 +7,7 @@ room stay open for the next piece of work, and for anything delivered into it
 later.
 """
 
+from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import session_auth_headers
 
 
@@ -30,14 +31,18 @@ def _task(client, project_id: str, room_id: str, title: str) -> dict:
     Through `/split`, because that is the only way to make one: `POST /topics`
     under a room is refused now — a room's inside is work, not another room.
     """
-    r = client.post(f"/topics/{room_id}/split", json={"title": title})
+    r = client.post(
+        f"/topics/{room_id}/split",
+        json=dict(reviewer_handle="alice", **{"title": title}),
+    )
     assert r.status_code == 200, r.text
     return r.json()["data"]
 
 
 def _accept(client, topic_id: str) -> None:
     card = client.post(
-        f"/topics/{topic_id}/accept-card",
+        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
+        headers=delivery_headers(client, topic_id),
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "alice",

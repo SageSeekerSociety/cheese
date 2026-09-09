@@ -15,7 +15,6 @@ import subprocess
 import time
 import uuid as _uuid
 from datetime import UTC, datetime
-from pathlib import Path
 
 import pytest
 
@@ -23,6 +22,7 @@ from app.core.sandbox_auth import mint_scoped_token
 from app.domain.review import github_pr
 from app.domain.review.pr_publish import dispatch as _REAL_DISPATCH
 from tests.conftest import wait_work_idle
+from tests.delivery import delivery_headers, delivery_task, delivery_task_id
 from tests.integration.conftest import room_text, session_auth_headers
 from tests.machine_work import machine_commits
 
@@ -45,7 +45,8 @@ def _make_topic(client, project_id: str) -> str:
 
 def _make_card_response(client, topic_id: str, reviewer: str = "alice"):
     return client.post(
-        f"/topics/{topic_id}/accept-card",
+        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
+        headers=delivery_headers(client, topic_id),
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": reviewer,
@@ -564,7 +565,7 @@ def app_world(client, monkeypatch):
     )
 
     def _push(pid, tid, token):
-        branch = ws.branch_for_tree(tid)
+        branch = ws.branch_for_task(tid)
         recorded["pushes"].append({"topic": tid, "token": token, "branch": branch})
         return branch
 
@@ -615,7 +616,7 @@ def _give_card_a_pr(
     `mirrored=True` 是轮询器已经跑过一跳、head 写在卡上、卡面因此显示得出一个
     sha 的常态。`mirrored=False` 是刚递上来的那 60 秒：PR 有了，卡面还是空的，
     人没有任何一版可看。"""
-    branch = f"topic/{_uuid.UUID(topic_id).hex[:8]}"
+    branch = _disk_branch(client, topic_id)
     head_sha = app_world["fake"].seed_pr(number, head=branch)
 
     from app.domain.review.repositories import AcceptCardRepository
@@ -692,7 +693,13 @@ def test_accept_merges_the_pr_on_the_spot_when_clean(client, app_world):
     # 交付完成 ≠ 话题结束 (#442 decision 1)。
     delivered = _topic(client, tid)
     assert delivered["status"] == "active"
-    assert delivered["accepted_at"] is not None
+    assert (
+        client.get(f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}").json()[
+            "data"
+        ]["accepted_at"]
+        is not None
+    )
+    assert delivered["accepted_at"] is None
     assert app_world["local_merges"] == []
 
 
@@ -1209,7 +1216,9 @@ def test_a_legacy_discussion_card_still_accepts_on_a_branchless_tree(
     assert r.json()["data"]["status"] == "accepted"
     assert app_world["fake"].merge_calls == []
     assert app_world["opened"] == []
-    assert app_world["local_merges"] == [_uuid.UUID(tid)]  # noop merge，无绕过
+    assert app_world["local_merges"] == [
+        delivery_task_id(client, tid)
+    ]  # noop merge，无绕过
 
 
 def test_filing_a_card_on_a_branchless_tree_is_refused(client, app_world, monkeypatch):
@@ -1219,13 +1228,12 @@ def test_filing_a_card_on_a_branchless_tree_is_refused(client, app_world, monkey
 
     pid = _make_project(client)
     tid = _make_topic(client, pid)
-    monkeypatch.setattr(ws, "topic_branch_exists", lambda pid_, tid_: False)
+    monkeypatch.setattr(ws, "branch_has_commits", lambda *args, **kwargs: False)
 
     r = _make_card_response(client, tid)
     assert r.status_code == 422, r.text
-    assert "没有任何提交" in r.json()["message"]
-    # 说清该推哪条分支（本话题的树分支）。
-    assert f"topic/{_uuid.UUID(tid).hex[:8]}" in r.json()["message"]
+    assert "没有可交付的提交" in r.json()["message"]
+    assert _branch_of_record(client, tid) in r.json()["message"]
     assert _cards(client, tid) == []
 
 
@@ -1247,23 +1255,22 @@ def _named_branch(message: str) -> str:
 
 
 def _room_open_tree_branch(client, topic_id: str) -> str | None:
-    """数据库这一层说的「这个房间正在写哪棵树」，翻成分支名。"""
-    from app.domain.room_task.repositories import WorkTreeRepository
-    from app.domain.workspace import service as ws
+    task_id = delivery_task_id(client, topic_id)
 
-    async def _do() -> str | None:
-        async with client.test_factory() as s:
-            tree = await WorkTreeRepository(s).open_tree_for_room(_uuid.UUID(topic_id))
-            return None if tree is None else ws.branch_for_tree(tree.id)
+    async def read():
+        from app.domain.room_task.models import Task
 
-    return asyncio.run(_do())
+        async with client.test_factory() as session:
+            task = await session.get(Task, task_id)
+            return task.branch_name if task.status == "open" else None
+
+    return client.portal.call(read)
 
 
 def _branch_of_record(client, topic_id: str) -> str:
-    """磁盘这一层说的同一件事（`tree_for_place` → 分支名）。两层必须一致。"""
     from app.domain.workspace import service as ws
 
-    return ws.branch_for_tree(ws.tree_for_place(_uuid.UUID(topic_id)))
+    return ws.branch_for_task(delivery_task_id(client, topic_id))
 
 
 def _only_these_branches_exist(monkeypatch, pushed: set[str]) -> None:
@@ -1271,72 +1278,9 @@ def _only_these_branches_exist(monkeypatch, pushed: set[str]) -> None:
     from app.domain.workspace import service as ws
 
     def _exists(_project_id, topic_id) -> bool:
-        return ws.branch_for_tree(ws.tree_for_place(topic_id)) in pushed
+        return ws.branch_for_task(topic_id) in pushed
 
     monkeypatch.setattr(ws, "topic_branch_exists", _exists)
-
-
-def test_a_delivery_after_the_last_batch_merged_keeps_the_tree_it_named(
-    client, app_world, monkeypatch
-):
-    """房间 2026-09-08 实测的那一刀：上一批已经合并（房间没有开着的树）→ 再递
-    卡时现场开新一批 → 空树守卫 422 → 回滚把刚开的那棵树一起烧掉。
-
-    钉的是两层一致：拒卡之后，数据库里那棵开着的树、磁盘上的房间映射、错误信息
-    里点名的分支，说的必须是同一条。"""
-    fake = app_world["fake"]
-    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
-    fake.check_state_by_sha[head_sha] = ("success", "全绿")
-    assert _accept(client, cid).status_code == 200  # 上一批落地，树 merged
-    # 合完当场就开了下一批：房间必须立刻有个别的地方可写，否则在下一次递卡之前
-    # 提交的每一行都落在刚被 squash 进 main 的那条分支上。
-    rolled = _room_open_tree_branch(client, tid)
-    assert rolled is not None
-    assert rolled != f"topic/{_uuid.UUID(tid).hex[:8]}"
-
-    pushed: set[str] = set()  # 新一批的分支上还什么都没有
-    _only_these_branches_exist(monkeypatch, pushed)
-
-    r = _make_card_response(client, tid)
-
-    assert r.status_code == 422, r.text
-    assert "没有任何提交" in r.json()["message"]
-    named = _named_branch(r.json()["message"])
-    # 被拒之后，那棵树还在，而且三层说的是同一条分支。
-    assert _room_open_tree_branch(client, tid) == named
-    assert _branch_of_record(client, tid) == named
-    # 而且它确实是新一批，不是上一批那条。
-    assert named != f"topic/{_uuid.UUID(tid).hex[:8]}"
-
-    pushed.add(named)  # 照着报的分支推提交
-    r = _make_card_response(client, tid)
-    assert r.status_code == 200, r.text
-
-
-def test_two_refused_cards_name_the_same_branch_and_pushing_to_it_works(
-    client, app_world, monkeypatch
-):
-    """连续两次空树拒卡，报的分支名必须一致——不然「把提交推上 X 后再递卡」
-    这句指引本身就是假的。照着它推完，第三次递卡成功。"""
-    fake = app_world["fake"]
-    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
-    fake.check_state_by_sha[head_sha] = ("success", "全绿")
-    assert _accept(client, cid).status_code == 200
-
-    pushed: set[str] = set()
-    _only_these_branches_exist(monkeypatch, pushed)
-
-    first = _make_card_response(client, tid)
-    second = _make_card_response(client, tid)
-
-    assert first.status_code == 422 and second.status_code == 422
-    named = _named_branch(first.json()["message"])
-    assert _named_branch(second.json()["message"]) == named
-
-    pushed.add(named)
-    third = _make_card_response(client, tid)
-    assert third.status_code == 200, third.text
-    assert _cards(client, tid)[0]["status"] == "pending"
 
 
 def test_github_unreachable_at_accept_stops_and_keeps_the_pr_on_the_card(
@@ -1398,7 +1342,13 @@ def test_accept_without_github_binding_local_merges(client):
     assert "本项目未接 GitHub" in card["note"]
     delivered = _topic(client, tid)
     assert delivered["status"] == "active"
-    assert delivered["accepted_at"] is not None
+    assert (
+        client.get(f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}").json()[
+            "data"
+        ]["accepted_at"]
+        is not None
+    )
+    assert delivered["accepted_at"] is None
 
 
 def test_existing_pr_cannot_fall_back_to_local_merge_when_binding_disappears(
@@ -1787,7 +1737,13 @@ def test_poll_settles_an_externally_merged_pr(client, app_world):
     assert fake.merge_calls == []
     delivered = _topic(client, tid)
     assert delivered["status"] == "active"
-    assert delivered["accepted_at"] is not None
+    assert (
+        client.get(f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}").json()[
+            "data"
+        ]["accepted_at"]
+        is not None
+    )
+    assert delivered["accepted_at"] is None
 
 
 @pytest.mark.parametrize("sync_fails", [False, True])
@@ -1826,8 +1782,8 @@ def test_external_merge_closes_a_returned_batch_without_rewriting_its_review(
     assert card["decided_by"] == rejected["decided_by"]
     assert card["pr_head_sha"] == rejected["pr_head_sha"]
     assert card["pr_merged_at"] is not None
-    assert _room_open_tree_branch(client, tid) != branch
-    assert _branch_of_record(client, tid) == _room_open_tree_branch(client, tid)
+    assert _room_open_tree_branch(client, tid) is None
+    assert _branch_of_record(client, tid) == branch
     assert fake.merge_calls == []
     room = _room_settled(client, tid, "原退回记录保留")
     assert "原退回记录保留" in room
@@ -1837,12 +1793,12 @@ def test_external_merge_closes_a_returned_batch_without_rewriting_its_review(
 
     async def check_delivery_boundary():
         from app.domain.review.repositories import AcceptCardRepository
-        from app.domain.room_task.repositories import WorkTreeRepository
+        from app.domain.room_task.repositories import TaskRepository
 
         async with client.test_factory() as session:
             stored = await AcceptCardRepository(session).get(_uuid.UUID(cid))
-            tree = await WorkTreeRepository(session).get(stored.tree_id)
-            assert tree.status == "merged"
+            tree = await TaskRepository(session).get(stored.task_id)
+            assert tree.status == "closed"
             assert tree.delivered_head == delivered_head
 
     asyncio.run(check_delivery_boundary())
@@ -2037,7 +1993,13 @@ def test_merge_anyway_merges_and_signs_the_card(client, app_world):
     assert card["decided_by"] == "alice"
     delivered = _topic(client, tid)
     assert delivered["status"] == "active"
-    assert delivered["accepted_at"] is not None
+    assert (
+        client.get(f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}").json()[
+            "data"
+        ]["accepted_at"]
+        is not None
+    )
+    assert delivered["accepted_at"] is None
     # 署名：谁、理由、以及合并那一刻检查到底是什么状态。
     assert "alice" in card["note"]
     assert "CI runner 挂了" in card["note"]
@@ -2103,7 +2065,7 @@ def _real_git_head(project_id: _uuid.UUID, topic_id: _uuid.UUID) -> str:
     from app.domain.workspace import service as ws
 
     repo_path = ws.ensure_repo(project_id)
-    branch = ws.branch_for_tree(topic_id)
+    branch = ws.branch_for_task(topic_id)
     return subprocess.run(
         ["git", "-C", str(repo_path), "rev-parse", branch],
         capture_output=True,
@@ -2145,7 +2107,7 @@ def test_push_fix_puts_the_local_commit_on_the_pr_on_demand(
 
     pid, tid, cid, number, head_sha = _ready_card(client, app_world)
     holder["number"] = number
-    puid, tuid = _uuid.UUID(pid), _uuid.UUID(tid)
+    puid, tuid = _uuid.UUID(pid), delivery_task_id(client, tid)
 
     machine_commits(puid, tuid, {"work.txt": "first pass\n"})
     first_head = _real_git_head(puid, tuid)
@@ -2158,7 +2120,8 @@ def test_push_fix_puts_the_local_commit_on_the_pr_on_demand(
 
     machine_commits(puid, tuid, {"work.txt": "fixed\n"})
     pushed = client.post(
-        f"/topics/{tid}/push-fix", headers=session_auth_headers("alice")
+        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/push-fix",
+        headers=session_auth_headers("alice"),
     ).json()["data"]
     assert pushed["pushed"] is True
     second_head = pushes[-1]["head_sha"]
@@ -2166,7 +2129,8 @@ def test_push_fix_puts_the_local_commit_on_the_pr_on_demand(
     assert _cards(client, tid)[0]["pr_head_sha"] == second_head
 
     again = client.post(
-        f"/topics/{tid}/push-fix", headers=session_auth_headers("alice")
+        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/push-fix",
+        headers=session_auth_headers("alice"),
     ).json()["data"]
     assert again["pushed"] is False, "没有新东西可推时,再问一次不算错误"
 
@@ -2195,7 +2159,8 @@ def test_push_fix_declines_a_doomed_non_fast_forward_and_says_so(
 
     pid, tid, cid, number, head_sha = _ready_card(client, app_world)
     pushed = client.post(
-        f"/topics/{tid}/push-fix", headers=session_auth_headers("alice")
+        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/push-fix",
+        headers=session_auth_headers("alice"),
     ).json()["data"]
 
     assert pushed["pushed"] is False
@@ -2213,7 +2178,7 @@ def test_remote_head_ff_from_local_reads_real_git_ancestry(client):
 
     pid = _make_project(client)
     tid = _make_topic(client, pid)
-    puid, tuid = _uuid.UUID(pid), _uuid.UUID(tid)
+    puid, tuid = _uuid.UUID(pid), delivery_task_id(client, tid)
 
     machine_commits(puid, tuid, {"a.txt": "1\n"})
     head1 = _real_git_head(puid, tuid)
@@ -2273,11 +2238,11 @@ def test_a_failed_post_merge_sync_is_annotated_not_fatal(
 # 下面这一组走的是真入口：真的 accept、真的 git 提交，然后问 git。
 
 
-def _disk_branch(place_id: str) -> str:
+def _disk_branch(client, place_id: str) -> str:
     """磁盘这一层说的「这个地方现在写哪条分支」——分身 commit 时用的就是它。"""
     from app.domain.workspace import service as ws
 
-    return ws.branch_for_tree(ws.tree_for_place(_uuid.UUID(place_id)))
+    return ws.branch_for_task(delivery_task_id(client, place_id))
 
 
 def _branch_holds(project_id: str, branch: str, sha: str) -> bool:
@@ -2290,87 +2255,6 @@ def _branch_holds(project_id: str, branch: str, sha: str) -> bool:
         text=True,
     )
     return done.returncode == 0
-
-
-def _landed_batch(client, app_world, subject: str = "chore(test): file an accept card"):
-    """一批真的走完的交付：写代码 → 递卡 → 采纳合并。返回交付掉的那条分支。"""
-    fake = app_world["fake"]
-    pid = _make_project(client)
-    tid = _make_topic(client, pid)
-    machine_commits(_uuid.UUID(pid), _uuid.UUID(tid), {"first.txt": "batch one\n"})
-    cid = _make_card(client, tid)
-    head_sha = _give_card_a_pr(client, app_world, tid, cid, 7)
-    fake.check_state_by_sha[head_sha] = ("success", "全绿")
-    delivered = _disk_branch(tid)
-    assert _accept(client, cid).status_code == 200
-    return pid, tid, delivered
-
-
-def test_a_commit_right_after_the_batch_landed_does_not_go_on_the_merged_branch(
-    client, app_world
-):
-    """采纳之后**什么都不做**，直接提交下一批的第一行代码。
-
-    它不能落在刚交付掉的那条分支上。那条分支的内容已经作为一个 squash 提交进了
-    main，分支本身不是 main 的祖先，所以写在它上面的东西 `git log main` 里永远
-    看不到，而且下一次递卡也带不走 —— 交付路径上没有任何一步会发现这件事。
-    """
-    pid, tid, delivered = _landed_batch(client, app_world)
-
-    sha = machine_commits(_uuid.UUID(pid), _uuid.UUID(tid), {"next.txt": "batch two\n"})
-
-    now = _disk_branch(tid)
-    assert now != delivered, "采纳之后房间还写在已经交付掉的那条分支上"
-    assert _branch_holds(pid, now, sha)
-    assert not _branch_holds(pid, delivered, sha)
-
-
-def test_the_next_batch_gets_its_own_draft_pr_on_its_own_branch(
-    client, app_world, monkeypatch
-):
-    """第二批的 draft PR 开在**新**分支上，而不是上一批那条已经合掉的。
-
-    走的是这条 PR 真正的入口：平台看不见 worktree 里那次 commit，所以是巡检
-    (`draft pr sweep`) 观察到「这一批的分支比 main 多了东西」才开的 PR。
-    """
-    from app.domain.review import pr_publish
-
-    monkeypatch.setattr(pr_publish, "enabled", lambda: True)
-    pid, tid, delivered = _landed_batch(client, app_world)
-    machine_commits(_uuid.UUID(pid), _uuid.UUID(tid), {"next.txt": "batch two\n"})
-    fresh = _disk_branch(tid)
-
-    counts = asyncio.run(pr_publish.sweep_draft_prs(client.test_factory))
-
-    assert counts["opened"] == 1, counts
-    drafts = [o for o in app_world["opened"] if o["draft"]]
-    assert [d["head"] for d in drafts] == [fresh]
-    assert delivered not in [d["head"] for d in drafts]
-    # 而且卡递出来时认领的就是它，不是再开一个。
-    cid = _make_card(client, tid)
-    assert _cards(client, tid)[0]["pr_number"] == drafts[0]["number"] and cid
-
-
-def test_work_still_open_when_the_batch_landed_follows_the_room(client, app_world):
-    """房间搬到新一批上，还没收的活跟着搬 —— 它的文件就在房间的工作区里，留在
-    已合并那棵树上等于指着一个没人再写的目录。"""
-    fake = app_world["fake"]
-    pid = _make_project(client)
-    tid = _make_topic(client, pid)
-    r = client.post(f"/topics/{tid}/split", json={"title": "还在干的活"})
-    assert r.status_code == 200, r.text
-    task = r.json()["data"]
-    machine_commits(_uuid.UUID(pid), _uuid.UUID(tid), {"first.txt": "batch one\n"})
-    cid = _make_card(client, tid)
-    head_sha = _give_card_a_pr(client, app_world, tid, cid, 7)
-    fake.check_state_by_sha[head_sha] = ("success", "全绿")
-    assert _accept(client, cid).status_code == 200
-
-    moved = client.get(f"/topics/{tid}/tasks/{task['id']}").json()["data"]
-    assert moved["tree_id"] != task["tree_id"]
-    from app.domain.workspace import service as ws
-
-    assert ws.tree_for_place(_uuid.UUID(task["id"])) == _uuid.UUID(moved["tree_id"])
 
 
 # ===================== 有东西就有 PR / cheese ready ==========================
@@ -2394,13 +2278,16 @@ def _room_with_work(client) -> tuple[str, str]:
     """一个房间，派了一条活（这是房间开出一批活的那道门），并且提交了东西。"""
     pid = _make_project(client)
     tid = _make_topic(client, pid)
-    assert client.post(f"/topics/{tid}/split", json={"title": "活"}).status_code == 200
-    machine_commits(_uuid.UUID(pid), _uuid.UUID(tid), {"a.txt": "work\n"})
+    delivery_task(client, tid, commit=False)
+    machine_commits(_uuid.UUID(pid), delivery_task_id(client, tid), {"a.txt": "work\n"})
     return pid, tid
 
 
 def _ready(client, topic_id: str):
-    return client.post(f"/topics/{topic_id}/ready")
+    return client.post(
+        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/ready",
+        headers=delivery_headers(client, topic_id),
+    )
 
 
 @pytest.fixture
@@ -2423,12 +2310,13 @@ def test_a_batch_with_commits_gets_a_draft_pr_without_anybody_filing_a_card(
     assert counts["opened"] == 1, counts
     [opened] = sweeping["opened"]
     assert opened["draft"] is True
-    assert opened["head"] == _disk_branch(tid)
+    assert opened["head"] == _disk_branch(client, tid)
 
 
 def test_a_batch_with_nothing_on_its_branch_gets_no_pr(client, sweeping):
     """一批空的活是房间两次交付之间的常态。给它开 PR = 把一个空 diff 推到人脸上。"""
-    _make_topic(client, _make_project(client))
+    room = _make_topic(client, _make_project(client))
+    delivery_task(client, room, commit=False)
 
     counts = _sweep(client)
 
@@ -2457,26 +2345,27 @@ def test_a_batch_that_merged_after_the_list_was_taken_gets_no_pr(
     名单已经取到，然后这一批在别的会话里合并并提交，之后巡检才轮到它。
     """
     from app.domain.review import pr_publish
-    from app.domain.room_task.services import WorkTreeService
+    from app.domain.room_task.services import TaskService
 
     pid, tid = _room_with_work(client)
-    original = WorkTreeService.open_without_pr
+    task_id = delivery_task_id(client, tid)
+    original = TaskService.open_without_pr
 
     async def _list_then_merge(self):
         trees = await original(self)
 
         async def _merge_it() -> None:
             async with client.test_factory() as s:
-                svc = WorkTreeService(s)
-                landed = await svc.current(_uuid.UUID(tid))
+                svc = TaskService(s)
+                landed = await svc.get(task_id)
                 assert landed is not None
-                await svc.mark_merged(landed)
+                landed.status = "closed"
                 await s.commit()
 
         await _merge_it()
         return trees
 
-    monkeypatch.setattr(WorkTreeService, "open_without_pr", _list_then_merge)
+    monkeypatch.setattr(TaskService, "open_without_pr", _list_then_merge)
 
     counts = asyncio.run(pr_publish.sweep_draft_prs(client.test_factory))
 
@@ -2492,28 +2381,28 @@ def test_one_batch_failing_does_not_cost_the_next_one_its_pr(
     共用一个 session 的话这条是反的：失败之后事务已经脏了，后面每一棵树都会跟着
     一起挂，一个项目的问题变成所有房间的问题。
     """
-    from app.domain.room_task.services import WorkTreeService
+    from app.domain.room_task.services import TaskService
 
     first_pid, first_tid = _room_with_work(client)
     second_pid, second_tid = _room_with_work(client)
-    doomed = _disk_branch(first_tid)
-    original = WorkTreeService.record_pr
+    doomed = _disk_branch(client, first_tid)
+    original = TaskService.record_pr
     blown: list[str] = []
 
     async def _explode_once(self, tree, *, number, url):
         from app.domain.workspace import service as ws
 
-        if ws.branch_for_tree(tree.id) == doomed and not blown:
+        if ws.branch_for_task(tree.id) == doomed and not blown:
             blown.append(doomed)
             raise RuntimeError("DB 抽风")
         return await original(self, tree, number=number, url=url)
 
-    monkeypatch.setattr(WorkTreeService, "record_pr", _explode_once)
+    monkeypatch.setattr(TaskService, "record_pr", _explode_once)
 
     counts = _sweep(client)
 
     assert counts["failed"] == 1 and counts["opened"] == 1, counts
-    assert _disk_branch(second_tid) in [o["head"] for o in sweeping["opened"]]
+    assert _disk_branch(client, second_tid) in [o["head"] for o in sweeping["opened"]]
 
 
 def test_filing_a_card_takes_the_batchs_pr_out_of_draft(client, sweeping, monkeypatch):
@@ -2527,7 +2416,7 @@ def test_filing_a_card_takes_the_batchs_pr_out_of_draft(client, sweeping, monkey
     monkeypatch.setattr(pr_publish, "dispatch", _REAL_DISPATCH)
     pid, tid = _room_with_work(client)
     _sweep(client)
-    node_id = sweeping["prs_by_head"][_disk_branch(tid)]["node_id"]
+    node_id = sweeping["prs_by_head"][_disk_branch(client, tid)]["node_id"]
 
     _make_card(client, tid)
     for _ in range(300):
@@ -2536,7 +2425,7 @@ def test_filing_a_card_takes_the_batchs_pr_out_of_draft(client, sweeping, monkey
         time.sleep(0.01)
 
     assert sweeping["readied"] == [node_id]
-    assert sweeping["prs_by_head"][_disk_branch(tid)]["draft"] is False
+    assert sweeping["prs_by_head"][_disk_branch(client, tid)]["draft"] is False
     # 认领，不是重开：GitHub 一条 head 上只有一个开着的 PR。
     assert len([o for o in sweeping["opened"] if not o.get("adopted")]) == 1
 
@@ -2545,7 +2434,7 @@ def test_ready_flips_the_draft_and_changes_nothing_else(client, sweeping):
     """`cheese ready` 只做一件事。"""
     pid, tid = _room_with_work(client)
     _sweep(client)
-    pr = sweeping["prs_by_head"][_disk_branch(tid)]
+    pr = sweeping["prs_by_head"][_disk_branch(client, tid)]
     assert pr["draft"] is True
     title_before, body_before = pr["title"], pr["body"]
 
@@ -2571,8 +2460,8 @@ def test_ready_on_a_pr_that_is_not_a_draft_says_so_instead_of_failing(client, sw
     again = _ready(client, tid)
 
     assert again.status_code == 200, again.text
-    assert again.json()["data"]["ready"] is False
-    assert "本来就不是 draft" in again.json()["data"]["reason"]
+    assert again.json()["data"]["ready"] is True
+    assert again.json()["data"]["already"] is True
     assert len(sweeping["readied"]) == 1
 
 
@@ -2585,7 +2474,7 @@ def test_ready_never_opens_a_pr(client, sweeping):
     assert r.status_code == 200, r.text
     data = r.json()["data"]
     assert data["ready"] is False
-    assert "先提交点东西" in data["reason"]
+    assert "先提交并同步代码" in data["reason"]
     assert sweeping["opened"] == []
     assert sweeping["prs_by_head"] == {}
 
@@ -2598,7 +2487,12 @@ def test_ready_never_opens_a_pr(client, sweeping):
 
 
 def _describe(client, topic_id: str, **body):
-    return client.post(f"/topics/{topic_id}/accept-card/describe", json=body)
+    task_id = delivery_task_id(client, topic_id)
+    return client.post(
+        f"/topics/{topic_id}/tasks/{task_id}/accept-card/describe",
+        headers=delivery_headers(client, topic_id),
+        json=body,
+    )
 
 
 def test_correcting_the_card_rewrites_the_pr_and_the_commit_that_lands(
@@ -2608,7 +2502,7 @@ def test_correcting_the_card_rewrites_the_pr_and_the_commit_that_lands(
     pid, tid = _room_with_work(client)
     cid = _make_card(client, tid)
     head_sha = _give_card_a_pr(client, sweeping, tid, cid, 7)
-    sweeping["prs_by_head"][_disk_branch(tid)] = {
+    sweeping["prs_by_head"][_disk_branch(client, tid)] = {
         "number": 7,
         "html_url": f"https://github.com/{REPO}/pull/7",
         "title": "chore(test): file an accept card",
@@ -2681,7 +2575,10 @@ def test_a_correction_never_touches_the_delivery_claim(client, sweeping):
     """署名是对**事实**的断言（哪个分身写的代码），描述是对改动的**说明**。
     更正入口只有后者，前者连字段都不收。"""
     pid, tid = _room_with_work(client)
-    r = client.post(f"/topics/{tid}/split", json={"title": "另一条活"})
+    r = client.post(
+        f"/topics/{tid}/split",
+        json=dict(reviewer_handle="alice", **{"title": "另一条活"}),
+    )
     other = r.json()["data"]["id"]
     _make_card(client, tid)
 
@@ -2705,7 +2602,7 @@ def test_a_correction_never_touches_the_delivery_claim(client, sweeping):
             assert card is not None
             return list(card.delivered_task_ids or [])
 
-    assert asyncio.run(_claimed()) == []
+    assert asyncio.run(_claimed()) == [str(delivery_task_id(client, tid))]
 
 
 def test_a_batch_being_merged_right_now_does_not_get_a_second_pr(client, sweeping):
@@ -2722,7 +2619,7 @@ def test_a_batch_being_merged_right_now_does_not_get_a_second_pr(client, sweepin
     """
     import threading
 
-    from app.domain.room_task.services import WorkTreeService
+    from app.domain.room_task.services import TaskService
 
     fake = sweeping["fake"]
     pid, tid = _room_with_work(client)
@@ -2732,7 +2629,7 @@ def test_a_batch_being_merged_right_now_does_not_get_a_second_pr(client, sweepin
 
     claimed = threading.Event()
     merged = threading.Event()
-    original_claim = WorkTreeService.claim_for_pr
+    original_claim = TaskService.claim_for_pr
 
     async def _claim_then_wait(self, tree_id):
         tree = await original_claim(self, tree_id)
@@ -2747,7 +2644,7 @@ def test_a_batch_being_merged_right_now_does_not_get_a_second_pr(client, sweepin
         merged.set()  # GitHub 已经合了；平台还没来得及标这棵树
         return result
 
-    WorkTreeService.claim_for_pr = _claim_then_wait
+    TaskService.claim_for_pr = _claim_then_wait
     type(fake).merge_pull_request = _merge_then_release
     swept: dict = {}
     try:
@@ -2757,224 +2654,11 @@ def test_a_batch_being_merged_right_now_does_not_get_a_second_pr(client, sweepin
         assert _accept(client, cid).status_code == 200
         worker.join(30)
     finally:
-        WorkTreeService.claim_for_pr = original_claim
+        TaskService.claim_for_pr = original_claim
         type(fake).merge_pull_request = original_merge
 
     assert swept.get("opened") == 0, swept
     assert [o for o in sweeping["opened"] if o["draft"]] == []
-
-
-# ============== 一个长命的 clone 跨过一次采纳 ================================
-#
-# 上面那几条用 `machine_commits`，它每次都重新 clone、重新读 marker —— 真实的
-# 机器不是这样。一块屏幕活很久，它的环境在**启动那一刻**就定死了，而
-# `CHEESE_GIT_BRANCH` 就在里面：房间交付、下一批换了分支，同一块屏幕还在往那条
-# 已经被 squash 进 main 的分支上推，`git push` 每次都成功，钩子每次都报 ok。
-# 本仓库自己的房间就一直在往旧的 `topic/6764aaf3` 上推。
-#
-# 所以下面这条**不许**重启进程、也不许改 env：同一个 clone、同一份脚本、同一组
-# 环境变量，跨过一次真实采纳继续提交，推出去的必须是新一批的分支。
-
-
-def _platform_over_http(client, pid: str):
-    """把平台那条「现在写哪条分支」的路由放到一个真 socket 上。
-
-    脚本用的是 `curl`，所以它需要一个真的 HTTP 地址；答案本身仍然由平台的路由
-    算出来（这里只是把它送出门），所以测的不是一个编出来的桩。
-    """
-    import json as _json
-    import threading
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-
-    from app.core.sandbox_auth import mint_scoped_token
-
-    token = mint_scoped_token(project_id=pid)
-
-    class _Handler(BaseHTTPRequestHandler):
-        def do_POST(self):  # noqa: N802
-            answer = client.post(
-                self.path,
-                content=self.rfile.read(int(self.headers["Content-Length"])),
-                headers={"X-Cheese-Token": token, "Content-Type": "text/plain"},
-            )
-            body = _json.dumps(answer.json().get("data") or {}).encode()
-            self.send_response(answer.status_code)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        def log_message(self, *_args):
-            pass
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    return server, token
-
-
-def _pr_head_is_the_real_branch_tip(
-    client, app_world, repo, card_id: str, number: int, branch: str
-) -> str:
-    """让这张卡的 PR head 就是**平台仓库里那条分支的真实 tip**。
-
-    生产上这本来就是同一个 commit：平台把自己仓库里的分支推到 GitHub，PR 的 head
-    就是设备推上来的那个提交。假 GitHub 默认编一个 `sha-...` 字符串，于是「交付出
-    去的是不是我推的那个」这道校验在测试里永远为假 —— 那不是被测系统的性质，是
-    替身的性质。
-    """
-    from app.domain.review.repositories import AcceptCardRepository
-
-    tip = subprocess.run(
-        ["git", "-C", str(repo), "rev-parse", branch],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
-    app_world["fake"].prs[number]["head_sha"] = tip
-
-    async def _do() -> None:
-        async with client.test_factory() as s:
-            card = await AcceptCardRepository(s).get(_uuid.UUID(card_id))
-            assert card is not None
-            card.pr_head_sha = tip
-            await s.commit()
-
-    client.portal.call(_do)
-    return tip
-
-
-def _long_lived_clone(tmp: Path, repo: Path, branch: str) -> Path:
-    work = tmp / "work"
-    subprocess.run(
-        ["git", "clone", "-q", str(repo), str(work)], check=True, capture_output=True
-    )
-    for args in (
-        ["config", "user.email", "c@z"],
-        ["config", "user.name", "芝士"],
-        ["checkout", "-q", "-B", branch, f"origin/{branch}"],
-    ):
-        subprocess.run(["git", *args], cwd=work, capture_output=True)
-    return work
-
-
-def test_a_long_lived_screen_stops_pushing_onto_the_batch_it_already_delivered(
-    client, app_world, tmp_path
-):
-    import os
-
-    from app.api.routes.git_http import _configure_for_push
-    from app.domain.agent.harness.claude_code.device_launch import build_launch_script
-    from app.domain.workspace import service as ws
-
-    fake = app_world["fake"]
-    pid = _make_project(client)
-    tid = _make_topic(client, pid)
-    assert client.post(f"/topics/{tid}/split", json={"title": "活"}).status_code == 200
-    repo = ws.ensure_repo(_uuid.UUID(pid))
-    machine_commits(_uuid.UUID(pid), _uuid.UUID(tid), {"first.txt": "batch one\n"})
-    _configure_for_push(repo)
-    first_branch = _disk_branch(tid)
-
-    server, token = _platform_over_http(client, pid)
-    work = _long_lived_clone(tmp_path, repo, first_branch)
-    sync = tmp_path / "cheese-sync"
-    sync.write_text(
-        build_launch_script(sync_on_stop=True).split("'SYNC'")[1].split("SYNC")[0]
-    )
-    bindir = tmp_path / "bin"
-    bindir.mkdir()
-    hook_log = tmp_path / "hook.log"
-    (bindir / "cheese-hook").write_text(f'#!/bin/sh\ncat >> "{hook_log}"\n')
-    (bindir / "cheese-hook").chmod(0o755)
-    host, port = server.server_address[:2]
-    # 屏幕启动那一刻的环境，从此**一个字都不改**。
-    env = {
-        **os.environ,
-        "PATH": f"{bindir}:{os.environ['PATH']}",
-        "CHEESE_WORK": str(work),
-        "CHEESE_TOPIC": tid,
-        "CHEESE_TOKEN": token,
-        "CHEESE_GIT_REMOTE": f"http://{host}:{port}/projects/{pid}/git",
-        "CHEESE_BRANCH_URL": (f"http://{host}:{port}/projects/{pid}/git/branch/{tid}"),
-        "CHEESE_GIT_BRANCH": first_branch,  # 上一批的分支，冻在这里；脚本不许用它
-    }
-
-    def _turn_ends(what: str) -> None:
-        (work / f"{what}.txt").write_text(f"{what}\n")
-        subprocess.run(["git", "add", "-A"], cwd=work, capture_output=True)
-        subprocess.run(["git", "commit", "-qm", what], cwd=work, capture_output=True)
-        hook_log.write_text("")
-        done = subprocess.run(
-            ["sh", str(sync)], env=env, capture_output=True, text=True, timeout=60
-        )
-        assert done.returncode == 0, done.stderr
-        # 同步报了什么，是这条用例的一半：一次没推上去的同步和一次推上去的同步，
-        # 从返回码上看一模一样。
-        assert '"status":"ok"' in hook_log.read_text(), hook_log.read_text()
-
-    try:
-        _turn_ends("before")
-        assert "before.txt" in _tree_of(repo, first_branch)
-
-        # 真的走一次采纳：卡、PR、合并。房间从此写下一批。
-        cid = _make_card(client, tid)
-        _give_card_a_pr(client, app_world, tid, cid, 7)
-        head_sha = _pr_head_is_the_real_branch_tip(
-            client, app_world, repo, cid, 7, first_branch
-        )
-        fake.check_state_by_sha[head_sha] = ("success", "全绿")
-        assert _accept(client, cid).status_code == 200
-        second_branch = _disk_branch(tid)
-        assert second_branch != first_branch
-
-        # 同一个 clone、同一份脚本、同一组环境变量，下一轮结束。
-        _turn_ends("after")
-        assert "after.txt" in _tree_of(repo, second_branch)
-        assert "after.txt" not in _tree_of(repo, first_branch), (
-            "这一轮的提交又落在了已经交付掉的那条分支上"
-        )
-
-        # 第三批 —— 这条走的是**真路由**：脚本自己决定 `?on=` 带什么，平台自己
-        # 算 `on_merged` / `on_head`。第三批正是手填 payload 骗得过、真实系统
-        # 里骗不过的地方：HEAD 从没动过，本地分支名说的还是第一批。
-        cid2 = _make_card(client, tid)
-        _give_card_a_pr(client, app_world, tid, cid2, 8)
-        head2 = _pr_head_is_the_real_branch_tip(
-            client, app_world, repo, cid2, 8, second_branch
-        )
-        fake.check_state_by_sha[head2] = ("success", "全绿")
-        assert _accept(client, cid2).status_code == 200
-        third_branch = _disk_branch(tid)
-        assert third_branch not in (first_branch, second_branch)
-
-        _turn_ends("third")
-    finally:
-        server.shutdown()
-
-    assert "third.txt" in _tree_of(repo, third_branch)
-    assert "third.txt" not in _tree_of(repo, second_branch)
-    # 而且它是**从 base 重新长出来的一个提交**，不是接在上一批的历史后面 —— 这就
-    # 是衔接真的发生了的证据。手填 payload 骗得过的地方正在这里：真实脚本第三批
-    # 带的 `?on=` 是它自己上次发布到的那条分支，平台据此答的才是第二批的交付事实。
-    assert _commits_since(repo, "main", third_branch) == 1
-
-
-def _commits_since(repo: Path, base: str, head: str) -> int:
-    out = subprocess.run(
-        ["git", "-C", str(repo), "rev-list", "--count", f"{base}..{head}"],
-        capture_output=True,
-        text=True,
-    ).stdout
-    return int(out.strip() or 0)
-
-
-def _tree_of(repo: Path, branch: str) -> str:
-    done = subprocess.run(
-        ["git", "-C", str(repo), "ls-tree", "-r", "--name-only", branch],
-        capture_output=True,
-        text=True,
-    )
-    return done.stdout
 
 
 def _treeless_card(client, topic_id: str, status: str) -> None:
@@ -3011,16 +2695,6 @@ def test_a_finished_treeless_card_does_not_switch_drafts_off_forever(client, swe
     counts = _sweep(client)
 
     assert counts["opened"] == 1, counts
-    assert [o["head"] for o in sweeping["opened"] if o["draft"]] == [_disk_branch(tid)]
-
-
-def test_a_live_treeless_card_still_stops_a_second_pr(client, sweeping):
-    """反过来：那张老卡还待处理时，它骑着的 PR 就在这条分支上。再开一个就是同一条
-    head 上两个 PR 抢同一批提交。"""
-    pid, tid = _room_with_work(client)
-    _treeless_card(client, tid, "pending")
-
-    counts = _sweep(client)
-
-    assert counts["opened"] == 0, counts
-    assert sweeping["opened"] == []
+    assert [o["head"] for o in sweeping["opened"] if o["draft"]] == [
+        _disk_branch(client, tid)
+    ]

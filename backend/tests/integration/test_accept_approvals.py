@@ -8,6 +8,7 @@ AI cannot vote (collaborative mode, same rule as "AI 不能验收自己").
 
 import pytest
 
+from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import session_auth_headers
 
 
@@ -32,7 +33,8 @@ def _make_topic(client, project_id: str) -> str:
 
 def _make_card(client, topic_id: str, reviewer: str = "alice") -> dict:
     r = client.post(
-        f"/topics/{topic_id}/accept-card",
+        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
+        headers=delivery_headers(client, topic_id),
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": reviewer,
@@ -109,7 +111,13 @@ def test_approvals_then_accept_merges(client):
     out = r.json()["data"]
     assert out["status"] == "accepted"
     assert sorted(out["approvals"]) == ["alice", "bob"]
-    assert client.get(f"/topics/{tid}").json()["data"]["accepted_by"] == "alice"
+    assert (
+        client.get(
+            f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}",
+            headers=delivery_headers(client, tid),
+        ).json()["data"]["accepted_by"]
+        == "alice"
+    )
 
 
 def test_ai_cannot_approve_collaborative(client):

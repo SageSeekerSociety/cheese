@@ -77,49 +77,8 @@ class AcceptCard(UuidPk, Timestamps, Base):
     task_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("tasks.id", ondelete="CASCADE"), nullable=True, index=True
     )
-    # 这张卡交付的是哪一棵树 —— 一棵树 = 一个分支 = 一个 PR = 一批活. The room
-    # is where the card is READ; the tree is what it delivers, and with more
-    # than one tree per room those stop being the same answer. "One card at a
-    # time" is a rule about not running two PRs on one branch, so it is scoped
-    # here rather than to the room — scoping it to the room would mean a room
-    # could never open a second PR, which is what a second tree was for.
-    #
-    # Nullable: `SET NULL`, so a card outlives the tree it delivered, and a
-    # historical card whose tree was never created has no honest value.
-    tree_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("work_trees.id", ondelete="SET NULL"), nullable=True, index=True
-    )
-    # 这批交付是哪几条活干出来的 —— 递卡的那一刻，由递卡方说 (#189)。The ids of
-    # `tasks` rows, and the whole of what `Cheese-Task:` writes into permanent
-    # history.
-    #
-    # It is DECLARED and not derived, because nothing here can derive it. A
-    # task's `tree_id` is fixed when `cheese split` runs and says which batch it
-    # joined THEN; which branch its code ends up on is decided when the room
-    # files a card, and a room that keeps working across two batches makes those
-    # two different answers. Enumerating the delivering tree's members therefore
-    # credits whoever happened to be sitting on that tree: run it over this
-    # project's own room/task/tree data as of 2026-09-08 and one delivery comes
-    # out wrong in both directions — three tasks that contributed nothing named
-    # on a PR, and the task that actually wrote it named on the previous one.
-    # (Nothing in this repository's history carries a wrong trailer; the
-    # trailers did not exist when those PRs merged. What is wrong is the
-    # inference, measured against real data before it could write anything.)
-    # Commit authors identify the room's agent, not its individual tasks.
-    #
-    # There is no automatic filling-in, and that is the point. Every rule a
-    # machine could apply — the tree's members, "everything not claimed by an
-    # earlier card" — establishes only that a task EXISTS and was not filed
-    # before; neither can establish that its code is in this diff. A placeholder
-    # task that wrote no code, and a sibling still running whose work goes out
-    # next batch, both pass those tests and would be signed onto a change they
-    # contributed nothing to. So an undeclared delivery carries no
-    # `Cheese-Task:` line at all: a wrong name in permanent history is worse
-    # than no name, because an audit believes it.
-    #
-    # A JSON list rather than a join table for the same reason `nudge_state`
-    # is one: it is read and written whole, always by the card that owns it, and
-    # never queried across cards.
+    # The task identifies this delivery. Existing declared credit lists remain
+    # unchanged; new cards declare the single task whose branch they deliver.
     delivered_task_ids: Mapped[list[str]] = mapped_column(
         JSON, nullable=False, default=list, server_default="[]"
     )

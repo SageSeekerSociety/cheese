@@ -7,11 +7,11 @@ import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 const getPreview = vi.fn()
-const readFile = vi.fn()
+const readPreviewFile = vi.fn()
 const requestPreviewSession = vi.fn()
 vi.mock('../../api', () => ({
   getPreview: (...args: unknown[]) => getPreview(...args),
-  readFile: (...args: unknown[]) => readFile(...args),
+  readPreviewFile: (...args: unknown[]) => readPreviewFile(...args),
   requestPreviewSession: (...args: unknown[]) => requestPreviewSession(...args),
 }))
 
@@ -49,7 +49,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   submissions = []
   getPreview.mockResolvedValue(artifact())
-  readFile.mockResolvedValue({ path: 'report.html', content: '<script>arbitrary()</script>' })
+  readPreviewFile.mockResolvedValue({ path: 'report.html', content: '<script>arbitrary()</script>' })
   requestPreviewSession.mockResolvedValue({ url: `${url}_cheese/session`, grant: 'preview-grant' })
   vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(function (this: HTMLFormElement) {
     expect(document.querySelector(`iframe[name="${this.target}"]`)).toBeTruthy()
@@ -120,14 +120,14 @@ it('ignores a late grant after switching topics', async () => {
 it('ignores a late file read after switching topics', async () => {
   let finish: (value: { path: string; content: string }) => void = () => {}
   getPreview.mockResolvedValue(artifact('file'))
-  readFile.mockImplementationOnce(
+  readPreviewFile.mockImplementationOnce(
     () =>
       new Promise((resolve) => {
         finish = resolve
       })
   )
   const { rerender, container } = mount()
-  await waitFor(() => expect(readFile).toHaveBeenCalled())
+  await waitFor(() => expect(readPreviewFile).toHaveBeenCalled())
   getPreview.mockResolvedValue(null)
   await rerender({ topicId: 'topic-b' })
   finish({ path: 'old-secret.html', content: '<p>old topic</p>' })
@@ -215,12 +215,12 @@ it('does not let background metadata cancel an explicit refresh grant', async ()
 
 it.each([false, true])('refreshes changed static content and preserves the same version (large=%s)', async (large) => {
   getPreview.mockResolvedValue({ ...artifact('file'), version: 'content-a' })
-  if (large) readFile.mockResolvedValue({ path: 'report.html', content: null, too_large: true, version: null })
+  if (large) readPreviewFile.mockResolvedValue({ path: 'report.html', content: null, too_large: true, version: null })
   const { container, rerender, getByTitle } = mount()
   await waitFor(() => expect(submissions).toHaveLength(1))
   const frame = container.querySelector('iframe')
   await rerender({ refreshTick: 1 })
-  await waitFor(() => expect(readFile).toHaveBeenCalledTimes(2))
+  await waitFor(() => expect(readPreviewFile).toHaveBeenCalledTimes(2))
   await new Promise((resolve) => setTimeout(resolve, 0))
   expect(submissions).toHaveLength(1)
   getPreview.mockResolvedValue({ ...artifact('file'), version: 'content-b' })

@@ -13,6 +13,8 @@
 
 import uuid
 
+from tests.delivery import delivery_headers, delivery_task_id
+
 _SUBJECT = "chore(test): file an accept card"
 
 
@@ -28,14 +30,18 @@ def _room(client) -> tuple[str, str]:
 
 
 def _thread(client, room_id: str, title: str = "一件活") -> str:
-    r = client.post(f"/topics/{room_id}/split", json={"title": title})
+    r = client.post(
+        f"/topics/{room_id}/split",
+        json=dict(reviewer_handle="alice", **{"title": title}),
+    )
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
 
 
 def _file_card(client, place_id: str, reviewer: str = "alice"):
     return client.post(
-        f"/topics/{place_id}/accept-card",
+        f"/topics/{place_id}/tasks/{delivery_task_id(client, place_id)}/accept-card",
+        headers=delivery_headers(client, place_id),
         json={
             "change_subject": _SUBJECT,
             "reviewer_handle": reviewer,

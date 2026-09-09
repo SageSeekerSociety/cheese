@@ -58,7 +58,10 @@ def test_upgrade_block_to_topic(client):
         client, p["id"], topic["id"], "我们要不要单独做一个数据清洗的模块"
     )
 
-    r = client.post(f"/blocks/{block_id}/upgrade", json={"created_by": "user-1"})
+    r = client.post(
+        f"/blocks/{block_id}/upgrade",
+        json={"created_by": "user-1", "reviewer_handle": "alice"},
+    )
     assert r.status_code == 200
     _wait_work_idle()  # kickoff runs in the background; don't race its writes
     new_topic = r.json()["data"]
@@ -134,7 +137,10 @@ def test_upgrading_a_message_wakes_the_room_to_raise_the_worker(client, stub_hoo
     block_id = _insert_block(client, p["id"], room["id"], "把导入这段单独拆出来做")
 
     screens = _record_screens(stub_hooks)
-    r = client.post(f"/blocks/{block_id}/upgrade", json={"created_by": "user-1"})
+    r = client.post(
+        f"/blocks/{block_id}/upgrade",
+        json={"created_by": "user-1", "reviewer_handle": "alice"},
+    )
     assert r.status_code == 200
     thread = r.json()["data"]
     _wait_work_idle()
@@ -159,7 +165,8 @@ def test_a_room_names_its_own_thread(client):
     ]
     block_id = _insert_block(client, p["id"], room["id"], "把导入这段单独拆出来做")
     thread = client.post(
-        f"/blocks/{block_id}/upgrade", json={"created_by": "user-1"}
+        f"/blocks/{block_id}/upgrade",
+        json={"created_by": "user-1", "reviewer_handle": "alice"},
     ).json()["data"]
     _wait_work_idle()
     assert thread["title"] == "新话题"
@@ -221,7 +228,10 @@ def test_upgrade_doc_node_to_subtopic(client):
     target = next(n for n in nodes if n["content"] == "特征工程")
     assert target["upgraded_to_topic_id"] is None
 
-    r = client.post(f"/blocks/{target['id']}/upgrade", json={"created_by": "user-1"})
+    r = client.post(
+        f"/blocks/{target['id']}/upgrade",
+        json={"created_by": "user-1", "reviewer_handle": "alice"},
+    )
     assert r.status_code == 200
     _wait_work_idle()
     sub = r.json()["data"]
@@ -259,7 +269,10 @@ def test_archived_topic_is_frozen(client):
     assert got["status"] == "archived"
 
     # Splitting a frozen topic is rejected.
-    r = client.post(f"/topics/{topic['id']}/split", json={"title": "续作"})
+    r = client.post(
+        f"/topics/{topic['id']}/split",
+        json=dict(reviewer_handle="alice", **{"title": "续作"}),
+    )
     assert r.status_code == 422
     # Editing the frozen topic's doc is rejected.
     r = client.put(
@@ -284,7 +297,10 @@ def test_upgrade_on_archived_topic_rejected(client):
         ).status_code
         == 200
     )
-    r = client.post(f"/blocks/{block_id}/upgrade", json={"created_by": "alice"})
+    r = client.post(
+        f"/blocks/{block_id}/upgrade",
+        json={"created_by": "alice", "reviewer_handle": "alice"},
+    )
     assert r.status_code == 422
 
 
@@ -299,7 +315,8 @@ def test_upgrade_from_private_chat_lands_under_root(client):
         client, p["id"], priv["id"], "我们其实该单独做个数据清洗模块"
     )
     topic = client.post(
-        f"/blocks/{block_id}/upgrade", json={"created_by": "user-1"}
+        f"/blocks/{block_id}/upgrade",
+        json={"created_by": "user-1", "reviewer_handle": "alice"},
     ).json()["data"]
     _wait_work_idle()
     assert topic["parent_id"] == p["root_topic_id"]
@@ -332,11 +349,14 @@ def test_split_records_the_brief_on_the_card_and_starts_nobody(client):
 
     sub = client.post(
         f"/topics/{topic['id']}/split",
-        json={
-            "title": "清洗数据",
-            "created_by": "cheese",
-            "brief": "把 10 万条借阅日志去重、去空值，产出干净数据集",
-        },
+        json=dict(
+            reviewer_handle="alice",
+            **{
+                "title": "清洗数据",
+                "created_by": "cheese",
+                "brief": "把 10 万条借阅日志去重、去空值，产出干净数据集",
+            },
+        ),
     ).json()["data"]
     _wait_work_idle()
 
@@ -369,9 +389,10 @@ def test_split_without_a_brief_leaves_the_brief_empty(client):
     topic = client.post(
         "/topics", json={"project_id": p["id"], "title": "大话题"}
     ).json()["data"]
-    sub = client.post(f"/topics/{topic['id']}/split", json={"title": "小任务"}).json()[
-        "data"
-    ]
+    sub = client.post(
+        f"/topics/{topic['id']}/split",
+        json=dict(reviewer_handle="alice", **{"title": "小任务"}),
+    ).json()["data"]
     _wait_work_idle()
     assert sub["brief"] == ""
     assert client.get(f"/topics/{sub['id']}/doc").status_code == 404
@@ -385,7 +406,8 @@ def test_split_and_conclude(client):
 
     # Split a todo into a sub-topic.
     sub = client.post(
-        f"/topics/{topic['id']}/split", json={"title": "实现数据清洗"}
+        f"/topics/{topic['id']}/split",
+        json=dict(reviewer_handle="alice", **{"title": "实现数据清洗"}),
     ).json()["data"]
     # A thread in the room, not a room of its own: it names the room it hangs
     # in, and it opens as work that is still going.
@@ -403,7 +425,7 @@ def test_split_and_conclude(client):
     # 收卡 is said BY the room about the worker it raised: that worker is a 分身
     # in the room's own session and has no place of its own to file from.
     r = client.post(
-        f"/topics/{topic['id']}/tasks/{sub['id']}/conclude",
+        f"/topics/{topic['id']}/tasks/{sub['id']}/close",
         json={"conclusion": "数据清洗完成，去重后剩 8000 条"},
     )
     assert r.status_code == 200, r.text
@@ -423,7 +445,7 @@ def test_concluding_something_that_is_not_a_thread_fails(client):
     p = _project(client)
     root_id = _project_root(client, p["id"])
     r = client.post(
-        f"/topics/{root_id}/tasks/{root_id}/conclude", json={"conclusion": "x"}
+        f"/topics/{root_id}/tasks/{root_id}/close", json={"conclusion": "x"}
     )
     assert r.status_code == 404
 

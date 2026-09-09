@@ -20,6 +20,7 @@ import {
   getGitDiff,
   getGitLog,
   listFiles,
+  listRoomTasks,
   readFile,
   workspaceFileRawUrl,
   writeFile,
@@ -30,6 +31,8 @@ import CodeEditor from '../CodeEditor.vue'
 const props = withDefaults(
   defineProps<{
     topicId: string | null
+    taskId?: string | null
+    readOnly?: boolean
     projectId: string | null
     // This tab is the one on screen. Loads happen on the rising edge, exactly
     // like opening the old drawer did.
@@ -38,7 +41,38 @@ const props = withDefaults(
     // working tree actually changed. Silent re-fetch, never a spinner.
     refreshTick?: number
   }>(),
-  { active: false, refreshTick: 0 }
+  { active: false, refreshTick: 0, taskId: null, readOnly: false }
+)
+
+const selectedTask = ref<string | null>(props.taskId ?? null)
+const taskOptions = ref<Array<{ id: string; title: string; status: string }>>([])
+const taskLoadError = ref<string | null>(null)
+
+async function loadTasks() {
+  const room = props.topicId
+  taskLoadError.value = null
+  if (!room) return
+  try {
+    const tasks = await listRoomTasks(room, { limit: 1 })
+    if (props.topicId === room) taskOptions.value = tasks.data.filter((task) => !!task.branch_name)
+  } catch (error) {
+    if (props.topicId === room) taskLoadError.value = error instanceof Error ? error.message : '任务加载失败'
+  }
+}
+watch(
+  () => props.topicId,
+  () => {
+    taskOptions.value = []
+    selectedTask.value = props.taskId ?? null
+    void loadTasks()
+  },
+  { immediate: true }
+)
+watch(
+  () => props.taskId,
+  (task) => {
+    selectedTask.value = task ?? null
+  }
 )
 
 const { mdAndUp } = useDisplay()
@@ -69,6 +103,7 @@ const gitDiff = ref<string>('')
 
 async function loadGit(opts: { silent?: boolean } = {}) {
   const tid = props.topicId
+  const task = selectedTask.value
   const pid = props.projectId
   if (!tid || !pid) return
   if (opts.silent) refreshing.value = true
@@ -81,17 +116,17 @@ async function loadGit(opts: { silent?: boolean } = {}) {
     // 采纳 this topic's commits live only on its branch; after, the base is
     // everyone's).
     const [log, diff] = await Promise.all([
-      getGitLog(pid, tid).catch(() => ({ data: [] as GitCommit[], total: 0 })),
-      getGitDiff(pid, tid),
+      getGitLog(pid, tid, task).catch(() => ({ data: [] as GitCommit[], total: 0 })),
+      getGitDiff(pid, tid, task),
     ])
     // Guard against a topic switch mid-flight.
-    if (props.topicId !== tid) return
+    if (props.topicId !== tid || selectedTask.value !== task) return
     gitCommits.value = log.data
     gitDiff.value = diff.diff
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : '加载失败'
   } finally {
-    if (props.topicId === tid) {
+    if (props.topicId === tid && selectedTask.value === task) {
       loading.value = false
       refreshing.value = false
     }
@@ -121,7 +156,14 @@ const fileVersion = ref<string | null>(null)
 const fileBinary = ref(false)
 const fileTooLarge = ref(false)
 const fileBytes = ref(0)
-const fileReadOnly = computed(() => fileBinary.value || fileTooLarge.value || openIsImage.value)
+const fileReadOnly = computed(
+  () =>
+    props.readOnly ||
+    taskOptions.value.find((task) => task.id === selectedTask.value)?.status !== 'open' ||
+    fileBinary.value ||
+    fileTooLarge.value ||
+    openIsImage.value
+)
 // Set when the backend rejected a save as a conflict. Nobody wins by default —
 // the human sees it and picks.
 const fileConflict = ref(false)
@@ -245,7 +287,7 @@ const openIsImage = computed(() => !!openPath.value && isImagePath(openPath.valu
 // download button hands over for anything else that can't be shown as text.
 const openRawUrl = computed(() =>
   openPath.value && props.projectId
-    ? workspaceFileRawUrl(props.projectId, openPath.value, props.topicId ?? undefined)
+    ? workspaceFileRawUrl(props.projectId, openPath.value, props.topicId ?? undefined, selectedTask.value)
     : ''
 )
 
@@ -292,15 +334,16 @@ function loadFiles(): Promise<void> {
 
 async function doLoadFiles() {
   const tid = props.topicId
+  const task = selectedTask.value
   const pid = props.projectId
   if (!tid || !pid) return
   loading.value = true
   errorMsg.value = null
   try {
-    const listed = (await listFiles(pid, tid)).data
+    const listed = (await listFiles(pid, tid, task)).data
     // Guard against a topic switch mid-flight — without it the previous topic's
     // listing repopulates the new panel.
-    if (props.topicId !== tid) return
+    if (props.topicId !== tid || selectedTask.value !== task) return
     files.value = listed
     const want = pendingOpen
     pendingOpen = null
@@ -319,13 +362,14 @@ async function doLoadFiles() {
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : '加载失败'
   } finally {
-    if (props.topicId === tid) loading.value = false
+    if (props.topicId === tid && selectedTask.value === task) loading.value = false
   }
 }
 
 async function selectFile(path: string) {
   const pid = props.projectId
   const tid = props.topicId
+  const task = selectedTask.value
   if (!pid) return
   errorMsg.value = null
   fileConflict.value = false
@@ -346,10 +390,10 @@ async function selectFile(path: string) {
     return
   }
   try {
-    const f = await readFile(pid, path, tid ?? undefined)
+    const f = await readFile(pid, path, tid ?? undefined, task)
     // A topic switch mid-flight must not land the previous topic's file — and
     // its draft — in the new topic's panel.
-    if (props.topicId !== tid) return
+    if (props.topicId !== tid || selectedTask.value !== task) return
     openPath.value = path
     // Binary and oversized files arrive with no content: they open read-only,
     // so the draft stays empty and there is nothing to write back.
@@ -361,7 +405,7 @@ async function selectFile(path: string) {
     fileBytes.value = f.bytes ?? listed
     revealInTree(path)
   } catch (e) {
-    if (props.topicId !== tid) return
+    if (props.topicId !== tid || selectedTask.value !== task) return
     errorMsg.value = e instanceof Error ? e.message : '读取文件失败'
   }
 }
@@ -371,21 +415,22 @@ async function selectFile(path: string) {
 async function writeOpenFile(expected: string | null) {
   const pid = props.projectId
   const tid = props.topicId
+  const task = selectedTask.value
   const path = openPath.value
-  if (!pid || !path || fileReadOnly.value || !fileDirty.value || fileSaving.value) return
+  if (!pid || !path || !selectedTask.value || fileReadOnly.value || !fileDirty.value || fileSaving.value) return
   const draft = fileDraft.value
   fileSaving.value = true
   errorMsg.value = null
   try {
-    const res = await writeFile(pid, path, draft, tid ?? undefined, expected)
+    const res = await writeFile(pid, path, draft, tid ?? undefined, expected, task)
     // The answer is only about the file that was open in the topic that was
     // open — anything else finished after a switch and must be dropped.
-    if (props.topicId !== tid || openPath.value !== path) return
+    if (props.topicId !== tid || selectedTask.value !== task || openPath.value !== path) return
     fileSaved.value = draft
     fileVersion.value = res.version
     fileConflict.value = false
   } catch (e) {
-    if (props.topicId !== tid || openPath.value !== path) return
+    if (props.topicId !== tid || selectedTask.value !== task || openPath.value !== path) return
     if (e instanceof ApiError && e.status === 409) {
       // 芝士 wrote this file since it was read. Neither side wins by default:
       // show the conflict and let the human reload or overwrite on purpose.
@@ -394,7 +439,7 @@ async function writeOpenFile(expected: string | null) {
       errorMsg.value = e instanceof Error ? e.message : '保存失败'
     }
   } finally {
-    if (props.topicId === tid) fileSaving.value = false
+    if (props.topicId === tid && selectedTask.value === task) fileSaving.value = false
   }
 }
 
@@ -416,6 +461,7 @@ function reloadOpenFile() {
 // the drawer used ("opening the tool loads it"). One surface now, so both halves
 // load together — the tree cannot mark what the diff has not told it yet. ----
 function loadAll(opts: { silent?: boolean } = {}) {
+  void loadTasks()
   void loadGit(opts)
   void loadFiles()
 }
@@ -466,17 +512,17 @@ watch(
 onBeforeUnmount(stopAutoRefresh)
 
 // Topic switch: everything here describes the previous topic's worktree.
-watch(
-  () => props.topicId,
-  () => {
-    gitCommits.value = []
-    gitDiff.value = ''
-    errorMsg.value = null
-    resetFilePanel()
-    showAll.value = false
-    if (props.active) loadAll()
-  }
-)
+watch([() => props.topicId, selectedTask], () => {
+  filesInFlight = null
+  pendingOpen = null
+  fileSaving.value = false
+  gitCommits.value = []
+  gitDiff.value = ''
+  errorMsg.value = null
+  resetFilePanel()
+  showAll.value = false
+  if (props.active) loadAll()
+})
 
 // Widening (or narrowing) the scope with nothing open should land on the first
 // thing in the new scope — otherwise switching to 全部文件 on a topic with no
@@ -497,7 +543,11 @@ watch(treeFiles, (rows) => {
 
 // A <&path> chip (chat or doc) opens that file here. WorkPanel switches to this
 // tab first, then calls in.
-async function openFile(path: string) {
+async function openFile(path: string, taskId?: string | null) {
+  if (taskId !== undefined && selectedTask.value !== taskId) {
+    selectedTask.value = taskId
+    await nextTick()
+  }
   pendingOpen = path
   // A file reached by a <&path> chip may be one this topic never touched, and
   // then it is not in the default scope — widen so the tree can show it.
@@ -517,6 +567,19 @@ defineExpose({ openFile })
 
 <template>
   <div class="panel-changes">
+    <v-select
+      v-model="selectedTask"
+      autocomplete="off"
+      :items="taskOptions"
+      item-title="title"
+      item-value="id"
+      label="查看任务"
+      :error-messages="taskLoadError ?? []"
+      placeholder="项目已采纳的代码"
+      clearable
+      hide-details="auto"
+      density="compact"
+    />
     <div class="changes-bar">
       <!-- 树的范围。默认只列这个话题改过的文件 —— 验收要看的就是这些；全部文件
            是为了顺手看一眼旁边那个没动过的文件。 -->
@@ -681,7 +744,7 @@ defineExpose({ openFile })
           <!-- Binary / oversized: no editor. Opening one in Monaco meant every
                byte utf-8 could not decode came back as U+FFFD, and 保存 wrote
                the damage to disk. -->
-          <div v-else-if="openPath && fileReadOnly" class="file-blob">
+          <div v-else-if="openPath && (fileBinary || fileTooLarge)" class="file-blob">
             <v-icon size="30" class="c-faint mb-2">
               {{ fileTooLarge ? 'mdi-weight' : 'mdi-file-code-outline' }}
             </v-icon>
@@ -703,7 +766,7 @@ defineExpose({ openFile })
             v-else-if="openPath"
             v-model="fileDraft"
             :filename="openPath"
-            :readonly="!mdAndUp"
+            :readonly="!mdAndUp || fileReadOnly"
             @save="saveFile"
           />
           <!-- 没打开文件时这一半装的是「这个话题干了什么」——提交本身是过程记录，

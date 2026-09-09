@@ -27,6 +27,7 @@ import pytest
 
 from app.core.config import settings
 from app.domain.workspace import service as ws
+from tests.machine_work import declare_task
 
 BACKEND_DOCKERFILE = Path(__file__).resolve().parents[2] / "Dockerfile"
 SANDBOX_DOCKERFILE = Path(__file__).resolve().parents[2] / "sandbox" / "Dockerfile"
@@ -85,6 +86,7 @@ def test_the_agents_commit_reaches_the_backend_through_the_shared_store(project)
     write is the whole delivery mechanism now: the commit it makes in its own
     worktree IS the topic branch moving, with nothing in between."""
     topic = uuid.uuid4()
+    declare_task(project, topic)
     wt = ws.topic_worktree(project, topic)
     (wt / "note.md").write_text("hello\n", encoding="utf-8")
 
@@ -114,6 +116,7 @@ def test_a_store_it_cannot_enter_names_the_uid_split(project):
     repository`, which reads like the files are simply missing — and that
     reading is why a project-wide outage once went undiagnosed."""
     topic = uuid.uuid4()
+    declare_task(project, topic)
     ws.topic_worktree(project, topic)
 
     store = ws._repo(project) / ".git"  # noqa: SLF001
@@ -135,6 +138,7 @@ def test_human_can_save_a_file_the_agent_just_created(project):
     its own uid), the human saves over it from the file panel. Under a uid split
     that write was an uncaught EACCES — a 500 on save."""
     topic = uuid.uuid4()
+    declare_task(project, topic)
     wt = ws.topic_worktree(project, topic)
     created = wt / "docs" / "agent.md"
     created.parent.mkdir(parents=True, exist_ok=True)
@@ -150,6 +154,7 @@ def test_agent_can_modify_a_file_the_human_saved(project):
     """人改文件即指令, second half: the file the human saved must still be the
     agent's to edit on its next turn."""
     topic = uuid.uuid4()
+    declare_task(project, topic)
     ws.write_file(project, "docs/human.md", "from 人\n", topic_id=topic)
     target = ws.topic_worktree(project, topic) / "docs" / "human.md"
 
@@ -167,6 +172,7 @@ def test_unwritable_file_is_a_clean_422_not_a_500(project):
     """A save that genuinely cannot proceed must still be an error the panel can
     show, not an unhandled OSError."""
     topic = uuid.uuid4()
+    declare_task(project, topic)
     ws.write_file(project, "locked.md", "v1\n", topic_id=topic)
     target = ws.topic_worktree(project, topic) / "locked.md"
     target.chmod(0o444)
@@ -186,6 +192,7 @@ def test_unwritable_file_is_a_clean_422_not_a_500(project):
 
 def test_ownership_audit_is_quiet_on_a_healthy_workspace(project):
     topic = uuid.uuid4()
+    declare_task(project, topic)
     ws.topic_worktree(project, topic)
     assert ws.audit_workspace_ownership() == []
 
@@ -193,6 +200,7 @@ def test_ownership_audit_is_quiet_on_a_healthy_workspace(project):
 @not_root
 def test_ownership_audit_names_a_store_this_process_cannot_use(project):
     topic = uuid.uuid4()
+    declare_task(project, topic)
     ws.topic_worktree(project, topic)
     store = ws._repo(project) / ".git"  # noqa: SLF001
     store.chmod(0o000)

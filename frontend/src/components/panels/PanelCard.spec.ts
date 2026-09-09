@@ -18,6 +18,8 @@ import * as directives from 'vuetify/directives'
 import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => ({ project: null }) }))
+
 const getRoomTask = vi.fn()
 const sayOnRoomTask = vi.fn()
 
@@ -25,6 +27,8 @@ vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
   return {
     ...actual,
+    getAcceptCards: vi.fn().mockResolvedValue({ data: [], total: 0 }),
+    getPrChecks: vi.fn().mockResolvedValue({ available: false }),
     getRoomTask: (...a: unknown[]) => getRoomTask(...a),
     sayOnRoomTask: (...a: unknown[]) => sayOnRoomTask(...a),
   }
@@ -54,7 +58,7 @@ function card(over: Partial<RoomTask> = {}): RoomTask & { blocks: Block[] } {
     room_id: 'room-1',
     title: '接口分页',
     status: 'open',
-    tree_id: 't1',
+    branch_name: 'task/one',
     owner_handle: 'alice',
     brief: '加 cursor 参数',
     created_at: '2026-09-06T00:00:00Z',

@@ -31,7 +31,10 @@ def _room(client) -> tuple[str, str]:
 
 
 def _thread(client, room_id: str, title: str = "一件活") -> str:
-    r = client.post(f"/topics/{room_id}/split", json={"title": title})
+    r = client.post(
+        f"/topics/{room_id}/split",
+        json=dict(reviewer_handle="alice", **{"title": title}),
+    )
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
 
@@ -145,14 +148,21 @@ def test_a_room_that_has_run_says_so(client):
     assert _summary(client, pid, room).json()["data"]["has_run"] is True
 
 
-def test_changed_files_are_the_trees_not_one_workers(client):
-    """`changed_files` 是**树**的。一批活共用一条分支，diff 本来就是共享的；把它
-    切成「这条活改的」是发明一个不存在的隔离。
-    """
+def test_room_summary_combines_its_independent_tasks(client):
+    """The room summary includes paths from every open task branch."""
     pid, room = _room(client)
-    _thread(client, room)
+    first = _thread(client, room)
+    second = _thread(client, room)
     machine_commits(
-        uuid.UUID(pid), uuid.UUID(room), {"shared.txt": "一批活一起写的\n"}, "一笔改动"
+        uuid.UUID(pid), uuid.UUID(first), {"first.txt": "First task\n"}, "First change"
     )
-
-    assert _summary(client, pid, room).json()["data"]["changed_files"] == ["shared.txt"]
+    machine_commits(
+        uuid.UUID(pid),
+        uuid.UUID(second),
+        {"second.txt": "Second task\n"},
+        "Second change",
+    )
+    assert _summary(client, pid, room).json()["data"]["changed_files"] == [
+        "first.txt",
+        "second.txt",
+    ]

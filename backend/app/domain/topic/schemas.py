@@ -78,6 +78,7 @@ class TopicOut(BaseModel):
 
 class UpgradeBlockIn(BaseModel):
     created_by: str | None = None
+    reviewer_handle: str | None = Field(default=None, max_length=64)
 
 
 class SplitIn(BaseModel):
@@ -86,10 +87,7 @@ class SplitIn(BaseModel):
     # 任务简报: what the 分身 is expected to do, in the splitter's own words.
     # Preset as the child's living doc so the kickoff turn starts informed.
     brief: str | None = None
-    # 这条活要碰哪些路径. Separate from `brief` on purpose: the brief is written
-    # once and can never be changed, and a claim always grows as work reaches
-    # files nobody predicted. A path ending in `/` is a directory.
-    paths: list[str] = Field(default_factory=list)
+    base_task_id: uuid.UUID | None = None
     # 谁来验收这条活 (#718 设置表「任务默认 reviewer」). Omitted means the
     # project's default — resolved at dispatch and STORED, not re-derived at
     # 递卡: the setting can change between the two, and the person a piece of
@@ -97,12 +95,6 @@ class SplitIn(BaseModel):
     reviewer_handle: str | None = Field(default=None, max_length=64)
     reporter_handle: str | None = Field(default=None, max_length=64)
     contributor_handles: list[str] = Field(default_factory=list)
-
-
-class ClaimIn(BaseModel):
-    """Add to what this piece of work says it will touch (`cheese claim`)."""
-
-    paths: list[str] = Field(default_factory=list)
 
 
 class CheckResultIn(BaseModel):
@@ -117,15 +109,11 @@ class CheckResultIn(BaseModel):
 
 
 class LockIn(BaseModel):
-    """Take or give back one of the room's two locks.
+    """Acquire or release the room's heavy-operation lane."""
 
-    `file` names one path and guards a whole-file overwrite; `heavy` is the
-    room's single lane for test runs, dependency installs and dev servers, and
-    names nothing.
-    """
-
-    kind: str = Field(pattern="^(file|heavy)$")
-    resource: str = ""
+    kind: str = Field(pattern="^heavy$")
+    task_id: uuid.UUID
+    resource: str = Field(default="", max_length=0)
 
 
 class ConclusionIn(BaseModel):

@@ -17,6 +17,7 @@ import uuid
 
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.identity.handles import CHEESE_HANDLE, topic_agent_handle
+from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import session_auth_headers
 
 
@@ -193,7 +194,8 @@ def test_a_topic_agent_cannot_accept_its_own_work(client):
     pid, tid = _project_topic(client)
     handle = topic_agent_handle(uuid.UUID(tid))
     card = client.post(
-        f"/topics/{tid}/accept-card",
+        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
+        headers=delivery_headers(client, tid),
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": handle,
