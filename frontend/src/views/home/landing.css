@@ -93,6 +93,12 @@ h3 {
   border-bottom: 1px solid var(--line);
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .brand {
   display: flex;
   align-items: center;
@@ -2030,4 +2036,18 @@ footer > span {
   margin-top: 18px;
   font-size: 14px;
   color: var(--muted);
+}
+
+.landing-page[lang='en'] .hero h1 {
+  font-size: clamp(44px, 4.4vw, 74px);
+  letter-spacing: -0.04em;
+}
+
+.landing-page[lang='en'] .eyebrow {
+  letter-spacing: 0.04em;
+}
+
+.landing-page[lang='en'] .map-node span {
+  max-width: 170px;
+  white-space: normal;
 }

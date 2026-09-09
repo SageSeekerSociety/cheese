@@ -1,15 +1,30 @@
 import type { AxiosError } from 'axios'
 import type { ResponseDataType } from '@/network/types'
 
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import responseInterceptorErr from './responseInterceptorErr'
 
+import { setLocale } from '@/i18n'
 import { BusinessError, ServerError } from '@/network/types/error'
+
+beforeEach(() => setLocale('zh-CN'))
 
 vi.mock('./hooks/refreshToken', () => ({ default: vi.fn() }))
 
 describe('responseInterceptorErr', () => {
+  it('shows English transport errors without claiming a failed write was not applied', () => {
+    setLocale('en')
+    const response = { status: 502, config: { url: '/users', method: 'post' }, data: '<html>Unavailable</html>' }
+    expect(() => responseInterceptorErr({ response } as unknown as AxiosError<ResponseDataType>)).toThrow(
+      'Service temporarily unavailable. The operation may have completed. Refresh to check before trying again. (HTTP 502)'
+    )
+    response.config.method = 'get'
+    expect(() => responseInterceptorErr({ response } as unknown as AxiosError<ResponseDataType>)).toThrow(
+      'Service temporarily unavailable. Please try again later. (HTTP 502)'
+    )
+  })
+
   it('uses the human-facing business message instead of the error-class prefix', () => {
     const error = {
       response: {

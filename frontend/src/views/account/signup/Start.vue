@@ -3,16 +3,22 @@
     <!-- 邮箱域名提醒弹窗 -->
     <v-dialog v-model="showDomainWarning" max-width="440">
       <v-card>
-        <v-card-item prepend-icon="mdi-email-alert" title="邮箱建议" class="bg-info-container" />
+        <v-card-item
+          prepend-icon="mdi-email-alert"
+          :title="t('website.chooseAnEmailAddress')"
+          class="bg-info-container"
+        />
         <v-card-text class="pt-4">
-          <p class="text-body-1 mb-3">建议使用<strong>企业邮箱</strong>或<strong>学校邮箱</strong>注册。</p>
-          <p class="text-body-2 text-medium-emphasis">
-            部分赛题可能仅对特定域名邮箱开放，使用个人邮箱可能影响您查看或参与这些内容。
+          <p class="text-body-1 mb-3">
+            {{ t('website.weRecommendA') }} <strong>{{ t('website.workEmail') }}</strong> {{ t('website.or') }}
+            <strong>{{ t('website.universityEmail') }}</strong>
+            {{ t('website.forRegistration') }}
           </p>
+          <p class="text-body-2 text-medium-emphasis">{{ t('website.someChallengesAreOnlyAvailableToParticular') }}</p>
         </v-card-text>
         <v-card-actions class="justify-end pa-4">
-          <v-btn variant="text" @click="showDomainWarning = false">关闭</v-btn>
-          <v-btn color="primary" variant="flat" @click="onDomainWarningConfirm">不再提醒</v-btn>
+          <v-btn variant="text" @click="showDomainWarning = false">{{ t('website.close') }}</v-btn>
+          <v-btn color="primary" variant="flat" @click="onDomainWarningConfirm">{{ t('website.dontShowAgain') }}</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -21,9 +27,13 @@
     <div class="mb-12">
       <div class="d-flex align-center mb-3">
         <v-icon color="primary" size="28" class="mr-3">mdi-account-plus</v-icon>
-        <h1 class="text-h3 font-weight-light" style="color: var(--ink); line-height: 1.2">加入知是社区</h1>
+        <h1 class="text-h3 font-weight-light" style="color: var(--ink); line-height: 1.2">
+          {{ t('website.joinCheese') }}
+        </h1>
       </div>
-      <p class="text-body-1" style="color: var(--muted); line-height: 1.5">开启您的知识共享之旅</p>
+      <p class="text-body-1" style="color: var(--muted); line-height: 1.5">
+        {{ t('website.startSharingKnowledgeWithYourTeam') }}
+      </p>
     </div>
 
     <!-- 错误提示区域 -->
@@ -44,7 +54,7 @@
                 v-model="username"
                 name="username"
                 autocomplete="username"
-                label="用户名"
+                :label="t('website.username')"
                 variant="outlined"
                 :loading="isSubmitting"
                 v-bind="usernameProps"
@@ -57,7 +67,7 @@
                 v-model="nickname"
                 name="nickname"
                 autocomplete="nickname"
-                label="显示名称"
+                :label="t('website.displayName')"
                 variant="outlined"
                 :loading="isSubmitting"
                 v-bind="nicknameProps"
@@ -73,7 +83,7 @@
                 v-model="password"
                 name="password"
                 autocomplete="new-password"
-                label="密码"
+                :label="t('website.password')"
                 type="password"
                 variant="outlined"
                 :loading="isSubmitting"
@@ -87,7 +97,7 @@
                 v-model="confirmPassword"
                 name="confirmPassword"
                 autocomplete="new-password"
-                label="确认密码"
+                :label="t('website.confirmPassword')"
                 type="password"
                 variant="outlined"
                 :loading="isSubmitting"
@@ -102,7 +112,7 @@
             v-model="email"
             name="email"
             autocomplete="email"
-            label="电子邮箱"
+            :label="t('website.emailAddress')"
             type="email"
             variant="outlined"
             :loading="isSubmitting"
@@ -114,7 +124,7 @@
             v-if="requireInviteCode"
             v-model="inviteCode"
             autocomplete="off"
-            label="邀请码"
+            :label="t('website.invitationCode')"
             variant="outlined"
             :loading="isSubmitting"
             v-bind="inviteCodeProps"
@@ -125,13 +135,15 @@
             <v-checkbox v-model="agree" density="compact" v-bind="agreeProps" hide-details>
               <template #label>
                 <span class="text-body-2" style="color: var(--muted); line-height: 1.4">
-                  同意 <a href="#" class="text-primary text-decoration-none">用户协议</a>和
-                  <a href="#" class="text-primary text-decoration-none">隐私政策</a>
+                  {{ t('website.iAgreeToThe') }}
+                  <a href="#" class="text-primary text-decoration-none">{{ t('website.termsOfService') }}</a>
+                  {{ t('website.and') }}
+                  <a href="#" class="text-primary text-decoration-none">{{ t('website.privacyPolicy') }}</a>
                 </span>
               </template>
             </v-checkbox>
             <v-btn variant="text" color="primary" to="/account/signin" size="small" style="text-transform: none">
-              已有账号
+              {{ t('website.iHaveAnAccount') }}
             </v-btn>
           </div>
 
@@ -145,11 +157,11 @@
             style="text-transform: none; font-weight: 500; height: 48px"
             class="mb-4"
           >
-            立即注册
+            {{ t('website.createAccount') }}
           </v-btn>
 
           <p class="text-body-2" style="color: var(--muted)">
-            已经有账号了？
+            {{ t('website.alreadyHaveAnAccount') }}
             <v-btn
               variant="text"
               color="primary"
@@ -158,7 +170,7 @@
               style="text-transform: none; padding: 0; min-width: auto; height: auto; vertical-align: baseline"
               class="text-decoration-none"
             >
-              立即登录
+              {{ t('website.signIn2') }}
             </v-btn>
           </p>
         </v-form>
@@ -168,7 +180,7 @@
 </template>
 
 <script lang="ts" setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { toTypedSchema } from '@vee-validate/zod'
 import * as srp from 'secure-remote-password/client'
@@ -177,6 +189,7 @@ import { z } from 'zod'
 
 import { REGEX_PASSWORD, vuetifyConfig } from '@/utils/form'
 
+import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 import { useSignupStore } from '@/stores/signup'
@@ -186,51 +199,59 @@ const requireInviteCode = ref(false)
 const registrationConfigReady = ref(false)
 
 const { handleSubmit, defineField, isSubmitting } = useForm({
-  validationSchema: toTypedSchema(
-    z
-      .object({
-        username: z
-          .string()
-          .min(4)
-          .max(32)
-          .regex(/^[a-zA-Z0-9_-]{4,32}$/, {
-            message: '用户名只能使用英文字母、数字、下划线',
-          }),
-        nickname: z
-          .string()
-          .min(1)
-          .max(16)
-          .regex(/^[a-zA-Z0-9_\u4e00-\u9fa5]{1,16}$/, {
-            message: '昵称只能使用英文字母、数字、下划线、中文',
-          }),
+  validationSchema: computed(() =>
+    toTypedSchema(
+      z
+        .object({
+          username: z
+            .string()
+            .min(4)
+            .max(32)
+            .regex(/^[a-zA-Z0-9_-]{4,32}$/, {
+              message: t('website.useLettersNumbersUnderscoresOrHyphensFor'),
+            }),
+          nickname: z
+            .string()
+            .min(1)
+            .max(16)
+            .regex(/^[a-zA-Z0-9_\u4e00-\u9fa5]{1,16}$/, {
+              message: t('website.useLettersNumbersUnderscoresOrChineseCharacters'),
+            }),
 
-        password: z.string().min(8).regex(REGEX_PASSWORD, {
-          message: '密码必须包含字母、数字、特殊字符',
-        }),
+          password: z
+            .string()
+            .min(8)
+            .regex(REGEX_PASSWORD, {
+              message: t('website.yourPasswordMustContainALetterA'),
+            }),
 
-        confirmPassword: z.string().min(8).regex(REGEX_PASSWORD, {
-          message: '密码必须包含字母、数字、特殊字符',
-        }),
-        email: z.string().email(),
-        inviteCode: z.string().optional(),
-        agree: z.boolean().refine((v) => v, { message: '请同意用户协议和隐私政策' }),
-      })
-      .superRefine(({ password, confirmPassword, inviteCode }, ctx) => {
-        if (password !== confirmPassword) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            path: ['confirmPassword'],
-            message: '两次输入的密码不一致',
-          })
-        }
-        if (requireInviteCode.value && !inviteCode?.trim()) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            path: ['inviteCode'],
-            message: '请输入邀请码',
-          })
-        }
-      })
+          confirmPassword: z
+            .string()
+            .min(8)
+            .regex(REGEX_PASSWORD, {
+              message: t('website.yourPasswordMustContainALetterA'),
+            }),
+          email: z.string().email(),
+          inviteCode: z.string().optional(),
+          agree: z.boolean().refine((v) => v, { message: t('website.pleaseAcceptTheTermsOfServiceAnd') }),
+        })
+        .superRefine(({ password, confirmPassword, inviteCode }, ctx) => {
+          if (password !== confirmPassword) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ['confirmPassword'],
+              message: t('website.passwordsDoNotMatch'),
+            })
+          }
+          if (requireInviteCode.value && !inviteCode?.trim()) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ['inviteCode'],
+              message: t('website.enterAnInvitationCode'),
+            })
+          }
+        })
+    )
   ),
 })
 
@@ -271,7 +292,7 @@ onMounted(async () => {
     requireInviteCode.value = data.requireInviteCode
     registrationConfigReady.value = true
   } catch (e) {
-    error.value = requestErrorMessage(e, '暂时无法获取注册配置，请刷新页面重试')
+    error.value = requestErrorMessage(e, t('website.registrationSettingsCouldNotBeLoadedRefresh'))
   }
 })
 
@@ -292,7 +313,7 @@ const submit = handleSubmit(async (value) => {
 
     router.push('/account/signup/verify-email')
   } catch (e) {
-    error.value = requestErrorMessage(e, '注册失败，请重试')
+    error.value = requestErrorMessage(e, t('website.registrationFailedPleaseTryAgain'))
   }
 })
 </script>

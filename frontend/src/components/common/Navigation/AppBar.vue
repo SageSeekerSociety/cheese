@@ -9,6 +9,7 @@
     </div>
     <div class="position-relative d-flex align-center justify-center">
       <v-spacer></v-spacer>
+      <LanguageToggle />
       <v-menu
         v-if="loggedIn"
         v-model="notificationMenuOpen"
@@ -58,6 +59,8 @@ import NotificationPanel from '../Notification/NotificationPanel.vue'
 
 import ParentBackButton from './ParentBackButton.vue'
 
+import LanguageToggle from '@/components/common/LanguageToggle.vue'
+import { t } from '@/i18n'
 import { NotificationsApi } from '@/network/api/notifications'
 import AccountService from '@/services/account'
 import { usePageTitleStore } from '@/stores/title'
@@ -69,7 +72,7 @@ const { getRouteHierarchy } = usePageTitle()
 const notificationMenuOpen = ref(false)
 const unreadNotificationsCount = ref(0)
 
-const currentTitle = ref('知是社区')
+const currentTitle = ref(t('website.cheese2'))
 
 const updateTitle = () => {
   const hierarchy = getRouteHierarchy.value
@@ -79,7 +82,7 @@ const updateTitle = () => {
       return
     }
   }
-  currentTitle.value = '知是社区'
+  currentTitle.value = t('website.cheese2')
 }
 
 watch([getRouteHierarchy, () => updateTrigger], updateTitle, { immediate: true })
@@ -148,6 +151,12 @@ onMounted(() => {
 .app-system-bar.app-system-bar {
   opacity: 1;
   color: rgb(var(--v-theme-on-surface-variant));
+}
+
+.app-system-bar .language-toggle {
+  min-height: 24px;
+  padding: 2px 8px;
+  font-size: 12px;
 }
 
 .floating-search-container {

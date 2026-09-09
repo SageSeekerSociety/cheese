@@ -13,6 +13,8 @@
 import { useRoute } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
+import { t } from '@/i18n'
+
 const { mdAndUp } = useDisplay()
 const route = useRoute()
 </script>
@@ -22,8 +24,8 @@ const route = useRoute()
   <template v-else>
     <Teleport v-if="!mdAndUp" to="#app-bar-slot">
       <v-tabs class="home-sections" grow slider-color="primary" bg-color="transparent" height="56">
-        <v-tab :to="{ name: 'HomeSpaces' }">空间</v-tab>
-        <v-tab :to="{ name: 'HomeTeams' }">小队</v-tab>
+        <v-tab :to="{ name: 'HomeSpaces' }">{{ t('website.spaces') }}</v-tab>
+        <v-tab :to="{ name: 'HomeTeams' }">{{ t('website.teams') }}</v-tab>
       </v-tabs>
     </Teleport>
     <div class="home-shell">
