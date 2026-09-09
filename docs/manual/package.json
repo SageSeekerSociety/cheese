@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vitepress dev .",
-    "build": "vitepress build . && python3 ../scripts/emit_llms.py .vitepress/dist"
+    "build": "vitepress build . && python3 ../../scripts/emit_llms.py ../../frontend/public/docs"
   },
   "devDependencies": {
     "vitepress": "^1.6.4"

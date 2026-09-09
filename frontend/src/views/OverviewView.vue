@@ -2,7 +2,6 @@
 import type { Contributions, InboxItem, ProjectCredits, ProjectOverview, TopicRef } from '../cx_types'
 
 import { computed, ref } from 'vue'
-import DOMPurify from 'dompurify'
 
 import { useCachedResource } from '@/composables/useCachedResource'
 
@@ -10,7 +9,7 @@ import { getContributions, getInbox, getOverview, getProject, getProjectCredits,
 import { label, NOTIF_KIND, PROJECT_ROLE, TOPIC_STATUS } from '../labels'
 import { myHandle } from '../me'
 
-import { markdown } from '@/lib/markdown'
+import { markdown, sanitizeRendered } from '@/lib/markdown'
 
 defineOptions({ name: 'OverviewView' })
 
@@ -73,7 +72,7 @@ const errorMessage = computed<string | null>(
 const summary = computed<string>(() => data.value?.summary ?? '')
 
 function renderMarkdown(text: string): string {
-  return DOMPurify.sanitize(markdown.parse(text, { async: false }) as string)
+  return sanitizeRendered(markdown.parse(text, { async: false }) as string)
 }
 
 // waiting_on_you is keyed by handle. Pull out my items vs. everyone else's.
