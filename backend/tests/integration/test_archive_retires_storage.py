@@ -20,6 +20,7 @@ import io
 import logging
 import os
 import re
+import shlex
 import subprocess
 import tarfile
 import uuid
@@ -33,6 +34,7 @@ from sqlalchemy import update
 
 from app.core.config import settings
 from app.domain.agent.device_hub import device_hub
+from app.domain.agent.device_provider import list_device_storage
 from app.domain.device.models import DeviceRow, HostedDeviceRow
 from app.domain.device.supply import Visibility
 from app.domain.device.wiring import sql_device_service
@@ -58,6 +60,9 @@ class FakeConnector:
     def __init__(self, device_id: str, homes: list[str] | None = None) -> None:
         self.device_id = device_id
         self.homes = list(homes or [])  # "<project>/<place>" pairs on disk
+        self.work: list[str] = []
+        self.listings = 0
+        self.fail_work_removal = False
         # The one session line a home's `.claude/projects` holds. A home absent
         # here never ran a session and has no such directory at all.
         self.sessions: dict[str, str] = {}
@@ -71,13 +76,25 @@ class FakeConnector:
         script = msg["command"][-1]
         stdout, stderr, exit_code = "", "", 0
         if "for p in */*" in script:
-            stdout = "".join(f"{h}\n" for h in self.homes)
+            self.listings += 1
+            stdout = "".join(
+                f"{kind}\t{path}\n"
+                for kind, paths in (("home", self.homes), ("work", self.work))
+                for path in paths
+            )
         elif "/transcripts/" in script:
             stdout, stderr, exit_code = await self._upload(script, msg.get("env") or {})
         elif script.startswith("rm -rf"):
             path = script.split('"')[1]
-            self.removed.append(path)
-            self.homes = [h for h in self.homes if not path.endswith(h)]
+            if "/.cheese/work/" in path:
+                if self.fail_work_removal:
+                    stderr, exit_code = "Permission denied", 1
+                else:
+                    self.removed.append(path)
+                    self.work = [p for p in self.work if not path.endswith(p)]
+            else:
+                self.removed.append(path)
+                self.homes = [h for h in self.homes if not path.endswith(h)]
         # The result frame the connector sends back; the hub resolves the
         # pending exec future from it.
         await device_hub.on_device_message(
@@ -220,6 +237,46 @@ def _home(project_id: uuid.UUID, place_id: uuid.UUID) -> str:
     return f"{project_id}/{place_id}"
 
 
+@pytest.mark.parametrize("roots", [(), ("home",), ("work",), ("home", "work")])
+async def test_device_listing_uses_one_portable_shell_and_ignores_symlinks(
+    tmp_path, roots
+):
+    project, place = str(uuid.uuid4()), str(uuid.uuid4())
+    outside = tmp_path / "outside"
+    (outside / place).mkdir(parents=True)
+    for kind in roots:
+        root = tmp_path / ".cheese" / kind
+        (root / project / place).mkdir(parents=True)
+        (root / str(uuid.uuid4())).symlink_to(outside, target_is_directory=True)
+        (root / project / str(uuid.uuid4())).symlink_to(
+            outside, target_is_directory=True
+        )
+
+    class ShellHub:
+        calls = 0
+
+        async def exec(self, device_id, command, *, timeout):
+            self.calls += 1
+            result = subprocess.run(
+                [*command[:-1], f"HOME={shlex.quote(str(tmp_path))}; {command[-1]}"],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            return {
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "exit": result.returncode,
+                "truncated": False,
+            }
+
+    hub = ShellHub()
+    assert await list_device_storage("fixture", hub=hub) == [
+        (kind, project, place) for kind in roots
+    ]
+    assert hub.calls == 1
+
+
 async def test_archive_keeps_the_disk_and_the_sweep_takes_it_after_retention(
     client, workspace_root, connected_device
 ):
@@ -257,6 +314,8 @@ async def test_archive_keeps_the_disk_and_the_sweep_takes_it_after_retention(
         "worktrees_left": 0,
         "homes_removed": 0,
         "homes_left": 0,
+        "work_removed": 0,
+        "work_left": 0,
     }
     assert wt.is_dir() and connected_device.homes == [_home(pid, tid)]
 
@@ -481,6 +540,7 @@ async def test_sweep_removes_leftovers_and_keeps_live_places(
         _home(pid, going_id),
         "not-a-project/not-a-place",
     ]
+    connected_device.work = list(connected_device.homes)
     # Two of the homes to go ran sessions: one for a topic that is still in
     # the database, one for a place that is not. The closed thread's never did.
     connected_device.sessions[_home(pid, old_id)] = '{"topic":"旧"}'
@@ -493,6 +553,8 @@ async def test_sweep_removes_leftovers_and_keeps_live_places(
         "worktrees_left": 0,
         "homes_removed": 3,
         "homes_left": 0,
+        "work_removed": 3,
+        "work_left": 0,
     }
     assert sorted(connected_device.uploads) == sorted(
         [_home(pid, old_id), _home(pid, gone_id)]
@@ -511,7 +573,9 @@ async def test_sweep_removes_leftovers_and_keeps_live_places(
     assert str(on_disk["active"]) in registered
     assert str(on_disk["old"]) not in registered
     assert sorted(connected_device.removed) == sorted(
-        f"$HOME/.cheese/home/{pid}/{place}" for place in (old_id, gone_id, done_id)
+        f"$HOME/.cheese/{kind}/{pid}/{place}"
+        for kind in ("home", "work")
+        for place in (old_id, gone_id, done_id)
     )
     assert sorted(connected_device.homes) == sorted(
         [
@@ -521,6 +585,42 @@ async def test_sweep_removes_leftovers_and_keeps_live_places(
             "not-a-project/not-a-place",
         ]
     )
+    assert sorted(connected_device.work) == sorted(connected_device.homes)
+    assert connected_device.listings == 1
+
+
+async def test_work_removal_failure_is_retried_without_a_home(
+    client, workspace_root, connected_device, caplog
+):
+    pid, tid = uuid.uuid4(), uuid.uuid4()
+    path = _home(pid, tid)
+    connected_device.work = [path]
+    connected_device.fail_work_removal = True
+    with caplog.at_level(logging.INFO, logger="cheesex.topic.retire"):
+        counts = await sweep_retired_storage(client.test_factory)
+    assert connected_device.work == [path]
+    assert counts["work_left"] == 1 and counts["work_removed"] == 0
+    assert "Permission denied" in caplog.text
+
+    connected_device.fail_work_removal = False
+    counts = await sweep_retired_storage(client.test_factory)
+    assert connected_device.work == []
+    assert counts["work_removed"] == 1 and counts["work_left"] == 0
+    assert connected_device.uploads == []
+
+
+async def test_work_on_an_offline_device_waits_for_reconnect(
+    client, workspace_root, connected_device
+):
+    path = _home(uuid.uuid4(), uuid.uuid4())
+    connected_device.work = [path]
+    await device_hub.detach_device(connected_device.device_id, connected_device)
+    counts = await sweep_retired_storage(client.test_factory)
+    assert connected_device.work == [path] and connected_device.listings == 0
+    assert counts["work_removed"] == 0
+    await device_hub.attach_device(connected_device.device_id, connected_device)
+    counts = await sweep_retired_storage(client.test_factory)
+    assert connected_device.work == [] and counts["work_removed"] == 1
 
 
 async def test_a_home_whose_project_is_gone_goes_unstored(

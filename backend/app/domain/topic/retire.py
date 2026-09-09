@@ -1,7 +1,7 @@
 """What a finished place leaves on disk, and the one thing that takes it away.
 
 Archiving a room releases its Cloud machine and settles its cards, and until
-2026-09 left two things behind for good:
+2026-09 left storage behind:
 
 - the tree's git worktree on this box,
   `<workspace_root>/.worktrees/<project>/topic_<hex8>`;
@@ -9,8 +9,10 @@ Archiving a room releases its Cloud machine and settles its cards, and until
   `$HOME/.cheese/home/<project>/<place>` — session files and caches, 1-4 GB each.
   Only rooms have one now; the sweep still resolves a thread's, because the
   directories a thread left on disk before 任务=分身 are still there.
+- the device's code clone, `$HOME/.cheese/work/<project>/<place>`, when the
+  backend no longer remembers its screen after a restart or reconnect.
 
-Nothing removed either. Measured on the dev box on 2026-09-03: 373 worktrees
+Measured on the dev box on 2026-09-03: 373 worktrees
 (141 GB), 118 of them for archived topics and 219 for topics no longer in the
 database at all; 162 homes (162 GB), 46 archived and 85 unknown.
 
@@ -24,9 +26,9 @@ nothing here may fail an archive, which is a fact about the place and not about
 its machine.
 
 `sweep_retired_storage` runs on a clock (scheduler/jobs.py). It walks this
-box's worktrees and every online device's homes, resolves each entry to a
-place, and removes what belongs to nothing — at once — or to something archived
-longer ago than the retention. A leftover that resolves to no row is an orphan:
+box's worktrees and every online device's homes and code clones. It resolves each
+entry to a place, and removes what belongs to nothing — at once — or to something
+archived longer ago than the retention. A leftover with no matching row is an orphan:
 the topic was deleted outright, or the directory predates the database knowing
 about it. Every removal and every keep is one log line with its reason.
 
@@ -243,8 +245,8 @@ async def _record_transcripts_archived(
 async def sweep_retired_storage(
     sessions: SessionFactory, *, retention_days: float | None = None
 ) -> dict[str, int]:
-    """Remove the worktrees and device homes of places that are gone or have
-    been archived longer than the retention. Returns what it did and what it
+    """Remove worktrees, device homes and code clones for places that are gone
+    or archived longer than the retention. Returns what it did and what it
     could not do; what it deliberately kept is only in the log, one line each."""
     days = (
         settings.topic_home_retention_days if retention_days is None else retention_days
@@ -255,9 +257,11 @@ async def sweep_retired_storage(
         "worktrees_left": 0,
         "homes_removed": 0,
         "homes_left": 0,
+        "work_removed": 0,
+        "work_left": 0,
     }
     await _sweep_worktrees(sessions, cutoff, counts)
-    await _sweep_homes(sessions, cutoff, counts)
+    await _sweep_device_storage(sessions, cutoff, counts)
     return counts
 
 
@@ -299,15 +303,15 @@ async def _tree_owners(
     return owners
 
 
-async def _sweep_homes(
+async def _sweep_device_storage(
     sessions: SessionFactory, cutoff: datetime, counts: dict[str, int]
 ) -> None:
     from app.domain.agent.device_hub import DeviceOffline, device_hub
-    from app.domain.agent.device_provider import list_device_homes
+    from app.domain.agent.device_provider import list_device_storage
 
     for device_id in sorted(device_hub.online_device_ids()):
         try:
-            homes = await list_device_homes(device_id)
+            entries = await list_device_storage(device_id)
         except DeviceOffline:
             logger.info(
                 "sweep: device=%s outcome=skipped reason=went offline", device_id
@@ -315,17 +319,20 @@ async def _sweep_homes(
             continue
         except Exception:  # noqa: BLE001 — one device must not stop the sweep
             logger.warning(
-                "sweep: device=%s outcome=error listing homes", device_id, exc_info=True
+                "sweep: device=%s outcome=error listing storage",
+                device_id,
+                exc_info=True,
             )
             continue
         async with sessions() as session:
-            for project, place in homes:
+            for kind, project, place in entries:
                 try:
                     project_id, place_id = uuid.UUID(project), uuid.UUID(place)
                 except ValueError:
                     logger.info(
-                        "sweep: home=%s/%s device=%s outcome=kept "
+                        "sweep: %s=%s/%s device=%s outcome=kept "
                         "reason=not a project/place id",
+                        kind,
                         project,
                         place,
                         device_id,
@@ -336,12 +343,20 @@ async def _sweep_homes(
                 )
                 if not remove:
                     logger.info(
-                        "sweep: home=%s/%s device=%s outcome=kept reason=%s",
+                        "sweep: %s=%s/%s device=%s outcome=kept reason=%s",
+                        kind,
                         project_id,
                         place_id,
                         device_id,
                         reason,
                     )
+                    continue
+                if kind == "work":
+                    await _release_screen(project_id, place_id)
+                    gone = await _remove_work(
+                        device_id, project_id, place_id, reason=reason
+                    )
+                    counts["work_removed" if gone else "work_left"] += 1
                     continue
                 # The transcripts are filed under the project. A home whose
                 # project row is gone has nowhere to file them and nobody who
@@ -363,6 +378,32 @@ async def _sweep_homes(
                 # must not be lost to a later home's failure on the same tick.
                 await session.commit()
                 counts["homes_removed" if gone else "homes_left"] += 1
+
+
+async def _remove_work(
+    device_id: str, project_id: uuid.UUID, place_id: uuid.UUID, *, reason: str
+) -> bool:
+    from app.domain.agent.device_provider import remove_device_work
+
+    try:
+        await remove_device_work(device_id, project_id, place_id)
+    except Exception:  # noqa: BLE001 — retry one failed directory next tick
+        logger.warning(
+            "sweep: work=%s/%s device=%s outcome=left reason=removal failed",
+            project_id,
+            place_id,
+            device_id,
+            exc_info=True,
+        )
+        return False
+    logger.info(
+        "sweep: work=%s/%s device=%s outcome=removed reason=%s",
+        project_id,
+        place_id,
+        device_id,
+        reason,
+    )
+    return True
 
 
 async def _place_archival(

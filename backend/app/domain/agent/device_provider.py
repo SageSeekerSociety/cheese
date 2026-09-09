@@ -366,10 +366,15 @@ def _credential_expiry(token: str) -> int:
 # in one place because two sides depend on it agreeing: the launcher that
 # creates it and the retirement that removes it (topic/retire.py).
 DEVICE_HOME_ROOT = "$HOME/.cheese/home"
+DEVICE_WORK_ROOT = "$HOME/.cheese/work"
 
 
 def device_home_dir(project_id: uuid.UUID, place_id: uuid.UUID) -> str:
     return f"{DEVICE_HOME_ROOT}/{project_id}/{place_id}"
+
+
+def device_work_dir(project_id: uuid.UUID, place_id: uuid.UUID) -> str:
+    return f"{DEVICE_WORK_ROOT}/{project_id}/{place_id}"
 
 
 async def environment_status(
@@ -622,7 +627,7 @@ class DeviceChannel(Channel):
         changes this boundary: files cross it through git or `file.put`, never by
         translating a backend path into the device's namespace.
         """
-        return f"$HOME/.cheese/work/{project_id}/{topic_id}"
+        return device_work_dir(project_id, topic_id)
 
     def _no_proxy_hosts(self) -> str:
         """What the screen's HTTPS_PROXY must NOT capture: the backend itself
@@ -1327,15 +1332,7 @@ class DeviceChannel(Channel):
         """Remove this topic's checkout from an online device."""
         if not self._hub.is_online(device_id):
             return
-        work_dir = self._work_dir(project_id, topic_id)
-        # `$HOME` in the scratch path is expanded by the device's shell; project and
-        # topic are UUIDs (no shell metacharacters), so the argv stays a fixed
-        # boundary with nothing to inject.
-        await self._hub.exec(
-            device_id,
-            ["sh", "-lc", f'rm -rf -- "{work_dir}"'],
-            timeout=30,
-        )
+        await remove_device_work(device_id, project_id, topic_id, hub=self._hub)
 
 
 async def release_topic_screen(
@@ -1355,10 +1352,10 @@ async def release_topic_screen(
     await channel.release_topic(project_id, topic_id)
 
 
-async def list_device_homes(
+async def list_device_storage(
     device_id: str, *, hub: DeviceHub | None = None
-) -> list[tuple[str, str]]:
-    """Every ``(project, place)`` directory pair under the device's home root,
+) -> list[tuple[str, str, str]]:
+    """Every ``(kind, project, place)`` under both device storage roots,
     as the device's shell sees them — names only, nothing resolved.
 
     Raises ``DeviceOffline`` like ``exec`` does; the caller decides what an
@@ -1366,16 +1363,44 @@ async def list_device_homes(
     `find -printf`, which is GNU-only and a device may be a Mac."""
     hub = hub or device_hub
     script = (
-        f'cd "{DEVICE_HOME_ROOT}" 2>/dev/null || exit 0; '
-        'for p in */*; do [ -d "$p" ] && printf "%s\\n" "$p"; done'
+        f'for root in "{DEVICE_HOME_ROOT}" "{DEVICE_WORK_ROOT}"; do '
+        '(cd "$root" 2>/dev/null || exit 0; '
+        # A project/place symlink may point into the device owner's other data.
+        'for p in */*; do if [ -d "$p" ] && '
+        '[ ! -L "${p%%/*}" ] && [ ! -L "$p" ]; then '
+        'printf "%s\\t%s\\n" "${root##*/}" "$p"; fi; done); done'
     )
     result = await hub.exec(device_id, ["sh", "-lc", script], timeout=30)
-    pairs: list[tuple[str, str]] = []
+    if result.get("exit") != 0 or result.get("truncated"):
+        raise RuntimeError("device storage listing failed or was truncated")
+    pairs: list[tuple[str, str, str]] = []
     for line in str(result.get("stdout") or "").splitlines():
-        project, sep, place = line.strip().partition("/")
-        if sep and project and place:
-            pairs.append((project, place))
+        kind, tab, path = line.partition("\t")
+        project, sep, place = path.partition("/")
+        if kind in {"home", "work"} and tab and sep and project and place:
+            pairs.append((kind, project, place))
     return pairs
+
+
+async def remove_device_work(
+    device_id: str,
+    project_id: uuid.UUID,
+    place_id: uuid.UUID,
+    *,
+    hub: DeviceHub | None = None,
+) -> None:
+    """Remove a device checkout, reporting a failed removal to the caller."""
+    hub = hub or device_hub
+    work = device_work_dir(project_id, place_id)
+    # The device expands HOME; UUIDs keep the target within one checkout.
+    result = await hub.exec(
+        device_id, ["sh", "-lc", f'rm -rf -- "{work}"'], timeout=300
+    )
+    if result.get("exit") != 0:
+        raise RuntimeError(
+            f"rm -rf {work} exited {result.get('exit')}: "
+            f"{str(result.get('stderr') or '').strip()}"
+        )
 
 
 async def remove_device_home(
