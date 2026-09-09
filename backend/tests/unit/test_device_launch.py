@@ -1,16 +1,159 @@
 """Device screen launcher: hooks settings + self-contained launch command."""
 
 import contextlib
+import json
 import os
 import re
+import shutil
+import socket
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 import uuid
 
 import pytest
 
-from app.domain.agent.harness.claude_code import device_launch
+from app.domain.agent.harness.claude_code import device_launch, warm_session
+
+
+def test_native_claim_replaces_all_provider_proxy_variants(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    work = tmp_path / "work"
+    work.mkdir()
+    token = tmp_path / "rv-token"
+    token.write_text("fixture")
+    (tmp_path / "ready").touch()
+    (tmp_path / "environment.json").write_text(
+        json.dumps(
+            {
+                name: "http://old-provider"
+                for name in (
+                    "HTTPS_PROXY",
+                    "https_proxy",
+                    "HTTP_PROXY",
+                    "http_proxy",
+                    "ALL_PROXY",
+                    "all_proxy",
+                )
+            }
+        )
+    )
+    monkeypatch.setattr(warm_session, "_native_alive", lambda state: True)
+    frames = []
+    with tempfile.TemporaryDirectory(prefix="cw-") as sockets:
+        path = sockets + "/claim"
+        (tmp_path / "state.json").write_text(
+            json.dumps(
+                {
+                    "home": str(home),
+                    "workspace": str(work.resolve()),
+                    "rendezvous": sockets + "/rv",
+                    "token_file": str(token),
+                    "claim_socket": path,
+                    "claim_auth": "fixture",
+                }
+            )
+        )
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+            server.bind(path)
+            server.listen(1)
+            server.settimeout(3)
+
+            def receive():
+                connection, _ = server.accept()
+                with connection, connection.makefile("rb") as reader:
+                    frames.append(json.loads(reader.readline()))
+
+            receiver = threading.Thread(target=receive)
+            receiver.start()
+            warm_session.bind(
+                tmp_path,
+                project_id=str(uuid.uuid4()),
+                topic_id=str(uuid.uuid4()),
+                work=work,
+                system_prompt="fixture",
+                settings={
+                    "env": {"HTTPS_PROXY": "http://room-meter", "NO_PROXY": "localhost"}
+                },
+            )
+            receiver.join(timeout=3)
+            assert not receiver.is_alive()
+    persisted = json.loads((home / ".claude/settings.json").read_text())["env"]
+    for environment in (frames[0]["env"], persisted):
+        assert (
+            environment["HTTPS_PROXY"]
+            == environment["https_proxy"]
+            == "http://room-meter"
+        )
+        assert environment["HTTP_PROXY"] == environment["http_proxy"] == ""
+        assert environment["ALL_PROXY"] == environment["all_proxy"] == ""
+        assert environment["NO_PROXY"] == environment["no_proxy"] == "localhost"
+
+
+@pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux is required")
+def test_prepared_topic_is_dead_when_only_its_drainer_survives(tmp_path):
+    directory = tmp_path / ".cheese/native-warm"
+    directory.mkdir(parents=True)
+    runner = directory.parent / "warm-native-runner.py"
+    shutil.copyfile(warm_session.__file__, runner)
+    topic = str(uuid.uuid4())
+    (directory / "binding.json").write_text(json.dumps({"topic_id": topic}))
+    with tempfile.TemporaryDirectory(prefix="cw-") as socket_dir:
+        socket_path = socket_dir + "/s"
+
+        def tmux(*args):
+            return subprocess.check_output(
+                ["tmux", "-S", socket_path, *args], text=True
+            ).strip()
+
+        try:
+            pane = tmux(
+                "-f",
+                "/dev/null",
+                "new-session",
+                "-d",
+                "-P",
+                "-F",
+                "#{pane_id}",
+                "-s",
+                "native-warm",
+                "sleep 30",
+            )
+            (directory / "state.json").write_text(
+                json.dumps({"socket": socket_path, "pane": pane})
+            )
+            tmux(
+                "new-window",
+                "-d",
+                "-t",
+                "native-warm",
+                "-n",
+                "cheese-drain",
+                "sleep 30",
+            )
+
+            def probe():
+                return subprocess.check_output(
+                    ["sh", "-c", device_launch.DEVICE_ALIVE_PROBE],
+                    text=True,
+                    env={
+                        **os.environ,
+                        "HOME": str(tmp_path),
+                        "CHEESE_ALIVE_TOPIC": topic,
+                    },
+                ).strip()
+
+            assert probe() == "alive"
+            tmux("kill-pane", "-t", pane)
+            assert tmux("list-panes", "-a", "-F", "#{pane_dead}") == "0"
+            assert probe() == "dead"
+        finally:
+            subprocess.run(
+                ["tmux", "-S", socket_path, "kill-server"], capture_output=True
+            )
 
 
 def test_liveness_probe_distinguishes_a_running_topic_from_an_exited_one(tmp_path):
@@ -270,6 +413,62 @@ def test_drainer_config_is_rewritten_each_launch_and_read_each_pass():
         assert line in script
 
 
+def test_adoption_upgrades_only_the_old_sender_process(tmp_path):
+    import threading
+    from pathlib import Path
+
+    home = tmp_path / "home"
+    native_home = home / ".claude"
+    native_home.mkdir(parents=True)
+    drain = native_home / "cheese-drain"
+    drain.write_text(
+        "#!/bin/sh\nexec python3 - \"$0\" <<'PY'\n"
+        "import os, sys, time\nfrom pathlib import Path\n"
+        "Path(sys.argv[1] + '.pid').write_text(str(os.getpid()))\n"
+        "while True: time.sleep(1)\nPY\n"
+    )
+    old = subprocess.Popen(["sh", str(drain)])
+    native = subprocess.Popen(["sleep", "30"])
+    reaper = threading.Thread(target=old.wait)
+    reaper.start()
+    try:
+        deadline = time.monotonic() + 5
+        while not Path(str(drain) + ".pid").exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert Path(str(drain) + ".pid").exists()
+        drain.write_text(_drain_body())
+        script = device_launch.build_launch_script()
+        adoption = script.split('    DRAIN_PID="', 1)[1].split("\n  else\n", 1)[0]
+        log = tmp_path / "tmux-calls"
+        wrapper = (
+            'set -e\natmux() { printf "%s\\n" "$*" >> "$TEST_LOG"; }\n'
+            + '    DRAIN_PID="'
+            + adoption
+        )
+        result = subprocess.run(
+            ["sh", "-c", wrapper],
+            env={
+                **os.environ,
+                "HOME": str(home),
+                "SESSION": "fixture",
+                "TEST_LOG": str(log),
+            },
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        assert result.returncode == 0, result.stderr
+        assert old.poll() is not None
+        assert native.poll() is None
+        assert "new-window -d -t fixture -n cheese-drain" in log.read_text()
+    finally:
+        for process in (old, native):
+            if process.poll() is None:
+                process.terminate()
+            process.wait(timeout=5)
+        reaper.join(timeout=5)
+
+
 def test_no_tmux_branch_keeps_the_drainer_in_claudes_own_tree():
     """Without tmux, claude stays in the launcher's process tree — a drainer
     backgrounded there genuinely shares its fate, so that shape stays."""
@@ -359,11 +558,12 @@ def test_running_drainer_uses_rotated_delivery_configuration(tmp_path):
         proc.wait(timeout=5)
 
 
-def test_drainer_prunes_expired_events_without_resetting_sequence(tmp_path):
+def test_drainer_prunes_only_claims_and_keeps_unacknowledged_events(tmp_path):
     drain, spool, env = _write_drainer(tmp_path, curl_response='{"code":500}')
-    expired = [spool / "0000000000000000001.old", spool / ".n0000000000000000001"]
+    expired = [spool / ".n0000000000000000001"]
+    unacknowledged = spool / "0000000000000000001.old"
     sequence = spool / ".seq"
-    for path in [*expired, sequence]:
+    for path in [*expired, sequence, unacknowledged]:
         path.write_text("1")
         os.utime(path, (time.time() - 90000, time.time() - 90000))
     fresh = spool / "0000000000000000002.fresh"
@@ -374,6 +574,7 @@ def test_drainer_prunes_expired_events_without_resetting_sequence(tmp_path):
         while any(path.exists() for path in expired) and time.monotonic() < deadline:
             time.sleep(0.01)
         assert all(not path.exists() for path in expired)
+        assert unacknowledged.exists()
         assert fresh.exists()
         assert sequence.read_text() == "1"
     finally:
@@ -1656,3 +1857,49 @@ def test_declaring_a_port_writes_it_on_the_machine(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert (tmp_path / ".claude/cheese-preview.port").read_text() == "5173\n"
+
+
+def test_no_mcp_server_is_planted_in_a_sandbox():
+    """The platform plants NO MCP server, on either delivery path.
+
+    An earlier revision planted `mcp-server-fetch` to get a fetch path a
+    deadline could reach. Measured against the same pages, that server extracts
+    badly where it matters (a list-style page yields 622 characters against
+    24,000+ from a converter that does not guess at "main content") and returns
+    the raw page instead of an answer (33k tokens for one Wikipedia article,
+    against tens of tokens from WebFetch's own summarisation). Claude Code's own
+    tool description also tells the model to PREFER an MCP fetch tool whenever
+    one exists, so planting one does not add a fallback — it replaces the better
+    default. Fetching moves to a platform-side service instead.
+    """
+    script = device_launch.build_launch_script(
+        sync_on_stop=True, system_prompt="", ca_pem=""
+    )
+    assert "mcpServers" not in _claude_json_from(script)
+
+    from app.domain.agent.harness.claude_code.session_launch import (
+        build_session_launch,
+    )
+
+    spec = build_session_launch(config_dir="/cfg", workdir="/work", system_prompt="x")
+    container = json.loads(
+        next(f.content for f in spec.files if f.name == ".claude.json")
+    )
+    assert "mcpServers" not in container
+
+
+def test_a_summarisation_stream_that_stalls_is_bounded():
+    """The one hang shape a setting still reaches.
+
+    Not WebFetch's own hang: measured on 2.1.224 and 2.1.261, its page fetch is
+    bounded (60 s) and its domain preflight is bounded (10 s); the step with no
+    deadline is the model call it makes on the extracted text, which no setting
+    reaches. This asserts the watchdog we CAN set stays set.
+    """
+    assert device_launch.hooks_settings()["env"]["CLAUDE_ENABLE_STREAM_WATCHDOG"]
+
+
+def _claude_json_from(script: str) -> dict:
+    """The `.claude.json` the launch script writes, as the shell would leave it."""
+    line = next(x for x in script.splitlines() if "hasCompletedOnboarding" in x)
+    return json.loads(line.replace("$CHEESE_WORK", "/work"))

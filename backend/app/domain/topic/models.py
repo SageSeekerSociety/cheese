@@ -20,6 +20,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     DateTime,
     Enum,
     ForeignKey,
@@ -146,6 +147,35 @@ class Topic(UuidPk, Timestamps, Base):
     transcripts_archived_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    cleanup_due_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    resource_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    cleanup_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+
+
+class RoomCleanup(UuidPk, Timestamps, Base):
+    __tablename__ = "room_cleanups"
+
+    project_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    topic_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    resource_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    state: Mapped[str] = mapped_column(String(16), default="pending")
+    resources: Mapped[list] = mapped_column(JSON, default=list)
+    last_error: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+
+
+class RawTranscript(UuidPk, Timestamps, Base):
+    """One original file generation; chunks and identity survive room cleanup."""
+
+    __tablename__ = "raw_transcripts"
+
+    project_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    topic_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    source: Mapped[str] = mapped_column(String(1024))
+    size: Mapped[int] = mapped_column(BigInteger, default=0)
+    chunks: Mapped[list] = mapped_column(JSON, default=list)
 
 
 class TopicReadState(UuidPk, Timestamps, Base):

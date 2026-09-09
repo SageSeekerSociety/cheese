@@ -20,6 +20,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         # The backend shells out to git for every workspace, and serves the
         # smart-HTTP endpoints from git's own exec-path.
         git \
+        # Confirm backend worktree users have exited before retirement.
+        lsof \
         postgresql-client \
         # The backend SSHes into machines it provisions to enroll them as agent
         # hosts; without a client that whole path is dead in the image.

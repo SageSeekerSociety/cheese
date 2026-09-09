@@ -1,10 +1,4 @@
-"""记忆整理 hanging off the idle screen reaper: when a pass is worth a turn, and
-why starting one can never stop a screen from being released.
-
-The trap this file exists for: a pass writes blocks, and blocks are what "idle"
-is measured on — so the naive version has every organized screen renew its own
-lease off the very turn that was supposed to be its last, forever.
-"""
+"""Idle memory consolidation preserves rooms and does not repeat itself."""
 
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -94,15 +88,14 @@ def _screen(project_id: uuid.UUID, topic_id: uuid.UUID):
 def _wire(monkeypatch, runner: _Kickoffs, screens: list, released: list):
     from app.api import deps
     from app.domain.agent import device_hub as dh
-    from app.domain.agent import device_provider as dp
 
     monkeypatch.setattr(deps, "get_work_runner", lambda: runner)
     monkeypatch.setattr(dh.device_hub, "all_online_screens", lambda: list(screens))
 
-    async def fake_release(project_id, topic_id, **kw):
-        released.append(topic_id)
+    async def fake_release(device_id, sid):
+        released.append(sid)
 
-    monkeypatch.setattr(dp, "release_topic_screen", fake_release)
+    monkeypatch.setattr(dh.device_hub, "close_screen", fake_release)
 
 
 def _enable(monkeypatch, **overrides):
@@ -114,35 +107,35 @@ def _enable(monkeypatch, **overrides):
 
 
 async def test_dreaming_off_by_default_starts_nothing(client, tmp_path, monkeypatch):
-    """Spending model budget on a background trigger is opt-in. Off, the reaper
-    behaves exactly as it did before this feature existed."""
+    """Spending model budget on a background trigger remains opt-in."""
     project_id, topic_id = await _idle_topic(client.test_factory)
     runner, released = _Kickoffs(), []
     _wire(monkeypatch, runner, [_screen(project_id, topic_id)], released)
     assert settings.dream_enabled is False
 
-    freed = await _scheduler(client, tmp_path).reap_idle_device_screens(idle_hours=3)
+    freed = await _scheduler(client, tmp_path).consolidate_idle_device_screens(
+        idle_hours=3
+    )
 
-    assert freed == 1
+    assert freed == 0
     assert runner.started == []
-    assert released == [topic_id]
+    assert released == []
     async with client.test_factory() as session:
         assert await latest_dream(session, topic_id) is None
 
 
-async def test_an_idle_screen_is_organized_before_it_is_released(
-    client, tmp_path, monkeypatch
-):
-    """The pass runs INSIDE the screen, so this sweep starts it and leaves the
-    screen alone; the next sweep does the releasing."""
+async def test_an_idle_screen_is_organized_and_retained(client, tmp_path, monkeypatch):
+    """The pass starts inside the retained screen."""
     project_id, topic_id = await _idle_topic(client.test_factory)
     runner, released = _Kickoffs(), []
     _wire(monkeypatch, runner, [_screen(project_id, topic_id)], released)
     _enable(monkeypatch)
 
-    freed = await _scheduler(client, tmp_path).reap_idle_device_screens(idle_hours=3)
+    freed = await _scheduler(client, tmp_path).consolidate_idle_device_screens(
+        idle_hours=3
+    )
 
-    assert freed == 0
+    assert freed == 1
     assert released == [], "the screen was closed out from under the pass"
     assert [t for t, _ in runner.started] == [topic_id]
     assert "记忆整理" in runner.started[0][1]
@@ -151,19 +144,17 @@ async def test_an_idle_screen_is_organized_before_it_is_released(
         assert recorded is not None and recorded.applied is False
 
 
-async def test_the_screen_is_released_next_sweep_even_though_the_pass_spoke(
+async def test_a_memory_pass_is_not_repeated_without_new_work(
     client, tmp_path, monkeypatch
 ):
-    """The loop trap. The pass posts blocks, so by the plain idle rule the topic
-    is "active" and the screen outlives it — an hour later it looks idle again,
-    gets organized again, and nothing is ever released."""
+    """The pass's own blocks must not trigger another consolidation pass."""
     project_id, topic_id = await _idle_topic(client.test_factory)
     runner, released = _Kickoffs(), []
     _wire(monkeypatch, runner, [_screen(project_id, topic_id)], released)
     _enable(monkeypatch)
     svc = _scheduler(client, tmp_path)
 
-    await svc.reap_idle_device_screens(idle_hours=3)
+    await svc.consolidate_idle_device_screens(idle_hours=3)
     async with client.test_factory() as session:
         recorded = await latest_dream(session, topic_id)
         assert recorded is not None
@@ -180,8 +171,8 @@ async def test_the_screen_is_released_next_sweep_even_though_the_pass_spoke(
             )
         await session.commit()
 
-    assert await svc.reap_idle_device_screens(idle_hours=3) == 1
-    assert released == [topic_id]
+    assert await svc.consolidate_idle_device_screens(idle_hours=3) == 0
+    assert released == []
     assert len(runner.started) == 1, "the topic was organized a second time"
 
 
@@ -196,7 +187,7 @@ async def test_someone_coming_back_still_keeps_the_screen(
     _enable(monkeypatch)
     svc = _scheduler(client, tmp_path)
 
-    await svc.reap_idle_device_screens(idle_hours=3)
+    await svc.consolidate_idle_device_screens(idle_hours=3)
     async with client.test_factory() as session:
         await BlockRepository(session).add(
             project_id=project_id,
@@ -207,21 +198,23 @@ async def test_someone_coming_back_still_keeps_the_screen(
         )
         await session.commit()
 
-    assert await svc.reap_idle_device_screens(idle_hours=3) == 0
+    assert await svc.consolidate_idle_device_screens(idle_hours=3) == 0
     assert released == []
 
 
-async def test_a_failing_pass_never_holds_up_cleanup(client, tmp_path, monkeypatch):
-    """记忆整理 is housekeeping. If it cannot start, the screen still goes."""
+async def test_a_failing_pass_keeps_the_screen(client, tmp_path, monkeypatch):
+    """A failed consolidation does not release the room's environment."""
     project_id, topic_id = await _idle_topic(client.test_factory)
     runner, released = _Kickoffs(boom=True), []
     _wire(monkeypatch, runner, [_screen(project_id, topic_id)], released)
     _enable(monkeypatch)
 
-    freed = await _scheduler(client, tmp_path).reap_idle_device_screens(idle_hours=3)
+    freed = await _scheduler(client, tmp_path).consolidate_idle_device_screens(
+        idle_hours=3
+    )
 
-    assert freed == 1
-    assert released == [topic_id]
+    assert freed == 0
+    assert released == []
 
 
 async def test_one_sweep_organizes_at_most_the_configured_number(
@@ -233,14 +226,16 @@ async def test_one_sweep_organizes_at_most_the_configured_number(
     _wire(monkeypatch, runner, [_screen(p, t) for p, t in topics], released)
     _enable(monkeypatch, dream_max_per_sweep=2)
 
-    freed = await _scheduler(client, tmp_path).reap_idle_device_screens(idle_hours=3)
+    freed = await _scheduler(client, tmp_path).consolidate_idle_device_screens(
+        idle_hours=3
+    )
 
     assert len(runner.started) == 2
-    # The third was not organized, and was not spared either — it is just reaped.
-    assert freed == 1 and len(released) == 1
+    # All three screens remain available, including the deferred pass.
+    assert freed == 2 and released == []
 
 
-async def test_a_topic_too_thin_to_be_worth_a_turn_is_just_reaped(
+async def test_a_topic_too_thin_to_be_worth_a_turn_is_retained(
     client, tmp_path, monkeypatch
 ):
     project_id, topic_id = await _idle_topic(client.test_factory, blocks=3)
@@ -248,8 +243,10 @@ async def test_a_topic_too_thin_to_be_worth_a_turn_is_just_reaped(
     _wire(monkeypatch, runner, [_screen(project_id, topic_id)], released)
     _enable(monkeypatch)
 
-    freed = await _scheduler(client, tmp_path).reap_idle_device_screens(idle_hours=3)
+    freed = await _scheduler(client, tmp_path).consolidate_idle_device_screens(
+        idle_hours=3
+    )
 
-    assert freed == 1
+    assert freed == 0
     assert runner.started == []
-    assert released == [topic_id]
+    assert released == []

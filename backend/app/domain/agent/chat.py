@@ -1654,11 +1654,17 @@ class ChatService:
         pending.append(entry)
         del pending[:-16]  # a dead session must not grow this forever
         try:
-            delivered = (
-                await self._compute.deliver(topic_id, line, images=images)
-                if images
-                else await self._compute.deliver(topic_id, line)
-            )
+            async with self._sessions() as session:
+                room = await TopicRepository(session).lock(topic_id)
+                if room is None or room.status == TopicStatus.archived:
+                    delivered = False
+                else:
+                    delivered = (
+                        await self._compute.deliver(topic_id, line, images=images)
+                        if images
+                        else await self._compute.deliver(topic_id, line)
+                    )
+                await session.commit()
         except Exception:  # noqa: BLE001 — caller reports the queued fallback
             logger.exception("merge into running turn failed (topic=%s)", topic_id)
             delivered = False
@@ -4022,6 +4028,8 @@ class ChatService:
             if place is None:
                 raise NotFoundError("Topic not found")
             topic = place.room
+            if topic.status == TopicStatus.archived:
+                raise ValidationError("房间已归档，请先取消归档再继续工作")
 
             # Speaker-labelled prompt covering every human message 芝士 hasn't
             # been handed yet — so messages posted without @芝士 are still seen on

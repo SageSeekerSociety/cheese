@@ -24,13 +24,16 @@ from tests.integration.conftest import session_auth_headers
 
 
 def _project(client) -> str:
-    r = client.post("/projects", json={"name": "P"})
+    r = client.post("/projects", json={"name": "P", "owner_handle": "alice"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
 
 def _topic(client, project_id: str) -> str:
-    r = client.post("/topics", json={"project_id": project_id, "title": "做一个东西"})
+    r = client.post(
+        "/topics",
+        json={"project_id": project_id, "title": "做一个东西", "created_by": "alice"},
+    )
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
@@ -153,7 +156,12 @@ def test_revoking_does_not_undo_a_persons_archive(client):
     cid = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"][0]["id"]
 
     assert (
-        client.post(f"/topics/{tid}/archive", json={"by": "alice"}).status_code == 200
+        client.post(
+            f"/topics/{tid}/archive",
+            json={"by": "alice"},
+            headers=session_auth_headers("alice"),
+        ).status_code
+        == 200
     )
     assert _state(client, tid)["status"] == "archived"
 
@@ -185,7 +193,11 @@ def test_manual_archive_still_archives_and_still_freezes_new_cards(client):
     pid = _project(client)
     tid = _topic(client, pid)
 
-    r = client.post(f"/topics/{tid}/archive", json={"by": "alice"})
+    r = client.post(
+        f"/topics/{tid}/archive",
+        json={"by": "alice"},
+        headers=session_auth_headers("alice"),
+    )
     assert r.status_code == 200
     topic = _state(client, tid)
     assert topic["status"] == "archived"
@@ -199,7 +211,12 @@ def test_manual_archive_still_archives_and_still_freezes_new_cards(client):
 
     # 取消归档回到可递卡。
     assert (
-        client.post(f"/topics/{tid}/unarchive", json={"by": "alice"}).status_code == 200
+        client.post(
+            f"/topics/{tid}/unarchive",
+            json={"by": "alice"},
+            headers=session_auth_headers("alice"),
+        ).status_code
+        == 200
     )
     assert _card(client, tid).status_code == 200
 

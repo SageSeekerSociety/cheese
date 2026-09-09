@@ -141,7 +141,7 @@ async def get_room_environment(
         state = {"state": "offline"}
     else:
         state = await environment_status(
-            device_hub, binding.device_id, project_id, topic_id
+            device_hub, binding.device_id, project_id, topic.resource_id or topic_id
         )
     recovery = await reconcile_recovery(db, topic_id)
     busy = await db.scalar(
@@ -168,6 +168,9 @@ class ApplyEnvironment(BaseModel):
 
 
 async def reset_idle_room(db: AsyncSession, topic_id: uuid.UUID, project_id: uuid.UUID):
+    topic = await room(db, project_id, topic_id, lock=True)
+    if topic.archived_at is not None:
+        raise ValidationError("请先取消归档，再修改房间环境")
     active = await db.scalar(
         select(AgentTurn.id)
         .where(AgentTurn.topic_id == topic_id, AgentTurn.stopped_at.is_(None))
@@ -180,7 +183,11 @@ async def reset_idle_room(db: AsyncSession, topic_id: uuid.UUID, project_id: uui
         if not device_hub.is_online(binding.device_id):
             raise ValidationError("机器离线，无法确认旧会话已停止，请连接后重试")
         await environment_status(
-            device_hub, binding.device_id, project_id, topic_id, action="reset"
+            device_hub,
+            binding.device_id,
+            project_id,
+            topic.resource_id or topic_id,
+            action="reset",
         )
         # Closing each screen also releases its runtime subscription.
         for screen in device_hub.screens_for_topic(topic_id):
@@ -235,7 +242,9 @@ async def inspect_recovery(
         raise NotFoundError("没有待处理的环境故障")
     binding = await sql_device_service(db).topic_binding(topic_id)
     status = (
-        await environment_status(device_hub, binding.device_id, project_id, topic_id)
+        await environment_status(
+            device_hub, binding.device_id, project_id, topic.resource_id or topic_id
+        )
         if binding is not None and device_hub.is_online(binding.device_id)
         else {"state": "offline"}
     )
@@ -293,7 +302,7 @@ async def repair_environment(
         if binding is None or not device_hub.is_online(binding.device_id):
             raise ValidationError("机器离线，暂时无法修复")
         state = await environment_status(
-            device_hub, binding.device_id, project_id, topic_id
+            device_hub, binding.device_id, project_id, topic.resource_id or topic_id
         )
         if state.get("state") != "failed" or state.get("attempt") != incident.meta.get(
             "attempt"

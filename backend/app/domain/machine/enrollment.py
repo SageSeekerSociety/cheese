@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import tempfile
+from pathlib import Path
 
 from app.core.config import settings
 from app.domain.agent import connector_build
@@ -25,6 +26,7 @@ from app.domain.agent.harness.claude_code import (
     CLAUDE_MIN_VERSION,
     CLAUDE_PINNED_VERSION,
     build_startup_cache_prepare,
+    build_warm_session_prepare,
 )
 from app.domain.machine import claude_dist
 
@@ -83,7 +85,7 @@ async def generate_keypair() -> tuple[str, str]:
 
 
 def bootstrap_script(
-    *, origin: str, token: str, device_id: str, prepare_native_cache: bool = False
+    *, origin: str, token: str, device_id: str, prepare_native_session: bool = False
 ) -> str:
     """What runs on the machine. Writes the cli's config, then connects.
 
@@ -109,9 +111,19 @@ def bootstrap_script(
     origin_clean = origin.rstrip("/")
     min_version = CLAUDE_MIN_VERSION
     pinned_version = CLAUDE_PINNED_VERSION
-    cache_script = ""
-    if prepare_native_cache:
-        cache_script = build_startup_cache_prepare(pinned_version)
+    preparation_script = ""
+    if prepare_native_session:
+        ca_pem = ""
+        if settings.subscription_enabled:
+            if not settings.subscription_ca_backend_path.strip():
+                raise EnrollmentError(
+                    "SUBSCRIPTION_CA_BACKEND_PATH is required for native preparation"
+                )
+            ca_pem = Path(settings.subscription_ca_backend_path).read_text()
+            if not ca_pem.strip():
+                raise EnrollmentError("Subscription proxy CA is empty")
+        preparation_script = build_startup_cache_prepare(pinned_version)
+        preparation_script += build_warm_session_prepare(pinned_version, ca_pem=ca_pem)
     return f"""set -eu
 arch=$(uname -m)
 case "$arch" in
@@ -202,7 +214,7 @@ if [ -z "$have" ] || [ "$(printf '%s\n%s\n' "{min_version}" "$have" \
   exit 1
 fi
 umask 077
-{cache_script}
+{preparation_script}
 mkdir -p "$HOME/.local/bin" "$HOME/.config/cheese"
 curl -fsSL --retry 3 --retry-delay 2 -m 120 \\
   "{origin.rstrip("/")}/connector/latest/$target/cheesehost" \\

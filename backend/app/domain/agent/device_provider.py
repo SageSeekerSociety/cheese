@@ -44,7 +44,6 @@ from app.domain.agent.harness.claude_code import (
     Channel,
     ScreenSetupError,
     build_screen_launch,
-    drop_topic_subscriptions,
 )
 from app.domain.agent.harness.launch import LaunchPlan
 from app.domain.agent.platform_failures import (
@@ -366,10 +365,15 @@ def _credential_expiry(token: str) -> int:
 # in one place because two sides depend on it agreeing: the launcher that
 # creates it and the retirement that removes it (topic/retire.py).
 DEVICE_HOME_ROOT = "$HOME/.cheese/home"
+DEVICE_WORK_ROOT = "$HOME/.cheese/work"
 
 
 def device_home_dir(project_id: uuid.UUID, place_id: uuid.UUID) -> str:
     return f"{DEVICE_HOME_ROOT}/{project_id}/{place_id}"
+
+
+def device_work_dir(project_id: uuid.UUID, place_id: uuid.UUID) -> str:
+    return f"{DEVICE_WORK_ROOT}/{project_id}/{place_id}"
 
 
 async def environment_status(
@@ -568,9 +572,18 @@ class DeviceChannel(Channel):
             await session.commit()
             return device_id, agent.id, agent.username
 
-    def _existing_screen(self, device_id: str, topic_id: uuid.UUID) -> HubScreen | None:
+    def _existing_screen(
+        self, device_id: str, topic_id: uuid.UUID, resource_id: uuid.UUID | None = None
+    ) -> HubScreen | None:
         for screen in self._hub.all_online_screens():
-            if screen.device_id == device_id and screen.topic_id == topic_id:
+            if (
+                screen.device_id == device_id
+                and screen.topic_id == topic_id
+                and (
+                    resource_id is None
+                    or (screen.resource_id or topic_id) == resource_id
+                )
+            ):
                 return screen
         return None
 
@@ -622,7 +635,7 @@ class DeviceChannel(Channel):
         changes this boundary: files cross it through git or `file.put`, never by
         translating a backend path into the device's namespace.
         """
-        return f"$HOME/.cheese/work/{project_id}/{topic_id}"
+        return device_work_dir(project_id, topic_id)
 
     def _no_proxy_hosts(self) -> str:
         """What the screen's HTTPS_PROXY must NOT capture: the backend itself
@@ -741,12 +754,13 @@ class DeviceChannel(Channel):
         dead pane. So a reused screen is first probed for a live `claude`
         (``confirm_alive``); an explicitly dead one is closed and reopened under a
         fresh sid the connector must Spawn, rather than reasserted into a corpse."""
-        existing = self._existing_screen(device_id, topic_id)
+        resource_id = uuid.UUID((env or {}).get("CHEESE_RESOURCE_ID", str(topic_id)))
+        existing = self._existing_screen(device_id, topic_id, resource_id)
         if existing is not None and (env or {}).get("CHEESE_ENVIRONMENT"):
             status = environment_before
             if status is None:
                 status = await environment_status(
-                    self._hub, device_id, project_id, topic_id
+                    self._hub, device_id, project_id, resource_id
                 )
             if status["state"] == "preparing":
                 return existing
@@ -787,8 +801,8 @@ class DeviceChannel(Channel):
         # one dir and the drainer delivers everything to whichever session started
         # last: its topic swallows every screen's events while the other topics'
         # turns show zero output.
-        home_dir = device_home_dir(project_id, topic_id)
-        work_dir = self._work_dir(project_id, topic_id)
+        home_dir = device_home_dir(project_id, resource_id)
+        work_dir = self._work_dir(project_id, resource_id)
         api_base = await self._device_api_base(device_id)
         ca_pem = ""
         if settings.subscription_enabled:
@@ -940,14 +954,14 @@ class DeviceChannel(Channel):
             ca_pem=ca_pem,
         )
         if existing is None:
-            command = await self._ship_launcher(device_id, topic_id, command)
+            command = await self._ship_launcher(device_id, resource_id, command)
         else:
             # These device requests are independent. Finish all three before
             # adopting or replacing the screen, without adding their round trips.
             alive, tunnel_down, command = await asyncio.gather(
                 self.confirm_alive(existing),
                 self._tunnel_helper_is_down(existing),
-                self._ship_launcher(device_id, topic_id, command),
+                self._ship_launcher(device_id, resource_id, command),
             )
             if not alive or tunnel_down:
                 # Adopt-create cannot restart a dead process or its tunnel while
@@ -976,6 +990,7 @@ class DeviceChannel(Channel):
         # credential from a dead one without re-deriving it.
         screen.credential_expires = credential_expires
         screen.agent_configuration = configuration
+        screen.resource_id = resource_id
         return screen
 
     # --- turn --------------------------------------------------------------
@@ -1019,23 +1034,33 @@ class DeviceChannel(Channel):
         assert isinstance(precheck, tuple)  # from our precheck
         device_id, agent_user_id, agent_handle = precheck
         try:
-            before = (
-                await environment_status(self._hub, device_id, project_id, topic_id)
-                if (env or {}).get("CHEESE_ENVIRONMENT")
-                else {}
-            )
-            prior_screen = self._existing_screen(device_id, topic_id)
-            screen = await self._ensure_screen(
-                device_id=device_id,
-                agent_user_id=agent_user_id,
-                agent_handle=agent_handle,
-                project_id=project_id,
-                topic_id=topic_id,
-                token=token,
-                env=env,
-                launch=launch,
-                environment_before=before,
-            )
+            from app.core.db import async_session_factory
+
+            factory = self._session_factory or async_session_factory
+            async with factory() as room_session:
+                room = await TopicService(room_session).lock_for_execution(topic_id)
+                resource_id = room.resource_id or room.id
+                env = {**(env or {}), "CHEESE_RESOURCE_ID": str(resource_id)}
+                before = (
+                    await environment_status(
+                        self._hub, device_id, project_id, resource_id
+                    )
+                    if (env or {}).get("CHEESE_ENVIRONMENT")
+                    else {}
+                )
+                prior_screen = self._existing_screen(device_id, topic_id, resource_id)
+                screen = await self._ensure_screen(
+                    device_id=device_id,
+                    agent_user_id=agent_user_id,
+                    agent_handle=agent_handle,
+                    project_id=project_id,
+                    topic_id=topic_id,
+                    token=token,
+                    env=env,
+                    launch=launch,
+                    environment_before=before,
+                )
+                await room_session.commit()
             self._subscription_devices[topic_id] = device_id
             if (env or {}).get("CHEESE_ENVIRONMENT"):
                 # A process started before this feature keeps its environment
@@ -1053,7 +1078,7 @@ class DeviceChannel(Channel):
                     async with asyncio.timeout(3660):
                         while True:
                             status = await environment_status(
-                                self._hub, device_id, project_id, topic_id
+                                self._hub, device_id, project_id, resource_id
                             )
                             if status["state"] == "ready":
                                 break
@@ -1284,81 +1309,11 @@ class DeviceChannel(Channel):
             return True
         return (result.get("stdout") or "").strip() != "dead"
 
-    # --- teardown ----------------------------------------------------------
 
-    async def release_topic(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
-        """Free a done topic's screen — the device backend's teardown, symmetric to
-        the local backend's ``ws.stop_topic_container`` and to this provider's own
-        ``checkpoint``. Called when a topic is accepted/archived or reaped for being
-        idle; without it the screen (and the ``claude`` process + tmux session behind
-        it) leaks on the machine forever, since the reaper only ever knew how to free
-        Docker containers.
-
-        The device's clone under its per-topic work dir is removed too. The
-        per-topic home keeps session state and is deliberately not part of this
-        worktree cleanup.
-
-        Best-effort and idempotent: no screen (device offline / already gone) is a
-        successful no-op, and every failure is swallowed so one topic can never break
-        a reap loop. The screen is forgotten even when its device is offline, so an
-        archived topic leaves no stale registry entry behind."""
-        await drop_topic_subscriptions(topic_id)
-        for screen in self._hub.screens_for_topic(topic_id):
-            device_id = screen.device_id
-            try:
-                # Close first so the device's claude process stops holding the tree,
-                # THEN remove the (now idle) device clone. close_screen forgets the
-                # screen even for an offline device (its session_close is a no-op),
-                # so our registry never leaks an archived topic.
-                await self._hub.close_screen(device_id, screen.sid)
-                await self._remove_work_dir(device_id, project_id, topic_id)
-            except Exception:  # noqa: BLE001 — one screen must not stop the rest
-                logger.warning(
-                    "release_topic: failed freeing screen %s on device %s (topic %s)",
-                    screen.sid,
-                    device_id,
-                    topic_id,
-                    exc_info=True,
-                )
-
-    async def _remove_work_dir(
-        self, device_id: str, project_id: uuid.UUID, topic_id: uuid.UUID
-    ) -> None:
-        """Remove this topic's checkout from an online device."""
-        if not self._hub.is_online(device_id):
-            return
-        work_dir = self._work_dir(project_id, topic_id)
-        # `$HOME` in the scratch path is expanded by the device's shell; project and
-        # topic are UUIDs (no shell metacharacters), so the argv stays a fixed
-        # boundary with nothing to inject.
-        await self._hub.exec(
-            device_id,
-            ["sh", "-lc", f'rm -rf -- "{work_dir}"'],
-            timeout=30,
-        )
-
-
-async def release_topic_screen(
-    project_id: uuid.UUID,
-    topic_id: uuid.UUID,
-    *,
-    hub: DeviceHub | None = None,
-    session_factory: async_sessionmaker | None = None,
-) -> None:
-    """Free a topic's device screen from a caller that holds no ``DeviceChannel`` —
-    the accept/archive path and the idle reaper both reach compute through ws-level
-    helpers, not the compute pool. Thin wrapper over ``DeviceChannel.release_topic``
-    bound to the shared ``device_hub`` singleton (``hub=None``). Best-effort and
-    idempotent, so it is safe to call for EVERY archived/idle topic regardless of
-    backend: a topic that never ran on a device simply has no screen to free."""
-    channel = DeviceChannel(hub=hub, session_factory=session_factory)
-    await channel.release_topic(project_id, topic_id)
-
-
-async def list_device_homes(
+async def list_device_storage(
     device_id: str, *, hub: DeviceHub | None = None
-) -> list[tuple[str, str]]:
-    """Every ``(project, place)`` directory pair under the device's home root,
+) -> list[tuple[str, str, str]]:
+    """Every ``(kind, project, place)`` under both device storage roots,
     as the device's shell sees them — names only, nothing resolved.
 
     Raises ``DeviceOffline`` like ``exec`` does; the caller decides what an
@@ -1366,132 +1321,23 @@ async def list_device_homes(
     `find -printf`, which is GNU-only and a device may be a Mac."""
     hub = hub or device_hub
     script = (
-        f'cd "{DEVICE_HOME_ROOT}" 2>/dev/null || exit 0; '
-        'for p in */*; do [ -d "$p" ] && printf "%s\\n" "$p"; done'
+        f'for root in "{DEVICE_HOME_ROOT}" "{DEVICE_WORK_ROOT}"; do '
+        '(cd "$root" 2>/dev/null || exit 0; '
+        # A project/place symlink may point into the device owner's other data.
+        'for p in */*; do if [ -d "$p" ] && '
+        '[ ! -L "${p%%/*}" ] && [ ! -L "$p" ]; then '
+        'printf "%s\\t%s\\n" "${root##*/}" "$p"; fi; done); done'
     )
     result = await hub.exec(device_id, ["sh", "-lc", script], timeout=30)
-    pairs: list[tuple[str, str]] = []
+    if result.get("exit") != 0 or result.get("truncated"):
+        raise RuntimeError("device storage listing failed or was truncated")
+    pairs: list[tuple[str, str, str]] = []
     for line in str(result.get("stdout") or "").splitlines():
-        project, sep, place = line.strip().partition("/")
-        if sep and project and place:
-            pairs.append((project, place))
+        kind, tab, path = line.partition("\t")
+        project, sep, place = path.partition("/")
+        if kind in {"home", "work"} and tab and sep and project and place:
+            pairs.append((kind, project, place))
     return pairs
-
-
-async def remove_device_home(
-    device_id: str,
-    project_id: uuid.UUID,
-    place_id: uuid.UUID,
-    *,
-    hub: DeviceHub | None = None,
-) -> None:
-    """Delete one place's isolated home on the device. Raises ``DeviceOffline``
-    when there is no link, and ``RuntimeError`` when the device ran the removal
-    and reported it failed — a home that is still there must not be logged as
-    gone."""
-    hub = hub or device_hub
-    home = device_home_dir(project_id, place_id)
-    # `$HOME` is expanded by the device's shell; both ids are UUIDs (no shell
-    # metacharacters), so the argv is a fixed boundary with nothing to inject.
-    # A home is 1-4 GB of session files and caches, hence the long timeout.
-    result = await hub.exec(
-        device_id, ["sh", "-lc", f'rm -rf -- "{home}"'], timeout=300
-    )
-    if result.get("exit") != 0:
-        raise RuntimeError(
-            f"rm -rf {home} exited {result.get('exit')}: "
-            f"{str(result.get('stderr') or '').strip()}"
-        )
-
-
-# What a home holds that the platform keeps when the home goes: claude's session
-# files and the todo lists beside them. Caches and the rest are rebuilt.
-TRANSCRIPT_DIRS = (".claude/projects", ".claude/todos")
-# Left in the home by a successful upload. Its mtime is the moment that upload
-# STARTED, so a session file written any later is newer than it and a later run
-# uploads again; an unchanged home is recognised with one POSIX `find -newer`,
-# on the device's own clock, so the platform's clock never enters into it.
-TRANSCRIPT_MARK = ".transcripts-uploaded"
-TRANSCRIPT_OUTCOMES = ("none", "unchanged", "uploaded")
-# tar+gzip of a few GB of session files, then the upload over whatever uplink
-# the machine has, with `transcripts_max_bytes` (512 MB) as the ceiling on the
-# bytes: fifteen minutes is generous for that and still bounds the archive
-# request this runs under.
-TRANSCRIPT_UPLOAD_TIMEOUT_S = 900
-
-
-def transcript_upload_script(project_id: uuid.UUID, place_id: uuid.UUID) -> str:
-    """The shell that ships one home's transcripts to the platform.
-
-    Prints its outcome as the last line — `none` (the home never ran a
-    session, nothing to keep), `unchanged` (already stored, nothing new since)
-    or `uploaded` — and exits non-zero on any failure, with curl's reason on
-    stderr. The platform's address and this machine's credential come from
-    `CHEESE_API` / `CHEESE_TOKEN`, the cli's own env override names
-    (cli/internal/apicli), handed to the command by the exec frame.
-
-    Streams with `-T -` rather than `--data-binary @-`: the latter reads the
-    whole archive into memory before sending, and a home can be gigabytes.
-    Only curl's exit decides the pipeline's (no `pipefail` in POSIX sh), which
-    is enough: a tar that died leaves a truncated stream, and the platform
-    refuses that with a 4xx that `-f` turns into a failure."""
-    home = device_home_dir(project_id, place_id)
-    projects, todos = TRANSCRIPT_DIRS
-    return (
-        f'home="{home}"; mark="$home/{TRANSCRIPT_MARK}"\n'
-        f'[ -d "$home/{projects}" ] || {{ echo none; exit 0; }}\n'
-        f"set -- {projects}\n"
-        f'[ -d "$home/{todos}" ] && set -- "$@" {todos}\n'
-        'if [ -e "$mark" ] && [ -z "$(cd "$home" && find "$@" -type f '
-        '-newer "$mark" | head -n 1)" ]; then echo unchanged; exit 0; fi\n'
-        'cd "$home" || exit 1\n'
-        'touch "$mark.pending"\n'
-        # macOS tar otherwise packs an AppleDouble `._x` twin beside every file
-        # that carries extended attributes — bytes the platform has no use for.
-        'COPYFILE_DISABLE=1 tar czf - "$@" 2>/dev/null | curl -sS -f -T - '
-        '-H "Authorization: Bearer $CHEESE_TOKEN" '
-        f'"$CHEESE_API/transcripts/{project_id}/{place_id}" '
-        '&& mv -f "$mark.pending" "$mark" && echo && echo uploaded\n'
-    )
-
-
-async def upload_device_transcripts(
-    device_id: str,
-    project_id: uuid.UUID,
-    place_id: uuid.UUID,
-    *,
-    token: str,
-    hub: DeviceHub | None = None,
-) -> tuple[str, str]:
-    """Have the device store one home's transcripts on the platform, before the
-    home is removed. Returns ``(outcome, receipt)``: the outcome is one of
-    ``TRANSCRIPT_OUTCOMES``, the receipt is the platform's answer (size and
-    sha256) on an upload and empty otherwise. Raises ``DeviceOffline`` like
-    ``exec`` does and ``RuntimeError`` when the device ran the upload and it
-    did not go through — the caller must then leave the home alone."""
-    hub = hub or device_hub
-    # The same base the machine's cli dials and its hooks post to, so it is
-    # reachable from there by construction.
-    api_base = f"{settings.connector_public_base.rstrip('/')}/connector"
-    result = await hub.exec(
-        device_id,
-        ["sh", "-lc", transcript_upload_script(project_id, place_id)],
-        env={"CHEESE_API": api_base, "CHEESE_TOKEN": token},
-        timeout=TRANSCRIPT_UPLOAD_TIMEOUT_S,
-    )
-    lines = [
-        line.strip()
-        for line in str(result.get("stdout") or "").splitlines()
-        if line.strip()
-    ]
-    outcome = lines[-1] if lines else ""
-    if result.get("exit") != 0 or outcome not in TRANSCRIPT_OUTCOMES:
-        detail = str(result.get("stderr") or "").strip() or " ".join(lines[-2:])
-        raise RuntimeError(
-            f"transcript upload exited {result.get('exit')}: {detail or 'no output'}"
-        )
-    receipt = lines[-2] if outcome == "uploaded" and len(lines) > 1 else ""
-    return outcome, receipt
 
 
 def topic_credential_expiry(

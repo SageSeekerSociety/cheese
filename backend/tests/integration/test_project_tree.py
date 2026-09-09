@@ -5,6 +5,7 @@ import uuid
 
 from app.domain.block.models import AuthorType, Block, BlockKind
 from tests.conftest import wait_work_idle as _wait_work_idle
+from tests.integration.conftest import session_auth_headers
 
 
 def _project(client, **kw) -> dict:
@@ -245,9 +246,14 @@ def test_archived_topic_is_frozen(client):
     # 反而更贴题了。
     p = _project(client)
     topic = client.post(
-        "/topics", json={"project_id": p["id"], "title": "交付物"}
+        "/topics",
+        json={"project_id": p["id"], "title": "交付物", "created_by": "alice"},
     ).json()["data"]
-    r = client.post(f"/topics/{topic['id']}/archive", json={"by": "alice"})
+    r = client.post(
+        f"/topics/{topic['id']}/archive",
+        json={"by": "alice"},
+        headers=session_auth_headers("alice"),
+    )
     assert r.status_code == 200
     got = client.get(f"/topics/{topic['id']}").json()["data"]
     assert got["status"] == "archived"
@@ -267,11 +273,15 @@ def test_upgrade_on_archived_topic_rejected(client):
     # Consistent with split/edit_doc: a frozen topic accepts no new work (§6.3).
     p = _project(client)
     topic = client.post(
-        "/topics", json={"project_id": p["id"], "title": "交付"}
+        "/topics", json={"project_id": p["id"], "title": "交付", "created_by": "alice"}
     ).json()["data"]
     block_id = _insert_block(client, p["id"], topic["id"], "某条结论")
     assert (
-        client.post(f"/topics/{topic['id']}/archive", json={"by": "alice"}).status_code
+        client.post(
+            f"/topics/{topic['id']}/archive",
+            json={"by": "alice"},
+            headers=session_auth_headers("alice"),
+        ).status_code
         == 200
     )
     r = client.post(f"/blocks/{block_id}/upgrade", json={"created_by": "alice"})

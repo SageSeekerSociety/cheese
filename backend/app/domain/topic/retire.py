@@ -1,402 +1,424 @@
-"""What a finished place leaves on disk, and the one thing that takes it away.
-
-Archiving a room releases its Cloud machine and settles its cards, and until
-2026-09 left two things behind for good:
-
-- the tree's git worktree on this box,
-  `<workspace_root>/.worktrees/<project>/topic_<hex8>`;
-- the place's isolated claude home on the device that ran it,
-  `$HOME/.cheese/home/<project>/<place>` — session files and caches, 1-4 GB each.
-  Only rooms have one now; the sweep still resolves a thread's, because the
-  directories a thread left on disk before 任务=分身 are still there.
-
-Nothing removed either. Measured on the dev box on 2026-09-03: 373 worktrees
-(141 GB), 118 of them for archived topics and 219 for topics no longer in the
-database at all; 162 homes (162 GB), 46 archived and 85 unknown.
-
-Archive itself still removes neither. `retire_room_storage` runs at archive
-time, from `TopicService`, and only closes the room's screen on its device: an
-archive is reversible (`POST /{topic_id}/unarchive`), and for
-`topic_home_retention_days` the worktree and the home stay so that the work
-comes back with its session intact rather than from an empty checkout of the
-branch. Best-effort by design —
-nothing here may fail an archive, which is a fact about the place and not about
-its machine.
-
-`sweep_retired_storage` runs on a clock (scheduler/jobs.py). It walks this
-box's worktrees and every online device's homes, resolves each entry to a
-place, and removes what belongs to nothing — at once — or to something archived
-longer ago than the retention. A leftover that resolves to no row is an orphan:
-the topic was deleted outright, or the directory predates the database knowing
-about it. Every removal and every keep is one log line with its reason.
-
-A home is stored before it is deleted. It holds the only copy of the agent's
-raw session files (`.claude/projects/**/*.jsonl` — the room's conversation is
-in `blocks`, that is not), so `_remove_home` first has the device ship
-`.claude/projects` and `.claude/todos` to the platform
-(`PUT /connector/transcripts/<project>/<place>`, stored under
-`settings.transcripts_dir`, see topic/transcripts.py), records the upload on
-the place as `transcripts_archived_at`, and only on a 2xx runs the `rm`. Any
-other answer leaves the home where it is with one WARN line, and the sweep
-tries again next tick. A home that never ran a session has nothing to keep and
-goes without an upload; so does a home whose project row is gone — there is no
-project to file its transcripts under and nobody left who could read them —
-with one WARN line saying so.
-
-The branch is never touched. Its commits are the record; the directory was only
-a checkout of them plus uncommitted work, which an archive abandons by definition.
-"""
+"""Durable archived-room cleanup, independent of backend process lifetime."""
 
 import asyncio
+import json
 import logging
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from app.core.config import settings
 from app.core.db import SessionFactory
+from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent import resource_cleanup
+from app.domain.agent.device_hub import device_hub
+from app.domain.agent.device_provider import device_home_dir, list_device_storage
+from app.domain.agent.harness.claude_code import event_drain
+from app.domain.agent.models import AgentTurn
+from app.domain.device.models import DeviceRow
+from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
-from app.domain.project.services import ProjectService
-from app.domain.room_task.models import TaskStatus
+from app.domain.machine.services import MachineService
 from app.domain.room_task.services import TaskService, WorkTreeService
-from app.domain.topic.models import Topic
+from app.domain.topic.models import RoomCleanup, Topic, TopicStatus
 from app.domain.topic.repositories import TopicRepository
 from app.domain.workspace import service as ws
 
 logger = logging.getLogger("cheesex.topic.retire")
 
 
-# ---- at archive time --------------------------------------------------------
-
-
-async def retire_room_storage(room: Topic) -> None:
-    """Stop the room's session on its device. Nothing comes off disk here: its
-    trees and its home stay for the retention, so that an un-archive picks the
-    work back up with the session intact, and the sweep takes them after."""
-    await _release_screen(room.project_id, room.id)
-
-
-async def _release_screen(project_id: uuid.UUID, place_id: uuid.UUID) -> None:
-    from app.domain.agent.device_provider import release_topic_screen
-
-    # Best-effort and idempotent on its side: a place that never ran on a device
-    # has no screen to close, and a device that is offline has nothing to answer.
-    try:
-        await release_topic_screen(project_id, place_id)
-    except Exception:  # noqa: BLE001
-        logger.warning("retire: place=%s screen not released", place_id, exc_info=True)
-
-
-async def _retire_worktree(project_id: uuid.UUID, wt: Path, *, reason: str) -> bool:
-    if not wt.exists():
-        return True
-    # git and rmtree block, and a checkout can be gigabytes: off the event loop,
-    # which is serving the archive request this runs under.
-    try:
-        gone = await asyncio.to_thread(ws.remove_worktree, project_id, wt)
-    except Exception:  # noqa: BLE001 — a disk failure must not fail the archive
-        logger.warning("retire: worktree=%s outcome=error", wt, exc_info=True)
-        return False
-    logger.info(
-        "retire: worktree=%s outcome=%s reason=%s",
-        wt,
-        "removed" if gone else "left (removal failed, the sweep will retry)",
-        reason,
+async def _device_action(
+    device: str,
+    project: uuid.UUID,
+    resource: str,
+    action: str,
+    cleanup_id: uuid.UUID,
+    receipts: list | None = None,
+) -> None:
+    result = await device_hub.exec(
+        device,
+        ["python3", "-", action, str(project), resource, str(cleanup_id)],
+        stdin=Path(resource_cleanup.__file__).read_text(),
+        timeout=60,
+        env={"CHEESE_TRANSCRIPT_RECEIPTS": json.dumps(receipts or [])},
     )
-    return gone
+    if result.get("exit") != 0 or result.get("truncated"):
+        raise RuntimeError(
+            str(result.get("stderr") or "device cleanup check failed")[-1500:]
+        )
 
 
-async def _remove_home(
+async def _flush_transcripts(
+    project: uuid.UUID,
+    topic: uuid.UUID,
+    entry: dict,
     session: AsyncSession,
-    project_id: uuid.UUID,
-    place_id: uuid.UUID,
-    device_id: str,
-    *,
-    reason: str,
-    store_transcripts: bool = True,
-) -> bool:
-    """Store the home's transcripts on the platform, then delete it. Only a
-    stored home — or one with nothing to store — is deleted; anything short of
-    that leaves it in place for the sweep to try again. ``store_transcripts``
-    is False for a home whose project row is gone: nothing to file them under,
-    nobody left who could read them, so the home goes unstored — said once, at
-    WARN, since it is the one deletion here that loses a record."""
-    from app.domain.agent.device_hub import DeviceOffline, device_hub
-    from app.domain.agent.device_provider import remove_device_home
+    cleanup_id: uuid.UUID,
+) -> list:
+    # Use the same collector even when the room last ran an older launcher.
+    home = device_home_dir(project, uuid.UUID(entry["resource_id"]))
+    token = mint_scoped_token(project_id=str(project), topic_id=str(topic), ttl_s=3600)
+    base = settings.connector_public_base.rstrip("/")
+    device = await session.get(DeviceRow, entry["device_id"])
+    if device and device.supply == Supply.cloud and device.cloud_control_private:
+        base = "http://127.0.0.1:18080"
+    setup = (
+        f'if [ ! -d "{home}" ]; then printf "[]"; exit 0; fi; '
+        f'export CHEESE_COLLECT_HOME="{home}"; exec python3 -'
+    )
+    source = Path(event_drain.__file__).read_text()
+    source = source[: source.index('if __name__ == "__main__":')]
+    source += """\nhome = Path(os.environ["CHEESE_COLLECT_HOME"])
+script = home / ".claude/cheese-drain"
+script.parent.mkdir(parents=True, exist_ok=True)
+values = {"CHEESE_HOOK_SPOOL": str(home / ".claude/cheese-spool"),
+          "CHEESE_HOOK_URL": os.environ["CHEESE_CLEANUP_HOOK_URL"],
+          "CHEESE_CLEANUP_ID": os.environ["CHEESE_CLEANUP_ID"],
+          "CHEESE_TOKEN": os.environ["CHEESE_CLEANUP_TOKEN"]}
+print(json.dumps(collect_transcripts(script, values, flush=True)))
+"""
+    result = await device_hub.exec(
+        entry["device_id"],
+        ["sh", "-c", setup],
+        stdin=source,
+        env={
+            "CHEESE_CLEANUP_TOKEN": token,
+            "CHEESE_CLEANUP_HOOK_URL": f"{base}/sandbox/hooks/{topic}",
+            "CHEESE_CLEANUP_ID": str(cleanup_id),
+        },
+        timeout=900,
+    )
+    if result.get("exit") != 0 or result.get("truncated"):
+        raise RuntimeError("final transcript collection or confirmation failed")
+    return json.loads(result.get("stdout") or "[]")
 
-    if not device_hub.is_online(device_id):
-        logger.info(
-            "retire: home=%s/%s device=%s outcome=left reason=device offline "
-            "(the sweep will retry when it connects)",
-            project_id,
-            place_id,
-            device_id,
+
+async def _inventory(session, operation: RoomCleanup, inventory: dict) -> list[dict]:
+    resource_ids = {str(operation.resource_id)}
+    resource_ids.update(
+        str(task.id)
+        for task, *_ in await TaskService(session).threads_for_room(
+            operation.topic_id, limit=0
         )
-        return False
-    try:
-        if store_transcripts:
-            if not await _store_transcripts(session, project_id, place_id, device_id):
-                return False
-        else:
-            logger.warning(
-                "retire: home=%s/%s device=%s transcripts=dropped reason=project "
-                "gone, no project to file them under and nobody left to read them",
-                project_id,
-                place_id,
-                device_id,
+    )
+    entries = {}
+    binding = await sql_device_service(session).topic_binding(operation.topic_id)
+    if binding is not None:
+        if (
+            not device_hub.is_online(binding.device_id)
+            or binding.device_id not in inventory
+        ):
+            raise RuntimeError("room's bound device is offline or its inventory failed")
+        entries[(binding.device_id, str(operation.resource_id))] = {
+            "kind": "device",
+            "device_id": binding.device_id,
+            "resource_id": str(operation.resource_id),
+        }
+    for device_id, paths in inventory.items():
+        for _kind, project, resource in paths:
+            if project == str(operation.project_id) and resource in resource_ids:
+                entries[(device_id, resource)] = {
+                    "kind": "device",
+                    "device_id": device_id,
+                    "resource_id": resource,
+                }
+    result = list(entries.values())
+    machine = await MachineService(session).topic_machine(operation.topic_id)
+    if machine is not None:
+        if machine.device_id is not None:
+            if (
+                not device_hub.is_online(machine.device_id)
+                or machine.device_id not in inventory
+            ):
+                raise RuntimeError("Cloud device is offline or its inventory failed")
+            if not any(entry.get("device_id") == machine.device_id for entry in result):
+                result.append(
+                    {
+                        "kind": "device",
+                        "device_id": machine.device_id,
+                        "resource_id": str(operation.resource_id),
+                    }
+                )
+            shared = await sql_device_service(session).list_topic_bindings(
+                machine.device_id
             )
-        await remove_device_home(device_id, project_id, place_id)
-    except DeviceOffline:
-        logger.info(
-            "retire: home=%s/%s device=%s outcome=left reason=device went offline",
-            project_id,
-            place_id,
-            device_id,
-        )
-        return False
-    except (TimeoutError, RuntimeError) as exc:
-        logger.warning(
-            "retire: home=%s/%s device=%s outcome=left reason=%s",
-            project_id,
-            place_id,
-            device_id,
-            exc,
-        )
-        return False
-    except Exception:  # noqa: BLE001 — one device must not stop an archive or a sweep
-        logger.warning(
-            "retire: home=%s/%s device=%s outcome=error",
-            project_id,
-            place_id,
-            device_id,
-            exc_info=True,
-        )
-        return False
-    logger.info(
-        "retire: home=%s/%s device=%s outcome=removed reason=%s",
-        project_id,
-        place_id,
-        device_id,
-        reason,
-    )
-    return True
-
-
-async def _store_transcripts(
-    session: AsyncSession, project_id: uuid.UUID, place_id: uuid.UUID, device_id: str
-) -> bool:
-    """Have the device ship the home's transcripts and note it on the place.
-    False — after a WARN — when the device row is gone and there is nothing to
-    authenticate the upload as; an upload the device ran and that did not go
-    through raises, like the ``rm`` does, and the caller logs it the same way."""
-    from app.domain.agent.device_provider import upload_device_transcripts
-
-    # The upload authenticates as the device, with the credential the device
-    # already holds; it is read here rather than off the machine because the
-    # exec frame is the one place the platform can hand the command its env.
-    device = await sql_device_service(session).get_device(device_id)
-    if device is None:
-        logger.warning(
-            "retire: home=%s/%s device=%s outcome=left reason=device row gone, "
-            "nothing to upload the transcripts as",
-            project_id,
-            place_id,
-            device_id,
-        )
-        return False
-    outcome, receipt = await upload_device_transcripts(
-        device_id, project_id, place_id, token=device.token
-    )
-    if outcome == "uploaded" and not await _record_transcripts_archived(
-        session, place_id
-    ):
-        outcome = "uploaded (no place row to record it on)"
-    logger.info(
-        "retire: home=%s/%s device=%s transcripts=%s%s",
-        project_id,
-        place_id,
-        device_id,
-        outcome,
-        f" receipt={receipt}" if receipt else "",
-    )
-    return True
-
-
-async def _record_transcripts_archived(
-    session: AsyncSession, place_id: uuid.UUID
-) -> bool:
-    """Stamp the place — a room, or a thread in one — with when its transcripts
-    reached the platform. False when no row has this id (the home of a deleted
-    place: its archive is on disk all the same, there is just nothing to note
-    it on)."""
-    now = datetime.now(UTC)
-    if await TopicRepository(session).mark_transcripts_archived(place_id, now):
-        return True
-    return await TaskService(session).mark_transcripts_archived(place_id, now)
-
-
-# ---- on a clock -------------------------------------------------------------
-
-
-async def sweep_retired_storage(
-    sessions: SessionFactory, *, retention_days: float | None = None
-) -> dict[str, int]:
-    """Remove the worktrees and device homes of places that are gone or have
-    been archived longer than the retention. Returns what it did and what it
-    could not do; what it deliberately kept is only in the log, one line each."""
-    days = (
-        settings.topic_home_retention_days if retention_days is None else retention_days
-    )
-    cutoff = datetime.now(UTC) - timedelta(days=days)
-    counts = {
-        "worktrees_removed": 0,
-        "worktrees_left": 0,
-        "homes_removed": 0,
-        "homes_left": 0,
+            if any(pin.topic_id != operation.topic_id for pin in shared):
+                raise RuntimeError("Cloud machine has another room's binding")
+            covered = {
+                (str(operation.project_id), entry["resource_id"])
+                for entry in result
+                if entry.get("device_id") == machine.device_id
+            }
+            if any(
+                (project, resource) not in covered
+                for _kind, project, resource in inventory[machine.device_id]
+            ):
+                raise RuntimeError(
+                    "Cloud machine contains unrecognized room directories"
+                )
+        result.append({"kind": "machine", "id": str(machine.id)})
+    trees = await WorkTreeService(session).trees_in_project(operation.project_id)
+    own = {
+        operation.topic_id,
+        *(tree.id for tree in trees if tree.room_id == operation.topic_id),
     }
-    await _sweep_worktrees(sessions, cutoff, counts)
-    await _sweep_homes(sessions, cutoff, counts)
+    other = {tree.id for tree in trees if tree.room_id != operation.topic_id}
+    other.update(
+        await session.scalars(
+            select(Topic.id).where(
+                Topic.project_id == operation.project_id,
+                Topic.id != operation.topic_id,
+            )
+        )
+    )
+    for project, prefix, path in await asyncio.to_thread(ws.topic_worktrees_on_disk):
+        if project != operation.project_id or not any(
+            item.hex[:8] == prefix for item in own
+        ):
+            continue
+        if any(item.hex[:8] == prefix for item in other):
+            raise RuntimeError("backend worktree prefix has ambiguous ownership")
+        target = path.parent / ".retired" / str(operation.id) / path.name
+        result.append({"kind": "worktree", "path": str(path), "retired": str(target)})
+    return result
+
+
+def _park_worktree(entry: dict) -> None:
+    source, target = Path(entry["path"]), Path(entry["retired"])
+    if not target.exists():
+        if not source.exists():
+            return
+        target.parent.mkdir(parents=True, exist_ok=True)
+        result = resource_cleanup.run_command(
+            ["git", "worktree", "move", str(source), str(target)], cwd=source
+        )
+        if result.returncode:
+            raise RuntimeError("could not isolate the backend checkout for cleanup")
+    # Free the room branch before claim: reopening can check it out while
+    # deletion of another old resource is still waiting for its device.
+    result = resource_cleanup.run_command(["git", "checkout", "--detach"], cwd=target)
+    if result.returncode:
+        raise RuntimeError("could not detach the retired backend checkout")
+
+
+async def sweep_retired_storage(sessions: SessionFactory) -> dict[str, int]:
+    counts = {"completed": 0, "pending": 0}
+    async with sessions() as session:
+        engine = session.bind
+        ids = list(
+            await session.scalars(
+                select(RoomCleanup.id).where(
+                    RoomCleanup.state.in_(["pending", "preparing", "claimed"]),
+                    RoomCleanup.due_at <= datetime.now(UTC),
+                )
+            )
+        )
+    if not ids:
+        return counts
+    inventory = {}
+    for device_id in device_hub.online_device_ids():
+        try:
+            inventory[device_id] = await list_device_storage(device_id)
+        except Exception:
+            logger.exception("cleanup device inventory failed device=%s", device_id)
+    assert isinstance(engine, AsyncEngine)
+    for cleanup_id in ids:
+        # Keep one physical connection across commits: a session advisory lock
+        # must not be returned to the pool while a device command is in flight.
+        async with engine.connect() as connection:
+            async with AsyncSession(bind=connection, expire_on_commit=False) as session:
+                key = {"key": f"room-cleanup:{cleanup_id}"}
+                locked = (
+                    await session.execute(
+                        text("SELECT pg_try_advisory_lock(hashtextextended(:key, 0))"),
+                        key,
+                    )
+                ).scalar()
+                if not locked:
+                    continue
+                try:
+                    await _advance(session, cleanup_id, inventory)
+                    operation = await session.get(RoomCleanup, cleanup_id)
+                    counts[
+                        "completed"
+                        if operation and operation.state == "complete"
+                        else "pending"
+                    ] += 1
+                except Exception as exc:
+                    await session.rollback()
+                    operation = await session.get(RoomCleanup, cleanup_id)
+                    if operation is not None:
+                        operation.last_error = str(exc)[:2048]
+                        await session.commit()
+                    logger.exception("cleanup failed operation=%s", cleanup_id)
+                    counts["pending"] += 1
+                finally:
+                    # Closing the physical connection also releases the lock on
+                    # cancellation, without leaking a locked connection into a pool.
+                    await connection.invalidate()
     return counts
 
 
-async def _sweep_worktrees(
-    sessions: SessionFactory, cutoff: datetime, counts: dict[str, int]
-) -> None:
-    by_project: dict[uuid.UUID, list[tuple[str, Path]]] = {}
-    for project_id, prefix, path in await asyncio.to_thread(ws.topic_worktrees_on_disk):
-        by_project.setdefault(project_id, []).append((prefix, path))
-    async with sessions() as session:
-        for project_id, entries in by_project.items():
-            owners = await _tree_owners(session, project_id)
-            for prefix, path in entries:
-                matched = {
-                    oid: at for oid, at in owners.items() if oid.hex[:8] == prefix
-                }
-                remove, reason = _verdict(matched, cutoff)
-                if not remove:
-                    logger.info(
-                        "sweep: worktree=%s outcome=kept reason=%s", path, reason
-                    )
-                    continue
-                gone = await _retire_worktree(project_id, path, reason=reason)
-                counts["worktrees_removed" if gone else "worktrees_left"] += 1
-
-
-async def _tree_owners(
-    session: AsyncSession, project_id: uuid.UUID
-) -> dict[uuid.UUID, datetime | None]:
-    """Everything a `topic_<hex8>` directory in this project can be named
-    after, with when it was archived: a topic, or one of a room's trees (a
-    later batch has its own id, and the tree is judged by its room). A tree
-    whose room is gone resolves to nothing, like any other orphan."""
-    topics = await TopicRepository(session).archival_for_project(project_id)
-    owners = dict(topics)
-    for tree in await WorkTreeService(session).trees_in_project(project_id):
-        if tree.room_id in topics:
-            owners.setdefault(tree.id, topics[tree.room_id])
-    return owners
-
-
-async def _sweep_homes(
-    sessions: SessionFactory, cutoff: datetime, counts: dict[str, int]
-) -> None:
-    from app.domain.agent.device_hub import DeviceOffline, device_hub
-    from app.domain.agent.device_provider import list_device_homes
-
-    for device_id in sorted(device_hub.online_device_ids()):
+async def _advance(session, cleanup_id: uuid.UUID, inventory: dict) -> None:
+    operation = await session.get(RoomCleanup, cleanup_id)
+    if operation is None or operation.state in {"cancelled", "complete"}:
+        return
+    retry_claim = operation.state == "claimed"
+    room = await TopicRepository(session).lock(operation.topic_id)
+    if operation.state == "pending":
+        if (
+            room is None
+            or room.status != TopicStatus.archived
+            or room.cleanup_id != operation.id
+        ):
+            operation.state = "cancelled"
+            await session.commit()
+            return
         try:
-            homes = await list_device_homes(device_id)
-        except DeviceOffline:
-            logger.info(
-                "sweep: device=%s outcome=skipped reason=went offline", device_id
-            )
-            continue
-        except Exception:  # noqa: BLE001 — one device must not stop the sweep
-            logger.warning(
-                "sweep: device=%s outcome=error listing homes", device_id, exc_info=True
-            )
-            continue
-        async with sessions() as session:
-            for project, place in homes:
-                try:
-                    project_id, place_id = uuid.UUID(project), uuid.UUID(place)
-                except ValueError:
-                    logger.info(
-                        "sweep: home=%s/%s device=%s outcome=kept "
-                        "reason=not a project/place id",
-                        project,
-                        place,
-                        device_id,
-                    )
-                    continue
-                remove, reason = _verdict(
-                    await _place_archival(session, place_id), cutoff
-                )
-                if not remove:
-                    logger.info(
-                        "sweep: home=%s/%s device=%s outcome=kept reason=%s",
-                        project_id,
-                        place_id,
-                        device_id,
-                        reason,
-                    )
-                    continue
-                # The transcripts are filed under the project. A home whose
-                # project row is gone has nowhere to file them and nobody who
-                # could ever read them, so it goes unstored.
-                project_gone = await ProjectService(session).get(project_id) is None
-                # An archived place had its screen closed at archive time; an
-                # orphan may still be running one, and its claude must not be
-                # holding the home while it is deleted.
-                await _release_screen(project_id, place_id)
-                gone = await _remove_home(
-                    session,
-                    project_id,
-                    place_id,
-                    device_id,
-                    reason=reason,
-                    store_transcripts=not project_gone,
-                )
-                # Per home, not per device: a `transcripts_archived_at` stamp
-                # must not be lost to a later home's failure on the same tick.
-                await session.commit()
-                counts["homes_removed" if gone else "homes_left"] += 1
-
-
-async def _place_archival(
-    session: AsyncSession, place_id: uuid.UUID
-) -> dict[uuid.UUID, datetime | None]:
-    """The place a home is named after — a room, or a thread in one — with when
-    it ended; empty when nothing has that id. A closed thread without a
-    `closed_at` reads as still open: with no date to judge by, keeping is the
-    safe reading."""
-    topic = await TopicRepository(session).get(place_id)
-    if topic is not None:
-        return {topic.id: topic.archived_at}
-    task = await TaskService(session).get(place_id)
-    if task is not None:
-        return {task.id: task.closed_at if task.status == TaskStatus.closed else None}
-    return {}
-
-
-def _verdict(
-    candidates: dict[uuid.UUID, datetime | None], cutoff: datetime
-) -> tuple[bool, str]:
-    """Whether a leftover named after `candidates` may go, and why either way."""
-    if not candidates:
-        return True, "no place with this id in the database"
-    if len(candidates) > 1:
-        return False, f"id prefix matches {len(candidates)} places, ambiguous"
-    ((place_id, archived_at),) = candidates.items()
-    if archived_at is None:
-        return False, f"place {place_id} is active"
-    if archived_at.tzinfo is None:
-        archived_at = archived_at.replace(tzinfo=UTC)
-    if archived_at >= cutoff:
-        return (
-            False,
-            f"place {place_id} archived {archived_at:%Y-%m-%d}, within retention",
+            if not operation.resources:
+                operation.resources = await _inventory(session, operation, inventory)
+        except Exception as exc:
+            operation.last_error = str(exc)[:2048]
+            await session.commit()
+            return
+        operation.state = "preparing"
+    await session.commit()
+    logger.info(
+        "cleanup start operation=%s room=%s state=%s",
+        cleanup_id,
+        operation.topic_id,
+        operation.state,
+    )
+    if operation.state == "preparing":
+        stopped = False
+        parking_started = any(
+            entry["kind"] == "worktree" and Path(entry["retired"]).exists()
+            for entry in operation.resources
         )
-    return True, f"place {place_id} archived {archived_at:%Y-%m-%d}, past retention"
+        try:
+            for entry in operation.resources:
+                if entry["kind"] == "device":
+                    await _device_action(
+                        entry["device_id"],
+                        operation.project_id,
+                        entry["resource_id"],
+                        "prepare",
+                        operation.id,
+                    )
+            stopped = True
+            resources = [dict(entry) for entry in operation.resources]
+            for entry in resources:
+                if entry["kind"] == "device":
+                    await _device_action(
+                        entry["device_id"],
+                        operation.project_id,
+                        entry["resource_id"],
+                        "publication",
+                        operation.id,
+                    )
+                    entry["transcripts"] = await _flush_transcripts(
+                        operation.project_id,
+                        operation.topic_id,
+                        entry,
+                        session,
+                        operation.id,
+                    )
+            active = await session.scalar(
+                select(AgentTurn.id)
+                .where(
+                    AgentTurn.topic_id == operation.topic_id,
+                    AgentTurn.stopped_at.is_(None),
+                )
+                .limit(1)
+            )
+            if active is not None:
+                raise RuntimeError(
+                    "room work is still finishing or persisting its result"
+                )
+            for entry in resources:
+                if entry["kind"] == "worktree":
+                    target = Path(entry["retired"])
+                    path = target if target.exists() else Path(entry["path"])
+                    await asyncio.to_thread(resource_cleanup.check_no_writers, [path])
+                    await asyncio.to_thread(
+                        resource_cleanup.check_published, path, canonical=True
+                    )
+            for entry in resources:
+                if entry["kind"] == "worktree":
+                    parking_started = True
+                    await asyncio.to_thread(_park_worktree, entry)
+            operation.resources = resources
+            for screen in list(device_hub.screens_for_topic(operation.topic_id)):
+                await device_hub.close_screen(screen.device_id, screen.sid)
+            operation.state = "claimed"
+            operation.last_error = None
+            if room is not None:
+                room.transcripts_archived_at = datetime.now(UTC)
+            await session.commit()
+        except Exception as exc:
+            operation.state = (
+                "pending" if stopped and not parking_started else "preparing"
+            )
+            operation.last_error = str(exc)[:2048]
+            await session.commit()
+            logger.warning("cleanup pending operation=%s reason=%s", cleanup_id, exc)
+            return
+    for entry in operation.resources:
+        if entry.get("removed"):
+            continue
+        if entry["kind"] == "device":
+            if retry_claim:
+                # A delayed append may have prevented the previous removal.
+                # Reconcile only the recorded old generation, even after reopen.
+                await _device_action(
+                    entry["device_id"],
+                    operation.project_id,
+                    entry["resource_id"],
+                    "prepare",
+                    operation.id,
+                )
+                entry["transcripts"] = await _flush_transcripts(
+                    operation.project_id,
+                    operation.topic_id,
+                    entry,
+                    session,
+                    operation.id,
+                )
+                operation.resources = [dict(item) for item in operation.resources]
+                await session.commit()
+            await _device_action(
+                entry["device_id"],
+                operation.project_id,
+                entry["resource_id"],
+                "remove",
+                operation.id,
+                entry.get("transcripts"),
+            )
+        elif entry["kind"] == "worktree":
+            target = Path(entry["retired"])
+            # Never return to the old path: reopening may already own it.
+            if target.exists():
+                await asyncio.to_thread(resource_cleanup.check_no_writers, [target])
+                await asyncio.to_thread(
+                    resource_cleanup.check_published, target, canonical=True
+                )
+                if not await asyncio.to_thread(
+                    ws.remove_worktree, operation.project_id, target
+                ):
+                    raise RuntimeError("backend checkout removal failed")
+        elif entry["kind"] == "machine":
+            await MachineService(session).release_archived_machine(
+                uuid.UUID(entry["id"])
+            )
+        operation.resources = [
+            {**item, "removed": True} if item == entry else item
+            for item in operation.resources
+        ]
+        await session.commit()
+    operation.state = "complete"
+    operation.last_error = None
+    await session.commit()
+    logger.info("cleanup complete operation=%s room=%s", cleanup_id, operation.topic_id)

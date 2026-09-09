@@ -13,6 +13,8 @@
 # to `backend` (compose service name), so no separate/host nginx is needed.
 services:
   backend:
+    labels:
+      li.zhifei.cheese.room-cleanup: "true"
     # Default is the current-path image by sha. Override BACKEND_IMAGE for an env
     # pinned to a different release/path — e.g. prod (RUC) runs the v0.16.4 release,
     # whose image is under the pre-rename path `cheese-backend-py/*`. prod deploys
@@ -43,10 +45,8 @@ services:
       # Set here rather than in backend/.env because the value is a CONTAINER
       # path that only makes sense together with the bind mount below.
       - OPENVIKING_DATA_DIR=/data/viking
-      # Raw Claude session files shipped from device homes before the home is
-      # deleted (topic/retire.py): one tar.gz per place per upload, and the
-      # only copy once the home is gone. A container path like the one above,
-      # paired with the bind mount below.
+      # Preserve earlier tar archives and their additive R2 mirror. New raw
+      # transcript increments go directly to the private TRANSCRIPT_S3_BUCKET.
       - TRANSCRIPTS_DIR=/data/transcripts
       # Agent containers are siblings spawned through docker.sock, not compose
       # services. Pin them to this deployment's sha so a floating/local alias
@@ -67,7 +67,7 @@ services:
       # one-line env change instead of a deploy edit.
       - ${VIKING_HOST_PATH:-/home/nictheboy/cheese-viking}:/data/viking
       # The transcript archives (TRANSCRIPTS_DIR above). Mounted so they
-      # outlive the container: nothing else holds them.
+      # outlive the container alongside their off-site backup.
       - ${TRANSCRIPTS_HOST_PATH:-/home/nictheboy/cheese-transcripts}:/data/transcripts
       # The claude binaries the backend serves to machines it enrols. It fetches
       # each version once from the vendor and caches it under connector-dist,

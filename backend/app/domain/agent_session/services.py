@@ -33,3 +33,6 @@ class AgentSessionService:
     async def has_run(self, topic_id: uuid.UUID) -> bool:
         """Whether ANY agent has ever run here — what the compute pin freezes on."""
         return await self._repo.has_any(topic_id)
+
+    async def forget_room(self, topic_id: uuid.UUID) -> None:
+        await self._repo.forget_room(topic_id)

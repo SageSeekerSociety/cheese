@@ -55,6 +55,8 @@ export interface Topic {
   accepted_by?: string | null
   accepted_at?: string | null
   archived_at?: string | null
+  cleanup_due_at?: string | null
+  can_archive?: boolean
   // 这个话题是从哪一块「升级」出来的（讨论升级 / 文档 🧩）。非空 = 它的来源 block
   // 上已经有一条「已升级为话题」的活引用了，时间线不必再标一次「已派出」。
   upgraded_from_block_id?: string | null
