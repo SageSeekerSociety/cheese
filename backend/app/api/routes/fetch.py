@@ -12,8 +12,6 @@ The sandbox therefore sends a URL and receives prose. It never receives the
 means to fetch anything itself.
 """
 
-from typing import Annotated
-
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 

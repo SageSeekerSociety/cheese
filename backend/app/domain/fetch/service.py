@@ -110,7 +110,7 @@ async def _distill(
         blocks = r.json().get("content") or []
         text = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
         return text.strip() or None
-    except (TimeoutError, asyncio.TimeoutError):
+    except TimeoutError:
         logger.warning("fetch distillation timed out after %.0fs", timeout)
         return None
     except Exception:  # noqa: BLE001
@@ -180,12 +180,10 @@ async def fetch(
         # returns.
         try:
             answer = await asyncio.wait_for(
-                _distill(
-                    won.text, prompt, base_url=base_url, token=token, model=model
-                ),
+                _distill(won.text, prompt, base_url=base_url, token=token, model=model),
                 timeout=DISTILL_TIMEOUT_SECONDS + 5,
             )
-        except (TimeoutError, asyncio.TimeoutError):
+        except TimeoutError:
             logger.warning("fetch distillation did not settle; returning the page")
             answer = None
         if answer:

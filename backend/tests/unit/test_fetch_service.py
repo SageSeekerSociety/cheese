@@ -7,8 +7,6 @@ that neither returned nor errored, holding one turn open for 17 minutes.
 
 import asyncio
 
-import pytest
-
 from app.domain.fetch import layers, service
 from app.domain.fetch.extract import substantive_length, to_markdown
 
@@ -58,7 +56,6 @@ def test_prose_is_counted_and_link_walls_are_not():
     assert substantive_length(to_markdown(LIST_PAGE)) > 100
 
 
-
 async def test_a_distillation_that_never_answers_does_not_hang_the_fetch(monkeypatch):
     """The whole reason this service exists.
 
@@ -94,9 +91,8 @@ async def test_a_distillation_that_never_answers_does_not_hang_the_fetch(monkeyp
     assert "prose." in outcome.text, "it must fall back to the page itself"
 
 
-
 async def test_a_failed_fetch_reports_how_each_rung_refused(monkeypatch):
-    """"Could not read this page" with no trail is unimprovable."""
+    """ "Could not read this page" with no trail is unimprovable."""
 
     async def refuses(url, *a, **k):
         return layers.Attempt("plain-http", False, "", "HTTP 403", 0.2)
@@ -113,7 +109,6 @@ async def test_a_failed_fetch_reports_how_each_rung_refused(monkeypatch):
     trail = outcome.trail()
     assert "markdown-native" in trail and "no markdown edition" in trail
     assert "HTTP 403" in trail
-
 
 
 async def test_third_party_and_browser_rungs_stay_off_unless_configured(monkeypatch):

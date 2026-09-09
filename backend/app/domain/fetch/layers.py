@@ -18,7 +18,6 @@ happened upstream was a step with no deadline on it.
 from __future__ import annotations
 
 import asyncio
-import re
 from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse
 
@@ -101,8 +100,12 @@ async def rung_markdown_native(url: str, timeout: float = 12.0) -> Attempt:
                 return Attempt(
                     "markdown-native", True, body, candidate, loop.time() - start
                 )
-    return Attempt("markdown-native", False, note="no markdown edition published",
-                   seconds=loop.time() - start)
+    return Attempt(
+        "markdown-native",
+        False,
+        note="no markdown edition published",
+        seconds=loop.time() - start,
+    )
 
 
 async def rung_plain_http(url: str, timeout: float = 20.0) -> Attempt:
@@ -117,11 +120,19 @@ async def rung_plain_http(url: str, timeout: float = 20.0) -> Attempt:
         ) as client:
             r = await client.get(url)
     except Exception as exc:  # noqa: BLE001 — every failure here is just a miss
-        return Attempt("plain-http", False, note=f"{type(exc).__name__}",
-                       seconds=loop.time() - start)
+        return Attempt(
+            "plain-http",
+            False,
+            note=f"{type(exc).__name__}",
+            seconds=loop.time() - start,
+        )
     if r.status_code != 200:
-        return Attempt("plain-http", False, note=f"HTTP {r.status_code}",
-                       seconds=loop.time() - start)
+        return Attempt(
+            "plain-http",
+            False,
+            note=f"HTTP {r.status_code}",
+            seconds=loop.time() - start,
+        )
     return _graded("plain-http", to_markdown(r.text), loop.time() - start)
 
 
@@ -146,11 +157,16 @@ async def rung_impersonated(url: str, timeout: float = 25.0) -> Attempt:
             asyncio.to_thread(_get), timeout=timeout + 5
         )
     except Exception as exc:  # noqa: BLE001
-        return Attempt("impersonated", False, note=f"{type(exc).__name__}",
-                       seconds=loop.time() - start)
+        return Attempt(
+            "impersonated",
+            False,
+            note=f"{type(exc).__name__}",
+            seconds=loop.time() - start,
+        )
     if status != 200:
-        return Attempt("impersonated", False, note=f"HTTP {status}",
-                       seconds=loop.time() - start)
+        return Attempt(
+            "impersonated", False, note=f"HTTP {status}", seconds=loop.time() - start
+        )
     return _graded("impersonated", to_markdown(body), loop.time() - start)
 
 
@@ -173,11 +189,19 @@ async def rung_reader_service(
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             r = await client.get(endpoint.rstrip("/") + "/" + url)
     except Exception as exc:  # noqa: BLE001
-        return Attempt("reader-service", False, note=f"{type(exc).__name__}",
-                       seconds=loop.time() - start)
+        return Attempt(
+            "reader-service",
+            False,
+            note=f"{type(exc).__name__}",
+            seconds=loop.time() - start,
+        )
     if r.status_code != 200:
-        return Attempt("reader-service", False, note=f"HTTP {r.status_code}",
-                       seconds=loop.time() - start)
+        return Attempt(
+            "reader-service",
+            False,
+            note=f"HTTP {r.status_code}",
+            seconds=loop.time() - start,
+        )
     return _graded("reader-service", r.text, loop.time() - start)
 
 
@@ -210,11 +234,13 @@ async def rung_browser(url: str, endpoint: str, timeout: float = 75.0) -> Attemp
                 json={"url": url, "settle_seconds": BROWSER_SETTLE_SECONDS},
             )
     except Exception as exc:  # noqa: BLE001
-        return Attempt("browser", False, note=f"{type(exc).__name__}",
-                       seconds=loop.time() - start)
+        return Attempt(
+            "browser", False, note=f"{type(exc).__name__}", seconds=loop.time() - start
+        )
     if r.status_code != 200:
-        return Attempt("browser", False, note=f"HTTP {r.status_code}",
-                       seconds=loop.time() - start)
+        return Attempt(
+            "browser", False, note=f"HTTP {r.status_code}", seconds=loop.time() - start
+        )
     payload = r.json()
     html = payload.get("html") or ""
     markdown = payload.get("markdown") or (to_markdown(html) if html else "")

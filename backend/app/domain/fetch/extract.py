@@ -23,7 +23,7 @@ import re
 # script is gone, and the conversion itself then costs well under a second.
 _NEVER_CONTENT = ("script", "style", "noscript", "iframe", "svg", "template")
 _STRIP_RE = re.compile(
-    r"<(%s)\b[^>]*>.*?</\1>" % "|".join(_NEVER_CONTENT),
+    r"<({})\b[^>]*>.*?</\1>".format("|".join(_NEVER_CONTENT)),
     re.DOTALL | re.IGNORECASE,
 )
 _BLANK_RUN = re.compile(r"\n{3,}")
