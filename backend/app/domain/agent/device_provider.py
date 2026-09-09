@@ -17,6 +17,7 @@ Per request:
 """
 
 import asyncio
+import base64
 import hashlib
 import json
 import logging
@@ -554,9 +555,25 @@ class DeviceChannel(Channel):
             factory = async_session_factory
         async with factory() as session:
             service = sql_device_service(session)
-            device_id = await resolve_pinned_device(
-                service, self._hub.is_online, project_id, topic_id
-            )
+            from app.domain.topic.services import TopicService
+
+            place = await TopicService(session).place_or_404(topic_id)
+            if place.room.is_private:
+                from app.domain.agent.private_chat import execution_target
+                from app.domain.device.supply import Visibility
+
+                device_id = execution_target(project_id, topic_id)["device_id"]
+                if not self._hub.is_online(device_id):
+                    raise ScreenSetupError("私聊中心执行机未连接，本轮没有启动")
+                binding = await service.topic_binding(topic_id)
+                if binding is None or binding.device_id != device_id:
+                    await service.bind_topic_device(
+                        topic_id, device_id, visibility=Visibility.host
+                    )
+            else:
+                device_id = await resolve_pinned_device(
+                    service, self._hub.is_online, project_id, topic_id
+                )
             if device_id is None:
                 return None
             # The screen acts as THIS topic's 分身 (its own agent-user), so a turn
@@ -743,6 +760,10 @@ class DeviceChannel(Channel):
         fresh sid the connector must Spawn, rather than reasserted into a corpse."""
         existing = self._existing_screen(device_id, topic_id)
         execution_target = settings.agent_execution_targets.get(str(topic_id))
+        if (env or {}).get("CHEESE_PRIVATE_CHAT") == "1":
+            from app.domain.agent.private_chat import execution_target as private_target
+
+            execution_target = private_target(project_id, topic_id)
         if (
             existing is not None
             and (env or {}).get("CHEESE_ENVIRONMENT")
@@ -1028,8 +1049,15 @@ class DeviceChannel(Channel):
         can host whatever it is handed, and this one cannot."""
         assert isinstance(precheck, tuple)  # from our precheck
         device_id, agent_user_id, agent_handle = precheck
+        if memory_scope == "personal":
+            env = dict(
+                env or {}, CHEESE_PRIVATE_CHAT="1", CHEESE_MEMORY_SCOPE="personal"
+            )
+            if owner:
+                env["CHEESE_OWNER"] = owner
         prepares_environment = bool((env or {}).get("CHEESE_ENVIRONMENT")) and not (
             settings.agent_execution_targets.get(str(topic_id))
+            or (env or {}).get("CHEESE_PRIVATE_CHAT") == "1"
         )
         try:
             before = (
@@ -1158,6 +1186,26 @@ class DeviceChannel(Channel):
                     data,
                     timeout=_FILE_STAGE_TIMEOUT_S,
                 )
+                if screen.device_id == settings.private_chat_device_id:
+                    from app.domain.agent import private_chat
+
+                    factory = self._session_factory
+                    if factory is None:
+                        from app.core.db import async_session_factory
+
+                        factory = async_session_factory
+                    async with factory() as session:
+                        target = await private_chat.for_topic(session, screen.topic_id)
+                    if target and target.get("kind") == "private":
+                        await private_chat.control(
+                            target,
+                            {
+                                "subtype": "stage_file",
+                                "path": path,
+                                "data": base64.b64encode(data).decode(),
+                            },
+                            hub=self._hub,
+                        )
             except Exception as exc:  # noqa: BLE001 — an image is not the message
                 # `str(exc)` is EMPTY for the failure this actually hits — a bare
                 # `TimeoutError` from a connector too old to know `file.put`, which
@@ -1324,6 +1372,10 @@ class DeviceChannel(Channel):
                 # screen even for an offline device (its session_close is a no-op),
                 # so our registry never leaks an archived topic.
                 await self._hub.close_screen(device_id, screen.sid)
+                if device_id == settings.private_chat_device_id:
+                    from app.domain.agent.private_chat import release
+
+                    await release(project_id, topic_id, device_id, self._hub)
                 await self._remove_work_dir(device_id, project_id, topic_id)
             except Exception:  # noqa: BLE001 — one screen must not stop the rest
                 logger.warning(

@@ -105,6 +105,9 @@ class Settings(BaseSettings):
     agent_model: str = "glm-5.2"
     # Experimental central sessions bind each topic to a remote executor.
     agent_execution_targets: dict[str, dict] = {}
+    # Shared central session host; private scratch runs in isolated containers.
+    private_chat_device_id: str | None = None
+    private_chat_executor_image: str = "cheese-private-executor:2.1.265"
     anthropic_base_url: str | None = None
     anthropic_auth_token: str | None = None
     # Model aliases the CLI may resolve internally; map them to the provider.

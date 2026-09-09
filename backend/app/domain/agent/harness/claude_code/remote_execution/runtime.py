@@ -295,6 +295,8 @@ class Executor:
         return result
 
     def hooks(self, event, tool, args, key, result=None):
+        if self.config.get("private"):
+            return args
         paths = [
             self.root / ".claude/settings.json",
             self.root / ".claude/settings.local.json",
@@ -557,6 +559,12 @@ class Executor:
 
     def control(self, params):
         kind = params["subtype"]
+        if kind == "stage_file" and self.config.get("private"):
+            path = (self.root / params["path"]).resolve()
+            path.relative_to(self.root)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(base64.b64decode(params["data"], validate=True))
+            return {"path": str(path)}
         if kind == "read_file":
             path = Path(params["path"])
             if not path.is_absolute():
@@ -564,6 +572,16 @@ class Executor:
             return {"contents": path.read_text(), "absPath": str(path)}
         if kind == "file_suggestions":
             query = params.get("query", "").casefold()
+            if self.config.get("private"):
+                files = [
+                    str(p.relative_to(self.root))
+                    for p in self.root.rglob("*")
+                    if p.is_file()
+                    and not any(
+                        part.startswith(".") for part in p.relative_to(self.root).parts
+                    )
+                ]
+                return {"files": [p for p in files if query in p.casefold()][:100]}
             files = subprocess.check_output(
                 ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
                 cwd=self.root,
@@ -571,6 +589,8 @@ class Executor:
             ).splitlines()
             return {"files": [p for p in files if query in p.casefold()][:100]}
         if kind == "get_workspace_diff":
+            if self.config.get("private"):
+                return {"diff": ""}
             diff = subprocess.check_output(
                 ["git", "diff", "HEAD", "--"], cwd=self.root, text=True
             )
@@ -615,6 +635,20 @@ class Executor:
         raise ValueError(f"Unsupported executor control: {kind}")
 
     def context(self):
+        if self.config.get("private"):
+            # Never import executable configuration written by a scratch command
+            # into the central Claude Code process.
+            return {
+                "workspace": str(self.root),
+                "cwd": str(self.cwd),
+                "files": {},
+                "instructions": "This chat has temporary scratch space at /work. "
+                "Use shell and file tools for drafts and small processing tasks. "
+                "Save finished documents through cheese doc set and publish artifacts "
+                "through cheese artifact. Scratch files can disappear when execution "
+                "is released; they are not permanent storage. "
+                "No project checkout is available.",
+            }
         files = {}
         instructions = []
         seen = set()
@@ -662,6 +696,11 @@ class Executor:
         }
 
     def dispatch(self, method, params):
+        if method == "configure_private" and self.config.get("private"):
+            self.env.update(params["env"])
+            self.config["env"] = params["env"]
+            write_json(self.state / "config.json", self.config)
+            return {"pid": os.getpid(), "workspace": str(self.root)}
         if method == "ping":
             return {"pid": os.getpid(), "workspace": str(self.root)}
         if method == "invoke":

@@ -1,6 +1,5 @@
 """Native RC worker transport and Cheese's authenticated controller API."""
 
-import asyncio
 import json
 import time
 import uuid
@@ -13,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
 from app.api.response import ok
-from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -22,9 +20,9 @@ from app.core.errors import (
     ValidationError,
 )
 from app.core.sandbox_auth import scoped_token_claims
+from app.domain.agent import private_chat
 from app.domain.agent.harness.claude_code.remote_execution.client import (
     REMOTE_CONTROLS,
-    RemoteClient,
 )
 from app.domain.agent.remote_control import CONTROLS, store
 from app.domain.topic.services import TopicService
@@ -246,11 +244,9 @@ async def control_state(
     result = (
         await store().snapshot(session) if session else {"connected": False, "id": None}
     )
-    target = settings.agent_execution_targets.get(str(topic_id))
+    target = await private_chat.for_topic(db, topic_id)
     if session and target:
-        tasks = await asyncio.to_thread(
-            RemoteClient(target).control, {"subtype": "background_tasks"}
-        )
+        tasks = await private_chat.control(target, {"subtype": "background_tasks"})
         result["tasks"].update({task["task_id"]: task for task in tasks["tasks"]})
     return ok(result)
 
@@ -287,7 +283,7 @@ async def control(
         "request_id": data.request_id,
         "request": data.request,
     }
-    target = settings.agent_execution_targets.get(str(topic_id))
+    target = await private_chat.for_topic(db, topic_id)
     remote_control = data.request.get("subtype") in REMOTE_CONTROLS
     if data.request.get("subtype") == "stop_task":
         remote_control = str(data.request.get("task_id", "")).startswith("remote-")
@@ -295,7 +291,7 @@ async def control(
         command = await store().execute_remote(session, payload, actor.handle, target)
     else:
         if target and data.request.get("subtype") == "interrupt":
-            await asyncio.to_thread(RemoteClient(target).control, data.request)
+            await private_chat.control(target, data.request)
         command = await store().enqueue(data.session_id, payload, actor.handle)
     result = await store().result(data.session_id, data.request_id, wait)
     command = await store().command(data.session_id, data.request_id) or command

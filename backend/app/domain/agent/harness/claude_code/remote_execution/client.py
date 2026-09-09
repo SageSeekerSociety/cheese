@@ -103,6 +103,13 @@ def prepare(
         )
     directory = Path(directory).resolve()
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if target.get("kind") == "private":
+        if __package__:
+            from .private import ensure
+        else:
+            from private import ensure
+
+        ensure(target, directory, os.environ)
     workspace = directory / "workspace"
     workspace.mkdir(exist_ok=True)
     # Stop native project discovery at this generated mirror's boundary.
@@ -221,6 +228,15 @@ def prepare(
         "--no-chrome",
         *extra_args,
     ]
+    if target.get("kind") == "private":
+        # Subagents and arbitrary plugins must not create another local execution
+        # route around the proxy. Skills shipped by the platform remain available.
+        command.extend(
+            [
+                "--disallowedTools",
+                "Agent,Task,WebFetch,WebSearch,EnterWorktree,ExitWorktree",
+            ]
+        )
     launch = {
         "command": command,
         "env": env,
@@ -371,13 +387,21 @@ def main():
             "bootstrap",
             "event",
             "invoke",
+            "release",
         ],
     )
     parser.add_argument("config", type=Path)
     parser.add_argument("args", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     config = json.loads(args.config.read_text())
-    if args.mode == "bridge":
+    if args.mode == "release":
+        if __package__:
+            from .private import release
+        else:
+            from private import release
+
+        release(config)
+    elif args.mode == "bridge":
         command = RemoteClient(config).command("bridge", args.args[0])
         os.execvp(command[0], command)
     elif args.mode == "guard":

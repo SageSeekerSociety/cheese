@@ -241,9 +241,7 @@ class RemoteControl:
         self, session: dict, payload: dict, actor: str, target: dict
     ) -> dict:
         """Journal remote controls without also executing them on the CLI host."""
-        from app.domain.agent.harness.claude_code.remote_execution.client import (
-            RemoteClient,
-        )
+        from app.domain.agent.private_chat import control
 
         command = await self.enqueue(session["id"], payload, actor, deliver=False)
         request_id = payload["request_id"]
@@ -251,9 +249,7 @@ class RemoteControl:
         if existing:
             return command
         try:
-            value = await asyncio.to_thread(
-                RemoteClient(target).control, payload["request"]
-            )
+            value = await control(target, payload["request"])
             response = {
                 "subtype": "success",
                 "request_id": request_id,

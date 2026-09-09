@@ -999,7 +999,7 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
     if remote_execution:
         source_dir = Path(execution_client.__file__).parent
         execution_setup = 'mkdir -p "$HOME/.claude/remote-execution"\n'
-        for name in ("client.py", "proxy.js"):
+        for name in ("client.py", "proxy.js", "private.py"):
             execution_setup += (
                 f'cat > "$HOME/.claude/remote-execution/{name}" '
                 "<<'CHEESE_EXECUTION_SOURCE'\n"
