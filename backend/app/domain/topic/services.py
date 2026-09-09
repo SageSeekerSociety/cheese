@@ -367,16 +367,40 @@ class TopicService:
         project_id: uuid.UUID,
         user_handle: str,
         peer_handle: str | None = None,
+        agent_handle: str | None = None,
     ) -> Topic:
         """A 1:1 private chat (spec §1).
 
-        No ``peer_handle`` → the member's 1:1 with 芝士. With ``peer_handle`` →
-        a person-to-person DM between the two humans (shared by both).
+        With ``peer_handle`` → a person-to-person DM between the two humans
+        (shared by both). Without → the member's 1:1 with the AI teammate named
+        by ``agent_handle``, or with the project's default when nobody named
+        one. One room per teammate, and it stays that teammate's afterwards.
         """
-        if await self._projects.get(project_id) is None:
+        project = await self._projects.get(project_id)
+        if project is None:
             raise NotFoundError("Project not found")
+        agent_instance_id = None
+        agent_display_name = None
+        if peer_handle is None:
+            agent = await AgentInstanceService(self._session).for_handle(
+                project, agent_handle
+            )
+            agent_instance_id = agent.id
+            agent_display_name = agent.display_name
+            if project.default_agent_instance_id == agent.id:
+                # This member may still have the DM from before rooms named a
+                # teammate. It is this agent's conversation — the default is who
+                # has been answering it — so hand it over rather than leaving it
+                # behind and opening an empty second one.
+                await self._repo.pin_unpinned_agent_dm(
+                    project_id, user_handle, agent.id
+                )
         topic = await self._repo.get_or_create_private(
-            project_id=project_id, user_handle=user_handle, peer_handle=peer_handle
+            project_id=project_id,
+            user_handle=user_handle,
+            peer_handle=peer_handle,
+            agent_instance_id=agent_instance_id,
+            agent_display_name=agent_display_name,
         )
         await TopicMemberService(self._session).seed_private(
             topic.id,

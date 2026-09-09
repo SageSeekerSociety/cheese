@@ -44,6 +44,19 @@ def topic_agent_handle(topic_id: uuid.UUID | str) -> str:
     return f"{TOPIC_AGENT_PREFIX}{hexed[:_TOPIC_AGENT_HEX]}"
 
 
+# How a 私聊 with an AI teammate is addressed — in the URL the browser shows and
+# in the unread map keyed by "who am I talking to". Prefixed rather than bare,
+# because a teammate's handle is chosen per project (``AgentInstance.handle``)
+# and nothing stops someone naming one after a person on the roster; without the
+# prefix, that person's DM and that teammate's DM would be the same string.
+DM_AGENT_PREFIX = "agent:"
+
+
+def agent_dm_key(agent_handle: str) -> str:
+    """How the UI addresses the 私聊 with this teammate. Pure."""
+    return f"{DM_AGENT_PREFIX}{agent_handle}"
+
+
 def looks_like_agent_handle(handle: str) -> bool:
     """Whether ``handle`` belongs to 芝士 (the platform row or any topic 分身).
 

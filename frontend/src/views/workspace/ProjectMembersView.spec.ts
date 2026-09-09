@@ -105,9 +105,12 @@ beforeEach(() => {
   revokeInvitation.mockReset().mockResolvedValue({})
   updateProjectMemberRole.mockReset().mockResolvedValue({})
   removeProjectMember.mockReset().mockResolvedValue({ deleted: true })
-  listProjectAgents
-    .mockReset()
-    .mockResolvedValue({ data: [{ handle: 'cheese-x', display_name: '芝士', is_default: true }] })
+  listProjectAgents.mockReset().mockResolvedValue({
+    data: [
+      { handle: 'cheese', display_name: '芝士', is_default: true, is_active: true },
+      { handle: 'reviewer', display_name: '评审', is_default: false, is_active: true },
+    ],
+  })
   privateUnreadMap = {}
   getUserInfo.mockReset().mockResolvedValue({ data: { user: { id: 1024, username: 'zhangheng', nickname: '张衡' } } })
   meHandle = 'alice'
@@ -132,18 +135,24 @@ function rowFor(container: Element, handle: string): Element {
   return row
 }
 
+// AI 队友那一段的行。它们不是名册行：来源是队友列表接口，不是 store.members。
+function agentRows(container: Element): Element[] {
+  return Array.from(container.querySelectorAll('.agent-row'))
+}
+
 function groupTitles(container: Element): string[] {
   return Array.from(container.querySelectorAll('.t-eyebrow')).map((n) => (n.textContent ?? '').trim())
 }
 
 describe('成员页', () => {
-  it('人按角色分组，AI 队友单独一段——它没有可升降的角色', () => {
+  it('人按角色分组，AI 队友单独一段——它没有可升降的角色', async () => {
     const { container } = mount()
+    // 队友那一段要等它自己那个接口回来（名册里没有它们）。
+    await waitFor(() => expect(groupTitles(container)).toContain('AI 队友 · 2'))
     const titles = groupTitles(container)
     expect(titles).toContain('组长 · 2')
     expect(titles).toContain('导师 · 1')
     expect(titles).toContain('成员 · 1')
-    expect(titles).toContain('AI 队友 · 1')
     // 芝士不能出现在「成员 · N」那一段里，否则它会带上一个改角色的菜单。
     expect(rowFor(container, 'ligan')).toBeTruthy()
     expect(() => rowFor(container, 'cheese-x')).toThrow()
@@ -254,32 +263,46 @@ describe('成员页：私聊未读', () => {
     expect(rowFor(container, 'mentor1').querySelector('.dm-unread')).toBeNull()
   })
 
-  it('和芝士那一间的私聊只长在默认队友那一行上——它今天只有一间', async () => {
-    privateUnreadMap = { cheese: 2 }
+  // 每个队友一间私聊，所以每个队友一行、一颗按钮、一份未读。合成一行的老写法
+  // 会让「谁找你」在有第二个队友的项目里彻底失真。
+  it('每个 AI 队友各有一行、一颗私聊按钮和自己的未读', async () => {
+    privateUnreadMap = { 'agent:reviewer': 2 }
     const { container, getByText } = mount()
-    const agentRow = await waitFor(() => {
-      const el = Array.from(container.querySelectorAll('.v-card')).find((c) =>
-        (c.textContent ?? '').includes('@cheese-x')
-      )
-      if (!el?.querySelector('[aria-label="私聊"]')) throw new Error('还没渲染出队友的私聊按钮')
-      return el
+    const rows = await waitFor(() => {
+      const found = agentRows(container)
+      if (found.length < 2) throw new Error('队友还没渲染出来')
+      return found
     })
-    expect(agentRow.querySelector('.dm-unread')?.textContent?.trim()).toBe('2')
-    await fireEvent.click(agentRow.querySelector('[aria-label="私聊"]') as Element)
-    // 地址是字面量 cheese，不是队友的 handle——后端存的是「没有 peer」的那一间。
-    expect(push).toHaveBeenCalledWith({ name: 'workspace-dm', params: { projectId: 'p1', peer: 'cheese' } })
-    expect(getByText('AI 队友 · 1')).toBeTruthy()
+    expect(getByText('AI 队友 · 2')).toBeTruthy()
+
+    const reviewer = rows.find((r) => (r.textContent ?? '').includes('@reviewer')) as Element
+    const cheese = rows.find((r) => (r.textContent ?? '').includes('@cheese')) as Element
+    expect(reviewer.querySelector('.dm-unread')?.textContent?.trim()).toBe('2')
+    // 未读是那个队友自己的，不会印到另一个队友那一行上
+    expect(cheese.querySelector('.dm-unread')).toBeNull()
+
+    await fireEvent.click(reviewer.querySelector('[aria-label="私聊"]') as Element)
+    // 地址带 agent: 前缀，和人的 handle 分开——队友的名字是项目自己起的，可以撞。
+    expect(push).toHaveBeenCalledWith({ name: 'workspace-dm', params: { projectId: 'p1', peer: 'agent:reviewer' } })
   })
 
-  it('拿不到队友名单时这一页照样能用，只是没有和芝士私聊的入口', async () => {
+  it('停用的队友不列出来——它在老话题里照常工作，但不该拿出来开新对话', async () => {
+    listProjectAgents.mockResolvedValue({
+      data: [
+        { handle: 'cheese', display_name: '芝士', is_default: true, is_active: true },
+        { handle: 'retired', display_name: '退休', is_default: false, is_active: false },
+      ],
+    })
+    const { container } = mount()
+    await waitFor(() => expect(agentRows(container).length).toBe(1))
+    expect(agentRows(container)[0].textContent).toContain('@cheese')
+  })
+
+  it('拿不到队友名单时这一页照样能用，只是没有 AI 队友那一段', async () => {
     listProjectAgents.mockRejectedValue(new Error('boom'))
     const { container } = mount()
     await waitFor(() => expect(rowFor(container, 'ligan')).toBeTruthy())
-    const agentRow = Array.from(container.querySelectorAll('.v-card')).find((c) =>
-      (c.textContent ?? '').includes('@cheese-x')
-    )
-    expect(agentRow).toBeTruthy()
-    expect(agentRow?.querySelector('[aria-label="私聊"]')).toBeNull()
+    expect(agentRows(container).length).toBe(0)
   })
 })
 

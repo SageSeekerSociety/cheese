@@ -2331,11 +2331,12 @@ async def project_private_unread(
     resolver: ActorResolverDep,
     handle: str | None = None,
 ) -> dict:
-    """私聊未读数: {peer_handle: unread_count} for the calling user, one query.
+    """私聊未读数: {peer: unread_count} for the calling user, one query.
 
-    Keyed by the other party's handle rather than by topic id — private chats
-    are not in the topic tree, so the sidebar renders their rows from the member
-    roster and has no topic id to look one up with. `cheese` is the 芝士 DM.
+    Keyed by the other party rather than by topic id — private chats are not in
+    the topic tree, so the roster page renders their rows from the member list
+    and has no topic id to look one up with. A person is their handle; an AI
+    teammate is `agent:<handle>`, which is also the word the DM's URL uses.
     Peers with zero unread are omitted.
 
     Same rule as ``topic-unread``: the recipient comes from the verified

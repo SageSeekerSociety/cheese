@@ -34,7 +34,7 @@ describe('the project frame', () => {
   it.each([
     ['/', 'workspace-project'],
     [`/topics/${TOPIC}`, 'workspace-topic'],
-    ['/dm/cheese', 'workspace-dm'],
+    ['/dm/agent:cheese', 'workspace-dm'],
     ['/docs/decisions', 'project-docs'],
     ['/overview', 'overview'],
     ['/calendar', 'calendar'],
@@ -121,8 +121,16 @@ describe('页面栈的末端', () => {
 
   // 私聊是唯一一层不回话题列表的：它只有一个入口——名册。回话题列表等于把人
   // 送到一个他没来过的地方，而那一层再也走不回他刚才在的那份名单。
+  // 地址里那一段既是「跟谁」也是未读表的键：人用 handle，队友用 `agent:<handle>`。
+  // 两种都得能从地址栏原样读回来，否则刷新一个队友私聊会掉进一个同名的人那里。
+  it('私聊的地址原样读得回来 —— 人是 handle，队友带 agent: 前缀', () => {
+    const r = router()
+    expect(r.resolve(`/projects/${PROJECT}/dm/agent:reviewer`).params.peer).toBe('agent:reviewer')
+    expect(r.resolve(`/projects/${PROJECT}/dm/lisi`).params.peer).toBe('lisi')
+  })
+
   it('私聊回的是成员页，不是话题列表', () => {
-    const leaf = leafOf(`/projects/${PROJECT}/dm/cheese`)
+    const leaf = leafOf(`/projects/${PROJECT}/dm/agent:cheese`)
     expect(leaf.meta.hideTabs).toBe(true)
     expect(leaf.meta.backTo).toBe('project-members')
   })
@@ -136,7 +144,7 @@ describe('页面栈的末端', () => {
   it('自带头的层填的是顶栏那一格', () => {
     expect(leafOf(`/projects/${PROJECT}`).meta.barSlot).toBe(true)
     expect(leafOf(`/projects/${PROJECT}/topics/t1`).meta.barSlot).toBe(true)
-    expect(leafOf(`/projects/${PROJECT}/dm/cheese`).meta.barSlot).toBeUndefined()
+    expect(leafOf(`/projects/${PROJECT}/dm/agent:cheese`).meta.barSlot).toBeUndefined()
   })
 })
 

@@ -12,8 +12,9 @@ from sqlalchemy.sql.elements import (
     UnaryExpression,
 )
 
+from app.domain.agent_instance.models import AgentInstance
 from app.domain.block.models import Block, BlockKind
-from app.domain.identity.handles import CHEESE_HANDLE
+from app.domain.identity.handles import CHEESE_HANDLE, CHEESE_NAME, agent_dm_key
 from app.domain.project.environment import project_environment
 from app.domain.project.models import Project
 from app.domain.topic.models import Topic, TopicKind, TopicProgress, TopicReadState
@@ -188,13 +189,21 @@ class TopicRepository:
         project_id: uuid.UUID,
         user_handle: str,
         peer_handle: str | None = None,
+        agent_instance_id: uuid.UUID | None = None,
+        agent_display_name: str | None = None,
     ) -> Topic:
         """A 1:1 private conversation in this project.
 
-        Without ``peer_handle`` this is the member's 1:1 with 芝士 (private_peer
-        NULL). With ``peer_handle`` it is a person-to-person DM between the two
-        humans; the unordered pair is canonicalized (owner = min, peer = max) so
-        both participants get and share the same row regardless of who opens it.
+        With ``peer_handle`` it is a person-to-person DM between the two humans;
+        the unordered pair is canonicalized (owner = min, peer = max) so both
+        participants get and share the same row regardless of who opens it.
+
+        Without it, it is the member's 1:1 with ONE AI teammate, identified by
+        ``agent_instance_id`` — the same column a room uses to say which teammate
+        works in it, which is why nothing else has to change for that teammate's
+        role and model to be the ones answering here. One room per (member,
+        teammate) pair: a project with three teammates gives each member three,
+        and switching the project's default does not move any of them.
         """
         if peer_handle is not None:
             owner, peer = sorted((user_handle, peer_handle))
@@ -211,13 +220,17 @@ class TopicRepository:
                 Topic.is_private.is_(True),
                 Topic.private_owner == user_handle,
                 Topic.private_peer.is_(None),
+                Topic.agent_instance_id == agent_instance_id,
             )
         existing = (await self._session.scalars(stmt)).first()
         if existing is not None:
             return existing
         # Title is a rendering hint only; the sidebar/ChatPanel show the peer's
         # own name from the roster. Deterministic, no NL parsing (CLAUDE.md §4).
-        title = f"私聊 · {owner} · {peer}" if peer else f"与芝士私聊 · {owner}"
+        if peer:
+            title = f"私聊 · {owner} · {peer}"
+        else:
+            title = f"与{agent_display_name or CHEESE_NAME}私聊 · {owner}"
         project = await self._session.get(Project, project_id)
         topic = Topic(
             project_id=project_id,
@@ -228,11 +241,37 @@ class TopicRepository:
             is_private=True,
             private_owner=owner,
             private_peer=peer,
+            agent_instance_id=agent_instance_id,
         )
         self._session.add(topic)
         await self._session.flush()
         await self._session.refresh(topic)
         return topic
+
+    async def pin_unpinned_agent_dm(
+        self, project_id: uuid.UUID, user_handle: str, agent_instance_id: uuid.UUID
+    ) -> None:
+        """Give this member's teammate-less 芝士 DM the teammate it has been
+        talking to all along.
+
+        A DM opened before there was one room per teammate names no teammate, so
+        it answers with whatever the project's default is at the time — which is
+        exactly *this* agent, because the caller only asks for this when the
+        agent it resolved IS the current default. Writing that down is what makes
+        the room stop moving when the default later changes; the conversation
+        stays where it is, under the teammate that actually held it.
+        """
+        await self._session.execute(
+            update(Topic)
+            .where(
+                Topic.project_id == project_id,
+                Topic.is_private.is_(True),
+                Topic.private_owner == user_handle,
+                Topic.private_peer.is_(None),
+                Topic.agent_instance_id.is_(None),
+            )
+            .values(agent_instance_id=agent_instance_id)
+        )
 
     async def list_children(self, parent_id: uuid.UUID) -> list[Topic]:
         stmt = (
@@ -322,19 +361,38 @@ class TopicRepository:
     async def private_unread_counts(
         self, project_id: uuid.UUID, user_handle: str
     ) -> dict[str, int]:
-        """Unread count per 私聊, keyed by the OTHER party's handle.
+        """Unread count per 私聊, keyed by the OTHER party.
 
         Same definition of "unread" as :meth:`unread_counts` — the two differ
         only in how the caller addresses a row. Private chats are not in the
-        topic tree, so the sidebar renders one DM row per project member from
-        the roster and never learns the conversation's topic id; a map keyed by
-        topic id is therefore unusable there. The member's 1:1 with 芝士 (a
-        private topic with no peer) is keyed by ``CHEESE_HANDLE``.
+        topic tree, so the roster page renders one DM row per member and per AI
+        teammate and never learns the conversation's topic id; a map keyed by
+        topic id is therefore unusable there. A person is keyed by their handle,
+        an AI teammate by ``agent_dm_key`` — see there for why a teammate does
+        not get to use the bare handle.
+
+        A DM that names no teammate predates one-room-per-teammate and is still
+        answered by whatever the project's default is, so that is what it counts
+        against; opening it pins it (:meth:`pin_unpinned_agent_dm`) and this
+        stops being a question.
         """
         stmt = (
-            select(Topic.private_owner, Topic.private_peer, func.count())
+            select(
+                Topic.private_owner,
+                Topic.private_peer,
+                AgentInstance.handle,
+                func.count(),
+            )
             .select_from(Topic)
             .join(Block, Block.topic_id == Topic.id)
+            .join(Project, Project.id == Topic.project_id)
+            .outerjoin(
+                AgentInstance,
+                AgentInstance.id
+                == func.coalesce(
+                    Topic.agent_instance_id, Project.default_agent_instance_id
+                ),
+            )
             .outerjoin(
                 TopicReadState,
                 and_(
@@ -360,13 +418,15 @@ class TopicRepository:
                     Block.created_at > TopicReadState.last_read_at,
                 ),
             )
-            .group_by(Topic.id, Topic.private_owner, Topic.private_peer)
+            .group_by(
+                Topic.id, Topic.private_owner, Topic.private_peer, AgentInstance.handle
+            )
         )
         rows = (await self._session.execute(stmt)).all()
         counts: dict[str, int] = {}
-        for owner, peer, count in rows:
+        for owner, peer, agent_handle, count in rows:
             if peer is None:
-                key = CHEESE_HANDLE
+                key = agent_dm_key(agent_handle or CHEESE_HANDLE)
             else:
                 key = peer if owner == user_handle else owner
             counts[key] = counts.get(key, 0) + int(count)

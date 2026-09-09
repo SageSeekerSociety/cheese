@@ -88,7 +88,7 @@ async function mountApp(path: string, width: number) {
         meta: { barSlot: true, backTo: 'workspace-project' },
       },
       { path: '/projects/p1/agents', name: 'project-agents', component: blank },
-      { path: '/projects/p1/dm/cheese', name: 'workspace-dm', component: blank },
+      { path: '/projects/p1/dm/agent:cheese', name: 'workspace-dm', component: blank },
       {
         path: '/home',
         component: Home,
@@ -156,7 +156,7 @@ it.each(['/projects/p1', '/projects/p1/topics/t1'])(
       expect(app.failures).toEqual([])
       for (const path of [
         '/projects/p1/agents',
-        '/projects/p1/dm/cheese',
+        '/projects/p1/dm/agent:cheese',
         '/projects/p1',
         '/projects/p1/topics/t1',
         '/home/spaces',
