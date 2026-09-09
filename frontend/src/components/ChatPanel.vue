@@ -1292,7 +1292,7 @@ function mentionsAgent(expanded: string): boolean {
 const agentMention = computed(() => mentionPool.value.find((m) => m.agent) ?? null)
 
 // 这条草稿现在叫不叫它。**读的是正文**，不是一个单独存着的开关值：真相只有一条，
-// 入口可以有两个（手打 @、点按钮、⌘+Enter 都是往正文里写同一个 @）。
+// 入口可以有三个（手打 @、点按钮、⌘/Ctrl+Enter 都是往正文里写同一个 @）。
 // 独立开关是另一回事 —— 那种东西能和正文说不一样的话（开关亮着、正文里没有 @），
 // 那时候「这条到底算不算叫了它」谁也答不上来，而只有开关那条是通的。
 const summonOn = computed(() => props.alwaysSummon || mentionsAgent(expandMentions(draft.value)))
@@ -1329,9 +1329,6 @@ function toggleSummon() {
   void nextTick(() => composerInput.value?.focus?.())
 }
 
-// `summon: true` = ⌘/Ctrl+Enter「发送并交给它」。它把 @ 写进正文再发，而不是在帧
-// 上把 summon 悄悄置真：时间线上那条消息必须自己说明它叫了谁，否则读的人看到的
-// 是一条谁也没 @ 的消息，芝士却动了。
 // ---- 忘了 @ 的补救 ----
 // 房间里最后一句话是对着人说的，芝士就不会动 —— 这是它该有的样子（没 @ 不等于
 // 没说，那条消息在待读窗口里等着下一轮捎上）。真正伤人的是**房间里没有任何东西
@@ -1372,6 +1369,9 @@ async function summonNow() {
   }
 }
 
+// `summon: true` = ⌘/Ctrl+Enter「发送并交给它」。它把 @ 写进正文再发，而不是在帧
+// 上把 summon 悄悄置真：时间线上那条消息必须自己说明它叫了谁，否则读的人看到的
+// 是一条谁也没 @ 的消息，芝士却动了。
 function sendDraft(opts?: { summon?: boolean }) {
   if (attsUploading.value) return
   if (!draft.value.trim() && !pendingAtts.value.length) return
