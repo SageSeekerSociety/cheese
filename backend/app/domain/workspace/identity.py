@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from app.core.config import settings
-from app.domain.identity.handles import looks_like_agent_handle, topic_agent_handle
+from app.domain.identity.handles import looks_like_agent_handle
 
 if TYPE_CHECKING:
     from app.domain.topic.models import Topic
@@ -273,6 +273,8 @@ async def attribution(
     """Resolve the agent author and credits from this delivery's declared tasks.
 
     Ownership alone never establishes a code contribution or a bug report."""
+    from app.domain.topic_membership.services import TopicMemberService
+
     task_id = getattr(card, "task_id", None)
     handle: str | None = None
     try:
@@ -282,7 +284,8 @@ async def attribution(
             "could not resolve the requester for topic %s", topic.id, exc_info=True
         )
     requester = await _identity_of(session, handle)
-    author = agent_identity(topic_agent_handle(topic.id))
+    acting = await TopicMemberService(session).resolve_agent_handle(topic.id)
+    author = agent_identity(acting)
     tasks: tuple[WorkItem, ...] = ()
     try:
         tasks = await work_items(session, card)

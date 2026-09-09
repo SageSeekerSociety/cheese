@@ -22,7 +22,7 @@ def test_claude_is_installed_at_the_pinned_version():
     pin = device_launch.CLAUDE_PINNED_VERSION
     assert f"/connector/claude/{pin}/" in s
     # Laid out exactly where the launcher's pin looks for it.
-    assert f'claude_pin="$HOME/.local/share/claude/versions/{pin}"' in s
+    assert f'claude_pin="$HOME/.cheese/claude/versions/{pin}"' in s
 
 
 def test_the_machine_owners_claude_is_left_alone():

@@ -287,6 +287,102 @@ describe('对话栏自己的输入栏', () => {
     expect(document.activeElement).toBe(box)
   })
 
+  // 「交给芝士」这颗按钮唯一被允许做的事，就是替你打那五个字。它自己不存状态：
+  // 一个能和正文说不一样的话的开关（亮着、正文里却没有 @），会让「这条到底算不
+  // 算叫了它」变成没人答得上来的问题——上一版正是因为这个被整颗删掉的。
+  it('点「交给芝士」把 @ 写进正文，再点一下拿掉', async () => {
+    const { container, getByRole } = mountPanel({}, 'topic-summon-btn')
+    await flush()
+
+    const box = composerBox(container)!
+    await fireEvent.update(box, '看看这个')
+    const btn = getByRole('button', { name: /交给芝士/ })
+    expect(btn.getAttribute('aria-pressed')).toBe('false')
+
+    await fireEvent.click(btn)
+    expect(box.value, '按钮没把 @ 写进正文——那它就是个只有它自己知道的开关').toBe('@芝士 看看这个')
+    expect(btn.getAttribute('aria-pressed')).toBe('true')
+
+    await fireEvent.click(btn)
+    expect(box.value).toBe('看看这个')
+    expect(btn.getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('手打 @芝士，按钮自己亮起来', async () => {
+    const { container, getByRole } = mountPanel({}, 'topic-summon-mirror')
+    await flush()
+
+    const box = composerBox(container)!
+    const btn = getByRole('button', { name: /交给芝士/ })
+    expect(btn.getAttribute('aria-pressed')).toBe('false')
+    await fireEvent.update(box, '@芝士 看看这个')
+    expect(btn.getAttribute('aria-pressed'), '正文里 @ 了它，按钮却没亮——两边说的不是同一件事').toBe('true')
+  })
+
+  // ⌘/Ctrl+Enter 是键盘上的同一个入口。它把 @ 写进正文再发，而不是在帧上偷偷把
+  // summon 置真：时间线上那条消息得自己说明它叫了谁，否则读的人看到的是一条谁也
+  // 没 @ 的消息、芝士却动了。
+  it('⌘/Ctrl+Enter 不用打 @ 也召唤，且发出去的正文里看得见那个 @', async () => {
+    const { container } = mountPanel({}, 'topic-summon-key')
+    await flush()
+
+    const box = composerBox(container)!
+    box.focus()
+    await fireEvent.update(box, '看看这个')
+    await fireEvent.keyDown(box, { key: 'Enter', metaKey: true })
+    await flush()
+
+    expect(JSON.parse(sent[0].payload)).toMatchObject({
+      content: '<@cheese-topica> 看看这个',
+      summon: true,
+    })
+  })
+
+  // 空输入框上按下这个快捷键，最坏的结果是发出一条光秃秃的 @——它把芝士叫起来，
+  // 而它手上一句话都没有。
+  it('输入框是空的时候，⌘/Ctrl+Enter 什么也不发', async () => {
+    const { container } = mountPanel({}, 'topic-summon-empty')
+    await flush()
+
+    const box = composerBox(container)!
+    box.focus()
+    await fireEvent.keyDown(box, { key: 'Enter', metaKey: true })
+    await flush()
+
+    expect(sent).toHaveLength(0)
+  })
+
+  // 同一条规矩对快捷键也成立：名册还没到就别假装召唤，那一下发出去的消息里没有
+  // 任何能解析成 handle 的东西，芝士不会动，而按的人以为自己叫了它。
+  it('还不知道芝士是谁的时候，⌘/Ctrl+Enter 只是普通发送', async () => {
+    const api = await import('../../api')
+    vi.mocked(api.listTopicMembers).mockResolvedValue({
+      data: [{ id: 'm1', member_handle: 'alice', name: 'Alice', role: 'owner', agent: false }],
+      total: 1,
+    } as Awaited<ReturnType<typeof api.listTopicMembers>>)
+
+    const vuetify = createVuetify({ components, directives })
+    const { container } = render(ChatPanel, {
+      props: {
+        topic: topic('topic-summon-unknown'),
+        showComposer: true,
+        hideHeader: true,
+        // 项目名册上也没有芝士那一行——这个房间此刻确实不知道它是谁。
+        members: [{ user_handle: 'alice', name: 'Alice', role: 'lead' }],
+      },
+      global: { plugins: [vuetify] },
+    })
+    await flush()
+
+    const box = composerBox(container)!
+    box.focus()
+    await fireEvent.update(box, '看看这个')
+    await fireEvent.keyDown(box, { key: 'Enter', metaKey: true })
+    await flush()
+
+    expect(JSON.parse(sent[0].payload)).toMatchObject({ content: '看看这个', summon: false })
+  })
+
   it('@ 一个人不会把芝士叫起来', async () => {
     const { container } = mountPanel({}, 'topic-B')
     await flush()

@@ -14,6 +14,8 @@ export interface RouteMetaTitle {
   disableBreadcrumbLink?: boolean
   isFullPage?: boolean
   backTo?: string
+  /** 「项目这个框」那条记录自己举的手——见 lib/projectEntry 的 projectFrameOf。 */
+  projectFrame?: boolean
 }
 
 export interface RouteHierarchyItem {

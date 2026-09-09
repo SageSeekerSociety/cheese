@@ -171,10 +171,8 @@ if [ "$(uname -s)" = "Linux" ]; then
 else
   cplat="darwin-$carch"
 fi
-# The pinned build goes into claude's own versions directory, which is built
-# for exactly this — several versions coexisting, with the user's `claude`
-# entry point deciding which one THEY get. We add a version and touch nothing
-# else.
+# The pinned build lives under Cheese's own directory. The owner's Claude
+# installation, version store, and command links remain untouched.
 #
 # Specifically: no symlink into ~/.local/bin. That path is the machine owner's
 # claude, and on a self-hosted machine it belongs to a person who did not ask
@@ -186,9 +184,9 @@ fi
 # otherwise the platform silently rides whatever the owner happens to have, and
 # their next upgrade or downgrade becomes our behaviour change. Pinning has to
 # mean the version we put there, not the version we found.
-claude_pin="$HOME/.local/share/claude/versions/{pinned_version}"
+claude_pin="$HOME/.cheese/claude/versions/{pinned_version}"
 if [ ! -x "$claude_pin" ]; then
-  mkdir -p "$HOME/.local/share/claude/versions"
+  mkdir -p "$HOME/.cheese/claude/versions"
   curl -fsSL --retry 3 --retry-delay 2 -m 300 \
     "{origin_clean}/connector/claude/{pinned_version}/$cplat/claude" \
     -o "$claude_pin.new" \
@@ -314,7 +312,7 @@ async def run_bootstrap(
         # too slow for enrollment. Reuse the platform's verified cache and the
         # existing bootstrap credential; no extra listener or guest credential.
         pin = CLAUDE_PINNED_VERSION
-        remote_dir = ".local/share/claude/versions"
+        remote_dir = ".cheese/claude/versions"
         facts = (
             (
                 await run(

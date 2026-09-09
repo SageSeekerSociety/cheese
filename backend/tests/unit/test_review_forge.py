@@ -36,9 +36,6 @@ async def test_a_bound_project_is_the_app_forge() -> None:
     got = await forge_mod.resolve(project_id=_pid(), is_github_bound=_bound)
 
     assert got.kind is forge_mod.ForgeKind.github_app
-    # The #362 rule: a PR is the only way in, and a PR-path failure stops the
-    # accept instead of becoming a direct push.
-    assert got.requires_pr is True
     assert got.has_external_checks is True
     assert got.note == ""
 
@@ -48,8 +45,6 @@ async def test_an_unbound_project_is_the_platform_forge() -> None:
     got = await forge_mod.resolve(project_id=_pid(), is_github_bound=_unbound)
 
     assert got.kind is forge_mod.ForgeKind.platform
-    # The local merge is this project's accept, not a fallback from a failed one.
-    assert got.requires_pr is False
     # And it is a repo with no CI configured — which #363 calls legitimate, so
     # the delivery surface must be able to say "no checks here" rather than
     # showing a check step that never runs.
@@ -73,11 +68,21 @@ async def test_an_undeterminable_binding_stops_the_accept() -> None:
 def test_every_kind_answers_every_question() -> None:
     """A new forge cannot be added half-way.
 
-    Adding a `ForgeKind` without deciding its PR rule or whether it has external
-    checks is how a lane ends up defaulting into someone else's behaviour.
+    Every registered provider declares checks and implements the operations.
     """
     for kind in forge_mod.ForgeKind:
-        got = forge_mod.Forge(kind)
-        assert isinstance(got.requires_pr, bool)
+        got = forge_mod.FORGES[kind]
         assert isinstance(got.has_external_checks, bool)
         assert isinstance(got.note, str)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("binding", [_unbound, _explodes])
+async def test_existing_proposal_keeps_its_forge_without_project_credentials(binding):
+    got = await forge_mod.resolve(
+        project_id=_pid(),
+        is_github_bound=binding,
+        proposal_url="https://github.com/acme/widgets/pull/42",
+    )
+    assert got.kind == forge_mod.ForgeKind.github_app
+    assert got.has_external_checks is True

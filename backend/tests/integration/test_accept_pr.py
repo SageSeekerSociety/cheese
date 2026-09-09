@@ -1401,6 +1401,163 @@ def test_accept_without_github_binding_local_merges(client):
     assert delivered["accepted_at"] is not None
 
 
+def test_existing_pr_cannot_fall_back_to_local_merge_when_binding_disappears(
+    client, app_world, monkeypatch
+):
+    from app.domain.agent import github_app
+
+    _pid, tid, cid, _number, _head = _ready_card(client, app_world)
+
+    async def unavailable(*_):
+        return None
+
+    monkeypatch.setattr(github_app, "github_app_tokens_for_project", unavailable)
+    response = _accept(client, cid)
+    assert response.status_code == 422, response.text
+    assert app_world["local_merges"] == []
+    assert app_world["fake"].merge_calls == []
+    card = _cards(client, tid)[0]
+    assert card["status"] == "pending"
+    assert card["has_external_checks"] is True
+
+
+def test_another_forge_owns_its_checks_and_accept_operation(client, monkeypatch):
+    """A provider without GitHub must not fall through to the platform merge."""
+    from app.core.errors import ValidationError
+    from app.domain.review import forge as forge_mod
+    from app.domain.review.models import AcceptStatus
+    from app.domain.workspace import service as ws
+
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid)
+    merges = []
+
+    class AnotherForge:
+        has_external_checks = True
+        note = ""
+        checks_passed = False
+
+        async def accept(self, service, card, topic, decided_by, *, seen_head):
+            if not self.checks_passed:
+                raise ValidationError("Provider checks are still running")
+            merges.append((card.id, decided_by, seen_head))
+            card.status = AcceptStatus.accepted
+            return card
+
+    provider = AnotherForge()
+
+    async def resolve(**_):
+        return provider
+
+    def unexpected_local_merge(*_, **__):
+        raise AssertionError(
+            "A different forge was silently merged in the platform repo"
+        )
+
+    monkeypatch.setattr(forge_mod, "resolve", resolve)
+    monkeypatch.setattr(ws, "merge_topic", unexpected_local_merge)
+    card = _cards(client, tid)[0]
+    assert card["has_external_checks"] is True
+    assert card["merge_state"]["state"] == "unknown"
+    blocked = _accept(client, cid)
+    assert blocked.status_code == 422, blocked.text
+    assert "Provider checks are still running" in blocked.text
+    assert merges == []
+    provider.checks_passed = True
+    accepted = _accept(client, cid)
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["data"]["status"] == "accepted"
+    assert merges == [(_uuid.UUID(cid), "alice", None)]
+
+
+@pytest.mark.parametrize("override", [False, True])
+def test_another_forge_refreshes_polls_and_merges_the_viewed_revision(
+    client, monkeypatch, override
+):
+    """Provider dispatch retains the common actor and revision guards."""
+    from app.core.errors import ValidationError
+    from app.domain.review import forge as forge_mod
+    from app.domain.review.models import AcceptStatus
+    from app.domain.review.repositories import AcceptCardRepository
+
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid)
+    calls = []
+    head = "c" * 40
+
+    async def attach_proposal():
+        async with client.test_factory() as session:
+            card = await AcceptCardRepository(session).get(_uuid.UUID(cid))
+            card.pr_number = 42
+            card.pr_url = "https://forge.example/proposals/42"
+            await session.commit()
+
+    asyncio.run(attach_proposal())
+
+    class AnotherForge(forge_mod.Forge):
+        kind = "test-provider"
+        has_external_checks = True
+        note = ""
+
+        async def refresh_unseen_head(self, service, card, topic, action):
+            calls.append("refresh")
+            raise ValidationError("Provider revision has not been displayed")
+
+        async def poll(self, service, card, topic, **_):
+            calls.append("poll")
+            card.pr_head_sha = head
+            card.merge_state = {
+                "state": "clean",
+                "who": "human",
+                "reasons": [],
+                "head_sha": head,
+                "checked_at": None,
+                "since": None,
+            }
+
+        async def accept(self, service, card, topic, decided_by, *, seen_head):
+            calls.append(("accept", decided_by, seen_head))
+            card.status = AcceptStatus.accepted
+            return card
+
+        async def merge_despite_checks(
+            self, service, card, topic, decided_by, *, seen_head, reason
+        ):
+            calls.append(("override", decided_by, seen_head, reason))
+            card.status = AcceptStatus.accepted
+            return card
+
+    async def resolve(**_):
+        return AnotherForge()
+
+    monkeypatch.setattr(forge_mod, "resolve", resolve)
+    unseen = _accept(client, cid, head_sha=None)
+    assert unseen.status_code == 422, unseen.text
+    assert "Provider revision has not been displayed" in unseen.text
+    assert calls == ["refresh"]
+    assert _poll(client)["cards_checked"] == 1
+    card = _cards(client, tid)[0]
+    assert card["merge_state"]["state"] == "clean"
+    assert card["merge_state"]["head_sha"] == head
+    assert calls == ["refresh", "poll"]
+    denied = _accept(client, cid, handle="bob", head_sha=head)
+    assert denied.status_code == 403, denied.text
+    stale = _accept(client, cid, head_sha="d" * 40)
+    assert stale.status_code == 422, stale.text
+    assert calls == ["refresh", "poll"]
+    if override:
+        result = _merge_anyway(client, cid, "alice", reason="Reviewed", head_sha=head)
+        expected = ("override", "alice", head, "Reviewed")
+    else:
+        result = _accept(client, cid, head_sha=head)
+        expected = ("accept", "alice", head)
+    assert result.status_code == 200, result.text
+    assert result.json()["data"]["status"] == "accepted"
+    assert calls == ["refresh", "poll", expected]
+
+
 # ============================ 轮询器的三件事 =================================
 
 
@@ -1631,6 +1788,113 @@ def test_poll_settles_an_externally_merged_pr(client, app_world):
     delivered = _topic(client, tid)
     assert delivered["status"] == "active"
     assert delivered["accepted_at"] is not None
+
+
+@pytest.mark.parametrize("sync_fails", [False, True])
+def test_external_merge_closes_a_returned_batch_without_rewriting_its_review(
+    client, app_world, monkeypatch, sync_fails
+):
+    from app.domain.workspace import service as ws
+
+    sync_calls = []
+
+    def sync(project_id, **kwargs):
+        sync_calls.append(project_id)
+        return {"synced": not sync_fails, "reason": "read failed"}
+
+    monkeypatch.setattr(ws, "sync_upstream", sync)
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    branch = _room_open_tree_branch(client, tid)
+    response = client.post(
+        f"/accept-cards/{cid}/reject",
+        json={"decided_by": "alice", "note": "The batch boundary is not proven"},
+        headers=session_auth_headers("alice"),
+    )
+    assert response.status_code == 200, response.text
+    rejected = _cards(client, tid)[0]
+    delivered_head = fake.push_new_commit(number)
+    fake.merge_externally(number, merge_commit_sha="a34b8e12")
+
+    result = _poll(client)
+
+    assert result["cards_checked"] == 1
+    assert result["errors"] == []
+    card = _cards(client, tid)[0]
+    assert card["status"] == "rejected"
+    assert card["note"] == rejected["note"]
+    assert card["decided_by"] == rejected["decided_by"]
+    assert card["pr_head_sha"] == rejected["pr_head_sha"]
+    assert card["pr_merged_at"] is not None
+    assert _room_open_tree_branch(client, tid) != branch
+    assert _branch_of_record(client, tid) == _room_open_tree_branch(client, tid)
+    assert fake.merge_calls == []
+    room = _room_settled(client, tid, "原退回记录保留")
+    assert "原退回记录保留" in room
+    assert sync_calls == [_uuid.UUID(pid)]
+    if sync_fails:
+        assert "本地同步待补：read failed" in room
+
+    async def check_delivery_boundary():
+        from app.domain.review.repositories import AcceptCardRepository
+        from app.domain.room_task.repositories import WorkTreeRepository
+
+        async with client.test_factory() as session:
+            stored = await AcceptCardRepository(session).get(_uuid.UUID(cid))
+            tree = await WorkTreeRepository(session).get(stored.tree_id)
+            assert tree.status == "merged"
+            assert tree.delivered_head == delivered_head
+
+    asyncio.run(check_delivery_boundary())
+    assert _poll(client)["cards_checked"] == 0
+
+
+@pytest.mark.parametrize("closed", [False, True])
+def test_poll_never_merges_or_rewrites_a_returned_pr(client, app_world, closed):
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    branch = _room_open_tree_branch(client, tid)
+    response = client.post(
+        f"/accept-cards/{cid}/reject",
+        json={"decided_by": "alice", "note": "Needs another review"},
+        headers=session_auth_headers("alice"),
+    )
+    assert response.status_code == 200, response.text
+    rejected = _cards(client, tid)[0]
+    fake.check_state_by_sha[head_sha] = ("success", "All checks passed")
+    if closed:
+        fake.close_unmerged(number)
+
+    assert _poll(client)["errors"] == []
+
+    card = _cards(client, tid)[0]
+    assert card["status"] == "rejected"
+    assert card["note"] == rejected["note"]
+    assert card["pr_merged_at"] is None
+    assert _room_open_tree_branch(client, tid) == branch
+    assert fake.merge_calls == []
+
+
+def test_poll_prefers_a_resubmitted_card_to_its_previous_return(client, app_world):
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    response = client.post(
+        f"/accept-cards/{cid}/reject",
+        json={"decided_by": "alice", "note": "Needs another review"},
+        headers=session_auth_headers("alice"),
+    )
+    assert response.status_code == 200, response.text
+    new_card = _make_card(client, tid)
+    _give_card_a_pr(client, app_world, tid, new_card, number)
+    fake.merge_externally(number)
+
+    result = _poll(client)
+
+    assert result["cards_checked"] == 1
+    assert result["errors"] == []
+    cards = {card["id"]: card for card in _cards(client, tid)}
+    assert cards[new_card]["status"] == "accepted"
+    assert cards[cid]["status"] == "rejected"
 
 
 def test_poll_steady_state_costs_one_pr_read_per_tick(client, app_world):

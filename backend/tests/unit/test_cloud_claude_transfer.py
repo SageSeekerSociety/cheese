@@ -47,7 +47,7 @@ cp "$src" "$TEST_GUEST_HOME/${dst#*:}"
         return cached
 
     monkeypatch.setattr(enrollment.claude_dist, "ensure_cached", ensure_cached)
-    script = f'"$HOME/.local/share/claude/versions/{pin}" --version'
+    script = f'"$HOME/.cheese/claude/versions/{pin}" --version'
     first = await enrollment.run_bootstrap(
         ip="guest", login_user="cheese", private_key="test", script=script
     )

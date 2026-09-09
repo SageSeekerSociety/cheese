@@ -34,15 +34,22 @@ file or stdin with `--file -`.
 
 ## Communication instructions
 
-The backend includes the chat skill in the system prompt when launching a room's
-terminal session. It teaches the lead agent to answer user messages directly
+The launcher installs `cheese-chat` and `cheese-docs` as native user-level skills
+under the session's `$CLAUDE_CONFIG_DIR/skills/`.
+It writes no skills or settings into the hosted project or the owner's Claude
+configuration. The system prompt carries a short publication contract and asks
+the agent to load `cheese-chat` through the Skill tool before responding. Native
+discovery lists the description; the body enters context when invoked. This is
+an instruction to the model, not a deterministic invocation gate.
+
+The chat skill teaches the lead agent to answer user messages directly
 when possible, announce work before doing it, and publish progress and results.
 Queued messages and messages received during work follow the same rules. Each
 new or merged terminal input also reminds the agent that ordinary text is not
 sent. Subagents report to their lead; scheduled inspections use the heartbeat
 notification rules.
 
-The doc-form skill handles durable overviews and updates when the underlying
+The `cheese-docs` skill handles durable overviews and updates when the underlying
 state changes. It does not require a document edit for every chat turn. Both
 skills adapt the explanation to the reader; a reader without conversation
 history may still have professional expertise.

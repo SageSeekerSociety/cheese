@@ -1473,6 +1473,54 @@ async def ask_options(
     return ok(payload)
 
 
+@router.post("/{topic_id}/summon")
+async def summon_agent(
+    topic_id: uuid.UUID,
+    body: dict,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
+) -> dict:
+    """叫芝士读一遍还没交到它手上的消息 —— 忘了 @ 的那一条的补救。
+
+    没 @ 的消息从来不会丢：它在待读窗口里等着下一轮把它捎上（没 @ 不等于没说）。
+    但「等下一轮」在一个安静的房间里等于永远，而房间安静恰恰是忘了 @ 之后的常态。
+    这个接口只做一件事：现在就开那一轮。它**不再发一条消息**，因为那条消息已经
+    在时间线上了——补发一条一模一样的，读的人要自己分辨哪条是真的。
+
+    两种情况下它什么都不做，并如实说明是哪一种：房间已经在干活（正在跑的那一轮
+    会自己把没 @ 的消息接过去），或者根本没有待读的东西（有人先 @ 过了）。两种
+    都不是错误，只是这一下不需要花钱。
+    """
+    place = await TopicService(db).place_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=body.get("author"),
+        topic_id=place.room_id,
+        project_id=place.project_id,
+    )
+    await resolver.authorize_topic(
+        actor, project_id=place.project_id, topic_id=place.room_id
+    )
+    if chat.has_running_turn(place.room_id):
+        return ok({"started": False, "reason": "working"})
+    if not await chat.has_unread_human_input(place.room_id):
+        return ok({"started": False, "reason": "nothing_pending"})
+    # content 在有待读消息时会被待读窗口取代（_converse_impl 的 backlog 分支），
+    # 这里正是要那个结果：芝士收到的东西和「当时就 @ 了它」一模一样。这句只在
+    # 待读窗口刚好被别人清空的缝隙里当兜底。
+    runner.submit(
+        chat,
+        place.room_id,
+        author="system",
+        content="有人请你看一下房间里还没读到的消息，照常处理。",
+        summon=True,
+        nudge_event=f"<@{actor.handle}> 叫芝士来看前面的消息",
+        provision_actor=actor,
+    )
+    return ok({"started": True})
+
+
 @router.post("/blocks/{block_id}/answer")
 async def answer_options(
     block_id: uuid.UUID,

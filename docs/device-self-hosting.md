@@ -14,8 +14,9 @@
 
 **判据：除了我们放进去的东西，机器上任何一样在我们来之前是什么样，走之后还是什么样。**
 
-- 装 claude = 往 `~/.local/share/claude/versions/<pin>` 加一个版本（那目录本就为共存而设）。**不碰 `~/.local/bin/claude`**，那是他敲 `claude` 得到的东西；启动器按 `versions/<pin>` 找，symlink 一分钱不值。反过来也不行：**看到他已有够新的就不装**，等于他下次升降级成了我们的行为变更。
-- 配置隔离：`CLAUDE_CONFIG_DIR` / `HOME` / 工作树都在 `~/.cheese/`、`~/cheese-workspaces/` 下；他的 `~/.claude` 不读不写。
+- Cheese installs its Claude build at `~/.cheese/claude/versions/<pin>`. It leaves the owner's version store and `~/.local/bin/claude` unchanged.
+- Session configuration, home and worktrees live under Cheese-owned directories. Machine credentials are read from the owner's configuration under the existing authorization; the launcher writes neither the owner's `~/.claude` nor project configuration. Native skills live in the session's `$CLAUDE_CONFIG_DIR/skills/`.
+- This boundary applies to the Cheese integration. By the user's explicit choice, Hosted Machine agents retain `--dangerously-skip-permissions` and their existing access to the machine.
 - 装在**他能写的目录**——否则自更新永远失败，且无声（#501）。
 
 ### 为什么这条特别容易破
@@ -28,7 +29,7 @@
 
 启动器起的内层 `claude` 会话，在 **connector 的私有 tmux server** 上，不在机主的默认 server 上。socket 不靠任何约定传递：这段启动器本来就跑在 connector 的一个 pane 里，tmux 把 socket 路径放在 `$TMUX` 的第一段（`<socket>,<pid>,<session>`），读出来即可（读完才 `unset TMUX`——从 pane 里 attach 必须先去掉它）。于是他的 `tmux ls` 看不见我们，他的 `tmux kill-server` 带不走 agent，我们的清理也碰不到他的会话。
 
-在默认 server 上发现同名的 `cheese_*` 会话，启动器直接杀掉再起自己的：那会话是我们放的，它握着这个话题的 rendezvous socket、spool 和工作树，留着就等于同一个话题有两个 claude 在应答。
+The launcher neither queries nor terminates sessions on the default server. A `cheese_*` name alone does not establish ownership.
 
 **"重启一下 connector"是非破坏性操作**，靠三件事一起成立，缺一件就不成立：
 

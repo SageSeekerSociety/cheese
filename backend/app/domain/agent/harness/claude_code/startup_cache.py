@@ -1,4 +1,4 @@
-"""Prepare native policy caches before a cloud machine is assigned to a room."""
+"""Prepare native policy and feature caches before a cloud room is assigned."""
 
 import hashlib
 import json
@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 FILES = ("remote-settings.json", "policy-limits.json")
+FEATURE_FIELDS = ("cachedGrowthBookFeatures", "cachedGrowthBookFeaturesAt")
 MAX_AGE = 3600
 
 
@@ -43,7 +44,7 @@ def prepare(owner: Path, version: str) -> None:
         (config / ".claude.json").write_text(
             json.dumps({"hasCompletedOnboarding": True})
         )
-        binary = owner / ".local/share/claude/versions" / version
+        binary = owner / ".cheese/claude/versions" / version
         with (directory / "native-startup-init.log").open("ab") as log:
             log.write(f"{time.time()} initializing {version}\n".encode())
             log.flush()
@@ -63,11 +64,13 @@ def prepare(owner: Path, version: str) -> None:
                 timeout=45,
                 check=True,
             )
+        native_state = json.loads((config / ".claude.json").read_text())
         bundle = {
             "version": version,
             "fingerprint": fingerprint,
             "created_at": time.time(),
             "files": {name: json.loads((config / name).read_text()) for name in FILES},
+            "features": {name: native_state[name] for name in FEATURE_FIELDS},
         }
         # Publish a complete initialization without replacing the previous bundle early.
         staged = home / "bundle.json"
@@ -88,11 +91,18 @@ def restore(owner: Path, config: Path, version: str) -> bool:
         or not 0 <= time.time() - bundle["created_at"] < MAX_AGE
     ):
         return False
+    # Never copy account identity, project trust, or conversation state.
+    features = {name: bundle["features"][name] for name in FEATURE_FIELDS}
     for name in FILES:
         destination = config / name
         # Native refresh owns existing files. Preserve all policy keys unchanged.
         if not destination.exists():
             destination.write_text(json.dumps(bundle["files"][name]))
+    state_path = config / ".claude.json"
+    state = json.loads(state_path.read_text()) if state_path.exists() else {}
+    if not any(name in state for name in FEATURE_FIELDS):
+        state.update(features)
+        state_path.write_text(json.dumps(state))
     return True
 
 

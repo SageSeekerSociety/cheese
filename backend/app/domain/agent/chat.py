@@ -68,7 +68,7 @@ from app.domain.agent.service import (
     AgentUsage,
     proves_output,
 )
-from app.domain.agent.skills import DEFAULT_CHAT_SKILLS, load_scenario, load_skills
+from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE, load_scenario, load_skills
 from app.domain.agent.stages import TopicStage, resolve_stage, stage_scenario
 from app.domain.agent.supply import SUBSCRIPTION, resolve_pool
 from app.domain.agent.tool_preview import ToolPreview, tool_preview, work_subpath
@@ -1371,8 +1371,8 @@ class ChatService:
         # project.settings (single-process reality, like the topic locks).
         self._gateway = gateway
         self._gateway_lock = asyncio.Lock()
-        # Load the conversation skills once (spec §8.3 product "soul").
-        self._skills = load_skills(DEFAULT_CHAT_SKILLS)
+        # Keep the publication contract present before native skills are invoked.
+        self._skills = NATIVE_CHAT_GUIDANCE
         # Prompt construction is serialized per topic. The lock is released as
         # soon as an interactive provider injects the prompt; non-interactive
         # providers still hold it while running because they cannot accept a
@@ -1794,6 +1794,20 @@ class ChatService:
     def has_running_turn(self, topic_id: uuid.UUID) -> bool:
         """Whether this process currently owns live work for the topic."""
         return topic_id in self._active_turn_ids
+
+    async def has_unread_human_input(self, topic_id: uuid.UUID) -> bool:
+        """Whether anything a person said is still waiting to reach 芝士.
+
+        「忘了 @」的补救按钮问的就是这一句，所以它必须和真正组装 prompt 时问的
+        是同一个问题 —— 同一个 `_pending_human_blocks`，不是一份近似的复制品。
+        一份复制品会在窗口语义改动时悄悄和它分叉，而分叉的表现是按钮说「它还没
+        看到」、点下去却什么也没有可读，白烧一轮。
+        """
+        async with self._sessions() as session:
+            history = await BlockRepository(session).list_for_topic(
+                topic_id, task_id=None
+            )
+            return bool(_pending_human_blocks(history))
 
     @asynccontextmanager
     async def edit_environment(self, topic_id: uuid.UUID) -> AsyncIterator[None]:
@@ -3731,7 +3745,7 @@ class ChatService:
                     {"agent": agent.configuration, "git_author": acting_agent},
                     sort_keys=True,
                 )
-                + ":explicit-chat-v2"
+                + ":explicit-chat-v3-native-skills"
                 + (":native-rc-v1" if supply == SUBSCRIPTION else "")
             ).encode()
         ).hexdigest()
