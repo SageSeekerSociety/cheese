@@ -1,0 +1,59 @@
+{
+  "base": "/docs",
+  "anchors": [
+    {
+      "url": "/docs/quickstart#quickstart",
+      "page": "quickstart",
+      "title": "快速开始",
+      "summary": "知是是你和 AI 队友一起做项目的地方。"
+    },
+    {
+      "url": "/docs/quickstart#prerequisites",
+      "page": "quickstart",
+      "title": "开始之前",
+      "summary": "你只需要一个知是账号。"
+    },
+    {
+      "url": "/docs/quickstart#create-project",
+      "page": "quickstart",
+      "title": "第一步：建一个项目",
+      "summary": "界面最左边那条竖栏是你的项目栏，底部的 ➕ 是新建项目。"
+    },
+    {
+      "url": "/docs/quickstart#connect-repo",
+      "page": "quickstart",
+      "title": "第二步：连上你已有的仓库（可以跳过）",
+      "summary": "如果你想在自己已有的代码上开工，去 项目设置 → 上游仓库：填 git 地址，点「保存」，再点「同步上游」，历史就拉进来了。"
+    },
+    {
+      "url": "/docs/quickstart#first-room",
+      "page": "quickstart",
+      "title": "第三步：开一个房间，说一句人话",
+      "summary": "打开项目，第一屏是看板，不是某个聊天——看板答的是「现在该谁动」，这是你每天的第一眼。"
+    },
+    {
+      "url": "/docs/quickstart#watch-work",
+      "page": "quickstart",
+      "title": "第四步：它干活的时候，你在看什么",
+      "summary": "芝士会先回你一句它理解的目标和第一步，然后开工。"
+    },
+    {
+      "url": "/docs/quickstart#accept",
+      "page": "quickstart",
+      "title": "第五步：它交活，你采纳",
+      "summary": "活干完，对话末尾会出现一张验收卡。"
+    },
+    {
+      "url": "/docs/quickstart#troubleshooting",
+      "page": "quickstart",
+      "title": "走不通的时候",
+      "summary": "第一趟最常见的三种卡住，以及它们各自意味着什么。"
+    },
+    {
+      "url": "/docs/quickstart#next-steps",
+      "page": "quickstart",
+      "title": "接下来",
+      "summary": "走完这一趟，剩下的两件事在你需要时再看。"
+    }
+  ]
+}

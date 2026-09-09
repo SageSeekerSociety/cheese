@@ -134,3 +134,13 @@ repos:
         language: system
         pass_filenames: false
         files: ^\.github/workflows/
+
+      # The user manual's anchors: 芝士 answers questions with URLs built from
+      # them, so a slug that moved or a generated list that fell behind hands
+      # out links that 404 — with nothing else in the tree going red.
+      - id: manual-anchors
+        name: user manual anchors (stable slugs, anchors.json in sync)
+        entry: python3 .claude/scripts/check-manual-anchors.py
+        language: system
+        pass_filenames: false
+        files: ^docs/manual/
