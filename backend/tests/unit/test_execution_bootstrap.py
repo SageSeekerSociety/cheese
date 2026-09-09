@@ -2,7 +2,6 @@
 
 import json
 import os
-import shutil
 import subprocess
 import sys
 import time
@@ -18,9 +17,10 @@ from app.domain.agent.harness.claude_code.remote_execution.launch import script
 def test_executor_prepares_project_without_model_credentials(tmp_path):
     pin = Path.home() / ".local/share/claude/versions/2.1.265"
     binary = os.environ.get("CHEESE_TEST_CLAUDE") or (
-        str(pin) if pin.exists() else shutil.which("claude")
+        str(pin) if pin.exists() else None
     )
-    assert binary, "The pinned Claude Code build is required"
+    if not binary:
+        pytest.skip("Native executor acceptance supplies CHEESE_TEST_CLAUDE in CI")
     original = tmp_path / "original"
     subprocess.run(["git", "init", "-q", str(original)], check=True)
     (original / "project.txt").write_text("original")
