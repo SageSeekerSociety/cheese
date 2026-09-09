@@ -65,10 +65,10 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 
 | 界面 | 组件 | 行为 |
 |---|---|---|
-| 工作台 | `views/WorkspaceView.vue` | 左栏(话题树/项目文档/私聊) ｜ 对话 ｜ 实况文档 + 跨区输入栏；栏宽可拖拽(持久化) |
+| 工作台 | `views/WorkspaceView.vue` | 左栏(话题树/项目文档/成员) ｜ 对话 ｜ 实况文档 + 跨区输入栏；栏宽可拖拽(持久化) |
 | 对话 | `components/ChatPanel.vue` | 飞书群聊式；只显示 message + 系统行（doc/decision/🔧 事件不混入）；本地时区 |
 | 实况文档 | `components/DocPanel.vue` | 飞书文档式；TipTap 编辑器，块手柄(＋插入/⠿ 拖动排序，真功能)；右侧工具可**钉住停靠** |
-| 左栏 | `components/TopicSidebar.vue` | 话题树(本体▸话题▸分身) + 项目文档(章程/决策/周报) + 私聊；右缘可拖拽调宽 |
+| 左栏 | `components/TopicSidebar.vue` | 话题树(本体▸话题▸分身) + 项目文档(章程/决策/周报) + 成员(私聊从名册进)；右缘可拖拽调宽 |
 | 项目总览 | `views/OverviewView.vue` | 一页纸总结 + 等你处理的事 + 里程碑 + 话题分布 + 人/AI 贡献 + 成员 |
 | 日历 | `views/CalendarView.vue` | 里程碑倒排 |
 | 机构看板 | `views/SpaceBoardView.vue` | Linear 表：团队/负责人/AI模式/话题数/活跃/**最近活动**/下个里程碑/状态 |

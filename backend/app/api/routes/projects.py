@@ -679,12 +679,14 @@ async def get_private_chat(
     db: DbSession,
     resolver: ActorResolverDep,
     peer_handle: str | None = None,
+    agent_handle: str | None = None,
 ) -> dict:
     """Get-or-create a 1:1 private chat (spec §1).
 
-    Without ``peer_handle`` this is the member's 1:1 with 芝士. With
-    ``peer_handle`` it is a person-to-person DM between the two humans, shared
-    by both regardless of who opens it first.
+    With ``peer_handle`` it is a person-to-person DM between the two humans,
+    shared by both regardless of who opens it first. Without, it is the member's
+    1:1 with one AI teammate — ``agent_handle`` picks which, defaulting to the
+    project's default teammate.
     """
     actor = await resolver.require_verified_caller(project_id=project_id)
     if actor.authenticated:
@@ -693,7 +695,10 @@ async def get_private_chat(
         if actor.handle not in participants:
             raise ForbiddenError("只能打开自己参与的私聊")
     topic = await TopicService(db).get_or_create_private(
-        project_id=project_id, user_handle=user_handle, peer_handle=peer_handle
+        project_id=project_id,
+        user_handle=user_handle,
+        peer_handle=peer_handle,
+        agent_handle=agent_handle,
     )
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
 
