@@ -331,9 +331,11 @@ def case(folder, options):
                 "40",
                 "-c",
                 str(center),
-                command,
+                "sleep 300",
             ]
         )
+        run(tmux + ["set-option", "-w", "-t", "agent", "remain-on-exit", "on"])
+        run(tmux + ["respawn-pane", "-k", "-t", "agent", command])
         time.sleep(4)
         if rc:
             assert rc.connected.wait(25), run(
