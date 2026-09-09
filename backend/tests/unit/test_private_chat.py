@@ -16,13 +16,13 @@ from app.domain.agent.harness.claude_code.remote_execution.runtime import Execut
 
 
 def test_private_chat_requires_a_central_device(monkeypatch):
-    monkeypatch.setattr(settings, "private_chat_device_id", None)
+    monkeypatch.setattr(settings, "agent_session_device_id", None)
     with pytest.raises(RuntimeError, match="尚未配置"):
         private_chat.execution_target(uuid.uuid4(), uuid.uuid4())
 
 
 def test_private_execution_does_not_select_a_project_machine(monkeypatch):
-    monkeypatch.setattr(settings, "private_chat_device_id", "central")
+    monkeypatch.setattr(settings, "agent_session_device_id", "central")
     project, topic = uuid.uuid4(), uuid.uuid4()
     config = private_chat.execution_target(project, topic)
     assert config["device_id"] == "central"
@@ -31,7 +31,7 @@ def test_private_execution_does_not_select_a_project_machine(monkeypatch):
 
 
 def test_reopened_chat_uses_a_new_container_and_control_home(monkeypatch):
-    monkeypatch.setattr(settings, "private_chat_device_id", "central")
+    monkeypatch.setattr(settings, "agent_session_device_id", "central")
     project, topic, resource = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     before = private_chat.execution_target(project, topic)
     after = private_chat.execution_target(project, topic, resource)
@@ -42,7 +42,7 @@ def test_reopened_chat_uses_a_new_container_and_control_home(monkeypatch):
 
 @pytest.mark.anyio
 async def test_private_control_uses_central_device_transport(monkeypatch):
-    monkeypatch.setattr(settings, "private_chat_device_id", "central")
+    monkeypatch.setattr(settings, "agent_session_device_id", "central")
     calls = []
 
     class Hub:
@@ -61,7 +61,7 @@ async def test_private_control_uses_central_device_transport(monkeypatch):
 
 @pytest.mark.anyio
 async def test_private_control_does_not_fall_back_on_transport_failure(monkeypatch):
-    monkeypatch.setattr(settings, "private_chat_device_id", "central")
+    monkeypatch.setattr(settings, "agent_session_device_id", "central")
 
     class Hub:
         async def exec(self, *args, **kwargs):

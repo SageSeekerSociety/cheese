@@ -50,6 +50,10 @@ PKG = "app.domain.agent.harness.claude_code"
 
 # 模块 → 它从适配器拿走的名字（排序后的元组）。见上面「账本是棘轮」。
 _LEDGER: dict[str, tuple[str, ...]] = {
+    # Session placement uses the harness's executor bootstrap and control adapter.
+    "app.domain.agent.central_provider": ("ScreenSetupError", "build_executor_launch"),
+    "app.domain.agent.private_chat": ("RemoteClient", "private_execution_target"),
+    "app.api.routes.remote_control": ("REMOTE_CONTROLS",),
     # Retirement flushes the same native raw-file collector before deletion.
     "app.domain.topic.retire": ("event_drain",),
     # --- 边缘：适配器对外的那条边 ---

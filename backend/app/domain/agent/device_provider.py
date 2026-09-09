@@ -568,7 +568,12 @@ class DeviceChannel(Channel):
                 from app.domain.agent.private_chat import execution_target
                 from app.domain.device.supply import Visibility
 
-                device_id = execution_target(project_id, topic_id)["device_id"]
+                placement = place.room.session_placement
+                device_id = execution_target(
+                    project_id,
+                    topic_id,
+                    device_id=placement["device_id"] if placement else None,
+                )["device_id"]
                 if not self._hub.is_online(device_id):
                     raise ScreenSetupError("私聊中心执行机未连接，本轮没有启动")
                 binding = await service.topic_binding(topic_id)
@@ -775,11 +780,15 @@ class DeviceChannel(Channel):
         fresh sid the connector must Spawn, rather than reasserted into a corpse."""
         resource_id = uuid.UUID((env or {}).get("CHEESE_RESOURCE_ID", str(topic_id)))
         existing = self._existing_screen(device_id, topic_id, resource_id)
-        execution_target = settings.agent_execution_targets.get(str(topic_id))
+        execution_target = None
+        if (env or {}).get("CHEESE_EXECUTION_TARGET"):
+            execution_target = json.loads((env or {})["CHEESE_EXECUTION_TARGET"])
         if (env or {}).get("CHEESE_PRIVATE_CHAT") == "1":
             from app.domain.agent.private_chat import execution_target as private_target
 
-            execution_target = private_target(project_id, topic_id, resource_id)
+            execution_target = private_target(
+                project_id, topic_id, resource_id, device_id=device_id
+            )
         if (
             existing is not None
             and (env or {}).get("CHEESE_ENVIRONMENT")
@@ -1007,6 +1016,7 @@ class DeviceChannel(Channel):
             # overwritten with this launch's freshly-minted one (the new token never
             # reaches the running process). It stays as the reuse gate's truth.
             await self._hub.reassert_screen(existing, command=command, env=screen_env)
+            existing.execution_target = execution_target
             return existing
         screen = await self._hub.open_screen(
             device_id,
@@ -1024,6 +1034,7 @@ class DeviceChannel(Channel):
         screen.credential_expires = credential_expires
         screen.agent_configuration = configuration
         screen.resource_id = resource_id
+        screen.execution_target = execution_target
         return screen
 
     # --- turn --------------------------------------------------------------
@@ -1073,7 +1084,7 @@ class DeviceChannel(Channel):
             if owner:
                 env["CHEESE_OWNER"] = owner
         prepares_environment = bool((env or {}).get("CHEESE_ENVIRONMENT")) and not (
-            settings.agent_execution_targets.get(str(topic_id))
+            (env or {}).get("CHEESE_EXECUTION_TARGET")
             or (env or {}).get("CHEESE_PRIVATE_CHAT") == "1"
         )
         try:
@@ -1217,17 +1228,11 @@ class DeviceChannel(Channel):
                     data,
                     timeout=_FILE_STAGE_TIMEOUT_S,
                 )
-                if screen.device_id == settings.private_chat_device_id:
+                if screen.execution_target:
                     from app.domain.agent import private_chat
 
-                    factory = self._session_factory
-                    if factory is None:
-                        from app.core.db import async_session_factory
-
-                        factory = async_session_factory
-                    async with factory() as session:
-                        target = await private_chat.for_topic(session, screen.topic_id)
-                    if target and target.get("kind") == "private":
+                    target = screen.execution_target
+                    if target:
                         await private_chat.control(
                             target,
                             {

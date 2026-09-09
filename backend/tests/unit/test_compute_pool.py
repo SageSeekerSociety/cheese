@@ -239,7 +239,7 @@ def test_build_pool_registers_the_concrete_cloud_channel():
 
     backend = pool.select(provider_id="cloud")
     assert pool.has("cloud")
-    assert backend.channel is cloud
+    assert backend.channel.executor is cloud
     # Unconfigured Cloud is registered but not runnable, and it is the one
     # backend the turn path must wait for a machine on.
     assert backend.available() is False

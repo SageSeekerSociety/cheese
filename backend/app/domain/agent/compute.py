@@ -286,6 +286,7 @@ def build_compute_pool(cloud_channel: "Channel | None" = None) -> ComputePool:
     executor falls back to. The default now comes from `compute_default_name`,
     the same answer the catalogue marks 默认.
     """
+    from app.domain.agent.central_provider import CentralChannel
     from app.domain.agent.device_provider import DeviceChannel
     from app.domain.agent.harness.claude_code import Channel, ClaudeCodeRuntime
     from app.domain.agent.market import compute_default_name
@@ -317,5 +318,7 @@ def build_compute_pool(cloud_channel: "Channel | None" = None) -> ComputePool:
     preferred = compute_default_name(settings)
     names = {channel.name for channel in channels}
     default_name = preferred if preferred in names else DeviceChannel.name
-    backends: list[ComputeProvider] = [runs_claude_code(c) for c in channels]
+    backends: list[ComputeProvider] = [
+        runs_claude_code(CentralChannel(c)) for c in channels
+    ]
     return ComputePool(backends, default_name)

@@ -21,9 +21,7 @@ from app.core.errors import (
 )
 from app.core.sandbox_auth import scoped_token_claims
 from app.domain.agent import private_chat
-from app.domain.agent.harness.claude_code.remote_execution.client import (
-    REMOTE_CONTROLS,
-)
+from app.domain.agent.harness.claude_code import REMOTE_CONTROLS
 from app.domain.agent.remote_control import CONTROLS, store
 from app.domain.topic.services import TopicService
 
@@ -74,7 +72,10 @@ async def rc_create(request: Request, db: DbSession) -> dict:
     place = await TopicService(db).place_or_404(uuid.UUID(claims["t"]))
     if str(place.project_id) != claims["p"]:
         raise ForbiddenError("Place does not belong to this credential")
-    return {"session": await store().create(claims, await body(request))}
+    data = await body(request)
+    # Placement is platform-owned; ignore an execution target supplied by a worker.
+    data["execution"] = place.room.session_placement
+    return {"session": await store().create(claims, data)}
 
 
 @router.post("/v1/code/sessions/{sid}/bridge", include_in_schema=False)
@@ -283,7 +284,15 @@ async def control(
         "request_id": data.request_id,
         "request": data.request,
     }
-    target = await private_chat.for_topic(db, topic_id)
+    placement = session.get("execution")
+    target = placement["execution"] if placement else None
+    if placement:
+        place = await TopicService(db).place_or_404(topic_id)
+        if placement["resource_id"] != str(place.room.resource_id or place.room.id):
+            raise ConflictError(
+                "This session belongs to a retired execution generation"
+            )
+        await db.commit()
     remote_control = data.request.get("subtype") in REMOTE_CONTROLS
     if data.request.get("subtype") == "stop_task":
         remote_control = str(data.request.get("task_id", "")).startswith("remote-")

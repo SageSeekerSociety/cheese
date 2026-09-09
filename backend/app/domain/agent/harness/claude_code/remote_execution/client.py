@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import os
 import re
@@ -117,6 +118,7 @@ def prepare(
     base_settings=None,
     home_override=None,
     config_override=None,
+    workspace_override=None,
 ):
     version = subprocess.check_output([claude, "--version"], text=True).split()[0]
     if version != PINNED_VERSION:
@@ -132,7 +134,9 @@ def prepare(
             from private import ensure
 
         ensure(target, directory, os.environ)
-    workspace = directory / "workspace"
+    workspace = (
+        Path(workspace_override) if workspace_override else directory / "workspace"
+    )
     workspace.mkdir(exist_ok=True)
     # Stop native project discovery at this generated mirror's boundary.
     if not (workspace / ".git").exists():
@@ -187,6 +191,21 @@ def prepare(
                     {
                         "type": "command",
                         "command": shlex.join([*helper, "context", str(target_path)]),
+                    }
+                ]
+            },
+        )
+    if target.get("kind") == "device":
+        hooks.setdefault("Stop", []).insert(
+            0,
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": shlex.join(
+                            [*helper, "checkpoint", str(target_path)]
+                        ),
+                        "timeout": 660,
                     }
                 ]
             },
@@ -325,7 +344,7 @@ def shell(target_path, command):
     if (
         len(words) >= 4
         and words[:2] == [sys.executable, helper]
-        and words[2] in ("bridge", "guard", "context", "event", "invoke")
+        and words[2] in ("bridge", "guard", "context", "event", "invoke", "checkpoint")
         and words[3] == str(target_path)
     ):
         os.execvp(words[0], words)
@@ -416,6 +435,7 @@ def main():
             "shell",
             "bootstrap",
             "event",
+            "checkpoint",
             "invoke",
             "release",
         ],
@@ -442,6 +462,22 @@ def main():
         else:
             command = RemoteClient(config).command("bridge", args.args[0])
             os.execvp(command[0], command)
+    elif args.mode == "checkpoint":
+        payload = json.load(sys.stdin)
+        transcript = Path(payload["transcript_path"])
+        identifier = hashlib.sha256(
+            (
+                json.dumps(payload, sort_keys=True) + str(transcript.stat().st_size)
+            ).encode()
+        ).hexdigest()
+        result = RemoteClient(config).control(
+            {
+                "subtype": "checkpoint",
+                "request_id": "checkpoint-" + identifier,
+            }
+        )
+        if "error" in result:
+            raise RuntimeError(result["error"])
     elif args.mode == "guard":
         json.load(sys.stdin)
         print(
@@ -482,6 +518,7 @@ def main():
             base_settings=json.loads((base_dir / "settings.json").read_text()),
             home_override=os.environ["HOME"],
             config_override=base_dir,
+            workspace_override=os.environ["CHEESE_WORK"],
         )
         os.chdir(launch["cwd"])
         os.execvpe(

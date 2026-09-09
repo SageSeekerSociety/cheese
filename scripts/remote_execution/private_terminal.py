@@ -1,4 +1,4 @@
-"""Drive two private chat turns through native Claude Code and RC."""
+"""Drive central chat turns through native Claude Code and RC."""
 
 import argparse
 import json
@@ -25,27 +25,43 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--claude", required=True)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--ordinary", action="store_true")
     args = parser.parse_args()
     folder = args.output.resolve()
     folder.mkdir(parents=True, exist_ok=False)
     config = target(uuid.uuid4())
+    room = None
+    handler = Handler
+    work = "/work"
+    if args.ordinary:
+        from room_fixture import RoomExecutor
+
+        room = RoomExecutor(folder, args.claude)
+        config = room.target
+        work = str(room.work)
+        os.environ["CHEESE_TOKEN"] = "room-fixture-token"
     tmux = ["tmux", "-L", "private-" + uuid.uuid4().hex[:12]]
     rc = RemoteControlFixture(
         folder,
         lambda event, **fields: log(folder / "rc.jsonl", {"event": event, **fields}),
     )
-    server = Server(("127.0.0.1", 0), rc.handler(Handler))
+    handler = rc.handler(handler)
+    if room:
+        handler = room.handler(handler)
+    server = Server(("127.0.0.1", 0), handler)
     rc.base = f"http://127.0.0.1:{server.server_port}"
+    if room:
+        config["url"] = rc.base + "/execution"
     actions = [
         {
             "name": "Write",
-            "input": {"file_path": "/work/draft.md", "content": "Private draft\n"},
+            "input": {"file_path": work + "/draft.md", "content": "Private draft\n"},
         },
-        {"name": "Read", "input": {"file_path": "/work/draft.md"}},
+        {"name": "Read", "input": {"file_path": work + "/draft.md"}},
         {
             "name": "Edit",
             "input": {
-                "file_path": "/work/draft.md",
+                "file_path": work + "/draft.md",
                 "old_string": "Private",
                 "new_string": "Revised",
             },
@@ -128,6 +144,8 @@ def main():
             NO_PROXY="127.0.0.1,localhost",
             no_proxy="127.0.0.1,localhost",
         )
+        if room:
+            env["CHEESE_TOKEN"] = "room-fixture-token"
         launch["env"] = env
         dump(folder / "launch.json", launch)
         run(["new-session", "-d", "-s", "agent", "-x", "120", "-y", "40", "sleep 300"])
@@ -164,28 +182,37 @@ def main():
                 {
                     "name": "Bash",
                     "input": {
-                        "command": "python3 - <<'PY'\nfrom pathlib import Path\nassert Path('/work/draft.md').read_text() == 'Revised draft\\n'\nprint('CROSS_TURN_SHELL_OK')\nPY"
+                        "command": "python3 - <<'PY'\nfrom pathlib import Path\nassert Path('draft.md').read_text() == 'Revised draft\\n'\nprint('CROSS_TURN_SHELL_OK')\nPY"
                     },
                 },
             ]
         )
+        if room:
+            actions.append(
+                {"name": "mcp__custom__echo", "input": {"message": "ROOM_CUSTOM_MCP"}}
+            )
         send("Continue processing the draft from the last message.")
-        wait_requests(6)
+        wait_requests(7 if room else 6)
         assert "CROSS_TURN_SHELL_OK" in json.dumps(server.state["requests"][-1])
         assert not (Path(launch["cwd"]) / "draft.md").exists()
         assert (
             RemoteClient(config).control(
-                {"subtype": "read_file", "path": "/work/draft.md"}
+                {"subtype": "read_file", "path": work + "/draft.md"}
             )["contents"]
             == "Revised draft\n"
         )
+        if room:
+            assert (room.work / "custom.txt").read_text() == "ROOM_CUSTOM_MCP"
+            assert (room.work / "setup-result").read_text() == "executor-env"
+            assert (room.work / "startup-result").read_text() == "started"
+            assert not (Path(launch["cwd"]) / "custom.txt").exists()
         terminal()
         dump(
             folder / "summary.json",
             {
                 "passed": True,
                 "turns": 2,
-                "model_requests": 6,
+                "model_requests": len(server.state["requests"]),
                 "central_file_unchanged": True,
             },
         )
@@ -193,7 +220,10 @@ def main():
         subprocess.run(tmux + ["kill-server"], capture_output=True)
         server.shutdown()
         server.server_close()
-        release(config)
+        if room:
+            room.close()
+        else:
+            release(config)
 
 
 if __name__ == "__main__":

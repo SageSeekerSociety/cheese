@@ -2,7 +2,7 @@ name: Remote execution acceptance
 
 on:
   push:
-    branches: [experiment/remote-execution]
+    branches: [experiment/remote-execution, feat/central-room-sessions]
   workflow_dispatch:
 
 permissions:
@@ -66,12 +66,17 @@ jobs:
       - name: Verify private chat routing and authorization
         working-directory: backend
         env:
+          CHEESE_TEST_CLAUDE: ${{ github.workspace }}/scripts/remote_execution/node_modules/.bin/claude
           TEST_PG_BASE: postgresql+asyncpg://postgres:postgres@localhost:${{ job.services.postgres.ports[5432] }}
           REDIS_URL: redis://localhost:${{ job.services.redis.ports[6379] }}/0
         run: >-
           .venv/bin/pytest tests/integration/test_private_chat_execution.py
           tests/unit/test_private_chat.py tests/unit/test_remote_control.py
           tests/integration/test_remote_control_auth.py -q
+          tests/integration/test_central_room_sessions.py
+          tests/unit/test_execution_bootstrap.py tests/unit/test_execution_transport.py
+          tests/unit/test_session_transfer.py tests/unit/test_resource_cleanup.py
+          tests/unit/test_compute_pool.py tests/unit/test_device_provider.py
       - name: Verify two private turns through native RC
         if: ${{ !cancelled() && steps.scratch.outcome == 'success' }}
         run: >-
@@ -82,7 +87,9 @@ jobs:
         if: always()
         with:
           name: private-chat-${{ github.sha }}
-          path: tmp/remote-execution/private-ci-*/
+          path: |
+            tmp/remote-execution/private-ci-*/
+            tmp/remote-execution/ordinary-ci-*/
   acceptance:
     runs-on: [self-hosted, cheese-ci]
     timeout-minutes: 20
@@ -111,12 +118,18 @@ jobs:
           --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
           --redis "$PWD/tmp/remote-execution/deps/usr/bin/redis-server"
           --output "tmp/remote-execution/ci-${{ github.run_id }}-${{ github.run_attempt }}"
+      - name: Verify ordinary room turns through the connector
+        run: >-
+          backend/.venv/bin/python scripts/remote_execution/private_terminal.py
+          --ordinary --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
+          --output tmp/remote-execution/ordinary-ci-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Upload acceptance receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: remote-execution-${{ github.sha }}
           path: |
+            tmp/remote-execution/ordinary-ci-*/
             tmp/remote-execution/ci-*/inputs.json
             tmp/remote-execution/ci-*/results.json
             tmp/remote-execution/ci-*/progress.jsonl

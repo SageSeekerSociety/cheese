@@ -133,6 +133,6 @@ def test_private_cleanup_rejects_another_generation(tmp_path):
     marker = tmp_path / ".claude/remote-target.json"
     marker.parent.mkdir()
     marker.write_text(json.dumps({"kind": "private", "topic": resource}))
-    assert cleanup.private_executor(tmp_path, resource)["topic"] == resource
+    assert cleanup.session_target(tmp_path, resource)["topic"] == resource
     with pytest.raises(RuntimeError, match="another resource generation"):
-        cleanup.private_executor(tmp_path, str(uuid.uuid4()))
+        cleanup.session_target(tmp_path, str(uuid.uuid4()))

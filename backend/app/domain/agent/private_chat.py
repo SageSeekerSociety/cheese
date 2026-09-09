@@ -5,34 +5,55 @@ import json
 import uuid
 
 from app.core.config import settings
+from app.core.errors import ConflictError
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import device_home_dir
-from app.domain.agent.harness.claude_code.remote_execution.client import RemoteClient
-from app.domain.agent.harness.claude_code.remote_execution.private import target
+from app.domain.agent.harness.claude_code import (
+    RemoteClient,
+)
+from app.domain.agent.harness.claude_code import (
+    private_execution_target as target,
+)
 from app.domain.topic.services import TopicService
 
 
 def execution_target(
-    project_id: uuid.UUID, topic_id: uuid.UUID, resource_id: uuid.UUID | None = None
+    project_id: uuid.UUID,
+    topic_id: uuid.UUID,
+    resource_id: uuid.UUID | None = None,
+    *,
+    device_id: str | None = None,
 ) -> dict:
-    if not settings.private_chat_device_id:
+    device_id = device_id or settings.agent_session_device_id
+    if not device_id:
         raise RuntimeError("私聊中心执行机尚未配置，本轮没有启动")
     return {
         **target(resource_id or topic_id, settings.private_chat_executor_image),
-        "device_id": settings.private_chat_device_id,
+        "device_id": device_id,
         "home": device_home_dir(project_id, resource_id or topic_id),
     }
 
 
 async def for_topic(db, topic_id: uuid.UUID) -> dict | None:
     place = await TopicService(db).place_or_404(topic_id)
+    placement = place.room.session_placement
+    if placement and placement["resource_id"] != str(
+        place.room.resource_id or place.room.id
+    ):
+        raise ConflictError("Execution generation is no longer current")
     await db.commit()
+    if placement:
+        return placement["execution"]
     if place.room.is_private:
         return execution_target(place.project_id, place.room_id, place.room.resource_id)
-    return settings.agent_execution_targets.get(str(topic_id))
+    return None
 
 
 async def control(target: dict, payload: dict, *, hub=None) -> dict:
+    if target.get("kind") == "device":
+        from app.domain.agent import execution
+
+        return await execution.call(target, "control", payload, hub=hub)
     if target.get("kind") != "private":
         return await asyncio.to_thread(RemoteClient(target).control, payload)
     # home contains only a literal $HOME followed by server-generated UUID paths.

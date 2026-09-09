@@ -6,9 +6,9 @@
 
 ---
 
-## Private chat execution
+## Central sessions and private chat execution
 
-Private chats run Claude Code and RC sessions on the central device configured by `PRIVATE_CHAT_DEVICE_ID`. They use the device transport without provisioning a Cloud machine for each conversation. A missing or offline central device produces an explicit setup failure.
+All Claude Code and RC sessions run on the central device configured by `AGENT_SESSION_DEVICE_ID`. Ordinary rooms keep their selected machine for project files, shell commands, environment scripts, custom stdio MCP processes and preview. Private chats use a temporary container on the central host. A missing or offline session host produces an explicit setup failure.
 
 Each chat gets a separate execution container with a read-only image and 64 MiB of writable temporary storage. Shell commands, file operations and Cheese CLI run there. The container has no host directory mounts or model credentials. It retains drafts across turns while it lives; releasing the chat removes its scratch files. Published documents remain in platform storage.
 
@@ -29,7 +29,7 @@ The remaining sections describe ordinary work topics and their selected compute 
 
 设备那条总是装上；Cloud 只在这个部署配了云平台的地址和密钥时才装。
 
-**每一台都不是平台的机器。** 平台没有一台自己的机器在跑话题，这是刻意的（#358）：人要选的是「谁的机器来跑」，而一台不在菜单上的机器，只要它还是执行层的兜底，就是所有人不选时的去处。
+These choices select the ordinary room's execution machine. Claude Code and RC run on the separately recorded central session host, which does not appear as a project execution choice. The two locations are described in `remote-execution.md`.
 
 ## 二、菜单和执行层现在是同一个答案
 

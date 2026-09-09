@@ -314,6 +314,9 @@ async def store_transcripts(
     if place is not None and place.project_id != project_id:
         raise NotFoundError("no such place in this project")
     allowed = await _device_ran_place(service, device, project_id, place_id)
+    placement = getattr(place, "session_placement", None)
+    if placement and placement["device_id"] == device.device_id:
+        allowed = True
     # Every read is done. Release the transaction before the body streams in:
     # an upload can take minutes, and a session held open across it would sit
     # `idle in transaction` on the topic tables for that long (#356).

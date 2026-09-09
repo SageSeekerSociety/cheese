@@ -87,6 +87,7 @@ class HubScreen:
     # token with no decodable expiry) → treated as fresh, never retired on it.
     credential_expires: int | None = None
     agent_configuration: str = ""
+    execution_target: dict | None = None
     viewers: set[ViewerTransport] = field(default_factory=set)
 
 

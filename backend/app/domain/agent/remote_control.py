@@ -81,6 +81,7 @@ class RemoteControl:
             "expires_at": claims["exp"],
             "title": body.get("title", "Cheese"),
             "config": body.get("config", {}),
+            "execution": body.get("execution"),
             "tags": body.get("tags", []),
             "status": "active",
             "environment_kind": "bridge",

@@ -560,7 +560,16 @@ class Executor:
 
     def control(self, params):
         kind = params["subtype"]
-        if kind == "stage_file" and self.config.get("private"):
+        if kind == "checkpoint":
+            self.hooks("Stop", "", {}, params["request_id"])
+            return self.invoke(
+                {
+                    "id": params["request_id"],
+                    "tool": "Bash",
+                    "args": {"command": "cheese-sync"},
+                }
+            )
+        if kind == "stage_file":
             path = (self.root / params["path"]).resolve()
             path.relative_to(self.root)
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -697,7 +706,9 @@ class Executor:
         }
 
     def dispatch(self, method, params):
-        if method == "configure_private" and self.config.get("private"):
+        if method == "configure" or (
+            method == "configure_private" and self.config.get("private")
+        ):
             self.env.update(params["env"])
             self.config["env"] = params["env"]
             write_json(self.state / "config.json", self.config)
