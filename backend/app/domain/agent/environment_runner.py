@@ -63,7 +63,9 @@ def read_status(directory: Path) -> dict:
 
 def wait_status(directory: Path) -> dict:
     """Observe short preparations locally instead of waiting for another RPC."""
-    deadline = time.monotonic() + 0.5
+    # Cover short launches in one RPC; returning at 0.5s adds a backend sleep
+    # and another interpreter startup when readiness lands just after it.
+    deadline = time.monotonic() + 2
     while True:
         status = read_status(directory)
         if status["state"] not in {"pending", "preparing"}:

@@ -51,6 +51,27 @@ def test_wait_status_returns_when_preparation_finishes(tmp_path, monkeypatch, st
         writer.join(timeout=2)
 
 
+@pytest.mark.parametrize("finish_after", [0.1, 0.65, 1.2])
+@pytest.mark.parametrize("state", ["ready", "failed"])
+def test_wait_status_observes_short_preparation_without_another_rpc(
+    tmp_path, monkeypatch, finish_after, state
+):
+    clock = [0.0]
+    monkeypatch.setattr(environment_runner.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        environment_runner.time,
+        "sleep",
+        lambda delay: clock.__setitem__(0, clock[0] + delay),
+    )
+    monkeypatch.setattr(
+        environment_runner,
+        "read_status",
+        lambda _: {"state": state if clock[0] >= finish_after else "preparing"},
+    )
+    assert environment_runner.wait_status(tmp_path) == {"state": state}
+    assert finish_after <= clock[0] <= finish_after + 0.051
+
+
 def test_wait_status_bounds_pending_wait(tmp_path, monkeypatch):
     clock = [0.0]
     monkeypatch.setattr(environment_runner.time, "monotonic", lambda: clock[0])
@@ -60,7 +81,7 @@ def test_wait_status_bounds_pending_wait(tmp_path, monkeypatch):
         lambda delay: clock.__setitem__(0, clock[0] + delay),
     )
     assert environment_runner.wait_status(tmp_path) == {"state": "pending"}
-    assert clock[0] == pytest.approx(0.5)
+    assert clock[0] == pytest.approx(2)
 
 
 @pytest.fixture(autouse=True)
