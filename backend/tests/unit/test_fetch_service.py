@@ -283,3 +283,42 @@ async def test_a_challenge_page_still_fails(monkeypatch):
     outcome = await service.fetch("https://example.com/blocked")
     assert not outcome.ok
     assert "plain-http" in outcome.trail()
+
+
+async def test_a_short_published_markdown_twin_wins_the_first_rung(monkeypatch):
+    """`<url>.md` is the site's own copy for machines — length is beside the point.
+
+    The convention (Stripe, Anthropic, our own docs) is that any page URL plus
+    `.md` returns the source. Measured, a docs page whose twin is 220 characters
+    was rejected by the article-vs-interstitial bar and fell all the way to a
+    browser render — the opposite of what this rung exists for. The server
+    saying `text/markdown` already answers the question that bar was asking.
+    """
+    import httpx
+
+    short_markdown = "# Teams\n\nA team is a group that works together on tasks.\n"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith(".md"):
+            return httpx.Response(
+                200, text=short_markdown, headers={"content-type": "text/markdown"}
+            )
+        return httpx.Response(
+            200,
+            text="<html><body>rendered</body></html>",
+            headers={"content-type": "text/html"},
+        )
+
+    original = httpx.AsyncClient
+
+    def with_mock(*args, **kwargs):
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(layers.httpx, "AsyncClient", with_mock)
+
+    got = await layers.rung_markdown_native("https://example.com/docs/teams")
+
+    assert got.ok, f"a published markdown twin must win here, however short: {got.note}"
+    assert "A team is a group" in got.text
+    assert got.note.endswith(".md"), "and it must say which URL answered"

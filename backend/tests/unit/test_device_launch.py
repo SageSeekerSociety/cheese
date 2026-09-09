@@ -273,9 +273,11 @@ def test_hooks_settings_wire_command_hook_to_forwarder():
     for event in events:
         entry = s["hooks"][event][0]
         assert entry["hooks"][0] == {"type": "command", "command": "cheese-hook"}
-    # The picker AskUserQuestion draws in the screen's terminal is unreachable
-    # for a remote user too — denied in settings as well as on the launch line.
-    assert s["permissions"]["deny"] == ["AskUserQuestion"]
+    # Both denied tools can leave a turn with no way to end: AskUserQuestion
+    # draws its picker in the screen's terminal where no remote user can reach
+    # it, and WebFetch has a step with no deadline. Denied in settings as well
+    # as on the launch line — a deny in only one of the two is not a deny.
+    assert set(s["permissions"]["deny"]) == {"AskUserQuestion", "WebFetch"}
 
 
 def test_build_screen_launch_shapes_command_and_env():
@@ -1978,3 +1980,33 @@ def _claude_json_from(script: str) -> dict:
     """The `.claude.json` the launch script writes, as the shell would leave it."""
     line = next(x for x in script.splitlines() if "hasCompletedOnboarding" in x)
     return json.loads(line.replace("$CHEESE_WORK", "/work"))
+
+
+def test_webfetch_is_denied_on_both_delivery_paths():
+    """WebFetch can hang a turn open with no way out, so it is denied outright.
+
+    Measured on this platform: two of two attempts on one page ran 1,028 s and
+    390 s and were ended by hand, while a larger page returned in 5 s. Reading
+    the binary shows why nothing on our side can bound it — the page fetch is
+    capped at 60 s and the domain preflight at 10 s, but the model call made on
+    the extracted text has no timeout at all.
+
+    `cheese fetch` is the replacement and is not a downgrade: end to end across
+    20 real sites it reads 19, every rung of it is bounded, and on the page that
+    hung for 17 minutes it answers in 10 seconds.
+
+    The deny has to hold on BOTH paths — the launch command and the settings
+    file — because a deny that lives in only one of them is not a deny.
+    """
+    from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD
+    from app.domain.agent.harness.claude_code.session_launch import (
+        build_session_launch,
+    )
+
+    assert "WebFetch" in CLAUDE_BASE_CMD, "the launch command must carry the deny"
+
+    spec = build_session_launch(config_dir="/cfg", workdir="/work", system_prompt="x")
+    settings = json.loads(
+        next(f.content for f in spec.files if f.name == "settings.json")
+    )
+    assert "WebFetch" in settings["permissions"]["deny"]
