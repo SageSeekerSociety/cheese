@@ -48,9 +48,11 @@ def test_warm_checkout_overlaps_configuration_but_precedes_adoption(
         f"    return {workspace_exit}\n"
         "  fi\n  sleep 0.01\ndone\nreturn 99\n",
     )
+    script = tmp_path / "launch.sh"
+    script.write_text(device_launch.build_launch_script())
     with (tmp_path / "launcher.log").open("w") as output:
         process = subprocess.Popen(
-            ["sh", "-c", device_launch.build_launch_script()],
+            ["sh", str(script)],
             env={
                 "PATH": os.environ["PATH"],
                 "HOME": str(owner),
