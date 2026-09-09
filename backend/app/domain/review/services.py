@@ -44,7 +44,6 @@ from app.domain.agent.platform_notices import (
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import looks_like_agent_handle
-from app.domain.machine.services import MachineService
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.models import AiMode, Project, ProjectRole
 from app.domain.project.repositories import ProjectRepository
@@ -348,7 +347,6 @@ class AcceptService:
         self._repo = AcceptCardRepository(session)
         self._topics = TopicRepository(session)
         self._projects = ProjectRepository(session)
-        self._machines = MachineService(session)
 
     async def _topic_or_404(self, topic_id: uuid.UUID) -> Topic:
         """The ROOM a place id names — a card is read in a room either way.
@@ -390,34 +388,6 @@ class AcceptService:
         if card is None:
             raise NotFoundError("Accept card not found")
         return card
-
-    async def _release_billed_compute(self, topic: Topic) -> None:
-        """Release the delivered topic's BILLED compute — its Cloud VM — and
-        nothing else.
-
-        This used to tear down the working surface too — a device topic's
-        screen plus its remote work dir. It doesn't any more, because 交付完成 no
-        longer means 话题结束 (#442 decision 1: 一个话题往往是连续的): the room
-        keeps working after the merge, and killing its screen mid-life is not
-        free — a rebuilt one loses everything installed alongside it, so the next
-        turn pays for a teardown nobody asked for. That surface has its own idle
-        reaper (``scheduler.reap_idle_device_screens``), which is where
-        reclaiming it belongs: the question "is anyone still using this" is about
-        activity, not about whether a branch landed.
-
-        The Cloud VM is the one exception and it stays here, deliberately: it is
-        the only one that costs money per hour and the only one with NO reaper —
-        release is manual-archive-or-nothing (`TopicService._release_cloud_machine`,
-        #442 decision 3). Dropping it here would turn every merged topic into a
-        billed leak that nothing ever collects. So it is not best-effort either:
-        accept must not report success if MicroCloud did not accept deletion.
-
-        Consequence worth knowing: a Cloud-backed topic that just delivered has
-        no VM until someone provisions one again, and `ensure_topic_machine`
-        requires an authorized human caller — so its next turn needs a human to
-        speak. That is the pre-existing trade-off of "archive is the VM's only
-        lifecycle", not a new one; the reclamation policy itself is still open."""
-        await self._machines.release_topic_machine(topic.id)
 
     async def _reviewer_or_project_default(
         self,
@@ -1394,9 +1364,6 @@ class AcceptService:
         if unbound_note:
             # 平台即 forge (#363): 如实标注，而不是让这张卡看起来像绕过了 PR。
             notes.annotate(card, unbound_note)
-
-        # 这次改动交付完了 → 释放计费算力，工作面留着（见 _release_billed_compute）。
-        await self._release_billed_compute(topic)
 
         # 交付完成 ≠ 话题结束 (#442 decision 1). accepted_by/accepted_at 是这一刻
         # 自动打上的交付标记；status 不动，归档只由人来做（POST /topics/{id}/archive）。
@@ -3258,7 +3225,6 @@ class AcceptService:
         settled = f"PR #{card.pr_number} {how}：{card.pr_url}"
         settled += await self._sync_merged_base(topic)
         notes.record(card, None, f"{headline}；{settled}" if headline else settled)
-        await self._release_billed_compute(topic)
         # 交付完成 ≠ 话题结束 (#442 decision 1)：话题保持 active，归档由人来做。
         await self._stamp_delivery(card, topic, by=by, at=now)
         await self._session.flush()

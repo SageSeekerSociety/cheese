@@ -14,7 +14,7 @@ import html
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import overload
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,7 +40,13 @@ from app.domain.review.services import AcceptService
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.room_task.services import ClaimService, TaskService
-from app.domain.topic.models import Topic, TopicKind, TopicRole, TopicStatus
+from app.domain.topic.models import (
+    RoomCleanup,
+    Topic,
+    TopicKind,
+    TopicRole,
+    TopicStatus,
+)
 from app.domain.topic.repositories import (
     SortOrder,
     TopicProgressRepository,
@@ -209,6 +215,14 @@ class TopicService:
     async def get(self, topic_id: uuid.UUID) -> Topic | None:
         """Return one topic for cross-domain service callers."""
         return await self._repo.get(topic_id)
+
+    async def lock_for_execution(self, topic_id: uuid.UUID) -> Topic:
+        topic = await self._repo.lock(topic_id)
+        if topic is None:
+            raise NotFoundError("Topic not found")
+        if topic.status == TopicStatus.archived:
+            raise ConflictError("房间已归档，请先取消归档再继续工作")
+        return topic
 
     async def resolve_agent(self, topic: Topic) -> ResolvedAgent:
         """Which agent works in this room — its own, else the project's."""
@@ -570,11 +584,12 @@ class TopicService:
         """Manually archive a topic (idempotent) — CASCADING: a topic's active
         subtopics go with it (归档整件事，分身是这件事的一部分；漏下的孤儿分身
         没有父上下文，毫无意义). The root topic (项目本体) can't be archived."""
-        topic = await self.get_or_404(topic_id)
+        topic = await self._repo.lock(topic_id)
+        if topic is None:
+            raise NotFoundError("Topic not found")
         if topic.kind == TopicKind.root:
             raise ValidationError("项目本体不能归档")
         if topic.status == TopicStatus.archived:
-            await self._release_cloud_machine(topic.id)
             return topic
         await self._archive_one(topic, by=by)
         await self._archive_children(topic, by=by)
@@ -618,7 +633,6 @@ class TopicService:
         children = await self._repo.list_children(topic.id)
         for child in children:
             if child.status == TopicStatus.archived:
-                await self._release_cloud_machine(child.id)
                 continue
             await self._archive_one(child, by=by, cascaded_from=topic.title)
             await self._archive_children(child, by=by)
@@ -627,9 +641,20 @@ class TopicService:
         self, topic: Topic, *, by: str, cascaded_from: str | None = None
     ) -> None:
         topic.status = TopicStatus.archived
-        topic.archived_at = datetime.now(UTC)
-        await self._release_cloud_machine(topic.id)
-        await self._retire_storage(topic)
+        archived_at = datetime.now(UTC)
+        topic.archived_at = archived_at
+        topic.cleanup_due_at = archived_at + timedelta(
+            seconds=settings.topic_archive_cleanup_delay_s
+        )
+        operation = RoomCleanup(
+            id=uuid.uuid4(),
+            project_id=topic.project_id,
+            topic_id=topic.id,
+            resource_id=topic.resource_id or topic.id,
+            due_at=topic.cleanup_due_at,
+        )
+        self._session.add(operation)
+        topic.cleanup_id = operation.id
         # 孤儿卡修复 (2026-08-10): 归档必须同时终结这个话题上还没决议的验收卡。
         # 一张骑着 PR 的卡不是"停着"——轮询器每 60 秒还在拿 GitHub 凭据跟进它。
         # 去向与理由见 review/archive.py 的模块 docstring。
@@ -657,35 +682,35 @@ class TopicService:
             meta={"platform": True},
         )
 
-    async def _release_cloud_machine(self, topic_id: uuid.UUID) -> None:
-        """Archive is the Cloud VM's sole reclamation lifecycle (#442 decision 3)."""
-        from app.domain.machine.services import MachineService
-
-        await MachineService(self._session).release_topic_machine(topic_id)
-
-    async def _retire_storage(self, topic: Topic) -> None:
-        """Stop the room's session on its device (topic/retire.py). Nothing
-        comes off disk here: the worktree and the home stay for the retention
-        so that an un-archive resumes with its session, and the storage sweep
-        takes them after. Best-effort inside; the archive is a fact about the
-        place, not about its machine.
-
-        Only the room. The threads closed alongside it have no session to stop:
-        each is a 分身 inside this very session, and it goes when this does.
-        """
-        from app.domain.topic.retire import retire_room_storage
-
-        await retire_room_storage(topic)
-
     async def unarchive(self, topic_id: uuid.UUID, *, by: str) -> Topic:
         """Bring an archived topic back to active (idempotent). Accept markers
         are kept — un-archiving doesn't rewrite acceptance history (use 撤回采纳
         for that)."""
-        topic = await self.get_or_404(topic_id)
+        topic = await self._repo.lock(topic_id)
+        if topic is None:
+            raise NotFoundError("Topic not found")
         if topic.status != TopicStatus.archived:
             return topic
+        operation = (
+            await self._session.get(RoomCleanup, topic.cleanup_id)
+            if topic.cleanup_id
+            else None
+        )
+        if operation is not None:
+            if operation.state == "preparing":
+                raise ConflictError("会话正在停止并保存记录，确认完成后即可取消归档")
+            if operation.state == "pending":
+                operation.state = "cancelled"
+            elif operation.state in {"claimed", "complete"}:
+                topic.resource_id = uuid.uuid4()
+                await AgentSessionService(self._session).forget_room(topic.id)
+                from app.domain.machine.services import MachineService
+
+                await MachineService(self._session).detach_archived_machine(topic.id)
         topic.status = TopicStatus.active
         topic.archived_at = None
+        topic.cleanup_due_at = None
+        topic.cleanup_id = None
         await self._blocks.add(
             project_id=topic.project_id,
             topic_id=topic.id,

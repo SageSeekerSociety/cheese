@@ -18,10 +18,14 @@ import uuid
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, Request
+from fastapi import APIRouter, Depends, Header, Query, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
+from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_chat_service
+from app.core.db import get_db
+from app.core.errors import BaseError, UnauthorizedError
 from app.core.sandbox_auth import is_valid_cheese_token, scoped_token_claims
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness.claude_code import append_event, hook_router
@@ -30,6 +34,93 @@ from app.domain.workspace import service as ws
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/sandbox", tags=["sandbox"])
+
+
+@router.post("/storage-sweep")
+async def trigger_storage_sweep(x_cheese_token: str = Header(default="")) -> dict:
+    from app.core.background import spawn
+    from app.core.db import async_session_factory
+    from app.core.sandbox_auth import is_global_sandbox_token
+    from app.domain.topic.retire import sweep_retired_storage
+
+    if not is_global_sandbox_token(x_cheese_token):
+        raise UnauthorizedError("Cleanup trigger requires the server credential")
+    spawn(sweep_retired_storage(async_session_factory), name="archived-room cleanup")
+    return {"code": 200, "data": {"scheduled": True}}
+
+
+class TranscriptManifest(BaseModel):
+    source: str = Field(max_length=1024)
+    offset: int = Field(default=0, ge=0)
+    size: int = Field(ge=0)
+    sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+@router.post("/transcripts/{topic_id}/{file_id}/confirm")
+async def confirm_transcript(
+    topic_id: uuid.UUID,
+    file_id: uuid.UUID,
+    body: TranscriptManifest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    x_cheese_token: str = Header(default=""),
+) -> dict:
+    from app.domain.topic import transcript_stream
+
+    if not is_valid_cheese_token(x_cheese_token, topic_id=str(topic_id)):
+        raise UnauthorizedError("Invalid transcript token")
+    claims = scoped_token_claims(x_cheese_token)
+    try:
+        project_id = uuid.UUID(str((claims or {}).get("p", "")))
+    except ValueError as exc:
+        raise UnauthorizedError("Transcript token needs a project") from exc
+    receipt = await transcript_stream.confirm(
+        db,
+        project_id=project_id,
+        topic_id=topic_id,
+        file_id=file_id,
+        source=body.source,
+        offset=body.offset,
+        size=body.size,
+        sha256=body.sha256,
+    )
+    return {"code": 200, "data": receipt}
+
+
+@router.put("/transcripts/{topic_id}/{file_id}")
+async def receive_transcript(
+    topic_id: uuid.UUID,
+    file_id: uuid.UUID,
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    source: str = Query(max_length=1024),
+    offset: int = Query(ge=0),
+    x_cheese_token: str = Header(default=""),
+) -> dict:
+    from app.domain.topic import transcript_stream
+
+    if not is_valid_cheese_token(x_cheese_token, topic_id=str(topic_id)):
+        raise UnauthorizedError("Invalid transcript token")
+    claims = scoped_token_claims(x_cheese_token)
+    try:
+        project_id = uuid.UUID(str((claims or {}).get("p", "")))
+    except ValueError as exc:
+        raise UnauthorizedError("Transcript token needs a project") from exc
+    content = bytearray()
+    async for part in request.stream():
+        if len(content) + len(part) > transcript_stream.CHUNK_BYTES:
+            raise BaseError(413, "Transcript chunk too large")
+        content.extend(part)
+    receipt = await transcript_stream.append(
+        db,
+        project_id=project_id,
+        topic_id=topic_id,
+        file_id=file_id,
+        source=source,
+        offset=offset,
+        content=bytes(content),
+    )
+    return {"code": 200, "data": receipt}
+
 
 # The `cheese` platform-action CLI source, shipped to enrolled devices (the local
 # sandbox bakes it into its own image instead). Loaded LAZILY and defensively:

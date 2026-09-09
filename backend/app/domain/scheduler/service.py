@@ -23,11 +23,7 @@ from app.domain.workspace import service as ws
 
 logger = logging.getLogger("cheesex.scheduler")
 
-# Idle-container reaper: a topic nobody has touched for this long gets its
-# long-lived sandbox container(s) removed. The worktree + ~/.claude session live
-# on host volumes, so the next turn simply recreates the box — nothing is lost.
-# Covers topics that are never 采纳'd (the accept path already reaps its own).
-IDLE_REAP_HOURS = 8
+IDLE_MEMORY_HOURS = 8
 
 
 class SchedulerService:
@@ -100,73 +96,43 @@ class SchedulerService:
             )
         return out
 
-    async def reap_idle_device_screens(
-        self, idle_hours: float = IDLE_REAP_HOURS
+    async def consolidate_idle_device_screens(
+        self, idle_hours: float = IDLE_MEMORY_HOURS
     ) -> int:
-        """Close a device screen whose topic has had NO block activity for
-        ``idle_hours`` — a topic that ran on a device and then went quiet used to
-        leak its screen (and the ``claude`` process behind it) on the machine
-        forever.
+        """Organize memory in quiet open rooms without releasing their agents.
 
-        Only ONLINE devices are walked (an offline box is unreachable now). Safe
-        by construction: an active turn has just-persisted blocks, so its topic
-        can never look idle. Teardown removes the device's per-topic tree.
-        Returns how many topics were released.
-
-        记忆整理 (issue #187) hangs here rather than on a clock of its own because
-        this is the last moment a remembered claim can still be checked against
-        the workspace it came from: `settings.dream_enabled` gives an
-        about-to-die screen one turn to organize what the topic learned into the
-        project's memory (see memory/dream.py). That pass runs INSIDE the screen,
-        so the screen survives this sweep and is released by the next one — this
-        loop is background maintenance and must never sit blocked for the minutes
-        a model turn takes.
-
-        A turn does NOT have to run on a device: it can run on Cloud, which
-        leaves no screen behind, and this is the platform's only reaper. So
-        dreaming reaches topics that ran on self-hosted devices and no others.
-        That gap is known and accepted — closing it needs a Cloud-side reaper
-        that does not exist yet, not a change here."""
+        Archival cleanup owns resource deletion. Memory consolidation keeps its
+        own activity and once-per-work-period checks, and remains opt-in.
+        """
         from app.domain.agent.device_hub import device_hub
-        from app.domain.agent.device_provider import release_topic_screen
+        from app.domain.topic.models import TopicStatus
+        from app.domain.topic.services import TopicService
 
         pairs = {
             (s.project_id, s.topic_id)
             for s in device_hub.all_online_screens()
             if s.project_id is not None and s.topic_id is not None
         }
-        if not pairs:
-            return 0
         cutoff = datetime.now(UTC) - timedelta(hours=idle_hours)
-        idle: list[tuple[uuid.UUID, uuid.UUID]] = []
         dreams_started = 0
         async with self._sessions() as session:
             for project_id, topic_id in pairs:
+                topic = await TopicService(session).get(topic_id)
+                if topic is None or topic.status == TopicStatus.archived:
+                    continue
                 dream = await latest_dream(session, topic_id)
                 last = await self._last_activity(session, topic_id, dream)
                 if last is not None and last >= cutoff:
-                    continue  # recently active — keep the screen alive
+                    continue
                 if dreams_started < settings.dream_max_per_sweep and (
                     await self._start_dream_if_worthwhile(
-                        session,
-                        topic_id=topic_id,
-                        project_id=project_id,
-                        dream=dream,
+                        session, topic_id=topic_id, project_id=project_id, dream=dream
                     )
                 ):
                     dreams_started += 1
-                    continue  # organize now, release on the next sweep
-                idle.append((project_id, topic_id))
-        # Release outside the query session so teardown cannot hold it open.
-        for project_id, topic_id in idle:
-            await release_topic_screen(
-                project_id, topic_id, session_factory=self._sessions
-            )
         if dreams_started:
-            logger.info(
-                "idle screen reap: started %d 记忆整理 pass(es)", dreams_started
-            )
-        return len(idle)
+            logger.info("idle memory consolidation: started %d passes", dreams_started)
+        return dreams_started
 
     async def _last_activity(
         self, session, topic_id: uuid.UUID, dream
@@ -201,8 +167,8 @@ class SchedulerService:
         project_id: uuid.UUID,
         dream,
     ) -> bool:
-        """Give one about-to-die screen a turn to organize its memory. True if a
-        pass was started (and the screen therefore lives one more sweep).
+        """Give one quiet screen a turn to organize its memory. Return whether
+        a pass was started; the screen remains allocated either way.
 
         Everything here is a reason NOT to spend a turn, because the default has
         to be not spending one — the thing this repo already parked once was a

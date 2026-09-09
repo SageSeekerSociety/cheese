@@ -42,6 +42,8 @@ class TopicOut(BaseModel):
     accepted_by: str | None = None
     accepted_at: datetime | None = None
     archived_at: datetime | None = None
+    cleanup_due_at: datetime | None = None
+    can_archive: bool = False
     upgraded_from_block_id: uuid.UUID | None = None
     # NULL = this topic uses the project's default agent.
     agent_instance_id: uuid.UUID | None = None

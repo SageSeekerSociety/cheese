@@ -50,6 +50,8 @@ PKG = "app.domain.agent.harness.claude_code"
 
 # 模块 → 它从适配器拿走的名字（排序后的元组）。见上面「账本是棘轮」。
 _LEDGER: dict[str, tuple[str, ...]] = {
+    # Retirement flushes the same native raw-file collector before deletion.
+    "app.domain.topic.retire": ("event_drain",),
     # --- 边缘：适配器对外的那条边 ---
     "app.api.routes.sandbox": ("append_event", "hook_router"),
     # Enrollment prepares the native cache and idle process before advertising capacity.
@@ -74,7 +76,6 @@ _LEDGER: dict[str, tuple[str, ...]] = {
         "SESSION_TOKEN_TTL_S",
         "ScreenSetupError",
         "build_screen_launch",
-        "drop_topic_subscriptions",
     ),
 }
 

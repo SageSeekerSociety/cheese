@@ -20,6 +20,7 @@ import uuid
 
 from app.core.sandbox_auth import mint_scoped_token
 from tests.conftest import wait_work_idle
+from tests.integration.conftest import session_auth_headers
 
 
 def _project(client) -> dict:
@@ -28,14 +29,15 @@ def _project(client) -> dict:
 
 def _topic(client, project_id: str, title: str = "房间") -> dict:
     return client.post(
-        "/topics", json={"project_id": project_id, "title": title}
+        "/topics",
+        json={"project_id": project_id, "title": title, "created_by": "user-1"},
     ).json()["data"]
 
 
 def _split(client, parent_id: str, title: str) -> dict:
-    sub = client.post(f"/topics/{parent_id}/split", json={"title": title}).json()[
-        "data"
-    ]
+    sub = client.post(
+        f"/topics/{parent_id}/split", json={"title": title, "created_by": "user-1"}
+    ).json()["data"]
     # The 分身's auto-kickoff turn must finish before the test looks at prompts.
     wait_work_idle()
     return sub
@@ -286,7 +288,11 @@ def test_a_thread_in_an_archived_room_still_takes_the_note(client):
     parent = _topic(client, p["id"])
     sub = _split(client, parent["id"], "房间要归档了")
     wait_work_idle()
-    client.post(f"/topics/{parent['id']}/archive", json={"by": "user-1"})
+    client.post(
+        f"/topics/{parent['id']}/archive",
+        json={"by": "user-1"},
+        headers=session_auth_headers("user-1"),
+    )
 
     r = _tell(client, parent["id"], sub["id"], "还有一件事")
     assert r.status_code == 200

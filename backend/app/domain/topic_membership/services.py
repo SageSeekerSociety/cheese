@@ -224,6 +224,18 @@ class TopicMemberService:
             await self._repo.count_for_topic(topic_id),
         )
 
+    async def require_archive_manager(self, topic_id: uuid.UUID, actor: str) -> None:
+        member = await self._repo.get(topic_id=topic_id, member_handle=actor)
+        if member is None or member.role not in _MANAGER_ROLES:
+            raise ForbiddenError("只有房间的 owner / admin 能归档或取消归档")
+
+    async def managed_topic_ids(
+        self, topic_ids: list[uuid.UUID], actor: str
+    ) -> set[uuid.UUID]:
+        return await self._repo.topic_ids_for_member(
+            topic_ids, actor, roles=_MANAGER_ROLES
+        )
+
     async def owner_of(self, topic_id: uuid.UUID) -> str | None:
         """The human this room belongs to — its ``owner`` member, or None.
 

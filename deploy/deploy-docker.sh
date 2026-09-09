@@ -639,6 +639,15 @@ if [ "$code" != ok ]; then
   fail "deploy failed health check${PREV_SHA:+, rolled back to $PREV_SHA}"
 fi
 
+# Host clock survives API rollouts. Non-systemd installations must arrange an
+# external minute trigger; startup/reconnect recovery alone is not a timer.
+if [ -d /run/systemd/system ]; then
+  bash "$HERE/install-room-cleanup-timer.sh" \
+    || fail "backend is healthy, but archived-room cleanup timer installation failed"
+else
+  log "no systemd host: schedule deploy/trigger-room-cleanup.sh externally every minute"
+fi
+
 promote_image_retainer() {
   local kind="$1"
   local current="${PROJECT}-${kind}-image-retainer"

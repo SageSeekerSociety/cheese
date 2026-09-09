@@ -2,7 +2,7 @@
 
 import uuid
 
-from sqlalchemy import exists, select, text
+from sqlalchemy import delete, exists, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -84,3 +84,8 @@ class AgentSessionRepository:
             select(exists().where(*self._at(topic_id)))
         )
         return bool(result.scalar())
+
+    async def forget_room(self, topic_id: uuid.UUID) -> None:
+        await self._session.execute(
+            delete(AgentSession).where(AgentSession.topic_id == topic_id)
+        )

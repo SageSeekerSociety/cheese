@@ -98,6 +98,18 @@ class TopicRepository:
     async def get(self, topic_id: uuid.UUID) -> Topic | None:
         return await self._session.get(Topic, topic_id)
 
+    async def lock(self, topic_id: uuid.UUID) -> Topic | None:
+        return (
+            await self._session.scalars(
+                select(Topic)
+                .where(Topic.id == topic_id)
+                # Serialize execution admission with archival while allowing
+                # hook writes whose foreign keys only take KEY SHARE.
+                .with_for_update(key_share=True)
+                .execution_options(populate_existing=True)
+            )
+        ).one_or_none()
+
     async def list_for_project(
         self,
         project_id: uuid.UUID,

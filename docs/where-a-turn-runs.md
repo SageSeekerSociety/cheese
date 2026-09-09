@@ -112,11 +112,53 @@ Cloud 能开机 → 默认是 Cloud；开不了 → 默认是自托管设备
 
 ## 八、归档退掉什么
 
-一个话题在机器上留下两样东西：这台后端上的 git worktree（`<workspace_root>/.worktrees/<项目>/topic_<id 前 8 位>`），和跑它的那台设备上的隔离 home（`$HOME/.cheese/home/<项目>/<话题>`，装着 claude 的会话文件和缓存，一个 1-4 GB）。**归档时两样都不动**（`topic/retire.py`）：归档只释放 Cloud 机器、关掉设备上的屏幕。归档是可撤销的（`POST /{topic_id}/unarchive`），`topic_home_retention_days`（默认 30 天）内 worktree 和 home 都留着，取消归档就接着原会话继续；过了这个期限由定时扫退掉。分支不动：提交是记录，工作区只是一份检出，没提交的东西随归档一起放弃；宽限期过后再取消归档，会从分支重新检出一棵空树，会话从头开始。
+Open rooms retain their agent sessions and environments, including while idle or
+after accepting a delivery. Archival is an authenticated owner/admin action.
+It records a cleanup deadline using `TOPIC_ARCHIVE_CLEANUP_DELAY_S` (default
+300 seconds). Deployment and later configuration changes do not move that deadline.
 
-退存储的只有定时扫（`topic_storage_sweep_interval_s`，默认一小时）：把盘上和每台在线设备上的条目逐个对回数据库，对不上的（话题被直接删了、或者数据库知道之前就留下的存量）当场删，归档超过 `topic_home_retention_days` 的删，其余留着。每一条删或留都写一行日志说明理由。合并用的 `_merge` 暂存树不归它管。
+The host's `cheese-room-cleanup.timer` triggers a check every minute. Startup and
+device reconnect also retry due operations. Each operation records its resource
+generation, directories, progress and failure reason in PostgreSQL. It inventories
+both device storage roots in one visit. Unknown historical directories are retained;
+absence from the database never grants deletion permission.
 
-**home 先存后删。** home 里的 `.claude/projects/**/*.jsonl` 是 agent 原始会话记录的唯一一份——房间里的对话在 `blocks` 表里，这份不在——所以定时扫删 home 之前先把它存到平台上。后端通过 `DeviceHub.exec` 在设备上跑一条命令（`device_provider.transcript_upload_script`）：把 home 里的 `.claude/projects` 和 `.claude/todos` 打成 tar.gz，`curl -T -` 流式 `PUT /connector/transcripts/<项目>/<话题>`，凭设备自己的令牌认证；平台地址和令牌以 `CHEESE_API` / `CHEESE_TOKEN`（cli 自己的环境变量名）随 exec 帧下发。后端核对这台设备就是话题钉住的那台（钉子没了——话题已被删、或选机器时换过——就看它是不是项目或团队登记的设备），限大小（`transcripts_max_bytes`，默认 512 MB，超了 413），存成 `<transcripts_dir>/<项目>/<话题>/<UTC 时间戳>.tar.gz`——先写临时文件、验过是完整的 tar.gz 再改名，一次上传一个文件，从不覆盖——然后在话题（或线程）上记 `transcripts_archived_at`。**只有 2xx 才删 home**；上传没成（设备离线、超限、平台够不着）home 原样留着，日志一行 WARN 说明原因，下一轮再试。从没跑过会话的 home（没有 `.claude/projects`）没什么可存，直接删；项目本身已经没了的 home 也直接删——transcripts 没有项目可归、也没有人能再看到——日志一行 WARN 说明。上传成功后设备在 home 里留一个标记文件 `.transcripts-uploaded`，时间是那次上传开始的一刻；home 没删成但之后也没变过（`find -newer` 标记，用设备自己的钟）的话，下一轮跳过上传只删。部署上 `transcripts_dir` 是 `/data/transcripts` 的持久挂载（`TRANSCRIPTS_HOST_PATH`），归档在那里是唯一一份，见 `docs/infrastructure.md`。
+Cleanup first requests a graceful agent exit and verifies that no process holds the
+resource open. Stop commands share a device lock and durable completion receipt,
+including subprocesses that could outlive a timed-out caller. Unpublished source or
+an unconfirmed transcript keeps cleanup pending. The platform does not create a
+separate backup of dirty working trees or unpushed commits.
+
+Raw `.claude/projects/**/*.jsonl` files, including subagent files, are collected as
+original byte ranges during execution by the hook sender. Hooks wake collection;
+reconciliation every five seconds catches missed hooks and delayed writes. Byte-range
+receipts follow object storage and database commits. Final cleanup reconciles the
+file set, drains outstanding hook events, and has the backend reread and verify the
+complete stored contents one bounded chunk at a time. Verification progress survives
+a worker restart; a new cleanup operation verifies all chunks again. It checks the
+files again immediately before removal.
+`TRANSCRIPT_S3_BUCKET` must name a private bucket; the public uploads bucket is never
+used implicitly. Existing S3 connection credentials are reused. Immutable source
+identity records accompany the raw chunks so their database index can be rebuilt
+after restoring an older database backup.
+
+Authorized room participants can list and download original readable files through
+`GET /topics/{id}/transcripts` and `GET /topics/{id}/transcripts/{file_id}`. This does
+not automatically inject transcript history into later prompts. Existing tar
+archives remain under `TRANSCRIPTS_DIR` and retain their hourly additive R2 mirror.
+The old recurring tar-copy collector is removed.
+
+Before cleanup takes ownership of deletion, unarchive cancels it and reuses retained
+resources. If a stop or worktree move has an unresolved outcome, unarchive reports
+that it must finish confirmation first. Once deletion is claimed, reopening allocates
+a new resource UUID and drops only obsolete session-resume pointers. Published Git
+branches, platform memory, room messages and task records remain. Old cleanup commands
+keep their original UUID and parked backend worktree path; they cannot target the
+replacement. Cloud machines are deleted by their recorded allocation ID.
+
+`GET /topics/{id}/cleanup` reports the deadline, stage, progress and pending reason.
+Installation and storage configuration are described in
+[`deploy/README-room-cleanup.md`](../deploy/README-room-cleanup.md).
 
 ---
 

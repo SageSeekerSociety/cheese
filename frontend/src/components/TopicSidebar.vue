@@ -791,6 +791,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                             @click="startRename(row.topic)"
                           />
                           <v-list-item
+                            v-if="row.topic.can_archive"
                             prepend-icon="mdi-archive-arrow-down-outline"
                             title="归档"
                             @click="emit('archive-topic', row.topic.id)"
@@ -848,6 +849,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                     {{ unreadLabel(t.id) }}
                   </span>
                   <v-btn
+                    v-if="t.can_archive"
                     icon="mdi-archive-arrow-up-outline"
                     size="small"
                     variant="text"

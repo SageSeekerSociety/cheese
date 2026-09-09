@@ -36,13 +36,28 @@ def _topic(client, topic_id: str) -> dict:
 
 
 def _archive(client, topic_id: str, by: str = "bob") -> dict:
-    r = client.post(f"/topics/{topic_id}/archive", json={"by": by})
+    roster = client.get(f"/topics/{topic_id}/members").json()["data"]["data"]
+    owner = next(
+        member["member_handle"] for member in roster if member["role"] == "owner"
+    )
+    if owner != by:
+        response = client.post(
+            f"/topics/{topic_id}/members",
+            json={"handle": by, "role": "admin"},
+            headers=session_auth_headers(owner),
+        )
+        assert response.status_code in {200, 409}, response.text
+    r = client.post(
+        f"/topics/{topic_id}/archive", json={"by": by}, headers=session_auth_headers(by)
+    )
     assert r.status_code == 200, r.text
     return r.json()["data"]
 
 
 def _make_project(client) -> str:
-    return client.post("/projects", json={"name": "P"}).json()["data"]["id"]
+    return client.post("/projects", json={"name": "P", "owner_handle": "bob"}).json()[
+        "data"
+    ]["id"]
 
 
 def _make_topic(client, project_id: str, title: str = "做一个东西") -> str:
