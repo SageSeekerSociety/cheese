@@ -181,8 +181,9 @@ def build_session_launch(
         env={
             CONFIG_DIR_ENV: config_dir,
             HARNESS_ENV: CLAUDE_CODE,
-            "BUN_OPTIONS": "--preload="
-            + shlex.quote(config_dir + "/webfetch_transport.cjs"),
+            "BUN_OPTIONS": shlex.quote(
+                "--preload=" + config_dir + "/webfetch_transport.cjs"
+            ),
         },
         files=(
             # 0o666: the sandbox's claude rewrites both of these itself, under a
