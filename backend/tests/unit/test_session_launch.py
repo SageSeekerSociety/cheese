@@ -87,8 +87,16 @@ def test_a_subagent_finishing_does_not_hand_the_tree_back():
     ]
 
 
-def test_hooks_settings_deny_the_tool_no_user_can_answer():
-    """AskUserQuestion's picker is drawn inside the screen's terminal, out of
-    every user's reach — a turn that calls it waits forever. Both hooks backends
-    read this settings.json, so the deny belongs here, next to the hook wiring."""
-    assert hooks_settings()["permissions"]["deny"] == ["AskUserQuestion"]
+def test_hooks_settings_deny_the_tools_that_can_hang_a_turn():
+    """Both denied tools share one failure: a turn that calls them may never end.
+
+    AskUserQuestion draws its picker inside the screen's terminal, out of every
+    user's reach, so the model waits forever for a keypress nobody can make.
+    WebFetch has a step with no deadline — measured, two of two attempts on one
+    page ran 1,028 s and 390 s — and nothing on our side reaches it.
+
+    Both hooks backends read this settings.json, so the deny belongs here, next
+    to the hook wiring."""
+    denied = hooks_settings()["permissions"]["deny"]
+    assert "AskUserQuestion" in denied
+    assert "WebFetch" in denied
