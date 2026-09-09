@@ -18,6 +18,68 @@ import pytest
 from app.domain.agent.harness.claude_code import device_launch, warm_session
 
 
+@pytest.mark.parametrize("workspace_exit", [0, 7])
+def test_warm_checkout_overlaps_configuration_but_precedes_adoption(
+    tmp_path, monkeypatch, workspace_exit
+):
+    owner = tmp_path / "owner"
+    home = tmp_path / "room"
+    work = tmp_path / "work"
+    warm = owner / ".cheese/native-warm"
+    warm.mkdir(parents=True)
+    (warm / "state.json").write_text("{}")
+    (warm.parent / "warm-native-runner.py").write_text(
+        "import os, sys\nfrom pathlib import Path\n"
+        "if sys.argv[1] == 'adopt-room':\n"
+        "    assert (Path(os.environ['CHEESE_WORK']) / 'complete').exists()\n"
+        "    (Path(os.environ['HOME']) / 'adopted').touch()\n"
+    )
+    binary = owner / ".cheese/claude/versions" / device_launch.CLAUDE_PINNED_VERSION
+    binary.parent.mkdir(parents=True)
+    binary.write_text("#!/bin/sh\necho '2.1.261 (fixture)'\n")
+    binary.chmod(0o700)
+    monkeypatch.setattr(
+        device_launch,
+        "CHEESE_WORKSPACE_BRINGUP",
+        'touch "$CHEESE_WORK/waiting"\n'
+        "for attempt in $(seq 1 300); do\n"
+        '  if [ -f "$CHEESE_WORK/release" ]; then\n'
+        '    touch "$CHEESE_WORK/complete"\n'
+        f"    return {workspace_exit}\n"
+        "  fi\n  sleep 0.01\ndone\nreturn 99\n",
+    )
+    with (tmp_path / "launcher.log").open("w") as output:
+        process = subprocess.Popen(
+            ["sh", "-c", device_launch.build_launch_script()],
+            env={
+                "PATH": os.environ["PATH"],
+                "HOME": str(owner),
+                "CHEESE_HOME": str(home),
+                "CHEESE_WORK": str(work),
+                "CHEESE_PROJECT": str(uuid.uuid4()),
+                "CHEESE_TOPIC": str(uuid.uuid4()),
+            },
+            stdout=output,
+            stderr=output,
+        )
+        try:
+            deadline = time.monotonic() + 3
+            while not (home / ".claude/cheese-drain.env").exists():
+                assert process.poll() is None
+                assert time.monotonic() < deadline
+                time.sleep(0.01)
+            assert (work / "waiting").exists()
+            assert not (work / "complete").exists()
+            assert not (home / "adopted").exists()
+            (work / "release").touch()
+            assert process.wait(timeout=5) == workspace_exit
+            assert (home / "adopted").exists() == (workspace_exit == 0)
+        finally:
+            (work / "release").touch()
+            if process.poll() is None:
+                process.wait(timeout=5)
+
+
 def test_native_claim_replaces_all_provider_proxy_variants(tmp_path, monkeypatch):
     home = tmp_path / "home"
     (home / ".claude").mkdir(parents=True)
