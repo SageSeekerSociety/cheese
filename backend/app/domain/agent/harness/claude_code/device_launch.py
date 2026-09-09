@@ -1089,7 +1089,8 @@ export DISABLE_AUTOUPDATER=1
 cat > "$CLAUDE_CONFIG_DIR/webfetch_transport.cjs" <<'CHEESE_WEBFETCH'
 {webfetch_transport}CHEESE_WEBFETCH
 WEBFETCH_PRELOAD="$CLAUDE_CONFIG_DIR/webfetch_transport.cjs"
-export BUN_OPTIONS="${{BUN_OPTIONS:+$BUN_OPTIONS }}--preload=\\"$WEBFETCH_PRELOAD\\""
+# BUN_OPTIONS is parsed by Bun, not a shell; embedded quotes become filename bytes.
+export BUN_OPTIONS="${{BUN_OPTIONS:+$BUN_OPTIONS }}--preload=$WEBFETCH_PRELOAD"
 {skill_setup}
 {ca_block}
 # Written by the shell, not node: a machine whose `claude` is the native binary
