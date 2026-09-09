@@ -2474,8 +2474,8 @@ class ChatService:
                 if payload is not None:
                     frame = {"type": "event_block", "block": payload}
             elif event.text.strip():
-                # Terminal output stays in activity, including Stop text.
-                # Tool-free private chat has no CLI and publishes its reply here.
+                # Private chats publish the direct reply; work topics retain
+                # terminal output in activity and publish through Cheese CLI.
                 payload = await self._persist_assistant_message(
                     project_id=project_id,
                     topic_id=topic_id,

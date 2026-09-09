@@ -59,6 +59,7 @@ jobs:
       - name: Build private execution image
         run: docker buildx build --load -f backend/sandbox/Dockerfile.private -t cheese-private-executor:2.1.265 .
       - name: Verify real scratch execution
+        id: scratch
         run: >-
           backend/.venv/bin/python scripts/remote_execution/private_acceptance.py
           --output tmp/remote-execution/private-ci-${{ github.run_id }}-${{ github.run_attempt }}
@@ -72,6 +73,7 @@ jobs:
           tests/unit/test_private_chat.py tests/unit/test_remote_control.py
           tests/integration/test_remote_control_auth.py -q
       - name: Verify two private turns through native RC
+        if: ${{ !cancelled() && steps.scratch.outcome == 'success' }}
         run: >-
           backend/.venv/bin/python scripts/remote_execution/private_terminal.py
           --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"

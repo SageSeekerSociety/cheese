@@ -69,10 +69,15 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
         blocks = await BlockRepository(session).list_for_topic(topic_id)
     assert any(
         b.author_type == AuthorType.ai
-        and b.kind == BlockKind.message
+        and b.kind == (BlockKind.message if private else BlockKind.event)
         and b.content == "Draft saved."
         for b in blocks
     )
+    if not private:
+        assert not any(
+            b.author_type == AuthorType.ai and b.kind == BlockKind.message
+            for b in blocks
+        )
     if private:
         # Exercise the same scoped credential given to Cheese CLI, against the
         # real document API and database rather than the shell HTTP fixture.
