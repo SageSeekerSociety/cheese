@@ -86,6 +86,7 @@ jobs:
           tests/unit/test_private_chat.py tests/unit/test_remote_control.py
           tests/integration/test_remote_control_auth.py -q
           tests/integration/test_central_room_sessions.py
+          tests/integration/test_llm_proxy.py
           tests/unit/test_execution_bootstrap.py tests/unit/test_execution_transport.py
           tests/unit/test_session_transfer.py tests/unit/test_resource_cleanup.py
           tests/unit/test_compute_pool.py tests/unit/test_device_provider.py
