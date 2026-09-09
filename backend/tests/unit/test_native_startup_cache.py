@@ -27,6 +27,11 @@ def initialized(tmp_path, monkeypatch):
         "policy = {'restrictions': {'deny': ['example']}}\n"
         "(config / 'remote-settings.json').write_text(json.dumps(remote))\n"
         "(config / 'policy-limits.json').write_text(json.dumps(policy))\n"
+        "state = {'cachedGrowthBookFeatures': {'example': True}, "
+        "'cachedGrowthBookFeaturesAt': 1234567890000, "
+        "'oauthAccount': {'accountUuid': 'preparer-account'}, "
+        "'projects': {'private-preparation': {'hasTrustDialogAccepted': True}}}\n"
+        "(config / '.claude.json').write_text(json.dumps(state))\n"
     )
     binary.chmod(0o700)
     startup_cache.prepare(owner, "test-version")
@@ -78,6 +83,40 @@ def test_native_refreshed_policy_is_never_overwritten(initialized):
     policy.write_text('{"newPolicy":true}')
     assert startup_cache.restore(owner, destination, "test-version")
     assert policy.read_text() == '{"newPolicy":true}'
+
+
+def test_fresh_room_gets_features_without_preparer_identity_or_trust(initialized):
+    owner, destination = initialized
+    state_path = destination / ".claude.json"
+    room_state = {
+        "hasCompletedOnboarding": True,
+        "projects": {"room-work": {"hasTrustDialogAccepted": True}},
+    }
+    state_path.write_text(json.dumps(room_state))
+    assert startup_cache.restore(owner, destination, "test-version")
+    assert json.loads(state_path.read_text()) == {
+        **room_state,
+        "cachedGrowthBookFeatures": {"example": True},
+        "cachedGrowthBookFeaturesAt": 1234567890000,
+    }
+    bundle = json.loads((owner / ".cheese/native-startup-cache.json").read_text())
+    assert bundle["features"] == {
+        "cachedGrowthBookFeatures": {"example": True},
+        "cachedGrowthBookFeaturesAt": 1234567890000,
+    }
+
+
+def test_native_refreshed_features_are_never_overwritten(initialized):
+    owner, destination = initialized
+    state_path = destination / ".claude.json"
+    state = {
+        "cachedGrowthBookFeatures": {"example": False, "newFeature": True},
+        "cachedGrowthBookFeaturesAt": 2345678900000,
+        "oauthAccount": {"accountUuid": "room-account"},
+    }
+    state_path.write_text(json.dumps(state))
+    assert startup_cache.restore(owner, destination, "test-version")
+    assert json.loads(state_path.read_text()) == state
 
 
 def test_machine_without_preinitialization_uses_native_fetch(tmp_path):

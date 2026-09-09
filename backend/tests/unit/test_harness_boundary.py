@@ -54,11 +54,12 @@ _LEDGER: dict[str, tuple[str, ...]] = {
     "app.domain.topic.retire": ("event_drain",),
     # --- 边缘：适配器对外的那条边 ---
     "app.api.routes.sandbox": ("append_event", "hook_router"),
-    # Enrollment prepares native caches before a warm machine becomes available.
+    # Enrollment prepares the native cache and idle process before advertising capacity.
     "app.domain.machine.enrollment": (
         "CLAUDE_MIN_VERSION",
         "CLAUDE_PINNED_VERSION",
         "build_startup_cache_prepare",
+        "build_warm_session_prepare",
     ),
     # --- 装配：池子在这里把 runtime 和 channel 拼起来，也只在这里 ---
     "app.domain.agent.compute": ("Channel", "ClaudeCodeRuntime"),

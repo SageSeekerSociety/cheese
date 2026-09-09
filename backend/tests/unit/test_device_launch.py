@@ -1,16 +1,82 @@
 """Device screen launcher: hooks settings + self-contained launch command."""
 
 import contextlib
+import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 
 import pytest
 
-from app.domain.agent.harness.claude_code import device_launch
+from app.domain.agent.harness.claude_code import device_launch, warm_session
+
+
+@pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux is required")
+def test_prepared_topic_is_dead_when_only_its_drainer_survives(tmp_path):
+    directory = tmp_path / ".cheese/native-warm"
+    directory.mkdir(parents=True)
+    runner = directory.parent / "warm-native-runner.py"
+    shutil.copyfile(warm_session.__file__, runner)
+    topic = str(uuid.uuid4())
+    (directory / "binding.json").write_text(json.dumps({"topic_id": topic}))
+    with tempfile.TemporaryDirectory(prefix="cw-") as socket_dir:
+        socket_path = socket_dir + "/s"
+
+        def tmux(*args):
+            return subprocess.check_output(
+                ["tmux", "-S", socket_path, *args], text=True
+            ).strip()
+
+        try:
+            pane = tmux(
+                "-f",
+                "/dev/null",
+                "new-session",
+                "-d",
+                "-P",
+                "-F",
+                "#{pane_id}",
+                "-s",
+                "native-warm",
+                "sleep 30",
+            )
+            (directory / "state.json").write_text(
+                json.dumps({"socket": socket_path, "pane": pane})
+            )
+            tmux(
+                "new-window",
+                "-d",
+                "-t",
+                "native-warm",
+                "-n",
+                "cheese-drain",
+                "sleep 30",
+            )
+
+            def probe():
+                return subprocess.check_output(
+                    ["sh", "-c", device_launch.DEVICE_ALIVE_PROBE],
+                    text=True,
+                    env={
+                        **os.environ,
+                        "HOME": str(tmp_path),
+                        "CHEESE_ALIVE_TOPIC": topic,
+                    },
+                ).strip()
+
+            assert probe() == "alive"
+            tmux("kill-pane", "-t", pane)
+            assert tmux("list-panes", "-a", "-F", "#{pane_dead}") == "0"
+            assert probe() == "dead"
+        finally:
+            subprocess.run(
+                ["tmux", "-S", socket_path, "kill-server"], capture_output=True
+            )
 
 
 def test_liveness_probe_distinguishes_a_running_topic_from_an_exited_one(tmp_path):
