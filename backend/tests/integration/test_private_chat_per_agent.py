@@ -162,6 +162,34 @@ def test_a_dm_from_before_teammates_were_named_keeps_its_history(client):
     assert _who_answers(client, legacy)["handle"] == default["handle"]
 
 
+def test_an_unopened_old_dm_is_settled_before_the_default_moves(client):
+    """The window the pin-on-open path cannot cover: a DM from before this
+    feature that nobody has opened yet. It is answered by the default, so the
+    moment the default changes is the last moment its history can still be
+    attributed to the teammate that actually held it."""
+    project_id = _project(client)
+    first = next(a for a in _agents(client, project_id) if a["is_default"])
+
+    async def _legacy_room() -> str:
+        async with client.test_factory() as session:
+            topic = await TopicRepository(session).get_or_create_private(
+                project_id=uuid.UUID(project_id), user_handle="user-1"
+            )
+            await session.commit()
+            return str(topic.id)
+
+    legacy = asyncio.run(_legacy_room())
+    _seed_message(client, project_id, legacy, "cheese")
+
+    # Nobody opened it; the default moves anyway.
+    reviewer = _add_agent(client, project_id, "reviewer", "评审")
+    _make_default(client, project_id, reviewer["id"])
+
+    assert _who_answers(client, legacy)["handle"] == first["handle"]
+    assert _dm_id(client, project_id, "user-1", first["handle"]) == legacy
+    assert _dm_id(client, project_id, "user-1", "reviewer") != legacy
+
+
 def test_unread_is_counted_per_teammate(client):
     project_id = _project(client)
     default = next(a for a in _agents(client, project_id) if a["is_default"])

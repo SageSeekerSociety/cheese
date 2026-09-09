@@ -34,7 +34,7 @@ from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import looks_like_agent_handle, names_a_person
 from app.domain.membership.services import MemberService
-from app.domain.project.models import ProjectRole
+from app.domain.project.models import Project, ProjectRole
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.services import AcceptService
 from app.domain.room_task.models import Task, TaskStatus
@@ -392,8 +392,8 @@ class TopicService:
                 # teammate. It is this agent's conversation — the default is who
                 # has been answering it — so hand it over rather than leaving it
                 # behind and opening an empty second one.
-                await self._repo.pin_unpinned_agent_dm(
-                    project_id, user_handle, agent.id
+                await self._repo.pin_unpinned_agent_dms(
+                    project_id, agent.id, user_handle=user_handle
                 )
         topic = await self._repo.get_or_create_private(
             project_id=project_id,
@@ -408,6 +408,19 @@ class TopicService:
             peer_handle=topic.private_peer,
         )
         return topic
+
+    async def pin_agent_dms_to_current_default(self, project: Project) -> None:
+        """Settle who owns every unpinned 私聊 in this project, before the
+        project's default teammate changes.
+
+        An unpinned DM is answered by the default, so the moment the default
+        moves is the last moment its history can still be attributed correctly.
+        Called from the agent side (choosing a new default, retiring the current
+        one); a no-op once every DM here has been opened at least once.
+        """
+        agents = AgentInstanceService(self._session)
+        current = await agents.materialize_default(project)
+        await self._repo.pin_unpinned_agent_dms(project.id, current.id)
 
     async def get_or_404(self, topic_id: uuid.UUID) -> Topic:
         topic = await self._repo.get(topic_id)

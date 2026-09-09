@@ -248,27 +248,39 @@ class TopicRepository:
         await self._session.refresh(topic)
         return topic
 
-    async def pin_unpinned_agent_dm(
-        self, project_id: uuid.UUID, user_handle: str, agent_instance_id: uuid.UUID
+    async def pin_unpinned_agent_dms(
+        self,
+        project_id: uuid.UUID,
+        agent_instance_id: uuid.UUID,
+        *,
+        user_handle: str | None = None,
     ) -> None:
-        """Give this member's teammate-less 芝士 DM the teammate it has been
-        talking to all along.
+        """Give the teammate-less 芝士 DMs the teammate they have been talking
+        to all along.
 
         A DM opened before there was one room per teammate names no teammate, so
-        it answers with whatever the project's default is at the time — which is
-        exactly *this* agent, because the caller only asks for this when the
-        agent it resolved IS the current default. Writing that down is what makes
-        the room stop moving when the default later changes; the conversation
-        stays where it is, under the teammate that actually held it.
+        it is answered by whatever the project's default is at the time. Callers
+        pass the agent that is the default *right now*, and call this at the two
+        moments that answer could change — somebody opens the DM, or the project
+        picks a different default. Writing it down at those two points is what
+        makes the conversation stay where it is: under the teammate that
+        actually held it, not under whoever holds the default later.
+
+        ``user_handle`` narrows it to one member's DM; without it, every
+        unpinned DM in the project (what the default moving is about).
         """
         await self._session.execute(
             update(Topic)
             .where(
                 Topic.project_id == project_id,
                 Topic.is_private.is_(True),
-                Topic.private_owner == user_handle,
                 Topic.private_peer.is_(None),
                 Topic.agent_instance_id.is_(None),
+                *(
+                    [Topic.private_owner == user_handle]
+                    if user_handle is not None
+                    else []
+                ),
             )
             .values(agent_instance_id=agent_instance_id)
         )

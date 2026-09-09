@@ -243,6 +243,7 @@ class AgentInstanceService:
             raise ValidationError("请先创建另一个队友，再停用这个队友")
         instance.is_active = False
         if project.default_agent_instance_id == instance.id:
+            await self._pin_private_chats(project)
             project.default_agent_instance_id = active[0].id
         await self._session.flush()
 
@@ -251,9 +252,24 @@ class AgentInstanceService:
     ) -> ResolvedAgent:
         if instance is not None and not instance.is_active:
             raise ValidationError("这个队友已停用，不能设为默认")
+        await self._pin_private_chats(project)
         project.default_agent_instance_id = instance.id if instance else None
         await self._session.flush()
         return await self.for_project(project)
+
+    async def _pin_private_chats(self, project: Project) -> None:
+        """Settle the 私聊 that name no teammate, before this project's default
+        stops being the one answering them.
+
+        A DM keyed to nobody is answered by the default, so moving the default
+        would silently move the conversation too — the thing 一人一间 exists to
+        prevent. Imported here rather than at module scope: the topic side reads
+        this service to resolve a room's agent, and the two would import each
+        other.
+        """
+        from app.domain.topic.services import TopicService
+
+        await TopicService(self._session).pin_agent_dms_to_current_default(project)
 
     async def materialize_default(self, project: Project) -> AgentInstance:
         """The project's default as a real row, creating it if it was implicit.
