@@ -67,7 +67,7 @@ async def test_remote_file_control_is_journalled_without_central_execution(
     }
     await service.execute_remote(session, payload, "alice", target)
     result = await service.result(session["id"], "remote-preview")
-    assert result["response"]["contents"] == "REMOTE_CONTENT"
+    assert result["response"]["response"]["contents"] == "REMOTE_CONTENT"
     assert await service.redis.xlen(key(session["id"], "in")) == 0
     (workspace / "sample.txt").write_text("CHANGED_AFTER_RESPONSE")
     await RemoteControl(service.redis).execute_remote(session, payload, "alice", target)
@@ -86,7 +86,7 @@ async def test_remote_file_control_records_unavailable_executor_error(rc, execut
     }
     await service.execute_remote(session, payload, "alice", target)
     result = await service.result(session["id"], "remote-error")
-    assert result["subtype"] == "error"
+    assert result["response"]["subtype"] == "error"
     assert await service.redis.xlen(key(session["id"], "in")) == 0
 
 
