@@ -1086,7 +1086,18 @@ export PATH="$HOME/.claude:$PATH"
 # Give every device the topic branch: a real checkout it can push back from so
 # 采纳 sees what the agent wrote. It runs here, after the forwarder is on PATH,
 # because what this step has to say when it goes wrong is the whole point of it.
+cheese_prepare_workspace() {{
 {workspace_bringup}
+}}
+WORKSPACE_PID=""
+if [ -n "$WARM_ROOT" ]; then
+  # The checkout and isolated-home files are independent. Join before adoption
+  # so native initialization still sees the complete project and its rules.
+  cheese_prepare_workspace &
+  WORKSPACE_PID=$!
+else
+  cheese_prepare_workspace
+fi
 # Extract the machine's own ccproxy ticket, READING the owner's files only —
 # see CHEESE_SETTINGS_RECONCILE for why nothing is written there any more
 # (CLAUDE_CONFIG_DIR made the owner's settings.json irrelevant to routing).
@@ -1352,6 +1363,7 @@ if [ -n "${{CHEESE_ENVIRONMENT:-}}" ]; then
 fi
 [ -s "$CHEESE_SP" ] && CLAUDE="$CLAUDE --append-system-prompt-file \\"$CHEESE_SP\\""
 if [ -n "$WARM_ROOT" ]; then
+  wait "$WORKSPACE_PID"
   python3 "$REAL_HOME/.cheese/warm-native-runner.py" adopt-room "$WARM_ROOT"
   exec python3 "$REAL_HOME/.cheese/warm-native-runner.py" attach \\
     "$WARM_ROOT" "$CHEESE_PROJECT" "$CHEESE_TOPIC"
