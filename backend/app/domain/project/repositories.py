@@ -247,7 +247,7 @@ class ProjectRepository:
                 .where(User.username == handle)
             )
         ).first()
-        return row if row is not None else (None, None, None)
+        return (None, None, None) if row is None else (row[0], row[1], row[2])
 
     async def list_ids_for_space_tasks(self, space_id: int) -> list[uuid.UUID]:
         """Project ids for every 赛题 published under this Space (机构看板).

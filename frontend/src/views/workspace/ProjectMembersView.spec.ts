@@ -42,11 +42,7 @@ const getUserInfo = vi.fn()
 vi.mock('@/network/api/users', () => ({ UserApi: { getUserInfo: (...a: unknown[]) => getUserInfo(...a) } }))
 
 let meHandle = 'alice'
-vi.mock('@/me', () => ({
-  myHandle: () => meHandle,
-  // 名册表里没有所有者，页面得自己补那一行，名字从这里来。
-  me: { value: { handle: 'alice', name: '爱丽丝' } },
-}))
+vi.mock('@/me', () => ({ myHandle: () => meHandle }))
 
 const refreshMembers = vi.fn()
 let members: ProjectMemberRow[] = []
@@ -345,27 +341,36 @@ describe('成员页：等待接受', () => {
   })
 })
 
-// 名册表里存的是**除所有者以外**的人（这个仓里所有者记在 Project.owner_handle
-// 上）。这一组守的是界面把他补出来——不补的话，一个刚建好的项目会对着它的主人说
-// 「还没有成员」，而他正是唯一确定在这儿的那个人。
-describe('成员页：所有者不在名册表里，但必须在页面上', () => {
-  it('名册为空的新项目，页面上仍然有所有者那一行', () => {
-    members = []
+// 所有者在成员表里没有自己那一行（这个仓里所有者记在 Project.owner_handle 上），
+// 名册接口在读的时候把他补进来，带 source: 'owner'。这一组守的是这一行在页面上和
+// 别人一样是个正常的人——只是没有可以改的角色。
+describe('成员页：所有者那一行', () => {
+  const owner = (): ProjectMemberRow => ({
+    user_handle: 'alice',
+    role: 'lead',
+    name: '爱丽丝',
+    source: 'owner',
+  })
+
+  it('刚建好、还没加过人的项目，页面上是所有者，不是「还没有成员」', () => {
+    members = [owner()]
     const { container } = mount()
     expect(container.textContent).toContain('@alice')
     expect(container.textContent).toContain('所有者')
     expect(container.textContent).not.toContain('还没有成员')
   })
 
-  it('他也在角色分组里——不是浮在名单外面的一行', () => {
-    members = []
+  it('他在角色分组里——不是浮在名单外面的一行', () => {
+    members = [owner()]
     const { container } = mount()
     expect(groupTitles(container)).toContain('组长 · 1')
   })
 
-  it('名册表里真有他的时候不画第二行', () => {
-    members = [member({ user_handle: 'alice', name: '爱丽丝', role: 'lead' })]
+  it('他那一行没有管理菜单：角色和移出都动不了成员表里不存在的一行', () => {
+    members = [owner(), member()]
     const { container } = mount()
-    expect(container.querySelectorAll('.member-row').length).toBe(1)
+    expect(rowFor(container, 'alice').querySelector('[aria-label="管理成员"]')).toBeNull()
+    // 名册里真有他自己那一行时（他也被显式加进过成员表），也只画一行。
+    expect(container.querySelectorAll('.member-row').length).toBe(2)
   })
 })
