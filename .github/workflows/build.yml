@@ -378,6 +378,15 @@ jobs:
       - name: Test frontend static-asset integrity guard
         run: sh frontend/scripts/test-check-static-assets.sh
 
+      # Without a node of its own, the box's own answers, and it is Debian's:
+      # node 20, whose corepack is too old to load a modern pnpm and links its
+      # shims into /usr/bin, which the runner user cannot write. Same pairing
+      # as frontend.yml — setup-node first, corepack second — because that is
+      # what puts both the node and the shims somewhere writable.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
       # The manual ships inside this image, but its sources (docs/manual) are
       # outside the build context (./frontend), so the docker build cannot make
       # it — it has to arrive in the context first. public/ is Vite's
@@ -386,17 +395,7 @@ jobs:
       # fails if this step did not happen.
       - name: Build the user manual into the image context
         run: |
-          # This job has no `actions/setup-node`, so `corepack` here is the
-          # system one and its default link target is /usr/bin — which the
-          # runner user cannot write. Every image build since the manual step
-          # landed died on that EACCES, and the deploys behind them with it.
-          # Link into a writable directory instead: the pnpm VERSION still
-          # comes from docs/manual's `packageManager` field, which is the whole
-          # reason to go through corepack rather than install pnpm by hand.
-          # corepack links into this directory but does not create it.
-          mkdir -p "$RUNNER_TEMP/corepack"
-          corepack enable --install-directory "$RUNNER_TEMP/corepack"
-          export PATH="$RUNNER_TEMP/corepack:$PATH"
+          corepack enable
           cd docs/manual
           pnpm install --frozen-lockfile
           pnpm exec vitepress build .
