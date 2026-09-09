@@ -386,7 +386,15 @@ jobs:
       # fails if this step did not happen.
       - name: Build the user manual into the image context
         run: |
-          corepack enable
+          # This job has no `actions/setup-node`, so `corepack` here is the
+          # system one and its default link target is /usr/bin — which the
+          # runner user cannot write. Every image build since the manual step
+          # landed died on that EACCES, and the deploys behind them with it.
+          # Link into a writable directory instead: the pnpm VERSION still
+          # comes from docs/manual's `packageManager` field, which is the whole
+          # reason to go through corepack rather than install pnpm by hand.
+          corepack enable --install-directory "$RUNNER_TEMP/corepack"
+          export PATH="$RUNNER_TEMP/corepack:$PATH"
           cd docs/manual
           pnpm install --frozen-lockfile
           pnpm exec vitepress build .
