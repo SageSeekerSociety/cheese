@@ -2,7 +2,19 @@ name: Remote execution acceptance
 
 on:
   push:
-    branches: [experiment/remote-execution, feat/central-room-sessions]
+    branches: [main, experiment/remote-execution]
+    paths:
+      - 'backend/**'
+      - 'cli/**'
+      - 'scripts/remote_execution/**'
+      - '.github/workflows/remote-execution.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'cli/**'
+      - 'scripts/remote_execution/**'
+      - '.github/workflows/remote-execution.yml'
   workflow_dispatch:
 
 permissions:
