@@ -15,6 +15,7 @@ import pytest
 
 from app.domain.agent import plain_chat
 from app.domain.agent.chat import ChatService
+from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.project.services import ProjectService
@@ -75,19 +76,6 @@ async def _messages(factory, topic_id: uuid.UUID) -> list:
     async with factory() as session:
         blocks = await BlockRepository(session).list_for_topic(topic_id)
     return [b for b in blocks if b.kind == BlockKind.message]
-
-
-async def _everything_said(factory, topic_id: uuid.UUID) -> str:
-    """房间里除了本人说的话之外，出现的所有文字。
-
-    不按块的种类挑：一轮失败落成的是事件而不是消息，而这条用例问的是「人有没有
-    被告知」——按种类挑，就会在真的说了的时候报没说。
-    """
-    async with factory() as session:
-        blocks = await BlockRepository(session).list_for_topic(topic_id)
-    return " ".join(
-        b.content or "" for b in blocks if b.author_type != AuthorType.human
-    )
 
 
 async def _everything_said(factory, topic_id: uuid.UUID) -> str:
@@ -227,3 +215,53 @@ async def test_history_goes_with_every_call(client, tmp_path, monkeypatch):
     assert seen[-1][-1]["role"] == "user"
     roles = [m["role"] for m in seen[-1]]
     assert all(a != b for a, b in zip(roles, roles[1:], strict=False))
+
+
+async def test_the_dm_asks_for_a_model_the_gateway_actually_serves(
+    client, tmp_path, monkeypatch
+):
+    """私聊问的是**网关池自己的**模型，不是队友配置里存的那个。
+
+    走订阅的项目存的是界面上的选项 id（`opus`），而机器那条路会先把它换成
+    `claude-opus-5` 再用。私聊没有那一步，也不需要有：它只从网关走，而网关那个池
+    挂的是另一家的模型，`opus` 和 `claude-opus-5` 它都不认——原样问过去换回来的是
+    `Invalid model name passed in model=opus`，一整间私聊就此哑掉。
+    """
+    from app.core.config import settings as app_settings
+    from app.domain.agent.supply import SUBSCRIPTION, SUPPLY_KEY
+
+    factory = client.test_factory  # type: ignore[attr-defined]
+    screen = CountingScreen()
+    svc = _service(factory, tmp_path, screen)
+    _with_gateway(svc)
+
+    asked: list[dict] = []
+
+    async def fake_ask(**kwargs):
+        asked.append(kwargs)
+        return plain_chat.PlainReply(text="在", input_tokens=1, output_tokens=1)
+
+    monkeypatch.setattr(plain_chat, "ask", fake_ask)
+
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        project.settings = {**(project.settings or {}), SUPPLY_KEY: SUBSCRIPTION}
+        # 这个项目上真实存着的就是这个：一个界面上的选项 id，机器那条路认得。
+        agents = AgentInstanceService(session)
+        instance = await agents.materialize_default(project)
+        instance.configuration = {**instance.configuration, "model": "opus"}
+        topic = await TopicService(session).get_or_create_private(
+            project_id=project.id, user_handle="u"
+        )
+        topic_id = topic.id
+        await session.commit()
+
+    async for _ in svc.converse(
+        topic_id=topic_id, author="u", content="在吗", summon=True
+    ):
+        pass
+    await settle_turn(svc, topic_id)
+
+    assert screen.prompts == [], "这一轮仍然不该占机器"
+    assert app_settings.agent_model != "opus", "这条用例要两个名字真的不一样"
+    assert [k["model"] for k in asked] == [app_settings.agent_model]

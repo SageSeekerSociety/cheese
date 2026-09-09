@@ -4457,7 +4457,6 @@ class ChatService:
                 turn_id=turn_id,
                 user_block_id=user_block_id,
                 system_prompt=system_prompt,
-                agent=prepared.agent,
                 pending_ids=pending_ids,
                 prompt_text=prompt_text,
                 private_owner=private_owner,
@@ -4737,7 +4736,6 @@ class ChatService:
         turn_id: uuid.UUID,
         user_block_id: uuid.UUID | None,
         system_prompt: str,
-        agent: ResolvedAgent,
         pending_ids: list[uuid.UUID],
         prompt_text: str,
         private_owner: str | None,
@@ -4782,13 +4780,15 @@ class ChatService:
                     "模型出口刚刚还在，现在拿不到项目的网关凭据了，这一轮没有发出去"
                 )
             base_url, api_key = target
-            # 模型名直接取队友自己配的那个，不经 `_model_kwargs`：走订阅的项目在那
-            # 里会被换成一个只有机器上那条链认识的别名，拿去问网关必然 404。
-            config = AgentConfiguration.model_validate(agent.configuration)
+            # 模型是**网关池自己的**，不是队友配置里存的那个。这条路只从网关走
+            # (`_plain_chat_route`)，所以模型名必须是网关认识的名字：走网关池的
+            # 项目存的本来就是它，走订阅的项目存的是界面上的选项 id（`opus`），
+            # 原样问网关只会换回一句 Invalid model name。队友的身份不受影响——
+            # 角色设定、这间对话、个人记忆都还是它的，换掉的只是底下那个模型。
             reply = await plain_chat.ask(
                 base_url=base_url,
                 api_key=api_key,
-                model=config.model,
+                model=settings.agent_model,
                 system_prompt=system_prompt,
                 messages=await self._plain_chat_messages(topic_id, prompt_text),
             )
