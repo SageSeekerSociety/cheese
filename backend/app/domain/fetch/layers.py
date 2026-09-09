@@ -25,9 +25,18 @@ import httpx
 
 from app.domain.fetch.extract import substantive_length, to_markdown
 
-#: Enough prose to be worth answering from. Below this a page is a shell: a
-#: challenge interstitial, a login wall, or a nav-only skeleton.
+#: Enough prose that a rung can stop climbing: the page clearly carried an
+#: article. Below it the ladder keeps trying, because a thin result is usually a
+#: challenge interstitial or a login wall.
 MIN_SUBSTANTIVE = 800
+
+#: But thin is not the same as empty, and some real pages ARE short — a Q&A
+#: page with few answers, a minimal example page. Measured: example.com yields
+#: 101 characters of prose and a Zhihu question page 691, and both were reported
+#: as "could not read this page" while their text sat in hand. So once every
+#: rung has been tried, anything above this floor is returned as the answer
+#: rather than thrown away; only below it is a page genuinely unreadable.
+MIN_USABLE = 60
 
 _BROWSER_UA = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "

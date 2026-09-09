@@ -236,3 +236,50 @@ async def test_distillation_asks_for_the_model_this_deployment_runs(monkeypatch)
     )
 
     assert seen["distill"][2] == "the-model-we-run"
+
+
+async def test_a_short_but_real_page_is_an_answer_not_a_failure(monkeypatch):
+    """Thin is not empty.
+
+    The bar for "stop climbing the ladder" was also used as the bar for "this
+    page is readable", so pages that are genuinely short came back as "could not
+    read this page" with their text sitting in hand — measured, example.com
+    yields 101 characters of prose and a Zhihu question page 691.
+
+    A challenge interstitial still has to fail, which is what the floor is for.
+    """
+
+    async def thin(url, *a, **k):
+        return layers.Attempt(
+            "plain-http",
+            False,
+            "A sentence that is long enough to count as prose. " * 6,
+            "only 300 chars of prose",
+            0.2,
+        )
+
+    async def nothing(url, *a, **k):
+        return layers.Attempt("markdown-native", False, "", "no markdown edition", 0.1)
+
+    monkeypatch.setattr(layers, "rung_markdown_native", nothing)
+    monkeypatch.setattr(layers, "rung_plain_http", thin)
+    monkeypatch.setattr(layers, "rung_impersonated", thin)
+
+    outcome = await service.fetch("https://example.com/short")
+    assert outcome.ok, "a short page that was actually read is not a failure"
+    assert "sentence" in outcome.text
+
+
+async def test_a_challenge_page_still_fails(monkeypatch):
+    """The floor's whole purpose: an interstitial must not pass as content."""
+
+    async def interstitial(url, *a, **k):
+        return layers.Attempt("plain-http", False, "Just a moment...", "shell", 0.1)
+
+    monkeypatch.setattr(layers, "rung_markdown_native", interstitial)
+    monkeypatch.setattr(layers, "rung_plain_http", interstitial)
+    monkeypatch.setattr(layers, "rung_impersonated", interstitial)
+
+    outcome = await service.fetch("https://example.com/blocked")
+    assert not outcome.ok
+    assert "plain-http" in outcome.trail()
