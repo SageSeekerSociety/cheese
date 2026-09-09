@@ -116,7 +116,20 @@ class ProjectRepository:
     async def list_members(self, project_id: uuid.UUID) -> list[dict]:
         """Project roster: each member's handle, display name, avatar and role —
         used to inject 芝士's teammate context, to resolve @mentions to a handle,
-        and to render a member's real avatar in the chat panel."""
+        and to render a member's real avatar in the chat panel.
+
+        Everyone the project contains, from all three of the places membership
+        is recorded — the member rows, the owning team, and ``owner_handle`` —
+        because every reader above asks "who is in this project", and the person
+        who created it is the surest answer to that question. The owner is NOT a
+        member row on purpose (``ProjectService._seed_roster`` explains why), so
+        without the row this function synthesizes, the owner of a project whose
+        member table is empty appears in no roster at all: their own messages
+        render as a bare handle with no avatar, an @ aimed at them resolves to
+        nobody and notifies nobody, and 芝士 is handed a teammate list that
+        omits the one person it is talking to. This is a read-side projection —
+        it puts nothing new in the table.
+        """
         # Display name lives on UserProfile.nickname (main's User has only
         # username); join both, keyed by handle == username (fusion identity).
         # ``avatar_id`` rides along from the same profile row and is None here
@@ -159,7 +172,27 @@ class ProjectRepository:
             for (h, role, name, avatar_id, avatar_type) in rows
         ]
         project = await self.get(project_id)
-        if project is None or project.team_id is None:
+        if project is None:
+            return members
+        explicit = {m["handle"] for m in members}
+        if project.owner_handle and project.owner_handle not in explicit:
+            name, avatar_id, avatar_type = await self._profile_of(project.owner_handle)
+            # Front of the list: the owner is the first person a reader of the
+            # roster is looking for. ``lead`` because that is what the owner can
+            # do (manage the roster) expressed in the only vocabulary this field
+            # has — ProjectRole carries no separate owner value.
+            members.insert(
+                0,
+                {
+                    "handle": project.owner_handle,
+                    "role": "lead",
+                    "name": name or project.owner_handle,
+                    "avatar_id": None if avatar_type == "default" else avatar_id,
+                    "source": "owner",
+                },
+            )
+            explicit.add(project.owner_handle)
+        if project.team_id is None:
             return members
         # Team access is inherited at read time, including teammates who join
         # after registration. Do not persist a second grant that survives leaving.
@@ -182,9 +215,8 @@ class ProjectRepository:
                 )
             )
         ).all()
-        explicit = {m["handle"] for m in members}
         for handle, name, avatar_id, avatar_type, created_at in team_rows:
-            if handle == project.owner_handle or handle in explicit:
+            if handle in explicit:
                 continue
             members.append(
                 {
@@ -198,6 +230,24 @@ class ProjectRepository:
                 }
             )
         return members
+
+    async def _profile_of(
+        self, handle: str
+    ) -> tuple[str | None, int | None, str | None]:
+        """``(nickname, avatar_id, avatar_type)`` for a handle, all None when no
+        fusion user stands behind it — a handle that names nobody is normal here
+        (agents, fixtures, a project handed to a handle that never registered),
+        and the roster row still exists, it just falls back to the handle."""
+        row = (
+            await self._session.execute(
+                select(UserProfile.nickname, UserProfile.avatar_id, Avatar.avatar_type)
+                .select_from(User)
+                .outerjoin(UserProfile, UserProfile.user_id == User.id)
+                .outerjoin(Avatar, Avatar.id == UserProfile.avatar_id)
+                .where(User.username == handle)
+            )
+        ).first()
+        return row if row is not None else (None, None, None)
 
     async def list_ids_for_space_tasks(self, space_id: int) -> list[uuid.UUID]:
         """Project ids for every 赛题 published under this Space (机构看板).
