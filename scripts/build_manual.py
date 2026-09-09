@@ -18,6 +18,7 @@ import json
 import re
 import shutil
 import sys
+import zipfile
 from pathlib import Path
 
 import markdown
@@ -56,6 +57,8 @@ nav .brand { font-weight:700; color:var(--ink); font-size:15px; margin-bottom:20
 nav a { display:block; color:var(--muted); text-decoration:none; padding:5px 0; font-size:14px; }
 nav a:hover { color:var(--ink); }
 nav a.on { color:var(--accent-ink); font-weight:600; }
+nav .dl { margin-top:16px; padding-top:14px; border-top:1px solid var(--line);
+          color:var(--accent-ink); font-size:13px; }
 nav .sub { padding-left:12px; font-size:13px; border-left:1px solid var(--line); margin-left:2px; }
 main {
   flex:1; min-width:0; background:var(--surface); border:1px solid var(--line);
@@ -138,6 +141,9 @@ def build(out: Path) -> int:
                     nav.append('<div class="sub">')
                     nav += [f'<a href="#{a}">{t}</a>' for _, t, a in subs]
                     nav.append("</div>")
+        # 平台上没有"把这一份带走"的入口——工作区文件只能一个一个下载，git 服务
+        # 又只认沙箱令牌。所以站点自己带一个：在预览的独立页面里点它就是下载。
+        nav.append('<a class="dl" href="/manual.zip" download>⤓ 下载全部（Markdown）</a>')
         md.reset()
         html = md.convert(body)
         # 每个标题挂一个可复制的 # —— 说明书的地址是拿来发给人的。
@@ -156,6 +162,11 @@ def build(out: Path) -> int:
             "</body></html>",
             encoding="utf-8",
         )
+
+    with zipfile.ZipFile(out / "manual.zip", "w", zipfile.ZIP_DEFLATED) as z:
+        for md_file in sorted(MANUAL.glob("*.md")):
+            z.write(md_file, f"知是说明书/{md_file.name}")
+        z.write(MANUAL / "anchors.json", "知是说明书/anchors.json")
 
     (out / "index.html").write_text(
         '<!doctype html><meta charset=utf-8><meta http-equiv=refresh content="0;url=/docs/quickstart">',
