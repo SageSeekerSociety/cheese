@@ -4,7 +4,7 @@ title: 知是使用说明
 hero:
   name: 知是
   text: 和 AI 队友一起做项目
-  tagline: 十分钟走完一整趟——从建一个项目，到你的第一个改动被合并进主分支。
+  tagline: 十分钟走完一整趟——组一支小队、建一个项目，然后开个话题跟 AI 队友说上第一句话。
   actions:
     - theme: brand
       text: 快速开始
@@ -14,7 +14,7 @@ hero:
       link: /rooms
 features:
   - title: 快速开始
-    details: 一条路走到底：建项目、开房间、说一句人话、采纳合并。不分叉。
+    details: 一条路走到底：组队、建项目、开话题说一句人话。不分叉。
     link: /quickstart
   - title: 按功能查
     details: 小队、项目、成员、话题、AI 队友、活与看板、验收与采纳、设备与算力。
