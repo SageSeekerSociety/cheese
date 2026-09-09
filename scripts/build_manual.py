@@ -21,10 +21,24 @@ import sys
 import zipfile
 from pathlib import Path
 
+import importlib.util
+
 import markdown
 
 ROOT = Path(__file__).resolve().parents[1]
+SITE = "https://okcheese.com"
 MANUAL = ROOT / "docs" / "manual"
+
+
+def _anchor_rules():
+    """守卫模块本身（文件名带连字符，只能按路径加载）。"""
+    spec = importlib.util.spec_from_file_location(
+        "manual_anchors", ROOT / ".claude" / "scripts" / "check-manual-anchors.py"
+    )
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 CSS = """
 :root {
@@ -129,6 +143,13 @@ def build(out: Path) -> int:
             )
         )
 
+    payload, problems = _anchor_rules().build(MANUAL)
+    if problems:
+        for problem in problems:
+            print(f"FAIL: {problem}", file=sys.stderr)
+        return 1
+    anchors_index = payload["anchors"]
+
     md = markdown.Markdown(extensions=["attr_list", "tables", "fenced_code", "sane_lists"])
 
     for slug, title, body, heads in metas:
@@ -163,17 +184,43 @@ def build(out: Path) -> int:
             encoding="utf-8",
         )
 
+    # 每页一个 .md 双胞胎 + 一份 llms.txt —— Anthropic / OpenAI / Stripe /
+    # Vercel / Linear 都是这么给模型供文档的（2026-09-09 逐个实测）。开头那两行
+    # 指回目录，是抄 code.claude.com 的：模型从任何一页进来都该知道全貌在哪。
+    lead = (
+        f"> ## Documentation Index\n"
+        f"> Fetch the complete documentation index at: {SITE}/docs/llms.txt\n"
+        f"> Use this file to discover all available pages before exploring further.\n\n"
+    )
+    for slug, _, body, _ in metas:
+        (out / "docs" / f"{slug}.md").write_text(lead + body.lstrip(), encoding="utf-8")
+
+    lines = [
+        "# 知是 · 使用说明",
+        "",
+        "> 知是是一个你和 AI 队友一起做项目的地方。这份文档讲怎么用它：从建第一个",
+        "> 项目到把 AI 干出来的活合并进主分支。",
+        "",
+        "## 文档",
+        "",
+    ]
+    for slug, title, _, heads in metas:
+        summary = next(
+            (a["summary"] for a in anchors_index if a["page"] == slug and a["summary"]), ""
+        )
+        lines.append(f"- [{title}]({SITE}/docs/{slug}.md): {summary}")
+    lines.append("")
+    (out / "llms.txt").write_text("\n".join(lines), encoding="utf-8")
+
     with zipfile.ZipFile(out / "manual.zip", "w", zipfile.ZIP_DEFLATED) as z:
         for md_file in sorted(MANUAL.glob("*.md")):
             z.write(md_file, f"知是说明书/{md_file.name}")
-        z.write(MANUAL / "anchors.json", "知是说明书/anchors.json")
 
     (out / "index.html").write_text(
         '<!doctype html><meta charset=utf-8><meta http-equiv=refresh content="0;url=/docs/quickstart">',
         encoding="utf-8",
     )
-    anchors = json.loads((MANUAL / "anchors.json").read_text(encoding="utf-8"))
-    print(f"built {len(metas)} pages / {len(anchors['anchors'])} anchors → {out}")
+    print(f"built {len(metas)} pages / {len(anchors_index)} anchors + llms.txt → {out}")
     return 0
 
 

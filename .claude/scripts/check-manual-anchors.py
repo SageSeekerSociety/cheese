@@ -13,24 +13,25 @@ silent:
      its own slug (`## 连接仓库 {#connect-repo}`) and the slug is what URLs are
      built from; the title is then free to change.
 
-  2. The list of anchors 芝士 is given (anchors.json) drifts from the manual.
-     A model handed a stale list does not say "I don't have that" — it says the
-     nearest thing, with a URL that no longer resolves. So the list is generated
-     from the manual, never edited by hand, and this guard fails when the
-     checked-in copy is not what the manual currently produces.
+  2. A section with no opening sentence has nothing to say about itself. The
+     site publishes an `llms.txt` (the convention Anthropic, OpenAI, Stripe,
+     Vercel and Linear all serve their docs to models through), and each entry
+     there is one line: title, URL, and this section's first sentence. A model
+     handed an entry with an empty summary does not say "I don't have that" —
+     it guesses from the title. Nothing is checked in: llms.txt is produced by
+     scripts/build_manual.py from these same files at build time, so it cannot
+     fall behind them.
 
 The one-line summary in that list is the section's FIRST SENTENCE, taken as-is.
 That is a writing rule, not a parser limitation: whatever you put first is what
 a reader (or 芝士) sees when deciding whether this section answers the question.
 
 Usage: check-manual-anchors.py             check (default: repo's docs/manual)
-       check-manual-anchors.py --write     regenerate anchors.json
        check-manual-anchors.py --self-test prove it catches what it claims to
 """
 
 from __future__ import annotations
 
-import json
 import re
 import sys
 from pathlib import Path
@@ -125,11 +126,7 @@ def build(manual_dir: Path) -> tuple[dict[str, object], list[str]]:
     return {"base": SITE_BASE, "anchors": anchors}, problems
 
 
-def render(payload: dict[str, object]) -> str:
-    return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
-
-
-def run(manual_dir: Path, *, write: bool) -> int:
+def run(manual_dir: Path) -> int:
     payload, problems = build(manual_dir)
     if problems:
         print("FAIL: 用户手册的锚点有问题：")
@@ -137,19 +134,7 @@ def run(manual_dir: Path, *, write: bool) -> int:
             print(f"  {p}")
         print("::error::manual anchors are not stable/real (see above)")
         return 1
-
-    target = manual_dir / "anchors.json"
-    expected = render(payload)
-    if write:
-        target.write_text(expected, encoding="utf-8")
-        print(f"WROTE: {target} — {len(payload['anchors'])} 个锚点")  # type: ignore[arg-type]
-        return 0
-    actual = target.read_text(encoding="utf-8") if target.exists() else ""
-    if actual != expected:
-        print(f"FAIL: {target} 和手册对不上 — 跑 `{Path(__file__).name} --write` 重新生成")
-        print("::error::anchors.json is stale (芝士 would hand out URLs from it)")
-        return 1
-    print(f"PASS: {len(payload['anchors'])} 个锚点都是显式的、唯一的、链得到的")  # type: ignore[arg-type]
+    print(f"PASS: {len(payload['anchors'])} 个锚点都是显式的、唯一的、有摘要的、链得到的")  # type: ignore[arg-type]
     return 0
 
 
@@ -163,7 +148,7 @@ def self_test() -> int:
     def quiet_run(d: Path) -> int:
         """run() prints its own verdict; inside the self-test that is noise."""
         with contextlib.redirect_stdout(io.StringIO()):
-            return run(d, write=False)
+            return run(d)
 
     def case(name: str, files: dict[str, str], should_pass: bool) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -176,9 +161,8 @@ def self_test() -> int:
             if not should_pass and not problems:
                 fails.append(f"{name}: 本该失败，却通过了")
             if should_pass and not problems:
-                (d / "anchors.json").write_text(render(payload), encoding="utf-8")
                 if quiet_run(d) != 0:
-                    fails.append(f"{name}: 生成的 anchors.json 自己对不上")
+                    fails.append(f"{name}: build() 说合格，run() 却判失败")
 
     good = "# 标题 {#top}\n\n开头一句话。\n\n## 小节 {#sec}\n\n这一节讲什么。\n"
     case("显式 slug + 摘要", {"quickstart.md": good}, True)
@@ -203,19 +187,11 @@ def self_test() -> int:
     )
     case("一个页面都没有", {}, False)
 
-    # 陈旧的 anchors.json 必须被抓到 —— 这是这个守卫存在的第二个理由。
-    with tempfile.TemporaryDirectory() as tmp:
-        d = Path(tmp)
-        (d / "quickstart.md").write_text(good, encoding="utf-8")
-        (d / "anchors.json").write_text('{"base": "/docs", "anchors": []}\n', encoding="utf-8")
-        if quiet_run(d) == 0:
-            fails.append("陈旧的 anchors.json: 本该失败，却通过了")
-
     if fails:
         for f in fails:
             print(f"SELF-TEST FAIL: {f}", file=sys.stderr)
         return 1
-    print("PASS: check-manual-anchors self-test（缺 slug / 大写 / 重复 / 无摘要 / 死链 / 陈旧清单 / 空目录）")
+    print("PASS: check-manual-anchors self-test（缺 slug / 大写 / 重复 / 无摘要 / 死链 / 空目录）")
     return 0
 
 
@@ -224,8 +200,7 @@ def main() -> int:
     if "--self-test" in args:
         return self_test()
     root = Path(__file__).resolve().parents[2]
-    manual = root / "docs" / "manual"
-    return run(manual, write="--write" in args)
+    return run(root / "docs" / "manual")
 
 
 if __name__ == "__main__":
