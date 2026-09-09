@@ -213,6 +213,26 @@ def bind(
                 raise ValueError("Native session binding does not match this request")
             if binding["phase"] == "bound":
                 return binding
+            if (
+                binding["phase"] == "binding"
+                and not Path(state["claim_socket"]).exists()
+            ):
+                current = _tmux(
+                    state,
+                    "display-message",
+                    "-p",
+                    "-t",
+                    state["pane"],
+                    "#{pane_current_path}",
+                )
+                if current.returncode == 0 and current.stdout.decode().strip() == str(
+                    work
+                ):
+                    # A launcher can exit after native accepted its one-shot claim
+                    # but before recording success. Resume that same assignment.
+                    binding["phase"] = "bound"
+                    _write(binding_path, json.dumps(binding))
+                    return binding
             session_id = binding.get("session_id")
         intent["session_id"] = session_id or str(uuid.uuid4())
         _write(binding_path, json.dumps({**intent, "phase": "binding"}))
