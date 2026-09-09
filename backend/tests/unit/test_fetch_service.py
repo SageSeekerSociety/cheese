@@ -201,3 +201,38 @@ async def test_a_sandbox_token_is_accepted_when_the_room_is_named(monkeypatch):
         fallback_handle=None, topic_id=topic, project_id=project
     )
     assert actor.is_agent and actor.handle.startswith("cheese-")
+
+
+async def test_distillation_asks_for_the_model_this_deployment_runs(monkeypatch):
+    """The model handed to the distiller must be one the gateway serves.
+
+    Shipped broken once: the endpoint asked for `agent_haiku_model`, reasoning
+    that a small model is cheaper. That setting is an ALIAS the CLI resolves
+    internally — it says what "haiku" should mean for a session — and its
+    default named a model this gateway does not serve. The gateway answered
+    "Invalid model name", distillation failed, and every prompted fetch quietly
+    returned the whole page instead of an answer.
+    """
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from app.api.routes import fetch as fetch_route
+
+    seen: dict = {}
+
+    async def capture(url, prompt=None, **kwargs):
+        seen.update(kwargs)
+        return service.FetchOutcome(url, True, "text", "plain-http", [])
+
+    monkeypatch.setattr(fetch_route, "fetch_url", capture)
+    monkeypatch.setattr(fetch_route.settings, "anthropic_base_url", "http://gw")
+    monkeypatch.setattr(fetch_route.settings, "anthropic_auth_token", "tok")
+    monkeypatch.setattr(fetch_route.settings, "agent_model", "the-model-we-run")
+    monkeypatch.setattr(fetch_route.settings, "agent_haiku_model", "an-alias-only")
+
+    await fetch_route.read_url(
+        fetch_route.FetchIn(url="https://example.com/x", prompt="q"),
+        SimpleNamespace(resolve=AsyncMock()),
+    )
+
+    assert seen["distill"][2] == "the-model-we-run"
