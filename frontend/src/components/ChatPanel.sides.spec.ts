@@ -108,7 +108,9 @@ async function open() {
 
 /** 每一条消息行是不是「我说的」，按时间线顺序。 */
 function sides(container: Element): boolean[] {
-  return [...container.querySelectorAll('.im-row')].map((r) => r.classList.contains('im-row--self'))
+  // Array.from 而不是展开：NodeList 的迭代器不在这套 tsconfig 的 lib 里，展开会
+  // 报 TS2488（仓库里其它 spec 也一律用 Array.from）。
+  return Array.from(container.querySelectorAll('.im-row')).map((r) => r.classList.contains('im-row--self'))
 }
 
 describe('消息站在哪一边', () => {
@@ -125,7 +127,7 @@ describe('消息站在哪一边', () => {
     // 这一条是这份用例存在的理由：房间里是「多个人 + 一个芝士」，按 author_type
     // 分的话，别人说的话会和我的一起跑到右边去，右边就不再是「我」了。
     history = [msg('a', 'bobby', 'human', '别人也是人'), msg('b', ME, 'human', '我')]
-    const rows = [...(await open()).querySelectorAll('.im-row')]
+    const rows = Array.from((await open()).querySelectorAll('.im-row'))
     expect(rows[0].classList.contains('im-row--self'), 'bobby 也是 human，但不是我').toBe(false)
     expect(rows[1].classList.contains('im-row--self')).toBe(true)
   })
@@ -133,7 +135,7 @@ describe('消息站在哪一边', () => {
   it('我连着说的第二条仍然在右边', async () => {
     // 续行不带头像和名字，「是谁说的」这时全靠位置 —— 掉到左边就成了别人的话。
     history = [msg('a', ME, 'human', '第一句'), msg('b', ME, 'human', '第二句')]
-    const rows = [...(await open()).querySelectorAll('.im-row')]
+    const rows = Array.from((await open()).querySelectorAll('.im-row'))
     expect(rows[1].classList.contains('im-row--cont'), '第二条是续行').toBe(true)
     expect(rows[1].classList.contains('im-row--self')).toBe(true)
   })
