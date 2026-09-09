@@ -173,9 +173,21 @@ async def fetch(
 
     if prompt and distill:
         base_url, token, model = distill
-        answer = await _distill(
-            won.text, prompt, base_url=base_url, token=token, model=model
-        )
+        # Bounded twice, on purpose. The HTTP client has its own deadline, but
+        # the bug this service replaces was a step that was *supposed* to be
+        # bounded and was not — so the caller does not get to depend on someone
+        # else's timeout being wired correctly. Whatever stalls in there, this
+        # returns.
+        try:
+            answer = await asyncio.wait_for(
+                _distill(
+                    won.text, prompt, base_url=base_url, token=token, model=model
+                ),
+                timeout=DISTILL_TIMEOUT_SECONDS + 5,
+            )
+        except (TimeoutError, asyncio.TimeoutError):
+            logger.warning("fetch distillation did not settle; returning the page")
+            answer = None
         if answer:
             return FetchOutcome(url, True, answer, won.rung, attempts, distilled=True)
     return FetchOutcome(url, True, won.text[:MAX_RAW_CHARS], won.rung, attempts)
