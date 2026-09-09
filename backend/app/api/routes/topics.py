@@ -131,6 +131,9 @@ async def create_topic(
         created_by=actor.handle if actor.handle != "anonymous" else body.created_by,
         agent_instance_id=body.agent_instance_id,
     )
+    # The caller can configure or enter this room as soon as it gets the ID.
+    # Dependency teardown commits after the response, which races that request.
+    await db.commit()
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
 
 
