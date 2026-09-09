@@ -181,8 +181,9 @@ def run(directory: Path) -> None:
         "CLAUDE_BG_BACKEND": "daemon",
         "CLAUDE_BG_CLAIM_AUTH": state["claim_auth"],
     }
-    preload = shlex.quote(str(directory / "webfetch_transport.cjs"))
-    env["BUN_OPTIONS"] = (env.get("BUN_OPTIONS", "") + f" --preload={preload}").strip()
+    preload = shlex.quote("--preload=" + str(directory / "webfetch_transport.cjs"))
+    # Bun skips a quoted preload after another option when the path has spaces.
+    env["BUN_OPTIONS"] = (preload + " " + env.get("BUN_OPTIONS", "")).strip()
     os.chdir(state["work"])
     os.execve(
         state["binary"],
