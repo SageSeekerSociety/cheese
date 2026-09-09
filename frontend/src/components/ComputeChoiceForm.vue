@@ -85,6 +85,7 @@ function submit() {
     <v-text-field
       v-if="named"
       v-model="name"
+      autocomplete="off"
       label="常用配置名称"
       maxlength="60"
       density="compact"

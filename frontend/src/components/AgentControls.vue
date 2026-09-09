@@ -330,6 +330,7 @@ const authUrl = computed(() => {
             <v-text-field
               v-else
               v-model="values[field]"
+              autocomplete="off"
               :label="labels[field]"
               :type="field === 'budget' ? 'number' : 'text'"
               density="compact"

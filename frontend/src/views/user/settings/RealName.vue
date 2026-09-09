@@ -49,7 +49,10 @@
         <v-row>
           <v-col cols="12" md="6">
             <v-text-field
+              id="field-selectedRealName"
               v-model="selectedRealName"
+              autocomplete="name"
+              name="selectedRealName"
               label="真实姓名"
               placeholder="请输入您的真实姓名"
               v-bind="realNameProps"
@@ -80,6 +83,7 @@
           <v-col cols="12" md="6">
             <v-text-field
               v-model="selectedStudentId"
+              autocomplete="off"
               label="学号"
               placeholder="请输入您的学号"
               v-bind="studentIdProps"
@@ -121,6 +125,7 @@
           <v-col cols="12" md="4">
             <v-text-field
               v-model="selectedGrade"
+              autocomplete="off"
               label="年级"
               placeholder="例如：2023级"
               v-bind="gradeProps"
@@ -133,6 +138,7 @@
           <v-col cols="12" md="4">
             <v-text-field
               v-model="selectedMajor"
+              autocomplete="off"
               label="专业"
               placeholder="请输入您的专业"
               v-bind="majorProps"
@@ -145,6 +151,7 @@
           <v-col cols="12" md="4">
             <v-text-field
               v-model="selectedClassName"
+              autocomplete="off"
               label="班级"
               placeholder="请输入您的班级"
               v-bind="classNameProps"

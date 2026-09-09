@@ -176,6 +176,7 @@ async function send() {
       <form class="panel-card__say" @submit.prevent="send">
         <input
           v-model="draft"
+          autocomplete="off"
           class="panel-card__input t-body"
           type="text"
           placeholder="在这条活下面说点什么（房间会转达给它）"

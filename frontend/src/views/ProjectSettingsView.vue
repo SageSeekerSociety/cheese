@@ -399,6 +399,7 @@ watch(
             <div class="d-flex align-center" style="gap: 8px">
               <v-text-field
                 v-model="upstreamUrl"
+                autocomplete="off"
                 density="compact"
                 variant="outlined"
                 hide-details
@@ -501,6 +502,7 @@ watch(
                 <div class="d-flex align-center" style="gap: 8px">
                   <v-text-field
                     v-model="newCheckName"
+                    autocomplete="off"
                     density="compact"
                     variant="outlined"
                     hide-details
@@ -511,6 +513,7 @@ watch(
                   />
                   <v-text-field
                     v-model="newCheckPaths"
+                    autocomplete="off"
                     density="compact"
                     variant="outlined"
                     hide-details

@@ -19,6 +19,7 @@
             <v-text-field
               v-if="!parametersOnly"
               v-model="name"
+              autocomplete="off"
               :label="t('tasks.form.taskName')"
               required
               v-bind="nameProps"
@@ -432,6 +433,7 @@
         <v-textarea
           v-if="descriptionFormat === 'markdown'"
           v-model="markdownDescription"
+          autocomplete="off"
           label="赛题详情（Markdown 格式）"
           :rows="10"
           :max-rows="30"
@@ -468,6 +470,7 @@
       <v-card-text class="pt-2">
         <v-text-field
           v-model="videoUrl"
+          autocomplete="off"
           v-bind="videoUrlProps"
           label="视频链接（选填）"
           placeholder="https://..."

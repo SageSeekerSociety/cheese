@@ -660,6 +660,7 @@ defineExpose({ reload: loadAcceptCard })
             </div>
             <v-textarea
               v-model="forceMergeReason"
+              autocomplete="off"
               label="理由"
               rows="2"
               auto-grow
@@ -688,6 +689,7 @@ defineExpose({ reload: loadAcceptCard })
         <div v-if="showRejectInput" class="d-flex align-end ga-2 mt-3">
           <v-text-field
             v-model="rejectNote"
+            autocomplete="off"
             variant="outlined"
             density="compact"
             hide-details

@@ -94,6 +94,7 @@
                   <v-card-text style="padding: 8px">
                     <div class="px-3 mb-2">
                       <v-text-field
+                        autocomplete="off"
                         clearable
                         label="搜索用户"
                         variant="outlined"

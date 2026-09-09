@@ -24,7 +24,10 @@
             <v-row dense>
               <v-col cols="12" md="6">
                 <v-text-field
+                  id="field-password"
                   v-model="password"
+                  autocomplete="new-password"
+                  name="password"
                   label="新密码"
                   type="password"
                   variant="outlined"
@@ -35,7 +38,10 @@
               </v-col>
               <v-col cols="12" md="6">
                 <v-text-field
+                  id="field-confirmPassword"
                   v-model="confirmPassword"
+                  autocomplete="new-password"
+                  name="confirmPassword"
                   label="确认密码"
                   type="password"
                   variant="outlined"

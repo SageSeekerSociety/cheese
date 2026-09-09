@@ -5,6 +5,7 @@
       <div class="search-and-filter d-flex gap-4 flex-grow-1 flex-wrap">
         <v-text-field
           v-model="searchQuery"
+          autocomplete="off"
           placeholder="搜索成员"
           variant="outlined"
           density="comfortable"

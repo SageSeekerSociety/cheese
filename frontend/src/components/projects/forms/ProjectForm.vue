@@ -5,6 +5,7 @@
       <v-col cols="12">
         <v-text-field
           v-model="name"
+          autocomplete="off"
           label="频道名称"
           variant="outlined"
           density="comfortable"
@@ -31,6 +32,7 @@
               <!-- 频道描述 -->
               <v-textarea
                 v-model="description"
+                autocomplete="off"
                 label="频道描述"
                 variant="outlined"
                 rows="2"

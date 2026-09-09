@@ -6,6 +6,7 @@
           <v-form @submit.prevent>
             <v-text-field
               v-model="title"
+              autocomplete="off"
               label="问题标题"
               variant="plain"
               class="question-title-input"

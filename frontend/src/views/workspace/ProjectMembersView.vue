@@ -313,6 +313,7 @@ async function submitInvite() {
       <v-text-field
         v-if="roster.length > 8"
         v-model="query"
+        autocomplete="off"
         density="compact"
         variant="outlined"
         hide-details

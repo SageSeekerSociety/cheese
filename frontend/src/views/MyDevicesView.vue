@@ -196,6 +196,7 @@ onMounted(load)
             <template v-if="renaming === d.device_id">
               <v-text-field
                 v-model="draftName"
+                autocomplete="off"
                 density="compact"
                 variant="outlined"
                 hide-details

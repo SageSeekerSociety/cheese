@@ -22,6 +22,7 @@
           <v-form class="search-container flex-grow-1" @submit.prevent="submitSearch">
             <v-text-field
               v-model="searchQueryInput"
+              autocomplete="off"
               density="compact"
               hide-details
               :placeholder="t('spaces.detail.tasks.searchPlaceholder')"

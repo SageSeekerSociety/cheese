@@ -77,6 +77,7 @@
                     <template v-if="entry.type === 'TEXT'">
                       <v-textarea
                         v-model="submissionContent[index].contentText"
+                        autocomplete="off"
                         :label="entry.prompt"
                         :placeholder="`请输入${entry.prompt}`"
                         variant="outlined"

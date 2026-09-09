@@ -23,6 +23,7 @@
                 <div class="text-caption mb-2">当前只支持通过 UID 邀请，UID 在对方的头像菜单里</div>
                 <v-text-field
                   v-model.number="inviteUidInput"
+                  autocomplete="off"
                   label="UID"
                   variant="outlined"
                   hide-details
@@ -38,6 +39,7 @@
                 ></v-select>
                 <v-textarea
                   v-model="inviteMessageInput"
+                  autocomplete="off"
                   label="邀请消息（可选）"
                   variant="outlined"
                   placeholder="请输入邀请说明..."
