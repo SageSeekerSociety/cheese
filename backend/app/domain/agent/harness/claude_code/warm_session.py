@@ -2,7 +2,7 @@
 
 This module is shipped to a cloud machine and uses only the standard library.
 Room adoption is separate: preparation never submits a prompt or enables RC.
-Native OAuth can still perform its own quota probe during startup.
+The native spare accepts its environment and launch arguments when claimed.
 """
 
 import fcntl
@@ -85,6 +85,8 @@ def prepare(directory: Path, binary: Path, environment: dict[str, str]) -> dict:
         state = {
             "socket": str(socket_root / "tmux.sock"),
             "rendezvous": str(socket_root / "rv.sock"),
+            "claim_socket": str(socket_root / "claim.sock"),
+            "claim_auth": secrets.token_hex(16),
             "token_file": str(directory / "rv.token"),
             "home": str(home),
             "work": str(work),
@@ -108,18 +110,7 @@ def prepare(directory: Path, binary: Path, environment: dict[str, str]) -> dict:
                 }
             )
         )
-        ready_command = shlex.join(["touch", str(directory / "ready")])
-        (config / "settings.json").write_text(
-            json.dumps(
-                {
-                    "hooks": {
-                        "SessionStart": [
-                            {"hooks": [{"type": "command", "command": ready_command}]}
-                        ]
-                    }
-                }
-            )
-        )
+        (config / "settings.json").write_text("{}")
         state_path.write_text(json.dumps(state))
         launched = _tmux(
             state,
@@ -144,12 +135,15 @@ def prepare(directory: Path, binary: Path, environment: dict[str, str]) -> dict:
         state["pane"] = launched.stdout.decode().strip()
         _write(state_path, json.dumps(state))
     deadline = time.monotonic() + 45
-    while not (directory / "ready").exists():
+    while (
+        not Path(state["claim_socket"]).exists() and not (directory / "ready").exists()
+    ):
         if not _native_alive(state):
-            raise RuntimeError("Native process exited before SessionStart")
+            raise RuntimeError("Native spare exited before accepting a claim")
         if time.monotonic() >= deadline:
-            raise TimeoutError("Native SessionStart is still pending")
+            raise TimeoutError("Native claim socket is still pending")
         time.sleep(0.05)
+    (directory / "ready").touch()
     return state
 
 
@@ -165,13 +159,12 @@ def run(directory: Path) -> None:
         "CLAUDE_CONFIG_DIR": str(Path(state["home"]) / ".claude"),
         "DISABLE_AUTOUPDATER": "1",
         "CLAUDE_BG_BACKEND": "daemon",
-        "CLAUDE_BG_RENDEZVOUS_SOCK": state["rendezvous"],
-        "CLAUDE_BG_RV_AUTH": (directory / "rv.token").read_text(),
+        "CLAUDE_BG_CLAIM_AUTH": state["claim_auth"],
     }
     os.chdir(state["work"])
     os.execve(
         state["binary"],
-        [state["binary"], "--dangerously-skip-permissions"],
+        [state["binary"], "--bg-spare", state["claim_socket"]],
         env,
     )
 
@@ -195,13 +188,6 @@ def bind(
         raise RuntimeError("Native session has not reported SessionStart")
     if not _native_alive(state):
         raise RuntimeError("Prepared native process is no longer running")
-    # Refuse adoption when project settings would override platform instructions.
-    for name in ("settings.json", "settings.local.json"):
-        project_settings = work / ".claude" / name
-        if project_settings.exists() and json.loads(project_settings.read_text()).get(
-            "outputStyle"
-        ):
-            raise ValueError("Project has its own native output style")
     intent = {
         "project_id": project_id,
         "topic_id": topic_id,
@@ -212,12 +198,11 @@ def bind(
     }
     binding_path = directory / "binding.json"
     config = Path(state["home"]) / ".claude"
-    style = "CheeseRoom" + topic_id.replace("-", "")
-    bound_settings = {**settings, "outputStyle": style}
     # This runs unattended during a claim. Persist ownership before any changes
     # so a crash or a second claimant cannot redirect a partially bound process.
     with (directory / "binding.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
+        session_id = None
         if binding_path.exists():
             binding = json.loads(binding_path.read_text())
             if any(
@@ -226,79 +211,66 @@ def bind(
                 if key != "context"
             ):
                 raise ValueError("Native session binding does not match this request")
-            if (
-                binding["phase"] == "bound"
-                and binding.get("context") == intent["context"]
-                and json.loads((config / "settings.json").read_text()) == bound_settings
-            ):
+            if binding["phase"] == "bound":
                 return binding
+            session_id = binding.get("session_id")
+        intent["session_id"] = session_id or str(uuid.uuid4())
         _write(binding_path, json.dumps({**intent, "phase": "binding"}))
-        styles = config / "output-styles"
-        styles.mkdir(exist_ok=True)
-        _write(
-            styles / (style + ".md"),
-            "---\nname: "
-            + style
-            + "\ndescription: Room instructions\nkeep-coding-instructions: true\n---\n"
-            + system_prompt,
+        prompt_file = config / "cheese-system-prompt.md"
+        _write(prompt_file, system_prompt)
+        environment = json.loads((directory / "environment.json").read_text())
+        environment.update(settings.get("env", {}))
+        environment.update(
+            PATH=os.environ["PATH"],
+            HOME=state["home"],
+            CLAUDE_CONFIG_DIR=str(config),
+            DISABLE_AUTOUPDATER="1",
+            CLAUDE_BG_BACKEND="daemon",
+            CLAUDE_BG_RENDEZVOUS_SOCK=state["rendezvous"],
+            CLAUDE_BG_RV_AUTH=Path(state["token_file"]).read_text(),
         )
-        _write(
-            config / "settings.json",
-            json.dumps(bound_settings),
-        )
+        # Native reapplies settings.env while claiming. Keep its real socket
+        # path there too, so it does not unlink the room's socket alias.
+        settings = {
+            **settings,
+            "env": {
+                **settings.get("env", {}),
+                "CLAUDE_BG_RENDEZVOUS_SOCK": environment["CLAUDE_BG_RENDEZVOUS_SOCK"],
+                "CLAUDE_BG_RV_AUTH": environment["CLAUDE_BG_RV_AUTH"],
+            },
+        }
+        _write(config / "settings.json", json.dumps(settings))
+        argv = [
+            "--dangerously-skip-permissions",
+            "--append-system-prompt-file",
+            str(prompt_file),
+        ]
+        if environment.get("CLAUDE_MODEL"):
+            argv.extend(["--model", environment["CLAUDE_MODEL"]])
+        if environment.get("CHEESE_REMOTE_CONTROL") == "1":
+            argv.extend(["--remote-control", "Cheese"])
+        resume_id = environment.get("CHEESE_RESUME_SESSION") or session_id
+        if resume_id and any((config / "projects").glob(f"*/{resume_id}.jsonl")):
+            argv.extend(["--resume", resume_id])
+        else:
+            argv.extend(["--session-id", intent["session_id"]])
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
             client.settimeout(10)
-            client.connect(state["rendezvous"])
+            client.connect(state["claim_socket"])
             client.sendall(
                 (
                     json.dumps(
                         {
-                            "role": "attacher",
-                            "auth": Path(state["token_file"]).read_text(),
+                            "cwd": str(work),
+                            "env": environment,
+                            "argv": argv,
+                            "sessionId": intent["session_id"],
+                            "auth": state["claim_auth"],
                         }
                     )
                     + "\n"
                 ).encode()
             )
-            current = _tmux(
-                state,
-                "display-message",
-                "-p",
-                "-t",
-                state["pane"],
-                "#{pane_current_path}",
-            )
-            # Native settings reload on a directory change. Repeating /cd to
-            # the current directory would retain the previous system instructions.
-            destinations = (
-                [Path(state["work"]), work]
-                if current.stdout.decode().strip() == str(work)
-                else [work]
-            )
-            for destination in destinations:
-                client.sendall(
-                    (
-                        json.dumps({"type": "reply", "text": "/cd " + str(destination)})
-                        + "\n"
-                    ).encode()
-                )
-                deadline = time.monotonic() + 10
-                while True:
-                    current = _tmux(
-                        state,
-                        "display-message",
-                        "-p",
-                        "-t",
-                        state["pane"],
-                        "#{pane_current_path}",
-                    )
-                    if current.returncode:
-                        raise RuntimeError("Native process exited during room binding")
-                    if current.stdout.decode().strip() == str(destination):
-                        break
-                    if time.monotonic() >= deadline:
-                        raise TimeoutError("Native project directory is still pending")
-                    time.sleep(0.02)
         binding = {**intent, "phase": "bound"}
         _write(binding_path, json.dumps(binding))
         return binding
@@ -447,47 +419,6 @@ def adopt_room(directory: Path) -> int:
         connection(
             directory, environment["CHEESE_PROJECT"], environment["CHEESE_TOPIC"]
         )
-        commands = []
-        if environment.get("CLAUDE_MODEL"):
-            commands.append("/model " + environment["CLAUDE_MODEL"])
-        rc_stamp = directory / "remote-control-requested"
-        enable_rc = (
-            environment.get("CHEESE_REMOTE_CONTROL") == "1" and not rc_stamp.exists()
-        )
-        if enable_rc:
-            commands.append("/remote-control Cheese")
-        if commands:
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-                client.settimeout(10)
-                client.connect(state["rendezvous"])
-                frames = [
-                    {"role": "attacher", "auth": Path(state["token_file"]).read_text()}
-                ]
-                frames.extend(
-                    {"type": "reply", "text": command} for command in commands
-                )
-                client.sendall(
-                    "".join(json.dumps(frame) + "\n" for frame in frames).encode()
-                )
-                if enable_rc:
-                    preferences = json.loads((config / ".claude.json").read_text())
-                    if preferences.get("oauthAccount", {}).get(
-                        "organizationUuid"
-                    ) and not preferences.get("hasUsedRemoteControl"):
-                        deadline = time.monotonic() + 2
-                        while time.monotonic() < deadline:
-                            pane = _tmux(
-                                state, "capture-pane", "-p", "-t", state["pane"]
-                            )
-                            if b"1. Enable Remote Control" in pane.stdout:
-                                # Rendering precedes the native input handler.
-                                time.sleep(0.3)
-                                _tmux(
-                                    state, "send-keys", "-t", state["pane"], "Enter"
-                                ).check_returncode()
-                                break
-                            time.sleep(0.02)
-                    _write(rc_stamp, str(pid))
         return pid
 
     if os.environ.get("CHEESE_ENVIRONMENT"):
@@ -507,6 +438,55 @@ def adopt_room(directory: Path) -> int:
     return 0
 
 
+def recover_room(directory: Path, project_id: str, topic_id: str) -> None:
+    """Restart a dead claimed process while retaining its home and transcript."""
+    binding_path = directory / "binding.json"
+    if not binding_path.exists():
+        return
+    with (directory / "binding.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        binding = json.loads(binding_path.read_text())
+        if binding["project_id"] != str(uuid.UUID(project_id)) or binding[
+            "topic_id"
+        ] != str(uuid.UUID(topic_id)):
+            raise ValueError("Prepared session belongs to another room")
+        state_path = directory / "state.json"
+        state = json.loads(state_path.read_text())
+        if _native_alive(state):
+            return
+        # This socket belonged to the verified dead process; never remove room data.
+        Path(state["claim_socket"]).unlink(missing_ok=True)
+        binding["phase"] = "staging"
+        _write(binding_path, json.dumps(binding))
+        existing = _tmux(state, "has-session", "-t", "native-warm").returncode == 0
+        launched = _tmux(
+            state,
+            "new-window" if existing else "new-session",
+            "-P",
+            "-F",
+            "#{pane_id}",
+            "-d",
+            "-t" if existing else "-s",
+            "native-warm",
+            "-c",
+            state["work"],
+            shlex.join(
+                [sys.executable, str(directory / "runner.py"), "run", str(directory)]
+            ),
+        )
+        launched.check_returncode()
+        state["pane"] = launched.stdout.decode().strip()
+        _write(state_path, json.dumps(state))
+        _tmux(state, "select-window", "-t", state["pane"]).check_returncode()
+        deadline = time.monotonic() + 45
+        while not Path(state["claim_socket"]).exists():
+            if not _native_alive(state):
+                raise RuntimeError("Recovered spare exited before accepting its room")
+            if time.monotonic() >= deadline:
+                raise TimeoutError("Recovered spare claim socket is still pending")
+            time.sleep(0.02)
+
+
 if __name__ == "__main__":
     os.umask(0o077)
     action, root = sys.argv[1:3]
@@ -517,8 +497,9 @@ if __name__ == "__main__":
         environment = json.loads((owner / ".claude/settings.json").read_text())["env"]
         if not environment.get("CLAUDE_CODE_OAUTH_TOKEN"):
             raise ValueError("Warm machine OAuth credential is missing")
-        binary = owner / ".local/share/claude/versions" / sys.argv[3]
-        print(json.dumps(prepare(owner / ".cheese/native-warm", binary, environment)))
+        binary = owner / ".cheese/claude/versions" / sys.argv[3]
+        prepare(owner / ".cheese/native-warm", binary, environment)
+        print("native spare: ready")
     elif action == "run":
         run(Path(root))
     elif action == "bind":
@@ -557,6 +538,10 @@ if __name__ == "__main__":
             print("alive" if _native_alive(state) else "dead")
     elif action == "adopt-room":
         raise SystemExit(adopt_room(Path(root)))
+    elif action == "recover-room":
+        recover_room(
+            Path(root), os.environ["CHEESE_PROJECT"], os.environ["CHEESE_TOPIC"]
+        )
     elif action == "run-drainer":
         directory = Path(root)
         environment = json.loads((directory / "room-environment.json").read_text())

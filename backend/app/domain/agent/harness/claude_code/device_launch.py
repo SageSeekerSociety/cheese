@@ -1010,6 +1010,10 @@ CW="${{CHEESE_WORK:?Cheese work directory is required}}"
 case "$CH" in "\\$HOME"*) CH="$REAL_HOME${{CH#\\$HOME}}";; esac
 case "$CW" in "\\$HOME"*) CW="$REAL_HOME${{CW#\\$HOME}}";; esac
 WARM_ROOT=""
+if [ -f "$REAL_HOME/.cheese/native-warm/binding.json" ]; then
+  python3 "$REAL_HOME/.cheese/warm-native-runner.py" recover-room \\
+    "$REAL_HOME/.cheese/native-warm"
+fi
 if [ -f "$REAL_HOME/.cheese/native-warm/state.json" ] \\
   && python3 "$REAL_HOME/.cheese/warm-native-runner.py" available \\
     "$REAL_HOME/.cheese/native-warm"; then
