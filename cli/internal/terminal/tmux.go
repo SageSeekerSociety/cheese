@@ -167,6 +167,36 @@ type Session struct {
 	start sync.Once
 }
 
+// The smallest terminal a viewer may impose on a screen. tmux sizes a window to
+// its most recently attached client (window-size latest), so one client's size
+// is every client's size — a screen is shared, and a size is not private to the
+// client that sent it. A browser terminal routinely reports something like 10x1
+// in the moment before its container has been laid out, and that one frame
+// repaints the program for everyone else attached, into a strip nothing can be
+// read from. Measured on the dev box 2026-09-09: 125 of 181 live screens sat at
+// a height below 10, one of them with a real viewer attached at 92x49 looking at
+// a 10x1 window.
+//
+// Clamped up rather than refused: a size this small is never a real viewer, and
+// dropping the frame would leave the previous size in place — the same failure
+// whenever the previous size was the bad one.
+const (
+	minCols = 40
+	minRows = 10
+)
+
+// atLeastUsable floors a terminal size to one a program can render into. It only
+// raises: a caller that already passes a sane size gets it back unchanged.
+func atLeastUsable(cols, rows int) (int, int) {
+	if cols < minCols {
+		cols = minCols
+	}
+	if rows < minRows {
+		rows = minRows
+	}
+	return cols, rows
+}
+
 // Spawn launches argv in a fresh tmux session sized cols x rows, with env (a
 // list of KEY=VALUE) present in the program's environment. Env is applied by
 // exec'ing the program through `env`, which is both portable and inherited by
@@ -181,6 +211,7 @@ func (m *Manager) Spawn(name string, argv, env []string, cols, rows int) (*Sessi
 	if rows <= 0 {
 		rows = 50
 	}
+	cols, rows = atLeastUsable(cols, rows)
 	launch := argv
 	if len(env) > 0 {
 		launch = append(append([]string{"env"}, env...), argv...)
@@ -228,6 +259,7 @@ func (s *Session) Attach(cols, rows int, onData func([]byte)) (*Client, error) {
 	if rows <= 0 {
 		rows = 24
 	}
+	cols, rows = atLeastUsable(cols, rows)
 	cmd := exec.Command(s.m.bin, "-S", s.m.sock, "-f", s.m.conf, "attach-session", "-t", s.name)
 	cmd.Env = append(os.Environ(), "LC_ALL=C.UTF-8", "LANG=C.UTF-8", "TERM=xterm-256color")
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
@@ -271,6 +303,7 @@ func (c *Client) Resize(cols, rows int) error {
 	if cols <= 0 || rows <= 0 {
 		return nil
 	}
+	cols, rows = atLeastUsable(cols, rows)
 	return pty.Setsize(c.ptmx, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
 }
 
