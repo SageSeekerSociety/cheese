@@ -21,13 +21,21 @@ import uuid
 from pathlib import Path
 
 
-def build_warm_session_prepare(version: str) -> str:
+def build_warm_session_prepare(version: str, *, ca_pem: str = "") -> str:
     source = Path(__file__).read_text()
+    certificate = (
+        "cat > \"$HOME/.cheese/warm-proxy-ca.pem\" <<'CHEESE_WARM_CA'\n"
+        + ca_pem.rstrip("\n")
+        + "\nCHEESE_WARM_CA\n"
+        if ca_pem
+        else ""
+    )
     return (
         'mkdir -p "$HOME/.cheese"\n'
         "cat > \"$HOME/.cheese/warm-native-runner.py\" <<'CHEESE_WARM_RUNNER'\n"
         f"{source}\nCHEESE_WARM_RUNNER\n"
-        'python3 "$HOME/.cheese/warm-native-runner.py" prepare-machine "$HOME" '
+        + certificate
+        + 'python3 "$HOME/.cheese/warm-native-runner.py" prepare-machine "$HOME" '
         + shlex.quote(version)
         + "\n"
     )
@@ -517,6 +525,18 @@ if __name__ == "__main__":
         environment = json.loads((owner / ".claude/settings.json").read_text())["env"]
         if not environment.get("CLAUDE_CODE_OAUTH_TOKEN"):
             raise ValueError("Warm machine OAuth credential is missing")
+        proxy_ca = owner / ".cheese/warm-proxy-ca.pem"
+        if proxy_ca.exists():
+            # Native proxy clients can cache trust before the room claim changes
+            # NODE_EXTRA_CA_CERTS. Trust both deployment CAs before process birth.
+            certificates = [proxy_ca.read_text()]
+            if environment.get("NODE_EXTRA_CA_CERTS"):
+                certificates.insert(
+                    0, Path(environment["NODE_EXTRA_CA_CERTS"]).read_text()
+                )
+            bundle = owner / ".cheese/warm-ca-bundle.pem"
+            _write(bundle, "\n".join(certificates))
+            environment["NODE_EXTRA_CA_CERTS"] = str(bundle)
         binary = owner / ".cheese/claude/versions" / sys.argv[3]
         prepare(owner / ".cheese/native-warm", binary, environment)
         print("native spare: ready")
