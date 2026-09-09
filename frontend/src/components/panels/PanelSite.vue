@@ -206,7 +206,7 @@ function eventPlatform(b: Block): boolean {
 
 <template>
   <div ref="scrollRef" class="panel-site" @scroll="onSiteScroll">
-    <LoadingSkeleton v-if="loading" variant="entry" :rows="5" class="pa-3" />
+    <LoadingSkeleton v-if="loading" variant="site" :rows="5" />
     <v-alert v-else-if="errorMsg" type="error" density="compact" class="ma-4">
       {{ errorMsg }}
     </v-alert>

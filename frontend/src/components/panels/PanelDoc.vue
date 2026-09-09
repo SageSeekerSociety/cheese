@@ -37,6 +37,7 @@ import { compareRoundTrip, docExtensions, serializeDoc } from '../../lib/docMark
 import { createSlashCommands } from '../../lib/docSlashMenu'
 import { myHandle } from '../../me'
 import CodeEditor from '../CodeEditor.vue'
+import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 
 import DocComments from './doc/DocComments.vue'
 import DocSlashMenu from './doc/DocSlashMenu.vue'
@@ -1460,7 +1461,12 @@ onBeforeUnmount(() => {
               </button>
             </div>
             <div class="doc-editor-wrap" @click="onDocClick" @keydown="onDocKeydown" @mouseover="onDocMouseOver">
-              <EditorContent v-if="editor" :editor="editor" class="doc-editor" />
+              <!-- 正文还在路上时画它的节奏，别把编辑器摆出来：一个空的编辑器会亮出
+                   「芝士会在这里维护文档」那句占位话，而那句话的意思是「这篇文档是
+                   空的」——文档有内容、只是还没到，说的就是假话。编辑器本身不卸载
+                   （v-show），卸了它每换一个话题都要重建一次。 -->
+              <LoadingSkeleton v-if="loading" variant="doc" class="doc-skel" />
+              <EditorContent v-if="editor" v-show="!loading" :editor="editor" class="doc-editor" />
               <!-- B4 Feishu-style: select text in the doc → a floating 评论 button
                  appears over the selection. Click to comment on that span. -->
               <button
@@ -1666,6 +1672,11 @@ onBeforeUnmount(() => {
 }
 .doc-editor-wrap {
   position: relative;
+}
+/* 骨架站在 .doc-prose 的位置上：同样 720px 封顶、居中。 */
+.doc-skel {
+  max-width: 720px;
+  margin: 0 auto;
 }
 /* Placeholder as ::before INSIDE the empty first paragraph: the ghost text
    shares the paragraph's exact font metrics, so the caret sits cleanly at

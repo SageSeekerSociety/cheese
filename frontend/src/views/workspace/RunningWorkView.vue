@@ -283,7 +283,7 @@ function openTask(task: RoomTask) {
                只有里面装什么。所以加载态画在列**里面**，板的框架一开始就是最终的
                样子，卡到齐的那一刻没有任何东西挪位置。定时重拉走的是静默那一路，
                它不碰 loading，所以骨架不会在人看着的时候再回来一次。 -->
-          <LoadingSkeleton v-if="loading && !rows.length" variant="entry" :rows="2" class="board-col__skel" />
+          <LoadingSkeleton v-if="loading && !rows.length" variant="card" :rows="2" class="board-col__skel" />
           <ul v-else class="board-col__list">
             <!-- 空列自己说它空。「施工中」那一列还多一句下一步：三列同时空着是这
                  个项目的常态，那几行字就是第一屏的主要内容。 -->
@@ -484,10 +484,10 @@ function openTask(task: RoomTask) {
   margin: 0;
   padding: 8px;
 }
-/* 骨架顶掉的是 ul，所以它得自己补上那圈 8px —— 骨头自带左右各 8px 的外边距，
-   卡片的 10px 内边距由骨架那边的 .skel__entry 出。 */
+/* 骨架顶掉的是 ul，所以它得自己补上 ul 那圈 8px。卡本身的边框、圆角和 10px 内
+   边距由骨架那边的 .skel__card 出 —— 它画的就是一张 .board-card。 */
 .board-col__skel {
-  padding-block: 8px;
+  padding: 8px;
 }
 
 .board-col__empty {
