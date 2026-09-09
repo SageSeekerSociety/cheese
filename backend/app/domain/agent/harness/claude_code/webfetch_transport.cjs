@@ -9,7 +9,8 @@ const responseFailures = new WeakMap();
 const originalPipeline = stream.pipeline;
 stream.pipeline = function (...args) {
   const output = originalPipeline.apply(this, args);
-  const fail = responseFailures.get(args[0]);
+  const input = Array.isArray(args[0]) ? args[0][0] : args[0];
+  const fail = responseFailures.get(input);
   if (fail) output.on('error', fail);
   return output;
 };

@@ -27,7 +27,7 @@ function fetchBody(url, agent = userAgent) {
       const stages = [response];
       if (response.headers['content-encoding'] === 'gzip') stages.push(zlib.createGunzip());
       // Use the patched export, like the native bundle after preload.
-      require('node:stream').pipeline(...stages, destination, () => {});
+      require('node:stream').pipeline([...stages, destination], () => {});
     });
     request.on('error', reject);
     request.end();
