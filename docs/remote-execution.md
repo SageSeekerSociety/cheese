@@ -10,7 +10,7 @@ From the repository root, install the locked dependencies:
 
 ```sh
 uv sync --project backend --locked
-npm ci --prefix scripts/remote_execution --ignore-scripts --no-audit --no-fund
+npm ci --prefix scripts/remote_execution --no-audit --no-fund
 ```
 
 Install `tmux`, `redis-server`, `openssl`, `ripgrep` and Git through the host package manager. Run:
