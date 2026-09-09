@@ -10,6 +10,11 @@ export interface Project {
   root_topic_id?: string
   /** 建这个项目的人。名册上他那一行不带任何管理动作——没人能把他降职或移出。 */
   owner_handle?: string | null
+  /**
+   * 这个项目归哪个小队（项目归团队 v4）。历史遗留的行是 null——新建项目一律会落到
+   * 创建者的个人小队。顶栏那颗 ← 在没记到来路时拿它当兜底。
+   */
+  team_id?: number | null
   [key: string]: unknown
   /** 这个项目是从哪道赛题创建的（1.0 `task` 的整数 id）；不来自赛题时为 null。 */
   external_task_id?: number | null

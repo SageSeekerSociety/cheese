@@ -31,7 +31,11 @@ export const workspaceRoutes: RouteRecordRaw = {
     sidebar: () => import('@/views/workspace/ProjectSidebar.vue'),
   },
   props: { default: true, sidebar: true },
-  meta: { title: '项目工作台', isFullPage: true },
+  // `projectFrame` 标出「项目这个框」。顶栏那颗 ← 靠它回答两个问题：这一跳是不是
+  // 从项目外面走进来的（是才记入口），以及现在还在不在同一个框里（在就别覆盖）。
+  // 用标记而不是比对 URL 前缀：`/project/<id>` 的旧链接会先经过一次重定向，比
+  // 前缀会把重定向前后判成两个不同的地方。
+  meta: { title: '项目工作台', isFullPage: true, projectFrame: true },
   children: [
     {
       name: 'workspace-project',
