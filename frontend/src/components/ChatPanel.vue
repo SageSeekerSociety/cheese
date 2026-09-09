@@ -66,6 +66,7 @@ import {
   listBlocks,
   listRoomTasks,
   listTopicMembers,
+  summonAgent,
   toggleReaction as apiToggleReaction,
 } from '../api'
 import { usePendingAttachments } from '../lib/attachments'
@@ -1287,9 +1288,87 @@ function mentionsAgent(expanded: string): boolean {
   return mentionPool.value.some((m) => m.agent && expanded.includes(`<@${m.handle}>`))
 }
 
-function sendDraft() {
+// 房间里那位芝士 —— @ 补全名单上带 agent 标记的那一行。
+const agentMention = computed(() => mentionPool.value.find((m) => m.agent) ?? null)
+
+// 这条草稿现在叫不叫它。**读的是正文**，不是一个单独存着的开关值：真相只有一条，
+// 入口可以有两个（手打 @、点按钮、⌘+Enter 都是往正文里写同一个 @）。
+// 独立开关是另一回事 —— 那种东西能和正文说不一样的话（开关亮着、正文里没有 @），
+// 那时候「这条到底算不算叫了它」谁也答不上来，而只有开关那条是通的。
+const summonOn = computed(() => props.alwaysSummon || mentionsAgent(expandMentions(draft.value)))
+
+function withAgentMention(text: string): string {
+  if (mentionsAgent(expandMentions(text))) return text
+  return `@${agentMention.value?.label ?? '芝士'} ${text}`
+}
+
+// 「交给芝士」这颗按钮：它不改任何隐藏状态，它只是替你打那五个字，写完你看得见、
+// 也能自己删掉。
+function toggleSummon() {
+  const agent = agentMention.value
+  if (!summonOn.value) {
+    draft.value = withAgentMention(draft.value)
+  } else if (agent) {
+    // 只摘掉第一处。正文里别处还提着它（「照 @芝士 说的改」）是在说事，不是在
+    // 叫它，取消这一次召唤不该顺手把那句话也改了。
+    for (const pat of [`@${agent.label}`, `@${agent.handle}`]) {
+      const at = draft.value.indexOf(pat)
+      if (at < 0) continue
+      const after = at + pat.length
+      draft.value = draft.value.slice(0, at) + draft.value.slice(draft.value[after] === ' ' ? after + 1 : after)
+      break
+    }
+  }
+  void nextTick(() => composerInput.value?.focus?.())
+}
+
+// `summon: true` = ⌘/Ctrl+Enter「发送并交给它」。它把 @ 写进正文再发，而不是在帧
+// 上把 summon 悄悄置真：时间线上那条消息必须自己说明它叫了谁，否则读的人看到的
+// 是一条谁也没 @ 的消息，芝士却动了。
+// ---- 忘了 @ 的补救 ----
+// 房间里最后一句话是对着人说的，芝士就不会动 —— 这是它该有的样子（没 @ 不等于
+// 没说，那条消息在待读窗口里等着下一轮捎上）。真正伤人的是**房间里没有任何东西
+// 说明这一点**：一个人贴完需求等了八分钟，追问「你有看到我的问题嘛」，全程没人
+// 接、也没有一行字告诉他为什么。这一行就是那行字，外加一次点击。
+//
+// 所以文案不能写「它还没看到」：那条消息不会丢，只是不会**现在**动。
+const summonBusy = ref(false)
+// 已经为哪条消息按过这一下。按完就把提示收起来，包括后端回「本来就不必」的那两
+// 种情况 —— 点了一下什么都没变，看起来和坏掉一模一样。
+const summonedFor = ref<string | null>(null)
+function showSummonHint(m: Block, i: number): boolean {
+  if (summonedFor.value === m.id) return false
+  if (props.alwaysSummon || !props.showComposer) return false
+  if (props.topic?.status === 'archived') return false
+  // 已经在跑的那一轮会自己把没 @ 的消息接过去（后端 submit_message 的 merge
+  // 分支），这时候提示「没人接」是假的。
+  if (awaitingReply.value || outbox.value.length) return false
+  if (i !== rows.value.length - 1) return false
+  if (m.author_type !== 'human') return false
+  if (m.kind !== 'message' && m.kind !== 'attachment') return false
+  return !mentionsAgent(m.content)
+}
+async function summonNow() {
+  const id = props.topic?.id
+  if (!id || summonBusy.value) return
+  summonBusy.value = true
+  try {
+    const res = await summonAgent(id)
+    // started=false 说明这一下本来就不必花钱（房间已经在干活，或者别人先 @ 过
+    // 了）。两种都不是错，但两种都得让界面动一下。
+    summonedFor.value = rows.value.at(-1)?.block.id ?? null
+    if (res.started) awaitingReply.value = true
+  } catch (e) {
+    errorMsg.value = e instanceof Error ? e.message : '没能叫醒它，请重试'
+  } finally {
+    summonBusy.value = false
+  }
+}
+
+function sendDraft(opts?: { summon?: boolean }) {
   if (attsUploading.value) return
-  const content = expandMentions(draft.value)
+  if (!draft.value.trim() && !pendingAtts.value.length) return
+  const content = expandMentions(opts?.summon ? withAgentMention(draft.value) : draft.value)
   if (send(content, props.alwaysSummon || mentionsAgent(content), pendingAtts.value.slice())) {
     draft.value = ''
     clearPendingAtts()
@@ -1352,6 +1431,13 @@ function onComposerKey(e: KeyboardEvent) {
   // Only act on Enter from the focused composer textarea itself.
   const t = e.target as HTMLElement | null
   if (!t || t.tagName !== 'TEXTAREA' || document.activeElement !== t) return
+  // ⌘/Ctrl+Enter = 发送并交给芝士，正文里一个 @ 都不用打。判断排在 @-菜单前面：
+  // 打到一半的 @ 不该把这个已经说清楚的「交给它」变成一次选人。
+  if (e.metaKey || e.ctrlKey) {
+    e.preventDefault()
+    sendDraft({ summon: true })
+    return
+  }
   // While the @-menu is open, Enter picks the first match instead of sending.
   if (mentionMatches.value.length) {
     e.preventDefault()
@@ -1750,6 +1836,14 @@ onBeforeUnmount(() => {
                   <v-icon size="13">mdi-arrow-top-right</v-icon>
                   已升级为话题，点击查看
                 </button>
+                <!-- 忘了 @ 的补救：房间里最后一句是对着人说的，芝士就不会动，
+                   而在这一行出现之前，房间里没有任何东西说明这一点。 -->
+                <div v-if="showSummonHint(m, i)" class="summon-hint">
+                  <span class="summon-hint-text">这条没叫{{ agentName }}，它不会现在动</span>
+                  <button type="button" class="summon-hint-btn" :disabled="summonBusy" @click="summonNow">
+                    让它现在就看
+                  </button>
+                </div>
                 <!-- Emoji reaction chips (Slack): count per emoji, own reactions
                    highlighted; click toggles. 芝士's ✅ receipt lands here too. -->
                 <div v-if="m.reactions?.length" class="rx-row">
@@ -1964,7 +2058,11 @@ onBeforeUnmount(() => {
               density="comfortable"
               class="composer-input"
               :placeholder="composerHint"
-              :title="enterSends ? 'Enter 发送，Shift+Enter 换行，可直接粘贴图片' : '可直接粘贴图片'"
+              :title="
+                enterSends
+                  ? `Enter 发送，Shift+Enter 换行，⌘/Ctrl+Enter 发送并交给${agentName}，可直接粘贴图片`
+                  : '可直接粘贴图片'
+              "
               @keydown="onComposerKey"
               @paste="onComposerPaste"
               @compositionstart="onCompositionStart"
@@ -2013,6 +2111,26 @@ onBeforeUnmount(() => {
               <!-- 算力说的是「这条消息会在哪儿跑」，属于发送这一侧，不和左边那两个
                  「这条消息本身」的动作并列。它是设置不是动作，所以最安静。 -->
               <slot name="composer-chips" />
+              <!-- 「交给芝士」：它不是一个自己存着状态的开关，它是正文的镜子——
+                 点一下把 @ 写进输入框（你看得见、也能自己删），手打 @ 它就自己
+                 亮。一个能和正文说不一样的话的开关（亮着、正文里却没有 @），会
+                 让「这条到底算不算叫了它」变成没人答得上来的问题。 -->
+              <button
+                v-if="!alwaysSummon"
+                type="button"
+                class="summon-btn"
+                :class="{ 'summon-btn--on': summonOn }"
+                :aria-pressed="summonOn"
+                :title="
+                  summonOn
+                    ? `正文里已经 @ 了${agentName}，点这里取消`
+                    : `交给${agentName}（也可以直接按 ⌘/Ctrl+Enter 发送并交给它）`
+                "
+                @click="toggleSummon"
+              >
+                <v-icon size="14">mdi-at</v-icon>
+                <span class="summon-btn-label">交给{{ agentName }}</span>
+              </button>
               <!-- 断线时照样能发：消息进发件箱、立刻显示，连上就自己走 (§14.1)。
                  按 `connected` 禁用会把「打字」和「后端此刻在不在」绑在一起。 -->
               <v-btn
@@ -2023,7 +2141,7 @@ onBeforeUnmount(() => {
                 size="small"
                 title="发送"
                 :disabled="attsUploading || (!draft.trim() && !pendingAtts.length)"
-                @click="sendDraft"
+                @click="sendDraft()"
               />
             </div>
           </div>
@@ -2346,6 +2464,65 @@ details.sys-row > summary::-webkit-details-marker {
 .composer-send {
   width: 28px;
   height: 28px;
+}
+/* 「交给芝士」。它和发送并排，但绝不能也是实心琥珀——一行里只有一个实心块，
+   那个位置是发送的。亮起来只改一条描边和墨色，形态不变。 */
+.summon-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  font-size: 13px;
+  line-height: 1;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    color 0.12s ease,
+    border-color 0.12s ease,
+    background-color 0.12s ease;
+}
+.summon-btn:hover {
+  background: var(--fill);
+  color: var(--text);
+}
+.summon-btn--on {
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+/* 窄屏上只留那个 @ 图标：这一行右边还站着算力和发送，三个都带字就换行了。 */
+@media (max-width: 480px) {
+  .summon-btn-label {
+    display: none;
+  }
+}
+
+/* 忘了 @ 的补救行。它属于那条消息（和正文左对齐），不是一条平台行——平台行说的
+   是平台做了什么，这一行说的是**你**还差一步。 */
+.summon-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--faint);
+}
+.summon-hint-btn {
+  padding: 2px 8px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  cursor: pointer;
+}
+.summon-hint-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+.summon-hint-btn:disabled {
+  cursor: default;
+  opacity: 0.6;
 }
 
 /* @-autocomplete popup — mirrors TopicView's composer picker. */

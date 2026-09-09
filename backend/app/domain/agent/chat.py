@@ -1795,6 +1795,20 @@ class ChatService:
         """Whether this process currently owns live work for the topic."""
         return topic_id in self._active_turn_ids
 
+    async def has_unread_human_input(self, topic_id: uuid.UUID) -> bool:
+        """Whether anything a person said is still waiting to reach 芝士.
+
+        「忘了 @」的补救按钮问的就是这一句，所以它必须和真正组装 prompt 时问的
+        是同一个问题 —— 同一个 `_pending_human_blocks`，不是一份近似的复制品。
+        一份复制品会在窗口语义改动时悄悄和它分叉，而分叉的表现是按钮说「它还没
+        看到」、点下去却什么也没有可读，白烧一轮。
+        """
+        async with self._sessions() as session:
+            history = await BlockRepository(session).list_for_topic(
+                topic_id, task_id=None
+            )
+            return bool(_pending_human_blocks(history))
+
     @asynccontextmanager
     async def edit_environment(self, topic_id: uuid.UUID) -> AsyncIterator[None]:
         """Prevent a new prompt from racing an explicit environment change."""

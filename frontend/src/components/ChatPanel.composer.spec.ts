@@ -76,8 +76,12 @@ describe('输入区的两行', () => {
 
   // 这一行只放**这条消息**的动作。话题级的设置（谁在跑、在哪跑）不在这儿——
   // 它们发第一条消息之后就不再变，摆在这里只是占着 390px 里最贵的一行。
-  it('这一行不摆话题级的设置', () => {
+  //
+  // 「交给芝士」是这一行唯一带字的一颗，而它恰恰是「这条消息」的动作：它决定
+  // 这条消息叫不叫它。带字是故意的——一个光秃秃的 @ 图标猜不出来，而「怎么叫
+  // 它」正是这个产品里最该一眼看见的事。窄屏上那三个字由 CSS 收起来。
+  it('这一行只放这条消息自己的动作', () => {
     const actions = composer().querySelector('.composer-actions')!
-    expect(actions.textContent?.replace(/\s/g, '')).toBe('')
+    expect(actions.textContent?.replace(/\s/g, '')).toBe('交给芝士')
   })
 })
