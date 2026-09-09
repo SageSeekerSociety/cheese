@@ -16,6 +16,53 @@ from app.domain.agent import environment_runner
 from app.domain.project.environment import EnvironmentConfig
 
 
+@pytest.mark.parametrize("state", ["ready", "failed"])
+def test_wait_status_returns_when_preparation_finishes(tmp_path, monkeypatch, state):
+    import threading
+
+    environment_runner.write_json(tmp_path / "status.json", {"state": "pending"})
+    checked = threading.Event()
+    original = environment_runner.read_status
+    result = {"state": state}
+    if state == "ready":
+        result.update(
+            pid=os.getpid(),
+            process_identity=environment_runner.process_identity(os.getpid()),
+        )
+    else:
+        result["error"] = "installer failed"
+
+    def observe(directory):
+        status = original(directory)
+        checked.set()
+        return status
+
+    monkeypatch.setattr(environment_runner, "read_status", observe)
+
+    def finish():
+        assert checked.wait(2)
+        environment_runner.write_json(tmp_path / "status.json", result)
+
+    writer = threading.Thread(target=finish)
+    writer.start()
+    try:
+        assert environment_runner.wait_status(tmp_path) == result
+    finally:
+        writer.join(timeout=2)
+
+
+def test_wait_status_bounds_pending_wait(tmp_path, monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(environment_runner.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        environment_runner.time,
+        "sleep",
+        lambda delay: clock.__setitem__(0, clock[0] + delay),
+    )
+    assert environment_runner.wait_status(tmp_path) == {"state": "pending"}
+    assert clock[0] == pytest.approx(0.5)
+
+
 @pytest.fixture(autouse=True)
 def active_room_admission(monkeypatch):
     from app.domain.agent.device_provider import DeviceChannel

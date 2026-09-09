@@ -383,6 +383,7 @@ async def environment_status(
     topic_id: uuid.UUID,
     *,
     action: str = "status",
+    wait_ready: bool = False,
 ) -> dict:
     home = device_home_dir(project_id, topic_id)
     reset_marker = (
@@ -397,6 +398,7 @@ async def environment_status(
             "-c",
             f'export HOME="{home}"; '
             'if [ -f "$HOME/.claude/cheese-environment.py" ]; then '
+            f"CHEESE_STATUS_WAIT={int(wait_ready)} "
             f'python3 "$HOME/.claude/cheese-environment.py" {action} || exit $?; '
             "else printf '%s' '{\"state\":\"pending\"}'; fi; " + reset_marker,
         ],
@@ -1078,7 +1080,11 @@ class DeviceChannel(Channel):
                     async with asyncio.timeout(3660):
                         while True:
                             status = await environment_status(
-                                self._hub, device_id, project_id, resource_id
+                                self._hub,
+                                device_id,
+                                project_id,
+                                resource_id,
+                                wait_ready=time.monotonic() - polling_started < 10,
                             )
                             if status["state"] == "ready":
                                 break
