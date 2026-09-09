@@ -105,7 +105,15 @@ async def rung_markdown_native(url: str, timeout: float = 12.0) -> Attempt:
             # no gain.
             if "markdown" not in ctype and "text/plain" not in ctype:
                 continue
-            if substantive_length(body) >= MIN_SUBSTANTIVE:
+            # No length bar at all, only "not empty". Every other rung has to
+            # guess whether what came back is the page or a wall, which is what
+            # the length bars are for. Here the server already answered: it
+            # declared `text/markdown`, so this IS the copy the site publishes
+            # for machines, and a short one is a short page. Measured, a docs
+            # page whose markdown twin is 220 characters was rejected by the
+            # article-vs-interstitial bar and fell all the way to a browser
+            # render — the opposite of what this rung exists for.
+            if body.strip():
                 return Attempt(
                     "markdown-native", True, body, candidate, loop.time() - start
                 )
