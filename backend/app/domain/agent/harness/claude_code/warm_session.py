@@ -206,10 +206,13 @@ def bind(
             if any(
                 binding.get(key) != value
                 for key, value in intent.items()
-                if key != "context" or binding["phase"] != "staging"
+                if key != "context"
             ):
                 raise ValueError("Native session binding does not match this request")
-            if binding["phase"] == "bound":
+            if (
+                binding["phase"] == "bound"
+                and binding.get("context") == intent["context"]
+            ):
                 return binding
         _write(binding_path, json.dumps({**intent, "phase": "binding"}))
         config = Path(state["home"]) / ".claude"
@@ -241,28 +244,45 @@ def bind(
                     + "\n"
                 ).encode()
             )
-            client.sendall(
-                (
-                    json.dumps({"type": "reply", "text": "/cd " + str(work)}) + "\n"
-                ).encode()
+            current = _tmux(
+                state,
+                "display-message",
+                "-p",
+                "-t",
+                "native-warm",
+                "#{pane_current_path}",
             )
-            deadline = time.monotonic() + 10
-            while True:
-                current = _tmux(
-                    state,
-                    "display-message",
-                    "-p",
-                    "-t",
-                    "native-warm",
-                    "#{pane_current_path}",
+            # Native settings reload on a directory change. Repeating /cd to
+            # the current directory would retain the previous system instructions.
+            destinations = (
+                [Path(state["work"]), work]
+                if current.stdout.decode().strip() == str(work)
+                else [work]
+            )
+            for destination in destinations:
+                client.sendall(
+                    (
+                        json.dumps({"type": "reply", "text": "/cd " + str(destination)})
+                        + "\n"
+                    ).encode()
                 )
-                if current.returncode:
-                    raise RuntimeError("Native process exited during room binding")
-                if current.stdout.decode().strip() == str(work):
-                    break
-                if time.monotonic() >= deadline:
-                    raise TimeoutError("Native project directory is still pending")
-                time.sleep(0.02)
+                deadline = time.monotonic() + 10
+                while True:
+                    current = _tmux(
+                        state,
+                        "display-message",
+                        "-p",
+                        "-t",
+                        "native-warm",
+                        "#{pane_current_path}",
+                    )
+                    if current.returncode:
+                        raise RuntimeError("Native process exited during room binding")
+                    if current.stdout.decode().strip() == str(destination):
+                        break
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("Native project directory is still pending")
+                    time.sleep(0.02)
         binding = {**intent, "phase": "bound"}
         _write(binding_path, json.dumps(binding))
         return binding
