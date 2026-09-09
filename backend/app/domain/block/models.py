@@ -188,7 +188,12 @@ class Block(UuidPk, Timestamps, Base):
     # Render-by-type (spec §9.1): the mimeType of an artifact block — the host
     # picks a renderer from this, never from parsing the AI's text. Only set on
     # kind=artifact blocks (e.g. text/html, image/svg+xml).
-    mime_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # 255, not 64: an Office MIME type runs 65-73 characters
+    # (`application/vnd.openxmlformats-officedocument.wordprocessingml.document`
+    # is 71), and 64 rejected every .docx/.xlsx/.pptx attachment — rolling back
+    # the whole message after the upload had already returned 200. RFC 6838 caps
+    # the type and subtype names at 127 each.
+    mime_type: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # How many times the living doc has been written (kind=doc only; every other
     # block sits at 1 and never moves). A writer sends the version it read and

@@ -139,6 +139,63 @@ def test_document_reaches_agent_as_file(client, stub_hooks):
     assert "发来一张图片" not in stub_hooks.last_prompt
 
 
+# The Office types, whose MIME strings are the long ones: .docx is 71
+# characters, .pptx 73, .xlsx 65. Uploading one always worked — what did not
+# was SENDING it, because the attachment block's mime_type column was 64 wide
+# and the insert rolled the whole message back. The person saw a bare
+# 「消息未能保存,请重新发送」 and every retry failed identically.
+OFFICE_MIMES = [
+    (
+        "说明书.docx",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ),
+    ("表.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+    (
+        "讲稿.pptx",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ),
+]
+
+
+@pytest.mark.parametrize(("filename", "mime"), OFFICE_MIMES)
+def test_office_document_lands_in_the_room(client, stub_hooks, filename, mime):
+    """发一个 .docx 进房间，它要真的出现在时间线上。"""
+    _, topic_id = _create_project_and_topic(client)
+    att = client.post(
+        f"/topics/{topic_id}/attachments",
+        files={"file": (filename, b"PK\x03\x04", mime)},
+    ).json()["data"]
+    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+        ws.send_json(
+            {
+                "type": "message",
+                "content": "这是说明书",
+                "summon": True,
+                "attachments": [att],
+            }
+        )
+        frames = _drain_until_done(ws)
+
+    assert not [f for f in frames if f["type"] == "error"], frames
+    # 正文和附件是两个 user_block —— 要的是附件那个。
+    block = next(
+        f["block"]
+        for f in frames
+        if f["type"] == "user_block" and f["block"]["kind"] == "attachment"
+    )
+    assert block["mime_type"] == mime
+
+    # 时间线上真的有它 —— 上一句只证明后端回了一帧，这一句才证明它落了库。
+    timeline = client.get(f"/topics/{topic_id}/blocks", params={"limit": 50})
+    assert timeline.status_code == 200
+    kinds = [
+        b["content"]
+        for b in timeline.json()["data"]["data"]
+        if b["kind"] == "attachment"
+    ]
+    assert att["path"] in kinds
+
+
 def test_duplicate_filename_and_upload_limits(client):
     _, topic_id = _create_project_and_topic(client)
     paths = []
