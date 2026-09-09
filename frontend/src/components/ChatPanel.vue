@@ -1350,7 +1350,15 @@ function showSummonHint(m: Block, i: number): boolean {
   if (i !== rows.value.length - 1) return false
   if (m.author_type !== 'human') return false
   if (m.kind !== 'message' && m.kind !== 'attachment') return false
-  return !mentionsAgent(m.content)
+  // 一次发送可能落成好几块（一句话 + 几张图），而叫没叫它写在那句话里。只看最后
+  // 一块的话，配了图的那次发送永远会被判成「没叫」——图片块的正文是一个文件路径，
+  // 它 @ 不到任何人。所以看的是同一个人连在一起的这一串。
+  for (let k = rows.value.length - 1; k >= 0; k -= 1) {
+    const b = rows.value[k].block
+    if (b.author_type !== 'human' || b.author !== m.author) break
+    if (mentionsAgent(b.content)) return false
+  }
+  return true
 }
 async function summonNow() {
   const id = props.topic?.id

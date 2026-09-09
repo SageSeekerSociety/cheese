@@ -140,6 +140,19 @@ describe('没叫芝士的那条消息', () => {
     expect(container.querySelector('.summon-hint')).toBeNull()
   })
 
+  // 一次发送落成两块：一句话 + 一张图。@ 写在那句话里，而排在最后的是图片块，
+  // 它的正文是一个文件路径——只看最后一块，配图的每一次召唤都会被判成「没叫」。
+  it('一句 @ 了它的话配一张图，不提示', async () => {
+    history = [
+      humanMsg('h1', `<@${SEAT}> 这个分页方案你看下`),
+      { ...humanMsg('h2', 'topic-a/shot.png'), kind: 'attachment', mime_type: 'image/png' } as Block,
+    ]
+    const { container } = mount('t-with-image')
+    await settle()
+
+    expect(container.querySelector('.summon-hint')).toBeNull()
+  })
+
   it('点一下就叫它来读，且不再多发一条一模一样的消息', async () => {
     history = [humanMsg('h1', '这个分页方案你看下')]
     const { container, getByRole } = mount('t-click')
