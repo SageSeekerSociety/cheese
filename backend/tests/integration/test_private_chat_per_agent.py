@@ -93,7 +93,7 @@ def _private_unread(client, project_id: str, handle: str) -> dict:
 def test_each_teammate_gets_its_own_room_and_keeps_it(client):
     project_id = _project(client)
     default = next(a for a in _agents(client, project_id) if a["is_default"])
-    reviewer = _add_agent(client, project_id, "reviewer", "评审")
+    _add_agent(client, project_id, "reviewer", "评审")
 
     with_default = _dm_id(client, project_id, "user-1", default["handle"])
     with_reviewer = _dm_id(client, project_id, "user-1", "reviewer")
