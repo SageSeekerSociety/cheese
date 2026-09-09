@@ -198,11 +198,19 @@ func Dial(ctx context.Context, path, token string, opts Options) (*Client, error
 // turns a healthy late-starting session into a connection-refused failure.
 func dialWhenReady(ctx context.Context, path string, within time.Duration) (net.Conn, error) {
 	deadline := time.Now().Add(within)
-	poll := time.NewTicker(100 * time.Millisecond)
+	// Warm launches should not wait a full 100 ms after their socket appears.
+	// Return to the ordinary cadence for longer cold starts.
+	fastUntil := time.Now().Add(2 * time.Second)
+	fast := true
+	poll := time.NewTicker(20 * time.Millisecond)
 	defer poll.Stop()
 	seenSocket := false
 	var lastDialErr error
 	for {
+		if fast && time.Now().After(fastUntil) {
+			poll.Reset(100 * time.Millisecond)
+			fast = false
+		}
 		if fi, err := os.Stat(path); err == nil && fi.Mode()&os.ModeSocket != 0 {
 			seenSocket = true
 			remaining := time.Until(deadline)
