@@ -42,6 +42,26 @@ def transfer(payload):
                 ["tmux", "-S", socket, "has-session", "-t", session],
                 capture_output=True,
             )
+            if probe.returncode == 0:
+                # The connector retains exited panes for terminal inspection.
+                # Their session still exists after Claude has flushed and exited.
+                panes = subprocess.check_output(
+                    [
+                        "tmux",
+                        "-S",
+                        socket,
+                        "list-panes",
+                        "-s",
+                        "-t",
+                        session,
+                        "-F",
+                        "#{pane_dead}",
+                    ],
+                    text=True,
+                ).splitlines()
+                if panes and all(dead == "1" for dead in panes):
+                    print(json.dumps({"stopped": True}))
+                    return
             if probe.returncode == 0 and payload.get("request_exit", True):
                 subprocess.run(
                     [
