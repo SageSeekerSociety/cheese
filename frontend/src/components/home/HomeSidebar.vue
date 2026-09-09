@@ -3,13 +3,25 @@
        只在桌面存在。 -->
   <SecondaryNavigation v-if="mdAndUp">
     <div class="sidebar-header">
-      <span class="text-subtitle-1">首页</span>
+      <span class="text-subtitle-1">{{ t('website.home') }}</span>
       <v-spacer></v-spacer>
     </div>
     <v-list nav :lines="false">
-      <v-list-item rounded="lg" prepend-icon="mdi-view-dashboard" to="/spaces" title="空间" color="primary">
+      <v-list-item
+        rounded="lg"
+        prepend-icon="mdi-view-dashboard"
+        to="/spaces"
+        :title="t('website.spaces')"
+        color="primary"
+      >
       </v-list-item>
-      <v-list-item rounded="lg" prepend-icon="mdi-account-group" to="/teams" title="小队" color="primary">
+      <v-list-item
+        rounded="lg"
+        prepend-icon="mdi-account-group"
+        to="/teams"
+        :title="t('website.teams')"
+        color="primary"
+      >
       </v-list-item>
     </v-list>
   </SecondaryNavigation>
@@ -19,6 +31,7 @@
 import { useDisplay } from 'vuetify'
 
 import SecondaryNavigation from '@/components/common/Navigation/SecondaryNavigation.vue'
+import { t } from '@/i18n'
 
 const { mdAndUp } = useDisplay()
 </script>

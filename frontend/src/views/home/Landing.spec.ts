@@ -1,14 +1,16 @@
 import { reactive } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import Landing from './Landing.vue'
 
+import i18n, { resolveInitialLocale, setLocale } from '@/i18n'
 import HomeRoutes from '@/router/home'
 import AccountService from '@/services/account'
 
 vi.mock('@/services/account', () => ({ default: reactive({ loggedIn: false }) }))
+beforeEach(() => setLocale('zh-CN'))
 
 afterEach(() => {
   cleanup()
@@ -32,6 +34,28 @@ async function mount(path = '/') {
 }
 
 describe('公开首页', () => {
+  it('switches the whole demo to English without resetting the selected audience and remembers the choice', async () => {
+    const view = await mount('/about')
+    await fireEvent.click(view.getByRole('tab', { name: '高校与机构' }))
+    await fireEvent.click(view.getByRole('button', { name: 'Switch to English' }))
+    expect(document.documentElement.lang).toBe('en')
+    expect(resolveInitialLocale()).toBe('en')
+    expect(view.getByRole('heading', { name: 'Learn through real projects.' })).toBeTruthy()
+    expect(view.getByRole('tab', { name: 'Universities and institutions' }).getAttribute('aria-selected')).toBe('true')
+    await fireEvent.click(view.getByRole('tab', { name: /03\s*Test/ }))
+    await fireEvent.click(view.getByRole('button', { name: 'Show sample answer' }))
+    expect(view.getByText('Sample source: Project getting started guide, section 1')).toBeTruthy()
+    await fireEvent.click(view.getByRole('tab', { name: /04\s*Deliver/ }))
+    await fireEvent.click(view.getByRole('button', { name: 'Show sample result' }))
+    expect(view.getByText(/The prototype shows source citations/)).toBeTruthy()
+    for (const link of view.getAllByRole('link', { name: 'Get started' })) {
+      expect(link.getAttribute('href')).toBe('/account/signin')
+    }
+    await fireEvent.click(view.getByRole('button', { name: '切换到中文' }))
+    expect(i18n.global.locale.value).toBe('zh-CN')
+    expect(view.getByRole('heading', { name: '让实践育人，发生在真实项目里。' })).toBeTruthy()
+  })
+
   it('可用键盘走完整个项目演示并打开成果示例', async () => {
     const view = await mount()
     const first = view.getByRole('tab', { name: /01\s*需求讨论/ })

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { t } from '@/i18n'
+
 defineProps<{ who: string; ai?: boolean }>()
 </script>
 
@@ -9,7 +11,9 @@ defineProps<{ who: string; ai?: boolean }>()
       <template v-else>{{ who[0] }}</template>
     </span>
     <div>
-      <div class="message-author">{{ who }} <small v-if="ai">AI 队友</small></div>
+      <div class="message-author">
+        {{ who }} <small v-if="ai">{{ t('website.aiTeammate') }}</small>
+      </div>
       <slot />
     </div>
   </div>

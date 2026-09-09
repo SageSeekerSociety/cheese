@@ -966,6 +966,7 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
     workspace_bringup = CHEESE_WORKSPACE_BRINGUP
     settings_reconcile = CHEESE_SETTINGS_RECONCILE
     startup_cache_source = Path(startup_cache.__file__).read_text()
+    webfetch_transport = Path(__file__).with_name("webfetch_transport.cjs").read_text()
     skill_setup = "\n".join(
         f'mkdir -p "$CLAUDE_CONFIG_DIR/{Path(name).parent}"\n'
         f"cat > \"$CLAUDE_CONFIG_DIR/{name}\" <<'CHEESE_NATIVE_SKILL'\n"
@@ -1085,6 +1086,10 @@ cat > "$HOME/.claude/cheese-environment.py" <<'CHEESE_ENV_PY'
 # starts by hand. With it, the owner's files are never read and never written.
 export CLAUDE_CONFIG_DIR="$HOME/.claude"
 export DISABLE_AUTOUPDATER=1
+cat > "$CLAUDE_CONFIG_DIR/webfetch_transport.cjs" <<'CHEESE_WEBFETCH'
+{webfetch_transport}CHEESE_WEBFETCH
+WEBFETCH_PRELOAD="$CLAUDE_CONFIG_DIR/webfetch_transport.cjs"
+export BUN_OPTIONS="${{BUN_OPTIONS:+$BUN_OPTIONS }}--preload=\\"$WEBFETCH_PRELOAD\\""
 {skill_setup}
 {ca_block}
 # Written by the shell, not node: a machine whose `claude` is the native binary

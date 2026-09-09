@@ -31,10 +31,11 @@ dayjs.extend(relativeTime)
 // identity so our views have a handle (= username) when embedded here.
 import './style.css'
 
-import { createApp } from 'vue'
+import { createApp, watch } from 'vue'
 import i18next from 'i18next'
 import { z } from 'zod'
 import { zodI18nMap } from 'zod-i18n-map'
+import englishTranslation from 'zod-i18n-map/locales/en/zod.json'
 // Import your language translation files
 import translation from 'zod-i18n-map/locales/zh-CN/zod.json'
 
@@ -42,8 +43,10 @@ import App from './App.vue'
 import { installErrorReporter } from './errorReporter'
 import { registerPwa } from './pwa'
 
+import i18n from '@/i18n'
 // Plugins
 import { registerPlugins } from '@/plugins'
+import vuetify from '@/plugins/vuetify'
 import AccountService from '@/services/account'
 
 try {
@@ -72,20 +75,27 @@ const app = createApp(App)
 // agents (who can't read a user's console) can debug them. See errorReporter.ts.
 installErrorReporter(app)
 
-registerPlugins(app)
-app.mount('#app')
-
-// Register the service worker (offline shell + auto-update). No-op where the
-// browser has no SW support or the build produced none (dev).
-registerPwa()
-
-// Initialize i18next
 i18next.init({
-  lng: 'zh-CN',
+  lng: i18n.global.locale.value,
   resources: {
     'zh-CN': {
       zod: translation,
     },
+    en: { zod: englishTranslation },
   },
 })
 z.setErrorMap(zodI18nMap)
+
+watch(
+  i18n.global.locale,
+  (locale) => {
+    void i18next.changeLanguage(locale)
+    dayjs.locale(locale === 'en' ? 'en' : 'zh-cn')
+    vuetify.locale.current.value = locale === 'en' ? 'en' : 'zhHans'
+  },
+  { immediate: true }
+)
+
+registerPlugins(app)
+app.mount('#app')
+registerPwa()

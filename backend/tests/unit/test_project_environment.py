@@ -16,6 +16,65 @@ from app.domain.agent import environment_runner
 from app.domain.project.environment import EnvironmentConfig
 
 
+def test_linux_status_identifies_pid_reuse_without_spawning_ps(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    monkeypatch.setattr(environment_runner.sys, "platform", "linux")
+    original = Path.read_text
+    start_tick = [12345]
+    boot_id = ["first-boot"]
+
+    def read(path, *args, **kwargs):
+        if str(path) == "/proc/123/stat":
+            # A process name can contain spaces and parentheses.
+            fields = ["S", *(["0"] * 18), str(start_tick[0])]
+            return "123 (worker (phase 2)) " + " ".join(fields)
+        if str(path) == "/proc/sys/kernel/random/boot_id":
+            return boot_id[0] + "\n"
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read)
+    monkeypatch.setattr(
+        environment_runner.subprocess,
+        "run",
+        Mock(side_effect=AssertionError("Linux status lookup spawned a subprocess")),
+    )
+    identity = environment_runner.process_identity(123)
+    environment_runner.write_json(
+        tmp_path / "status.json",
+        {"state": "ready", "pid": 123, "process_identity": identity},
+    )
+    assert environment_runner.read_status(tmp_path)["state"] == "ready"
+    start_tick[0] += 1
+    assert environment_runner.read_status(tmp_path)["state"] == "stopped"
+    start_tick[0] -= 1
+    boot_id[0] = "second-boot"
+    assert environment_runner.read_status(tmp_path)["state"] == "stopped"
+
+
+@pytest.mark.parametrize("platform", ["linux", "darwin"])
+def test_status_reads_legacy_process_identity(tmp_path, monkeypatch, platform):
+    monkeypatch.setattr(environment_runner.sys, "platform", platform)
+    legacy = "Wed Sep  9 12:00:00 2026"
+    probe = Mock(return_value=SimpleNamespace(stdout=legacy + "\n"))
+    monkeypatch.setattr(environment_runner.subprocess, "run", probe)
+    environment_runner.write_json(
+        tmp_path / "status.json",
+        {"state": "ready", "pid": 123, "process_identity": legacy},
+    )
+    assert environment_runner.read_status(tmp_path)["state"] == "ready"
+    probe.return_value.stdout = ""
+    assert environment_runner.read_status(tmp_path)["state"] == "stopped"
+
+
+def test_linux_missing_process_is_not_alive(monkeypatch):
+    from pathlib import Path
+
+    monkeypatch.setattr(environment_runner.sys, "platform", "linux")
+    monkeypatch.setattr(Path, "read_text", Mock(side_effect=FileNotFoundError))
+    assert environment_runner.process_identity(123) == ""
+
+
 @pytest.mark.parametrize("state", ["ready", "failed"])
 def test_wait_status_returns_when_preparation_finishes(tmp_path, monkeypatch, state):
     import threading

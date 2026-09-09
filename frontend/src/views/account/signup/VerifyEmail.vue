@@ -4,10 +4,13 @@
     <div class="mb-12">
       <div class="d-flex align-center mb-3">
         <v-icon color="primary" size="28" class="mr-3">mdi-email-check</v-icon>
-        <h1 class="text-h3 font-weight-light" style="color: var(--ink); line-height: 1.2">验证邮箱地址</h1>
+        <h1 class="text-h3 font-weight-light" style="color: var(--ink); line-height: 1.2">
+          {{ t('website.verifyYourEmail') }}
+        </h1>
       </div>
       <p class="text-body-1" style="color: var(--muted); line-height: 1.5">
-        我们已向 <strong style="color: var(--text)">{{ signupStore.email }}</strong> 发送了验证码
+        {{ t('website.weSentAVerificationCodeTo') }}
+        <strong style="color: var(--text)">{{ signupStore.email }}</strong> {{ t('website.sentenceEnd2') }}
       </p>
     </div>
 
@@ -37,12 +40,12 @@
               style="text-transform: none; font-weight: 500; height: 48px"
               class="mb-6"
             >
-              完成注册
+              {{ t('website.finishRegistration') }}
             </v-btn>
 
             <div class="d-flex align-center justify-space-between">
               <p class="text-body-2" style="color: var(--muted)">
-                没有收到验证码？
+                {{ t('website.didntReceiveACode') }}
                 <v-btn
                   variant="text"
                   color="primary"
@@ -51,11 +54,11 @@
                   class="text-decoration-none"
                   @click="handleResend"
                 >
-                  重新发送
+                  {{ t('website.resendCode') }}
                 </v-btn>
               </p>
               <v-btn variant="text" color="primary" to="/account/signin" size="small" style="text-transform: none">
-                返回登录
+                {{ t('website.backToSignIn') }}
               </v-btn>
             </div>
           </v-form>
@@ -66,6 +69,7 @@
 </template>
 
 <script lang="ts" setup>
+import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { toTypedSchema } from '@vee-validate/zod'
@@ -74,6 +78,7 @@ import { z } from 'zod'
 
 import { vuetifyConfig } from '@/utils/form'
 
+import { t } from '@/i18n'
 import { useSignupStore } from '@/stores/signup'
 
 const router = useRouter()
@@ -81,10 +86,15 @@ const router = useRouter()
 const signupStore = useSignupStore()
 
 const { handleSubmit, defineField, isSubmitting } = useForm({
-  validationSchema: toTypedSchema(
-    z.object({
-      otp: z.string().length(6, { message: '验证码必须是6位数字' }).default(''),
-    })
+  validationSchema: computed(() =>
+    toTypedSchema(
+      z.object({
+        otp: z
+          .string()
+          .length(6, { message: t('website.enterASixdigitVerificationCode') })
+          .default(''),
+      })
+    )
   ),
 })
 
@@ -94,17 +104,17 @@ const submit = handleSubmit(async ({ otp }) => {
     const username = signupStore.username
     const res = await signupStore.signup(otp)
     if (res) {
-      toast.success('注册成功')
+      toast.success(t('website.accountCreated'))
       router.push({
         name: 'SignIn',
         query: {
           username,
-          message: '注册成功，请使用新账号登录',
+          message: t('website.yourAccountIsReadySignInTo'),
         },
       })
     }
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : '验证失败')
+    toast.error(error instanceof Error ? error.message : t('website.verificationFailed'))
   }
 })
 
@@ -117,9 +127,9 @@ const handleOtpInput = (value: string) => {
 const handleResend = async () => {
   try {
     // await signupStore.resendVerification()
-    toast.success('验证码已重新发送')
+    toast.success(t('website.verificationCodeResent'))
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : '发送失败')
+    toast.error(error instanceof Error ? error.message : t('website.couldNotSendTheCode'))
   }
 }
 </script>

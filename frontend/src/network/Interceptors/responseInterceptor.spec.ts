@@ -1,10 +1,13 @@
 import type { AxiosResponse } from 'axios'
 
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import responseInterceptor from './responseInterceptor'
 
+import { setLocale } from '@/i18n'
 import { ServerError } from '@/network/types/error'
+
+beforeEach(() => setLocale('zh-CN'))
 
 describe('responseInterceptor', () => {
   it('a 200 whose body is a page is not an answer', () => {

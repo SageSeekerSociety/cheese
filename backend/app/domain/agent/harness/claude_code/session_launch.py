@@ -36,6 +36,7 @@ served to that one is the failure this prevents.
 """
 
 import json
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -89,12 +90,7 @@ def hooks_settings(
     ]
     return {
         "skipDangerousModePermissionPrompt": True,
-        # A summarisation stream that stops delivering is the one hang shape a
-        # setting can still bound. WebFetch's own hang is NOT this: measured on
-        # 2.1.224/2.1.261, its page fetch is bounded (60 s) and so is its domain
-        # preflight (10 s) — the unbounded step is the model call it makes on the
-        # extracted text, and no knob reaches that. Kept because it is one line
-        # and covers a different failure, not because it fixes #86910.
+        # Stream liveness is separate from WebFetch's response-error handling.
         "env": {
             "CLAUDE_ENABLE_STREAM_WATCHDOG": "1",
         },
@@ -182,7 +178,12 @@ def build_session_launch(
         command += f" --model {model}"
     return LaunchSpec(
         command=command,
-        env={CONFIG_DIR_ENV: config_dir, HARNESS_ENV: CLAUDE_CODE},
+        env={
+            CONFIG_DIR_ENV: config_dir,
+            HARNESS_ENV: CLAUDE_CODE,
+            "BUN_OPTIONS": "--preload="
+            + shlex.quote(config_dir + "/webfetch_transport.cjs"),
+        },
         files=(
             # 0o666: the sandbox's claude rewrites both of these itself, under a
             # different uid than the backend that plants them.
@@ -194,6 +195,11 @@ def build_session_launch(
             SessionFile(GATES_FILE, _gates(workdir), 0o666),
             # Ours alone; claude only reads it.
             SessionFile(SYSTEM_PROMPT_FILE, system_prompt, 0o644),
+            SessionFile(
+                "webfetch_transport.cjs",
+                Path(__file__).with_name("webfetch_transport.cjs").read_text(),
+                0o644,
+            ),
             *(
                 SessionFile(name, content, 0o644)
                 for name, content in native_skill_files().items()

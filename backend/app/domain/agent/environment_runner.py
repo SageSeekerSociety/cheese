@@ -21,7 +21,19 @@ def now():
     return datetime.now(timezone.utc).isoformat()  # noqa: UP017
 
 
-def process_identity(pid):
+def process_identity(pid, *, reference=None):
+    # Keep recognizing status files written by older helpers, including during
+    # reset. New Linux records avoid spawning ps on every readiness poll.
+    if sys.platform == "linux" and (
+        reference is None or reference.startswith("linux:")
+    ):
+        try:
+            fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+            boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+        except (FileNotFoundError, ProcessLookupError):
+            return ""
+        # stat field 22 is starttime; fields here begin at field 3 (state).
+        return f"linux:{boot_id}:{fields[19]}"
     return subprocess.run(
         ["ps", "-p", str(pid), "-o", "lstart="],
         capture_output=True,
@@ -42,7 +54,10 @@ def read_status(directory: Path) -> dict:
         return {"state": "pending"}
     data = json.loads(path.read_text())
     if data["state"] in ("preparing", "ready"):
-        if process_identity(data["pid"]) != data["process_identity"]:
+        if (
+            process_identity(data["pid"], reference=data["process_identity"])
+            != data["process_identity"]
+        ):
             if data["state"] == "ready":
                 data = {**data, "state": "stopped"}
             else:
@@ -260,7 +275,12 @@ if __name__ == "__main__":
             import time
 
             for _ in range(50):
-                if process_identity(status["pid"]) != status["process_identity"]:
+                if (
+                    process_identity(
+                        status["pid"], reference=status["process_identity"]
+                    )
+                    != status["process_identity"]
+                ):
                     break
                 time.sleep(0.1)
             else:
