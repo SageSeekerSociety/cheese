@@ -336,6 +336,13 @@ case "$APP_IMAGE_SOURCE" in
   registry)
     log "pulling app images…"
     retry_pull "image pull" dc pull backend frontend
+    # The browser is an ENHANCEMENT to fetching, not a component of the app, so
+    # its pull is deliberately outside the retry-and-fail path above: without it
+    # fetching falls back a rung (measured: 19 of 20 real sites becomes 17) and
+    # everything else is unaffected, whereas failing the deploy over it would
+    # trade the whole platform for one rung.
+    dc pull browser-render >/dev/null 2>&1 \
+      || log "WARNING: browser-render image unavailable; fetching will fall back a rung"
     ;;
   local)
     [ -n "${BACKEND_IMAGE:-}" ] || \
@@ -588,6 +595,11 @@ else
   log "bringing up backend + frontend…"
   dc up -d backend frontend || fail "compose up failed"
 fi
+
+# Same reasoning as the pull: never `fail` on this one. A browser that will not
+# start must not hold back a backend that would have served.
+dc up -d browser-render >/dev/null 2>&1 \
+  || log "WARNING: browser-render did not start; fetching will fall back a rung"
 
 log "waiting for health…"
 code=""

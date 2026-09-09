@@ -174,3 +174,52 @@ services:
       driver: journald
       options:
         tag: "{{.Name}}"
+
+  # One browser for the box, shared by every topic's fetches.
+  #
+  # It belongs in this file rather than a compose of its own because it now has
+  # to survive the same events the platform survives. Run by hand it was fine
+  # until the first full redeploy, and its failure mode is silent: fetching
+  # falls back a rung and coverage drops from 19-of-20 real sites to 17,
+  # with nothing in any log to say why.
+  #
+  # Measured: one shared instance served six concurrent pages in 4.7s where a
+  # browser per caller took 9.5s for three, and Chrome is installed once here
+  # instead of once per topic home (185MB each).
+  browser-render:
+    image: ${BROWSER_RENDER_IMAGE:-ghcr.io/sageseekersociety/cheese/browser-render:${IMAGE_TAG:-main}}
+    container_name: cheese-browser-render
+    # Chromium writes to /dev/shm, and Docker's 64MB default is where headless
+    # Chrome starts crashing on real pages. This is the single most common way
+    # a working browser container turns flaky under load.
+    shm_size: "1gb"
+    environment:
+      # Playwright does NOT read this on its own; the service hands it to the
+      # browser explicitly. Named here so a box behind a proxy can set it —
+      # and so nobody inherits a sandbox's own 127.0.0.1 tunnel by accident,
+      # which points at the container itself and reaches nothing.
+      - HTTPS_PROXY=${BROWSER_RENDER_PROXY:-}
+      - RENDER_MAX_CONCURRENT=${BROWSER_RENDER_CONCURRENCY:-6}
+    # A browser is the one process here that will happily eat the box. Six
+    # concurrent pages measured healthy; these bounds make a burst queue
+    # instead of swap.
+    mem_limit: 2g
+    cpus: 2.0
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import urllib.request; urllib.request.urlopen('http://127.0.0.1:8900/healthz', timeout=3)
+      interval: 30s
+      timeout: 8s
+      # Chromium's first launch is slow; failing the check before then would
+      # restart it into the same cold start forever.
+      start_period: 60s
+      retries: 3
+    restart: unless-stopped
+    logging:
+      driver: journald
+      options:
+        tag: "{{.Name}}"
