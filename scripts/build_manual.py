@@ -5,6 +5,10 @@
 `/docs/quickstart#connect-repo` 这样的地址就和线上完全一样——文档里的站内链接
 不需要为预览改写，也就不会出现「预览时好好的，上线全断」。
 
+线上那台 nginx 要用 `try_files $uri $uri/index.html $uri/ =404`：没有它，
+`/docs/quickstart`（不带尾斜杠）只会拿到一个 301，而说明书里发出去的每个链接
+都是不带尾斜杠的那种写法。
+
 用法: build_manual.py [输出目录]      默认 docs/manual/.site
 """
 
