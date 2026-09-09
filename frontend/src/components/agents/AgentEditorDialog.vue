@@ -132,6 +132,7 @@ async function save() {
         <v-alert v-if="error" type="error" density="comfortable" class="mb-4">{{ error }}</v-alert>
         <v-text-field
           v-model="displayName"
+          autocomplete="off"
           label="名字"
           variant="outlined"
           :error-messages="submitted && nameProblem ? [nameProblem] : []"
@@ -139,6 +140,7 @@ async function save() {
         <v-text-field
           v-if="isNew"
           v-model="handle"
+          autocomplete="off"
           label="标识（英文，可留空）"
           variant="outlined"
           :error-messages="submitted && handleProblem ? [handleProblem] : []"
@@ -147,15 +149,17 @@ async function save() {
         <v-select
           v-if="isNew"
           v-model="presetName"
+          autocomplete="off"
           :items="presetItems"
           label="从内置配置开始"
           variant="outlined"
           :disabled="loading"
           @update:model-value="applyPreset"
         />
-        <v-textarea v-model="draft.body" label="角色设定（可留空）" rows="6" variant="outlined" />
+        <v-textarea v-model="draft.body" autocomplete="off" label="角色设定（可留空）" rows="6" variant="outlined" />
         <v-select
           v-model="draft.model"
+          autocomplete="off"
           :items="modelItems"
           item-title="label"
           item-value="id"

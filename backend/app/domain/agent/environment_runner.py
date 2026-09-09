@@ -10,6 +10,7 @@ import os
 import signal
 import subprocess
 import sys
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -60,7 +61,22 @@ def read_status(directory: Path) -> dict:
     return data
 
 
-def run(config, directory, command):
+def wait_status(directory: Path) -> dict:
+    """Observe short preparations locally instead of waiting for another RPC."""
+    # Cover short launches in one RPC; returning at 0.5s adds a backend sleep
+    # and another interpreter startup when readiness lands just after it.
+    deadline = time.monotonic() + 2
+    while True:
+        status = read_status(directory)
+        if status["state"] not in {"pending", "preparing"}:
+            return status
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return status
+        time.sleep(min(0.05, remaining))
+
+
+def run(config, directory, command, *, adopt=None):
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     lock = (directory / "lock").open("a")
     try:
@@ -104,8 +120,8 @@ def run(config, directory, command):
         write_json(directory / "status.json", state)
         raise SystemExit(128 + signum)
 
-    signal.signal(signal.SIGTERM, cancel)
-    signal.signal(signal.SIGINT, cancel)
+    previous_term = signal.signal(signal.SIGTERM, cancel)
+    previous_int = signal.signal(signal.SIGINT, cancel)
     environment = dict(os.environ)
     environment.update(config["variables"])
     environment.pop("CHEESE_ENVIRONMENT", None)
@@ -170,11 +186,21 @@ def run(config, directory, command):
                 log.write(f"{now()} {stage}: completed\n")
                 if stage == "setup":
                     write_json(receipt, config["revision"])
+            if adopt is not None:
+                # Bind only after both scripts succeed. Status must follow the
+                # existing agent, not this short-lived preparation process.
+                pid = adopt(environment, work)
+                identity = process_identity(pid)
+                if not identity:
+                    raise RuntimeError("prepared agent exited during adoption")
+                state.update(pid=pid, process_identity=identity)
             state.update(
                 state="ready", stage="complete", exit_code=0, finished_at=now()
             )
             write_json(directory / "status.json", state)
             log.write(f"{now()} ready\n")
+            if adopt is not None:
+                return 0
             # Exec keeps the PID stable for status inspection. The project
             # variables are applied to the agent as well as both scripts.
             os.chdir(work)
@@ -186,6 +212,10 @@ def run(config, directory, command):
             log.write(f"{now()} failed: {exc}\n")
             write_json(directory / "status.json", state)
             return state["exit_code"]
+        finally:
+            signal.signal(signal.SIGTERM, previous_term)
+            signal.signal(signal.SIGINT, previous_int)
+            lock.close()
     return 0
 
 
@@ -228,7 +258,11 @@ if __name__ == "__main__":
             os.kill(status["pid"], signal.SIGTERM)
         print(json.dumps(status))
     elif sys.argv[1:] == ["status"]:
-        print(json.dumps(read_status(root)))
+        # Old shipped helpers ignore this opt-in and retain ordinary status reads.
+        reader = (
+            wait_status if os.environ.get("CHEESE_STATUS_WAIT") == "1" else read_status
+        )
+        print(json.dumps(reader(root)))
     else:
         config = json.loads(os.environ["CHEESE_ENVIRONMENT"])
         raise SystemExit(run(config, root, sys.argv[1:]))

@@ -48,7 +48,7 @@
 **话题之外的对话**
 | 组成部分 | 对标产品 | AI 带来什么变化 |
 |---|---|---|
-| 私聊 | 飞书私聊 | One-to-one conversations for preferences, questions, document drafts and small tasks. Shell tools run in isolated temporary storage; saved documents live on Cheese. Repository work and team collaboration move to a work topic with the member's consent. |
+| 私聊 | 飞书私聊 | One conversation per AI teammate, or a human-to-human conversation, for preferences, questions, document drafts and small tasks. Shell tools run in isolated temporary storage; saved documents live on Cheese. Repository work and team collaboration move to a work topic with the member's consent. |
 
 **三个全局页面（分属不同层级）**
 | 组成部分 | 层级 | 对标产品 | AI 带来什么变化 |
@@ -522,9 +522,13 @@ Ground truth 永远在文档里。对话中的通知只是文档变更的实时�
 
 ### 14.2 协作软件，而非 AI 软件
 
-- 聊天的参照系是飞书/Slack 里的**同事**，不是 AI 产品的流式气泡：
+- 聊天的参照系是飞书/Slack 里的**同事**，不是 AI 产品的**流式输出**：
   - **不实时吐字**。芝士有话说时发一条**完整消息**，一轮可以连发多条（消息边界 = SDK 的
     AssistantMessage 结构化事件，绝不是解析文本）。
+  - **排版是飞书群聊那一路**（2026-09-09 <@符露夀> 定）：一条消息一个气泡，我说的靠右、
+    别人和芝士靠左。侧只回答「这条是不是我说的」，「谁在说」由头像和名字承担，两侧都保留 ——
+    房间里是「多个人 + 一个芝士」，左边同时坐着好几个人。芝士也在左边：它是队友里的一个，
+    不是对话的另一极。
   - **收到请求先 ✅**：被 @ 的瞬间，平台自动给触发消息贴 ✅ 表情（结构化动作）；
     禁止用一条"收到/已记录"的文本来代替。
   - **先回应，再干活**：接到任务先给出简短回应/任务清单，让人知道它接住了。

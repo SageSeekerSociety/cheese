@@ -6,12 +6,9 @@ After=network-online.target
 [Service]
 Type=oneshot
 User=nictheboy
-# The storage sweep uploads a place's raw Claude session files here as one
-# immutable `<project>/<place>/<ts>.tar.gz` and then deletes the device home
-# they came from, so this directory is the only copy left. The same additive
-# mirror the uploads dir uses fits it exactly: archives are written once and
-# never modified, and the script never deletes remotely, so R2 stays a superset
-# even after local pruning.
+# Preserve earlier `<project>/<place>/<ts>.tar.gz` session archives. This
+# additive mirror never removes remote objects. New raw transcript collection
+# writes directly to private object storage and does not depend on this timer.
 Environment=UPLOADS_PREFIX=transcripts
 ExecStart=/home/nictheboy/cheese-backend-py/backend/.venv/bin/python /home/nictheboy/ops/r2-sync-uploads.py /home/nictheboy/cheese-transcripts
 Nice=10

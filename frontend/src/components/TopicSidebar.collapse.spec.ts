@@ -10,11 +10,16 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import { VLayout } from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render } from '@testing-library/vue'
+import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { createPinia } from 'pinia'
-import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import TopicSidebar from './TopicSidebar.vue'
+
+vi.mock('../api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../api')>()),
+  listProjectAgents: vi.fn().mockResolvedValue({ data: [] }),
+}))
 
 // h() 对 SFC 的具名 props 类型太严，这里只需要它是个组件。
 const Sidebar = TopicSidebar as unknown as Component
@@ -101,6 +106,17 @@ function toggleFor(container: Element, title: string): HTMLElement {
 }
 
 beforeAll(() => {
+  vi.stubGlobal('devicePixelRatio', 1)
+  vi.stubGlobal(
+    'visualViewport',
+    Object.assign(new EventTarget(), {
+      width: 1024,
+      height: 768,
+      offsetLeft: 0,
+      offsetTop: 0,
+      scale: 1,
+    })
+  )
   // Vuetify 的 layout/overlay 会摸这两个浏览器 API，happy-dom 没有。
   if (!('ResizeObserver' in globalThis)) {
     ;(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
@@ -123,6 +139,16 @@ beforeAll(() => {
 
 describe('左侧话题列表：房间下面那些活的折叠', () => {
   beforeEach(() => localStorage.clear())
+
+  it.each([true, false])('archive controls follow server permission: %s', async (allowed) => {
+    const active = { ...topic('managed', 'root'), can_archive: allowed }
+    const archived = { ...topic('old', 'root'), status: 'archived', can_archive: allowed } as Topic
+    const { container, queryByText } = mount({ topics: [topic('root', null, 'root'), active, archived] })
+    await fireEvent.click(rowFor(container, 'managed').querySelector('[title="更多操作"]') as HTMLElement)
+    await waitFor(() => expect(Boolean(queryByText('归档'))).toBe(allowed))
+    await fireEvent.click(container.querySelector('.archived-toggle') as HTMLElement)
+    expect(Boolean(rowFor(container, 'old').querySelector('[title="取消归档"]'))).toBe(allowed)
+  })
 
   it('默认收起 —— 房间派出去的活不摊在主导航上', () => {
     // 一个跑久了的房间有近两百条活。它们的去处是右边的 Task Progress，不是这条

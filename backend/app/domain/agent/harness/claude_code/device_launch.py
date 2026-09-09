@@ -236,6 +236,13 @@ print("ok (ticket extracted)")
 # exec error are read conservatively as alive, so a probe hiccup never false-kills.
 DEVICE_ALIVE_PROBE = r"""topic="${CHEESE_ALIVE_TOPIC:-}"
 [ -n "$topic" ] || { echo unknown; exit 0; }
+# A prepared process acquired its topic after exec; its original /proc environ
+# cannot identify that assignment. Check the durable binding and native pane.
+if [ -f "$HOME/.cheese/native-warm/state.json" ]; then
+  warm_status="$(python3 "$HOME/.cheese/warm-native-runner.py" probe-topic \
+    "$HOME/.cheese/native-warm" "$topic" 2>/dev/null)"
+  case "$warm_status" in alive|dead) echo "$warm_status"; exit 0;; esac
+fi
 # Linux: match the topic on each process's own environ → per-topic precise. The
 # connector (same user as the screen it spawned) can read that same-uid /proc entry.
 if [ -d /proc ] && [ -r /proc/self/environ ]; then
@@ -471,7 +478,7 @@ printf '%s\\n' "$WANT" > "$STAMPF"
 
 def build_drain_script() -> str:
     source = Path(event_drain.__file__).read_text(encoding="utf-8")
-    return "#!/bin/sh\nexec python3 - \"$0\" <<'PY'\n" + source + "\nPY\n"
+    return '#!/bin/sh\nexec python3 - "$0" "$@" <<\'PY\'\n' + source + "\nPY\n"
 
 
 # Bringing a device's workspace up, kept out of the launcher's f-string (and
@@ -1027,6 +1034,36 @@ CH="${{CHEESE_HOME:?Cheese session home is required}}"
 CW="${{CHEESE_WORK:?Cheese work directory is required}}"
 case "$CH" in "\\$HOME"*) CH="$REAL_HOME${{CH#\\$HOME}}";; esac
 case "$CW" in "\\$HOME"*) CW="$REAL_HOME${{CW#\\$HOME}}";; esac
+WARM_ROOT=""
+if [ -z "${{CHEESE_EXECUTION_TARGET:-}}" ] && \\
+   [ -f "$REAL_HOME/.cheese/native-warm/binding.json" ]; then
+  python3 "$REAL_HOME/.cheese/warm-native-runner.py" recover-room \\
+    "$REAL_HOME/.cheese/native-warm"
+fi
+# Reuse one interpreter for the check and staging, including on existing spares.
+if [ -z "${{CHEESE_EXECUTION_TARGET:-}}" ] && \\
+   [ -f "$REAL_HOME/.cheese/native-warm/state.json" ]; then
+  WARM_ROOT="$(python3 - "$REAL_HOME/.cheese/native-warm" "$CH" "$CW" \\
+    <<'CHEESE_WARM_STAGE'
+import json, os, runpy, sys
+from pathlib import Path
+directory = Path(sys.argv[1])
+runner = runpy.run_path(str(directory.parent / "warm-native-runner.py"))
+state = json.loads((directory / "state.json").read_text())
+if (directory / "ready").exists() and runner["_native_alive"](state):
+    runner["stage"](
+        directory,
+        project_id=os.environ["CHEESE_PROJECT"],
+        topic_id=os.environ["CHEESE_TOPIC"],
+        home=Path(sys.argv[2]),
+        work=Path(sys.argv[3]),
+        rendezvous=Path(os.environ["CHEESE_RV_SOCK"]),
+        token_file=Path(os.environ["CHEESE_RV_TOKEN_FILE"]),
+    )
+    print(directory)
+CHEESE_WARM_STAGE
+)"
+fi
 export HOME="$CH" CHEESE_WORK="$CW"
 mkdir -p "$HOME" "$CHEESE_WORK"
 # Canonicalize to absolutes (resolve symlinks) so nothing depends on cwd —
@@ -1061,9 +1098,11 @@ export DISABLE_AUTOUPDATER=1
 # claude reads the onboarding/trust gates from THERE (verified — the gate in the
 # dir let a non-interactive run proceed), and a file at $HOME/.claude.json would
 # just be dead weight in the isolated home.
+if [ -z "$WARM_ROOT" ]; then
 cat > "$CLAUDE_CONFIG_DIR/.claude.json" <<JSON
 {{"hasCompletedOnboarding":true,"autoUpdates":false,"bypassPermissionsModeAccepted":true,"projects":{{"$CHEESE_WORK":{{"hasTrustDialogAccepted":true,"hasCompletedProjectOnboarding":true}}}}}}
 JSON
+fi
 cat > "$HOME/.claude/settings.json" <<'JSON'
 {settings_json}
 JSON
@@ -1090,7 +1129,18 @@ export PATH="$HOME/.claude:$PATH"
 # Give every device the topic branch: a real checkout it can push back from so
 # 采纳 sees what the agent wrote. It runs here, after the forwarder is on PATH,
 # because what this step has to say when it goes wrong is the whole point of it.
+cheese_prepare_workspace() {{
 {workspace_bringup}
+}}
+WORKSPACE_PID=""
+if [ -n "$WARM_ROOT" ]; then
+  # The checkout and isolated-home files are independent. Join before adoption
+  # so native initialization still sees the complete project and its rules.
+  cheese_prepare_workspace &
+  WORKSPACE_PID=$!
+else
+  cheese_prepare_workspace
+fi
 # Extract the machine's own ccproxy ticket, READING the owner's files only —
 # see CHEESE_SETTINGS_RECONCILE for why nothing is written there any more
 # (CLAUDE_CONFIG_DIR made the owner's settings.json irrelevant to routing).
@@ -1356,6 +1406,32 @@ if [ -n "${{CHEESE_ENVIRONMENT:-}}" ]; then
 fi
 [ -s "$CHEESE_SP" ] && CLAUDE="$CLAUDE --append-system-prompt-file \\"$CHEESE_SP\\""
 {execution_setup}
+if [ -n "$WARM_ROOT" ]; then
+  wait "$WORKSPACE_PID"
+  # Reuse the loaded helper for adoption and terminal attachment. The shipped
+  # helper already exposes both operations, including on existing warm machines.
+  exec python3 - "$REAL_HOME/.cheese/warm-native-runner.py" \\
+    "$WARM_ROOT" 3<&0 <<'WARM_ATTACH'
+import os
+import runpy
+import sys
+from pathlib import Path
+
+# The heredoc carries code; tmux and environment scripts still need the PTY.
+os.dup2(3, 0)
+os.close(3)
+runner = runpy.run_path(sys.argv[1])
+directory = Path(sys.argv[2])
+code = runner["adopt_room"](directory)
+if code:
+    raise SystemExit(code)
+terminal = runner["connection"](
+    directory, os.environ["CHEESE_PROJECT"], os.environ["CHEESE_TOPIC"]
+)
+os.environ.pop("TMUX", None)
+os.execvp("tmux", terminal["command"])
+WARM_ATTACH
+fi
 if command -v tmux >/dev/null 2>&1; then
   # WHICH tmux server hosts the inner session decides who is able to wipe it.
   # The machine's DEFAULT server belongs to the person whose machine this is:
@@ -1484,6 +1560,26 @@ if command -v tmux >/dev/null 2>&1; then
         || true
     fi
     DRAIN_PID="$(cat "$HOME/.claude/cheese-drain.pid" 2>/dev/null || true)"
+    # Upgrade only the sender; the native agent and its context keep running.
+    DRAIN_WANT="$(cksum "$HOME/.claude/cheese-drain" | cut -d' ' -f1)"
+    DRAIN_HAVE="$(cat "$HOME/.claude/cheese-drain.version" 2>/dev/null || true)"
+    if [ -n "$DRAIN_PID" ] && kill -0 "$DRAIN_PID" 2>/dev/null &&
+       [ "$DRAIN_WANT" != "$DRAIN_HAVE" ]; then
+      case "$(ps -p "$DRAIN_PID" -o args=)" in
+        *" - $HOME/.claude/cheese-drain"*)
+          kill "$DRAIN_PID"
+          DRAIN_WAIT=0
+          while kill -0 "$DRAIN_PID" 2>/dev/null && [ "$DRAIN_WAIT" -lt 10 ]; do
+            sleep 1
+            DRAIN_WAIT=$((DRAIN_WAIT + 1))
+          done
+          if kill -0 "$DRAIN_PID" 2>/dev/null; then
+            echo "Spool sender has not stopped for upgrade" >&2; exit 1
+          fi
+          ;;
+        *) echo "Refusing to replace an unidentified spool sender" >&2; exit 1 ;;
+      esac
+    fi
     if [ -z "$DRAIN_PID" ] || ! kill -0 "$DRAIN_PID" 2>/dev/null; then
       TETHER="$(atmux list-panes -s -t "$SESSION" -F '#{{pane_pid}}' \\
         2>/dev/null | head -n 1)"

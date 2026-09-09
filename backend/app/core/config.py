@@ -116,6 +116,23 @@ class Settings(BaseSettings):
     agent_haiku_model: str | None = "glm-4.5-air"
     agent_sonnet_model: str | None = "glm-5.2"
     agent_opus_model: str | None = "glm-5.2"
+    # --- Platform-side fetch service (app.domain.fetch) ---
+    # Reading the web for an agent happens HERE, not in the sandbox: the sandbox
+    # has a datacentre egress that several sites refuse outright, one browser per
+    # topic would mean one 185 MB Chrome per topic, and nothing cached would be
+    # shared. Both endpoints are optional and both default to off.
+    #
+    # The reader is a THIRD PARTY: enabling it hands every fetched URL to someone
+    # else, so it is an operator's decision rather than a default. Measured, it
+    # earns its place — it returned a Cloudflare-challenged page and a host this
+    # network cannot reach at all — but that is a trade to make deliberately.
+    fetch_reader_endpoint: str | None = None
+    # A shared browser, reached over HTTP rather than supervised in-process:
+    # it needs Chrome and pooling, and an API worker cannot restart a headless
+    # browser process tree cleanly. Measured, one shared instance served six
+    # concurrent pages in 4.7s where per-caller browsers took 9.5s for three.
+    fetch_browser_endpoint: str | None = None
+
     # --- LLM gateway admin (L1/L2 — defined in `app.domain.agent.gateway`) ---
     # When the pool routes through the self-hosted LiteLLM gateway, the backend can
     # use the gateway's ADMIN API to (L1) mint a per-project virtual key — injected
@@ -477,36 +494,11 @@ class Settings(BaseSettings):
     # Seconds between automatic 定期巡检 ticks across all projects. 0 = off
     # (manual heartbeat only; default off so dev/tests don't burn model calls).
     scheduler_interval_seconds: int = 0
-    # Container lifecycle is deterministic maintenance and must keep running
-    # even when model-consuming automatic heartbeats are disabled.
-    # A room now outlives the work done in it, so boxes accumulate per ROOM
-    # rather than draining as topics close. Hours, not days: container count
-    # should track work in flight, and a box whose room nobody has touched
-    # since yesterday is paying rent for a conversation that will resume from
-    # its transcript anyway.
-    #
-    # 8 hours holds for a whole room (2026-08-17 decision), because what
-    # "idle" MEASURES is the room's last activity AND its tasks'. Judging the
-    # room alone would tear down live work the moment the room's own timeline
-    # went quiet — and a room whose work has been split out is quiet by design,
-    # so that is the normal case.
+    # Idle rooms consolidate memory but keep their running environment.
     sandbox_reap_interval_seconds: int = 3600
     sandbox_idle_hours: float = 8
-    # Archive takes nothing off disk (topic/retire.py): a finished place's git
-    # worktree on this box and its isolated home on the device that ran it stay
-    # for `topic_home_retention_days`, and this sweep is what removes them after
-    # that — and at once for places no longer in the database (dev box,
-    # 2026-09-03: 141 GB of worktrees and 162 GB of homes, most of them for
-    # places long gone). 0 disables it.
-    topic_storage_sweep_interval_s: int = 3600
-    # How long after archive the sweep leaves a place's worktree and home
-    # alone. Archive itself removes neither: it is reversible, and this is the
-    # window in which somebody un-archives to pick the work back up with its
-    # session intact rather than from an empty checkout of the branch. A grace
-    # period, not a safety net: a home is only ever deleted after its raw
-    # Claude session files have been stored under `transcripts_dir`, so what
-    # expires here is the convenience of resuming in place.
-    topic_home_retention_days: float = 30
+    # Snapshotted into each archival operation, never restarted by deployment.
+    topic_archive_cleanup_delay_s: int = Field(default=300, ge=0)
     # Where the platform keeps the raw Claude session files of every place that
     # ran on a device — `.claude/projects/**/*.jsonl` and `.claude/todos` from
     # the device home, as `<project>/<place>/<utc timestamp>.tar.gz`, one file
@@ -685,6 +677,8 @@ class Settings(BaseSettings):
 
     # --- S3 storage (used when storage_type == "s3") ---
     s3_bucket: str = "cheese"
+    # Explicit private bucket; public upload bucket is never used for transcripts.
+    transcript_s3_bucket: str = ""
     s3_endpoint_url: str | None = None
     s3_access_key: str | None = None
     s3_secret_key: str | None = None

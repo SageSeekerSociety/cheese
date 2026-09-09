@@ -23,9 +23,11 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.project.services import ProjectService
 from app.domain.team.models import TeamMemberRole
 from app.domain.team.repositories import TeamRepository
+from app.domain.topic.models import RoomCleanup
 from app.domain.topic.repositories import TopicRepository
+from app.domain.topic.services import TopicService
 from tests.conftest import seed_user
-from tests.integration.conftest import UserCreator
+from tests.integration.conftest import UserCreator, session_auth_headers
 from tests.unit.test_machine_service import FakeMicroCloud
 
 
@@ -330,7 +332,7 @@ def test_topic_cloud_provisioning_is_concurrent_safe_and_exclusive(client, monke
     assert other_topic[0] != same_topic[0][0]
 
 
-def test_direct_and_cascading_archive_release_every_topic_machine(client):
+def test_direct_and_cascading_archive_retain_machines_during_grace(client):
     async def _seed():
         async with client.test_factory() as session:
             project = await ProjectRepository(session).add(name="Archive Cloud")
@@ -351,8 +353,14 @@ def test_direct_and_cascading_archive_release_every_topic_machine(client):
             return direct.id, parent.id, child.id
 
     direct_id, parent_id, child_id = asyncio.run(_seed())
-    assert client.post(f"/topics/{direct_id}/archive", json={"by": "u"}).is_success
-    assert client.post(f"/topics/{parent_id}/archive", json={"by": "u"}).is_success
+
+    async def archive_both():
+        async with client.test_factory() as session:
+            await TopicService(session).archive(direct_id, by="u")
+            await TopicService(session).archive(parent_id, by="u")
+            await session.commit()
+
+    asyncio.run(archive_both())
 
     async def _released():
         async with client.test_factory() as session:
@@ -362,10 +370,10 @@ def test_direct_and_cascading_archive_release_every_topic_machine(client):
                 for tid in (direct_id, parent_id, child_id)
             ]
 
-    assert asyncio.run(_released()) == [None, None, None]
+    assert all(machine is not None for machine in asyncio.run(_released()))
 
 
-def test_unarchived_topic_provisions_a_new_machine(client, monkeypatch):
+def test_reopen_after_cleanup_claim_provisions_a_new_machine(client, monkeypatch):
     from app.core.config import settings
 
     monkeypatch.setattr(settings, "microcloud_base_url", "https://example.invalid")
@@ -377,7 +385,7 @@ def test_unarchived_topic_provisions_a_new_machine(client, monkeypatch):
             project = await ProjectService(session).create(
                 name="Reactivate Cloud", owner_handle="owner"
             )
-            topic = await TopicRepository(session).add(
+            topic = await TopicService(session).create(
                 project_id=project.id, title="Again", created_by="owner"
             )
             old = await _add_topic_machine(
@@ -390,8 +398,21 @@ def test_unarchived_topic_provisions_a_new_machine(client, monkeypatch):
             return topic.id, old.id
 
     topic_id, old_id = asyncio.run(_seed())
-    assert client.post(f"/topics/{topic_id}/archive", json={"by": "u"}).is_success
-    assert client.post(f"/topics/{topic_id}/unarchive", json={"by": "u"}).is_success
+    assert client.post(
+        f"/topics/{topic_id}/archive", json={}, headers=session_auth_headers("owner")
+    ).is_success
+
+    async def claim_cleanup():
+        async with client.test_factory() as session:
+            room = await TopicService(session).get_or_404(topic_id)
+            operation = await session.get(RoomCleanup, room.cleanup_id)
+            operation.state = "claimed"
+            await session.commit()
+
+    asyncio.run(claim_cleanup())
+    assert client.post(
+        f"/topics/{topic_id}/unarchive", json={}, headers=session_auth_headers("owner")
+    ).is_success
     cloud = FakeMicroCloud()
 
     async def _keypair():

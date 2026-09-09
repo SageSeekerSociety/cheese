@@ -66,6 +66,7 @@
           <ResourceLimitsNotice v-if="newProjectDialog" />
           <v-text-field
             v-model="newProjectName"
+            autocomplete="off"
             label="项目名称"
             variant="outlined"
             color="primary"
@@ -76,6 +77,7 @@
           />
           <v-select
             v-model="newProjectTeamId"
+            autocomplete="off"
             :items="newProjectTeams"
             :item-title="teamLabel"
             item-value="id"

@@ -378,6 +378,29 @@ jobs:
       - name: Test frontend static-asset integrity guard
         run: sh frontend/scripts/test-check-static-assets.sh
 
+      # Without a node of its own, the box's own answers, and it is Debian's:
+      # node 20, whose corepack is too old to load a modern pnpm and links its
+      # shims into /usr/bin, which the runner user cannot write. Same pairing
+      # as frontend.yml — setup-node first, corepack second — because that is
+      # what puts both the node and the shims somewhere writable.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      # The manual ships inside this image, but its sources (docs/manual) are
+      # outside the build context (./frontend), so the docker build cannot make
+      # it — it has to arrive in the context first. public/ is Vite's
+      # copy-verbatim directory, so landing it there is all it takes.
+      # check-static-assets, which the image build and healthcheck both run,
+      # fails if this step did not happen.
+      - name: Build the user manual into the image context
+        run: |
+          cd docs/manual
+          # The runner cannot install shims beside its root-owned Node binary.
+          corepack pnpm@9.15.3 install --frozen-lockfile
+          corepack pnpm@9.15.3 exec vitepress build .
+          python3 ../../scripts/emit_llms.py ../../frontend/public/docs
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
         with:

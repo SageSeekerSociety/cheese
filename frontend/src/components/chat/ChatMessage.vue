@@ -9,6 +9,7 @@
             <v-textarea
               ref="editTextarea"
               v-model="editedQuestion"
+              autocomplete="off"
               auto-grow
               rows="2"
               variant="plain"

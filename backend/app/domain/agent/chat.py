@@ -1653,11 +1653,17 @@ class ChatService:
         pending.append(entry)
         del pending[:-16]  # a dead session must not grow this forever
         try:
-            delivered = (
-                await self._compute.deliver(topic_id, line, images=images)
-                if images
-                else await self._compute.deliver(topic_id, line)
-            )
+            async with self._sessions() as session:
+                room = await TopicRepository(session).lock(topic_id)
+                if room is None or room.status == TopicStatus.archived:
+                    delivered = False
+                else:
+                    delivered = (
+                        await self._compute.deliver(topic_id, line, images=images)
+                        if images
+                        else await self._compute.deliver(topic_id, line)
+                    )
+                await session.commit()
         except Exception:  # noqa: BLE001 — caller reports the queued fallback
             logger.exception("merge into running turn failed (topic=%s)", topic_id)
             delivered = False
@@ -4021,6 +4027,8 @@ class ChatService:
             if place is None:
                 raise NotFoundError("Topic not found")
             topic = place.room
+            if topic.status == TopicStatus.archived:
+                raise ValidationError("房间已归档，请先取消归档再继续工作")
 
             # Speaker-labelled prompt covering every human message 芝士 hasn't
             # been handed yet — so messages posted without @芝士 are still seen on
@@ -4602,15 +4610,6 @@ class ChatService:
                 yield {"type": "event_block", "block": payload}
         return
 
-    # ---- 私聊：一次不落地的模型调用 ----------------------------------------
-    # 房间里的一轮活是「在一台机器上开一个会话」，因为它要读文件、跑命令、开 PR。
-    # 私聊不做这些事，而机器是按话题分配的——照原样走下去，每个人的私聊都在替一段
-    # 对话占着一台机器。这里换成后端自己问一次模型，然后把回答交给和会话那条路
-    # **同一个**消费口（`_consume_hook_event`）：落库、推帧、结算、记忆抽取因此一样
-    # 也不少，换掉的只是「谁产生了那段文字」。
-
-    #: 一次私聊调用带上多少条历史。这条路是无状态的（没有会话记住上下文），所以
-    #: 上下文得每次自己带；截断是必须的，而尾部才是对话，所以取最新的这些。
     def _schedule_memory_extraction(
         self,
         *,
@@ -4636,9 +4635,7 @@ class ChatService:
         if is_private and private_owner:
             scope, scope_id = MemoryScope.user, private_owner
         elif agent_pool is not None:
-            # What 芝士 learns in a project is its own, the way a teammate's is.
-            # Never the shared pool: two agents in one project would dilute each
-            # other's memory, which is the case this split exists for.
+            # Keep each teammate's learned project knowledge in its own pool.
             scope, scope_id = agent_pool
         else:
             return

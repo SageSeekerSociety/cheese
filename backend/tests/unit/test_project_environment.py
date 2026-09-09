@@ -5,12 +5,98 @@ import os
 import subprocess
 import sys
 import time
+import uuid
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from pydantic import ValidationError
 
 from app.domain.agent import environment_runner
 from app.domain.project.environment import EnvironmentConfig
+
+
+@pytest.mark.parametrize("state", ["ready", "failed"])
+def test_wait_status_returns_when_preparation_finishes(tmp_path, monkeypatch, state):
+    import threading
+
+    environment_runner.write_json(tmp_path / "status.json", {"state": "pending"})
+    checked = threading.Event()
+    original = environment_runner.read_status
+    result = {"state": state}
+    if state == "ready":
+        result.update(
+            pid=os.getpid(),
+            process_identity=environment_runner.process_identity(os.getpid()),
+        )
+    else:
+        result["error"] = "installer failed"
+
+    def observe(directory):
+        status = original(directory)
+        checked.set()
+        return status
+
+    monkeypatch.setattr(environment_runner, "read_status", observe)
+
+    def finish():
+        assert checked.wait(2)
+        environment_runner.write_json(tmp_path / "status.json", result)
+
+    writer = threading.Thread(target=finish)
+    writer.start()
+    try:
+        assert environment_runner.wait_status(tmp_path) == result
+    finally:
+        writer.join(timeout=2)
+
+
+@pytest.mark.parametrize("finish_after", [0.1, 0.65, 1.2])
+@pytest.mark.parametrize("state", ["ready", "failed"])
+def test_wait_status_observes_short_preparation_without_another_rpc(
+    tmp_path, monkeypatch, finish_after, state
+):
+    clock = [0.0]
+    monkeypatch.setattr(environment_runner.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        environment_runner.time,
+        "sleep",
+        lambda delay: clock.__setitem__(0, clock[0] + delay),
+    )
+    monkeypatch.setattr(
+        environment_runner,
+        "read_status",
+        lambda _: {"state": state if clock[0] >= finish_after else "preparing"},
+    )
+    assert environment_runner.wait_status(tmp_path) == {"state": state}
+    assert finish_after <= clock[0] <= finish_after + 0.051
+
+
+def test_wait_status_bounds_pending_wait(tmp_path, monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(environment_runner.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        environment_runner.time,
+        "sleep",
+        lambda delay: clock.__setitem__(0, clock[0] + delay),
+    )
+    assert environment_runner.wait_status(tmp_path) == {"state": "pending"}
+    assert clock[0] == pytest.approx(2)
+
+
+@pytest.fixture(autouse=True)
+def active_room_admission(monkeypatch):
+    from app.domain.agent.device_provider import DeviceChannel
+
+    async def active_room(_self, topic_id):
+        return SimpleNamespace(id=topic_id, resource_id=None)
+
+    monkeypatch.setattr(
+        "app.domain.topic.services.TopicService.lock_for_execution", active_room
+    )
+    monkeypatch.setattr(
+        DeviceChannel, "_session_factory", Mock(return_value=AsyncMock()), raising=False
+    )
 
 
 def launch(tmp_path, config, command=None, *, checkout=True):
@@ -50,6 +136,61 @@ def test_finished_agent_is_stopped_not_failed_preparation(tmp_path):
     result = environment_runner.read_status(tmp_path / "home/.cheese-environment")
     assert result["state"] == "stopped"
     assert "error" not in result
+
+
+@pytest.mark.parametrize("failure", ["setup", "adoption", None])
+def test_prepared_agent_adoption_follows_project_setup(tmp_path, monkeypatch, failure):
+    home, work = tmp_path / "home", tmp_path / "work"
+    home.mkdir()
+    work.mkdir()
+    subprocess.run(["git", "init", "-q", str(work)], check=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("CHEESE_WORK", str(work))
+    monkeypatch.setenv("CHEESE_ENVIRONMENT", "fixture")
+    config = EnvironmentConfig(
+        setup_script="exit 9" if failure == "setup" else "echo setup > setup-done",
+        startup_script='printf "%s" "$PROJECT_VALUE" > startup-value',
+        variables={"PROJECT_VALUE": "project-specific"},
+    )
+    adopted = []
+    root = home / ".cheese-environment"
+    with subprocess.Popen(["sleep", "30"]) as native:
+        try:
+
+            def adopt(environment, directory):
+                assert directory == work.resolve()
+                assert (work / "setup-done").read_text() == "setup\n"
+                assert (work / "startup-value").read_text() == "project-specific"
+                assert environment["PROJECT_VALUE"] == "project-specific"
+                assert "CHEESE_ENVIRONMENT" not in environment
+                assert environment_runner.read_status(root)["state"] == "preparing"
+                adopted.append(native.pid)
+                if failure == "adoption":
+                    raise RuntimeError("room binding failed")
+                return native.pid
+
+            code = environment_runner.run(config.snapshot(), root, [], adopt=adopt)
+            if failure == "setup":
+                assert code == 9
+                assert not adopted
+                assert environment_runner.read_status(root)["state"] == "failed"
+            elif failure == "adoption":
+                assert code == 1
+                assert adopted == [native.pid]
+                result = environment_runner.read_status(root)
+                assert result["state"] == "failed"
+                assert result["error"] == "room binding failed"
+            else:
+                assert code == 0
+                assert adopted == [native.pid]
+                result = environment_runner.read_status(root)
+                assert result["state"] == "ready"
+                assert result["pid"] == native.pid
+        finally:
+            native.terminate()
+            native.wait(timeout=5)
+    if failure is None:
+        assert environment_runner.read_status(root)["state"] == "stopped"
 
 
 def test_dead_installer_is_failed_preparation(tmp_path):
@@ -255,8 +396,8 @@ async def test_channels_ignore_old_failure_but_wait_for_new_attempt(
     monkeypatch.setattr(device_provider, "environment_status", read)
     monkeypatch.setattr(device_provider.asyncio, "sleep", AsyncMock())
     actual = await channel.ensure_ready(
-        project_id="project",
-        topic_id="topic",
+        project_id=uuid.UUID(int=1),
+        topic_id=uuid.UUID(int=2),
         token="token",
         env={"CHEESE_ENVIRONMENT": "{}"},
         memory_scope=None,
@@ -288,8 +429,8 @@ async def test_reconnect_to_preparing_process_never_probes_it_as_dead(monkeypatc
         device_id="machine",
         agent_user_id=1,
         agent_handle="agent",
-        project_id="project",
-        topic_id="topic",
+        project_id=uuid.UUID(int=1),
+        topic_id=uuid.UUID(int=2),
         token="token",
         env={"CHEESE_ENVIRONMENT": "{}"},
         launch=None,
@@ -312,8 +453,8 @@ async def test_reconnect_uses_initial_environment_read_until_next_poll(monkeypat
     read = AsyncMock(side_effect=[{"state": "preparing"}, {"state": "ready"}])
     monkeypatch.setattr(device_provider, "environment_status", read)
     actual = await channel.ensure_ready(
-        project_id="project",
-        topic_id="topic",
+        project_id=uuid.UUID(int=1),
+        topic_id=uuid.UUID(int=2),
         token="token",
         env={"CHEESE_ENVIRONMENT": "{}"},
         memory_scope=None,
@@ -351,8 +492,8 @@ async def test_ready_environment_is_rechecked_only_after_screen_replacement(
     )
     monkeypatch.setattr(device_provider, "environment_status", read)
     request = channel.ensure_ready(
-        project_id="project",
-        topic_id="topic",
+        project_id=uuid.UUID(int=1),
+        topic_id=uuid.UUID(int=2),
         token="token",
         env={"CHEESE_ENVIRONMENT": "{}"},
         memory_scope=None,
@@ -388,8 +529,8 @@ async def test_fast_environment_is_observed_without_two_second_wait(monkeypatch)
 
     monkeypatch.setattr(device_provider, "environment_status", read)
     actual = await channel.ensure_ready(
-        project_id="project",
-        topic_id="topic",
+        project_id=uuid.UUID(int=1),
+        topic_id=uuid.UUID(int=2),
         token="token",
         env={"CHEESE_ENVIRONMENT": "{}"},
         memory_scope=None,
@@ -433,8 +574,8 @@ async def test_long_environment_returns_to_low_frequency_checks(monkeypatch):
     monkeypatch.setattr(device_provider.asyncio, "sleep", sleep)
     monkeypatch.setattr(device_provider, "environment_status", read)
     actual = await channel.ensure_ready(
-        project_id="project",
-        topic_id="topic",
+        project_id=uuid.UUID(int=1),
+        topic_id=uuid.UUID(int=2),
         token="token",
         env={"CHEESE_ENVIRONMENT": "{}"},
         memory_scope=None,

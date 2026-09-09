@@ -68,10 +68,14 @@ function handle(pathname) {
   if (pathname === `/api/projects/${PID}/invitations`) return list(INVITATIONS)
   if (pathname === `/api/projects/${PID}/agents`)
     return list([
-      { id: 'ag1', handle: 'cheese-01', display_name: '芝士', is_default: true, is_active: true },
+      { id: 'ag1', handle: 'cheese', display_name: '芝士', is_default: true, is_active: true },
+      { id: 'ag2', handle: 'reviewer', display_name: '评审员', is_default: false, is_active: true },
+      { id: 'ag3', handle: 'writer', display_name: '文档', is_default: false, is_active: true },
     ])
   if (pathname === `/api/projects/${PID}/topic-unread`) return ok({ t4: 3 })
-  if (pathname === `/api/projects/${PID}/private-unread`) return ok({ ligan: 2, cheese: 1 })
+  // 一个队友一间私聊，所以未读也一个队友一份 —— 键是 `agent:<handle>`。
+  if (pathname === `/api/projects/${PID}/private-unread`)
+    return ok({ ligan: 2, 'agent:cheese': 1, 'agent:reviewer': 4 })
   if (pathname === '/api/topics') return list(TOPICS)
   // 「待定」那一页的小队申请/邀请，也在 1.0 那层。
   if (pathname === '/users/me/team-requests')
@@ -176,6 +180,12 @@ await p.goto(`${BASE}/teams/pending`, { waitUntil: 'domcontentloaded', timeout: 
 await p.getByText('收到的项目邀请').waitFor({ timeout: 30000 })
 await p.waitForTimeout(7000) // 让假后端引出的那条一次性提示自己散掉（小队接口不在这套假数据里）
 await shot('05-accept-page')
+
+// AI 队友：一个队友一行、一颗自己的私聊按钮、一份自己的未读。
+await p.goto(`${BASE}/projects/${PID}/members`, { waitUntil: 'domcontentloaded', timeout: 60000 })
+await p.getByText('AI 队友 · 3').waitFor({ timeout: 30000 })
+await p.getByText('AI 队友 · 3').scrollIntoViewIfNeeded()
+await shot('06-teammates')
 
 console.log('unmatched:', [...unmatched].join(', ') || '(none)')
 await b.close()

@@ -8,7 +8,7 @@
 // 一行 = 一个人 = 两件事：找到他（点开是他的主页，右边是私聊），和管理他（角色、
 // 移出）。管理动作只对 owner / lead 出现，这条判断在后端也各做一次
 // （membership/services.py），前端藏起来只是为了不给人一个必定失败的按钮。
-import type { ProjectInvitation, ProjectMemberRow } from '@/cx_types'
+import type { ProjectAgent, ProjectInvitation, ProjectMemberRow } from '@/cx_types'
 
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -25,6 +25,7 @@ import {
 } from '@/api'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { label, PROJECT_ROLE } from '@/labels'
+import { agentDmKey } from '@/lib/dm'
 import { me as meRef, myHandle } from '@/me'
 import { UserApi } from '@/network/api/users'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -53,20 +54,21 @@ function countLabel(n: number): string {
   return n > 99 ? '99+' : String(n)
 }
 
-// 和芝士那一间私聊今天只有一间（后端按 private_peer 为空存的），答话的是项目的
-// 默认队友。所以私聊按钮只长在默认那一行上——长在每一行会是句假话：点开的是同
-// 一间对话，而队友有好几个。
-const defaultAgentHandle = ref<string | null>(null)
+// AI 队友这一段读的是**队友列表**，不是项目名册：名册上只有平台那个共用身份
+// （一行），而项目里可以有好几个队友，各有各的角色设定、模型和记忆。每个队友一
+// 间私聊，所以每一行都有自己的私聊按钮和自己的未读。
+// 停用的队友不列：它在已经用着它的话题里照常工作，只是不再拿出来选。
+const teammates = ref<ProjectAgent[]>([])
 watch(
   () => props.projectId,
   async (pid) => {
-    defaultAgentHandle.value = null
+    teammates.value = []
     try {
-      const agents = (await listProjectAgents(pid)).data
+      const rows = (await listProjectAgents(pid)).data
       if (props.projectId !== pid) return
-      defaultAgentHandle.value = agents.find((a) => a.is_default)?.handle ?? null
+      teammates.value = rows.filter((a) => a.is_active)
     } catch {
-      // 拿不到就没有私聊按钮，页面其余部分照常——名册不该被一个可选接口拖垮。
+      // 拿不到就不显示这一段，页面其余部分照常——名册不该被一个可选接口拖垮。
     }
   },
   { immediate: true }
@@ -115,7 +117,8 @@ function matches(m: ProjectMemberRow): boolean {
 }
 
 // AI 队友也在项目名册上，但它们不是「人」：没有角色可升降，也不该混在人堆里
-// 排序。它们单独一段，管理入口在 AI 队友那一页。
+// 排序。人这一段把它们滤掉，队友那一段（teammates）单独渲染，管理入口在 AI 队友
+// 那一页。
 // 名册表里存的是**除所有者以外**的人：这个仓里「谁是所有者」记在项目上
 // (Project.owner_handle)，不是一行成员数据。所以他得在这里补出来——否则一个刚建
 // 好的项目会对着它的主人说「还没有成员」，而他正是那个唯一确定在这儿的人。
@@ -133,7 +136,12 @@ const ownerName = computed<string>(() =>
 )
 
 const people = computed(() => roster.value.filter((m) => !m.agent && matches(m)))
-const agents = computed(() => roster.value.filter((m) => m.agent && matches(m)))
+const agents = computed(() =>
+  teammates.value.filter((a) => {
+    const q = query.value.trim().toLowerCase()
+    return !q || a.display_name.toLowerCase().includes(q) || a.handle.toLowerCase().includes(q)
+  })
+)
 
 const groups = computed(() =>
   ROLES.map((role) => ({
@@ -166,10 +174,10 @@ function openDm(m: ProjectMemberRow) {
   void router.push({ name: 'workspace-dm', params: { projectId: props.projectId, peer: m.user_handle } })
 }
 
-// 和芝士那一间的地址是字面量 `cheese`，不是队友的 handle —— 后端存的是
-// 「private_peer 为空」的那一间，一个人一间，跟具体哪个队友无关。
-function openCheeseDm() {
-  void router.push({ name: 'workspace-dm', params: { projectId: props.projectId, peer: 'cheese' } })
+// 队友的私聊地址带 `agent:` 前缀，和人的分开（见 lib/dm.ts）：队友的名字是每个
+// 项目自己起的，可以跟名册上某个人撞。
+function openAgentDm(a: ProjectAgent) {
+  void router.push({ name: 'workspace-dm', params: { projectId: props.projectId, peer: agentDmKey(a.handle) } })
 }
 
 async function run(handle: string, fn: () => Promise<unknown>) {
@@ -305,6 +313,7 @@ async function submitInvite() {
       <v-text-field
         v-if="roster.length > 8"
         v-model="query"
+        autocomplete="off"
         density="compact"
         variant="outlined"
         hide-details
@@ -403,25 +412,28 @@ async function submitInvite() {
 
       <div v-if="agents.length" class="mb-6">
         <div class="t-eyebrow mb-2">AI 队友 · {{ agents.length }}</div>
-        <v-card v-for="a in agents" :key="a.user_handle" class="mb-2" variant="outlined">
+        <v-card v-for="a in agents" :key="a.handle" class="mb-2 agent-row" variant="outlined">
           <div class="d-flex align-center pa-3">
-            <UserAvatar :name="a.name || a.user_handle" :avatar="faceUrl(a)" :size="36" class="mr-3" />
+            <UserAvatar :name="a.display_name || a.handle" avatar="" :size="36" class="mr-3" />
             <div class="min-w-0">
-              <div class="t-title text-truncate">{{ a.name || a.user_handle }}</div>
-              <div class="t-meta c-muted">@{{ a.user_handle }}</div>
+              <div class="t-title text-truncate">
+                {{ a.display_name || a.handle }}
+                <span v-if="a.is_default" class="chip-neutral">默认</span>
+              </div>
+              <div class="t-meta c-muted">@{{ a.handle }}</div>
             </div>
             <v-spacer />
-            <span v-if="a.user_handle === defaultAgentHandle" class="dm-slot">
+            <span class="dm-slot">
               <v-btn
                 variant="text"
                 size="small"
                 icon="mdi-message-outline"
                 aria-label="私聊"
                 title="私聊"
-                @click.stop="openCheeseDm()"
+                @click.stop="openAgentDm(a)"
               />
-              <span v-if="unreadWith('cheese') > 0" class="dm-unread">
-                {{ countLabel(unreadWith('cheese')) }}
+              <span v-if="unreadWith(agentDmKey(a.handle)) > 0" class="dm-unread">
+                {{ countLabel(unreadWith(agentDmKey(a.handle))) }}
               </span>
             </span>
             <v-btn
@@ -479,6 +491,7 @@ async function submitInvite() {
           <div v-else class="mb-5" />
           <v-select
             v-model="inviteRole"
+            autocomplete="off"
             :items="ROLES.map((r) => ({ title: label(PROJECT_ROLE, r), value: r }))"
             label="角色"
             density="comfortable"

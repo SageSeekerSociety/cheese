@@ -515,13 +515,21 @@ export function requestSiteSession(projectId: string): Promise<{ url: string; gr
 // wrapper would only leave a 404 waiting for its first caller. `summary` still
 // arrives on the project card above — it just has no trigger in the UI.
 
-// A 1:1 private chat as a normal Topic (open the chat WS on its id). Without
-// `peerHandle` it's the member's 1:1 with 芝士; with `peerHandle` it's a
-// person-to-person DM between the two humans (shared by both).
-export function getPrivateChat(projectId: string, userHandle: string, peerHandle?: string): Promise<Topic> {
+// A 1:1 private chat as a normal Topic (open the chat WS on its id). `peerHandle`
+// is a person-to-person DM between the two humans (shared by both); `agentHandle`
+// is the member's 1:1 with that AI teammate — one room per teammate, and it stays
+// that teammate's even after the project's default changes. Neither → the
+// project's default teammate.
+export function getPrivateChat(
+  projectId: string,
+  userHandle: string,
+  peerHandle?: string,
+  agentHandle?: string
+): Promise<Topic> {
   const peer = peerHandle ? `&peer_handle=${encodeURIComponent(peerHandle)}` : ''
+  const agent = agentHandle ? `&agent_handle=${encodeURIComponent(agentHandle)}` : ''
   return request<Topic>(
-    `/projects/${encodeURIComponent(projectId)}/private-chat?user_handle=${encodeURIComponent(userHandle)}${peer}`
+    `/projects/${encodeURIComponent(projectId)}/private-chat?user_handle=${encodeURIComponent(userHandle)}${peer}${agent}`
   )
 }
 

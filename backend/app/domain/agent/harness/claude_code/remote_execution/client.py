@@ -14,6 +14,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
+from urllib.request import Request, urlopen
 
 PINNED_VERSION = "2.1.265"
 NATIVE_TOOLS = (
@@ -67,6 +68,20 @@ class RemoteClient:
         return command
 
     def call(self, method, params=None):
+        if self.config.get("kind") == "device":
+            payload = json.dumps({"method": method, "params": params or {}}).encode()
+            request = Request(
+                self.config["url"],
+                data=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Cheese-Token": os.environ["CHEESE_TOKEN"],
+                },
+            )
+            # Mutation IDs belong to the executor ledger. A failed HTTP call must
+            # never generate a fresh ID or replay the operation automatically.
+            with urlopen(request, timeout=660) as response:
+                return json.load(response)
         result = subprocess.run(
             self.command("request"),
             input=json.dumps({"method": method, "params": params or {}}),
@@ -417,8 +432,16 @@ def main():
 
         release(config)
     elif args.mode == "bridge":
-        command = RemoteClient(config).command("bridge", args.args[0])
-        os.execvp(command[0], command)
+        if config.get("kind") == "device":
+            if __package__:
+                from .runtime import bridge
+            else:
+                from runtime import bridge
+
+            bridge(None, args.args[0], call=RemoteClient(config).call)
+        else:
+            command = RemoteClient(config).command("bridge", args.args[0])
+            os.execvp(command[0], command)
     elif args.mode == "guard":
         json.load(sys.stdin)
         print(

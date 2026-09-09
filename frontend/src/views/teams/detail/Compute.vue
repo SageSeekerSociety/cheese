@@ -480,6 +480,7 @@ onBeforeUnmount(() => {
           </v-alert>
           <v-select
             v-model="selectedProject"
+            autocomplete="off"
             :items="projectOptions"
             label="费用与审计归属项目"
             variant="outlined"

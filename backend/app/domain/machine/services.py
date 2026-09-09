@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.errors import (
     AuthenticationRequiredError,
+    ConflictError,
     ForbiddenError,
     NotFoundError,
     ValidationError,
@@ -331,7 +332,7 @@ class MachineService:
         """Return/create one locked lease; admission also locks the team's quota."""
         from app.domain.topic.services import TopicService
 
-        topic = await TopicService(self._session).get_or_404(topic_id)
+        topic = await TopicService(self._session).lock_for_execution(topic_id)
         await self._repo.lock_topic(topic_id)
         # The archive path takes the same topic lock. Re-read after waiting so a
         # first turn cannot provision from the stale pre-lock `active` state.
@@ -376,30 +377,44 @@ class MachineService:
     async def topic_machine(self, topic_id: uuid.UUID) -> ProjectMachine | None:
         return await self._repo.get_active_for_topic(topic_id)
 
-    async def release_topic_machine(self, topic_id: uuid.UUID) -> ProjectMachine | None:
-        """Destroy and release the topic's active Cloud VM, idempotently.
-
-        `released_at` is stamped only after MicroCloud accepts deletion. With no
-        cleanup timer by product decision, pretending release succeeded on a
-        provider failure would permanently hide a billed leak from later archive
-        retries.
-        """
+    async def detach_archived_machine(self, topic_id: uuid.UUID) -> None:
+        """Reopening gets new compute; the recorded cleanup still owns the old VM."""
         await self._repo.lock_topic(topic_id)
         machine = await self._repo.get_active_for_topic(topic_id)
         if machine is None:
-            return None
-        if machine.status not in {MachineStatus.deleting, MachineStatus.deleted}:
-            await self.destroy(machine)
+            return
         binding = await self._devices.topic_binding(topic_id)
-        if (
-            binding is not None
-            and machine.device_id is not None
-            and binding.device_id == machine.device_id
-        ):
+        if binding is not None and binding.device_id == machine.device_id:
             await self._devices.release_topic_device(
-                topic_id, reason="topic cloud machine released on archive"
+                topic_id, reason="reopen after cleanup claim"
             )
-        return await self._repo.mark_released(machine, when=datetime.now(UTC))
+        await self._repo.mark_released(machine, when=datetime.now(UTC))
+
+    async def release_archived_machine(self, machine_id: uuid.UUID) -> None:
+        """Delete the recorded VM even if its room now has a newer allocation."""
+        machine = await self._repo.get(machine_id)
+        if machine is None:
+            return
+        if machine.topic_id is None:
+            raise ValidationError("Cleanup resource is not a room allocation")
+        await self._repo.lock_topic(machine.topic_id)
+        if machine.device_id is not None:
+            pins = await self._devices.list_topic_bindings(machine.device_id)
+            if any(pin.topic_id != machine.topic_id for pin in pins):
+                raise ConflictError("Cloud machine is shared by another room")
+        if machine.status not in {MachineStatus.deleting, MachineStatus.deleted}:
+            if machine.device_id is not None:
+                from app.domain.agent.device_provider import list_device_storage
+
+                if await list_device_storage(machine.device_id):
+                    raise ConflictError("Cloud machine still contains room directories")
+            await self.destroy(machine)
+        binding = await self._devices.topic_binding(machine.topic_id)
+        if binding is not None and binding.device_id == machine.device_id:
+            await self._devices.release_topic_device(
+                machine.topic_id, reason="archived room cleanup completed"
+            )
+        await self._repo.mark_released(machine, when=datetime.now(UTC))
 
     async def ready_topic_devices(
         self, device_id: str | None = None

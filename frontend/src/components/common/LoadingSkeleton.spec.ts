@@ -62,11 +62,18 @@ describe('画几行', () => {
 })
 
 describe('每一行长得像它替代的那一行', () => {
-  it('聊天行：一个头像位 + 名字 + 正文', () => {
+  it('聊天行：一个头像位 + 名字 + 一个气泡', () => {
+    // 消息现在是气泡（分栏，2026-09-09 定），骨架画一条灰线的话，等来的是一个
+    // 带框的块，到货那一刻整列会重排一次。
     const row = rows(draw({ variant: 'chat', rows: 1 }), 'chat')[0]
     expect(row.querySelector('.skel__bone--avatar'), '没有头像位的话，消息到达那一刻整行会往右挪').not.toBeNull()
     expect(row.querySelector('.skel__bone--name')).not.toBeNull()
-    expect(row.querySelector('.skel__bone--line')).not.toBeNull()
+    expect(row.querySelector('.skel__bubble'), '画的必须是气泡，不是一条线').not.toBeNull()
+  })
+
+  it('聊天骨架里两侧都有 —— 真的那一列自己发的靠右', () => {
+    const container = draw({ variant: 'chat', rows: 4 })
+    expect(container.querySelector('.skel__chat--self')).not.toBeNull()
   })
 
   it('名册行：一个头像位 + 两行字 + 右边一个小标', () => {

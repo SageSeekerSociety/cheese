@@ -6,9 +6,7 @@
 // handle→name and id→title maps are provided by the caller (roster / topics).
 import type { Block } from '../cx_types'
 
-import DOMPurify from 'dompurify'
-
-import { markdown } from './markdown'
+import { markdown, sanitizeRendered } from './markdown'
 
 export interface RefMaps {
   mentionNames: Record<string, string>
@@ -55,7 +53,7 @@ export function highlightTokens(html: string, maps: RefMaps): string {
 // breaks:true — this is chat: a single newline the author typed IS a line
 // break; strict-markdown paragraph rules would silently swallow it.
 export function renderMarkdown(text: string, maps: RefMaps): string {
-  return DOMPurify.sanitize(
+  return sanitizeRendered(
     highlightTokens(markdown.parse(text, { async: false, gfm: true, breaks: true }) as string, maps)
   )
 }
@@ -64,7 +62,7 @@ export function renderMarkdown(text: string, maps: RefMaps): string {
 // newlines. The newlines survive here as literal \n; the host element must
 // render with `white-space: pre-wrap` or the browser collapses them.
 export function renderPlain(text: string, maps: RefMaps): string {
-  return DOMPurify.sanitize(highlightTokens(escapeHtml(text), maps))
+  return sanitizeRendered(highlightTokens(escapeHtml(text), maps))
 }
 
 interface FenceState {

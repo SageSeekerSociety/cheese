@@ -42,9 +42,15 @@
           </v-col>
           <v-col cols="8">
             <v-list-subheader inset>昵称</v-list-subheader>
-            <v-text-field v-model="selectedNickname" v-bind="nicknameProps"></v-text-field>
+            <v-text-field
+              id="field-selectedNickname"
+              v-model="selectedNickname"
+              autocomplete="nickname"
+              name="selectedNickname"
+              v-bind="nicknameProps"
+            ></v-text-field>
             <v-list-subheader inset>个人简介</v-list-subheader>
-            <v-text-field v-model="selectedIntro" :counter="60" v-bind="introProps"></v-text-field>
+            <v-text-field v-model="selectedIntro" autocomplete="off" :counter="60" v-bind="introProps"></v-text-field>
           </v-col>
         </v-row>
         <v-row>

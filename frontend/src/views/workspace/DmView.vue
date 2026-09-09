@@ -4,16 +4,18 @@ import type { Topic } from '@/cx_types'
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
-import { getPrivateChat } from '@/api'
+import { getPrivateChat, listProjectAgents } from '@/api'
 import ChatPanel from '@/components/ChatPanel.vue'
+import { agentHandleOf } from '@/lib/dm'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 // 私聊 (飞书私聊): a normal 1:1 chat in the content area — no document, no PR
 // header, no accept box. `peer` is the URL's own word for who you are talking
-// to: the literal `cheese` for the 芝士 DM, otherwise a teammate's handle. It
-// lives in the address bar so a DM can be refreshed, shared and navigated back
-// to like anything else; it used to exist only as a component ref, which is why
+// to: `agent:<handle>` for an AI teammate, otherwise a person's handle (see
+// lib/dm.ts for why a teammate does not get the bare handle). It lives in the
+// address bar so a DM can be refreshed, shared and navigated back to like
+// anything else; it used to exist only as a component ref, which is why
 // reloading the page dropped you back into a topic.
 defineOptions({ name: 'DmView' })
 
@@ -21,31 +23,37 @@ const props = defineProps<{ projectId: string; peer: string }>()
 const router = useRouter()
 const store = useWorkspaceStore()
 
-const CHEESE = 'cheese'
-const peerHandle = computed<string | null>(() => (props.peer === CHEESE ? null : props.peer))
+const agentHandle = computed<string | null>(() => agentHandleOf(props.peer))
+const peerHandle = computed<string | null>(() => (agentHandle.value === null ? props.peer : null))
 
 const topic = ref<Topic | null>(null)
 const loading = ref(false)
 const error = ref<string | null>(null)
+// The teammate's own name, once the room is open — a project may have several
+// and 「芝士」 for all of them would make the header a lie.
+const agentName = ref<string | null>(null)
 
-// Header label: the peer's name for a person DM, else 芝士.
+// Header label: the peer's name for a person DM, else this teammate's.
 const title = computed<string>(() => {
-  if (peerHandle.value === null) return '芝士'
+  if (agentHandle.value !== null) return agentName.value || agentHandle.value
   const m = store.members.find((x) => x.user_handle === peerHandle.value)
-  return m?.name || peerHandle.value
+  return m?.name || peerHandle.value || ''
 })
 
 async function load() {
   const pid = props.projectId
   const peer = peerHandle.value
+  const agent = agentHandle.value
   const me = myHandle()
   loading.value = true
   error.value = null
   topic.value = null
+  agentName.value = null
   try {
-    const fetched = await getPrivateChat(pid, me, peer ?? undefined)
+    const fetched = await getPrivateChat(pid, me, peer ?? undefined, agent ?? undefined)
     if (props.projectId !== pid || peerHandle.value !== peer) return
     topic.value = fetched
+    if (agent !== null) void loadAgentName(pid, agent)
     // Opening a DM = reading it — without this its badge lights up and never clears.
     store.markDmRead(fetched.id, props.peer)
   } catch (e) {
@@ -54,6 +62,19 @@ async function load() {
     }
   } finally {
     if (props.projectId === pid && peerHandle.value === peer) loading.value = false
+  }
+}
+
+// 队友的显示名不在名册里（名册是人 + 平台那个共用身份），得问队友列表。拿不到
+// 就退回 handle：一个私聊不该因为标题写不出名字就打不开。
+async function loadAgentName(pid: string, handle: string) {
+  try {
+    const found = (await listProjectAgents(pid)).data.find((a) => a.handle === handle)
+    if (props.projectId === pid && agentHandle.value === handle) {
+      agentName.value = found?.display_name || null
+    }
+  } catch {
+    // 标题退回 handle。
   }
 }
 
@@ -112,7 +133,7 @@ async function handleUpgradeMessage(messageId: string) {
       style="min-height: 0"
       :topic="topic"
       :pr-header="false"
-      :always-summon="peerHandle === null"
+      :always-summon="agentHandle !== null"
       :title-override="title"
       back-label="成员"
       :members="store.members"

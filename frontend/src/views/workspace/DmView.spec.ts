@@ -14,10 +14,15 @@ import { render, waitFor } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getPrivateChat = vi.fn()
+const listProjectAgents = vi.fn()
 
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
-  return { ...actual, getPrivateChat: (...a: unknown[]) => getPrivateChat(...a) }
+  return {
+    ...actual,
+    getPrivateChat: (...a: unknown[]) => getPrivateChat(...a),
+    listProjectAgents: (...a: unknown[]) => listProjectAgents(...a),
+  }
 })
 
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }))
@@ -85,12 +90,15 @@ function stubChatBackend() {
 
 beforeEach(() => {
   getPrivateChat.mockReset()
+  listProjectAgents.mockReset().mockResolvedValue({
+    data: [{ handle: 'reviewer', display_name: '评审', is_default: false, is_active: true }],
+  })
   localStorage.setItem('cheesex.me', JSON.stringify({ id: '1', handle: 'me', name: 'me', token: '' }))
   stubChatBackend()
 })
 
-function open() {
-  return render(Dm, { props: { projectId: 'p1', peer: 'cheese' }, global: { plugins: [vuetify] } })
+function open(peer = 'agent:reviewer') {
+  return render(Dm, { props: { projectId: 'p1', peer }, global: { plugins: [vuetify] } })
 }
 
 const settle = async () => {
@@ -118,5 +126,37 @@ describe('私聊的加载态只有一层', () => {
     await waitFor(() => expect(container.querySelector('.messages [role="status"][aria-busy="true"]')).not.toBeNull())
     expect(container.querySelector('.pr-header'), '骨架上面得是头，不是骨架自己占着头的位置').not.toBeNull()
     expect(container.querySelectorAll('[role="status"][aria-busy="true"]').length, '一次等待只画一处').toBe(1)
+  })
+})
+
+// 地址栏里那一段既是「我在跟谁说话」，也是未读表的键。人用自己的 handle，队友用
+// `agent:<handle>` —— 队友的名字是每个项目自己起的，不加前缀就会和同名的人撞成
+// 一间对话。
+describe('私聊的地址说的是跟谁', () => {
+  it('agent: 开头 → 问的是这个队友，不是一个叫这个名字的人', async () => {
+    getPrivateChat.mockResolvedValue(dmTopic)
+    open('agent:reviewer')
+    await waitFor(() => expect(getPrivateChat).toHaveBeenCalled())
+    expect(getPrivateChat).toHaveBeenCalledWith('p1', 'me', undefined, 'reviewer')
+  })
+
+  it('没有前缀 → 那是个人，队友那一栏空着', async () => {
+    getPrivateChat.mockResolvedValue(dmTopic)
+    open('ligan')
+    await waitFor(() => expect(getPrivateChat).toHaveBeenCalled())
+    expect(getPrivateChat).toHaveBeenCalledWith('p1', 'me', 'ligan', undefined)
+  })
+
+  it('头上写的是这个队友自己的名字 —— 项目里有好几个，都叫「芝士」就是句假话', async () => {
+    getPrivateChat.mockResolvedValue(dmTopic)
+    const { findByText } = open('agent:reviewer')
+    expect(await findByText('评审')).toBeTruthy()
+  })
+
+  it('队友名单拿不到也照样能聊 —— 标题退回 handle', async () => {
+    getPrivateChat.mockResolvedValue(dmTopic)
+    listProjectAgents.mockRejectedValue(new Error('boom'))
+    const { findByText } = open('agent:reviewer')
+    expect(await findByText('reviewer')).toBeTruthy()
   })
 })

@@ -22,7 +22,10 @@
         <div class="mb-8">
           <v-form @submit.prevent="submit">
             <v-text-field
+              id="field-email"
               v-model="email"
+              autocomplete="email"
+              name="email"
               label="注册邮箱"
               variant="outlined"
               :loading="isSubmitting"

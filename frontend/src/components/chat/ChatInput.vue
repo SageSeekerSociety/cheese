@@ -17,6 +17,7 @@
     <div class="d-flex align-center">
       <v-textarea
         v-model="userInput"
+        autocomplete="off"
         rows="1"
         max-rows="5"
         auto-grow

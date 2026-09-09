@@ -8,6 +8,7 @@
       <div class="section-toolbar__actions">
         <v-select
           v-model="sortByModel"
+          autocomplete="off"
           :items="sortByItems"
           label="排序字段"
           density="comfortable"
@@ -17,6 +18,7 @@
         />
         <v-select
           v-model="sortOrderModel"
+          autocomplete="off"
           :items="sortOrderItems"
           label="排序方向"
           density="comfortable"

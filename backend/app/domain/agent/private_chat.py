@@ -12,13 +12,15 @@ from app.domain.agent.harness.claude_code.remote_execution.private import target
 from app.domain.topic.services import TopicService
 
 
-def execution_target(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
+def execution_target(
+    project_id: uuid.UUID, topic_id: uuid.UUID, resource_id: uuid.UUID | None = None
+) -> dict:
     if not settings.private_chat_device_id:
         raise RuntimeError("私聊中心执行机尚未配置，本轮没有启动")
     return {
-        **target(topic_id, settings.private_chat_executor_image),
+        **target(resource_id or topic_id, settings.private_chat_executor_image),
         "device_id": settings.private_chat_device_id,
-        "home": device_home_dir(project_id, topic_id),
+        "home": device_home_dir(project_id, resource_id or topic_id),
     }
 
 
@@ -26,7 +28,7 @@ async def for_topic(db, topic_id: uuid.UUID) -> dict | None:
     place = await TopicService(db).place_or_404(topic_id)
     await db.commit()
     if place.room.is_private:
-        return execution_target(place.project_id, place.room_id)
+        return execution_target(place.project_id, place.room_id, place.room.resource_id)
     return settings.agent_execution_targets.get(str(topic_id))
 
 

@@ -1,16 +1,292 @@
 """Device screen launcher: hooks settings + self-contained launch command."""
 
 import contextlib
+import json
 import os
 import re
+import shutil
+import socket
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 import uuid
 
 import pytest
 
-from app.domain.agent.harness.claude_code import device_launch
+from app.domain.agent.harness.claude_code import device_launch, warm_session
+
+
+@pytest.mark.parametrize("workspace_exit", [0, 7])
+@pytest.mark.parametrize("adoption_exit", [0, 9])
+@pytest.mark.parametrize("stage_exit", [0, 13])
+def test_warm_checkout_overlaps_configuration_but_precedes_adoption(
+    tmp_path, monkeypatch, workspace_exit, adoption_exit, stage_exit
+):
+    owner = tmp_path / "owner"
+    home = tmp_path / "room"
+    work = tmp_path / "work"
+    warm = owner / ".cheese/native-warm"
+    warm.mkdir(parents=True)
+    (warm / "state.json").write_text("{}")
+    (warm / "ready").touch()
+    (warm.parent / "warm-native-runner.py").write_text(
+        "import os, sys\nfrom pathlib import Path\n"
+        "def _native_alive(state):\n    return True\n"
+        "def stage(*args, **kwargs):\n"
+        f"    if {stage_exit}: raise SystemExit({stage_exit})\n"
+        "def adopt_room(directory):\n"
+        "    assert (Path(os.environ['CHEESE_WORK']) / 'complete').exists()\n"
+        "    (Path(os.environ['HOME']) / 'adopted').touch()\n"
+        f"    return {adoption_exit}\n"
+        "def connection(directory, project, topic):\n"
+        "    assert (Path(os.environ['HOME']) / 'adopted').exists()\n"
+        "    return {'command': ['tmux']}\n"
+    )
+    binary = owner / ".cheese/claude/versions" / device_launch.CLAUDE_PINNED_VERSION
+    binary.parent.mkdir(parents=True)
+    binary.write_text("#!/bin/sh\necho '2.1.261 (fixture)'\n")
+    binary.chmod(0o700)
+    tmux = tmp_path / "tmux"
+    tmux.write_text('#!/bin/sh\ntouch "$HOME/attached"\n')
+    tmux.chmod(0o700)
+    monkeypatch.setattr(
+        device_launch,
+        "CHEESE_WORKSPACE_BRINGUP",
+        'touch "$CHEESE_WORK/waiting"\n'
+        "for attempt in $(seq 1 300); do\n"
+        '  if [ -f "$CHEESE_WORK/release" ]; then\n'
+        '    touch "$CHEESE_WORK/complete"\n'
+        f"    return {workspace_exit}\n"
+        "  fi\n  sleep 0.01\ndone\nreturn 99\n",
+    )
+    script = tmp_path / "launch.sh"
+    script.write_text(device_launch.build_launch_script())
+    with (tmp_path / "launcher.log").open("w") as output:
+        process = subprocess.Popen(
+            ["sh", str(script)],
+            env={
+                "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"],
+                "HOME": str(owner),
+                "CHEESE_HOME": str(home),
+                "CHEESE_WORK": str(work),
+                "CHEESE_PROJECT": str(uuid.uuid4()),
+                "CHEESE_TOPIC": str(uuid.uuid4()),
+                "CHEESE_RV_SOCK": str(tmp_path / "rv.sock"),
+                "CHEESE_RV_TOKEN_FILE": str(tmp_path / "rv.token"),
+            },
+            stdout=output,
+            stderr=output,
+        )
+        try:
+            if stage_exit:
+                assert process.wait(timeout=5) == stage_exit
+                assert not (work / "waiting").exists()
+                assert not (home / "adopted").exists()
+                return
+            deadline = time.monotonic() + 3
+            while not (home / ".claude/cheese-drain.env").exists():
+                assert process.poll() is None
+                assert time.monotonic() < deadline
+                time.sleep(0.01)
+            assert (work / "waiting").exists()
+            assert not (work / "complete").exists()
+            assert not (home / "adopted").exists()
+            (work / "release").touch()
+            assert process.wait(timeout=5) == (workspace_exit or adoption_exit)
+            assert (home / "adopted").exists() == (workspace_exit == 0)
+            assert (home / "attached").exists() == (
+                workspace_exit == 0 and adoption_exit == 0
+            )
+        finally:
+            if work.exists():
+                (work / "release").touch()
+            if process.poll() is None:
+                process.wait(timeout=5)
+
+
+@pytest.mark.parametrize("ready", [False, True])
+def test_unavailable_spare_still_prepares_an_ordinary_workspace(
+    tmp_path, monkeypatch, ready
+):
+    owner = tmp_path / "owner"
+    warm = owner / ".cheese/native-warm"
+    warm.mkdir(parents=True)
+    (warm / "state.json").write_text("{}")
+    if ready:
+        (warm / "ready").touch()
+    (warm.parent / "warm-native-runner.py").write_text(
+        "def _native_alive(state):\n    return False\n"
+        "def stage(*args, **kwargs):\n    raise SystemExit(99)\n"
+    )
+    binary = owner / ".cheese/claude/versions" / device_launch.CLAUDE_PINNED_VERSION
+    binary.parent.mkdir(parents=True)
+    binary.write_text("#!/bin/sh\necho '2.1.261 (fixture)'\n")
+    binary.chmod(0o700)
+    work = tmp_path / "work"
+    monkeypatch.setattr(
+        device_launch,
+        "CHEESE_WORKSPACE_BRINGUP",
+        'touch "$CHEESE_WORK/ordinary-workspace"\nreturn 42\n',
+    )
+    script = tmp_path / "launch.sh"
+    script.write_text(device_launch.build_launch_script())
+    result = subprocess.run(
+        ["sh", str(script)],
+        env={
+            "PATH": os.environ["PATH"],
+            "HOME": str(owner),
+            "CHEESE_HOME": str(tmp_path / "home"),
+            "CHEESE_WORK": str(work),
+            "CHEESE_PROJECT": str(uuid.uuid4()),
+            "CHEESE_TOPIC": str(uuid.uuid4()),
+        },
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 42, result.stderr
+    assert (work / "ordinary-workspace").exists()
+    assert not (warm / "binding.json").exists()
+
+
+def test_native_claim_replaces_all_provider_proxy_variants(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    work = tmp_path / "work"
+    work.mkdir()
+    token = tmp_path / "rv-token"
+    token.write_text("fixture")
+    (tmp_path / "ready").touch()
+    (tmp_path / "environment.json").write_text(
+        json.dumps(
+            {
+                name: "http://old-provider"
+                for name in (
+                    "HTTPS_PROXY",
+                    "https_proxy",
+                    "HTTP_PROXY",
+                    "http_proxy",
+                    "ALL_PROXY",
+                    "all_proxy",
+                )
+            }
+        )
+    )
+    monkeypatch.setattr(warm_session, "_native_alive", lambda state: True)
+    frames = []
+    with tempfile.TemporaryDirectory(prefix="cw-") as sockets:
+        path = sockets + "/claim"
+        (tmp_path / "state.json").write_text(
+            json.dumps(
+                {
+                    "home": str(home),
+                    "workspace": str(work.resolve()),
+                    "rendezvous": sockets + "/rv",
+                    "token_file": str(token),
+                    "claim_socket": path,
+                    "claim_auth": "fixture",
+                }
+            )
+        )
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+            server.bind(path)
+            server.listen(1)
+            server.settimeout(3)
+
+            def receive():
+                connection, _ = server.accept()
+                with connection, connection.makefile("rb") as reader:
+                    frames.append(json.loads(reader.readline()))
+
+            receiver = threading.Thread(target=receive)
+            receiver.start()
+            warm_session.bind(
+                tmp_path,
+                project_id=str(uuid.uuid4()),
+                topic_id=str(uuid.uuid4()),
+                work=work,
+                system_prompt="fixture",
+                settings={
+                    "env": {"HTTPS_PROXY": "http://room-meter", "NO_PROXY": "localhost"}
+                },
+            )
+            receiver.join(timeout=3)
+            assert not receiver.is_alive()
+    persisted = json.loads((home / ".claude/settings.json").read_text())["env"]
+    for environment in (frames[0]["env"], persisted):
+        assert (
+            environment["HTTPS_PROXY"]
+            == environment["https_proxy"]
+            == "http://room-meter"
+        )
+        assert environment["HTTP_PROXY"] == environment["http_proxy"] == ""
+        assert environment["ALL_PROXY"] == environment["all_proxy"] == ""
+        assert environment["NO_PROXY"] == environment["no_proxy"] == "localhost"
+
+
+@pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux is required")
+def test_prepared_topic_is_dead_when_only_its_drainer_survives(tmp_path):
+    directory = tmp_path / ".cheese/native-warm"
+    directory.mkdir(parents=True)
+    runner = directory.parent / "warm-native-runner.py"
+    shutil.copyfile(warm_session.__file__, runner)
+    topic = str(uuid.uuid4())
+    (directory / "binding.json").write_text(json.dumps({"topic_id": topic}))
+    with tempfile.TemporaryDirectory(prefix="cw-") as socket_dir:
+        socket_path = socket_dir + "/s"
+
+        def tmux(*args):
+            return subprocess.check_output(
+                ["tmux", "-S", socket_path, *args], text=True
+            ).strip()
+
+        try:
+            pane = tmux(
+                "-f",
+                "/dev/null",
+                "new-session",
+                "-d",
+                "-P",
+                "-F",
+                "#{pane_id}",
+                "-s",
+                "native-warm",
+                "sleep 30",
+            )
+            (directory / "state.json").write_text(
+                json.dumps({"socket": socket_path, "pane": pane})
+            )
+            tmux(
+                "new-window",
+                "-d",
+                "-t",
+                "native-warm",
+                "-n",
+                "cheese-drain",
+                "sleep 30",
+            )
+
+            def probe():
+                return subprocess.check_output(
+                    ["sh", "-c", device_launch.DEVICE_ALIVE_PROBE],
+                    text=True,
+                    env={
+                        **os.environ,
+                        "HOME": str(tmp_path),
+                        "CHEESE_ALIVE_TOPIC": topic,
+                    },
+                ).strip()
+
+            assert probe() == "alive"
+            tmux("kill-pane", "-t", pane)
+            assert tmux("list-panes", "-a", "-F", "#{pane_dead}") == "0"
+            assert probe() == "dead"
+        finally:
+            subprocess.run(
+                ["tmux", "-S", socket_path, "kill-server"], capture_output=True
+            )
 
 
 def test_liveness_probe_distinguishes_a_running_topic_from_an_exited_one(tmp_path):
@@ -55,9 +331,11 @@ def test_hooks_settings_wire_command_hook_to_forwarder():
     for event in events:
         entry = s["hooks"][event][0]
         assert entry["hooks"][0] == {"type": "command", "command": "cheese-hook"}
-    # The picker AskUserQuestion draws in the screen's terminal is unreachable
-    # for a remote user too — denied in settings as well as on the launch line.
-    assert s["permissions"]["deny"] == ["AskUserQuestion"]
+    # Both denied tools can leave a turn with no way to end: AskUserQuestion
+    # draws its picker in the screen's terminal where no remote user can reach
+    # it, and WebFetch has a step with no deadline. Denied in settings as well
+    # as on the launch line — a deny in only one of the two is not a deny.
+    assert set(s["permissions"]["deny"]) == {"AskUserQuestion", "WebFetch"}
 
 
 def test_build_screen_launch_shapes_command_and_env():
@@ -270,6 +548,62 @@ def test_drainer_config_is_rewritten_each_launch_and_read_each_pass():
         assert line in script
 
 
+def test_adoption_upgrades_only_the_old_sender_process(tmp_path):
+    import threading
+    from pathlib import Path
+
+    home = tmp_path / "home"
+    native_home = home / ".claude"
+    native_home.mkdir(parents=True)
+    drain = native_home / "cheese-drain"
+    drain.write_text(
+        "#!/bin/sh\nexec python3 - \"$0\" <<'PY'\n"
+        "import os, sys, time\nfrom pathlib import Path\n"
+        "Path(sys.argv[1] + '.pid').write_text(str(os.getpid()))\n"
+        "while True: time.sleep(1)\nPY\n"
+    )
+    old = subprocess.Popen(["sh", str(drain)])
+    native = subprocess.Popen(["sleep", "30"])
+    reaper = threading.Thread(target=old.wait)
+    reaper.start()
+    try:
+        deadline = time.monotonic() + 5
+        while not Path(str(drain) + ".pid").exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert Path(str(drain) + ".pid").exists()
+        drain.write_text(_drain_body())
+        script = device_launch.build_launch_script()
+        adoption = script.split('    DRAIN_PID="', 1)[1].split("\n  else\n", 1)[0]
+        log = tmp_path / "tmux-calls"
+        wrapper = (
+            'set -e\natmux() { printf "%s\\n" "$*" >> "$TEST_LOG"; }\n'
+            + '    DRAIN_PID="'
+            + adoption
+        )
+        result = subprocess.run(
+            ["sh", "-c", wrapper],
+            env={
+                **os.environ,
+                "HOME": str(home),
+                "SESSION": "fixture",
+                "TEST_LOG": str(log),
+            },
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        assert result.returncode == 0, result.stderr
+        assert old.poll() is not None
+        assert native.poll() is None
+        assert "new-window -d -t fixture -n cheese-drain" in log.read_text()
+    finally:
+        for process in (old, native):
+            if process.poll() is None:
+                process.terminate()
+            process.wait(timeout=5)
+        reaper.join(timeout=5)
+
+
 def test_no_tmux_branch_keeps_the_drainer_in_claudes_own_tree():
     """Without tmux, claude stays in the launcher's process tree — a drainer
     backgrounded there genuinely shares its fate, so that shape stays."""
@@ -359,11 +693,12 @@ def test_running_drainer_uses_rotated_delivery_configuration(tmp_path):
         proc.wait(timeout=5)
 
 
-def test_drainer_prunes_expired_events_without_resetting_sequence(tmp_path):
+def test_drainer_prunes_only_claims_and_keeps_unacknowledged_events(tmp_path):
     drain, spool, env = _write_drainer(tmp_path, curl_response='{"code":500}')
-    expired = [spool / "0000000000000000001.old", spool / ".n0000000000000000001"]
+    expired = [spool / ".n0000000000000000001"]
+    unacknowledged = spool / "0000000000000000001.old"
     sequence = spool / ".seq"
-    for path in [*expired, sequence]:
+    for path in [*expired, sequence, unacknowledged]:
         path.write_text("1")
         os.utime(path, (time.time() - 90000, time.time() - 90000))
     fresh = spool / "0000000000000000002.fresh"
@@ -374,6 +709,7 @@ def test_drainer_prunes_expired_events_without_resetting_sequence(tmp_path):
         while any(path.exists() for path in expired) and time.monotonic() < deadline:
             time.sleep(0.01)
         assert all(not path.exists() for path in expired)
+        assert unacknowledged.exists()
         assert fresh.exists()
         assert sequence.read_text() == "1"
     finally:
@@ -1656,3 +1992,79 @@ def test_declaring_a_port_writes_it_on_the_machine(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert (tmp_path / ".claude/cheese-preview.port").read_text() == "5173\n"
+
+
+def test_no_mcp_server_is_planted_in_a_sandbox():
+    """The platform plants NO MCP server, on either delivery path.
+
+    An earlier revision planted `mcp-server-fetch` to get a fetch path a
+    deadline could reach. Measured against the same pages, that server extracts
+    badly where it matters (a list-style page yields 622 characters against
+    24,000+ from a converter that does not guess at "main content") and returns
+    the raw page instead of an answer (33k tokens for one Wikipedia article,
+    against tens of tokens from WebFetch's own summarisation). Claude Code's own
+    tool description also tells the model to PREFER an MCP fetch tool whenever
+    one exists, so planting one does not add a fallback — it replaces the better
+    default. Fetching moves to a platform-side service instead.
+    """
+    script = device_launch.build_launch_script(
+        sync_on_stop=True, system_prompt="", ca_pem=""
+    )
+    assert "mcpServers" not in _claude_json_from(script)
+
+    from app.domain.agent.harness.claude_code.session_launch import (
+        build_session_launch,
+    )
+
+    spec = build_session_launch(config_dir="/cfg", workdir="/work", system_prompt="x")
+    container = json.loads(
+        next(f.content for f in spec.files if f.name == ".claude.json")
+    )
+    assert "mcpServers" not in container
+
+
+def test_a_summarisation_stream_that_stalls_is_bounded():
+    """The one hang shape a setting still reaches.
+
+    Not WebFetch's own hang: measured on 2.1.224 and 2.1.261, its page fetch is
+    bounded (60 s) and its domain preflight is bounded (10 s); the step with no
+    deadline is the model call it makes on the extracted text, which no setting
+    reaches. This asserts the watchdog we CAN set stays set.
+    """
+    assert device_launch.hooks_settings()["env"]["CLAUDE_ENABLE_STREAM_WATCHDOG"]
+
+
+def _claude_json_from(script: str) -> dict:
+    """The `.claude.json` the launch script writes, as the shell would leave it."""
+    line = next(x for x in script.splitlines() if "hasCompletedOnboarding" in x)
+    return json.loads(line.replace("$CHEESE_WORK", "/work"))
+
+
+def test_webfetch_is_denied_on_both_delivery_paths():
+    """WebFetch can hang a turn open with no way out, so it is denied outright.
+
+    Measured on this platform: two of two attempts on one page ran 1,028 s and
+    390 s and were ended by hand, while a larger page returned in 5 s. Reading
+    the binary shows why nothing on our side can bound it — the page fetch is
+    capped at 60 s and the domain preflight at 10 s, but the model call made on
+    the extracted text has no timeout at all.
+
+    `cheese fetch` is the replacement and is not a downgrade: end to end across
+    20 real sites it reads 19, every rung of it is bounded, and on the page that
+    hung for 17 minutes it answers in 10 seconds.
+
+    The deny has to hold on BOTH paths — the launch command and the settings
+    file — because a deny that lives in only one of them is not a deny.
+    """
+    from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD
+    from app.domain.agent.harness.claude_code.session_launch import (
+        build_session_launch,
+    )
+
+    assert "WebFetch" in CLAUDE_BASE_CMD, "the launch command must carry the deny"
+
+    spec = build_session_launch(config_dir="/cfg", workdir="/work", system_prompt="x")
+    settings = json.loads(
+        next(f.content for f in spec.files if f.name == "settings.json")
+    )
+    assert "WebFetch" in settings["permissions"]["deny"]

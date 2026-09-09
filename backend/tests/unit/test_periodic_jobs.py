@@ -128,7 +128,7 @@ def _jobs():
 
     scheduler = SimpleNamespace(
         tick=_noop,
-        reap_idle_device_screens=_noop,
+        consolidate_idle_device_screens=_noop,
         poll_open_prs=_noop,
         open_draft_prs=_noop,
         sync_upstreams=_noop,
@@ -150,10 +150,6 @@ def _jobs():
         ("notification email drain", "notification_email_drain_interval_s"),
         ("task deadline sweep", "task_deadline_sweep_interval_s"),
         ("chat progress reminder", "chat_progress_check_interval_s"),
-        # Same shape of absence one layer down: a worktree and a device home
-        # nobody removes is a disk that fills at 1-4 GB a topic (141 GB and
-        # 162 GB on the dev box, 2026-09-03) with no error anywhere.
-        ("topic storage sweep", "topic_storage_sweep_interval_s"),
     ],
 )
 def test_the_jobs_nobody_was_running_are_scheduled(name, interval_setting):

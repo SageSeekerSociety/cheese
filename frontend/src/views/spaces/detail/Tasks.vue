@@ -6,6 +6,7 @@
       <div class="d-md-none category-nav-mobile mb-4">
         <v-select
           v-model="selectedCategoryIdModel"
+          autocomplete="off"
           :items="categoryFilterOptions"
           density="comfortable"
           variant="outlined"
@@ -22,6 +23,7 @@
           <v-form class="search-container flex-grow-1" @submit.prevent="submitSearch">
             <v-text-field
               v-model="searchQueryInput"
+              autocomplete="off"
               density="compact"
               hide-details
               :placeholder="t('spaces.detail.tasks.searchPlaceholder')"
@@ -36,6 +38,7 @@
           <!-- Sort Dropdown -->
           <v-select
             v-model="selectedSortOption"
+            autocomplete="off"
             :items="sortOptions"
             item-title="title"
             item-value="value"

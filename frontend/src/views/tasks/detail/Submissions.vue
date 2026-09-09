@@ -13,6 +13,7 @@
             <v-select
               v-if="showIdentitySelect && identityOptions.length > 1"
               v-model="selectedIdentity"
+              autocomplete="off"
               :items="identityOptions"
               label="查看身份"
               hide-details

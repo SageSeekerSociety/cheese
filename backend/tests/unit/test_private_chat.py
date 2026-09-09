@@ -30,6 +30,16 @@ def test_private_execution_does_not_select_a_project_machine(monkeypatch):
     assert config["mcp_servers"] == []
 
 
+def test_reopened_chat_uses_a_new_container_and_control_home(monkeypatch):
+    monkeypatch.setattr(settings, "private_chat_device_id", "central")
+    project, topic, resource = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    before = private_chat.execution_target(project, topic)
+    after = private_chat.execution_target(project, topic, resource)
+    assert before["command"] != after["command"]
+    assert before["home"] != after["home"]
+    assert after["topic"] == str(resource)
+
+
 @pytest.mark.anyio
 async def test_private_control_uses_central_device_transport(monkeypatch):
     monkeypatch.setattr(settings, "private_chat_device_id", "central")

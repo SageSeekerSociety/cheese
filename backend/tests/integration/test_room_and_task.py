@@ -130,7 +130,11 @@ def test_archiving_the_room_still_takes_its_tasks(client):
     room_id = _room(client, project_id)
     task = _task(client, project_id, room_id, "修登录")
 
-    r = client.post(f"/topics/{room_id}/archive", json={"by": "alice"})
+    r = client.post(
+        f"/topics/{room_id}/archive",
+        json={"by": "alice"},
+        headers=session_auth_headers("alice"),
+    )
     assert r.status_code == 200
 
     assert _status(client, room_id) == "archived"
