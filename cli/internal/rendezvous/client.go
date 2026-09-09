@@ -150,10 +150,12 @@ func Dial(ctx context.Context, path, token string, opts Options) (*Client, error
 	if wait <= 0 {
 		wait = 90 * time.Second
 	}
+	dialStarted := time.Now()
 	conn, err := dialWhenReady(ctx, path, wait)
 	if err != nil {
 		return nil, err
 	}
+	connectedAt := time.Now()
 
 	c := &Client{
 		path:    path,
@@ -164,6 +166,7 @@ func Dial(ctx context.Context, path, token string, opts Options) (*Client, error
 	}
 	c.lastBeat.set(time.Now())
 	go c.readLoop(conn)
+	c.logf("socket_connected at=%s wait_ms=%.3f", connectedAt.UTC().Format(time.RFC3339Nano), float64(connectedAt.Sub(dialStarted))/float64(time.Millisecond))
 
 	if token != "" {
 		if err := c.write(Frame{Role: "attacher", Auth: token}); err != nil {
@@ -176,6 +179,7 @@ func Dial(ctx context.Context, path, token string, opts Options) (*Client, error
 			conn.Close()
 			return nil, err
 		}
+		c.logf("initial_prompt_written at=%s", time.Now().UTC().Format(time.RFC3339Nano))
 	}
 	if token != "" || opts.InitialPrompt != "" {
 		select {
@@ -291,6 +295,7 @@ func (c *Client) Reply(text string) error {
 	if err := c.write(Frame{Type: TypeReply, Text: text}); err != nil {
 		return err
 	}
+	c.logf("prompt_written at=%s", time.Now().UTC().Format(time.RFC3339Nano))
 	select {
 	case kind := <-c.rejects:
 		return fmt.Errorf("%w: %s", ErrRejected, kind)
