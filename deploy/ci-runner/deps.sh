@@ -7,7 +7,7 @@
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 sudo apt-get update -qq
-sudo apt-get install -y -qq build-essential pkg-config libssl-dev git curl qemu-guest-agent >/dev/null
+sudo apt-get install -y -qq build-essential pkg-config libssl-dev git curl lsof qemu-guest-agent >/dev/null
 # The guest agent lets the Proxmox host read the VM's disk usage and run fstrim
 # without anyone logging in (the runners' disks are thin-provisioned with
 # discard=on since 2026-09-03, and nobody with sudo can otherwise reach them).
