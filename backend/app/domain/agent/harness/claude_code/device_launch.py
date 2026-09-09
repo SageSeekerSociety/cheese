@@ -420,7 +420,8 @@ while time.monotonic() < deadline:
         socket.create_connection(("127.0.0.1", port), timeout=0.2).close()
         raise SystemExit(0)
     except OSError:
-        time.sleep(0.1)
+        # Native adoption waits here; avoid adding a full 100 ms after port bind.
+        time.sleep(0.02)
 raise SystemExit(1)
 WAITPY
 """
