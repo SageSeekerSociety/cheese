@@ -62,8 +62,15 @@ async def member_summary(
 
 
 @router.get("/projects/{project_id}/usage")
-async def project_usage(project_id: uuid.UUID, db: DbSession) -> dict:
-    """资源用量 (spec §9.1): aggregated token/cost for the whole project."""
+async def project_usage(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """资源用量 (spec §9.1): aggregated token/cost for the whole project.
+
+    What a project spends says how much work it does and how hard; the credits
+    route next door has always required membership for the same reason."""
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     return ok(await UsageRepository(db).for_project(project_id))
 
 
