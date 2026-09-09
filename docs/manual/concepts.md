@@ -1,13 +1,14 @@
 ---
 title: 这些词是什么意思
 slug: concepts
+order: 2
 ---
 
 # 这些词是什么意思 {#concepts}
 
 知是里的名词不多，但它们之间的关系跟别的工具不太一样。这一页把每个词讲清楚，顺带说明为什么是这样——知道了为什么，剩下的都好猜。
 
-如果你还没走过一遍 [快速开始](/docs/quickstart#quickstart)，先走一遍，这一页会好读很多。
+如果你还没走过一遍 [快速开始](/quickstart#quickstart)，先走一遍，这一页会好读很多。
 
 ## 项目 {#project}
 

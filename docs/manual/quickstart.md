@@ -1,6 +1,7 @@
 ---
 title: 快速开始
 slug: quickstart
+order: 1
 ---
 
 # 快速开始 {#quickstart}
@@ -83,7 +84,7 @@ slug: quickstart
 
 走完这一趟，下面几样在你需要的时候再看。
 
-- [这些词是什么意思](/docs/concepts#concepts)——房间、活、卡、采纳、算力，一个词一段人话。
-- [怎么和芝士一起干活](/docs/working-with-cheese#working-with-cheese)——真正需要花点时间的是这个，不是按钮在哪。
+- [这些词是什么意思](/concepts#concepts)——房间、活、卡、采纳、算力，一个词一段人话。
+- [怎么和芝士一起干活](/working-with-cheese#working-with-cheese)——真正需要花点时间的是这个，不是按钮在哪。
 - 想接自己的机器跑任务：命令行运行 `cheese link`，按提示在浏览器里批准这台设备。
 - 想让项目产出一个能访问的网站：让芝士准备好静态站并提交验收，采纳之后在「导出与发布」里发布。

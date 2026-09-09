@@ -36,11 +36,13 @@ import re
 import sys
 from pathlib import Path
 
-SITE_BASE = "/docs"
+# 源码里的站内链接是 base 之下的路径（`/concepts#task`）——VitePress 自己补
+# `/docs/` 前缀，源码里再写一遍会变成 /docs/docs/…（它的死链检查会当场报）。
+SITE_BASE = ""
 HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*(?:\{#([^}]*)\})?\s*$")
 SLUG_OK = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 # A link into the manual's own pages: /docs/quickstart#connect-repo
-INTERNAL_LINK = re.compile(rf"\]\(({re.escape(SITE_BASE)}/[^)\s]*)\)")
+INTERNAL_LINK = re.compile(r"\]\((/[^)\s]*)\)")
 
 
 def _first_sentence(lines: list[str]) -> str:
@@ -118,7 +120,10 @@ def build(manual_dir: Path) -> tuple[dict[str, object], list[str]]:
 
     known = set(seen)
     for link in links:
-        if link.split("#")[0].rstrip("/") == SITE_BASE:  # a bare page link
+        page = link.split("#")[0].rstrip("/")
+        if "#" not in link:  # a link to a whole page, not to one section
+            if page.lstrip("/") not in {a["page"] for a in anchors}:
+                problems.append(f"文档里链到了不存在的页面：{link}")
             continue
         if link not in known:
             problems.append(f"文档里链到了不存在的锚点：{link}")
@@ -175,14 +180,16 @@ def self_test() -> int:
     )
     case("同一页重复 slug", {"a.md": "# A {#x}\n\n一。\n\n## B {#x}\n\n二。\n"}, False)
     case("小节没有说明句", {"a.md": "# A {#x}\n\n- 只有列表\n"}, False)
+    case("链到整页", {"a.md": "# A {#x}\n\n见 [那边](/a)。\n"}, True)
+    case("链到不存在的页面", {"a.md": "# A {#x}\n\n见 [那边](/nope)。\n"}, False)
     case(
         "链到不存在的锚点",
-        {"a.md": "# A {#x}\n\n见 [那边](/docs/a#nope)。\n"},
+        {"a.md": "# A {#x}\n\n见 [那边](/a#nope)。\n"},
         False,
     )
     case(
         "链到存在的锚点",
-        {"a.md": "# A {#x}\n\n见 [那边](/docs/a#y)。\n\n## Y {#y}\n\n一句话。\n"},
+        {"a.md": "# A {#x}\n\n见 [那边](/a#y)。\n\n## Y {#y}\n\n一句话。\n"},
         True,
     )
     case("一个页面都没有", {}, False)
