@@ -5,6 +5,7 @@ Use --ssh and --remote-root to repeat the same cases on another physical host.
 """
 
 import argparse
+import asyncio
 import importlib.util
 import json
 import os
@@ -15,6 +16,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from pathlib import Path
 
 from model_fixture import Handler, Server, dump, log
@@ -279,6 +281,7 @@ def case(folder, options):
             from app.domain.agent.harness.claude_code.device_launch import (
                 build_screen_launch,
             )
+            from app.domain.agent.device_provider import DeviceChannel
 
             owner = folder / "device-owner"
             (owner / ".local/bin").mkdir(parents=True)
@@ -296,6 +299,29 @@ def case(folder, options):
                 execution_target=target,
             )
             env.update(screen_env)
+
+            class LocalDeviceHub:
+                async def exec(self, device_id, command, *, stdin, timeout):
+                    result = await asyncio.to_thread(
+                        subprocess.run,
+                        command,
+                        input=stdin,
+                        env=env,
+                        text=True,
+                        capture_output=True,
+                        timeout=timeout,
+                    )
+                    return {
+                        "exit": result.returncode,
+                        "stdout": result.stdout,
+                        "stderr": result.stderr,
+                    }
+
+            channel = object.__new__(DeviceChannel)
+            channel._hub = LocalDeviceHub()
+            launch["command"] = asyncio.run(
+                channel._ship_launcher("fixture", uuid.uuid4(), launch["command"])
+            )
         if options.mode == "disabled":
             env["CLAUDE_CODE_ENABLE_FUNCTION_HOOKS"] = "0"
         elif options.mode == "throw":
