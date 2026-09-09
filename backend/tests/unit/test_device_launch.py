@@ -19,8 +19,9 @@ from app.domain.agent.harness.claude_code import device_launch, warm_session
 
 
 @pytest.mark.parametrize("workspace_exit", [0, 7])
+@pytest.mark.parametrize("adoption_exit", [0, 9])
 def test_warm_checkout_overlaps_configuration_but_precedes_adoption(
-    tmp_path, monkeypatch, workspace_exit
+    tmp_path, monkeypatch, workspace_exit, adoption_exit
 ):
     owner = tmp_path / "owner"
     home = tmp_path / "room"
@@ -30,14 +31,21 @@ def test_warm_checkout_overlaps_configuration_but_precedes_adoption(
     (warm / "state.json").write_text("{}")
     (warm.parent / "warm-native-runner.py").write_text(
         "import os, sys\nfrom pathlib import Path\n"
-        "if sys.argv[1] == 'adopt-room':\n"
+        "def adopt_room(directory):\n"
         "    assert (Path(os.environ['CHEESE_WORK']) / 'complete').exists()\n"
         "    (Path(os.environ['HOME']) / 'adopted').touch()\n"
+        f"    return {adoption_exit}\n"
+        "def connection(directory, project, topic):\n"
+        "    assert (Path(os.environ['HOME']) / 'adopted').exists()\n"
+        "    return {'command': ['tmux']}\n"
     )
     binary = owner / ".cheese/claude/versions" / device_launch.CLAUDE_PINNED_VERSION
     binary.parent.mkdir(parents=True)
     binary.write_text("#!/bin/sh\necho '2.1.261 (fixture)'\n")
     binary.chmod(0o700)
+    tmux = tmp_path / "tmux"
+    tmux.write_text('#!/bin/sh\ntouch "$HOME/attached"\n')
+    tmux.chmod(0o700)
     monkeypatch.setattr(
         device_launch,
         "CHEESE_WORKSPACE_BRINGUP",
@@ -54,7 +62,7 @@ def test_warm_checkout_overlaps_configuration_but_precedes_adoption(
         process = subprocess.Popen(
             ["sh", str(script)],
             env={
-                "PATH": os.environ["PATH"],
+                "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"],
                 "HOME": str(owner),
                 "CHEESE_HOME": str(home),
                 "CHEESE_WORK": str(work),
@@ -74,8 +82,11 @@ def test_warm_checkout_overlaps_configuration_but_precedes_adoption(
             assert not (work / "complete").exists()
             assert not (home / "adopted").exists()
             (work / "release").touch()
-            assert process.wait(timeout=5) == workspace_exit
+            assert process.wait(timeout=5) == (workspace_exit or adoption_exit)
             assert (home / "adopted").exists() == (workspace_exit == 0)
+            assert (home / "attached").exists() == (
+                workspace_exit == 0 and adoption_exit == 0
+            )
         finally:
             (work / "release").touch()
             if process.poll() is None:
