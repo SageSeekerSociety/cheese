@@ -191,6 +191,7 @@
               <v-col cols="12">
                 <v-autocomplete
                   v-model="form.leaderId"
+                  autocomplete="off"
                   label="负责人"
                   variant="outlined"
                   density="comfortable"

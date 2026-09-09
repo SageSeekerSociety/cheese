@@ -69,7 +69,7 @@ export default [
         'error',
         {
           selector:
-            'VStartTag[parent.name=/^(input|textarea|v-text-field|v-textarea)$/]' +
+            'VStartTag[parent.name=/^(input|textarea|v-text-field|v-textarea|v-select|v-autocomplete|v-combobox)$/]' +
             ':not(:has(VAttribute[directive=false][key.name="type"][value.value=/^(file|hidden|checkbox|radio|submit|button|reset|image|range|color|number|date|time|datetime-local|month|week)$/]))' +
             ':not(:has(VAttribute[directive=false][key.name="autocomplete"]))' +
             ':not(:has(VAttribute[directive=true][key.name.name="bind"][key.argument.name="autocomplete"]))',

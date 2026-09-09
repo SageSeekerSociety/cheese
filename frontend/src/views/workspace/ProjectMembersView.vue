@@ -491,6 +491,7 @@ async function submitInvite() {
           <div v-else class="mb-5" />
           <v-select
             v-model="inviteRole"
+            autocomplete="off"
             :items="ROLES.map((r) => ({ title: label(PROJECT_ROLE, r), value: r }))"
             label="角色"
             density="comfortable"

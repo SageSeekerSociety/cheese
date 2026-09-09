@@ -149,6 +149,7 @@ async function save() {
         <v-select
           v-if="isNew"
           v-model="presetName"
+          autocomplete="off"
           :items="presetItems"
           label="从内置配置开始"
           variant="outlined"
@@ -158,6 +159,7 @@ async function save() {
         <v-textarea v-model="draft.body" autocomplete="off" label="角色设定（可留空）" rows="6" variant="outlined" />
         <v-select
           v-model="draft.model"
+          autocomplete="off"
           :items="modelItems"
           item-title="label"
           item-value="id"

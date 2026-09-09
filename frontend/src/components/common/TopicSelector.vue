@@ -1,6 +1,7 @@
 <template>
   <v-autocomplete
     v-model:search="topicInput"
+    autocomplete="off"
     :model-value="topics"
     :items="addTopicItems"
     :loading="isLoading"

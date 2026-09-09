@@ -15,6 +15,9 @@ test('rejects unmarked native and Vuetify text fields, including a revealed pass
     '<textarea />',
     '<v-text-field />',
     '<v-textarea />',
+    '<v-select />',
+    '<v-autocomplete />',
+    '<v-combobox />',
     "<v-text-field :type=\"visible ? 'text' : 'password'\" />",
   ]) {
     assert.equal((await violations(field)).length, 1, field)

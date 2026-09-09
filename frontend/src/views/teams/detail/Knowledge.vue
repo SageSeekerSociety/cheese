@@ -23,6 +23,7 @@
 
         <v-select
           v-model="filter.type"
+          autocomplete="off"
           label="资料类型"
           density="compact"
           variant="solo"
@@ -37,6 +38,7 @@
 
         <v-select
           v-model="filter.tag"
+          autocomplete="off"
           label="标签"
           density="compact"
           variant="solo"
@@ -597,6 +599,7 @@
               <div v-else-if="uploadData.type === 'CODE'" class="upload-content">
                 <v-select
                   v-model="uploadData.language"
+                  autocomplete="off"
                   label="编程语言"
                   :items="languageOptions"
                   item-title="text"
@@ -648,6 +651,7 @@
 
                     <v-combobox
                       v-model="uploadData.labels"
+                      autocomplete="off"
                       label="标签"
                       variant="outlined"
                       density="comfortable"

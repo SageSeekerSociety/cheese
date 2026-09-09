@@ -43,7 +43,15 @@ function submit() {
 
 <template>
   <div class="pa-3">
-    <v-select v-model="target" :items="options" label="运行资源" density="compact" variant="outlined" hide-details />
+    <v-select
+      v-model="target"
+      autocomplete="off"
+      :items="options"
+      label="运行资源"
+      density="compact"
+      variant="outlined"
+      hide-details
+    />
     <p v-if="!options.length" class="text-body-2 my-3">暂无可用资源，请在团队算力页添加设备或接入云服务</p>
     <template v-if="target === 'cloud'">
       <v-checkbox v-model="custom" label="自定义 CPU、内存和磁盘" density="compact" hide-details />

@@ -19,6 +19,7 @@
 
         <v-select
           v-model="filter.role"
+          autocomplete="off"
           label="角色"
           density="comfortable"
           hide-details
@@ -139,6 +140,7 @@
               <v-window-item value="team">
                 <v-autocomplete
                   v-model="selectedTeamMembers"
+                  autocomplete="off"
                   label="选择团队成员"
                   variant="outlined"
                   density="comfortable"

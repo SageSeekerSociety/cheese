@@ -199,6 +199,7 @@ onBeforeUnmount(() => {
         <template v-if="info.rooms.length">
           <v-select
             v-model="selectedRoom"
+            autocomplete="off"
             :items="info.rooms"
             item-title="title"
             item-value="id"

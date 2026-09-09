@@ -14,6 +14,7 @@
         />
         <v-select
           v-model="groupByModel"
+          autocomplete="off"
           :items="groupByItems"
           label="趋势粒度"
           density="comfortable"

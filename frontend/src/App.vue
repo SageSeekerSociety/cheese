@@ -77,6 +77,7 @@
           />
           <v-select
             v-model="newProjectTeamId"
+            autocomplete="off"
             :items="newProjectTeams"
             :item-title="teamLabel"
             item-value="id"

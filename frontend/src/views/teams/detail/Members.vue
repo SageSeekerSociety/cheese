@@ -31,6 +31,7 @@
                 />
                 <v-select
                   v-model="inviteRoleInput"
+                  autocomplete="off"
                   :items="roleOptions"
                   label="角色"
                   variant="outlined"

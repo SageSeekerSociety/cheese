@@ -71,6 +71,7 @@
               <div v-if="teamMembers && teamMembers.length > 0" class="mt-4">
                 <v-autocomplete
                   v-model="leaderId"
+                  autocomplete="off"
                   label="频道负责人"
                   variant="outlined"
                   density="comfortable"

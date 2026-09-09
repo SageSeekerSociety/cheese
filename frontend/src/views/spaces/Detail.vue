@@ -22,6 +22,7 @@
                   <v-select
                     v-if="admin.role !== 'OWNER' || (admin.user.id !== currentUser?.id && isCurrentUserOwner)"
                     v-model="admin.role"
+                    autocomplete="off"
                     :items="adminRoles"
                     density="compact"
                     hide-details
@@ -55,6 +56,7 @@
               />
               <v-select
                 v-model="newAdminRole"
+                autocomplete="off"
                 :items="adminRoles"
                 :label="t('spaces.detail.role')"
                 density="compact"

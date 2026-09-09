@@ -264,6 +264,7 @@ function onAgentSwapped() {
       <div v-if="canManage" class="roster__add">
         <v-select
           v-model="addHandle"
+          autocomplete="off"
           :items="addable"
           density="compact"
           variant="outlined"
