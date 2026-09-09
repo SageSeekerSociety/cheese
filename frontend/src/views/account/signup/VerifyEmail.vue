@@ -91,13 +91,14 @@ const { handleSubmit, defineField, isSubmitting } = useForm({
 const [otp, otpProps] = defineField('otp', vuetifyConfig)
 const submit = handleSubmit(async ({ otp }) => {
   try {
+    const username = signupStore.username
     const res = await signupStore.signup(otp)
     if (res) {
       toast.success('注册成功')
       router.push({
         name: 'SignIn',
         query: {
-          username: signupStore.username,
+          username,
           message: '注册成功，请使用新账号登录',
         },
       })

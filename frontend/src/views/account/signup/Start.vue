@@ -40,7 +40,10 @@
           <v-row dense>
             <v-col cols="12" md="6">
               <v-text-field
+                id="signup-username"
                 v-model="username"
+                name="username"
+                autocomplete="username"
                 label="用户名"
                 variant="outlined"
                 :loading="isSubmitting"
@@ -50,7 +53,10 @@
             </v-col>
             <v-col cols="12" md="6">
               <v-text-field
+                id="signup-nickname"
                 v-model="nickname"
+                name="nickname"
+                autocomplete="nickname"
                 label="显示名称"
                 variant="outlined"
                 :loading="isSubmitting"
@@ -63,7 +69,10 @@
           <v-row dense>
             <v-col cols="12" md="6">
               <v-text-field
+                id="signup-password"
                 v-model="password"
+                name="password"
+                autocomplete="new-password"
                 label="密码"
                 type="password"
                 variant="outlined"
@@ -74,7 +83,10 @@
             </v-col>
             <v-col cols="12" md="6">
               <v-text-field
+                id="signup-confirm-password"
                 v-model="confirmPassword"
+                name="confirmPassword"
+                autocomplete="new-password"
                 label="确认密码"
                 type="password"
                 variant="outlined"
@@ -86,7 +98,10 @@
           </v-row>
 
           <v-text-field
+            id="signup-email"
             v-model="email"
+            name="email"
+            autocomplete="email"
             label="电子邮箱"
             type="email"
             variant="outlined"
@@ -98,6 +113,7 @@
           <v-text-field
             v-if="requireInviteCode"
             v-model="inviteCode"
+            autocomplete="off"
             label="邀请码"
             variant="outlined"
             :loading="isSubmitting"

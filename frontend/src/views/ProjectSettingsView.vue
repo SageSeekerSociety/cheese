@@ -399,6 +399,7 @@ watch(
             <div class="d-flex align-center" style="gap: 8px">
               <v-text-field
                 v-model="upstreamUrl"
+                autocomplete="off"
                 density="compact"
                 variant="outlined"
                 hide-details
@@ -501,6 +502,7 @@ watch(
                 <div class="d-flex align-center" style="gap: 8px">
                   <v-text-field
                     v-model="newCheckName"
+                    autocomplete="off"
                     density="compact"
                     variant="outlined"
                     hide-details
@@ -511,6 +513,7 @@ watch(
                   />
                   <v-text-field
                     v-model="newCheckPaths"
+                    autocomplete="off"
                     density="compact"
                     variant="outlined"
                     hide-details
@@ -589,6 +592,7 @@ watch(
                   <div class="bp-hint c-faint">检查未过时可以放行合并的人；留空时是项目 owner 和 lead</div>
                 </div>
                 <v-select
+                  autocomplete="off"
                   density="compact"
                   variant="outlined"
                   hide-details
@@ -642,6 +646,7 @@ watch(
                   <div class="bp-hint c-faint">派任务没有指定 reviewer 时用这个人</div>
                 </div>
                 <v-select
+                  autocomplete="off"
                   density="compact"
                   variant="outlined"
                   hide-details

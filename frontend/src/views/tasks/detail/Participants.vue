@@ -351,6 +351,7 @@
           </p>
           <v-textarea
             v-model="rejectReason"
+            autocomplete="off"
             label="驳回原因（选填）"
             placeholder="请填写驳回原因，帮助申请者了解问题所在"
             variant="outlined"

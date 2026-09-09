@@ -131,6 +131,7 @@ onBeforeUnmount(() => {
         </p>
         <v-textarea
           v-model="setup"
+          autocomplete="off"
           label="安装工具（初始化脚本）"
           variant="outlined"
           rows="5"
@@ -141,6 +142,7 @@ onBeforeUnmount(() => {
         />
         <v-textarea
           v-model="startup"
+          autocomplete="off"
           label="准备项目（启动脚本）"
           variant="outlined"
           rows="5"
@@ -160,6 +162,7 @@ onBeforeUnmount(() => {
         <div v-for="(row, index) in variables" :key="index" class="d-flex align-start ga-2 mb-2">
           <v-text-field
             v-model="row.key"
+            autocomplete="off"
             label="名称"
             variant="outlined"
             density="compact"
@@ -167,6 +170,7 @@ onBeforeUnmount(() => {
           />
           <v-textarea
             v-model="row.value"
+            autocomplete="off"
             label="值"
             variant="outlined"
             density="compact"
@@ -195,6 +199,7 @@ onBeforeUnmount(() => {
         <template v-if="info.rooms.length">
           <v-select
             v-model="selectedRoom"
+            autocomplete="off"
             :items="info.rooms"
             item-title="title"
             item-value="id"

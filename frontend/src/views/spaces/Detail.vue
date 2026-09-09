@@ -22,6 +22,7 @@
                   <v-select
                     v-if="admin.role !== 'OWNER' || (admin.user.id !== currentUser?.id && isCurrentUserOwner)"
                     v-model="admin.role"
+                    autocomplete="off"
                     :items="adminRoles"
                     density="compact"
                     hide-details
@@ -55,6 +56,7 @@
               />
               <v-select
                 v-model="newAdminRole"
+                autocomplete="off"
                 :items="adminRoles"
                 :label="t('spaces.detail.role')"
                 density="compact"
@@ -82,10 +84,15 @@
                 <avatar-uploader v-model="selectedAvatar" />
               </v-col>
               <v-col cols="12" md="8">
-                <v-text-field v-model="name" :label="t('spaces.detail.spaceName')" v-bind="nameProps" />
+                <v-text-field
+                  v-model="name"
+                  autocomplete="off"
+                  :label="t('spaces.detail.spaceName')"
+                  v-bind="nameProps"
+                />
 
                 <v-list-subheader>{{ t('spaces.detail.intro') }}</v-list-subheader>
-                <v-text-field v-model="intro" :counter="255" v-bind="introProps" />
+                <v-text-field v-model="intro" autocomplete="off" :counter="255" v-bind="introProps" />
 
                 <template v-if="isCurrentUserAtLeastAdmin">
                   <v-list-subheader>每个发布者对普通用户可见的未结项已通过赛题数量上限(M)</v-list-subheader>

@@ -172,6 +172,7 @@ watch(
               <v-select
                 v-if="candidates.length > 1"
                 v-model="directory"
+                autocomplete="off"
                 :items="candidates"
                 :disabled="publishing || loading"
                 label="网站入口"

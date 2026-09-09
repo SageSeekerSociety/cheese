@@ -2075,6 +2075,7 @@ onBeforeUnmount(() => {
             <v-textarea
               ref="composerInput"
               v-model="draft"
+              autocomplete="off"
               variant="plain"
               rows="1"
               auto-grow

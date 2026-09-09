@@ -243,6 +243,7 @@ const authUrl = computed(() => {
           <div v-for="question in questions(item)" :key="question.question">
             <p>{{ question.question }}</p>
             <v-combobox
+              autocomplete="off"
               :model-value="
                 question.multiSelect
                   ? answers[item.request_id]?.[question.question]?.split(', ') ?? []
@@ -304,11 +305,19 @@ const authUrl = computed(() => {
           >
         </div>
         <form class="control-form" @submit.prevent="execute">
-          <v-select v-model="operation" :items="operations" label="操作" density="compact" hide-details />
+          <v-select
+            v-model="operation"
+            autocomplete="off"
+            :items="operations"
+            label="操作"
+            density="compact"
+            hide-details
+          />
           <template v-for="field in selected.fields" :key="field">
             <v-select
               v-if="field === 'mode'"
               v-model="values.mode"
+              autocomplete="off"
               label="工具权限"
               :items="[
                 { title: '逐次确认', value: 'default' },
@@ -322,6 +331,7 @@ const authUrl = computed(() => {
             <v-select
               v-else-if="field === 'effort'"
               v-model="values.effort"
+              autocomplete="off"
               label="思考强度"
               :items="['low', 'medium', 'high', 'max']"
               density="compact"
@@ -330,6 +340,7 @@ const authUrl = computed(() => {
             <v-text-field
               v-else
               v-model="values[field]"
+              autocomplete="off"
               :label="labels[field]"
               :type="field === 'budget' ? 'number' : 'text'"
               density="compact"

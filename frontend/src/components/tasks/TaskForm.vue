@@ -19,6 +19,7 @@
             <v-text-field
               v-if="!parametersOnly"
               v-model="name"
+              autocomplete="off"
               :label="t('tasks.form.taskName')"
               required
               v-bind="nameProps"
@@ -75,6 +76,7 @@
             <v-col cols="12" md="6">
               <v-select
                 v-model="teamLockingPolicy"
+                autocomplete="off"
                 :label="t('tasks.form.teamLockingPolicy')"
                 required
                 v-bind="teamLockingPolicyProps"
@@ -237,6 +239,7 @@
             <v-select
               v-if="categories.length > 0"
               v-model="categoryId"
+              autocomplete="off"
               :items="categoryItems"
               :label="t('spaces.detail.tasks.category')"
               item-title="title"
@@ -252,6 +255,7 @@
           <v-col cols="12" md="6">
             <v-select
               v-model="topics"
+              autocomplete="off"
               :items="topicItems"
               :label="t('spaces.detail.tasks.topic')"
               chips
@@ -367,6 +371,7 @@
             <v-select
               v-if="domainGroupItems.length > 0"
               v-model="accessDomainGroupIds"
+              autocomplete="off"
               :items="domainGroupItems"
               :label="t('tasks.form.accessControl.domainGroups')"
               :hint="t('tasks.form.accessControl.domainGroupsHint')"
@@ -432,6 +437,7 @@
         <v-textarea
           v-if="descriptionFormat === 'markdown'"
           v-model="markdownDescription"
+          autocomplete="off"
           label="赛题详情（Markdown 格式）"
           :rows="10"
           :max-rows="30"
@@ -468,6 +474,7 @@
       <v-card-text class="pt-2">
         <v-text-field
           v-model="videoUrl"
+          autocomplete="off"
           v-bind="videoUrlProps"
           label="视频链接（选填）"
           placeholder="https://..."

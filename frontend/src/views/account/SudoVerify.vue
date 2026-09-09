@@ -44,7 +44,10 @@
         <div v-if="activeMethod === 'password'">
           <v-form @submit.prevent="handlePasswordVerify">
             <v-text-field
+              id="field-password"
               v-model="password"
+              autocomplete="current-password"
+              name="password"
               label="账户密码"
               :type="showPassword ? 'text' : 'password'"
               variant="outlined"

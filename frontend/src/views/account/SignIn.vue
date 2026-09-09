@@ -23,10 +23,22 @@
           <v-form ref="loginForm" @submit.prevent="login">
             <!-- 表单字段组 - 预留错误提示空间 -->
             <div class="mb-4">
-              <v-text-field v-model="username" label="用户名" variant="outlined" v-bind="usernameProps" class="mb-4" />
+              <v-text-field
+                id="signin-username"
+                v-model="username"
+                name="username"
+                autocomplete="username"
+                label="用户名"
+                variant="outlined"
+                v-bind="usernameProps"
+                class="mb-4"
+              />
 
               <v-text-field
+                id="signin-password"
                 v-model="password"
+                name="password"
+                autocomplete="current-password"
                 label="密码"
                 :type="showPassword ? 'text' : 'password'"
                 variant="outlined"

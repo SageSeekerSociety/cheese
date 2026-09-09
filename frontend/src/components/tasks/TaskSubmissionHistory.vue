@@ -34,7 +34,7 @@
                 <v-radio label="驳回" :value="false"></v-radio>
               </v-radio-group>
               <v-text-field v-model.number="score" label="评分" type="number" min="0" max="100" v-bind="scoreProps" />
-              <v-textarea v-model="comment" label="评论" v-bind="commentProps" />
+              <v-textarea v-model="comment" autocomplete="off" label="评论" v-bind="commentProps" />
             </v-form>
           </template>
           <template #actions>

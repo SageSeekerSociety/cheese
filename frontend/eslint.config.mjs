@@ -63,6 +63,24 @@ export default [
   {
     rules: {
       'vue/multi-word-component-names': 'off',
+      // Explicit purposes keep password managers from treating display names as logins.
+      // Non-identity text fields use "off"; numeric controls and file pickers are excluded.
+      'vue/no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            'VStartTag[parent.name=/^(input|textarea|v-text-field|v-textarea|v-select|v-autocomplete|v-combobox)$/]' +
+            ':not(:has(VAttribute[directive=false][key.name="type"][value.value=/^(file|hidden|checkbox|radio|submit|button|reset|image|range|color|number|date|time|datetime-local|month|week)$/]))' +
+            ':not(:has(VAttribute[directive=false][key.name="autocomplete"]))' +
+            ':not(:has(VAttribute[directive=true][key.name.name="bind"][key.argument.name="autocomplete"]))',
+          message:
+            'Declare autocomplete explicitly: username, nickname, email, tel, name, current-password, new-password, or off for non-identity fields.',
+        },
+        {
+          selector: 'VAttribute[directive=false][key.name="autocomplete"][value.value=/^(on|)$/]',
+          message: 'Choose a specific autocomplete purpose or off; on leaves the field meaning ambiguous.',
+        },
+      ],
     },
   },
   prettier,

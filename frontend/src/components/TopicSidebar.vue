@@ -717,6 +717,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                     <v-text-field
                       v-if="renamingTopicId === row.topic.id"
                       v-model="draftTitle"
+                      autocomplete="off"
                       density="compact"
                       variant="outlined"
                       hide-details

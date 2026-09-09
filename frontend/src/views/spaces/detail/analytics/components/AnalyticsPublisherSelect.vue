@@ -1,6 +1,7 @@
 <template>
   <v-select
     v-model="model"
+    autocomplete="off"
     :items="items"
     :loading="loading"
     label="老师"
