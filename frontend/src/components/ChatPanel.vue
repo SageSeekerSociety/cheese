@@ -73,6 +73,7 @@ import { usePendingAttachments } from '../lib/attachments'
 import { cachedWindow, setCachedWindow } from '../lib/blockCache'
 import { mergeRefreshedTail, PAGE_SIZE, prependOlder, scrollTopAfterPrepend, shouldLoadOlder } from '../lib/blockPaging'
 import { parseDiffLines } from '../lib/diff'
+import { expandMentions as expandMentionNames } from '../lib/expandMentions'
 import { collapseNotices } from '../lib/platformNotice'
 import {
   coalesceSplitFencedCodeBlocks,
@@ -1227,22 +1228,14 @@ function pickMention(item: MentionItem) {
 }
 
 // Human composer: turn a friendly "@名字 / @话题名 / @handle" into the canonical
-// token (<@handle> / <#topicId>) at send time — longest patterns first so
-// substrings don't mis-match. The backend re-canonicalizes as a backstop, so a
-// name typed without picking from the menu still resolves.
+// token (<@handle> / <#topicId>) at send time. The rules live in the shared
+// module so this stays identical to the backend's backstop.
 function expandMentions(text: string): string {
-  const subs: { pat: string; token: string }[] = [
-    { pat: '@all', token: '<@all>' },
-    { pat: '@here', token: '<@here>' },
-    ...mentionPool.value.flatMap((m) => [
-      { pat: `@${m.label}`, token: `<@${m.handle}>` },
-      { pat: `@${m.handle}`, token: `<@${m.handle}>` },
-    ]),
-    ...props.topicList.filter((t) => t.kind !== 'root').map((t) => ({ pat: `@${t.title}`, token: `<#${t.id}>` })),
-  ].sort((a, b) => b.pat.length - a.pat.length)
-  let out = text
-  for (const s of subs) out = out.split(s.pat).join(s.token)
-  return out
+  return expandMentionNames(
+    text,
+    mentionPool.value,
+    props.topicList.filter((t) => t.kind !== 'root')
+  )
 }
 
 // 图片输入: paste (screenshot) or pick images; they upload to the topic's
