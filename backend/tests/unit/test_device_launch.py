@@ -19,6 +19,38 @@ import pytest
 from app.domain.agent.harness.claude_code import device_launch, warm_session
 
 
+def test_launch_timings_append_without_logging_credentials(tmp_path):
+    script = device_launch.build_launch_script()
+    start = script.index("cheese_launch_phase() {")
+    end = script.index("cheese_launch_phase started", start)
+    function = script[start:end]
+    directory = tmp_path / ".cheese/launch"
+    directory.mkdir(parents=True)
+    env = {
+        "REAL_HOME": str(tmp_path),
+        "CHEESE_TOPIC": "test-room",
+        "CHEESE_TOKEN": "must-not-be-logged",
+        "EPOCHREALTIME": "123.456",
+    }
+    for _ in range(2):
+        result = subprocess.run(
+            ["sh", "-c", function + "cheese_launch_phase started"],
+            env=env,
+            capture_output=True,
+            check=True,
+        )
+        assert result.stdout == result.stderr == b""
+    assert (directory / "test-room.timing").read_text() == (
+        "123.456 started\n123.456 started\n"
+    )
+    # A shell without the clock leaves diagnostics off and launch successful.
+    env.pop("EPOCHREALTIME")
+    subprocess.run(
+        ["sh", "-c", function + "cheese_launch_phase skipped"], env=env, check=True
+    )
+    assert "skipped" not in (directory / "test-room.timing").read_text()
+
+
 @pytest.mark.parametrize("workspace_exit", [0, 7])
 @pytest.mark.parametrize("adoption_exit", [0, 9])
 @pytest.mark.parametrize("stage_exit", [0, 13])
