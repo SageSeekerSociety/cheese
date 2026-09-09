@@ -1110,6 +1110,18 @@ function fmtTime(iso: string): string {
     minute: '2-digit',
   })
 }
+// 分栏 (2026-09-09, <@符露夀> 定): 我说的话靠右，别人和芝士靠左。
+//
+// 侧只回答一件事——**这条是不是我说的**。「谁在说」仍然由头像和名字承担，两侧
+// 都保留它们：房间里是「多个人 + 一个芝士」，左边同时坐着好几个人，光靠「在左边」
+// 分不出谁是谁。芝士也在左边，它是队友里的一个，不是对话的另一极。
+//
+// 按 handle 判，不按 author_type：author_type 只说「是人还是 AI」，而这一列里
+// 有好几个人。
+function isMine(m: Block): boolean {
+  return m.author_type === 'human' && m.author === AUTHOR
+}
+
 // Group consecutive messages from the same author into runs: only the first of
 // a run shows the avatar + name + time; the rest indent under the text column.
 // An event block always breaks a run so the next message keeps its header.
@@ -1761,7 +1773,12 @@ onBeforeUnmount(() => {
             </div>
 
             <!-- message row -->
-            <div v-else-if="!notice" class="im-row" :class="{ 'im-row--cont': !isRunStart(i) }" :data-mid="m.id">
+            <div
+              v-else-if="!notice"
+              class="im-row"
+              :class="{ 'im-row--cont': !isRunStart(i), 'im-row--self': isMine(m) }"
+              :data-mid="m.id"
+            >
               <!-- avatar gutter: only on the first of a run -->
               <div class="im-gutter">
                 <template v-if="isRunStart(i)">
@@ -1909,7 +1926,7 @@ onBeforeUnmount(() => {
 
           <!-- 发件箱: 已经打出去、还没落库的消息。它长得就是一条自己发的消息,
              只是右边多一行状态——「立即显示」是第一位的，送达状态是第二位的。 -->
-          <div v-for="item in outbox" :key="item.clientId" class="im-row im-row--pending">
+          <div v-for="item in outbox" :key="item.clientId" class="im-row im-row--pending im-row--self">
             <div class="im-gutter">
               <img
                 v-if="avatarSrc(AUTHOR)"
@@ -2174,6 +2191,21 @@ onBeforeUnmount(() => {
   font-size: 13px; /* 13px 是可读下限；平台行比正文低一档，不低于它 */
   line-height: 1.6;
   color: var(--muted);
+}
+/* 分栏之下，「谁都没说这句话」需要自己的位置：一行字的平台行居中（飞书/微信
+   的通行做法）。**只有单行的那两种**——带右侧归属/状态列的动作卡、可折叠的
+   报错卡、事故卡仍然留在左轴上：把一张右侧有状态列的卡居中，那一列就没了落点。 */
+.sys-row.turn-summary,
+.sys-row.im-event {
+  padding-left: 16px;
+}
+.sys-row.turn-summary .sys-line,
+.sys-row.im-event .sys-line {
+  justify-content: center;
+}
+.sys-row.turn-summary .sys-text,
+.sys-row.im-event .sys-text {
+  flex: 0 1 auto;
 }
 details.sys-row > summary {
   cursor: pointer;
@@ -2675,7 +2707,12 @@ details.sys-row > summary::-webkit-details-marker {
 .im-row--cont {
   margin-top: 0;
 }
-.im-row:hover {
+/* 悬停只改颜色不改位置（设计系统 §9.1）。改的是气泡自己那一档 —— 原来刷的是
+   整行的 --fill，而气泡也是 --fill，鼠标扫过去气泡就消失了。 */
+.im-row:hover .im-text {
+  background: var(--fill-2);
+}
+.im-row--self:hover .im-text {
   background: var(--fill);
 }
 .im-gutter {
@@ -2723,11 +2760,74 @@ details.sys-row > summary::-webkit-details-marker {
   font-size: 12px; /* 12 是元信息档；11.5 既不在档位上，也在可读下限以下 */
   color: var(--faint);
 }
+/* ---- 分栏气泡 (2026-09-09, <@符露夀> 定) ----
+   一条消息是一个气泡，我说的靠右、别人和芝士靠左。三件事一起说明「是不是我」：
+   位置、头像在哪边、尖角朝哪边 —— **不能**用颜色说，别家那一格放的是品牌色，
+   而我们这套色板里那个位置是琥珀，按设计系统只留给主操作、激活态和品牌。所以
+   两侧只差一档灰。
+   立面靠描边不靠填充（设计系统 §3.4「卡片只描边，不投影」）：--fill 在白底上
+   只差 3% 亮度，那是「悬停高亮」那一档的强度，单靠它立不起一个面。--line-2 而
+   不是 --line：--line 比 --fill 还浅，描在 --fill 的面上等于没描。 */
 .im-text {
+  display: inline-block;
+  max-width: 100%;
+  padding: 7px 12px;
   font-size: 14px;
   line-height: 1.62;
   color: var(--text);
   word-break: break-word;
+  background: var(--fill);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-lg);
+  border-top-left-radius: var(--radius-sm); /* 尖角朝说话的那一边 */
+}
+/* 对侧留白。各家常见的是 15%，这里 8% —— 头像在哪边本身已经说明了侧，不需要
+   那么大的空档，省下的宽度还给正文（默认栏宽下 403px 对 365px）。 */
+.im-row {
+  padding-right: calc(16px + 8%);
+}
+.im-row--self {
+  flex-direction: row-reverse;
+  padding-right: 16px;
+  padding-left: calc(16px + 8%);
+}
+.im-row--self .im-meta {
+  flex-direction: row-reverse;
+}
+/* 自己那一侧的所有块级内容（气泡、图片、附件、表情、提示）一起靠右。 */
+.im-row--self .im-main {
+  text-align: right;
+}
+.im-row--self .im-text {
+  text-align: left; /* 气泡靠右，气泡里的字仍然左起 */
+  background: var(--fill-2);
+  border-top-left-radius: var(--radius-lg);
+  border-top-right-radius: var(--radius-sm);
+}
+/* 同一个人连着说的第二条：尖角收掉，两条读成一段。分栏之下这是「连续消息」
+   唯一还剩的信号 —— 位置已经被拿去表示「是不是我」了。 */
+.im-row--cont .im-text {
+  border-top-left-radius: var(--radius-lg);
+}
+.im-row--self.im-row--cont .im-text {
+  border-top-right-radius: var(--radius-lg);
+}
+/* 气泡里的行内元素（表情 chip、选项、提示）跟着靠右。 */
+.im-row--self .rx-row,
+.im-row--self .ask-row,
+.im-row--self .summon-hint {
+  justify-content: flex-end;
+}
+/* 悬停条镜像到左上角：自己那侧的右上角被气泡的尖角占着。 */
+.im-row--self .im-actions {
+  right: auto;
+  left: 12px;
+}
+/* 表情面板挂在悬停条上，所以它也得跟着换边 —— 不换的话它从条的右端往右展开，
+   而条已经在这一列的最左边，面板整个滑出聊天栏、盖到侧栏上去（实测点不到）。 */
+.im-row--self .rx-picker {
+  right: auto;
+  left: 0;
 }
 /* 现场尊重原文: exactly what the human typed, line breaks included. */
 .im-text--verbatim {
@@ -3095,15 +3195,19 @@ details.sys-row > summary::-webkit-details-marker {
   max-width: 100%;
   overflow-x: auto;
 }
+/* 气泡里那一层往回走到「面」那一级配一条更浅的线：一层比一层亮，和两侧的气泡
+   底色（--fill / --fill-2）都分得开。留在 --fill 的话它和左侧气泡同色，糊成一块。 */
 .md-content :deep(code) {
   font-family: var(--font-mono);
-  background: var(--fill);
+  background: var(--surface);
+  border: 1px solid var(--line);
   padding: 0.5px 5px;
   border-radius: var(--radius-sm);
   font-size: 0.88em;
 }
 .md-content :deep(pre) {
-  background: var(--fill);
+  background: var(--surface);
+  border: 1px solid var(--line);
   padding: 11px 13px;
   border-radius: 8px;
   overflow-x: auto;
