@@ -42,7 +42,9 @@ SITE_BASE = ""
 HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*(?:\{#([^}]*)\})?\s*$")
 SLUG_OK = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 # A link into the manual's own pages: /docs/quickstart#connect-repo
-INTERNAL_LINK = re.compile(r"\]\((/[^)\s]*)\)")
+# 前面那个 `!` 是分界：`[文字](/x)` 是链到一页，`![说明](/x.png)` 是一张图。
+# 两者要分开查 —— 把图片当页面查，加一张图就会被这个守卫拦住（它拦过一次）。
+INTERNAL_LINK = re.compile(r"(!?)\[[^\]]*\]\((/[^)\s]*)\)")
 
 
 def _first_sentence(lines: list[str]) -> str:
@@ -91,14 +93,18 @@ def parse_page(path: Path) -> tuple[str, list[dict[str, str]], list[str]]:
             }
         )
 
-    links = [m.group(1) for m in INTERNAL_LINK.finditer(body)]
-    return page_slug, anchors, problems + [f"__links__{link}" for link in links]
+    refs = [
+        ("__assets__" if m.group(1) else "__links__") + m.group(2)
+        for m in INTERNAL_LINK.finditer(body)
+    ]
+    return page_slug, anchors, problems + refs
 
 
 def build(manual_dir: Path) -> tuple[dict[str, object], list[str]]:
     anchors: list[dict[str, str]] = []
     problems: list[str] = []
     links: list[str] = []
+    assets: list[str] = []
     pages = sorted(p for p in manual_dir.glob("*.md") if p.name != "README.md")
     if not pages:
         return {}, [f"{manual_dir} 下没有任何手册页面 — 什么都没检查，这本身就是失败"]
@@ -106,9 +112,12 @@ def build(manual_dir: Path) -> tuple[dict[str, object], list[str]]:
         _, page_anchors, raw = parse_page(path)
         anchors.extend(page_anchors)
         for item in raw:
-            (links if item.startswith("__links__") else problems).append(
-                item.removeprefix("__links__")
-            )
+            if item.startswith("__assets__"):
+                assets.append(item.removeprefix("__assets__"))
+            elif item.startswith("__links__"):
+                links.append(item.removeprefix("__links__"))
+            else:
+                problems.append(item)
 
     seen: dict[str, str] = {}
     for a in anchors:
@@ -127,6 +136,13 @@ def build(manual_dir: Path) -> tuple[dict[str, object], list[str]]:
             continue
         if link not in known:
             problems.append(f"文档里链到了不存在的锚点：{link}")
+
+    # 图片走 VitePress 的 public/：`/images/x.png` 对应 `public/images/x.png`。
+    # 路径写错了页面照常构建、照常发布，只是那张图不显示 —— 又一个「坏掉的样子
+    # 和没坏一模一样」，所以在这里查。
+    for asset in assets:
+        if not (manual_dir / "public" / asset.lstrip("/")).is_file():
+            problems.append(f"图片文件不存在：{asset}（应放在 docs/manual/public{asset}）")
 
     return {"base": SITE_BASE, "anchors": anchors}, problems
 
@@ -155,11 +171,20 @@ def self_test() -> int:
         with contextlib.redirect_stdout(io.StringIO()):
             return run(d)
 
-    def case(name: str, files: dict[str, str], should_pass: bool) -> None:
+    def case(
+        name: str,
+        files: dict[str, str],
+        should_pass: bool,
+        assets: list[str] | None = None,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             d = Path(tmp)
             for fname, content in files.items():
                 (d / fname).write_text(content, encoding="utf-8")
+            for asset in assets or []:
+                target = d / "public" / asset
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(b"")
             payload, problems = build(d)
             if should_pass and problems:
                 fails.append(f"{name}: 本该通过，却报了 {problems}")
@@ -180,6 +205,17 @@ def self_test() -> int:
     )
     case("同一页重复 slug", {"a.md": "# A {#x}\n\n一。\n\n## B {#x}\n\n二。\n"}, False)
     case("小节没有说明句", {"a.md": "# A {#x}\n\n- 只有列表\n"}, False)
+    case(
+        "图片路径存在",
+        {"a.md": "# A {#x}\n\n一句话。\n\n![界面截图](/images/ok.png)\n"},
+        True,
+        assets=["images/ok.png"],
+    )
+    case(
+        "图片路径不存在",
+        {"a.md": "# A {#x}\n\n一句话。\n\n![界面截图](/images/gone.png)\n"},
+        False,
+    )
     case("链到整页", {"a.md": "# A {#x}\n\n见 [那边](/a)。\n"}, True)
     case("链到不存在的页面", {"a.md": "# A {#x}\n\n见 [那边](/nope)。\n"}, False)
     case(
@@ -198,7 +234,7 @@ def self_test() -> int:
         for f in fails:
             print(f"SELF-TEST FAIL: {f}", file=sys.stderr)
         return 1
-    print("PASS: check-manual-anchors self-test（缺 slug / 大写 / 重复 / 无摘要 / 死链 / 空目录）")
+    print("PASS: check-manual-anchors self-test（缺 slug / 大写 / 重复 / 无摘要 / 死链 / 图片路径 / 空目录）")
     return 0
 
 
