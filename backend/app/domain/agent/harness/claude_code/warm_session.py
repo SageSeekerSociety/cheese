@@ -211,6 +211,9 @@ def bind(
         ).hexdigest(),
     }
     binding_path = directory / "binding.json"
+    config = Path(state["home"]) / ".claude"
+    style = "CheeseRoom" + topic_id.replace("-", "")
+    bound_settings = {**settings, "outputStyle": style}
     # This runs unattended during a claim. Persist ownership before any changes
     # so a crash or a second claimant cannot redirect a partially bound process.
     with (directory / "binding.lock").open("a") as lock:
@@ -226,13 +229,12 @@ def bind(
             if (
                 binding["phase"] == "bound"
                 and binding.get("context") == intent["context"]
+                and json.loads((config / "settings.json").read_text()) == bound_settings
             ):
                 return binding
         _write(binding_path, json.dumps({**intent, "phase": "binding"}))
-        config = Path(state["home"]) / ".claude"
         styles = config / "output-styles"
         styles.mkdir(exist_ok=True)
-        style = "CheeseRoom" + topic_id.replace("-", "")
         _write(
             styles / (style + ".md"),
             "---\nname: "
@@ -242,7 +244,7 @@ def bind(
         )
         _write(
             config / "settings.json",
-            json.dumps({**settings, "outputStyle": style}),
+            json.dumps(bound_settings),
         )
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
             client.settimeout(10)
