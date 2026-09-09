@@ -7,6 +7,7 @@ Native OAuth can still perform its own quota probe during startup.
 
 import fcntl
 import hashlib
+import importlib.util
 import json
 import os
 import secrets
@@ -48,6 +49,13 @@ def _tmux(state: dict, *args: str) -> subprocess.CompletedProcess:
     )
 
 
+def _native_alive(state: dict) -> bool:
+    panes = _tmux(state, "list-panes", "-a", "-F", "#{pane_id} #{pane_dead}")
+    return panes.returncode == 0 and (state["pane"] + " 0") in (
+        panes.stdout.decode().splitlines()
+    )
+
+
 def prepare(directory: Path, binary: Path, environment: dict[str, str]) -> dict:
     """Start once; a repeated call resumes observation of the same process."""
     directory = directory.resolve()
@@ -59,7 +67,7 @@ def prepare(directory: Path, binary: Path, environment: dict[str, str]) -> dict:
         state = json.loads(state_path.read_text())
         if state["fingerprint"] != fingerprint or state["binary"] != str(binary):
             raise ValueError("Warm session credentials or binary changed")
-        if _tmux(state, "has-session", "-t", "native-warm").returncode:
+        if not _native_alive(state):
             raise RuntimeError("Prepared native process is no longer running")
     else:
         directory.mkdir(parents=True, exist_ok=False)
@@ -118,6 +126,9 @@ def prepare(directory: Path, binary: Path, environment: dict[str, str]) -> dict:
             "-f",
             "/dev/null",
             "new-session",
+            "-P",
+            "-F",
+            "#{pane_id}",
             "-d",
             "-s",
             "native-warm",
@@ -129,9 +140,12 @@ def prepare(directory: Path, binary: Path, environment: dict[str, str]) -> dict:
         )
         if launched.returncode:
             raise RuntimeError("Could not start the isolated native tmux session")
+        # Window indexes can be reassigned after the native window exits.
+        state["pane"] = launched.stdout.decode().strip()
+        _write(state_path, json.dumps(state))
     deadline = time.monotonic() + 45
     while not (directory / "ready").exists():
-        if _tmux(state, "has-session", "-t", "native-warm").returncode:
+        if not _native_alive(state):
             raise RuntimeError("Native process exited before SessionStart")
         if time.monotonic() >= deadline:
             raise TimeoutError("Native SessionStart is still pending")
@@ -179,7 +193,7 @@ def bind(
         raise ValueError("Room must use this process's prepared workspace")
     if not (directory / "ready").exists():
         raise RuntimeError("Native session has not reported SessionStart")
-    if _tmux(state, "has-session", "-t", "native-warm").returncode:
+    if not _native_alive(state):
         raise RuntimeError("Prepared native process is no longer running")
     # Refuse adoption when project settings would override platform instructions.
     for name in ("settings.json", "settings.local.json"):
@@ -249,7 +263,7 @@ def bind(
                 "display-message",
                 "-p",
                 "-t",
-                "native-warm",
+                state["pane"],
                 "#{pane_current_path}",
             )
             # Native settings reload on a directory change. Repeating /cd to
@@ -273,7 +287,7 @@ def bind(
                         "display-message",
                         "-p",
                         "-t",
-                        "native-warm",
+                        state["pane"],
                         "#{pane_current_path}",
                     )
                     if current.returncode:
@@ -301,10 +315,7 @@ def stage(
     """Connect ordinary room paths to an exclusively reserved prepared session."""
     project_id, topic_id = str(uuid.UUID(project_id)), str(uuid.UUID(topic_id))
     state = json.loads((directory / "state.json").read_text())
-    if (
-        not (directory / "ready").exists()
-        or _tmux(state, "has-session", "-t", "native-warm").returncode
-    ):
+    if not (directory / "ready").exists() or not _native_alive(state):
         raise RuntimeError("Native session is not ready for assignment")
     intent = {
         "project_id": project_id,
@@ -351,7 +362,7 @@ def connection(directory: Path, project_id: str, topic_id: str) -> dict:
     ):
         raise ValueError("Native terminal is not assigned to this room")
     state = json.loads((directory / "state.json").read_text())
-    if _tmux(state, "has-session", "-t", "native-warm").returncode:
+    if not _native_alive(state):
         raise RuntimeError("Bound native process is no longer running")
     session_file = Path(state["home"]) / ".claude/environment-session.json"
     _write(
@@ -374,6 +385,124 @@ def connection(directory: Path, project_id: str, topic_id: str) -> dict:
             "CHEESE_RV_TOKEN_FILE": state["token_file"],
         },
     }
+
+
+def adopt_room(directory: Path) -> int:
+    """Bind launcher files and project setup to the existing native process."""
+    state = json.loads((directory / "state.json").read_text())
+    config = Path(state["home"]) / ".claude"
+
+    def adopt(environment, work):
+        for variable, helper in (
+            ("CHEESE_TUNNEL_URL", "cheese-tunnel-up"),
+            ("CHEESE_PREVIEW_URL", "cheese-preview-up"),
+        ):
+            if environment.get(variable):
+                subprocess.run(
+                    ["sh", str(config / helper)], env=environment, check=True
+                )
+        settings = json.loads((config / "settings.json").read_text())
+        settings["env"] = {**settings.get("env", {}), **environment}
+        bind(
+            directory,
+            project_id=environment["CHEESE_PROJECT"],
+            topic_id=environment["CHEESE_TOPIC"],
+            work=work,
+            settings=settings,
+            system_prompt=(config / "cheese-system-prompt.md").read_text(),
+        )
+        pane = _tmux(state, "display-message", "-p", "-t", state["pane"], "#{pane_pid}")
+        pane.check_returncode()
+        pid = int(pane.stdout.strip())
+        _write(directory / "room-environment.json", json.dumps(environment))
+        drain_pid = config / "cheese-drain.pid"
+        running = False
+        if drain_pid.exists():
+            try:
+                os.kill(int(drain_pid.read_text().strip()), 0)
+                running = True
+            except (ValueError, ProcessLookupError):
+                pass
+        if not running:
+            _tmux(
+                state,
+                "new-window",
+                "-d",
+                "-t",
+                "native-warm",
+                "-n",
+                "cheese-drain",
+                shlex.join(
+                    [
+                        sys.executable,
+                        str(directory / "runner.py"),
+                        "run-drainer",
+                        str(directory),
+                        str(pid),
+                    ]
+                ),
+            ).check_returncode()
+        connection(
+            directory, environment["CHEESE_PROJECT"], environment["CHEESE_TOPIC"]
+        )
+        commands = []
+        if environment.get("CLAUDE_MODEL"):
+            commands.append("/model " + environment["CLAUDE_MODEL"])
+        rc_stamp = directory / "remote-control-requested"
+        enable_rc = (
+            environment.get("CHEESE_REMOTE_CONTROL") == "1" and not rc_stamp.exists()
+        )
+        if enable_rc:
+            commands.append("/remote-control Cheese")
+        if commands:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.settimeout(10)
+                client.connect(state["rendezvous"])
+                frames = [
+                    {"role": "attacher", "auth": Path(state["token_file"]).read_text()}
+                ]
+                frames.extend(
+                    {"type": "reply", "text": command} for command in commands
+                )
+                client.sendall(
+                    "".join(json.dumps(frame) + "\n" for frame in frames).encode()
+                )
+                if enable_rc:
+                    preferences = json.loads((config / ".claude.json").read_text())
+                    if preferences.get("oauthAccount", {}).get(
+                        "organizationUuid"
+                    ) and not preferences.get("hasUsedRemoteControl"):
+                        deadline = time.monotonic() + 2
+                        while time.monotonic() < deadline:
+                            pane = _tmux(
+                                state, "capture-pane", "-p", "-t", state["pane"]
+                            )
+                            if b"1. Enable Remote Control" in pane.stdout:
+                                # Rendering precedes the native input handler.
+                                time.sleep(0.3)
+                                _tmux(
+                                    state, "send-keys", "-t", state["pane"], "Enter"
+                                ).check_returncode()
+                                break
+                            time.sleep(0.02)
+                    _write(rc_stamp, str(pid))
+        return pid
+
+    if os.environ.get("CHEESE_ENVIRONMENT"):
+        spec = importlib.util.spec_from_file_location(
+            "cheese_environment", config / "cheese-environment.py"
+        )
+        assert spec is not None and spec.loader is not None
+        runner = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(runner)
+        return runner.run(
+            json.loads(os.environ["CHEESE_ENVIRONMENT"]),
+            Path(state["home"]) / ".cheese-environment",
+            [],
+            adopt=adopt,
+        )
+    adopt(dict(os.environ), Path(os.environ["CHEESE_WORK"]).resolve())
+    return 0
 
 
 if __name__ == "__main__":
@@ -399,6 +528,42 @@ if __name__ == "__main__":
         for field in ("home", "work", "rendezvous", "token_file"):
             body[field] = Path(body[field])
         print(json.dumps(stage(Path(root), **body)))
+    elif action == "stage-environment":
+        stage(
+            Path(root),
+            project_id=os.environ["CHEESE_PROJECT"],
+            topic_id=os.environ["CHEESE_TOPIC"],
+            home=Path(sys.argv[3]),
+            work=Path(sys.argv[4]),
+            rendezvous=Path(os.environ["CHEESE_RV_SOCK"]),
+            token_file=Path(os.environ["CHEESE_RV_TOKEN_FILE"]),
+        )
+    elif action == "available":
+        directory = Path(root)
+        state = json.loads((directory / "state.json").read_text())
+        raise SystemExit(
+            0 if (directory / "ready").exists() and _native_alive(state) else 1
+        )
+    elif action == "probe-topic":
+        directory = Path(root)
+        binding_file = directory / "binding.json"
+        binding = json.loads(binding_file.read_text()) if binding_file.exists() else {}
+        if binding.get("topic_id") != str(uuid.UUID(sys.argv[3])):
+            print("unknown")
+        else:
+            state = json.loads((directory / "state.json").read_text())
+            print("alive" if _native_alive(state) else "dead")
+    elif action == "adopt-room":
+        raise SystemExit(adopt_room(Path(root)))
+    elif action == "run-drainer":
+        directory = Path(root)
+        environment = json.loads((directory / "room-environment.json").read_text())
+        environment["CHEESE_DRAIN_TETHER"] = sys.argv[3]
+        os.execve(
+            "/bin/sh",
+            ["sh", str(Path(environment["HOME"]) / ".claude/cheese-drain")],
+            environment,
+        )
     elif action == "attach":
         terminal = connection(Path(root), *sys.argv[3:5])
         os.environ.pop("TMUX", None)

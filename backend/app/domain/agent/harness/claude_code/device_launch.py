@@ -232,6 +232,13 @@ print("ok (ticket extracted)")
 # exec error are read conservatively as alive, so a probe hiccup never false-kills.
 DEVICE_ALIVE_PROBE = r"""topic="${CHEESE_ALIVE_TOPIC:-}"
 [ -n "$topic" ] || { echo unknown; exit 0; }
+# A prepared process acquired its topic after exec; its original /proc environ
+# cannot identify that assignment. Check the durable binding and native pane.
+if [ -f "$HOME/.cheese/native-warm/state.json" ]; then
+  warm_status="$(python3 "$HOME/.cheese/warm-native-runner.py" probe-topic \
+    "$HOME/.cheese/native-warm" "$topic" 2>/dev/null)"
+  case "$warm_status" in alive|dead) echo "$warm_status"; exit 0;; esac
+fi
 # Linux: match the topic on each process's own environ → per-topic precise. The
 # connector (same user as the screen it spawned) can read that same-uid /proc entry.
 if [ -d /proc ] && [ -r /proc/self/environ ]; then
@@ -994,6 +1001,14 @@ REAL_HOME="$HOME"
 CH="${{CHEESE_HOME:-$REAL_HOME}}"; CW="${{CHEESE_WORK:-$REAL_HOME}}"
 case "$CH" in "\\$HOME"*) CH="$REAL_HOME${{CH#\\$HOME}}";; esac
 case "$CW" in "\\$HOME"*) CW="$REAL_HOME${{CW#\\$HOME}}";; esac
+WARM_ROOT=""
+if [ -f "$REAL_HOME/.cheese/native-warm/state.json" ] \\
+  && python3 "$REAL_HOME/.cheese/warm-native-runner.py" available \\
+    "$REAL_HOME/.cheese/native-warm"; then
+  python3 "$REAL_HOME/.cheese/warm-native-runner.py" stage-environment \\
+    "$REAL_HOME/.cheese/native-warm" "$CH" "$CW"
+  WARM_ROOT="$REAL_HOME/.cheese/native-warm"
+fi
 export HOME="$CH" CHEESE_WORK="$CW"
 mkdir -p "$HOME" "$CHEESE_WORK"
 # Canonicalize to absolutes (resolve symlinks) so nothing depends on cwd —
@@ -1026,9 +1041,11 @@ export CLAUDE_CONFIG_DIR="$HOME/.claude"
 # claude reads the onboarding/trust gates from THERE (verified — the gate in the
 # dir let a non-interactive run proceed), and a file at $HOME/.claude.json would
 # just be dead weight in the isolated home.
+if [ -z "$WARM_ROOT" ]; then
 cat > "$CLAUDE_CONFIG_DIR/.claude.json" <<JSON
 {{"hasCompletedOnboarding":true,"autoUpdates":false,"bypassPermissionsModeAccepted":true,"projects":{{"$CHEESE_WORK":{{"hasTrustDialogAccepted":true,"hasCompletedProjectOnboarding":true}}}}}}
 JSON
+fi
 cat > "$HOME/.claude/settings.json" <<'JSON'
 {settings_json}
 JSON
@@ -1320,6 +1337,11 @@ if [ -n "${{CHEESE_ENVIRONMENT:-}}" ]; then
   ENVIRONMENT_CMD="python3 \\"$HOME/.claude/cheese-environment.py\\" "
 fi
 [ -s "$CHEESE_SP" ] && CLAUDE="$CLAUDE --append-system-prompt-file \\"$CHEESE_SP\\""
+if [ -n "$WARM_ROOT" ]; then
+  python3 "$REAL_HOME/.cheese/warm-native-runner.py" adopt-room "$WARM_ROOT"
+  exec python3 "$REAL_HOME/.cheese/warm-native-runner.py" attach \\
+    "$WARM_ROOT" "$CHEESE_PROJECT" "$CHEESE_TOPIC"
+fi
 if command -v tmux >/dev/null 2>&1; then
   # WHICH tmux server hosts the inner session decides who is able to wipe it.
   # The machine's DEFAULT server belongs to the person whose machine this is:
