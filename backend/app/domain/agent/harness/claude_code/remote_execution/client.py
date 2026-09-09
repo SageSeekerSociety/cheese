@@ -139,14 +139,6 @@ def prepare(
     (plugin / "hooks/proxy.js").write_text(module)
     settings = json.loads(json.dumps(base_settings or {}))
     hooks = settings.setdefault("hooks", {})
-    for event in ("PreToolUse", "PostToolUse"):
-        for group in hooks.get(event, []):
-            matcher = group.get("matcher", "*")
-            group["matcher"] = (
-                "^(?!mcp__cheese_execution__invoke$)(?:"
-                + (".*" if matcher == "*" else matcher)
-                + ")"
-            )
     helper = [sys.executable, str(Path(__file__).resolve())]
     guard = shlex.join([*helper, "guard", str(target_path)])
     hooks.setdefault("PreToolUse", []).insert(
@@ -173,9 +165,6 @@ def prepare(
         enableArtifact=False,
         attribution={"sessionUrl": False},
     )
-    settings.setdefault("permissions", {}).setdefault("allow", []).append(
-        "mcp__cheese_execution__invoke"
-    )
     (config / "settings.json").write_text(json.dumps(settings))
     gates = {
         "hasCompletedOnboarding": True,
@@ -191,16 +180,10 @@ def prepare(
     gate_file = config / ".claude.json"
     previous = json.loads(gate_file.read_text()) if gate_file.exists() else {}
     gate_file.write_text(json.dumps({**previous, **gates}))
-    servers = {
-        "cheese_execution": {
-            "type": "stdio",
-            "command": helper[0],
-            "args": [*helper[1:], "bridge", str(target_path), "native"],
-        }
-    }
+    servers = {}
     for name in target.get("mcp_servers", []):
-        if name == "cheese_execution":
-            raise ValueError("MCP server name cheese_execution is reserved")
+        if name == "native":
+            raise ValueError("MCP server name native is reserved for file operations")
         servers[name] = {
             "type": "stdio",
             "command": helper[0],
@@ -296,7 +279,7 @@ def shell(target_path, command):
     if (
         len(words) >= 4
         and words[:2] == [sys.executable, helper]
-        and words[2] in ("bridge", "guard", "context", "event")
+        and words[2] in ("bridge", "guard", "context", "event", "invoke")
         and words[3] == str(target_path)
     ):
         os.execvp(words[0], words)
@@ -387,6 +370,7 @@ def main():
             "shell",
             "bootstrap",
             "event",
+            "invoke",
         ],
     )
     parser.add_argument("config", type=Path)
@@ -414,6 +398,18 @@ def main():
         raise SystemExit(shell(args.config, args.args[0]))
     elif args.mode == "event":
         print(json.dumps(publish_event(config, json.load(sys.stdin))))
+    elif args.mode == "invoke":
+        payload = json.load(sys.stdin)
+        client = RemoteClient(config)
+
+        def cancel_invoke(signum, _frame):
+            if payload["tool"] == "Bash":
+                client.control({"subtype": "stop_request", "request_id": payload["id"]})
+            raise SystemExit(128 + signum)
+
+        signal.signal(signal.SIGTERM, cancel_invoke)
+        signal.signal(signal.SIGINT, cancel_invoke)
+        print(json.dumps(client.call("invoke", payload)))
     elif args.mode == "bootstrap":
         base_dir = args.config.parent
         launch = prepare(

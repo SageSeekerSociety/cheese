@@ -288,6 +288,53 @@ class RemoteExecutionTests(unittest.TestCase):
         )
         self.assertIn("REMOTE_SEARCH_MARKER", json.dumps(grep))
 
+    def test_interrupting_transport_stops_remote_foreground_command(self):
+        target = self.root / "client.json"
+        target.write_text(
+            json.dumps(
+                {"command": [sys.executable, str(RUNTIME)], "state": str(self.state)}
+            )
+        )
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                str(RUNTIME.with_name("client.py")),
+                "invoke",
+                str(target),
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+        def cleanup():
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=5)
+            process.stdout.close()
+            process.stderr.close()
+
+        self.addCleanup(cleanup)
+        process.stdin.write(
+            json.dumps(
+                {
+                    "id": "interrupted",
+                    "tool": "Bash",
+                    "args": {"command": "touch started; sleep 2; touch forbidden.txt"},
+                }
+            )
+        )
+        process.stdin.close()
+        deadline = time.monotonic() + 3
+        while not (self.workspace / "started").exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.assertTrue((self.workspace / "started").exists())
+        process.terminate()
+        self.assertEqual(process.wait(timeout=5), 143)
+        time.sleep(2.1)
+        self.assertFalse((self.workspace / "forbidden.txt").exists())
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

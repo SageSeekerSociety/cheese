@@ -31,9 +31,6 @@ async function publish($, event, e, args, response) {
 export function register(on) {
   on("tool.call", async ($, e, next) => {
     const { tool, tool_use_id, ...args } = e;
-    if (tool === "mcp__cheese_execution__invoke") {
-      return { deny: "Use the native tool; the execution transport is internal" };
-    }
     if (native.has(tool)) {
       for (const field of ["file_path", "path", "notebook_path"]) {
         if (typeof args[field] === "string") args[field] = remotePath(args[field]);
@@ -42,11 +39,14 @@ export function register(on) {
         const decision = await publish($, "PreToolUse", e, args);
         if (decision.deny) return decision;
         const input = decision.hookSpecificOutput?.updatedInput || args;
-        const response = await $.mcp.call("cheese_execution", "invoke", {
-          id: tool_use_id, tool, args: input,
+        const response = await $.process.run([...execution.helper, "invoke", execution.target_file], {
+          stdin: JSON.stringify({id: tool_use_id, tool, args: input}),
+          timeoutMs: 600000,
         });
-        if (response.isError) return { deny: JSON.stringify(response.content) };
-        const value = JSON.parse(response.content[0].text);
+        if (response.exitCode !== 0) return { deny: response.stderr };
+        const receipt = JSON.parse(response.stdout);
+        if (receipt.error) return { deny: receipt.error };
+        const value = receipt.value;
         await publish($, "PostToolUse", e, input, value);
         return { result: value };
       } catch (error) {

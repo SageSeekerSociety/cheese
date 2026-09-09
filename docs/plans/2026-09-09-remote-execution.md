@@ -2,7 +2,7 @@
 
 Goal: Run the interactive Claude Code process on a central host while project file operations, shell commands and custom MCP servers execute on a separate host. Keep this work on an experimental branch; do not deploy or merge it.
 
-Architecture: A persistent executor owns the remote workspace and command processes. A Claude Code function hook forwards native tool calls through MCP. The same executor answers file and task controls from Cheese RC. The central session receives the project context needed by Claude Code without installing integration files in the hosted repository.
+Architecture: A persistent executor owns the remote workspace and command processes. A Claude Code function hook forwards native tool calls through a helper process. The same executor answers file and task controls from Cheese RC. The central session receives the project context needed by Claude Code without installing integration files in the hosted repository.
 
 Tech stack: Python standard library, SSH, Claude Code function hooks and MCP, pytest, GitHub Actions.
 

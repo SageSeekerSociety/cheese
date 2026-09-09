@@ -743,51 +743,21 @@ def bridge(state, server):
                 }
             elif method == "ping":
                 result = {}
-            elif method == "tools/list" and server == "native":
-                result = {
-                    "tools": [
-                        {
-                            "name": "invoke",
-                            "description": "Execute on the assigned machine.",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "id": {"type": "string"},
-                                    "tool": {"type": "string"},
-                                    "args": {"type": "object"},
-                                },
-                                "required": ["id", "tool", "args"],
-                            },
-                        }
-                    ]
-                }
             elif method == "tools/call":
-                if server == "native":
-                    value = request(state, "invoke", params["arguments"])
-                    result = {
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": json.dumps(value.get("value", value)),
-                            }
-                        ],
-                        "isError": "error" in value,
-                    }
-                else:
-                    value = request(
-                        state,
-                        "invoke",
-                        {
-                            "id": f"mcp-{bridge_id}-{data['id']}",
-                            "server": server,
-                            "tool": params["name"],
-                            "args": params.get("arguments", {}),
-                        },
-                    )
-                    result = value.get("value") or {
-                        "content": [{"type": "text", "text": value["error"]}],
-                        "isError": True,
-                    }
+                value = request(
+                    state,
+                    "invoke",
+                    {
+                        "id": f"mcp-{bridge_id}-{data['id']}",
+                        "server": server,
+                        "tool": params["name"],
+                        "args": params.get("arguments", {}),
+                    },
+                )
+                result = value.get("value") or {
+                    "content": [{"type": "text", "text": value["error"]}],
+                    "isError": True,
+                }
             else:
                 result = request(
                     state, "mcp", {"server": server, "method": method, "params": params}
