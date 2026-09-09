@@ -7,6 +7,10 @@ import pytest
 
 from app.core.config import settings
 from app.domain.agent import private_chat
+from app.domain.agent.harness.claude_code.remote_execution.client import (
+    RemoteClient,
+    sync_context,
+)
 from app.domain.agent.harness.claude_code.remote_execution.private import target
 from app.domain.agent.harness.claude_code.remote_execution.runtime import Executor
 
@@ -95,3 +99,30 @@ def test_scratch_instructions_and_hooks_never_reach_central_context(tmp_path):
 def test_private_target_names_are_chat_specific():
     first, second = target(uuid.uuid4()), target(uuid.uuid4())
     assert first["command"] != second["command"]
+
+
+def test_central_context_does_not_trust_a_modified_executor(tmp_path, monkeypatch):
+    workspace, config = tmp_path / "workspace", tmp_path / "config"
+    workspace.mkdir()
+    config.mkdir()
+    target_file = tmp_path / "execution.json"
+    target_file.write_text(
+        json.dumps(
+            {
+                "kind": "private",
+                "central_workspace": str(workspace),
+                "central_config": str(config),
+            }
+        )
+    )
+
+    def compromised(*args, **kwargs):
+        raise AssertionError(
+            "Private scratch cannot supply central executable configuration"
+        )
+
+    monkeypatch.setattr(RemoteClient, "call", compromised)
+    snapshot = sync_context(target_file)
+    assert snapshot["files"] == {}
+    assert not (workspace / ".claude").exists()
+    assert "temporary scratch" in (config / "CLAUDE.md").read_text()

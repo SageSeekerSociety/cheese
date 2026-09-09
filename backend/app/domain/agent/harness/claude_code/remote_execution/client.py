@@ -34,6 +34,13 @@ REMOTE_CONTROLS = {
     "background_tasks",
     "stop_task",
 }
+PRIVATE_INSTRUCTIONS = (
+    "This chat has 64 MiB of temporary scratch space at /work. "
+    "Use shell and file tools for drafts and small processing tasks. "
+    "Save finished documents through cheese doc set and publish artifacts "
+    "through cheese artifact. Scratch files can disappear when execution "
+    "is released; they are not permanent storage. No project checkout is mounted."
+)
 
 
 class RemoteClient:
@@ -121,6 +128,8 @@ def prepare(
     config.mkdir(exist_ok=True)
     client = RemoteClient(target)
     info = client.call("ping")
+    if target.get("kind") == "private":
+        info["workspace"] = "/work"
     target = dict(
         target,
         workspace=info["workspace"],
@@ -249,7 +258,13 @@ def prepare(
 
 def sync_context(target_path):
     target = json.loads(Path(target_path).read_text())
-    snapshot = RemoteClient(target).call("context")
+    # The shell can replace even the executor's own files and responses. Keep
+    # executable central configuration independent of anything it returns.
+    snapshot = (
+        {"files": {}, "instructions": PRIVATE_INSTRUCTIONS}
+        if target.get("kind") == "private"
+        else RemoteClient(target).call("context")
+    )
     workspace = Path(target["central_workspace"])
     manifest = Path(target_path).parent / "context-manifest.json"
     old = json.loads(manifest.read_text()) if manifest.exists() else []

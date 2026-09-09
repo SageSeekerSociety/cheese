@@ -33,12 +33,31 @@ jobs:
           - 6379/tcp
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
       - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a
         with:
           version: '0.12.1'
       - run: uv sync --project backend --locked
+      - name: Install native terminal test dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y tmux openssl
+          npm ci --prefix scripts/remote_execution --no-audit --no-fund
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+        with:
+          driver-opts: |
+            image=mirror.gcr.io/moby/buildkit:buildx-stable-1@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec
+          buildkitd-config-inline: |
+            # As in build.yml, bypass the runner's UDP fake-IP resolver.
+            [dns]
+              nameservers = ["1.1.1.1", "1.0.0.1"]
+              options = ["use-vc"]
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
       - name: Build private execution image
-        run: docker build -f backend/sandbox/Dockerfile.private -t cheese-private-executor:2.1.265 .
+        run: docker buildx build --load -f backend/sandbox/Dockerfile.private -t cheese-private-executor:2.1.265 .
       - name: Verify real scratch execution
         run: >-
           backend/.venv/bin/python scripts/remote_execution/private_acceptance.py
@@ -52,6 +71,11 @@ jobs:
           .venv/bin/pytest tests/integration/test_private_chat_execution.py
           tests/unit/test_private_chat.py tests/unit/test_remote_control.py
           tests/integration/test_remote_control_auth.py -q
+      - name: Verify two private turns through native RC
+        run: >-
+          backend/.venv/bin/python scripts/remote_execution/private_terminal.py
+          --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
+          --output tmp/remote-execution/private-ci-terminal-${{ github.run_id }}-${{ github.run_attempt }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

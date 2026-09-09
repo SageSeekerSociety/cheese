@@ -1,4 +1,4 @@
-FROM mirror.gcr.io/library/node:22-bookworm-slim
+FROM mirror.gcr.io/library/node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5
 RUN apt-get update && apt-get install -y --no-install-recommends python3 bash ca-certificates ripgrep \
     && rm -rf /var/lib/apt/lists/* \
     && npm install -g @anthropic-ai/claude-code@2.1.265 \

@@ -244,7 +244,7 @@ async def control_state(
     result = (
         await store().snapshot(session) if session else {"connected": False, "id": None}
     )
-    target = await private_chat.for_topic(db, topic_id)
+    target = await private_chat.for_topic(db, topic_id) if session else None
     if session and target:
         tasks = await private_chat.control(target, {"subtype": "background_tasks"})
         result["tasks"].update({task["task_id"]: task for task in tasks["tasks"]})
