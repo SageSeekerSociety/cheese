@@ -95,10 +95,12 @@ def main():
     )
     for name, args in (
         ("native-terminal-rc", ["--launcher", "device", "--rc"]),
-        ("plugin-disabled", ["--mode", "disabled"]),
-        ("plugin-throws", ["--mode", "throw"]),
-        ("plugin-timeout", ["--mode", "timeout"]),
-        ("executor-disconnected", ["--mode", "disconnect"]),
+        # RC acknowledges connection readiness; typing into a terminal after a
+        # fixed sleep can leave Enter unprocessed while the native UI mounts.
+        ("plugin-disabled", ["--mode", "disabled", "--rc"]),
+        ("plugin-throws", ["--mode", "throw", "--rc"]),
+        ("plugin-timeout", ["--mode", "timeout", "--rc"]),
+        ("executor-disconnected", ["--mode", "disconnect", "--rc"]),
     ):
         attempt = len(list(folder.glob(name + ".attempt-*.log"))) + 1
         case(
