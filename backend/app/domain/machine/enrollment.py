@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import tempfile
+from pathlib import Path
 
 from app.core.config import settings
 from app.domain.agent import connector_build
@@ -112,8 +113,17 @@ def bootstrap_script(
     pinned_version = CLAUDE_PINNED_VERSION
     preparation_script = ""
     if prepare_native_session:
+        ca_pem = ""
+        if settings.subscription_enabled:
+            if not settings.subscription_ca_backend_path.strip():
+                raise EnrollmentError(
+                    "SUBSCRIPTION_CA_BACKEND_PATH is required for native preparation"
+                )
+            ca_pem = Path(settings.subscription_ca_backend_path).read_text()
+            if not ca_pem.strip():
+                raise EnrollmentError("Subscription proxy CA is empty")
         preparation_script = build_startup_cache_prepare(pinned_version)
-        preparation_script += build_warm_session_prepare(pinned_version)
+        preparation_script += build_warm_session_prepare(pinned_version, ca_pem=ca_pem)
     return f"""set -eu
 arch=$(uname -m)
 case "$arch" in
