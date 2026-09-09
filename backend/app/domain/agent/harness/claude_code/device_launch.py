@@ -29,6 +29,7 @@ from app.domain.agent.harness.claude_code import event_drain, startup_cache
 from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD
 from app.domain.agent.harness.claude_code.hooks_substrate import CHEESE_HOOK_SCRIPT
 from app.domain.agent.harness.claude_code.session_launch import hooks_settings
+from app.domain.agent.skills import native_skill_files
 
 # First-launch gates (Claude Code 2.1.x) for $CLAUDE_CONFIG_DIR/.claude.json,
 # kept here as the readable statement of what the launch script writes inline.
@@ -954,6 +955,12 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
     workspace_bringup = CHEESE_WORKSPACE_BRINGUP
     settings_reconcile = CHEESE_SETTINGS_RECONCILE
     startup_cache_source = Path(startup_cache.__file__).read_text()
+    skill_setup = "\n".join(
+        f'mkdir -p "$CLAUDE_CONFIG_DIR/{Path(name).parent}"\n'
+        f"cat > \"$CLAUDE_CONFIG_DIR/{name}\" <<'CHEESE_NATIVE_SKILL'\n"
+        f"{content}\nCHEESE_NATIVE_SKILL"
+        for name, content in native_skill_files().items()
+    )
     drain_script = build_drain_script()
     cli_source = (Path(__file__).resolve().parents[5] / "sandbox" / "cheese").read_text(
         encoding="utf-8"
@@ -991,7 +998,8 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
 # POSIX-only from here: the connector's tmux joins argv with spaces and
 # re-parses through /bin/sh (dash on Debian/Ubuntu) — bashisms die silently.
 REAL_HOME="$HOME"
-CH="${{CHEESE_HOME:-$REAL_HOME}}"; CW="${{CHEESE_WORK:-$REAL_HOME}}"
+CH="${{CHEESE_HOME:?Cheese session home is required}}"
+CW="${{CHEESE_WORK:?Cheese work directory is required}}"
 case "$CH" in "\\$HOME"*) CH="$REAL_HOME${{CH#\\$HOME}}";; esac
 case "$CW" in "\\$HOME"*) CW="$REAL_HOME${{CW#\\$HOME}}";; esac
 export HOME="$CH" CHEESE_WORK="$CW"
@@ -1014,6 +1022,8 @@ cat > "$HOME/.claude/cheese-environment.py" <<'CHEESE_ENV_PY'
 # owner's settings.json to be routed at all, hijacking every claude the owner
 # starts by hand. With it, the owner's files are never read and never written.
 export CLAUDE_CONFIG_DIR="$HOME/.claude"
+export DISABLE_AUTOUPDATER=1
+{skill_setup}
 {ca_block}
 # Written by the shell, not node: a machine whose `claude` is the native binary
 # has no node at all (MicroCloud's Debian image is exactly that), and under
@@ -1204,7 +1214,7 @@ fi
 # has a claude. Non-fatal: the chain below still runs, and the floor check
 # still refuses a build that is too old. A screen created without CHEESE_API
 # skips this and behaves as before.
-_pin="$REAL_HOME/.local/share/claude/versions/{CLAUDE_PINNED_VERSION}"
+_pin="$REAL_HOME/.cheese/claude/versions/{CLAUDE_PINNED_VERSION}"
 if [ ! -x "$_pin" ] && [ -n "${{CHEESE_API:-}}" ]; then
   case "$(uname -m)" in
     x86_64|amd64) _carch=x64 ;;
@@ -1354,14 +1364,8 @@ if command -v tmux >/dev/null 2>&1; then
   SESSION="cheese_$(printf '%s' "$CHEESE_WORK" | cksum | cut -d' ' -f1)"
   python3 -c 'import json,sys; json.dump(sys.argv[1:], open(sys.argv[3], "w"))' \\
     "$CHEESE_TMUX_SOCK" "$SESSION" "$HOME/.claude/environment-session.json"
-  # An agent session is never the owner's to carry. One sitting on the default
-  # server is ours all the same, and it is not harmless: it holds this topic's
-  # rendezvous socket, spool and work tree, so leaving it running means a second
-  # claude answering for this topic forever. Retire it. `has-session` never
-  # starts a server, so a machine with no default server keeps not having one.
-  if tmux has-session -t "$SESSION" 2>/dev/null; then
-    tmux kill-session -t "$SESSION" 2>/dev/null || true
-  fi
+  # A matching name on the owner's default server does not prove ownership.
+  # Only the connector's private server belongs to this launch.
   # A surviving inner session runs the `claude` it was BORN with, and claude
   # reads its model credential (CLAUDE_CODE_OAUTH_TOKEN / the HTTPS_PROXY
   # password) ONCE at startup — it never re-reads it. So the fresh scoped token

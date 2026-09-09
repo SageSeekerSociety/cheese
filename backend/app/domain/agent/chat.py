@@ -68,7 +68,7 @@ from app.domain.agent.service import (
     AgentUsage,
     proves_output,
 )
-from app.domain.agent.skills import DEFAULT_CHAT_SKILLS, load_scenario, load_skills
+from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE, load_scenario, load_skills
 from app.domain.agent.stages import TopicStage, resolve_stage, stage_scenario
 from app.domain.agent.supply import SUBSCRIPTION, resolve_pool
 from app.domain.agent.tool_preview import ToolPreview, tool_preview, work_subpath
@@ -1371,8 +1371,8 @@ class ChatService:
         # project.settings (single-process reality, like the topic locks).
         self._gateway = gateway
         self._gateway_lock = asyncio.Lock()
-        # Load the conversation skills once (spec §8.3 product "soul").
-        self._skills = load_skills(DEFAULT_CHAT_SKILLS)
+        # Keep the publication contract present before native skills are invoked.
+        self._skills = NATIVE_CHAT_GUIDANCE
         # Prompt construction is serialized per topic. The lock is released as
         # soon as an interactive provider injects the prompt; non-interactive
         # providers still hold it while running because they cannot accept a
@@ -3745,7 +3745,7 @@ class ChatService:
                     {"agent": agent.configuration, "git_author": acting_agent},
                     sort_keys=True,
                 )
-                + ":explicit-chat-v2"
+                + ":explicit-chat-v3-native-skills"
                 + (":native-rc-v1" if supply == SUBSCRIPTION else "")
             ).encode()
         ).hexdigest()
