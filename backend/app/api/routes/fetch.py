@@ -52,10 +52,18 @@ async def read_url(body: FetchIn, actor: ActorResolverDep) -> dict:
 
     distill = None
     if settings.anthropic_base_url and settings.anthropic_auth_token:
+        # `agent_model` and not `agent_haiku_model`. The haiku setting is an
+        # ALIAS the CLI resolves internally — it names what "haiku" should map
+        # to for a session, and its default names a model this gateway may not
+        # serve at all. Asking the gateway for it returned
+        # "Invalid model name passed in model=glm-4.5-air", the distillation
+        # failed, and every prompted fetch quietly returned the whole page
+        # instead of an answer. `agent_model` is the model this deployment
+        # actually runs, so it is the one that is certainly reachable.
         distill = (
             settings.anthropic_base_url,
             settings.anthropic_auth_token,
-            settings.agent_haiku_model or settings.agent_model,
+            settings.agent_model,
         )
 
     outcome = await fetch_url(

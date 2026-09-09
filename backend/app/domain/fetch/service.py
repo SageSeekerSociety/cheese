@@ -105,7 +105,14 @@ async def _distill(
                 },
             )
         if r.status_code != 200:
-            logger.warning("fetch distillation returned HTTP %s", r.status_code)
+            # The body, not just the code. A bare "returned HTTP 400" cost
+            # several steps to diagnose when the cause was one sentence in the
+            # response: the model name did not exist on this gateway.
+            logger.warning(
+                "fetch distillation returned HTTP %s: %s",
+                r.status_code,
+                r.text[:300],
+            )
             return None
         blocks = r.json().get("content") or []
         text = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
