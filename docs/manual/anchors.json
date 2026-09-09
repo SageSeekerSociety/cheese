@@ -2,6 +2,66 @@
   "base": "/docs",
   "anchors": [
     {
+      "url": "/docs/concepts#concepts",
+      "page": "concepts",
+      "title": "这些词是什么意思",
+      "summary": "知是里的名词不多，但它们之间的关系跟别的工具不太一样。"
+    },
+    {
+      "url": "/docs/concepts#project",
+      "page": "concepts",
+      "title": "项目",
+      "summary": "一个项目就是一个 git 仓库加一支团队。"
+    },
+    {
+      "url": "/docs/concepts#room",
+      "page": "concepts",
+      "title": "房间",
+      "summary": "一个房间对应一段完整的上下文：这件事的来龙去脉、试过什么、结论是什么，都在这个房间里。"
+    },
+    {
+      "url": "/docs/concepts#cheese",
+      "page": "concepts",
+      "title": "芝士",
+      "summary": "芝士是那个 AI 队友。"
+    },
+    {
+      "url": "/docs/concepts#task",
+      "page": "concepts",
+      "title": "活",
+      "summary": "活不是另一个房间，也不在别的地方——它就是这个房间派出去的一件具体工作，有自己的简报、自己的进展、自己的结论。"
+    },
+    {
+      "url": "/docs/concepts#board",
+      "page": "concepts",
+      "title": "看板",
+      "summary": "打开项目第一屏就是它，不是任何一个聊天。"
+    },
+    {
+      "url": "/docs/concepts#living-doc",
+      "page": "concepts",
+      "title": "实况文档",
+      "summary": "房间右侧那份文档是这个房间的当前全貌：目标、已有结论、下一步。"
+    },
+    {
+      "url": "/docs/concepts#accept",
+      "page": "concepts",
+      "title": "验收卡与采纳",
+      "summary": "活干完，房间里会出现一张验收卡：它做了什么、对着你的要求逐条给了什么证据，以及一个「采纳」按钮。"
+    },
+    {
+      "url": "/docs/concepts#conclusion",
+      "page": "concepts",
+      "title": "结论卡",
+      "summary": "一件活收尾时会留下一张结论卡：这件事最后的结论是什么。"
+    },
+    {
+      "url": "/docs/concepts#compute",
+      "page": "concepts",
+      "title": "机器与算力",
+      "summary": "芝士干活要跑在一台机器上，这台机器就是这个房间的运行环境。"
+    },
+    {
       "url": "/docs/quickstart#quickstart",
       "page": "quickstart",
       "title": "快速开始",
@@ -53,7 +113,61 @@
       "url": "/docs/quickstart#next-steps",
       "page": "quickstart",
       "title": "接下来",
-      "summary": "走完这一趟，剩下的两件事在你需要时再看。"
+      "summary": "走完这一趟，下面几样在你需要的时候再看。"
+    },
+    {
+      "url": "/docs/working-with-cheese#working-with-cheese",
+      "page": "working-with-cheese",
+      "title": "怎么和芝士一起干活",
+      "summary": "界面上的按钮几分钟就摸熟了，真正需要一点时间的是另一件事：怎么把一件事交给一个 AI 队友。"
+    },
+    {
+      "url": "/docs/working-with-cheese#say-what-not-how",
+      "page": "working-with-cheese",
+      "title": "说你要什么，不用说怎么做",
+      "summary": "交代一件事的时候，说清楚两样：你要什么，以及做成什么样算好。"
+    },
+    {
+      "url": "/docs/working-with-cheese#the-first-reply",
+      "page": "working-with-cheese",
+      "title": "它先回你一句，那是你纠偏的机会",
+      "summary": "接到活它会先说一句它理解的目标和第一步，然后就开工了——这不是在等你批准，是给你一个便宜的纠偏窗口。"
+    },
+    {
+      "url": "/docs/working-with-cheese#interrupt",
+      "page": "working-with-cheese",
+      "title": "它干活的时候你可以插话",
+      "summary": "不用等它停下来。"
+    },
+    {
+      "url": "/docs/working-with-cheese#when-it-asks",
+      "page": "working-with-cheese",
+      "title": "它问你的时候，是真的需要你定",
+      "summary": "芝士被要求自己解决技术问题，不要把过程甩给你。"
+    },
+    {
+      "url": "/docs/working-with-cheese#one-thing-one-room",
+      "page": "working-with-cheese",
+      "title": "一件事一个房间",
+      "summary": "一个房间承载一件事的完整上下文。"
+    },
+    {
+      "url": "/docs/working-with-cheese#feedback",
+      "page": "working-with-cheese",
+      "title": "给反馈要对着产出说",
+      "summary": "它交东西之后，最有用的反馈是具体的：哪一处不对、你期望的是什么样。"
+    },
+    {
+      "url": "/docs/working-with-cheese#memory",
+      "page": "working-with-cheese",
+      "title": "它会记住什么",
+      "summary": "每个 AI 队友有自己的记忆，跨房间。"
+    },
+    {
+      "url": "/docs/working-with-cheese#read-the-card",
+      "page": "working-with-cheese",
+      "title": "它交活的时候，看证据不看结论",
+      "summary": "验收卡上应该是逐条对着你的要求给的证据，不是一句「做完了」。"
     }
   ]
 }

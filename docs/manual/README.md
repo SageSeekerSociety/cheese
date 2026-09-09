@@ -54,3 +54,5 @@ python3 .claude/scripts/check-manual-anchors.py           # CI 跑的就是这�
 | 页面 | 给谁看 |
 |---|---|
 | [`quickstart.md`](quickstart.md) | 第一次用的人。一条路走到底：建项目 → 开房间 → 说一句话 → 采纳合并。 |
+| [`concepts.md`](concepts.md) | 走过一遍之后想把词理清楚的人。项目 / 房间 / 芝士 / 活 / 看板 / 实况文档 / 卡 / 算力。 |
+| [`working-with-cheese.md`](working-with-cheese.md) | 已经会用、但交出去的活总不太对的人。这是这个产品真正的门槛。 |
