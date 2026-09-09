@@ -225,6 +225,22 @@ if __name__ == "__main__":
         status = read_status(root)
         if status["state"] == "preparing":
             raise SystemExit("environment is still preparing")
+        executor = Path.home() / ".claude/execution-owner.json"
+        if executor.exists():
+            if json.loads(executor.read_text())["resource"] != Path.home().name:
+                raise SystemExit("executor belongs to another room resource")
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(Path.home() / ".claude/remote-execution/runtime.py"),
+                    "stop",
+                    "--state",
+                    str(Path.home() / ".claude/executor"),
+                ],
+                check=True,
+                timeout=30,
+            )
+            status = read_status(root)
         session_file = Path.home() / ".claude/environment-session.json"
         if session_file.exists():
             socket, session, _ = json.loads(session_file.read_text())

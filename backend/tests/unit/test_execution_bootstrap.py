@@ -50,7 +50,13 @@ def test_executor_prepares_project_without_model_credentials(tmp_path):
     configuration = {
         "revision": "fixture-revision",
         "variables": {"EXECUTOR_SETTING": "project-value"},
-        "setup_script": 'printf "$EXECUTOR_SETTING" > setup-result',
+        "setup_script": (
+            'printf "$EXECUTOR_SETTING" > setup-result\n'
+            'mkdir -p "$HOME/.local/bin"\n'
+            "printf '#!/bin/sh\\nprintf INSTALLED_TOOL_OK\\n' "
+            '> "$HOME/.local/bin/room-tool"\n'
+            'chmod +x "$HOME/.local/bin/room-tool"'
+        ),
         "startup_script": "printf started >> startup-result",
     }
     env = {
@@ -103,6 +109,16 @@ def test_executor_prepares_project_without_model_credentials(tmp_path):
         )
         assert "error" not in read, read
         assert read["value"]["file"]["content"] == "original"
+        installed = runtime.request(
+            state,
+            "invoke",
+            {
+                "id": "installed-program",
+                "tool": "Bash",
+                "args": {"command": "room-tool"},
+            },
+        )
+        assert "INSTALLED_TOOL_OK" in json.dumps(installed), installed
         (work / "draft.txt").write_text("retain this draft")
         env["CHEESE_TOKEN"] = "rotated-token"
         reused = json.loads(launch().stdout)
@@ -113,6 +129,67 @@ def test_executor_prepares_project_without_model_credentials(tmp_path):
             json.loads((state / "config.json").read_text())["env"]["CHEESE_TOKEN"]
             == "rotated-token"
         )
+        # The existing environment reset must stop the execution daemon too.
+        reset = subprocess.run(
+            [sys.executable, str(home / ".claude/cheese-environment.py"), "reset"],
+            env={**os.environ, "HOME": str(home)},
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+        )
+        assert json.loads(reset.stdout)["state"] == "pending"
+        with pytest.raises((ConnectionError, FileNotFoundError)):
+            runtime.request(state, "ping")
+        configuration["revision"] = "second-revision"
+        env["CHEESE_ENVIRONMENT"] = json.dumps(configuration)
+        launch()
+        deadline = time.monotonic() + 15
+        while True:
+            try:
+                restarted = runtime.request(state, "ping")
+                break
+            except (ConnectionError, FileNotFoundError):
+                assert time.monotonic() < deadline
+                time.sleep(0.05)
+        assert restarted["pid"] != running["pid"]
+        assert (work / "draft.txt").read_text() == "retain this draft"
+        assert (work / "startup-result").read_text() == "startedstarted"
+        # A failed setup leaves the ownership marker without a running daemon.
+        subprocess.run(
+            [sys.executable, runtime.__file__, "stop", "--state", str(state)],
+            check=True,
+            timeout=15,
+        )
+        configuration.update(revision="broken-revision", setup_script="exit 23")
+        env["CHEESE_ENVIRONMENT"] = json.dumps(configuration)
+        launch()
+        status_file = home / ".cheese-environment/status.json"
+        deadline = time.monotonic() + 15
+        while json.loads(status_file.read_text()).get("state") != "failed":
+            assert time.monotonic() < deadline
+            time.sleep(0.05)
+        repaired = subprocess.run(
+            [sys.executable, str(home / ".claude/cheese-environment.py"), "reset"],
+            env={**os.environ, "HOME": str(home)},
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+        )
+        assert json.loads(repaired.stdout)["state"] == "pending"
+        configuration.update(revision="fixed-revision", setup_script="true")
+        env["CHEESE_ENVIRONMENT"] = json.dumps(configuration)
+        launch()
+        deadline = time.monotonic() + 15
+        while True:
+            try:
+                runtime.request(state, "ping")
+                break
+            except (ConnectionError, FileNotFoundError):
+                assert time.monotonic() < deadline
+                time.sleep(0.05)
+        assert (work / "draft.txt").read_text() == "retain this draft"
     finally:
         subprocess.run(
             [sys.executable, runtime.__file__, "stop", "--state", str(state)],

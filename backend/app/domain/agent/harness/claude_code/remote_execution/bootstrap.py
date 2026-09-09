@@ -133,7 +133,6 @@ def configure(payload):
                 "CHEESE_WORK",
                 "CHEESE_WORKTREE_ROOT",
                 "CHEESE_PREVIEW_UP",
-                "PATH",
             }
         }
         config = {

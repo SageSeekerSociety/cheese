@@ -5,7 +5,6 @@ import json
 import uuid
 
 from app.core.config import settings
-from app.core.errors import ConflictError
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import device_home_dir
 from app.domain.agent.harness.claude_code import (
@@ -14,7 +13,6 @@ from app.domain.agent.harness.claude_code import (
 from app.domain.agent.harness.claude_code import (
     private_execution_target as target,
 )
-from app.domain.topic.services import TopicService
 
 
 def execution_target(
@@ -32,21 +30,6 @@ def execution_target(
         "device_id": device_id,
         "home": device_home_dir(project_id, resource_id or topic_id),
     }
-
-
-async def for_topic(db, topic_id: uuid.UUID) -> dict | None:
-    place = await TopicService(db).place_or_404(topic_id)
-    placement = place.room.session_placement
-    if placement and placement["resource_id"] != str(
-        place.room.resource_id or place.room.id
-    ):
-        raise ConflictError("Execution generation is no longer current")
-    await db.commit()
-    if placement:
-        return placement["execution"]
-    if place.room.is_private:
-        return execution_target(place.project_id, place.room_id, place.room.resource_id)
-    return None
 
 
 async def control(target: dict, payload: dict, *, hub=None) -> dict:

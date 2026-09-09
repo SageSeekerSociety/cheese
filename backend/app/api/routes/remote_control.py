@@ -72,6 +72,10 @@ async def rc_create(request: Request, db: DbSession) -> dict:
     place = await TopicService(db).place_or_404(uuid.UUID(claims["t"]))
     if str(place.project_id) != claims["p"]:
         raise ForbiddenError("Place does not belong to this credential")
+    if place.room.session_placement and claims.get("r") != str(
+        place.room.resource_id or place.room.id
+    ):
+        raise ConflictError("RC credential belongs to another execution generation")
     data = await body(request)
     # Placement is platform-owned; ignore an execution target supplied by a worker.
     data["execution"] = place.room.session_placement
@@ -245,7 +249,13 @@ async def control_state(
     result = (
         await store().snapshot(session) if session else {"connected": False, "id": None}
     )
-    target = await private_chat.for_topic(db, topic_id) if session else None
+    placement = session.get("execution") if session else None
+    target = None
+    if placement:
+        place = await TopicService(db).place_or_404(topic_id)
+        if placement["resource_id"] == str(place.room.resource_id or place.room.id):
+            target = placement["execution"]
+        await db.commit()
     if session and target:
         tasks = await private_chat.control(target, {"subtype": "background_tasks"})
         result["tasks"].update({task["task_id"]: task for task in tasks["tasks"]})

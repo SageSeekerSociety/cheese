@@ -38,6 +38,7 @@ async def execute(
     placement = place.room.session_placement
     if (
         not placement
+        or claims.get("r") != str(resource_id)
         or placement["resource_id"] != str(resource_id)
         or (place.room.resource_id or place.room.id) != resource_id
         or placement["execution"].get("kind") != "device"

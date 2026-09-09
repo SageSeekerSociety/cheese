@@ -885,7 +885,10 @@ def main():
     elif args.mode == "relay":
         relay(state, json.load(sys.stdin))
     elif args.mode == "stop":
-        info = request(state, "ping")
+        try:
+            info = request(state, "ping")
+        except (FileNotFoundError, ConnectionRefusedError):
+            return
         os.kill(info["pid"], signal.SIGTERM)
         for _ in range(100):
             if not Path(socket_path(state)).exists():

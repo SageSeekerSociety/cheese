@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.db import async_session_factory
+from app.core.sandbox_auth import bind_resource_token
 from app.domain.agent import execution, private_chat, session_transfer
 from app.domain.agent.device_provider import (
     DeviceChannel,
@@ -115,6 +116,7 @@ class CentralChannel(DeviceChannel):
             ):
                 raise ScreenSetupError("执行机器与本房间已经记录的位置不一致")
             values = {**(env or {}), "CHEESE_RESOURCE_ID": str(resource)}
+            token = bind_resource_token(token, str(resource))
             if not previous and launch.resume_session_id:
                 await self._transfer_history(
                     executor_id, center, project_id, resource, launch.resume_session_id

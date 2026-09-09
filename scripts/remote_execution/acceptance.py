@@ -159,7 +159,7 @@ def case(folder, options):
         )
         execution_file = folder / "central/execution.json"
         if options.launcher == "device":
-            center = folder / "device-home/.claude/remote-session/workspace"
+            center = folder / "device-work"
             center.mkdir(parents=True)
             launch = {"cwd": str(center), "env": {}}
             execution_file = (

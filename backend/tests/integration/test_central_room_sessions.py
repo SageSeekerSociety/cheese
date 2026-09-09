@@ -62,7 +62,7 @@ async def test_room_starts_centrally_and_keeps_recorded_placement(
     screen = await central.ensure_ready(
         project_id=project,
         topic_id=topic,
-        token="scoped",
+        token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
         env={"CHEESE_ENVIRONMENT": '{"revision":"one"}'},
         launch=ClaudeLaunch("System"),
         precheck=precheck,
@@ -139,7 +139,10 @@ async def test_scoped_execution_and_rc_use_platform_owned_target(
     monkeypatch.setattr("app.domain.agent.execution.call", call)
     endpoint = f"/topics/{topic}/execution/{resource}"
     token = mint_scoped_token(
-        project_id=str(project), topic_id=str(topic), remote_control=True
+        project_id=str(project),
+        topic_id=str(topic),
+        remote_control=True,
+        resource_id=str(resource),
     )
     headers = {"X-Cheese-Token": token}
     payload = {
@@ -202,3 +205,13 @@ async def test_scoped_execution_and_rc_use_platform_owned_target(
         },
     )
     assert stale.status_code == 409, stale.text
+    stale_bootstrap = client.post("/v1/code/sessions", headers=headers, json={})
+    assert stale_bootstrap.status_code == 409, stale_bootstrap.text
+    async with client.test_factory() as db:
+        stored = await db.get(Topic, topic)
+        new_resource = stored.resource_id
+        stored.session_placement = {**placement, "resource_id": str(new_resource)}
+        await db.commit()
+    # Changing the URL must not let the old credential reach the replacement.
+    new_endpoint = f"/topics/{topic}/execution/{new_resource}"
+    assert client.post(new_endpoint, headers=headers, json=payload).status_code == 409

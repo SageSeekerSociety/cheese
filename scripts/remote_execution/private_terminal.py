@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import threading
@@ -206,12 +207,88 @@ def main():
             assert (room.work / "setup-result").read_text() == "executor-env"
             assert (room.work / "startup-result").read_text() == "started"
             assert not (Path(launch["cwd"]) / "custom.txt").exists()
+            # Resume the original bytes under a different HOME and cwd, as a
+            # session migration does. The chunked transfer has its own test.
+            run(["send-keys", "-t", "agent", "-l", "/exit"])
+            run(["send-keys", "-t", "agent", "Enter"])
+            deadline = time.monotonic() + 20
+            while (
+                run(["display-message", "-p", "-t", "agent", "#{pane_dead}"]).strip()
+                != "1"
+            ):
+                assert time.monotonic() < deadline, terminal()
+                time.sleep(0.1)
+            source = Path(launch["env"]["CLAUDE_CONFIG_DIR"]) / "projects"
+            originals = {
+                p.relative_to(source): p.read_bytes() for p in source.rglob("*.jsonl")
+            }
+            assert len(originals) == 1, list(originals)
+            resume = next(iter(originals)).stem
+            resumed = prepare(
+                folder / "resumed-center",
+                config,
+                claude=args.claude,
+                extra_args=[
+                    "--dangerously-skip-permissions",
+                    "--remote-control",
+                    "Resumed acceptance",
+                    "--resume",
+                    resume,
+                ],
+            )
+            resumed_config = Path(resumed["env"]["CLAUDE_CONFIG_DIR"])
+            shutil.copytree(source, resumed_config / "projects")
+            resumed_gate = json.loads((resumed_config / ".claude.json").read_text())
+            resumed_gate.update(
+                {
+                    k: gates[k]
+                    for k in (
+                        "cachedGrowthBookFeatures",
+                        "cachedGrowthBookFeaturesAt",
+                        "oauthAccount",
+                    )
+                }
+            )
+            dump(resumed_config / ".claude.json", resumed_gate)
+            resumed["env"] = {**env, **resumed["env"]}
+            dump(folder / "resumed-launch.json", resumed)
+            rc.connected.clear()
+            run(
+                [
+                    "respawn-pane",
+                    "-k",
+                    "-t",
+                    "agent",
+                    shlex.join(
+                        [
+                            sys.executable,
+                            str(SOURCE / "client.py"),
+                            "launch",
+                            str(folder / "resumed-launch.json"),
+                        ]
+                    ),
+                ]
+            )
+            assert rc.connected.wait(30), terminal()
+            actions.extend(
+                [None, {"name": "Read", "input": {"file_path": work + "/draft.md"}}]
+            )
+            send("Resume the same conversation and read the revised draft.")
+            wait_requests(9)
+            history = json.dumps(server.state["requests"][-1]["messages"])
+            assert "Prepare and revise a private document draft." in history
+            assert "ROOM_CUSTOM_MCP" in history
+            assert "Revised draft" in history
+            assert not (Path(resumed["cwd"]) / "draft.md").exists()
+            assert {
+                p.relative_to(source): p.read_bytes() for p in source.rglob("*.jsonl")
+            } == originals
         terminal()
         dump(
             folder / "summary.json",
             {
                 "passed": True,
-                "turns": 2,
+                "turns": 3 if room else 2,
                 "model_requests": len(server.state["requests"]),
                 "central_file_unchanged": True,
             },
