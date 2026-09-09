@@ -61,8 +61,8 @@ def test_warm_native_exec_loads_the_transport_and_preserves_existing_options(tmp
     assert result.returncode == 0, result.stderr
     observed = json.loads(result.stdout)
     assert shlex.split(observed["options"]) == [
-        "--smol",
         "--preload=" + str(tmp_path / "webfetch_transport.cjs"),
+        "--smol",
     ]
     assert observed["home"] == str(tmp_path / "home")
 

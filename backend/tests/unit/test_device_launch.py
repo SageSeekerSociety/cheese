@@ -887,7 +887,7 @@ def test_full_launcher_installs_platform_cli_without_network(tmp_path):
         text=True,
         check=True,
     )
-    assert "--preload=" + str(transport) in shlex.split(environment.stdout)
+    assert environment.stdout == f'"--preload={transport}"'
     installed = home / ".claude/cheese"
     source = (
         device_launch.Path(device_launch.__file__).resolve().parents[5]
@@ -2068,4 +2068,6 @@ def test_repaired_webfetch_is_available_on_both_delivery_paths():
         next(f.content for f in spec.files if f.name == "settings.json")
     )
     assert "WebFetch" not in settings["permissions"]["deny"]
-    assert "--preload=" in spec.env["BUN_OPTIONS"]
+    assert shlex.split(spec.env["BUN_OPTIONS"]) == [
+        "--preload=/cfg/webfetch_transport.cjs"
+    ]
