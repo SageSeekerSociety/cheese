@@ -247,7 +247,18 @@ def bind(
         prompt_file = config / "cheese-system-prompt.md"
         _write(prompt_file, system_prompt)
         environment = json.loads((directory / "environment.json").read_text())
-        environment.update(settings.get("env", {}))
+        room_environment = settings.get("env", {})
+        environment.update(room_environment)
+        proxy_environment = {}
+        if "HTTPS_PROXY" in room_environment:
+            # Native clients differ on proxy variable casing. A claim must not
+            # retain the provider route through a lowercase or HTTP-only alias.
+            for name in ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY"):
+                value = room_environment.get(
+                    name, room_environment.get(name.lower(), "")
+                )
+                proxy_environment[name] = proxy_environment[name.lower()] = value
+            environment.update(proxy_environment)
         environment.update(
             PATH=os.environ["PATH"],
             HOME=state["home"],
@@ -263,6 +274,7 @@ def bind(
             **settings,
             "env": {
                 **settings.get("env", {}),
+                **proxy_environment,
                 "CLAUDE_BG_RENDEZVOUS_SOCK": environment["CLAUDE_BG_RENDEZVOUS_SOCK"],
                 "CLAUDE_BG_RV_AUTH": environment["CLAUDE_BG_RV_AUTH"],
             },

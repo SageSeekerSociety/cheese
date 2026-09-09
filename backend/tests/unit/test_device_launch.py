@@ -5,15 +5,92 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 
 import pytest
 
 from app.domain.agent.harness.claude_code import device_launch, warm_session
+
+
+def test_native_claim_replaces_all_provider_proxy_variants(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    work = tmp_path / "work"
+    work.mkdir()
+    token = tmp_path / "rv-token"
+    token.write_text("fixture")
+    (tmp_path / "ready").touch()
+    (tmp_path / "environment.json").write_text(
+        json.dumps(
+            {
+                name: "http://old-provider"
+                for name in (
+                    "HTTPS_PROXY",
+                    "https_proxy",
+                    "HTTP_PROXY",
+                    "http_proxy",
+                    "ALL_PROXY",
+                    "all_proxy",
+                )
+            }
+        )
+    )
+    monkeypatch.setattr(warm_session, "_native_alive", lambda state: True)
+    frames = []
+    with tempfile.TemporaryDirectory(prefix="cw-") as sockets:
+        path = sockets + "/claim"
+        (tmp_path / "state.json").write_text(
+            json.dumps(
+                {
+                    "home": str(home),
+                    "workspace": str(work.resolve()),
+                    "rendezvous": sockets + "/rv",
+                    "token_file": str(token),
+                    "claim_socket": path,
+                    "claim_auth": "fixture",
+                }
+            )
+        )
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+            server.bind(path)
+            server.listen(1)
+            server.settimeout(3)
+
+            def receive():
+                connection, _ = server.accept()
+                with connection, connection.makefile("rb") as reader:
+                    frames.append(json.loads(reader.readline()))
+
+            receiver = threading.Thread(target=receive)
+            receiver.start()
+            warm_session.bind(
+                tmp_path,
+                project_id=str(uuid.uuid4()),
+                topic_id=str(uuid.uuid4()),
+                work=work,
+                system_prompt="fixture",
+                settings={
+                    "env": {"HTTPS_PROXY": "http://room-meter", "NO_PROXY": "localhost"}
+                },
+            )
+            receiver.join(timeout=3)
+            assert not receiver.is_alive()
+    persisted = json.loads((home / ".claude/settings.json").read_text())["env"]
+    for environment in (frames[0]["env"], persisted):
+        assert (
+            environment["HTTPS_PROXY"]
+            == environment["https_proxy"]
+            == "http://room-meter"
+        )
+        assert environment["HTTP_PROXY"] == environment["http_proxy"] == ""
+        assert environment["ALL_PROXY"] == environment["all_proxy"] == ""
+        assert environment["NO_PROXY"] == environment["no_proxy"] == "localhost"
 
 
 @pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux is required")
