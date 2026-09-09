@@ -1131,7 +1131,9 @@ def main() -> None:
             _call("POST", f"/topics/{topic}/title", {"title": a.text})
             print(f"话题标题已设为：{a.text}")
     elif a.cmd == "fetch":
-        body = {"url": a.url}
+        # 带上话题:沙箱 token 是带作用域的,后端要凭它确认这个凭据属于谁。
+        # 不带的话每一次调用都会被判成 "Agent credential is invalid or expired"。
+        body = {"url": a.url, "topic": TOPIC, "project": PROJECT}
         if a.prompt:
             body["prompt"] = a.prompt
         data = _call("POST", "/fetch", body).get("data", {})

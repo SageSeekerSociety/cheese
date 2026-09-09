@@ -12,6 +12,8 @@ The sandbox therefore sends a URL and receives prose. It never receives the
 means to fetch anything itself.
 """
 
+import uuid
+
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
@@ -29,14 +31,24 @@ class FetchIn(BaseModel):
     #: which is the difference between spending tens of tokens and tens of
     #: thousands on the same article.
     prompt: str | None = Field(default=None, max_length=4000)
+    #: Which room and project are asking. A sandbox token is SCOPED — it names
+    #: both — so verifying it needs to know which one the caller claims to be
+    #: speaking for. An endpoint that touches none of our resources still has to
+    #: say this, because the check is on the credential, not on the resource.
+    topic: uuid.UUID | None = None
+    project: uuid.UUID | None = None
 
 
 @router.post("/fetch", summary="Read a URL for an agent")
 async def read_url(body: FetchIn, actor: ActorResolverDep) -> dict:
     # Any caller the platform already authenticates may read a public page;
     # there is no per-resource permission to check because no resource of ours
-    # is being touched. Resolving still matters: it rejects an unsigned caller.
-    await actor.resolve(fallback_handle=None)
+    # is being touched. The topic still has to be passed: a scoped sandbox token
+    # only verifies against the scope it was minted for, so leaving it out made
+    # every sandbox call fail with "Agent credential is invalid or expired".
+    await actor.resolve(
+        fallback_handle=None, topic_id=body.topic, project_id=body.project
+    )
 
     distill = None
     if settings.anthropic_base_url and settings.anthropic_auth_token:

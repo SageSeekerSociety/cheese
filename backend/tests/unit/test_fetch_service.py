@@ -7,6 +7,8 @@ that neither returned nor errored, holding one turn open for 17 minutes.
 
 import asyncio
 
+import pytest
+
 from app.domain.fetch import layers, service
 from app.domain.fetch.extract import substantive_length, to_markdown
 
@@ -145,3 +147,57 @@ async def test_third_party_and_browser_rungs_stay_off_unless_configured(monkeypa
         browser_endpoint="http://render:8900",
     )
     assert called == ["reader", "browser"], "configured rungs run cheapest-first"
+
+
+async def test_a_sandbox_token_is_accepted_when_the_room_is_named(monkeypatch):
+    """The shipped bug: /fetch resolved the caller without naming a room.
+
+    A sandbox token is SCOPED — it carries the project and topic it was minted
+    for — so verifying it needs to know which room the caller claims to speak
+    for. The first release passed neither, and every real sandbox call came back
+    "Agent credential is invalid or expired". The behaviour tests around it all
+    passed, because none of them went through authentication.
+
+    Reading a public page still needs no per-resource permission. The room is
+    named for the credential's sake, not the resource's.
+    """
+    import uuid as _uuid
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.api import auth as auth_mod
+    from app.core.errors import AuthenticationRequiredError, ForbiddenError
+    from app.core.sandbox_auth import mint_scoped_token
+
+    project, topic = _uuid.uuid4(), _uuid.uuid4()
+    monkeypatch.setattr(
+        auth_mod,
+        "IdentityService",
+        lambda _session: SimpleNamespace(is_agent=AsyncMock(return_value=True)),
+    )
+    monkeypatch.setattr(
+        auth_mod,
+        "UserRepository",
+        lambda _session: SimpleNamespace(
+            get_by_id=AsyncMock(return_value=None),
+            get_by_username=AsyncMock(return_value=None),
+        ),
+    )
+    token = mint_scoped_token(project_id=str(project), topic_id=str(topic))
+
+    def resolver():
+        return auth_mod.ActorResolver(
+            session=MagicMock(), bearer=None, cheese_token=token
+        )
+
+    # What the endpoint used to do: no room named. Refused — which of the two
+    # refusals it is depends on the token's claims, and either one is a 4xx the
+    # sandbox cannot get past.
+    with pytest.raises((AuthenticationRequiredError, ForbiddenError)):
+        await resolver().resolve(fallback_handle=None)
+
+    # What it does now.
+    actor = await resolver().resolve(
+        fallback_handle=None, topic_id=topic, project_id=project
+    )
+    assert actor.is_agent and actor.handle.startswith("cheese-")
