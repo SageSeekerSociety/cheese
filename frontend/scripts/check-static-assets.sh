@@ -61,8 +61,21 @@ if [ "$css_count" -eq 0 ]; then
   failures=$((failures + 1))
 fi
 
+# The user manual ships inside this image (docs/manual → public/docs → dist).
+# It is built by a step OUTSIDE the docker build, because the build context is
+# frontend/ and the manual's sources are not in it. Forget that step and the
+# image still builds, still passes every other check, and /docs is simply 404 —
+# a silent hole in something we hand out links to. So it is a hard requirement
+# here, where a missing file already fails the build and the healthcheck.
+for required in docs/index.html docs/llms.txt; do
+  if [ ! -f "$static_root/$required" ]; then
+    error "missing $required — build it with \`task docs:build\` before the image"
+    failures=$((failures + 1))
+  fi
+done
+
 if [ "$failures" -ne 0 ]; then
   exit 1
 fi
 
-echo "STATIC ASSETS OK: $local_count local references"
+echo "STATIC ASSETS OK: $local_count local references, manual present"

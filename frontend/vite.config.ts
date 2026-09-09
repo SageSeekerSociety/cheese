@@ -160,7 +160,11 @@ export default defineConfig({
         // waved it through and every install downloaded it. Same reason, same
         // treatment: keep both OUT of precache (that is "别缓存到爆"); the
         // /assets/ runtime cache below picks them up on first online use.
-        globIgnores: ['**/*.worker-*.js', '**/monaco-*.js'],
+        // `docs/**` is the user manual (docs/manual → public/docs), not part of
+        // this app's shell: precaching it made every install download 55 extra
+        // files it may never open, and each edit to the manual would then have
+        // to reach people through a service-worker update.
+        globIgnores: ['**/*.worker-*.js', '**/monaco-*.js', 'docs/**'],
         // Raised from the 2 MiB default so the shell-critical `vendor` chunk
         // (~5 MB) is precached — leaving it out is exactly the "离线白屏" the
         // spec warns against. Do NOT tune this number to drop one specific
@@ -183,8 +187,16 @@ export default defineConfig({
           {
             // Refresh every application page online, including deep workspace
             // links. Backend navigations must never receive the SPA fallback.
+            // `docs` joins the exclusions for a different reason than the others:
+            // it IS ours, but it is static pages nginx already resolves
+            // (/docs/quickstart → quickstart.html). Leaving it in meant an
+            // offline reader got `precacheFallback: index.html` — the
+            // application, rendered under a documentation URL, with nothing
+            // saying so. A plain browser error is the honest answer there.
             urlPattern: ({ url, request, sameOrigin }) =>
-              sameOrigin && request.mode === 'navigate' && !/^\/(?:api|connector|users)(?:\/|$)/.test(url.pathname),
+              sameOrigin &&
+              request.mode === 'navigate' &&
+              !/^\/(?:api|connector|users|docs)(?:\/|$)/.test(url.pathname),
             handler: 'NetworkOnly',
             options: {
               fetchOptions: { cache: 'no-cache' },
