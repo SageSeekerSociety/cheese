@@ -13,6 +13,7 @@ export function usePageTitle() {
   const router = useRouter()
   const store = usePageTitleStore()
   const { t } = useI18n()
+  const siteName = computed(() => (store.siteName === '知是社区' ? t('website.cheese2') : store.siteName))
 
   const getRouteHierarchy = computed((): RouteHierarchyItem[] => {
     const matched = route.matched
@@ -91,18 +92,18 @@ export function usePageTitle() {
     const hierarchy = getRouteHierarchy.value
     const titles = hierarchy.map((item) => item.title).filter(Boolean)
 
-    if (titles.length === 0) return store.siteName
+    if (titles.length === 0) return siteName.value
 
-    return [...titles, store.siteName].join(store.separator)
+    return [...titles, siteName.value].join(store.separator)
   })
 
   const seoTitle = computed((): string => {
     const hierarchy = getRouteHierarchy.value
     const titles = hierarchy.map((item) => item.title).reverse()
 
-    if (titles.length === 0) return store.siteName
+    if (titles.length === 0) return siteName.value
 
-    return [...titles, store.siteName].join(store.separator)
+    return [...titles, siteName.value].join(store.separator)
   })
 
   return {
@@ -121,7 +122,7 @@ export function usePageTitle() {
     fullTitle: fullTitle,
     seoTitle: seoTitle,
     getRouteHierarchy: getRouteHierarchy,
-    siteName: computed(() => store.siteName),
+    siteName,
     separator: computed(() => store.separator),
     allDynamicTitles: computed(() => store.allDynamicTitles),
   }

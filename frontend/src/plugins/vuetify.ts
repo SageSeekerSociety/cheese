@@ -21,7 +21,7 @@ import 'vuetify/styles'
 
 import { createVuetify } from 'vuetify'
 import { aliases, mdi } from 'vuetify/iconsets/mdi'
-import { zhHans } from 'vuetify/locale'
+import { en, zhHans } from 'vuetify/locale'
 
 import { resolveInitialTheme } from '@/theme'
 
@@ -33,7 +33,7 @@ export default createVuetify({
   locale: {
     locale: 'zhHans',
     fallback: 'zhHans',
-    messages: { zhHans },
+    messages: { en, zhHans },
   },
   theme: {
     // Which theme to boot with is resolved from the persisted preference (or

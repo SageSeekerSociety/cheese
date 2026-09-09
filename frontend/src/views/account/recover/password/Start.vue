@@ -4,9 +4,13 @@
     <div class="mb-12">
       <div class="d-flex align-center mb-3">
         <v-icon color="primary" size="28" class="mr-3">mdi-lock-reset</v-icon>
-        <h1 class="text-h3 font-weight-light" style="color: var(--ink); line-height: 1.2">重置账户密码</h1>
+        <h1 class="text-h3 font-weight-light" style="color: var(--ink); line-height: 1.2">
+          {{ t('website.resetYourPassword') }}
+        </h1>
       </div>
-      <p class="text-body-1" style="color: var(--muted); line-height: 1.5">通过注册邮箱验证身份</p>
+      <p class="text-body-1" style="color: var(--muted); line-height: 1.5">
+        {{ t('website.verifyYourIdentityWithYourAccountEmail') }}
+      </p>
     </div>
 
     <!-- 错误/成功提示区域 -->
@@ -26,7 +30,7 @@
               v-model="email"
               autocomplete="email"
               name="email"
-              label="注册邮箱"
+              :label="t('website.accountEmail')"
               variant="outlined"
               :loading="isSubmitting"
               v-bind="emailProps"
@@ -42,11 +46,11 @@
               style="text-transform: none; font-weight: 500; height: 48px"
               class="mb-4"
             >
-              发送重置邮件
+              {{ t('website.sendResetEmail') }}
             </v-btn>
 
             <p class="text-body-2" style="color: var(--muted)">
-              想起密码了？
+              {{ t('website.rememberYourPassword') }}
               <v-btn
                 variant="text"
                 color="primary"
@@ -55,8 +59,7 @@
                 style="text-transform: none; padding: 0; min-width: auto; height: auto; vertical-align: baseline"
                 class="text-decoration-none"
               >
-                <v-icon start size="16">mdi-arrow-left</v-icon>
-                返回登录
+                <v-icon start size="16">mdi-arrow-left</v-icon> {{ t('website.backToSignIn') }}
               </v-btn>
             </p>
           </v-form>
@@ -67,7 +70,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 // import { useRouter } from 'vue-router'
 import { toTypedSchema } from '@vee-validate/zod'
 import { useForm } from 'vee-validate'
@@ -75,6 +78,7 @@ import { z } from 'zod'
 
 import { vuetifyConfig } from '@/utils/form'
 
+import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 
@@ -87,10 +91,12 @@ const myAlert = ref<{
 })
 
 const { handleSubmit, defineField, isSubmitting } = useForm({
-  validationSchema: toTypedSchema(
-    z.object({
-      email: z.string().email(),
-    })
+  validationSchema: computed(() =>
+    toTypedSchema(
+      z.object({
+        email: z.string().email(),
+      })
+    )
   ),
 })
 
@@ -102,12 +108,12 @@ const submit = handleSubmit(async (value) => {
   try {
     await UserApi.recoverPasswordRequest(value.email)
     myAlert.value = {
-      message: '重置密码邮件已发送，请注意查收',
+      message: t('website.checkYourInboxForAPasswordReset'),
       type: 'success',
     }
   } catch (e) {
     myAlert.value = {
-      message: requestErrorMessage(e, '发送失败，请重试'),
+      message: requestErrorMessage(e, t('website.couldNotSendTheEmailPleaseTry')),
       type: 'error',
     }
   }

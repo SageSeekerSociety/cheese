@@ -188,6 +188,7 @@ router.isReady().then(async () => {
 
   watch(() => router.currentRoute.value.path, updateDocumentTitle, { immediate: true })
   watch(() => store.updateTrigger, updateDocumentTitle)
+  watch(titleManager.fullTitle, updateDocumentTitle)
   watch([() => store.siteName, () => store.separator], updateDocumentTitle)
 })
 

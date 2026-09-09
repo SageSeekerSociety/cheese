@@ -9,6 +9,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiError, listProjects, markRead } from './api'
 
+import { setLocale } from '@/i18n'
+
 const HTML = '<!DOCTYPE html><html><body><h1>Argo Tunnel error</h1></body></html>'
 
 function page(status: number, type = 'text/html; charset=UTF-8'): Response {
@@ -31,6 +33,7 @@ describe('边缘的错误页不是应用的答复', () => {
   let calls: string[]
 
   beforeEach(() => {
+    setLocale('zh-CN')
     calls = []
     localStorage.clear()
   })

@@ -14,6 +14,7 @@ export default {
       component: () => import('@/views/account/SignIn.vue'),
       meta: {
         title: '登录',
+        titleKey: 'website.signIn',
       },
     },
     {
@@ -22,6 +23,7 @@ export default {
       component: () => import('@/views/account/signup/Start.vue'),
       meta: {
         title: '注册',
+        titleKey: 'website.createAccount',
       },
     },
     {
@@ -30,6 +32,7 @@ export default {
       component: () => import('@/views/account/signup/VerifyEmail.vue'),
       meta: {
         title: '注册',
+        titleKey: 'website.verifyYourEmail',
       },
     },
     {
@@ -38,6 +41,7 @@ export default {
       component: () => import('@/views/account/recover/password/Start.vue'),
       meta: {
         title: '找回密码',
+        titleKey: 'website.forgotPassword',
       },
     },
     {
@@ -46,6 +50,7 @@ export default {
       component: () => import('@/views/account/recover/password/Verify.vue'),
       meta: {
         title: '找回密码',
+        titleKey: 'website.forgotPassword',
       },
       beforeEnter: (to: any, from: any, next: any) => {
         if (!to.query.token) {
@@ -101,6 +106,7 @@ export default {
       component: () => import('@/views/account/OAuthError.vue'),
       meta: {
         title: 'OAuth 登录失败',
+        titleKey: 'website.thirdpartySigninFailed',
       },
     },
   ],

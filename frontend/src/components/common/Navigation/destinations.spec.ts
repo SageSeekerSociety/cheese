@@ -1,9 +1,13 @@
 import type { Project } from '@/cx_types'
 import type { NavItem } from './types'
 
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import { railItems, tabItems, workspaceProject } from './destinations'
+
+import { setLocale } from '@/i18n'
+
+beforeEach(() => setLocale('zh-CN'))
 
 function sources(projectCount: number, workspaceProjectId: string | null = null) {
   const projects = Array.from({ length: projectCount }, (_, i) => ({ id: `p${i}`, name: `项目${i}` })) as Project[]

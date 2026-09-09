@@ -6,14 +6,14 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { createPinia } from 'pinia'
-import { afterAll, beforeAll, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 
 import TopicHeader from './components/TopicHeader.vue'
 import TopicSidebar from './components/TopicSidebar.vue'
 import Home from './layouts/home/Home.vue'
 import { createDialogPlugin } from './plugins/dialog'
 import App from './App.vue'
-import i18n from './i18n'
+import i18n, { setLocale } from './i18n'
 
 vi.mock('@/api', async (original) => ({
   ...(await original<typeof import('@/api')>()),
@@ -35,6 +35,7 @@ beforeAll(() => {
   )
 })
 afterAll(() => vi.unstubAllGlobals())
+beforeEach(() => setLocale('zh-CN'))
 
 const topic: Topic = {
   id: 't1',
@@ -172,16 +173,20 @@ it.each(['/projects/p1', '/projects/p1/topics/t1'])(
   }
 )
 
-it('mounts the home tabs into the mobile bar after a breakpoint change', async () => {
+it.each([
+  { locale: 'zh-CN' as const, spaces: '空间', teams: '小队' },
+  { locale: 'en' as const, spaces: 'Spaces', teams: 'Teams' },
+])('mounts $locale home tabs into the mobile bar after a breakpoint change', async ({ locale, spaces, teams }) => {
+  setLocale(locale)
   const app = await mountApp('/home/spaces', 1280)
   try {
     await app.resize(390)
     expect(app.failures).toEqual([])
-    expect(document.querySelector('#app-bar-slot')?.textContent).toContain('空间')
+    expect(document.querySelector('#app-bar-slot')?.textContent).toContain(spaces)
     await app.resize(1280)
     await app.resize(390)
     expect(app.failures).toEqual([])
-    expect(document.querySelector('#app-bar-slot')?.textContent).toContain('小队')
+    expect(document.querySelector('#app-bar-slot')?.textContent).toContain(teams)
   } finally {
     app.dispose()
   }

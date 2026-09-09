@@ -10,8 +10,10 @@
       >
         <div class="text-center">
           <v-img :src="logo" max-width="140" contain class="mx-auto mb-8" />
-          <h1 class="text-h3 font-weight-light mb-3" style="color: var(--ink)">知是</h1>
-          <div class="text-body-1 font-weight-light" style="color: var(--muted)">知无界，识有光</div>
+          <h1 class="text-h3 font-weight-light mb-3" style="color: var(--ink)">{{ t('website.cheese') }}</h1>
+          <div class="text-body-1 font-weight-light" style="color: var(--muted)">
+            {{ t('website.learnTogetherBuildTogether') }}
+          </div>
         </div>
       </v-col>
 
@@ -20,12 +22,15 @@
         <!-- 移动端：顶部logo区域 -->
         <div class="d-md-none text-center py-8" style="background-color: var(--canvas)">
           <v-img :src="logo" max-width="100" contain class="mx-auto mb-4" />
-          <h1 class="text-h4 font-weight-light mb-2" style="color: var(--ink)">知是</h1>
-          <div class="text-subtitle-1 font-weight-light" style="color: var(--muted)">知无界，识有光</div>
+          <h1 class="text-h4 font-weight-light mb-2" style="color: var(--ink)">{{ t('website.cheese') }}</h1>
+          <div class="text-subtitle-1 font-weight-light" style="color: var(--muted)">
+            {{ t('website.learnTogetherBuildTogether') }}
+          </div>
         </div>
 
+        <div class="d-flex justify-end px-6 pt-4"><LanguageToggle /></div>
         <!-- 内容区域 -->
-        <div class="flex-grow-1 d-flex flex-column justify-center px-16 py-12">
+        <div class="flex-grow-1 d-flex flex-column justify-center px-6 px-sm-16 py-12">
           <div class="w-100" style="max-width: 400px">
             <v-defaults-provider :defaults="defaults">
               <router-view v-slot="{ Component }">
@@ -43,7 +48,7 @@
             <span class="mr-3">&copy; 2023 - 2025</span>
             <span class="mr-3">|</span>
             <span
-              >由
+              >{{ t('website.madeBy') }}
               <a
                 href="https://github.com/SageSeekerSociety"
                 target="_blank"
@@ -51,11 +56,10 @@
                 style="color: var(--muted)"
                 >SageSeekerSociety</a
               >
-              用
+              {{ t('website.with') }}
               <!-- 这颗心是情感符号不是状态：红心在浅色和深色下都该是红的，所以它保持
                    固定色，不走 --danger（把装饰挂到状态色上，改状态色时它会跟着变）。 -->
-              <v-icon color="red" size="12" class="mx-1">mdi-heart</v-icon>
-              做出来的
+              <v-icon color="red" size="12" class="mx-1">mdi-heart</v-icon> {{ t('website.sentenceEnd3') }}
             </span>
           </div>
         </div>
@@ -68,6 +72,8 @@
 import { ref } from 'vue'
 
 import logo from '@/assets/logo.svg?url'
+import LanguageToggle from '@/components/common/LanguageToggle.vue'
+import { t } from '@/i18n'
 
 const defaults = ref({
   VTextField: {

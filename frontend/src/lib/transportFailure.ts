@@ -1,3 +1,5 @@
+import { t } from '@/i18n'
+
 // What the app did not answer.
 //
 // Every answer of ours is a JSON envelope, and so is every error of ours: a
@@ -24,9 +26,7 @@ export function isTransportFailure(body: unknown): boolean {
 // one thing they cannot know. The app may have applied the write before
 // an intermediary returned the error page.
 export function transportFailureMessage(method: string, status: number): string {
-  const sentence =
-    method.toUpperCase() === 'GET'
-      ? '服务暂时不可达，请稍后重试'
-      : '服务暂时不可达，无法确认操作是否完成，请刷新查看后再重试'
-  return `${sentence}（HTTP ${status}）`
+  return t(method.toUpperCase() === 'GET' ? 'website.transportReadFailure' : 'website.transportWriteFailure', {
+    status,
+  })
 }
