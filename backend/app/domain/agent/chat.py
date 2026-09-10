@@ -3227,8 +3227,8 @@ class ChatService:
 
         A Stop is "handed something back", never "done": the same worker reports
         finished again after it resumes. So this is an event on the timeline and
-        nothing more — it settles nothing and closes nothing. The room decides
-        the work is over by reading what came back (`cheese conclude-task`).
+        nothing more: acceptance closes delivered work, while an explicit close
+        abandons a task. This event does neither.
         """
         if task_id is None:
             return None

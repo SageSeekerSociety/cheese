@@ -4,7 +4,7 @@ container on the box that also hosts the enrolled device.
 It drives one real summoned turn on a device-backed project and asserts the three
 properties the first dev self-hosting run got wrong:
 
-  #94  the screen edits its device-owned checkout and pushes the topic branch,
+  #94  the screen edits its device-owned checkout and pushes the task branch,
        so 采纳/diff see the work;
   #95  the agent can file its own 验收卡 with the `cheese` CLI shipped to the device;
   #96  the chat WebSocket relays frames to a client while the turn runs.
@@ -37,13 +37,16 @@ PROJECT_ID = os.environ.get("PROJECT_ID", "").strip()
 TURN_TIMEOUT_S = float(os.environ.get("TURN_TIMEOUT_S", "600"))
 MARKER = f"device-smoke {uuid.uuid4().hex[:8]}"
 
-_CARD_CMD = f'cheese accept-request {USER_HANDLE} "设备自托管冒烟 {MARKER}"'
+_CARD_CMD = (
+    f'cheese accept-request {USER_HANDLE} "设备自托管冒烟 {MARKER}" '
+    '--subject "test: verify device task delivery"'
+)
 # An override lets CI drive a REAL dogfood round (any task), not just the marker
 # check; the built-in prompt stays the default so the assertions still apply.
 PROMPT = os.environ.get("PROMPT", "").strip() or (
     "请做两件小事,不要做别的、不要跑测试:\n"
     f"1. 在 README.md 末尾追加一行:`<!-- {MARKER} -->`\n"
-    f"2. 然后执行 `{_CARD_CMD}` 递验收卡。\n"
+    f"2. 提交并用 cheese sync 同步成功后，执行 `{_CARD_CMD}` 递验收卡。\n"
     "做完直接结束。"
 )
 
@@ -133,7 +136,13 @@ async def main() -> int:
         )["data"]["id"]
     )
     repo = ws.ensure_repo(project_id)
-    branch = ws.branch_for_place(topic_id)
+    task = api(
+        "POST",
+        f"/topics/{topic_id}/split",
+        token,
+        {"title": f"Device smoke {MARKER}", "reviewer_handle": USER_HANDLE},
+    )["data"]
+    branch = task["branch_name"]
 
     def branch_head() -> str:
         return subprocess.run(
@@ -166,7 +175,14 @@ async def main() -> int:
     url += f"/topics/{topic_id}/chat?token={token}"
     async with websockets.connect(url, open_timeout=20) as sock:
         await sock.send(
-            json.dumps({"type": "message", "content": PROMPT, "summon": True})
+            json.dumps(
+                {
+                    "type": "message",
+                    "content": f'先执行 cd "$(cheese worktree {task["id"]})"，'
+                    "在这条已有任务中完成：\n" + PROMPT,
+                    "summon": True,
+                }
+            )
         )
         loop = asyncio.get_event_loop()
         deadline = loop.time() + TURN_TIMEOUT_S
@@ -233,7 +249,7 @@ async def main() -> int:
         # that the device committed and pushed its work back.
         results.append(
             (
-                "#94 device pushed the topic branch",
+                "#94 device pushed the task branch",
                 pushed,
                 f"{before_head[:12]} -> {after_head[:12]}",
             )
@@ -241,7 +257,7 @@ async def main() -> int:
     else:
         results.append(
             (
-                "#94 device pushed its edit into the topic branch",
+                "#94 device pushed its edit into the task branch",
                 pushed and edited,
                 f"{branch}:README.md {'contains' if edited else 'MISSING'} the marker",
             )

@@ -172,9 +172,8 @@ class TaskService:
         Called for every `SubagentStop` from a BOUND worker, and a worker stops
         more than once: parking a long command in its own background reads as
         finishing, and it stops again when it resumes and finishes for real. So
-        the last one is the only one worth keeping, and none of them is allowed
-        to close anything — the room decides the work is done, after reading
-        this (`cheese conclude-task`).
+        the last one is the only one worth keeping. Acceptance closes delivered
+        work; an explicit close abandons it. A stop notification does neither.
         """
         task.conclusion = conclusion
         await self._session.flush()

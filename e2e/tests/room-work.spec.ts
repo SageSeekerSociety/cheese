@@ -1,13 +1,5 @@
-/** 一个房间派出去的活，人在屏幕上找不找得到。
- *
- * 派活的入口本来就是 API（芝士自己拆的活占绝大多数），所以布景走 API；**断言全在
- * 界面上**，因为这里要钉的正是「派出去之后，人看不看得见、点不点得进去」。
- *
- * 这一层能钉的只有这些。封口期提示在 e2e 里做不出布景：封口要 `x-cheese-token`
- * （每轮次令牌），而这是对的——封口是芝士的动作，浏览器里的人本来就不该能递卡。
- * 它钉在 TaskProgress.seal.spec.ts 和
- * tests/integration/test_tree_sealing_and_quick_check.py。
- */
+/** Dispatch through the API, then verify that people can find and open each
+ * independent task in the room overview and project board. */
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import { api, login, openFirstProject } from './helpers';
@@ -26,7 +18,9 @@ async function freshRoom(page: Page, title: string) {
 }
 
 async function dispatch(page: Page, roomId: string, title: string) {
-  return (await api(page, 'post', `/topics/${roomId}/split`, { title, created_by: 'alice' })) as {
+  return (await api(page, 'post', `/topics/${roomId}/split`, {
+    title, created_by: 'alice', reviewer_handle: 'alice',
+  })) as {
     id: string;
     queued?: boolean;
   };
