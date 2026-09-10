@@ -93,7 +93,7 @@ beforeEach(() => {
   listProjectAgents.mockReset().mockResolvedValue({
     data: [{ handle: 'reviewer', display_name: '评审', is_default: false, is_active: true }],
   })
-  localStorage.setItem('cheesex.me', JSON.stringify({ id: '1', handle: 'me', name: 'me', token: '' }))
+  localStorage.setItem('user', JSON.stringify({ id: 1, username: 'me', nickname: 'me' }))
   stubChatBackend()
 })
 

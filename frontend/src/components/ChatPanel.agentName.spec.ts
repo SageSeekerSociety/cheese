@@ -59,7 +59,7 @@ beforeAll(() => {
 beforeEach(() => {
   history = []
   agentName = '芝士'
-  localStorage.setItem('cheesex.me', JSON.stringify({ id: '1', handle: 'me', name: 'me', token: '' }))
+  localStorage.setItem('user', JSON.stringify({ id: 1, username: 'me', nickname: 'me' }))
   vi.stubGlobal(
     'WebSocket',
     class {
