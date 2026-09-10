@@ -41,9 +41,11 @@ def test_add_and_list_members(client, bearer):
 
     r = client.get(f"/projects/{project_id}/members")
     body = r.json()
-    assert body["data"]["total"] == 2
+    # 名册 = 加进来的人 + 项目所有者（他不是成员表里的一行，见
+    # test_new_project_roster.py），所有者排在最前面。
+    assert body["data"]["total"] == 3
     handles = [m["user_handle"] for m in body["data"]["data"]]
-    assert handles == ["alice", "bob"]
+    assert handles == [OWNER, "alice", "bob"]
 
 
 def test_duplicate_member_rejected(client, bearer):
@@ -77,8 +79,11 @@ def test_update_member_role(client, bearer):
     assert r.status_code == 200
     assert r.json()["data"]["role"] == "mentor"
 
-    r = client.get(f"/projects/{project_id}/members")
-    assert r.json()["data"]["data"][0]["role"] == "mentor"
+    rows = {
+        m["user_handle"]: m
+        for m in client.get(f"/projects/{project_id}/members").json()["data"]["data"]
+    }
+    assert rows["alice"]["role"] == "mentor"
 
 
 def test_update_missing_member_404(client, bearer):
@@ -103,8 +108,9 @@ def test_delete_member(client, bearer):
     assert r.status_code == 200
     assert r.json()["data"]["deleted"] is True
 
-    r = client.get(f"/projects/{project_id}/members")
-    assert r.json()["data"]["total"] == 0
+    rows = client.get(f"/projects/{project_id}/members").json()["data"]["data"]
+    # 移出的是 alice；所有者留在名册上——移出成员碰不到他，他不在那张表里。
+    assert [m["user_handle"] for m in rows] == [OWNER]
 
 
 def test_delete_missing_member_404(client, bearer):

@@ -101,9 +101,6 @@ class DashboardService:
         if card is None:
             raise NotFoundError("Project not found")
         members = await self._projects.list_members(project_id)
-        owner = card.get("owner_handle")
-        if owner and not any(m["handle"] == owner for m in members):
-            members.insert(0, {"handle": owner, "role": "lead"})
         # 等你处理的事: decision/accept requests still unread, grouped by person.
         inbox = await self._notifs.list_inbox(project_id, target_handle=viewer)
         todo_by_person: dict[str, list[dict]] = {}

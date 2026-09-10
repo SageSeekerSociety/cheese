@@ -318,7 +318,10 @@ export interface ProjectMember {
 export interface ProjectMemberRow {
   user_handle: string
   role: string
-  source?: 'team'
+  // 这一行背后**没有**成员表记录时说明它是怎么进名册的：小队带进来的人，或者
+  // 项目的所有者（所有者记在 Project.owner_handle 上，从来不是一行成员数据）。
+  // 没有这个字段 = 名册上有他自己的一行，角色和移出才动得了。
+  source?: 'team' | 'owner'
   team_id?: number
   name?: string
   // 这个人**自己选的**头像素材 id（getAvatarUrl 拼成 /avatars/{id}）。两种情况
