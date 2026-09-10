@@ -12,7 +12,7 @@ import uuid
 from datetime import UTC, datetime
 
 from app.domain.project.models import Project
-from app.domain.room_task.models import Task, WorkTree
+from app.domain.room_task.models import Task
 from app.domain.topic.models import Topic, TopicKind
 from tests.integration.conftest import session_auth_headers
 
@@ -31,7 +31,10 @@ def _room(client, project_id: str, title: str = "运维") -> str:
 
 
 def _card(client, room_id: str, title: str = "接口分页", brief: str = "") -> dict:
-    r = client.post(f"/topics/{room_id}/split", json={"title": title, "brief": brief})
+    r = client.post(
+        f"/topics/{room_id}/split",
+        json=dict(reviewer_handle="alice", **{"title": title, "brief": brief}),
+    )
     assert r.status_code == 200, r.text
     return r.json()["data"]
 
@@ -102,32 +105,13 @@ def test_saying_something_on_a_card_lands_on_the_card(client):
     assert all("这条先别动 routes" not in b["content"] for b in room_line)
 
 
-def test_a_claim_is_only_recorded_when_it_names_a_card(client):
-    """声明记在卡上。房间自己声明只查不记——它没有卡可以记。"""
+def test_file_claim_routes_are_retired(client):
     project_id = _project(client)
     room_id = _room(client, project_id)
-    card = _card(client, room_id)
-
-    room_said = client.post(
-        f"/topics/{room_id}/claim", json={"paths": ["backend/app/x.py"]}
-    )
-    assert room_said.status_code == 200, room_said.text
-    assert room_said.json()["data"]["claimed"] == []
-
-    on_card = client.post(
-        f"/topics/{room_id}/tasks/{card['id']}/claim",
-        json={"paths": ["backend/app/x.py"]},
-    )
-    assert on_card.status_code == 200, on_card.text
-    assert on_card.json()["data"]["claimed"] == ["backend/app/x.py"]
-
-    # 记下来了才拦得住第二条活。
-    other = _card(client, room_id, title="另一件")
-    clash = client.post(
-        f"/topics/{room_id}/tasks/{other['id']}/claim",
-        json={"paths": ["backend/app/x.py"]},
-    )
-    assert clash.json()["data"]["refusals"], "同一个文件被两条活声明，要拒绝"
+    task = _card(client, room_id)
+    for suffix in ("claim", f"tasks/{task['id']}/claim"):
+        response = client.post(f"/topics/{room_id}/{suffix}", json={"paths": ["a.py"]})
+        assert response.status_code == 404
 
 
 def test_a_card_that_kept_its_old_topic_id_still_renders(client):
@@ -149,15 +133,12 @@ def test_a_card_that_kept_its_old_topic_id_still_renders(client):
             room = Topic(project_id=project.id, title="老房间", kind=TopicKind.topic)
             s.add(room)
             await s.flush()
-            tree = WorkTree(project_id=project.id, room_id=room.id)
-            s.add(tree)
             await s.flush()
             s.add(
                 Task(
                     id=inherited_id,
                     project_id=project.id,
                     room_id=room.id,
-                    tree_id=tree.id,
                     title="从前是个话题",
                     created_at=datetime(2026, 7, 1, tzinfo=UTC),
                 )

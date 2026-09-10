@@ -153,10 +153,13 @@ def test_ci_failure_still_hands_the_agent_the_whole_instruction(
 
     prompt = stub_hooks.last_prompt or ""
     assert "pytest: 3 failed" in prompt
-    # 芝士推不了 GitHub，指令必须说清楚是平台代推（2026-08-09 的回归）。
-    assert "推送新 commit" not in prompt
-    assert "平台会自动把新提交同步到这个 PR" in prompt
-    # 要看全文得自己铸只读 token —— 这两句是芝士唯一能读到这条路的地方。
+    # Recovery names the task workspace and updates its existing PR. It must
+    # retain human approval instead of promising an unconditional merge.
+    tasks = client.get(f"/topics/{tid}/tasks").json()["data"]["data"]
+    assert f"cheese worktree {tasks[0]['id']}" in prompt
+    assert "cheese push-fix" in prompt
+    assert "采纳由人决定" in prompt
+    # The credentials command and repository path make the full logs reachable.
     assert "cheese gh-token" in prompt
     assert "repos/acme/widgets/actions/jobs/" in prompt
 

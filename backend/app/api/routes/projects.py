@@ -957,15 +957,18 @@ _BRANCH_PROTECTION_KEYS = (
     dependencies=[Depends(require_project_steward)],
 )
 async def set_branch_protection(
-    project_id: uuid.UUID, body: dict, db: DbSession
+    project_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     """Update branch-protection rules. Only the keys present in the body change.
 
     ``approvals_required`` predates this block and stays at
     ``settings["approvals_required"]`` — read and written here, never moved,
-    never dual-written. Writes need a verified owner/lead. Assigning this role
-    to an agent grants the same authority to change review requirements.
+    never dual-written. Review policy is controlled by human owners/leads;
+    an agent's management role does not grant authority to relax its checks.
     """
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    if actor.is_agent:
+        raise ForbiddenError("只有人类项目 owner / 组长能修改合并规则")
     project = await ProjectRepository(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")

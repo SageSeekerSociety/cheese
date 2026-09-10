@@ -20,6 +20,17 @@ CHEESE_NAME = "芝士"
 CHEESE_EMAIL = "cheese@zhishi.local"
 
 
+def declare_task(project_id: uuid.UUID, task_id: uuid.UUID) -> None:
+    """Declare delivery ownership explicitly in filesystem-only unit fixtures."""
+    base, _ = ws.base_branch_head(project_id)
+    ws.bind_task(
+        task_id,
+        branch=f"task/{task_id.hex[:8]}",
+        directory=f"task_{task_id.hex[:8]}",
+        base=base,
+    )
+
+
 def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
     done = subprocess.run(
         ["git", *args], cwd=cwd, capture_output=True, text=True, timeout=60
@@ -38,7 +49,7 @@ def machine_commits(
 ) -> str:
     """Write `files` on this place's branch and push it back. Returns the sha."""
     repo = ws.ensure_repo(project_id)
-    branch = ws.branch_for_tree(ws.tree_for_place(place_id))
+    branch = ws.branch_for_task(place_id)
     work = Path(tempfile.mkdtemp(prefix="cheese-machine-"))
     try:
         _git(work.parent, "clone", "-q", str(repo), str(work))

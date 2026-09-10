@@ -155,15 +155,16 @@ def run(config, directory, command, *, adopt=None):
         write_json(directory / f"{attempt}.json", config)
         write_json(directory / "status.json", state)
         try:
-            # An empty/failed checkout must never cause installs in another cwd.
+            # Installs must never land in another cwd, so the room directory has
+            # to be there before any script runs. It is NOT a repository: a room
+            # holds the conversation and nothing else, and a task's checkout is
+            # made next to it by `cheese worktree`. Asking git about this
+            # directory therefore answers no useful question — and while it was
+            # still asked, every room on a deployment failed preparation, which
+            # means the agent was never exec'd below and the room went silent.
             work = Path(os.environ["CHEESE_WORK"]).resolve()
-            checkout = subprocess.run(
-                ["git", "-C", str(work), "rev-parse", "--is-inside-work-tree"],
-                capture_output=True,
-                text=True,
-            )
-            if checkout.returncode or checkout.stdout.strip() != "true":
-                raise RuntimeError("repository checkout is not ready")
+            if not work.is_dir():
+                raise RuntimeError("work directory is missing")
             for stage, key in (
                 ("setup", "setup_script"),
                 ("startup", "startup_script"),

@@ -26,7 +26,7 @@ import {
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { label, PROJECT_ROLE } from '@/labels'
 import { agentDmKey } from '@/lib/dm'
-import { me as meRef, myHandle } from '@/me'
+import { myHandle } from '@/me'
 import { UserApi } from '@/network/api/users'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -118,24 +118,9 @@ function matches(m: ProjectMemberRow): boolean {
 
 // AI 队友也在项目名册上，但它们不是「人」：没有角色可升降，也不该混在人堆里
 // 排序。人这一段把它们滤掉，队友那一段（teammates）单独渲染，管理入口在 AI 队友
-// 那一页。
-// 名册表里存的是**除所有者以外**的人：这个仓里「谁是所有者」记在项目上
-// (Project.owner_handle)，不是一行成员数据。所以他得在这里补出来——否则一个刚建
-// 好的项目会对着它的主人说「还没有成员」，而他正是那个唯一确定在这儿的人。
-const roster = computed<ProjectMemberRow[]>(() => {
-  const rows = store.members
-  if (!ownerHandle.value || rows.some((m) => m.user_handle === ownerHandle.value)) return rows
-  const owner: ProjectMemberRow = { user_handle: ownerHandle.value, role: 'lead', name: ownerName.value }
-  return [owner, ...rows]
-})
-
-// 所有者的显示名：名册上没有他，所以得从别处捞——是我自己就用我自己的名字，
-// 否则退回 handle。写不出名字不影响这一行存在。
-const ownerName = computed<string>(() =>
-  ownerHandle.value === me.value ? meRef.value?.name || ownerHandle.value : ownerHandle.value
-)
-
-const people = computed(() => roster.value.filter((m) => !m.agent && matches(m)))
+// 那一页。所有者已经在名册里（后端补的那一行，带昵称和头像），这一页不再自己拼
+// 一行出来——拼出来的那行只有 handle。
+const people = computed(() => store.members.filter((m) => !m.agent && matches(m)))
 const agents = computed(() =>
   teammates.value.filter((a) => {
     const q = query.value.trim().toLowerCase()
@@ -151,13 +136,15 @@ const groups = computed(() =>
   })).filter((g) => g.rows.length > 0)
 )
 
-const myRole = computed(() => roster.value.find((m) => m.user_handle === me.value)?.role ?? null)
+const myRole = computed(() => store.members.find((m) => m.user_handle === me.value)?.role ?? null)
 const canManage = computed(() => me.value === ownerHandle.value || myRole.value === 'lead')
 
 // 项目所有者和自己这两行不带管理动作：把所有者降职会让项目没人管得了，而把
 // 自己踢出去是一个点一下就回不来的操作，两者都不该藏在一个 ⋯ 菜单里。
+// 带 source 的行（小队带进来的人、所有者）背后没有成员表那一行，改角色和移出都
+// 无从下手——它们进名册的方式就不是被加进来的。
 function manageable(m: ProjectMemberRow): boolean {
-  return canManage.value && m.source !== 'team' && m.user_handle !== ownerHandle.value && m.user_handle !== me.value
+  return canManage.value && !m.source && m.user_handle !== ownerHandle.value && m.user_handle !== me.value
 }
 
 function faceUrl(m: ProjectMemberRow): string {
@@ -257,7 +244,7 @@ watch(inviteUid, (raw) => {
 
 // 已经在名册上的人不能再邀请一次——后端会拒，但那是按下按钮之后才知道。
 const alreadyMember = computed(
-  () => !!foundUser.value && roster.value.some((m) => m.user_handle === foundUser.value?.username)
+  () => !!foundUser.value && store.members.some((m) => m.user_handle === foundUser.value?.username)
 )
 
 function resetInvite() {
@@ -311,7 +298,7 @@ async function submitInvite() {
       </p>
 
       <v-text-field
-        v-if="roster.length > 8"
+        v-if="store.members.length > 8"
         v-model="query"
         autocomplete="off"
         density="compact"
@@ -447,7 +434,7 @@ async function submitInvite() {
         </v-card>
       </div>
 
-      <div v-if="roster.length === 0" class="text-center py-10">
+      <div v-if="store.members.length === 0" class="text-center py-10">
         <v-icon size="34" class="mb-3 c-muted">mdi-account-group-outline</v-icon>
         <div class="t-body c-muted">还没有成员</div>
       </div>

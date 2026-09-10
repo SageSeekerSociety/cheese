@@ -36,7 +36,7 @@ def test_a_place_with_no_card_is_delegating():
 
 
 def test_finished_work_is_merged():
-    assert _stage(finished=True) is TopicStage.merged
+    assert _stage(finished=True) is TopicStage.archived
 
 
 @pytest.mark.parametrize(
@@ -101,7 +101,7 @@ def test_one_scenario_can_be_served_by_several_skills():
     「还没递卡」这一段是两份 skill 拼出来的——派活怎么派，以及这批活怎么交付。
     """
     serving = skills_for_scenario(stage_scenario(TopicStage.delegating))
-    assert {"stage-delegating", "stage-working"} <= set(serving), serving
+    assert {"stage-delegating"} == set(serving), serving
 
 
 def test_unknown_scenario_is_empty_not_an_error():
@@ -123,14 +123,16 @@ def test_the_pre_card_stage_covers_when_to_hand_off_and_the_github_channel():
     """这几条读完就得知道该怎么做，不能散落在别处。"""
     guide = load_scenario(stage_scenario(TopicStage.delegating))
     assert "accept-request" in guide  # 怎么递
-    assert "只读" in guide  # 为什么自己推不了
-    assert "push-fix" in guide  # 递卡之后改动怎么上 PR（#718）
+    assert "独立" in guide
+    assert "cheese ready" in guide
+    assert "永远不能" not in guide
 
 
 def test_awaiting_stage_tells_the_agent_how_prs_move_now():
     guide = load_scenario(stage_scenario(TopicStage.awaiting))
     assert "push-fix" in guide  # 提交不会自己上 PR，得说怎么上
-    assert "只读" in guide  # 为什么不能自己碰 GitHub
+    assert "实际授权" in guide
+    assert "token 是只读的" not in guide
 
 
 # --- 注入进 system prompt ---------------------------------------------------

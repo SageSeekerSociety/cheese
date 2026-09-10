@@ -186,7 +186,7 @@ const emit = defineEmits<{
   // topic/doc → open that topic).
   (e: 'mention-click', name: string): void
   // A <&path> file chip was clicked — the parent opens it in the 文件 drawer.
-  (e: 'open-file', path: string): void
+  (e: 'open-file', path: string, taskId?: string | null): void
   // An action card's button (decision → decisions page, milestone → calendar…).
   (e: 'open-resource', resource: string, turnId?: string): void
 }>()
@@ -388,7 +388,11 @@ function onMessagesClick(e: MouseEvent) {
   if (!el) return
   if (el.dataset.handle) emit('mention-click', el.dataset.handle)
   else if (el.dataset.topic) emit('open-topic', el.dataset.topic)
-  else if (el.dataset.file) emit('open-file', el.dataset.file)
+  else if (el.dataset.file) {
+    const row = el.closest('[data-mid]') as HTMLElement | null
+    const task = rows.value.find(({ block }) => block.id === row?.dataset.mid)?.block.task_id
+    emit('open-file', el.dataset.file, task ?? null)
+  }
 }
 
 // Catch-up mode: right after (re)opening the socket, the broker REPLAYS every

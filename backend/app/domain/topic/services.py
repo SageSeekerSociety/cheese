@@ -39,7 +39,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.review.services import AcceptService
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.place import Place, PlaceResolver
-from app.domain.room_task.services import ClaimService, TaskService
+from app.domain.room_task.services import TaskService
 from app.domain.topic.models import (
     RoomCleanup,
     Topic,
@@ -762,7 +762,11 @@ class TopicService:
         return topic
 
     async def upgrade_block_to_place(
-        self, *, block_id: uuid.UUID, created_by: str | None = None
+        self,
+        *,
+        block_id: uuid.UUID,
+        created_by: str | None = None,
+        reviewer_handle: str | None = None,
     ) -> tuple[Topic, Task | None, bool]:
         """讨论升级 (eval A1): turn a block into work of its own; the original
         position becomes a live link. The upgraded block itself is the task
@@ -810,10 +814,18 @@ class TopicService:
         project = await self._projects.get(block.project_id)
 
         if not parent.is_private:
+            from app.domain.project.protection import branch_protection_of
+
+            reviewer_handle = (reviewer_handle or "").strip() or (
+                branch_protection_of(project).default_reviewer or None
+            )
+            if reviewer_handle is None:
+                raise ValidationError("请指定任务验收人，或先设置项目默认验收人")
             task = await tasks.open_thread(
                 project_id=block.project_id,
                 room_id=parent.id,
                 title=PLACEHOLDER_TITLE,
+                reviewer_handle=reviewer_handle,
                 owner_handle=await self._resolve_owner(
                     created_by,
                     project_id=block.project_id,
@@ -927,7 +939,7 @@ class TopicService:
         title: str,
         created_by: str | None = None,
         brief: str | None = None,
-        paths: list[str] | None = None,
+        base_task_id: uuid.UUID | None = None,
         triggered_by: str | None = None,
         reviewer_handle: str | None = None,
         reporter_handle: str | None = None,
@@ -1000,31 +1012,25 @@ class TopicService:
         # 谁来验收这条活 (#718 设置表): 显式指定优先，没指定就用项目的默认验收人。
         # Resolved HERE, at dispatch, and stored on the row — see
         # `Task.reviewer_handle` for why it is not read back out of the setting
-        # when the card is filed. None is a legitimate outcome (no default
-        # configured, nobody named): the card then has to name one itself, and
-        # refusing to dispatch work over it would make an unset setting stop a
-        # project from working at all.
+        # when the card is filed. Work must have a reviewer before it starts.
         from app.domain.project.protection import branch_protection_of
 
         reviewer_handle = (reviewer_handle or "").strip() or (
             branch_protection_of(project).default_reviewer or None
         )
+        if reviewer_handle is None:
+            raise ValidationError("请指定任务验收人，或先设置项目默认验收人")
         task = await TaskService(self._session).open_thread(
             project_id=room.project_id,
             room_id=room.id,
             title=title,
+            base_task_id=base_task_id,
             owner_handle=owner_handle,
             reviewer_handle=reviewer_handle,
             reporter_handle=reporter_handle,
             contributor_handles=contributor_handles,
             created_by=created_by,
         )
-        if paths:
-            # 划出这条活要碰的地方。Refusals are NOT raised here: the caller
-            # renders them alongside the warnings, and an exception would carry
-            # only one of the two. A claim that was refused simply is not
-            # recorded — the thread still exists and can narrow it and try again.
-            await ClaimService(self._session).claim(task, paths)
         # 简报进卡, not into a document of its own — see `seed_brief_doc` for
         # why the document could not be kept up to date. The worker gets these
         # same words a second way, in the prompt the room hands its subagent;

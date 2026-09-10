@@ -10,6 +10,7 @@ import uuid
 
 import pytest
 
+from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import session_auth_headers
 
 
@@ -27,7 +28,8 @@ def _make_topic(client, project_id: str) -> str:
 
 def _make_card(client, topic_id: str, reviewer: str = "alice") -> str:
     r = client.post(
-        f"/topics/{topic_id}/accept-card",
+        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
+        headers=delivery_headers(client, topic_id),
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": reviewer,
@@ -446,7 +448,12 @@ def test_legacy_discussion_card_on_bound_project_accepts_without_forge_label(
     assert "未接 GitHub" not in (card["note"] or "")
     assert [c for c in _FakeClient.calls if c[0] in ("open_pr", "merge")] == []
     assert pr_world["local_merges"] != []  # noop merge — nothing bypassed
-    assert client.get(f"/topics/{tid}").json()["data"]["accepted_by"] == "alice"
+    assert (
+        client.get(f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}").json()[
+            "data"
+        ]["accepted_by"]
+        == "alice"
+    )
 
 
 @pytest.mark.parametrize("missing", ["upstream", "installation"])
@@ -484,7 +491,12 @@ def test_unbound_project_local_merge_is_legitimate_and_labelled(
     assert "⚠️" not in card["note"]
     assert [c for c in _FakeClient.calls if c[0] in ("open_pr", "merge")] == []
     assert pr_world["local_merges"] != []  # the only accept such a project has
-    assert client.get(f"/topics/{tid}").json()["data"]["accepted_by"] == "alice"
+    assert (
+        client.get(f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}").json()[
+            "data"
+        ]["accepted_by"]
+        == "alice"
+    )
 
 
 def test_unbound_project_with_github_upstream_pushes_nothing(

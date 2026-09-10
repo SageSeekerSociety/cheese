@@ -44,7 +44,7 @@ import { noteTone } from '@/lib/noteTone'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 
-const props = defineProps<{ topicId: string; topicStatus: string }>()
+const props = defineProps<{ topicId: string; topicStatus: string; taskId?: string | null }>()
 const emit = defineEmits<{
   (e: 'phase', phase: CardPhase): void
   /** 去验收: show me what I am being asked to accept. */
@@ -170,11 +170,12 @@ async function loadAcceptCard(silent = false) {
     showGateOutput.value = false
   }
   const tid = props.topicId
+  const task = props.taskId
   if (!tid) return
   try {
-    const payload = await getAcceptCards(tid)
-    if (props.topicId === tid) {
-      acceptCards.value = payload.data
+    const payload = await getAcceptCards(tid, task)
+    if (props.topicId === tid && props.taskId === task) {
+      acceptCards.value = payload.data.filter((card) => (props.taskId ? card.task_id === props.taskId : !card.task_id))
       loaded.value = true
     }
   } catch {
@@ -191,20 +192,21 @@ const prChecks = ref<PrChecks | null>(null)
 let prPollTimer: number | null = null
 async function loadPrChecks() {
   const tid = props.topicId
+  const task = props.taskId
   if (!prCheckCard.value?.pr_number) return
   try {
-    const payload = await getPrChecks(tid)
-    if (props.topicId === tid) prChecks.value = payload
+    const payload = await getPrChecks(tid, task)
+    if (props.topicId === tid && props.taskId === task) prChecks.value = payload
   } catch {
     // Best-effort; the PR row just shows the link without CI state.
   }
 }
 watch(
-  () => (prCheckCard.value?.pr_number ? props.topicId : null),
+  () => (prCheckCard.value?.pr_number ? `${props.topicId}:${props.taskId ?? ''}:${prCheckCard.value.pr_number}` : null),
   (active) => {
     prChecks.value = null
+    if (active) void loadPrChecks()
     if (active && prPollTimer === null) {
-      void loadPrChecks()
       prPollTimer = window.setInterval(() => {
         void loadPrChecks()
         // 卡本身也跟着刷——待采纳和交付中都要，而且理由是同一个：**这张卡是快照，
@@ -344,7 +346,7 @@ async function onRejectCard() {
 }
 
 watch(
-  () => props.topicId,
+  () => [props.topicId, props.taskId],
   () => void loadAcceptCard(),
   { immediate: true }
 )

@@ -4,7 +4,7 @@ import type { FileContent, PreviewInfo } from '../../cx_types'
 import { nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
 import { useFullscreen } from '@vueuse/core'
 
-import { getPreview, readFile, requestPreviewSession } from '../../api'
+import { getPreview, readPreviewFile, requestPreviewSession } from '../../api'
 import { postPreviewSession } from '../../lib/previewSession'
 
 const props = withDefaults(
@@ -100,7 +100,7 @@ async function load(opts: { silent?: boolean; reload?: boolean } = {}) {
     } else {
       previewMime.value = art.mime || 'text/html'
       try {
-        const content = await readFile(pid, art.path, tid)
+        const content = await readPreviewFile(tid)
         if (!stillCurrent()) return
         previewFile.value = content
       } catch (e) {

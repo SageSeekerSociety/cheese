@@ -214,7 +214,10 @@ def test_work_dispatched_in_an_agent_created_room_is_not_ownerless(client):
 
     child = client.post(
         f"/topics/{room['id']}/split",
-        json={"title": "分身拆出的子任务", "created_by": "cheese"},
+        json=dict(
+            reviewer_handle="alice",
+            **{"title": "分身拆出的子任务", "created_by": "cheese"},
+        ),
     ).json()["data"]
 
     assert child["owner_handle"] == "alice"
@@ -255,7 +258,8 @@ def test_upgraded_block_falls_back_to_project_owner(client):
     block_id = _insert_block(client, p["id"], room["id"], "这块值得单独开一个话题")
 
     upgraded = client.post(
-        f"/blocks/{block_id}/upgrade", json={"created_by": "cheese"}
+        f"/blocks/{block_id}/upgrade",
+        json={"created_by": "cheese", "reviewer_handle": "alice"},
     ).json()["data"]
     _wait_work_idle()  # kickoff runs in the background; don't race its writes
 
@@ -270,7 +274,9 @@ def test_upgraded_block_without_a_creator_is_not_ownerless(client):
     room = _create_topic(client, p["id"], headers=session_auth_headers("alice"))
     block_id = _insert_block(client, p["id"], room["id"], "这块值得单独开一个话题")
 
-    upgraded = client.post(f"/blocks/{block_id}/upgrade", json={}).json()["data"]
+    upgraded = client.post(
+        f"/blocks/{block_id}/upgrade", json={"reviewer_handle": "alice"}
+    ).json()["data"]
     _wait_work_idle()
 
     assert upgraded["owner_handle"] == "alice"

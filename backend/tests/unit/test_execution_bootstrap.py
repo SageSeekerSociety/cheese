@@ -1,4 +1,4 @@
-"""Start an executor from an empty machine home and reuse its project state."""
+"""Start an executor from an empty machine home and reuse its room state."""
 
 import json
 import os
@@ -14,43 +14,26 @@ from app.domain.agent.harness.claude_code.remote_execution import runtime
 from app.domain.agent.harness.claude_code.remote_execution.launch import script
 
 
-def test_executor_prepares_project_without_model_credentials(tmp_path):
+def test_executor_prepares_room_without_model_credentials(tmp_path):
     pin = Path.home() / ".local/share/claude/versions/2.1.265"
     binary = os.environ.get("CHEESE_TEST_CLAUDE") or (
         str(pin) if pin.exists() else None
     )
     if not binary:
         pytest.skip("Native executor acceptance supplies CHEESE_TEST_CLAUDE in CI")
-    original = tmp_path / "original"
-    subprocess.run(["git", "init", "-q", str(original)], check=True)
-    (original / "project.txt").write_text("original")
-    subprocess.run(["git", "add", "."], cwd=original, check=True)
-    subprocess.run(
-        [
-            "git",
-            "-c",
-            "user.name=fixture",
-            "-c",
-            "user.email=fixture@example.test",
-            "commit",
-            "-qm",
-            "initial",
-        ],
-        cwd=original,
-        check=True,
-    )
     owner = tmp_path / "owner"
     destination = owner / ".cheese/claude/versions/2.1.265"
     destination.parent.mkdir(parents=True)
     destination.symlink_to(binary)
     project, resource = uuid.uuid4(), uuid.uuid4()
     home = owner / ".cheese/home" / str(project) / str(resource)
-    work = owner / ".cheese/work" / str(project) / str(resource)
+    work = home / "room"
     state = home / ".claude/executor"
     configuration = {
         "revision": "fixture-revision",
         "variables": {"EXECUTOR_SETTING": "project-value"},
         "setup_script": (
+            "printf original > notes.txt\n"
             'printf "$EXECUTOR_SETTING" > setup-result\n'
             'mkdir -p "$HOME/.local/bin"\n'
             "printf '#!/bin/sh\\nprintf INSTALLED_TOOL_OK\\n' "
@@ -64,8 +47,6 @@ def test_executor_prepares_project_without_model_credentials(tmp_path):
         "CHEESE_TOKEN": "first-token",
         "CHEESE_PROJECT": str(project),
         "CHEESE_TOPIC": str(resource),
-        "CHEESE_GIT_REMOTE": original.as_uri(),
-        "CHEESE_GIT_BRANCH": "room",
         "CHEESE_ENVIRONMENT": json.dumps(configuration),
         "ANTHROPIC_API_KEY": "must-not-be-copied",
     }
@@ -93,7 +74,8 @@ def test_executor_prepares_project_without_model_credentials(tmp_path):
                 if time.monotonic() >= deadline:
                     pytest.fail((home / ".claude/executor-bootstrap.log").read_text())
                 time.sleep(0.05)
-        assert (work / "project.txt").read_text() == "original"
+        assert not (work / ".git").exists()
+        assert (work / "notes.txt").read_text() == "original"
         assert (work / "setup-result").read_text() == "project-value"
         assert (work / "startup-result").read_text() == "started"
         stored = json.loads((state / "config.json").read_text())
@@ -102,9 +84,9 @@ def test_executor_prepares_project_without_model_credentials(tmp_path):
             state,
             "invoke",
             {
-                "id": "read-project",
+                "id": "read-notes",
                 "tool": "Read",
-                "args": {"file_path": str(work / "project.txt")},
+                "args": {"file_path": str(work / "notes.txt")},
             },
         )
         assert "error" not in read, read

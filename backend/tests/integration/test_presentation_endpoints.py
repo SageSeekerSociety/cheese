@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.project.models import Project
 from app.domain.review.models import AcceptCard, AcceptStatus
-from app.domain.room_task.models import Task, WorkTree
+from app.domain.room_task.models import Task
 from app.domain.room_task.presentation import LOST_SIGNAL_AFTER
 from app.domain.topic.models import Topic, TopicKind
 
@@ -33,14 +33,11 @@ def _seeded(client, stub_hooks=None) -> dict[str, str]:
             room = Topic(project_id=project.id, title="房间", kind=TopicKind.topic)
             s.add(room)
             await s.flush()
-            tree = WorkTree(project_id=project.id, room_id=room.id)
-            s.add(tree)
             await s.flush()
 
             running = Task(
                 project_id=project.id,
                 room_id=room.id,
-                tree_id=tree.id,
                 title="在跑的活",
                 subagent_id="agent-running",
                 last_turn_at=datetime.now(UTC),
@@ -48,13 +45,11 @@ def _seeded(client, stub_hooks=None) -> dict[str, str]:
             waiting = Task(
                 project_id=project.id,
                 room_id=room.id,
-                tree_id=tree.id,
                 title="等人验收的活",
             )
             lost = Task(
                 project_id=project.id,
                 room_id=room.id,
-                tree_id=tree.id,
                 title="失联的活",
                 subagent_id="agent-lost",
                 last_turn_at=datetime.now(UTC) - LOST_SIGNAL_AFTER - timedelta(hours=1),
@@ -64,7 +59,6 @@ def _seeded(client, stub_hooks=None) -> dict[str, str]:
             talking = Task(
                 project_id=project.id,
                 room_id=room.id,
-                tree_id=tree.id,
                 title="还在说话的活",
                 subagent_id="agent-talking",
                 last_turn_at=datetime.now(UTC) - LOST_SIGNAL_AFTER - timedelta(hours=1),
@@ -89,7 +83,6 @@ def _seeded(client, stub_hooks=None) -> dict[str, str]:
                 AcceptCard(
                     topic_id=room.id,
                     task_id=waiting.id,
-                    tree_id=tree.id,
                     reviewer_handle="alice",
                     status=AcceptStatus.pending,
                 )

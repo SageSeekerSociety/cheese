@@ -91,6 +91,8 @@ def test_api_output_flag_reaches_the_request(monkeypatch, tmp_path):
 def test_push_fix_reports_where_it_pushed(monkeypatch, capsys):
     cli = _load()
     monkeypatch.setattr(cli, "TOPIC", "t-1")
+    monkeypatch.setattr(cli, "_task_id", lambda _: "task-1")
+    monkeypatch.setattr(cli, "_sync_task", lambda _: None)
     monkeypatch.setattr(
         cli,
         "_call",
@@ -113,6 +115,8 @@ def test_push_fix_says_why_when_there_was_nothing_to_push(monkeypatch, capsys):
     learns to stop calling this, which is the opposite of what it is for."""
     cli = _load()
     monkeypatch.setattr(cli, "TOPIC", "t-1")
+    monkeypatch.setattr(cli, "_task_id", lambda _: "task-1")
+    monkeypatch.setattr(cli, "_sync_task", lambda _: None)
     monkeypatch.setattr(
         cli,
         "_call",

@@ -69,7 +69,7 @@ def configure(payload):
         str(uuid.UUID(payload["resource"])),
     )
     home = owner / ".cheese/home" / project / resource
-    work = owner / ".cheese/work" / project / resource
+    work = home / "room"
     config_dir = home / ".claude"
     config_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     work.mkdir(parents=True, exist_ok=True)
@@ -100,28 +100,6 @@ def configure(payload):
         (config_dir / "cheese-preview.token").write_text(env["CHEESE_TOKEN"])
         (config_dir / "cheese-preview.token").chmod(0o600)
         log = config_dir / "executor-bootstrap.log"
-        with log.open("a") as output:
-            subprocess.run(
-                ["sh", str(config_dir / "cheese-workspace")],
-                env=env,
-                cwd=work,
-                stdout=output,
-                stderr=output,
-                check=True,
-                timeout=300,
-            )
-        checkout = subprocess.run(
-            ["git", "-C", str(work), "rev-parse", "--show-toplevel"],
-            capture_output=True,
-            text=True,
-        )
-        if (
-            checkout.returncode
-            or Path(checkout.stdout.strip()).resolve() != work.resolve()
-        ):
-            raise RuntimeError(
-                "Project checkout failed; inspect executor-bootstrap.log"
-            )
         scoped_env = {
             name: value
             for name, value in env.items()

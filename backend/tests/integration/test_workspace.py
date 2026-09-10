@@ -14,7 +14,8 @@ import pytest
 
 from app.core.errors import ValidationError
 from app.domain.workspace import service as ws
-from tests.machine_work import machine_commits
+from tests.delivery import delivery_task_id
+from tests.machine_work import declare_task, machine_commits
 
 _MSG = "chore: land the branch under test\n\nRequested-by: alice"
 
@@ -40,6 +41,7 @@ def _owner(client) -> dict[str, str]:
 
 def _native_edit(pid: uuid.UUID, topic_id: uuid.UUID, path: str, content: str) -> None:
     """One turn: the machine writes a file, commits it, and pushes the branch."""
+    declare_task(pid, topic_id)
     machine_commits(pid, topic_id, {path: content})
 
 
@@ -103,9 +105,10 @@ def test_file_endpoints_survive_the_agent_committing(client):
     """
     pid = _mkproject(client)
     tid = _mktopic(client, pid)
-    _native_edit(pid, tid, "note.md", "hello\n")
+    task_id = delivery_task_id(client, tid)
+    _native_edit(pid, task_id, "note.md", "hello\n")
 
-    wt = ws.topic_worktree(pid, tid)
+    wt = ws.topic_worktree(pid, task_id)
     (wt / "from_the_agent.md").write_text(
         "written in the container\n", encoding="utf-8"
     )
@@ -124,7 +127,9 @@ def test_file_endpoints_survive_the_agent_committing(client):
         subprocess.run(["git", *args], cwd=wt, check=True, capture_output=True)
 
     listed = client.get(
-        f"/projects/{pid}/files", params={"topic": str(tid)}, headers=_owner(client)
+        f"/projects/{pid}/files",
+        params={"topic": str(tid), "task": str(task_id)},
+        headers=_owner(client),
     )
     assert listed.status_code == 200
     paths = {f["path"] for f in listed.json()["data"]["data"]}
@@ -132,18 +137,19 @@ def test_file_endpoints_survive_the_agent_committing(client):
 
     body = client.get(
         f"/projects/{pid}/file",
-        params={"topic": str(tid), "path": "note.md"},
+        params={"topic": str(tid), "task": str(task_id), "path": "note.md"},
         headers=_owner(client),
     )
     assert body.status_code == 200
 
     # A second topic in the same project — the blast radius that made this a P0.
     other = _mktopic(client, pid)
-    _native_edit(pid, other, "other.md", "still fine\n")
+    other_task = delivery_task_id(client, other)
+    _native_edit(pid, other_task, "other.md", "still fine\n")
     assert (
         client.get(
             f"/projects/{pid}/files",
-            params={"topic": str(other)},
+            params={"topic": str(other), "task": str(other_task)},
             headers=_owner(client),
         ).status_code
         == 200
@@ -246,7 +252,9 @@ def test_concurrent_accepts_on_the_same_project_dont_block_each_other(
     _native_edit(pid, hang_tid, "hang.txt", "hang work\n")
     _native_edit(pid, fast_tid, "fast.txt", "fast work\n")
 
-    hang_branch = ws.branch_for_tree(hang_tid)
+    hang_branch = ws._git(
+        ws.ensure_repo(pid), "rev-parse", ws.branch_for_task(hang_tid)
+    ).strip()
     real_run = ws._run_subprocess
     hang_entered = threading.Event()
 
@@ -384,6 +392,7 @@ def test_accepting_an_upstream_resolution_still_joins_the_histories(client):
     assert synced["synced"] is False and synced["conflicts"] == ["f.txt"]
 
     tid = uuid.uuid4()
+    declare_task(pid, tid)
     assert ws.prepare_upstream_conflict_resolution(pid, tid) == ["f.txt"]
     wt = ws.topic_worktree(pid, tid)
     (wt / "f.txt").write_text("resolved version\n", encoding="utf-8")

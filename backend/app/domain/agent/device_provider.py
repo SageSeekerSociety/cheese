@@ -659,7 +659,7 @@ class DeviceChannel(Channel):
         changes this boundary: files cross it through git or `file.put`, never by
         translating a backend path into the device's namespace.
         """
-        return device_work_dir(project_id, topic_id)
+        return f"{device_home_dir(project_id, topic_id)}/room"
 
     def _no_proxy_hosts(self) -> str:
         """What the screen's HTTPS_PROXY must NOT capture: the backend itself
@@ -991,7 +991,6 @@ class DeviceChannel(Channel):
             git_author=(agent_handle, f"{agent_handle}@agent.cheese.local"),
             # Every device owns its checkout and syncs through authenticated git.
             git_remote=f"{api_base}/projects/{project_id}/git",
-            git_branch=ws.branch_for_tree(ws.tree_for_place(topic_id)),
             system_prompt=launch.system_prompt,
             ca_pem=ca_pem,
             execution_target=execution_target,
@@ -1219,9 +1218,7 @@ class DeviceChannel(Channel):
         for image in images:
             path = str(image.get("path") or "")
             try:
-                data = ws.read_file_bytes(
-                    screen.project_id, path, topic_id=screen.topic_id
-                )
+                data = ws.read_room_file(screen.project_id, screen.topic_id, path)
                 await self._hub.put_file(
                     screen.device_id,
                     screen.sid,

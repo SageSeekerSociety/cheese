@@ -8,7 +8,6 @@ from app.domain.agent import environment_runner, preview_tunnel
 from app.domain.agent.harness.claude_code.device_launch import (
     CHEESE_PREVIEW_UP,
     CHEESE_SYNC_SCRIPT,
-    CHEESE_WORKSPACE_BRINGUP,
 )
 from app.domain.agent.harness.claude_code.hooks_substrate import CHEESE_HOOK_SCRIPT
 from app.domain.agent.harness.claude_code.remote_execution import bootstrap, runtime
@@ -21,7 +20,6 @@ def script(project_id, resource_id, env):
         "cheese-environment.py": Path(environment_runner.__file__).read_text(),
         "cheese-preview.py": Path(preview_tunnel.__file__).read_text(),
         "cheese-preview-up": CHEESE_PREVIEW_UP,
-        "cheese-workspace": CHEESE_WORKSPACE_BRINGUP,
         "cheese-sync": CHEESE_SYNC_SCRIPT,
         "cheese-hook": CHEESE_HOOK_SCRIPT,
         "cheese": (Path(__file__).resolve().parents[6] / "sandbox/cheese").read_text(),

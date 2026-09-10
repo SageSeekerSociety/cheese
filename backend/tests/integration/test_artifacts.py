@@ -38,7 +38,7 @@ def test_a_remote_artifact_is_readable_without_a_git_push(client):
     )
     assert response.status_code == 200, response.text
     response = client.get(
-        f"/projects/{pid}/file",
+        f"/topics/{tid}/preview/file",
         headers=session_auth_headers("alice"),
         params={
             "topic": tid,
@@ -86,15 +86,15 @@ def test_editing_the_same_artifact_changes_preview_version(client, size):
 
     pid, tid = _topic(client)
     project, topic = uuid.UUID(pid), uuid.UUID(tid)
-    ws.write_file_bytes(project, "report.html", b"a" * size, topic)
+    ws.write_room_file(project, topic, "report.html", b"a" * size)
     response = client.post(f"/topics/{tid}/artifact", json={"path": "report.html"})
     assert response.status_code == 200
     first = client.get(f"/topics/{tid}/preview").json()["data"]
     assert first["version"]
-    ws.write_file_bytes(project, "report.html", b"a" * size, topic)
+    ws.write_room_file(project, topic, "report.html", b"a" * size)
     unchanged = client.get(f"/topics/{tid}/preview").json()["data"]
     assert unchanged["version"] == first["version"]
-    ws.write_file_bytes(project, "report.html", b"b" * size, topic)
+    ws.write_room_file(project, topic, "report.html", b"b" * size)
     edited = client.get(f"/topics/{tid}/preview").json()["data"]
     assert edited["artifact_id"] == first["artifact_id"]
     assert edited["version"] != first["version"]
@@ -242,7 +242,7 @@ def test_app_artifact_and_preview(client):
     # A later file artifact supersedes the app as the current preview.
     import uuid as _uuid
 
-    wt = ws.topic_worktree(_uuid.UUID(pid), _uuid.UUID(tid))
+    wt = ws.room_files_root(_uuid.UUID(pid), _uuid.UUID(tid))
     (wt / "r.html").write_text("<h1>hi</h1>")
     client.post(f"/topics/{tid}/artifact", json={"path": "r.html", "as": "html"})
     d = client.get(f"/topics/{tid}/preview").json()["data"]

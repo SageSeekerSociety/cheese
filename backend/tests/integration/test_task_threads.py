@@ -16,7 +16,7 @@ from pathlib import Path
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.project.models import Project
 from app.domain.review.models import AcceptCard, AcceptStatus
-from app.domain.room_task.models import Task, WorkTree
+from app.domain.room_task.models import Task
 from app.domain.room_task.repositories import TaskRepository
 from app.domain.topic.models import (
     Topic,
@@ -57,29 +57,23 @@ def _room_with_threads(client) -> dict:
             await s.flush()
 
             # 一批活共用一棵树. Each room takes its work into one.
-            tree = WorkTree(project_id=project.id, room_id=room.id)
-            other_tree = WorkTree(project_id=project.id, room_id=other.id)
-            s.add_all([tree, other_tree])
             await s.flush()
 
             talkative = Task(
                 project_id=project.id,
                 room_id=room.id,
-                tree_id=tree.id,
                 title="聊得多的活",
                 created_at=datetime(2026, 8, 1, tzinfo=UTC),
             )
             silent = Task(
                 project_id=project.id,
                 room_id=room.id,
-                tree_id=tree.id,
                 title="没人说话的活",
                 created_at=datetime(2026, 8, 2, tzinfo=UTC),
             )
             elsewhere = Task(
                 project_id=project.id,
                 room_id=other.id,
-                tree_id=other_tree.id,
                 title="别的房间的活",
             )
             s.add_all([talkative, silent, elsewhere])
@@ -213,7 +207,6 @@ def test_a_thread_carries_the_card_it_is_riding_on(client):
                 AcceptCard(
                     topic_id=ids["room"],
                     task_id=task.id,
-                    tree_id=task.tree_id,
                     reviewer_handle="alice",
                     routing_reason="最懂",
                     status=AcceptStatus.pending,

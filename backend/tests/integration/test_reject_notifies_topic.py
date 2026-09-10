@@ -10,6 +10,7 @@ the guess is usually "redo it".
 """
 
 from tests.conftest import wait_work_idle
+from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import session_auth_headers
 
 
@@ -25,7 +26,8 @@ def _topic(client, project_id: str) -> str:
 
 def _card(client, topic_id: str, reviewer: str = "alice") -> str:
     return client.post(
-        f"/topics/{topic_id}/accept-card",
+        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
+        headers=delivery_headers(client, topic_id),
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": reviewer,
@@ -110,3 +112,28 @@ def test_rejected_topic_stays_active(client):
     wait_work_idle()
 
     assert client.get(f"/topics/{tid}").json()["data"]["status"] == "active"
+
+
+def test_reject_of_closed_task_reports_reason_without_waking_worker(client, stub_hooks):
+    pid = _project(client)
+    tid = _topic(client, pid)
+    cid = _card(client, tid)
+    task_id = delivery_task_id(client, tid)
+    closed = client.post(
+        f"/topics/{tid}/tasks/{task_id}/close",
+        json={"conclusion": "Stopped"},
+        headers=delivery_headers(client, tid),
+    )
+    assert closed.status_code == 200, closed.text
+    before = stub_hooks.last_prompt
+    response = _reject(client, cid, note="Needs a replacement task")
+    assert response.status_code == 200, response.text
+    wait_work_idle()
+    assert stub_hooks.last_prompt == before
+    notices = [
+        b
+        for b in _blocks(client, tid)
+        if (b.get("meta") or {}).get("event_type") == "card_rejected"
+    ]
+    assert notices[-1]["meta"]["detail"] == "Needs a replacement task"
+    assert "原任务已结束" in notices[-1]["content"]

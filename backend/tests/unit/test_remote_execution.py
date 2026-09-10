@@ -1,5 +1,6 @@
 """Exercise the executor through its public process/socket protocol."""
 
+import ast
 import importlib.util
 import json
 import os
@@ -20,6 +21,51 @@ RUNTIME = (
 spec = importlib.util.spec_from_file_location("execution_runtime", RUNTIME)
 runtime = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runtime)
+
+
+def test_executor_bootstrap_starts_in_room_without_a_git_checkout(
+    tmp_path, monkeypatch, capsys
+):
+    from app.domain.agent.harness.claude_code.remote_execution import bootstrap
+    from app.domain.agent.harness.claude_code.remote_execution.launch import script
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "must-not-reach-executor")
+    monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
+    project, resource = uuid.uuid4(), uuid.uuid4()
+    home = tmp_path / ".cheese/home" / str(project) / str(resource)
+    state = home / ".claude/executor"
+    # Use the installation payload shipped to devices, including its CLI.
+    program = script(
+        project, resource, {"CHEESE_API": "http://unused", "CHEESE_TOKEN": "test"}
+    )
+    call = ast.parse(program).body[-1].value
+    payload = json.loads(ast.literal_eval(call.args[0].args[0]))
+    try:
+        bootstrap.configure(payload)
+        assert json.loads(capsys.readouterr().out)["workspace"] == str(home / "room")
+        assert not (home / "room/.git").exists()
+        config = json.loads((state / "config.json").read_text())
+        assert "ANTHROPIC_API_KEY" not in config["env"]
+        installed = subprocess.run(
+            [str(home / ".claude/cheese"), "--help"],
+            env={**os.environ, **config["env"]},
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert "worktree" in installed.stdout
+        deadline = time.monotonic() + 10
+        while not Path(runtime.socket_path(state)).exists():
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        assert runtime.request(state, "ping")["workspace"] == str(home / "room")
+    finally:
+        subprocess.run(
+            [sys.executable, str(RUNTIME), "stop", "--state", str(state)],
+            capture_output=True,
+            timeout=15,
+        )
 
 
 class RemoteExecutionTests(unittest.TestCase):

@@ -39,7 +39,7 @@ def static_preview(client, preview_config):
         "nested/asset.txt": "nested asset",
     }
     for path, content in assets.items():
-        ws.write_file(project_id, "web/" + path, content, topic_id=topic_id)
+        ws.write_room_file(project_id, topic_id, "web/" + path, content.encode())
     return project_id, topic_id, html, assets
 
 
@@ -249,7 +249,7 @@ def test_static_preview_tracks_selected_artifact_directory(client, static_previe
         headers=session_auth_headers("alice"),
     )
     assert response.status_code == 200, response.text
-    ws.write_file(project_id, "other/main.js", "second module", topic_id=topic_id)
+    ws.write_room_file(project_id, topic_id, "other/main.js", b"second module")
     origin = preview_origin(topic_id)
     assert client.get(origin + "/").text == "selected second page"
     assert client.get(origin + "/main.js").text == "second module"
@@ -262,7 +262,7 @@ def test_static_preview_rejects_hidden_traversal_and_symlink_escape(
 ):
     project_id, topic_id, _, _ = static_preview
     _open_preview(client, topic_id)
-    tree = ws.topic_worktree(project_id, topic_id)
+    tree = ws.room_files_root(project_id, topic_id)
     (tree / "secret.txt").write_text("outside selected directory")
     (tree / "web/.env").write_text("private value")
     (tree / "web/.hidden").mkdir()
@@ -353,7 +353,7 @@ def test_private_room_roster_is_required_even_for_project_members(
     if dispatch_task:
         task = client.post(
             f"/topics/{room_id}/split",
-            json={"title": "Private work"},
+            json=dict(reviewer_handle="alice", **{"title": "Private work"}),
             headers=owner,
         )
         assert task.status_code == 200, task.text

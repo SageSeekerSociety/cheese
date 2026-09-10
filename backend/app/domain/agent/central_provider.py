@@ -22,7 +22,6 @@ from app.domain.agent.device_provider import (
 from app.domain.agent.harness.claude_code import ScreenSetupError, build_executor_launch
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
-from app.domain.workspace import service as ws
 
 
 class CentralChannel(DeviceChannel):
@@ -140,12 +139,6 @@ class CentralChannel(DeviceChannel):
                     "CHEESE_TOPIC": str(topic_id),
                     "CHEESE_AUTHOR": agent_handle,
                     "CHEESE_GIT_REMOTE": f"{api}/projects/{project_id}/git",
-                    "CHEESE_GIT_BRANCH": ws.branch_for_tree(
-                        ws.tree_for_place(topic_id)
-                    ),
-                    "CHEESE_BRANCH_URL": (
-                        f"{api}/projects/{project_id}/git/branch/{topic_id}"
-                    ),
                     "CHEESE_GIT_AUTHOR_NAME": agent_handle,
                     "CHEESE_GIT_AUTHOR_EMAIL": f"{agent_handle}@agent.cheese.local",
                     "GIT_AUTHOR_NAME": agent_handle,

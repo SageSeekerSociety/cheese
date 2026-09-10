@@ -14,6 +14,7 @@ import pytest
 
 from app.domain.workspace import service as ws
 from tests.conftest import StubChannel
+from tests.delivery import delivery_task
 from tests.integration.conftest import chat_ws_url
 
 DIFF = """diff --git a/backend/app/x.py b/backend/app/x.py
@@ -61,10 +62,12 @@ def _chat(client, topic_id: str) -> None:
 
 def _topic(client) -> str:
     p = client.post("/projects", json={"name": "P"}).json()["data"]
-    return client.post(
+    room = client.post(
         "/topics",
         json={"project_id": p["id"], "title": "话题", "created_by": "user-1"},
     ).json()["data"]["id"]
+    delivery_task(client, room, commit=False)
+    return room
 
 
 def _transcript(client, topic_id: str) -> list[dict]:

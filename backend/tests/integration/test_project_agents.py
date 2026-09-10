@@ -201,7 +201,9 @@ def test_work_split_out_of_a_room_learns_into_the_rooms_pool(client):
 
     r = client.post(
         f"/topics/{room}/split",
-        json={"title": "拆出来的活", "created_by": "u"},
+        json=dict(
+            reviewer_handle="alice", **{"title": "拆出来的活", "created_by": "u"}
+        ),
     )
     assert r.status_code == 200, r.text
     # 一张卡问不出 agent 来：它不是地点。

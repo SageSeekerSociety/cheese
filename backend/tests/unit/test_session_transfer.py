@@ -19,8 +19,9 @@ from app.domain.agent.harness.claude_code import ScreenSetupError
 
 
 @pytest.mark.skipif(not shutil.which("tmux"), reason="requires a real tmux terminal")
+@pytest.mark.parametrize("legacy_workspace", [True, False])
 def test_exited_session_with_retained_terminal_allows_transfer(
-    tmp_path, monkeypatch, capsys
+    tmp_path, monkeypatch, capsys, legacy_workspace
 ):
     from app.domain.agent.session_transfer import transfer
 
@@ -29,6 +30,8 @@ def test_exited_session_with_retained_terminal_allows_transfer(
     home = tmp_path / ".cheese/home" / project / resource / ".claude"
     home.mkdir(parents=True)
     work = tmp_path / ".cheese/work" / project / resource
+    if not legacy_workspace:
+        work = home.parent / "room"
     checksum = subprocess.check_output(["cksum"], input=str(work).encode())
     session = "cheese_" + checksum.decode().split()[0]
     # macOS pytest paths can exceed the Unix socket path-length limit.

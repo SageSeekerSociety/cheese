@@ -76,28 +76,29 @@ async def list_members(project_id: uuid.UUID, db: DbSession) -> dict:
     agent_ids = await AgentBindingRepository(db).agent_user_ids(
         [u.id for u in rows.values()]
     )
+    # Walk the roster, not the member rows: the roster is the wider list (it also
+    # carries the owner and the owning team's members, neither of whom holds a
+    # member row — ``ProjectRepository.list_members`` says why), and it is
+    # already in the order the UI should show. A member row, where one exists,
+    # contributes the fields only it has (id, created_at, the stored role).
+    row_of = {m.user_handle: m for m in members}
     items = []
-    for m in members:
-        d = MemberOut.model_validate(m).model_dump(mode="json")
-        profile = profiles.get(m.user_handle)
-        d["name"] = profile["name"] if profile else m.user_handle
-        d["avatar_id"] = profile["avatar_id"] if profile else None
-        user = rows.get(m.user_handle)
-        d["agent"] = user is not None and user.id in agent_ids
-        items.append(d)
     for handle, profile in profiles.items():
-        if profile.get("source") != "team":
-            continue
+        member = row_of.get(handle)
         user = rows.get(handle)
-        items.append(
-            {
+        if member is not None:
+            d = MemberOut.model_validate(member).model_dump(mode="json")
+            d["name"] = profile["name"]
+            d["avatar_id"] = profile["avatar_id"]
+        else:
+            d = {
                 **profile,
                 "id": None,
                 "project_id": str(project_id),
                 "user_handle": handle,
-                "agent": user is not None and user.id in agent_ids,
             }
-        )
+        d["agent"] = user is not None and user.id in agent_ids
+        items.append(d)
     return ok(page(items, len(items)))
 
 

@@ -28,10 +28,14 @@ def transfer(payload):
                 / str(uuid.UUID(payload["project"]))
                 / str(uuid.UUID(payload["resource"]))
             )
-            checksum = subprocess.run(
-                ["cksum"], input=str(work).encode(), capture_output=True, check=True
-            )
-            if session != "cheese_" + checksum.stdout.decode().split()[0]:
+            sessions = {
+                "cheese_"
+                + subprocess.check_output(["cksum"], input=str(path).encode())
+                .decode()
+                .split()[0]
+                for path in (work, home / "room")
+            }
+            if session not in sessions:
                 raise RuntimeError("Session marker names another room")
             if not Path(socket).exists():
                 print(json.dumps({"stopped": True}))

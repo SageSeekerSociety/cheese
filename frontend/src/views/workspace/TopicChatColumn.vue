@@ -34,7 +34,7 @@ const emit = defineEmits<{
   (e: 'working', working: boolean): void
   (e: 'state-changed', payload: unknown): void
   (e: 'mention-click', handle: string): void
-  (e: 'open-file', path: string): void
+  (e: 'open-file', path: string, taskId?: string | null): void
   // 两个参数都要转：`turnId` 决定文档面板高亮哪一轮改的段落，
   // 只转第一个的话那个功能会静默降级成「整篇闪一下」。
   (e: 'open-resource', resource: string, turnId?: string): void
@@ -74,7 +74,7 @@ defineExpose({
       @working="emit('working', $event)"
       @state-changed="emit('state-changed', $event)"
       @mention-click="emit('mention-click', $event)"
-      @open-file="emit('open-file', $event)"
+      @open-file="(path, taskId) => emit('open-file', path, taskId)"
       @open-resource="(resource: string, turnId?: string) => emit('open-resource', resource, turnId)"
       @upgrade-message="emit('upgrade-message', $event)"
       @open-topic="emit('open-topic', $event)"

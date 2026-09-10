@@ -1,25 +1,13 @@
-"""合并结束的是这次改动，不是这个话题 (#442 decision 1).
+"""Acceptance closes the delivered task while its room stays active.
 
-采纳过去一口气做三件事：把卡置成 accepted、释放话题的算力、把话题归档。只有第一
-件是「合并」这个事实本身；另外两件是搭在它上面的两个不同决定，而且都错了——归档
-是人整理列表的动作，容器是话题接着干活要用的东西。
-
-这个文件把拆开之后的四条契约钉住：
-
-1. 合并后话题仍是 ``active``，并带上自动的交付标记（``accepted_by``/``accepted_at``）。
-2. 已交付的话题**不能**再递验收卡 —— 它的分支已经在 main 上，再开的 PR 没有新提交
-   （GitHub 422 → 平台降级成本地合并 → 卡看着采纳了却什么都没交付）。
-3. 采纳不再删容器。
-4. 手动归档照旧：仍然归档，归档后仍然不能递卡。
-
-第 2 条是这次改动里唯一**新增**的闸门。它必须存在，因为归档以前兼任「工作面冻结」
-的开关，而现在归档不再自动发生了。
+A later delivery uses a new task; revoking approval does not undo a Git merge.
 """
 
 import uuid
 
 import pytest
 
+from tests.delivery import delivery_headers, delivery_task, delivery_task_id
 from tests.integration.conftest import session_auth_headers
 
 
@@ -45,7 +33,8 @@ def _card(
     subject: str = "chore(test): file an accept card",
 ):
     return client.post(
-        f"/topics/{topic_id}/accept-card",
+        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
+        headers=delivery_headers(client, topic_id),
         json={
             "change_subject": subject,
             "reviewer_handle": reviewer,
@@ -54,17 +43,20 @@ def _card(
     )
 
 
-def _commit_to_topic_branch(project_id: str, topic_id: str, text: str) -> None:
-    """在这个话题的分支上再落一个提交 —— 也就是「房间里又干了一件活」。
-
-    分身在自己的机器上提交、把分支推回来，是这条路径在真实使用里的样子。
-    """
-    import uuid as _uuid
-
+def _commit_next_task(client, project_id: str, topic_id: str, text: str) -> None:
     from tests.machine_work import machine_commits
 
-    pid, tid = _uuid.UUID(project_id), _uuid.UUID(topic_id)
-    machine_commits(pid, tid, {"next-task.txt": text})
+    task = delivery_task(client, topic_id, new=True, commit=False)
+    machine_commits(uuid.UUID(project_id), task.id, {"next-task.txt": text})
+
+
+def _task_state(client, topic_id: str) -> dict:
+    response = client.get(
+        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}",
+        headers=delivery_headers(client, topic_id),
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["data"]
 
 
 def _accept(client, card_id: str, by: str = "alice"):
@@ -95,46 +87,40 @@ def test_merge_leaves_the_topic_active_with_a_delivery_marker(client):
 
     topic = _state(client, tid)
     assert topic["status"] == "active"  # 不是 archived
-    assert topic["accepted_by"] == "alice"  # 交付标记，自动打上
-    assert topic["accepted_at"] is not None
+    assert topic["accepted_by"] is None
+    task = _task_state(client, tid)
+    assert task["accepted_by"] == "alice"
+    assert task["accepted_at"] is not None
+    assert task["status"] == "closed"
+    assert task["delivered_head"]
 
 
 def test_a_delivered_topic_with_nothing_new_cannot_file_a_second_card(client):
-    """防空 PR：分支上没有 main 没有的东西，这一张卡交付不了任何改动。
-
-    注意拒绝的**理由**：不是「这个话题交付过了」，而是「这条分支现在没有新提交」。
-    两者在这一刻的结论相同，往后就不同了 —— 见下面那条。
-    """
+    """The delivered task is closed even though its room is still active."""
     _pid, tid = _delivered_topic(client)
 
     r = _card(client, tid, reviewer="bob")
     assert r.status_code == 422
     # 拒绝话术要说清出路（读它的是一轮之后就要再试一次的芝士）。
     message = r.json()["message"]
-    assert "没有新提交" in message
-    assert "先把改动提交到工作区" in message
+    assert "任务已结束" in message
     # 而且这个拒绝不靠归档 —— 话题还活着。
     assert _state(client, tid)["status"] == "active"
 
 
 def test_a_delivered_room_can_deliver_again_once_there_are_new_commits(client):
-    """一个 task 完成了可以再新开 task —— 这是房间比它承载的活儿长的全部意义。
-
-    这条曾经是不成立的：守卫看的是「历史上有没有一张卡到过 accepted」，于是
-    房间交付一次之后就永久冻住，而 #536 让话题在合并后活下来，恰恰是为了让它
-    接着干下一件事。守卫现在问的是分支的事实，所以工作区里有了新提交就能再递。
-    """
+    """The next task owns a new branch in the same open room."""
     pid, tid = _delivered_topic(client)
 
-    # 干下一件活：往这个房间的分支上再写一笔。
-    _commit_to_topic_branch(pid, tid, "next task")
+    # 干下一件活：新任务、新分支。
+    _commit_next_task(client, pid, tid, "next task")
 
     r = _card(client, tid, reviewer="bob", subject="feat(x): the next task")
     assert r.status_code == 200, r.text
 
 
-def test_revoking_the_accept_lets_the_topic_deliver_again(client):
-    """撤回采纳＝这次验收不算，于是「已交付」这个冻结也不再成立。"""
+def test_revoking_approval_keeps_merged_task_closed(client):
+    """Approval can be revoked; the already merged branch cannot be reused."""
     _pid, tid = _delivered_topic(client)
     cid = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"][0]["id"]
 
@@ -144,8 +130,13 @@ def test_revoking_the_accept_lets_the_topic_deliver_again(client):
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200
-    assert _state(client, tid)["accepted_at"] is None
-
+    task = _task_state(client, tid)
+    assert task["accepted_at"] is None
+    assert task["accepted_by"] is None
+    assert task["status"] == "closed"
+    assert task["delivered_head"]
+    assert _card(client, tid, reviewer="bob").status_code == 422
+    delivery_task(client, tid, new=True)
     assert _card(client, tid, reviewer="bob").status_code == 200
 
 
@@ -237,4 +228,4 @@ def test_one_card_at_a_time_covers_both_live_and_delivered(client, blocked_statu
     if blocked_status == "pending":
         assert "改验收人" in message
     else:
-        assert "没有新提交" in message
+        assert "任务已结束" in message

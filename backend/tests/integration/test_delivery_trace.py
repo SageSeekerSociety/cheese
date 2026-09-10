@@ -1,26 +1,10 @@
-"""#189: `git log` can name the 芝士 that wrote a change, and the work it was.
-
-The commit already said who ASKED (`Requested-by`) and who approved
-(`Reviewed-by`), and Claude Code signs every commit it writes for anybody
-anywhere with `Co-authored-by: Claude Fable 5`. So a reader of the project's
-history could learn what model typed the change and nothing at all about which
-instance of this platform ran it, or which piece of work inside that instance it
-came from — which is what a bad delivery has to be traced back to.
-
-Who did it is DECLARED at 递卡 and never inferred. Everything a machine could
-infer — the delivering tree's members, "every task no earlier card claimed" —
-establishes that a task row exists, not that its code is in this diff, and the
-difference is not academic: measured on this project (2026-09-08), inferring it
-from the tree would have signed one PR with three tasks that contributed nothing
-to it while naming the task that actually wrote it on the previous PR. So these
-go through a real accept on an unbound project, and read the commit that
-actually landed on `main` rather than a string a builder returned.
-"""
+"""Real merge commits attribute only the task whose branch was delivered."""
 
 import itertools
 import subprocess
 import uuid
 
+from tests.delivery import delivery_headers
 from tests.integration.conftest import session_auth_headers
 from tests.machine_work import machine_commits
 
@@ -52,7 +36,10 @@ def _room(client, project_id: str) -> str:
 
 def _dispatch(client, room_id: str, title: str) -> str:
     """One piece of work in the room, through the only door that makes one."""
-    r = client.post(f"/topics/{room_id}/split", json={"title": title})
+    r = client.post(
+        f"/topics/{room_id}/split",
+        json=dict(reviewer_handle="alice", **{"title": title}),
+    )
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
 
@@ -70,14 +57,15 @@ def _bind(client, room_id: str, task_id: str, agent_id: str) -> None:
 
 
 def _file_card(client, room_id: str, subject: str, tasks: list[str] | None = None):
+    assert tasks and len(tasks) == 1
     return client.post(
-        f"/topics/{room_id}/accept-card",
+        f"/topics/{room_id}/tasks/{tasks[0]}/accept-card",
+        headers=delivery_headers(client, room_id),
         json={
             "change_subject": subject,
             "change_body": "Who wrote this, on the record.",
             "reviewer_handle": "alice",
             "routing_reason": "最懂",
-            "task_ids": tasks or [],
         },
     )
 
@@ -122,7 +110,7 @@ def _batch(client, pid: str, room: str, subject: str, tasks: list[str]) -> str:
     means, and re-writing the same bytes is a no-op git refuses to commit.
     """
     name = f"work-{next(_written)}.txt"
-    machine_commits(uuid.UUID(pid), uuid.UUID(room), {name: subject})
+    machine_commits(uuid.UUID(pid), uuid.UUID(tasks[0]), {name: subject})
     card = _deliver(client, room, subject, tasks)
     _accept(client, card["id"])
     landed = _landed_body(pid)
@@ -140,16 +128,17 @@ def test_the_landed_commit_names_the_agent_and_every_worker_declared(client):
     theirs = _dispatch(client, room, "顺手修 flaky 测试")
     _bind(client, room, mine, "ac2c038d44616a2f2")
     _bind(client, room, theirs, "9f1b7c22e0d341a80")
-    machine_commits(uuid.UUID(pid), uuid.UUID(room), {"a.txt": "one\n"})
+    machine_commits(uuid.UUID(pid), uuid.UUID(mine), {"a.txt": "one\n"})
 
-    card = _deliver(client, room, "feat: deliver what two workers made", [mine, theirs])
+    card = _deliver(client, room, "feat: deliver one task", [mine])
     _accept(client, card["id"])
 
     body = _landed_body(pid)
     assert f"Cheese-Agent: cheese-{uuid.UUID(room).hex[:12]}" in body
     assert _task_line(pid, room, mine, "ac2c038d44616a2f2", "补 trailer") in body
     assert (
-        _task_line(pid, room, theirs, "9f1b7c22e0d341a80", "顺手修 flaky 测试") in body
+        _task_line(pid, room, theirs, "9f1b7c22e0d341a80", "顺手修 flaky 测试")
+        not in body
     )
     # The trailers that were already there did not move over to make room.
     assert f"/topics/{room}" in body
@@ -164,33 +153,6 @@ def test_the_landed_commit_names_the_agent_and_every_worker_declared(client):
 # that just merged — while the work they are still doing goes out on the NEXT
 # tree. Which is why "the batch" cannot be the delivering tree's membership: it
 # is right only for a room that dispatches nothing and delivers once.
-
-
-def _next_batch(client, pid: str, room: str) -> None:
-    """The batch that just went out is closed and the room starts the next one.
-
-    What an accept on a GitHub-bound project does to the tree it merged
-    (`AcceptService._mark_cards_tree_merged`), reached here directly because the
-    unbound lane these tests run on has no PR to merge. The state it leaves is
-    the ordinary one for every room that has delivered and kept working: the
-    task rows sit on a tree that is finished, and the next batch of code is
-    written somewhere else entirely.
-    """
-    from app.domain.room_task.services import WorkTreeService
-
-    async def _roll() -> None:
-        async with client.test_factory() as s:
-            trees = WorkTreeService(s)
-            landed = await trees.current(uuid.UUID(room))
-            assert landed is not None
-            await trees.mark_merged(landed)
-            fresh = await trees.ensure_open(
-                project_id=uuid.UUID(pid), room_id=uuid.UUID(room)
-            )
-            assert fresh.id != landed.id
-            await s.commit()
-
-    client.portal.call(_roll)
 
 
 def _two_batches(client) -> tuple[str, str, str, str]:
@@ -213,7 +175,6 @@ def test_work_delivered_in_a_later_batch_is_named_on_that_batch(client):
     pid, room, earlier, later = _two_batches(client)
 
     _batch(client, pid, room, "feat: the first batch", [earlier])
-    _next_batch(client, pid, room)
     second = _batch(client, pid, room, "feat: the second batch", [later])
 
     assert (
@@ -272,22 +233,6 @@ def test_work_still_running_is_not_signed_onto_the_batch_going_out_now(client):
     assert _task_line(pid, room, running, "eeee4444eeee4444e", "还在跑的活") in later
 
 
-def test_an_undeclared_delivery_lands_with_no_task_trailer_at_all(client):
-    """诚实的空白, and the one rule with no exception: nothing falls back to the
-    tree for a card that named nobody. A wrong `Cheese-Task:` is permanent and
-    reads exactly like a right one, so an audit acts on it — a missing one only
-    says nobody claimed the work."""
-    pid = _project(client)
-    room = _room(client, pid)
-    _bind(client, room, _dispatch(client, room, "有人干了但没报"), "ffff5555ffff5555f")
-
-    body = _batch(client, pid, room, "feat: land without naming anybody", [])
-
-    assert body.splitlines()[0] == "feat: land without naming anybody"
-    assert "Cheese-Task" not in body
-    assert f"Cheese-Agent: cheese-{uuid.UUID(room).hex[:12]}" in body
-
-
 def test_work_no_worker_ever_took_still_appears_when_it_is_declared(client):
     """`subagent_id` is NULL until a worker is bound, and a room can write a
     change itself. Dropping the row would make the batch in the commit smaller
@@ -301,19 +246,6 @@ def test_work_no_worker_ever_took_still_appears_when_it_is_declared(client):
     assert _task_line(pid, room, unclaimed, "-", "没人认领的活") in body
 
 
-def test_a_delivery_with_no_work_at_all_still_lands(client):
-    """The trailers are a nicety; a room that dispatched nothing must merge
-    exactly as it did before they existed."""
-    pid = _project(client)
-    room = _room(client, pid)
-
-    body = _batch(client, pid, room, "feat: deliver without a task row", [])
-
-    assert body.splitlines()[0] == "feat: deliver without a task row"
-    assert "Cheese-Task" not in body
-    assert f"Cheese-Agent: cheese-{uuid.UUID(room).hex[:12]}" in body
-
-
 def test_unreadable_work_costs_the_trailers_and_not_the_merge(client, monkeypatch):
     """Best-effort, like every other part of attribution: whatever else is wrong,
     a trailer must never be the reason a delivery fails to land."""
@@ -322,7 +254,7 @@ def test_unreadable_work_costs_the_trailers_and_not_the_merge(client, monkeypatc
     pid = _project(client)
     room = _room(client, pid)
     mine = _dispatch(client, room, "补 trailer")
-    machine_commits(uuid.UUID(pid), uuid.UUID(room), {"a.txt": "one\n"})
+    machine_commits(uuid.UUID(pid), uuid.UUID(mine), {"a.txt": "one\n"})
     card = _deliver(client, room, "feat: land when the batch is unreadable", [mine])
 
     async def _blow_up(_self, _task_ids):
@@ -351,75 +283,9 @@ def test_work_from_another_room_cannot_be_signed_onto_this_change(client):
     room = _room(client, pid)
     elsewhere = _room(client, pid)
     theirs = _dispatch(client, elsewhere, "别的房间的活")
-    machine_commits(uuid.UUID(pid), uuid.UUID(room), {"a.txt": "one\n"})
 
     r = _file_card(client, room, "feat: claim someone else's work", [theirs])
-    assert r.status_code == 422, r.text
-    assert theirs in r.json()["message"]
-
-
-def test_work_that_keeps_going_is_named_on_every_batch_it_wrote(client):
-    """交付过 ≠ 做完了：一条活可以交付过而仍然开着（`TaskStatus`），继续往同一条
-    分支推，真实地写进下一批。它在两次交付的历史里各出现一次是**真实情况**，
-    拒掉第二次就是拒掉一条真的贡献声明。"""
-    pid = _project(client)
-    room = _room(client, pid)
-    kept_going = _dispatch(client, room, "两批都写了的活")
-    _bind(client, room, kept_going, "aaaa0000aaaa0000a")
-
-    first = _batch(client, pid, room, "feat: the first half", [kept_going])
-    _next_batch(client, pid, room)
-    second = _batch(client, pid, room, "feat: the second half", [kept_going])
-
-    line = _task_line(pid, room, kept_going, "aaaa0000aaaa0000a", "两批都写了的活")
-    assert line in first
-    assert line in second
-
-
-def test_the_only_way_to_add_a_claim_to_a_filed_card_is_void_and_refile(client):
-    """递卡时忘了 `--task`，声明就补不上这张卡 —— `create_card` 拒绝在同一棵树上
-    再递一张，而 `pending` 卡上没有任何改声明的入口。唯一走得通的补救是**人**
-    把卡作废，房间再带着声明重递（芝士自己点不了作废：`_forbid_ai`）。
-
-    CLI 的提示照着这条路写，所以这条路必须真的走得通。"""
-    pid = _project(client)
-    room = _room(client, pid)
-    mine = _dispatch(client, room, "递卡时忘了报的活")
-    _bind(client, room, mine, "cccc2222cccc2222c")
-    machine_commits(uuid.UUID(pid), uuid.UUID(room), {"c.txt": "three\n"})
-
-    forgot = _deliver(client, room, "feat: land without naming who wrote it", [])
-    # 补声明的两条想当然的路都是死路：直接重递被互斥挡住。
-    assert (
-        _file_card(client, room, "feat: name them after all", [mine]).status_code == 422
-    )
-
-    r = client.post(
-        f"/accept-cards/{forgot['id']}/void",
-        json={"note": "忘了报活，重递"},
-        headers=session_auth_headers("alice"),
-    )
-    assert r.status_code == 200, r.text
-
-    card = _deliver(client, room, "feat: name them after all", [mine])
-    _accept(client, card["id"])
-    assert _task_line(
-        pid, room, mine, "cccc2222cccc2222c", "递卡时忘了报的活"
-    ) in _landed_body(pid)
-
-
-def test_naming_the_same_work_twice_on_one_card_writes_one_trailer(client):
-    """同一张卡里把一条活报两遍不是两份贡献，也不值得拒 —— 它跟报一遍说的是同
-    一件事，去重即可。"""
-    pid = _project(client)
-    room = _room(client, pid)
-    once = _dispatch(client, room, "被报了两遍的活")
-    _bind(client, room, once, "bbbb1111bbbb1111b")
-
-    body = _batch(client, pid, room, "feat: name it twice", [once, once])
-
-    line = _task_line(pid, room, once, "bbbb1111bbbb1111b", "被报了两遍的活")
-    assert body.count(line) == 1
+    assert r.status_code == 404, r.text
 
 
 def test_git_itself_parses_the_trailers_on_the_commit_that_landed(client):

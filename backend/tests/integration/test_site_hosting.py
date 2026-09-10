@@ -9,7 +9,7 @@ from app.core.tokens import verify_session_token
 from app.domain.site.hosting import content_origin, mint_site_token
 from app.domain.workspace import service as ws
 from tests.integration.conftest import session_auth_headers, session_token
-from tests.machine_work import machine_commits
+from tests.machine_work import declare_task, machine_commits
 
 
 @pytest.fixture
@@ -26,6 +26,7 @@ def published(client, monkeypatch, tmp_path):
     assert result.status_code == 200, result.text
     project = uuid.UUID(result.json()["data"]["id"])
     topic = uuid.uuid4()
+    declare_task(project, topic)
     machine_commits(
         project,
         topic,

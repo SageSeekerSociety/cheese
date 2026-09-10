@@ -22,7 +22,7 @@ from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine.services import MachineService
-from app.domain.room_task.services import TaskService, WorkTreeService
+from app.domain.room_task.services import TaskService
 from app.domain.topic.models import RoomCleanup, Topic, TopicStatus
 from app.domain.topic.repositories import TopicRepository
 from app.domain.workspace import service as ws
@@ -173,7 +173,7 @@ async def _inventory(session, operation: RoomCleanup, inventory: dict) -> list[d
                     "Cloud machine contains unrecognized room directories"
                 )
         result.append({"kind": "machine", "id": str(machine.id)})
-    trees = await WorkTreeService(session).trees_in_project(operation.project_id)
+    trees = await TaskService(session).list_in_project(operation.project_id)
     own = {
         operation.topic_id,
         *(tree.id for tree in trees if tree.room_id == operation.topic_id),

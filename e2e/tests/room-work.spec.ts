@@ -1,13 +1,8 @@
-/** 一个房间派出去的活，人在屏幕上找不找得到。
- *
- * 派活的入口本来就是 API（芝士自己拆的活占绝大多数），所以布景走 API；**断言全在
- * 界面上**，因为这里要钉的正是「派出去之后，人看不看得见、点不点得进去」。
- *
- * 这一层能钉的只有这些。封口期提示在 e2e 里做不出布景：封口要 `x-cheese-token`
- * （每轮次令牌），而这是对的——封口是芝士的动作，浏览器里的人本来就不该能递卡。
- * 它钉在 TaskProgress.seal.spec.ts 和
- * tests/integration/test_tree_sealing_and_quick_check.py。
- */
+/** Dispatch through the API, then verify that people can find and open each
+ * independent task in the room overview and project board. */
+import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import { api, login, openFirstProject } from './helpers';
@@ -26,7 +21,9 @@ async function freshRoom(page: Page, title: string) {
 }
 
 async function dispatch(page: Page, roomId: string, title: string) {
-  return (await api(page, 'post', `/topics/${roomId}/split`, { title, created_by: 'alice' })) as {
+  return (await api(page, 'post', `/topics/${roomId}/split`, {
+    title, created_by: 'alice', reviewer_handle: 'alice',
+  })) as {
     id: string;
     queued?: boolean;
   };
@@ -83,4 +80,62 @@ test.describe('房间里派出去的活', () => {
     // 否则一块空板读起来就是「这个项目没活」——而项目里可能有几百条。
     await expect(view).toContainText(/施工中|交付中|等你|暂无派出去的活/);
   });
+});
+
+
+test('同名文件按任务打开，切换来源后草稿仍在', async ({ page }, testInfo) => {
+  await login(page);
+  await openFirstProject(page);
+  const project = projectIdOf(page);
+  const room = await freshRoom(page, `文件来源 ${Date.now()}`);
+  const first = await dispatch(page, room, '调整登录样式');
+  const second = await dispatch(page, room, '修复登录校验');
+  // Use real task worktrees: API writes remain uncommitted until the agent
+  // commits, so commit the fixture as the agent would before showing its diff.
+  const root = process.env.WORKSPACE_ROOT ?? resolve('../backend/.workspaces');
+  for (const [task, content] of [[first, 'first task\n'], [second, 'second task\n']] as const) {
+    await api(page, 'put', `/projects/${project}/file?topic=${room}&task=${task.id}`, {
+      path: 'src/login.txt', content, version: null,
+    });
+    const descriptor = JSON.parse(readFileSync(resolve(root, '.task-workspaces', `${task.id.replaceAll('-', '')}.json`), 'utf8'));
+    const tree = resolve(root, '.worktrees', project, descriptor.directory);
+    execFileSync('git', ['-C', tree, 'add', 'src/login.txt']);
+    execFileSync('git', ['-C', tree, '-c', 'user.name=E2E', '-c', 'user.email=e2e@example.invalid', 'commit', '-m', 'Seed task file']);
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto(`/projects/${project}/topics/${room}?tab=changes`);
+  const panel = page.locator('.panel-changes');
+  const firstGroup = panel.getByRole('article', { name: '调整登录样式' });
+  const secondGroup = panel.getByRole('article', { name: '修复登录校验' });
+  await expect(firstGroup.getByRole('button', { name: /src\/login.txt/ })).toBeVisible();
+  await expect(secondGroup.getByRole('button', { name: /src\/login.txt/ })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('task-files-overview.png'), fullPage: true });
+  await firstGroup.getByRole('button', { name: /src\/login.txt/ }).click();
+  await expect(panel.locator('.source-heading')).toContainText('调整登录样式');
+  await panel.getByRole('button', { name: '编辑', exact: true }).click();
+  await panel.locator('.monaco-editor .view-lines').click();
+  await page.keyboard.press('ControlOrMeta+A');
+  await page.keyboard.type('my unsaved draft');
+  await expect(panel.getByRole('button', { name: '保存', exact: true })).toBeEnabled();
+  await panel.getByRole('button', { name: '切换来源' }).click();
+  await page.getByRole('listbox', { name: '文件来源' }).getByText('修复登录校验', { exact: true }).click();
+  await expect(panel.locator('.source-heading')).toContainText('修复登录校验');
+  await expect(panel).toContainText('second task');
+  await panel.getByRole('button', { name: '切换来源' }).click();
+  await page.getByRole('listbox', { name: '文件来源' }).getByText('调整登录样式', { exact: true }).click();
+  await expect(panel.locator('.monaco-editor')).toContainText('my unsaved draft');
+  await expect(panel.getByRole('button', { name: '保存', exact: true })).toBeEnabled();
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.screenshot({ path: testInfo.outputPath('task-files-draft-dark.png'), fullPage: true });
+  await panel.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(panel.getByRole('button', { name: '保存', exact: true })).toBeDisabled();
+  const saved = await api(page, 'get', `/projects/${project}/file?path=src/login.txt&topic=${room}&task=${first.id}`);
+  expect(saved.content).toBe('my unsaved draft');
+  const untouched = await api(page, 'get', `/projects/${project}/file?path=src/login.txt&topic=${room}&task=${second.id}`);
+  expect(untouched.content).toBe('second task\n');
+  await panel.getByRole('button', { name: '切换来源' }).click();
+  await page.getByRole('listbox', { name: '文件来源' }).getByText('项目当前代码', { exact: true }).click();
+  await expect(panel.locator('.source-heading')).toContainText('项目当前代码');
+  await expect(panel.locator('.source-status')).toHaveText('只读');
+  await expect(panel.getByRole('button', { name: '保存', exact: true })).toHaveCount(0);
 });

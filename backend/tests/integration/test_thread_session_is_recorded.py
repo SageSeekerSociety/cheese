@@ -53,7 +53,10 @@ def _room(client) -> tuple[str, str]:
 
 def _dispatched(client, room_id: str, title: str = "一件活") -> str:
     """派出去的一条活。派活不跑任何东西，所以它出来时是安静的。"""
-    r = client.post(f"/topics/{room_id}/split", json={"title": title})
+    r = client.post(
+        f"/topics/{room_id}/split",
+        json=dict(reviewer_handle="alice", **{"title": title}),
+    )
     assert r.status_code == 200, r.text
     wait_work_idle()
     return r.json()["data"]["id"]

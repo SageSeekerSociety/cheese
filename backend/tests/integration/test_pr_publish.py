@@ -7,7 +7,8 @@ card; any failure leaves the card PR-less (the accept path then falls back).
 
 import asyncio
 import uuid
-from pathlib import Path
+
+from tests.delivery import delivery_headers, delivery_task_id
 
 
 def _make_project(client) -> str:
@@ -24,7 +25,8 @@ def _make_topic(client, project_id: str) -> str:
 
 def _make_card(client, topic_id: str, **extra) -> str:
     r = client.post(
-        f"/topics/{topic_id}/accept-card",
+        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
+        headers=delivery_headers(client, topic_id),
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "alice",
@@ -133,7 +135,6 @@ def _github_world(monkeypatch) -> None:
         ws, "push_topic_branch", lambda pid, tid, token: f"topic/{tid.hex[:8]}"
     )
     monkeypatch.setattr(ws, "topic_branch_exists", lambda pid, tid: True)
-    monkeypatch.setattr(ws, "ensure_repo", lambda pid: Path("."))
     monkeypatch.setattr(ws, "upstream_default_branch", lambda repo, **_: "main")
 
 
@@ -352,7 +353,8 @@ def test_a_malformed_subject_is_refused_at_the_card(client, monkeypatch):
     tid = _make_topic(client, pid)
 
     r = client.post(
-        f"/topics/{tid}/accept-card",
+        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
+        headers=delivery_headers(client, tid),
         json={"reviewer_handle": "alice", "change_subject": "做完了分页"},
     )
 
@@ -415,7 +417,11 @@ def test_a_card_with_no_subject_at_all_is_refused(client, monkeypatch):
     pid = _make_project(client)
     tid = _make_topic(client, pid)
 
-    r = client.post(f"/topics/{tid}/accept-card", json={"reviewer_handle": "alice"})
+    r = client.post(
+        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
+        headers=delivery_headers(client, tid),
+        json={"reviewer_handle": "alice"},
+    )
 
     assert r.status_code == 422
     # The refusal has to teach, not just refuse: the reader is an agent one
@@ -434,7 +440,8 @@ def test_a_blank_subject_is_refused_like_a_missing_one(client, monkeypatch):
     tid = _make_topic(client, pid)
 
     r = client.post(
-        f"/topics/{tid}/accept-card",
+        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
+        headers=delivery_headers(client, tid),
         json={"reviewer_handle": "alice", "change_subject": "   "},
     )
 

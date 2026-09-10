@@ -1518,7 +1518,14 @@ class GitHubPRClient:
         return parse_pull_request_status(await self.pr_view(number))
 
     @_as_pr_error
-    async def update_pr(self, number: int, *, title: str, body: str) -> dict:
+    async def update_pr(
+        self,
+        number: int,
+        *,
+        title: str | None = None,
+        body: str | None = None,
+        base: str | None = None,
+    ) -> dict:
         """Rewrite the PR's title and description — nothing else.
 
         The card is the single source of both, so correcting the card
@@ -1531,7 +1538,15 @@ class GitHubPRClient:
         async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
             resp = await client.patch(
                 self._url(f"/pulls/{number}"),
-                json={"title": title, "body": body},
+                json={
+                    key: value
+                    for key, value in {
+                        "title": title,
+                        "body": body,
+                        "base": base,
+                    }.items()
+                    if value is not None
+                },
                 headers=self._headers(token),
             )
         if resp.status_code != 200:

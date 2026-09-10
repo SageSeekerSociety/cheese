@@ -97,7 +97,7 @@ const focusMode = ref(false) // 专注模式 (spec §7.1): session-only, a trans
 const panelRef = ref<{
   pulse: () => void
   highlightTurn: (turnId: string) => void
-  openFile?: (path: string) => void
+  openFile?: (path: string, taskId?: string | null) => void
 } | null>(null)
 const chatColumn = ref<{
   connected: boolean
@@ -138,7 +138,7 @@ const chatEvents = {
   working: handleWorking,
   'state-changed': handleStateChanged,
   'mention-click': handleMentionClick,
-  'open-file': (path: string) => panelRef.value?.openFile?.(path),
+  'open-file': (path: string, taskId?: string | null) => panelRef.value?.openFile?.(path, taskId),
   'open-resource': handleOpenResource,
   'upgrade-message': handleUpgradeMessage,
   'open-topic': openTopic,
