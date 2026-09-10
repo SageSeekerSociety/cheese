@@ -32,3 +32,15 @@ lark-cli auth status --profile cheese    # 查 token 是否有效
 | `strict mode is "user"` | 本机策略禁用 bot 身份 | 用 user 身份（默认）即可，勿切 strict-mode |
 | `invalid access token` 偶发一次 | 旧 token 被刷新失效（缓存窗口） | 原样重试一次即可（wrapper 通常已自动重试） |
 | token 过期且 `auth login` 可用 | 普通机器 user token 到期 | `lark-cli auth login --profile cheese` |
+
+## Updating project skills
+
+Lark skills live in `.agents/skills/`, with directory links in `.claude/skills/`
+for Claude Code. Codex reads `.agents/skills/` directly. Commit any local skill
+changes, then run `bash scripts/update-lark-skills.sh` to refresh the complete
+official collection and `skills-lock.json` in this checkout. Review and commit
+the resulting diff. Each Git worktree uses the skills in its own checkout.
+
+Keep these skills project-scoped. The script omits `--global`; `lark-cli update`
+also installs skills and can recreate global entries. Upgrade the CLI separately,
+following the installed wrapper's guidance on machines with managed credentials.
