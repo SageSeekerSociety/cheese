@@ -23,10 +23,10 @@ class RoomExecutor:
         project, resource = uuid.uuid4(), uuid.uuid4()
         self.owner = folder / "execution-host"
         self.home = self.owner / ".cheese/home" / str(project) / str(resource)
-        self.work = self.owner / ".cheese/work" / str(project) / str(resource)
+        self.work = self.home / "room"
         self.state = self.home / ".claude/executor"
-        original = folder / "origin"
-        subprocess.run(["git", "init", "-q", str(original)], check=True)
+        original = self.work
+        original.mkdir(parents=True)
         (original / "CLAUDE.md").write_text(
             "Project commands execute beside project.txt.\n"
         )
@@ -47,21 +47,6 @@ class RoomExecutor:
                 }
             )
         )
-        subprocess.run(["git", "add", "."], cwd=original, check=True)
-        subprocess.run(
-            [
-                "git",
-                "-c",
-                "user.name=fixture",
-                "-c",
-                "user.email=fixture@example.test",
-                "commit",
-                "-qm",
-                "initial",
-            ],
-            cwd=original,
-            check=True,
-        )
         pin = self.owner / ".cheese/claude/versions/2.1.265"
         pin.parent.mkdir(parents=True)
         pin.symlink_to(Path(claude).resolve())
@@ -70,8 +55,6 @@ class RoomExecutor:
             "CHEESE_TOKEN": "room-fixture-token",
             "CHEESE_PROJECT": str(project),
             "CHEESE_TOPIC": str(resource),
-            "CHEESE_GIT_REMOTE": original.as_uri(),
-            "CHEESE_GIT_BRANCH": "room",
             "GIT_AUTHOR_NAME": "fixture",
             "GIT_AUTHOR_EMAIL": "fixture@example.test",
             "GIT_COMMITTER_NAME": "fixture",
