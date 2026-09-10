@@ -936,6 +936,9 @@ def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_p
     project_entries = set(work.rglob("*"))
     original_entries = set(owner.iterdir())
     session = owner / ".cheese/home/room"
+    previous_chat_skill = session / ".claude/skills/cheese-chat/SKILL.md"
+    previous_chat_skill.parent.mkdir(parents=True)
+    previous_chat_skill.write_text("Previous generated chat guide\n")
     env.update(
         CHEESE_HOME=str(session),
         CHEESE_WORK=str(work),
@@ -961,8 +964,9 @@ def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_p
     assert (
         owner / ".cheese/claude/versions" / device_launch.CLAUDE_PINNED_VERSION
     ).is_file()
-    for name in ("cheese-chat", "cheese-docs"):
+    for name in ("cheese-docs",):
         assert (session / ".claude/skills" / name / "SKILL.md").is_file()
+    assert not previous_chat_skill.exists()
     args = (tmp_path / "newsession.args").read_text()
     assert "--dangerously-skip-permissions" in args
     assert f"CLAUDE_CONFIG_DIR={session}/.claude" in args

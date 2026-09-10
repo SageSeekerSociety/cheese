@@ -34,15 +34,15 @@ file or stdin with `--file -`.
 
 ## Communication instructions
 
-The launcher installs `cheese-chat` and `cheese-docs` as native user-level skills
-under the session's `$CLAUDE_CONFIG_DIR/skills/`.
-It writes no skills or settings into the hosted project or the owner's Claude
-configuration. The system prompt carries a short publication contract and asks
-the agent to load `cheese-chat` through the Skill tool before responding. Native
-discovery lists the description; the body enters context when invoked. This is
-an instruction to the model, not a deterministic invocation gate.
+The system prompt includes the chat guide before the first model request. The
+agent can publish a reply without calling the Skill tool to learn how to send
+it. The same guide supplies both native sessions and API conversations.
 
-The chat skill teaches the lead agent to answer user messages directly
+The launcher installs `cheese-docs` under the session's
+`$CLAUDE_CONFIG_DIR/skills/` for document work. It writes no skills or settings
+into the hosted project or the owner's Claude configuration.
+
+The chat guide teaches the lead agent to answer user messages directly
 when possible, announce work before doing it, and publish progress and results.
 Queued messages and messages received during work follow the same rules. Each
 new or merged terminal input also reminds the agent that ordinary text is not
@@ -51,12 +51,11 @@ notification rules.
 
 The `cheese-docs` skill handles durable overviews and updates when the underlying
 state changes. It does not require a document edit for every chat turn. Both
-skills adapt the explanation to the reader; a reader without conversation
+guides adapt the explanation to the reader; a reader without conversation
 history may still have professional expertise.
 
-The launch configuration changes so existing terminals reopen through the
-session-resume path at the next task boundary and receive the updated CLI and
-instructions.
+New sessions receive the chat guide in their initial context. Sessions already
+running retain the instructions they loaded.
 
 For room work answering a person, the backend checks chat silence every 15
 seconds. While a response remains active, the backend queues a reminder after
