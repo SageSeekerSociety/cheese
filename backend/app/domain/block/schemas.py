@@ -28,6 +28,7 @@ class BlockOut(BaseModel):
 
     id: uuid.UUID
     topic_id: uuid.UUID
+    task_id: uuid.UUID | None = None
     kind: BlockKind
     author_type: AuthorType
     author: str

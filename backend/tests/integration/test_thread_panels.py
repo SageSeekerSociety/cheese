@@ -29,7 +29,10 @@ def _room(client) -> tuple[str, str]:
 
 
 def _thread(client, room_id: str, title: str = "一件活") -> str:
-    r = client.post(f"/topics/{room_id}/split", json={"title": title})
+    r = client.post(
+        f"/topics/{room_id}/split",
+        json=dict(reviewer_handle="alice", **{"title": title}),
+    )
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
 

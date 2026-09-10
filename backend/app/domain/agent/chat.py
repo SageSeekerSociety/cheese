@@ -1482,6 +1482,9 @@ class ChatService:
             if payload is None:
                 raise NotFoundError("Topic not found")
             yield {"type": "event_block", "block": payload}
+            if not summon:
+                yield {"type": "done"}
+                return
             user_block_id = None
         else:
             user_payloads, user_block_id, user_block_ids = await self.post_user_message(
@@ -2641,7 +2644,6 @@ class ChatService:
             )
             if payload is not None:
                 action_frames.append({"type": "event_block", "block": payload})
-            await self._report_paths_outside_the_claim(state.topic_id, changeset)
         if not result.is_error:
             self._schedule_memory_extraction(
                 topic_id=state.topic_id,
@@ -3225,8 +3227,8 @@ class ChatService:
 
         A Stop is "handed something back", never "done": the same worker reports
         finished again after it resumes. So this is an event on the timeline and
-        nothing more — it settles nothing and closes nothing. The room decides
-        the work is over by reading what came back (`cheese conclude-task`).
+        nothing more: acceptance closes delivered work, while an explicit close
+        abandons a task. This event does neither.
         """
         if task_id is None:
             return None
@@ -3299,13 +3301,11 @@ class ChatService:
         if known_commits is None:
             return None
 
+        commits = await self._known_commits(project_id, topic_id)
+        if commits is None:
+            return None
+
         def _collect() -> _Changeset | None:
-            commits = [
-                row["hash"]
-                for row in ws.git_log(
-                    project_id, limit=_CHANGE_COMMIT_WALK, topic_id=topic_id
-                )
-            ]
             fresh = [h for h in commits if h not in known_commits]
             if not fresh:
                 return None
@@ -3338,56 +3338,27 @@ class ChatService:
         summary is measured against. None when it cannot be read (see
         _HookWorkState.known_commits)."""
         try:
+            from app.domain.room_task.services import TaskService
+
+            async with self._sessions() as session:
+                tasks = await TaskService(session).list_in_room(topic_id)
+                task_ids = []
+                for task in tasks:
+                    if task.branch_name:
+                        TaskService._bind_workspace(task)
+                        task_ids.append(task.id)
             return await asyncio.to_thread(
                 lambda: {
                     row["hash"]
+                    for task_id in task_ids
                     for row in ws.git_log(
-                        project_id, limit=_CHANGE_COMMIT_WALK, topic_id=topic_id
+                        project_id, limit=_CHANGE_COMMIT_WALK, topic_id=task_id
                     )
                 }
             )
         except Exception:  # noqa: BLE001 — no baseline just means no summary
             logger.warning("commit baseline unreadable for topic %s", topic_id)
             return None
-
-    async def _report_paths_outside_the_claim(
-        self, topic_id: uuid.UUID, changeset: _Changeset
-    ) -> None:
-        """Say when a turn touched ground this piece of work never claimed.
-
-        A claim is an intention and a commit is a fact. If nothing ever compares
-        them, the claim is decoration — it would refuse the conflicts it happens
-        to predict and stay silent about the ones that actually happened.
-
-        Reported, never blocked, and never after the fact undone: the work is
-        committed and pushed by the time this runs, and the useful thing is that
-        somebody finds out, not that the commit is punished.
-        """
-        from app.domain.room_task.services import ClaimService
-
-        try:
-            touched = [f["path"] for f in changeset.files]
-            if not touched:
-                return
-            async with self._sessions() as session:
-                # By topic id, through the service: a room's own line and work
-                # that claimed nothing both come back empty, and this domain
-                # never has to hold room_task's repository to find that out.
-                surprises = await ClaimService(session).unclaimed_by_topic(
-                    topic_id, touched
-                )
-            if surprises:
-                logger.info(
-                    "task %s touched paths it never claimed: %s",
-                    topic_id,
-                    ", ".join(surprises[:10]),
-                )
-        except Exception:  # noqa: BLE001 — a report must never fail a turn
-            logger.warning(
-                "could not compare touched paths to the claim for %s",
-                topic_id,
-                exc_info=True,
-            )
 
     async def _persist_change_summary(
         self,

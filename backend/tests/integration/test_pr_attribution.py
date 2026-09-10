@@ -12,9 +12,9 @@ human as the child's owner — and that is what these read now.
 import asyncio
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 
 from app.domain.identity.handles import topic_agent_handle
+from tests.delivery import delivery_headers, delivery_task_id
 
 
 class _FakeTokens:
@@ -85,11 +85,14 @@ def test_reporter_credit_survives_dispatch_and_only_declared_work_is_credited(cl
     _, room = _project(client, owner="alice")
     result = client.post(
         f"/topics/{room}/split",
-        json={
-            "title": "Fix reported bug",
-            "reporter_handle": "reporter",
-            "contributor_handles": ["coder", "coder"],
-        },
+        json=dict(
+            reviewer_handle="alice",
+            **{
+                "title": "Fix reported bug",
+                "reporter_handle": "reporter",
+                "contributor_handles": ["coder", "coder"],
+            },
+        ),
     )
     assert result.status_code == 200, result.text
     task = result.json()["data"]
@@ -108,25 +111,28 @@ def test_reporter_credit_survives_dispatch_and_only_declared_work_is_credited(cl
     assert credited.coauthors == (identity.platform_identity("coder"),)
     assert credited.author == identity.agent_identity(topic_agent_handle(room))
     concluded = client.post(
-        f"/topics/{room}/tasks/{task['id']}/conclude",
+        f"/topics/{room}/tasks/{task['id']}/close",
         json={"contributor_handles": ["reporter"], "reporter_handle": None},
     )
     assert concluded.status_code == 200, concluded.text
     credited = asyncio.run(read_credit())
     assert credited.reporters == ()
     assert credited.coauthors == (identity.platform_identity("reporter"),)
-    preserved = client.post(f"/topics/{room}/tasks/{task['id']}/conclude", json={})
+    preserved = client.post(f"/topics/{room}/tasks/{task['id']}/close", json={})
     assert preserved.status_code == 200, preserved.text
     assert preserved.json()["data"]["contributor_handles"] == ["reporter"]
     rejected = client.post(
-        f"/topics/{room}/tasks/{task['id']}/conclude",
+        f"/topics/{room}/tasks/{task['id']}/close",
         json={"contributor_handles": ["nobody-exists"]},
     )
     assert rejected.status_code == 422, rejected.text
     assert asyncio.run(read_credit()).coauthors == credited.coauthors
     bad = client.post(
         f"/topics/{room}/split",
-        json={"title": "bad", "reporter_handle": "nobody-exists"},
+        json=dict(
+            reviewer_handle="alice",
+            **{"title": "bad", "reporter_handle": "nobody-exists"},
+        ),
     )
     assert bad.status_code == 422, bad.text
 
@@ -178,7 +184,6 @@ def _github_world(monkeypatch, *, connected: dict[str, str]) -> None:
         ws, "push_topic_branch", lambda pid, tid, token: f"topic/{tid.hex[:8]}"
     )
     monkeypatch.setattr(ws, "topic_branch_exists", lambda pid, tid: True)
-    monkeypatch.setattr(ws, "ensure_repo", lambda pid: Path("."))
     monkeypatch.setattr(ws, "upstream_default_branch", lambda repo, **_: "main")
 
 
@@ -194,7 +199,9 @@ def _split(client, parent_id: str, *, by: str) -> str:
     exact shape `cheese split` sends from a 分身's sandbox."""
     r = client.post(
         f"/topics/{parent_id}/split",
-        json={"title": "分身拆出的子任务", "created_by": by},
+        json=dict(
+            reviewer_handle="alice", **{"title": "分身拆出的子任务", "created_by": by}
+        ),
     )
     assert r.status_code == 200
     return r.json()["data"]["id"]
@@ -202,7 +209,8 @@ def _split(client, parent_id: str, *, by: str) -> str:
 
 def _card(client, topic_id: str) -> str:
     r = client.post(
-        f"/topics/{topic_id}/accept-card",
+        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
+        headers=delivery_headers(client, topic_id),
         json={
             "reviewer_handle": "alice",
             "routing_reason": "最懂",
@@ -297,7 +305,8 @@ def test_a_card_cannot_open_a_pr_of_its_own(client, monkeypatch):
     tid = _split(client, root, by=f"cheese-{uuid.uuid4().hex[:12]}")
 
     r = client.post(
-        f"/topics/{tid}/accept-card",
+        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
+        headers=delivery_headers(client, tid),
         json={
             "reviewer_handle": "alice",
             "routing_reason": "最懂",

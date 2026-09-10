@@ -14,22 +14,19 @@ history, deletes and conflict handling badly; with this the agent uses plain
 `git push`.
 """
 
-import asyncio
 import os
-import re
 import subprocess
 import uuid
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Body, Depends, Header, Request, Response
+from fastapi import APIRouter, Depends, Header, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.response import ok
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.core.sandbox_auth import verify_scoped_token
-from app.domain.room_task.models import TreeStatus
 from app.domain.workspace import service as ws
 
 router = APIRouter(prefix="/projects", tags=["git"])
@@ -163,141 +160,33 @@ async def _cgi(
     )
 
 
-@router.get("/{project_id}/git/branch/{topic_id}")
-@router.post("/{project_id}/git/branch/{topic_id}")
-async def branch_for_place(
+@router.get("/{project_id}/git/tasks/{task_id}")
+async def task_workspace(
     project_id: uuid.UUID,
-    topic_id: uuid.UUID,
+    task_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    on: str = "",
-    heads: str = Body(default="", media_type="text/plain"),
     x_cheese_token: str | None = Header(default=None, alias="X-Cheese-Token"),
 ) -> dict:
-    """Which branch this place writes to **right now**, and how to get onto it.
-
-    A device's screen is long-lived and its environment is fixed at launch, so
-    `CHEESE_GIT_BRANCH` is a snapshot of the batch that was open when the screen
-    started. A room delivers, the batch merges, the next one opens on a new
-    branch — and the screen keeps pushing everything it does onto the branch
-    that already landed, silently, for as long as it lives. That is not a
-    hypothetical: this repository's own room did exactly that.
-
-    So the branch is ASKED FOR at push time instead of remembered. Sitting in
-    `git_http` because it belongs to the same conversation and the same
-    credential as the push it precedes: the device already holds a
-    project-scoped token and already talks to this router to push.
-
-    `on` is the branch the caller's clone is currently on and `heads` are the
-    commits it has (its HEAD and that commit's ancestors). Both are asked for
-    because **the name alone is not evidence**: `git branch -m` renames a branch
-    without moving a single commit, so a clone whose history is built on a batch
-    already squashed into main can present a name this room never delivered from
-    — and be told, truthfully about the name and disastrously about the history,
-    that there is nothing to carry over. The commits cannot be renamed, so they
-    are what the batch is identified by; `on` only ADDS the batch this device's
-    own record says it last published to.
-
-    The three extra facts in the answer exist because a device **cannot work
-    them out for itself** after a squash merge:
-
-    - `on_merged` — is this clone's history built on a batch of THIS room that
-      has landed? Ancestry cannot say. A squash commit is not a descendant of
-      the branch it squashed, so `merge-base --is-ancestor` answers "no" for a
-      batch that is fully delivered and "no" for one that never was. Nor can a
-      device tell a landed batch from a branch that was never a batch at all
-      (its own `dev/…`, or the base branch it was cloned onto) — and the two
-      need opposite handling: the first must be carried onto the new batch or
-      refused, the second is just a name and pushes normally.
-    - `on_branch` — which batch that was, by name. The device keys its own
-      records (what it published, where it was locally when it did) by branch
-      name, so being told the name is what lets it find them after a rename.
-    - `on_head` — the commit that batch delivered, empty when the merge
-      predates recording it. A merged batch with no `on_head` is the case the
-      device must REFUSE rather than push: it knows the work here sits on a
-      landed batch and cannot tell where that batch ends.
-    - `base` / `base_sha` — the commit the next batch starts from, by name AND
-      by sha. Same reason: the delivering clone has no ref that reaches it.
-
-    All of them are the platform stating a fact it alone holds, so that a device
-    grafts its next batch onto the right commit only when the previous one is
-    confirmed delivered — never on a guess.
-    """
     _repo_for(project_id, x_cheese_token)
-    from app.domain.room_task.place import PlaceResolver
-    from app.domain.room_task.services import WorkTreeService
-    from app.domain.topic.models import Topic
+    from app.domain.room_task.services import TaskService
 
-    # BEFORE resolving. The token proves a claim on the project in the URL and
-    # NOTHING about the topic, and a place id is resolved globally — so without
-    # this a device holding one project's credential could name any other
-    # project's room and be told which branch it is writing to.
-    #
-    # And it has to come BEFORE rather than after, because resolving a place is
-    # not a pure read: it repairs that place's on-disk tree marker
-    # (`PlaceResolver._heal_the_marker`). Checking afterwards would refuse the
-    # request having already written into the very project it is refusing to
-    # talk about. Same answer for "no such topic" and "somebody else's topic" —
-    # which of the two it is, is exactly what a caller probing ids wants told.
-    room = await db.get(Topic, topic_id)
-    if room is None or room.project_id != project_id:
-        raise NotFoundError("这个项目里没有这个地点")
-    place = await PlaceResolver(db).resolve(topic_id)
-    if place is None:
-        raise NotFoundError("这个项目里没有这个地点")
-    if place.branch_name is None:
-        raise NotFoundError("这个地点现在没有可写的分支")
-    base, base_sha = await asyncio.to_thread(ws.base_branch_head, project_id)
-    history = await WorkTreeService(db).history(place.room_id)
-    landed = {
-        ws.branch_for_tree(t.id): t for t in history if t.status == TreeStatus.merged
-    }
-    carried = set()
-    reported = _commits_a_clone_reported(heads)
-    if landed and reported:
-        carried = await asyncio.to_thread(
-            ws.batches_a_clone_stands_on,
-            project_id,
-            {b: (t.delivered_head or "") for b, t in landed.items()},
-            reported,
-        )
-    # 名字命中和提交命中放在一起挑，挑最后交付的那一批。A clone that has grafted
-    # already still has the batch BEFORE last in its ancestry — HEAD never moves
-    # here, the graft is built with plumbing — so on a third batch the commits
-    # identify the first one while `on` (the syncer's own record of what it last
-    # published to) identifies the second. Carrying onto the older of the two
-    # would re-deliver everything the second one added, so the newest wins.
-    was = max(
-        (t for b, t in landed.items() if b == on or b in carried),
-        key=lambda t: t.merged_at or t.created_at,
-        default=None,
-    )
-    # 「交出去的是哪个 commit」来自合并那一刻记下的 `delivered_head`，**不是**
-    # 那条分支现在指向哪里。A device grafting its next batch does a three-way
-    # merge whose BASE is the content that was delivered; the branch is
-    # mutable, so a commit pushed onto it after the merge (a stale screen,
-    # a hand push) would be taken for delivered content it never was, and
-    # the graft would silently re-deliver or drop work. A batch that merged
-    # before this was recorded answers `on_merged` with no `on_head`, and
-    # the device refuses rather than guesses.
+    task = await TaskService(db).get(task_id)
+    if task is None or task.project_id != project_id or task.branch_name is None:
+        raise NotFoundError("这个项目里没有这条工作任务")
+    if not verify_scoped_token(
+        x_cheese_token or "", project_id=str(project_id), topic_id=str(task.room_id)
+    ):
+        raise NotFoundError("这个房间里没有这条工作任务")
+    TaskService._bind_workspace(task)
     return ok(
         {
-            "branch": place.branch_name,
-            "tree_id": str(place.tree_id),
-            "base": base,
-            "base_sha": base_sha,
-            "on_merged": was is not None,
-            "on_branch": ws.branch_for_tree(was.id) if was is not None else "",
-            "on_head": (was.delivered_head or "") if was is not None else "",
+            "task_id": str(task.id),
+            "room_id": str(task.room_id),
+            "branch": task.branch_name,
+            "base": task.base_branch,
+            "closed": task.status == "closed",
         }
     )
-
-
-# Only full hex object names count as reported commits.
-_A_COMMIT = re.compile(r"\A[0-9a-f]{40}(?:[0-9a-f]{24})?\Z")
-
-
-def _commits_a_clone_reported(heads: str) -> list[str]:
-    return [c for c in heads.split() if _A_COMMIT.match(c)]
 
 
 @router.get("/{project_id}/git/info/refs")

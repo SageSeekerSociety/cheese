@@ -31,6 +31,7 @@ vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
     ...actual,
+    listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getTranscript: (...a: unknown[]) => getTranscript(...a),
     getTerminal: (...a: unknown[]) => getTerminal(...a),
     // Everything else the panel calls on mount — quiet, empty answers.

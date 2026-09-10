@@ -8,6 +8,7 @@ from the UI.
 """
 
 from tests.conftest import seed_task_with_protocol
+from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import session_auth_headers
 
 OWNER = "owner-1"
@@ -43,7 +44,8 @@ def _setup_with_mentor_condition(client) -> tuple[str, str]:
 
 def _card(client, topic_id: str, reviewer: str) -> str:
     return client.post(
-        f"/topics/{topic_id}/accept-card",
+        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
+        headers=delivery_headers(client, topic_id),
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": reviewer,
@@ -76,4 +78,8 @@ def test_mentor_can_accept(client):
     assert r.status_code == 200
     topic = client.get(f"/topics/{tid}").json()["data"]
     assert topic["status"] == "active"  # 交付完成不归档 (#442 decision 1)
-    assert topic["accepted_by"] == "mentor-1"
+    task = client.get(f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}").json()[
+        "data"
+    ]
+    assert task["accepted_by"] == "mentor-1"
+    assert task["status"] == "closed"

@@ -11,7 +11,7 @@ from app.core.config import settings
 from app.domain.site.services import get_current_release, read_release_file
 from app.domain.workspace import service as ws
 from tests.integration.conftest import session_auth_headers
-from tests.machine_work import machine_commits
+from tests.machine_work import declare_task, machine_commits
 
 
 @pytest.fixture(autouse=True)
@@ -31,6 +31,7 @@ def _project(client, *, owner="alice", team_id=None):
 
 def _accepted(pid, files):
     tid = uuid.uuid4()
+    declare_task(pid, tid)
     machine_commits(pid, tid, files)
     result = ws.merge_topic(
         pid, tid, message="Publish test website\n\nRequested-by: alice"
@@ -62,6 +63,7 @@ def _release(client, pid):
 def test_only_accepted_files_are_published_and_survive_machine_and_repo_removal(client):
     pid = _project(client)
     topic = uuid.uuid4()
+    declare_task(pid, topic)
     machine_commits(pid, topic, {"draft/index.html": "unaccepted"})
     assert _get(client, pid).json()["data"]["candidates"] == []
     accepted = {

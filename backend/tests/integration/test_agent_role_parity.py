@@ -6,6 +6,7 @@ import pytest
 
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.identity.handles import topic_agent_handle
+from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import session_auth_headers
 
 
@@ -387,7 +388,8 @@ def test_review_actions_check_the_credentials_project_and_room(client):
     project, origin, _ = _rooms(client)
     foreign, _, room = _rooms(client)
     card = client.post(
-        f"/topics/{room}/accept-card",
+        f"/topics/{room}/tasks/{delivery_task_id(client, room)}/accept-card",
+        headers=delivery_headers(client, room),
         json={
             "change_subject": "test: scoped review",
             "reviewer_handle": "alice",

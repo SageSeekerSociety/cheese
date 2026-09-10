@@ -7,6 +7,7 @@ request body with no authentication at all — anyone who could reach the API
 could accept/reject/revoke any card by simply naming the right handle.
 """
 
+from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import session_auth_headers
 
 
@@ -24,7 +25,8 @@ def _make_topic(client, project_id: str) -> str:
 
 def _make_card(client, topic_id: str, reviewer: str = "alice") -> str:
     r = client.post(
-        f"/topics/{topic_id}/accept-card",
+        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
+        headers=delivery_headers(client, topic_id),
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": reviewer,
@@ -120,7 +122,13 @@ def test_revoke_without_auth_401(client):
 
     r = client.post(f"/accept-cards/{cid}/revoke", json={"decided_by": "alice"})
     assert r.status_code == 401
-    assert client.get(f"/topics/{tid}").json()["data"]["accepted_by"] == "alice"
+    assert (
+        client.get(
+            f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}",
+            headers=delivery_headers(client, tid),
+        ).json()["data"]["accepted_by"]
+        == "alice"
+    )
 
 
 def test_revoke_ignores_spoofed_body_identity(client):
@@ -141,7 +149,13 @@ def test_revoke_ignores_spoofed_body_identity(client):
         headers=session_auth_headers("mallory"),
     )
     assert r.status_code == 422
-    assert client.get(f"/topics/{tid}").json()["data"]["accepted_by"] == "alice"
+    assert (
+        client.get(
+            f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}",
+            headers=delivery_headers(client, tid),
+        ).json()["data"]["accepted_by"]
+        == "alice"
+    )
 
 
 def test_reassign_without_auth_401(client):

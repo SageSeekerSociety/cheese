@@ -41,6 +41,7 @@ vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
     ...actual,
+    listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getDoc: (...a: unknown[]) => getDoc(...a),
     listFiles: (...a: unknown[]) => listFiles(...a),
     readFile: (...a: unknown[]) => readFile(...a),
@@ -199,7 +200,7 @@ describe('工作面板 · Tab 容器', () => {
     expect(visible(container, '.panel-changes')).toBe(true)
     expect(visible(container, '.panel-overview')).toBe(false)
     // ……而且是它的文件半边，开着的正是被点的那个文件。
-    expect(readFile).toHaveBeenCalledWith('p1', 'src/b.ts', 'topic-A')
+    expect(readFile).toHaveBeenCalledWith('p1', 'src/b.ts', 'topic-A', null)
     expect(container.querySelector('.file-bar__path')?.textContent?.trim()).toBe('src/b.ts')
   })
 

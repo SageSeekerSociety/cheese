@@ -2,7 +2,7 @@
 those threads work on."""
 
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime
 
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,131 +11,7 @@ from app.domain.block.models import Block, BlockKind
 from app.domain.room_task.models import (
     Task,
     TaskStatus,
-    TreeStatus,
-    WorkTree,
 )
-
-
-class WorkTreeRepository:
-    """一棵树 = 一个分支 = 一个 PR = 一批活."""
-
-    def __init__(self, session: AsyncSession):
-        self._session = session
-
-    async def get(self, tree_id: uuid.UUID) -> WorkTree | None:
-        return await self._session.get(WorkTree, tree_id)
-
-    async def open_tree_for_room(self, room_id: uuid.UUID) -> WorkTree | None:
-        """The tree this room is currently taking work into, if any.
-
-        None means the room is sealed — its tree's PR is in flight and the next
-        batch has not been started yet. That is a real state, not a missing row:
-        it is what stops a task from writing into a PR that CI is checking.
-        """
-        stmt = select(WorkTree).where(
-            WorkTree.room_id == room_id, WorkTree.status == TreeStatus.open
-        )
-        return (await self._session.scalars(stmt)).first()
-
-    async def list_for_room(self, room_id: uuid.UUID) -> list[WorkTree]:
-        """Every tree this room has had, oldest first."""
-        stmt = (
-            select(WorkTree)
-            .where(WorkTree.room_id == room_id)
-            .order_by(WorkTree.created_at, WorkTree.id)
-        )
-        return list((await self._session.scalars(stmt)).all())
-
-    async def list_for_project(self, project_id: uuid.UUID) -> list[WorkTree]:
-        """Every tree of every room in the project — the set whose directories
-        the storage sweep may find on disk."""
-        stmt = select(WorkTree).where(WorkTree.project_id == project_id)
-        return list((await self._session.scalars(stmt)).all())
-
-    async def open_without_pr(self) -> list[WorkTree]:
-        """Batches that are taking work and have no PR yet (#718 拍板①).
-
-        The draft-PR sweep's whole input. `open` and `pr_number IS NULL` are
-        both part of the question rather than a filter on the answer: a sealed
-        or merged batch must never gain a PR after the fact, and a batch that
-        already has one is the case this sweep exists to stop re-asking GitHub
-        about.
-        """
-        stmt = select(WorkTree).where(
-            WorkTree.status == TreeStatus.open, WorkTree.pr_number.is_(None)
-        )
-        return list((await self._session.scalars(stmt)).all())
-
-    async def claim_for_pr(self, tree_id: uuid.UUID) -> WorkTree | None:
-        """Lock this batch and hand it back only if it still wants a PR.
-
-        `FOR UPDATE` because the answer has to survive the work that follows it:
-        opening a PR takes GitHub round trips, and an accept can merge the batch
-        in the middle of them. Locking the row makes the sweep and the accept
-        serialise instead of racing — see `pr_publish._draft_pr_for_one_tree`.
-
-        None when somebody got there first (the batch merged, or already has a
-        PR), which is a normal outcome, not an error.
-        """
-        stmt = (
-            select(WorkTree)
-            .where(
-                WorkTree.id == tree_id,
-                WorkTree.status == TreeStatus.open,
-                WorkTree.pr_number.is_(None),
-            )
-            .with_for_update()
-        )
-        return (await self._session.scalars(stmt)).first()
-
-    async def record_pr(self, tree: WorkTree, *, number: int, url: str | None) -> None:
-        """Remember which PR this batch is being written into."""
-        tree.pr_number = number
-        tree.pr_url = (url or "")[:255] or None
-        await self._session.flush()
-
-    async def add(
-        self,
-        *,
-        project_id: uuid.UUID,
-        room_id: uuid.UUID,
-        tree_id: uuid.UUID | None = None,
-    ) -> WorkTree:
-        """Start a batch.
-
-        `tree_id` exists for the room's FIRST tree, which carries the room's own
-        id so that every branch, worktree directory, container
-        workdir and tmux session keeps the name it already had. Every later tree
-        gets a fresh id and therefore a fresh branch.
-        """
-        tree = WorkTree(project_id=project_id, room_id=room_id, status=TreeStatus.open)
-        if tree_id is not None:
-            tree.id = tree_id
-        self._session.add(tree)
-        await self._session.flush()
-        return tree
-
-    async def seal(self, tree: WorkTree) -> WorkTree:
-        """封口: its PR is in flight, so nothing new may be written here."""
-        tree.status = TreeStatus.sealed
-        tree.sealed_at = datetime.now(UTC)
-        await self._session.flush()
-        return tree
-
-    async def mark_merged(self, tree: WorkTree) -> WorkTree:
-        tree.status = TreeStatus.merged
-        tree.merged_at = datetime.now(UTC)
-        await self._session.flush()
-        return tree
-
-    async def list_tasks(self, tree_id: uuid.UUID) -> list[Task]:
-        """The batch: every task working on this tree, oldest first."""
-        stmt = (
-            select(Task)
-            .where(Task.tree_id == tree_id)
-            .order_by(Task.created_at, Task.id)
-        )
-        return list((await self._session.scalars(stmt)).all())
 
 
 class TaskRepository:
@@ -165,7 +41,6 @@ class TaskRepository:
         *,
         project_id: uuid.UUID,
         room_id: uuid.UUID,
-        tree_id: uuid.UUID,
         title: str,
         owner_handle: str | None,
         created_by: str | None,
@@ -173,17 +48,10 @@ class TaskRepository:
         reporter_handle: str | None = None,
         contributor_handles: list[str] | None = None,
     ) -> Task:
-        """A new thread in *room_id*, working on *tree_id*.
-
-        The tree is passed in rather than looked up here: which tree a task
-        joins is a decision (the room's currently open one, and a sealed room
-        has none), and a repository that made it would be making it silently at
-        the moment of writing rather than where it can be explained.
-        """
+        """Create a task; its service assigns the branch before checkout."""
         task = Task(
             project_id=project_id,
             room_id=room_id,
-            tree_id=tree_id,
             title=title,
             owner_handle=owner_handle,
             reviewer_handle=reviewer_handle,

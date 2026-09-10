@@ -29,7 +29,10 @@ def _room(client, project_id: str) -> dict:
 
 
 def _thread(client, room_id: str, title: str = "子活") -> dict:
-    return client.post(f"/topics/{room_id}/split", json={"title": title}).json()["data"]
+    return client.post(
+        f"/topics/{room_id}/split",
+        json=dict(reviewer_handle="alice", **{"title": title}),
+    ).json()["data"]
 
 
 def _record_screens(stub_hooks) -> list[str]:

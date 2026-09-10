@@ -366,12 +366,12 @@ function highlightTurn(turnId: string) {
   setTab('overview')
   void nextTick(() => overviewRef.value?.highlightTurn(turnId))
 }
-async function openFile(path: string) {
+async function openFile(path: string, taskId?: string | null) {
   setTab('changes')
   await nextTick()
   // A chip may carry the lines it was pointing at (`src/a.ts:12-30`) — that part
   // names a place inside the file, not a file, and the tree only knows paths.
-  await changesRef.value?.openFile(path.replace(/:\d+(?:-\d+)?$/, ''))
+  await changesRef.value?.openFile(path.replace(/:\d+(?:-\d+)?$/, ''), taskId)
 }
 defineExpose({ pulse, highlightTurn, openFile })
 </script>
@@ -455,6 +455,8 @@ defineExpose({ pulse, highlightTurn, openFile })
           v-show="active === 'changes'"
           ref="changesRef"
           :topic-id="topicId"
+          :task-id="openCardId"
+          :read-only="topic?.status === 'archived'"
           :project-id="projectId"
           :active="active === 'changes'"
           :refresh-tick="refreshTick"

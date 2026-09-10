@@ -16,6 +16,9 @@ never moved and never dual-written; one test reads the raw row to pin that.
 import asyncio
 import uuid
 
+import pytest
+
+from app.domain.identity.handles import topic_agent_handle
 from tests.integration.conftest import session_auth_headers
 
 _DEFAULTS = {
@@ -202,3 +205,23 @@ def test_update_allows_project_lead_not_ordinary_member(client):
 
     client.headers.update(session_auth_headers("member-user"))
     assert _put(client, pid, {"strict": False}).status_code == 404
+
+
+@pytest.mark.parametrize("role", ["lead", "owner"])
+def test_agent_stewards_cannot_change_merge_policy(client, role):
+    pid = _make_project(client)
+    project = client.get(f"/projects/{pid}").json()["data"]
+    handle = topic_agent_handle(uuid.UUID(project["root_topic_id"]))
+    response = client.post(
+        f"/projects/{pid}/members",
+        json={"user_handle": handle, "role": "lead"},
+    )
+    assert response.status_code == 200, response.text
+    if role == "owner":
+        response = client.put(f"/projects/{pid}/owner", json={"owner_handle": handle})
+        assert response.status_code == 200, response.text
+    before = _get(client, pid)
+    client.headers.update(session_auth_headers(handle))
+    response = _put(client, pid, {"auto_merge_allowed": True, "required_checks": []})
+    assert response.status_code == 403, response.text
+    assert _get(client, pid) == before

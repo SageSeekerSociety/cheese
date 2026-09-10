@@ -16,9 +16,9 @@ commit's own author, and a room has one git identity.
 
 import asyncio
 import uuid
-from pathlib import Path
 
 from app.api.deps import get_work_runner
+from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import session_token
 
 
@@ -85,7 +85,6 @@ def _github_world(monkeypatch, *, connected: dict[str, tuple[str, str]]) -> None
         ws, "push_topic_branch", lambda pid, tid, token: f"topic/{tid.hex[:8]}"
     )
     monkeypatch.setattr(ws, "topic_branch_exists", lambda pid, tid: True)
-    monkeypatch.setattr(ws, "ensure_repo", lambda pid: Path("."))
     monkeypatch.setattr(ws, "upstream_default_branch", lambda repo, **_: "main")
 
 
@@ -137,7 +136,9 @@ def _split(client, parent_id: str, *, by: str) -> dict:
     token, the acting handle only in the body."""
     r = client.post(
         f"/topics/{parent_id}/split",
-        json={"title": "分身拆出的子任务", "created_by": by},
+        json=dict(
+            reviewer_handle="alice", **{"title": "分身拆出的子任务", "created_by": by}
+        ),
     )
     assert r.status_code == 200
     return r.json()["data"]
@@ -157,7 +158,8 @@ def _pr_body(client, pid: str, tid: str) -> str:
     from app.domain.review import pr_publish
 
     card = client.post(
-        f"/topics/{tid}/accept-card",
+        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
+        headers=delivery_headers(client, tid),
         json={
             "reviewer_handle": "alice",
             "routing_reason": "最懂",
@@ -210,7 +212,7 @@ def test_a_human_who_splits_it_themselves_still_wins(client, monkeypatch):
 
     r = client.post(
         f"/topics/{root}/split",
-        json={"title": "我自己拆的"},
+        json=dict(reviewer_handle="alice", **{"title": "我自己拆的"}),
         headers={"Authorization": f"Bearer {session_token('carol')}"},
     )
     assert r.status_code == 200
@@ -273,7 +275,8 @@ def test_a_card_cannot_open_the_pr_for_the_batch_it_is_one_of(client, monkeypatc
     thread = _split(client, root, by=_agent())["id"]
 
     r = client.post(
-        f"/topics/{thread}/accept-card",
+        f"/topics/{thread}/tasks/{delivery_task_id(client, thread)}/accept-card",
+        headers=delivery_headers(client, thread),
         json={
             "reviewer_handle": "alice",
             "routing_reason": "最懂",

@@ -17,8 +17,8 @@ there, and so does whoever opens the card next week.
 
 The reverse leg (活 → 它所在的房间) is gone with the sessions: it existed because
 a piece of work held a per-turn token of its own and had no other way home. A
-card has no turn and no token. What a worker finishes with reaches the room as
-its own result, and the room files it with `cheese conclude-task`.
+card has no turn and no token. A bound worker's result is recorded on its task;
+acceptance closes delivered work, while `cheese close-task` abandons a task.
 
 Why this is not `POST /topics/{id}/comments`: that route summons only when the
 commenter is a HUMAN (`if not actor.is_agent`), and it is not in

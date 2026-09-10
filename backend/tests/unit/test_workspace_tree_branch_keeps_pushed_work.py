@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from app.domain.workspace import service as ws
+from tests.machine_work import declare_task
 
 
 def _run(cwd: Path, *args: str) -> str:
@@ -81,7 +82,7 @@ def _push_over_the_git_proxy(
     worktree is never touched — this is the whole point."""
     work = tmp_path / f"sandbox-{uuid.uuid4().hex[:6]}"
     subprocess.run(["git", "clone", "-q", str(repo), str(work)], check=True)
-    branch = ws.branch_for_tree(tree_id)
+    branch = ws.branch_for_task(tree_id)
     if _run(work, "branch", "-r", "--list", f"origin/{branch}").strip():
         _run(work, "checkout", "-q", "-B", branch, f"origin/{branch}")
     for rel, content in files.items():
@@ -109,6 +110,7 @@ def test_pr_carries_work_pushed_over_the_git_proxy(tmp_path, project, monkeypatc
     with nothing in it, and accepting that PR merged nothing into main."""
     pid, repo = project
     tid = uuid.uuid4()
+    declare_task(pid, tid)
     pushed = _push_over_the_git_proxy(
         tmp_path, repo, tid, {"src/app.py": "print('hi')\n"}
     )
@@ -124,7 +126,7 @@ def test_pr_carries_work_pushed_over_the_git_proxy(tmp_path, project, monkeypatc
     assert _run(bare, "show", f"{result['head_sha']}:src/app.py") == "print('hi')\n"
     # And opening it did not move the branch out from under what was pushed.
     assert result["head_sha"] == pushed
-    assert _run(repo, "rev-parse", ws.branch_for_tree(tid)).strip() == pushed
+    assert _run(repo, "rev-parse", ws.branch_for_task(tid)).strip() == pushed
 
 
 def test_first_worktree_joins_the_work_the_branch_already_carries(tmp_path, project):
@@ -134,11 +136,12 @@ def test_first_worktree_joins_the_work_the_branch_already_carries(tmp_path, proj
     from whoever opened the panel and stages the branch to be rewound."""
     pid, repo = project
     tid = uuid.uuid4()
+    declare_task(pid, tid)
     pushed = _push_over_the_git_proxy(
         tmp_path, repo, tid, {"src/app.py": "print('hi')\n"}
     )
 
     wt = ws.topic_worktree(pid, tid)
 
-    assert _run(repo, "rev-parse", ws.branch_for_tree(tid)).strip() == pushed
+    assert _run(repo, "rev-parse", ws.branch_for_task(tid)).strip() == pushed
     assert (wt / "src" / "app.py").read_text(encoding="utf-8") == "print('hi')\n"

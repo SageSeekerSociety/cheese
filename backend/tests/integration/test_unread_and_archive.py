@@ -223,11 +223,13 @@ def test_archive_cascades_to_the_work_in_the_room(client):
     )
     parent = t.json()["data"]["id"]
     c1 = client.post(
-        f"/topics/{parent}/split", json={"title": "子1", "created_by": "u"}
+        f"/topics/{parent}/split",
+        json=dict(reviewer_handle="alice", **{"title": "子1", "created_by": "u"}),
     ).json()["data"]["id"]
     wait_work_idle()
     c2 = client.post(
-        f"/topics/{parent}/split", json={"title": "子2", "created_by": "u"}
+        f"/topics/{parent}/split",
+        json=dict(reviewer_handle="alice", **{"title": "子2", "created_by": "u"}),
     ).json()["data"]["id"]
     wait_work_idle()
 

@@ -37,7 +37,6 @@ import type {
   ProjectSiteInfo,
   ReactionAgg,
   RoomTask,
-  RoomTree,
   Topic,
   TopicComputeProfile,
   TopicMemberRow,
@@ -568,15 +567,7 @@ export function listProjectTasks(projectId: string): Promise<ListPayload<RoomTas
   return request<ListPayload<RoomTask>>(`/projects/${encodeURIComponent(projectId)}/tasks`)
 }
 
-/** 一个房间的一批批活（树），最新的在前。一棵树 = 一个分支 = 一个 PR = 一批活。
- *
- *  房间会封口一批、开下一批，所以「我现在写的东西进的是哪一批」才有答案 —— 封了
- *  口的房间和没封口的在屏幕上长得一模一样，是「我改了半天，改动怎么不在 PR 上」
- *  的来源。 */
-export function listRoomTrees(roomId: string): Promise<ListPayload<RoomTree>> {
-  return request<ListPayload<RoomTree>>(`/topics/${encodeURIComponent(roomId)}/trees`)
-}
-
+/** Tasks in this room, each with its own branch and delivery. */
 export function listRoomTasks(
   roomId: string,
   // 每条支线最多带回多少块对话。标记只要支线本身，所以取 1 —— 不传的话后端会把
@@ -1287,13 +1278,21 @@ export function answerAgentControl(
   })
 }
 
-export function getGitLog(projectId: string, topicId?: string | null): Promise<ListPayload<GitCommit>> {
-  const t = topicId ? `?topic=${encodeURIComponent(topicId)}` : ''
+export function getGitLog(
+  projectId: string,
+  topicId?: string | null,
+  taskId?: string | null
+): Promise<ListPayload<GitCommit>> {
+  const t = `?${new URLSearchParams({ ...(topicId ? { topic: topicId } : {}), ...(taskId ? { task: taskId } : {}) })}`
   return request<ListPayload<GitCommit>>(`/projects/${encodeURIComponent(projectId)}/git/log${t}`)
 }
 
-export function getGitDiff(projectId: string, topicId?: string | null): Promise<{ diff: string }> {
-  const t = topicId ? `?topic=${encodeURIComponent(topicId)}` : ''
+export function getGitDiff(
+  projectId: string,
+  topicId?: string | null,
+  taskId?: string | null
+): Promise<{ diff: string }> {
+  const t = `?${new URLSearchParams({ ...(topicId ? { topic: topicId } : {}), ...(taskId ? { task: taskId } : {}) })}`
   return request<{ diff: string }>(`/projects/${encodeURIComponent(projectId)}/git/diff${t}`)
 }
 
@@ -1306,20 +1305,29 @@ export function getTopicWorkSummary(projectId: string, topicId: string): Promise
 }
 
 // 文件: list workspace files; read one file's content.
-export function listFiles(projectId: string, topicId?: string | null): Promise<ListPayload<WorkspaceFile>> {
-  const t = topicId ? `?topic=${encodeURIComponent(topicId)}` : ''
+export function listFiles(
+  projectId: string,
+  topicId?: string | null,
+  taskId?: string | null
+): Promise<ListPayload<WorkspaceFile>> {
+  const t = `?${new URLSearchParams({ ...(topicId ? { topic: topicId } : {}), ...(taskId ? { task: taskId } : {}) })}`
   return request<ListPayload<WorkspaceFile>>(`/projects/${encodeURIComponent(projectId)}/files${t}`)
 }
 
 // <img src=…> URL for a workspace file (binary raw endpoint) — the 文件 panel
 // shows images as images instead of Monaco-mangled bytes.
-export function workspaceFileRawUrl(projectId: string, path: string, topicId?: string): string {
-  const t = topicId ? `&topic=${encodeURIComponent(topicId)}` : ''
+export function workspaceFileRawUrl(projectId: string, path: string, topicId?: string, taskId?: string | null): string {
+  const t = `&${new URLSearchParams({ ...(topicId ? { topic: topicId } : {}), ...(taskId ? { task: taskId } : {}) })}`
   return `${BASE}/projects/${encodeURIComponent(projectId)}/file/raw?path=${encodeURIComponent(path)}${t}`
 }
 
-export function readFile(projectId: string, path: string, topicId?: string | null): Promise<FileContent> {
-  const t = topicId ? `&topic=${encodeURIComponent(topicId)}` : ''
+export function readFile(
+  projectId: string,
+  path: string,
+  topicId?: string | null,
+  taskId?: string | null
+): Promise<FileContent> {
+  const t = `&${new URLSearchParams({ ...(topicId ? { topic: topicId } : {}), ...(taskId ? { task: taskId } : {}) })}`
   return request<FileContent>(`/projects/${encodeURIComponent(projectId)}/file?path=${encodeURIComponent(path)}${t}`)
 }
 
@@ -1334,9 +1342,10 @@ export function writeFile(
   path: string,
   content: string,
   topicId?: string | null,
-  version?: string | null
+  version?: string | null,
+  taskId?: string | null
 ): Promise<{ path: string; version: string }> {
-  const t = topicId ? `?topic=${encodeURIComponent(topicId)}` : ''
+  const t = `?${new URLSearchParams({ ...(topicId ? { topic: topicId } : {}), ...(taskId ? { task: taskId } : {}) })}`
   return request(`/projects/${encodeURIComponent(projectId)}/file${t}`, {
     method: 'PUT',
     body: JSON.stringify({ path, content, version: version ?? null }),
@@ -1347,6 +1356,10 @@ export function writeFile(
 // or null if none is set. Content is fetched separately via readFile.
 export function getPreview(topicId: string): Promise<PreviewInfo | null> {
   return request<PreviewInfo | null>(`/topics/${encodeURIComponent(topicId)}/preview`)
+}
+
+export function readPreviewFile(topicId: string): Promise<FileContent> {
+  return request<FileContent>(`/topics/${encodeURIComponent(topicId)}/preview/file`)
 }
 
 // 资源: aggregated token/cost usage for a topic and for the whole project.
@@ -1373,14 +1386,18 @@ export function getAppVersion(): Promise<AppVersion> {
 // ---- 采纳卡 / 验收 (eval C5/A3) ----
 
 // Accept cards for a topic, newest first.
-export function getAcceptCards(topicId: string): Promise<ListPayload<AcceptCard>> {
-  return request<ListPayload<AcceptCard>>(`/topics/${encodeURIComponent(topicId)}/accept-card`)
+export function getAcceptCards(topicId: string, taskId?: string | null): Promise<ListPayload<AcceptCard>> {
+  return request<ListPayload<AcceptCard>>(
+    `/topics/${encodeURIComponent(topicId)}/accept-card${taskId ? `?task=${encodeURIComponent(taskId)}` : ''}`
+  )
 }
 
 // 采纳 PR 化 (#188 §5.1): live CI state of the newest card's PR. Safe to poll —
 // answers {available:false} when the topic has no PR-riding card.
-export function getPrChecks(topicId: string): Promise<PrChecks> {
-  return request<PrChecks>(`/topics/${encodeURIComponent(topicId)}/pr-checks`)
+export function getPrChecks(topicId: string, taskId?: string | null): Promise<PrChecks> {
+  return request<PrChecks>(
+    `/topics/${encodeURIComponent(topicId)}/pr-checks${taskId ? `?task=${encodeURIComponent(taskId)}` : ''}`
+  )
 }
 
 // 合的是人看到的那个 commit：会触发合并的三个入口（采纳 / 人工放行 / 布防）都

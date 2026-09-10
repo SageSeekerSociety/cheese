@@ -287,6 +287,8 @@ def test_accept_request_without_a_subject_never_reaches_the_backend(
 
 def test_accept_request_sends_the_subject_it_was_given(monkeypatch):
     cli = _load()
+    monkeypatch.setattr(cli, "_task_id", lambda _: "task-1")
+    monkeypatch.setattr(cli, "_sync_task", lambda _: None)
     sent: list[dict] = []
 
     def _call(m, p, d=None):
@@ -311,9 +313,25 @@ def test_accept_request_sends_the_subject_it_was_given(monkeypatch):
     cli.main()
 
     [call] = sent
-    assert call["p"] == "/topics/t-1/accept-card"
+    assert call["p"] == "/topics/t-1/tasks/task-1/accept-card"
     assert call["d"]["change_subject"] == "fix(accept): require a commit subject"
     assert call["d"]["reviewer_handle"] == "alice"
+
+
+def test_ready_never_syncs_creates_a_card_or_merges(monkeypatch):
+    cli = _load()
+    calls = []
+    monkeypatch.setattr(cli, "TOPIC", "room-1")
+    monkeypatch.setattr(cli, "_task_id", lambda _: "task-1")
+    monkeypatch.setattr(cli, "_sync_task", lambda _: pytest.fail("ready must not sync"))
+    monkeypatch.setattr(
+        cli,
+        "_call",
+        lambda *args: calls.append(args) or {"data": {"ready": True, "pr_number": 1}},
+    )
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "ready"])
+    cli.main()
+    assert calls == [("POST", "/topics/room-1/tasks/task-1/ready")]
 
 
 def test_accept_request_without_a_reviewer_lets_the_backend_pick_the_default(
@@ -327,6 +345,8 @@ def test_accept_request_without_a_reviewer_lets_the_backend_pick_the_default(
     to the project default.
     """
     cli = _load()
+    monkeypatch.setattr(cli, "_task_id", lambda _: "task-1")
+    monkeypatch.setattr(cli, "_sync_task", lambda _: None)
     sent: list[dict] = []
 
     def _call(m, p, d=None):
@@ -465,8 +485,10 @@ def test_gh_token_spells_out_pushing_and_opening_a_pr_when_it_may(monkeypatch, c
     )
 
     _out, err = capsys.readouterr()
-    assert "git push https://x-access-token:$GH_TOKEN@github.com/acme/widgets" in err
-    assert "gh api repos/acme/widgets/pulls -f head=" in err
+    assert "cheese sync" in err
+    assert "cheese push-fix" in err
+    assert "x-access-token:" not in err
+    assert "gh api repos/acme/widgets/pulls -f head=" not in err
 
 
 def test_gh_token_does_not_promise_what_it_was_not_granted(monkeypatch, capsys):

@@ -34,10 +34,13 @@ async def ops_registry() -> dict:
     dependencies=[Depends(require_project_access)],
 )
 async def list_operation_requests(
-    project_id: uuid.UUID, db: DbSession, topic: uuid.UUID | None = None
+    project_id: uuid.UUID,
+    db: DbSession,
+    topic: uuid.UUID | None = None,
+    task: uuid.UUID | None = None,
 ) -> dict:
     """The operation requests on this topic's branch, as card faces."""
     await ProjectService(db).get_or_404(project_id)
-    requests = OperationRequestService(project_id, topic_id=topic).list_requests()
+    requests = OperationRequestService(project_id, topic_id=task).list_requests()
     items = [r.model_dump(mode="json") for r in requests]
     return ok(page(items, len(items)))

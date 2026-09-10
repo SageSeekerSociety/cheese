@@ -38,7 +38,7 @@ vi.mock('../../api', async () => {
         (preview: Record<string, unknown> | null) =>
           preview && { ...preview, url: preview.kind === 'app' ? preview.url : 'https://preview-topic-a.example/' }
       ),
-    readFile: (...a: unknown[]) => readFile(...a),
+    readPreviewFile: (...a: unknown[]) => readFile(...a),
     requestPreviewSession: (...a: unknown[]) => requestPreviewSession(...a),
     getDoc: vi.fn().mockResolvedValue({ markdown: '', title: '' }),
     putDoc: vi.fn().mockResolvedValue({}),

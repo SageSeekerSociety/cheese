@@ -4,7 +4,7 @@ Given a topic id, reports (as `KEY=value` lines) the two facts the device
 capability checks care about:
 
     CARDS=<accept cards filed on the topic>      # the shipped `cheese` CLI works
-    MARKER=<1|0>                                 # the device pushed its topic branch
+    MARKER=<1|0>                                 # the device pushed a task branch
 
 Usage: python device_capability_verify.py <topic_id> [marker]
 """
@@ -28,6 +28,7 @@ async def main() -> int:
 
     from app.common.auth import create_access_token
     from app.core.db import async_session_factory
+    from app.domain.room_task.services import TaskService
     from app.domain.topic.models import Topic
     from app.domain.user.models import User
     from app.domain.workspace import service as ws
@@ -45,6 +46,11 @@ async def main() -> int:
             await session.execute(select(Topic).where(Topic.id == TOPIC_ID))
         ).scalar_one_or_none()
         project_id = topic.project_id if topic is not None else None
+        branches = [
+            task.branch_name
+            for task in await TaskService(session).list_in_room(TOPIC_ID)
+            if task.branch_name
+        ]
 
     req = urllib.request.Request(
         f"{BASE}/topics/{TOPIC_ID}/accept-card",
@@ -56,15 +62,17 @@ async def main() -> int:
 
     seen = 0
     if MARKER and project_id is not None:
-        result = subprocess.run(
-            ["git", "show", f"{ws.branch_for_place(TOPIC_ID)}:DEVICE_PROBE.txt"],
-            cwd=ws.ensure_repo(project_id),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode == 0 and MARKER in result.stdout:
-            seen = 1
+        for branch in branches:
+            result = subprocess.run(
+                ["git", "show", f"{branch}:DEVICE_PROBE.txt"],
+                cwd=ws.ensure_repo(project_id),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode == 0 and MARKER in result.stdout:
+                seen = 1
+                break
     print(f"MARKER={seen}")
     return 0
 

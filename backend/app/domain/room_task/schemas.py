@@ -32,20 +32,22 @@ class TaskOut(BaseModel):
     status: TaskStatus
     # 唯一的主. A room answers this with a roster; a task with one handle.
     owner_handle: str | None = None
-    # 谁来验收这条活 —— 派活那一刻定下的 (#718 设置表)。NULL 表示派出去时既没
-    # 点名、项目也没有默认验收人，递卡时必须自己点一个。
+    # 新任务在创建时确定验收人；历史记录可能为空。
     reviewer_handle: str | None = None
     reporter_handle: str | None = None
     contributor_handles: list[str] = Field(default_factory=list)
     created_by: str | None = None
-    # 这条活在哪棵树上干 — many tasks share one, and that tree is the batch
-    # that opens one PR. A task has no branch of its own any more.
-    tree_id: uuid.UUID
+    branch_name: str | None = None
+    base_branch: str | None = None
+    base_task_id: uuid.UUID | None = None
+    historical_delivery_id: uuid.UUID | None = None
+    pr_number: int | None = None
+    pr_url: str | None = None
+    delivered_head: str | None = None
     # 哪个分身在做它. NULL = 还没有分身认领——派活写下这一行，绑定发生在房间
     # 真的起了一个分身之后，中间这段时间是正常状态，不是错误。
     subagent_id: str | None = None
-    # Delivery, which is NOT the same question as `status` — work can be
-    # delivered and still open, or closed with nothing delivered.
+    # Acceptance closes the task; closing a task alone does not imply delivery.
     accepted_by: str | None = None
     accepted_at: datetime | None = None
     closed_at: datetime | None = None

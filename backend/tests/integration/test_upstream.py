@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from tests.conftest import stub_compute
+from tests.delivery import delivery_headers, delivery_task_id
 from tests.machine_work import machine_commits
 
 
@@ -149,11 +150,12 @@ def test_accept_leaves_the_upstream_untouched(client, tmp_path):
         "/topics", json={"project_id": pid, "title": "T", "created_by": "u"}
     )
     tid = r.json()["data"]["id"]
-    puid, tuid = _uuid.UUID(pid), _uuid.UUID(tid)
+    puid, tuid = _uuid.UUID(pid), delivery_task_id(client, tid)
     machine_commits(puid, tuid, {"work.txt": "accepted work\n"})
 
     card = client.post(
-        f"/topics/{tid}/accept-card",
+        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
+        headers=delivery_headers(client, tid),
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "u",
@@ -191,7 +193,7 @@ def test_accept_conflict_is_a_state_not_a_lie(client):
         "/topics", json={"project_id": pid, "title": "T", "created_by": "u"}
     )
     tid = r.json()["data"]["id"]
-    puid, tuid = _uuid.UUID(pid), _uuid.UUID(tid)
+    puid, tuid = _uuid.UUID(pid), delivery_task_id(client, tid)
 
     # Branch edits f.txt one way…
     machine_commits(puid, tuid, {"f.txt": "branch version\n"})
@@ -205,7 +207,8 @@ def test_accept_conflict_is_a_state_not_a_lie(client):
     )
 
     card = client.post(
-        f"/topics/{tid}/accept-card",
+        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
+        headers=delivery_headers(client, tid),
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "u",
@@ -240,7 +243,12 @@ def test_accept_conflict_is_a_state_not_a_lie(client):
     assert r.status_code == 200 and r.json()["data"]["status"] == "accepted"
     t = client.get(f"/topics/{tid}").json()["data"]
     assert t["status"] == "active"
-    assert t["accepted_at"] is not None
+    assert (
+        client.get(
+            f"/topics/{tid}/tasks/{tuid}", headers=delivery_headers(client, tid)
+        ).json()["data"]["accepted_at"]
+        is not None
+    )
     assert ws.read_file(puid, "f.txt") == "merged version\n"
 
 
@@ -276,7 +284,7 @@ def test_upstream_conflict_materializes_and_accepting_completes_the_sync(
     tid = client.post(
         "/topics", json={"project_id": pid, "title": "T", "created_by": "u"}
     ).json()["data"]["id"]
-    tuid = _uuid.UUID(tid)
+    tuid = delivery_task_id(client, tid)
     files = ws.prepare_upstream_conflict_resolution(puid, tuid)
     assert files == ["hello.txt"]
 
@@ -290,7 +298,8 @@ def test_upstream_conflict_materializes_and_accepting_completes_the_sync(
     machine_commits(puid, tuid, {"hello.txt": "merged by hand\n"}, "解决同步上游冲突")
 
     card = client.post(
-        f"/topics/{tid}/accept-card",
+        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
+        headers=delivery_headers(client, tid),
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "u",

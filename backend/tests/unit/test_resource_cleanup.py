@@ -22,7 +22,10 @@ def wait_for(predicate):
     raise AssertionError("fixture did not reach the expected process state")
 
 
-def test_stop_lock_survives_parent_death_and_late_retry_is_read_only(tmp_path):
+@pytest.mark.parametrize("task_layout", [False, True])
+def test_stop_lock_survives_parent_death_and_late_retry_is_read_only(
+    tmp_path, task_layout
+):
     project, resource, operation = (str(uuid.uuid4()) for _ in range(3))
     home, work = cleanup.resource_paths(tmp_path, project, resource)
     (home / ".claude").mkdir(parents=True)
@@ -31,7 +34,10 @@ def test_stop_lock_survives_parent_death_and_late_retry_is_read_only(tmp_path):
     socket.touch()
     checksum = (
         subprocess.run(
-            ["cksum"], input=str(work).encode(), capture_output=True, check=True
+            ["cksum"],
+            input=str(home / "room" if task_layout else work).encode(),
+            capture_output=True,
+            check=True,
         )
         .stdout.decode()
         .split()[0]
@@ -126,3 +132,60 @@ def test_unpublished_source_blocks_cleanup(tmp_path):
     with pytest.raises(RuntimeError, match="working-tree changes"):
         cleanup.check_published(tmp_path)
     assert (tmp_path / "source.py").exists()
+
+
+def test_task_work_is_checked_before_removing_the_room_home(tmp_path):
+    home, work = tmp_path / "home", tmp_path / "legacy-work"
+    task = home / ".cheese/tasks" / str(uuid.uuid4())
+    task.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(task)], check=True)
+    (task / "source.py").write_text("unpublished task work")
+    with pytest.raises(RuntimeError, match="working-tree changes"):
+        cleanup.check_resource_publication(home, work)
+    assert (task / "source.py").read_text() == "unpublished task work"
+
+
+def test_unpublished_room_notes_block_home_removal(tmp_path):
+    home, work = tmp_path / "home", tmp_path / "legacy-work"
+    room = home / "room"
+    room.mkdir(parents=True)
+    (room / "notes.md").write_text("unfinished research")
+    with pytest.raises(RuntimeError, match="no Git publication record"):
+        cleanup.check_resource_publication(home, work)
+    assert (room / "notes.md").read_text() == "unfinished research"
+
+
+def test_bare_cache_keeps_unpublished_commits_after_checkout_is_removed(tmp_path):
+    home, work = tmp_path / "home", tmp_path / "legacy-work"
+    repo = home / ".cheese/repositories/project.git"
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    for args in (
+        ["init", "-q", "-b", "main"],
+        [
+            "-c",
+            "user.name=test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "unpublished work",
+        ],
+    ):
+        subprocess.run(["git", "-C", str(seed), *args], check=True, capture_output=True)
+    repo.parent.mkdir(parents=True)
+    subprocess.run(
+        ["git", "clone", "--bare", str(seed), str(repo)],
+        check=True,
+        capture_output=True,
+    )
+    with pytest.raises(RuntimeError, match="unpublished commits"):
+        cleanup.check_resource_publication(home, work)
+    # A fetched origin ref is the publication evidence used by task checkouts.
+    subprocess.run(
+        ["git", "-C", str(repo), "update-ref", "refs/remotes/origin/main", "main"],
+        check=True,
+        capture_output=True,
+    )
+    cleanup.check_resource_publication(home, work)

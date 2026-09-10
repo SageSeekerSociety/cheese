@@ -6,7 +6,8 @@ token a device screen would receive, as shell-friendly `KEY=value` lines:
     PROJECT=<uuid>
     TOPIC=<uuid>
     TOKEN=<scoped token>
-    BRANCH=<topic branch the device clones and pushes>
+    TASK=<uuid>
+    BRANCH=<task branch the device clones and pushes>
 
 No agent turn is summoned, so this costs nothing at the model provider.
 """
@@ -32,7 +33,6 @@ async def main() -> int:
     from app.domain.device.models import DeviceProjectRow
     from app.domain.project.models import Project
     from app.domain.user.models import User
-    from app.domain.workspace import service as ws
 
     async with async_session_factory() as session:
         user = (
@@ -79,16 +79,26 @@ async def main() -> int:
     with urllib.request.urlopen(req, timeout=60) as resp:
         topic_id = uuid.UUID(json.loads(resp.read())["data"]["id"])
 
-    # A production turn materialises the canonical topic branch before the
-    # DeviceProvider launches. The probe must reproduce that prerequisite; the
-    # device still obtains the branch only by cloning it over smart HTTP.
-    ws.topic_worktree(project.id, topic_id)
+    req = urllib.request.Request(
+        f"{BASE}/topics/{topic_id}/split",
+        data=json.dumps(
+            {"title": "Device capability probe", "reviewer_handle": USER_HANDLE}
+        ).encode(),
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        task = json.loads(resp.read())["data"]
 
     scoped = mint_scoped_token(project_id=str(project.id), topic_id=str(topic_id))
     print(f"PROJECT={project.id}")
     print(f"TOPIC={topic_id}")
     print(f"TOKEN={scoped}")
-    print(f"BRANCH={ws.branch_for_place(topic_id)}")
+    print(f"TASK={task['id']}")
+    print(f"BRANCH={task['branch_name']}")
     return 0
 
 

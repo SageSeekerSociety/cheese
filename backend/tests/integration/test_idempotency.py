@@ -38,7 +38,7 @@ from app.domain.idempotency.keys import action_key
 from app.domain.milestone.models import Milestone
 from app.domain.room_task.models import Task
 from tests.conftest import StubChannel, settle_turn, stub_compute
-from tests.integration.conftest import session_auth_headers
+from tests.delivery import delivery_headers, delivery_task_id
 
 # One fixed continuation for every test here: it stands for "the interrupted
 # turn and the turn that resumed it", which is the whole point — two separate
@@ -247,8 +247,12 @@ def test_split_does_not_spawn_a_second_subtopic(client, in_a_turn, monkeypatch):
     tid = _topic(client, pid)
     body = {"title": "数据清洗", "brief": "把脏数据洗掉", "created_by": "cheese"}
 
-    first = client.post(f"/topics/{tid}/split", json=body)
-    second = client.post(f"/topics/{tid}/split", json=body)
+    first = client.post(
+        f"/topics/{tid}/split", json=dict(reviewer_handle="alice", **body)
+    )
+    second = client.post(
+        f"/topics/{tid}/split", json=dict(reviewer_handle="alice", **body)
+    )
     assert first.status_code == 200, first.text
     assert second.status_code == 200, second.text
 
@@ -333,24 +337,24 @@ def test_second_accept_card_is_refused_so_no_second_pr(client):
     tid = _topic(client, pid)
 
     first = client.post(
-        f"/topics/{tid}/accept-card",
+        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "alice",
             "routing_reason": "最懂",
         },
-        headers=session_auth_headers("cheese"),
+        headers=delivery_headers(client, tid),
     )
     assert first.status_code == 200, first.text
 
     second = client.post(
-        f"/topics/{tid}/accept-card",
+        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "alice",
             "routing_reason": "最懂",
         },
-        headers=session_auth_headers("cheese"),
+        headers=delivery_headers(client, tid),
     )
     assert second.status_code >= 400, "第二张验收卡没被拦住——它能开出第二个 PR"
 
@@ -395,7 +399,10 @@ def test_without_a_running_turn_nothing_is_deduped(client, monkeypatch):
         assert (
             client.post(
                 f"/topics/{tid}/split",
-                json={"title": "同一个子话题", "created_by": "cheese"},
+                json=dict(
+                    reviewer_handle="alice",
+                    **{"title": "同一个子话题", "created_by": "cheese"},
+                ),
             ).status_code
             == 200
         )

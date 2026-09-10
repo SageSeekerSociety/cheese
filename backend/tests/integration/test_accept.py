@@ -13,6 +13,7 @@ test_accept_authorization.py for the security-focused cases.
 
 import uuid
 
+from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import session_auth_headers
 
 
@@ -30,7 +31,8 @@ def _make_topic(client, project_id: str) -> str:
 
 def _make_card(client, topic_id: str, reviewer: str = "alice") -> str:
     r = client.post(
-        f"/topics/{topic_id}/accept-card",
+        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
+        headers=delivery_headers(client, topic_id),
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": reviewer,
@@ -46,8 +48,9 @@ def _make_card(client, topic_id: str, reviewer: str = "alice") -> str:
 
 
 def test_create_card_404_for_missing_topic(client):
+    missing_room, missing_task = uuid.uuid4(), uuid.uuid4()
     r = client.post(
-        f"/topics/{uuid.uuid4()}/accept-card",
+        f"/topics/{missing_room}/tasks/{missing_task}/accept-card",
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "alice",
@@ -100,8 +103,13 @@ def test_accept_marks_the_topic_delivered_and_leaves_it_active(client):
     r = client.get(f"/topics/{tid}")
     topic = r.json()["data"]
     assert topic["status"] == "active"
-    assert topic["accepted_by"] == "alice"
-    assert topic["accepted_at"] is not None
+    delivered = client.get(
+        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}"
+    ).json()["data"]
+    assert delivered["accepted_by"] == "alice"
+    assert delivered["accepted_at"] is not None
+    assert delivered["status"] == "closed"
+    assert topic["accepted_at"] is None
 
     cards = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"]
     assert cards[0]["status"] == "accepted"
@@ -231,7 +239,12 @@ def test_revoke_clears_the_delivery_marker(client):
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )
-    assert client.get(f"/topics/{tid}").json()["data"]["accepted_by"] == "alice"
+    assert (
+        client.get(f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}").json()[
+            "data"
+        ]["accepted_by"]
+        == "alice"
+    )
 
     r = client.post(
         f"/accept-cards/{cid}/revoke",
@@ -269,7 +282,8 @@ def test_only_one_pending_card_per_topic(client):
     tid = _make_topic(client, pid)
     _make_card(client, tid, "alice")
     r = client.post(
-        f"/topics/{tid}/accept-card",
+        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
+        headers=delivery_headers(client, tid),
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "bob",
@@ -291,7 +305,8 @@ def test_no_new_card_after_delivery(client):
         headers=session_auth_headers("alice"),
     )
     r = client.post(
-        f"/topics/{tid}/accept-card",
+        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
+        headers=delivery_headers(client, tid),
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "bob",
@@ -301,7 +316,7 @@ def test_no_new_card_after_delivery(client):
     assert r.status_code == 422
     # 拒的是「分支上没有新东西」这个事实，不是「这个话题交付过了」这段历史：
     # 房间接着干活、有了新提交就该能再递一张（见 test_accept_does_not_archive）。
-    assert "没有新提交" in r.json()["message"]
+    assert "任务已结束" in r.json()["message"]
     # 话题没有被归档 —— 拒绝的只是这一张空卡。
     assert client.get(f"/topics/{tid}").json()["data"]["status"] == "active"
 
@@ -323,7 +338,12 @@ def test_revoke_requires_authority(client):
         headers=session_auth_headers("stranger"),
     )
     assert r.status_code == 422
-    assert client.get(f"/topics/{tid}").json()["data"]["accepted_by"] == "alice"
+    assert (
+        client.get(f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}").json()[
+            "data"
+        ]["accepted_by"]
+        == "alice"
+    )
 
     r = client.post(
         f"/accept-cards/{cid}/revoke",
@@ -331,7 +351,12 @@ def test_revoke_requires_authority(client):
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200
-    assert client.get(f"/topics/{tid}").json()["data"]["accepted_by"] is None
+    assert (
+        client.get(f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}").json()[
+            "data"
+        ]["accepted_by"]
+        is None
+    )
 
 
 def test_revoke_404_for_missing_card(client):
@@ -370,11 +395,12 @@ def test_accept_squashes_the_delivery_with_the_cards_words(client):
 
     pid = _make_project(client)
     tid = _make_topic(client, pid)
-    machine_commits(uuid.UUID(pid), uuid.UUID(tid), {"a.txt": "one\n"})
-    machine_commits(uuid.UUID(pid), uuid.UUID(tid), {"b.txt": "two\n"})
+    machine_commits(uuid.UUID(pid), delivery_task_id(client, tid), {"a.txt": "one\n"})
+    machine_commits(uuid.UUID(pid), delivery_task_id(client, tid), {"b.txt": "two\n"})
 
     r = client.post(
-        f"/topics/{tid}/accept-card",
+        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
+        headers=delivery_headers(client, tid),
         json={
             "change_subject": "feat: deliver a and b",
             "change_body": "Two files, one delivery.",
@@ -422,7 +448,7 @@ def test_accept_squashes_the_delivery_with_the_cards_words(client):
     assert committer == "芝士 cheese@zhishi.local"
 
 
-def test_conflict_card_reads_dirty(client):
+def test_conflict_card_reads_dirty(client, stub_hooks):
     """The one signal an unbound project has: the last merge hit a conflict.
     The card then says dirty (芝士处理中), not clean."""
     import subprocess
@@ -432,7 +458,9 @@ def test_conflict_card_reads_dirty(client):
 
     pid = _make_project(client)
     tid = _make_topic(client, pid)
-    machine_commits(uuid.UUID(pid), uuid.UUID(tid), {"f.txt": "branch version\n"})
+    machine_commits(
+        uuid.UUID(pid), delivery_task_id(client, tid), {"f.txt": "branch version\n"}
+    )
     repo = ws.ensure_repo(uuid.UUID(pid))
     (repo / "f.txt").write_text("base version\n", encoding="utf-8")
     for args in (
@@ -450,6 +478,15 @@ def test_conflict_card_reads_dirty(client):
     assert r.status_code == 200
     assert r.json()["data"]["status"] == "conflict"
 
+    from tests.conftest import wait_work_idle
+
+    wait_work_idle()
+    prompt = stub_hooks.last_prompt or ""
+    assert "cheese worktree" in prompt
+    assert "git merge origin/" in prompt
+    assert "cheese sync --task" in prompt
+    assert "cheese push-fix" not in prompt
+
     card = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"][0]
     assert card["merge_state"]["state"] == "dirty"
     assert card["merge_state"]["who"] == "human"
@@ -457,7 +494,7 @@ def test_conflict_card_reads_dirty(client):
     # The conflicted accept already materialized the merge (markers committed
     # on the branch) and dispatched 芝士 — resolving is an ordinary commit in
     # the topic worktree, and the retry then squashes cleanly.
-    wt = ws.topic_worktree(uuid.UUID(pid), uuid.UUID(tid))
+    wt = ws.topic_worktree(uuid.UUID(pid), delivery_task_id(client, tid))
     assert "<<<<<<<" in (wt / "f.txt").read_text(encoding="utf-8")
     (wt / "f.txt").write_text("resolved version\n", encoding="utf-8")
     for args in (

@@ -32,20 +32,24 @@ def check_published(work: Path, *, canonical: bool = False) -> None:
     if dirty.returncode or dirty.stdout.strip():
         raise RuntimeError("checkout has unpublished working-tree changes")
     if not canonical:
-        unpublished = run_command(
-            [
-                "git",
-                "rev-list",
-                "--branches",
-                "HEAD",
-                "--not",
-                "--remotes=origin",
-                "--glob=refs/cheese/published/*",
-            ],
-            cwd=work,
-        )
-        if unpublished.returncode or unpublished.stdout.strip():
-            raise RuntimeError("checkout has unpublished commits")
+        check_published_commits(work, include_head=True)
+
+
+def check_published_commits(repo: Path, *, include_head: bool = False) -> None:
+    unpublished = run_command(
+        [
+            "git",
+            "rev-list",
+            "--branches",
+            *(["HEAD"] if include_head else []),
+            "--not",
+            "--remotes=origin",
+            "--glob=refs/cheese/published/*",
+        ],
+        cwd=repo,
+    )
+    if unpublished.returncode or unpublished.stdout.strip():
+        raise RuntimeError("checkout has unpublished commits")
 
 
 def check_no_writers(paths: list[Path]) -> None:
@@ -63,17 +67,37 @@ def check_no_writers(paths: list[Path]) -> None:
             )
 
 
+def check_resource_publication(home: Path, work: Path) -> None:
+    """Check both legacy checkouts and task worktrees before deleting a home."""
+    check_published(work)
+    check_published(home / "room")
+    tasks = home / ".cheese/tasks"
+    if tasks.is_symlink():
+        raise RuntimeError("task storage is a symlink")
+    if tasks.exists():
+        for task in tasks.iterdir():
+            if task.is_symlink() or not task.is_dir():
+                raise RuntimeError("unrecognized entry in task storage")
+            check_published(task)
+    # A removed checkout can leave the only copy of a branch in the bare cache.
+    repositories = home / ".cheese/repositories"
+    for repo in repositories.glob("*.git"):
+        check_published_commits(repo)
+
+
 def request_exit(home: Path, work: Path, lock_fd: int) -> None:
     marker = home / ".claude/environment-session.json"
     if not marker.exists():
         return
     socket, name, *_ = json.loads(marker.read_text())
     # cksum consumes stdin below; do not trust a session name from an arbitrary file.
-    checksum = subprocess.run(
-        ["cksum"], input=str(work).encode(), capture_output=True, check=True
-    )
-    expected = "cheese_" + checksum.stdout.decode().split()[0]
-    if name != expected:
+    expected = set()
+    for directory in (work, home / "room"):
+        checksum = subprocess.run(
+            ["cksum"], input=str(directory).encode(), capture_output=True, check=True
+        )
+        expected.add("cheese_" + checksum.stdout.decode().split()[0])
+    if name not in expected:
         raise RuntimeError("session metadata does not identify this resource")
     if not Path(socket).exists():
         return
@@ -167,13 +191,13 @@ def main() -> None:
                     os.close(descriptor)
         print(json.dumps({"ready": True}))
     elif action == "publication":
-        check_published(work)
+        check_resource_publication(home, work)
         print(json.dumps({"published": True}))
     elif action == "remove":
         # The caller recorded this generation before granting deletion permission.
         # A reopened room uses another UUID, even on the same physical device.
         check_no_writers([home, work])
-        check_published(work)
+        check_resource_publication(home, work)
         if home.exists():
             check_transcripts(
                 home, json.loads(os.environ["CHEESE_TRANSCRIPT_RECEIPTS"])

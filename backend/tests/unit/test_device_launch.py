@@ -51,11 +51,10 @@ def test_launch_timings_append_without_logging_credentials(tmp_path):
     assert "skipped" not in (directory / "test-room.timing").read_text()
 
 
-@pytest.mark.parametrize("workspace_exit", [0, 7])
 @pytest.mark.parametrize("adoption_exit", [0, 9])
 @pytest.mark.parametrize("stage_exit", [0, 13])
-def test_warm_checkout_overlaps_configuration_but_precedes_adoption(
-    tmp_path, monkeypatch, workspace_exit, adoption_exit, stage_exit
+def test_warm_adoption_waits_for_room_configuration(
+    tmp_path, monkeypatch, adoption_exit, stage_exit
 ):
     owner = tmp_path / "owner"
     home = tmp_path / "room"
@@ -70,7 +69,7 @@ def test_warm_checkout_overlaps_configuration_but_precedes_adoption(
         "def stage(*args, **kwargs):\n"
         f"    if {stage_exit}: raise SystemExit({stage_exit})\n"
         "def adopt_room(directory):\n"
-        "    assert (Path(os.environ['CHEESE_WORK']) / 'complete').exists()\n"
+        "    assert (Path(os.environ['HOME']) / '.claude/cheese-drain.env').exists()\n"
         "    (Path(os.environ['HOME']) / 'adopted').touch()\n"
         f"    return {adoption_exit}\n"
         "def connection(directory, project, topic):\n"
@@ -84,16 +83,6 @@ def test_warm_checkout_overlaps_configuration_but_precedes_adoption(
     tmux = tmp_path / "tmux"
     tmux.write_text('#!/bin/sh\ntouch "$HOME/attached"\n')
     tmux.chmod(0o700)
-    monkeypatch.setattr(
-        device_launch,
-        "CHEESE_WORKSPACE_BRINGUP",
-        'touch "$CHEESE_WORK/waiting"\n'
-        "for attempt in $(seq 1 300); do\n"
-        '  if [ -f "$CHEESE_WORK/release" ]; then\n'
-        '    touch "$CHEESE_WORK/complete"\n'
-        f"    return {workspace_exit}\n"
-        "  fi\n  sleep 0.01\ndone\nreturn 99\n",
-    )
     script = tmp_path / "launch.sh"
     script.write_text(device_launch.build_launch_script())
     with (tmp_path / "launcher.log").open("w") as output:
@@ -118,29 +107,18 @@ def test_warm_checkout_overlaps_configuration_but_precedes_adoption(
                 assert not (work / "waiting").exists()
                 assert not (home / "adopted").exists()
                 return
-            deadline = time.monotonic() + 3
-            while not (home / ".claude/cheese-drain.env").exists():
-                assert process.poll() is None
-                assert time.monotonic() < deadline
-                time.sleep(0.01)
-            assert (work / "waiting").exists()
-            assert not (work / "complete").exists()
-            assert not (home / "adopted").exists()
-            (work / "release").touch()
-            assert process.wait(timeout=5) == (workspace_exit or adoption_exit)
-            assert (home / "adopted").exists() == (workspace_exit == 0)
-            assert (home / "attached").exists() == (
-                workspace_exit == 0 and adoption_exit == 0
-            )
+            assert process.wait(timeout=5) == adoption_exit
+            assert (home / "adopted").exists()
+            assert (home / "attached").exists() == (adoption_exit == 0)
+            assert not (work / ".git").exists()
         finally:
-            if work.exists():
-                (work / "release").touch()
             if process.poll() is None:
+                process.terminate()
                 process.wait(timeout=5)
 
 
 @pytest.mark.parametrize("ready", [False, True])
-def test_unavailable_spare_still_prepares_an_ordinary_workspace(
+def test_unavailable_spare_prepares_room_without_a_shared_checkout(
     tmp_path, monkeypatch, ready
 ):
     owner = tmp_path / "owner"
@@ -158,13 +136,10 @@ def test_unavailable_spare_still_prepares_an_ordinary_workspace(
     binary.write_text("#!/bin/sh\necho '2.1.261 (fixture)'\n")
     binary.chmod(0o700)
     work = tmp_path / "work"
-    monkeypatch.setattr(
-        device_launch,
-        "CHEESE_WORKSPACE_BRINGUP",
-        'touch "$CHEESE_WORK/ordinary-workspace"\nreturn 42\n',
-    )
     script = tmp_path / "launch.sh"
-    script.write_text(device_launch.build_launch_script())
+    launch = device_launch.build_launch_script()
+    launch = launch[: launch.index("cheese_launch_phase files_written")]
+    script.write_text(launch + '\n[ -z "$WARM_ROOT" ]\n')
     result = subprocess.run(
         ["sh", str(script)],
         env={
@@ -179,8 +154,9 @@ def test_unavailable_spare_still_prepares_an_ordinary_workspace(
         text=True,
         timeout=10,
     )
-    assert result.returncode == 42, result.stderr
-    assert (work / "ordinary-workspace").exists()
+    assert result.returncode == 0, result.stderr
+    assert work.is_dir()
+    assert not (work / ".git").exists()
     assert not (warm / "binding.json").exists()
 
 

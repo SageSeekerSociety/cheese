@@ -24,6 +24,7 @@ import pytest
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.review import gate_sweep
 from tests.conftest import wait_work_idle
+from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import room_text, session_auth_headers
 
 
@@ -49,10 +50,13 @@ def _seed_pending_gate_card(client, topic_id: str, reviewer: str = "alice") -> s
     before the gate was retired (the API can no longer mint this state)."""
     from app.domain.review.models import AcceptCard, AcceptStatus
 
+    task_id = delivery_task_id(client, topic_id)
+
     async def _do() -> str:
         async with client.test_factory() as session:
             card = AcceptCard(
                 topic_id=uuid.UUID(topic_id),
+                task_id=task_id,
                 reviewer_handle=reviewer,
                 routing_reason="最懂",
                 status=AcceptStatus.pending_gate,
@@ -87,7 +91,8 @@ def _latest_card(client, topic_id: str) -> dict:
 
 def _file_card(client, topic_id: str, reviewer: str = "alice"):
     return client.post(
-        f"/topics/{topic_id}/accept-card",
+        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
+        headers=delivery_headers(client, topic_id),
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": reviewer,
@@ -294,7 +299,8 @@ def test_void_rejects_a_card_that_is_already_settled(client):
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     r = client.post(
-        f"/topics/{tid}/accept-card",
+        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
+        headers=delivery_headers(client, tid),
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "alice",

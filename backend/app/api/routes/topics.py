@@ -66,10 +66,8 @@ from app.domain.room_task.place import Place
 from app.domain.room_task.repositories import TaskRepository
 from app.domain.room_task.schemas import TaskOut
 from app.domain.room_task.services import (
-    ClaimService,
     RoomLockService,
     TaskService,
-    WorkTreeService,
 )
 from app.domain.topic.doc_change import summarize_doc_change
 from app.domain.topic.models import Topic, TopicKind
@@ -78,7 +76,6 @@ from app.domain.topic.repositories import SortOrder, TopicSortField
 from app.domain.topic.schemas import (
     BindSubagentIn,
     CheckResultIn,
-    ClaimIn,
     ConclusionIn,
     DocEditIn,
     LockIn,
@@ -555,6 +552,17 @@ async def get_room_task(
         ),
         now=datetime.now(UTC),
     ).as_dict()
+    card = cards.get(task.id)
+    out["card"] = (
+        None
+        if card is None
+        else {
+            "id": str(card.id),
+            "status": str(card.status),
+            "pr_number": card.pr_number,
+            "pr_url": card.pr_url,
+        }
+    )
     out["blocks"] = [BlockOut.model_validate(b).model_dump(mode="json") for b in blocks]
     return ok(out)
 
@@ -689,7 +697,7 @@ async def set_task_title(
     return ok(out)
 
 
-@router.post("/{topic_id}/tasks/{task_id}/conclude")
+@router.post("/{topic_id}/tasks/{task_id}/close")
 async def conclude_task(
     topic_id: uuid.UUID,
     task_id: uuid.UUID,
@@ -709,8 +717,8 @@ async def conclude_task(
     workers the platform never bound — measured on 2.1.224: after the session's
     own Stop, with an unknown id, an empty type and a fragment of a prompt as
     their closing message. Closing on either of those would collapse work that
-    is still going. Only the room has read what came back and folded the changes
-    into its branch, so only the room can say.
+    is still going. The room decides when work has ended; code acceptance merges
+    the task's branch and closes it through the separate acceptance flow.
 
     `conclusion` is optional: given, it overwrites the worker's last word (which
     is sometimes the fragment above); omitted, that last word stands.
@@ -749,60 +757,6 @@ async def conclude_task(
     out = TaskOut.model_validate(task).model_dump(mode="json")
     await db.commit()
     return ok(out)
-
-
-@router.get("/{topic_id}/trees")
-async def list_room_trees(
-    topic_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """This room's batches — newest first, each with the PR it rides on.
-
-    一棵树 = 一个分支 = 一个 PR = 一批活. A room seals one and opens the next, so
-    "is what I write right now going into the batch that is currently under CI,
-    or into the next one" has an answer — and until this endpoint existed, no
-    caller outside the backend could get it. A room whose batch is sealed reads
-    on screen exactly like one that is not, which is how somebody keeps working
-    and wonders why their changes are not on the PR.
-
-    `last_check_*` is the agent's own quick check on this tree's content. It
-    gates nothing (#296 settled that the PR's real CI decides) — it is here so a
-    red check is visible to whoever is about to accept.
-    """
-    topic = await TopicService(db).get_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
-    )
-    await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
-    )
-    trees = await WorkTreeService(db).history(topic_id)
-    cards = await AcceptCardRepository(db).latest_by_tree([t.id for t in trees])
-    items = []
-    for tree in reversed(trees):
-        card = cards.get(tree.id)
-        items.append(
-            {
-                "id": str(tree.id),
-                "status": str(tree.status),
-                "created_at": tree.created_at,
-                "sealed_at": tree.sealed_at,
-                "merged_at": tree.merged_at,
-                "last_check_at": tree.last_check_at,
-                "last_check_ok": tree.last_check_ok,
-                "last_check_detail": tree.last_check_detail,
-                "card": None
-                if card is None
-                else {
-                    "id": str(card.id),
-                    "status": str(card.status),
-                    "pr_number": card.pr_number,
-                    "pr_url": card.pr_url,
-                },
-            }
-        )
-    return ok(page(items, len(items)))
 
 
 @router.get("/{topic_id}/transcript")
@@ -954,7 +908,6 @@ async def topic_status(
                 "id": str(place.room_id),
                 "title": place.title,
                 "status": str(place.room.status),
-                "branch": place.branch_name,
             },
             "turn": turn,
             "stall": stall,
@@ -1854,7 +1807,7 @@ async def split_topic(
         title=body.title,
         created_by=actor.handle if actor.handle != "anonymous" else body.created_by,
         brief=body.brief,
-        paths=body.paths,
+        base_task_id=body.base_task_id,
         # 显式指定优先，没指定就用项目默认验收人 (#718 设置表)。The resolution is
         # in the service because it needs the project row; the route only says
         # whether anybody named somebody.
@@ -1879,9 +1832,10 @@ async def split_topic(
     return ok(out)
 
 
-@router.post("/{topic_id}/check-result")
+@router.post("/{topic_id}/tasks/{task_id}/check-result")
 async def record_check_result(
     topic_id: uuid.UUID,
+    task_id: uuid.UUID,
     body: CheckResultIn,
     db: DbSession,
     resolver: ActorResolverDep,
@@ -1900,82 +1854,11 @@ async def record_check_result(
     """
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
-    trees = WorkTreeService(db)
-    tree = await trees.ensure_open(project_id=place.project_id, room_id=place.room_id)
-    await trees.record_check(tree, ok=body.ok, detail=body.detail)
+    tasks = TaskService(db)
+    task = await tasks.require_in_room(place.room_id, task_id)
+    await tasks.record_check(task, ok=body.ok, detail=body.detail)
     await db.commit()
-    return ok({"recorded": True, "tree_id": str(tree.id)})
-
-
-@router.post("/{topic_id}/claim")
-async def claim_paths(
-    topic_id: uuid.UUID,
-    body: ClaimIn,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """声明这条活要碰哪些路径 —— and find out who else is already there.
-
-    Additive, because a claim always grows: work reaches files nobody predicted
-    when the brief was written. That is also why this is a call rather than a
-    field in the brief — a brief is written once and cannot be changed.
-
-    Refusals and warnings come back together. Claiming the same FILE as another
-    open piece of work on the same tree is refused (the second write wins in
-    silence, and nothing else would report it); overlapping DIRECTORIES is a
-    warning, because two cards under one package is ordinary and refusing it
-    would make the rule something people route around.
-
-    The ROOM's own claim, which records nothing: a claim is held on a card's
-    row, and the room writing on its own behalf has none. It still gets the
-    answer, because the room writes to the same tree its cards do and can
-    overwrite their files exactly as they can overwrite each other's. A worker
-    that wants its claim REMEMBERED says so on its card — `/tasks/{id}/claim`
-    beside this one.
-    """
-    place = await TopicService(db).place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
-    svc = ClaimService(db)
-    refusals, warnings = await svc.check(
-        tree_id=place.tree_id or place.room_id,
-        paths=svc.normalise(body.paths),
-        exclude_task_id=None,
-    )
-    return ok({"claimed": [], "refusals": refusals, "warnings": warnings})
-
-
-@router.post("/{topic_id}/tasks/{task_id}/claim")
-async def claim_paths_for_task(
-    topic_id: uuid.UUID,
-    task_id: uuid.UUID,
-    body: ClaimIn,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """声明这条活要碰哪些路径，由房间代它说。
-
-    Said through the room because a card is not a place and has no token of its
-    own: the 分身 doing the work runs inside the room's session, so the room's
-    token is the only one there is. Which card is being spoken for has to be in
-    the URL — otherwise every worker in a room claims as the room, and the rows
-    that make two workers' overlap visible are never written.
-
-    Same rules as the room's own claim above; this one is recorded.
-    """
-    place = await TopicService(db).place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
-    task = await TaskService(db).get(task_id)
-    if task is None or task.room_id != place.room_id:
-        raise NotFoundError("这个房间里没有这条活")
-    refusals, warnings = await ClaimService(db).claim(task, body.paths)
-    await db.commit()
-    return ok(
-        {
-            "claimed": [] if refusals else list(task.claimed_paths or []),
-            "refusals": refusals,
-            "warnings": warnings,
-        }
-    )
+    return ok({"recorded": True, "task_id": str(task.id)})
 
 
 @router.post("/{topic_id}/lock")
@@ -1993,11 +1876,12 @@ async def take_room_lock(
     """
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
+    await TaskService(db).require_in_room(topic_id, body.task_id)
     acquired, reason = await RoomLockService(db).acquire(
         room_id=place.room_id,
         kind=LockKind(body.kind),
         resource=body.resource or "",
-        holder_task_id=None,
+        holder_task_id=body.task_id,
     )
     await db.commit()
     return ok({"acquired": acquired, "reason": reason})
@@ -2012,11 +1896,12 @@ async def release_room_lock(
 ) -> dict:
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
+    await TaskService(db).require_in_room(topic_id, body.task_id)
     released = await RoomLockService(db).release(
         room_id=place.room_id,
         kind=LockKind(body.kind),
         resource=body.resource or "",
-        holder_task_id=None,
+        holder_task_id=body.task_id,
     )
     await db.commit()
     return ok({"released": released})
@@ -2190,7 +2075,7 @@ async def set_artifact(
         if not isinstance(content, str):
             raise ValidationError("content 必须是文本")
         # A remote machine's file is not in the backend worktree until published.
-        ws.write_file(place.project_id, path, content, topic_id=topic_id)
+        ws.write_room_file(place.project_id, topic_id, path, content.encode())
     block = await BlockRepository(db).add(
         project_id=place.project_id,
         topic_id=topic_id,  # the place; `add` splits it
@@ -2258,6 +2143,18 @@ async def get_preview(
     )
 
 
+@router.get("/{topic_id}/preview/file")
+async def preview_file(
+    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    place = await TopicService(db).place_or_404(topic_id)
+    await _actor_in_place(resolver, place)
+    art = await BlockRepository(db).latest_artifact(place.room_id)
+    if art is None or art.mime_type == _ARTIFACT_MIME["app"]:
+        raise NotFoundError("No file preview")
+    return ok(ws.read_room_text_file(place.project_id, topic_id, art.content))
+
+
 # ---- Chat attachments -----------------------------------------------------
 # An attachment is a REAL file in the topic's worktree (所有产出都是 git): the
 # upload writes bytes under uploads/, the message references it as an
@@ -2314,7 +2211,7 @@ async def upload_attachment(
     if ext and not name.lower().endswith(ext):
         name += ext
     path = f"uploads/{uuid.uuid4().hex}/{name}"
-    ws.write_file_bytes(topic.project_id, path, data, topic_id=topic_id)
+    ws.write_room_file(topic.project_id, topic_id, path, data)
     return ok({"path": path, "mime": mime, "bytes": len(data)})
 
 
@@ -2344,7 +2241,7 @@ async def attachment_raw(
     mime = _EXT_IMAGE_MIME.get(suffix)
     if mime is None and not download:
         raise ValidationError("只能读取图片附件")
-    data = ws.read_file_bytes(topic.project_id, clean, topic_id=topic_id)
+    data = ws.read_room_file(topic.project_id, topic_id, clean)
     filename = quote(clean.rsplit("/", 1)[-1], safe="")
     return Response(
         content=data,
@@ -2438,7 +2335,9 @@ async def upgrade_block(
     the worker and bind it.
     """
     room, thread, created = await TopicService(db).upgrade_block_to_place(
-        block_id=block_id, created_by=body.created_by
+        block_id=block_id,
+        created_by=body.created_by,
+        reviewer_handle=body.reviewer_handle,
     )
     out = (
         TaskOut.model_validate(thread).model_dump(mode="json")

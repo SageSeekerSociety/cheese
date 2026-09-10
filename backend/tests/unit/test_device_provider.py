@@ -186,8 +186,8 @@ async def test_every_device_image_is_staged_before_rendezvous_prompt(
     project_id, topic_id = uuid.uuid4(), uuid.uuid4()
 
     monkeypatch.setattr(
-        "app.domain.agent.device_provider.ws.read_file_bytes",
-        lambda project, path, topic_id=None: b"exact-image-bytes",
+        "app.domain.agent.device_provider.ws.read_room_file",
+        lambda project, room, path: b"exact-image-bytes",
     )
 
     events, task = await _run(
@@ -760,7 +760,7 @@ def test_every_device_work_dir_is_a_topic_scratch_dir():
     pid = uuid.uuid4()
     tid = uuid.uuid4()
     prov = DeviceChannel(hub=FakeHub())
-    assert prov._work_dir(pid, tid) == f"$HOME/.cheese/work/{pid}/{tid}"
+    assert prov._work_dir(pid, tid) == f"$HOME/.cheese/home/{pid}/{tid}/room"
 
 
 @pytest.mark.anyio
@@ -903,7 +903,6 @@ async def test_every_device_is_told_where_to_clone_from():
     """The launcher's clone/push block is inert without these two env vars, so the
     wiring is the thing that has to be tested — the block itself can be perfect
     and the machine still starts in an empty dir."""
-    from app.domain.workspace.service import branch_for_tree
 
     class RecordingHub(FakeHub):
         def __init__(self) -> None:
@@ -929,7 +928,8 @@ async def test_every_device_is_told_where_to_clone_from():
     )
 
     assert hub.env["CHEESE_GIT_REMOTE"] == f"http://cheese.test/projects/{project}/git"
-    assert hub.env["CHEESE_GIT_BRANCH"] == branch_for_tree(topic)
+    assert "CHEESE_GIT_BRANCH" not in hub.env
+    assert hub.env["CHEESE_TOPIC"] == str(topic)
 
 
 # --- release_topic: freeing a done topic's screen (the leak this fixes) --------

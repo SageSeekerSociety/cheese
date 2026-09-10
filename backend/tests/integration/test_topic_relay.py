@@ -36,7 +36,8 @@ def _topic(client, project_id: str, title: str = "房间") -> dict:
 
 def _split(client, parent_id: str, title: str) -> dict:
     sub = client.post(
-        f"/topics/{parent_id}/split", json={"title": title, "created_by": "user-1"}
+        f"/topics/{parent_id}/split",
+        json=dict(reviewer_handle="alice", **{"title": title, "created_by": "user-1"}),
     ).json()["data"]
     # The 分身's auto-kickoff turn must finish before the test looks at prompts.
     wait_work_idle()
@@ -179,7 +180,10 @@ def test_a_card_cannot_split_out_more_work(client):
     room = _topic(client, p["id"])
     first = _split(client, room["id"], "第一件活")
 
-    r = client.post(f"/topics/{first['id']}/split", json={"title": "再来一件"})
+    r = client.post(
+        f"/topics/{first['id']}/split",
+        json=dict(reviewer_handle="alice", **{"title": "再来一件"}),
+    )
     assert r.status_code == 404
 
 

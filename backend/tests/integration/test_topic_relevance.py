@@ -19,6 +19,7 @@ trips" are separate claims and only one of them is visible in the JSON.
 
 import pytest
 
+from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import chat_ws_url, session_auth_headers
 
 
@@ -65,7 +66,8 @@ def _seen_by(client, pid: str, handle: str) -> dict[str, dict]:
 
 def _card(client, tid: str, reviewer: str) -> str:
     r = client.post(
-        f"/topics/{tid}/accept-card",
+        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
+        headers=delivery_headers(client, tid),
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": reviewer,

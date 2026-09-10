@@ -1,5 +1,6 @@
 """改验收人 — reassign a pending accept card (spec §4.4)."""
 
+from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import session_auth_headers
 
 
@@ -9,7 +10,8 @@ def _topic_and_card(client) -> str:
         "data"
     ]
     card = client.post(
-        f"/topics/{t['id']}/accept-card",
+        f"/topics/{t['id']}/tasks/{delivery_task_id(client, t['id'])}/accept-card",
+        headers=delivery_headers(client, t["id"]),
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "user-1",

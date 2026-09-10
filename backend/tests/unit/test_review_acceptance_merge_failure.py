@@ -15,13 +15,14 @@ from app.domain.webhook import service as webhook_service
 from app.domain.workspace import service as ws
 
 
-def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
+def _accept_service(
+    monkeypatch,
+) -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
     card = SimpleNamespace(
         id=uuid.uuid4(),
         topic_id=uuid.uuid4(),
-        # The card is the room's own main line, not one thread's — delivery
-        # therefore gets stamped on the room.
-        task_id=None,
+        # The card delivers this task; the surrounding room stays active.
+        task_id=uuid.uuid4(),
         status=AcceptStatus.pending,
         reviewer_handle="alice",
         decided_by=None,
@@ -56,6 +57,7 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
         owner_handle="owner",
     )
     session = AsyncMock()
+    session.get.return_value = None
     session.scalars.return_value = SimpleNamespace(all=lambda: [])
     session.execute.return_value = SimpleNamespace(scalar_one_or_none=lambda: None)
     service = AcceptService(session)
@@ -73,6 +75,9 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
     # Unbound project: the platform is the forge and the local merge is the
     # accept (#363) — the lane under test here.
     service._github_bound = AsyncMock(return_value=False)
+    monkeypatch.setattr(review_services.TaskService, "require_in_room", AsyncMock())
+    service._mark_task_merged = AsyncMock()
+    service._stamp_delivery = AsyncMock()
     return service, card, topic
 
 
@@ -95,7 +100,7 @@ async def _drain_notify() -> None:
 
 @pytest.mark.anyio
 async def test_merge_exception_keeps_acceptance_retryable(monkeypatch):
-    service, card, topic = _accept_service()
+    service, card, topic = _accept_service(monkeypatch)
     notify = _patch_notify(monkeypatch)
 
     def fail_merge(*_args, **_kwargs):
@@ -123,7 +128,7 @@ async def test_merge_exception_keeps_acceptance_retryable(monkeypatch):
 
 @pytest.mark.anyio
 async def test_empty_conflict_result_keeps_acceptance_retryable(monkeypatch):
-    service, card, topic = _accept_service()
+    service, card, topic = _accept_service(monkeypatch)
     notify = _patch_notify(monkeypatch)
     monkeypatch.setattr(
         ws,
@@ -151,7 +156,7 @@ async def test_empty_conflict_result_keeps_acceptance_retryable(monkeypatch):
 
 @pytest.mark.anyio
 async def test_conflict_with_paths_marks_card_conflict_and_notifies(monkeypatch):
-    service, card, topic = _accept_service()
+    service, card, topic = _accept_service(monkeypatch)
     notify = _patch_notify(monkeypatch)
     monkeypatch.setattr(
         ws,
@@ -182,7 +187,7 @@ async def test_conflict_with_paths_marks_card_conflict_and_notifies(monkeypatch)
 @pytest.mark.anyio
 @pytest.mark.parametrize("reason", ["no topic branch", "topic is the base branch"])
 async def test_explicit_merge_noop_remains_acceptable(monkeypatch, reason):
-    service, card, topic = _accept_service()
+    service, card, topic = _accept_service(monkeypatch)
     notify = _patch_notify(monkeypatch)
     monkeypatch.setattr(
         ws,
@@ -196,7 +201,7 @@ async def test_explicit_merge_noop_remains_acceptable(monkeypatch, reason):
     assert card.status == AcceptStatus.accepted
     # 交付完成 ≠ 话题结束 (#442 decision 1).
     assert topic.status == TopicStatus.active
-    assert topic.accepted_at is not None
+    service._stamp_delivery.assert_awaited_once()
     service._repo.add_approval.assert_awaited_once_with(card.id, "alice")
     await _drain_notify()
     notify.assert_awaited_once()
@@ -210,12 +215,12 @@ async def test_explicit_merge_noop_remains_acceptable(monkeypatch, reason):
 
 @pytest.mark.anyio
 async def test_successful_merge_notifies_room(monkeypatch):
-    service, card, topic = _accept_service()
+    service, card, topic = _accept_service(monkeypatch)
     notify = _patch_notify(monkeypatch)
     monkeypatch.setattr(
         ws,
         "merge_topic",
-        lambda *_args, **_kwargs: {"merged": True, "commit": "abc123"},
+        lambda *_args, **_kwargs: {"merged": True, "delivered_head": "abc123"},
     )
 
     returned = await service.accept(card_id=card.id, decided_by="alice")
@@ -223,8 +228,9 @@ async def test_successful_merge_notifies_room(monkeypatch):
     assert returned is card
     assert card.status == AcceptStatus.accepted
     assert topic.status == TopicStatus.active
-    assert topic.accepted_by == "alice"
+    service._stamp_delivery.assert_awaited_once()
     # Delivery retains the open room's Cloud machine.
+    service._mark_task_merged.assert_awaited_once_with(card, delivered_head="abc123")
     await _drain_notify()
     notify.assert_awaited_once()
     _, kwargs = notify.await_args
