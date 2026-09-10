@@ -28,7 +28,6 @@ def test_the_launch_names_the_files_claude_reads_before_it_starts():
         ".claude.json",
         "cheese-system-prompt.md",
         "webfetch_transport.cjs",
-        "skills/cheese-chat/SKILL.md",
         "skills/cheese-docs/SKILL.md",
     }
     assert planted["cheese-system-prompt.md"] == "你是芝士。"

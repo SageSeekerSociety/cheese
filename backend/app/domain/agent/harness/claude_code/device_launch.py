@@ -665,6 +665,8 @@ WEBFETCH_PRELOAD="$CLAUDE_CONFIG_DIR/webfetch_transport.cjs"
 # Quote the whole first option: Bun skips quoted paths after another option
 # and rejects quotes after the equals sign in --preload="path".
 export BUN_OPTIONS="\\"--preload=$WEBFETCH_PRELOAD\\"${{BUN_OPTIONS:+ $BUN_OPTIONS}}"
+# Chat guidance is now in the system prompt. Retire the generated skill on reuse.
+rm -f "$CLAUDE_CONFIG_DIR/skills/cheese-chat/SKILL.md"
 {skill_setup}
 {ca_block}
 # Written by the shell, not node: a machine whose `claude` is the native binary
