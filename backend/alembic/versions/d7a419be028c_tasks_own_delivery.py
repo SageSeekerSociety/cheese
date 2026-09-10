@@ -2,6 +2,7 @@
 
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 import sqlalchemy as sa
@@ -33,15 +34,35 @@ def preserve_room_files(workspace: Path, project: str, room: str) -> None:
     source = workspace / ".worktrees" / project / f"topic_{tree_id[:8]}"
     if not source.is_dir():
         return
-    paths = (
-        subprocess.run(
+    if (source / ".git").exists():
+        listing = subprocess.run(
             ["git", "-C", str(source), "ls-files", "-co", "--exclude-standard", "-z"],
             check=True,
             capture_output=True,
         )
-        .stdout.decode()
-        .split("\0")
-    )
+    else:
+        # Pre-Git rooms can still hold Jujutsu workspaces. An empty external
+        # index applies their .gitignore rules without changing the old tree
+        # or depending on a retired VCS binary. Never publish its .jj metadata.
+        with tempfile.TemporaryDirectory(prefix="cheese-room-files-") as index:
+            subprocess.run(
+                ["git", "init", "--bare", index], check=True, capture_output=True
+            )
+            listing = subprocess.run(
+                [
+                    "git",
+                    f"--git-dir={index}",
+                    f"--work-tree={source}",
+                    "ls-files",
+                    "--others",
+                    "--exclude-standard",
+                    "--exclude=.jj",
+                    "-z",
+                ],
+                check=True,
+                capture_output=True,
+            )
+    paths = listing.stdout.decode().split("\0")
     staging = target.with_name(f".{room}.importing")
     staging.mkdir(parents=True, exist_ok=True)
     for relative in dict.fromkeys(paths):

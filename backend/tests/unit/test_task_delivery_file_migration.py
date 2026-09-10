@@ -63,3 +63,47 @@ def test_migration_refuses_to_overwrite_existing_room_files(tmp_path):
     with pytest.raises(RuntimeError, match="already exists"):
         migration().preserve_room_files(tmp_path, "project", "room")
     assert (target / "report.html").read_text() == "existing publication"
+
+
+def test_pre_git_room_files_preserve_ignore_rules_and_originals(tmp_path):
+    project, room = [str(uuid.uuid4()) for _ in range(2)]
+    source = tmp_path / ".worktrees" / project / f"topic_{room.replace('-', '')[:8]}"
+    source.mkdir(parents=True)
+    (source / ".jj").mkdir()
+    (source / ".jj" / "repo").write_text("historical repository pointer")
+    (source / ".gitignore").write_text("private.key\nnode_modules/\n")
+    (source / "report.html").write_text("old publication")
+    (source / "private.key").write_text("fixture secret")
+    (source / "node_modules").mkdir()
+    (source / "node_modules" / "cached.js").write_text("regenerable")
+    (source / "nested").mkdir()
+    (source / "nested" / ".gitignore").write_text("ignored.txt\n")
+    (source / "nested" / "ignored.txt").write_text("ignored")
+    (source / "nested" / "note.txt").write_text("keep me")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside")
+    (source / "escape").symlink_to(outside)
+    migration().preserve_room_files(tmp_path, project, room)
+    target = tmp_path / ".room-files" / project / room
+    assert (target / "report.html").read_text() == "old publication"
+    assert (target / "nested" / "note.txt").read_text() == "keep me"
+    for excluded in (
+        ".jj",
+        "private.key",
+        "node_modules",
+        "nested/ignored.txt",
+        "escape",
+    ):
+        assert not (target / excluded).exists()
+    assert (source / ".jj" / "repo").read_text() == "historical repository pointer"
+    assert not (source / ".git").exists()
+
+
+def test_empty_pre_git_room_is_imported_without_inventing_a_repository(tmp_path):
+    source = tmp_path / ".worktrees" / "project" / "topic_room"
+    source.mkdir(parents=True)
+    migration().preserve_room_files(tmp_path, "project", "room")
+    assert (
+        tmp_path / ".room-files" / "project" / "room" / ".imported-task-delivery"
+    ).is_file()
+    assert list(source.iterdir()) == []
