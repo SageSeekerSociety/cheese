@@ -141,8 +141,8 @@ Ordinary execution devices run a persistent Python service and the pinned `claud
 
 每台 Device 都有自己的文件系统边界，物理上是否碰巧与后端同机不改变协议：
 
-- Each device stores room state under `$HOME/.cheese/home/{project_id}/{resource_id}` and work under `$HOME/.cheese/work/{project_id}/{resource_id}`. A reclaimed room receives a new resource UUID when reopened.
-- Execution bootstrap clones the room branch through authenticated Git HTTP. The central Stop hook invokes `cheese-sync` on that execution device.
+- Each device stores room state under `$HOME/.cheese/home/{project_id}/{resource_id}`. The room directory is `room/` under that home, and task checkouts live under `.cheese/tasks/{task_id}`. A reclaimed room receives a new resource UUID when reopened.
+- `cheese worktree` fetches each task branch through authenticated Git HTTP. The central Stop hook invokes `cheese-sync` on that execution device to publish task work.
 - Image attachments are staged in both the central prompt workspace and the execution workspace before delivery.
 - 后端从不把自己的 topic workspace 路径翻译成设备路径，也不跳过复制。仓库中没有“后端与设备共享 workspace”的配置或分支。
 - 后端不往任何工作树里写提交；它以设备 push 回来的分支作为结果。
