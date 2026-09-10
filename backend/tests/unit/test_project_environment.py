@@ -158,13 +158,16 @@ def active_room_admission(monkeypatch):
     )
 
 
-def launch(tmp_path, config, command=None, *, checkout=True):
+def launch(tmp_path, config, command=None, *, work_dir=True):
+    # A room's work directory is a plain directory — the conversation lives
+    # there and nothing else, and a task's checkout is made elsewhere by
+    # `cheese worktree`. So no repository is created here: that is what a real
+    # room looks like.
     home = tmp_path / "home"
     work = tmp_path / "work"
     home.mkdir(exist_ok=True)
-    work.mkdir(exist_ok=True)
-    if checkout:
-        subprocess.run(["git", "init", "-q", str(work)], check=True)
+    if work_dir:
+        work.mkdir(exist_ok=True)
     return subprocess.Popen(
         [sys.executable, environment_runner.__file__, *(command or ["true"])],
         env={
@@ -396,14 +399,31 @@ def test_new_machine_initializes_even_with_same_project_revision(tmp_path):
         assert (machine / "work/initialized").exists()
 
 
-def test_failed_checkout_never_runs_scripts_or_agent(tmp_path):
+def test_a_room_without_a_repository_still_prepares_and_starts_the_agent(tmp_path):
+    """A room is not a checkout, and preparation must not ask it to be one.
+
+    While it did, every room on a deployment failed preparation with
+    "repository checkout is not ready" — and since the agent is only exec'd
+    after both scripts succeed, every one of those rooms answered nothing at
+    all.
+    """
+    config = EnvironmentConfig(setup_script="touch installed")
+    assert launch(tmp_path, config, ["touch", "agent"]).wait(timeout=5) == 0
+    assert not (tmp_path / "work/.git").exists()
+    assert (tmp_path / "work/installed").exists()
+    assert (tmp_path / "work/agent").exists()
+
+
+def test_a_missing_work_directory_never_runs_scripts_or_agent(tmp_path):
+    """What the check is actually for: an install must never land in some other
+    cwd because the directory it was meant for is not there."""
     config = EnvironmentConfig(setup_script="touch installed")
     assert (
-        launch(tmp_path, config, ["touch", "agent"], checkout=False).wait(timeout=5)
+        launch(tmp_path, config, ["touch", "agent"], work_dir=False).wait(timeout=5)
         == 1
     )
-    assert not (tmp_path / "work/installed").exists()
-    assert not (tmp_path / "work/agent").exists()
+    assert not (tmp_path / "work").exists()
+    assert status(tmp_path)["error"] == "work directory is missing"
 
 
 def test_startup_failure_keeps_setup_receipt_for_retry(tmp_path):
@@ -418,7 +438,7 @@ def test_startup_failure_keeps_setup_receipt_for_retry(tmp_path):
     assert (tmp_path / "work/count").read_text() == "setup\n"
 
 
-def test_changed_revision_reinitializes_preserving_checkout(tmp_path):
+def test_changed_revision_reinitializes_preserving_the_work_directory(tmp_path):
     first = EnvironmentConfig(setup_script="echo first >> count")
     second = EnvironmentConfig(setup_script="echo second >> count")
     assert launch(tmp_path, first).wait(timeout=5) == 0
