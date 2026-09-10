@@ -1,6 +1,6 @@
 # 设备自托管：让芝士跑在自己的机器上
 
-这条路（self-hosted / BYO 算力，fusion-design §5）把 agent 执行放到**用户自己入册的机器**上：你在笔记本/台式机装一个瘦客户机 `cheesehost`，批准后，平台就在设备上开一个「屏幕」跑 `claude`，结构化事件经 Claude Code hooks 回流。本地容器与 Device 是两个独立 provider；它们复用 hooks、CLI 等底座，但本地容器不会自动入册成设备，也不共享文件系统。
+Enrolled devices provide execution for ordinary rooms: project files, shell commands, environment scripts, custom stdio MCP processes and preview. Claude Code and RC run on the central session host configured by `AGENT_SESSION_DEVICE_ID`. Both locations use the existing connector, with separate recorded placement and storage. See `remote-execution.md` for setup and migration.
 
 设备是**纯算力**：它不含 agent 身份，agent 由项目/话题在请求开始时独立解析（agent = 屏幕，不是机器）。设备永远向服务器**拨出**（非入站），带退避重连 + 心跳，所以躲在 NAT/防火墙后的笔记本也能托管 agent、**零入站端口**。
 
@@ -27,7 +27,7 @@
 
 ### agent 会话住在 connector 自己的 tmux server 里
 
-启动器起的内层 `claude` 会话，在 **connector 的私有 tmux server** 上，不在机主的默认 server 上。socket 不靠任何约定传递：这段启动器本来就跑在 connector 的一个 pane 里，tmux 把 socket 路径放在 `$TMUX` 的第一段（`<socket>,<pid>,<session>`），读出来即可（读完才 `unset TMUX`——从 pane 里 attach 必须先去掉它）。于是他的 `tmux ls` 看不见我们，他的 `tmux kill-server` 带不走 agent，我们的清理也碰不到他的会话。
+On the central session host, the launcher keeps Claude Code in the connector's private tmux server. It reads that server's socket from `$TMUX` before attaching the inner session. The execution device runs its service independently of the terminal. Sessions awaiting migration retain their original private tmux server until transfer.
 
 The launcher neither queries nor terminates sessions on the default server. A `cheese_*` name alone does not establish ownership.
 
@@ -92,8 +92,8 @@ unit 文件由 `cheese link connect` 每次重写（kardianos 本身拒绝覆盖
 
 6. **话题选 device 算力**。两种姿势：
    - **全局**：不配 Cloud 的部署，整个算力池就是 DeviceChannel，每次 agent 请求都落到一台在线的、绑定了该项目的设备。
-   - **话题/项目级**：DeviceChannel 与 local-docker 并列在算力池里，通过 `compute_profile` / provider_id 选用 `device`。**仅当有在线设备时才可选**（市场 listing 里 `available` 按 `device_online` gating）。
-   - **话题亲和（关键）**：一个话题第一次落在哪台设备就**写死 pin** 在那台，之后仍回到同一台——工作树 + 可恢复 Claude Code 会话都在那台机器上。pinned 设备离线时**绝不漂到别的在线设备**（否则工作树清零、resume 错乱）。
+   - Room and project settings select `device` or `cloud` for execution. The catalogue requires an online enrolled device before offering it.
+   - Each room retains its selected execution device and its separately recorded session host. An offline device prevents further execution; the platform does not move its worktree to another machine automatically.
 
 > 一个 gotcha：`approve_url` 用的是 `frontend_url`（前端 SPA 的 `/connect`），**不是** `CONNECTOR_PUBLIC_BASE`——后者是后端/webhook 基址（默认 localhost:8099），在浏览器里会 404。
 
@@ -101,7 +101,7 @@ unit 文件由 `cheese link connect` 每次重写（kardianos 本身拒绝覆盖
 
 ## 2. 设备需要装什么
 
-设备是用户自己的机器，`claude` 直接跑在上面，**不入容器，不需要 Docker**。启动器（`device_launch.build_launch_script`）是一个自包含的 `bash -lc` 脚本，运行时依赖：
+Ordinary execution devices run a persistent Python service and the pinned `claude mcp serve` process for native file tools. They do not require Docker. Central hosts also run the terminal launcher and need Docker for private chat containers. The connector and launch helpers use these dependencies:
 
 | 依赖 | 用途 | 是否必须 |
 |---|---|---|
@@ -111,7 +111,7 @@ unit 文件由 `cheese link connect` 每次重写（kardianos 本身拒绝覆盖
 | **tmux** | 把 `claude` 养在持久会话里，链路/屏幕掉线不丢进程，重开屏幕即 re-attach | 必须。连接器**没有 tmux 就直接退出**，而 `link connect` 仍报成功（systemd 在进程倒下之前就返回了），所以缺它表现为"机器永远不上线"，不是任何一条错误信息 |
 | **git** | agent 把项目 clone 进工作目录、把话题分支推回来 | 必须。缺它则轮次在**空目录**里跑完并报成功，工作没人看得见 |
 | **python3** | 平台发到机器上跑的那几个小工具：计量隧道（订阅轮次）、运行环境预览的隧道（`cheese serve`）。只用标准库，机器上不需要 venv、不需要 `pip install` | 轮次不需要它，这两样功能需要。缺它则订阅轮次到不了计量端、`cheese serve` 起不来通道——两边都会明说，不会静默 |
-| **claude**（Claude Code CLI） | 真正干活的 agent | 必须，**由平台装**（见下） |
+| **claude** (Claude Code CLI) | Central model session, or native file tools on an executor | Required; supplied by the platform |
 | **cheesehost** 连接器 | `install.sh` 装到 `~/.local/bin/`；必须装在**该服务自己能写的目录**里，否则自更新永远失败且无声（#501） |
 | **能用的用户级 service manager** | 后台常驻靠它，而我们只用当前账户的那一个 | 必须。Linux 上是 `systemd --user`（要 logind：ssh 进来得有 `XDG_RUNTIME_DIR`，还要能 `loginctl enable-linger`），macOS 上是 launchd。装不上不是无声的：`link connect` 直接报错，入册脚本判失败 |
 
@@ -141,9 +141,9 @@ unit 文件由 `cheese link connect` 每次重写（kardianos 本身拒绝覆盖
 
 每台 Device 都有自己的文件系统边界，物理上是否碰巧与后端同机不改变协议：
 
-- Claude Code 的隔离 home 是 `$HOME/.cheese/home/{project_id}/{topic_id}`；项目 checkout 是 `$HOME/.cheese/work/{project_id}/{topic_id}`。
-- 首次开屏时，设备通过带 scoped token 的 smart HTTP clone 话题分支；请求结束时 `cheese-sync` 提交并 push 回同一分支。
-- 图片附件先由后端通过控制信道 `file.put` 写进这个 checkout，收到设备确认后，再用 `@相对路径` 送进 rendezvous。
+- Each device stores room state under `$HOME/.cheese/home/{project_id}/{resource_id}`. The room directory is `room/` under that home, and task checkouts live under `.cheese/tasks/{task_id}`. A reclaimed room receives a new resource UUID when reopened.
+- `cheese worktree` fetches each task branch through authenticated Git HTTP. The central Stop hook invokes `cheese-sync` on that execution device to publish task work.
+- Image attachments are staged in both the central prompt workspace and the execution workspace before delivery.
 - 后端从不把自己的 topic workspace 路径翻译成设备路径，也不跳过复制。仓库中没有“后端与设备共享 workspace”的配置或分支。
 - 后端不往任何工作树里写提交；它以设备 push 回来的分支作为结果。
 

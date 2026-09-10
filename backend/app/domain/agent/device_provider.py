@@ -17,6 +17,7 @@ Per request:
 """
 
 import asyncio
+import base64
 import hashlib
 import json
 import logging
@@ -560,9 +561,30 @@ class DeviceChannel(Channel):
             factory = async_session_factory
         async with factory() as session:
             service = sql_device_service(session)
-            device_id = await resolve_pinned_device(
-                service, self._hub.is_online, project_id, topic_id
-            )
+            from app.domain.topic.services import TopicService
+
+            place = await TopicService(session).place_or_404(topic_id)
+            if place.room.is_private:
+                from app.domain.agent.private_chat import execution_target
+                from app.domain.device.supply import Visibility
+
+                placement = place.room.session_placement
+                device_id = execution_target(
+                    project_id,
+                    topic_id,
+                    device_id=placement["device_id"] if placement else None,
+                )["device_id"]
+                if not self._hub.is_online(device_id):
+                    raise ScreenSetupError("私聊中心执行机未连接，本轮没有启动")
+                binding = await service.topic_binding(topic_id)
+                if binding is None or binding.device_id != device_id:
+                    await service.bind_topic_device(
+                        topic_id, device_id, visibility=Visibility.host
+                    )
+            else:
+                device_id = await resolve_pinned_device(
+                    service, self._hub.is_online, project_id, topic_id
+                )
             if device_id is None:
                 return None
             # The screen acts as THIS topic's 分身 (its own agent-user), so a turn
@@ -758,7 +780,20 @@ class DeviceChannel(Channel):
         fresh sid the connector must Spawn, rather than reasserted into a corpse."""
         resource_id = uuid.UUID((env or {}).get("CHEESE_RESOURCE_ID", str(topic_id)))
         existing = self._existing_screen(device_id, topic_id, resource_id)
-        if existing is not None and (env or {}).get("CHEESE_ENVIRONMENT"):
+        execution_target = None
+        if (env or {}).get("CHEESE_EXECUTION_TARGET"):
+            execution_target = json.loads((env or {})["CHEESE_EXECUTION_TARGET"])
+        if (env or {}).get("CHEESE_PRIVATE_CHAT") == "1":
+            from app.domain.agent.private_chat import execution_target as private_target
+
+            execution_target = private_target(
+                project_id, topic_id, resource_id, device_id=device_id
+            )
+        if (
+            existing is not None
+            and (env or {}).get("CHEESE_ENVIRONMENT")
+            and not execution_target
+        ):
             status = environment_before
             if status is None:
                 status = await environment_status(
@@ -767,6 +802,8 @@ class DeviceChannel(Channel):
             if status["state"] == "preparing":
                 return existing
         configuration = (env or {}).get("CHEESE_AGENT_CONFIG", "")
+        if execution_target:
+            configuration += json.dumps(execution_target, sort_keys=True)
         if (
             existing is not None
             and configuration
@@ -834,6 +871,7 @@ class DeviceChannel(Channel):
                 topic_id=str(topic_id),
                 ttl_s=SESSION_TOKEN_TTL_S,
                 remote_control=True,
+                resource_id=str(resource_id),
             )
             tunnel_url = settings.subscription_tunnel_url.strip()
             via_tunnel = uses_tunnel(tunnel_url=tunnel_url)
@@ -924,6 +962,8 @@ class DeviceChannel(Channel):
         # the preview rides the path the connector proved, so a deployment that
         # can host a device can host a preview with nothing further to set.
         model_env["CHEESE_PREVIEW_URL"] = _preview_ws_url(api_base)
+        if execution_target:
+            model_env["CHEESE_AGENT_CONFIG"] = configuration
         command, screen_env = build_screen_launch(
             hook_url=f"{api_base}/sandbox/hooks/{topic_id}",
             hook_token=token,
@@ -953,6 +993,7 @@ class DeviceChannel(Channel):
             git_remote=f"{api_base}/projects/{project_id}/git",
             system_prompt=launch.system_prompt,
             ca_pem=ca_pem,
+            execution_target=execution_target,
         )
         if existing is None:
             command = await self._ship_launcher(device_id, resource_id, command)
@@ -975,6 +1016,7 @@ class DeviceChannel(Channel):
             # overwritten with this launch's freshly-minted one (the new token never
             # reaches the running process). It stays as the reuse gate's truth.
             await self._hub.reassert_screen(existing, command=command, env=screen_env)
+            existing.execution_target = execution_target
             return existing
         screen = await self._hub.open_screen(
             device_id,
@@ -992,6 +1034,7 @@ class DeviceChannel(Channel):
         screen.credential_expires = credential_expires
         screen.agent_configuration = configuration
         screen.resource_id = resource_id
+        screen.execution_target = execution_target
         return screen
 
     # --- turn --------------------------------------------------------------
@@ -1034,6 +1077,16 @@ class DeviceChannel(Channel):
         can host whatever it is handed, and this one cannot."""
         assert isinstance(precheck, tuple)  # from our precheck
         device_id, agent_user_id, agent_handle = precheck
+        if memory_scope == "personal":
+            env = dict(
+                env or {}, CHEESE_PRIVATE_CHAT="1", CHEESE_MEMORY_SCOPE="personal"
+            )
+            if owner:
+                env["CHEESE_OWNER"] = owner
+        prepares_environment = bool((env or {}).get("CHEESE_ENVIRONMENT")) and not (
+            (env or {}).get("CHEESE_EXECUTION_TARGET")
+            or (env or {}).get("CHEESE_PRIVATE_CHAT") == "1"
+        )
         try:
             from app.core.db import async_session_factory
 
@@ -1046,7 +1099,7 @@ class DeviceChannel(Channel):
                     await environment_status(
                         self._hub, device_id, project_id, resource_id
                     )
-                    if (env or {}).get("CHEESE_ENVIRONMENT")
+                    if prepares_environment
                     else {}
                 )
                 prior_screen = self._existing_screen(device_id, topic_id, resource_id)
@@ -1063,7 +1116,7 @@ class DeviceChannel(Channel):
                 )
                 await room_session.commit()
             self._subscription_devices[topic_id] = device_id
-            if (env or {}).get("CHEESE_ENVIRONMENT"):
+            if prepares_environment:
                 # A process started before this feature keeps its environment
                 # until its next restart; it has no preparation receipt yet.
                 # Reasserting a live screen does not rerun its environment. A new
@@ -1173,6 +1226,20 @@ class DeviceChannel(Channel):
                     data,
                     timeout=_FILE_STAGE_TIMEOUT_S,
                 )
+                if screen.execution_target:
+                    from app.domain.agent import private_chat
+
+                    target = screen.execution_target
+                    if target:
+                        await private_chat.control(
+                            target,
+                            {
+                                "subtype": "stage_file",
+                                "path": path,
+                                "data": base64.b64encode(data).decode(),
+                            },
+                            hub=self._hub,
+                        )
             except Exception as exc:  # noqa: BLE001 — an image is not the message
                 # `str(exc)` is EMPTY for the failure this actually hits — a bare
                 # `TimeoutError` from a connector too old to know `file.put`, which

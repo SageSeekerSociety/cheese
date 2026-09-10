@@ -235,7 +235,7 @@ const agentName = computed(() => {
 // 的芝士没有工具，读不了文件也跑不了命令。一句承诺它做不到的事的提示语，换来的
 // 是一次「我试了但做不了」，而人只会记得是它没做成。
 const composerHint = computed(() =>
-  props.alwaysSummon ? `和${agentName.value}聊聊…（要它干活去开话题）` : `输入消息，@${agentName.value} 交给它做`
+  props.alwaysSummon ? `和${agentName.value}聊聊，或交给它一件事…` : `输入消息，@${agentName.value} 交给它做`
 )
 
 /** @ 得到的人：这个房间里的，加上项目里还没进这个房间的。 */

@@ -1,0 +1,157 @@
+name: Remote execution acceptance
+
+on:
+  push:
+    branches: [main, experiment/remote-execution]
+    paths:
+      - 'backend/**'
+      - 'cli/**'
+      - 'scripts/remote_execution/**'
+      - '.github/workflows/remote-execution.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'cli/**'
+      - 'scripts/remote_execution/**'
+      - '.github/workflows/remote-execution.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: remote-execution-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  private-chat:
+    runs-on: [self-hosted, cheese-ci]
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: mirror.gcr.io/paradedb/paradedb:v0.18.8-pg16@sha256:8a14fee5257f554a60d70afc89490a6460a9833c3f7f99f7d88dbbf12e4042a2
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432/tcp
+        options: >-
+          --tmpfs /var/lib/postgresql/data:rw,size=1g
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s --health-timeout=5s --health-retries=10
+      redis:
+        image: mirror.gcr.io/library/redis:7-alpine
+        ports:
+          - 6379/tcp
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a
+        with:
+          version: '0.12.1'
+      - run: uv sync --project backend --locked
+      - name: Install native terminal test dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y tmux openssl
+          npm ci --prefix scripts/remote_execution --no-audit --no-fund
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+        with:
+          driver-opts: |
+            image=mirror.gcr.io/moby/buildkit:buildx-stable-1@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec
+          buildkitd-config-inline: |
+            # As in build.yml, bypass the runner's UDP fake-IP resolver.
+            [dns]
+              nameservers = ["1.1.1.1", "1.0.0.1"]
+              options = ["use-vc"]
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
+      - name: Build private execution image
+        run: docker buildx build --load -f backend/sandbox/Dockerfile.private -t cheese-private-executor:2.1.265 .
+      - name: Verify real scratch execution
+        id: scratch
+        run: >-
+          backend/.venv/bin/python scripts/remote_execution/private_acceptance.py
+          --output tmp/remote-execution/private-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Verify private chat routing and authorization
+        working-directory: backend
+        env:
+          CHEESE_TEST_CLAUDE: ${{ github.workspace }}/scripts/remote_execution/node_modules/.bin/claude
+          TEST_PG_BASE: postgresql+asyncpg://postgres:postgres@localhost:${{ job.services.postgres.ports[5432] }}
+          REDIS_URL: redis://localhost:${{ job.services.redis.ports[6379] }}/0
+        run: >-
+          .venv/bin/pytest tests/integration/test_private_chat_execution.py
+          tests/unit/test_private_chat.py tests/unit/test_remote_control.py
+          tests/integration/test_remote_control_auth.py -q
+          tests/integration/test_central_room_sessions.py
+          tests/integration/test_llm_proxy.py
+          tests/unit/test_execution_bootstrap.py tests/unit/test_execution_transport.py
+          tests/unit/test_session_transfer.py tests/unit/test_resource_cleanup.py
+          tests/unit/test_compute_pool.py tests/unit/test_device_provider.py
+      - name: Verify two private turns through native RC
+        if: ${{ !cancelled() && steps.scratch.outcome == 'success' }}
+        run: >-
+          backend/.venv/bin/python scripts/remote_execution/private_terminal.py
+          --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
+          --output tmp/remote-execution/private-ci-terminal-${{ github.run_id }}-${{ github.run_attempt }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: private-chat-${{ github.sha }}
+          path: |
+            tmp/remote-execution/private-ci-*/
+            tmp/remote-execution/ordinary-ci-*/
+  acceptance:
+    runs-on: [self-hosted, cheese-ci]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
+        with:
+          version: '0.12.1'
+      - name: Install terminal test dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y tmux redis-tools openssl ripgrep
+          mkdir -p tmp/remote-execution/deps
+          (cd tmp/remote-execution/deps && apt-get download redis-server redis-tools)
+          for package in tmp/remote-execution/deps/*.deb; do
+            dpkg-deb -x "$package" tmp/remote-execution/deps
+          done
+          npm ci --prefix scripts/remote_execution --no-audit --no-fund
+          uv sync --project backend --locked
+      - name: Run acceptance
+        run: >-
+          backend/.venv/bin/python scripts/remote_execution/suite.py
+          --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
+          --redis "$PWD/tmp/remote-execution/deps/usr/bin/redis-server"
+          --output "tmp/remote-execution/ci-${{ github.run_id }}-${{ github.run_attempt }}"
+      - name: Verify ordinary room turns through the connector
+        run: >-
+          backend/.venv/bin/python scripts/remote_execution/private_terminal.py
+          --ordinary --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
+          --output tmp/remote-execution/ordinary-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Upload acceptance receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: remote-execution-${{ github.sha }}
+          path: |
+            tmp/remote-execution/ordinary-ci-*/
+            tmp/remote-execution/ci-*/inputs.json
+            tmp/remote-execution/ci-*/results.json
+            tmp/remote-execution/ci-*/progress.jsonl
+            tmp/remote-execution/ci-*/*.log
+            tmp/remote-execution/ci-*/*/summary.json
+            tmp/remote-execution/ci-*/*/terminal.txt
+            tmp/remote-execution/ci-*/*/request-*.json
+            tmp/remote-execution/ci-*/*/action-*.json
+            tmp/remote-execution/ci-*/*/hooks.jsonl
+            tmp/remote-execution/ci-*/*/rc*.json*
+            tmp/remote-execution/ci-*/*/execution/state/events.jsonl
+          retention-days: 14

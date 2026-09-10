@@ -105,6 +105,19 @@ async def _inventory(session, operation: RoomCleanup, inventory: dict) -> list[d
         )
     )
     entries = {}
+    room = await session.get(Topic, operation.topic_id)
+    placement = room.session_placement if room else None
+    if placement and placement["resource_id"] == str(operation.resource_id):
+        center = placement["device_id"]
+        if not device_hub.is_online(center) or center not in inventory:
+            raise RuntimeError(
+                "room's session device is offline or its inventory failed"
+            )
+        entries[(center, str(operation.resource_id))] = {
+            "kind": "device",
+            "device_id": center,
+            "resource_id": str(operation.resource_id),
+        }
     binding = await sql_device_service(session).topic_binding(operation.topic_id)
     if binding is not None:
         if (

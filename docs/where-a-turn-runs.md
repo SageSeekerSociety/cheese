@@ -6,19 +6,15 @@
 
 ---
 
-## 零、有一种轮次不占机器：私聊
+## Central sessions and private chat execution
 
-**私聊不落在任何一台机器上。** 机器是**按话题**分配的，而私聊也是一个话题——照原样走下去，每个人跟每个 AI 队友的那一间都在替一段对话扣着一台机器（配了 Cloud 的部署上就是一台云主机）。所以私聊改走另一条：后端自己向模型问一次（`agent/plain_chat.py`），把回答当成这一轮的最终结果，交给和会话那条路**同一个**消费口。落库、推帧、结算、记忆抽取因此一样不少，换掉的只是「谁产生了那段文字」。
+All Claude Code and RC sessions run on the central device configured by `AGENT_SESSION_DEVICE_ID`. Ordinary rooms keep their selected machine for project files, shell commands, environment scripts, custom stdio MCP processes and preview. Private chats use a temporary container on the central host. A missing or offline session host produces an explicit setup failure.
 
-代价是明写的，也是选定的：**私聊里的芝士没有任何工具**——读不了文件、跑不了命令、也用不了 cheese 命令。要它干活，去开话题。
+Each chat gets a separate execution container with a read-only image and 64 MiB of writable temporary storage. Shell commands, file operations and Cheese CLI run there. The container has no host directory mounts or model credentials. It retains drafts across turns while it lives; releasing the chat removes its scratch files. Published documents remain in platform storage.
 
-这条路只从**网关**走，不看项目选的是哪个池：订阅那条路的凭据是机器上的 OAuth token，后端手里根本没有，而私聊要的从来不是一台机器上的 Claude Code，只是一次模型调用。凭据仍是项目自己的虚拟 key，所以它和沙箱那条路计费在同一个口子上。
+Build the executor on the central device with `docker build -f backend/sandbox/Dockerfile.private -t cheese-private-executor:2.1.265 .` from the repository root. `PRIVATE_CHAT_EXECUTOR_IMAGE` selects the installed image. General network access remains available; backend authorization governs platform operations. The configured session host must have this image available before accepting private chats.
 
-**所以它问的模型也是网关池那个（`settings.agent_model`），不是队友配置里存的那个。** 沙箱那条路让 Claude Code 以为自己在跟 Anthropic 说话，靠的是把三个别名档（haiku / sonnet / opus）映射成网关池的模型；私聊是后端直接打 `/v1/messages`，必须显式写一个名字，没有别名档可映射。走网关池的项目存的本来就是那个名字，所以对它们没有变化；走订阅的项目存的是**界面上的选项 id**（`opus`——机器那条路会先换成 `claude-opus-5`），原样问网关只会换回一句 `Invalid model name`。**队友的身份不受影响**：角色设定、这间对话、个人记忆都还是它的，换掉的只是底下那个模型。
-
-**网关没配的部署上，私聊退回去照旧占一台机器。** 不占机器是优化，不是承诺——一间答不上话的私聊，比一台被占着的机器糟得多。
-
-下面整份文档说的都是**房间**那一轮——它仍然要一台机器。
+The remaining sections describe ordinary work topics and their selected compute providers.
 
 ---
 
@@ -33,7 +29,7 @@
 
 设备那条总是装上；Cloud 只在这个部署配了云平台的地址和密钥时才装。
 
-**每一台都不是平台的机器。** 平台没有一台自己的机器在跑话题，这是刻意的（#358）：人要选的是「谁的机器来跑」，而一台不在菜单上的机器，只要它还是执行层的兜底，就是所有人不选时的去处。
+These choices select the ordinary room's execution machine. Claude Code and RC run on the separately recorded central session host, which does not appear as a project execution choice. The two locations are described in `remote-execution.md`.
 
 ## 二、菜单和执行层现在是同一个答案
 

@@ -57,6 +57,7 @@ def mint_scoped_token(
     agent_handle: str | None = None,
     access_scope: Literal["topic", "project"] = "topic",
     remote_control: bool = False,
+    resource_id: str | None = None,
 ) -> str:
     """Mint an HMAC token scoped to a project (+ optional topic), expiring in ttl_s.
 
@@ -85,7 +86,20 @@ def mint_scoped_token(
         if not topic_id:
             raise ValueError("RC credentials require a place")
         payload["rc"] = 1
+    if resource_id is not None:
+        payload["r"] = resource_id
     raw = json.dumps(payload, separators=(",", ":")).encode()
+    body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
+    return f"{body}.{_sign(body)}"
+
+
+def bind_resource_token(token: str, resource_id: str) -> str:
+    """Bind an existing scoped launch credential to its allocated execution."""
+    claims = scoped_token_claims(token)
+    if claims is None:
+        raise ValueError("A valid scoped launch credential is required")
+    claims["r"] = resource_id
+    raw = json.dumps(claims, separators=(",", ":")).encode()
     body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
     return f"{body}.{_sign(body)}"
 

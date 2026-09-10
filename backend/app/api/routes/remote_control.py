@@ -20,6 +20,8 @@ from app.core.errors import (
     ValidationError,
 )
 from app.core.sandbox_auth import scoped_token_claims
+from app.domain.agent import private_chat
+from app.domain.agent.harness.claude_code import REMOTE_CONTROLS
 from app.domain.agent.remote_control import CONTROLS, store
 from app.domain.topic.services import TopicService
 
@@ -70,7 +72,14 @@ async def rc_create(request: Request, db: DbSession) -> dict:
     place = await TopicService(db).place_or_404(uuid.UUID(claims["t"]))
     if str(place.project_id) != claims["p"]:
         raise ForbiddenError("Place does not belong to this credential")
-    return {"session": await store().create(claims, await body(request))}
+    if place.room.session_placement and claims.get("r") != str(
+        place.room.resource_id or place.room.id
+    ):
+        raise ConflictError("RC credential belongs to another execution generation")
+    data = await body(request)
+    # Placement is platform-owned; ignore an execution target supplied by a worker.
+    data["execution"] = place.room.session_placement
+    return {"session": await store().create(claims, data)}
 
 
 @router.post("/v1/code/sessions/{sid}/bridge", include_in_schema=False)
@@ -237,9 +246,20 @@ async def control_state(
 ) -> dict:
     await controller(topic_id, db, resolver)
     session = await store().current(str(topic_id))
-    return ok(
+    result = (
         await store().snapshot(session) if session else {"connected": False, "id": None}
     )
+    placement = session.get("execution") if session else None
+    target = None
+    if placement:
+        place = await TopicService(db).place_or_404(topic_id)
+        if placement["resource_id"] == str(place.room.resource_id or place.room.id):
+            target = placement["execution"]
+        await db.commit()
+    if session and target:
+        tasks = await private_chat.control(target, {"subtype": "background_tasks"})
+        result["tasks"].update({task["task_id"]: task for task in tasks["tasks"]})
+    return ok(result)
 
 
 class ControlIn(BaseModel):
@@ -266,18 +286,32 @@ async def control(
     wait: float = Query(default=15, ge=0, le=30),
 ) -> dict:
     actor = await controller(topic_id, db, resolver)
-    await selected_session(topic_id, data.session_id)
+    session = await selected_session(topic_id, data.session_id)
     if data.request.get("subtype") not in CONTROLS:
         raise ValidationError("Unsupported RC control; see the session's controls list")
-    command = await store().enqueue(
-        data.session_id,
-        {
-            "type": "control_request",
-            "request_id": data.request_id,
-            "request": data.request,
-        },
-        actor.handle,
-    )
+    payload = {
+        "type": "control_request",
+        "request_id": data.request_id,
+        "request": data.request,
+    }
+    placement = session.get("execution")
+    target = placement["execution"] if placement else None
+    if placement:
+        place = await TopicService(db).place_or_404(topic_id)
+        if placement["resource_id"] != str(place.room.resource_id or place.room.id):
+            raise ConflictError(
+                "This session belongs to a retired execution generation"
+            )
+        await db.commit()
+    remote_control = data.request.get("subtype") in REMOTE_CONTROLS
+    if data.request.get("subtype") == "stop_task":
+        remote_control = str(data.request.get("task_id", "")).startswith("remote-")
+    if target and remote_control:
+        command = await store().execute_remote(session, payload, actor.handle, target)
+    else:
+        if target and data.request.get("subtype") == "interrupt":
+            await private_chat.control(target, data.request)
+        command = await store().enqueue(data.session_id, payload, actor.handle)
     result = await store().result(data.session_id, data.request_id, wait)
     command = await store().command(data.session_id, data.request_id) or command
     return ok(

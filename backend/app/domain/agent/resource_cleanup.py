@@ -4,9 +4,11 @@ import fcntl
 import hashlib
 import json
 import os
+import runpy
 import shutil
 import subprocess
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -164,9 +166,58 @@ def check_transcripts(home: Path, receipts: list[dict]) -> None:
         raise RuntimeError("hook events still await backend acknowledgement")
 
 
+def session_target(home: Path, resource: str) -> dict | None:
+    marker = home / ".claude/remote-target.json"
+    if not marker.exists():
+        return None
+    target = json.loads(marker.read_text())
+    if target.get("kind") not in {"private", "device"}:
+        return None
+    generation = (
+        target.get("topic")
+        if target["kind"] == "private"
+        else target.get("resource_id")
+    )
+    if generation != str(uuid.UUID(resource)):
+        raise RuntimeError("executor belongs to another resource generation")
+    return target
+
+
+def stop_executor(home: Path, resource: str) -> None:
+    marker = home / ".claude/execution-owner.json"
+    if not marker.exists():
+        return
+    if json.loads(marker.read_text())["resource"] != str(uuid.UUID(resource)):
+        raise RuntimeError("execution marker names another resource generation")
+    runtime = home / ".claude/remote-execution/runtime.py"
+    state = home / ".claude/executor"
+    helper = runpy.run_path(str(runtime))
+    if Path(helper["socket_path"](state)).exists():
+        result = run_command(
+            [sys.executable, str(runtime), "stop", "--state", str(state)]
+        )
+        if result.returncode:
+            raise RuntimeError("executor has not stopped: " + result.stderr)
+    preview = home / ".claude/cheese-preview.pid"
+    if preview.exists():
+        pid = int(preview.read_text())
+        command = run_command(["ps", "-p", str(pid), "-o", "args="])
+        expected = str(home / ".claude/cheese-preview.py")
+        if expected in command.stdout:
+            os.kill(pid, 15)
+            for _ in range(30):
+                command = run_command(["ps", "-p", str(pid), "-o", "args="])
+                if expected not in command.stdout:
+                    break
+                time.sleep(0.1)
+            else:
+                raise RuntimeError("preview helper has not stopped")
+
+
 def main() -> None:
     action, project, resource, cleanup = sys.argv[1:]
     home, work = resource_paths(Path.home(), project, resource)
+    executor = session_target(home, resource)
     if action == "prepare":
         # A timed-out command may arrive after reopening. Once this operation
         # confirmed quiescence, all its delayed retries become read-only.
@@ -177,6 +228,7 @@ def main() -> None:
             fcntl.flock(lock, fcntl.LOCK_EX)
             if not receipt.exists() or receipt.read_text() != "ready\n":
                 request_exit(home, work, lock.fileno())
+                stop_executor(home, resource)
                 check_no_writers([home, work])
                 temporary = receipt.with_suffix(".tmp")
                 with temporary.open("w") as output:
@@ -191,17 +243,24 @@ def main() -> None:
                     os.close(descriptor)
         print(json.dumps({"ready": True}))
     elif action == "publication":
-        check_resource_publication(home, work)
+        # Central workspaces hold generated context. Project publication is
+        # checked on the separately inventoried execution device.
+        if executor is None:
+            check_resource_publication(home, work)
         print(json.dumps({"published": True}))
     elif action == "remove":
         # The caller recorded this generation before granting deletion permission.
         # A reopened room uses another UUID, even on the same physical device.
         check_no_writers([home, work])
-        check_resource_publication(home, work)
+        if executor is None:
+            check_resource_publication(home, work)
         if home.exists():
             check_transcripts(
                 home, json.loads(os.environ["CHEESE_TRANSCRIPT_RECEIPTS"])
             )
+        if executor is not None and executor["kind"] == "private":
+            helper = runpy.run_path(str(home / ".claude/remote-execution/private.py"))
+            helper["release"](executor)
         for path in (work, home):
             if path.exists():
                 shutil.rmtree(path)

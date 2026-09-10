@@ -48,7 +48,7 @@
 **话题之外的对话**
 | 组成部分 | 对标产品 | AI 带来什么变化 |
 |---|---|---|
-| 私聊 | 飞书私聊 | 成员和某一个 AI 队友的一对一对话（一个队友一间，也可以和人私聊）。用来设偏好（"设计的先给我看"）、问项目状态、调个人设置。不是讨论具体工作的地方——聊到具体事情时芝士会建议开话题，避免重要信息沉在私聊里 |
+| 私聊 | 飞书私聊 | One conversation per AI teammate, or a human-to-human conversation, for preferences, questions, document drafts and small tasks. Shell tools run in isolated temporary storage; saved documents live on Cheese. Repository work and team collaboration move to a work topic with the member's consent. |
 
 **三个全局页面（分属不同层级）**
 | 组成部分 | 层级 | 对标产品 | AI 带来什么变化 |

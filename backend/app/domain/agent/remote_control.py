@@ -81,6 +81,7 @@ class RemoteControl:
             "expires_at": claims["exp"],
             "title": body.get("title", "Cheese"),
             "config": body.get("config", {}),
+            "execution": body.get("execution"),
             "tags": body.get("tags", []),
             "status": "active",
             "environment_kind": "bridge",
@@ -188,7 +189,9 @@ class RemoteControl:
             raise AuthenticationRequiredError("RC worker is no longer current")
         return session
 
-    async def enqueue(self, sid: str, payload: dict, actor: str) -> dict:
+    async def enqueue(
+        self, sid: str, payload: dict, actor: str, *, deliver: bool = True
+    ) -> dict:
         """A retry with the same id returns the original command, never replays it."""
         request_id = payload.get("request_id") or payload.get("response", {}).get(
             "request_id"
@@ -213,7 +216,8 @@ class RemoteControl:
             "v.sequence_num=tostring(n); v.event_id=ARGV[2]; "
             "local out=cjson.encode(v); redis.call('SET',KEYS[1],out,'EX',ARGV[3]); "
             "redis.call('SET',KEYS[4],KEYS[1],'EX',ARGV[3]); "
-            "redis.call('XADD',KEYS[2],tostring(n)..'-0','event',out); "
+            "if ARGV[4]=='1' then "
+            "redis.call('XADD',KEYS[2],tostring(n)..'-0','event',out); end; "
             "redis.call('EXPIRE',KEYS[2],ARGV[3]); "
             "redis.call('EXPIRE',KEYS[3],ARGV[3]); return out",
             5,
@@ -225,6 +229,7 @@ class RemoteControl:
             json.dumps(command),
             event_id,
             RETENTION,
+            "1" if deliver else "0",
         )
         if not raw:
             raise ConflictError("This question is no longer pending")
@@ -232,6 +237,41 @@ class RemoteControl:
         if result["digest"] != digest:
             raise ConflictError("This request id already has a different payload")
         return result
+
+    async def execute_remote(
+        self, session: dict, payload: dict, actor: str, target: dict
+    ) -> dict:
+        """Journal remote controls without also executing them on the CLI host."""
+        from app.domain.agent.private_chat import control
+
+        command = await self.enqueue(session["id"], payload, actor, deliver=False)
+        request_id = payload["request_id"]
+        existing = await self.result(session["id"], request_id)
+        if existing:
+            return command
+        try:
+            value = await control(target, payload["request"])
+            response = {
+                "subtype": "success",
+                "request_id": request_id,
+                "response": value,
+            }
+        except Exception as exc:
+            response = {"subtype": "error", "request_id": request_id, "error": str(exc)}
+        await self.receive(
+            session["id"],
+            [
+                {
+                    "payload": {
+                        "type": "control_response",
+                        "uuid": "execution-" + command["event_id"],
+                        "response": response,
+                    }
+                }
+            ],
+            epoch=session["epoch"],
+        )
+        return await self.command(session["id"], request_id) or command
 
     async def command(self, sid: str, request_id: str) -> dict | None:
         raw = await self.redis.get(key(sid, "command:" + request_id))

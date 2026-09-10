@@ -316,43 +316,23 @@ class ProjectMachineRepository:
         return list(result.scalars())
 
     async def ccproxy_upstream_for_place(self, place_id: uuid.UUID) -> str | None:
-        """The ccproxy identity of the machine this place's turns run on.
+        """Use the model session host's credential, independently of execution.
 
-        One join rather than two round trips, because the metering proxy asks
-        this on the admission path — the hop every turn already waits on. The
-        chain is room → pinned device → machine: a room's work tree and its
-        resumable claude session live on ONE machine, and that pin is write-once
-        (``bind_topic_device``), so the answer is stable for the room's life.
-
-        A THREAD is asked about by its own id, because that is the id its
-        per-turn token carries and the only one the proxy ever holds. Its own pin
-        is consulted first and its ROOM's is the fallback, and the order is
-        load-bearing in both directions:
-
-        - A thread on a self-hosted device pins ITSELF — the resolver binds by
-          the place id it is given, and two threads of one room can land on two
-          different boxes. Answering such a thread from its room would name a
-          machine its turns do not run on.
-        - A thread in a Cloud room has no pin of its own to find: the lease and
-          the pin are the room's (#702), deliberately, because releasing the
-          room's machine drops only the room's pin. That is the case that was
-          broken, and empty is not the harmless fallback here that it is for a
-          room — a caller carrying its own ccproxy ticket is REFUSED when no
-          identity resolves, rather than billed to the platform. Every thread
-          turn on such a machine was refused, and the refusal did not even reach
-          the caller; it timed out.
-
-        Two sources, one meaning. A MicroCloud machine's identity is captured at
-        enrollment into `ProjectMachine`; a self-hosted device has no enrollment,
-        so its identity lives on `DeviceRow` (set by whoever administers the
-        device — the dev box first). Checked in that order; they cannot disagree,
-        because a device is only ever one of the two kinds.
-
-        None whenever every link is missing — an unpinned place, a device that
-        brings no identity, a machine enrolled before the identity was recorded.
-        Every one of those means "use the deployment-wide identity", which is
-        the behaviour those turns have today.
+        A placed room never borrows its executor's model identity. An empty
+        central identity selects the platform credential. Unmigrated sessions
+        still finish on their original pinned device.
         """
+        from app.domain.topic.models import Topic
+
+        placement = await self._session.scalar(
+            select(Topic.session_placement).where(Topic.id == place_id)
+        )
+        if placement:
+            return await self._session.scalar(
+                select(DeviceRow.ccproxy_upstream).where(
+                    DeviceRow.device_id == placement["device_id"]
+                )
+            )
         return await self._upstream_of_pinned_device(place_id)
 
     async def _upstream_of_pinned_device(self, topic_id: uuid.UUID) -> str | None:

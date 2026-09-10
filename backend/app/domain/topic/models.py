@@ -151,6 +151,9 @@ class Topic(UuidPk, Timestamps, Base):
         DateTime(timezone=True), nullable=True, index=True
     )
     resource_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    # Session ownership is independent of the room's execution-device binding.
+    # The resource UUID pins both locations for recovery and delayed controls.
+    session_placement: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     cleanup_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
 
 

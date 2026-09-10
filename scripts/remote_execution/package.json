@@ -1,0 +1,8 @@
+{
+  "name": "cheese-remote-execution-acceptance",
+  "private": true,
+  "version": "0.1.0",
+  "dependencies": {
+    "@anthropic-ai/claude-code": "2.1.265"
+  }
+}

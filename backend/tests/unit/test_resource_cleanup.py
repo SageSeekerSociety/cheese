@@ -134,6 +134,16 @@ def test_unpublished_source_blocks_cleanup(tmp_path):
     assert (tmp_path / "source.py").exists()
 
 
+def test_private_cleanup_rejects_another_generation(tmp_path):
+    resource = str(uuid.uuid4())
+    marker = tmp_path / ".claude/remote-target.json"
+    marker.parent.mkdir()
+    marker.write_text(json.dumps({"kind": "private", "topic": resource}))
+    assert cleanup.session_target(tmp_path, resource)["topic"] == resource
+    with pytest.raises(RuntimeError, match="another resource generation"):
+        cleanup.session_target(tmp_path, str(uuid.uuid4()))
+
+
 def test_task_work_is_checked_before_removing_the_room_home(tmp_path):
     home, work = tmp_path / "home", tmp_path / "legacy-work"
     task = home / ".cheese/tasks" / str(uuid.uuid4())

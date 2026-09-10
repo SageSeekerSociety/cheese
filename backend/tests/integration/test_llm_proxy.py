@@ -486,6 +486,64 @@ async def test_a_device_with_no_identity_still_names_none(client, monkeypatch):
     assert "upstream" not in body["supply"]
 
 
+@pytest.mark.parametrize("central_upstream", ["central:ticket", None])
+async def test_placed_room_uses_session_identity_not_executor(
+    client, monkeypatch, central_upstream
+):
+    from datetime import UTC, datetime
+
+    from app.core.config import settings as app_settings
+    from app.domain.device.models import DeviceRow
+    from app.domain.topic.models import Topic
+
+    monkeypatch.setattr(app_settings, "subscription_enabled", True)
+    pid = _make_project(client)
+    room_id = client.post(
+        "/topics",
+        json={"project_id": pid, "title": "Central room", "created_by": "alice"},
+    ).json()["data"]["id"]
+    await _pin_topic_to_self_hosted_device(
+        client,
+        topic_id=uuid.UUID(room_id),
+        device_id="executor",
+        upstream="executor:ticket",
+    )
+    async with client.test_factory() as session:
+        executor = await session.get(DeviceRow, "executor")
+        session.add(
+            DeviceRow(
+                device_id="central",
+                name="central",
+                token="tok-central",
+                owner_user_id=executor.owner_user_id,
+                created_at=datetime.now(UTC),
+                ccproxy_upstream=central_upstream,
+            )
+        )
+        room = await session.get(Topic, uuid.UUID(room_id))
+        room.session_placement = {
+            "device_id": "central",
+            "resource_id": room_id,
+            "channel": "device",
+            "execution": {"kind": "device", "device_id": "executor"},
+        }
+        await session.commit()
+
+    response = client.post(
+        "/llm/admission",
+        headers={
+            "Authorization": "Bearer "
+            + mint_scoped_token(project_id=pid, topic_id=room_id)
+        },
+    )
+    assert response.status_code == 200
+    supply = response.json()["data"]["supply"]
+    if central_upstream is None:
+        assert "upstream" not in supply
+    else:
+        assert supply["upstream"] == central_upstream
+
+
 async def _room_with_a_thread(client, project_id: str) -> tuple[str, str]:
     """A real room and one thread of work in it — (room_id, thread_id).
 

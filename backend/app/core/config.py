@@ -103,6 +103,9 @@ class Settings(BaseSettings):
     # GLM: base_url=https://open.bigmodel.cn/api/anthropic, token=ZHIPU_API_KEY.
     # Swapping to LiteLLM / Anthropic later is just env, no code change.
     agent_model: str = "glm-5.2"
+    # Shared central session host; private scratch runs in isolated containers.
+    agent_session_device_id: str | None = None
+    private_chat_executor_image: str = "cheese-private-executor:2.1.265"
     anthropic_base_url: str | None = None
     anthropic_auth_token: str | None = None
     # Model aliases the CLI may resolve internally; map them to the provider.
