@@ -737,6 +737,9 @@ def list_files(project_id: uuid.UUID, topic_id: uuid.UUID | None = None) -> list
     for root, dirnames, filenames in os.walk(tree):
         dirnames[:] = sorted(d for d in dirnames if d not in _SKIP_DIRS)
         for name in sorted(filenames):
+            # Linked worktrees use a .git file, which is still VCS metadata.
+            if name == ".git":
+                continue
             p = Path(root) / name
             rel = p.relative_to(tree)
             # lstat, not stat: a symlink pointing at something that no longer

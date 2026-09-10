@@ -41,6 +41,7 @@ vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
     ...actual,
+    listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getDoc: (...a: unknown[]) => getDoc(...a),
     listFiles: (...a: unknown[]) => listFiles(...a),
     readFile: (...a: unknown[]) => readFile(...a),
