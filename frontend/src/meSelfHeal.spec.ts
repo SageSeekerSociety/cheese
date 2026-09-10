@@ -1,10 +1,4 @@
-// `me` is a module-scope ref initialised ONCE, at import time, from
-// localStorage. Sign-in is a `router.replace` (SignIn.vue) — an SPA navigation,
-// never a reload — so after logging in, that snapshot is still the logged-OUT
-// one until something re-reads storage. `myHandle()` has always re-read; the
-// numeric id had no such accessor, and reading `me.value?.id` raw made the
-// 连接 GitHub 账号 section render its 「未登录」 error branch to a user who had
-// just logged in.
+// Account changes must reach chat requests without reloading the page.
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 function storage(): Storage {
@@ -21,7 +15,7 @@ function storage(): Storage {
   }
 }
 
-describe('myId', () => {
+describe('current chat account', () => {
   beforeEach(() => {
     vi.resetModules()
     vi.stubGlobal('localStorage', storage())
@@ -39,10 +33,31 @@ describe('myId', () => {
     expect(mod.myId()).toBe('467')
   })
 
-  it('prefers the cheesex.me mirror when main.ts has written one', async () => {
-    localStorage.setItem('cheesex.me', JSON.stringify({ id: '470', handle: 'wangchangxin', name: 'w' }))
+  it('uses the current account when an older chat identity remains', async () => {
+    localStorage.setItem('cheesex.me', JSON.stringify({ id: '1', handle: 'old-account', token: 'old-token' }))
+    localStorage.setItem('user', JSON.stringify({ id: 470, username: 'current-account' }))
     const mod = await import('./me')
     expect(mod.myId()).toBe('470')
+    expect(mod.myHandle()).toBe('current-account')
+  })
+
+  it('follows account changes without reloading the page', async () => {
+    localStorage.setItem('user', JSON.stringify({ id: 1, username: 'alice' }))
+    const mod = await import('./me')
+    expect(mod.myHandle()).toBe('alice')
+    localStorage.setItem('user', JSON.stringify({ id: 2, username: 'bob' }))
+    expect(mod.myHandle()).toBe('bob')
+    expect(mod.myId()).toBe('2')
+    localStorage.removeItem('user')
+    expect(mod.myHandle()).toBe('')
+    expect(mod.myId()).toBe('')
+  })
+
+  it('does not treat an obsolete chat identity as a signed-in account', async () => {
+    localStorage.setItem('cheesex.me', JSON.stringify({ id: '1', handle: 'old-account', token: 'old-token' }))
+    const mod = await import('./me')
+    expect(mod.myHandle()).toBe('')
+    expect(mod.myId()).toBe('')
   })
 
   it('stays empty when nobody is signed in, rather than inventing an id', async () => {

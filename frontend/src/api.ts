@@ -65,20 +65,10 @@ export { TOPIC_TITLE_MAX_LENGTH }
 // namespace that separated them has nothing left to separate.
 export const BASE = '/api'
 
-// P1 真鉴权: read the signed session token straight from storage (avoids an
-// import cycle with me.ts). Sent as `Authorization: Bearer` so the backend
-// resolves the actor from a verified token instead of a forgeable body field.
-// Empty when signed out or for an older pre-token cached identity.
+// Chat requests use the same access token as AccountService.
 export function authToken(): string {
-  // fusion unify P3: ONE token. The 知是 login stores its JWT under `accessToken`
-  // (sub=int id + a `handle` claim); the merged backend's cheesex auth reads the
-  // handle claim, so the same token authenticates both API layers. Fall back to
-  // the legacy `cheesex.me` token for any older cached session.
   try {
-    const main = localStorage.getItem('accessToken')
-    if (main) return main
-    const raw = localStorage.getItem('cheesex.me')
-    return raw ? JSON.parse(raw)?.token ?? '' : ''
+    return localStorage.getItem('accessToken') ?? ''
   } catch {
     return ''
   }

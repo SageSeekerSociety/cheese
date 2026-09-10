@@ -155,3 +155,50 @@ describe('AccountService.init()', () => {
     expect(account.loggedIn).toBe(false)
   })
 })
+
+describe('chat requests after sign-in', () => {
+  it('uses the new account and token after replacing an existing login, then clears both on logout', async () => {
+    localStorage.setItem('user', JSON.stringify({ id: 9, username: 'previous-account' }))
+    localStorage.setItem('cheesex.me', JSON.stringify({ id: '9', handle: 'previous-account', token: 'previous-token' }))
+    const account = await freshService()
+    const identity = await import('@/me')
+    const api = await import('@/api')
+    expect(identity.myHandle()).toBe('previous-account')
+
+    const token = jwtWithExp(Date.now() / 1000 + 900)
+    await account.login(token)
+    expect(identity.myHandle()).toBe('alice')
+    expect(identity.myId()).toBe('1')
+
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ code: 200, data: {} }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+    )
+    try {
+      await api.getTopicUnread('project', identity.myHandle())
+      await api.getPrivateUnread('project', identity.myHandle())
+      await api.markTopicRead('room', identity.myHandle())
+      expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+        '/api/projects/project/topic-unread?handle=alice',
+        '/api/projects/project/private-unread?handle=alice',
+        '/api/topics/room/read',
+      ])
+      for (const [, init] of fetch.mock.calls) {
+        expect(init?.headers).toMatchObject({ Authorization: `Bearer ${token}` })
+      }
+      expect(JSON.parse(String(fetch.mock.calls[2][1]?.body))).toEqual({ handle: 'alice' })
+
+      await account.logout()
+      expect(identity.myHandle()).toBe('')
+      expect(identity.myId()).toBe('')
+      expect(api.authToken()).toBe('')
+      localStorage.setItem('cheesex.me', JSON.stringify({ token: 'previous-token' }))
+      expect(api.authToken()).toBe('')
+    } finally {
+      fetch.mockRestore()
+    }
+  })
+})
