@@ -1,7 +1,9 @@
 """DeviceHub: the server end of the link.Msg protocol (I/O-free, fake transports)."""
 
+import asyncio
 import base64
 import hashlib
+import json
 import uuid
 
 import pytest
@@ -41,6 +43,72 @@ async def test_attach_sends_welcome():
     await hub.attach_device("dev1", t)
     assert t.sent == [{"t": "welcome", "v": 1}]
     assert hub.is_online("dev1")
+
+
+async def _executor_call():
+    hub = DeviceHub()
+    transport = FakeDeviceTransport()
+    await hub.attach_device("dev1", transport)
+    await hub.on_device_message("dev1", {"t": "hello", "executor": True})
+    task = asyncio.create_task(hub.call_executor("dev1", "/room/state", "ping", {}))
+    await asyncio.sleep(0)
+    return hub, transport, task, transport.sent[-1]["id"]
+
+
+async def test_executor_does_not_wait_for_an_unsupported_connector():
+    hub = DeviceHub()
+    transport = FakeDeviceTransport()
+    await hub.attach_device("dev1", transport)
+    with pytest.raises(RuntimeError, match="updating"):
+        await hub.call_executor("dev1", "/room/state", "ping", {})
+    assert len(transport.sent) == 1
+
+
+async def test_executor_result_waits_for_complete_response():
+    hub, transport, task, identifier = await _executor_call()
+    data = json.dumps({"result": {"text": "中文"}}, ensure_ascii=False).encode()
+    for chunk in (data[:23], data[23:]):
+        await hub.on_device_message(
+            "dev1",
+            {
+                "t": "execution.data",
+                "id": identifier,
+                "data": base64.b64encode(chunk).decode(),
+            },
+        )
+    assert not task.done()
+    await hub.on_device_message("dev1", {"t": "execution.result", "id": identifier})
+    assert await task == {"text": "中文"}
+
+
+async def test_executor_disconnect_reports_unknown_outcome_without_replay():
+    hub, transport, task, _ = await _executor_call()
+    await hub.detach_device("dev1", transport)
+    with pytest.raises(DeviceOffline):
+        await task
+    assert len([m for m in transport.sent if m["t"] == "execution.call"]) == 1
+
+
+async def test_executor_cancellation_reaches_connector():
+    _, transport, task, identifier = await _executor_call()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert transport.sent[-1] == {"t": "exec.cancel", "id": identifier}
+
+
+async def test_executor_interrupted_response_is_not_returned_as_success():
+    hub, _, task, identifier = await _executor_call()
+    await hub.on_device_message(
+        "dev1",
+        {
+            "t": "execution.result",
+            "id": identifier,
+            "error": "executor disconnected",
+        },
+    )
+    with pytest.raises(RuntimeError, match="disconnected"):
+        await task
 
 
 async def test_open_screen_sends_session_create_and_registers_token():

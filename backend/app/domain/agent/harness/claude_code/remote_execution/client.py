@@ -5,17 +5,22 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import http.client
 import json
 import os
 import re
+import select
 import shlex
 import signal
 import subprocess
 import sys
+import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from urllib.request import Request, urlopen
+from urllib.parse import unquote, urlsplit
+from urllib.request import getproxies, proxy_bypass
 
 PINNED_VERSION = "2.1.265"
 NATIVE_TOOLS = (
@@ -48,6 +53,59 @@ PRIVATE_INSTRUCTIONS = (
 class RemoteClient:
     def __init__(self, config):
         self.config = config
+        self.transport = threading.local()
+
+    def connection(self):
+        if getattr(self.transport, "connection", None) is not None:
+            connection = self.transport.connection
+            # Idle HTTP connections can be closed by the gateway between turns.
+            # Reconnect before writing when the socket already has EOF/data.
+            if connection.sock and select.select([connection.sock], [], [], 0)[0]:
+                connection.close()
+            return connection, self.transport.path
+        target = urlsplit(str(self.config["url"]))
+        if not target.hostname:
+            raise ValueError("Executor URL requires a hostname")
+        proxy = (
+            getproxies().get(target.scheme)
+            if not proxy_bypass(target.hostname)
+            else None
+        )
+        address = urlsplit(proxy) if proxy else target
+        hostname = address.hostname
+        if not hostname:
+            raise ValueError("Executor proxy URL requires a hostname")
+        factory = (
+            http.client.HTTPSConnection
+            if address.scheme == "https"
+            else http.client.HTTPConnection
+        )
+        connection = factory(hostname, address.port, timeout=660)
+        path = target.path or "/"
+        if target.query:
+            path += "?" + target.query
+        self.transport.headers = {}
+        if proxy:
+            headers = {}
+            if address.username is not None:
+                auth = unquote(address.username) + ":" + unquote(address.password or "")
+                headers["Proxy-Authorization"] = (
+                    "Basic " + base64.b64encode(auth.encode()).decode()
+                )
+            if target.scheme == "https":
+                if address.scheme != "http":
+                    raise ValueError(
+                        "Executor HTTPS requests require an HTTP CONNECT proxy"
+                    )
+                connection = http.client.HTTPSConnection(
+                    hostname, address.port or 80, timeout=660
+                )
+                connection.set_tunnel(target.hostname, target.port or 443, headers)
+            else:
+                path = self.config["url"]
+                self.transport.headers = headers
+        self.transport.connection, self.transport.path = connection, path
+        return connection, path
 
     def command(self, mode, server=None):
         command = [*self.config["command"], mode, "--state", self.config["state"]]
@@ -71,18 +129,31 @@ class RemoteClient:
     def call(self, method, params=None):
         if self.config.get("kind") == "device":
             payload = json.dumps({"method": method, "params": params or {}}).encode()
-            request = Request(
-                self.config["url"],
-                data=payload,
-                headers={
-                    "Content-Type": "application/json",
-                    "X-Cheese-Token": os.environ["CHEESE_TOKEN"],
-                },
-            )
-            # Mutation IDs belong to the executor ledger. A failed HTTP call must
-            # never generate a fresh ID or replay the operation automatically.
-            with urlopen(request, timeout=660) as response:
-                return json.load(response)
+            connection, path = self.connection()
+            try:
+                connection.request(
+                    "POST",
+                    path,
+                    body=payload,
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-Cheese-Token": os.environ["CHEESE_TOKEN"],
+                        **self.transport.headers,
+                    },
+                )
+                response = connection.getresponse()
+                data = response.read()
+                if response.status != 200:
+                    raise RuntimeError(
+                        f"Executor HTTP request failed: {response.status}"
+                    )
+                return json.loads(data)
+            except Exception:
+                # A lost response can follow a committed mutation. Reconnect only
+                # for the next call; never replay this request automatically.
+                connection.close()
+                self.transport.connection = None
+                raise
         result = subprocess.run(
             self.command("request"),
             input=json.dumps({"method": method, "params": params or {}}),
@@ -173,6 +244,10 @@ def prepare(
     module = module.replace("__EXECUTION_CONFIG__", json.dumps(target))
     (plugin / "hooks/proxy.js").write_text(module)
     settings = json.loads(json.dumps(base_settings or {}))
+    permissions = settings.setdefault("permissions", {})
+    allowed = permissions.setdefault("allow", [])
+    if "mcp__native__invoke" not in allowed:
+        allowed.append("mcp__native__invoke")
     hooks = settings.setdefault("hooks", {})
     helper = [sys.executable, str(Path(__file__).resolve())]
     guard = shlex.join([*helper, "guard", str(target_path)])
@@ -230,7 +305,13 @@ def prepare(
     gate_file = config / ".claude.json"
     previous = json.loads(gate_file.read_text()) if gate_file.exists() else {}
     gate_file.write_text(json.dumps({**previous, **gates}))
-    servers = {}
+    servers = {
+        "native": {
+            "type": "stdio",
+            "command": helper[0],
+            "args": [*helper[1:], "transport", str(target_path)],
+        }
+    }
     for name in target.get("mcp_servers", []):
         if name == "native":
             raise ValueError("MCP server name native is reserved for file operations")
@@ -344,7 +425,7 @@ def shell(target_path, command):
     if (
         len(words) >= 4
         and words[:2] == [sys.executable, helper]
-        and words[2] in ("bridge", "guard", "context", "event", "invoke", "checkpoint")
+        and words[2] in ("bridge", "guard", "context", "checkpoint", "transport")
         and words[3] == str(target_path)
     ):
         os.execvp(words[0], words)
@@ -421,6 +502,137 @@ def publish_event(config, payload):
     return output
 
 
+def transport(config):
+    client = RemoteClient(config)
+    output_lock = threading.Lock()
+    active = {}
+    active_lock = threading.RLock()
+    cancelled = set()
+
+    def cancel(request_id):
+        with active_lock:
+            payload = active.get(request_id)
+            if payload is None:
+                return
+            cancelled.add(request_id)
+        if payload.get("tool") == "Bash":
+            client.control({"subtype": "stop_request", "request_id": payload["id"]})
+
+    def stop(signum, _frame):
+        with active_lock:
+            requests = list(active)
+        for request_id in requests:
+            cancel(request_id)
+        raise SystemExit(128 + signum)
+
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+
+    def handle(request):
+        try:
+            method = request["method"]
+            if method == "initialize":
+                value = {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {"name": "cheese-native-execution", "version": "1"},
+                }
+            elif method == "tools/list":
+                value = {
+                    "tools": [
+                        {
+                            "name": "invoke",
+                            "description": (
+                                "Internal native tool transport. "
+                                "Use the native file and shell tools."
+                            ),
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "id": {"type": "string"},
+                                    "tool": {
+                                        "type": "string",
+                                        "enum": list(NATIVE_TOOLS),
+                                    },
+                                    "args": {"type": "object"},
+                                    "session_id": {"type": "string"},
+                                },
+                                "required": ["id", "tool", "args", "session_id"],
+                            },
+                        }
+                    ]
+                }
+            elif method == "tools/call":
+                if request["params"]["name"] != "invoke":
+                    raise ValueError("Unknown transport tool")
+                payload = request["params"]["arguments"]
+                with active_lock:
+                    if request["id"] in cancelled:
+                        raise RuntimeError("Tool call was cancelled")
+                if payload["tool"] not in NATIVE_TOOLS:
+                    raise ValueError("Unknown native tool")
+                event = {
+                    "hook_event_name": "PreToolUse",
+                    "session_id": payload["session_id"],
+                    "tool_name": payload["tool"],
+                    "tool_use_id": payload["id"],
+                    "tool_input": payload["args"],
+                    "cwd": config["workspace"],
+                }
+                decision = publish_event(config, event)
+                if decision.get("deny"):
+                    outcome = decision
+                else:
+                    args = decision.get("hookSpecificOutput", {}).get(
+                        "updatedInput", payload["args"]
+                    )
+                    receipt = client.call(
+                        "invoke",
+                        {"id": payload["id"], "tool": payload["tool"], "args": args},
+                    )
+                    if "error" in receipt:
+                        outcome = {"deny": receipt["error"]}
+                    else:
+                        publish_event(
+                            config,
+                            dict(
+                                event,
+                                hook_event_name="PostToolUse",
+                                tool_input=args,
+                                tool_response=receipt["value"],
+                            ),
+                        )
+                        outcome = {"result": receipt["value"]}
+                value = {"content": [{"type": "text", "text": json.dumps(outcome)}]}
+            elif method == "ping":
+                value = {}
+            else:
+                raise ValueError("Unknown transport method")
+            response = {"jsonrpc": "2.0", "id": request["id"], "result": value}
+        except Exception as exc:
+            response = {
+                "jsonrpc": "2.0",
+                "id": request["id"],
+                "error": {"code": -32000, "message": str(exc)},
+            }
+        with output_lock:
+            print(json.dumps(response), flush=True)
+        with active_lock:
+            active.pop(request["id"], None)
+            cancelled.discard(request["id"])
+
+    with ThreadPoolExecutor() as workers:
+        for line in sys.stdin:
+            request = json.loads(line)
+            if request.get("method") == "notifications/cancelled":
+                workers.submit(cancel, request["params"]["requestId"])
+            if "id" in request:
+                if request.get("method") == "tools/call":
+                    with active_lock:
+                        active[request["id"]] = request["params"].get("arguments", {})
+                workers.submit(handle, request)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -434,17 +646,18 @@ def main():
             "control",
             "shell",
             "bootstrap",
-            "event",
             "checkpoint",
-            "invoke",
             "release",
+            "transport",
         ],
     )
     parser.add_argument("config", type=Path)
     parser.add_argument("args", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     config = json.loads(args.config.read_text())
-    if args.mode == "release":
+    if args.mode == "transport":
+        transport(config)
+    elif args.mode == "release":
         if __package__:
             from .private import release
         else:
@@ -494,20 +707,6 @@ def main():
         )
     elif args.mode == "shell":
         raise SystemExit(shell(args.config, args.args[0]))
-    elif args.mode == "event":
-        print(json.dumps(publish_event(config, json.load(sys.stdin))))
-    elif args.mode == "invoke":
-        payload = json.load(sys.stdin)
-        client = RemoteClient(config)
-
-        def cancel_invoke(signum, _frame):
-            if payload["tool"] == "Bash":
-                client.control({"subtype": "stop_request", "request_id": payload["id"]})
-            raise SystemExit(128 + signum)
-
-        signal.signal(signal.SIGTERM, cancel_invoke)
-        signal.signal(signal.SIGINT, cancel_invoke)
-        print(json.dumps(client.call("invoke", payload)))
     elif args.mode == "bootstrap":
         base_dir = args.config.parent
         launch = prepare(

@@ -13,21 +13,6 @@ function remotePath(path) {
     : path;
 }
 
-async function publish($, event, e, args, response) {
-    if (!execution.central_hooks?.[event]?.length) return {};
-    const payload = {
-      hook_event_name: event, session_id: await $.session.id(),
-      tool_name: e.tool, tool_use_id: e.tool_use_id, tool_input: args,
-      cwd: execution.workspace,
-    };
-    if (event === "PostToolUse") payload.tool_response = response;
-    const result = await $.process.run([...execution.helper, "event", execution.target_file], {
-      stdin: JSON.stringify(payload),
-    });
-    if (result.exitCode !== 0) throw new Error(result.stderr);
-    return JSON.parse(result.stdout || "{}");
-}
-
 export function register(on) {
   on("tool.call", async ($, e, next) => {
     const { tool, tool_use_id, ...args } = e;
@@ -36,19 +21,11 @@ export function register(on) {
         if (typeof args[field] === "string") args[field] = remotePath(args[field]);
       }
       try {
-        const decision = await publish($, "PreToolUse", e, args);
-        if (decision.deny) return decision;
-        const input = decision.hookSpecificOutput?.updatedInput || args;
-        const response = await $.process.run([...execution.helper, "invoke", execution.target_file], {
-          stdin: JSON.stringify({id: tool_use_id, tool, args: input}),
-          timeoutMs: 600000,
+        const response = await $.mcp.call("native", "invoke", {
+          id: tool_use_id, tool, args, session_id: await $.session.id(),
         });
-        if (response.exitCode !== 0) return { deny: response.stderr };
-        const receipt = JSON.parse(response.stdout);
-        if (receipt.error) return { deny: receipt.error };
-        const value = receipt.value;
-        await publish($, "PostToolUse", e, input, value);
-        return { result: value };
+        if (response.isError) return { deny: JSON.stringify(response.content) };
+        return JSON.parse(response.content[0].text);
       } catch (error) {
         return { deny: "Remote execution failed: " + String(error) };
       }

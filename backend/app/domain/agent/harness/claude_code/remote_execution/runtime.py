@@ -834,43 +834,9 @@ def bridge(state, server, *, call=None):
         thread.join()
 
 
-def relay(state, payload):
-    """Keep device exec output below its 1 MiB cap, including MCP images."""
-    directory = state / "relay"
-    identifier = str(uuid.UUID(payload["id"]))
-    path = directory / identifier
-    chunk_bytes = 384 * 1024
-    action = payload["action"]
-    if action == "call":
-        result = request(state, payload["method"], payload.get("params"))
-        encoded = json.dumps(result).encode()
-        if len(encoded) <= chunk_bytes:
-            print(json.dumps({"result": result}))
-            return
-        directory.mkdir(exist_ok=True, mode=0o700)
-        with path.open("xb") as output:
-            output.write(encoded)
-        print(json.dumps({"size": len(encoded)}))
-    elif action == "read":
-        offset = payload["offset"]
-        if not isinstance(offset, int) or offset < 0:
-            raise ValueError("Invalid response offset")
-        with path.open("rb") as original:
-            original.seek(offset)
-            content = original.read(chunk_bytes)
-        print(json.dumps({"data": base64.b64encode(content).decode()}))
-    elif action == "drop":
-        path.unlink(missing_ok=True)
-        print("{}")
-    else:
-        raise ValueError("Unknown relay action")
-
-
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "mode", choices=["start", "serve", "bridge", "request", "stop", "relay"]
-    )
+    parser.add_argument("mode", choices=["start", "serve", "bridge", "request", "stop"])
     parser.add_argument("--state", required=True, type=Path)
     parser.add_argument("--server", default="native")
     args = parser.parse_args()
@@ -882,8 +848,6 @@ def main():
     elif args.mode == "request":
         value = json.load(sys.stdin)
         print(json.dumps(request(state, value["method"], value.get("params"))))
-    elif args.mode == "relay":
-        relay(state, json.load(sys.stdin))
     elif args.mode == "stop":
         try:
             info = request(state, "ping")

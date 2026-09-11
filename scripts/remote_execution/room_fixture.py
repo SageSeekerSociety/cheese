@@ -121,23 +121,10 @@ class RoomExecutor:
 
         return Handler
 
-    async def exec(self, device, command, *, stdin, timeout):
+    async def call_executor(self, device, state, method, params):
         assert device == "executor"
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(
-            process.communicate(stdin.encode()), timeout
-        )
-        return {
-            "exit": process.returncode,
-            "stdout": stdout[: 1 << 20].decode(),
-            "stderr": stderr.decode(),
-            "truncated": len(stdout) > 1 << 20,
-        }
+        assert Path(state) == self.state
+        return await asyncio.to_thread(runtime.request, self.state, method, params)
 
     def close(self):
         subprocess.run(

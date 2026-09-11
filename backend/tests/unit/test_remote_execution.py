@@ -338,14 +338,18 @@ class RemoteExecutionTests(unittest.TestCase):
         target = self.root / "client.json"
         target.write_text(
             json.dumps(
-                {"command": [sys.executable, str(RUNTIME)], "state": str(self.state)}
+                {
+                    "command": [sys.executable, str(RUNTIME)],
+                    "state": str(self.state),
+                    "workspace": str(self.workspace),
+                }
             )
         )
         process = subprocess.Popen(
             [
                 sys.executable,
                 str(RUNTIME.with_name("client.py")),
-                "invoke",
+                "transport",
                 str(target),
             ],
             stdin=subprocess.PIPE,
@@ -358,6 +362,7 @@ class RemoteExecutionTests(unittest.TestCase):
             if process.poll() is None:
                 process.kill()
             process.wait(timeout=5)
+            process.stdin.close()
             process.stdout.close()
             process.stderr.close()
 
@@ -365,13 +370,25 @@ class RemoteExecutionTests(unittest.TestCase):
         process.stdin.write(
             json.dumps(
                 {
-                    "id": "interrupted",
-                    "tool": "Bash",
-                    "args": {"command": "touch started; sleep 2; touch forbidden.txt"},
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "invoke",
+                        "arguments": {
+                            "id": "interrupted",
+                            "session_id": "test",
+                            "tool": "Bash",
+                            "args": {
+                                "command": "touch started; sleep 2; touch forbidden.txt"
+                            },
+                        },
+                    },
                 }
             )
+            + "\n"
         )
-        process.stdin.close()
+        process.stdin.flush()
         deadline = time.monotonic() + 3
         while not (self.workspace / "started").exists() and time.monotonic() < deadline:
             time.sleep(0.02)

@@ -21,6 +21,8 @@ Our adaptations vs the reference:
 """
 
 import asyncio
+import base64
+import json
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -105,6 +107,7 @@ class HubDevice:
     # connector built before it announced either.
     build: str = ""
     target: str = ""
+    executor: bool = False
     # Whether this CONNECTION has already been told to update itself. Reset on
     # every attach, so a machine whose self-update failed is told again the next
     # time it dials in rather than once and never again.
@@ -122,6 +125,9 @@ class HubDevice:
     )
     call_pending: dict[str, asyncio.Future[Any]] = field(default_factory=dict)
     file_pending: dict[str, asyncio.Future[Any]] = field(default_factory=dict)
+    executor_pending: dict[str, tuple[asyncio.Future[Any], bytearray]] = field(
+        default_factory=dict
+    )
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     async def send(self, msg: dict[str, Any]) -> None:
@@ -148,7 +154,12 @@ class DeviceHub:
         self, device_id: str, transport: DeviceTransport, *, name: str = ""
     ) -> None:
         device = self._device(device_id)
+        if device.transport is not None and device.transport is not transport:
+            for future, _ in device.executor_pending.values():
+                if not future.done():
+                    future.set_exception(DeviceOffline(device_id))
         device.transport = transport
+        device.executor = False
         if name:
             device.name = name
         device.update_pushed = False
@@ -158,6 +169,9 @@ class DeviceHub:
         device = self._devices.get(device_id)
         if device is not None and device.transport is transport:
             device.transport = None
+            for future, _ in device.executor_pending.values():
+                if not future.done():
+                    future.set_exception(DeviceOffline(device_id))
             from app.domain.agent.harness.claude_code import (
                 drop_device_subscriptions,
                 drop_screen_subscriptions,
@@ -440,6 +454,40 @@ class DeviceHub:
         finally:
             device.exec_pending.pop(eid, None)
 
+    async def call_executor(
+        self,
+        device_id: str,
+        state: str,
+        method: str,
+        params: dict,
+        *,
+        timeout: float = 660,
+    ) -> dict:
+        device = self._device(device_id)
+        if device.transport is None:
+            raise DeviceOffline(device_id)
+        identifier = "execution-" + uuid.uuid4().hex
+        if not device.executor:
+            raise RuntimeError("Device connector must finish updating before execution")
+        future = asyncio.get_running_loop().create_future()
+        device.executor_pending[identifier] = (future, bytearray())
+        try:
+            await device.send(
+                {
+                    "t": "execution.call",
+                    "id": identifier,
+                    "path": state,
+                    "stdin": json.dumps({"method": method, "params": params}),
+                    "timeout": int(timeout),
+                }
+            )
+            return await asyncio.wait_for(future, timeout)
+        except (TimeoutError, asyncio.CancelledError):
+            await device.send(device_link.exec_cancel(identifier))
+            raise
+        finally:
+            device.executor_pending.pop(identifier, None)
+
     # -- viewers (browser <-> device screen) -------------------------------
 
     async def attach_viewer(
@@ -494,6 +542,7 @@ class DeviceHub:
             device.proto = msg.v
             device.build = msg.build
             device.target = msg.target
+            device.executor = msg.executor
             if device.proto not in (None, PROTOCOL_VERSION):
                 self._on_version_skew(device_id, device.proto)
             await self._update_if_stale(device, msg)
@@ -523,6 +572,24 @@ class DeviceHub:
                         "truncated": msg.truncated,
                     }
                 )
+            return
+        if msg.t in {"execution.data", "execution.result"}:
+            pending = device.executor_pending.get(msg.id)
+            if pending is None or pending[0].done():
+                return
+            future, data = pending
+            try:
+                if msg.t == "execution.data":
+                    data.extend(base64.b64decode(msg.data, validate=True))
+                elif msg.error:
+                    raise RuntimeError(msg.error)
+                else:
+                    response = json.loads(data)
+                    if "error" in response:
+                        raise RuntimeError(response["error"])
+                    future.set_result(response["result"])
+            except (ValueError, KeyError, RuntimeError) as exc:
+                future.set_exception(exc)
             return
         if msg.t == "screen.data" and screen is not None:
             await self._fan_out_screen_data(screen, msg.decoded_data())

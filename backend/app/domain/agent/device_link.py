@@ -39,6 +39,7 @@ class LinkMsg:
     # announced either — which is the whole point of asking (`connector_build`).
     build: str = ""
     target: str = ""
+    executor: bool = False
     name: str = ""
     value: Any = None
     id: str = ""
@@ -59,6 +60,7 @@ class LinkMsg:
             v=m.get("v"),
             build=str(m.get("build", "")),
             target=str(m.get("target", "")),
+            executor=m.get("executor") is True,
             name=str(m.get("name", "")),
             value=m.get("value"),
             id=str(m.get("id", "")),
