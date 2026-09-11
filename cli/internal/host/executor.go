@@ -18,7 +18,11 @@ import (
 // The authenticated server supplies the recorded executor state directory.
 // Requests use the existing device WebSocket and the resident executor socket.
 func executorExchange(ctx context.Context, state, input string, send func([]byte) error) error {
-	resolved, err := filepath.EvalSymlinks(state)
+	expanded, err := resolveScreenWorkDir(state)
+	if err != nil {
+		return err
+	}
+	resolved, err := filepath.EvalSymlinks(expanded)
 	if err != nil {
 		return err
 	}
