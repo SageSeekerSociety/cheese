@@ -244,6 +244,10 @@ def prepare(
     module = module.replace("__EXECUTION_CONFIG__", json.dumps(target))
     (plugin / "hooks/proxy.js").write_text(module)
     settings = json.loads(json.dumps(base_settings or {}))
+    permissions = settings.setdefault("permissions", {})
+    allowed = permissions.setdefault("allow", [])
+    if "mcp__native__invoke" not in allowed:
+        allowed.append("mcp__native__invoke")
     hooks = settings.setdefault("hooks", {})
     helper = [sys.executable, str(Path(__file__).resolve())]
     guard = shlex.join([*helper, "guard", str(target_path)])
