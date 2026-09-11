@@ -468,7 +468,7 @@ def case(folder, options):
                 assert not [
                     h
                     for h in hooks
-                    if h.get("tool_name") == "mcp__cheese_execution__invoke"
+                    if h.get("tool_name") == "mcp__native__invoke"
                 ], hooks
         else:
             assert results[0].get("is_error"), results
