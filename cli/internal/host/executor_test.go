@@ -78,6 +78,31 @@ func TestExecutorDisconnectDoesNotRetry(t *testing.T) {
 	}
 }
 
+func TestExecutorRecordedHomePath(t *testing.T) {
+	state, listener := executorListener(t)
+	t.Setenv("HOME", filepath.Dir(state))
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_, _ = bufio.NewReader(conn).ReadString('\n')
+		_, _ = conn.Write([]byte("{\"result\":{\"ok\":true}}\n"))
+	}()
+	var got bytes.Buffer
+	err := executorExchange(context.Background(), "$HOME/"+filepath.Base(state), `{"method":"ping"}`, func(data []byte) error {
+		_, err := got.Write(data)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.String() != "{\"result\":{\"ok\":true}}\n" {
+		t.Fatal(got.String())
+	}
+}
+
 func TestExecutorCancellationClosesWaitingSocket(t *testing.T) {
 	state, listener := executorListener(t)
 	closed := make(chan struct{})
