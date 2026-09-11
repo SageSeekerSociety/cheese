@@ -121,7 +121,7 @@ class RoomExecutor:
 
         return Handler
 
-    async def call_executor(self, device, state, method, params):
+    async def call_executor(self, device, state, method, params, *, trace_id=None):
         assert device == "executor"
         assert Path(state) == self.state
         return await asyncio.to_thread(runtime.request, self.state, method, params)

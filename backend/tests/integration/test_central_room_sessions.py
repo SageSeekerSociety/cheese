@@ -154,6 +154,7 @@ async def test_scoped_execution_and_rc_use_platform_owned_target(
     assert response.json() == {"content": "executor file"}
     assert call.await_args is not None
     assert call.await_args.args == (target, "invoke", payload["params"])
+    assert call.await_args.kwargs["trace_id"].startswith("execution-")
     assert client.post(endpoint, json=payload).status_code == 401
     assert (
         client.post(endpoint, headers=headers, json={"method": "configure"}).status_code
