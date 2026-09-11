@@ -612,6 +612,11 @@ class DeviceChannel(Channel):
         return None
 
     async def _device_api_base(self, device_id: str) -> str:
+        if (
+            device_id == settings.agent_session_device_id
+            and settings.agent_session_api_base
+        ):
+            return settings.agent_session_api_base.rstrip("/")
         factory = self._session_factory
         if factory is None:
             from app.core.db import async_session_factory

@@ -39,14 +39,32 @@ class ClaimCloud(FakeMicroCloud):
 
 
 @pytest.mark.parametrize(
-    "supply,direct,expected",
+    "supply,direct,center,internal,expected",
     [
-        (Supply.cloud, True, "http://127.0.0.1:18080"),
-        (Supply.cloud, False, "https://public.example/api"),
-        (Supply.self_hosted, True, "https://public.example/api"),
+        (Supply.cloud, True, None, None, "http://127.0.0.1:18080"),
+        (Supply.cloud, False, None, None, "https://public.example/api"),
+        (Supply.self_hosted, True, None, None, "https://public.example/api"),
+        (
+            Supply.self_hosted,
+            False,
+            "warm-test",
+            "http://127.0.0.1:18081/",
+            "http://127.0.0.1:18081",
+        ),
+        (
+            Supply.self_hosted,
+            False,
+            "other-device",
+            "http://127.0.0.1:18081",
+            "https://public.example/api",
+        ),
     ],
 )
-def test_device_api_route_follows_cloud_enrollment(warm_case, supply, direct, expected):
+def test_device_api_route_follows_cloud_enrollment(
+    warm_case, monkeypatch, supply, direct, center, internal, expected
+):
+    monkeypatch.setattr(settings, "agent_session_device_id", center)
+    monkeypatch.setattr(settings, "agent_session_api_base", internal)
     client, _, _, _ = warm_case
 
     async def run():

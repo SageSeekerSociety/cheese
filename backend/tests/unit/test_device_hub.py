@@ -64,7 +64,8 @@ async def test_executor_does_not_wait_for_an_unsupported_connector():
     assert len(transport.sent) == 1
 
 
-async def test_executor_result_waits_for_complete_response():
+async def test_executor_result_waits_for_complete_response(caplog):
+    caplog.set_level("INFO", logger="app.domain.agent.device_hub")
     hub, transport, task, identifier = await _executor_call()
     data = json.dumps({"result": {"text": "中文"}}, ensure_ascii=False).encode()
     for chunk in (data[:23], data[23:]):
@@ -79,6 +80,15 @@ async def test_executor_result_waits_for_complete_response():
     assert not task.done()
     await hub.on_device_message("dev1", {"t": "execution.result", "id": identifier})
     assert await task == {"text": "中文"}
+    messages = [r.message for r in caplog.records if "execution_timing" in r.message]
+    assert [m.split("stage=", 1)[1].split()[0] for m in messages] == [
+        "device_send_start",
+        "device_sent",
+        "device_first_data",
+        "device_complete",
+    ]
+    assert all(f"trace={identifier}" in m for m in messages)
+    assert all("中文" not in m for m in messages)
 
 
 async def test_executor_disconnect_reports_unknown_outcome_without_replay():

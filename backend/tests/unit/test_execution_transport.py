@@ -53,7 +53,7 @@ class SocketDevice:
         self.devices = []
         self.hub = DeviceHub()
 
-    async def call_executor(self, device_id, state, method, params):
+    async def call_executor(self, device_id, state, method, params, *, trace_id=None):
         self.devices.append(device_id)
         await self.hub.attach_device(device_id, self)
         await self.hub.on_device_message(device_id, {"t": "hello", "executor": True})

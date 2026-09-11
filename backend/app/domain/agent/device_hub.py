@@ -24,6 +24,7 @@ import asyncio
 import base64
 import json
 import logging
+import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -462,16 +463,22 @@ class DeviceHub:
         params: dict,
         *,
         timeout: float = 660,
+        trace_id: str | None = None,
     ) -> dict:
         device = self._device(device_id)
         if device.transport is None:
             raise DeviceOffline(device_id)
-        identifier = "execution-" + uuid.uuid4().hex
+        identifier = trace_id or "execution-" + uuid.uuid4().hex
         if not device.executor:
             raise RuntimeError("Device connector must finish updating before execution")
         future = asyncio.get_running_loop().create_future()
         device.executor_pending[identifier] = (future, bytearray())
         try:
+            logger.info(
+                "execution_timing stage=device_send_start trace=%s mono_ns=%d",
+                identifier,
+                time.monotonic_ns(),
+            )
             await device.send(
                 {
                     "t": "execution.call",
@@ -480,6 +487,11 @@ class DeviceHub:
                     "stdin": json.dumps({"method": method, "params": params}),
                     "timeout": int(timeout),
                 }
+            )
+            logger.info(
+                "execution_timing stage=device_sent trace=%s mono_ns=%d",
+                identifier,
+                time.monotonic_ns(),
             )
             return await asyncio.wait_for(future, timeout)
         except (TimeoutError, asyncio.CancelledError):
@@ -580,10 +592,27 @@ class DeviceHub:
             future, data = pending
             try:
                 if msg.t == "execution.data":
+                    if not data:
+                        logger.info(
+                            "execution_timing stage=device_first_data "
+                            "trace=%s mono_ns=%d",
+                            msg.id,
+                            time.monotonic_ns(),
+                        )
                     data.extend(base64.b64decode(msg.data, validate=True))
                 elif msg.error:
+                    logger.info(
+                        "execution_timing stage=device_error trace=%s mono_ns=%d",
+                        msg.id,
+                        time.monotonic_ns(),
+                    )
                     raise RuntimeError(msg.error)
                 else:
+                    logger.info(
+                        "execution_timing stage=device_complete trace=%s mono_ns=%d",
+                        msg.id,
+                        time.monotonic_ns(),
+                    )
                     response = json.loads(data)
                     if "error" in response:
                         raise RuntimeError(response["error"])

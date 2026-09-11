@@ -105,6 +105,7 @@ class Settings(BaseSettings):
     agent_model: str = "glm-5.2"
     # Shared central session host; private scratch runs in isolated containers.
     agent_session_device_id: str | None = None
+    agent_session_api_base: str | None = None
     private_chat_executor_image: str = "cheese-private-executor:2.1.265"
     anthropic_base_url: str | None = None
     anthropic_auth_token: str | None = None

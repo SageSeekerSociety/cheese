@@ -1,5 +1,7 @@
 """Scoped tool calls to the room's recorded execution generation."""
 
+import logging
+import time
 import uuid
 from typing import Annotated
 
@@ -14,6 +16,7 @@ from app.domain.agent import execution
 from app.domain.topic.services import TopicService
 
 router = APIRouter(tags=["execution"])
+logger = logging.getLogger(__name__)
 
 
 class ExecutionRequest(BaseModel):
@@ -29,6 +32,14 @@ async def execute(
     payload: ExecutionRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
+    trace_id = "execution-" + uuid.uuid4().hex
+    logger.info(
+        "execution_timing stage=handler_start trace=%s mono_ns=%d method=%s tool_id=%s",
+        trace_id,
+        time.monotonic_ns(),
+        payload.method,
+        payload.params.get("id", ""),
+    )
     claims = scoped_token_claims(request.headers.get("x-cheese-token", ""))
     if not claims or claims.get("t") != str(topic_id):
         raise AuthenticationRequiredError("A credential for this room is required")
@@ -48,4 +59,18 @@ async def execute(
         raise ForbiddenError("This executor operation is not available to the session")
     target = placement["execution"]
     await db.commit()
-    return await execution.call(target, payload.method, payload.params)
+    logger.info(
+        "execution_timing stage=admitted trace=%s mono_ns=%d",
+        trace_id,
+        time.monotonic_ns(),
+    )
+    try:
+        return await execution.call(
+            target, payload.method, payload.params, trace_id=trace_id
+        )
+    finally:
+        logger.info(
+            "execution_timing stage=handler_end trace=%s mono_ns=%d",
+            trace_id,
+            time.monotonic_ns(),
+        )
