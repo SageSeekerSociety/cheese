@@ -240,6 +240,8 @@ func (h *Host) onMsg(m link.Msg) {
 		}
 	case "exec": // run a one-shot command on this machine and return its output
 		go h.runExec(m)
+	case "execution.call":
+		go h.runExecutor(m)
 	case "exec.cancel": // stop an in-flight exec (e.g. the caller's timeout fired)
 		h.cancelExec(m.ID)
 	case "update": // server-pushed forced update: update in place and re-exec
