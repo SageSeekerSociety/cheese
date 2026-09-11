@@ -249,6 +249,13 @@ def prepare(
     if "mcp__native__invoke" not in allowed:
         allowed.append("mcp__native__invoke")
     hooks = settings.setdefault("hooks", {})
+    # The transport publishes hooks for the original tool. Running them again
+    # for its internal MCP call duplicates events and delays both directions.
+    for event in ("PreToolUse", "PostToolUse"):
+        for group in hooks.get(event, []):
+            matcher = group.get("matcher", "*")
+            matcher = ".*" if matcher in ("*", "") else matcher
+            group["matcher"] = f"^(?!mcp__native__invoke$).*(?:{matcher})"
     helper = [sys.executable, str(Path(__file__).resolve())]
     guard = shlex.join([*helper, "guard", str(target_path)])
     hooks.setdefault("PreToolUse", []).insert(
