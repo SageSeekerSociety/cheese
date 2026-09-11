@@ -2,6 +2,7 @@ package terminal
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,6 +11,42 @@ import (
 	"testing"
 	"time"
 )
+
+func TestCloseOwnsClaimedWarmTerminalWithoutKillingOtherSessions(t *testing.T) {
+	isolate(t)
+	owner, err := NewManager()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(owner.KillServer)
+	isolate(t)
+	warm, err := NewManager()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(warm.KillServer)
+	for _, name := range []string{"claimed", "spare"} {
+		if _, err := warm.Spawn(name, []string{"sleep", "60"}, nil, 80, 24); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := owner.Spawn("screen", []string{"sleep", "60"}, nil, 80, 24); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := json.Marshal(map[string]string{"socket": warm.sock, "session": "claimed"})
+	if err := owner.tmux("set-option", "-t", "screen", "@cheese-terminal", string(data)).Run(); err != nil {
+		t.Fatal(err)
+	}
+	if err := owner.Adopt("screen").Close(); err != nil {
+		t.Fatal(err)
+	}
+	if owner.HasSession("screen") || warm.HasSession("claimed") {
+		t.Fatal("closing a recovered owner left its claimed terminal alive")
+	}
+	if !warm.HasSession("spare") {
+		t.Fatal("closing a screen killed an unclaimed spare")
+	}
+}
 
 // isolate points NewManager at a runtime dir of this test's own. NewManager
 // derives its socket from $TMPDIR, and on a machine that hosts agents the
@@ -51,6 +88,9 @@ func TestHasSessionAndAdopt(t *testing.T) {
 	}
 	if !m.HasSession("t1") {
 		t.Error("HasSession returned false for a live session")
+	}
+	if err := m.SaveIdentity("t1", "https://backend.test", `{"sid":"t1"}`); err != nil {
+		t.Fatalf("save identity: %v", err)
 	}
 
 	adopted := m.Adopt("t1")

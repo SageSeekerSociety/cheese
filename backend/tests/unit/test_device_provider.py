@@ -60,6 +60,9 @@ class FakeHub:
     def online_device_ids(self) -> list[str]:
         return ["dev1"]
 
+    async def list_screens(self, device_id):
+        return []
+
     def is_online(self, device_id: str) -> bool:
         return device_id == "dev1"
 
@@ -262,6 +265,102 @@ async def test_restart_recovery_uses_durable_topic_pins(monkeypatch):
 
     await provider.drop_device_subscriptions("dev1")
     assert router.push(str(topic_id), {"hook_event_name": "Stop"}) is False
+
+
+async def test_central_recovery_restores_actual_screen_and_close_reaches_device(
+    monkeypatch,
+):
+    from unittest.mock import AsyncMock
+
+    from app.domain.agent.central_provider import CentralChannel
+    from app.domain.agent.device_hub import DeviceHub
+    from app.domain.identity.services import IdentityService
+
+    project_id, topic_id, resource_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    room = SimpleNamespace(
+        id=topic_id,
+        project_id=project_id,
+        resource_id=resource_id,
+        session_placement={
+            "device_id": "center",
+            "channel": "device",
+            "resource_id": str(resource_id),
+        },
+    )
+    metadata = {
+        "sid": "survivor",
+        "screen": "birth-token",
+        "command": ["claude"],
+        "env": {
+            "CHEESE_PROJECT": str(project_id),
+            "CHEESE_TOPIC": str(topic_id),
+            "CHEESE_RESOURCE_ID": str(resource_id),
+            "CHEESE_TOKEN_EXPIRES": "1234567890",
+            "CHEESE_AGENT_CONFIG": "original-config",
+            "CHEESE_EXECUTION_TARGET": '{"device_id":"executor"}',
+        },
+    }
+    hub = DeviceHub()
+    sent = []
+    retired = {
+        **metadata,
+        "sid": "retired",
+        "screen": "retired-token",
+        "env": {**metadata["env"], "CHEESE_RESOURCE_ID": str(uuid.uuid4())},
+    }
+
+    class Transport:
+        async def send_json(self, msg):
+            sent.append(msg)
+            if msg["t"] in ("session.list", "session.close"):
+                await hub.on_device_message(
+                    "center",
+                    {
+                        "t": "session.result",
+                        "id": msg["id"],
+                        "value": [metadata, retired]
+                        if msg["t"] == "session.list"
+                        else None,
+                    },
+                )
+
+    class Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def scalars(self, query):
+            return [room]
+
+        async def commit(self):
+            pass
+
+    async def agent(self, topic):
+        return SimpleNamespace(id=1, username="agent")
+
+    monkeypatch.setattr(IdentityService, "ensure_topic_agent_user", agent)
+    monkeypatch.setattr(
+        "app.domain.topic.services.TopicService.get", AsyncMock(return_value=room)
+    )
+    await hub.attach_device("center", Transport())
+    executor = DeviceChannel(hub=hub, session_factory=Session)
+    executor.discover = AsyncMock(return_value=[])
+    central = CentralChannel(executor)
+    result = await central.discover("center")
+    screen = hub.screen("survivor")
+    assert result == [(project_id, topic_id, screen, None)]
+    assert screen.resource_id == resource_id
+    assert screen.credential_expires == 1234567890
+    assert screen.agent_configuration == "original-config"
+    assert screen.execution_target == {"device_id": "executor"}
+    assert hub.screen("retired") is not None
+    assert {item.sid for item in hub.all_online_screens()} == {"survivor", "retired"}
+    assert not any(msg["t"] == "session.create" for msg in sent)
+    assert await hub.close_screen("center", screen.sid)
+    assert hub.screen("survivor") is None
+    assert sent[-1]["t"] == "session.close"
 
 
 async def test_a_hook_delivered_live_and_again_by_replay_is_consumed_once(

@@ -318,26 +318,6 @@ echo down
 """
 
 
-# The spool drainer, shipped to "$HOME/.claude/cheese-drain" and started INSIDE
-# claude's own tmux session (same life, same death). It used to be backgrounded
-# in the OUTER launcher tree — the CONNECTOR's process tree — so a connector
-# restart killed the drainer while claude survived inside tmux: claude kept
-# working, every hook landed in the spool, and nothing ever sent them (84 events
-# piled up on a dev box while the platform read the turn as unresponsive).
-#
-# Config (spool dir / hook URL / token) is sourced from "$0.env" on EVERY pass:
-# the launcher rewrites that file (atomically) on each launch, so a drainer
-# adopted from an earlier turn delivers with the CURRENT turn's token and URL,
-# not the ones its session was born with. "$0.pid" is the idempotence handle —
-# a relaunch checks it before starting a second drainer. (Both are per isolated
-# HOME, matching the spool itself, which a project's topics share.)
-#
-# CHEESE_DRAIN_TETHER (set by the revival path only): the pid of the claude
-# pane this drainer was revived NEXT TO. A revived drainer runs in its own tmux
-# window, and a window with no exit condition would hold the session open after
-# claude died — the next launch would then adopt a claude-less session and
-# prompt into nothing. The tether makes it exit when claude goes, taking the
-# window (and with it the otherwise-empty session) down.
 # Starts the tunnel helper and does NOT return until its port answers.
 #
 # The wait is the point. `claude` reads HTTPS_PROXY once at startup and makes its
@@ -751,13 +731,7 @@ esac
 # stops an unreachable backend from accumulating retries forever. The backend
 # dedups re-deliveries by event-id.
 #
-# The drainer is NOT started here: this launcher runs in the CONNECTOR's
-# process tree, which dies with the connector while claude survives in its own
-# tmux — a drainer backgrounded here died exactly then, and every later hook
-# spooled with no sender. It starts inside claude's tmux session below (same
-# life, same death). Only its config is written here, atomically (tmp + mv, so
-# a running drainer never sources a half-written file) and on EVERY launch, so
-# an adopted drainer always delivers with the current turn's token/URL.
+# The supervisor below owns the drainer for a newly started session.
 export CHEESE_HOOK_SPOOL="$HOME/.claude/cheese-spool"
 export CHEESE_HOOK_SPOOL_ONLY=1
 mkdir -p "$CHEESE_HOOK_SPOOL"
@@ -812,26 +786,6 @@ PREVIEWTOK
   export CHEESE_PREVIEW_UP="$HOME/.claude/cheese-preview-up"
 fi
 cd "$CHEESE_WORK"
-# Host claude in a PERSISTENT tmux session so it survives a link/screen drop: the
-# session keeps running on the device and re-opening the screen re-attaches to it
-# (the PTY mirrors the pane for the human viewer). Direct exec if tmux isn't
-# installed.
-# Prefix that must complete BEFORE claude: it brings the tunnel helper up and
-# waits for its port, because claude reads HTTPS_PROXY once and calls out
-# immediately. Empty when this deployment has no tunnel, so the direct path
-# does not pay for a script it does not use.
-TUP=""
-if [ -n "${{CHEESE_TUNNEL_URL:-}}" ]; then
-  TUP="sh \\"$HOME/.claude/cheese-tunnel-up\\" >/dev/null 2>&1;"
-fi
-# Same shape for the preview helper, and it is genuinely a prefix rather than a
-# background job of its own: the script backgrounds the helper and returns at
-# once, and it exits without doing anything at all when no preview was ever
-# declared here.
-PUP=""
-if [ -n "${{CHEESE_PREVIEW_URL:-}}" ]; then
-  PUP="sh \\"$HOME/.claude/cheese-preview-up\\" >/dev/null 2>&1;"
-fi
 # --- prompt delivery: the rendezvous socket, and the version floor under it ---
 # Prompts reach this claude over a unix socket it binds ITSELF (three env vars
 # below), where the runtime enqueues them as `origin: {{kind:"human"}}` — the
@@ -986,6 +940,8 @@ if [ -n "$WARM_ROOT" ]; then
 import os
 import runpy
 import sys
+import json
+import subprocess
 from pathlib import Path
 
 # The heredoc carries code; tmux and environment scripts still need the PTY.
@@ -999,283 +955,61 @@ if code:
 terminal = runner["connection"](
     directory, os.environ["CHEESE_PROJECT"], os.environ["CHEESE_TOPIC"]
 )
+outer_socket = os.environ["TMUX"].split(",", 1)[0]
+outer_session = subprocess.check_output(
+    ["tmux", "-S", outer_socket, "display-message", "-p", "-t",
+     os.environ["TMUX_PANE"], "#S"],
+    text=True,
+).strip()
+owned_terminal = {{
+    "socket": terminal["command"][2],
+    "session": terminal["command"][-1],
+}}
+subprocess.run(
+    ["tmux", "-S", outer_socket, "set-option", "-t", outer_session,
+     "@cheese-terminal", json.dumps(owned_terminal)],
+    check=True,
+)
 os.environ.pop("TMUX", None)
 os.execvp("tmux", terminal["command"])
 WARM_ATTACH
 fi
-if command -v tmux >/dev/null 2>&1; then
-  # WHICH tmux server hosts the inner session decides who is able to wipe it.
-  # The machine's DEFAULT server belongs to the person whose machine this is:
-  # their `tmux kill-server` would take every agent on the box with it, our
-  # teardown would take their sessions, and their `tmux ls` would list our
-  # internals — the constraint device-self-hosting §0 exists to hold. So the
-  # session lives in the CONNECTOR's private server: the very one this launcher
-  # is already running inside.
-  #
-  # That socket needs no new contract between connector and launcher, because
-  # tmux hands it to every pane as the first field of $TMUX
-  # ("<socket>,<pid>,<session>"). Read it before unsetting. With no connector
-  # around it, a per-user socket of our own still keeps us off the owner's
-  # server — the invariant holds either way, which is the point.
+# The connector owns the terminal session. This shell owns its children.
+if [ -n "${{TMUX:-}}" ]; then
   CHEESE_TMUX_SOCK="${{TMUX%%,*}}"
-  if [ -z "$CHEESE_TMUX_SOCK" ]; then
-    CHEESE_TMUX_DIR="/tmp/cheese-$(id -u)"
-    (umask 077 && mkdir -p "$CHEESE_TMUX_DIR") || true
-    CHEESE_TMUX_SOCK="$CHEESE_TMUX_DIR/agent.sock"
-  fi
-  # tmux refuses to attach from inside a pane while $TMUX is set, so it has to
-  # go. Every command below names the socket explicitly instead of inheriting
-  # one, so nothing in this block can silently land on the default server.
-  unset TMUX
-  atmux() {{ tmux -S "$CHEESE_TMUX_SOCK" "$@"; }}
-  # The session name is derived from the WORK DIR, never a fixed "cheese": one
-  # shared session made every topic on a device attach to whatever cwd the FIRST
-  # topic had, so later topics edited the wrong tree and never saw new launcher
-  # env (observed live: a 7-day-old session still serving new topics). Keying on
-  # the work dir gives per-topic isolation AND retires a stale session whenever
-  # the resolved work dir changes.
-  SESSION="cheese_$(printf '%s' "$CHEESE_WORK" | cksum | cut -d' ' -f1)"
+  SESSION="$(tmux -S "$CHEESE_TMUX_SOCK" display-message -p -t "$TMUX_PANE" '#S')"
   python3 -c 'import json,sys; json.dump(sys.argv[1:], open(sys.argv[3], "w"))' \\
     "$CHEESE_TMUX_SOCK" "$SESSION" "$HOME/.claude/environment-session.json"
-  # A matching name on the owner's default server does not prove ownership.
-  # Only the connector's private server belongs to this launch.
-  # A surviving inner session runs the `claude` it was BORN with, and claude
-  # reads its model credential (CLAUDE_CODE_OAUTH_TOKEN / the HTTPS_PROXY
-  # password) ONCE at startup — it never re-reads it. So the fresh scoped token
-  # THIS launch just minted never reaches an adopted process: once the baked
-  # token expires the metering proxy answers 407 on every turn, and no relaunch,
-  # backend redeploy, or re-mint fixes it because the long-lived process keeps
-  # the dead credential. That reuse is the second layer under #385 — extending
-  # the TTL from 1h to a session only delays the day the baked token dies under a
-  # still-running claude. So before adopting, retire a session whose recorded
-  # token expiry (written in the create branch below) is past, seconds from
-  # expiring, or missing; the create branch then replaces it with a claude
-  # carrying THIS launch's live token. A session whose token is still good is
-  # adopted unchanged — no churn, and an in-flight turn is never interrupted. The
-  # margin is deliberately small: it only rejects an already-dead-or-dying token,
-  # never a healthy one, so a short-lived credential (the gateway path's hour) is
-  # re-minted at most once an hour rather than on every turn.
-  # Configuration is checked at the turn boundary, including after backend restart.
-  printf '%s' "${{CHEESE_AGENT_CONFIG:-}}" > "$HOME/.claude/agent-configuration"
-  printf '%s' {shlex.quote(claude_args)} > "$HOME/.claude/launch-contract"
-  EXPFILE="$HOME/.claude/$SESSION.tokexp"
-  if atmux has-session -t "$SESSION" 2>/dev/null; then
-    TOKEXP="$(cat "$EXPFILE" 2>/dev/null || true)"
-    case "$TOKEXP" in ''|*[!0-9]*) TOKEXP=0 ;; esac
-    # Retire on a dead credential OR on a changed launch contract. claude reads
-    # settings.json ONCE at startup, so a screen reused across turns keeps
-    # whatever contract it was born with — a shipped change to WHICH ticket it
-    # carries reaches the file and never reaches the process. Measured
-    # 2026-08-14: the file said one thing and the running claude was still
-    # failing on the other. Same reasoning as the tunnel helper's stamp.
-    CFGF="$HOME/.claude/$SESSION.cfg"
-    # The machine's ticket is part of the contract, and it does NOT live in that
-    # settings.json as far as this process is concerned — the launcher exports
-    # it, so a ticket that changed (or appeared for the first time, the moment
-    # this path shipped) leaves the file byte-identical and the running claude
-    # holding the old credential forever. Folding the ticket into the checksum
-    # is what makes a rotation reach the process. On a device with no ticket the
-    # file is absent and this is the old checksum unchanged, so nothing churns.
-    CFGNOW="$(cat "$REAL_HOME/.claude/settings.json" \\
-      "$HOME/.claude/cheese-machine.token" \\
-      "$HOME/.claude/agent-configuration" \\
-      "$HOME/.claude/launch-contract" 2>/dev/null | cksum | cut -d" " -f1)"
-    CFGWAS="$(cat "$CFGF" 2>/dev/null || true)"
-    RETIRE=0
-    [ -f "$HOME/.claude/environment-restart" ] && RETIRE=1
-    [ "$TOKEXP" -le "$(( $(date +%s) + 300 ))" ] && RETIRE=1
-    [ -n "$CFGNOW" ] && [ "$CFGNOW" != "$CFGWAS" ] && RETIRE=1
-    # The connector's server keeps a pane after its program exits, so a claude
-    # that died leaves the session standing with a DEAD pane. Adopting that
-    # hosts nothing: every later turn attaches to a corpse and the topic never
-    # gets a claude again. A dead first pane is as good a reason to retire as a
-    # dead credential.
-    case "$(atmux list-panes -s -t "$SESSION" -F '#{{pane_dead}}' 2>/dev/null \\
-      | head -n 1)" in 1) RETIRE=1 ;; esac
-    if [ "$RETIRE" = 1 ]; then
-      atmux kill-session -t "$SESSION" 2>/dev/null || true
-    fi
-  fi
-  if atmux has-session -t "$SESSION" 2>/dev/null; then
-    # Adopt: claude (and normally the drainer sharing its pane, started below)
-    # is already running — never start a second drainer. But a session CAN
-    # outlive its drainer (one created before the drainer moved in-session; a
-    # crashed loop), so when the recorded pid is gone, revive one in a window
-    # of THIS session — tethered to the claude pane so it can never outlive
-    # claude and pin the session open.
-    # Same reasoning as the drainer below: a session can outlive the helper
-    # (connector restart, crashed loop), and claude keeps pointing at that dead
-    # loopback port — every turn then fails looking exactly like a stalled model.
-    # `cheese-tunnel-up` adopts a live one and starts a new one otherwise.
-    #
-    # No tether here, unlike the drainer's window. The drainer needs one because
-    # it RUNS in that window and would hold the session open after claude died;
-    # this window only starts a helper that now (`nohup`) outlives it and exits
-    # straight away, so there is nothing left to pin the session down.
-    if [ -n "${{CHEESE_TUNNEL_URL:-}}" ]; then
-      atmux new-window -d -t "$SESSION" -n cheese-tunnel \\
-        "CHEESE_TUNNEL_URL=$CHEESE_TUNNEL_URL CHEESE_TUNNEL_PORT=$CHEESE_TUNNEL_PORT \\
-         exec sh \\"$HOME/.claude/cheese-tunnel-up\\"" \\
-        || true
-    fi
-    # A preview declared on an earlier turn outlives the helper that carried it
-    # (a killed process, a machine reboot), and the room would then show a dead
-    # panel for an app that is still running. The up script adopts a live helper
-    # and is a no-op when nobody ever declared a port, so running it on every
-    # adopt costs a `cksum` and restores a preview that would otherwise need the
-    # agent to declare it again.
-    if [ -n "${{CHEESE_PREVIEW_URL:-}}" ]; then
-      atmux new-window -d -t "$SESSION" -n cheese-preview \\
-        "CHEESE_PREVIEW_URL=$CHEESE_PREVIEW_URL \\
-         exec sh \\"$HOME/.claude/cheese-preview-up\\"" \\
-        || true
-    fi
-    DRAIN_PID="$(cat "$HOME/.claude/cheese-drain.pid" 2>/dev/null || true)"
-    # Upgrade only the sender; the native agent and its context keep running.
-    DRAIN_WANT="$(cksum "$HOME/.claude/cheese-drain" | cut -d' ' -f1)"
-    DRAIN_HAVE="$(cat "$HOME/.claude/cheese-drain.version" 2>/dev/null || true)"
-    if [ -n "$DRAIN_PID" ] && kill -0 "$DRAIN_PID" 2>/dev/null &&
-       [ "$DRAIN_WANT" != "$DRAIN_HAVE" ]; then
-      case "$(ps -p "$DRAIN_PID" -o args=)" in
-        *" - $HOME/.claude/cheese-drain"*)
-          kill "$DRAIN_PID"
-          DRAIN_WAIT=0
-          while kill -0 "$DRAIN_PID" 2>/dev/null && [ "$DRAIN_WAIT" -lt 10 ]; do
-            sleep 1
-            DRAIN_WAIT=$((DRAIN_WAIT + 1))
-          done
-          if kill -0 "$DRAIN_PID" 2>/dev/null; then
-            echo "Spool sender has not stopped for upgrade" >&2; exit 1
-          fi
-          ;;
-        *) echo "Refusing to replace an unidentified spool sender" >&2; exit 1 ;;
-      esac
-    fi
-    if [ -z "$DRAIN_PID" ] || ! kill -0 "$DRAIN_PID" 2>/dev/null; then
-      TETHER="$(atmux list-panes -s -t "$SESSION" -F '#{{pane_pid}}' \\
-        2>/dev/null | head -n 1)"
-      atmux new-window -d -t "$SESSION" -n cheese-drain \\
-        "CHEESE_DRAIN_TETHER=$TETHER exec sh \\"$HOME/.claude/cheese-drain\\"" \\
-        || true
-    fi
-  else
-    # The drainer is backgrounded INSIDE the session command, then the shell
-    # execs claude in the same pane: the whole delivery chain lives and dies
-    # with the tmux session, not with the connector that spawned this launcher.
-    # Stamp the token expiry this claude is BORN with so the gate above can later
-    # tell a stale-credential session from a good one and retire only the stale.
-    printf '%s\\n' "${{CHEESE_TOKEN_EXPIRES:-0}}" > "$EXPFILE" 2>/dev/null || true
-    cat "$REAL_HOME/.claude/settings.json" \\
-      "$HOME/.claude/cheese-machine.token" \\
-      "$HOME/.claude/agent-configuration" \\
-      "$HOME/.claude/launch-contract" 2>/dev/null | cksum | cut -d" " -f1 \\
-      > "$HOME/.claude/$SESSION.cfg" 2>/dev/null || true
-    # Hand THIS launch's credential / routing / attribution env to the new session
-    # EXPLICITLY with -e, never by inheritance. tmux seeds a new session's env from
-    # the tmux SERVER's GLOBAL env — frozen when that server first started — for
-    # every var outside `update-environment` (which lists only DISPLAY / SSH_*).
-    # CLAUDE_CODE_OAUTH_TOKEN, the HTTPS_PROXY password and the CHEESE_* wiring are
-    # none of them, so on a server that has been up since another topic's launch
-    # (which, now the connector's own server hosts these sessions, is the normal
-    # case) a brand-new claude would silently boot with the token frozen into
-    # that server when the connector started — a stale, wrong-topic credential
-    # — instead of the one this turn minted. That is the 407 that outlives a
-    # re-mint, a backend redeploy AND killing the old session: the dead token lives
-    # in the server's global env, not the process, so recreating the session alone
-    # inherits it again. -e writes the session env before claude execs, per key, so
-    # each topic's claude runs on its OWN live credential.
-    set -- new-session -d -s "$SESSION" -c "$CHEESE_WORK"
-    # HOME and PATH are load-bearing for isolation and MUST travel per session:
-    # both point into this topic's isolated home (PATH leads with its .claude,
-    # where cheese-hook/cheese live), both are always non-empty, and neither is
-    # in tmux's update-environment set — so without -e every claude after the
-    # server's first would inherit the FIRST topic's HOME/PATH from the frozen
-    # server global, resolve the first topic's hook forwarder, and report every
-    # event as that topic (measured live 2026-08-15: /proc of topic B's claude
-    # showed topic A's HOME and PATH).
-    for _kv in \\
-      "HOME=$HOME" "PATH=$PATH" \\
-      "CLAUDE_CONFIG_DIR=$CLAUDE_CONFIG_DIR" \\
-      "CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN" \\
-      "ANTHROPIC_AUTH_TOKEN=$ANTHROPIC_AUTH_TOKEN" \\
-      "ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL" \\
-      "HTTPS_PROXY=$HTTPS_PROXY" "HTTP_PROXY=$HTTP_PROXY" \\
-      "NO_PROXY=$NO_PROXY" "no_proxy=$no_proxy" \\
-      "NODE_EXTRA_CA_CERTS=$NODE_EXTRA_CA_CERTS" \\
-      "ANTHROPIC_CUSTOM_HEADERS=$ANTHROPIC_CUSTOM_HEADERS" \\
-      "CLAUDE_MODEL=$CLAUDE_MODEL" \\
-      "CLAUDE_BG_BACKEND=$CLAUDE_BG_BACKEND" \\
-      "CLAUDE_BG_RENDEZVOUS_SOCK=$CLAUDE_BG_RENDEZVOUS_SOCK" \\
-      "CLAUDE_BG_RV_AUTH=$CLAUDE_BG_RV_AUTH" \\
-      "CHEESE_TOKEN=$CHEESE_TOKEN" "CHEESE_HOOK_URL=$CHEESE_HOOK_URL" \\
-      "CHEESE_API=$CHEESE_API" "CHEESE_PROJECT=$CHEESE_PROJECT" \\
-      "CHEESE_TOPIC=$CHEESE_TOPIC" "CHEESE_AUTHOR=$CHEESE_AUTHOR" \\
-      "CHEESE_TUNNEL_URL=$CHEESE_TUNNEL_URL" \\
-      "CHEESE_TUNNEL_PORT=$CHEESE_TUNNEL_PORT" \\
-      "CHEESE_PREVIEW_URL=$CHEESE_PREVIEW_URL" \\
-      "CHEESE_PREVIEW_UP=$CHEESE_PREVIEW_UP"; do
-      # An empty value = a var this launch didn't set; skip it (a same-mode box's
-      # frozen-global copy already matches, and forcing empty could flip modes).
-      case "$_kv" in *=) ;; *) set -- "$@" -e "$_kv" ;; esac
-    done
-    # The -e list above is a curated view of THIS launcher's environment, and
-    # every var it misses is inherited from the server's frozen global env —
-    # i.e. from a DIFFERENT topic's launcher. That class of bug has now struck
-    # three times (the token / #409, HOME+PATH / #433, CHEESE_HOOK_SPOOL —
-    # measured 2026-08-16: topic E's claude spooled every hook into topic F's
-    # dir, so F's drainer shipped E's events under F's identity). So the
-    # session no longer TRUSTS inheritance at all: the launcher dumps its
-    # complete environment (shell-quoted by python, atomically renamed) and
-    # the session command sources it before exec'ing claude. The -e list stays
-    # as a safety net for the window where the dump could not be written.
-    # TMUX/TMUX_PANE are tmux's own (and deliberately unset here), PWD/OLDPWD
-    # would lie about the session's real cwd, SHLVL/_ are shell bookkeeping.
-    ENVF="$HOME/.claude/cheese-session-env"
-    python3 -c 'import os, shlex
-skip = ("TMUX", "TMUX_PANE", "PWD", "OLDPWD", "SHLVL", "_")
-for k, v in os.environ.items():
-    if k not in skip:
-        print("export %s=%s" % (k, shlex.quote(v)))' > "$ENVF.tmp" \\
-      && mv "$ENVF.tmp" "$ENVF" || rm -f "$ENVF.tmp"
-    SRCENV=""
-    [ -s "$ENVF" ] && SRCENV=". \\"$ENVF\\"; "
-    DRAINCMD="sh \\"$HOME/.claude/cheese-drain\\" >/dev/null 2>&1"
-    set -- "$@" "$SRCENV$TUP$PUP $DRAINCMD & exec $ENVIRONMENT_CMD$CLAUDE"
-    # Fall back to a plain create ONLY when this tmux predates -e (< 3.0 says
-    # "unknown flag" / prints usage). Any OTHER create failure fails LOUDLY:
-    # the old catch-everything fallback turned a transient server error into a
-    # silent degradation (#427) — and even though the sourced env file now
-    # carries the full environment either way (#434), a masked failure still
-    # costs its diagnosis. The launcher exiting non-zero surfaces as a screen
-    # setup error on the turn, which is the honest outcome.
-    if ! _ERR=$(atmux "$@" 2>&1); then
-      case "$_ERR" in
-        *"unknown flag"*|*"usage:"*|*"invalid option"*)
-          atmux new-session -d -s "$SESSION" -c "$CHEESE_WORK" \\
-            "$SRCENV$TUP$PUP $DRAINCMD & exec $ENVIRONMENT_CMD$CLAUDE"
-          ;;
-        *)
-          echo "cheese-launch: tmux new-session failed: $_ERR" >&2
-          exit 1 ;;
-      esac
-    fi
-  fi
-  rm -f "$HOME/.claude/environment-restart"
-  exec tmux -S "$CHEESE_TMUX_SOCK" attach -t "$SESSION"
-else
-  # eval, not bare exec: $CLAUDE now carries a QUOTED file path, and plain
-  # word-splitting would hand claude the quote characters themselves.
-  # No tmux → claude stays in THIS process tree, so a drainer backgrounded
-  # right here genuinely shares its fate; same-life-same-death holds as is.
-  if [ -n "${{CHEESE_TUNNEL_URL:-}}" ]; then
-    sh "$HOME/.claude/cheese-tunnel-up" >/dev/null 2>&1 || true
-  fi
-  if [ -n "${{CHEESE_PREVIEW_URL:-}}" ]; then
-    sh "$HOME/.claude/cheese-preview-up" >/dev/null 2>&1 || true
-  fi
-  sh "$HOME/.claude/cheese-drain" >/dev/null 2>&1 &
-  eval "exec $ENVIRONMENT_CMD$CLAUDE"
 fi
+printf '%s' "${{CHEESE_AGENT_CONFIG:-}}" > "$HOME/.claude/agent-configuration"
+printf '%s' {shlex.quote(claude_args)} > "$HOME/.claude/launch-contract"
+CLAUDE_PID=""
+DRAIN_PID=""
+cleanup() {{
+  trap '' HUP INT TERM
+  [ -z "$CLAUDE_PID" ] || kill "$CLAUDE_PID" 2>/dev/null || true
+  [ -z "$DRAIN_PID" ] || kill "$DRAIN_PID" 2>/dev/null || true
+  wait 2>/dev/null || true
+}}
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap cleanup EXIT
+if [ -n "${{CHEESE_TUNNEL_URL:-}}" ]; then
+  sh "$HOME/.claude/cheese-tunnel-up" || exit 1
+fi
+if [ -n "${{CHEESE_PREVIEW_URL:-}}" ]; then
+  sh "$HOME/.claude/cheese-preview-up" || exit 1
+fi
+CHEESE_DRAIN_TETHER=$$ sh "$HOME/.claude/cheese-drain" >/dev/null 2>&1 &
+DRAIN_PID=$!
+eval "exec $ENVIRONMENT_CMD$CLAUDE" <&0 &
+CLAUDE_PID=$!
+RESULT=0
+wait "$CLAUDE_PID" || RESULT=$?
+CLAUDE_PID=""
+exit "$RESULT"
+
 """
 
 
