@@ -52,7 +52,7 @@ class CentralChannel(DeviceChannel):
 
     async def discover(self, device_id=None):
         factory = self._session_factory or async_session_factory
-        found = []
+        scopes = []
         async with factory() as session:
             rooms = await session.scalars(
                 select(Topic).where(Topic.session_placement.is_not(None))
@@ -66,7 +66,7 @@ class CentralChannel(DeviceChannel):
                     center
                 ):
                     self._subscription_devices[room.id] = center
-                    found.append((room.project_id, room.id, None, None))
+                    scopes.append((room.project_id, room.id, center))
             placed = {
                 room.id
                 for room in await session.scalars(
@@ -74,6 +74,7 @@ class CentralChannel(DeviceChannel):
                 )
                 if room.session_placement
             }
+        found = await self.restore_screens(scopes)
         # Finish consuming turns that began before this deployment. Their next
         # opening transfers the transcript; no new prompt starts on the old host.
         for scope in await self.executor.discover(device_id):

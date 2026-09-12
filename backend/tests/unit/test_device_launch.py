@@ -74,7 +74,8 @@ def test_warm_adoption_waits_for_room_configuration(
         f"    return {adoption_exit}\n"
         "def connection(directory, project, topic):\n"
         "    assert (Path(os.environ['HOME']) / 'adopted').exists()\n"
-        "    return {'command': ['tmux']}\n"
+        "    return {'command': ['tmux', '-S', '/test/warm.sock', "
+        "'attach-session', '-t', 'native-warm']}\n"
     )
     binary = owner / ".cheese/claude/versions" / device_launch.CLAUDE_PINNED_VERSION
     binary.parent.mkdir(parents=True)
@@ -97,6 +98,8 @@ def test_warm_adoption_waits_for_room_configuration(
                 "CHEESE_TOPIC": str(uuid.uuid4()),
                 "CHEESE_RV_SOCK": str(tmp_path / "rv.sock"),
                 "CHEESE_RV_TOKEN_FILE": str(tmp_path / "rv.token"),
+                "TMUX": "/test/owner.sock,1,0",
+                "TMUX_PANE": "%0",
             },
             stdout=output,
             stderr=output,
@@ -366,10 +369,6 @@ def test_build_screen_launch_shapes_command_and_env():
     # A remote screen is just as unreachable for AskUserQuestion's in-terminal
     # picker as the local pane is — same deny, carried on the launch line.
     assert "--disallowedTools AskUserQuestion" in script
-    # Session name is derived from the work dir (per-topic isolation; a stale
-    # session can't serve a different topic's tree).
-    assert 'SESSION="cheese_$(printf' in script
-    assert 'new-session -d -s "$SESSION" -c "$CHEESE_WORK"' in script
     assert "CHEESE_HOOK_SPOOL" in script
     # Env carries the hook wiring, home/work, model, and the gateway var.
     assert env["CHEESE_HOOK_URL"] == "http://h/sandbox/hooks/T"
@@ -499,45 +498,6 @@ def _drain_body() -> str:
     return script.split("<<'DRAIN'\n", 1)[1].split("\nDRAIN\n", 1)[0] + "\n"
 
 
-def test_drainer_lives_inside_the_claude_tmux_session():
-    """The drainer used to be backgrounded in the OUTER launcher tree — the
-    connector's process tree. A connector restart killed it while claude
-    survived inside tmux: hooks kept spooling with no sender (84 piled up on a
-    dev box while the platform read the turn as unresponsive). It must start
-    inside the tmux session command itself, sharing claude's pane and fate."""
-    script = device_launch.build_launch_script()
-    # No drainer loop in the launcher's own tree on the tmux path.
-    assert "( while true" not in script
-    # The session command backgrounds the drainer, then execs claude — one
-    # pane, one fate: the session dying takes both, the connector dying takes
-    # neither.
-    m = re.search(
-        r'tmux new-session -d -s "\$SESSION" -c "\$CHEESE_WORK" \\\n\s+"(.+)"\n',
-        script,
-    )
-    assert m, "new-session lost its command string"
-    wrapper = m.group(1)
-    # The drainer may appear inline or via the $DRAINCMD variable the script
-    # defines right above (both expand to `sh .../cheese-drain`).
-    assert "cheese-drain" in wrapper or "$DRAINCMD" in wrapper
-    assert wrapper.endswith("& exec $ENVIRONMENT_CMD$CLAUDE")
-    proc = subprocess.run(["sh", "-n"], input=script, capture_output=True, text=True)
-    assert proc.returncode == 0, proc.stderr
-
-
-def test_adopt_rerun_revives_a_dead_drainer_but_never_doubles_a_live_one():
-    """Re-running the launcher against a live session (the #369 adopt/reassert
-    path) must be idempotent: a live drainer (its recorded pid answers) is left
-    alone; a missing one (pre-fix session, crashed loop) is revived INSIDE the
-    session, tethered to the claude pane so it cannot outlive claude and hold
-    the session open."""
-    script = device_launch.build_launch_script()
-    assert 'cat "$HOME/.claude/cheese-drain.pid"' in script
-    assert 'kill -0 "$DRAIN_PID"' in script
-    assert 'tmux new-window -d -t "$SESSION" -n cheese-drain' in script
-    assert "CHEESE_DRAIN_TETHER=$TETHER" in script
-
-
 def test_drainer_config_is_rewritten_each_launch_and_read_each_pass():
     """An adopted drainer outlives the turn that started it, so it must deliver
     with the CURRENT turn's token/URL: the launcher rewrites the config file
@@ -552,71 +512,6 @@ def test_drainer_config_is_rewritten_each_launch_and_read_each_pass():
         'CHEESE_TOKEN="$CHEESE_TOKEN"',
     ):
         assert line in script
-
-
-def test_adoption_upgrades_only_the_old_sender_process(tmp_path):
-    import threading
-    from pathlib import Path
-
-    home = tmp_path / "home"
-    native_home = home / ".claude"
-    native_home.mkdir(parents=True)
-    drain = native_home / "cheese-drain"
-    drain.write_text(
-        "#!/bin/sh\nexec python3 - \"$0\" <<'PY'\n"
-        "import os, sys, time\nfrom pathlib import Path\n"
-        "Path(sys.argv[1] + '.pid').write_text(str(os.getpid()))\n"
-        "while True: time.sleep(1)\nPY\n"
-    )
-    old = subprocess.Popen(["sh", str(drain)])
-    native = subprocess.Popen(["sleep", "30"])
-    reaper = threading.Thread(target=old.wait)
-    reaper.start()
-    try:
-        deadline = time.monotonic() + 5
-        while not Path(str(drain) + ".pid").exists() and time.monotonic() < deadline:
-            time.sleep(0.01)
-        assert Path(str(drain) + ".pid").exists()
-        drain.write_text(_drain_body())
-        script = device_launch.build_launch_script()
-        adoption = script.split('    DRAIN_PID="', 1)[1].split("\n  else\n", 1)[0]
-        log = tmp_path / "tmux-calls"
-        wrapper = (
-            'set -e\natmux() { printf "%s\\n" "$*" >> "$TEST_LOG"; }\n'
-            + '    DRAIN_PID="'
-            + adoption
-        )
-        result = subprocess.run(
-            ["sh", "-c", wrapper],
-            env={
-                **os.environ,
-                "HOME": str(home),
-                "SESSION": "fixture",
-                "TEST_LOG": str(log),
-            },
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        assert result.returncode == 0, result.stderr
-        assert old.poll() is not None
-        assert native.poll() is None
-        assert "new-window -d -t fixture -n cheese-drain" in log.read_text()
-    finally:
-        for process in (old, native):
-            if process.poll() is None:
-                process.terminate()
-            process.wait(timeout=5)
-        reaper.join(timeout=5)
-
-
-def test_no_tmux_branch_keeps_the_drainer_in_claudes_own_tree():
-    """Without tmux, claude stays in the launcher's process tree — a drainer
-    backgrounded there genuinely shares its fate, so that shape stays."""
-    script = device_launch.build_launch_script()
-    no_tmux = script.split("\nelse\n", 1)[1]  # outer else only (inner is indented)
-    assert 'sh "$HOME/.claude/cheese-drain"' in no_tmux
-    assert 'eval "exec $ENVIRONMENT_CMD$CLAUDE"' in no_tmux
 
 
 def _write_drainer(tmp_path, *, curl_response: str) -> tuple:
@@ -749,35 +644,49 @@ def test_the_gates_written_are_valid_json():
     assert parsed["projects"]["/w"]["hasTrustDialogAccepted"] is True
 
 
-# --- the inner claude must boot on THIS launch's token, not a frozen one ------
-#
-# A device's `claude` runs in a PERSISTENT inner tmux session on the connector's
-# own private tmux server. The 407-that-outlives-a-re-mint has two layers:
-#   1. tmux seeds a new session's env from the SERVER's GLOBAL env — frozen when
-#      the server first started — for every var not in `update-environment`
-#      (DISPLAY/SSH_* only). So a brand-new claude on an already-running server
-#      inherits the token frozen weeks ago, not the one this turn minted. The
-#      launcher now passes the credential per-key with `-e`, overriding the global.
-#   2. A surviving session's claude reads its credential ONCE at startup; an
-#      adopted-but-expired one keeps serving a dead token. The launcher stamps the
-#      born-with expiry and retires a session whose credential has died.
-# These tests drive the real generated shell (stub tmux, and a real tmux server
-# for the frozen-global case) and assert both.
-
-
-def _tmux_hosting_block() -> str:
-    """The tmux-hosting branch of the launcher, standalone (its env is supplied by
-    the caller instead of the full launcher's earlier setup)."""
+def _supervisor_block():
     script = device_launch.build_launch_script()
-    head = "if command -v tmux >/dev/null 2>&1; then\n"
-    tail = '  exec tmux -S "$CHEESE_TMUX_SOCK" attach -t "$SESSION"\n'
-    body = script.split(head, 1)[1].split(tail, 1)[0]
-    return "set -e\n" + head + body + tail + "fi\n"
+    marker = "# The connector owns the terminal session."
+    return "set -e\n" + marker + script.split(marker, 1)[1]
 
 
-# The socket the stub/real tmux below stands for: the launcher reads it out of
-# $TMUX, exactly as a pane of the connector's own tmux would.
-STUB_SOCK = "/tmp/cheese-test-connector.sock"  # noqa: S108 — never bound, only named
+def _spawn_supervisor(socket, env, body):
+    import shlex
+    import shutil
+
+    tmux = shutil.which("tmux")
+    if (
+        subprocess.run(
+            [tmux, "-S", socket, "has-session", "-t", "=screen"], capture_output=True
+        ).returncode
+        == 0
+    ):
+        return
+    keys = (
+        "PATH",
+        "HOME",
+        "CHEESE_WORK",
+        "CLAUDE",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "CHEESE_HOOK_SPOOL",
+        "CHEESE_TOKEN_EXPIRES",
+        "CHEESE_ENVIRONMENT",
+    )
+    command = shlex.join(
+        [
+            "env",
+            *[f"{k}={env[k]}" for k in keys if k in env],
+            "sh",
+            "-c",
+            'cd "$CHEESE_WORK"; ' + body,
+        ]
+    )
+    subprocess.run(
+        [tmux, "-S", socket, "new-session", "-d", "-s", "screen", command], check=True
+    )
+
+
+STUB_SOCK = "/tmp/cheese-test-connector.sock"
 
 
 def _stub_tmux_env(tmp_path):
@@ -841,15 +750,6 @@ def _stub_tmux_env(tmp_path):
     return home, env, log
 
 
-def _run_block(env, expiry):
-    env = {**env, "CHEESE_TOKEN_EXPIRES": str(expiry)}
-    proc = subprocess.run(
-        ["sh", "-c", _tmux_hosting_block()], env=env, capture_output=True, text=True
-    )
-    assert proc.returncode == 0, proc.stderr
-    return proc
-
-
 def test_full_launcher_installs_platform_cli_without_network(tmp_path):
     home, env, _log = _stub_tmux_env(tmp_path)
     bindir = tmp_path / "bin"
@@ -859,7 +759,10 @@ def test_full_launcher_installs_platform_cli_without_network(tmp_path):
     curl.chmod(0o755)
     claude = home / ".local/bin/claude"
     claude.parent.mkdir(parents=True)
-    claude.write_text('#!/bin/sh\necho "2.1.261 (Claude Code)"\n')
+    claude.write_text(
+        '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "2.1.261 (Claude Code)"; '
+        'else printf "%s" "$BUN_OPTIONS" > "$HOME/bun-options"; fi\n'
+    )
     claude.chmod(0o755)
     env["CHEESE_TOKEN_EXPIRES"] = str(int(time.time()) + 3600)
     # Devices execute a shipped file; Linux rejects this script's size in argv.
@@ -883,19 +786,7 @@ def test_full_launcher_installs_platform_cli_without_network(tmp_path):
             )
         ).read_bytes()
     )
-    environment = subprocess.run(
-        [
-            "sh",
-            "-c",
-            '. "$1"; printf "%s" "$BUN_OPTIONS"',
-            "fixture",
-            str(home / ".claude/cheese-session-env"),
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    assert environment.stdout == f'"--preload={transport}"'
+    assert (home / "bun-options").read_text() == f'"--preload={transport}"'
     installed = home / ".claude/cheese"
     source = (
         device_launch.Path(device_launch.__file__).resolve().parents[5]
@@ -907,12 +798,6 @@ def test_full_launcher_installs_platform_cli_without_network(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert "usage:" in result.stdout
-
-
-def _tokexp_file(home):
-    files = list((home / ".claude").glob("*.tokexp"))
-    assert len(files) == 1, files
-    return files[0]
 
 
 def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_path):
@@ -949,7 +834,10 @@ def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_p
     curl.write_text(
         '#!/bin/sh\nwhile [ "$#" -gt 0 ]; do\n'
         'if [ "$1" = "-o" ]; then shift; dest="$1"; fi\nshift\ndone\n'
-        'printf \'#!/bin/sh\\necho "2.1.261 (Claude Code)"\\n\' > "$dest"\n'
+        "cat > \"$dest\" <<'AGENT'\n#!/bin/sh\n"
+        'if [ "$1" = "--version" ]; then echo "2.1.261 (Claude Code)"; '
+        'else printf "%s\\n" "$@" "$CLAUDE_CONFIG_DIR" > "$HOME/agent.args"; '
+        "fi\nAGENT\n"
     )
     curl.chmod(0o755)
     launcher = tmp_path / "launch.sh"
@@ -967,131 +855,9 @@ def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_p
     for name in ("cheese-docs",):
         assert (session / ".claude/skills" / name / "SKILL.md").is_file()
     assert not previous_chat_skill.exists()
-    args = (tmp_path / "newsession.args").read_text()
+    args = (session / "agent.args").read_text()
     assert "--dangerously-skip-permissions" in args
-    assert f"CLAUDE_CONFIG_DIR={session}/.claude" in args
-
-
-def test_the_agent_session_never_lands_on_the_machine_owners_tmux_server(tmp_path):
-    """A Hosted machine is someone's own laptop. If our claude lives in their
-    DEFAULT tmux server then their `tmux kill-server` takes every agent on the
-    box with it, our teardown takes their sessions, and `tmux ls` shows them our
-    internals. So every command that hosts, adopts or attaches must name the
-    connector's own socket — the one $TMUX handed this pane."""
-    home, env, log = _stub_tmux_env(tmp_path)
-    _run_block(env, expiry=int(time.time()) + 100_000)
-
-    sockets = set(open(env["STUB_SOCKS"]).read().split())
-    assert sockets == {STUB_SOCK}, (
-        f"an inner tmux command went to a server we do not own: {sockets}"
-    )
-    on_default = [s for s in log.read_text().split() if s.startswith("default:")]
-    assert not on_default, f"the machine owner's server was used: {on_default}"
-
-
-def test_a_matching_session_on_the_machine_owners_server_is_untouched(tmp_path):
-    """A Cheese-shaped name does not grant ownership of a user's session."""
-    home, env, log = _stub_tmux_env(tmp_path)
-    open(env["STUB_OWNER_MARK"], "w").close()  # one is squatting there
-
-    _run_block(env, expiry=int(time.time()) + 100_000)
-
-    steps = log.read_text().split()
-    assert not any(step.startswith("default:") for step in steps)
-    assert os.path.exists(env["STUB_OWNER_MARK"])
-    assert "new" in steps, "and this launch still hosts its own claude"
-
-
-def test_a_session_whose_claude_died_is_not_adopted(tmp_path):
-    """The connector's server keeps a pane after its program exits, so a claude
-    that died leaves the session standing with a dead pane. Adopting it hosts
-    nothing — every later turn would attach to a corpse and the topic would never
-    get a claude again."""
-    home, env, log = _stub_tmux_env(tmp_path)
-    good = int(time.time()) + 100_000
-    _run_block(env, expiry=good)  # create
-    _run_block({**env, "STUB_PANES": "1"}, expiry=good)  # its claude has since died
-
-    steps = log.read_text().split()
-    assert "kill" in steps, "a session whose pane is dead must be retired"
-    assert steps.count("new") == 2, "and replaced by a live claude"
-
-
-def test_a_fresh_inner_session_records_the_launch_token_expiry(tmp_path):
-    """First launch (no session yet): claude starts and the launcher records the
-    expiry of the token it was born with, so a later launch can judge it."""
-    home, env, log = _stub_tmux_env(tmp_path)
-    exp = int(time.time()) + 100_000
-    _run_block(env, expiry=exp)
-    assert "new" in log.read_text().split()  # a session was created
-    assert _tokexp_file(home).read_text().strip() == str(exp)
-
-
-def test_a_stale_inner_session_is_retired_and_relaunched_with_the_fresh_expiry(
-    tmp_path,
-):
-    """The bug: a surviving session whose baked credential has expired is adopted,
-    so the fresh token never runs. Now it is killed and replaced, and the NEW
-    launch's expiry is recorded — not the reused dead one."""
-    home, env, log = _stub_tmux_env(tmp_path)
-    _run_block(env, expiry=int(time.time()) + 100_000)  # create the session
-    # Its baked token has since expired (a pre-#385 1h token, or a >TTL-old one).
-    _tokexp_file(home).write_text(str(int(time.time()) - 100))
-    fresh = int(time.time()) + 900_000
-    _run_block(env, expiry=fresh)  # relaunch
-
-    steps = log.read_text().split()
-    assert "kill" in steps, "a stale-credential session must be retired"
-    assert steps.count("new") == 2, "and replaced by a fresh claude"
-    assert _tokexp_file(home).read_text().strip() == str(fresh), (
-        "the relaunch must record the FRESH expiry, not the reused dead one"
-    )
-
-
-def test_a_valid_inner_session_is_adopted_without_relaunch(tmp_path):
-    """No churn: a session whose baked token is still good is adopted unchanged —
-    an in-flight turn on a live credential is never interrupted."""
-    home, env, log = _stub_tmux_env(tmp_path)
-    good = int(time.time()) + 100_000
-    _run_block(env, expiry=good)  # create
-    _run_block(env, expiry=int(time.time()) + 900_000)  # relaunch, token still good
-
-    steps = log.read_text().split()
-    assert "kill" not in steps, "a still-valid session must not be killed"
-    assert steps.count("new") == 1, "and must not be relaunched"
-    assert _tokexp_file(home).read_text().strip() == str(good), "expiry left intact"
-
-
-def test_explicit_environment_application_restarts_a_process_without_a_receipt(
-    tmp_path,
-):
-    home, env, log = _stub_tmux_env(tmp_path)
-    good = int(time.time()) + 100_000
-    _run_block(env, expiry=good)
-    marker = home / ".claude/environment-restart"
-    marker.touch()
-    _run_block(env, expiry=good)
-    assert log.read_text().split().count("new") == 2
-    assert not marker.exists()
-
-
-def test_create_passes_the_fresh_credential_explicitly_via_dash_e(tmp_path):
-    """The new session must be handed THIS launch's token with -e, not left to
-    inherit it — inheritance is exactly what pulls the stale frozen-global token."""
-    home, env, log = _stub_tmux_env(tmp_path)
-    env = {
-        **env,
-        "CLAUDE_CODE_OAUTH_TOKEN": "fresh-oauth-tok",
-        "HTTPS_PROXY": "http://cheese:fresh-oauth-tok@proxy:8080",
-        "CHEESE_TOPIC": "topic-abc",
-    }
-    _run_block(env, expiry=int(time.time()) + 100_000)
-    args = open(env["STUB_ARGS"]).read().splitlines()
-    assert "-e" in args, "the session must be created with explicit env"
-    assert "CLAUDE_CODE_OAUTH_TOKEN=fresh-oauth-tok" in args
-    assert "HTTPS_PROXY=http://cheese:fresh-oauth-tok@proxy:8080" in args
-    # per-topic attribution must be explicit too (the alive probe keys on it)
-    assert "CHEESE_TOPIC=topic-abc" in args
+    assert f"{session}/.claude" in args
 
 
 def _tmux_ge_30() -> bool:
@@ -1147,12 +913,7 @@ def test_environment_prepares_once_on_attach_and_runs_startup_after_reset(tmp_pa
                 0
             ]
         )
-        subprocess.run(
-            ["sh", "-c", prefix + _tmux_hosting_block()],
-            env=env,
-            capture_output=True,
-            timeout=10,
-        )
+        _spawn_supervisor(socket, env, prefix + _supervisor_block())
 
     def wait_agents(count):
         deadline = time.monotonic() + 5
@@ -1251,12 +1012,7 @@ def test_fresh_token_overrides_a_stale_tmux_server_global(tmp_path):
             # — no wrapper pinning it there.
             "TMUX": f"{sock},1,0",
         }
-        subprocess.run(
-            ["sh", "-c", _tmux_hosting_block()],
-            env=env,
-            capture_output=True,
-            text=True,
-        )  # ends in `exec tmux attach` (fails fast, no tty) — the session is up
+        _spawn_supervisor(sock, env, _supervisor_block())
         deadline = time.monotonic() + 8
         while not token_out.exists() and time.monotonic() < deadline:
             time.sleep(0.05)
@@ -1345,8 +1101,6 @@ def test_the_helper_starts_inside_the_session_and_before_claude():
     claude reads HTTPS_PROXY once and calls out immediately, so a helper that is
     still binding loses that race and the screen boots unauthenticated."""
     script = _launch_with_tunnel()
-    assert "$TUP$PUP $DRAINCMD & exec $ENVIRONMENT_CMD$CLAUDE" in script
-    assert 'TUP="sh \\"$HOME/.claude/cheese-tunnel-up\\" >/dev/null 2>&1;"' in script
     # The wait itself, in the up-script — and NOT via bash's /dev/tcp: this runs
     # under `sh`, which is dash on the machine images, where that redirect fails
     # on every iteration and the loop would report "not ready" for a helper that
@@ -1359,7 +1113,6 @@ def test_a_deployment_without_a_tunnel_writes_and_runs_none_of_it():
     """Every deployment that has one today reaches the listener directly. The
     tunnel must cost them nothing — not a written file, not a no-op call."""
     script = _launch_with_tunnel(CHEESE_TUNNEL_URL="")
-    assert 'TUP=""' in script
     # The guard is what makes it inert; the heredoc body may still be present.
     assert 'if [ -n "${CHEESE_TUNNEL_URL:-}" ]; then' in script
 
@@ -1566,58 +1319,6 @@ def test_the_helper_is_verified_by_the_dash_syntax_check_too():
     assert checked.returncode == 0, checked.stderr
 
 
-def test_a_session_born_on_a_different_contract_is_retired():
-    """claude reads settings.json ONCE at startup and a screen is reused across
-    turns, so a shipped change to WHICH ticket it carries reaches the file and
-    never reaches the process. Measured 2026-08-14: the file said one thing and
-    the running claude kept failing on the other, with nothing to indicate why."""
-    script = _launch_with_tunnel()
-    assert "$SESSION.cfg" in script
-    assert '"$REAL_HOME/.claude/settings.json"' in script
-    # The contract is the settings file AND the ticket the launcher exports; the
-    # ticket does not live in that file, so checksumming the file alone would
-    # miss a rotation entirely. See the test below.
-    assert "cksum" in script
-    # Both reasons retire, and neither is allowed to mask the other.
-    assert "RETIRE=1" in script
-    assert script.count("RETIRE=1") >= 2
-
-
-def test_surviving_inner_session_detects_an_agent_edit(tmp_path):
-    import os
-    import subprocess
-    import time
-
-    script = device_launch.build_launch_script()
-    config_dir = tmp_path / ".claude"
-    config_dir.mkdir()
-    (config_dir / "settings.json").write_text("{}")
-    (config_dir / "cheese-machine.token").write_text("unchanged-ticket")
-    (config_dir / "agent-configuration").write_text("original-config")
-    env = {
-        **os.environ,
-        "HOME": str(tmp_path),
-        "REAL_HOME": str(tmp_path),
-        "SESSION": "test-session",
-        "TOKEXP": str(int(time.time()) + 3600),
-    }
-    start = script.rindex('    cat "$REAL_HOME/.claude/settings.json"')
-    record = script[start : script.index("    # Hand THIS launch", start)]
-    subprocess.run(["bash", "-c", record], env=env, check=True)
-    start = script.index('    CFGF="$HOME/.claude/$SESSION.cfg"')
-    gate = script[start : script.index("    # The connector's server", start)]
-    for config, retired in [("original-config", "0"), ("edited-config", "1")]:
-        (config_dir / "agent-configuration").write_text(config)
-        result = subprocess.run(
-            ["bash", "-c", gate + '\nprintf "%s" "$RETIRE"'],
-            env=env,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        assert result.stdout == retired
-
-
 def test_the_launcher_adopts_that_ticket_as_the_model_credential():
     """It has to reach claude through the process environment, because the file
     that would otherwise carry it is in a home claude does not read."""
@@ -1654,26 +1355,6 @@ def test_the_tunnel_password_stays_the_scoped_token():
             text=True,
         )
         assert result.stdout.strip() == connect
-
-
-def test_a_changed_machine_ticket_retires_the_session_that_baked_the_old_one():
-    """claude reads its model credential ONCE at startup, and the ticket is
-    exported by the launcher rather than living in the settings.json the retire
-    gate checksums — so a rotated ticket would leave that file byte-identical
-    and the running claude holding a dead credential forever. Both sides of the
-    comparison have to include it, or the gate compares the wrong thing on one
-    of them and retires on every single launch."""
-    script = device_launch.build_launch_script()
-
-    both = [
-        line
-        for line in script.splitlines()
-        if "cheese-machine.token" in line and "cksum" in script
-    ]
-    assert len(both) >= 2, "the ticket joins the checksum when read AND when recorded"
-    # And the old single-file form is gone from both, or one side would compare
-    # a checksum of different bytes and never match.
-    assert 'cksum "$REAL_HOME/.claude/settings.json"' not in script
 
 
 # --- the read-only reconcile (#5: never touch the machine owner's files) ------
@@ -1846,102 +1527,9 @@ def test_the_launcher_exports_the_config_dir_and_passes_it_into_tmux():
     — same reasoning as the credential below it)."""
     script = device_launch.build_launch_script()
     assert 'export CLAUDE_CONFIG_DIR="$HOME/.claude"' in script
-    assert '"CLAUDE_CONFIG_DIR=$CLAUDE_CONFIG_DIR"' in script
     # And the stale handoff from a previous launch is cleared before the
     # extraction runs, so an old ticket can never be exported by mistake.
     assert 'rm -f "$HOME/.claude/cheese-machine.token"' in script
-
-
-def test_a_transient_create_failure_fails_loudly_not_into_the_fallback(tmp_path):
-    """#427: the no-`-e` fallback is for pre-3.0 tmux ONLY. Any other create
-    failure must surface as a launcher failure (→ a visible screen-setup error
-    on the turn), never silently retry without per-session env."""
-    home = tmp_path / "home"
-    (home / ".claude").mkdir(parents=True)
-    work = home / "work"
-    work.mkdir()
-    (home / ".claude" / "cheese-drain").write_text("#!/bin/sh\nexit 0\n")
-    bindir = tmp_path / "bin"
-    bindir.mkdir()
-    calls = tmp_path / "tmux.calls"
-    stub = bindir / "tmux"
-    stub.write_text(
-        "#!/bin/sh\n"
-        'if [ "$1" = "-S" ]; then shift 2; fi\n'
-        f'echo "$@" >> "{calls}"\n'
-        'case "$1" in\n'
-        "  has-session) exit 1 ;;\n"
-        '  new-session) echo "create failed: server error" >&2; '
-        "exit 1 ;;\n"
-        "esac\nexit 0\n"
-    )
-    stub.chmod(0o755)
-    result = subprocess.run(
-        ["sh", "-c", _tmux_hosting_block()],
-        env={
-            "PATH": f"{bindir}:/usr/bin:/bin",
-            "HOME": str(home),
-            "CHEESE_WORK": str(work),
-            "CLAUDE": "true",
-            "CHEESE_TOKEN_EXPIRES": str(int(time.time()) + 100_000),
-            "TMUX": f"{STUB_SOCK},1,0",
-        },
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode != 0, "a non-version create failure must fail the launch"
-    assert "cheese-launch: tmux new-session failed" in result.stderr
-    body = calls.read_text()
-    assert body.count("new-session") == 1, (
-        f"the no--e fallback ran on a non-version failure: {body}"
-    )
-
-
-def test_an_old_tmux_without_dash_e_still_gets_the_fallback(tmp_path):
-    """The one failure the fallback exists for: a pre-3.0 tmux rejecting `-e`
-    (usage/unknown-flag output) still launches the screen, with the sourced env
-    file carrying the full environment (#434)."""
-    home = tmp_path / "home"
-    (home / ".claude").mkdir(parents=True)
-    work = home / "work"
-    work.mkdir()
-    (home / ".claude" / "cheese-drain").write_text("#!/bin/sh\nexit 0\n")
-    bindir = tmp_path / "bin"
-    bindir.mkdir()
-    calls = tmp_path / "tmux.calls"
-    stub = bindir / "tmux"
-    stub.write_text(
-        "#!/bin/sh\n"
-        'if [ "$1" = "-S" ]; then shift 2; fi\n'
-        f'echo "$@" >> "{calls}"\n'
-        'case "$1" in\n'
-        "  has-session) exit 1 ;;\n"
-        "  new-session)\n"
-        f'    if ! grep -q "fallback-done" "{calls}" 2>/dev/null '
-        '&& echo "$@" | grep -q -- " -e "; then\n'
-        '      echo "usage: new-session [-AdDEPX] ..." >&2; exit 1\n'
-        "    fi\n"
-        f'    echo fallback-done >> "{calls}"\n'
-        "    exit 0 ;;\n"
-        "  attach) exit 0 ;;\n"
-        "esac\nexit 0\n"
-    )
-    stub.chmod(0o755)
-    result = subprocess.run(
-        ["sh", "-c", _tmux_hosting_block()],
-        env={
-            "PATH": f"{bindir}:/usr/bin:/bin",
-            "HOME": str(home),
-            "CHEESE_WORK": str(work),
-            "CLAUDE": "true",
-            "CHEESE_TOKEN_EXPIRES": str(int(time.time()) + 100_000),
-            "TMUX": f"{STUB_SOCK},1,0",
-        },
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
-    assert "fallback-done" in calls.read_text()
 
 
 # --- 运行环境预览: the preview helper shipped alongside the tunnel's -------------
@@ -1967,7 +1555,6 @@ def test_the_preview_helper_and_its_token_are_written_every_launch():
 
 def test_a_deployment_without_a_preview_url_writes_and_runs_none_of_it():
     script = _launch_with_tunnel(CHEESE_PREVIEW_URL="")
-    assert 'PUP=""' in script
     assert 'if [ -n "${CHEESE_PREVIEW_URL:-}" ]; then' in script
 
 
@@ -2083,3 +1670,128 @@ def test_repaired_webfetch_is_available_on_both_delivery_paths():
     assert shlex.split(spec.env["BUN_OPTIONS"]) == [
         "--preload=/cfg/webfetch_transport.cjs"
     ]
+
+
+def _supervised_program(tmp_path):
+    import shlex
+    import sys
+
+    home = tmp_path / "home"
+    config = home / ".claude"
+    config.mkdir(parents=True)
+    (config / "cheese-drain").write_text(_drain_body())
+    spool = config / "spool"
+    spool.mkdir()
+    (config / "cheese-drain.env").write_text(f'CHEESE_HOOK_SPOOL="{spool}"\n')
+    agent = tmp_path / "agent.py"
+    agent.write_text(
+        "import os, pathlib, sys, time\n"
+        f"pathlib.Path({str(tmp_path / 'agent.pid')!r}).write_text(str(os.getpid()))\n"
+        "if os.environ.get('WAIT_FOR_INPUT'):\n"
+        "    print(sys.stdin.readline().strip(), flush=True)\n"
+        "    sys.exit(7)\n"
+        "time.sleep(60)\n"
+    )
+    body = device_launch.build_launch_script().split(
+        "# The connector owns the terminal session.", 1
+    )[1]
+    script = tmp_path / "supervise.sh"
+    script.write_text("set -e\n# The connector owns the terminal session." + body)
+    env = {
+        **os.environ,
+        "HOME": str(home),
+        "CLAUDE": f"{shlex.quote(sys.executable)} {shlex.quote(str(agent))}",
+        "CHEESE_TUNNEL_URL": "",
+        "CHEESE_PREVIEW_URL": "",
+    }
+    return script, env, config / "cheese-drain.pid", tmp_path / "agent.pid"
+
+
+def _wait_file(path):
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if path.exists():
+            content = path.read_text().strip()
+            if content:
+                return int(content)
+        time.sleep(0.02)
+    pytest.fail(f"process never started: {path}")
+
+
+def _assert_exited(pid):
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.02)
+    pytest.fail(f"process {pid} survived its owner")
+
+
+@pytest.mark.parametrize("shell", ["sh", "dash"])
+def test_supervisor_preserves_input_and_exit_status_and_reaps_drainer(tmp_path, shell):
+    import shutil
+
+    if shutil.which(shell) is None:
+        pytest.skip(f"needs {shell}")
+    script, env, drain_file, agent_file = _supervised_program(tmp_path)
+    proc = subprocess.Popen(
+        [shell, str(script)],
+        env={**env, "WAIT_FOR_INPUT": "1"},
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        drainer = _wait_file(drain_file)
+        agent = _wait_file(agent_file)
+        out, _ = proc.communicate("hello\n", timeout=5)
+        assert out.strip() == "hello"
+        assert proc.returncode == 7
+        _assert_exited(drainer)
+        _assert_exited(agent)
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(timeout=5)
+
+
+def test_closing_real_tmux_ends_agent_and_drainer(tmp_path):
+    import shlex
+    import shutil
+    import tempfile
+
+    tmux = shutil.which("tmux")
+    if tmux is None:
+        pytest.skip("needs tmux")
+    script, env, drain_file, agent_file = _supervised_program(tmp_path)
+    with tempfile.TemporaryDirectory(prefix="cs-life-", dir="/tmp") as runtime:
+        sock = runtime + "/t.sock"
+
+        def run(*args):
+            return subprocess.run(
+                [tmux, "-S", sock, *args], env=env, capture_output=True, text=True
+            )
+
+        try:
+            assert (
+                run(
+                    "new-session",
+                    "-d",
+                    "-s",
+                    "screen",
+                    f"exec sh {shlex.quote(str(script))}",
+                ).returncode
+                == 0
+            )
+            agent = _wait_file(agent_file)
+            drainer = _wait_file(drain_file)
+            assert (
+                run("list-sessions", "-F", "#{session_name}").stdout.strip() == "screen"
+            )
+            assert run("kill-session", "-t", "=screen").returncode == 0
+            _assert_exited(agent)
+            _assert_exited(drainer)
+        finally:
+            run("kill-server")

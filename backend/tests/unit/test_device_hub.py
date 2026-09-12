@@ -28,6 +28,107 @@ class FakeViewer:
         self.bytes_.append(data)
 
 
+async def test_close_waits_for_confirmation_and_retries_after_disconnect():
+    hub = DeviceHub()
+    transport = FakeDeviceTransport()
+    await hub.attach_device("dev", transport)
+    screen = await hub.open_screen("dev", ["sleep", "60"], **_screen_args())
+    await hub.detach_device("dev", transport)
+    with pytest.raises(DeviceOffline):
+        await hub.close_screen("dev", screen.sid)
+    assert hub.screen(screen.sid) is screen
+    assert screen.closing
+    await hub.attach_device("dev", transport)
+    closing = asyncio.create_task(hub.close_screen("dev", screen.sid))
+    await asyncio.sleep(0)
+    assert not closing.done()
+    assert hub.screen(screen.sid) is screen
+    request = transport.sent[-1]
+    await hub.on_device_message(
+        "dev", {"t": "session.result", "id": request["id"], "error": "kill failed"}
+    )
+    with pytest.raises(RuntimeError, match="kill failed"):
+        await closing
+    assert hub.screen(screen.sid) is screen
+    closing = asyncio.create_task(hub.close_screen("dev", screen.sid))
+    await asyncio.sleep(0)
+    await hub.on_device_message(
+        "dev", {"t": "session.result", "id": transport.sent[-1]["id"]}
+    )
+    assert await closing is True
+    assert hub.screen(screen.sid) is None
+
+
+async def test_inventory_accepts_a_reply_during_send():
+    hub = DeviceHub()
+
+    class ImmediateTransport:
+        async def send_json(self, msg):
+            if msg["t"] == "session.list":
+                await hub.on_device_message(
+                    "dev",
+                    {
+                        "t": "session.result",
+                        "id": msg["id"],
+                        "value": [{"sid": "survivor"}],
+                    },
+                )
+
+    await hub.attach_device("dev", ImmediateTransport())
+    assert await hub.list_screens("dev") == [{"sid": "survivor"}]
+
+
+def test_reconnect_reads_inventory_replies_while_recovery_is_running(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.api.routes import connector
+    from app.core.db import get_db
+
+    hub = DeviceHub()
+    recovered = []
+
+    class Chat:
+        async def recover_sessions(self, device_id):
+            inventory = await hub.session_request(
+                device_id, {"t": "session.list"}, timeout=1
+            )
+            recovered.extend(inventory)
+
+    class Wakeup:
+        async def wake_device(self, device_id):
+            await hub._device(device_id).send({"t": "recovery.finished"})
+
+    monkeypatch.setattr(connector, "device_hub", hub)
+    monkeypatch.setattr("app.api.deps.get_chat_service", lambda: Chat())
+    monkeypatch.setattr("app.api.deps.get_cloud_wakeup", lambda: Wakeup())
+    monkeypatch.setattr("app.domain.topic.retire.sweep_retired_storage", AsyncMock())
+    app = FastAPI()
+    app.include_router(connector.router)
+    app.dependency_overrides[get_db] = lambda: SimpleNamespace(commit=AsyncMock())
+    service = SimpleNamespace(
+        verify_token=AsyncMock(
+            return_value=SimpleNamespace(device_id="dev", name="fixture")
+        )
+    )
+    app.dependency_overrides[connector.get_device_service] = lambda: service
+    with (
+        TestClient(app) as client,
+        client.websocket_connect("/connector/agent?token=fixture") as ws,
+    ):
+        assert ws.receive_json()["t"] == "welcome"
+        request = ws.receive_json()
+        assert request["t"] == "session.list"
+        ws.send_json(
+            {"t": "session.result", "id": request["id"], "value": [{"sid": "survivor"}]}
+        )
+        assert ws.receive_json()["t"] == "recovery.finished"
+    assert recovered == [{"sid": "survivor"}]
+
+
 def _screen_args() -> dict:
     return {
         "agent_user_id": uuid.uuid4(),
@@ -283,9 +384,25 @@ async def test_adopt_screen_reregisters_running_screen_after_restart():
     assert screen.agent_user_id == agent and screen.topic_id == topic
     # Idempotent: adopting the same sid returns the already-registered screen.
     again = hub.adopt_screen(
-        "dev1", "s-kept", token="other", agent_user_id=uuid.uuid4(), agent_handle="y"
+        "dev1",
+        "s-kept",
+        token="kept-tok",
+        agent_user_id=agent,
+        agent_handle="agent-x",
+        project_id=project,
+        topic_id=topic,
     )
     assert again is screen
+    with pytest.raises(ValueError, match="identity"):
+        hub.adopt_screen(
+            "other-device",
+            "s-kept",
+            token="kept-tok",
+            agent_user_id=agent,
+            agent_handle="agent-x",
+            project_id=project,
+            topic_id=topic,
+        )
 
 
 async def test_inbound_frame_updates_last_seen():

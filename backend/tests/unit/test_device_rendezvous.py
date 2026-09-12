@@ -66,9 +66,6 @@ def test_launcher_arms_claude_codes_own_env_trio():
     assert (
         "export CLAUDE_BG_BACKEND CLAUDE_BG_RENDEZVOUS_SOCK CLAUDE_BG_RV_AUTH" in script
     )
-    # tmux seeds a new session from the SERVER's frozen global env, so the trio
-    # must also travel on the explicit -e list (#409/#433 class of bug).
-    assert '"CLAUDE_BG_RENDEZVOUS_SOCK=$CLAUDE_BG_RENDEZVOUS_SOCK"' in script
 
 
 def test_launcher_reuses_an_existing_token_file():

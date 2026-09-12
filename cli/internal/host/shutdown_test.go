@@ -5,6 +5,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/SageSeekerSociety/cheese/cli/internal/link"
 	"github.com/SageSeekerSociety/cheese/cli/internal/terminal"
 )
 
@@ -35,6 +36,48 @@ func isolatedManager(t *testing.T) *terminal.Manager {
 	}
 	t.Cleanup(m.KillServer)
 	return m
+}
+
+func TestRestartRestoresIdentityAndCanCloseWithoutReopening(t *testing.T) {
+	m := isolatedManager(t)
+	newHost := func(base string) *Host {
+		return &Host{tm: m, base: base, conn: link.New("", "", "", ""),
+			ctx: context.Background(), sessions: map[string]*sess{}}
+	}
+	h := newHost("https://backend.test")
+	h.createSession(link.Msg{T: "session.create", Sid: "recover-me", Screen: "original-token",
+		Command: []string{"sh", "-c", "sleep 60"},
+		Env: map[string]string{"CHEESE_PROJECT": "project", "CHEESE_TOPIC": "topic",
+			"CHEESE_TOKEN_EXPIRES": "1234567890", envRvSock: "/tmp/example.sock"}})
+	if h.session("recover-me") == nil {
+		t.Fatal("screen creation failed")
+	}
+	identities, identityErr := m.Identities(h.base)
+	if identityErr != nil || len(identities) != 1 {
+		t.Fatalf("saved identity: %v, %v", identities, identityErr)
+	}
+	h.releaseAll()
+	restarted := newHost(h.base)
+	screens, err := restarted.restoreSessions()
+	if err != nil || len(screens) != 1 {
+		t.Fatalf("restore: %v, %v", screens, err)
+	}
+	if screens[0].Screen != "original-token" || screens[0].Env["CHEESE_TOKEN_EXPIRES"] != "1234567890" {
+		t.Fatalf("birth identity changed: %+v", screens[0])
+	}
+	if restarted.session("recover-me").rvPath != "/tmp/example.sock" {
+		t.Fatal("restarted host cannot deliver to the original session")
+	}
+	other := newHost("https://other.test")
+	if err := other.closeSession("recover-me"); err != nil || !m.HasSession("recover-me") {
+		t.Fatal("a different backend closed this backend's session")
+	}
+	if err := newHost(h.base).closeSession("recover-me"); err != nil || m.HasSession("recover-me") {
+		t.Fatalf("close after host restart: %v", err)
+	}
+	if err := restarted.closeSession("recover-me"); err != nil {
+		t.Fatalf("repeated close: %v", err)
+	}
 }
 
 // hostWithScreen builds a Host holding one live screen, without a server link.

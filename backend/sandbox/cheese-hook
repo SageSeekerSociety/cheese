@@ -1,5 +1,13 @@
 #!/bin/sh
 body="$(cat)"
+if [ -f "$HOME/.claude/cheese-resume.attempt" ]; then
+  printf '%s' "$body" | python3 -c '
+import json, pathlib, sys
+event = json.load(sys.stdin)
+if event.get("hook_event_name") in ("UserPromptSubmit", "Stop"):
+    (pathlib.Path.home() / ".claude/cheese-resume.attempt").unlink(missing_ok=True)
+' 2>/dev/null || true
+fi
 eid="$(cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "$$-$(date +%s%N)")"
 if [ -n "$CHEESE_HOOK_SPOOL" ]; then
   mkdir -p "$CHEESE_HOOK_SPOOL" 2>/dev/null || true

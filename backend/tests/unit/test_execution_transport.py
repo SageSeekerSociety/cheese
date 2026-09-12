@@ -195,10 +195,11 @@ def native_call(process, identifier, command):
 def test_central_tools_reuse_process_and_http_connection(central_transport):
     process, clients, _, work = central_transport
     pid = process.process.pid
-    for index in range(3):
+    for index in range(40):
         assert "result" in native_call(process, str(index), "printf x >> count")
-    assert (work / "count").read_text() == "xxx"
-    assert len(set(clients)) == 1
+    assert (work / "count").read_text() == "x" * 40
+    # Each worker owns a connection; sequential replies may use different workers.
+    assert len(set(clients)) < len(clients)
     assert process.process.pid == pid and process.process.poll() is None
 
 
