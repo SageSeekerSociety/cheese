@@ -117,7 +117,11 @@ def send_frame(sock: socket.socket, payload: bytes, opcode: int = _OP_BIN) -> No
         header.extend(struct.pack("!Q", length))
     mask = secrets.token_bytes(4)
     header.extend(mask)
-    masked = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+    # The pipe sends up to 64 KiB per frame; keep masking out of a Python byte loop.
+    repeated_mask = (mask * ((length + 3) // 4))[:length]
+    masked = (
+        int.from_bytes(payload, "big") ^ int.from_bytes(repeated_mask, "big")
+    ).to_bytes(length, "big")
     sock.sendall(bytes(header) + masked)
 
 
