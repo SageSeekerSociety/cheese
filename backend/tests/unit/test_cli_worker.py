@@ -12,10 +12,11 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 CLI = ROOT / "sandbox/cheese"
 WORKER = ROOT / "app/domain/agent/harness/claude_code/remote_execution/cli_worker.py"
+CLIENT = ROOT / "app/domain/agent/harness/claude_code/remote_execution/cli_client.py"
 
 
-@pytest.fixture
-def worker(tmp_path):
+@pytest.fixture(params=["pipe", "file"])
+def worker(tmp_path, request):
     source = tmp_path / "cheese"
     source.write_bytes(CLI.read_bytes())
     # macOS limits Unix socket paths to 104 bytes; pytest's temp root is longer.
@@ -23,11 +24,12 @@ def worker(tmp_path):
         "/tmp/cheese-cli-test-"
         + hashlib.sha256(str(tmp_path).encode()).hexdigest()[:24]
     )
+    errors = (tmp_path / "worker.log").open("w+") if request.param == "file" else None
     process = subprocess.Popen(
         [sys.executable, str(WORKER), address, str(source)],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stderr=errors if errors is not None else subprocess.PIPE,
         text=True,
     )
     assert select.select([process.stdout], [], [], 10)[0]
@@ -37,10 +39,12 @@ def worker(tmp_path):
         process.stdin.close()
     process.wait(timeout=10)
     assert process.returncode == 0, process.stderr.read()
+    if errors is not None:
+        errors.close()
 
 
 def command(address, *args):
-    return [sys.executable, str(CLI), *args], {
+    return [sys.executable, str(CLIENT), *args], {
         **os.environ,
         "CHEESE_CLI_SOCKET": address,
     }

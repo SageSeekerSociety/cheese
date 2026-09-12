@@ -72,6 +72,23 @@ def test_executor_bootstrap_starts_in_room_without_a_git_checkout(
             },
         )
         assert "--request-id" in publication_help["value"]["stdout"]
+        (home / ".claude/cheese").write_text(
+            "import sys\n"
+            "if __name__ == 'preload':\n"
+            "    sys.cheese_cli_preloaded = True\n"
+            "if __name__ == '__main__':\n"
+            "    print(getattr(sys, 'cheese_cli_preloaded', False))\n"
+        )
+        preloaded = runtime.request(
+            state,
+            "invoke",
+            {
+                "id": "cli-preloaded-dispatch",
+                "tool": "Bash",
+                "args": {"command": "cheese"},
+            },
+        )
+        assert preloaded["value"]["stdout"].strip() == "True"
         from app.domain.agent import environment_runner
 
         environment = home / ".cheese-environment"
