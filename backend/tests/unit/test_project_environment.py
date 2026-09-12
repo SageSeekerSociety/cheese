@@ -16,6 +16,45 @@ from app.domain.agent import environment_runner
 from app.domain.project.environment import EnvironmentConfig
 
 
+def test_reset_succeeds_when_agent_exits_after_status_read(tmp_path, monkeypatch):
+    import runpy
+    import signal
+
+    root = tmp_path / ".cheese-environment"
+    root.mkdir()
+    child = subprocess.Popen(["sleep", "60"])
+    original_kill = os.kill
+    environment_runner.write_json(
+        root / "status.json",
+        {
+            "state": "ready",
+            "pid": child.pid,
+            "process_identity": environment_runner.process_identity(child.pid),
+        },
+    )
+    signals = []
+
+    def exited_before_signal(pid, sig):
+        if pid == child.pid and sig == signal.SIGTERM:
+            signals.append(pid)
+            original_kill(pid, sig)
+            child.wait(timeout=5)
+            raise ProcessLookupError(pid)
+        return original_kill(pid, sig)
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", [environment_runner.__file__, "reset"])
+    monkeypatch.setattr(os, "kill", exited_before_signal)
+    try:
+        runpy.run_path(environment_runner.__file__, run_name="__main__")
+        assert signals == [child.pid]
+        assert json.loads((root / "status.json").read_text()) == {"state": "pending"}
+    finally:
+        if child.poll() is None:
+            original_kill(child.pid, signal.SIGTERM)
+            child.wait(timeout=5)
+
+
 def test_linux_status_identifies_pid_reuse_without_spawning_ps(tmp_path, monkeypatch):
     from pathlib import Path
 

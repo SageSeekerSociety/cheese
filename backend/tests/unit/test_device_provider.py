@@ -1372,12 +1372,14 @@ class ProbingHub(FakeHub):
         self.probe_calls = 0
         self.probe_topics: set[str] = set()
         self.probe_devices: set[str] = set()
+        self.probed = asyncio.Event()
 
     async def exec(self, device_id, argv, *, env=None, timeout=30, **kw):
         self.probe_calls += 1
         self.probe_devices.add(device_id)
         if env and "CHEESE_ALIVE_TOPIC" in env:
             self.probe_topics.add(env["CHEESE_ALIVE_TOPIC"])
+            self.probed.set()
         return {"exit": 0, "stdout": self.verdict, "stderr": "", "truncated": False}
 
 
@@ -1484,7 +1486,7 @@ async def test_a_silent_but_alive_turn_survives_idle_suspect_and_ends_on_stop():
     # First hook = the prompt receipt / start of a long foreground command; then
     # the hooks go SILENT for the run — the window this fix has to survive.
     router.push(key, {"hook_event_name": "UserPromptSubmit", "prompt": "run the tests"})
-    await asyncio.sleep(0.2)  # cross idle-suspect; the alive probe keeps it running
+    await asyncio.wait_for(hub.probed.wait(), timeout=3)
     assert hub.probe_calls >= 1, "idle-suspect must have re-probed liveness"
     assert not any(isinstance(e, AgentResult) and e.is_error for e in events)
     # The command finishes: the reply and the Stop hook arrive, ending the turn.
