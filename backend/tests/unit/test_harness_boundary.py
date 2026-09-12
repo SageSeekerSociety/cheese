@@ -74,6 +74,7 @@ _LEDGER: dict[str, tuple[str, ...]] = {
     # --- channels：接缝本身，加上还没搬过缝的 Claude Code 知识 ---
     "app.domain.agent.cloud_provider": ("ScreenSetupError",),
     "app.domain.agent.device_provider": (
+        "CHEESE_HOOK_SCRIPT",
         "Channel",
         "DEVICE_ALIVE_PROBE",
         "DEVICE_TUNNEL_PROBE",

@@ -2,7 +2,9 @@
 
 import asyncio
 import os
+import subprocess
 import uuid
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -512,6 +514,55 @@ async def test_reuse_checks_and_launcher_transfer_do_not_wait_for_each_other(
     assert reused is screen
     assert entered == {"alive", "tunnel", "launcher"}
     assert hub.reasserted == [screen.sid]
+
+
+async def test_reused_screen_refreshes_hook_without_restarting(monkeypatch, tmp_path):
+    from app.domain.agent.device_provider import device_home_dir
+
+    class LocalTransferHub(FakeHub):
+        async def exec(self, device_id, argv, *, stdin=None, **kwargs):
+            if stdin is None:
+                return await super().exec(device_id, argv, **kwargs)
+            result = subprocess.run(
+                argv,
+                input=stdin,
+                text=True,
+                capture_output=True,
+                env={**os.environ, "HOME": str(tmp_path)},
+                timeout=10,
+            )
+            return {
+                "exit": result.returncode,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+            }
+
+    hook = "#!/bin/sh\nprintf '%s' 'updated hook'\n"
+    monkeypatch.setattr("app.domain.agent.device_provider.CHEESE_HOOK_SCRIPT", hook)
+    hub = LocalTransferHub()
+    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
+    project, topic = uuid.uuid4(), uuid.uuid4()
+    arguments = dict(
+        device_id="dev1",
+        agent_user_id=1,
+        agent_handle="cheese",
+        project_id=project,
+        topic_id=topic,
+        token="tok",
+        env=None,
+        launch=ClaudeLaunch(system_prompt=""),
+    )
+    screen = await provider._ensure_screen(**arguments)
+    home = device_home_dir(project, topic).replace("$HOME", str(tmp_path))
+    hook_path = Path(home) / ".claude/cheese-hook"
+    settings_path = hook_path.with_name("settings.json")
+    settings_path.write_text('{"keep":true}')
+    hook_path.write_text("#!/bin/sh\necho old\n")
+    reused = await provider._ensure_screen(**arguments)
+    assert reused is screen and len(hub.opened) == 1
+    assert hub.reasserted == [screen.sid]
+    assert subprocess.check_output([str(hook_path)], text=True) == "updated hook"
+    assert settings_path.read_text() == '{"keep":true}'
 
 
 class DeadClaudeHub(FakeHub):
