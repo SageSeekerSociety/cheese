@@ -36,6 +36,7 @@ from app.domain.agent.harness.claude_code.hook_events import (
     hook_router,
 )
 from app.domain.agent.harness.claude_code.hooks_substrate import (
+    CHEESE_HOOK_SCRIPT,
     SESSION_TOKEN_TTL_S,
     ActivityTracker,
     Channel,
@@ -73,6 +74,7 @@ from app.domain.agent.harness.claude_code.startup_cache import (
 from app.domain.agent.harness.claude_code.warm_session import build_warm_session_prepare
 
 __all__ = [
+    "CHEESE_HOOK_SCRIPT",
     "REMOTE_CONTROLS",
     "RemoteClient",
     "build_executor_launch",

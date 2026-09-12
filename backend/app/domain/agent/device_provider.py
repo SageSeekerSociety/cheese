@@ -40,6 +40,7 @@ from app.domain.agent.device_hub import (
     device_hub,
 )
 from app.domain.agent.harness.claude_code import (
+    CHEESE_HOOK_SCRIPT,
     DEVICE_ALIVE_PROBE,
     DEVICE_TUNNEL_PROBE,
     SESSION_TOKEN_TTL_S,
@@ -47,7 +48,6 @@ from app.domain.agent.harness.claude_code import (
     ScreenSetupError,
     build_screen_launch,
 )
-from app.domain.agent.harness.claude_code.hooks_substrate import CHEESE_HOOK_SCRIPT
 from app.domain.agent.harness.launch import LaunchPlan
 from app.domain.agent.platform_failures import (
     DEVICE_OFFLINE_MESSAGE,
