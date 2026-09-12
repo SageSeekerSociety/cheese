@@ -9,7 +9,9 @@ path = Path(
 )
 expected = "f68b41bbeb04689c6dbe7ca5d924e7f7c515102fcd958a6ba89fc307b51b42b9"
 original = path.read_bytes()
-assert hashlib.sha256(original).hexdigest() == expected, "Review the upstream file before updating this patch"
+assert hashlib.sha256(original).hexdigest() == expected, (
+    "Review the upstream file before updating this patch"
+)
 old = b"self.start_time = datetime.now()"
 new = b"self.start_time = litellm_logging_obj.start_time"
 assert original.count(old) == 1
