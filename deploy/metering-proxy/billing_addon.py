@@ -584,10 +584,24 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
         # Off-loop: urllib blocks, and one slow admission call must not stall
         # every other flow through the proxy.
         admission_started = time.perf_counter()
-        verdict = await asyncio.to_thread(ADMISSION.check, project_id, topic_id, bearer)
+
+        def check_admission():
+            check_started = time.perf_counter()
+            verdict = ADMISSION.check(project_id, topic_id, bearer)
+            return verdict, check_started, time.perf_counter()
+
+        verdict, check_started, check_finished = await asyncio.to_thread(
+            check_admission
+        )
+        admission_finished = time.perf_counter()
         flow.metadata["cheese_admission_ms"] = (
-            time.perf_counter() - admission_started
+            admission_finished - admission_started
         ) * 1000
+        flow.metadata["cheese_admission_phases_ms"] = {
+            "thread_queue": (check_started - admission_started) * 1000,
+            "check": (check_finished - check_started) * 1000,
+            "loop_resume": (admission_finished - check_finished) * 1000,
+        }
 
     if (
         verdict is not None
@@ -804,6 +818,7 @@ def _log_gateway_timing(flow: http.HTTPFlow) -> None:
                 "request_end": getattr(flow.request, "timestamp_end", None),
                 "route_ready": flow.metadata.get("cheese_route_ready"),
                 "admission_ms": flow.metadata.get("cheese_admission_ms"),
+                "admission_phases_ms": flow.metadata.get("cheese_admission_phases_ms"),
                 "response_start": getattr(resp, "timestamp_start", None),
                 "response_end": getattr(resp, "timestamp_end", None),
                 "status": resp.status_code if resp else None,
