@@ -898,8 +898,7 @@ CLAUDE="\\"$CLAUDE_BIN\\"{claude_args}"
 # in-process `build_session_launch` guard, which reads the transcript through a
 # shared mount, was never reachable from this transport.)
 #
-# Only the CREATE branch below can use it: an adopted session already carries a
-# running conversation, and $CLAUDE goes unread there.
+# The connector adopts live sessions without running this launcher again.
 RESUMEF="$HOME/.claude/cheese-resume.attempt"
 RESUME_TRIED="$(cat "$RESUMEF" 2>/dev/null || true)"
 # Consumed on read, always. The stamp says "the last launch asked to resume THIS
@@ -907,8 +906,7 @@ RESUME_TRIED="$(cat "$RESUMEF" 2>/dev/null || true)"
 # would otherwise kill the pane, get the session retired for a dead pane, and be
 # resumed again on the relaunch, forever. Consuming it costs at most one lost
 # continuation and cannot become a wedge: the very next launch starts clean.
-# A resume that WORKED clears it just as well, because the run that adopts that
-# live session reads the stamp and writes nothing back.
+# A prompt or completed turn clears the stamp through the hook forwarder.
 rm -f "$RESUMEF"
 if [ -n "${{CHEESE_RESUME_SESSION:-}}" ] \\
   && [ "$RESUME_TRIED" != "$CHEESE_RESUME_SESSION" ]; then
@@ -1003,7 +1001,9 @@ if [ -n "${{CHEESE_PREVIEW_URL:-}}" ]; then
 fi
 CHEESE_DRAIN_TETHER=$$ sh "$HOME/.claude/cheese-drain" >/dev/null 2>&1 &
 DRAIN_PID=$!
-eval "exec $ENVIRONMENT_CMD$CLAUDE" <&0 &
+# Preserve input before POSIX sh redirects an asynchronous command's fd 0.
+exec 3<&0
+eval "exec $ENVIRONMENT_CMD$CLAUDE" <&3 3<&- &
 CLAUDE_PID=$!
 RESULT=0
 wait "$CLAUDE_PID" || RESULT=$?

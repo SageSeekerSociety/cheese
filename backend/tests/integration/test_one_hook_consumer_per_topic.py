@@ -54,6 +54,9 @@ class _Hub:
     def is_online(self, device_id: str) -> bool:
         return device_id in self.online
 
+    async def list_screens(self, device_id: str) -> list[dict]:
+        return []
+
 
 async def _seed(factory) -> dict[str, object]:
     """一个项目、两个房间，各绑一台机器：一台平台开的云机器，一台人自己接进来的。"""

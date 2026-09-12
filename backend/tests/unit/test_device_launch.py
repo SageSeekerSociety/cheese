@@ -1709,10 +1709,13 @@ def _supervised_program(tmp_path):
 
 def _wait_file(path):
     deadline = time.monotonic() + 5
-    while not path.exists() and time.monotonic() < deadline:
+    while time.monotonic() < deadline:
+        if path.exists():
+            content = path.read_text().strip()
+            if content:
+                return int(content)
         time.sleep(0.02)
-    assert path.exists(), f"process never started: {path}"
-    return int(path.read_text())
+    pytest.fail(f"process never started: {path}")
 
 
 def _assert_exited(pid):
@@ -1726,10 +1729,15 @@ def _assert_exited(pid):
     pytest.fail(f"process {pid} survived its owner")
 
 
-def test_supervisor_preserves_input_and_exit_status_and_reaps_drainer(tmp_path):
+@pytest.mark.parametrize("shell", ["sh", "dash"])
+def test_supervisor_preserves_input_and_exit_status_and_reaps_drainer(tmp_path, shell):
+    import shutil
+
+    if shutil.which(shell) is None:
+        pytest.skip(f"needs {shell}")
     script, env, drain_file, agent_file = _supervised_program(tmp_path)
     proc = subprocess.Popen(
-        ["sh", str(script)],
+        [shell, str(script)],
         env={**env, "WAIT_FOR_INPUT": "1"},
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
