@@ -21,23 +21,36 @@ class AgentConfiguration(BaseModel):
 
 
 def model_choices(project_settings: dict | None) -> list[dict]:
-    if (
+    subscription_default = (
         resolve_pool(
             project_settings, subscription_enabled=settings.subscription_enabled
         )
         == SUBSCRIPTION
-    ):
-        if not settings.subscription_enabled:
-            return []
-        return [asdict(item) for item in subscription_model_listings()]
-    return [
+    ) and settings.subscription_enabled
+    choices = (
+        [
+            dict(asdict(item), default=item.default and subscription_default)
+            for item in subscription_model_listings()
+        ]
+        if settings.subscription_enabled
+        else []
+    )
+    choices.extend(
         {
-            "id": settings.agent_model,
-            "label": settings.agent_model,
+            "id": model,
+            "label": label,
             "description": "平台模型池",
-            "default": True,
+            "default": not subscription_default and model == settings.agent_model,
         }
-    ]
+        for model, label in dict.fromkeys(
+            [
+                (settings.agent_model, settings.agent_model),
+                ("deepseek-flash", "DeepSeek V4.1 Flash"),
+                ("glm-5.2", "GLM-5.2"),
+            ]
+        )
+    )
+    return list({item["id"]: item for item in choices}.values())
 
 
 def initial_model(project_settings: dict | None) -> str:
