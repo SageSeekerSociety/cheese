@@ -340,8 +340,34 @@ def prepare(
         "CHEESE_EXECUTION_CONFIG": str(target_path),
     }
     prefix = directory / "shell-prefix"
+    local_commands = {
+        hook["command"]
+        for groups in target["central_hooks"].values()
+        for group in groups
+        for hook in group.get("hooks", [])
+        if hook.get("type") == "command"
+    }
+    local_commands.update(
+        shlex.join([*helper, mode, str(target_path)])
+        for mode in ("guard", "context", "checkpoint", "transport")
+    )
+    local_commands.update(
+        shlex.join([*helper, "bridge", str(target_path), name])
+        for name in target.get("mcp_servers", [])
+    )
+    # Match complete trusted commands; appended shell syntax takes the usual route.
+    dispatch = (
+        'case "$1" in\n'
+        + "".join(
+            f'  {shlex.quote(command)}) exec sh -c "$1" ;;\n'
+            for command in sorted(local_commands)
+        )
+        + "esac\n"
+    )
     prefix.write_text(
-        "#!/bin/sh\nexec "
+        "#!/bin/sh\n"
+        + dispatch
+        + "exec "
         + shlex.join([*helper, "shell", str(target_path)])
         + ' "$@"\n'
     )
