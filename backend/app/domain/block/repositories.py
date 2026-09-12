@@ -5,7 +5,7 @@ from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import Text, cast, func, or_, select, tuple_, update
+from sqlalchemy import Text, and_, cast, func, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import JSONB, array
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -331,6 +331,51 @@ class BlockRepository:
             .where(
                 *self._in_place(topic_id, task_id),
                 Block.kind.not_in(self._NON_TIMELINE),
+            )
+            .order_by(Block.created_at, Block.id)
+        )
+        return list((await self._session.scalars(stmt)).all())
+
+    async def turn_history(self, topic_id: uuid.UUID) -> list[Block]:
+        """Inputs awaiting consumption and the two turn-preparation boundaries."""
+        place = self._in_place(topic_id, None)
+        latest_ai = (
+            select(Block.id)
+            .where(
+                *place,
+                Block.author_type == AuthorType.ai,
+                Block.kind == BlockKind.message,
+            )
+            .order_by(Block.created_at.desc(), Block.id.desc())
+            .limit(1)
+            .scalar_subquery()
+        )
+        latest_cloud = (
+            select(Block.id)
+            .where(
+                *place,
+                Block.kind.not_in(self._NON_TIMELINE),
+                Block.meta["event_type"].as_string() == "cloud_provisioning",
+            )
+            .order_by(Block.created_at.desc(), Block.id.desc())
+            .limit(1)
+            .scalar_subquery()
+        )
+        # The latest AI message remains the watermark for untracked legacy
+        # inputs. Explicitly pending inputs can precede it and must survive.
+        stmt = (
+            select(Block)
+            .where(
+                *place,
+                or_(
+                    Block.id == latest_ai,
+                    Block.id == latest_cloud,
+                    and_(
+                        Block.author_type == AuthorType.human,
+                        Block.kind.in_((BlockKind.message, BlockKind.attachment)),
+                        Block.meta[CONSUMED_TURN_META_KEY].as_string().is_(None),
+                    ),
+                ),
             )
             .order_by(Block.created_at, Block.id)
         )
