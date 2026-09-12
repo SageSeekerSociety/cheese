@@ -54,6 +54,43 @@ def channel(client, monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_center_uses_the_selected_harness_for_bootstrap_and_history(
+    client, room, monkeypatch
+):
+    project, topic = room
+    central = channel(client, monkeypatch)
+    history = AsyncMock()
+    launch = SimpleNamespace(
+        resume_session_id="fixture-session",
+        execution=SimpleNamespace(
+            transfer_history=history,
+            script=lambda *args: "FIXTURE_EXECUTOR_BOOTSTRAP",
+            payload_for=lambda *args: {"fixture_executor": True},
+        ),
+    )
+    kwargs = dict(
+        project_id=project,
+        topic_id=topic,
+        token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
+        env={},
+        launch=launch,
+        precheck=await central.precheck(project, topic),
+    )
+    await central.ensure_ready(**kwargs)
+    assert central._hub.exec.await_args.kwargs["stdin"] == "FIXTURE_EXECUTOR_BOOTSTRAP"
+    history.assert_awaited_once_with(
+        central._hub, "executor", "center", project, topic, "fixture-session"
+    )
+    central._hub.call_executor.side_effect = [
+        {"pid": 123, "capabilities": ["prepare"]},
+        {"pid": 123, "workspace": "/project", "mcp_servers": []},
+    ]
+    await central.ensure_ready(**kwargs)
+    assert central._hub.call_executor.await_args.args[3] == {"fixture_executor": True}
+    assert history.await_count == 1
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize("environment_state", ["ready", "pending", "failed"])
 async def test_running_executor_prepares_without_python_launch(
     client, room, monkeypatch, environment_state

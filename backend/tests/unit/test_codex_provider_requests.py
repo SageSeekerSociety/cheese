@@ -11,7 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 
 from app.domain.agent.harness import Opening
-from app.domain.agent.harness.codex import AppServer, Session
+from app.domain.agent.harness.codex.runner import Runner, socket_path
 from tests.support.harness_prompts import event_prompts, system_prompt
 
 
@@ -96,17 +96,9 @@ async def test_real_provider_receives_platform_prompt_and_matching_tool_result(
     )
     prompt = system_prompt()
     inputs = list(event_prompts().values())
-    completed = asyncio.Queue()
     calls = []
     tool_started = asyncio.Event()
     release_tool = asyncio.Event()
-    session = None
-
-    async def on_event(event):
-        if session is not None:
-            session.observe(event)
-        if event["method"] == "turn/completed":
-            await completed.put(event["params"]["turn"])
 
     async def on_request(method, params):
         assert method == "item/tool/call"
@@ -118,84 +110,104 @@ async def test_real_provider_receives_platform_prompt_and_matching_tool_result(
             "contentItems": [{"type": "inputText", "text": "TOOL_RESULT_FIXTURE"}],
         }
 
-    process = None
-    listener = None
+    state = home / "runner"
+    runner = None
+    cursor = 0
 
-    async def connect(errors):
-        nonlocal session
-        process = await asyncio.create_subprocess_exec(
-            "codex",
-            "app-server",
-            cwd=workspace,
+    async def rpc(method, params=None, *, abandon=False):
+        reader, writer = await asyncio.open_unix_connection(
+            socket_path(state), limit=4 * 1024 * 1024
+        )
+        try:
+            writer.write(
+                json.dumps({"method": method, "params": params or {}}).encode() + b"\n"
+            )
+            await writer.drain()
+            if abandon:
+                return None
+            result = json.loads(await reader.readline())
+            assert "error" not in result, result
+            return result["result"]
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    async def wait_completed():
+        nonlocal cursor
+        while True:
+            entries = (await rpc("events", {"after": cursor}))["events"]
+            for entry in entries:
+                cursor = entry["sequence"]
+                event = entry["record"]
+                if event["method"] == "turn/completed":
+                    assert event["params"]["turn"]["status"] == "completed"
+                    return
+            await asyncio.sleep(0.005)
+
+    async def connect(resume=None, *, tools):
+        nonlocal runner
+        runner = Runner(state, on_request)
+        return await runner.start(
+            Opening(system_prompt=prompt, resume_token=resume),
+            binary=shutil.which("codex"),
+            cwd=str(workspace),
             env={
                 "PATH": os.environ["PATH"],
                 "HOME": str(home),
                 "CODEX_HOME": str(home),
             },
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=errors,
-            limit=4 * 1024 * 1024,
+            base_instructions="HARNESS_BASE_FIXTURE",
+            tools=tools,
         )
-        assert process.stdout is not None and process.stdin is not None
-        client = AppServer(
-            process.stdout, process.stdin, on_event=on_event, on_request=on_request
-        )
-        session = Session(client)
-        return process, client, asyncio.create_task(client.listen())
 
     try:
-        with (tmp_path / "stderr.log").open("wb") as errors:
-            process, client, listener = await connect(errors)
-            async with asyncio.timeout(30):
-                await client.initialize()
-                thread_id = await session.open(
-                    Opening(system_prompt=prompt),
-                    cwd=str(workspace),
-                    base_instructions="HARNESS_BASE_FIXTURE",
-                    tools=[
-                        {
-                            "name": "cheese_fixture",
-                            "description": "Contract fixture",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {"value": {"type": "string"}},
-                                "required": ["value"],
-                                "additionalProperties": False,
-                            },
-                        }
-                    ],
-                )
-                started = await session.send(inputs[0])
-                await tool_started.wait()
-                assert await session.send(inputs[1]) == started
-                release_tool.set()
-                assert (await completed.get())["status"] == "completed"
-                for number, user_prompt in enumerate(inputs[2:], start=2):
-                    if number == 2:
-                        # Resume must recover history and dynamic tools from disk,
-                        # without replaying the first user message or tool call.
-                        process.terminate()
-                        await process.wait()
-                        await listener
-                        process, client, listener = await connect(errors)
-                        await client.initialize()
-                        resumed = await session.open(
-                            Opening(system_prompt=prompt, resume_token=thread_id),
-                            cwd=str(workspace),
-                            base_instructions="HARNESS_BASE_FIXTURE",
-                            tools=[],
-                        )
-                        assert resumed == thread_id
-                    await session.send(user_prompt)
-                    assert (await completed.get())["status"] == "completed"
+        async with asyncio.timeout(30):
+            thread_id = await connect(
+                tools=[
+                    {
+                        "name": "cheese_fixture",
+                        "description": "Contract fixture",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {"value": {"type": "string"}},
+                            "required": ["value"],
+                            "additionalProperties": False,
+                        },
+                    }
+                ]
+            )
+            contender = Runner(state, on_request)
+            try:
+                with pytest.raises(BlockingIOError):
+                    await contender.start(
+                        Opening("unused"),
+                        binary="must-not-start",
+                        cwd=str(workspace),
+                        env={},
+                        tools=[],
+                    )
+            finally:
+                await contender.close()
+            first = await rpc("send", {"input_id": "first", "text": inputs[0]})
+            await tool_started.wait()
+            await rpc("send", {"input_id": "steering", "text": inputs[1]}, abandon=True)
+            retry = await rpc("send", {"input_id": "steering", "text": inputs[1]})
+            assert retry["turn_id"] == first["turn_id"]
+            release_tool.set()
+            await wait_completed()
+            before_restart = (await rpc("events"))["events"]
+            await runner.close()
+            assert await connect(thread_id, tools=[]) == thread_id
+            after_restart = (await rpc("events"))["events"]
+            assert after_restart[: len(before_restart)] == before_restart
+            assert await rpc("send", {"input_id": "first", "text": inputs[0]}) == first
+            for number, user_prompt in enumerate(inputs[2:], start=2):
+                await rpc("send", {"input_id": str(number), "text": user_prompt})
+                await wait_completed()
     finally:
         release_tool.set()
-        if process is not None and process.returncode is None:
-            process.terminate()
-            await process.wait()
-        if listener is not None:
-            await listener
+        if runner is not None:
+            await runner.close()
         provider.shutdown()
         provider.server_close()
         worker.join()

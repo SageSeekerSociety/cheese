@@ -1,18 +1,19 @@
-"""Central Claude Code sessions with independently selected room execution."""
+"""Central agent sessions with independently selected room execution."""
 
 import asyncio
-import base64
 import json
 import logging
 import time
-from pathlib import Path
+import uuid
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
 
 from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.db import async_session_factory
 from app.core.sandbox_auth import bind_resource_token
-from app.domain.agent import execution, private_chat, session_transfer
+from app.domain.agent import execution, private_chat
 from app.domain.agent.device_provider import (
     DeviceChannel,
     EnvironmentPreparationError,
@@ -21,14 +22,21 @@ from app.domain.agent.device_provider import (
     environment_status,
 )
 from app.domain.agent.harness.channel import ScreenSetupError
-from app.domain.agent.harness.claude_code import (
-    build_executor_launch,
-    executor_prepare_payload,
-)
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedSession:
+    device_id: str
+    agent_user_id: int
+    agent_handle: str
+    project_id: uuid.UUID
+    topic_id: uuid.UUID
+    token: str
+    env: dict[str, str]
 
 
 class CentralChannel(DeviceChannel):
@@ -105,6 +113,43 @@ class CentralChannel(DeviceChannel):
         owner=None,
         turn_id=None,
     ):
+        async with self.prepare_session(
+            project_id=project_id,
+            topic_id=topic_id,
+            token=token,
+            env=env,
+            launch=launch,
+            precheck=precheck,
+            memory_scope=memory_scope,
+            owner=owner,
+            turn_id=turn_id,
+        ) as prepared:
+            return await self._ensure_screen(
+                device_id=prepared.device_id,
+                agent_user_id=prepared.agent_user_id,
+                agent_handle=prepared.agent_handle,
+                project_id=prepared.project_id,
+                topic_id=prepared.topic_id,
+                token=prepared.token,
+                env=prepared.env,
+                launch=launch,
+                environment_before={},
+            )
+
+    @asynccontextmanager
+    async def prepare_session(
+        self,
+        *,
+        project_id,
+        topic_id,
+        token,
+        env,
+        launch,
+        precheck=None,
+        memory_scope=None,
+        owner=None,
+        turn_id=None,
+    ):
         assert isinstance(precheck, tuple)
         started_at = time.monotonic()
 
@@ -136,8 +181,13 @@ class CentralChannel(DeviceChannel):
             values = {**(env or {}), "CHEESE_RESOURCE_ID": str(resource)}
             token = bind_resource_token(token, str(resource))
             if not previous and launch.resume_session_id:
-                await self._transfer_history(
-                    executor_id, center, project_id, resource, launch.resume_session_id
+                await launch.execution.transfer_history(
+                    self._hub,
+                    executor_id,
+                    center,
+                    project_id,
+                    resource,
+                    launch.resume_session_id,
                 )
             if room.is_private:
                 target = private_chat.execution_target(
@@ -179,14 +229,18 @@ class CentralChannel(DeviceChannel):
                         info = await execution.call(
                             previous["execution"],
                             "prepare",
-                            executor_prepare_payload(project_id, resource, execute_env),
+                            launch.execution.payload_for(
+                                project_id, resource, execute_env
+                            ),
                             hub=self._hub,
                         )
                 if info is None:
                     result = await self._hub.exec(
                         executor_id,
                         ["python3", "-"],
-                        stdin=build_executor_launch(project_id, resource, execute_env),
+                        stdin=launch.execution.script(
+                            project_id, resource, execute_env
+                        ),
                         timeout=660,
                     )
                     if result.get("exit") != 0 or result.get("truncated"):
@@ -234,7 +288,8 @@ class CentralChannel(DeviceChannel):
                 raise ScreenSetupError("房间已经重新打开，本轮没有启动旧执行环境")
             values.pop("CHEESE_ENVIRONMENT", None)
             values["CHEESE_EXECUTION_TARGET"] = json.dumps(target)
-            screen = await self._ensure_screen(
+            # Retain the room lock until the selected harness finishes starting.
+            yield PreparedSession(
                 device_id=center,
                 agent_user_id=agent_user_id,
                 agent_handle=agent_handle,
@@ -242,69 +297,9 @@ class CentralChannel(DeviceChannel):
                 topic_id=topic_id,
                 token=token,
                 env=values,
-                launch=launch,
-                environment_before={},
             )
             mark("screen_ready")
         self._subscription_devices[topic_id] = center
-        return screen
-
-    async def _transfer_history(self, source, center, project, resource, resume):
-        if source == center:
-            return
-        program = Path(session_transfer.__file__).read_text()
-
-        async def exchange(device, action, **values):
-            payload = {
-                "project": str(project),
-                "resource": str(resource),
-                "action": action,
-                **values,
-            }
-            result = await self._hub.exec(
-                device,
-                ["python3", "-"],
-                timeout=60,
-                stdin=program
-                + "\ntransfer(json.loads("
-                + repr(json.dumps(payload))
-                + "))\n",
-            )
-            if result.get("exit") != 0 or result.get("truncated"):
-                raise ScreenSetupError(result.get("stderr") or "完整会话历史迁移失败")
-            return json.loads(result["stdout"])
-
-        deadline = time.monotonic() + 60
-        stopped = await exchange(source, "stop", request_exit=True)
-        while not stopped["stopped"]:
-            if time.monotonic() >= deadline:
-                raise ScreenSetupError("原机器上的会话尚未退出，尚未切换到中心")
-            await asyncio.sleep(0.5)
-            stopped = await exchange(source, "stop", request_exit=False)
-        manifest = (await exchange(source, "list"))["files"]
-        if not any(Path(item["path"]).name == resume + ".jsonl" for item in manifest):
-            raise ScreenSetupError("原机器缺少要继续的完整会话文件，尚未切换到中心")
-        for item in manifest:
-            offset = 0
-            while offset < item["size"] or item["size"] == 0 and offset == 0:
-                chunk = await exchange(source, "read", path=item["path"], offset=offset)
-                count = len(base64.b64decode(chunk["data"], validate=True))
-                if not count and item["size"]:
-                    raise ScreenSetupError("原会话文件在复制完成前结束")
-                await exchange(
-                    center,
-                    "write",
-                    path=item["path"],
-                    offset=offset,
-                    data=chunk["data"],
-                    final=offset + count == item["size"],
-                    sha256=item["sha256"],
-                )
-                offset += count
-                if item["size"] == 0:
-                    break
-        if (await exchange(source, "list"))["files"] != manifest:
-            raise ScreenSetupError("原会话记录仍在变化，尚未切换到中心")
 
     async def _wait_executor(self, project_id, resource, target, has_environment):
         deadline = time.monotonic() + (3660 if has_environment else 30)

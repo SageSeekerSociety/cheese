@@ -68,6 +68,8 @@ def main() -> int:
         "tests/unit/test_harness_prompt_contract.py",
         "tests/unit/test_codex_app_server.py",
         "tests/unit/test_codex_session.py",
+        "tests/unit/test_codex_runner.py",
+        "tests/unit/test_codex_tools.py",
         "tests/unit/test_codex_provider_requests.py",
         "tests/unit/test_claude_provider_requests.py",
     ]

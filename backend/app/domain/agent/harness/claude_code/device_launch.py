@@ -24,7 +24,12 @@ from pathlib import Path
 # substrate — identical for the local (tmux) and remote (device) backends so it
 # can't drift (fusion-design §8.6). Re-exported here (`hooks_settings`) because
 # this module's launcher and its callers build on it.
-from app.domain.agent import environment_runner, machine_tunnel, preview_tunnel
+from app.domain.agent import (
+    environment_runner,
+    executor_transport,
+    machine_tunnel,
+    preview_tunnel,
+)
 from app.domain.agent.harness.claude_code import event_drain, event_spool, startup_cache
 from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD
 from app.domain.agent.harness.claude_code.hooks_substrate import CHEESE_HOOK_SCRIPT
@@ -578,6 +583,7 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
                 + "\nCHEESE_EXECUTION_SOURCE\n"
             )
         for name, source in {
+            "executor_transport.py": Path(executor_transport.__file__).read_text(),
             "event_spool.py": Path(event_spool.__file__).read_text(),
             "platform-hook-source": CHEESE_HOOK_SCRIPT,
         }.items():

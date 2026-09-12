@@ -7,9 +7,7 @@ import uuid
 from app.core.config import settings
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import device_home_dir
-from app.domain.agent.harness.claude_code import (
-    RemoteClient,
-)
+from app.domain.agent.executor_transport import RemoteClient
 from app.domain.agent.harness.claude_code import (
     private_execution_target as target,
 )

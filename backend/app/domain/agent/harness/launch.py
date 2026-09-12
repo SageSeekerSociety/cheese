@@ -21,6 +21,18 @@ from pathlib import Path
 from typing import Protocol
 
 
+class ExecutorLaunch(Protocol):
+    """Harness-owned installation and history transfer over a device transport."""
+
+    def payload_for(self, project_id, resource_id, env: dict) -> dict: ...
+
+    def script(self, project_id, resource_id, env: dict) -> str: ...
+
+    async def transfer_history(
+        self, hub, source, center, project, resource, resume: str
+    ) -> None: ...
+
+
 @dataclass(frozen=True, slots=True)
 class SessionFile:
     """One file the harness reads at launch, named relative to its state dir.
@@ -101,6 +113,9 @@ class LaunchPlan(Protocol):
 
     @property
     def resume_session_id(self) -> str | None: ...
+
+    @property
+    def execution(self) -> ExecutorLaunch: ...
 
     def at(self, place: ScreenPlace) -> LaunchSpec:
         """The launch, now that the machine has said where."""
