@@ -6,6 +6,7 @@ package terminal
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -144,7 +145,7 @@ func (m *Manager) KillServer() { _ = m.tmux("kill-server").Run() }
 // private server — used to re-adopt a surviving session after the cheese process
 // re-execs itself (e.g. `cheese update`) without ever tearing down tmux.
 func (m *Manager) HasSession(name string) bool {
-	return m.tmux("has-session", "-t", name).Run() == nil
+	return m.tmux("has-session", "-t", "="+name).Run() == nil
 }
 
 // Adopt wraps an already-existing tmux session (one that survived a process
@@ -153,6 +154,35 @@ func (m *Manager) HasSession(name string) bool {
 // polling/relay is (re)established around it.
 func (m *Manager) Adopt(name string) *Session {
 	return &Session{m: m, name: name, stop: make(chan struct{})}
+}
+
+// SaveIdentity keeps recovery data with the session that owns the process.
+func (m *Manager) SaveIdentity(name, owner, data string) error {
+	if out, err := m.tmux("set-option", "-t", name, "@cheese-owner", owner).CombinedOutput(); err != nil {
+		return fmt.Errorf("terminal: save owner: %w: %s", err, out)
+	}
+	if out, err := m.tmux("set-option", "-t", name, "@cheese-screen", data).CombinedOutput(); err != nil {
+		return fmt.Errorf("terminal: save identity: %w: %s", err, out)
+	}
+	return nil
+}
+
+func (m *Manager) Identities(owner string) (map[string]string, error) {
+	out, err := m.tmux("list-sessions", "-F", "#{session_name}\t#{@cheese-owner}\t#{@cheese-screen}").CombinedOutput()
+	if err != nil {
+		if strings.Contains(string(out), "no server running") || strings.Contains(string(out), "No such file or directory") {
+			return map[string]string{}, nil
+		}
+		return nil, fmt.Errorf("terminal: list sessions: %w: %s", err, out)
+	}
+	identities := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		parts := strings.SplitN(line, "\t", 3)
+		if len(parts) == 3 && parts[1] == owner && parts[2] != "" {
+			identities[parts[0]] = parts[2]
+		}
+	}
+	return identities, nil
 }
 
 // Session is one hosted program: a tmux session polled for screen changes.
@@ -413,10 +443,35 @@ func (s *Session) poll() {
 
 // Close kills the session and stops its poller.
 func (s *Session) Close() error {
+	// A claimed warm process keeps its original PTY. Its launcher records that
+	// terminal here, transferring ownership to this screen before attaching.
+	data, err := s.m.tmux("show-option", "-qv", "-t", s.name, "@cheese-terminal").Output()
+	if err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data)) != 0 {
+		var target struct {
+			Socket  string `json:"socket"`
+			Session string `json:"session"`
+		}
+		if err := json.Unmarshal(data, &target); err != nil {
+			return err
+		}
+		if target.Socket == "" || target.Session == "" {
+			return fmt.Errorf("terminal: incomplete owned terminal")
+		}
+		cmd := exec.Command(s.m.bin, "-S", target.Socket, "kill-session", "-t", "="+target.Session)
+		if out, err := cmd.CombinedOutput(); err != nil &&
+			!strings.Contains(string(out), "can't find session") &&
+			!strings.Contains(string(out), "no server running") &&
+			!strings.Contains(string(out), "No such file or directory") {
+			return fmt.Errorf("terminal: close owned terminal: %w: %s", err, out)
+		}
+	}
 	select {
 	case <-s.stop:
 	default:
 		close(s.stop)
 	}
-	return s.m.tmux("kill-session", "-t", s.name).Run()
+	return s.m.tmux("kill-session", "-t", "="+s.name).Run()
 }

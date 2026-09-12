@@ -319,7 +319,7 @@ def _read_proxy_ca() -> str:
 _ALIVE_PROBE_TIMEOUT_S = 8.0
 
 # Retire-and-reopen a reused screen whose baked credential is within this many
-# seconds of expiry, mirroring the launcher's ``$EXPFILE`` gate (device_launch)
+# seconds of expiry, before reusing a running device session
 # so the backend's reuse decision and the on-device create gate agree on ONE
 # margin. Small on purpose: it only rejects an already-dead-or-dying credential,
 # never a healthy one, so a short-lived token (the gateway path's hour) is
@@ -344,16 +344,10 @@ _FILE_STAGE_TIMEOUT_S = 20
 
 
 def _credential_expiry(token: str) -> int:
-    """The UNIX expiry the device screen stamps for the model credential it is
-    launched with (``CHEESE_TOKEN_EXPIRES``). The launcher records it against the
-    inner tmux session it creates, and a later launch reads it back to tell a
-    session whose baked credential has DIED — a bare `claude` reads its OAUTH /
-    proxy credential ONCE at startup and never re-reads it, so a freshly minted
-    token never reaches an already-running (adopted) process — from one still
-    holding a good token, and retires only the former. A token with no decodable
-    claim (a dev ``SANDBOX_TOKEN`` passthrough) falls back to a session length from
-    now, so the launcher never reads it as perpetually stale and churns the screen
-    every turn."""
+    """Read the credential's birth expiry, retained with its device session.
+
+    A development token without an expiry gets the normal session lifetime.
+    """
     claims = scoped_token_claims(token)
     exp = claims.get("exp") if claims else None
     if isinstance(exp, int):
@@ -466,23 +460,11 @@ class DeviceChannel(Channel):
     async def discover(
         self, device_id: str | None = None
     ) -> list[tuple[uuid.UUID, uuid.UUID, object | None, str | None]]:
-        """Topics durably pinned to currently connected devices OF THIS CHANNEL.
+        """Recover this channel's room subscriptions and their surviving screens.
 
-        No screen comes back with them: the ``HubScreen`` that was open before
-        the restart is gone from this process, and the device reattaches on the
-        topic's next turn. What survives is the PIN, which is enough to start
-        listening again.
-
-        A topic may come back from exactly ONE channel, because a topic's hooks
-        arrive on exactly one process-wide queue (``hook_router``) and every
-        channel that discovers a topic puts a consumer on it. Two consumers do
-        not each get a copy — they SPLIT the queue: a message that arrives in
-        four flushes is assembled half by each, both halves land as separate
-        replies, and the Stop that carries the full text lands a third, because
-        "已经说过的话" is a per-consumer list. That is what an unfiltered
-        discover cost: every topic on an online connector was recovered by the
-        device channel AND the cloud one, on every backend start and every
-        connector reconnect.
+        DB bindings select the channel; the device supplies the running screen.
+        Recovering a room through both device and cloud channels would split its
+        event queue between two consumers.
         """
         online = set(self._hub.online_device_ids())
         device_ids = [device_id] if device_id in online else []
@@ -516,9 +498,65 @@ class DeviceChannel(Channel):
         # not what we started on it, and the screen itself is gone from this
         # process. Running two harnesses on one enrolled machine needs the
         # binding to record which — until then this transport hosts one.
-        return [
-            (project_id, topic_id, None, None) for project_id, topic_id, _ in scopes
-        ]
+        return await self.restore_screens(scopes)
+
+    async def restore_screens(
+        self, scopes: list[tuple[uuid.UUID, uuid.UUID, str]]
+    ) -> list[tuple[uuid.UUID, uuid.UUID, object | None, str | None]]:
+        """Rebuild screen identities for the rooms this channel owns in the DB."""
+        inventories = {
+            device_id: await self._hub.list_screens(device_id)
+            for device_id in {scope[2] for scope in scopes}
+        }
+        if not any(inventories.values()):
+            return [(project, topic, None, None) for project, topic, _ in scopes]
+        factory = self._session_factory
+        if factory is None:
+            from app.core.db import async_session_factory
+
+            factory = async_session_factory
+        restored = []
+        async with factory() as session:
+            for project_id, topic_id, device_id in scopes:
+                screen = None
+                room = await TopicService(session).get(topic_id)
+                current_resource = (room.resource_id or topic_id) if room else None
+                for entry in inventories[device_id]:
+                    env = entry.get("env", {})
+                    if (env.get("CHEESE_PROJECT"), env.get("CHEESE_TOPIC")) != (
+                        str(project_id),
+                        str(topic_id),
+                    ):
+                        continue
+                    agent = await IdentityService(session).ensure_topic_agent_user(
+                        topic_id
+                    )
+                    recovered = self._hub.adopt_screen(
+                        device_id,
+                        entry["sid"],
+                        token=entry["screen"],
+                        agent_user_id=agent.id,
+                        agent_handle=agent.username,
+                        project_id=project_id,
+                        topic_id=topic_id,
+                        resource_id=uuid.UUID(
+                            env.get("CHEESE_RESOURCE_ID") or str(topic_id)
+                        ),
+                        command=entry["command"],
+                        hook_key=str(topic_id),
+                    )
+                    expiry = env.get("CHEESE_TOKEN_EXPIRES")
+                    recovered.credential_expires = int(expiry) if expiry else None
+                    target = env.get("CHEESE_EXECUTION_TARGET")
+                    recovered.execution_target = json.loads(target) if target else None
+                    recovered.agent_configuration = env.get("CHEESE_AGENT_CONFIG", "")
+                    # Retired generations remain registered for durable cleanup;
+                    # only the room's current generation can resume its turn.
+                    if recovered.resource_id == current_resource:
+                        screen = recovered
+                restored.append((project_id, topic_id, screen, None))
+            await session.commit()
+        return restored
 
     def topics_on_device(self, device_id: str) -> list[uuid.UUID]:
         return [
@@ -817,22 +855,11 @@ class DeviceChannel(Channel):
             # Called between turns. A running CLI cannot adopt a changed model or role.
             await self._hub.close_screen(existing.device_id, existing.sid)
             existing = None
-        if existing is not None and self._credential_is_stale(existing):
-            # #388 缺陷二: the screen is still alive, but the credential its `claude`
-            # was LAUNCHED with has expired (or is within the retire margin). That
-            # credential is read ONCE at startup and never re-read, and a reused
-            # screen is only reasserted (an adopt-create), never relaunched —
-            # so reasserting here would leave the process forever holding a dead
-            # token, 407'd by the metering proxy / 401'd upstream on every turn
-            # while its process stays healthy (the exact "alive process + dead
-            # credential = looks healthy to the probe" the issue names). Retire it:
-            # close_screen makes the connector forget the sid, so the OPEN below
-            # Spawns a fresh `claude` carrying THIS launch's live credential. This
-            # is the same retirement the launcher's `$EXPFILE` gate does in its
-            # CREATE branch — but that branch only runs when the connector already
-            # forgot the sid, so on plain reuse this backend-side gate is the ONLY
-            # place it can fire. A refreshed host credential is thereby picked up on
-            # the next summon instead of an unrunnable screen being reused forever.
+        if existing is not None and (
+            existing.closing or self._credential_is_stale(existing)
+        ):
+            # A running CLI retains its birth credential. Confirm the old
+            # process stopped before opening its replacement with a fresh one.
             await self._hub.close_screen(existing.device_id, existing.sid)
             existing = None
         # Device-side paths (the launcher mkdir -p's them). Kept under a stable per
@@ -939,10 +966,7 @@ class DeviceChannel(Channel):
                 # path — the #393 dependency this model exists to remove.
                 merged["CHEESE_MACHINE_TICKET"] = "1"
             model_env = merged
-            # Stamp the minted session token's expiry so the launcher can retire an
-            # inner tmux session whose baked credential has died instead of adopting
-            # it (device_launch: the reuse that outlives a TTL bump — #385), and so
-            # the backend's own reuse gate below can do the same for a plain reuse.
+            # Preserve the birth expiry across device and backend restarts.
             credential_expires = _credential_expiry(session_token)
             model_env["CHEESE_TOKEN_EXPIRES"] = str(credential_expires)
         else:

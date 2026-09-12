@@ -16,6 +16,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -217,7 +218,19 @@ func (h *Host) onMsg(m link.Msg) {
 	case "session.create":
 		h.createSession(m)
 	case "session.close":
-		h.closeSession(m.Sid)
+		err := h.closeSession(m.Sid)
+		reply := link.Msg{T: "session.result", ID: m.ID, Sid: m.Sid}
+		if err != nil {
+			reply.Error = err.Error()
+		}
+		_ = h.conn.Send(reply)
+	case "session.list":
+		screens, err := h.restoreSessions()
+		reply := link.Msg{T: "session.result", ID: m.ID, Value: screens}
+		if err != nil {
+			reply.Error = err.Error()
+		}
+		_ = h.conn.Send(reply)
 	case "rpc.call": // the server asks this screen to do something
 		if s := h.session(m.Sid); s != nil {
 			go h.serveCall(m, s)
@@ -301,6 +314,15 @@ func (h *Host) createSession(m link.Msg) {
 			_ = h.conn.Send(link.Msg{T: "session.error", Sid: m.Sid, Error: err.Error()})
 			return
 		}
+		data, err := json.Marshal(m)
+		if err == nil {
+			err = h.tm.SaveIdentity(m.Sid, h.base, string(data))
+		}
+		if err != nil {
+			_ = term.Close()
+			_ = h.conn.Send(link.Msg{T: "session.error", Sid: m.Sid, Error: err.Error()})
+			return
+		}
 	}
 	h.mu.Lock()
 	h.sessions[m.Sid] = &sess{
@@ -348,13 +370,49 @@ func (h *Host) unsubscribeScreen(sid string) {
 	}
 }
 
-func (h *Host) closeSession(sid string) {
+func (h *Host) closeSession(sid string) error {
 	h.mu.Lock()
 	s := h.sessions[sid]
+	h.mu.Unlock()
+	if s == nil {
+		identities, err := h.tm.Identities(h.base)
+		if err != nil {
+			return err
+		}
+		if _, exists := identities[sid]; !exists {
+			return nil
+		}
+		s = &sess{term: h.tm.Adopt(sid)}
+	}
+	h.release(s)
+	if h.tm.HasSession(sid) {
+		if err := s.term.Close(); err != nil {
+			return err
+		}
+	}
+	h.mu.Lock()
 	delete(h.sessions, sid)
 	h.mu.Unlock()
-	h.teardown(s)
 	h.publishState()
+	return nil
+}
+
+func (h *Host) restoreSessions() ([]link.Msg, error) {
+	identities, err := h.tm.Identities(h.base)
+	if err != nil {
+		return nil, err
+	}
+	screens := make([]link.Msg, 0, len(identities))
+	for sid, data := range identities {
+		var screen link.Msg
+		if err := json.Unmarshal([]byte(data), &screen); err != nil {
+			return nil, fmt.Errorf("screen %s identity: %w", sid, err)
+		}
+		screen.Sid = sid
+		h.createSession(screen)
+		screens = append(screens, screen)
+	}
+	return screens, nil
 }
 
 // closeViewerClients detaches every live viewer pty (s.client) WITHOUT touching the
@@ -403,16 +461,6 @@ func (h *Host) release(s *sess) {
 		s.rv = nil
 	}
 	s.rvMu.Unlock()
-}
-
-// teardown ends a screen for good: release, then kill the tmux session with the
-// program in it. Only for a close the SERVER asked for.
-func (h *Host) teardown(s *sess) {
-	if s == nil {
-		return
-	}
-	h.release(s)
-	_ = s.term.Close()
 }
 
 // The screen-env keys the launcher and this host agree on. The launcher derives

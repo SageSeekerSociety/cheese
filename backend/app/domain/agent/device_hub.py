@@ -91,6 +91,7 @@ class HubScreen:
     credential_expires: int | None = None
     agent_configuration: str = ""
     execution_target: dict | None = None
+    closing: bool = False
     viewers: set[ViewerTransport] = field(default_factory=set)
 
 
@@ -129,6 +130,7 @@ class HubDevice:
     executor_pending: dict[str, tuple[asyncio.Future[Any], bytearray]] = field(
         default_factory=dict
     )
+    session_pending: dict[str, asyncio.Future[Any]] = field(default_factory=dict)
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     async def send(self, msg: dict[str, Any]) -> None:
@@ -159,6 +161,9 @@ class DeviceHub:
             for future, _ in device.executor_pending.values():
                 if not future.done():
                     future.set_exception(DeviceOffline(device_id))
+            for future in device.session_pending.values():
+                if not future.done():
+                    future.set_exception(DeviceOffline(device_id))
         device.transport = transport
         device.executor = False
         if name:
@@ -171,6 +176,9 @@ class DeviceHub:
         if device is not None and device.transport is transport:
             device.transport = None
             for future, _ in device.executor_pending.values():
+                if not future.done():
+                    future.set_exception(DeviceOffline(device_id))
+            for future in device.session_pending.values():
                 if not future.done():
                     future.set_exception(DeviceOffline(device_id))
             from app.domain.agent.harness.claude_code import (
@@ -294,6 +302,7 @@ class DeviceHub:
         command: list[str] | None = None,
         project_id: uuid.UUID | None = None,
         topic_id: uuid.UUID | None = None,
+        resource_id: uuid.UUID | None = None,
         hook_key: str = "",
     ) -> HubScreen:
         """Re-register a screen the *device* is still running after the server lost its
@@ -302,16 +311,21 @@ class DeviceHub:
         screen token to the agent identity so viewers/attribution work again without
         restarting the screen. Idempotent per (device, sid).
 
-        NOTE (P3 Phase B, item 5 skeleton): the caller that reconstructs the identity
-        from the DB (agent_user_id/handle/project/topic per persisted screen row) and
-        replays the device's re-announce into this is not yet wired — see
-        ``connector.agent_socket``'s inbound loop. The mechanism is here and tested;
-        the persistence + replay is the remaining TODO.
+        The channel checks room ownership against the DB before adopting the
+        identity retained by the device's tmux session.
         """
         device = self._device(device_id)
         existing = device.screens.get(sid)
         if existing is not None:
+            if (existing.project_id, existing.topic_id, existing.token) != (
+                project_id,
+                topic_id,
+                token,
+            ):
+                raise ValueError("screen identity changed during recovery")
             return existing
+        if sid in self._screens or token in self._by_screen_token:
+            raise ValueError("screen identity belongs to another device")
         screen = HubScreen(
             sid=sid,
             device_id=device_id,
@@ -321,6 +335,7 @@ class DeviceHub:
             agent_handle=agent_handle,
             project_id=project_id,
             topic_id=topic_id,
+            resource_id=resource_id,
             hook_key=hook_key,
         )
         device.screens[sid] = screen
@@ -329,11 +344,15 @@ class DeviceHub:
         return screen
 
     async def close_screen(self, device_id: str, sid: str) -> bool:
-        """Close a screen: tell the device to end the session and forget it here."""
+        """Forget a screen only after its owner confirms that it has stopped."""
         device = self._device(device_id)
-        screen = device.screens.pop(sid, None)
+        screen = device.screens.get(sid)
+        if screen is not None:
+            screen.closing = True
+        await self.session_request(device_id, device_link.session_close(sid))
         if screen is None:
             return False
+        device.screens.pop(sid, None)
         self._screens.pop(sid, None)
         self._by_screen_token.pop(screen.token, None)
         from app.domain.agent.harness.claude_code import (
@@ -341,8 +360,25 @@ class DeviceHub:
         )
 
         await drop_screen_subscriptions(screen)
-        await device.send(device_link.session_close(sid))
         return True
+
+    async def session_request(
+        self, device_id: str, message: dict[str, Any], *, timeout: float = 30
+    ) -> Any:
+        device = self._device(device_id)
+        if device.transport is None:
+            raise DeviceOffline(device_id)
+        request_id = uuid.uuid4().hex
+        future = asyncio.get_running_loop().create_future()
+        device.session_pending[request_id] = future
+        try:
+            await device.send({**message, "id": request_id})
+            return await asyncio.wait_for(future, timeout)
+        finally:
+            device.session_pending.pop(request_id, None)
+
+    async def list_screens(self, device_id: str) -> list[dict[str, Any]]:
+        return await self.session_request(device_id, {"t": "session.list"})
 
     def screen_by_token(self, token: str) -> HubScreen | None:
         return self._by_screen_token.get(token)
@@ -361,12 +397,7 @@ class DeviceHub:
         ]
 
     def screens_for_topic(self, topic_id: uuid.UUID) -> list[HubScreen]:
-        """Every screen bound to a topic, ACROSS devices and whether or not the
-        device is online — the reverse lookup the lifecycle reaper needs to free a
-        topic's screen when it is archived/accepted (``topic_id`` is globally unique,
-        so this is the whole set). Offline devices are included on purpose: closing
-        their screen still forgets it here, so an archived topic leaves no stale
-        registry entry to re-surface if the device reconnects."""
+        """Include offline screens so a close can remain pending until reconnect."""
         return [s for s in self._screens.values() if s.topic_id == topic_id]
 
     async def call_screen(
@@ -631,8 +662,13 @@ class DeviceHub:
                 else:
                     fut.set_result(msg.value)
             return
-        if msg.t == "file.result":
-            fut = device.file_pending.get(msg.id)
+        if msg.t in ("file.result", "session.result"):
+            pending = (
+                device.file_pending
+                if msg.t == "file.result"
+                else device.session_pending
+            )
+            fut = pending.get(msg.id)
             if fut is not None and not fut.done():
                 if msg.error:
                     fut.set_exception(RuntimeError(msg.error))

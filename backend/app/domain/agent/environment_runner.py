@@ -271,7 +271,11 @@ if __name__ == "__main__":
                 )
                 status = read_status(root)
         if status["state"] == "ready":
-            os.kill(status["pid"], signal.SIGTERM)
+            try:
+                os.kill(status["pid"], signal.SIGTERM)
+            except ProcessLookupError:
+                # Closing its terminal can finish after the status read.
+                pass
             # Confirm termination before another revision can touch this HOME.
             import time
 

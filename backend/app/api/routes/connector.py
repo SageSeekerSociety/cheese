@@ -19,6 +19,8 @@ the existing ``/sandbox/hooks/{topic_id}`` endpoint (scoped-token auth + shared
 ``hook_router``) — the connector adds no second hook path.
 """
 
+import asyncio
+import contextlib
 import json
 import logging
 import uuid
@@ -226,27 +228,33 @@ async def agent_socket(
     from app.core.db import async_session_factory
     from app.domain.topic.retire import sweep_retired_storage
 
-    # The receive loop below must be running to answer cleanup's device execs.
-    spawn(sweep_retired_storage(async_session_factory), name="cleanup device reconnect")
-    try:
-        from app.api.deps import get_chat_service
+    async def recover():
+        try:
+            from app.api.deps import get_chat_service
 
-        await get_chat_service().recover_sessions(device.device_id)
-    except Exception:  # noqa: BLE001 — recovery cannot reject a healthy device
-        logger.exception(
-            "hook subscription recovery failed for device %s", device.device_id
+            await get_chat_service().recover_sessions(device.device_id)
+        except Exception:  # noqa: BLE001 — recovery cannot reject a healthy device
+            logger.exception(
+                "hook subscription recovery failed for device %s", device.device_id
+            )
+        # Restore screen ownership before cleanup looks for sessions to close.
+        spawn(
+            sweep_retired_storage(async_session_factory),
+            name="cleanup device reconnect",
         )
-    try:
-        # A Cloud topic whose machine just came up has been holding a message;
-        # this attach is the last fact it was waiting for, so deliver now instead
-        # of at the next sweep tick (machine/wakeup.py).
-        from app.api.deps import get_cloud_wakeup
+        try:
+            # A Cloud topic whose machine just came up has been holding a message;
+            # this attach is the last fact it was waiting for, so deliver now instead
+            # of at the next sweep tick (machine/wakeup.py).
+            from app.api.deps import get_cloud_wakeup
 
-        await get_cloud_wakeup().wake_device(device.device_id)
-    except Exception:  # noqa: BLE001 — a wake-up failure cannot reject the device
-        logger.exception(
-            "cloud wake-up on attach failed for device %s", device.device_id
-        )
+            await get_cloud_wakeup().wake_device(device.device_id)
+        except Exception:  # noqa: BLE001 — a wake-up failure cannot reject the device
+            logger.exception(
+                "cloud wake-up on attach failed for device %s", device.device_id
+            )
+
+    recovery = asyncio.create_task(recover())
     try:
         while True:
             message = await websocket.receive_json()
@@ -254,6 +262,9 @@ async def agent_socket(
     except WebSocketDisconnect:
         pass
     finally:
+        recovery.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await recovery
         await device_hub.detach_device(device.device_id, transport)
 
 

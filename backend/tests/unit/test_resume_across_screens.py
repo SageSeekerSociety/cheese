@@ -11,37 +11,33 @@ The decision cannot be made on this side. `--resume <id>` whose transcript is
 absent does not degrade to a fresh session — claude exits and the pane never
 draws an input box — so it has to be guarded by looking at the file, and the
 file is on a machine behind NAT that the backend cannot stat. So the launcher
-carries the guard, and these tests drive the REAL generated shell (with a stub
-tmux) to check what it decides, plus one turn through the real channel to check
+carries the guard, and these tests drive the generated shell with a recording
+agent to check what it decides, plus one turn through the real channel to check
 the pointer reaches it at all.
 """
 
 import asyncio
-import os
+import json
 import subprocess
 import time
 import uuid
 from types import SimpleNamespace
 
+import pytest
+
 from app.domain.agent.harness.claude_code import device_launch
 from app.domain.agent.harness.claude_code.hook_events import HookRouter
-from tests.unit.test_device_launch import STUB_SOCK, _stub_tmux_env
+from tests.unit.test_device_launch import _stub_tmux_env
 from tests.unit.test_device_provider import FakeHub, _provider
 
 SESSION_ID = "9f1c0d3e-2b4a-4c6e-8d10-7a5b3c9e1f20"
 
 
 def _resume_deciding_block() -> str:
-    """The launcher from where it builds `$CLAUDE` through the tmux-hosting
-    branch, standalone — the span in which the resume decision is made and the
-    command it produces is either used (a fresh session) or ignored (an adopted
-    one). Its env is supplied by the caller instead of the launcher's earlier
-    setup, exactly as in test_device_launch's tmux tests."""
+    """Run the resume decision and the resulting agent command."""
     script = device_launch.build_launch_script()
     start = script.index('CLAUDE="\\"$CLAUDE_BIN\\"')
-    tail = '  exec tmux -S "$CHEESE_TMUX_SOCK" attach -t "$SESSION"\n'
-    body = script[start:].split(tail, 1)[0]
-    return "set -e\n" + body + tail + "fi\n"
+    return "set -e\n" + script[start:]
 
 
 def _machine(tmp_path, *, transcript_for: str | None = SESSION_ID):
@@ -53,23 +49,34 @@ def _machine(tmp_path, *, transcript_for: str | None = SESSION_ID):
         slug = config_dir / "projects" / "-home-agent-work"
         slug.mkdir(parents=True)
         (slug / f"{transcript_for}.jsonl").write_text('{"type":"user"}\n')
+    agent = tmp_path / "claude-stub"
+    agent.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os, sys\n"
+        'with open(os.environ["AGENT_ARGS"], "a") as output:\n'
+        '    output.write(json.dumps(sys.argv[1:]) + "\\n")\n'
+    )
+    agent.chmod(0o755)
     env = {
         **env,
         "CLAUDE_CONFIG_DIR": str(config_dir),
-        "CLAUDE_BIN": "/usr/bin/claude",
+        "CLAUDE_BIN": str(agent),
+        "AGENT_ARGS": str(tmp_path / "agent-args.jsonl"),
+        "WARM_ROOT": "",
+        "CHEESE_TUNNEL_URL": "",
+        "CHEESE_PREVIEW_URL": "",
         "CLAUDE_MODEL": "",
-        "TMUX": f"{STUB_SOCK},1,0",
     }
+    env.pop("TMUX", None)
     env.pop("CLAUDE", None)  # this block builds it; it must not be inherited
     return home, env, log
 
 
-def _launch(env, *, resume: str | None = SESSION_ID, panes: str = "12345"):
+def _launch(env, *, resume: str | None = SESSION_ID):
     """Run the launcher's decision span once, as a turn would."""
     full = {
         **env,
         "CHEESE_TOKEN_EXPIRES": str(int(time.time()) + 100_000),
-        "STUB_PANES": panes,
     }
     if resume is not None:
         full["CHEESE_RESUME_SESSION"] = resume
@@ -84,17 +91,18 @@ def _launch(env, *, resume: str | None = SESSION_ID, panes: str = "12345"):
 
 
 def _launched_commands(env) -> list[str]:
-    """Every `claude` command line the stub tmux was asked to host."""
-    path = env["STUB_ARGS"]
-    if not os.path.exists(path):
-        return []
-    # The stub logs every new-session argument on its own line; the one that
-    # hosts a claude is the session command, and only it carries the flags.
-    return [
-        line
-        for line in open(path).read().splitlines()
-        if "--dangerously-skip-permissions" in line
-    ]
+    """Arguments received by the agent process itself."""
+    return [" ".join(json.loads(line)) for line in open(env["AGENT_ARGS"])]
+
+
+def _hook(env, event):
+    subprocess.run(
+        ["sh", "-c", device_launch._CHEESE_HOOK_SCRIPT],
+        input=json.dumps({"hook_event_name": event}),
+        text=True,
+        env={**env, "CHEESE_HOOK_SPOOL_ONLY": "1", "CHEESE_HOOK_SPOOL": ""},
+        check=True,
+    )
 
 
 def test_a_reopened_screen_picks_the_conversation_back_up(tmp_path):
@@ -142,20 +150,6 @@ def test_an_empty_transcript_is_not_a_conversation(tmp_path):
     assert "--resume" not in _launched_commands(env)[0]
 
 
-def test_a_live_session_is_adopted_and_never_asked_to_resume(tmp_path):
-    """An adopted `claude`已经带着自己的对话在跑. Resuming is only ever about the
-    session a launch CREATES, so a reuse must not start a second one."""
-    _home, env, log = _machine(tmp_path)
-
-    _launch(env)  # creates
-    _launch(env)  # the same screen, still alive
-
-    assert len(_launched_commands(env)) == 1, (
-        "a live session was relaunched instead of adopted"
-    )
-    assert log.read_text().split().count("new") == 1
-
-
 def test_a_resume_that_killed_the_screen_is_not_tried_twice(tmp_path):
     """The wedge this must not become. A transcript that is present but that
     claude cannot read kills the pane; a dead pane is (correctly) grounds to
@@ -165,7 +159,8 @@ def test_a_resume_that_killed_the_screen_is_not_tried_twice(tmp_path):
     _home, env, _log = _machine(tmp_path)
 
     _launch(env)  # resumes...
-    _launch(env, panes="1")  # ...and its pane is dead: retire and relaunch
+    _hook(env, "SessionStart")  # Startup alone does not prove resume worked.
+    _launch(env)  # ...and its pane is dead: retire and relaunch
 
     hosted = _launched_commands(env)
     assert len(hosted) == 2, hosted
@@ -175,16 +170,14 @@ def test_a_resume_that_killed_the_screen_is_not_tried_twice(tmp_path):
     )
 
 
-def test_a_resume_that_worked_can_be_used_again_later(tmp_path):
-    """And the other side of that: a session that came up fine and was adopted
-    leaves nothing behind, so the NEXT time the screen is retired the same
-    conversation is picked up again. Otherwise one retirement would cost every
-    later one its memory."""
+@pytest.mark.parametrize("event", ["UserPromptSubmit", "Stop"])
+def test_a_resume_that_worked_can_be_used_again_later(tmp_path, event):
+    """A confirmed resumed conversation can be resumed again after retirement."""
     _home, env, _log = _machine(tmp_path)
 
     _launch(env)  # resumes
-    _launch(env)  # adopted — the resume evidently worked
-    _launch(env, panes="1")  # much later: the credential died, say
+    _hook(env, event)
+    _launch(env)  # much later: the credential died, say
 
     hosted = _launched_commands(env)
     assert len(hosted) == 2, hosted
