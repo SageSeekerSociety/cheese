@@ -59,10 +59,12 @@ import { useEventListener } from '@vueuse/core'
 
 import {
   answerOptions,
+  ApiError,
   attachmentRawUrl,
   chatWsUrl,
   downloadFile,
   getProgress,
+  isRetryableGetFailure,
   listBlocks,
   listRoomTasks,
   listTopicMembers,
@@ -554,6 +556,7 @@ function restoreScroll(topicId: string) {
 // gaps from the outage are refetched (pushBlock dedups the overlap).
 let retryTimer: ReturnType<typeof setTimeout> | null = null
 let retryDelayMs = 1000
+let disposed = false
 
 function cancelRetry() {
   if (retryTimer) {
@@ -808,7 +811,7 @@ async function loadTopic(topic: Topic) {
     // user scrolls up to them (loadOlder).
     const payload = await listBlocks(topic.id, { limit: PAGE_SIZE })
     // Only apply if still the active topic (avoid race on fast switching).
-    if (props.topic?.id !== topic.id) return
+    if (disposed || props.topic?.id !== topic.id) return
     // Blocks that landed while we were away append at the tail; if the user
     // was parked at the bottom, follow them so the newest message is visible
     // without a manual scroll. Compared on the LAST id, not on length: the
@@ -829,7 +832,12 @@ async function loadTopic(topic: Topic) {
     openSocket(topic.id)
     void fillViewportIfNeeded()
   } catch (e) {
+    if (disposed || props.topic?.id !== topic.id) return
     errorMsg.value = e instanceof Error ? e.message : '加载历史失败'
+    // A failed history fetch must not terminate socket recovery during an outage.
+    if (isRetryableGetFailure('GET', e instanceof ApiError ? e.status : undefined, e)) {
+      scheduleReconnect(topic.id)
+    }
   } finally {
     if (props.topic?.id === topic.id) loadingHistory.value = false
   }
@@ -1505,6 +1513,7 @@ watch(
 )
 
 onBeforeUnmount(() => {
+  disposed = true
   rememberScroll() // persist position across an unmount (e.g. leaving the view)
   if (props.topic) rememberComposer(props.topic.id)
   for (const id of [...echoTimers.keys()]) clearEchoTimer(id)
