@@ -17,6 +17,7 @@ import json
 import logging
 import re
 import shutil
+import time
 import uuid
 from collections import Counter
 from collections.abc import AsyncIterator
@@ -4341,6 +4342,7 @@ class ChatService:
         queued turn picks up every message posted while it waited."""
         from app.api.deps import get_work_runner
 
+        preparation_started = time.monotonic()
         prepared = await self._assemble_turn(
             topic_id=topic_id,
             content=content,
@@ -4348,6 +4350,14 @@ class ChatService:
             user_block_id=user_block_id,
             provision_actor=provision_actor,
             platform_turn=platform_turn,
+        )
+        logger.info(
+            "chat_preparation_timing topic=%s turn=%s phase=assembled "
+            "elapsed_ms=%.3f unix_ms=%.3f",
+            topic_id,
+            turn_id,
+            (time.monotonic() - preparation_started) * 1000,
+            time.time() * 1000,
         )
         if isinstance(prepared, _TurnBail):
             for frame in prepared.frames:
@@ -4413,12 +4423,28 @@ class ChatService:
             ),
         )
         prompt_text = publication_prompt(prompt_text, is_private=is_private)
+        logger.info(
+            "chat_preparation_timing topic=%s turn=%s phase=prompt_built "
+            "elapsed_ms=%.3f unix_ms=%.3f",
+            topic_id,
+            turn_id,
+            (time.monotonic() - preparation_started) * 1000,
+            time.time() * 1000,
+        )
 
         # Compute: a provider owns the per-topic sandbox + execution (spec §9.1).
         # In a private chat, `cheese remember` targets the owner's personal memory
         # (spec §8.4). The provider runs a plain model turn when no Docker (tests).
         model_kwargs, route = await self._model_kwargs(
             project_id, provider, topic_id, agent=prepared.agent
+        )
+        logger.info(
+            "chat_preparation_timing topic=%s turn=%s phase=model_ready "
+            "elapsed_ms=%.3f unix_ms=%.3f",
+            topic_id,
+            turn_id,
+            (time.monotonic() - preparation_started) * 1000,
+            time.time() * 1000,
         )
         # Remembered for the turns this session starts by itself. A route is a
         # fact about where a SESSION's traffic goes, not about one prompt, and a

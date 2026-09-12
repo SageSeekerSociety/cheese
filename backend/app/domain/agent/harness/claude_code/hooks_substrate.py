@@ -1802,7 +1802,16 @@ class ClaudeCodeRuntime:
         """
         topic_id = session.topic_id
         screen, subscription = await self.ensure(session, opening, work_id=work_id)
+        dispatch_started = time.monotonic()
         staged, lost = await self._stage(screen, images)
+        logger.info(
+            "session_dispatch_timing topic=%s turn=%s phase=images_staged "
+            "elapsed_ms=%.3f unix_ms=%.3f",
+            topic_id,
+            work_id,
+            (time.monotonic() - dispatch_started) * 1000,
+            time.time() * 1000,
+        )
         prompt = _prompt_with_native_images(message, staged, lost)
         attribution = subscription.current_work
         if attribution is None:
@@ -1824,6 +1833,14 @@ class ClaudeCodeRuntime:
         )
         try:
             delivery_started = time.monotonic()
+            logger.info(
+                "session_dispatch_timing topic=%s turn=%s phase=prompt_dispatch "
+                "elapsed_ms=%.3f unix_ms=%.3f",
+                topic_id,
+                work_id,
+                (delivery_started - dispatch_started) * 1000,
+                time.time() * 1000,
+            )
             ready = await self._channel.send_prompt(screen, prompt)
             logger.info(
                 "session setup phase=prompt topic=%s duration_ms=%d ready=%s",
