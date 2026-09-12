@@ -71,6 +71,15 @@ These timestamps cover the gateway request; they do not separately measure
 provider processing and gateway overhead. Application deployments still leave
 this independent gateway stack running.
 
+The derived image also emits `provider_http_timing` records for model HTTP calls,
+correlated by LiteLLM call ID. They mark entry into the HTTP request, response
+headers (or a buffered response), and stream completion, interruption, or early
+closure. Logs contain timestamps, duration, status, and outcome; they omit URLs,
+headers, credentials, and bodies. The interval includes connection setup, HTTP
+retries, network transfer, and stream-consumer delays. It is an upstream HTTP
+interval, not a measurement of provider compute alone. Offline build tests verify
+body delivery, close propagation, cancellation, failures, and log redaction.
+
 Check the loaded configuration's request transformation and nonzero token prices:
 
 ```sh
