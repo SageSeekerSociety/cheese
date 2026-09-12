@@ -7,7 +7,12 @@ import time
 
 import httpx
 
-logger = logging.getLogger("LiteLLM Proxy")
+logger = logging.getLogger("cheese.provider_http_timing")
+# The proxy may suppress INFO globally. Keep these metadata-only records visible
+# without enabling provider debug logging, which can include request contents.
+logger.setLevel(logging.INFO)
+logger.propagate = False
+logger.addHandler(logging.StreamHandler())
 
 
 class RequestTiming:

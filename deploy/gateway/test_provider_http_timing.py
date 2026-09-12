@@ -1,7 +1,9 @@
 """Check upstream boundary logs and stream behavior without a provider call."""
 
 import asyncio
+import io
 import json
+import logging
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -30,6 +32,16 @@ class Body(httpx.AsyncByteStream):
 
 
 async def main():
+    capture = io.StringIO()
+    proxy_logger = logging.getLogger("LiteLLM Proxy")
+    with (
+        patch.object(proxy_logger, "level", logging.ERROR),
+        patch.object(timing.logger.handlers[0], "stream", capture),
+    ):
+        timing.RequestTiming("visibility-check").finish("complete")
+    visible = capture.getvalue()
+    assert '"call_id": "visibility-check"' in visible
+    assert '"phase": "request_end"' in visible
     handler = AsyncHTTPHandler()
     try:
         for mode in ("complete", "close", "broken", "cancelled", "failed"):
