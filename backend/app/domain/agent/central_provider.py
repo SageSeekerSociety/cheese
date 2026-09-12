@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import json
+import logging
 import time
 from pathlib import Path
 
@@ -22,6 +23,8 @@ from app.domain.agent.device_provider import (
 from app.domain.agent.harness.claude_code import ScreenSetupError, build_executor_launch
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
+
+logger = logging.getLogger(__name__)
 
 
 class CentralChannel(DeviceChannel):
@@ -99,10 +102,21 @@ class CentralChannel(DeviceChannel):
         turn_id=None,
     ):
         assert isinstance(precheck, tuple)
+        started_at = time.monotonic()
+
+        def mark(phase):
+            logger.info(
+                "central_setup_timing topic=%s phase=%s elapsed_ms=%.3f",
+                topic_id,
+                phase,
+                (time.monotonic() - started_at) * 1000,
+            )
+
         executor_id, agent_user_id, agent_handle = precheck
         factory = self._session_factory or async_session_factory
         async with factory() as session:
             room = await TopicService(session).lock_for_execution(topic_id)
+            mark("room_lock")
             resource = room.resource_id or room.id
             previous = room.session_placement
             center = (
@@ -132,6 +146,7 @@ class CentralChannel(DeviceChannel):
                 if center == executor_id:
                     raise ScreenSetupError("项目执行机器与中心会话机器需要分别配置")
                 api = await self.executor._device_api_base(executor_id)
+                mark("executor_route")
                 execute_env = {
                     **values,
                     "CHEESE_API": api,
@@ -153,6 +168,7 @@ class CentralChannel(DeviceChannel):
                     stdin=build_executor_launch(project_id, resource, execute_env),
                     timeout=660,
                 )
+                mark("executor_launch")
                 if result.get("exit") != 0 or result.get("truncated"):
                     raise ScreenSetupError(result.get("stderr") or "执行环境启动失败")
                 info = json.loads(result["stdout"])
@@ -171,6 +187,7 @@ class CentralChannel(DeviceChannel):
                 await self._wait_executor(
                     project_id, resource, target, bool(values.get("CHEESE_ENVIRONMENT"))
                 )
+                mark("executor_ready")
             placement = {
                 "device_id": center,
                 "resource_id": str(resource),
@@ -183,6 +200,7 @@ class CentralChannel(DeviceChannel):
             await session.commit()
             room = await TopicService(session).lock_for_execution(topic_id)
             await session.refresh(room)
+            mark("placement_committed")
             if (room.resource_id or room.id) != resource:
                 raise ScreenSetupError("房间已经重新打开，本轮没有启动旧执行环境")
             values.pop("CHEESE_ENVIRONMENT", None)
@@ -198,6 +216,7 @@ class CentralChannel(DeviceChannel):
                 launch=launch,
                 environment_before={},
             )
+            mark("screen_ready")
         self._subscription_devices[topic_id] = center
         return screen
 
