@@ -4485,6 +4485,14 @@ class ChatService:
         # event-id. No-op for an empty spool.
         async for frame in self._reconcile_spool(project_id, topic_id, turn_id):
             yield frame
+        logger.info(
+            "chat_preparation_timing topic=%s turn=%s phase=spool_reconciled "
+            "elapsed_ms=%.3f unix_ms=%.3f",
+            topic_id,
+            turn_id,
+            (time.monotonic() - preparation_started) * 1000,
+            time.time() * 1000,
+        )
 
         # The turn's own checklist starts EMPTY even when prior_progress is not
         # (see `_HookWorkState.todo`): _apply_task_event numbers items by
