@@ -184,9 +184,15 @@ class CentralChannel(DeviceChannel):
                         f"/topics/{topic_id}/execution/{resource}"
                     ),
                 }
-                await self._wait_executor(
-                    project_id, resource, target, bool(values.get("CHEESE_ENVIRONMENT"))
-                )
+                has_environment = bool(values.get("CHEESE_ENVIRONMENT"))
+                # Bootstrap already checked the running executor and its environment
+                # in one process. Fresh or unfinished environments still wait here.
+                if not info.get("pid") or (
+                    has_environment and info.get("environment_status") != "ready"
+                ):
+                    await self._wait_executor(
+                        project_id, resource, target, has_environment
+                    )
                 mark("executor_ready")
             placement = {
                 "device_id": center,

@@ -60,6 +60,26 @@ def test_executor_bootstrap_starts_in_room_without_a_git_checkout(
             assert time.monotonic() < deadline
             time.sleep(0.01)
         assert runtime.request(state, "ping")["workspace"] == str(home / "room")
+        from app.domain.agent import environment_runner
+
+        environment = home / ".cheese-environment"
+        environment.mkdir()
+        payload["environment"] = {"revision": "existing"}
+        for status in ("ready", "failed", "pending"):
+            environment_runner.write_json(
+                environment / "status.json",
+                {
+                    "state": status,
+                    "pid": os.getpid(),
+                    "process_identity": environment_runner.process_identity(
+                        os.getpid()
+                    ),
+                },
+            )
+            bootstrap.configure(payload)
+            reused = json.loads(capsys.readouterr().out)
+            assert reused["pid"] == runtime.request(state, "ping")["pid"]
+            assert reused["environment_status"] == status
     finally:
         subprocess.run(
             [sys.executable, str(RUNTIME), "stop", "--state", str(state)],
