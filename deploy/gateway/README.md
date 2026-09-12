@@ -49,6 +49,9 @@ fixed when a container is created, not when its process starts.
 
 The `deepseek-flash` entry declares its thinking and effort capabilities. Without
 them, the pinned gateway removes the thinking settings sent by Claude Code.
+Agent settings offer DeepSeek V4.1 Flash and GLM-5.2 alongside enabled Claude
+models. Saving a different model refreshes the native session at the next task
+boundary; the scoped session credential carries the selected model's route.
 Check the loaded configuration's request transformation and nonzero token prices:
 
 ```sh
