@@ -52,6 +52,16 @@ them, the pinned gateway removes the thinking settings sent by Claude Code.
 Agent settings offer DeepSeek V4.1 Flash and GLM-5.2 alongside enabled Claude
 models. Saving a different model refreshes the native session at the next task
 boundary; the scoped session credential carries the selected model's route.
+Auxiliary and subagent model aliases follow the selected API model. API-backed
+Remote Control sessions receive Cheese project identity and control policy from
+the metering proxy; these queries do not require an Anthropic login. Claude
+subscription sessions retain their provider account route.
+
+The central session's `AGENT_SESSION_API_BASE` must also be reachable from its
+private execution containers. A host loopback URL makes platform tools inside
+those containers fail with connection refused; use the deployment's reachable
+backend address.
+
 Check the loaded configuration's request transformation and nonzero token prices:
 
 ```sh
