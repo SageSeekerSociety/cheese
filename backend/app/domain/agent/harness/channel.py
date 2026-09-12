@@ -29,18 +29,11 @@ class ScreenSetupError(Exception):
 
 
 class Channel:
-    """一条通往「机器上一块屏幕」的通道：开机器、把字送进去、按 Escape。
+    """Reach a session host, prepare its workspace, and transport input.
 
-    The transport half of what used to be one class. A channel knows how to
-    reach a machine and how to type on it, and nothing about what is running
-    there — the subscription, activity, spool and receipt machinery that every
-    transport used to inherit a copy of is written once above this seam, in
-    ``ClaudeCodeRuntime``.
-
-    Two methods have no sensible default and every channel writes them:
-    ``ensure_ready`` (bring a screen up) and ``send_prompt`` (put text into it).
-    The rest default to 「这条通道没有这个能力」, which is what lets a channel be
-    as small as the transport actually is.
+    Implementations report delivery and liveness; the harness owns event
+    translation, provider requests, and session state. Startup and input delivery
+    require an implementation. Optional operations report their availability.
     """
 
     # WHICH machine pool this is: what a topic's ``compute_profile`` stores and

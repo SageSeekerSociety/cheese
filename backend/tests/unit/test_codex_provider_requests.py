@@ -4,13 +4,14 @@ import asyncio
 import json
 import os
 import shutil
+import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
 from app.domain.agent.harness.codex import AppServer
-from app.domain.agent.harness.prompt import build_system_prompt
+from tests.support.harness_prompts import event_prompts, system_prompt
 
 
 @pytest.mark.anyio
@@ -84,7 +85,7 @@ async def test_real_provider_receives_platform_prompt_and_matching_tool_result(
     home.mkdir()
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    (workspace / ".git").mkdir()
+    subprocess.run(["git", "init", "--quiet", str(workspace)], check=True)
     (home / "config.toml").write_text(
         'model = "gpt-5.3-codex"\nmodel_provider = "fixture"\n'
         '[model_providers.fixture]\nname = "fixture"\n'
@@ -92,13 +93,8 @@ async def test_real_provider_receives_platform_prompt_and_matching_tool_result(
         'wire_api = "responses"\nrequires_openai_auth = false\n'
         "[analytics]\nenabled = false\n"
     )
-    prompt = build_system_prompt(
-        "PLATFORM_FIXTURE",
-        "SKILL_FIXTURE",
-        "DOCUMENT_FIXTURE",
-        ["MEMORY_FIXTURE"],
-        role="ROLE_FIXTURE",
-    )
+    prompt = system_prompt()
+    inputs = list(event_prompts().values())
     completed = asyncio.Queue()
     calls = []
 
@@ -116,27 +112,31 @@ async def test_real_provider_receives_platform_prompt_and_matching_tool_result(
 
     process = None
     listener = None
+
+    async def connect(errors):
+        process = await asyncio.create_subprocess_exec(
+            "codex",
+            "app-server",
+            cwd=workspace,
+            env={
+                "PATH": os.environ["PATH"],
+                "HOME": str(home),
+                "CODEX_HOME": str(home),
+            },
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=errors,
+            limit=4 * 1024 * 1024,
+        )
+        assert process.stdout is not None and process.stdin is not None
+        client = AppServer(
+            process.stdout, process.stdin, on_event=on_event, on_request=on_request
+        )
+        return process, client, asyncio.create_task(client.listen())
+
     try:
         with (tmp_path / "stderr.log").open("wb") as errors:
-            process = await asyncio.create_subprocess_exec(
-                "codex",
-                "app-server",
-                cwd=workspace,
-                env={
-                    "PATH": os.environ["PATH"],
-                    "HOME": str(home),
-                    "CODEX_HOME": str(home),
-                },
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=errors,
-                limit=4 * 1024 * 1024,
-            )
-            assert process.stdout is not None and process.stdin is not None
-            client = AppServer(
-                process.stdout, process.stdin, on_event=on_event, on_request=on_request
-            )
-            listener = asyncio.create_task(client.listen())
+            process, client, listener = await connect(errors)
             async with asyncio.timeout(30):
                 await client.initialize()
                 thread = await client.request(
@@ -166,18 +166,39 @@ async def test_real_provider_receives_platform_prompt_and_matching_tool_result(
                     "turn/start",
                     {
                         "threadId": thread_id,
-                        "input": [{"type": "text", "text": "USER_FIXTURE"}],
+                        "input": [{"type": "text", "text": inputs[0]}],
                     },
                 )
                 assert (await completed.get())["status"] == "completed"
-                await client.request(
-                    "turn/start",
-                    {
-                        "threadId": thread_id,
-                        "input": [{"type": "text", "text": "FOLLOWUP_FIXTURE"}],
-                    },
-                )
-                assert (await completed.get())["status"] == "completed"
+                for number, user_prompt in enumerate(inputs[1:], start=1):
+                    if number == 2:
+                        # Resume must recover history and dynamic tools from disk,
+                        # without replaying the first user message or tool call.
+                        process.terminate()
+                        await process.wait()
+                        await listener
+                        process, client, listener = await connect(errors)
+                        await client.initialize()
+                        resumed = await client.request(
+                            "thread/resume",
+                            {
+                                "threadId": thread_id,
+                                "cwd": str(workspace),
+                                "baseInstructions": "HARNESS_BASE_FIXTURE",
+                                "developerInstructions": prompt,
+                                "approvalPolicy": "never",
+                                "sandbox": "read-only",
+                            },
+                        )
+                        assert resumed["thread"]["id"] == thread_id
+                    await client.request(
+                        "turn/start",
+                        {
+                            "threadId": thread_id,
+                            "input": [{"type": "text", "text": user_prompt}],
+                        },
+                    )
+                    assert (await completed.get())["status"] == "completed"
     finally:
         if process is not None and process.returncode is None:
             process.terminate()
@@ -189,7 +210,7 @@ async def test_real_provider_receives_platform_prompt_and_matching_tool_result(
         worker.join()
         (tmp_path / "provider-requests.json").write_text(json.dumps(requests, indent=2))
 
-    assert len(requests) == 3
+    assert len(requests) == len(inputs) + 1
     assert len(calls) == 1
     assert calls[0]["arguments"] == {"value": "fixture input"}
     for request in requests:
@@ -202,15 +223,35 @@ async def test_real_provider_receives_platform_prompt_and_matching_tool_result(
             if part.get("text") == prompt
         ]
         assert platform == [prompt]
+        tools = [
+            tool for tool in request["tools"] if tool.get("name") == "cheese_fixture"
+        ]
+        assert len(tools) == 1
+        assert tools[0]["parameters"] == {
+            "type": "object",
+            "properties": {"value": {"type": "string"}},
+            "required": ["value"],
+            "additionalProperties": False,
+        }
     tool_results = [
         item for item in requests[1]["input"] if item["type"] == "function_call_output"
     ]
     assert len(tool_results) == 1
     assert tool_results[0]["call_id"] == "call_fixture"
     assert "TOOL_RESULT_FIXTURE" in json.dumps(tool_results[0]["output"])
-    user_messages = [
-        item for item in requests[2]["input"] if item.get("role") == "user"
+    for number, user_prompt in enumerate(inputs):
+        request = requests[number + 1]
+        user_messages = [
+            item for item in request["input"] if item.get("role") == "user"
+        ]
+        assert user_messages[-1]["content"] == [
+            {"type": "input_text", "text": user_prompt}
+        ]
+    recorded_inputs = [
+        part["text"]
+        for item in requests[-1]["input"]
+        if item.get("role") == "user"
+        for part in item["content"]
+        if part.get("text") in inputs
     ]
-    assert user_messages[-1]["content"] == [
-        {"type": "input_text", "text": "FOLLOWUP_FIXTURE"}
-    ]
+    assert recorded_inputs == inputs

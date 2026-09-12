@@ -15,7 +15,8 @@ import uuid
 
 import pytest
 
-from app.domain.agent.chat import PLATFORM_NOTICE, ChatService
+from app.domain.agent.chat import ChatService
+from app.domain.agent.harness.prompt import PLATFORM_NOTICE
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, settle_turn, stub_compute

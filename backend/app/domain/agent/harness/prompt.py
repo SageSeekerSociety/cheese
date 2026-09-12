@@ -1,6 +1,9 @@
 """Platform instructions shared by every agent harness."""
 
 import re
+import uuid
+
+from app.domain.block.models import BlockKind
 
 _BARE_PATH_RE = re.compile(
     r"(?<![\w/.&<-])((?:[\w.-]+/)+[\w-]+\.\w{1,8}(?::\d+(?:-\d+)?)?)(?![\w/])"
@@ -118,3 +121,139 @@ def build_system_prompt(
             "## 本轮运行环境（平台元信息，非用户输入）\n" + "\n".join(turn_meta)
         )
     return "\n\n".join(parts)
+
+
+KICKOFF_PROMPT = (
+    "这个话题刚从一条消息升级出来，由你负责推进。任务简报在系统提示的"
+    "「当前话题的实况文档」里：被升级的那段讨论 + 它原来所在地方的文档快照。"
+    "现在开工：\n"
+    "1. 先发开场白：一两句复述你理解的任务、说明打算怎么推进（给人纠偏的机会）；"
+    "简报信息不足就明确列出缺什么、@ 升级发起人补充。\n"
+    "2. 把实况文档改写成你自己的状态摘要（目标/约束/下一步），别留着简报原文不动。\n"
+    "3. 能直接开始的活就开始干；需要拍板的用决策请求找对的人。"
+)
+
+
+def thread_relay_prompt(
+    *, task_id: uuid.UUID, task_title: str, author: str, message: str
+) -> str:
+    """The ROOM's wake-up instruction when a person says something on one of its
+    threads — a chat message, a comment on its living doc.
+
+    Same reason as 补证据 and 讨论升级: the person is looking at the thread, but
+    the worker doing it lives in the room's session, so the room is the only
+    thing that can hear them. What was said stays where it was said — this only
+    says who has to act on it.
+    """
+    return (
+        f"有人在活「{task_title}」（task id `{task_id}`）上说话了：\n\n"
+        f"---\n[{author}] {message}\n---\n\n"
+        "**转达给做这条活的分身**：它还在跑就直接给它发消息；已经收工了，你就自己"
+        "看着办——能替它答的当场答，要接着干的照原来的简报重起一个分身并 "
+        f"`cheese bind {task_id} <新的 agent_id>`。"
+        "回话说在这条活上（`cheese tell` 到它），别只在房间里说，"
+        "问话的人看的是那边。"
+    )
+
+
+def thread_upgraded_prompt(*, task_id: uuid.UUID, source_message: str) -> str:
+    """The ROOM's wake-up instruction when one of its messages became a thread.
+
+    Addressed to the room because a thread is a 分身 inside the room's own
+    session and has no session to wake. The platform writes the row, its card
+    block and its brief; raising the worker is the room's, and so is naming the
+    thread — it is created untitled and nothing else is in a position to name it.
+    """
+    return (
+        f"你把一条消息升级成了这个房间里的一条活（task id `{task_id}`）。"
+        "被升级的那段话就是它的简报，平台已经记在卡上了：\n\n"
+        f"---\n{source_message}\n---\n\n"
+        "接下来是你的事：\n"
+        f'1. `cheese title "<≤12 字的标题>" --task {task_id}`——它现在还叫「新话题」，'
+        "只有你能给它起名字。\n"
+        "2. 用你的 Agent 工具起一个分身，**把上面这段简报原文放进它的 prompt**"
+        "（分身不会自己去读文档）。\n"
+        f"3. `cheese bind {task_id} <分身的 agent_id>`——不 bind，这条活在界面上"
+        "永远是「没人做」，分身干的每件事都记在你头上。"
+    )
+
+
+PLATFORM_NOTICE = "【平台】以下是平台自动发出的指令，不是任何人手打的话："
+
+
+def platform_prompt(content: str) -> str:
+    return f"{PLATFORM_NOTICE}\n{content}"
+
+
+def publication_prompt(content: str, *, is_private: bool = False) -> str:
+    """Carry the chat contract on new and resumed terminal input alike."""
+    if is_private:
+        return (
+            content
+            + "\n\n"
+            + platform_prompt(
+                "这是私聊，最终答复会自动发布给用户。直接回答，"
+                "不要再用 cheese chat send 重复发送同一答复。"
+            )
+        )
+    return (
+        content
+        + "\n\n"
+        + platform_prompt(
+            "普通输出和最终答复都不会自动发到聊天。请用 cheese chat send 发送给用户。"
+            "收到需要回应的用户消息（包括排队或执行中追加的消息）时，能直接回答就发答案；"
+            "需要继续处理就先说明你理解的意思和接下来要做什么，再继续。"
+            "重要进展、改方向、阻碍和完成结果也要主动发消息。"
+            "巡检按 heartbeat 的通知规则发言；分身向主 agent 回报。"
+        )
+    )
+
+
+def strip_platform_notice(text: str) -> str:
+    """Neutralize the platform marker inside HUMAN text, so a person cannot type
+    a message that reads as a platform instruction. The marker is the one thing
+    in the prompt that claims institutional authority, so it has to be
+    unforgeable from the content side."""
+    return text.replace(PLATFORM_NOTICE, "【平台·用户原文】")
+
+
+def attachment_prompt_line(
+    author: str, path: str, *, embeds_images: bool, mime: str = "image/png"
+) -> str:
+    if not mime.startswith("image/"):
+        return f"[{author}] 发来一个文件：{path}。请用适合该格式的工具读取文件内容。"
+    if embeds_images:
+        return (
+            f"[{author}] 发来一张图片（图片内容已附在本条消息里；"
+            f"它同时存在你工作目录的 {path}）"
+        )
+    return (
+        f"[{author}] 发来一张图片：**它没有附在本条消息里**，"
+        f"文件在你工作目录的 {path}，需要你自己用 Read 打开它。"
+        f"（打不开就直说打不开，不要猜图里是什么。）"
+    )
+
+
+def prompt_line(b, *, embeds_images: bool) -> str:
+    """One speaker-labelled prompt line per pending human block.
+
+    An attachment block is a worktree image, and the line has to describe how it
+    actually arrives THIS turn — which is not the same on every backend:
+
+    - ``embeds_images``: the provider produces a native image block. SDK/relay
+      providers embed base64 directly; interactive Claude Code resolves the
+      prompt's ``@path`` through its native attachment path after a remote
+      device has acknowledged staging the bytes.
+    - a third-party provider that declares ``embeds_images=False`` gets the
+      explicit Read fallback and must not claim the image was attached.
+
+    The wording is load-bearing, not cosmetic. Told "图片内容已附在本条消息里"
+    and handed nothing, an agent does not raise — it writes a confident answer
+    about a picture it never saw, and nothing downstream marks that answer as
+    invented. Saying "去打开这个文件" fails safe: worst case it reports it could
+    not read the path."""
+    if b.kind == BlockKind.attachment:
+        return attachment_prompt_line(
+            b.author, b.content, embeds_images=embeds_images, mime=b.mime_type or ""
+        )
+    return f"[{b.author}]: {strip_platform_notice(b.content)}"

@@ -50,7 +50,7 @@ class ComputeProvider(Protocol):
 
     # 图片输入: whether the turn's user message actually carries `images=`. It is
     # a capability, not a preference — the prompt wording branches on it
-    # (chat._prompt_line). Before this existed, `images=` was accepted by every
+    # (chat.prompt_line). Before this existed, `images=` was accepted by every
     # provider and silently dropped by some, while the prompt kept telling 芝士
     # "图片内容已附在本条消息里" on all of them. An agent that reads that promise
     # and sees nothing does not error — it invents what the image said, which is

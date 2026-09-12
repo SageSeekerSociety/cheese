@@ -1,0 +1,82 @@
+"""Install isolated harness binaries and retain the provider contract evidence."""
+
+import ast
+import json
+import os
+import subprocess
+import sys
+from datetime import UTC, datetime
+from pathlib import Path
+
+
+def main() -> int:
+    backend = Path(__file__).resolve().parents[1]
+    root = backend.parent
+    run = (
+        root / "logs/harness-contracts" / datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    )
+    run.mkdir(parents=True)
+    tools = root / "tmp/harness-contract-tools"
+    source = backend / "app/domain/agent/harness/claude_code/remote_execution/client.py"
+    claude_version = next(
+        ast.literal_eval(node.value)
+        for node in ast.parse(source.read_text()).body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "PINNED_VERSION"
+            for target in node.targets
+        )
+    )
+    packages = [f"@anthropic-ai/claude-code@{claude_version}", "@openai/codex@0.154.0"]
+    (run / "inputs.json").write_text(json.dumps({"packages": packages}, indent=2))
+    print(f"Contract evidence: {run}", flush=True)
+    with (run / "install.log").open("w") as log:
+        subprocess.run(
+            [
+                "npm",
+                "install",
+                "--prefix",
+                str(tools),
+                "--no-audit",
+                "--no-fund",
+                *packages,
+            ],
+            check=True,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+        )
+    env = {
+        **os.environ,
+        "PATH": str(tools / "node_modules/.bin") + os.pathsep + os.environ["PATH"],
+    }
+    with (run / "versions.log").open("w") as log:
+        for binary in ("claude", "codex"):
+            subprocess.run(
+                [binary, "--version"],
+                check=True,
+                env=env,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+            )
+    command = [
+        sys.executable,
+        "-m",
+        "pytest",
+        "-q",
+        "--basetemp",
+        str(run / "pytest"),
+        "tests/unit/test_harness_prompt_contract.py",
+        "tests/unit/test_codex_app_server.py",
+        "tests/unit/test_codex_provider_requests.py",
+        "tests/unit/test_claude_provider_requests.py",
+    ]
+    with (run / "pytest.log").open("w") as log:
+        result = subprocess.run(
+            command, cwd=backend, env=env, stdout=log, stderr=subprocess.STDOUT
+        )
+    print((run / "pytest.log").read_text(), end="")
+    return result.returncode
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,47 @@
+name: Harness request contracts
+
+on:
+  pull_request:
+    paths:
+      - "backend/app/domain/agent/**"
+      - "backend/tests/**"
+      - "backend/scripts/test_harness_contracts.py"
+      - "backend/uv.lock"
+      - ".github/workflows/harness-contract.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: harness-contract-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  provider-requests:
+    runs-on: [self-hosted, cheese-ci]
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
+        with:
+          version: "0.12.1"
+      - name: Install Python and dependencies
+        run: |
+          uv python install 3.13
+          uv sync --frozen --group dev
+      - name: Verify actual provider requests with pinned binaries
+        run: uv run python scripts/test_harness_contracts.py
+      - name: Retain synthetic requests and test logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: harness-contract-${{ github.sha }}
+          path: logs/harness-contracts/
+          retention-days: 7
