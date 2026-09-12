@@ -10,7 +10,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from app.domain.agent.harness.codex import AppServer
+from app.domain.agent.harness import Opening
+from app.domain.agent.harness.codex import AppServer, Session
 from tests.support.harness_prompts import event_prompts, system_prompt
 
 
@@ -97,14 +98,21 @@ async def test_real_provider_receives_platform_prompt_and_matching_tool_result(
     inputs = list(event_prompts().values())
     completed = asyncio.Queue()
     calls = []
+    tool_started = asyncio.Event()
+    release_tool = asyncio.Event()
+    session = None
 
     async def on_event(event):
+        if session is not None:
+            session.observe(event)
         if event["method"] == "turn/completed":
             await completed.put(event["params"]["turn"])
 
     async def on_request(method, params):
         assert method == "item/tool/call"
         calls.append(params)
+        tool_started.set()
+        await release_tool.wait()
         return {
             "success": True,
             "contentItems": [{"type": "inputText", "text": "TOOL_RESULT_FIXTURE"}],
@@ -114,6 +122,7 @@ async def test_real_provider_receives_platform_prompt_and_matching_tool_result(
     listener = None
 
     async def connect(errors):
+        nonlocal session
         process = await asyncio.create_subprocess_exec(
             "codex",
             "app-server",
@@ -132,6 +141,7 @@ async def test_real_provider_receives_platform_prompt_and_matching_tool_result(
         client = AppServer(
             process.stdout, process.stdin, on_event=on_event, on_request=on_request
         )
+        session = Session(client)
         return process, client, asyncio.create_task(client.listen())
 
     try:
@@ -139,38 +149,29 @@ async def test_real_provider_receives_platform_prompt_and_matching_tool_result(
             process, client, listener = await connect(errors)
             async with asyncio.timeout(30):
                 await client.initialize()
-                thread = await client.request(
-                    "thread/start",
-                    {
-                        "cwd": str(workspace),
-                        "approvalPolicy": "never",
-                        "sandbox": "read-only",
-                        "baseInstructions": "HARNESS_BASE_FIXTURE",
-                        "developerInstructions": prompt,
-                        "dynamicTools": [
-                            {
-                                "name": "cheese_fixture",
-                                "description": "Contract fixture",
-                                "inputSchema": {
-                                    "type": "object",
-                                    "properties": {"value": {"type": "string"}},
-                                    "required": ["value"],
-                                    "additionalProperties": False,
-                                },
-                            }
-                        ],
-                    },
+                thread_id = await session.open(
+                    Opening(system_prompt=prompt),
+                    cwd=str(workspace),
+                    base_instructions="HARNESS_BASE_FIXTURE",
+                    tools=[
+                        {
+                            "name": "cheese_fixture",
+                            "description": "Contract fixture",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {"value": {"type": "string"}},
+                                "required": ["value"],
+                                "additionalProperties": False,
+                            },
+                        }
+                    ],
                 )
-                thread_id = thread["thread"]["id"]
-                await client.request(
-                    "turn/start",
-                    {
-                        "threadId": thread_id,
-                        "input": [{"type": "text", "text": inputs[0]}],
-                    },
-                )
+                started = await session.send(inputs[0])
+                await tool_started.wait()
+                assert await session.send(inputs[1]) == started
+                release_tool.set()
                 assert (await completed.get())["status"] == "completed"
-                for number, user_prompt in enumerate(inputs[1:], start=1):
+                for number, user_prompt in enumerate(inputs[2:], start=2):
                     if number == 2:
                         # Resume must recover history and dynamic tools from disk,
                         # without replaying the first user message or tool call.
@@ -179,27 +180,17 @@ async def test_real_provider_receives_platform_prompt_and_matching_tool_result(
                         await listener
                         process, client, listener = await connect(errors)
                         await client.initialize()
-                        resumed = await client.request(
-                            "thread/resume",
-                            {
-                                "threadId": thread_id,
-                                "cwd": str(workspace),
-                                "baseInstructions": "HARNESS_BASE_FIXTURE",
-                                "developerInstructions": prompt,
-                                "approvalPolicy": "never",
-                                "sandbox": "read-only",
-                            },
+                        resumed = await session.open(
+                            Opening(system_prompt=prompt, resume_token=thread_id),
+                            cwd=str(workspace),
+                            base_instructions="HARNESS_BASE_FIXTURE",
+                            tools=[],
                         )
-                        assert resumed["thread"]["id"] == thread_id
-                    await client.request(
-                        "turn/start",
-                        {
-                            "threadId": thread_id,
-                            "input": [{"type": "text", "text": user_prompt}],
-                        },
-                    )
+                        assert resumed == thread_id
+                    await session.send(user_prompt)
                     assert (await completed.get())["status"] == "completed"
     finally:
+        release_tool.set()
         if process is not None and process.returncode is None:
             process.terminate()
             await process.wait()
@@ -210,7 +201,7 @@ async def test_real_provider_receives_platform_prompt_and_matching_tool_result(
         worker.join()
         (tmp_path / "provider-requests.json").write_text(json.dumps(requests, indent=2))
 
-    assert len(requests) == len(inputs) + 1
+    assert len(requests) == len(inputs)
     assert len(calls) == 1
     assert calls[0]["arguments"] == {"value": "fixture input"}
     for request in requests:
@@ -240,7 +231,7 @@ async def test_real_provider_receives_platform_prompt_and_matching_tool_result(
     assert tool_results[0]["call_id"] == "call_fixture"
     assert "TOOL_RESULT_FIXTURE" in json.dumps(tool_results[0]["output"])
     for number, user_prompt in enumerate(inputs):
-        request = requests[number + 1]
+        request = requests[number]
         user_messages = [
             item for item in request["input"] if item.get("role") == "user"
         ]
