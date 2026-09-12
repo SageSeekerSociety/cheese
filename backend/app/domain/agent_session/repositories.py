@@ -35,18 +35,21 @@ class AgentSessionRepository:
             AgentSession.task_id.is_(None),
         )
 
-    async def resume_token(self, topic_id: uuid.UUID, agent_handle: str) -> str | None:
+    async def resume_token(
+        self, topic_id: uuid.UUID, agent_handle: str, harness: str
+    ) -> str | None:
         """What this agent resumes its conversation in this place by."""
         result = await self._session.execute(
             select(AgentSession.resume_token).where(
                 *self._at(topic_id),
                 AgentSession.agent_handle == agent_handle,
+                AgentSession.harness == harness,
             )
         )
         return result.scalar_one_or_none()
 
     async def save(
-        self, *, topic_id: uuid.UUID, agent_handle: str, resume_token: str
+        self, *, topic_id: uuid.UUID, agent_handle: str, resume_token: str, harness: str
     ) -> None:
         """Record where this agent's conversation got to (upsert).
 
@@ -62,11 +65,16 @@ class AgentSessionRepository:
         stmt = insert(AgentSession).values(
             topic_id=topic_id,
             agent_handle=agent_handle,
+            harness=harness,
             resume_token=resume_token,
         )
         await self._session.execute(
             stmt.on_conflict_do_update(
-                index_elements=[AgentSession.topic_id, AgentSession.agent_handle],
+                index_elements=[
+                    AgentSession.topic_id,
+                    AgentSession.agent_handle,
+                    AgentSession.harness,
+                ],
                 index_where=text("task_id IS NULL"),
                 set_={"resume_token": stmt.excluded.resume_token},
             )

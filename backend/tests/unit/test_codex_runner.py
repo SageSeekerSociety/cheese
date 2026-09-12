@@ -1,6 +1,7 @@
 """Transport retries and lost readers must not create a second model input."""
 
 import asyncio
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -46,7 +47,9 @@ async def test_cancelled_reader_and_duplicate_request_share_one_submission(tmp_p
 @pytest.mark.anyio
 async def test_interrupted_submission_is_not_silently_sent_again(tmp_path):
     runner = Runner(tmp_path, AsyncMock())
-    runner.journal.begin_input("uncertain", "text")
+    runner.journal.begin_input(
+        "uncertain", json.dumps({"text": "text", "images": []}, sort_keys=True)
+    )
     await runner.close()
     reopened = Runner(tmp_path, AsyncMock())
     try:
@@ -73,3 +76,17 @@ async def test_event_reads_do_not_consume_and_survive_reopening(tmp_path):
         assert result["events"] == entries[1:]
     finally:
         await reopened.close()
+
+
+@pytest.mark.anyio
+async def test_image_content_is_part_of_the_input_identity(tmp_path):
+    runner = Runner(tmp_path, AsyncMock())
+    sender = AsyncMock(return_value="turn")
+    runner.session = SimpleNamespace(send=sender)
+    try:
+        await runner.send("input", "look", ["data:image/png;base64,YQ=="])
+        with pytest.raises(ValueError):
+            await runner.send("input", "look", ["data:image/png;base64,Yg=="])
+        sender.assert_awaited_once_with("look", images=["data:image/png;base64,YQ=="])
+    finally:
+        await runner.close()

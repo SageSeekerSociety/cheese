@@ -30,6 +30,16 @@ class Session:
                 "approvalPolicy": "never",
                 # Native tools must not write into the central session host.
                 "sandbox": "read-only",
+                # No native host environment: all filesystem tools are dynamic
+                # calls into the selected room executor, including image reads.
+                "environments": [],
+                "config": {
+                    # File/shell operations belong to the room executor. The
+                    # platform question tool is `cheese ask`, as on Claude Code.
+                    "features.shell_tool": False,
+                    "features.view_image": False,
+                    "tools.experimental_request_user_input.enabled": False,
+                },
             }
             if opening.model:
                 params["model"] = opening.model
@@ -63,13 +73,16 @@ class Session:
         elif method == "turn/completed" and params["turn"]["id"] == self.turn_id:
             self.turn_id = None
 
-    async def send(self, text: str) -> str:
+    async def send(self, text: str, *, images: list[str] | None = None) -> str:
         async with self.input_lock:
             if self.thread_id is None:
                 raise RuntimeError("Open the Codex thread before sending input")
             params: dict = {
                 "threadId": self.thread_id,
-                "input": [{"type": "text", "text": text}],
+                "input": [
+                    {"type": "text", "text": text},
+                    *({"type": "image", "url": url} for url in images or []),
+                ],
             }
             if self.turn_id is not None:
                 params["expectedTurnId"] = self.turn_id

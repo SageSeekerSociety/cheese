@@ -11,14 +11,18 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 
 from app.domain.agent.harness import Opening
+from app.domain.agent.harness.codex.events import Assembler
 from app.domain.agent.harness.codex.runner import Runner, socket_path
+from app.domain.agent.service import AgentMessage, AgentResult, AgentToolUse
 from tests.support.harness_prompts import event_prompts, system_prompt
 
 
 @pytest.mark.anyio
 @pytest.mark.skipif(shutil.which("codex") is None, reason="Codex binary required")
+@pytest.mark.parametrize("model", ["gpt-5.3-codex", "gpt-6-astra"])
 async def test_real_provider_receives_platform_prompt_and_matching_tool_result(
     tmp_path,
+    model,
 ):
     requests = []
 
@@ -39,6 +43,19 @@ async def test_real_provider_receives_platform_prompt_and_matching_tool_result(
                     "arguments": '{"value":"fixture input"}',
                     "status": "completed",
                 }
+                if model == "gpt-6-astra":
+                    item = {
+                        "id": "fc_fixture",
+                        "type": "custom_tool_call",
+                        "call_id": "call_fixture",
+                        "name": "exec",
+                        "namespace": "functions",
+                        "input": (
+                            "text(await tools.cheese_fixture("
+                            '{value: "fixture input"}));'
+                        ),
+                        "status": "completed",
+                    }
             else:
                 item = {
                     "id": f"msg_fixture_{number}",
@@ -88,7 +105,7 @@ async def test_real_provider_receives_platform_prompt_and_matching_tool_result(
     workspace.mkdir()
     subprocess.run(["git", "init", "--quiet", str(workspace)], check=True)
     (home / "config.toml").write_text(
-        'model = "gpt-5.3-codex"\nmodel_provider = "fixture"\n'
+        f'model = "{model}"\nmodel_provider = "fixture"\n'
         '[model_providers.fixture]\nname = "fixture"\n'
         f'base_url = "http://127.0.0.1:{provider.server_port}/v1"\n'
         'wire_api = "responses"\nrequires_openai_auth = false\n'
@@ -113,6 +130,7 @@ async def test_real_provider_receives_platform_prompt_and_matching_tool_result(
     state = home / "runner"
     runner = None
     cursor = 0
+    observed = []
 
     async def rpc(method, params=None, *, abandon=False):
         reader, writer = await asyncio.open_unix_connection(
@@ -139,6 +157,7 @@ async def test_real_provider_receives_platform_prompt_and_matching_tool_result(
             for entry in entries:
                 cursor = entry["sequence"]
                 event = entry["record"]
+                observed.append(event)
                 if event["method"] == "turn/completed":
                     assert event["params"]["turn"]["status"] == "completed"
                     return
@@ -215,29 +234,111 @@ async def test_real_provider_receives_platform_prompt_and_matching_tool_result(
 
     assert len(requests) == len(inputs)
     assert len(calls) == 1
+    assembler = Assembler()
+    room_events = [event for record in observed for event in assembler.accept(record)]
+    messages = [event for event in room_events if isinstance(event, AgentMessage)]
+    assert len(messages) == len(inputs) - 1
+    assert all(message.text == "fixture reply" for message in messages)
+    assert len({message.eid for message in messages}) == len(messages)
+    assert len([event for event in room_events if isinstance(event, AgentResult)]) == 5
+    uses = [event for event in room_events if isinstance(event, AgentToolUse)]
+    assert len(uses) == 1
+    assert uses[0].input == {"value": "fixture input"}
     assert calls[0]["arguments"] == {"value": "fixture input"}
-    for request in requests:
-        assert request["instructions"] == "HARNESS_BASE_FIXTURE"
+    for index, request in enumerate(requests):
+        lite = model == "gpt-6-astra"
+        if lite:
+            assert "tools" not in request and "instructions" not in request
+            declarations = [
+                item for item in request["input"] if item["type"] == "additional_tools"
+            ]
+            assert len(declarations) == 1
+            tool_specs = [
+                tool
+                for namespace in declarations[0]["tools"]
+                for tool in namespace["tools"]
+            ]
+        else:
+            assert request["instructions"] == "HARNESS_BASE_FIXTURE"
+            tool_specs = request["tools"]
+        native_tools = {tool.get("name") for tool in tool_specs}
+        assert not native_tools.intersection(
+            {
+                "exec_command",
+                "write_stdin",
+                "view_image",
+                "request_user_input",
+                "apply_patch",
+            }
+        )
         platform = [
             part["text"]
             for item in request["input"]
             if item.get("role") == "developer"
-            for part in item["content"]
+            for part in item.get("content", [])
             if part.get("text") == prompt
         ]
         assert platform == [prompt]
-        tools = [
-            tool for tool in request["tools"] if tool.get("name") == "cheese_fixture"
+        developer_parts = [
+            part["text"]
+            for item in request["input"]
+            if item.get("role") == "developer"
+            for part in item.get("content", [])
         ]
-        assert len(tools) == 1
-        assert tools[0]["parameters"] == {
-            "type": "object",
-            "properties": {"value": {"type": "string"}},
-            "required": ["value"],
-            "additionalProperties": False,
-        }
+        if lite:
+            assert developer_parts.pop(0) == "HARNESS_BASE_FIXTURE"
+        native_count = 6 if lite else 3
+        assert len(developer_parts) == native_count + (index >= 2)
+        assert developer_parts[0] == prompt
+        assert developer_parts[1].startswith("<skills_instructions>\n")
+        assert developer_parts[1].endswith("\n</skills_instructions>")
+        assert developer_parts[2].startswith("<permissions instructions>\n")
+        assert developer_parts[2].endswith("</permissions instructions>")
+        if lite:
+            for part, tag in zip(
+                developer_parts[3:6],
+                ("collaboration_mode", "multi_agent_role", "multi_agent_mode"),
+                strict=True,
+            ):
+                assert part.startswith(f"<{tag}>") and part.endswith(f"</{tag}>")
+        if index >= 2:
+            assert developer_parts[native_count] == (
+                "<skills_instructions>\n## Orchestrator skills update\n"
+                "No orchestrator skills are currently available.\n"
+                "</skills_instructions>"
+            )
+        if lite:
+            executors = [tool for tool in tool_specs if tool["name"] == "exec"]
+            assert len(executors) == 1
+            declaration = (
+                "### `cheese_fixture`\nContract fixture\n\nexec tool declaration:\n"
+                "```ts\ndeclare const tools: { "
+                "cheese_fixture(args: { value: string; }): "
+                "Promise<unknown>; };\n```"
+            )
+            assert executors[0]["description"].count(declaration) == 1
+            for name in ("exec_command", "write_stdin", "view_image"):
+                assert f"### `{name}`" not in executors[0]["description"]
+        else:
+            tools = [
+                tool for tool in tool_specs if tool.get("name") == "cheese_fixture"
+            ]
+            assert len(tools) == 1
+            assert tools[0]["parameters"] == {
+                "type": "object",
+                "properties": {"value": {"type": "string"}},
+                "required": ["value"],
+                "additionalProperties": False,
+            }
     tool_results = [
-        item for item in requests[1]["input"] if item["type"] == "function_call_output"
+        item
+        for item in requests[1]["input"]
+        if item["type"]
+        == (
+            "custom_tool_call_output"
+            if model == "gpt-6-astra"
+            else "function_call_output"
+        )
     ]
     assert len(tool_results) == 1
     assert tool_results[0]["call_id"] == "call_fixture"

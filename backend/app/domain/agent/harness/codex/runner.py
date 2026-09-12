@@ -90,10 +90,13 @@ class Runner:
         os.chmod(socket_path(self.state), 0o600)
         return thread
 
-    async def send(self, identifier: str, text: str) -> dict:
+    async def send(
+        self, identifier: str, text: str, images: list[str] | None = None
+    ) -> dict:
+        payload = json.dumps({"text": text, "images": images or []}, sort_keys=True)
         previous = self.journal.input(identifier)
         if previous is not None:
-            if previous[0] != text:
+            if previous[0] != payload:
                 raise ValueError("An input ID cannot be reused for different text")
             if previous[1] == "accepted":
                 return previous[2] or {}
@@ -104,8 +107,8 @@ class Runner:
                     "Previous input outcome is unresolved; it was not resubmitted"
                 )
         else:
-            self.journal.begin_input(identifier, text)
-            task = asyncio.create_task(self._submit(identifier, text))
+            self.journal.begin_input(identifier, payload)
+            task = asyncio.create_task(self._submit(identifier, text, images))
             self.inputs[identifier] = task
 
             def finished(task):
@@ -116,10 +119,16 @@ class Runner:
             task.add_done_callback(finished)
         return await asyncio.shield(self.inputs[identifier])
 
-    async def _submit(self, identifier: str, text: str) -> dict:
+    async def _submit(
+        self, identifier: str, text: str, images: list[str] | None
+    ) -> dict:
         assert self.session is not None
         try:
-            turn = await self.session.send(text)
+            turn = (
+                await self.session.send(text, images=images)
+                if images
+                else await self.session.send(text)
+            )
             result = {"turn_id": turn, "input_id": identifier}
             self.journal.finish_input(identifier, "accepted", result)
             return result
@@ -131,7 +140,9 @@ class Runner:
         if method == "events":
             return {"events": self.journal.read(int(params.get("after", 0)))}
         if method == "send":
-            return await self.send(params["input_id"], params["text"])
+            return await self.send(
+                params["input_id"], params["text"], params.get("images")
+            )
         if method == "interrupt":
             return {
                 "interrupted": await self.session.interrupt() if self.session else False

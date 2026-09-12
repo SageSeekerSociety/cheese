@@ -32,7 +32,7 @@ from app.core.errors import GatewayUnavailableError, NotFoundError, ValidationEr
 from app.core.text import markdown_preview
 from app.domain.agent.compute import ComputePool, ComputeProvider
 from app.domain.agent.gateway import LlmGateway, drain_new_usage
-from app.domain.agent.harness import Opening, SessionRef, runtime_for
+from app.domain.agent.harness import Opening, SessionRef, harness_name, runtime_for
 from app.domain.agent.harness.prompt import (
     KICKOFF_PROMPT,
     attachment_prompt_line,
@@ -1928,6 +1928,7 @@ class ChatService:
                         topic_id=place.room_id,
                         agent_handle=agent.handle,
                         resume_token=session_id,
+                        harness=harness_name(agent.configuration.get("harness")),
                     )
                     await session.commit()
         except Exception:  # noqa: BLE001 — never mask the original failure
@@ -3878,7 +3879,9 @@ class ChatService:
             # conversation, which is the failure this whole path prevents.
             session_agent = await self._agent_at(session, place)
             resume_session_id = await AgentSessionService(session).resume_token(
-                place.room_id, session_agent.handle
+                place.room_id,
+                session_agent.handle,
+                harness=harness_name(session_agent.configuration.get("harness")),
             )
             untitled = not is_private and topic.title == PLACEHOLDER_TITLE
             # 进度层 (#187): the checklist the last turn left behind. Read inside
@@ -4562,6 +4565,7 @@ class ChatService:
                     topic_id=topic_id,
                     agent_handle=agent.handle,
                     resume_token=new_session_id,
+                    harness=harness_name(agent.configuration.get("harness")),
                 )
             await session.commit()
 

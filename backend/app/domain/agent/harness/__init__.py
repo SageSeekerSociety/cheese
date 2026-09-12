@@ -61,7 +61,7 @@ if TYPE_CHECKING:
 # lived in the Claude Code adapter under names starting with "Hook", which is
 # how they were sensed and not what they are.
 #
-# (project, topic, work id, event, session id, is-replay, is-live)
+# (project, topic, work id, event, event id, final text already seen, unsolicited)
 EventConsumer = Callable[
     [
         uuid.UUID,

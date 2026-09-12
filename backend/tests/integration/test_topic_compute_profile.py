@@ -44,6 +44,7 @@ def _mark_started(client, tid: str) -> None:
                 topic_id=uuid.UUID(tid),
                 agent_handle=CHEESE_HANDLE,
                 resume_token="sess-1",
+                harness="claude-code",
             )
             await s.commit()
 
