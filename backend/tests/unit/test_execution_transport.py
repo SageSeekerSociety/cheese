@@ -12,6 +12,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 import pytest
 
@@ -190,6 +191,84 @@ def native_call(process, identifier, command):
         },
     )
     return json.loads(result["content"][0]["text"])
+
+
+def test_generated_prefix_preserves_local_hook_and_remote_command_boundary(
+    central_transport, tmp_path, monkeypatch
+):
+    _, _, _, remote_work = central_transport
+    monkeypatch.setenv("CHEESE_TOKEN", "fixture")
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1")
+    helpers = tmp_path / "helpers"
+    helpers.mkdir()
+    source = Path(central.__file__)
+    copied_helper = helpers / source.name
+    shutil.copyfile(source, copied_helper)
+    shutil.copyfile(source.with_name("proxy.js"), helpers / "proxy.js")
+    monkeypatch.setattr(central, "__file__", str(copied_helper))
+    target = json.loads((tmp_path / "central.json").read_text())
+    command = "cat > 'hook receipt.txt'; printf '%s' 'quoted * ? [value]'"
+    directory = tmp_path / "prepared with spaces"
+    version_probe = tmp_path / "claude-version"
+    version_probe.write_text("#!/bin/sh\nprintf '2.1.265\\n'\n")
+    version_probe.chmod(0o700)
+    launch = central.prepare(
+        directory,
+        target,
+        claude=str(version_probe),
+        base_settings={
+            "hooks": {
+                "UserPromptSubmit": [
+                    {"hooks": [{"type": "command", "command": command}]}
+                ]
+            }
+        },
+    )
+    env = launch["env"]
+    workspace = directory / "workspace"
+    prefix = env["CLAUDE_CODE_SHELL_PREFIX"]
+    local = subprocess.run(
+        [prefix, command],
+        input='{"receipt":true}',
+        cwd=workspace,
+        env={**os.environ, **env},
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=15,
+    )
+    assert local.stdout == "quoted * ? [value]"
+    assert (workspace / "hook receipt.txt").read_text() == '{"receipt":true}'
+    assert not (remote_work / "hook receipt.txt").exists()
+    # Sharing a prefix with an allowed hook cannot make arbitrary commands local.
+    changed = command + "; printf remote > appended.txt"
+    subprocess.run(
+        [prefix, changed],
+        input="remote input",
+        cwd=workspace,
+        env={**os.environ, **env},
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=15,
+    )
+    assert not (workspace / "appended.txt").exists()
+    assert (remote_work / "appended.txt").read_text() == "remote"
+    assert (workspace / "hook receipt.txt").read_text() == '{"receipt":true}'
+    # Platform hooks no longer need to launch the Python command dispatcher.
+    copied_helper.unlink()
+    direct = subprocess.run(
+        [prefix, command],
+        input="second receipt",
+        cwd=workspace,
+        env={**os.environ, **env},
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=15,
+    )
+    assert direct.stdout == "quoted * ? [value]"
+    assert (workspace / "hook receipt.txt").read_text() == "second receipt"
 
 
 def test_central_tools_reuse_process_and_http_connection(central_transport):
