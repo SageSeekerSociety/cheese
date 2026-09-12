@@ -3877,40 +3877,41 @@ class ChatService:
         if self._gateway is None:
             return None
         try:
-            async with self._gateway_lock:
-                async with self._sessions() as session:
-                    project = await ProjectRepository(session).get(project_id)
-                    if project is None:
-                        return None
-                    s = dict(project.settings or {})
-                    key = s.get(self._GW_KEY)
-                    if not isinstance(key, str) or not key:
-                        return None  # nothing ever routed → nothing to meter
-                    ckpt = s.get(self._GW_CKPT)
-                    ckpt = ckpt if isinstance(ckpt, dict) else None
-                    drained = await drain_new_usage(self._gateway, key, ckpt)
-                    if drained is None or drained[0] + drained[1] <= 0:
-                        # LiteLLM writes spend logs asynchronously — at turn end
-                        # the rows often lag by a few seconds (verified live).
-                        # One bounded settle-retry keeps per-turn attribution;
-                        # anything still missing lands in the NEXT drain
-                        # (cumulative deltas are exactly-once either way).
-                        await asyncio.sleep(3.0)
+            for attempt in range(2):
+                if attempt:
+                    # Spend rows can arrive late. Wait without holding the lock
+                    # needed by new model requests, then read the current checkpoint.
+                    await asyncio.sleep(3.0)
+                async with self._gateway_lock:
+                    async with self._sessions() as session:
+                        project = await ProjectRepository(session).get(project_id)
+                        if project is None:
+                            return None
+                        s = dict(project.settings or {})
+                        key = s.get(self._GW_KEY)
+                        if not isinstance(key, str) or not key:
+                            return None  # nothing ever routed → nothing to meter
+                        ckpt = s.get(self._GW_CKPT)
+                        ckpt = ckpt if isinstance(ckpt, dict) else None
                         drained = await drain_new_usage(self._gateway, key, ckpt)
-                    if drained is None:
-                        return None
-                    prompt, completion, usd, next_ckpt = drained
-                    s[self._GW_CKPT] = next_ckpt
-                    project.settings = s
-                    await session.commit()
-            if prompt + completion <= 0:
-                return None
-            return AgentUsage(
-                model=settings.agent_model,
-                input_tokens=prompt,
-                output_tokens=completion,
-                cost_usd=usd,
-            )
+                        if not attempt and (
+                            drained is None or drained[0] + drained[1] <= 0
+                        ):
+                            continue
+                        if drained is None:
+                            return None
+                        prompt, completion, usd, next_ckpt = drained
+                        s[self._GW_CKPT] = next_ckpt
+                        project.settings = s
+                        await session.commit()
+                if prompt + completion <= 0:
+                    return None
+                return AgentUsage(
+                    model=settings.agent_model,
+                    input_tokens=prompt,
+                    output_tokens=completion,
+                    cost_usd=usd,
+                )
         except Exception:  # noqa: BLE001 — metering must never fail a turn
             logger.exception("gateway usage drain failed for %s", project_id)
             return None
