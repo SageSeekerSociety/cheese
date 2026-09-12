@@ -6,6 +6,7 @@ and an undelivered prompt (the ONE re-send case) goes out as the original text.
 """
 
 import asyncio
+import time
 import uuid
 
 import pytest
@@ -23,6 +24,7 @@ from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from app.domain.workspace import service as ws
 from tests.conftest import StubChannel, stub_compute
+from tests.integration.conftest import chat_ws_url
 from tests.turn_log import open_turn, open_turn_ids
 
 
@@ -302,3 +304,65 @@ def test_parked_hook_schedules_a_settle(client, tmp_path, monkeypatch):
     assert scheduled == [tid]
     # The event really is parked for that settle to find.
     assert len(event_spool.spool_entries(ws.spool_dir(pid, tid))) == 1
+
+
+def test_completed_live_turn_settles_before_another_prompt(
+    client, stub_hooks, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
+    real_schedule = ChatService.schedule_spool_settle
+    monkeypatch.setattr(
+        ChatService,
+        "schedule_spool_settle",
+        lambda self, topic_id, delay_s=2.0: real_schedule(self, topic_id, delay_s=0),
+    )
+    project = client.post("/projects", json={"name": "P"}).json()["data"]
+    topic = client.post(
+        "/topics",
+        json={"project_id": project["id"], "title": "T", "created_by": "u"},
+    ).json()["data"]
+    pid, tid = uuid.UUID(project["id"]), uuid.UUID(topic["id"])
+    spool = ws.spool_dir(pid, tid)
+
+    def emit_turn(topic_id, prompt, reply):
+        del reply
+        stub_hooks.starts(topic_id)
+        stub_hooks.acknowledges(topic_id, prompt)
+        for eid, payload in (
+            ("live-message", {"hook_event_name": "MessageDisplay", "delta": "done"}),
+            (
+                "live-stop",
+                {
+                    "hook_event_name": "Stop",
+                    "last_assistant_message": "done",
+                    "session_id": "sess-test-1",
+                },
+            ),
+        ):
+            _spool_event(spool, eid, payload)
+            stub_hooks.hook(topic_id, _eid=eid, **payload)
+
+    monkeypatch.setattr(stub_hooks, "emit_turn", emit_turn)
+    with client.websocket_connect(chat_ws_url(str(tid), "u")) as socket:
+        socket.send_json({"type": "message", "content": "hello", "summon": True})
+        while True:
+            frame = socket.receive_json()
+            assert frame["type"] != "error", frame
+            if frame["type"] == "done":
+                break
+        for _ in range(100):
+            cursor = event_spool.read_cursor(spool)
+            if cursor is not None and not event_spool.spool_entries(spool, cursor):
+                break
+            client.get(f"/topics/{tid}")
+            time.sleep(0.01)
+        assert event_spool.read_cursor(spool) is not None
+        assert event_spool.spool_entries(spool, event_spool.read_cursor(spool)) == []
+
+    async def replies():
+        async with client.test_factory() as session:
+            return await BlockRepository(session).list_for_topic(tid)
+
+    assert (
+        len([block for block in asyncio.run(replies()) if block.content == "done"]) == 1
+    )
