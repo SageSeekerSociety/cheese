@@ -306,12 +306,13 @@ class AdmissionGate:
         self._timeout = timeout_s
         self._post = post  # test seam
         self._lock = threading.Lock()
-        self._cache: dict[tuple[str, str], tuple[float, Verdict]] = {}
+        self._cache: dict[tuple[str, str, str], tuple[float, Verdict]] = {}
 
     def check(self, project_id: str, topic_id: str, bearer: str) -> Verdict:
         if not self._url or not project_id:
             return Verdict(True, "admission not configured")
-        key = (project_id, topic_id)
+        # A relaunched agent can select a different model supply in the same room.
+        key = (project_id, topic_id, hashlib.sha256(bearer.encode()).hexdigest())
         now = time.time()
         with self._lock:
             hit = self._cache.get(key)

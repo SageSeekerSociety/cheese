@@ -300,13 +300,18 @@ def test_the_compose_no_longer_stamps_one_identity_on_every_connection():
 
 
 def _scoped_token(
-    secret: str, *, project: str = "p1", ttl_s: float = 3600.0, rc: bool = False
+    secret: str,
+    *,
+    project: str = "p1",
+    ttl_s: float = 3600.0,
+    rc: bool = False,
+    model: str | None = None,
 ) -> str:
     """A token shaped exactly like the backend's mint_scoped_token. Signed for
     real: the addon verifies the HMAC, so a hand-written string would only ever
     exercise the reject path."""
     raw = json.dumps(
-        {"p": project, "t": "t1", "exp": time.time() + ttl_s, "rc": int(rc)}
+        {"p": project, "t": "t1", "exp": time.time() + ttl_s, "rc": int(rc), "m": model}
     )
     body = base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
     digest = hmac.new(secret.encode(), body.encode(), hashlib.sha256).digest()
@@ -338,6 +343,49 @@ def test_rc_bootstrap_routes_to_cheese_before_credential_injection(
     assert "x-cheese-attr" not in flow.request.headers
     assert flow.server_conn.via is None
     assert mod.verify_scoped_token(token, "test-secret")["t"] == "t1"
+
+
+def test_api_rc_profile_and_policy_are_owned_by_the_signed_place(monkeypatch, tmp_path):
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="provider-secret", scoped_secret="test-secret"
+    )
+    token = _scoped_token("test-secret", rc=True, model="glm-5.2")
+    mod.http_connect(_make_connect_flow(_basic(token)))
+    for path in (
+        "/api/oauth/profile",
+        "/api/claude_code/settings",
+        "/api/claude_code/policy_limits",
+    ):
+        flow = _make_flow(path=path, caller_bearer="machine-ticket")
+        flow.request.headers["x-cheese-attr"] = "other-project/other-topic"
+        asyncio.run(mod.requestheaders(flow))
+        assert flow.response.status_code == (204 if path.endswith("settings") else 200)
+        assert flow.request.stream is False
+        assert flow.server_conn.via is None
+        if path.endswith("profile"):
+            data = json.loads(flow.response.content)
+            assert data["organization"]["uuid"] == "p1"
+            assert data["account"]["uuid"] == "t1"
+        elif path.endswith("settings"):
+            assert flow.response.content == b""
+        else:
+            assert (
+                json.loads(flow.response.content)["restrictions"][
+                    "allow_remote_control"
+                ]["allowed"]
+                is True
+            )
+
+
+def test_subscription_rc_profile_retains_its_provider_identity(monkeypatch, tmp_path):
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="provider-secret", scoped_secret="test-secret"
+    )
+    token = _scoped_token("test-secret", rc=True, model="claude-sonnet-5")
+    flow = _make_flow(path="/api/oauth/profile", caller_bearer=token)
+    asyncio.run(mod.requestheaders(flow))
+    assert flow.response is None
+    assert flow.request.headers["authorization"] == "Bearer provider-secret"
 
 
 def test_rc_without_backend_never_falls_through_to_official_service(
@@ -760,6 +808,65 @@ def test_a_non_message_response_streams_without_metering(monkeypatch, tmp_path):
 
     assert flow.response.stream is True
     assert mod.METER.used() == 0
+
+
+def test_gateway_responses_do_not_charge_the_subscription(monkeypatch, tmp_path):
+    mod = _load_addon(monkeypatch, tmp_path, inject=None)
+    mod.GATEWAY_BASE = "http://gateway:4000"
+    mod.ADMISSION_URL = "http://backend/llm/admission"
+    mod.ALLOW_HEADER_ATTR = True
+    mod.ADMISSION.check = lambda *args: SimpleNamespace(
+        allow=True, pool="gateway", key="project-key"
+    )
+    for content_type in ("application/json", "text/event-stream"):
+        flow = _make_flow()
+        flow.request.headers["x-cheese-attr"] = "project/topic"
+        asyncio.run(mod.requestheaders(flow))
+        assert flow.response is None
+        assert flow.request.host == "gateway"
+        flow.response = _make_response(content_type=content_type)
+        flow.response.raw_content = json.dumps(
+            {"model": "glm-5.2", "usage": {"input_tokens": 10, "output_tokens": 20}}
+        ).encode()
+        mod.responseheaders(flow)
+        assert flow.response.stream is True
+        mod.response(flow)
+    assert mod.METER.used() == 0
+    assert not mod.USAGE_LOG.exists()
+
+
+def test_gateway_account_requests_retain_the_credential_route(monkeypatch, tmp_path):
+    mod = _load_addon(monkeypatch, tmp_path, inject="subscription-secret")
+    mod.ADMISSION_URL = "http://backend/llm/admission"
+    mod.ALLOW_HEADER_ATTR = True
+    mod.UPSTREAM_VIA = "subscription-proxy:3128"
+    mod.ADMISSION.check = lambda *args: SimpleNamespace(
+        allow=True, pool="gateway", upstream=None
+    )
+    for path in (
+        "/api/claude_code/settings",
+        "/api/claude_code/policy_limits",
+        "/api/oauth/profile",
+    ):
+        flow = _make_flow(path=path)
+        flow.request.headers["x-cheese-attr"] = "project/topic"
+        asyncio.run(mod.requestheaders(flow))
+        assert flow.response is None
+        assert flow.request.stream is True
+        assert flow.server_conn.via is not None
+        assert flow.request.headers["authorization"] == "Bearer subscription-secret"
+
+    flow = _make_flow(path="/api/eval/sdk-client")
+    flow.request.headers["x-cheese-attr"] = "project/topic"
+    flow.metadata["cheese_rc_flags"] = True
+    asyncio.run(mod.requestheaders(flow))
+    mod.responseheaders(flow)
+    mod.response(flow)
+    assert flow.response.status_code == 200
+    assert flow.server_conn.via is None
+    assert json.loads(flow.response.content)["features"]["tengu_ccr_bridge"] == {
+        "defaultValue": True
+    }
 
 
 # --- a refusal has to REACH the caller --------------------------------------

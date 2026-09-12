@@ -7,11 +7,13 @@ restarts as a new generation, and unattributable rows are skipped without
 wedging the pass."""
 
 import json
+import uuid
 
 import pytest
 
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
+from app.domain.usage.models import ResourceUsage
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
 from app.domain.usage.subscription_ingest import ingest_once
 
@@ -123,3 +125,33 @@ async def test_unattributable_rows_are_skipped_not_wedged_on(client, tmp_path):
     async with client.test_factory() as session:
         agg = await UsageRepository(session).for_topic(tid)
     assert agg["turns"] == 1
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("missing", [True, False])
+async def test_invalid_topic_keeps_project_usage_and_advances_once(
+    client, tmp_path, missing
+):
+    from sqlalchemy import select
+
+    pid, tid = await _seed(client.test_factory)
+    if missing:
+        invalid_topic = uuid.uuid4()
+    else:
+        _, invalid_topic = await _seed(client.test_factory)
+    log = tmp_path / "usage.jsonl"
+    original = _row(pid, invalid_topic, inp=17, out=3) + _row(pid, tid, inp=7, out=2)
+    log.write_text(original)
+    assert await ingest_once(client.test_factory, log) == {"landed": 2, "skipped": 0}
+    assert await ingest_once(client.test_factory, log) == {"landed": 0, "skipped": 0}
+    assert log.read_text() == original
+    async with client.test_factory() as session:
+        rows = list(
+            await session.scalars(
+                select(ResourceUsage).where(ResourceUsage.project_id == pid)
+            )
+        )
+        assert {(row.topic_id, row.total_tokens) for row in rows} == {
+            (None, 20),
+            (tid, 9),
+        }
