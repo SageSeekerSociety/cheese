@@ -6,7 +6,6 @@ closing an SSH connection does not discard the command registry or replay writes
 
 from __future__ import annotations
 
-import argparse
 import base64
 import contextlib
 import fcntl
@@ -19,7 +18,6 @@ import shlex
 import signal
 import socket
 import socketserver
-import sqlite3
 import subprocess
 import sys
 import threading
@@ -181,6 +179,9 @@ class Executor:
         self.client_lock = threading.Lock()
         self.log_lock = threading.Lock()
         self.db_lock = threading.Lock()
+        # Socket clients load this module without opening the service database.
+        import sqlite3
+
         self.db = sqlite3.connect(
             self.state / "requests.sqlite", check_same_thread=False
         )
@@ -835,6 +836,8 @@ def bridge(state, server, *, call=None):
 
 
 def main():
+    import argparse
+
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=["start", "serve", "bridge", "request", "stop"])
     parser.add_argument("--state", required=True, type=Path)

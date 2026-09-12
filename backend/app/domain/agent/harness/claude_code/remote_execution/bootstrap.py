@@ -6,14 +6,12 @@ import base64
 import fcntl
 import json
 import os
-import platform
 import runpy
 import shutil
 import subprocess
 import sys
 import uuid
 from pathlib import Path
-from urllib.request import urlopen
 
 VERSION = "2.1.265"
 
@@ -34,6 +32,10 @@ def binary(owner, api):
             )
             if result.returncode == 0 and result.stdout.split()[0] == VERSION:
                 return str(candidate)
+    # Warm room preparation needs neither download handling nor TLS setup.
+    import platform
+    from urllib.request import urlopen
+
     architecture = {"x86_64": "x64", "arm64": "arm64", "aarch64": "arm64"}[
         platform.machine()
     ]
