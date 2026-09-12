@@ -1373,6 +1373,12 @@ class ProbingHub(FakeHub):
         self.probe_topics: set[str] = set()
         self.probe_devices: set[str] = set()
         self.probed = asyncio.Event()
+        self.prompt_sent = asyncio.Event()
+
+    async def call_screen(self, device_id, sid, name, args) -> str:
+        result = await super().call_screen(device_id, sid, name, args)
+        self.prompt_sent.set()
+        return result
 
     async def exec(self, device_id, argv, *, env=None, timeout=30, **kw):
         self.probe_calls += 1
@@ -1451,7 +1457,10 @@ async def test_confirm_alive_maps_the_probe_result_to_a_liveness_verdict():
     assert (await confirm(boom=True))[0] is True
 
 
-async def test_a_silent_but_alive_turn_survives_idle_suspect_and_ends_on_stop():
+@pytest.mark.parametrize("setup_delay", [0, 0.1])
+async def test_a_silent_but_alive_turn_survives_idle_suspect_and_ends_on_stop(
+    setup_delay,
+):
     """The core regression: a long foreground command emits only a first and a last
     hook, silent in between. Past idle-suspect the turn is re-probed; while the
     probe says the screen is alive the turn must NOT be killed — it runs to the
@@ -1461,6 +1470,7 @@ async def test_a_silent_but_alive_turn_survives_idle_suspect_and_ends_on_stop():
     tid = uuid.uuid4()
 
     async def resolver(_p, _t):
+        await asyncio.sleep(setup_delay)
         return ("dev1", 1, "agent-x")
 
     provider = ClaudeCodeRuntime(
@@ -1481,11 +1491,13 @@ async def test_a_silent_but_alive_turn_survives_idle_suspect_and_ends_on_stop():
         system_prompt="",
         resume_session_id=None,
     )
-    await asyncio.sleep(0.05)  # resolve + open screen + send prompt + reach drain
+    await asyncio.wait_for(hub.prompt_sent.wait(), timeout=3)
     key = str(tid)
     # First hook = the prompt receipt / start of a long foreground command; then
     # the hooks go SILENT for the run — the window this fix has to survive.
-    router.push(key, {"hook_event_name": "UserPromptSubmit", "prompt": "run the tests"})
+    assert router.push(
+        key, {"hook_event_name": "UserPromptSubmit", "prompt": "run the tests"}
+    )
     await asyncio.wait_for(hub.probed.wait(), timeout=3)
     assert hub.probe_calls >= 1, "idle-suspect must have re-probed liveness"
     assert not any(isinstance(e, AgentResult) and e.is_error for e in events)
