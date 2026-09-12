@@ -17,7 +17,7 @@ from pathlib import Path
 VERSION = "2.1.265"
 
 
-def binary(owner, api):
+def binary(owner, api, verified=None):
     destination = owner / ".cheese/claude/versions" / VERSION
     candidates = [destination, owner / ".local/bin/claude"]
     installed = shutil.which("claude")
@@ -25,6 +25,18 @@ def binary(owner, api):
         candidates.append(Path(installed))
     for candidate in candidates:
         if candidate.is_file() and os.access(candidate, os.X_OK):
+            stat = candidate.stat()
+            identity = (
+                VERSION,
+                stat.st_dev,
+                stat.st_ino,
+                stat.st_mode,
+                stat.st_size,
+                stat.st_mtime_ns,
+                stat.st_ctime_ns,
+            )
+            if verified is not None and verified.get(str(candidate)) == identity:
+                return str(candidate)
             result = subprocess.run(
                 [str(candidate), "--version"],
                 capture_output=True,
@@ -32,6 +44,8 @@ def binary(owner, api):
                 timeout=15,
             )
             if result.returncode == 0 and result.stdout.split()[0] == VERSION:
+                if verified is not None:
+                    verified[str(candidate)] = identity
                 return str(candidate)
     # Warm room preparation needs neither download handling nor TLS setup.
     import platform
@@ -66,7 +80,7 @@ def binary(owner, api):
 
 
 @contextlib.contextmanager
-def prepared(payload, owner):
+def prepared(payload, owner, verified=None):
     project, resource = (
         str(uuid.UUID(payload["project"])),
         str(uuid.UUID(payload["resource"])),
@@ -117,7 +131,7 @@ def prepared(payload, owner):
         }
         config = {
             "workspace": str(work),
-            "claude": binary(owner, env["CHEESE_API"]),
+            "claude": binary(owner, env["CHEESE_API"], verified),
             "env": scoped_env,
             "mcp_servers": {},
         }

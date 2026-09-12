@@ -163,6 +163,8 @@ class MCPProcess:
 class Executor:
     def __init__(self, state):
         self.state = Path(state).resolve()
+        # Bootstrap is reloaded each turn; successful checks belong to this process.
+        self.verified_binaries = {}
         self.config = json.loads((self.state / "config.json").read_text())
         self.root = Path(self.config["workspace"]).resolve(strict=True)
         self.cwd_file = self.state / "cwd.json"
@@ -758,7 +760,12 @@ class Executor:
         bootstrap = runpy.run_path(
             str(self.state.parent / "remote-execution/bootstrap.py")
         )
-        with bootstrap["prepared"](payload, owner) as (_, config, _, _):
+        with bootstrap["prepared"](payload, owner, self.verified_binaries) as (
+            _,
+            config,
+            _,
+            _,
+        ):
             if {k: v for k, v in self.config.items() if k != "env"} != {
                 k: v for k, v in config.items() if k != "env"
             }:
