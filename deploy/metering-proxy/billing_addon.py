@@ -436,6 +436,29 @@ def _rc_route(flow: http.HTTPFlow) -> bool:
     path = flow.request.path.split("?", 1)[0]
     if not rc:
         return False
+    model = claims.get("m")
+    if isinstance(model, str) and model and not model.startswith("claude-"):
+        # API-backed Cheese control sessions use Cheese's project identity and
+        # policy. No Anthropic account or subscription entitlement is asserted.
+        local = None
+        if path == "/api/oauth/profile":
+            local = {
+                "account": {"uuid": claims["t"], "email": "cheese@agent.cheese.local"},
+                "organization": {"uuid": claims["p"]},
+            }
+        elif path == "/api/claude_code/settings":
+            local = {}
+        elif path == "/api/claude_code/policy_limits":
+            local = {"restrictions": {"allow_remote_control": {"allowed": True}}}
+        if local is not None:
+            flow.server_conn.via = None
+            flow.request.stream = False
+            flow.response = http.Response.make(
+                204 if path.endswith("/settings") else 200,
+                b"" if path.endswith("/settings") else json.dumps(local).encode(),
+                {"Content-Type": "application/json"},
+            )
+            return True
     if path.startswith("/api/eval/"):
         flow.metadata["cheese_rc_flags"] = True
         return False
@@ -565,8 +588,8 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
         and verdict.pool == GATEWAY
         and flow.metadata.get("cheese_rc_flags")
     ):
-        # Cheese supplies its own RC flags. Account/profile requests retain the
-        # existing credential route: native RC needs organization metadata.
+        # Cheese supplies its own RC flags; _rc_route handles the API session's
+        # project identity and control policy before provider authentication.
         flow.server_conn.via = None
         flow.request.stream = False
         flow.response = http.Response.make(

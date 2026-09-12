@@ -1148,8 +1148,17 @@ def platform_prompt(content: str) -> str:
     return f"{PLATFORM_NOTICE}\n{content}"
 
 
-def publication_prompt(content: str) -> str:
+def publication_prompt(content: str, *, is_private: bool = False) -> str:
     """Carry the chat contract on new and resumed terminal input alike."""
+    if is_private:
+        return (
+            content
+            + "\n\n"
+            + platform_prompt(
+                "这是私聊，最终答复会自动发布给用户。直接回答，"
+                "不要再用 cheese chat send 重复发送同一答复。"
+            )
+        )
     return (
         content
         + "\n\n"
@@ -1642,7 +1651,10 @@ class ChatService:
             )
             for image in images
         )
-        line = publication_prompt("\n".join(lines))
+        state = self._hook_work.get((topic_id, consuming_turn_id))
+        line = publication_prompt(
+            "\n".join(lines), is_private=bool(state and state.is_private)
+        )
         # Register BEFORE the write so a fast receipt cannot race the entry
         # (#539 decision A). The receipt is still the consumed boundary — it
         # just no longer gates the delivery verdict: write-accept is delivery,
@@ -4399,7 +4411,7 @@ class ChatService:
                 else None
             ),
         )
-        prompt_text = publication_prompt(prompt_text)
+        prompt_text = publication_prompt(prompt_text, is_private=is_private)
 
         # Compute: a provider owns the per-topic sandbox + execution (spec §9.1).
         # In a private chat, `cheese remember` targets the owner's personal memory

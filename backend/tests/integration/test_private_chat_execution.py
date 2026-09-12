@@ -63,6 +63,8 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
         pass
     await settle_turn(svc, topic_id)
     assert len(screen.prompts) == 1
+    assert ("最终答复会自动发布给用户" in screen.prompts[0]) is private
+    assert ("最终答复都不会自动发到聊天" in screen.prompts[0]) is not private
     assert not (project_machine if private else central).prompts
     assert screen.openings[0]["memory_scope"] == ("personal" if private else None)
     async with factory() as session:
