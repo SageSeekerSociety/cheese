@@ -194,9 +194,10 @@ async def lifespan(_: FastAPI):
 
     await memory_endpoint_probe.check_on_startup()
 
+    from app.core.storage import reuse_s3_connections
     from app.domain.machine.microcloud import reuse_connections
 
-    async with reuse_connections():
+    async with reuse_connections(), reuse_s3_connections():
         try:
             yield
         finally:

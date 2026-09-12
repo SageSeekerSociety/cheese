@@ -3,16 +3,56 @@ import hashlib
 import io
 import uuid
 from abc import ABC, abstractmethod
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import BinaryIO
+from typing import Any, BinaryIO
 
 import aiofiles
 import aiofiles.os
 import aiofiles.ospath
 
 from app.core.config import settings
+
+
+@dataclass
+class _S3Connections:
+    clients: dict[tuple, Any] = field(default_factory=dict)
+    stack: AsyncExitStack = field(default_factory=AsyncExitStack)
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+
+_s3_connections: _S3Connections | None = None
+
+
+@asynccontextmanager
+async def reuse_s3_connections():
+    """Load SDK models before serving requests and close clients at shutdown."""
+    global _s3_connections
+    previous = _s3_connections
+    pool = _S3Connections()
+    _s3_connections = pool
+    try:
+        async with pool.stack:
+            if settings.storage_type == "s3" or (
+                settings.s3_endpoint_url
+                and settings.s3_access_key
+                and settings.s3_secret_key
+                and settings.transcript_s3_bucket
+            ):
+                backend = S3StorageBackend(
+                    bucket=settings.s3_bucket,
+                    endpoint_url=settings.s3_endpoint_url,
+                    access_key=settings.s3_access_key,
+                    secret_key=settings.s3_secret_key,
+                    region=settings.s3_region,
+                )
+                async with backend._get_client():
+                    pass
+            yield
+    finally:
+        _s3_connections = previous
 
 
 class StorageBackend(ABC):
@@ -93,15 +133,32 @@ class S3StorageBackend(StorageBackend):
     async def _get_client(self):  # type: ignore[override]
         import aioboto3
 
-        session = aioboto3.Session()
-        async with session.client(  # type: ignore[attr-defined]
-            "s3",
+        kwargs = dict(
             endpoint_url=self._endpoint_url,
             aws_access_key_id=self._access_key,
             aws_secret_access_key=self._secret_key,
             region_name=self._region,
-        ) as client:
-            yield client
+        )
+
+        def new_client() -> Any:
+            # aioboto3 inherits boto3's synchronous client typing.
+            session: Any = aioboto3.Session()
+            return session.client("s3", **kwargs)
+
+        pool = _s3_connections
+        # Standalone callers own one operation; the application owns its pool.
+        if pool is None:
+            async with new_client() as client:
+                yield client
+            return
+        # Bucket is per operation. Connections must not cross credentials or endpoints.
+        key = (self._endpoint_url, self._access_key, self._secret_key, self._region)
+        async with pool.lock:
+            client = pool.clients.get(key)
+            if client is None:
+                client = await pool.stack.enter_async_context(new_client())
+                pool.clients[key] = client
+        yield client
 
     async def upload(self, file: BinaryIO, key: str, content_type: str) -> str:
         async with self._get_client() as client:
