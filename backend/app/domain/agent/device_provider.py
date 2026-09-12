@@ -21,6 +21,7 @@ import base64
 import hashlib
 import json
 import logging
+import shlex
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -46,6 +47,7 @@ from app.domain.agent.harness.claude_code import (
     ScreenSetupError,
     build_screen_launch,
 )
+from app.domain.agent.harness.claude_code.hooks_substrate import CHEESE_HOOK_SCRIPT
 from app.domain.agent.harness.launch import LaunchPlan
 from app.domain.agent.platform_failures import (
     DEVICE_OFFLINE_MESSAGE,
@@ -717,7 +719,7 @@ class DeviceChannel(Channel):
         return ",".join(hosts)
 
     async def _ship_launcher(
-        self, device_id: str, topic_id: uuid.UUID, command: list[str]
+        self, device_id: str, topic_id: uuid.UUID, command: list[str], home_dir: str
     ) -> list[str]:
         """Write the launch script to a FILE on the device (over the link's one-shot
         ``exec``, script on stdin) and return a short command that runs it.
@@ -733,11 +735,21 @@ class DeviceChannel(Channel):
         assert command[:2] == ["bash", "-lc"] and len(command) == 3
         script = command[2]
         path = f"$HOME/.cheese/launch/{topic_id}.sh"
+        hook_dir = f"{home_dir}/.claude"
+        # Reasserting a live screen does not run its launcher. Refresh the hook
+        # during the existing transfer so reused processes receive hook fixes.
+        transfer = (
+            f'mkdir -p "$HOME/.cheese/launch" "{hook_dir}" && cat > "{path}"'
+            f" && printf %s {shlex.quote(CHEESE_HOOK_SCRIPT)}"
+            f' > "{hook_dir}/cheese-hook.next.$$"'
+            f' && chmod 755 "{hook_dir}/cheese-hook.next.$$"'
+            f' && mv "{hook_dir}/cheese-hook.next.$$" "{hook_dir}/cheese-hook"'
+        )
         started = time.monotonic()
         try:
             result = await self._hub.exec(
                 device_id,
-                ["sh", "-c", f'mkdir -p "$HOME/.cheese/launch" && cat > "{path}"'],
+                ["sh", "-c", transfer],
                 stdin=script,
                 timeout=_LAUNCHER_SHIP_TIMEOUT_S,
             )
@@ -1031,14 +1043,16 @@ class DeviceChannel(Channel):
             execution_target=execution_target,
         )
         if existing is None:
-            command = await self._ship_launcher(device_id, resource_id, command)
+            command = await self._ship_launcher(
+                device_id, resource_id, command, home_dir
+            )
         else:
             # These device requests are independent. Finish all three before
             # adopting or replacing the screen, without adding their round trips.
             alive, tunnel_down, command = await asyncio.gather(
                 self.confirm_alive(existing),
                 self._tunnel_helper_is_down(existing),
-                self._ship_launcher(device_id, resource_id, command),
+                self._ship_launcher(device_id, resource_id, command, home_dir),
             )
             if not alive or tunnel_down:
                 # Adopt-create cannot restart a dead process or its tunnel while
