@@ -149,6 +149,17 @@ def test_running_executor_prepares_updated_room_without_restart(
         .value
     )
     payload = json.loads(ast.literal_eval(call.args[0].args[0]))
+    import base64
+
+    cli = (
+        "from pathlib import Path\n"
+        "if __name__ == 'preload':\n"
+        "    with Path(__file__).with_name('preload-calls').open('a') as output:\n"
+        "        output.write('loaded\\n')\n"
+        "if __name__ == '__main__':\n"
+        "    print('first CLI')\n"
+    )
+    payload["files"]["cheese"] = base64.b64encode(cli.encode()).decode()
     try:
         bootstrap.configure(payload)
         capsys.readouterr()
@@ -159,8 +170,6 @@ def test_running_executor_prepares_updated_room_without_restart(
         original = runtime.request(state, "ping")
         assert "prepare" in original["capabilities"]
         payload["env"]["CHEESE_TOKEN"] = "refreshed"
-        import base64
-
         payload["files"]["cheese-hook"] = base64.b64encode(b"updated hook").decode()
         ready = runtime.request(state, "prepare", payload)
         assert ready["pid"] == original["pid"]
@@ -171,6 +180,34 @@ def test_running_executor_prepares_updated_room_without_restart(
             json.loads((state / "config.json").read_text())["env"]["CHEESE_TOKEN"]
             == "refreshed"
         )
+        for iteration in range(2):
+            result = runtime.request(
+                state,
+                "invoke",
+                {
+                    "id": f"preload-{iteration}",
+                    "tool": "Bash",
+                    "args": {"command": "cheese --version"},
+                },
+            )
+            assert result["value"]["stdout"].strip() == "first CLI"
+            assert (home / ".claude/preload-calls").read_text() == "loaded\n"
+            runtime.request(state, "prepare", payload)
+        payload["files"]["cheese"] = base64.b64encode(
+            cli.replace("first CLI", "updated CLI").encode()
+        ).decode()
+        runtime.request(state, "prepare", payload)
+        updated = runtime.request(
+            state,
+            "invoke",
+            {
+                "id": "updated-cli",
+                "tool": "Bash",
+                "args": {"command": "cheese --version"},
+            },
+        )
+        assert updated["value"]["stdout"].strip() == "updated CLI"
+        assert (home / ".claude/preload-calls").read_text() == "loaded\nloaded\n"
         checked = version_calls.read_text()
         runtime.request(state, "prepare", payload)
         assert version_calls.read_text() == checked
