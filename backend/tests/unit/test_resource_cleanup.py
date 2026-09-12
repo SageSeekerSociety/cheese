@@ -5,12 +5,149 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 
 import pytest
 
 from app.domain.agent import resource_cleanup as cleanup
+
+
+def test_remove_readonly_cache_preserves_symlink_target(tmp_path):
+    home = tmp_path / "home"
+    cache = home / "go/pkg/mod/toolchain"
+    cache.mkdir(parents=True)
+    (cache / "compiler").write_text("cached binary")
+    outside = tmp_path / "original"
+    outside.mkdir()
+    (outside / "source").write_text("keep this")
+    (cache / "external").symlink_to(outside, target_is_directory=True)
+    cache.chmod(0o555)
+    cache.parent.chmod(0o555)
+    outside.chmod(0o555)
+    try:
+        cleanup.remove_tree(home)
+        assert not home.exists()
+        assert (outside / "source").read_text() == "keep this"
+        assert outside.stat().st_mode & 0o777 == 0o555
+    finally:
+        outside.chmod(0o755)
+
+
+@pytest.fixture
+def terminal_resource(tmp_path):
+    project, resource = str(uuid.uuid4()), str(uuid.uuid4())
+    home, work = cleanup.resource_paths(tmp_path, project, resource)
+    (home / ".claude").mkdir(parents=True)
+    work.mkdir(parents=True)
+    with tempfile.TemporaryDirectory(prefix="cheese-cleanup-") as runtime:
+        from pathlib import Path
+
+        socket = str(Path(runtime) / "s")
+        config = Path(runtime) / "tmux.conf"
+        config.write_text("set -g remain-on-exit on\n")
+
+        def tmux(*args):
+            result = subprocess.run(
+                ["tmux", "-S", socket, "-f", str(config), *args],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            assert result.returncode == 0, result.stderr
+            return result.stdout.strip()
+
+        try:
+            yield home, work, socket, tmux
+        finally:
+            subprocess.run(["tmux", "-S", socket, "kill-server"], capture_output=True)
+
+
+@pytest.mark.parametrize("connector_owned", [False, True])
+def test_exited_terminal_is_closed_without_touching_prefix_neighbor(
+    terminal_resource, connector_owned
+):
+    home, work, socket, tmux = terminal_resource
+    name = (
+        "screen-123"
+        if connector_owned
+        else "cheese_"
+        + subprocess.run(
+            ["cksum"], input=str(work), text=True, capture_output=True, check=True
+        ).stdout.split()[0]
+    )
+    tmux("new-session", "-d", "-s", name, "sh", "-c", "read answer")
+    tmux("new-session", "-d", "-s", name + "-neighbor", "sleep", "60")
+    if connector_owned:
+        tmux(
+            "set-option",
+            "-t",
+            "=" + name + ":",
+            "@cheese-screen",
+            json.dumps(
+                {
+                    "sid": name,
+                    "env": {
+                        "CHEESE_PROJECT": home.parent.name,
+                        "CHEESE_RESOURCE_ID": home.name,
+                    },
+                }
+            ),
+        )
+    (home / ".claude/environment-session.json").write_text(json.dumps([socket, name]))
+    tmux("send-keys", "-t", "=" + name + ":", "Enter")
+    wait_for(
+        lambda: (
+            tmux("display-message", "-p", "-t", "=" + name + ":", "#{pane_dead}") == "1"
+        )
+    )
+    with (home / "lock").open("w") as lock:
+        cleanup.request_exit(home, work, lock.fileno())
+        cleanup.request_exit(home, work, lock.fileno())
+    assert tmux("list-sessions", "-F", "#{session_name}") == name + "-neighbor"
+
+
+def test_exit_targets_live_pane_after_the_original_pane_has_exited(terminal_resource):
+    home, work, socket, tmux = terminal_resource
+    name = (
+        "cheese_"
+        + subprocess.run(
+            ["cksum"], input=str(work), text=True, capture_output=True, check=True
+        ).stdout.split()[0]
+    )
+    tmux("new-session", "-d", "-s", name, "sh", "-c", "read answer")
+    tmux("send-keys", "-t", "=" + name + ":", "Enter")
+    wait_for(
+        lambda: (
+            tmux("display-message", "-p", "-t", "=" + name + ":", "#{pane_dead}") == "1"
+        )
+    )
+    received = home / "received"
+    tmux(
+        "new-window",
+        "-t",
+        "=" + name + ":",
+        "sh",
+        "-c",
+        'read answer; printf %s "$answer" > "$1"',
+        "sh",
+        str(received),
+    )
+    (home / ".claude/environment-session.json").write_text(json.dumps([socket, name]))
+    with (home / "lock").open("w") as lock:
+        with pytest.raises(RuntimeError, match="waiting for the agent"):
+            cleanup.request_exit(home, work, lock.fileno())
+        wait_for(lambda: received.exists() and received.read_text() == "/exit")
+        wait_for(
+            lambda: all(
+                line == "1"
+                for line in tmux(
+                    "list-panes", "-s", "-t", "=" + name + ":", "-F", "#{pane_dead}"
+                ).splitlines()
+            )
+        )
+        cleanup.request_exit(home, work, lock.fileno())
 
 
 def wait_for(predicate):
@@ -55,6 +192,9 @@ from pathlib import Path
 root = Path(os.environ["HOME"])
 if "has-session" in sys.argv:
     sys.exit(1 if (root / "delivered").exists() else 0)
+if "list-panes" in sys.argv:
+    print("%0 0")
+    sys.exit(0)
 (root / "started").write_text(str(os.getpid()))
 while not (root / "release").exists():
     time.sleep(0.01)
@@ -124,6 +264,47 @@ def test_deletion_refuses_tail_written_after_confirmation(tmp_path):
     with pytest.raises(RuntimeError, match="changed"):
         cleanup.check_transcripts(home, receipts)
     assert original.read_bytes().endswith(b"late result\n")
+
+
+@pytest.mark.parametrize("name", ["cheese-preview", "cheese-tunnel"])
+@pytest.mark.parametrize("has_executor", [False, True])
+def test_resource_helpers_stop_even_without_an_executor(tmp_path, name, has_executor):
+    resource = str(uuid.uuid4())
+    home = tmp_path / resource
+    directory = home / ".claude"
+    directory.mkdir(parents=True)
+    helper = directory / (name + ".py")
+    ready = directory / "ready"
+    helper.write_text(
+        "import sys, time\nfrom pathlib import Path\n"
+        "Path(sys.argv[1]).touch()\ntime.sleep(60)\n"
+    )
+    if has_executor:
+        (directory / "execution-owner.json").write_text(
+            json.dumps({"resource": resource})
+        )
+        runtime = directory / "remote-execution/runtime.py"
+        runtime.parent.mkdir()
+        runtime.write_text("def socket_path(state):\n    return state / 'absent'\n")
+    process = subprocess.Popen([sys.executable, str(helper), str(ready)])
+    unrelated = subprocess.Popen(["sleep", "60"])
+    try:
+        wait_for(ready.exists)
+        marker = directory / (name + ".pid")
+        marker.write_text(str(unrelated.pid))
+        cleanup.stop_executor(home, resource)
+        assert unrelated.poll() is None
+        assert process.poll() is None
+        marker.write_text(str(process.pid))
+        cleanup.stop_executor(home, resource)
+        assert process.wait(timeout=5) != 0
+        assert unrelated.poll() is None
+        cleanup.stop_executor(home, resource)
+    finally:
+        for child in (process, unrelated):
+            if child.poll() is None:
+                child.terminate()
+            child.wait(timeout=5)
 
 
 def test_unpublished_source_blocks_cleanup(tmp_path):
