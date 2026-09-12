@@ -48,6 +48,39 @@ func TestCloseOwnsClaimedWarmTerminalWithoutKillingOtherSessions(t *testing.T) {
 	}
 }
 
+func TestCloseWaitsForPaneCleanup(t *testing.T) {
+	isolate(t)
+	manager, err := NewManager()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(manager.KillServer)
+	directory := t.TempDir()
+	ready := filepath.Join(directory, "ready")
+	stopped := filepath.Join(directory, "stopped")
+	script := fmt.Sprintf("trap 'sleep 0.3; touch %q; exit' HUP; touch %q; while :; do sleep 0.1; done", stopped, ready)
+	session, err := manager.Spawn("cleanup", []string{"bash", "-c", script}, nil, 80, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(ready); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("pane never started")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := session.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stopped); err != nil {
+		t.Fatal("close returned before the pane finished cleanup")
+	}
+}
+
 // isolate points NewManager at a runtime dir of this test's own. NewManager
 // derives its socket from $TMPDIR, and on a machine that hosts agents the
 // default one is the LIVE connector's server — which holds every running
