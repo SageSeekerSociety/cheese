@@ -96,7 +96,10 @@ def prepared(payload, owner, verified=None):
             destination = config_dir / name
             destination.relative_to(config_dir)
             destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_bytes(base64.b64decode(content))
+            decoded = base64.b64decode(content)
+            # Keep unchanged CLI sources from invalidating the worker's preload.
+            if not destination.exists() or destination.read_bytes() != decoded:
+                destination.write_bytes(decoded)
             destination.chmod(0o700)
         env = dict(os.environ)
         for name in list(env):
