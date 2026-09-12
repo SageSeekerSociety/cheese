@@ -13,6 +13,7 @@ stamps the turn it refused (`credits_refused_at`) the moment it happens, and the
 turn's own end reads that stamp back to decide whose wording the room gets.
 """
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 
@@ -91,6 +92,8 @@ async def _run_stop_failure(
     # This test owns the runtime, so close its activity and subscription too.
     # settle_turn() only waits for the chat work to finish.
     await screen.runtime._close_topic(topic_id)
+    # Live completion also schedules reconciliation owned by the chat service.
+    await asyncio.gather(*chat._settle_tasks)
 
 
 async def _system_event_lines(factory, topic_id: uuid.UUID) -> list[str]:
