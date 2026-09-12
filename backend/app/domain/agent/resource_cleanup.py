@@ -6,6 +6,7 @@ import json
 import os
 import runpy
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -85,6 +86,23 @@ def check_resource_publication(home: Path, work: Path) -> None:
     repositories = home / ".cheese/repositories"
     for repo in repositories.glob("*.git"):
         check_published_commits(repo)
+
+
+def remove_tree(path: Path) -> None:
+    def retry_unlink(function, name, exc_info):
+        error = exc_info[1]
+        parent = Path(name).parent
+        if (
+            not isinstance(error, PermissionError)
+            or function not in {os.unlink, os.rmdir}
+            or not parent.is_relative_to(path)
+        ):
+            raise error
+        # Go module caches contain read-only directories owned by this user.
+        parent.chmod(parent.stat().st_mode | stat.S_IWUSR)
+        function(name)
+
+    shutil.rmtree(path, onerror=retry_unlink)
 
 
 def request_exit(home: Path, work: Path, lock_fd: int) -> None:
@@ -312,7 +330,7 @@ def main() -> None:
             helper["release"](executor)
         for path in (work, home):
             if path.exists():
-                shutil.rmtree(path)
+                remove_tree(path)
         print(json.dumps({"removed": True}))
     else:
         raise ValueError("unknown cleanup action")

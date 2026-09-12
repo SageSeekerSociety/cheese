@@ -14,6 +14,27 @@ import pytest
 from app.domain.agent import resource_cleanup as cleanup
 
 
+def test_remove_readonly_cache_preserves_symlink_target(tmp_path):
+    home = tmp_path / "home"
+    cache = home / "go/pkg/mod/toolchain"
+    cache.mkdir(parents=True)
+    (cache / "compiler").write_text("cached binary")
+    outside = tmp_path / "original"
+    outside.mkdir()
+    (outside / "source").write_text("keep this")
+    (cache / "external").symlink_to(outside, target_is_directory=True)
+    cache.chmod(0o555)
+    cache.parent.chmod(0o555)
+    outside.chmod(0o555)
+    try:
+        cleanup.remove_tree(home)
+        assert not home.exists()
+        assert (outside / "source").read_text() == "keep this"
+        assert outside.stat().st_mode & 0o777 == 0o555
+    finally:
+        outside.chmod(0o755)
+
+
 @pytest.fixture
 def terminal_resource(tmp_path):
     project, resource = str(uuid.uuid4()), str(uuid.uuid4())
