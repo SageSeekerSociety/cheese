@@ -2134,7 +2134,8 @@ class ChatService:
         }
 
     def schedule_spool_settle(self, topic_id: uuid.UUID, delay_s: float = 2.0) -> None:
-        """Debounced background ``settle_spool``. Two callers: the hooks
+        """Debounced background ``settle_spool``. Called after a live turn ends,
+        so idle time can advance its replay cursor; by the hooks
         endpoint when an event arrives with no turn listening — nothing will
         read what it just wrote until something goes looking, so a working
         claude's progress (and its Stop) lands within seconds instead of waiting
@@ -2570,6 +2571,7 @@ class ChatService:
                     frame_out["code"] = error_code
                 await broker.publish(str(topic_id), frame_out)
             await broker.publish(str(topic_id), {"type": "done"})
+            self.schedule_spool_settle(topic_id)
 
     async def _close_hook_work(
         self, state: _HookWorkState, result: AgentResult
