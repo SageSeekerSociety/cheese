@@ -88,6 +88,90 @@ def test_executor_bootstrap_starts_in_room_without_a_git_checkout(
         )
 
 
+def test_running_executor_prepares_updated_room_without_restart(
+    tmp_path, monkeypatch, capsys
+):
+    from app.domain.agent.harness.claude_code.remote_execution import bootstrap
+    from app.domain.agent.harness.claude_code.remote_execution.launch import script
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    binary = tmp_path / ".cheese/claude/versions" / bootstrap.VERSION
+    binary.parent.mkdir(parents=True)
+    binary.write_text(f"#!/bin/sh\necho '{bootstrap.VERSION}'\n")
+    binary.chmod(0o700)
+    project, resource = uuid.uuid4(), uuid.uuid4()
+    home = tmp_path / ".cheese/home" / str(project) / str(resource)
+    state = home / ".claude/executor"
+    call = (
+        ast.parse(
+            script(
+                project,
+                resource,
+                {
+                    "CHEESE_API": "http://unused",
+                    "CHEESE_TOKEN": "first",
+                },
+            )
+        )
+        .body[-1]
+        .value
+    )
+    payload = json.loads(ast.literal_eval(call.args[0].args[0]))
+    try:
+        bootstrap.configure(payload)
+        capsys.readouterr()
+        deadline = time.monotonic() + 10
+        while not Path(runtime.socket_path(state)).exists():
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        original = runtime.request(state, "ping")
+        assert "prepare" in original["capabilities"]
+        payload["env"]["CHEESE_TOKEN"] = "refreshed"
+        import base64
+
+        payload["files"]["cheese-hook"] = base64.b64encode(b"updated hook").decode()
+        ready = runtime.request(state, "prepare", payload)
+        assert ready["pid"] == original["pid"]
+        assert ready["workspace"] == str(home / "room")
+        assert (home / ".claude/cheese-preview.token").read_text() == "refreshed"
+        assert (home / ".claude/cheese-hook").read_text() == "updated hook"
+        assert (
+            json.loads((state / "config.json").read_text())["env"]["CHEESE_TOKEN"]
+            == "refreshed"
+        )
+        from app.domain.agent import environment_runner
+
+        environment = home / ".cheese-environment"
+        environment.mkdir()
+        payload["environment"] = {"revision": "existing"}
+        for status in ("ready", "failed", "pending"):
+            environment_runner.write_json(
+                environment / "status.json",
+                {
+                    "state": status,
+                    "pid": os.getpid(),
+                    "process_identity": environment_runner.process_identity(
+                        os.getpid()
+                    ),
+                },
+            )
+            prepared = runtime.request(state, "prepare", payload)
+            assert prepared["pid"] == original["pid"]
+            assert prepared["environment_status"] == status
+        payload["resource"] = str(uuid.uuid4())
+        import pytest
+
+        with pytest.raises(RuntimeError, match="another room"):
+            runtime.request(state, "prepare", payload)
+        assert not (home.parent / payload["resource"]).exists()
+    finally:
+        subprocess.run(
+            [sys.executable, str(RUNTIME), "stop", "--state", str(state)],
+            capture_output=True,
+            timeout=15,
+        )
+
+
 class RemoteExecutionTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="cheese-execution-")

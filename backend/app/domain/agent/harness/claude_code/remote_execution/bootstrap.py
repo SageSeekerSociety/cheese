@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import fcntl
 import json
 import os
@@ -64,8 +65,8 @@ def binary(owner, api):
     return str(destination)
 
 
-def configure(payload):
-    owner = Path.home()
+@contextlib.contextmanager
+def prepared(payload, owner):
     project, resource = (
         str(uuid.UUID(payload["project"])),
         str(uuid.UUID(payload["resource"])),
@@ -101,7 +102,6 @@ def configure(payload):
         )
         (config_dir / "cheese-preview.token").write_text(env["CHEESE_TOKEN"])
         (config_dir / "cheese-preview.token").chmod(0o600)
-        log = config_dir / "executor-bootstrap.log"
         scoped_env = {
             name: value
             for name, value in env.items()
@@ -126,6 +126,15 @@ def configure(payload):
             config["mcp_servers"] = json.loads(mcp.read_text()).get("mcpServers", {})
         state = config_dir / "executor"
         state.mkdir(exist_ok=True, mode=0o700)
+        yield home, config, state, env
+
+
+def configure(payload):
+    with prepared(payload, Path.home()) as (home, config, state, env):
+        config_dir = home / ".claude"
+        work = Path(config["workspace"])
+        scoped_env = config["env"]
+        log = config_dir / "executor-bootstrap.log"
         sys.path.insert(0, str(config_dir / "remote-execution"))
         runtime = runpy.run_path(str(config_dir / "remote-execution/runtime.py"))
 
@@ -153,7 +162,7 @@ def configure(payload):
         runtime["write_json"](state / "config.json", config)
         runtime["write_json"](state / "environment.json", payload.get("environment"))
         runtime["write_json"](
-            config_dir / "execution-owner.json", {"resource": resource}
+            config_dir / "execution-owner.json", {"resource": home.name}
         )
         with log.open("a") as output:
             subprocess.Popen(

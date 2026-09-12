@@ -35,6 +35,7 @@ def channel(client, monkeypatch):
     monkeypatch.setattr(settings, "agent_session_device_id", "center")
     hub: Any = SimpleNamespace(
         is_online=lambda device: device in {"center", "executor"},
+        call_executor=AsyncMock(return_value={}),
         exec=AsyncMock(
             return_value={
                 "exit": 0,
@@ -50,6 +51,72 @@ def channel(client, monkeypatch):
     central._ensure_screen = AsyncMock(return_value=SimpleNamespace(device_id="center"))
     central._wait_executor = AsyncMock()
     return central
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("environment_state", ["ready", "pending", "failed"])
+async def test_running_executor_prepares_without_python_launch(
+    client, room, monkeypatch, environment_state
+):
+    project, topic = room
+    central = channel(client, monkeypatch)
+    kwargs = dict(
+        project_id=project,
+        topic_id=topic,
+        token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
+        env={"CHEESE_ENVIRONMENT": '{"revision":"one"}'},
+        launch=ClaudeLaunch("System"),
+        precheck=await central.precheck(project, topic),
+    )
+    await central.ensure_ready(**kwargs)
+    central._hub.exec.reset_mock()
+    central._wait_executor.reset_mock()
+    central._hub.call_executor.side_effect = [
+        {"pid": 123, "capabilities": ["prepare"]},
+        {
+            "pid": 123,
+            "workspace": "/project",
+            "mcp_servers": [],
+            "environment_status": environment_state,
+        },
+    ]
+    await central.ensure_ready(**kwargs)
+    central._hub.exec.assert_not_awaited()
+    calls = central._hub.call_executor.await_args_list
+    assert [call.args[2] for call in calls] == ["ping", "prepare"]
+    payload = calls[1].args[3]
+    assert payload["env"]["CHEESE_TOKEN"]
+    assert payload["environment"] == {"revision": "one"}
+    assert "cheese-hook" in payload["files"]
+    if environment_state == "ready":
+        central._wait_executor.assert_not_awaited()
+    else:
+        central._wait_executor.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_running_executor_prepare_failure_is_not_retried_as_install(
+    client, room, monkeypatch
+):
+    project, topic = room
+    central = channel(client, monkeypatch)
+    kwargs = dict(
+        project_id=project,
+        topic_id=topic,
+        token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
+        env={},
+        launch=ClaudeLaunch("System"),
+        precheck=await central.precheck(project, topic),
+    )
+    await central.ensure_ready(**kwargs)
+    central._hub.exec.reset_mock()
+    central._hub.call_executor.side_effect = [
+        {"pid": 123, "capabilities": ["prepare"]},
+        RuntimeError("Executor configuration changed"),
+    ]
+    with pytest.raises(RuntimeError, match="configuration changed"):
+        await central.ensure_ready(**kwargs)
+    central._hub.exec.assert_not_awaited()
 
 
 @pytest.mark.anyio
