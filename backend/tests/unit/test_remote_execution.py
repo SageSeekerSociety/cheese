@@ -60,6 +60,18 @@ def test_executor_bootstrap_starts_in_room_without_a_git_checkout(
             assert time.monotonic() < deadline
             time.sleep(0.01)
         assert runtime.request(state, "ping")["workspace"] == str(home / "room")
+        publication_help = runtime.request(
+            state,
+            "invoke",
+            {
+                "id": "cli-worker-help",
+                "tool": "Bash",
+                "args": {
+                    "command": 'test -S "$CHEESE_CLI_SOCKET" && cheese chat send --help'
+                },
+            },
+        )
+        assert "--request-id" in publication_help["value"]["stdout"]
         from app.domain.agent import environment_runner
 
         environment = home / ".cheese-environment"
