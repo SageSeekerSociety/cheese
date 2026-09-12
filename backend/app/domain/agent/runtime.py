@@ -604,6 +604,7 @@ class AgentWorkRunner:
         metered work. Keeping those as two operations makes the ordering real:
         the project queue and credit gate can delay/refuse only the latter.
         """
+        received_at = time.monotonic()
         channel = str(topic_id)
         # Capture the user's arrival-time expectation before the database write.
         # The live session may finish while the message is being persisted; that
@@ -621,10 +622,18 @@ class AgentWorkRunner:
             client_id=client_id,
         )
         turn_id = user_block_id
+        persisted_at = time.monotonic()
         for payload in payloads:
             await self._broker.publish(
                 channel, {"type": "user_block", "block": payload}
             )
+        logger.info(
+            "chat_receive_timing topic=%s turn=%s persist_ms=%.3f publish_ms=%.3f",
+            topic_id,
+            turn_id,
+            (persisted_at - received_at) * 1000,
+            (time.monotonic() - persisted_at) * 1000,
+        )
         if not summon:
             # 没 @ 不等于没说 (spec §7.1 所有消息 AI 都会收到). An unsummoned
             # message is meant to be picked up by the pending window the next

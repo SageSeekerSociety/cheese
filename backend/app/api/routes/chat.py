@@ -34,6 +34,7 @@ the frame itself stays JSON text, no binary over the socket.
 
 import asyncio
 import contextlib
+import time
 import uuid
 from typing import Annotated
 
@@ -71,6 +72,14 @@ async def chat(
         async with send_lock:
             with contextlib.suppress(WebSocketDisconnect, RuntimeError):
                 await websocket.send_json(frame)
+                if frame.get("type") in {"user_block", "assistant_block"}:
+                    _log.info(
+                        "chat_message_frame_sent",
+                        topic=str(topic_id),
+                        frame_type=frame["type"],
+                        block_id=(frame.get("block") or {}).get("id"),
+                        sent_unix_ms=time.time() * 1000,
+                    )
 
     token = websocket.query_params.get("token") or ""
     conn_actor: Actor
@@ -174,8 +183,14 @@ async def chat(
                     continue
                 # Await only the short durable receive. Any model work is still
                 # background-owned by AgentWorkRunner and survives this socket.
+                received_at = time.monotonic()
+                _log.info(
+                    "chat_message_received",
+                    topic=str(topic_id),
+                    received_unix_ms=time.time() * 1000,
+                )
                 try:
-                    await runner.submit_message(
+                    turn_id = await runner.submit_message(
                         chat_service,
                         topic_id,
                         author=author,
@@ -185,6 +200,12 @@ async def chat(
                         attachments=attachments,
                         provision_actor=conn_actor,
                         client_id=client_id,
+                    )
+                    _log.info(
+                        "chat_message_submitted",
+                        topic=str(topic_id),
+                        turn=str(turn_id),
+                        duration_ms=(time.monotonic() - received_at) * 1000,
                     )
                 except AppError as exc:
                     await send({"type": "error", "message": exc.message})
