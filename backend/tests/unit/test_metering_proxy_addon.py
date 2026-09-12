@@ -879,9 +879,54 @@ def test_gateway_timing_preserves_request_boundary_and_omits_credentials(
     assert event["response_start"] == 102.0
     assert event["response_end"] == 103.0
     assert round(event["admission_ms"]) == 35
+    assert event["admission_phases_ms"] == {
+        "thread_queue": 0,
+        "check": 35,
+        "loop_resume": 0,
+    }
     assert event["route_ready"] is not None
     assert event["status"] == 200 and event["failed"] is False
     assert "private-" not in messages[0]
+
+
+def test_admission_timing_separates_executor_queue_from_check(
+    monkeypatch, tmp_path, caplog
+):
+    mod = _load_addon(monkeypatch, tmp_path, inject=None)
+    mod.GATEWAY_BASE = "http://gateway:4000"
+    mod.ADMISSION_URL = "http://backend/llm/admission"
+    mod.ALLOW_HEADER_ATTR = True
+    clock = [0.0]
+    monkeypatch.setattr(mod.time, "perf_counter", lambda: clock[0])
+
+    def admit(*args):
+        clock[0] += 0.035
+        return SimpleNamespace(allow=True, pool="gateway", key="private-key")
+
+    async def queued_thread(function, *args, **kwargs):
+        clock[0] += 1.8
+        result = function(*args, **kwargs)
+        clock[0] += 0.004
+        return result
+
+    mod.ADMISSION.check = admit
+    monkeypatch.setattr(mod.asyncio, "to_thread", queued_thread)
+    flow = _make_flow(caller_bearer="private-token")
+    flow.request.headers["x-cheese-attr"] = "project/topic"
+    asyncio.run(mod.requestheaders(flow))
+    flow.response = _make_response()
+    with caplog.at_level("INFO", logger="cheese.metering"):
+        mod.response(flow)
+    event = json.loads(caplog.records[-1].message.split(" ", 1)[1])
+    assert round(event["admission_ms"]) == 1839
+    assert {
+        key: round(value) for key, value in event["admission_phases_ms"].items()
+    } == {
+        "thread_queue": 1800,
+        "check": 35,
+        "loop_resume": 4,
+    }
+    assert "private-" not in caplog.records[-1].message
 
 
 def test_failed_gateway_request_keeps_timing_without_error_details(
