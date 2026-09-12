@@ -3429,10 +3429,15 @@ class ChatService:
         completes them still sees what they are made of. ``give_up`` is for the
         session that died mid-sentence: what arrived lands joined rather than
         being lost."""
+        started = time.monotonic()
+        phases_ms: dict[str, float] = {}
+        event_count = 0
         try:
             session_ref = SessionRef(project_id, topic_id)
             backlog = self._compute.backlog(session_ref)
             spooled = backlog.unread()
+            event_count = len(spooled)
+            phases_ms["read"] = (time.monotonic() - started) * 1000
             if not spooled:
                 return
             # Dedup against everything the live path already persisted (this +
@@ -3452,6 +3457,7 @@ class ChatService:
                     await TopicRepository(session).list_for_project(project_id),
                     exclude_id=topic_id,
                 )
+            phases_ms["history"] = (time.monotonic() - started) * 1000
             seen = _persisted_eids(blocks)
 
             def _canon(text: str) -> str:
@@ -3657,6 +3663,7 @@ class ChatService:
                             recovered += 1
                             yield {"type": "event_block", "block": block_payload}
                     pending = set()
+            phases_ms["replay"] = (time.monotonic() - started) * 1000
             # Reading is not consuming: the cursor moves over the events that
             # reached the timeline, and retention — not this pass — is what
             # eventually deletes them. It stops at the first still-buffered
@@ -3666,7 +3673,9 @@ class ChatService:
                 if event.eid in pending:
                     break
                 backlog.landed(through=event.key)
+            phases_ms["cursor"] = (time.monotonic() - started) * 1000
             backlog.forget(older_than_s=_SPOOL_RETENTION_S)
+            phases_ms["retention"] = (time.monotonic() - started) * 1000
             if recovered:
                 logger.info(
                     "reconciled %d spooled 现场 event(s) for topic %s",
@@ -3675,6 +3684,16 @@ class ChatService:
                 )
         except Exception:  # noqa: BLE001 — reconcile is best-effort, never fail a turn
             logger.exception("spool reconcile failed for topic %s", topic_id)
+        finally:
+            logger.info(
+                "spool_reconcile_timing topic=%s turn=%s events=%d "
+                "elapsed_ms=%.3f phases_ms=%s",
+                topic_id,
+                turn_id,
+                event_count,
+                (time.monotonic() - started) * 1000,
+                phases_ms,
+            )
 
     async def _model_kwargs(
         self,
