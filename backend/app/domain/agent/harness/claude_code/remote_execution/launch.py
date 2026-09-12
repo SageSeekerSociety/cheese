@@ -13,7 +13,7 @@ from app.domain.agent.harness.claude_code.hooks_substrate import CHEESE_HOOK_SCR
 from app.domain.agent.harness.claude_code.remote_execution import bootstrap, runtime
 
 
-def script(project_id, resource_id, env):
+def payload_for(project_id, resource_id, env):
     files = {
         "remote-execution/bootstrap.py": Path(bootstrap.__file__).read_text(),
         "remote-execution/runtime.py": Path(runtime.__file__).read_text(),
@@ -34,7 +34,7 @@ def script(project_id, resource_id, env):
         if values.get("CHEESE_ENVIRONMENT")
         else None
     )
-    payload = {
+    return {
         "project": str(project_id),
         "resource": str(resource_id),
         "env": values,
@@ -44,6 +44,10 @@ def script(project_id, resource_id, env):
             for name, content in files.items()
         },
     }
+
+
+def script(project_id, resource_id, env):
+    payload = payload_for(project_id, resource_id, env)
     return (
         Path(bootstrap.__file__).read_text()
         + "\nconfigure(json.loads("

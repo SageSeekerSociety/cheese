@@ -57,6 +57,9 @@ from app.domain.agent.harness.claude_code.remote_execution.client import (
     RemoteClient,
 )
 from app.domain.agent.harness.claude_code.remote_execution.launch import (
+    payload_for as executor_prepare_payload,
+)
+from app.domain.agent.harness.claude_code.remote_execution.launch import (
     script as build_executor_launch,
 )
 from app.domain.agent.harness.claude_code.remote_execution.private import (
@@ -78,6 +81,7 @@ __all__ = [
     "REMOTE_CONTROLS",
     "RemoteClient",
     "build_executor_launch",
+    "executor_prepare_payload",
     "private_execution_target",
     "CLAUDE_MIN_VERSION",
     "CLAUDE_PINNED_VERSION",

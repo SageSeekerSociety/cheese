@@ -14,6 +14,7 @@ import json
 import os
 import queue
 import re
+import runpy
 import shlex
 import signal
 import socket
@@ -706,7 +707,42 @@ class Executor:
             "instructions": "\n\n".join(instructions),
         }
 
+    def prepare(self, payload):
+        owner = self.state.parents[5]
+        home = (
+            owner
+            / ".cheese/home"
+            / str(uuid.UUID(payload["project"]))
+            / str(uuid.UUID(payload["resource"]))
+        )
+        if home / ".claude/executor" != self.state:
+            raise ValueError("Executor preparation belongs to another room")
+        bootstrap = runpy.run_path(
+            str(self.state.parent / "remote-execution/bootstrap.py")
+        )
+        with bootstrap["prepared"](payload, owner) as (_, config, _, _):
+            if {k: v for k, v in self.config.items() if k != "env"} != {
+                k: v for k, v in config.items() if k != "env"
+            }:
+                raise RuntimeError(
+                    "Executor configuration changed; restart the room environment"
+                )
+            info = {
+                **self.dispatch("configure", {"env": config["env"]}),
+                "mcp_servers": list(config["mcp_servers"]),
+            }
+            if payload.get("environment"):
+                runner = runpy.run_path(
+                    str(self.state.parent / "cheese-environment.py")
+                )
+                info["environment_status"] = runner["read_status"](
+                    home / ".cheese-environment"
+                )["state"]
+            return info
+
     def dispatch(self, method, params):
+        if method == "prepare":
+            return self.prepare(params)
         if method == "configure" or (
             method == "configure_private" and self.config.get("private")
         ):
@@ -715,7 +751,11 @@ class Executor:
             write_json(self.state / "config.json", self.config)
             return {"pid": os.getpid(), "workspace": str(self.root)}
         if method == "ping":
-            return {"pid": os.getpid(), "workspace": str(self.root)}
+            return {
+                "pid": os.getpid(),
+                "workspace": str(self.root),
+                "capabilities": ["prepare"],
+            }
         if method == "invoke":
             return self.invoke(params)
         if method == "control":

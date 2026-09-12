@@ -20,7 +20,11 @@ from app.domain.agent.device_provider import (
     device_home_dir,
     environment_status,
 )
-from app.domain.agent.harness.claude_code import ScreenSetupError, build_executor_launch
+from app.domain.agent.harness.claude_code import (
+    ScreenSetupError,
+    build_executor_launch,
+    executor_prepare_payload,
+)
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
 
@@ -162,16 +166,35 @@ class CentralChannel(DeviceChannel):
                     "CHEESE_PREVIEW_URL": _preview_ws_url(api),
                     "CHEESE_HOOK_URL": f"{api}/sandbox/hooks/{topic_id}",
                 }
-                result = await self._hub.exec(
-                    executor_id,
-                    ["python3", "-"],
-                    stdin=build_executor_launch(project_id, resource, execute_env),
-                    timeout=660,
-                )
+                info = None
+                if previous:
+                    try:
+                        running = await execution.call(
+                            previous["execution"], "ping", {}, hub=self._hub
+                        )
+                    except RuntimeError:
+                        # A stopped executor must take the installation path.
+                        running = {}
+                    if "prepare" in running.get("capabilities", []):
+                        info = await execution.call(
+                            previous["execution"],
+                            "prepare",
+                            executor_prepare_payload(project_id, resource, execute_env),
+                            hub=self._hub,
+                        )
+                if info is None:
+                    result = await self._hub.exec(
+                        executor_id,
+                        ["python3", "-"],
+                        stdin=build_executor_launch(project_id, resource, execute_env),
+                        timeout=660,
+                    )
+                    if result.get("exit") != 0 or result.get("truncated"):
+                        raise ScreenSetupError(
+                            result.get("stderr") or "执行环境启动失败"
+                        )
+                    info = json.loads(result["stdout"])
                 mark("executor_launch")
-                if result.get("exit") != 0 or result.get("truncated"):
-                    raise ScreenSetupError(result.get("stderr") or "执行环境启动失败")
-                info = json.loads(result["stdout"])
                 target = {
                     "kind": "device",
                     "resource_id": str(resource),
