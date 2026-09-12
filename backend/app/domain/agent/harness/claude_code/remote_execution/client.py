@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import base64
-import hashlib
-import http.client
 import json
 import os
 import re
@@ -14,13 +11,10 @@ import shlex
 import signal
 import subprocess
 import sys
-import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
-from urllib.request import getproxies, proxy_bypass
 
 PINNED_VERSION = "2.1.265"
 NATIVE_TOOLS = (
@@ -52,10 +46,18 @@ PRIVATE_INSTRUCTIONS = (
 
 class RemoteClient:
     def __init__(self, config):
+        import threading
+
         self.config = config
         self.transport = threading.local()
 
     def connection(self):
+        # Shell forwarding exits before creating a client; keep its startup
+        # independent of HTTP, TLS and proxy discovery imports.
+        import base64
+        import http.client
+        from urllib.request import getproxies, proxy_bypass
+
         if getattr(self.transport, "connection", None) is not None:
             connection = self.transport.connection
             # Idle HTTP connections can be closed by the gateway between turns.
@@ -379,6 +381,8 @@ def prepare(
 
 
 def sync_context(target_path):
+    import base64
+
     target = json.loads(Path(target_path).read_text())
     # The shell can replace even the executor's own files and responses. Keep
     # executable central configuration independent of anything it returns.
@@ -510,6 +514,9 @@ def publish_event(config, payload):
 
 
 def transport(config):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
     client = RemoteClient(config)
     output_lock = threading.Lock()
     active = {}
@@ -683,6 +690,8 @@ def main():
             command = RemoteClient(config).command("bridge", args.args[0])
             os.execvp(command[0], command)
     elif args.mode == "checkpoint":
+        import hashlib
+
         payload = json.load(sys.stdin)
         transcript = Path(payload["transcript_path"])
         identifier = hashlib.sha256(
