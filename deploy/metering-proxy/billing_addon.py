@@ -61,6 +61,7 @@ import json
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -298,6 +299,7 @@ def _route_to_gateway(flow: http.HTTPFlow, key: str) -> bool:
     flow.request.headers.pop("x-api-key", None)
     # LiteLLM records API spend; the subscription ledger must not charge it again.
     flow.metadata["cheese_pool"] = GATEWAY
+    flow.metadata["cheese_route_ready"] = time.time()
     return True
 
 
@@ -581,7 +583,11 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
     if project_id and ADMISSION_URL:
         # Off-loop: urllib blocks, and one slow admission call must not stall
         # every other flow through the proxy.
+        admission_started = time.perf_counter()
         verdict = await asyncio.to_thread(ADMISSION.check, project_id, topic_id, bearer)
+        flow.metadata["cheese_admission_ms"] = (
+            time.perf_counter() - admission_started
+        ) * 1000
 
     if (
         verdict is not None
@@ -782,8 +788,39 @@ def responseheaders(flow: http.HTTPFlow) -> None:
         resp.stream = True
 
 
+def _log_gateway_timing(flow: http.HTTPFlow) -> None:
+    project, topic = flow.metadata.get("cheese_attr") or ("", "")
+    resp = flow.response
+    logger.info(
+        "gateway_request_timing %s",
+        json.dumps(
+            {
+                "project": project,
+                "topic": topic,
+                "gateway_request_id": resp.headers.get("x-litellm-call-id")
+                if resp
+                else None,
+                "request_start": getattr(flow.request, "timestamp_start", None),
+                "request_end": getattr(flow.request, "timestamp_end", None),
+                "route_ready": flow.metadata.get("cheese_route_ready"),
+                "admission_ms": flow.metadata.get("cheese_admission_ms"),
+                "response_start": getattr(resp, "timestamp_start", None),
+                "response_end": getattr(resp, "timestamp_end", None),
+                "status": resp.status_code if resp else None,
+                "failed": bool(getattr(flow, "error", None)),
+            }
+        ),
+    )
+
+
+def error(flow: http.HTTPFlow) -> None:
+    if flow.metadata.get("cheese_pool") == GATEWAY:
+        _log_gateway_timing(flow)
+
+
 def response(flow: http.HTTPFlow) -> None:
     if flow.metadata.get("cheese_pool") == GATEWAY:
+        _log_gateway_timing(flow)
         return
     if (
         flow.metadata.get("cheese_rc_flags")
