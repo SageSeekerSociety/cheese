@@ -320,7 +320,9 @@ def case(folder, options):
             channel = object.__new__(DeviceChannel)
             channel._hub = LocalDeviceHub()
             launch["command"] = asyncio.run(
-                channel._ship_launcher("fixture", uuid.uuid4(), launch["command"])
+                channel._ship_launcher(
+                    "fixture", uuid.uuid4(), launch["command"], str(folder / "device-home")
+                )
             )
         if options.mode == "disabled":
             env["CLAUDE_CODE_ENABLE_FUNCTION_HOOKS"] = "0"
