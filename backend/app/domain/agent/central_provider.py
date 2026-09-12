@@ -184,13 +184,15 @@ class CentralChannel(DeviceChannel):
                         f"/topics/{topic_id}/execution/{resource}"
                     ),
                 }
-                await self._wait_executor(
-                    project_id,
-                    resource,
-                    target,
-                    bool(values.get("CHEESE_ENVIRONMENT")),
-                    executor_ready=bool(info.get("pid")),
-                )
+                has_environment = bool(values.get("CHEESE_ENVIRONMENT"))
+                # Bootstrap already checked the running executor and its environment
+                # in one process. Fresh or unfinished environments still wait here.
+                if not info.get("pid") or (
+                    has_environment and info.get("environment_status") != "ready"
+                ):
+                    await self._wait_executor(
+                        project_id, resource, target, has_environment
+                    )
                 mark("executor_ready")
             placement = {
                 "device_id": center,
@@ -281,9 +283,7 @@ class CentralChannel(DeviceChannel):
         if (await exchange(source, "list"))["files"] != manifest:
             raise ScreenSetupError("原会话记录仍在变化，尚未切换到中心")
 
-    async def _wait_executor(
-        self, project_id, resource, target, has_environment, *, executor_ready=False
-    ):
+    async def _wait_executor(self, project_id, resource, target, has_environment):
         deadline = time.monotonic() + (3660 if has_environment else 30)
         while True:
             if has_environment:
@@ -300,10 +300,6 @@ class CentralChannel(DeviceChannel):
             else:
                 ready = True
             if ready:
-                # A reused bootstrap returns a PID only after ping and configure
-                # succeed. Keep environment checks without repeating that RPC.
-                if executor_ready:
-                    return
                 try:
                     await execution.call(target, "ping", {}, hub=self._hub)
                     return

@@ -125,6 +125,7 @@ async def test_executor_readiness_reuses_bootstrap_reply(
     reply = {"workspace": "/project", "mcp_servers": []}
     if running:
         reply["pid"] = 123
+        reply["environment_status"] = "ready"
     central._hub.exec.return_value["stdout"] = json.dumps(reply)
     central._wait_executor = CentralChannel._wait_executor.__get__(central)
     ping = AsyncMock(return_value={"pid": 123})
@@ -140,28 +141,41 @@ async def test_executor_readiness_reuses_bootstrap_reply(
         precheck=("executor", 1, "agent"),
     )
     assert ping.await_count == (0 if running else 1)
-    assert status.await_count == (1 if has_environment else 0)
+    assert status.await_count == (1 if has_environment and not running else 0)
     central._ensure_screen.assert_awaited_once()
 
 
 @pytest.mark.anyio
-async def test_running_executor_does_not_hide_failed_environment(client, monkeypatch):
+async def test_running_executor_does_not_hide_failed_environment(
+    client, room, monkeypatch
+):
+    project, topic = room
     central = channel(client, monkeypatch)
+    central._hub.exec.return_value["stdout"] = json.dumps(
+        {
+            "workspace": "/project",
+            "mcp_servers": [],
+            "pid": 123,
+            "environment_status": "failed",
+        }
+    )
+    central._wait_executor = CentralChannel._wait_executor.__get__(central)
     status = AsyncMock(return_value={"state": "failed", "error": "build failed"})
     ping = AsyncMock()
     monkeypatch.setattr("app.domain.agent.central_provider.environment_status", status)
     monkeypatch.setattr("app.domain.agent.execution.call", ping)
     with pytest.raises(EnvironmentPreparationError):
-        await CentralChannel._wait_executor(
-            central,
-            uuid.uuid4(),
-            uuid.uuid4(),
-            {"device_id": "executor"},
-            True,
-            executor_ready=True,
+        await central.ensure_ready(
+            project_id=project,
+            topic_id=topic,
+            token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
+            env={"CHEESE_ENVIRONMENT": '{"revision":"one"}'},
+            launch=ClaudeLaunch("System"),
+            precheck=("executor", 1, "agent"),
         )
     status.assert_awaited_once()
     ping.assert_not_awaited()
+    central._ensure_screen.assert_not_awaited()
 
 
 @pytest.mark.anyio

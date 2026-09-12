@@ -143,6 +143,11 @@ def configure(payload):
                         "Executor configuration changed; restart the room environment"
                     )
                 runtime["request"](state, "configure", {"env": scoped_env})
+                if payload.get("environment"):
+                    runner = runpy.run_path(str(config_dir / "cheese-environment.py"))
+                    info["environment_status"] = runner["read_status"](
+                        home / ".cheese-environment"
+                    )["state"]
                 print(json.dumps({**info, "mcp_servers": list(config["mcp_servers"])}))
                 return
         runtime["write_json"](state / "config.json", config)
