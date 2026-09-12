@@ -20,6 +20,13 @@ recovery behavior and provider-visibility limits.
   only, unit-tested from `backend/tests/unit/test_metering_proxy_core.py`.
 - `compose.yml` — the container. Values via a box-local `.env` (see header).
 
+Gateway responses emit `gateway_request_timing` in the container log. Each record
+contains the HTTP request and response timestamps, the end of route selection,
+admission-check duration, and `x-litellm-call-id` for correlation with gateway
+spend logs. Bodies, credentials, and arbitrary headers are excluded. Failed
+upstream requests retain their available timestamps. These intervals include
+proxy and gateway work; they are not a measurement of provider processing alone.
+
 ## One interception point, two destinations (#243)
 
 Every sandbox's traffic passes through here, and the destination is a per-request

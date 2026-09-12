@@ -835,6 +835,72 @@ def test_gateway_responses_do_not_charge_the_subscription(monkeypatch, tmp_path)
     assert not mod.USAGE_LOG.exists()
 
 
+def test_gateway_timing_preserves_request_boundary_and_omits_credentials(
+    monkeypatch, tmp_path, caplog
+):
+    mod = _load_addon(monkeypatch, tmp_path, inject=None)
+    mod.GATEWAY_BASE = "http://gateway:4000"
+    mod.ADMISSION_URL = "http://backend/llm/admission"
+    mod.ALLOW_HEADER_ATTR = True
+    clock = [0.0]
+    monkeypatch.setattr(mod.time, "perf_counter", lambda: clock[0])
+
+    def admit(*args):
+        clock[0] = 0.035
+        return SimpleNamespace(allow=True, pool="gateway", key="private-provider-key")
+
+    mod.ADMISSION.check = admit
+    flow = _make_flow(caller_bearer="private-caller-token")
+    flow.request.headers["x-cheese-attr"] = "project/topic"
+    flow.request.timestamp_start = 100.0
+    flow.request.timestamp_end = 100.02
+    asyncio.run(mod.requestheaders(flow))
+    flow.response = _make_response()
+    flow.response.headers["x-litellm-call-id"] = "gateway-call"
+    flow.response.headers["private-header"] = "private-value"
+    flow.response.timestamp_start = 102.0
+    flow.response.timestamp_end = 103.0
+    flow.response.raw_content = b"private-response-body"
+    with caplog.at_level("INFO", logger="cheese.metering"):
+        mod.responseheaders(flow)
+        mod.response(flow)
+    assert flow.response.stream is True
+    assert mod.METER.used() == 0
+    messages = [
+        r.message
+        for r in caplog.records
+        if r.message.startswith("gateway_request_timing ")
+    ]
+    assert len(messages) == 1
+    event = json.loads(messages[0].split(" ", 1)[1])
+    assert event["gateway_request_id"] == "gateway-call"
+    assert event["request_start"] == 100.0
+    assert event["request_end"] == 100.02
+    assert event["response_start"] == 102.0
+    assert event["response_end"] == 103.0
+    assert round(event["admission_ms"]) == 35
+    assert event["route_ready"] is not None
+    assert event["status"] == 200 and event["failed"] is False
+    assert "private-" not in messages[0]
+
+
+def test_failed_gateway_request_keeps_timing_without_error_details(
+    monkeypatch, tmp_path, caplog
+):
+    mod = _load_addon(monkeypatch, tmp_path, inject=None)
+    flow = _make_flow()
+    flow.metadata["cheese_pool"] = "gateway"
+    flow.request.timestamp_start = 100.0
+    flow.error = SimpleNamespace(msg="private-upstream-details")
+    with caplog.at_level("INFO", logger="cheese.metering"):
+        mod.error(flow)
+    event = json.loads(caplog.records[-1].message.split(" ", 1)[1])
+    assert event["request_start"] == 100.0
+    assert event["failed"] is True and event["status"] is None
+    assert event["response_start"] is None and event["response_end"] is None
+    assert "private-" not in caplog.records[-1].message
+
+
 def test_gateway_account_requests_retain_the_credential_route(monkeypatch, tmp_path):
     mod = _load_addon(monkeypatch, tmp_path, inject="subscription-secret")
     mod.ADMISSION_URL = "http://backend/llm/admission"
