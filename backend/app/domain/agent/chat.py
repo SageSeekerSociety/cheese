@@ -4027,6 +4027,8 @@ class ChatService:
         yielded: assembling is a question with an answer, and a coroutine can
         return one.
         """
+        started = time.monotonic()
+        phases_ms: dict[str, float] = {}
         # --- tx1: load topic + history, load memory ---
         async with self._sessions() as session:
             topics = TopicRepository(session)
@@ -4050,6 +4052,7 @@ class ChatService:
             # the room every card's chatter as its backlog would drown the
             # messages actually addressed to it.
             history = await blocks.list_for_topic(place.room_id, task_id=None)
+            phases_ms["history"] = (time.monotonic() - started) * 1000
             pending = _pending_human_blocks(history)
             pending_ids = [b.id for b in pending]
             if not pending and user_block_id is not None:
@@ -4075,6 +4078,7 @@ class ChatService:
             acting_agent = await self._agent_handle(session, topic.id)
             doc_root = None if is_private else await blocks.doc_root(place.room_id)
             doc_text = doc_root.content if doc_root else None
+            phases_ms["identity"] = (time.monotonic() - started) * 1000
             # Memory is retrieved against what this turn is actually about —
             # newest message first, since a turn is usually about the thing
             # somebody just said, and the doc last because it is the slowest-
@@ -4098,6 +4102,7 @@ class ChatService:
                 memories = await self._recall_agent_memories(
                     memory, session, topic=topic, query=turn_query
                 )
+            phases_ms["memory"] = (time.monotonic() - started) * 1000
             projects_repo = ProjectRepository(session)
             project = await projects_repo.get(topic.project_id)
             # Read the selected agent once so this turn's role and model agree.
@@ -4168,6 +4173,7 @@ class ChatService:
                 )
             )
             # Resolve the room choice, then the explicit project default.
+            phases_ms["metadata"] = (time.monotonic() - started) * 1000
             compute_id = (
                 "device"
                 if is_private
@@ -4265,6 +4271,7 @@ class ChatService:
                     frames.append({"type": "waiting", "state": "cloud_provisioning"})
                     frames.append({"type": "done"})
                     return _TurnBail(frames)
+            phases_ms["provider"] = (time.monotonic() - started) * 1000
             # The prompt is built HERE, not where `pending` was computed: an
             # attachment line has to describe how the image reaches 芝士 on THIS
             # backend, and that is only knowable once the provider is picked.
@@ -4320,6 +4327,14 @@ class ChatService:
                 # never move an existing work tree or resumable Claude session.
                 topic.compute_profile = provider.name
                 await session.commit()
+            phases_ms["committed"] = (time.monotonic() - started) * 1000
+        logger.info(
+            "chat_assembly_timing topic=%s turn=%s elapsed_ms=%.3f phases_ms=%s",
+            topic_id,
+            turn_id,
+            (time.monotonic() - started) * 1000,
+            phases_ms,
+        )
         return _TurnContext(
             acting_agent=acting_agent,
             agent=agent,
