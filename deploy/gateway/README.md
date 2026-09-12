@@ -47,7 +47,7 @@ LLM_GATEWAY_ADMIN_KEY=<the master key above>
 and recreate the backend — `docker restart` will not do, since environment is
 fixed when a container is created, not when its process starts.
 
-The `deepseek-chat` entry declares its thinking and effort capabilities. Without
+The `deepseek-flash` entry declares its thinking and effort capabilities. Without
 them, the pinned gateway removes the thinking settings sent by Claude Code.
 Check the loaded configuration's request transformation and nonzero token prices:
 

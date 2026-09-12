@@ -38,10 +38,25 @@ model_list:
       input_cost_per_token: 0.0000001127
       output_cost_per_token: 0.0000002817
 
-  - model_name: deepseek-chat
+  - model_name: glm-5.2
     litellm_params:
-      model: deepseek/deepseek-chat
+      model: anthropic/glm-5.2
+      api_base: https://open.bigmodel.cn/api/anthropic
+      api_key: os.environ/ZHIPU_API_KEY
+      # Preserve the deployed budget estimate; Coding Plan quota is separate.
+      input_cost_per_token: 0.000003944
+      output_cost_per_token: 0.000003944
+      cache_read_input_token_cost: 0.0000002817
+
+  - model_name: deepseek-flash
+    litellm_params:
+      model: deepseek/deepseek-flash
       api_key: os.environ/DEEPSEEK_API_KEY
+      # Official peak rates bound the budget estimate; off-peak billing is half.
+      # https://api-docs.deepseek.com/quick_start/pricing/
+      input_cost_per_token: 0.0000003
+      output_cost_per_token: 0.0000012
+      cache_read_input_token_cost: 0.000000006
     model_info:
       # This deployment's alias supports native thinking/effort. Without these
       # capabilities LiteLLM 1.96 drops thinking when Claude Code sends effort.

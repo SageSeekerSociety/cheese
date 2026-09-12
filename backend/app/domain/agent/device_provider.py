@@ -877,6 +877,7 @@ class DeviceChannel(Channel):
                 ttl_s=SESSION_TOKEN_TTL_S,
                 remote_control=True,
                 resource_id=str(resource_id),
+                model=launch.model,
             )
             tunnel_url = settings.subscription_tunnel_url.strip()
             via_tunnel = uses_tunnel(tunnel_url=tunnel_url)

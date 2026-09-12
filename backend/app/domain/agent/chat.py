@@ -32,7 +32,10 @@ from app.core.text import markdown_preview
 from app.domain.agent.compute import ComputePool, ComputeProvider
 from app.domain.agent.gateway import LlmGateway, drain_new_usage
 from app.domain.agent.harness import Opening, SessionRef, runtime_for
-from app.domain.agent.market import subscription_model_alias
+from app.domain.agent.market import (
+    subscription_model_alias,
+    subscription_model_listings,
+)
 from app.domain.agent.platform_failures import (
     MODEL_LIMIT_REACHED_CODE,
     PROVIDER_OVERLOADED_CODE,
@@ -70,7 +73,7 @@ from app.domain.agent.service import (
 )
 from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE, load_scenario, load_skills
 from app.domain.agent.stages import TopicStage, resolve_stage, stage_scenario
-from app.domain.agent.supply import SUBSCRIPTION, resolve_pool
+from app.domain.agent.supply import SUBSCRIPTION
 from app.domain.agent.tool_preview import ToolPreview, tool_preview, work_subpath
 from app.domain.agent_instance.configuration import (
     AgentConfiguration,
@@ -3705,8 +3708,10 @@ class ChatService:
                 )
             config = AgentConfiguration.model_validate(agent.configuration)
             validate_configuration(config, project.settings)
-            supply = resolve_pool(
-                project.settings, subscription_enabled=settings.subscription_enabled
+            supply = (
+                SUBSCRIPTION
+                if config.model in {item.id for item in subscription_model_listings()}
+                else "gateway"
             )
         model = (
             subscription_model_alias(config.model)

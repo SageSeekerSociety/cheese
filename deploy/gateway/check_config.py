@@ -20,13 +20,13 @@ def main() -> None:
     }
     transformed = copy.deepcopy(request)
     AnthropicMessagesConfig._translate_adaptive_effort_for_non_adaptive_model(
-        model="deepseek-chat",
+        model="deepseek-flash",
         optional_params=transformed,
         max_tokens=32000,
         custom_llm_provider="deepseek",
     )
     assert transformed == request, f"Thinking settings were changed: {transformed}"
-    info = litellm.get_model_info("deepseek-chat", custom_llm_provider="deepseek")
+    info = litellm.get_model_info("deepseek-flash", custom_llm_provider="deepseek")
     assert info["input_cost_per_token"] > 0, "Input tokens must remain billable"
     assert info["output_cost_per_token"] > 0, "Output tokens must remain billable"
     print("PASS: thinking/effort preserved; input and output pricing retained")

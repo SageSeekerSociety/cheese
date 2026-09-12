@@ -487,8 +487,9 @@ async def test_a_device_with_no_identity_still_names_none(client, monkeypatch):
 
 
 @pytest.mark.parametrize("central_upstream", ["central:ticket", None])
+@pytest.mark.parametrize("model", ["claude-sonnet-5", "deepseek-flash", "glm-5.2"])
 async def test_placed_room_uses_session_identity_not_executor(
-    client, monkeypatch, central_upstream
+    client, monkeypatch, central_upstream, model, _project_key
 ):
     from datetime import UTC, datetime
 
@@ -533,11 +534,16 @@ async def test_placed_room_uses_session_identity_not_executor(
         "/llm/admission",
         headers={
             "Authorization": "Bearer "
-            + mint_scoped_token(project_id=pid, topic_id=room_id)
+            + mint_scoped_token(project_id=pid, topic_id=room_id, model=model)
         },
     )
     assert response.status_code == 200
     supply = response.json()["data"]["supply"]
+    assert supply["pool"] == (
+        "subscription" if model.startswith("claude-") else "gateway"
+    )
+    if supply["pool"] == "gateway":
+        assert supply["key"].startswith("sk-virtual-for-")
     if central_upstream is None:
         assert "upstream" not in supply
     else:
