@@ -15,6 +15,7 @@ import os
 import queue
 import re
 import runpy
+import select
 import shlex
 import signal
 import socket
@@ -192,6 +193,21 @@ class Executor:
             "(id TEXT PRIMARY KEY, input TEXT, result TEXT)"
         )
         self.db.commit()
+        self.cli_worker = None
+        self.cli_worker_ready = False
+        worker = self.state.parent / "remote-execution/cli_worker.py"
+        cli = self.state.parent / "cheese"
+        if worker.is_file() and cli.is_file():
+            address = socket_path(self.state) + ".cli"
+            Path(address).unlink(missing_ok=True)
+            with (self.state / "cli-worker.log").open("a") as log:
+                self.cli_worker = subprocess.Popen(
+                    [sys.executable, str(worker), address, str(cli)],
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=log,
+                    text=True,
+                )
         self.log("service", "started", workspace=str(self.root), pid=os.getpid())
 
     def log(self, item, status, **fields):
@@ -410,6 +426,20 @@ class Executor:
     def bash(self, args, request_id):
         background = args.get("run_in_background", False)
         with self.cwd_lock:
+            if self.cli_worker is not None and not self.cli_worker_ready:
+                # Preload overlaps room/model preparation, before the first shell.
+                assert self.cli_worker.stdout is not None
+                if (
+                    not select.select([self.cli_worker.stdout], [], [], 15)[0]
+                    or self.cli_worker.stdout.readline().strip() != "ready"
+                ):
+                    self.cli_worker.kill()
+                    self.cli_worker.wait()
+                    raise RuntimeError(
+                        "CLI worker startup failed; inspect cli-worker.log"
+                    )
+                self.env["CHEESE_CLI_SOCKET"] = socket_path(self.state) + ".cli"
+                self.cli_worker_ready = True
             task_id = "remote-" + uuid.uuid4().hex[:16]
             directory = self.state / "tasks" / task_id
             directory.mkdir(parents=True)
@@ -754,7 +784,12 @@ class Executor:
             return {
                 "pid": os.getpid(),
                 "workspace": str(self.root),
-                "capabilities": ["prepare"],
+                "capabilities": ["prepare"]
+                + (
+                    ["cli_worker"]
+                    if self.cli_worker is not None and self.cli_worker.poll() is None
+                    else []
+                ),
             }
         if method == "invoke":
             return self.invoke(params)
@@ -774,6 +809,10 @@ class Executor:
                 self.stop_task(task_id)
         for client in self.clients.values():
             client.close()
+        if self.cli_worker is not None:
+            assert self.cli_worker.stdin is not None
+            self.cli_worker.stdin.close()
+            self.cli_worker.wait(timeout=10)
 
 
 def serve(state):

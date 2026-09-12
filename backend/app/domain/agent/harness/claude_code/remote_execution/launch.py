@@ -10,13 +10,18 @@ from app.domain.agent.harness.claude_code.device_launch import (
     CHEESE_SYNC_SCRIPT,
 )
 from app.domain.agent.harness.claude_code.hooks_substrate import CHEESE_HOOK_SCRIPT
-from app.domain.agent.harness.claude_code.remote_execution import bootstrap, runtime
+from app.domain.agent.harness.claude_code.remote_execution import (
+    bootstrap,
+    cli_worker,
+    runtime,
+)
 
 
 def payload_for(project_id, resource_id, env):
     files = {
         "remote-execution/bootstrap.py": Path(bootstrap.__file__).read_text(),
         "remote-execution/runtime.py": Path(runtime.__file__).read_text(),
+        "remote-execution/cli_worker.py": Path(cli_worker.__file__).read_text(),
         "cheese-environment.py": Path(environment_runner.__file__).read_text(),
         "cheese-preview.py": Path(preview_tunnel.__file__).read_text(),
         "cheese-preview-up": CHEESE_PREVIEW_UP,
