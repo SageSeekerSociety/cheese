@@ -126,7 +126,10 @@ def test_running_executor_prepares_updated_room_without_restart(
     monkeypatch.setenv("HOME", str(tmp_path))
     binary = tmp_path / ".cheese/claude/versions" / bootstrap.VERSION
     binary.parent.mkdir(parents=True)
-    binary.write_text(f"#!/bin/sh\necho '{bootstrap.VERSION}'\n")
+    version_calls = tmp_path / "version-calls"
+    binary.write_text(
+        f"#!/bin/sh\necho checked >> '{version_calls}'\necho '{bootstrap.VERSION}'\n"
+    )
     binary.chmod(0o700)
     project, resource = uuid.uuid4(), uuid.uuid4()
     home = tmp_path / ".cheese/home" / str(project) / str(resource)
@@ -168,6 +171,21 @@ def test_running_executor_prepares_updated_room_without_restart(
             json.loads((state / "config.json").read_text())["env"]["CHEESE_TOKEN"]
             == "refreshed"
         )
+        checked = version_calls.read_text()
+        runtime.request(state, "prepare", payload)
+        assert version_calls.read_text() == checked
+        before = binary.stat()
+        binary.write_text(binary.read_text() + "# changed in place\n")
+        os.utime(binary, ns=(before.st_atime_ns, before.st_mtime_ns))
+        runtime.request(state, "prepare", payload)
+        assert version_calls.read_text() == checked + "checked\n"
+        checked = version_calls.read_text()
+        replacement = binary.with_suffix(".replacement")
+        replacement.write_text(binary.read_text())
+        replacement.chmod(0o700)
+        replacement.replace(binary)
+        runtime.request(state, "prepare", payload)
+        assert version_calls.read_text() == checked + "checked\n"
         from app.domain.agent import environment_runner
 
         environment = home / ".cheese-environment"
@@ -199,6 +217,23 @@ def test_running_executor_prepares_updated_room_without_restart(
             capture_output=True,
             timeout=15,
         )
+
+
+def test_modified_verified_binary_with_wrong_version_is_not_reused(tmp_path):
+    from app.domain.agent.harness.claude_code.remote_execution import bootstrap
+
+    binary = tmp_path / ".cheese/claude/versions" / bootstrap.VERSION
+    binary.parent.mkdir(parents=True)
+    binary.write_text(f"#!/bin/sh\necho '{bootstrap.VERSION}'\n")
+    binary.chmod(0o700)
+    fallback = tmp_path / ".local/bin/claude"
+    fallback.parent.mkdir(parents=True)
+    fallback.write_text(binary.read_text())
+    fallback.chmod(0o700)
+    verified = {}
+    assert bootstrap.binary(tmp_path, "http://unused", verified) == str(binary)
+    binary.write_text("#!/bin/sh\necho '0.0.0'\n")
+    assert bootstrap.binary(tmp_path, "http://unused", verified) == str(fallback)
 
 
 class RemoteExecutionTests(unittest.TestCase):
