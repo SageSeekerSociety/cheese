@@ -173,6 +173,8 @@ def open_tunnel(
         query = f"{parsed.query}&{query}"
 
     raw = socket.create_connection((host, port), timeout=_HANDSHAKE_TIMEOUT_S)
+    # Separate TLS records must not wait for the preceding packet's delayed ACK.
+    raw.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     if secure:
         if insecure:
             context = ssl._create_unverified_context()  # noqa: S323 — opt-in only
@@ -425,6 +427,7 @@ def serve(
     logger.info("tunnel listening on %s:%s → %s", listen_host, listen_port, url)
     while True:
         client, _ = server.accept()
+        client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         threading.Thread(
             target=handle_connection,
             args=(client, url, token),
