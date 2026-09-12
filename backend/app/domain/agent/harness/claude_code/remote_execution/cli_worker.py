@@ -1,7 +1,6 @@
 """Single-threaded CLI preload process; each invocation runs in its own child."""
 
 import array
-import io
 import json
 import os
 import select
@@ -36,13 +35,15 @@ class Handler(socketserver.BaseRequestHandler):
         os.environ.clear()
         os.environ.update(payload["env"])
         sys.argv = [str(server.source), *payload["argv"]]
+        # Recreate wrappers: inherited file streams retain seekability after dup2.
+        for standard_stream in (sys.stdin, sys.stdout, sys.stderr):
+            standard_stream.close()
         for target, descriptor in enumerate(descriptors):
             os.dup2(descriptor, target)
             os.close(descriptor)
-        for index, standard_stream in enumerate((sys.stdin, sys.stdout, sys.stderr)):
-            cast(io.TextIOWrapper, standard_stream).reconfigure(
-                **payload["stdio"][index]
-            )
+        sys.stdin = os.fdopen(0, "r", **payload["stdio"][0])
+        sys.stdout = os.fdopen(1, "w", **payload["stdio"][1])
+        sys.stderr = os.fdopen(2, "w", **payload["stdio"][2])
         done = threading.Event()
 
         def disconnected():
@@ -57,7 +58,6 @@ class Handler(socketserver.BaseRequestHandler):
                 {
                     "__name__": "__main__",
                     "__file__": str(server.source),
-                    "__cheese_worker__": True,
                 },
             )
         except SystemExit as exc:

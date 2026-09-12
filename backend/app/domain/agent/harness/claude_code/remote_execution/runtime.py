@@ -440,6 +440,14 @@ class Executor:
                     )
                 self.env["CHEESE_CLI_SOCKET"] = socket_path(self.state) + ".cli"
                 self.cli_worker_ready = True
+            command_env = self.env
+            if self.cli_worker_ready:
+                command_env = dict(
+                    self.env,
+                    PATH=str(self.state.parent / "remote-execution/bin")
+                    + os.pathsep
+                    + self.env.get("PATH", os.defpath),
+                )
             task_id = "remote-" + uuid.uuid4().hex[:16]
             directory = self.state / "tasks" / task_id
             directory.mkdir(parents=True)
@@ -466,7 +474,7 @@ class Executor:
                     process = subprocess.Popen(
                         ["bash", "-c", shell],
                         cwd=self.cwd,
-                        env=self.env,
+                        env=command_env,
                         stdin=stdin,
                         stdout=stdout,
                         stderr=stderr,
