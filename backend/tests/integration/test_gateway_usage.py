@@ -3,6 +3,7 @@ key (minted once, persisted), and a turn that ends with usage=0 (the hooks
 backends) gets its REAL usage drained from the gateway spend log into the
 usage table."""
 
+import asyncio
 import uuid
 from unittest.mock import AsyncMock
 
@@ -238,6 +239,38 @@ async def test_zero_usage_turn_gets_real_usage_from_gateway(
     assert project is not None
     ckpt = (project.settings or {}).get("llm_gateway_usage_ckpt")
     assert ckpt and ckpt["prompt"] == 120 and ckpt["completion"] == 30
+
+
+@pytest.mark.anyio
+async def test_settling_usage_allows_key_lookup_and_keeps_checkpoint_current(
+    client, tmp_path, monkeypatch
+):
+    fake = FakeGateway()
+    fake.days[gw.utc_today()] = (120, 30, 0.02)
+    svc, _factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
+    key = await svc.project_gateway_key(pid)
+    fake.lag_calls = 1
+    settling = asyncio.Event()
+    resume = asyncio.Event()
+
+    async def wait_for_rows(_seconds):
+        settling.set()
+        await resume.wait()
+
+    monkeypatch.setattr("app.domain.agent.chat.asyncio.sleep", wait_for_rows)
+    pending = asyncio.create_task(svc._drain_gateway_usage(pid))
+    try:
+        await asyncio.wait_for(settling.wait(), timeout=2)
+        # New inference must proceed while an earlier turn waits for spend rows.
+        assert await asyncio.wait_for(svc.project_gateway_key(pid), timeout=1) == key
+        other = await asyncio.wait_for(svc._drain_gateway_usage(pid), timeout=1)
+        assert other is not None
+        assert (other.input_tokens, other.output_tokens) == (120, 30)
+    finally:
+        resume.set()
+        retried = await pending
+    # The paused drain must read the checkpoint advanced by the other drain.
+    assert retried is None
 
 
 @pytest.mark.anyio
