@@ -229,33 +229,38 @@ def session_target(home: Path, resource: str) -> dict | None:
 
 def stop_executor(home: Path, resource: str) -> None:
     marker = home / ".claude/execution-owner.json"
-    if not marker.exists():
-        return
-    if json.loads(marker.read_text())["resource"] != str(uuid.UUID(resource)):
-        raise RuntimeError("execution marker names another resource generation")
-    runtime = home / ".claude/remote-execution/runtime.py"
-    state = home / ".claude/executor"
-    helper = runpy.run_path(str(runtime))
-    if Path(helper["socket_path"](state)).exists():
-        result = run_command(
-            [sys.executable, str(runtime), "stop", "--state", str(state)]
-        )
-        if result.returncode:
-            raise RuntimeError("executor has not stopped: " + result.stderr)
-    preview = home / ".claude/cheese-preview.pid"
-    if preview.exists():
-        pid = int(preview.read_text())
+    if marker.exists():
+        if json.loads(marker.read_text())["resource"] != str(uuid.UUID(resource)):
+            raise RuntimeError("execution marker names another resource generation")
+        runtime = home / ".claude/remote-execution/runtime.py"
+        state = home / ".claude/executor"
+        helper = runpy.run_path(str(runtime))
+        if Path(helper["socket_path"](state)).exists():
+            result = run_command(
+                [sys.executable, str(runtime), "stop", "--state", str(state)]
+            )
+            if result.returncode:
+                raise RuntimeError("executor has not stopped: " + result.stderr)
+    # Both helpers can outlive the agent, including launches without an executor.
+    for name in ("cheese-preview", "cheese-tunnel"):
+        marker = home / ".claude" / (name + ".pid")
+        if not marker.exists():
+            continue
+        pid = int(marker.read_text())
         command = run_command(["ps", "-p", str(pid), "-o", "args="])
-        expected = str(home / ".claude/cheese-preview.py")
+        expected = str(home / ".claude" / (name + ".py"))
         if expected in command.stdout:
-            os.kill(pid, 15)
+            try:
+                os.kill(pid, 15)
+            except ProcessLookupError:
+                continue
             for _ in range(30):
                 command = run_command(["ps", "-p", str(pid), "-o", "args="])
                 if expected not in command.stdout:
                     break
                 time.sleep(0.1)
             else:
-                raise RuntimeError("preview helper has not stopped")
+                raise RuntimeError(name + " helper has not stopped")
 
 
 def main() -> None:

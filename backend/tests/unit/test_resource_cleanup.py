@@ -245,6 +245,47 @@ def test_deletion_refuses_tail_written_after_confirmation(tmp_path):
     assert original.read_bytes().endswith(b"late result\n")
 
 
+@pytest.mark.parametrize("name", ["cheese-preview", "cheese-tunnel"])
+@pytest.mark.parametrize("has_executor", [False, True])
+def test_resource_helpers_stop_even_without_an_executor(tmp_path, name, has_executor):
+    resource = str(uuid.uuid4())
+    home = tmp_path / resource
+    directory = home / ".claude"
+    directory.mkdir(parents=True)
+    helper = directory / (name + ".py")
+    ready = directory / "ready"
+    helper.write_text(
+        "import sys, time\nfrom pathlib import Path\n"
+        "Path(sys.argv[1]).touch()\ntime.sleep(60)\n"
+    )
+    if has_executor:
+        (directory / "execution-owner.json").write_text(
+            json.dumps({"resource": resource})
+        )
+        runtime = directory / "remote-execution/runtime.py"
+        runtime.parent.mkdir()
+        runtime.write_text("def socket_path(state):\n    return state / 'absent'\n")
+    process = subprocess.Popen([sys.executable, str(helper), str(ready)])
+    unrelated = subprocess.Popen(["sleep", "60"])
+    try:
+        wait_for(ready.exists)
+        marker = directory / (name + ".pid")
+        marker.write_text(str(unrelated.pid))
+        cleanup.stop_executor(home, resource)
+        assert unrelated.poll() is None
+        assert process.poll() is None
+        marker.write_text(str(process.pid))
+        cleanup.stop_executor(home, resource)
+        assert process.wait(timeout=5) != 0
+        assert unrelated.poll() is None
+        cleanup.stop_executor(home, resource)
+    finally:
+        for child in (process, unrelated):
+            if child.poll() is None:
+                child.terminate()
+            child.wait(timeout=5)
+
+
 def test_unpublished_source_blocks_cleanup(tmp_path):
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     (tmp_path / "source.py").write_text("work in progress")
