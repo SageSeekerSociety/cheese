@@ -762,6 +762,63 @@ def test_a_non_message_response_streams_without_metering(monkeypatch, tmp_path):
     assert mod.METER.used() == 0
 
 
+def test_gateway_responses_do_not_charge_the_subscription(monkeypatch, tmp_path):
+    mod = _load_addon(monkeypatch, tmp_path, inject=None)
+    mod.GATEWAY_BASE = "http://gateway:4000"
+    mod.ADMISSION_URL = "http://backend/llm/admission"
+    mod.ALLOW_HEADER_ATTR = True
+    mod.ADMISSION.check = lambda *args: SimpleNamespace(
+        allow=True, pool="gateway", key="project-key"
+    )
+    for content_type in ("application/json", "text/event-stream"):
+        flow = _make_flow()
+        flow.request.headers["x-cheese-attr"] = "project/topic"
+        asyncio.run(mod.requestheaders(flow))
+        assert flow.response is None
+        assert flow.request.host == "gateway"
+        flow.response = _make_response(content_type=content_type)
+        flow.response.raw_content = json.dumps(
+            {"model": "glm-5.2", "usage": {"input_tokens": 10, "output_tokens": 20}}
+        ).encode()
+        mod.responseheaders(flow)
+        assert flow.response.stream is True
+        mod.response(flow)
+    assert mod.METER.used() == 0
+    assert not mod.USAGE_LOG.exists()
+
+
+def test_gateway_account_requests_do_not_use_the_subscription(monkeypatch, tmp_path):
+    mod = _load_addon(monkeypatch, tmp_path, inject="subscription-secret")
+    mod.ADMISSION_URL = "http://backend/llm/admission"
+    mod.ALLOW_HEADER_ATTR = True
+    mod.UPSTREAM_VIA = "subscription-proxy:3128"
+    mod.ADMISSION.check = lambda *args: SimpleNamespace(allow=True, pool="gateway")
+    for path in (
+        "/api/claude_code/settings",
+        "/api/claude_code/policy_limits",
+        "/api/oauth/profile",
+    ):
+        flow = _make_flow(path=path)
+        flow.request.headers["x-cheese-attr"] = "project/topic"
+        asyncio.run(mod.requestheaders(flow))
+        assert flow.response.status_code == 404
+        assert flow.request.stream is False
+        assert flow.server_conn.via is None
+        assert "subscription-secret" not in flow.request.headers["authorization"]
+
+    flow = _make_flow(path="/api/eval/sdk-client")
+    flow.request.headers["x-cheese-attr"] = "project/topic"
+    flow.metadata["cheese_rc_flags"] = True
+    asyncio.run(mod.requestheaders(flow))
+    mod.responseheaders(flow)
+    mod.response(flow)
+    assert flow.response.status_code == 200
+    assert flow.server_conn.via is None
+    assert json.loads(flow.response.content)["features"]["tengu_ccr_bridge"] == {
+        "defaultValue": True
+    }
+
+
 # --- a refusal has to REACH the caller --------------------------------------
 # The proxy streams the request body straight through (#654: buffering a long
 # turn's grown conversation is what OOM-killed it). Streaming and answering

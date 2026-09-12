@@ -296,6 +296,8 @@ def _route_to_gateway(flow: http.HTTPFlow, key: str) -> bool:
     # downstream, which is how a swapped credential silently 401s).
     flow.request.headers["authorization"] = f"Bearer {key}"
     flow.request.headers.pop("x-api-key", None)
+    # LiteLLM records API spend; the subscription ledger must not charge it again.
+    flow.metadata["cheese_pool"] = GATEWAY
     return True
 
 
@@ -558,6 +560,24 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
         # every other flow through the proxy.
         verdict = await asyncio.to_thread(ADMISSION.check, project_id, topic_id, bearer)
 
+    if verdict is not None and verdict.pool == GATEWAY and not is_messages:
+        # API projects have no Anthropic account behind this route. RC requests
+        # were handled above; account lookups must not spend the host credential.
+        flow.server_conn.via = None
+        if flow.metadata.get("cheese_rc_flags"):
+            flow.request.stream = False
+            flow.response = http.Response.make(
+                200, b'{"features":{}}', {"Content-Type": "application/json"}
+            )
+        else:
+            _refuse(
+                flow,
+                404,
+                "not_found_error",
+                "cheese: Anthropic account endpoints are unavailable for API supply",
+            )
+        return
+
     if is_messages:
         if SCOPED_SECRET and not ALLOW_HEADER_ATTR and not project_id:
             # #198: an exposed proxy must not spend the subscription for a
@@ -715,6 +735,9 @@ def responseheaders(flow: http.HTTPFlow) -> None:
     resp = flow.response
     if resp is None:
         return
+    if flow.metadata.get("cheese_pool") == GATEWAY:
+        resp.stream = True
+        return
     if flow.metadata.get("cheese_rc_flags"):
         # Feature evaluation is small JSON. Inference SSE remains streamed.
         return
@@ -741,6 +764,8 @@ def responseheaders(flow: http.HTTPFlow) -> None:
 
 
 def response(flow: http.HTTPFlow) -> None:
+    if flow.metadata.get("cheese_pool") == GATEWAY:
+        return
     if (
         flow.metadata.get("cheese_rc_flags")
         and flow.response
