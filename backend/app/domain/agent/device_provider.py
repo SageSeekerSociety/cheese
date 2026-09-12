@@ -39,13 +39,12 @@ from app.domain.agent.device_hub import (
     HubScreen,
     device_hub,
 )
+from app.domain.agent.harness.channel import Channel, ScreenSetupError
 from app.domain.agent.harness.claude_code import (
     CHEESE_HOOK_SCRIPT,
     DEVICE_ALIVE_PROBE,
     DEVICE_TUNNEL_PROBE,
     SESSION_TOKEN_TTL_S,
-    Channel,
-    ScreenSetupError,
     build_screen_launch,
 )
 from app.domain.agent.harness.launch import LaunchPlan

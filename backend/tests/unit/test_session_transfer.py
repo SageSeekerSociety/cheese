@@ -15,7 +15,7 @@ import pytest
 
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_provider import DeviceChannel
-from app.domain.agent.harness.claude_code import ScreenSetupError
+from app.domain.agent.harness.channel import ScreenSetupError
 
 
 @pytest.mark.skipif(not shutil.which("tmux"), reason="requires a real tmux terminal")

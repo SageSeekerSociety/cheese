@@ -85,8 +85,8 @@ from app.core.redis import get_redis_client  # noqa: E402
 from app.core.sandbox_auth import SANDBOX_TOKEN  # noqa: E402
 from app.domain.agent.chat import ChatService  # noqa: E402
 from app.domain.agent.compute import ComputePool  # noqa: E402
+from app.domain.agent.harness.channel import Channel  # noqa: E402
 from app.domain.agent.harness.claude_code import (  # noqa: E402
-    Channel,
     ClaudeCodeRuntime,
     HookRouter,
 )

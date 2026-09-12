@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.domain.agent.chat import _build_system_prompt
+from app.domain.agent.harness.prompt import build_system_prompt
 from app.domain.memory.models import MemoryScope
 from app.domain.memory.store import recall_pools
 
@@ -185,7 +185,7 @@ async def test_both_pools_report_into_one_total():
 def test_core_and_retrieved_are_labelled_apart():
     """ "Always here" and "here because this turn mentioned it" are different
     promises; a reader that cannot tell them apart cannot trust either."""
-    prompt = _build_system_prompt(
+    prompt = build_system_prompt(
         "base", "", None, ["我是芝士", "某条事实"], memories_core=1
     )
 
@@ -196,7 +196,7 @@ def test_core_and_retrieved_are_labelled_apart():
 
 
 def test_what_did_not_come_in_is_stated_in_the_prompt():
-    prompt = _build_system_prompt("base", "", None, ["记住这条"], memories_omitted=9)
+    prompt = build_system_prompt("base", "", None, ["记住这条"], memories_omitted=9)
 
     assert "记住这条" in prompt
     assert "9" in prompt
@@ -204,7 +204,7 @@ def test_what_did_not_come_in_is_stated_in_the_prompt():
 
 
 def test_no_notice_when_nothing_was_left_out():
-    prompt = _build_system_prompt("base", "", None, ["记住这条"])
+    prompt = build_system_prompt("base", "", None, ["记住这条"])
 
     assert "记住这条" in prompt
     assert "cheese recall" not in prompt
@@ -213,7 +213,7 @@ def test_no_notice_when_nothing_was_left_out():
 def test_core_overflow_gets_its_own_warning():
     """A missing fact is normal. A missing *core* fact means the layer that is
     supposed to be unconditional has stopped being unconditional."""
-    prompt = _build_system_prompt(
+    prompt = build_system_prompt(
         "base", "", None, ["我是芝士"], memories_core=1, memories_core_omitted=3
     )
 
@@ -227,9 +227,7 @@ def test_core_overflow_gets_its_own_warning():
 def test_a_bare_path_in_a_fact_arrives_as_a_reference_token():
     """模型照抄它在 prompt 里看到的形状：裸路径进去，裸路径就会出现在它写的文档和
     回复里，而裸路径在前端点不开。"""
-    prompt = _build_system_prompt(
-        "base", "", None, ["配置在 backend/app/core/db.py 里"]
-    )
+    prompt = build_system_prompt("base", "", None, ["配置在 backend/app/core/db.py 里"])
 
     assert "<&backend/app/core/db.py>" in prompt
 
@@ -237,7 +235,7 @@ def test_a_bare_path_in_a_fact_arrives_as_a_reference_token():
 def test_the_lines_a_fact_points_at_stay_inside_the_token():
     """`db.py:55-60` 指的是文件里的一段。行号被留在尖括号外面，token 就只剩半截——
     前端认出来的是文件，而那条事实真正在说的是那六行。"""
-    prompt = _build_system_prompt(
+    prompt = build_system_prompt(
         "base", "", None, ["连接池在 backend/app/core/db.py:55-60"]
     )
 

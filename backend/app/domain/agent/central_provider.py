@@ -20,8 +20,8 @@ from app.domain.agent.device_provider import (
     device_home_dir,
     environment_status,
 )
+from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent.harness.claude_code import (
-    ScreenSetupError,
     build_executor_launch,
     executor_prepare_payload,
 )

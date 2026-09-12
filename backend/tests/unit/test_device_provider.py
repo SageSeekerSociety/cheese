@@ -1349,7 +1349,7 @@ async def test_subscription_without_a_readable_ca_fails_loud_not_into_the_gatewa
     """Falling back to the gateway would silently swap the model — the failure
     #325 G2 exists to kill. A half-configured deployment must say what to fix."""
     from app.core.config import settings
-    from app.domain.agent.harness.claude_code.hooks_substrate import ScreenSetupError
+    from app.domain.agent.harness.channel import ScreenSetupError
 
     _subscription_settings(monkeypatch, tmp_path)
     monkeypatch.setattr(settings, "subscription_ca_backend_path", "")

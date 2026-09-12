@@ -26,7 +26,7 @@ if TYPE_CHECKING:
         SessionRef,
         UnreadProbe,
     )
-    from app.domain.agent.harness.claude_code import Channel
+    from app.domain.agent.harness.channel import Channel
 
 
 class ComputeProvider(Protocol):
@@ -288,7 +288,8 @@ def build_compute_pool(cloud_channel: "Channel | None" = None) -> ComputePool:
     """
     from app.domain.agent.central_provider import CentralChannel
     from app.domain.agent.device_provider import DeviceChannel
-    from app.domain.agent.harness.claude_code import Channel, ClaudeCodeRuntime
+    from app.domain.agent.harness.channel import Channel
+    from app.domain.agent.harness.claude_code import ClaudeCodeRuntime
     from app.domain.agent.market import compute_default_name
 
     def runs_claude_code(channel: Channel) -> ClaudeCodeRuntime:

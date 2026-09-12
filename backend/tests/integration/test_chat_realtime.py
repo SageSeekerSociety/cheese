@@ -9,7 +9,7 @@ import uuid
 import pytest
 
 from app.domain.agent.chat import ChatService
-from app.domain.agent.harness.claude_code import ScreenSetupError
+from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository

@@ -12,7 +12,7 @@ from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_provider import DeviceChannel, EnvironmentPreparationError
-from app.domain.agent.harness.claude_code import ScreenSetupError
+from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
