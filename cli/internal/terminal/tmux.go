@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/creack/pty"
@@ -443,6 +444,41 @@ func (s *Session) poll() {
 
 // Close kills the session and stops its poller.
 func (s *Session) Close() error {
+	// kill-session closes the PTY before the pane's supervisor has reaped its
+	// children. Wait for that supervisor so a replacement cannot connect to
+	// the retiring agent's still-live prompt socket.
+	killAndWait := func(socket, session string) error {
+		args := []string{"-S", socket}
+		out, err := exec.Command(s.m.bin, append(args, "list-panes", "-t", "="+session, "-F", "#{pane_pid}")...).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("terminal: list pane processes: %w: %s", err, out)
+		}
+		var processes []*os.Process
+		for _, value := range strings.Fields(string(out)) {
+			pid, err := strconv.Atoi(value)
+			if err != nil {
+				return err
+			}
+			process, err := os.FindProcess(pid)
+			if err != nil {
+				return err
+			}
+			processes = append(processes, process)
+		}
+		if err := exec.Command(s.m.bin, append(args, "kill-session", "-t", "="+session)...).Run(); err != nil {
+			return err
+		}
+		deadline := time.Now().Add(10 * time.Second)
+		for _, process := range processes {
+			for process.Signal(syscall.Signal(0)) == nil {
+				if time.Now().After(deadline) {
+					return fmt.Errorf("terminal: pane process %d did not stop", process.Pid)
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+		}
+		return nil
+	}
 	// A claimed warm process keeps its original PTY. Its launcher records that
 	// terminal here, transferring ownership to this screen before attaching.
 	data, err := s.m.tmux("show-option", "-qv", "-t", s.name, "@cheese-terminal").Output()
@@ -460,12 +496,11 @@ func (s *Session) Close() error {
 		if target.Socket == "" || target.Session == "" {
 			return fmt.Errorf("terminal: incomplete owned terminal")
 		}
-		cmd := exec.Command(s.m.bin, "-S", target.Socket, "kill-session", "-t", "="+target.Session)
-		if out, err := cmd.CombinedOutput(); err != nil &&
-			!strings.Contains(string(out), "can't find session") &&
-			!strings.Contains(string(out), "no server running") &&
-			!strings.Contains(string(out), "No such file or directory") {
-			return fmt.Errorf("terminal: close owned terminal: %w: %s", err, out)
+		if err := killAndWait(target.Socket, target.Session); err != nil &&
+			!strings.Contains(err.Error(), "can't find session") &&
+			!strings.Contains(err.Error(), "no server running") &&
+			!strings.Contains(err.Error(), "No such file or directory") {
+			return fmt.Errorf("terminal: close owned terminal: %w", err)
 		}
 	}
 	select {
@@ -473,5 +508,5 @@ func (s *Session) Close() error {
 	default:
 		close(s.stop)
 	}
-	return s.m.tmux("kill-session", "-t", "="+s.name).Run()
+	return killAndWait(s.m.sock, s.name)
 }

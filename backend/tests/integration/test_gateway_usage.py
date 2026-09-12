@@ -308,12 +308,13 @@ async def test_late_spend_rows_land_via_deferred_drain(client, tmp_path, monkeyp
 
 
 @pytest.mark.anyio
-async def test_device_turn_route_follows_the_deployment_supply(client, tmp_path):
-    """A device turn's model env belongs to the backend that reaches the machine
-    — the profile env (box-local gateway URL + a real key) must never reach the
-    machine. The ROUTE follows where its traffic actually goes (#325 G2): the
-    /llm gateway without a subscription, the metering proxy with one, so moving
-    a topic between machines never swaps its model."""
+async def test_device_turn_keeps_its_saved_gateway_model_when_subscription_is_enabled(
+    client, tmp_path
+):
+    """Adding subscription supply preserves the saved API model and gateway route.
+
+    Provider URLs and keys remain on the backend, away from the machine.
+    """
     from app.core.config import settings as app_settings
 
     pool_url = "http://pool.example"
@@ -340,12 +341,14 @@ async def test_device_turn_route_follows_the_deployment_supply(client, tmp_path)
 
     import unittest.mock
 
-    from app.core.errors import ValidationError
-
     with unittest.mock.patch.object(app_settings, "subscription_enabled", True):
-        # Changing available supply does not silently replace the saved model.
-        with pytest.raises(ValidationError, match="请选择可用模型"):
-            await svc._model_kwargs(pid, _on_a_machine())
+        subscription_kwargs, subscription_route = await svc._model_kwargs(
+            pid, _on_a_machine()
+        )
+
+    assert subscription_route == route == "gateway"
+    assert subscription_kwargs == kwargs
+    assert fake.minted == []
 
 
 @pytest.mark.anyio

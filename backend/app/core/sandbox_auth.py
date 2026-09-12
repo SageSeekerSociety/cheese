@@ -58,6 +58,7 @@ def mint_scoped_token(
     access_scope: Literal["topic", "project"] = "topic",
     remote_control: bool = False,
     resource_id: str | None = None,
+    model: str | None = None,
 ) -> str:
     """Mint an HMAC token scoped to a project (+ optional topic), expiring in ttl_s.
 
@@ -88,6 +89,8 @@ def mint_scoped_token(
         payload["rc"] = 1
     if resource_id is not None:
         payload["r"] = resource_id
+    if model is not None:
+        payload["m"] = model
     raw = json.dumps(payload, separators=(",", ":")).encode()
     body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
     return f"{body}.{_sign(body)}"

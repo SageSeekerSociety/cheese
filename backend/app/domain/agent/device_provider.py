@@ -904,6 +904,7 @@ class DeviceChannel(Channel):
                 ttl_s=SESSION_TOKEN_TTL_S,
                 remote_control=True,
                 resource_id=str(resource_id),
+                model=launch.model,
             )
             tunnel_url = settings.subscription_tunnel_url.strip()
             via_tunnel = uses_tunnel(tunnel_url=tunnel_url)
@@ -936,6 +937,11 @@ class DeviceChannel(Channel):
             ):
                 merged.pop(k, None)
             merged.update(sub.env)
+            if launch.model and not launch.model.startswith("claude-"):
+                # Native auxiliary calls and subagents must use the selected
+                # gateway model too; LiteLLM does not serve Claude aliases.
+                for family in ("HAIKU", "SONNET", "OPUS"):
+                    merged[f"ANTHROPIC_DEFAULT_{family}_MODEL"] = launch.model
             merged["CHEESE_REMOTE_CONTROL"] = "1"
             # The tunnel's CONNECT credential must carry the same place and RC
             # claims as the direct proxy URL; CHEESE_TOKEN authenticates hooks.

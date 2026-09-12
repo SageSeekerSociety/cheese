@@ -1,5 +1,6 @@
 """Archival persists a configurable grace period without deleting resources."""
 
+import os
 import subprocess
 import uuid
 from datetime import timedelta
@@ -189,11 +190,13 @@ async def test_cloud_inventory_cannot_discard_unrecognized_transcripts(
             await retire._inventory(session, operation, inventory)
 
 
+@pytest.mark.parametrize("pointer", ["absolute", "relative", "moved-relative"])
 async def test_parked_worktree_frees_the_branch_before_old_device_is_removed(
-    client, monkeypatch, tmp_path
+    client, monkeypatch, tmp_path, pointer
 ):
     room_id, cleanup_id = await archived_room(client, monkeypatch)
-    repo, work, parked = tmp_path / "repo", tmp_path / "work", tmp_path / "retired"
+    repo, work = tmp_path / "repo", tmp_path / "work"
+    parked = tmp_path / "retired" / "operation" / "work"
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
     (repo / "code.py").write_text("published code")
     subprocess.run(["git", "add", "."], cwd=repo, check=True)
@@ -214,6 +217,17 @@ async def test_parked_worktree_frees_the_branch_before_old_device_is_removed(
     subprocess.run(
         ["git", "worktree", "add", "-qb", "room", str(work)], cwd=repo, check=True
     )
+    monkeypatch.setattr(retire.ws, "_repo", lambda _: repo)
+    if pointer != "absolute":
+        retire.ws._point_at_the_store_relatively(repo, work)
+    if pointer == "moved-relative":
+        parked.parent.mkdir(parents=True)
+        subprocess.run(
+            ["git", "worktree", "move", str(work), str(parked)], cwd=repo, check=True
+        )
+        admin = repo / ".git" / "worktrees" / "work"
+        # Reproduce a move interrupted with the old relative pointer intact.
+        (parked / ".git").write_text(f"gitdir: {os.path.relpath(admin, work)}\n")
     monkeypatch.setattr(
         retire,
         "_inventory",
