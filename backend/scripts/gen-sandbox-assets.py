@@ -3,8 +3,8 @@ Docker image and the runtime launcher can't drift (fusion-design §8.6).
 
 Currently emits ``backend/sandbox/cheese-hook`` — the Claude Code hook forwarder
 baked into the tmux image via ``COPY``. Its source of truth is
-``app.domain.agent.hooks_substrate.CHEESE_HOOK_SCRIPT`` (the SAME string the
-device launcher writes at runtime). Run this after editing that constant:
+``app.domain.agent.harness.claude_code.hooks_substrate.CHEESE_HOOK_SCRIPT``, also
+written by the device launcher at runtime. Run this after editing that constant:
 
     uv run python scripts/gen-sandbox-assets.py
 
@@ -18,7 +18,7 @@ from pathlib import Path
 # Make `app` importable when run as a plain script (scripts/ sits next to app/).
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.domain.agent.harness.claude_code import (
+from app.domain.agent.harness.claude_code.hooks_substrate import (
     CHEESE_HOOK_SCRIPT,  # noqa: E402
 )
 
