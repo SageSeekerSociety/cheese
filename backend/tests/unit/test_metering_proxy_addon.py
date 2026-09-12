@@ -787,12 +787,14 @@ def test_gateway_responses_do_not_charge_the_subscription(monkeypatch, tmp_path)
     assert not mod.USAGE_LOG.exists()
 
 
-def test_gateway_account_requests_do_not_use_the_subscription(monkeypatch, tmp_path):
+def test_gateway_account_requests_retain_the_credential_route(monkeypatch, tmp_path):
     mod = _load_addon(monkeypatch, tmp_path, inject="subscription-secret")
     mod.ADMISSION_URL = "http://backend/llm/admission"
     mod.ALLOW_HEADER_ATTR = True
     mod.UPSTREAM_VIA = "subscription-proxy:3128"
-    mod.ADMISSION.check = lambda *args: SimpleNamespace(allow=True, pool="gateway")
+    mod.ADMISSION.check = lambda *args: SimpleNamespace(
+        allow=True, pool="gateway", upstream=None
+    )
     for path in (
         "/api/claude_code/settings",
         "/api/claude_code/policy_limits",
@@ -801,10 +803,10 @@ def test_gateway_account_requests_do_not_use_the_subscription(monkeypatch, tmp_p
         flow = _make_flow(path=path)
         flow.request.headers["x-cheese-attr"] = "project/topic"
         asyncio.run(mod.requestheaders(flow))
-        assert flow.response.status_code == 404
-        assert flow.request.stream is False
-        assert flow.server_conn.via is None
-        assert "subscription-secret" not in flow.request.headers["authorization"]
+        assert flow.response is None
+        assert flow.request.stream is True
+        assert flow.server_conn.via is not None
+        assert flow.request.headers["authorization"] == "Bearer subscription-secret"
 
     flow = _make_flow(path="/api/eval/sdk-client")
     flow.request.headers["x-cheese-attr"] = "project/topic"

@@ -560,22 +560,18 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
         # every other flow through the proxy.
         verdict = await asyncio.to_thread(ADMISSION.check, project_id, topic_id, bearer)
 
-    if verdict is not None and verdict.pool == GATEWAY and not is_messages:
-        # API projects have no Anthropic account behind this route. RC requests
-        # were handled above; account lookups must not spend the host credential.
+    if (
+        verdict is not None
+        and verdict.pool == GATEWAY
+        and flow.metadata.get("cheese_rc_flags")
+    ):
+        # Cheese supplies its own RC flags. Account/profile requests retain the
+        # existing credential route: native RC needs organization metadata.
         flow.server_conn.via = None
-        if flow.metadata.get("cheese_rc_flags"):
-            flow.request.stream = False
-            flow.response = http.Response.make(
-                200, b'{"features":{}}', {"Content-Type": "application/json"}
-            )
-        else:
-            _refuse(
-                flow,
-                404,
-                "not_found_error",
-                "cheese: Anthropic account endpoints are unavailable for API supply",
-            )
+        flow.request.stream = False
+        flow.response = http.Response.make(
+            200, b'{"features":{}}', {"Content-Type": "application/json"}
+        )
         return
 
     if is_messages:
