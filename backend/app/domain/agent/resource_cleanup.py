@@ -99,29 +99,73 @@ def request_exit(home: Path, work: Path, lock_fd: int) -> None:
             ["cksum"], input=str(directory).encode(), capture_output=True, check=True
         )
         expected.add("cheese_" + checksum.stdout.decode().split()[0])
-    if name not in expected:
-        raise RuntimeError("session metadata does not identify this resource")
     if not Path(socket).exists():
         return
     if Path(socket).stat().st_uid != os.getuid():
         raise RuntimeError("session socket is owned by another user")
     alive = run_command(
-        ["tmux", "-S", socket, "has-session", "-t", name], pass_fds=(lock_fd,)
+        ["tmux", "-S", socket, "has-session", "-t", "=" + name], pass_fds=(lock_fd,)
     )
     if alive.returncode:
         return
-    sent = run_command(
-        ["tmux", "-S", socket, "send-keys", "-t", name + ":0.0", "-l", "/exit"],
+    if name not in expected:
+        identity = run_command(
+            [
+                "tmux",
+                "-S",
+                socket,
+                "show-options",
+                "-v",
+                "-t",
+                "=" + name + ":",
+                "@cheese-screen",
+            ],
+            pass_fds=(lock_fd,),
+        )
+        screen = json.loads(identity.stdout) if identity.returncode == 0 else {}
+        env = screen.get("env", {})
+        if (
+            screen.get("sid") != name
+            or env.get("CHEESE_PROJECT") != home.parent.name
+            or (env.get("CHEESE_RESOURCE_ID") or env.get("CHEESE_TOPIC")) != home.name
+        ):
+            raise RuntimeError("session metadata does not identify this resource")
+    panes = run_command(
+        [
+            "tmux",
+            "-S",
+            socket,
+            "list-panes",
+            "-s",
+            "-t",
+            "=" + name + ":",
+            "-F",
+            "#{pane_id} #{pane_dead}",
+        ],
         pass_fds=(lock_fd,),
     )
-    if (
-        sent.returncode
-        or run_command(
-            ["tmux", "-S", socket, "send-keys", "-t", name + ":0.0", "Enter"],
+    if panes.returncode or not panes.stdout.strip():
+        raise RuntimeError("could not inspect the resource's terminal panes")
+    live = [
+        line.split()[0] for line in panes.stdout.splitlines() if line.split()[1] != "1"
+    ]
+    if not live:
+        # remain-on-exit preserves the terminal after every agent has exited.
+        closed = run_command(
+            ["tmux", "-S", socket, "kill-session", "-t", "=" + name],
             pass_fds=(lock_fd,),
-        ).returncode
-    ):
-        raise RuntimeError("could not request a graceful session exit")
+        )
+        if closed.returncode:
+            raise RuntimeError("could not close the exited resource terminal")
+        return
+    for pane in live:
+        for keys in (["-l", "/exit"], ["Enter"]):
+            sent = run_command(
+                ["tmux", "-S", socket, "send-keys", "-t", pane, *keys],
+                pass_fds=(lock_fd,),
+            )
+            if sent.returncode:
+                raise RuntimeError("could not request a graceful session exit")
     raise RuntimeError("waiting for the agent to exit and finish transcript writes")
 
 
