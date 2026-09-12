@@ -6,7 +6,7 @@
 # stack is brought up once per box and then left alone; app deploys never touch
 # it, and a gateway restart never restarts the app.
 #
-#   docker compose -f docker-compose.gateway.yml -p cheese-gateway up -d
+#   docker compose -f docker-compose.gateway.yml -p cheese-gateway up -d --build
 #
 # What it buys (docs in backend/app/domain/agent/gateway.py):
 #   - real per-project token accounting, which the hooks backends cannot produce
@@ -15,10 +15,10 @@
 #   - a budget brake (max_budget) that refuses calls once a grant is spent.
 services:
   litellm:
-    # Pinned by DIGEST, not by tag: berriai publishes no tag for the version this
-    # deployed gateway runs (1.96.0 — checked inside this image), and
-    # `main-latest` moves under you. A digest is the only reproducible handle.
-    image: ghcr.io/berriai/litellm@sha256:d1fc1c122e2c1a0cec2b00540b220ff0d2682842758eb8bc64e373a1aedfec7e
+    # The Dockerfile pins the upstream digest and verifies the patched file hash.
+    image: cheese-litellm:1.96.0-timing
+    build:
+      context: ../gateway
     restart: unless-stopped
     depends_on:
       litellm-db:

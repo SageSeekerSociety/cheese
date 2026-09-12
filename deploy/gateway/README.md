@@ -34,7 +34,7 @@ ZHIPU_API_KEY=...                # the same upstream keys already in use
 DEEPSEEK_API_KEY=...
 EOF
 chmod 600 .env
-docker compose -f docker-compose.gateway.yml -p cheese-gateway up -d
+docker compose -f docker-compose.gateway.yml -p cheese-gateway up -d --build
 ```
 
 Then, in the box's `backend/.env`:
@@ -61,6 +61,15 @@ The central session's `AGENT_SESSION_API_BASE` must also be reachable from its
 private execution containers. A host loopback URL makes platform tools inside
 those containers fail with connection refused; use the deployment's reachable
 backend address.
+
+The gateway Dockerfile derives from the upstream image pinned by digest and checks the
+streaming logger's file hash before applying a timing correction. The upstream
+logger starts its clock when the stream wrapper is created, omitting earlier
+request time. The patch retains the logging object's original request start.
+An isolated test runs during the image build without calling a model provider.
+These timestamps cover the gateway request; they do not separately measure
+provider processing and gateway overhead. Application deployments still leave
+this independent gateway stack running.
 
 Check the loaded configuration's request transformation and nonzero token prices:
 
