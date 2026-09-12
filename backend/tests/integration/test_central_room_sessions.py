@@ -11,7 +11,7 @@ import pytest
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.central_provider import CentralChannel
-from app.domain.agent.device_provider import DeviceChannel
+from app.domain.agent.device_provider import DeviceChannel, EnvironmentPreparationError
 from app.domain.agent.harness.claude_code import ScreenSetupError
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.topic.models import Topic
@@ -112,6 +112,56 @@ async def test_execution_drift_fails_before_touching_either_machine(
         )
     central._hub.exec.assert_not_called()
     central._ensure_screen.assert_not_called()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("running", [False, True])
+@pytest.mark.parametrize("has_environment", [False, True])
+async def test_executor_readiness_reuses_bootstrap_reply(
+    client, room, monkeypatch, running, has_environment
+):
+    project, topic = room
+    central = channel(client, monkeypatch)
+    reply = {"workspace": "/project", "mcp_servers": []}
+    if running:
+        reply["pid"] = 123
+    central._hub.exec.return_value["stdout"] = json.dumps(reply)
+    central._wait_executor = CentralChannel._wait_executor.__get__(central)
+    ping = AsyncMock(return_value={"pid": 123})
+    status = AsyncMock(return_value={"state": "ready"})
+    monkeypatch.setattr("app.domain.agent.execution.call", ping)
+    monkeypatch.setattr("app.domain.agent.central_provider.environment_status", status)
+    await central.ensure_ready(
+        project_id=project,
+        topic_id=topic,
+        token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
+        env={"CHEESE_ENVIRONMENT": '{"revision":"one"}'} if has_environment else {},
+        launch=ClaudeLaunch("System"),
+        precheck=("executor", 1, "agent"),
+    )
+    assert ping.await_count == (0 if running else 1)
+    assert status.await_count == (1 if has_environment else 0)
+    central._ensure_screen.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_running_executor_does_not_hide_failed_environment(client, monkeypatch):
+    central = channel(client, monkeypatch)
+    status = AsyncMock(return_value={"state": "failed", "error": "build failed"})
+    ping = AsyncMock()
+    monkeypatch.setattr("app.domain.agent.central_provider.environment_status", status)
+    monkeypatch.setattr("app.domain.agent.execution.call", ping)
+    with pytest.raises(EnvironmentPreparationError):
+        await CentralChannel._wait_executor(
+            central,
+            uuid.uuid4(),
+            uuid.uuid4(),
+            {"device_id": "executor"},
+            True,
+            executor_ready=True,
+        )
+    status.assert_awaited_once()
+    ping.assert_not_awaited()
 
 
 @pytest.mark.anyio

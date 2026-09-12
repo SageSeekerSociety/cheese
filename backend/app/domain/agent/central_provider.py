@@ -185,7 +185,11 @@ class CentralChannel(DeviceChannel):
                     ),
                 }
                 await self._wait_executor(
-                    project_id, resource, target, bool(values.get("CHEESE_ENVIRONMENT"))
+                    project_id,
+                    resource,
+                    target,
+                    bool(values.get("CHEESE_ENVIRONMENT")),
+                    executor_ready=bool(info.get("pid")),
                 )
                 mark("executor_ready")
             placement = {
@@ -277,7 +281,9 @@ class CentralChannel(DeviceChannel):
         if (await exchange(source, "list"))["files"] != manifest:
             raise ScreenSetupError("原会话记录仍在变化，尚未切换到中心")
 
-    async def _wait_executor(self, project_id, resource, target, has_environment):
+    async def _wait_executor(
+        self, project_id, resource, target, has_environment, *, executor_ready=False
+    ):
         deadline = time.monotonic() + (3660 if has_environment else 30)
         while True:
             if has_environment:
@@ -294,6 +300,10 @@ class CentralChannel(DeviceChannel):
             else:
                 ready = True
             if ready:
+                # A reused bootstrap returns a PID only after ping and configure
+                # succeed. Keep environment checks without repeating that RPC.
+                if executor_ready:
+                    return
                 try:
                     await execution.call(target, "ping", {}, hub=self._hub)
                     return
