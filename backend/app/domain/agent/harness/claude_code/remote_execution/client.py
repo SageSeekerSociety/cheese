@@ -484,6 +484,11 @@ def shell(target_path, command):
     }
     if command in commands:
         os.execvp("sh", ["sh", "-c", command])
+    local_chat = _local_chat_send_argv(command)
+    if local_chat is not None:
+        result = _publish_chat_locally(local_chat)
+        if result is not None:
+            return result
     client = RemoteClient(target)
     command = command.replace(
         target["central_config"] + "/skills/", target["workspace"] + "/.claude/skills/"
@@ -515,6 +520,119 @@ def shell(target_path, command):
             sys.stderr.write(task["stderr"])
             return task["exit_code"] if task["exit_code"] is not None else 1
         time.sleep(0.1)
+
+
+def _local_chat_send_argv(command):
+    """Return argv for the safe, direct platform publication fast path.
+
+    ``cheese chat send`` is a platform action whose credentials are already in
+    the central session environment. Only a standalone invocation is eligible;
+    shell operators and expansions stay on the remote executor so this cannot
+    turn an appended command into a central-host escape.
+    """
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    try:
+        words = list(lexer)
+    except ValueError:
+        return None
+    if len(words) < 3 or words[:3] != ["cheese", "chat", "send"]:
+        return None
+    if any(token in {";", "&&", "||", "|", ">", ">>", "<", "<<"} for token in words):
+        return None
+    # These expansions are meaningful only to a shell. Running the CLI
+    # directly must preserve quoted message text and never reinterpret them.
+    quote = None
+    escaped = False
+    for _, char in enumerate(command):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if quote is None and char in "'\"":
+            quote = char
+            continue
+        if quote is not None and char == quote:
+            quote = None
+            continue
+        if quote is None and (char in ";&|<>`\n$" or char == "\r"):
+            return None
+    if quote is not None or escaped:
+        return None
+    return words
+
+
+def _publish_chat_locally(argv):
+    """Publish an inline chat message using the session's scoped credentials.
+
+    File-backed messages remain remote because their path belongs to the
+    executor workspace. Returning ``None`` asks ``shell`` to use its normal
+    remote path for unsupported or incomplete local inputs.
+    """
+    if "--help" in argv or "--file" in argv:
+        return None
+    content = None
+    reply_to = None
+    request_id = None
+    index = 3
+    while index < len(argv):
+        value = argv[index]
+        if value in ("--reply-to", "--request-id"):
+            if index + 1 >= len(argv):
+                return None
+            if value == "--reply-to":
+                reply_to = argv[index + 1]
+            else:
+                request_id = argv[index + 1]
+            index += 2
+            continue
+        if value.startswith("-") or content is not None:
+            return None
+        content = value
+        index += 1
+    api = os.environ.get("CHEESE_API", "").rstrip("/")
+    token = os.environ.get("CHEESE_TOKEN", "")
+    topic = os.environ.get("CHEESE_TOPIC", "")
+    if not content or not content.strip() or not api or not token or not topic:
+        return None
+    try:
+        publication_id = str(uuid.UUID(request_id)) if request_id else str(uuid.uuid4())
+    except (ValueError, AttributeError):
+        return None
+    body = {"content": content, "request_id": publication_id}
+    if reply_to:
+        body["reply_to"] = reply_to
+    import urllib.error
+    import urllib.request
+
+    request = urllib.request.Request(
+        f"{api}/topics/{topic}/messages",
+        data=json.dumps(body).encode(),
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "X-Cheese-Token": token,
+            **(
+                {"X-Cheese-Turn": os.environ["CHEESE_TURN"]}
+                if os.environ.get("CHEESE_TURN")
+                else {}
+            ),
+        },
+    )
+    print(
+        f"[cheese] request_id={publication_id}；重试请带 --request-id {publication_id}",
+        file=sys.stderr,
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            result = json.load(response)
+    except (urllib.error.HTTPError, urllib.error.URLError) as exc:
+        print(f"[cheese] POST /topics/{topic}/messages 出错: {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps(result["data"], ensure_ascii=False))
+    return 0
 
 
 def _publish_spooled_hook(command, payload):
