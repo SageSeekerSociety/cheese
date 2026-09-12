@@ -517,6 +517,48 @@ def shell(target_path, command):
         time.sleep(0.1)
 
 
+def _publish_spooled_hook(command, payload):
+    if (
+        command != "cheese-hook"
+        or payload["hook_event_name"] not in ("PreToolUse", "PostToolUse")
+        or not os.environ.get("CHEESE_HOOK_SPOOL_ONLY")
+        or not os.environ.get("CHEESE_HOOK_SPOOL")
+    ):
+        return False
+    import shutil
+
+    executable = shutil.which(command)
+    if executable is None:
+        return False
+    if __package__:
+        from ..event_spool import append
+        from ..hooks_substrate import CHEESE_HOOK_SCRIPT
+
+        expected = CHEESE_HOOK_SCRIPT.encode()
+    else:
+        from event_spool import append
+
+        expected = Path(__file__).with_name("platform-hook-source").read_bytes()
+    try:
+        actual = Path(executable).read_bytes()
+    except OSError:
+        return False
+    if actual != expected:
+        return False
+    try:
+        spool = Path(os.environ["CHEESE_HOOK_SPOOL"])
+        spool.mkdir(parents=True, exist_ok=True)
+        try:
+            spool.chmod(0o777)
+        except OSError:
+            pass
+        append(spool, str(uuid.uuid4()), payload)
+    except OSError:
+        # The managed shell hook is best effort and never denies a tool on IO failure.
+        pass
+    return True
+
+
 def publish_event(config, payload):
     output = {}
     for group in config.get("central_hooks", {}).get(payload["hook_event_name"], []):
@@ -526,6 +568,8 @@ def publish_event(config, payload):
         for hook in group.get("hooks", []):
             if hook["type"] != "command":
                 raise ValueError("Execution event forwarding requires command hooks")
+            if _publish_spooled_hook(hook["command"], payload):
+                continue
             result = subprocess.run(
                 ["sh", "-c", hook["command"]],
                 input=json.dumps(payload),
