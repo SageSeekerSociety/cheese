@@ -62,7 +62,8 @@ def test_worker_preserves_actual_cli_help(worker):
     )
 
 
-def test_worker_publishes_with_current_credentials(worker):
+@pytest.mark.parametrize("encoding", ["utf-8", "latin-1"])
+def test_worker_publishes_with_current_credentials(worker, encoding):
     import threading
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -77,7 +78,7 @@ def test_worker_publishes_with_current_credentials(worker):
                     json.loads(self.rfile.read(int(self.headers["Content-Length"]))),
                 )
             )
-            body = b'{"data":{"id":"reply"}}'
+            body = '{"data":{"id":"réponse"}}'.encode()
             self.send_response(200)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -100,20 +101,20 @@ def test_worker_publishes_with_current_credentials(worker):
                     "CHEESE_TOPIC": "room",
                     "CHEESE_API": f"http://127.0.0.1:{server.server_port}",
                     "NO_PROXY": "*",
+                    "PYTHONIOENCODING": encoding,
                 },
-                input="current message",
+                input="café".encode(encoding),
                 capture_output=True,
-                text=True,
                 timeout=10,
             )
             assert result.returncode == 0, result.stderr
-            assert json.loads(result.stdout) == {"id": "reply"}
+            assert json.loads(result.stdout.decode(encoding)) == {"id": "réponse"}
         assert [row[1] for row in received] == [
             "first-test-token",
             "rotated-test-token",
         ]
         assert all(row[0] == "/topics/room/messages" for row in received)
-        assert all(row[2]["content"] == "current message" for row in received)
+        assert all(row[2]["content"] == "café" for row in received)
         assert received[0][2]["request_id"] != received[1][2]["request_id"]
     finally:
         server.shutdown()

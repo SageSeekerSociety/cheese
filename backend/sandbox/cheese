@@ -49,7 +49,15 @@ def _worker_call(address: str) -> None:
         )
         connection.sendall(
             json.dumps(
-                {"argv": sys.argv[1:], "cwd": os.getcwd(), "env": dict(os.environ)}
+                {
+                    "argv": sys.argv[1:],
+                    "cwd": os.getcwd(),
+                    "env": dict(os.environ),
+                    "stdio": [
+                        {"encoding": stream.encoding, "errors": stream.errors}
+                        for stream in (sys.stdin, sys.stdout, sys.stderr)
+                    ],
+                }
             ).encode()
             + b"\n"
         )

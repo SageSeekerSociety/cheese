@@ -1,6 +1,7 @@
 """Single-threaded CLI preload process; each invocation runs in its own child."""
 
 import array
+import io
 import json
 import os
 import select
@@ -38,6 +39,10 @@ class Handler(socketserver.BaseRequestHandler):
         for target, descriptor in enumerate(descriptors):
             os.dup2(descriptor, target)
             os.close(descriptor)
+        for index, standard_stream in enumerate((sys.stdin, sys.stdout, sys.stderr)):
+            cast(io.TextIOWrapper, standard_stream).reconfigure(
+                **payload["stdio"][index]
+            )
         done = threading.Event()
 
         def disconnected():
