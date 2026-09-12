@@ -1,6 +1,7 @@
 """Transport retries and lost readers must not create a second model input."""
 
 import asyncio
+import fcntl
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -90,3 +91,21 @@ async def test_image_content_is_part_of_the_input_identity(tmp_path):
         sender.assert_awaited_once_with("look", images=["data:image/png;base64,YQ=="])
     finally:
         await runner.close()
+
+
+@pytest.mark.anyio
+async def test_protocol_failure_releases_session_lock_and_files(tmp_path):
+    async def fail():
+        raise ValueError("malformed event")
+
+    runner = Runner(tmp_path, AsyncMock())
+    runner.lock = (tmp_path / "runner.lock").open("a")
+    fcntl.flock(runner.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    runner.errors = (tmp_path / "app-server.log").open("ab")
+    runner.listener = asyncio.create_task(fail())
+    with pytest.raises(ValueError, match="malformed event"):
+        await runner.close()
+    assert runner.errors.closed
+    assert runner.lock.closed
+    with (tmp_path / "runner.lock").open("a") as replacement:
+        fcntl.flock(replacement, fcntl.LOCK_EX | fcntl.LOCK_NB)

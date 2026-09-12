@@ -6,16 +6,19 @@ import io
 import json
 import os
 import shutil
+import signal
 import subprocess
-import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 from PIL import Image
 
+from app.domain.agent.harness.codex.backlog import CodexBacklog, receive
 from app.domain.agent.harness.codex.bundle import build
+from app.domain.agent.harness.codex.host import configure
 from app.domain.agent.harness.codex.runner import socket_path
+from app.domain.agent.service import AgentMessage, AgentResult
 
 
 @pytest.mark.anyio
@@ -108,7 +111,7 @@ async def test_standalone_owner_survives_client_disconnect(
     workspace.mkdir()
     subprocess.run(["git", "init", "--quiet", str(workspace)], check=True)
     endpoint = f"http://127.0.0.1:{server.server_port}"
-    (home / "config.toml").write_text(
+    codex_config = (
         'model = "gpt-6-astra"\nmodel_provider = "fixture"\n'
         '[model_providers.fixture]\nname = "fixture"\n'
         f'base_url = "{endpoint}/v1"\nwire_api = "responses"\n'
@@ -126,30 +129,17 @@ async def test_standalone_owner_survives_client_disconnect(
             }
         )
     )
-    archive = tmp_path / "runner.pyz"
-    archive.write_bytes(build())
     state = home / "runner"
-    log = (tmp_path / "runner.log").open("w")
-    process = await asyncio.create_subprocess_exec(
-        sys.executable,
-        "-I",
-        "-S",
-        str(archive),
-        "--state",
-        str(state),
-        "--config",
-        str(config),
-        cwd=workspace,
-        env={
-            "PATH": os.environ["PATH"],
-            "HOME": str(home),
-            "CODEX_HOME": str(home),
-            "CHEESE_TOKEN": "fixture",
-            "NO_PROXY": "127.0.0.1",
-        },
-        stdout=log,
-        stderr=log,
-    )
+    launch = {
+        "state": str(state),
+        "config": json.loads(config.read_text()),
+        "codex_config": codex_config,
+        "archive": base64.b64encode(build()).decode(),
+        "env": {"CHEESE_TOKEN": "fixture", "NO_PROXY": "127.0.0.1"},
+    }
+    process = await asyncio.to_thread(configure, launch)
+    pid = process["pid"]
+    workspace = state / "workspace"
 
     async def rpc(method, params=None, *, disconnect=False):
         reader, writer = await asyncio.open_unix_connection(socket_path(state))
@@ -169,10 +159,8 @@ async def test_standalone_owner_survives_client_disconnect(
 
     try:
         async with asyncio.timeout(30):
-            while not os.path.exists(socket_path(state)):
-                assert process.returncode is None, (tmp_path / "runner.log").read_text()
-                await asyncio.sleep(0.01)
-            assert (await rpc("ping"))["pid"] == process.pid
+            assert (await rpc("ping"))["pid"] == pid
+            assert (await asyncio.to_thread(configure, launch))["pid"] == pid
             png = io.BytesIO()
             Image.new("RGB", (32, 32), "white").save(png, format="PNG")
             picture = (
@@ -220,13 +208,35 @@ async def test_standalone_owner_survives_client_disconnect(
                 == "independent process reply"
                 for row in records
             )
+            mirror = tmp_path / "backend-events.sqlite"
+            await receive(mirror, rpc)
+            backlog = CodexBacklog(mirror)
+            events = [
+                event for row in backlog.unread() for event in backlog.assemble(row)
+            ]
+            replies = [event for event in events if isinstance(event, AgentMessage)]
+            assert [event.text for event in replies] == ["independent process reply"]
+            assert (
+                len([event for event in events if isinstance(event, AgentResult)]) == 1
+            )
+            # A second backend reader sees the same message identity until landing.
+            await receive(mirror, rpc)
+            reopened = CodexBacklog(mirror)
+            replay = [
+                event for row in reopened.unread() for event in reopened.assemble(row)
+            ]
+            assert [
+                event.eid for event in replay if isinstance(event, AgentMessage)
+            ] == [
+                replies[0].eid,
+            ]
+            reopened.landed(through=reopened.unread()[-1].key)
+            assert not CodexBacklog(mirror).unread()
     finally:
         (tmp_path / "provider-requests.json").write_text(json.dumps(requests, indent=2))
-        if process.returncode is None:
-            process.terminate()
-        await asyncio.wait_for(process.wait(), 10)
-        log.close()
+        os.kill(pid, signal.SIGTERM)
+        _, status = await asyncio.wait_for(asyncio.to_thread(os.waitpid, pid, 0), 10)
         server.shutdown()
         server.server_close()
         worker.join()
-    assert process.returncode == 0, (tmp_path / "runner.log").read_text()
+    assert os.waitstatus_to_exitcode(status) == 0, (state / "runner.log").read_text()

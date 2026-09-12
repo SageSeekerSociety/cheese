@@ -26,6 +26,7 @@ def build() -> bytes:
         "domain/agent/harness/codex/runner.py",
         "domain/agent/harness/codex/tools.py",
         "domain/agent/harness/codex/entry.py",
+        "domain/agent/harness/codex/host.py",
     ):
         files[f"app/{relative}"] = (source / relative).read_text()
     output = io.BytesIO()

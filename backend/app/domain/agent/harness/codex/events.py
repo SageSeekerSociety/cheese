@@ -7,6 +7,8 @@ from app.domain.agent.service import (
     AgentMessage,
     AgentResult,
     AgentSessionInfo,
+    AgentSubagentStart,
+    AgentSubagentStop,
     AgentToolUse,
 )
 
@@ -14,15 +16,31 @@ from app.domain.agent.service import (
 class Assembler:
     def __init__(self):
         self.pending: dict[str, AgentMessage] = {}
+        self.children: dict[str, tuple[str, str]] = {}
+        self.last_text: dict[str, str] = {}
+
+    def attribution(self, thread_id: str) -> dict:
+        child = self.children.get(thread_id)
+        return {"agent_id": thread_id, "agent_type": child[1]} if child else {}
 
     def accept(self, record: dict) -> list[AgentEvent]:
         method = record["method"]
         params = record.get("params", {})
         if method == "thread/started":
-            return [AgentSessionInfo(params["thread"]["id"])]
+            thread = params["thread"]
+            if parent := thread.get("parentThreadId"):
+                role = thread.get("agentRole") or ""
+                self.children[thread["id"]] = (parent, role)
+                return [AgentSubagentStart(thread["id"], role, parent)]
+            return [AgentSessionInfo(thread["id"])]
+        if method == "turn/started":
+            self.last_text.pop(params["threadId"], None)
+            return []
         if method == "item/agentMessage/delta":
             eid = f"codex:{params['threadId']}:{params['itemId']}"
-            message = self.pending.setdefault(eid, AgentMessage("", eid=eid))
+            message = self.pending.setdefault(
+                eid, AgentMessage("", eid=eid, **self.attribution(params["threadId"]))
+            )
             message.text += params["delta"]
             return []
         if method in ("item/started", "item/completed"):
@@ -35,14 +53,26 @@ class Assembler:
                         item.get("text", ""),
                         eid=eid,
                         at=datetime.fromtimestamp(at / 1000, UTC) if at else None,
+                        **self.attribution(params["threadId"]),
                     )
                     return []
-                message = self.pending.pop(eid, AgentMessage("", eid=eid))
+                message = self.pending.pop(
+                    eid,
+                    AgentMessage("", eid=eid, **self.attribution(params["threadId"])),
+                )
                 message.text = item["text"]
                 message.eids = (eid,)
+                self.last_text[params["threadId"]] = message.text
                 return [message]
             if item["type"] == "dynamicToolCall" and method == "item/started":
-                return [AgentToolUse(item["tool"], item["arguments"], eid=eid)]
+                return [
+                    AgentToolUse(
+                        item["tool"],
+                        item["arguments"],
+                        eid=eid,
+                        **self.attribution(params["threadId"]),
+                    )
+                ]
             return []
         if method == "turn/completed":
             turn = params["turn"]
@@ -53,13 +83,36 @@ class Assembler:
             ]
             error = turn.get("error")
             failed = turn["status"] == "failed"
+            thread_id = params["threadId"]
+            partial = self.give_up(thread_id=thread_id)
+            last = self.last_text.pop(thread_id, "")
+            text = (
+                error["message"]
+                if error
+                else (
+                    messages[-1]
+                    if messages
+                    else (partial[-1].text if partial else last)
+                )
+            )
+            if child := self.children.get(thread_id):
+                parent, role = child
+                return [
+                    *partial,
+                    AgentSubagentStop(
+                        thread_id,
+                        text,
+                        role,
+                        session_id=parent,
+                    ),
+                ]
             result = AgentResult(
-                text=error["message"] if error else (messages[-1] if messages else ""),
+                text=text,
                 session_id=params["threadId"],
                 is_error=failed,
                 errors=[error["message"]] if error else None,
             )
-            return [*self.give_up(thread_id=params["threadId"]), result]
+            return [*partial, result]
         return []
 
     def give_up(self, *, thread_id: str | None = None) -> list[AgentMessage]:

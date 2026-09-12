@@ -186,13 +186,17 @@ class Runner:
         if self.process is not None and self.process.returncode is None:
             self.process.terminate()
             await self.process.wait()
-        if self.listener is not None:
-            await self.listener
-        await asyncio.gather(*self.inputs.values(), return_exceptions=True)
-        if self.errors is not None:
-            self.errors.close()
-        self.journal.close()
-        if self.server is not None:
-            Path(socket_path(self.state)).unlink(missing_ok=True)
-        if self.lock is not None:
-            self.lock.close()
+        try:
+            if self.listener is not None:
+                await self.listener
+        finally:
+            # Protocol failure must release the lock and database too, so a
+            # supervised replacement can resume the recorded session.
+            await asyncio.gather(*self.inputs.values(), return_exceptions=True)
+            if self.errors is not None:
+                self.errors.close()
+            self.journal.close()
+            if self.server is not None:
+                Path(socket_path(self.state)).unlink(missing_ok=True)
+            if self.lock is not None:
+                self.lock.close()
