@@ -2,6 +2,16 @@
 
 from __future__ import annotations
 
+import sys
+
+# Prompt hooks can use the existing MCP process before loading HTTP and CLI
+# dependencies. Initial startup still synchronizes directly when it is absent.
+if __name__ == "__main__" and len(sys.argv) == 3 and sys.argv[1] == "context":
+    from context_service import call as call_context
+
+    if call_context(sys.argv[2]):
+        raise SystemExit(0)
+
 import argparse
 import json
 import os
@@ -10,7 +20,6 @@ import select
 import shlex
 import signal
 import subprocess
-import sys
 import time
 import uuid
 from pathlib import Path
@@ -539,9 +548,14 @@ def publish_event(config, payload):
     return output
 
 
-def transport(config):
+def transport(config, target_path):
     import threading
     from concurrent.futures import ThreadPoolExecutor
+
+    if __package__:
+        from .context_service import serve
+    else:
+        from context_service import serve
 
     client = RemoteClient(config)
     output_lock = threading.Lock()
@@ -661,7 +675,10 @@ def transport(config):
             active.pop(request["id"], None)
             cancelled.discard(request["id"])
 
-    with ThreadPoolExecutor() as workers:
+    with (
+        serve(target_path, lambda: sync_context(target_path)),
+        ThreadPoolExecutor() as workers,
+    ):
         for line in sys.stdin:
             request = json.loads(line)
             if request.get("method") == "notifications/cancelled":
@@ -696,7 +713,7 @@ def main():
     args = parser.parse_args()
     config = json.loads(args.config.read_text())
     if args.mode == "transport":
-        transport(config)
+        transport(config, args.config)
     elif args.mode == "release":
         if __package__:
             from .private import release
