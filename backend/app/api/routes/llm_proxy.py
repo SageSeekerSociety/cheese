@@ -149,6 +149,9 @@ async def admission(
         project.settings if project else None,
         subscription_enabled=settings.subscription_enabled,
     )
+    model = claims.get("m")
+    if isinstance(model, str):
+        pool = SUBSCRIPTION if model.startswith("claude-") else GATEWAY
     supply: dict = {"pool": pool}
     if pool == GATEWAY and decision.allow:
         # Minted lazily and cached on the project; the proxy never holds a
@@ -156,7 +159,7 @@ async def admission(
         # gets no key here and the proxy refuses rather than falling back to a
         # shared credential (which would bill every project to one bucket).
         supply["key"] = await chat.project_gateway_key(project_uuid)
-    elif pool == SUBSCRIPTION and decision.allow:
+    if decision.allow:
         # Which identity the proxy should authenticate as on its ccproxy hop.
         # ccproxy scopes its ticket swap to the authenticated connection, so
         # relaying a machine's OWN ticket only works from that machine's

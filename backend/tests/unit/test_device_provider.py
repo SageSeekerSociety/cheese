@@ -1143,6 +1143,7 @@ def _subscription_settings(monkeypatch, tmp_path) -> str:
 
 async def _subscription_screen(
     env: dict | None = None,
+    model: str | None = None,
 ) -> tuple[SubRecordingHub, uuid.UUID, uuid.UUID]:
     hub = SubRecordingHub()
     provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
@@ -1155,7 +1156,7 @@ async def _subscription_screen(
         topic_id=topic,
         token="hook-token",
         env=env,
-        launch=ClaudeLaunch(system_prompt=""),
+        launch=ClaudeLaunch(system_prompt="", model=model),
     )
     return hub, project, topic
 
@@ -1275,6 +1276,19 @@ async def test_subscription_drops_gateway_pins_a_caller_env_carries(
     assert "ANTHROPIC_BASE_URL" not in env
     assert "deepseek" not in repr(env)
     assert env["SOME_OTHER"] == "kept"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("model", ["deepseek-flash", "glm-5.2"])
+async def test_gateway_selection_pins_native_auxiliary_models(
+    monkeypatch, tmp_path, model
+):
+    _subscription_settings(monkeypatch, tmp_path)
+    hub, _project, _topic = await _subscription_screen(model=model)
+    assert "ANTHROPIC_BASE_URL" not in hub.env
+    assert hub.env["CLAUDE_CODE_OAUTH_TOKEN"]
+    for family in ("HAIKU", "SONNET", "OPUS"):
+        assert hub.env[f"ANTHROPIC_DEFAULT_{family}_MODEL"] == model
 
 
 @pytest.mark.anyio

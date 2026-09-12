@@ -296,6 +296,8 @@ def _route_to_gateway(flow: http.HTTPFlow, key: str) -> bool:
     # downstream, which is how a swapped credential silently 401s).
     flow.request.headers["authorization"] = f"Bearer {key}"
     flow.request.headers.pop("x-api-key", None)
+    # LiteLLM records API spend; the subscription ledger must not charge it again.
+    flow.metadata["cheese_pool"] = GATEWAY
     return True
 
 
@@ -434,6 +436,29 @@ def _rc_route(flow: http.HTTPFlow) -> bool:
     path = flow.request.path.split("?", 1)[0]
     if not rc:
         return False
+    model = claims.get("m")
+    if isinstance(model, str) and model and not model.startswith("claude-"):
+        # API-backed Cheese control sessions use Cheese's project identity and
+        # policy. No Anthropic account or subscription entitlement is asserted.
+        local = None
+        if path == "/api/oauth/profile":
+            local = {
+                "account": {"uuid": claims["t"], "email": "cheese@agent.cheese.local"},
+                "organization": {"uuid": claims["p"]},
+            }
+        elif path == "/api/claude_code/settings":
+            local = {}
+        elif path == "/api/claude_code/policy_limits":
+            local = {"restrictions": {"allow_remote_control": {"allowed": True}}}
+        if local is not None:
+            flow.server_conn.via = None
+            flow.request.stream = False
+            flow.response = http.Response.make(
+                204 if path.endswith("/settings") else 200,
+                b"" if path.endswith("/settings") else json.dumps(local).encode(),
+                {"Content-Type": "application/json"},
+            )
+            return True
     if path.startswith("/api/eval/"):
         flow.metadata["cheese_rc_flags"] = True
         return False
@@ -557,6 +582,20 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
         # Off-loop: urllib blocks, and one slow admission call must not stall
         # every other flow through the proxy.
         verdict = await asyncio.to_thread(ADMISSION.check, project_id, topic_id, bearer)
+
+    if (
+        verdict is not None
+        and verdict.pool == GATEWAY
+        and flow.metadata.get("cheese_rc_flags")
+    ):
+        # Cheese supplies its own RC flags; _rc_route handles the API session's
+        # project identity and control policy before provider authentication.
+        flow.server_conn.via = None
+        flow.request.stream = False
+        flow.response = http.Response.make(
+            200, b'{"features":{}}', {"Content-Type": "application/json"}
+        )
+        return
 
     if is_messages:
         if SCOPED_SECRET and not ALLOW_HEADER_ATTR and not project_id:
@@ -715,6 +754,9 @@ def responseheaders(flow: http.HTTPFlow) -> None:
     resp = flow.response
     if resp is None:
         return
+    if flow.metadata.get("cheese_pool") == GATEWAY:
+        resp.stream = True
+        return
     if flow.metadata.get("cheese_rc_flags"):
         # Feature evaluation is small JSON. Inference SSE remains streamed.
         return
@@ -741,6 +783,8 @@ def responseheaders(flow: http.HTTPFlow) -> None:
 
 
 def response(flow: http.HTTPFlow) -> None:
+    if flow.metadata.get("cheese_pool") == GATEWAY:
+        return
     if (
         flow.metadata.get("cheese_rc_flags")
         and flow.response

@@ -199,7 +199,7 @@ async def _inventory(session, operation: RoomCleanup, inventory: dict) -> list[d
     return result
 
 
-def _park_worktree(entry: dict) -> None:
+def _park_worktree(entry: dict, project_id: uuid.UUID) -> None:
     source, target = Path(entry["path"]), Path(entry["retired"])
     if not target.exists():
         if not source.exists():
@@ -210,6 +210,8 @@ def _park_worktree(entry: dict) -> None:
         )
         if result.returncode:
             raise RuntimeError("could not isolate the backend checkout for cleanup")
+    # Older Git keeps our sandbox-relative pointer anchored at the old depth.
+    ws._git(ws._repo(project_id), "worktree", "repair", str(target))
     # Free the room branch before claim: reopening can check it out while
     # deletion of another old resource is still waiting for its device.
     result = resource_cleanup.run_command(["git", "checkout", "--detach"], cwd=target)
@@ -354,6 +356,15 @@ async def _advance(session, cleanup_id: uuid.UUID, inventory: dict) -> None:
             for entry in resources:
                 if entry["kind"] == "worktree":
                     target = Path(entry["retired"])
+                    if target.exists():
+                        # A previous move can finish before repairing its pointer.
+                        await asyncio.to_thread(
+                            ws._git,
+                            ws._repo(operation.project_id),
+                            "worktree",
+                            "repair",
+                            str(target),
+                        )
                     path = target if target.exists() else Path(entry["path"])
                     await asyncio.to_thread(resource_cleanup.check_no_writers, [path])
                     await asyncio.to_thread(
@@ -362,7 +373,7 @@ async def _advance(session, cleanup_id: uuid.UUID, inventory: dict) -> None:
             for entry in resources:
                 if entry["kind"] == "worktree":
                     parking_started = True
-                    await asyncio.to_thread(_park_worktree, entry)
+                    await asyncio.to_thread(_park_worktree, entry, operation.project_id)
             operation.resources = resources
             for screen in list(device_hub.screens_for_topic(operation.topic_id)):
                 await device_hub.close_screen(screen.device_id, screen.sid)

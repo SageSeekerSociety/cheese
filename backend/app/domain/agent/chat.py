@@ -32,7 +32,10 @@ from app.core.text import markdown_preview
 from app.domain.agent.compute import ComputePool, ComputeProvider
 from app.domain.agent.gateway import LlmGateway, drain_new_usage
 from app.domain.agent.harness import Opening, SessionRef, runtime_for
-from app.domain.agent.market import subscription_model_alias
+from app.domain.agent.market import (
+    subscription_model_alias,
+    subscription_model_listings,
+)
 from app.domain.agent.platform_failures import (
     MODEL_LIMIT_REACHED_CODE,
     PROVIDER_OVERLOADED_CODE,
@@ -70,7 +73,7 @@ from app.domain.agent.service import (
 )
 from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE, load_scenario, load_skills
 from app.domain.agent.stages import TopicStage, resolve_stage, stage_scenario
-from app.domain.agent.supply import SUBSCRIPTION, resolve_pool
+from app.domain.agent.supply import SUBSCRIPTION
 from app.domain.agent.tool_preview import ToolPreview, tool_preview, work_subpath
 from app.domain.agent_instance.configuration import (
     AgentConfiguration,
@@ -1145,8 +1148,17 @@ def platform_prompt(content: str) -> str:
     return f"{PLATFORM_NOTICE}\n{content}"
 
 
-def publication_prompt(content: str) -> str:
+def publication_prompt(content: str, *, is_private: bool = False) -> str:
     """Carry the chat contract on new and resumed terminal input alike."""
+    if is_private:
+        return (
+            content
+            + "\n\n"
+            + platform_prompt(
+                "这是私聊，最终答复会自动发布给用户。直接回答，"
+                "不要再用 cheese chat send 重复发送同一答复。"
+            )
+        )
     return (
         content
         + "\n\n"
@@ -1639,7 +1651,10 @@ class ChatService:
             )
             for image in images
         )
-        line = publication_prompt("\n".join(lines))
+        state = self._hook_work.get((topic_id, consuming_turn_id))
+        line = publication_prompt(
+            "\n".join(lines), is_private=bool(state and state.is_private)
+        )
         # Register BEFORE the write so a fast receipt cannot race the entry
         # (#539 decision A). The receipt is still the consumed boundary — it
         # just no longer gates the delivery verdict: write-accept is delivery,
@@ -3705,8 +3720,10 @@ class ChatService:
                 )
             config = AgentConfiguration.model_validate(agent.configuration)
             validate_configuration(config, project.settings)
-            supply = resolve_pool(
-                project.settings, subscription_enabled=settings.subscription_enabled
+            supply = (
+                SUBSCRIPTION
+                if config.model in {item.id for item in subscription_model_listings()}
+                else "gateway"
             )
         model = (
             subscription_model_alias(config.model)
@@ -4394,7 +4411,7 @@ class ChatService:
                 else None
             ),
         )
-        prompt_text = publication_prompt(prompt_text)
+        prompt_text = publication_prompt(prompt_text, is_private=is_private)
 
         # Compute: a provider owns the per-topic sandbox + execution (spec §9.1).
         # In a private chat, `cheese remember` targets the owner's personal memory

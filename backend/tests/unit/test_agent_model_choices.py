@@ -59,8 +59,20 @@ def test_subscription_models_are_unavailable_without_subscription_transport(
 ):
     monkeypatch.setattr(settings, "subscription_enabled", False)
     project = {"supply": "subscription"}
-    assert model_choices(project) == []
-    with pytest.raises(ValidationError, match="没有可用模型"):
-        initial_model(project)
+    assert {"glm-5.2", "deepseek-flash"} <= {
+        item["id"] for item in model_choices(project)
+    }
+    assert initial_model(project) == settings.agent_model
     with pytest.raises(ValidationError, match="请选择可用模型"):
         validate_configuration(AgentConfiguration(model="sonnet"), project)
+
+
+@pytest.mark.parametrize("supply", ["subscription", "gateway"])
+def test_agents_can_select_each_gateway_model_without_changing_project_supply(
+    monkeypatch, supply
+):
+    monkeypatch.setattr(settings, "subscription_enabled", True)
+    project = {"supply": supply}
+    for model in ("glm-5.2", "deepseek-flash", "sonnet"):
+        validate_configuration(AgentConfiguration(model=model), project)
+    assert sum(item["default"] for item in model_choices(project)) == 1

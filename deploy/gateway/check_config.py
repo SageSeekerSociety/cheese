@@ -13,20 +13,25 @@ import yaml
 
 def main() -> None:
     config = yaml.safe_load(Path(sys.argv[1]).read_text())
-    litellm.Router(model_list=config["model_list"])
+    router = litellm.Router(model_list=config["model_list"])
     request = {
         "thinking": {"type": "adaptive"},
         "output_config": {"effort": "high"},
     }
     transformed = copy.deepcopy(request)
     AnthropicMessagesConfig._translate_adaptive_effort_for_non_adaptive_model(
-        model="deepseek-chat",
+        model="deepseek-flash",
         optional_params=transformed,
         max_tokens=32000,
         custom_llm_provider="deepseek",
     )
     assert transformed == request, f"Thinking settings were changed: {transformed}"
-    info = litellm.get_model_info("deepseek-chat", custom_llm_provider="deepseek")
+    deployment = next(
+        item for item in router.model_list if item["model_name"] == "deepseek-flash"
+    )
+    # Router pricing is registered under the deployment id, including custom
+    # models that do not appear in LiteLLM's built-in provider catalog.
+    info = litellm.model_cost[deployment["model_info"]["id"]]
     assert info["input_cost_per_token"] > 0, "Input tokens must remain billable"
     assert info["output_cost_per_token"] > 0, "Output tokens must remain billable"
     print("PASS: thinking/effort preserved; input and output pricing retained")

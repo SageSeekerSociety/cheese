@@ -257,6 +257,19 @@ def test_admission_gate_caches_and_fails_open():
     assert core.AdmissionGate("", post=fake_post).check("p3", "t1", "tok").allow is True
 
 
+def test_relaunched_agent_does_not_reuse_its_previous_model_supply():
+    def post(url, bearer, timeout_s):
+        return core.Verdict(
+            True,
+            "ok",
+            pool=core.GATEWAY if bearer == "new-session" else core.SUBSCRIPTION,
+        )
+
+    gate = core.AdmissionGate("http://backend/llm/admission", post=post)
+    assert gate.check("project", "room", "old-session").pool == core.SUBSCRIPTION
+    assert gate.check("project", "room", "new-session").pool == core.GATEWAY
+
+
 def test_one_topics_machine_identity_is_never_served_to_another():
     """Two topics of ONE project, on two different machines — the ordinary shape
     of a project that leased more than one box.
