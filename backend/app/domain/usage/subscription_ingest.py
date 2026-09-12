@@ -37,6 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.db import SessionFactory
 from app.domain.block.models import Block
 from app.domain.project.repositories import ProjectRepository
+from app.domain.topic.models import Topic
 from app.domain.usage.credits import tokens_to_credits
 from app.domain.usage.models import IngestCheckpoint
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
@@ -173,6 +174,19 @@ async def _land_row(session: AsyncSession, row: dict, work_index: WorkIndex) -> 
     if await ProjectRepository(session).get(project_id) is None:
         return False
     topic_id = _uuid_or_none(row.get("topic_id"))
+    if topic_id is not None:
+        topic = await session.scalar(
+            select(Topic.id)
+            .where(Topic.id == topic_id, Topic.project_id == project_id)
+            .with_for_update(read=True, key_share=True)
+        )
+        if topic is None:
+            logger.warning(
+                "usage topic %s is absent from project %s; retaining project usage",
+                topic_id,
+                project_id,
+            )
+            topic_id = None
     # Cache reads fold into the input count — AgentUsage has no cache field,
     # and leaving them out would under-report work by more than it reports.
     input_tokens, output_tokens = input_output_tokens(row)
