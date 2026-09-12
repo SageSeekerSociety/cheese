@@ -108,14 +108,18 @@ if event.get("hook_event_name") in ("UserPromptSubmit", "Stop"):
     (pathlib.Path.home() / ".claude/cheese-resume.attempt").unlink(missing_ok=True)
 ' 2>/dev/null || true
 fi
-eid="$(cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "$$-$(date +%s%N)")"
+if ! { IFS= read -r eid < /proc/sys/kernel/random/uuid; } 2>/dev/null; then
+  eid="$$-$(date +%s%N)"
+fi
 if [ -n "$CHEESE_HOOK_SPOOL" ]; then
   mkdir -p "$CHEESE_HOOK_SPOOL" 2>/dev/null || true
   # Shared bind mount: node (sandbox uid 1000) writes while cheese (backend uid
   # 1001) reads, parks, and prunes events. Keep the directory shared even if it
   # had to be recreated after session setup.
   chmod 0777 "$CHEESE_HOOK_SPOOL" 2>/dev/null || true
-  _n="$(cat "$CHEESE_HOOK_SPOOL/.seq" 2>/dev/null)"
+  _n=""
+  # The hint has no trailing newline; read sets _n even when it returns EOF.
+  { IFS= read -r _n < "$CHEESE_HOOK_SPOOL/.seq"; } 2>/dev/null || true
   case "$_n" in
     ''|*[!0-9]*)
       # No usable hint. The glob expands in ascending order and every name is
@@ -139,8 +143,8 @@ if [ -n "$CHEESE_HOOK_SPOOL" ]; then
     if (set -C; : > "$CHEESE_HOOK_SPOOL/.n$_key") 2>/dev/null; then break; fi
   done
   printf '%s' "$_n" > "$CHEESE_HOOK_SPOOL/.seqt.$$" 2>/dev/null &&
-    mv "$CHEESE_HOOK_SPOOL/.seqt.$$" "$CHEESE_HOOK_SPOOL/.seq" 2>/dev/null
-  rm -f "$CHEESE_HOOK_SPOOL/.seqt.$$" 2>/dev/null
+    mv "$CHEESE_HOOK_SPOOL/.seqt.$$" "$CHEESE_HOOK_SPOOL/.seq" 2>/dev/null ||
+    rm -f "$CHEESE_HOOK_SPOOL/.seqt.$$" 2>/dev/null
   _tmp="$CHEESE_HOOK_SPOOL/.tmp.$eid"
   if printf '%s' "$body" > "$_tmp" 2>/dev/null; then
     mv "$_tmp" "$CHEESE_HOOK_SPOOL/$_key.$eid" 2>/dev/null || rm -f "$_tmp" 2>/dev/null
