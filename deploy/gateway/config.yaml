@@ -52,12 +52,12 @@ model_list:
     litellm_params:
       model: deepseek/deepseek-flash
       api_key: os.environ/DEEPSEEK_API_KEY
+    model_info:
       # Official peak rates bound the budget estimate; off-peak billing is half.
       # https://api-docs.deepseek.com/quick_start/pricing/
       input_cost_per_token: 0.0000003
       output_cost_per_token: 0.0000012
       cache_read_input_token_cost: 0.000000006
-    model_info:
       # This deployment's alias supports native thinking/effort. Without these
       # capabilities LiteLLM 1.96 drops thinking when Claude Code sends effort.
       supports_reasoning: true
