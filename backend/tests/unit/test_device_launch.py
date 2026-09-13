@@ -327,6 +327,37 @@ def test_liveness_probe_distinguishes_a_running_topic_from_an_exited_one(tmp_pat
     assert probe() == "dead"
 
 
+@pytest.mark.skipif(not os.path.exists("/proc/self/environ"), reason="Linux procfs")
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("CHEESE_TOPIC", "{topic}-other"),
+        ("CHEESE_TOPIC", "other-{topic}"),
+        ("OTHER", "CHEESE_TOPIC={topic}"),
+    ],
+)
+def test_liveness_probe_requires_an_exact_topic_environment_field(tmp_path, key, value):
+    executable = tmp_path / "claude"
+    executable.symlink_to(sys.executable)
+    topic = str(uuid.uuid4())
+    environment = {**os.environ, key: value.format(topic=topic)}
+    if key != "CHEESE_TOPIC":
+        environment.pop("CHEESE_TOPIC", None)
+    process = subprocess.Popen(
+        [str(executable), "-c", "import time; time.sleep(30)"], env=environment
+    )
+    try:
+        result = subprocess.check_output(
+            ["sh", "-c", device_launch.DEVICE_ALIVE_PROBE],
+            env={**os.environ, "HOME": str(tmp_path), "CHEESE_ALIVE_TOPIC": topic},
+            text=True,
+        )
+        assert result.strip() == "dead"
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
+
+
 def test_hooks_settings_wire_command_hook_to_forwarder():
     s = device_launch.hooks_settings()
     assert s["skipDangerousModePermissionPrompt"] is True
