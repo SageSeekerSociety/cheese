@@ -328,7 +328,7 @@ hex=$(printf '%04X' "$port" 2>/dev/null) || { echo unknown; exit 0; }
 # and compare the LAST field rather than matching the whole column.
 for f in /proc/net/tcp /proc/net/tcp6; do
   [ -r "$f" ] || continue
-  if awk -v p="$hex" '$4=="0A" { n=split($2,a,":"); if (a[n]==p) f=1 }
+  if awk -v p="$hex" '$4=="0A" { n=split($2,a,":"); if (a[n]==p) { f=1; exit } }
                       END { exit f?0:1 }' "$f"; then
     echo up; exit 0
   fi

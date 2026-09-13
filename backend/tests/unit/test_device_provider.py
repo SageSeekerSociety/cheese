@@ -758,7 +758,8 @@ async def test_no_tunnel_deployment_pays_nothing_for_the_gate(monkeypatch):
     assert hub.closed == []  # and nothing retired on a verdict it never got
 
 
-def test_the_tunnel_probe_reads_a_real_listening_socket():
+@pytest.mark.parametrize("host", ["127.0.0.1", "::1"])
+def test_the_tunnel_probe_reads_a_real_listening_socket(host: str):
     """The probe is a shell script parsing /proc/net/tcp, which is exactly the kind
     of thing that passes review and is wrong on the box. Run it for real: against a
     port this test is actually listening on it must say `up`, and against one
@@ -770,6 +771,9 @@ def test_the_tunnel_probe_reads_a_real_listening_socket():
 
     if not os.access("/proc/net/tcp", os.R_OK):
         pytest.skip("no readable /proc/net/tcp on this platform")
+    if host == "::1" and not socket.has_ipv6:
+        pytest.skip("IPv6 is unavailable on this platform")
+    family = socket.AF_INET6 if host == "::1" else socket.AF_INET
 
     def verdict(port: int) -> str:
         return subprocess.run(
@@ -780,14 +784,14 @@ def test_the_tunnel_probe_reads_a_real_listening_socket():
             timeout=30,
         ).stdout.strip()
 
-    with socket.socket() as live:
-        live.bind(("127.0.0.1", 0))
+    with socket.socket(family) as live:
+        live.bind((host, 0))
         live.listen(1)
         listening = live.getsockname()[1]
         assert verdict(listening) == "up"
 
-    with socket.socket() as probe:  # bound, then released → nothing listening
-        probe.bind(("127.0.0.1", 0))
+    with socket.socket(family) as probe:  # bound, then released → nothing listening
+        probe.bind((host, 0))
         free = probe.getsockname()[1]
     assert verdict(free) == "down"
 
