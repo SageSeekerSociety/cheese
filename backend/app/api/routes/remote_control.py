@@ -251,7 +251,7 @@ async def control_state(
     )
     placement = session.get("execution") if session else None
     target = None
-    if placement:
+    if placement and result["connected"]:
         place = await TopicService(db).place_or_404(topic_id)
         if placement["resource_id"] == str(place.room.resource_id or place.room.id):
             target = placement["execution"]
