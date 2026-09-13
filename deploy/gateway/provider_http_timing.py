@@ -20,6 +20,8 @@ class RequestTiming:
         self.call_id = call_id
         self.started = time.monotonic()
         self.finished = False
+        self.consumer_hold = 0.0
+        self.consumer_since = None
         self.emit("request_start")
 
     def emit(self, phase, **fields):
@@ -39,7 +41,10 @@ class RequestTiming:
     def finish(self, outcome):
         if not self.finished:
             self.finished = True
-            self.emit("request_end", outcome=outcome)
+            held = self.consumer_hold
+            if self.consumer_since is not None:
+                held += time.monotonic() - self.consumer_since
+            self.emit("request_end", outcome=outcome, consumer_hold_ms=held * 1000)
 
 
 class TimedStream(httpx.AsyncByteStream):
@@ -50,7 +55,14 @@ class TimedStream(httpx.AsyncByteStream):
     async def __aiter__(self):
         try:
             async for chunk in self.stream:
-                yield chunk
+                # Downstream holds may overlap upstream work; they are not CPU time.
+                started = time.monotonic()
+                self.timing.consumer_since = started
+                try:
+                    yield chunk
+                finally:
+                    self.timing.consumer_hold += time.monotonic() - started
+                    self.timing.consumer_since = None
         except BaseException:
             self.timing.finish("interrupted")
             raise
