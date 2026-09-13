@@ -567,7 +567,10 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
         for name, source in helper_sources.items():
             execution_setup += (
                 f'cat > "$HOME/.claude/remote-execution/{name}" '
-                "<<'CHEESE_EXECUTION_SOURCE'\n" + source + "\nCHEESE_EXECUTION_SOURCE\n"
+                "<<'CHEESE_EXECUTION_SOURCE'\n"
+                + source
+                + ("" if source.endswith("\n") else "\n")
+                + "CHEESE_EXECUTION_SOURCE\n"
             )
         execution_setup += (
             f"printf %s {release.digest(helper_sources)} "
