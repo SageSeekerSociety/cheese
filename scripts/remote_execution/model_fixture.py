@@ -3,7 +3,9 @@
 import datetime as dt
 import gzip
 import json
+import shutil
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 
 def dump(path, value):
@@ -27,6 +29,15 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
+        if self.path.startswith("/connector/claude/"):
+            binary = Path(self.server.state["claude_binary"])
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(binary.stat().st_size))
+            self.end_headers()
+            with binary.open("rb") as source:
+                shutil.copyfileobj(source, self.wfile)
+            return
         self.reply({})
 
     def reply(self, value):
@@ -42,6 +53,14 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get("Content-Encoding") == "gzip":
             raw = gzip.decompress(raw)
         body = json.loads(raw or b"{}")
+        if self.path == "/topics/fixture/messages":
+            assert self.headers.get("X-Cheese-Token") == "fixture-place-token"
+            self.server.state.setdefault("publications", []).append(body)
+            dump(
+                self.server.state["dir"] / "publications.json",
+                self.server.state["publications"],
+            )
+            return self.reply({"data": body})
         if self.path.startswith("/hook"):
             log(self.server.state["dir"] / "hooks.jsonl", {"payload": body})
             return self.reply({"code": 200})

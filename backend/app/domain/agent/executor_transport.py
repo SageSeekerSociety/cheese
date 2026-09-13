@@ -11,11 +11,14 @@ from urllib.parse import unquote, urlsplit
 
 
 class RemoteClient:
-    def __init__(self, config):
+    def __init__(self, config, *, shared_connection=False):
         import threading
+        from types import SimpleNamespace
 
         self.config = config
-        self.transport = threading.local()
+        self.transport = SimpleNamespace() if shared_connection else threading.local()
+        self.publication_lock = threading.Lock()
+        self.publication = None
 
     def connection(self):
         # Shell forwarding exits before creating a client; keep its startup
@@ -84,37 +87,56 @@ class RemoteClient:
         if not match or any(char in command for char in ";&|<>`$\\\r"):
             return None
         content = match[2]
+        if not content.strip() or content.startswith("-"):
+            return None
+        if not all(
+            os.environ.get(name)
+            for name in ("CHEESE_API", "CHEESE_TOPIC", "CHEESE_TOKEN")
+        ):
+            return None
+        return self.publish_message(payload, {"content": content})
+
+    def publish_message(self, payload, args):
+        with self.publication_lock:
+            return self._publish_message(payload, args)
+
+    def _publish_message(self, payload, args):
+        content = args.get("content")
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("Chat content must be a nonempty string")
         api = os.environ.get("CHEESE_API", "").rstrip("/")
         topic = os.environ.get("CHEESE_TOPIC", "")
         token = os.environ.get("CHEESE_TOKEN", "")
-        if (
-            not content.strip()
-            or content.startswith("-")
-            or not api
-            or not topic
-            or not token
-        ):
-            return None
-        url = f"{api}/topics/{topic}/messages"
-        if (
-            getattr(self, "publication", None) is None
-            or self.publication.config["url"] != url
-        ):
-            self.publication = RemoteClient({"url": url})
-        publisher = self.publication
-        connection, path = publisher.connection()
-        # The backend deduplicates retries of the same native tool call.
+        if not api or not topic or not token:
+            raise RuntimeError("Chat publication requires room credentials")
         publication_id = str(
-            uuid.uuid5(
+            uuid.UUID(args["request_id"])
+            if args.get("request_id")
+            else uuid.uuid5(
                 uuid.NAMESPACE_URL, f"{topic}/{payload['session_id']}/{payload['id']}"
             )
         )
+        url = f"{api}/topics/{topic}/messages"
+        if self.publication is None or self.publication.config["url"] != url:
+            # Publication is serialized across MCP workers; its connection must
+            # outlive the worker thread that happened to make the first call.
+            self.publication = RemoteClient({"url": url}, shared_connection=True)
+        publisher = self.publication
+        connection, path = publisher.connection()
         try:
             connection.request(
                 "POST",
                 path,
                 body=json.dumps(
-                    {"content": content, "request_id": publication_id}
+                    {
+                        "content": content,
+                        "request_id": publication_id,
+                        **(
+                            {"reply_to": args["reply_to"]}
+                            if args.get("reply_to")
+                            else {}
+                        ),
+                    }
                 ).encode(),
                 headers={
                     "Content-Type": "application/json",
@@ -135,10 +157,12 @@ class RemoteClient:
                     f"request_id={publication_id}"
                 )
             result = json.loads(data)
-        except Exception:
+        except Exception as exc:
             connection.close()
             publisher.transport.connection = None
-            raise
+            raise RuntimeError(
+                f"Chat publication failed; request_id={publication_id}: {exc}"
+            ) from exc
         return {
             "value": {
                 "stdout": json.dumps(result["data"], ensure_ascii=False),

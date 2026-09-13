@@ -125,8 +125,9 @@ def prepare(
     settings = json.loads(json.dumps(base_settings or {}))
     permissions = settings.setdefault("permissions", {})
     allowed = permissions.setdefault("allow", [])
-    if "mcp__native__invoke" not in allowed:
-        allowed.append("mcp__native__invoke")
+    for tool in ("invoke", "chat_send"):
+        if f"mcp__native__{tool}" not in allowed:
+            allowed.append(f"mcp__native__{tool}")
     hooks = settings.setdefault("hooks", {})
     # The transport publishes hooks for the original tool. Running them again
     # for its internal MCP call duplicates events and delays both directions.
@@ -134,7 +135,7 @@ def prepare(
         for group in hooks.get(event, []):
             matcher = group.get("matcher", "*")
             matcher = ".*" if matcher in ("*", "") else matcher
-            group["matcher"] = f"^(?!mcp__native__invoke$).*(?:{matcher})"
+            group["matcher"] = f"^(?!mcp__native__(?:invoke|chat_send)$).*(?:{matcher})"
     helper = [sys.executable, str(Path(__file__).resolve())]
     guard = shlex.join([*helper, "guard", str(target_path)])
     hooks.setdefault("PreToolUse", []).insert(
@@ -662,17 +663,52 @@ def transport(config, target_path):
                                 },
                                 "required": ["id", "tool", "args", "session_id"],
                             },
-                        }
+                        },
+                        {
+                            "name": "chat_send",
+                            "description": (
+                                "Publish a message to the current Cheese room. "
+                                "Use for user-visible updates and replies; "
+                                "ordinary model output is not published."
+                            ),
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "content": {"type": "string"},
+                                    "reply_to": {"type": "string"},
+                                    "request_id": {
+                                        "type": "string",
+                                        "description": (
+                                            "UUID from an uncertain prior result; "
+                                            "reuse with the same content to retry."
+                                        ),
+                                    },
+                                },
+                                "required": ["content"],
+                            },
+                        },
                     ]
                 }
             elif method == "tools/call":
-                if request["params"]["name"] != "invoke":
+                tool = request["params"]["name"]
+                if tool not in ("invoke", "chat_send"):
                     raise ValueError("Unknown transport tool")
                 payload = request["params"]["arguments"]
+                if tool == "chat_send":
+                    payload = {
+                        "id": payload["id"],
+                        "session_id": payload["session_id"],
+                        "tool": "mcp__native__chat_send",
+                        "args": {
+                            key: payload[key]
+                            for key in ("content", "reply_to", "request_id")
+                            if key in payload
+                        },
+                    }
                 with active_lock:
                     if request["id"] in cancelled:
                         raise RuntimeError("Tool call was cancelled")
-                if payload["tool"] not in NATIVE_TOOLS:
+                if tool == "invoke" and payload["tool"] not in NATIVE_TOOLS:
                     raise ValueError("Unknown native tool")
                 event = {
                     "hook_event_name": "PreToolUse",
@@ -689,7 +725,11 @@ def transport(config, target_path):
                     args = decision.get("hookSpecificOutput", {}).get(
                         "updatedInput", payload["args"]
                     )
-                    receipt = client.publish_chat(payload, args)
+                    receipt = (
+                        client.publish_message(payload, args)
+                        if tool == "chat_send"
+                        else client.publish_chat(payload, args)
+                    )
                     if receipt is None:
                         receipt = client.call(
                             "invoke",

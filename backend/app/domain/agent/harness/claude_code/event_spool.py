@@ -30,6 +30,8 @@ unit-testable; the translate + persist + dedup lives in ``ChatService`` (reusing
 its existing block helpers).
 """
 
+from __future__ import annotations
+
 import contextlib
 import json
 import os

@@ -293,10 +293,16 @@ class RemoteControlFixture:
                 )
 
             def do_GET(self):
+                if urlparse(self.path).path.startswith("/connector/claude/"):
+                    return super().do_GET()
                 return self.route("GET")
 
             def do_POST(self):
-                if urlparse(self.path).path in ("/v1/messages", "/hook"):
+                if urlparse(self.path).path in (
+                    "/v1/messages",
+                    "/hook",
+                    "/topics/fixture/messages",
+                ):
                     return super().do_POST()
                 raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
                 if self.headers.get("Content-Encoding") == "gzip":

@@ -152,7 +152,7 @@ def case(folder, options):
                 "--tools",
                 "Read,Edit,Write,Bash,TaskOutput,TaskStop,Skill",
                 "--allowedTools",
-                "Read,Edit,Write,Bash,TaskOutput,TaskStop,Skill,mcp__custom__echo",
+                "Read,Edit,Write,Bash,TaskOutput,TaskStop,Skill,mcp__custom__echo,mcp__native__chat_send",
                 "--debug-file",
                 str(folder / "claude-debug.log"),
             ],
@@ -212,6 +212,12 @@ def case(folder, options):
                 "input": {"command": "rg AFTER_EDIT target.txt"},
             },
             read_background_output,
+            {
+                "name": "mcp__native__chat_send",
+                "input": {
+                    "content": "Published 'literally'\n$(touch forbidden-publication)"
+                },
+            },
         ]
         if options.mode != "normal":
             actions = [actions[2]]
@@ -228,7 +234,12 @@ def case(folder, options):
         server = Server(("127.0.0.1", 0), rc.handler(Handler) if rc else Handler)
         if rc:
             rc.base = f"http://127.0.0.1:{server.server_port}"
-        server.state = {"dir": folder, "actions": actions, "requests": []}
+        server.state = {
+            "dir": folder,
+            "actions": actions,
+            "requests": [],
+            "claude_binary": options.claude,
+        }
         threading.Thread(target=server.serve_forever, daemon=True).start()
         env = {
             k: v
@@ -242,6 +253,9 @@ def case(folder, options):
             ANTHROPIC_AUTH_TOKEN="fixture-no-real-credential",
             DISABLE_TELEMETRY="1",
             DISABLE_ERROR_REPORTING="1",
+            CHEESE_API=f"http://127.0.0.1:{server.server_port}",
+            CHEESE_TOPIC="fixture",
+            CHEESE_TOKEN="fixture-place-token",
         )
         if rc:
             for key in (
@@ -425,6 +439,13 @@ def case(folder, options):
             assert "target.txt" in json.dumps(results[10]), results[10]
             assert "AFTER_EDIT" in json.dumps(results[11]), results[11]
             assert "REMOTE_BACKGROUND" in json.dumps(results[12]), results[12]
+            publications = server.state.get("publications", [])
+            assert len(publications) == 1, publications
+            assert (
+                publications[0]["content"]
+                == "Published 'literally'\n$(touch forbidden-publication)"
+            )
+            assert not (center / "forbidden-publication").exists()
             assert "REMOTE_PROJECT_INSTRUCTIONS" in json.dumps(
                 server.state["requests"][0]
             )
