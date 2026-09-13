@@ -152,7 +152,12 @@ def prepare(
                     {
                         "type": "command",
                         "command": helper[0],
-                        "args": [helper[1], "context", str(target_path)],
+                        "args": [
+                            str(
+                                Path(__file__).with_name("context_service.py").resolve()
+                            ),
+                            str(target_path),
+                        ],
                     }
                 ]
             },

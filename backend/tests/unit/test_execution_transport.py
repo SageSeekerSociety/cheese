@@ -452,10 +452,15 @@ def test_central_tools_reuse_process_and_http_connection(central_transport):
     assert process.process.pid == pid and process.process.poll() is None
 
 
-def test_prompt_context_updates_through_running_mcp(central_transport, tmp_path):
+@pytest.mark.parametrize("resident", [True, False])
+def test_prompt_context_updates_through_running_mcp(
+    central_transport, tmp_path, resident
+):
     process, _, _, work = central_transport
     config_path = tmp_path / "central.json"
     config = json.loads(config_path.read_text())
+    if not resident:
+        config_path = tmp_path / "cold context.json"
     workspace = tmp_path / "central-work"
     settings = tmp_path / "central-settings"
     workspace.mkdir()
@@ -466,7 +471,11 @@ def test_prompt_context_updates_through_running_mcp(central_transport, tmp_path)
     for instruction in ("First project instruction", "Updated project instruction"):
         (work / "CLAUDE.md").write_text(instruction)
         result = subprocess.run(
-            [sys.executable, central.__file__, "context", str(config_path)],
+            [
+                sys.executable,
+                str(Path(central.__file__).with_name("context_service.py")),
+                str(config_path),
+            ],
             env={**os.environ, "NO_PROXY": "127.0.0.1", "CHEESE_TOKEN": "fixture"},
             capture_output=True,
             timeout=10,
