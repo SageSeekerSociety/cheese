@@ -31,7 +31,12 @@ const loading = ref(false)
 const saving = ref(false)
 const error = ref<string | null>(null)
 const submitted = ref(false)
-const modelItems = computed(() => fieldChoices(options.value, 'model'))
+const harnessItems = computed(() => fieldChoices(options.value, 'harness'))
+const modelItems = computed(() =>
+  fieldChoices(options.value, 'model').filter((item) =>
+    (item.harnesses ?? ['claude-code']).includes(draft.value.harness)
+  )
+)
 const presetItems = computed(() => [
   { title: '自行填写', value: null },
   ...props.types.map((preset) => ({ title: preset.title || preset.name, value: preset.name })),
@@ -41,13 +46,23 @@ const handleProblem = computed(() => (isNew.value ? handleError(handle.value.tri
 
 function applyPreset(name: string | null) {
   const preset = props.types.find((item) => item.name === name)
+  const harness = preset?.harness || 'claude-code'
+  const models = fieldChoices(options.value, 'model').filter((item) =>
+    (item.harnesses ?? ['claude-code']).includes(harness)
+  )
   draft.value = {
     body: preset?.body ?? '',
-    model: preset?.model || modelItems.value.find((item) => item.default)?.id || '',
-    harness: preset?.harness || 'claude-code',
+    model: preset?.model || models.find((item) => item.default)?.id || models[0]?.id || '',
+    harness,
     skills: [...(preset?.skills ?? [])],
     mcp_servers: [...(preset?.mcp_servers ?? [])],
     effort: preset?.effort ?? null,
+  }
+}
+
+function changeHarness() {
+  if (!modelItems.value.some((item) => item.id === draft.value.model)) {
+    draft.value.model = modelItems.value.find((item) => item.default)?.id || modelItems.value[0]?.id || ''
   }
 }
 
@@ -157,6 +172,18 @@ async function save() {
           @update:model-value="applyPreset"
         />
         <v-textarea v-model="draft.body" autocomplete="off" label="角色设定（可留空）" rows="6" variant="outlined" />
+        <v-select
+          v-if="harnessItems.length > 1"
+          v-model="draft.harness"
+          autocomplete="off"
+          :items="harnessItems"
+          item-title="label"
+          item-value="id"
+          label="运行方式"
+          variant="outlined"
+          :disabled="loading"
+          @update:model-value="changeHarness"
+        />
         <v-select
           v-model="draft.model"
           autocomplete="off"

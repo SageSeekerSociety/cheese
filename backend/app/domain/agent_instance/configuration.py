@@ -50,7 +50,24 @@ def model_choices(project_settings: dict | None) -> list[dict]:
             ]
         )
     )
-    return list({item["id"]: item for item in choices}.values())
+    choices = list({item["id"]: item for item in choices}.values())
+    for item in choices:
+        item["harnesses"] = [DEFAULT_HARNESS]
+    for model in dict.fromkeys(settings.agent_codex_models):
+        existing = next((item for item in choices if item["id"] == model), None)
+        if existing is not None:
+            existing["harnesses"].append("codex")
+        else:
+            choices.append(
+                dict(
+                    id=model,
+                    label=model,
+                    description="平台模型池",
+                    default=False,
+                    harnesses=["codex"],
+                )
+            )
+    return choices
 
 
 def initial_model(project_settings: dict | None) -> str:
@@ -63,7 +80,11 @@ def initial_model(project_settings: dict | None) -> str:
 def validate_configuration(
     config: AgentConfiguration, project_settings: dict | None
 ) -> None:
-    if config.model not in {item["id"] for item in model_choices(project_settings)}:
+    if config.model not in {
+        item["id"]
+        for item in model_choices(project_settings)
+        if config.harness in item["harnesses"]
+    }:
         raise ValidationError(f"当前项目无法使用模型 {config.model!r}，请选择可用模型")
     if not known_harness(config.harness):
         raise ValidationError(f"当前平台无法使用运行方式 {config.harness!r}")

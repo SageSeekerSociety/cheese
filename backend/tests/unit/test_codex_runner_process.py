@@ -256,6 +256,21 @@ async def test_standalone_owner_survives_client_disconnect(
             ]
             assert [call.args[-1] for call in activity.await_args_list] == [True, False]
             assert await subscription.drain() == 0
+            first_thread = (await rpc("ping"))["thread_id"]
+            launch["config"]["opening"]["model"] = "gpt-5.5"
+            assert (await asyncio.to_thread(configure, launch))["pid"] == pid
+            await rpc(
+                "send",
+                {
+                    "input_id": "message-2",
+                    "text": "continue with another model",
+                    "work_id": str(uuid.uuid4()),
+                },
+            )
+            while (await rpc("ping"))["turn_id"]:
+                await asyncio.sleep(0.01)
+            assert requests[-1]["model"] == "gpt-5.5"
+            assert (await rpc("ping"))["thread_id"] == first_thread
     finally:
         (tmp_path / "provider-requests.json").write_text(json.dumps(requests, indent=2))
         os.kill(pid, signal.SIGTERM)

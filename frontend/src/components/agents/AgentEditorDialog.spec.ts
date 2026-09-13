@@ -120,6 +120,40 @@ beforeEach(() => {
 afterEach(() => cleanup())
 
 describe('新建时的校验', () => {
+  it('selects a compatible model when changing harness and preserves the role', async () => {
+    getProjectAgentOptions.mockResolvedValue({
+      harness: {
+        state: 'choosable',
+        choices: [
+          { id: 'claude-code', label: 'Claude Code' },
+          { id: 'codex', label: 'Codex' },
+        ],
+      },
+      model: {
+        state: 'choosable',
+        choices: [
+          { id: 'sonnet', label: 'Sonnet', default: true, harnesses: ['claude-code'] },
+          { id: 'codex-fixture', label: 'Codex fixture', harnesses: ['codex'] },
+        ],
+      },
+    })
+    mountDialog(null)
+    await fireEvent.update(field('名字'), '代码评审')
+    await fireEvent.update(field('角色设定'), 'Review code')
+    await waitFor(() => expect(field('运行方式').disabled).toBe(false))
+    await fireEvent.mouseDown(field('运行方式'))
+    await fireEvent.click(await screen.findByText('Codex', { selector: '.v-list-item-title' }))
+    await clickSave()
+    await waitFor(() =>
+      expect(createProjectAgent).toHaveBeenCalledWith(
+        PROJECT,
+        expect.objectContaining({
+          configuration: { ...CONFIG, model: 'codex-fixture', harness: 'codex' },
+        })
+      )
+    )
+  })
+
   it('一进来不先骂人', async () => {
     mountDialog(null)
     expect(screen.queryByText('请填写名字')).toBeNull()

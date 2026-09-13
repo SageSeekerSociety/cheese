@@ -11,6 +11,8 @@ class Session:
         self.client = client
         self.thread_id: str | None = None
         self.turn_id: str | None = None
+        self.model: str | None = None
+        self.completed_turns: set[str] = set()
         self.input_lock = asyncio.Lock()
 
     async def open(
@@ -55,6 +57,7 @@ class Session:
             thread = result["thread"]
             thread_id: str = thread["id"]
             self.thread_id = thread_id
+            self.model = opening.model
             running = [
                 turn
                 for turn in thread.get("turns", [])
@@ -70,8 +73,11 @@ class Session:
         method = notification["method"]
         if method == "turn/started":
             self.turn_id = params["turn"]["id"]
-        elif method == "turn/completed" and params["turn"]["id"] == self.turn_id:
-            self.turn_id = None
+        elif method == "turn/completed":
+            turn_id = params["turn"]["id"]
+            self.completed_turns.add(turn_id)
+            if turn_id == self.turn_id:
+                self.turn_id = None
 
     async def send(self, text: str, *, images: list[str] | None = None) -> str:
         async with self.input_lock:
@@ -88,9 +94,15 @@ class Session:
                 params["expectedTurnId"] = self.turn_id
                 result = await self.client.request("turn/steer", params)
                 return result["turnId"]
+            if self.model is not None:
+                params["model"] = self.model
             result = await self.client.request("turn/start", params)
-            # Notifications own active state: completion can precede this reply.
-            return result["turn"]["id"]
+            turn_id = result["turn"]["id"]
+            # The acknowledgement can precede turn/started, or follow completion.
+            # Only an unfinished acknowledged turn can own the next steer.
+            if turn_id not in self.completed_turns:
+                self.turn_id = turn_id
+            return turn_id
 
     async def interrupt(self) -> bool:
         async with self.input_lock:

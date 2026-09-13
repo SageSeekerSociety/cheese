@@ -67,7 +67,7 @@ while True:
         assert "OPENAI_API_KEY" not in actual
         assert "ANTHROPIC_API_KEY" not in actual
         assert (state / "runner.json").stat().st_mode & 0o777 == 0o600
-        payload["config"]["opening"]["model"] = "different"
+        payload["config"]["opening"]["agent_handle"] = "different"
         with pytest.raises(RuntimeError, match="different opening"):
             configure(payload)
     finally:

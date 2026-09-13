@@ -22,11 +22,7 @@ class CombinedBacklog:
         return self.readers[index].assemble(original)
 
     def unfinished(self) -> set[str]:
-        return {
-            f"{index}:{key}"
-            for index, reader in enumerate(self.readers)
-            for key in reader.unfinished()
-        }
+        return {key for reader in self.readers for key in reader.unfinished()}
 
     def give_up(self):
         return [message for reader in self.readers for message in reader.give_up()]

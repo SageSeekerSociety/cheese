@@ -16,19 +16,29 @@ from app.domain.agent.harness.codex.runner import socket_path
 VERSION = "0.154.0"
 
 
-def ping(state: Path) -> dict | None:
+def exchange(state: Path, method: str, params: dict) -> dict:
     connection = socket.socket(socket.AF_UNIX)
     connection.settimeout(2)
     try:
         connection.connect(socket_path(state))
-        connection.sendall(b'{"method":"ping"}\n')
+        connection.sendall(
+            json.dumps({"method": method, "params": params}).encode() + b"\n"
+        )
         with connection.makefile("rb") as stream:
-            result = json.loads(stream.readline())["result"]
+            response = json.loads(stream.readline())
+        if "error" in response:
+            raise RuntimeError(response["error"])
+        return response["result"]
+    finally:
+        connection.close()
+
+
+def ping(state: Path) -> dict | None:
+    try:
+        result = exchange(state, "ping", {})
         return result if result["alive"] else None
     except (FileNotFoundError, ConnectionRefusedError):
         return None
-    finally:
-        connection.close()
 
 
 def configure(payload: dict) -> dict:
@@ -47,7 +57,7 @@ def configure(payload: dict) -> dict:
                 for key in ("execution_target", "mcp_servers")
             ) or any(
                 previous["opening"].get(key) != requested["opening"].get(key)
-                for key in ("model", "owner", "agent_handle")
+                for key in ("owner", "agent_handle")
             ):
                 raise RuntimeError(
                     "The running session belongs to a different opening or executor"
@@ -57,6 +67,12 @@ def configure(payload: dict) -> dict:
                 raise RuntimeError(
                     "The running session cannot resume a different thread"
                 )
+            if previous["opening"].get("model") != requested["opening"].get("model"):
+                exchange(
+                    state, "configure", {"model": requested["opening"].get("model")}
+                )
+                previous["opening"]["model"] = requested["opening"].get("model")
+                (state / "runner.json").write_text(json.dumps(previous))
             return running
         config = dict(payload["config"])
         binary = Path(config["binary"]).expanduser().resolve()

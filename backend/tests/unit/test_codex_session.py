@@ -12,6 +12,7 @@ class Peer:
         self.adapter = Session(self)
         self.reject_steer = False
         self.complete_before_ack = False
+        self.start_before_ack = True
 
     def notify(self, method, turn="turn"):
         self.adapter.observe(
@@ -29,7 +30,8 @@ class Peer:
         if method in {"thread/start", "thread/resume"}:
             return {"thread": {"id": "thread", "turns": []}}
         if method == "turn/start":
-            self.notify("turn/started")
+            if self.start_before_ack:
+                self.notify("turn/started")
             if self.complete_before_ack:
                 self.notify("turn/completed")
             return {"turn": {"id": "turn"}}
@@ -41,6 +43,19 @@ class Peer:
             self.notify("turn/completed")
             return {}
         raise AssertionError(method)
+
+
+@pytest.mark.anyio
+async def test_ack_before_started_routes_next_input_to_the_running_turn():
+    peer = Peer()
+    peer.start_before_ack = False
+    session = peer.adapter
+    await session.open(Opening("instructions"), cwd="/fixture", tools=[])
+    await session.send("first")
+    assert session.turn_id == "turn"
+    await session.send("steering")
+    assert peer.requests[-1][0] == "turn/steer"
+    assert peer.requests[-1][1]["expectedTurnId"] == "turn"
 
 
 @pytest.mark.anyio

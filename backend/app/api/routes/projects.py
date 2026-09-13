@@ -349,14 +349,33 @@ async def project_agent_options(project_id: uuid.UUID, db: DbSession) -> dict:
 
     project = await ProjectService(db).get_or_404(project_id)
     choices = model_choices(project.settings)
+    harnesses = {harness for item in choices for harness in item["harnesses"]}
     return ok(
         {
+            "harness": {
+                "state": "choosable" if harnesses else "unavailable",
+                "choices": [
+                    dict(
+                        id=name,
+                        label=label,
+                        description="",
+                        default=name == "claude-code",
+                    )
+                    for name, label in (
+                        ("claude-code", "Claude Code"),
+                        ("codex", "Codex"),
+                    )
+                    if name in harnesses
+                ],
+                "reason": "",
+                "note": "",
+            },
             "model": {
                 "state": "choosable" if choices else "unavailable",
                 "choices": choices,
                 "reason": "" if choices else "当前项目没有可用模型，请检查模型服务",
                 "note": "",
-            }
+            },
         }
     )
 
