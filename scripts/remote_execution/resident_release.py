@@ -14,6 +14,8 @@ from pathlib import Path
 import acceptance
 from model_fixture import log
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
+
 from app.domain.agent import remote_control
 from app.domain.agent.device_hub import HubScreen
 from app.domain.agent.device_provider import DeviceChannel
