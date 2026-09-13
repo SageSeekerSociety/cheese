@@ -686,7 +686,7 @@ class Executor:
             return {}
         raise ValueError(f"Unsupported executor control: {kind}")
 
-    def context(self):
+    def context(self, known_files=None):
         if self.config.get("private"):
             # Never import executable configuration written by a scratch command
             # into the central Claude Code process.
@@ -735,15 +735,19 @@ class Executor:
         for directory in (self.root / ".claude",):
             if directory.exists():
                 paths.extend(p for p in directory.rglob("*") if p.is_file())
+        file_names = []
         for path in paths:
             if path.is_file():
-                files[str(path.relative_to(self.root))] = base64.b64encode(
-                    path.read_bytes()
-                ).decode()
+                name = str(path.relative_to(self.root))
+                file_names.append(name)
+                content = path.read_bytes()
+                if (known_files or {}).get(name) != hashlib.sha256(content).hexdigest():
+                    files[name] = base64.b64encode(content).decode()
         return {
             "workspace": str(self.root),
             "cwd": str(self.cwd),
             "files": files,
+            "file_names": file_names,
             "instructions": "\n\n".join(instructions),
         }
 
@@ -796,9 +800,17 @@ class Executor:
             write_json(self.state / "config.json", self.config)
             return {"pid": os.getpid(), "workspace": str(self.root)}
         if method == "ping":
+            manifest = self.state.parent / "executor-files.json"
+            files = {}
+            if manifest.exists():
+                for name in json.loads(manifest.read_text()):
+                    path = self.state.parent / name
+                    if path.is_file():
+                        files[name] = hashlib.sha256(path.read_bytes()).hexdigest()
             return {
                 "pid": os.getpid(),
                 "workspace": str(self.root),
+                "files": files,
                 "capabilities": ["prepare"]
                 + (
                     ["cli_worker"]
@@ -811,7 +823,7 @@ class Executor:
         if method == "control":
             return self.control(params)
         if method == "context":
-            return self.context()
+            return self.context(params.get("known_files"))
         if method == "mcp":
             return self.client(params["server"]).call(
                 params["method"], params.get("params")

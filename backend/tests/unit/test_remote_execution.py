@@ -1,6 +1,8 @@
 """Exercise the executor through its public process/socket protocol."""
 
 import ast
+import base64
+import hashlib
 import importlib.util
 import json
 import os
@@ -14,6 +16,7 @@ import unittest
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from unittest.mock import patch
 
 RUNTIME = (
     Path(__file__).resolve().parents[2]
@@ -208,6 +211,17 @@ def test_running_executor_prepares_updated_room_without_restart(
             time.sleep(0.01)
         original = runtime.request(state, "ping")
         assert "prepare" in original["capabilities"]
+        from app.domain.agent.harness.claude_code.remote_execution.launch import (
+            payload_for,
+        )
+
+        delta = payload_for(project, resource, payload["env"], original["files"])
+        # The fixture replaces the CLI; all other installed helpers are unchanged.
+        assert set(delta["files"]) == {"cheese"}
+        (home / ".claude/cheese-hook").write_text("locally edited helper")
+        changed = runtime.request(state, "ping")
+        repair = payload_for(project, resource, payload["env"], changed["files"])
+        assert set(repair["files"]) == {"cheese", "cheese-hook"}
         payload["env"]["CHEESE_TOKEN"] = "refreshed"
         payload["files"]["cheese-hook"] = base64.b64encode(b"updated hook").decode()
         ready = runtime.request(state, "prepare", payload)
@@ -478,6 +492,71 @@ class RemoteExecutionTests(unittest.TestCase):
                 ".claude/skills/example/asset.bin",
             },
         )
+
+    def test_context_sends_only_changed_working_tree_files(self):
+        instructions = self.workspace / "CLAUDE.md"
+        instructions.write_text("first")
+        first = runtime.request(self.state, "context")
+        known = {
+            name: hashlib.sha256(base64.b64decode(value)).hexdigest()
+            for name, value in first["files"].items()
+        }
+        unchanged = runtime.request(self.state, "context", {"known_files": known})
+        self.assertEqual(unchanged["files"], {})
+        self.assertIn("CLAUDE.md", unchanged["file_names"])
+        self.assertEqual(unchanged["instructions"], first["instructions"])
+
+        instructions.write_text("uncommitted change")
+        changed = runtime.request(self.state, "context", {"known_files": known})
+        self.assertEqual(
+            base64.b64decode(changed["files"]["CLAUDE.md"]), b"uncommitted change"
+        )
+        self.assertIn("uncommitted change", changed["instructions"])
+        instructions.unlink()
+        removed = runtime.request(self.state, "context", {"known_files": known})
+        self.assertNotIn("CLAUDE.md", removed["file_names"])
+        self.assertEqual(removed["instructions"], "")
+
+    def test_context_sync_preserves_unchanged_files_and_repairs_local_changes(self):
+        spec = importlib.util.spec_from_file_location(
+            "central_client", RUNTIME.with_name("client.py")
+        )
+        client = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(client)
+
+        (self.workspace / "CLAUDE.md").write_text("project instructions")
+        central = self.root / "central"
+        config = self.root / "config"
+        central.mkdir()
+        config.mkdir()
+        target = self.root / "target.json"
+        target.write_text(
+            json.dumps(
+                {"central_workspace": str(central), "central_config": str(config)}
+            )
+        )
+        responses = []
+
+        def context_request(_client, method, params=None):
+            result = runtime.request(self.state, method, params or {})
+            responses.append(result)
+            return result
+
+        with patch.object(client.RemoteClient, "call", context_request):
+            client.sync_context(target)
+            copied = central / "CLAUDE.md"
+            before = copied.stat()
+            client.sync_context(target)
+            self.assertEqual(responses[-1]["files"], {})
+            self.assertEqual(copied.stat().st_mtime_ns, before.st_mtime_ns)
+            self.assertEqual(copied.stat().st_ino, before.st_ino)
+            copied.write_text("local corruption")
+            client.sync_context(target)
+            self.assertEqual(copied.read_text(), "project instructions")
+            (self.workspace / "CLAUDE.md").unlink()
+            client.sync_context(target)
+            self.assertFalse(copied.exists())
+            self.assertEqual((config / "CLAUDE.md").read_text(), "")
 
     def test_disconnected_executor_is_an_error(self):
         self.stop()

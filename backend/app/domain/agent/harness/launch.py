@@ -24,7 +24,9 @@ from typing import Protocol
 class ExecutorLaunch(Protocol):
     """Harness-owned installation and history transfer over a device transport."""
 
-    def payload_for(self, project_id, resource_id, env: dict) -> dict: ...
+    def payload_for(
+        self, project_id, resource_id, env: dict, known_files: dict | None = None
+    ) -> dict: ...
 
     def script(self, project_id, resource_id, env: dict) -> str: ...
 
