@@ -41,6 +41,8 @@ export default defineConfig({
   webServer: [
     {
       command: `cd ../backend && uv run uvicorn app.main:app --host 0.0.0.0 --port ${BACKEND_PORT}`,
+      // Exercise model selection without configuring a live inference provider.
+      env: { AGENT_CODEX_MODELS: '["codex-ci-fixture"]' },
       url: `${BACKEND_URL}/healthz`,
       reuseExistingServer: !process.env.CI,
       timeout: 180_000,
