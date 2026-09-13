@@ -1,6 +1,8 @@
 import os
+import socket
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -76,3 +78,50 @@ def test_context_entry_reports_service_failure_without_direct_retry(tmp_path):
     assert result.returncode != 0
     assert "context unavailable" in result.stderr
     assert attempts == [True]
+
+
+@pytest.mark.parametrize(
+    ("response", "error"),
+    [
+        (b'{"ok": true}\n', None),
+        (b'{ "ok" : true }\n', None),
+        (b'{"error": "sync denied"}\n', "sync denied"),
+        (b'{"ok": false}\n', "Invalid context synchronization response"),
+        (b'{"ok": true, "extra": 1}\n', "Invalid context synchronization response"),
+        (b"not-json\n", "JSONDecodeError"),
+        (b"", "JSONDecodeError"),
+    ],
+)
+def test_context_entry_response_compatibility(tmp_path, response, error):
+    target = tmp_path / "execution.json"
+    requests = []
+    with socket.socket(socket.AF_UNIX) as server:
+        server.bind(address(target))
+        server.listen(1)
+        server.settimeout(10)
+
+        def respond():
+            with server.accept()[0] as connection:
+                connection.settimeout(10)
+                with connection.makefile("rb") as incoming:
+                    requests.append(incoming.readline())
+                connection.sendall(response)
+
+        worker = threading.Thread(target=respond)
+        worker.start()
+        try:
+            result = subprocess.run(
+                [sys.executable, str(Path(context_service.__file__)), str(target)],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        finally:
+            worker.join(timeout=10)
+        assert not worker.is_alive()
+    assert requests == [b"context\n"]
+    if error is None:
+        assert result.returncode == 0, result.stderr
+    else:
+        assert result.returncode != 0
+        assert error in result.stderr

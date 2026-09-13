@@ -1,7 +1,6 @@
 """Reuse the central MCP process for prompt-time context synchronization."""
 
 import hashlib
-import json
 import os
 import socket
 from contextlib import contextmanager
@@ -21,7 +20,13 @@ def call(target):
             return False
         connection.sendall(b"context\n")
         with connection.makefile("rb") as response:
-            result = json.loads(response.readline())
+            raw = response.readline()
+        # The resident service emits this exact success response on every turn.
+        if raw == b'{"ok": true}\n':
+            return True
+        import json
+
+        result = json.loads(raw)
         if "error" in result:
             raise RuntimeError(result["error"])
         if result != {"ok": True}:
@@ -31,6 +36,7 @@ def call(target):
 
 @contextmanager
 def serve(target, synchronize):
+    import json
     import socketserver
     import threading
 
