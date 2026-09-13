@@ -53,6 +53,9 @@ from app.domain.agent.harness.claude_code.hooks_substrate import (
 from app.domain.agent.harness.claude_code.remote_execution import (
     launch as executor_launch,
 )
+from app.domain.agent.harness.claude_code.remote_execution import (
+    release as resident_release,
+)
 from app.domain.agent.harness.claude_code.remote_execution.client import (
     REMOTE_CONTROLS,
 )
@@ -72,6 +75,7 @@ from app.domain.agent.harness.claude_code.warm_session import build_warm_session
 
 __all__ = [
     "executor_launch",
+    "resident_release",
     "CHEESE_HOOK_SCRIPT",
     "REMOTE_CONTROLS",
     "private_execution_target",

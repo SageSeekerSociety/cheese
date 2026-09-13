@@ -46,6 +46,7 @@ from app.domain.agent.harness.claude_code import (
     DEVICE_TUNNEL_PROBE,
     SESSION_TOKEN_TTL_S,
     build_screen_launch,
+    resident_release,
 )
 from app.domain.agent.harness.launch import LaunchPlan
 from app.domain.agent.platform_failures import (
@@ -718,7 +719,12 @@ class DeviceChannel(Channel):
         return ",".join(hosts)
 
     async def _ship_launcher(
-        self, device_id: str, topic_id: uuid.UUID, command: list[str], home_dir: str
+        self,
+        device_id: str,
+        topic_id: uuid.UUID,
+        command: list[str],
+        home_dir: str,
+        release_state: dict | None = None,
     ) -> list[str]:
         """Write the launch script to a FILE on the device (over the link's one-shot
         ``exec``, script on stdin) and return a short command that runs it.
@@ -744,6 +750,11 @@ class DeviceChannel(Channel):
             f' && chmod 755 "{hook_dir}/cheese-hook.next.$$"'
             f' && mv "{hook_dir}/cheese-hook.next.$$" "{hook_dir}/cheese-hook"'
         )
+        if release_state is not None:
+            transfer += (
+                f' && if [ -f "{hook_dir}/remote-execution/release-ready" ]; then '
+                f'cat "{hook_dir}/remote-execution/release-ready"; fi'
+            )
         started = time.monotonic()
         try:
             result = await self._hub.exec(
@@ -777,7 +788,78 @@ class DeviceChannel(Channel):
             raise ScreenSetupError(
                 f"无法把启动脚本写到设备上：{result.get('stderr') or result}"
             )
+        if release_state is not None:
+            release_state["version"] = result.get("stdout", "").strip()
         return ["bash", "-lc", f'exec bash "{path}"']
+
+    async def _refresh_resident(
+        self, screen: HubScreen, home_dir: str, state: dict
+    ) -> None:
+        sources = resident_release.sources()
+        version = resident_release.digest(sources)
+        if state.get("version") == version:
+            return
+        from app.domain.agent.remote_control import store
+
+        control = store()
+        session = await control.current(str(screen.topic_id))
+        if not session or session["status"] != "active":
+            raise ScreenSetupError(
+                "Resident release requires the active native control session"
+            )
+        if screen.resource_id is not None and (
+            (session.get("execution") or {}).get("resource_id")
+            != str(screen.resource_id)
+        ):
+            raise ScreenSetupError(
+                "Native control belongs to another execution generation"
+            )
+
+        async def execute(function, *args):
+            result = await self._hub.exec(
+                screen.device_id,
+                ["python3", "-"],
+                stdin=resident_release.script(function, *args),
+                timeout=40,
+            )
+            if result.get("exit") != 0:
+                raise ScreenSetupError(
+                    f"Resident release {function} failed: {result.get('stderr')}"
+                )
+            return json.loads(result["stdout"])
+
+        staged = await execute("stage", home_dir, sources)
+        if not staged["changed"]:
+            return
+        # The rendezvous path runs terminal-only slash commands without typing
+        # over a person's draft. The transcript confirms plugin loading finished.
+        await self.send_prompt(screen, "/reload-plugins")
+        await execute("wait_reloaded", staged["offsets"])
+        for subtype in ("mcp_reconnect", "mcp_status"):
+            request_id = str(uuid.uuid4())
+            await control.enqueue(
+                session["id"],
+                {
+                    "type": "control_request",
+                    "request_id": request_id,
+                    "request": {"subtype": subtype, "serverName": "native"},
+                },
+                "cheese-release",
+            )
+            result = await control.result(session["id"], request_id, 30)
+            if not result or result.get("response", {}).get("subtype") != "success":
+                raise ScreenSetupError(f"Resident MCP {subtype} did not complete")
+            if subtype == "mcp_status" and not any(
+                server.get("name") == "native" and server.get("status") == "connected"
+                for server in result["response"]
+                .get("response", {})
+                .get("mcpServers", [])
+            ):
+                raise ScreenSetupError("Released native MCP is not connected")
+        await execute("acknowledge", home_dir, version)
+        logger.info(
+            "resident release applied topic=%s version=%s", screen.topic_id, version
+        )
 
     def _link_failure(
         self, device_id: str, *, step: str, waited_s: float, offline: bool
@@ -1053,6 +1135,7 @@ class DeviceChannel(Channel):
             execution_target=execution_target,
         )
         mark("launcher_built")
+        release_state = {} if existing is not None and execution_target else None
         if existing is None:
             command = await self._ship_launcher(
                 device_id, resource_id, command, home_dir
@@ -1063,7 +1146,17 @@ class DeviceChannel(Channel):
             alive, tunnel_down, command = await asyncio.gather(
                 self.confirm_alive(existing),
                 self._tunnel_helper_is_down(existing),
-                self._ship_launcher(device_id, resource_id, command, home_dir),
+                self._ship_launcher(
+                    device_id,
+                    resource_id,
+                    command,
+                    home_dir,
+                    **(
+                        {"release_state": release_state}
+                        if release_state is not None
+                        else {}
+                    ),
+                ),
             )
             if not alive or tunnel_down:
                 # Adopt-create cannot restart a dead process or its tunnel while
@@ -1072,6 +1165,8 @@ class DeviceChannel(Channel):
                 existing = None
         mark("device_checks_complete")
         if existing is not None:
+            if release_state is not None:
+                await self._refresh_resident(existing, home_dir, release_state)
             # A reassert keeps the CURRENTLY-RUNNING `claude`, which still holds the
             # credential it was born with — so the recorded birth expiry must NOT be
             # overwritten with this launch's freshly-minted one (the new token never

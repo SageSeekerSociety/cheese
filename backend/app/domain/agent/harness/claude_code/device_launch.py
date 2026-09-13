@@ -26,16 +26,16 @@ from pathlib import Path
 # this module's launcher and its callers build on it.
 from app.domain.agent import (
     environment_runner,
-    executor_transport,
     machine_tunnel,
     preview_tunnel,
 )
-from app.domain.agent.harness.claude_code import event_drain, event_spool, startup_cache
+from app.domain.agent.harness.claude_code import event_drain, startup_cache
 from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD
 from app.domain.agent.harness.claude_code.hooks_substrate import CHEESE_HOOK_SCRIPT
 from app.domain.agent.harness.claude_code.remote_execution import (
     client as execution_client,
 )
+from app.domain.agent.harness.claude_code.remote_execution import release
 from app.domain.agent.harness.claude_code.session_launch import hooks_settings
 from app.domain.agent.skills import native_skill_files
 
@@ -562,32 +562,17 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
     )
     minimum_version = pinned_version if remote_execution else CLAUDE_MIN_VERSION
     if remote_execution:
-        source_dir = Path(execution_client.__file__).parent
+        helper_sources = release.sources()
         execution_setup = 'mkdir -p "$HOME/.claude/remote-execution"\n'
-        for name in (
-            "client.py",
-            "proxy.js",
-            "private.py",
-            "runtime.py",
-            "context_service.py",
-        ):
+        for name, source in helper_sources.items():
             execution_setup += (
                 f'cat > "$HOME/.claude/remote-execution/{name}" '
-                "<<'CHEESE_EXECUTION_SOURCE'\n"
-                + (source_dir / name).read_text()
-                + "\nCHEESE_EXECUTION_SOURCE\n"
+                "<<'CHEESE_EXECUTION_SOURCE'\n" + source + "\nCHEESE_EXECUTION_SOURCE\n"
             )
-        for name, source in {
-            "executor_transport.py": Path(executor_transport.__file__).read_text(),
-            "event_spool.py": Path(event_spool.__file__).read_text(),
-            "platform-hook-source": CHEESE_HOOK_SCRIPT,
-        }.items():
-            execution_setup += (
-                f'cat > "$HOME/.claude/remote-execution/{name}" '
-                "<<'CHEESE_EXECUTION_SOURCE'\n"
-                + source.rstrip("\n")
-                + "\nCHEESE_EXECUTION_SOURCE\n"
-            )
+        execution_setup += (
+            f"printf %s {release.digest(helper_sources)} "
+            '> "$HOME/.claude/remote-execution/release-ready"\n'
+        )
         execution_setup += """printf '%s' "$CHEESE_EXECUTION_TARGET" \\
   > "$HOME/.claude/remote-target.json"
 EXECUTOR_CLIENT="$HOME/.claude/remote-execution/client.py"
