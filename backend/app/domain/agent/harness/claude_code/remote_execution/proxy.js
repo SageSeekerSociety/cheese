@@ -13,38 +13,12 @@ function remotePath(path) {
     : path;
 }
 
-function directChatContent(tool, args) {
-  if (tool !== "Bash" || typeof args.command !== "string") return null;
-  const command = args.command.trim();
-  const match = command.match(/^cheese\s+chat\s+send\s+(['"])([^'"\n]*)\1$/);
-  if (!match || /[;&|<>`$]/.test(command)) return null;
-  return match[2].trim() ? match[2] : null;
-}
-
 export function register(on) {
   on("tool.call", async ($, e, next) => {
     const { tool, tool_use_id, ...args } = e;
     if (native.has(tool)) {
       for (const field of ["file_path", "path", "notebook_path"]) {
         if (typeof args[field] === "string") args[field] = remotePath(args[field]);
-      }
-      if (tool === "Bash") {
-        try {
-          const content = directChatContent(tool, args);
-          if (content) {
-            const response = await $.mcp.call("native", "publish_chat", {content});
-            if (response.isError) throw new Error(JSON.stringify(response.content));
-            return {result: {
-              stdout: response.content?.[0]?.text || "{}",
-              stderr: "[cheese] published via resident transport",
-              interrupted: false,
-              noOutputExpected: false,
-              returnCodeInterpretation: "Exit code 0",
-            }};
-          }
-        } catch (error) {
-          return { deny: "Direct chat publication failed: " + String(error) };
-        }
       }
       try {
         const response = await $.mcp.call("native", "invoke", {
