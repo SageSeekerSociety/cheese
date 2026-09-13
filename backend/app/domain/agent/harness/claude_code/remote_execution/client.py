@@ -21,6 +21,7 @@ import shlex
 import signal
 import subprocess
 import time
+import urllib.request
 import uuid
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -778,7 +779,52 @@ def transport(config, target_path):
                         }
                     ]
                 }
+                if os.environ.get("CHEESE_API"):
+                    value["tools"].append(
+                        {
+                            "name": "publish_chat",
+                            "description": (
+                                "Publish one chat message through Cheese without "
+                                "device execution."
+                            ),
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {"content": {"type": "string"}},
+                                "required": ["content"],
+                            },
+                        }
+                    )
             elif method == "tools/call":
+                if request["params"]["name"] == "publish_chat":
+                    content = request["params"]["arguments"].get("content")
+                    api = os.environ.get("CHEESE_API", "").rstrip("/")
+                    token = os.environ.get("CHEESE_TOKEN", "")
+                    topic = os.environ.get("CHEESE_TOPIC", "")
+                    if (
+                        not api
+                        or not token
+                        or not topic
+                        or not isinstance(content, str)
+                        or not content.strip()
+                    ):
+                        raise ValueError("Cheese chat publication is not configured")
+                    body = json.dumps({"content": content}).encode()
+                    req = urllib.request.Request(
+                        f"{api}/topics/{topic}/messages",
+                        data=body,
+                        method="POST",
+                        headers={
+                            "Content-Type": "application/json",
+                            "X-Cheese-Token": token,
+                        },
+                    )
+                    with urllib.request.urlopen(req, timeout=15) as response:
+                        payload = json.loads(response.read())
+                    value = {"content": [{"type": "text", "text": json.dumps(payload)}]}
+                    response = {"jsonrpc": "2.0", "id": request["id"], "result": value}
+                    with output_lock:
+                        print(json.dumps(response), flush=True)
+                    return
                 if request["params"]["name"] != "invoke":
                     raise ValueError("Unknown transport tool")
                 payload = request["params"]["arguments"]
