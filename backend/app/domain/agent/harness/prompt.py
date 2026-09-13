@@ -200,7 +200,9 @@ def publication_prompt(content: str, *, is_private: bool = False) -> str:
         content
         + "\n\n"
         + platform_prompt(
-            "普通输出和最终答复都不会自动发到聊天。请用 cheese chat send 发送给用户。"
+            "Ordinary output and final responses are not published to chat. "
+            "Publish with the chat_send MCP tool when available; "
+            "otherwise use cheese chat send. "
             "收到需要回应的用户消息（包括排队或执行中追加的消息）时，能直接回答就发答案；"
             "需要继续处理就先说明你理解的意思和接下来要做什么，再继续。"
             "重要进展、改方向、阻碍和完成结果也要主动发消息。"

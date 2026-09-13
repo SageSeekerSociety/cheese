@@ -16,6 +16,19 @@ function remotePath(path) {
 export function register(on) {
   on("tool.call", async ($, e, next) => {
     const { tool, tool_use_id, ...args } = e;
+    if (tool === "mcp__native__chat_send") {
+      try {
+        const response = await $.mcp.call("native", "chat_send", {
+          ...args, id: tool_use_id, session_id: await $.session.id(),
+        });
+        if (response.isError) return { deny: JSON.stringify(response.content) };
+        const outcome = JSON.parse(response.content[0].text);
+        if (outcome.deny) return outcome;
+        return { result: [{ type: "text", text: outcome.result.stdout }, { type: "text", text: outcome.result.stderr }] };
+      } catch (error) {
+        return { deny: "Chat publication failed: " + String(error) };
+      }
+    }
     if (native.has(tool)) {
       for (const field of ["file_path", "path", "notebook_path"]) {
         if (typeof args[field] === "string") args[field] = remotePath(args[field]);

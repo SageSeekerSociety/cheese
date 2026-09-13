@@ -42,6 +42,14 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get("Content-Encoding") == "gzip":
             raw = gzip.decompress(raw)
         body = json.loads(raw or b"{}")
+        if self.path == "/topics/fixture/messages":
+            assert self.headers.get("X-Cheese-Token") == "fixture-place-token"
+            self.server.state.setdefault("publications", []).append(body)
+            dump(
+                self.server.state["dir"] / "publications.json",
+                self.server.state["publications"],
+            )
+            return self.reply({"data": body})
         if self.path.startswith("/hook"):
             log(self.server.state["dir"] / "hooks.jsonl", {"payload": body})
             return self.reply({"code": 200})

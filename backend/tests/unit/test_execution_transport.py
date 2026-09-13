@@ -441,6 +441,23 @@ def test_chat_lost_response_is_not_replayed_or_sent_to_device(central_transport)
     assert process.publications[0] == process.publications[1]
 
 
+def test_structured_chat_publishes_literal_content_without_executor(central_transport):
+    process, clients, _, work = central_transport
+    content = "hello 'world'\n$(touch forbidden); --literal"
+    arguments = {"content": content, "id": "typed-publication", "session_id": "fixture"}
+    tools = process.call("tools/list", {})["tools"]
+    assert any(tool["name"] == "chat_send" for tool in tools)
+    for _ in range(2):
+        result = process.call(
+            "tools/call", {"name": "chat_send", "arguments": arguments}
+        )
+        value = json.loads(result["content"][0]["text"])["result"]
+        assert json.loads(value["stdout"])["content"] == content
+    assert process.publications[0] == process.publications[1]
+    assert clients[0] == clients[1]
+    assert not (work / "forbidden").exists()
+
+
 def test_central_tools_reuse_process_and_http_connection(central_transport):
     process, clients, _, work = central_transport
     pid = process.process.pid
@@ -450,6 +467,22 @@ def test_central_tools_reuse_process_and_http_connection(central_transport):
     # Each worker owns a connection; sequential replies may use different workers.
     assert len(set(clients)) < len(clients)
     assert process.process.pid == pid and process.process.poll() is None
+
+
+def test_structured_chat_retry_retains_request_id(central_transport):
+    process, _, drop, _ = central_transport
+    args = {"content": "retry", "id": "first", "session_id": "fixture"}
+    drop.append(True)
+    with pytest.raises(RuntimeError, match="request_id="):
+        process.call("tools/call", {"name": "chat_send", "arguments": args})
+    args["id"] = "second"
+    args["request_id"] = process.publications[0]["request_id"]
+    process.call("tools/call", {"name": "chat_send", "arguments": args})
+    assert process.publications[0] == process.publications[1]
+    args["request_id"] = "invalid"
+    with pytest.raises(RuntimeError):
+        process.call("tools/call", {"name": "chat_send", "arguments": args})
+    assert len(process.publications) == 2
 
 
 @pytest.mark.parametrize("resident", [True, False])
@@ -530,6 +563,46 @@ def test_resident_transport_keeps_policy_denials(central_transport):
     assert native_call(process, "denied-chat", "cheese chat send 'forbidden'") == {
         "deny": "blocked by policy"
     }
+    assert not process.publications and not clients
+
+
+@pytest.mark.parametrize(
+    "central_transport",
+    [
+        {
+            "PreToolUse": [
+                {
+                    "matcher": "mcp__native__chat_send",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": (
+                                "printf '%s' '{\"hookSpecificOutput\":"
+                                '{"permissionDecision":"deny",'
+                                '"permissionDecisionReason":"publication denied"}}\''
+                            ),
+                        }
+                    ],
+                }
+            ]
+        }
+    ],
+    indirect=True,
+)
+def test_structured_chat_preserves_policy_denial(central_transport):
+    process, clients, _, _ = central_transport
+    result = process.call(
+        "tools/call",
+        {
+            "name": "chat_send",
+            "arguments": {
+                "content": "not published",
+                "id": "denied",
+                "session_id": "fixture",
+            },
+        },
+    )
+    assert json.loads(result["content"][0]["text"]) == {"deny": "publication denied"}
     assert not process.publications and not clients
 
 
