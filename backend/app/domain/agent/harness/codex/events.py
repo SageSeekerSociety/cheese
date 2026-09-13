@@ -26,13 +26,17 @@ class Assembler:
     def accept(self, record: dict) -> list[AgentEvent]:
         method = record["method"]
         params = record.get("params", {})
+        owner = record.get("cheese", {})
+        identity = {
+            key: owner[key] for key in ("agent_handle", "harness") if key in owner
+        }
         if method == "thread/started":
             thread = params["thread"]
             if parent := thread.get("parentThreadId"):
                 role = thread.get("agentRole") or ""
                 self.children[thread["id"]] = (parent, role)
                 return [AgentSubagentStart(thread["id"], role, parent)]
-            return [AgentSessionInfo(thread["id"])]
+            return [AgentSessionInfo(thread["id"], **identity)]
         if method == "turn/started":
             self.last_text.pop(params["threadId"], None)
             return []
@@ -111,6 +115,7 @@ class Assembler:
                 session_id=params["threadId"],
                 is_error=failed,
                 errors=[error["message"]] if error else None,
+                **identity,
             )
             return [*partial, result]
         return []

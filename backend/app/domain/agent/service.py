@@ -1,14 +1,8 @@
-"""Claude Agent SDK integration — 芝士 (spec §8, §9).
+"""Shared agent events consumed by room persistence and presentation.
 
-Wraps `claude-agent-sdk` to run a resumable, streaming conversation per topic.
-We do NOT parse the model's natural-language output (spec §9.1); the platform
-observes the agent through structured SDK messages only.
-
-Key SDK facts (verified against installed claude-agent-sdk 0.2.x):
-- `StreamEvent.event` carries Anthropic-style streaming deltas when
-  `include_partial_messages=True` — we surface `text_delta`s for live UI.
-- `AssistantMessage` text blocks are the authoritative final text we persist.
-- `ResultMessage.session_id` is the token used to resume the conversation.
+Each harness translates its structured protocol into these events. Session
+ownership travels with resumable pointers because a delayed event may arrive
+after the room has selected another teammate or harness.
 """
 
 from dataclasses import dataclass
@@ -16,12 +10,10 @@ from datetime import datetime
 from typing import Any
 
 
-# The cheese CLI rules, injected into every sandbox turn's system prompt (the
-# cheese Agent Skill is lazy-loaded and weak models don't self-load it). Read
 @dataclass
 class AgentMessage:
-    """One COMPLETED top-level assistant message (the SDK's AssistantMessage
-    boundary — a STRUCTURAL event, never parsed out of prose). A turn with tool
+    """One completed assistant message, at a structural protocol boundary.
+    A turn with tool
     calls yields several of these; each becomes its own chat message block
     (Slack-style discrete messages instead of one growing streamed bubble)."""
 
@@ -113,6 +105,8 @@ class AgentSessionInfo:
     '再 @ 一次接着做' truly RESUMES the partial work instead of replaying."""
 
     session_id: str
+    agent_handle: str | None = None
+    harness: str | None = None
 
 
 @dataclass
@@ -142,6 +136,8 @@ class AgentResult:
     # session's own Stop — the one that ends a turn.
     agent_id: str | None = None
     agent_type: str | None = None
+    agent_handle: str | None = None
+    harness: str | None = None
 
 
 @dataclass

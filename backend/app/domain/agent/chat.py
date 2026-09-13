@@ -1905,7 +1905,14 @@ class ChatService:
         self._settle_tasks.add(task)
         task.add_done_callback(self._settle_tasks.discard)
 
-    async def _save_session_pointer(self, topic_id: uuid.UUID, session_id: str) -> None:
+    async def _save_session_pointer(
+        self,
+        topic_id: uuid.UUID,
+        session_id: str,
+        *,
+        agent_handle: str | None = None,
+        harness: str | None = None,
+    ) -> None:
         """Best-effort: point the PLACE at the (possibly partial) session so the
         next summon resumes it. Never raises — used on failure paths.
 
@@ -1920,15 +1927,19 @@ class ChatService:
             async with self._sessions() as session:
                 place = await PlaceResolver(session).resolve(topic_id)
                 if place is not None:
-                    # Resolved here rather than threaded in: the hook-consume
-                    # path reaches this with no ResolvedAgent in scope, and this
-                    # already opens a session to do its own write.
-                    agent = await self._agent_at(session, place)
+                    # New event streams carry their original owner. Legacy
+                    # hooks still require resolving the room's current agent.
+                    if agent_handle is None or harness is None:
+                        agent = await self._agent_at(session, place)
+                        agent_handle = agent_handle or agent.handle
+                        harness = harness or harness_name(
+                            agent.configuration.get("harness")
+                        )
                     await AgentSessionService(session).remember(
                         topic_id=place.room_id,
-                        agent_handle=agent.handle,
+                        agent_handle=agent_handle,
                         resume_token=session_id,
-                        harness=harness_name(agent.configuration.get("harness")),
+                        harness=harness,
                     )
                     await session.commit()
         except Exception:  # noqa: BLE001 — never mask the original failure
@@ -2102,7 +2113,12 @@ class ChatService:
         # would see an event that a reload then moves somewhere else.
         channel = str(task_id) if task_id is not None else str(topic_id)
         if isinstance(event, AgentSessionInfo):
-            await self._save_session_pointer(topic_id, event.session_id)
+            await self._save_session_pointer(
+                topic_id,
+                event.session_id,
+                agent_handle=event.agent_handle,
+                harness=event.harness,
+            )
         elif isinstance(event, AgentSubagentStart | AgentSubagentStop):
             payload = await self._persist_worker_event(
                 project_id=project_id,
@@ -2200,7 +2216,12 @@ class ChatService:
         elif isinstance(event, AgentResult):
             error_line, error_code = "", None
             if event.session_id:
-                await self._save_session_pointer(topic_id, event.session_id)
+                await self._save_session_pointer(
+                    topic_id,
+                    event.session_id,
+                    agent_handle=event.agent_handle,
+                    harness=event.harness,
+                )
             if event.is_error:
                 if event.text.strip() == TURN_TIMEOUT_MESSAGE:
                     # The watchdog's own verdict, and the only failure whose
@@ -3289,7 +3310,12 @@ class ChatService:
                         # The finished session is what the next summon must
                         # resume — without this the topic keeps pointing at
                         # whatever SessionStart last managed to save live.
-                        await self._save_session_pointer(topic_id, result.session_id)
+                        await self._save_session_pointer(
+                            topic_id,
+                            result.session_id,
+                            agent_handle=result.agent_handle,
+                            harness=result.harness,
+                        )
                     # `stop_text` stays RAW above (the prefix test matches it
                     # against raw flush text); the dedup compares stored forms.
                     if not stop_text or _canon(result.text or "") in known_texts:

@@ -146,7 +146,15 @@ def translate_hook(hook: dict) -> AgentEvent | None:
 
     if event == "SessionStart":
         sid = hook.get("session_id")
-        return AgentSessionInfo(session_id=str(sid)) if sid else None
+        return (
+            AgentSessionInfo(
+                session_id=str(sid),
+                agent_handle=hook.get("_agent_handle"),
+                harness="claude-code",
+            )
+            if sid
+            else None
+        )
 
     if event == "SubagentStart":
         # No id, no event: everything downstream of this exists to attribute
@@ -272,6 +280,8 @@ def translate_hook(hook: dict) -> AgentEvent | None:
             text=str(hook.get("last_assistant_message") or ""),
             session_id=str(sid) if sid else None,
             usage=_usage_from_hook(hook),
+            agent_handle=hook.get("_agent_handle"),
+            harness="claude-code",
             agent_id=_agent_id(hook),
             agent_type=_agent_type(hook),
         )
@@ -298,6 +308,8 @@ def translate_hook(hook: dict) -> AgentEvent | None:
             session_id=str(sid) if sid else None,
             is_error=True,
             errors=[kind],
+            agent_handle=hook.get("_agent_handle"),
+            harness="claude-code",
         )
 
     # Any unmapped event: nothing to surface.

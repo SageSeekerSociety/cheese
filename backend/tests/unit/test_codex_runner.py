@@ -109,3 +109,67 @@ async def test_protocol_failure_releases_session_lock_and_files(tmp_path):
     assert runner.lock.closed
     with (tmp_path / "runner.lock").open("a") as replacement:
         fcntl.flock(replacement, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+@pytest.mark.anyio
+async def test_work_ownership_precedes_ack_and_children_keep_original_work(tmp_path):
+    runner = Runner(tmp_path, AsyncMock())
+
+    async def send(text):
+        await runner.record(
+            {
+                "method": "turn/started",
+                "params": {
+                    "threadId": "root",
+                    "turn": {"id": text},
+                },
+            }
+        )
+        return text
+
+    runner.session = SimpleNamespace(
+        thread_id="root",
+        turn_id=None,
+        send=AsyncMock(side_effect=send),
+        observe=lambda event: None,
+    )
+    try:
+        await runner.send("input-1", "first", work_id="work-1")
+        runner.session.turn_id = "first"
+        with pytest.raises(RuntimeError, match="still active"):
+            await runner.send("input-conflict", "conflict", work_id="work-2")
+        await runner.record(
+            {
+                "method": "thread/started",
+                "params": {
+                    "thread": {
+                        "id": "child",
+                        "parentThreadId": "root",
+                    }
+                },
+            }
+        )
+        runner.session.turn_id = None
+        await runner.send("input-2", "second", work_id="work-2")
+    finally:
+        await runner.close()
+    reopened = Runner(tmp_path, AsyncMock())
+    try:
+        await reopened.record(
+            {
+                "method": "turn/completed",
+                "params": {
+                    "threadId": "child",
+                    "turn": {"id": "child-turn"},
+                },
+            }
+        )
+        rows = reopened.journal.read()
+        assert [row["record"]["cheese"]["work_id"] for row in rows] == [
+            "work-1",
+            "work-1",
+            "work-2",
+            "work-1",
+        ]
+    finally:
+        await reopened.close()

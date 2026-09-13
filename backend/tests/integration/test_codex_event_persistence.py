@@ -114,3 +114,65 @@ async def test_same_agent_resumes_each_harness_history_independently(client):
             await sessions.resume_token(topic_id, "teammate", harness="codex")
             == "codex-thread"
         )
+
+
+@pytest.mark.anyio
+async def test_late_session_event_preserves_original_teammate_and_harness(
+    client, tmp_path
+):
+    project = client.post(
+        "/projects",
+        json={
+            "name": "Late owner",
+            "owner_handle": "alice",
+        },
+    ).json()["data"]
+    topic = client.post(
+        "/topics",
+        json={
+            "project_id": project["id"],
+            "title": "Different current teammate",
+            "created_by": "alice",
+        },
+    ).json()["data"]
+    project_id, topic_id = uuid.UUID(project["id"]), uuid.UUID(topic["id"])
+    service = ChatService(
+        session_factory=client.test_factory,
+        base_system_prompt="fixture",
+        workspace_root=str(tmp_path),
+        compute=Mock(),
+    )
+    event = Assembler().accept(
+        {
+            "method": "thread/started",
+            "params": {"thread": {"id": "old-thread"}},
+            "cheese": {"agent_handle": "original-teammate", "harness": "codex"},
+        }
+    )[0]
+    await service._consume_hook_event(
+        project_id,
+        topic_id,
+        uuid.uuid4(),
+        event,
+        "late-start",
+        False,
+        False,
+    )
+    async with client.test_factory() as session:
+        sessions = AgentSessionService(session)
+        assert (
+            await sessions.resume_token(
+                topic_id,
+                "original-teammate",
+                harness="codex",
+            )
+            == "old-thread"
+        )
+        assert (
+            await sessions.resume_token(
+                topic_id,
+                "original-teammate",
+                harness="claude-code",
+            )
+            is None
+        )

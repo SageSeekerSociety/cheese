@@ -53,6 +53,26 @@ def test_hook_rejected_without_valid_token(client):
     assert r.status_code == 401
 
 
+def test_session_owner_is_taken_from_verified_token(client, spool_root):
+    project, topic = uuid.uuid4(), uuid.uuid4()
+    token = mint_scoped_token(
+        project_id=str(project),
+        topic_id=str(topic),
+        agent_handle="original-agent",
+    )
+    response = client.post(
+        f"/sandbox/hooks/{topic}",
+        json={
+            "hook_event_name": "SessionStart",
+            "session_id": "old-session",
+            "_agent_handle": "replacement-agent",
+        },
+        headers={"X-Cheese-Token": token, "X-Cheese-Event-Id": "original-start"},
+    )
+    assert response.status_code == 200
+    assert _logged(project, topic)[0].record["_agent_handle"] == "original-agent"
+
+
 def test_hook_accepted_but_undelivered_without_listener(client, spool_root):
     project, topic = uuid.uuid4(), uuid.uuid4()
     eid = str(uuid.uuid4())

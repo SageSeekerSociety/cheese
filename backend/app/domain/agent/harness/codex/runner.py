@@ -32,10 +32,24 @@ class Runner:
         self.listener: asyncio.Task | None = None
         self.server: asyncio.Server | None = None
         self.inputs: dict[str, asyncio.Task] = {}
+        self.submit_lock = asyncio.Lock()
         self.errors = None
         self.lock = None
 
     async def record(self, event: dict) -> None:
+        params = event.get("params", {})
+        thread = params.get("thread", {})
+        thread_id = params.get("threadId") or thread.get("id")
+        if parent := thread.get("parentThreadId"):
+            work = self.journal.recall(f"work:{parent}")
+            if work:
+                self.journal.remember(f"work:{thread_id}", work)
+        work = self.journal.recall(f"work:{thread_id}") if thread_id else None
+        owner = json.loads(self.journal.recall("owner") or "{}")
+        if work:
+            owner["work_id"] = work
+        if owner:
+            event = {**event, "cheese": owner}
         self.journal.append(event)
         if self.session is not None:
             self.session.observe(event)
@@ -57,6 +71,15 @@ class Runner:
             if opening.resume_token not in (None, saved):
                 raise ValueError("A session directory cannot resume a different thread")
             opening = replace(opening, resume_token=saved)
+        self.journal.remember(
+            "owner",
+            json.dumps(
+                {
+                    "harness": "codex",
+                    "agent_handle": opening.agent_handle,
+                }
+            ),
+        )
         # Only the lock owner may remove a socket left by a crashed runner.
         Path(socket_path(self.state)).unlink(missing_ok=True)
         self.errors = (self.state / "app-server.log").open("ab")
@@ -91,9 +114,16 @@ class Runner:
         return thread
 
     async def send(
-        self, identifier: str, text: str, images: list[str] | None = None
+        self,
+        identifier: str,
+        text: str,
+        images: list[str] | None = None,
+        work_id: str | None = None,
     ) -> dict:
-        payload = json.dumps({"text": text, "images": images or []}, sort_keys=True)
+        content: dict = {"text": text, "images": images or []}
+        if work_id is not None:
+            content["work_id"] = work_id
+        payload = json.dumps(content, sort_keys=True)
         previous = self.journal.input(identifier)
         if previous is not None:
             if previous[0] != payload:
@@ -108,7 +138,7 @@ class Runner:
                 )
         else:
             self.journal.begin_input(identifier, payload)
-            task = asyncio.create_task(self._submit(identifier, text, images))
+            task = asyncio.create_task(self._submit(identifier, text, images, work_id))
             self.inputs[identifier] = task
 
             def finished(task):
@@ -120,15 +150,28 @@ class Runner:
         return await asyncio.shield(self.inputs[identifier])
 
     async def _submit(
-        self, identifier: str, text: str, images: list[str] | None
+        self,
+        identifier: str,
+        text: str,
+        images: list[str] | None,
+        work_id: str | None,
     ) -> dict:
         assert self.session is not None
         try:
-            turn = (
-                await self.session.send(text, images=images)
-                if images
-                else await self.session.send(text)
-            )
+            async with self.submit_lock:
+                if work_id is not None:
+                    thread_id = self.session.thread_id
+                    previous = self.journal.recall(f"work:{thread_id}")
+                    if self.session.turn_id is not None and previous != work_id:
+                        raise RuntimeError("A different room work item is still active")
+                    # Persist attribution before the call: notifications can
+                    # arrive before app-server acknowledges turn/start.
+                    self.journal.remember(f"work:{thread_id}", work_id)
+                turn = (
+                    await self.session.send(text, images=images)
+                    if images
+                    else await self.session.send(text)
+                )
             result = {"turn_id": turn, "input_id": identifier}
             self.journal.finish_input(identifier, "accepted", result)
             return result
@@ -141,7 +184,10 @@ class Runner:
             return {"events": self.journal.read(int(params.get("after", 0)))}
         if method == "send":
             return await self.send(
-                params["input_id"], params["text"], params.get("images")
+                params["input_id"],
+                params["text"],
+                params.get("images"),
+                params.get("work_id"),
             )
         if method == "interrupt":
             return {
