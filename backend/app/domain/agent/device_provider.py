@@ -835,7 +835,8 @@ class DeviceChannel(Channel):
         # over a person's draft. The transcript confirms plugin loading finished.
         await self.send_prompt(screen, "/reload-plugins")
         await execute("wait_reloaded", staged["offsets"])
-        for subtype in ("mcp_reconnect", "mcp_status"):
+
+        async def request(subtype):
             request_id = str(uuid.uuid4())
             await control.enqueue(
                 session["id"],
@@ -849,13 +850,26 @@ class DeviceChannel(Channel):
             result = await control.result(session["id"], request_id, 30)
             if not result or result.get("response", {}).get("subtype") != "success":
                 raise ScreenSetupError(f"Resident MCP {subtype} did not complete")
-            if subtype == "mcp_status" and not any(
-                server.get("name") == "native" and server.get("status") == "connected"
-                for server in result["response"]
-                .get("response", {})
-                .get("mcpServers", [])
-            ):
-                raise ScreenSetupError("Released native MCP is not connected")
+            return result["response"].get("response", {})
+
+        await request("mcp_reconnect")
+        # Reconnect acknowledges the request while the server can still be pending.
+        deadline = time.monotonic() + 30
+        while True:
+            status = await request("mcp_status")
+            native = next(
+                (
+                    server
+                    for server in status.get("mcpServers", [])
+                    if server.get("name") == "native"
+                ),
+                {},
+            )
+            if native.get("status") == "connected":
+                break
+            if native.get("status") != "pending" or time.monotonic() >= deadline:
+                raise ScreenSetupError("Released native MCP did not connect")
+            await asyncio.sleep(0.1)
         await execute("acknowledge", home_dir, version)
         logger.info(
             "resident release applied topic=%s version=%s", screen.topic_id, version

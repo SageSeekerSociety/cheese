@@ -132,7 +132,10 @@ def test_active_turn_blocks_changes_until_completion(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_failed_reconnect_keeps_release_unacknowledged(tmp_path, monkeypatch):
+@pytest.mark.parametrize("connected", [False, True])
+async def test_release_acknowledgement_requires_connection(
+    tmp_path, monkeypatch, connected
+):
     config = tmp_path / ".claude"
     (config / "remote-session").mkdir(parents=True)
     (config / "remote-session/execution.json").write_text("{}")
@@ -149,15 +152,33 @@ async def test_failed_reconnect_keeps_release_unacknowledged(tmp_path, monkeypat
         },
     )
 
+    commands = []
+
     class Control:
         async def current(self, topic):
             return {"id": "session", "status": "active"}
 
-        async def enqueue(self, *args):
-            pass
+        async def enqueue(self, sid, payload, actor):
+            commands.append(payload["request"]["subtype"])
 
         async def result(self, *args):
-            return {"response": {"subtype": "error", "error": "disconnected"}}
+            if not connected:
+                return {"response": {"subtype": "error", "error": "disconnected"}}
+            value = {}
+            if commands[-1] == "mcp_status":
+                value = {
+                    "mcpServers": [
+                        {
+                            "name": "native",
+                            "status": (
+                                "pending"
+                                if commands.count("mcp_status") == 1
+                                else "connected"
+                            ),
+                        }
+                    ]
+                }
+            return {"response": {"subtype": "success", "response": value}}
 
     class Hub:
         async def exec(self, device, command, *, stdin, timeout):
@@ -192,6 +213,13 @@ async def test_failed_reconnect_keeps_release_unacknowledged(tmp_path, monkeypat
     channel._hub = Hub()
     monkeypatch.setattr(channel, "send_prompt", reload)
     screen = HubScreen("screen", "device", [], "token", 1, "agent")
-    with pytest.raises(ScreenSetupError, match="mcp_reconnect"):
+    if connected:
         await channel._refresh_resident(screen, str(tmp_path), {})
-    assert not (config / "remote-execution/release-ready").exists()
+        assert (
+            config / "remote-execution/release-ready"
+        ).read_text() == release.digest(release.sources())
+        assert commands == ["mcp_reconnect", "mcp_status", "mcp_status"]
+    else:
+        with pytest.raises(ScreenSetupError, match="mcp_reconnect"):
+            await channel._refresh_resident(screen, str(tmp_path), {})
+        assert not (config / "remote-execution/release-ready").exists()
