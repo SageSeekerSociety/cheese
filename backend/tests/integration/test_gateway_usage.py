@@ -482,7 +482,9 @@ async def test_a_room_uses_its_agent_and_an_ongoing_turn_keeps_its_snapshot(
         await session.commit()
         assert await agents.system_prompt(snapshot) == "Original role"
 
-    current, _ = await svc._model_kwargs(pid, _on_a_machine(), tid, agent=snapshot)
+    current, _ = await svc._model_kwargs(
+        pid, _on_a_machine(), tid, agent=snapshot, acting_agent="reviewer"
+    )
     following, _ = await svc._model_kwargs(pid, _on_a_machine(), tid)
     default, _ = await svc._model_kwargs(pid, _on_a_machine())
     assert current["model"] == "claude-opus-5"
@@ -497,7 +499,13 @@ async def test_a_room_uses_its_agent_and_an_ongoing_turn_keeps_its_snapshot(
         == following["env"]["CHEESE_AGENT_CONFIG"]
     )
     monkeypatch.setattr(svc, "_agent_handle", AsyncMock(return_value="ops"))
+    same_turn, _ = await svc._model_kwargs(
+        pid, _on_a_machine(), tid, agent=snapshot, acting_agent="reviewer"
+    )
+    assert same_turn == current
+    assert same_turn["agent_handle"] == "reviewer"
     different_author, _ = await svc._model_kwargs(pid, _on_a_machine(), tid)
+    assert different_author["agent_handle"] == "ops"
     assert different_author["model"] == following["model"]
     assert (
         different_author["env"]["CHEESE_AGENT_CONFIG"]
