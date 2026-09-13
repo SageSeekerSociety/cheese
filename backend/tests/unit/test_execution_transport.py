@@ -202,6 +202,7 @@ def central_transport(executor, tmp_path, request):
     _, work, state = executor
     clients = []
     drop = []
+    publications = []
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -213,7 +214,13 @@ def central_transport(executor, tmp_path, request):
             assert self.headers["X-Cheese-Token"] == "fixture"
             clients.append(self.client_address)
             payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-            result = runtime.request(state, payload["method"], payload["params"])
+            if self.path == "/topics/fixture/messages":
+                uuid.UUID(payload["request_id"])
+                assert self.headers["X-Cheese-Turn"] == "fixture-turn"
+                publications.append(payload)
+                result = {"data": {"content": payload["content"]}}
+            else:
+                result = runtime.request(state, payload["method"], payload["params"])
             if drop:
                 drop.pop()
                 self.close_connection = True
@@ -241,9 +248,17 @@ def central_transport(executor, tmp_path, request):
     process = runtime.MCPProcess(
         [sys.executable, central.__file__, "transport", str(config)],
         str(tmp_path),
-        {**os.environ, "NO_PROXY": "127.0.0.1", "CHEESE_TOKEN": "fixture"},
+        {
+            **os.environ,
+            "NO_PROXY": "127.0.0.1",
+            "CHEESE_TOKEN": "fixture",
+            "CHEESE_API": f"http://127.0.0.1:{server.server_port}",
+            "CHEESE_TOPIC": "fixture",
+            "CHEESE_TURN": "fixture-turn",
+        },
         log,
     )
+    process.publications = publications
     try:
         yield process, clients, drop, work
     finally:
@@ -347,6 +362,63 @@ def test_generated_prefix_preserves_local_hook_and_remote_command_boundary(
     assert (workspace / "hook receipt.txt").read_text() == "second receipt"
 
 
+@pytest.mark.parametrize(
+    "central_transport",
+    [
+        {
+            event: [
+                {
+                    "matcher": "Bash",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": "cat >> publication-hooks.jsonl; "
+                            "printf '\\n' >> publication-hooks.jsonl",
+                        }
+                    ],
+                }
+            ]
+            for event in ("PreToolUse", "PostToolUse")
+        }
+    ],
+    indirect=True,
+)
+def test_chat_publication_uses_resident_connection_and_stable_request_id(
+    central_transport,
+    tmp_path,
+):
+    process, clients, _, _ = central_transport
+    for _ in range(2):
+        result = native_call(process, "publication", "cheese chat send 'hello 世界'")
+        assert json.loads(result["result"]["stdout"]) == {"content": "hello 世界"}
+    assert len(process.publications) == 2
+    assert (
+        process.publications[0]["request_id"] == process.publications[1]["request_id"]
+    )
+    assert clients[0] == clients[1]
+    events = [
+        json.loads(line)
+        for line in (tmp_path / "publication-hooks.jsonl").read_text().splitlines()
+    ]
+    assert [event["hook_event_name"] for event in events] == [
+        "PreToolUse",
+        "PostToolUse",
+        "PreToolUse",
+        "PostToolUse",
+    ]
+    assert events[1]["tool_response"]["stdout"] == result["result"]["stdout"]
+
+
+def test_chat_lost_response_is_not_replayed_or_sent_to_device(central_transport):
+    process, _, drop, _ = central_transport
+    drop.append(True)
+    with pytest.raises(RuntimeError):
+        native_call(process, "lost-publication", "cheese chat send 'hello'")
+    assert len(process.publications) == 1
+    native_call(process, "lost-publication", "cheese chat send 'hello'")
+    assert process.publications[0] == process.publications[1]
+
+
 def test_central_tools_reuse_process_and_http_connection(central_transport):
     process, clients, _, work = central_transport
     pid = process.process.pid
@@ -424,6 +496,10 @@ def test_resident_transport_keeps_policy_denials(central_transport):
         "deny": "blocked by policy"
     }
     assert not clients and not (work / "forbidden").exists()
+    assert native_call(process, "denied-chat", "cheese chat send 'forbidden'") == {
+        "deny": "blocked by policy"
+    }
+    assert not process.publications and not clients
 
 
 def test_resident_transport_cancels_a_running_shell(central_transport):

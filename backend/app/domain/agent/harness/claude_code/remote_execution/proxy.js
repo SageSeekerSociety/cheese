@@ -13,51 +13,12 @@ function remotePath(path) {
     : path;
 }
 
-function directChatSend(tool, args) {
-  if (tool !== "Bash" || typeof args.command !== "string") return null;
-  const command = args.command.trim();
-  const match = command.match(/^cheese\s+chat\s+send\s+(['"])([^'"\n]*)\1$/);
-  if (!match || /[;&|<>`$]/.test(command)) return null;
-  const api = (process.env.CHEESE_API || "").replace(/\/$/, "");
-  const token = process.env.CHEESE_TOKEN || "";
-  const topic = process.env.CHEESE_TOPIC || "";
-  if (!api || !token || !topic || !match[2].trim()) return null;
-  const requestId = crypto.randomUUID();
-  return fetch(`${api}/topics/${topic}/messages`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Cheese-Token": token,
-      ...(process.env.CHEESE_TURN ? {"X-Cheese-Turn": process.env.CHEESE_TURN} : {}),
-    },
-    body: JSON.stringify({content: match[2], request_id: requestId}),
-  }).then(async response => {
-    if (!response.ok) throw new Error(`chat send failed: HTTP ${response.status}`);
-    const payload = await response.json();
-    return {result: {
-      stdout: JSON.stringify(payload.data ?? payload),
-      stderr: `[cheese] request_id=${requestId}`,
-      interrupted: false,
-      noOutputExpected: false,
-      returnCodeInterpretation: "Exit code 0",
-    }};
-  });
-}
-
 export function register(on) {
   on("tool.call", async ($, e, next) => {
     const { tool, tool_use_id, ...args } = e;
     if (native.has(tool)) {
       for (const field of ["file_path", "path", "notebook_path"]) {
         if (typeof args[field] === "string") args[field] = remotePath(args[field]);
-      }
-      if (tool === "Bash") {
-        try {
-          const direct = await directChatSend(tool, args);
-          if (direct) return direct;
-        } catch (error) {
-          return { deny: "Direct chat publication failed: " + String(error) };
-        }
       }
       try {
         const response = await $.mcp.call("native", "invoke", {
