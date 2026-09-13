@@ -126,6 +126,61 @@ def test_worker_publishes_with_current_credentials(worker, encoding):
         thread.join()
 
 
+def test_cli_client_publishes_inline_chat_without_worker(tmp_path):
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    received = []
+
+    class API(BaseHTTPRequestHandler):
+        def do_POST(self):
+            received.append(
+                (
+                    self.path,
+                    self.headers["X-Cheese-Token"],
+                    json.loads(self.rfile.read(int(self.headers["Content-Length"]))),
+                )
+            )
+            body = b'{"data":{"id":"direct"}}'
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), API)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        args, env = command(
+            "/tmp/socket-that-does-not-exist", "chat", "send", "direct message"
+        )
+        result = subprocess.run(
+            args,
+            env={
+                **env,
+                "CHEESE_TOKEN": "direct-token",
+                "CHEESE_TOPIC": "room",
+                "CHEESE_API": f"http://127.0.0.1:{server.server_port}",
+                "NO_PROXY": "*",
+            },
+            capture_output=True,
+            timeout=10,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout) == {"id": "direct"}
+        assert received[0][0] == "/topics/room/messages"
+        assert received[0][1] == "direct-token"
+        assert received[0][2]["content"] == "direct message"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
 def test_worker_refreshes_source_and_isolates_concurrent_credentials(worker, tmp_path):
     source, address, _ = worker
     source.write_text(
