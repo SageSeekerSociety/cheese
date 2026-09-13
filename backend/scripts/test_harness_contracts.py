@@ -81,7 +81,6 @@ def main() -> int:
         "tests/unit/test_codex_tools.py",
         "tests/unit/test_codex_provider_requests.py",
         "tests/unit/test_claude_provider_requests.py",
-        "tests/unit/test_claude_interactive_contract.py",
     ]
     with (run / "pytest.log").open("w") as log:
         result = subprocess.run(

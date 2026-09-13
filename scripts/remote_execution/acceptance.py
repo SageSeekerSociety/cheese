@@ -321,7 +321,10 @@ def case(folder, options):
             channel._hub = LocalDeviceHub()
             launch["command"] = asyncio.run(
                 channel._ship_launcher(
-                    "fixture", uuid.uuid4(), launch["command"], str(folder / "device-home")
+                    "fixture",
+                    uuid.uuid4(),
+                    launch["command"],
+                    str(folder / "device-home"),
                 )
             )
         if options.mode == "disabled":
@@ -458,19 +461,18 @@ def case(folder, options):
                     for line in hooks_file.read_text().splitlines()
                 ]
                 for event in ("PreToolUse", "PostToolUse"):
-                    seen = {
+                    seen = [
                         h.get("tool_use_id")
                         for h in hooks
                         if h.get("hook_event_name") == event
-                    }
-                    assert {f"toolu_acceptance_{i}" for i in range(8)} <= seen, (
-                        event,
-                        seen,
-                    )
+                    ]
+                    for index in range(8):
+                        assert seen.count(f"toolu_acceptance_{index}") == 1, (
+                            event,
+                            seen,
+                        )
                 assert not [
-                    h
-                    for h in hooks
-                    if h.get("tool_name") == "mcp__native__invoke"
+                    h for h in hooks if h.get("tool_name") == "mcp__native__invoke"
                 ], hooks
         else:
             assert results[0].get("is_error"), results
