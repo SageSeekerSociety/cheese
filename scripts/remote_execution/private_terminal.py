@@ -312,11 +312,11 @@ def main():
             assert "Bash" in {tool["name"] for tool in request["tools"]}
         history = requests[-1]["messages"]
         user_text = "\n".join(
-            block.get("text", "")
+            message["content"]
+            if isinstance(message["content"], str)
+            else "\n".join(block.get("text", "") for block in message["content"])
             for message in history
             if message["role"] == "user"
-            for block in message["content"]
-            if isinstance(block, dict)
         )
         for event in platform_events:
             assert event in user_text, event
