@@ -670,10 +670,16 @@ def transport(config, target_path):
                     args = decision.get("hookSpecificOutput", {}).get(
                         "updatedInput", payload["args"]
                     )
-                    receipt = client.call(
-                        "invoke",
-                        {"id": payload["id"], "tool": payload["tool"], "args": args},
-                    )
+                    receipt = client.publish_chat(payload, args)
+                    if receipt is None:
+                        receipt = client.call(
+                            "invoke",
+                            {
+                                "id": payload["id"],
+                                "tool": payload["tool"],
+                                "args": args,
+                            },
+                        )
                     if "error" in receipt:
                         outcome = {"deny": receipt["error"]}
                     else:

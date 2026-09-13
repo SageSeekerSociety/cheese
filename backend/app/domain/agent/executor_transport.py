@@ -2,9 +2,11 @@
 
 import json
 import os
+import re
 import select
 import shlex
 import subprocess
+import uuid
 from urllib.parse import unquote, urlsplit
 
 
@@ -72,6 +74,80 @@ class RemoteClient:
                 self.transport.headers = headers
         self.transport.connection, self.transport.path = connection, path
         return connection, path
+
+    def publish_chat(self, payload, args):
+        if payload["tool"] != "Bash" or not isinstance(args.get("command"), str):
+            return None
+        command = args["command"].strip()
+        # Only literal inline messages: files and shell syntax belong to the device.
+        match = re.fullmatch(r"cheese\s+chat\s+send\s+(['\"])([^'\"\n]*)\1", command)
+        if not match or any(char in command for char in ";&|<>`$\\\r"):
+            return None
+        content = match[2]
+        api = os.environ.get("CHEESE_API", "").rstrip("/")
+        topic = os.environ.get("CHEESE_TOPIC", "")
+        token = os.environ.get("CHEESE_TOKEN", "")
+        if (
+            not content.strip()
+            or content.startswith("-")
+            or not api
+            or not topic
+            or not token
+        ):
+            return None
+        url = f"{api}/topics/{topic}/messages"
+        if (
+            getattr(self, "publication", None) is None
+            or self.publication.config["url"] != url
+        ):
+            self.publication = RemoteClient({"url": url})
+        publisher = self.publication
+        connection, path = publisher.connection()
+        # The backend deduplicates retries of the same native tool call.
+        publication_id = str(
+            uuid.uuid5(
+                uuid.NAMESPACE_URL, f"{topic}/{payload['session_id']}/{payload['id']}"
+            )
+        )
+        try:
+            connection.request(
+                "POST",
+                path,
+                body=json.dumps(
+                    {"content": content, "request_id": publication_id}
+                ).encode(),
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Cheese-Token": token,
+                    **publisher.transport.headers,
+                    **(
+                        {"X-Cheese-Turn": os.environ["CHEESE_TURN"]}
+                        if os.environ.get("CHEESE_TURN")
+                        else {}
+                    ),
+                },
+            )
+            response = connection.getresponse()
+            data = response.read()
+            if response.status != 200:
+                raise RuntimeError(
+                    f"Chat publication failed: HTTP {response.status}; "
+                    f"request_id={publication_id}"
+                )
+            result = json.loads(data)
+        except Exception:
+            connection.close()
+            publisher.transport.connection = None
+            raise
+        return {
+            "value": {
+                "stdout": json.dumps(result["data"], ensure_ascii=False),
+                "stderr": f"[cheese] request_id={publication_id}",
+                "interrupted": False,
+                "noOutputExpected": False,
+                "returnCodeInterpretation": "Exit code 0",
+            }
+        }
 
     def command(self, mode, server=None):
         command = [*self.config["command"], mode, "--state", self.config["state"]]
