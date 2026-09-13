@@ -20,6 +20,26 @@ So this file describes **this project** and nothing else. Anything equally true 
 
 We are the easiest repo in the world to get this wrong in, being both the platform and one of the repos it hosts — so `check-repo-rules.sh` guards it. The tell, when you are unsure: **a rule that is false when you are NOT in a sandbox is leaked platform knowledge.**
 
+## Production changes to this codebase go through CI/CD
+
+Treat the shared live Cheese deployment as production even when it is named dev.
+Changes to this repository's code, deployment configuration and database schema
+there must go through normal CI/CD: merge through the required checks, then
+deploy the resulting main commit or approved release with its pipeline-built or
+pinned images. Passing feature-branch CI does not authorize deploying that branch
+to production, even by manually triggering a GitHub workflow.
+
+For this codebase's production deployment, do not substitute custom Docker images,
+local builds or retagged candidates, hot-edit containers, mount candidate source
+over deployed code, or run deployments or database migrations by hand to bypass
+CI/CD. Image recipes and dependency changes follow the same release path.
+Recovery also uses normal CI/CD with database-compatible artifacts.
+
+SSH diagnosis is allowed. Independently maintained services outside this codebase,
+such as the metering proxy, and separate test environments are outside this CI/CD
+restriction; existing safety and authorization rules still apply. Run pre-merge
+experiments there without changing this codebase's production deployment or data.
+
 ## Read the issues before the docs, and clean the docs when a design lands
 
 **The design that is still being argued lives in issues.** Whatever `docs/` says about it was written before the argument finished, so starting there means implementing something already superseded — and nothing in the file will tell you.
