@@ -767,9 +767,9 @@ class DeviceChannel(Channel):
                 )
             ) from exc
         logger.info(
-            "launcher shipped to device %s in %.1fs (topic=%s, %d bytes)",
+            "launcher shipped to device %s in %.3fms (topic=%s, %d bytes)",
             device_id,
-            time.monotonic() - started,
+            (time.monotonic() - started) * 1000,
             topic_id,
             len(script),
         )
@@ -832,6 +832,16 @@ class DeviceChannel(Channel):
         dead pane. So a reused screen is first probed for a live `claude`
         (``confirm_alive``); an explicitly dead one is closed and reopened under a
         fresh sid the connector must Spawn, rather than reasserted into a corpse."""
+        started = time.monotonic()
+
+        def mark(phase: str) -> None:
+            logger.info(
+                "device_screen_timing topic=%s phase=%s elapsed_ms=%.3f",
+                topic_id,
+                phase,
+                (time.monotonic() - started) * 1000,
+            )
+
         resource_id = uuid.UUID((env or {}).get("CHEESE_RESOURCE_ID", str(topic_id)))
         existing = self._existing_screen(device_id, topic_id, resource_id)
         execution_target = None
@@ -1010,6 +1020,7 @@ class DeviceChannel(Channel):
         model_env["CHEESE_PREVIEW_URL"] = _preview_ws_url(api_base)
         if execution_target:
             model_env["CHEESE_AGENT_CONFIG"] = configuration
+        mark("configuration_ready")
         command, screen_env = build_screen_launch(
             hook_url=f"{api_base}/sandbox/hooks/{topic_id}",
             hook_token=token,
@@ -1041,6 +1052,7 @@ class DeviceChannel(Channel):
             ca_pem=ca_pem,
             execution_target=execution_target,
         )
+        mark("launcher_built")
         if existing is None:
             command = await self._ship_launcher(
                 device_id, resource_id, command, home_dir
@@ -1058,12 +1070,14 @@ class DeviceChannel(Channel):
                 # the connector still knows the sid. A new sid runs the launcher.
                 await self._hub.close_screen(existing.device_id, existing.sid)
                 existing = None
+        mark("device_checks_complete")
         if existing is not None:
             # A reassert keeps the CURRENTLY-RUNNING `claude`, which still holds the
             # credential it was born with — so the recorded birth expiry must NOT be
             # overwritten with this launch's freshly-minted one (the new token never
             # reaches the running process). It stays as the reuse gate's truth.
             await self._hub.reassert_screen(existing, command=command, env=screen_env)
+            mark("screen_reasserted")
             existing.execution_target = execution_target
             return existing
         screen = await self._hub.open_screen(
@@ -1076,6 +1090,7 @@ class DeviceChannel(Channel):
             hook_key=str(topic_id),
             env=screen_env,
         )
+        mark("screen_opened")
         # Record what credential this freshly-Spawned `claude` was born with, so a
         # later turn's reuse gate (and the zero-output fuse) can tell a live
         # credential from a dead one without re-deriving it.
@@ -1380,6 +1395,7 @@ class DeviceChannel(Channel):
             return False
         if not uses_tunnel(tunnel_url=settings.subscription_tunnel_url.strip()):
             return False
+        started = time.monotonic()
         try:
             result = await self._hub.exec(
                 screen.device_id,
@@ -1389,6 +1405,12 @@ class DeviceChannel(Channel):
             )
         except Exception:  # noqa: BLE001 — a probe failure is not proof of death
             return False
+        finally:
+            logger.info(
+                "device_probe_timing topic=%s probe=tunnel elapsed_ms=%.3f",
+                topic_id,
+                (time.monotonic() - started) * 1000,
+            )
         if result.get("exit") != 0:
             return False
         return (result.get("stdout") or "").strip() == "down"
@@ -1414,6 +1436,7 @@ class DeviceChannel(Channel):
         topic_id = screen.topic_id
         if topic_id is None:
             return True
+        started = time.monotonic()
         try:
             result = await self._hub.exec(
                 screen.device_id,
@@ -1423,6 +1446,12 @@ class DeviceChannel(Channel):
             )
         except Exception:  # noqa: BLE001 — a probe failure is not proof of death
             return True
+        finally:
+            logger.info(
+                "device_probe_timing topic=%s probe=alive elapsed_ms=%.3f",
+                topic_id,
+                (time.monotonic() - started) * 1000,
+            )
         if result.get("exit") != 0:
             return True
         return (result.get("stdout") or "").strip() != "dead"
