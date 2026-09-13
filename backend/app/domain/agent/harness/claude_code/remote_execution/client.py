@@ -291,21 +291,28 @@ def prepare(
 
 def sync_context(target_path):
     import base64
+    import hashlib
 
     target = json.loads(Path(target_path).read_text())
+    workspace = Path(target["central_workspace"])
+    manifest = Path(target_path).parent / "context-manifest.json"
+    old = json.loads(manifest.read_text()) if manifest.exists() else []
+    known_files = {}
+    for name in old:
+        path = workspace / name
+        if path.is_file():
+            known_files[name] = hashlib.sha256(path.read_bytes()).hexdigest()
     # The shell can replace even the executor's own files and responses. Keep
     # executable central configuration independent of anything it returns.
     snapshot = (
         {"files": {}, "instructions": PRIVATE_INSTRUCTIONS}
         if target.get("kind") == "private"
-        else RemoteClient(target).call("context")
+        else RemoteClient(target).call("context", {"known_files": known_files})
     )
-    workspace = Path(target["central_workspace"])
-    manifest = Path(target_path).parent / "context-manifest.json"
-    old = json.loads(manifest.read_text()) if manifest.exists() else []
     files = snapshot["files"]
+    file_names = snapshot.get("file_names", list(files))
     for name in old:
-        if name not in files:
+        if name not in file_names:
             (workspace / name).unlink(missing_ok=True)
     for name, encoded in files.items():
         relative = Path(name)
@@ -318,9 +325,15 @@ def sync_context(target_path):
         path = workspace / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(base64.b64decode(encoded))
-    manifest.write_text(json.dumps(list(files)))
+    if old != file_names:
+        manifest.write_text(json.dumps(file_names))
     config = Path(target["central_config"])
-    (config / "CLAUDE.md").write_text(snapshot["instructions"])
+    instructions = config / "CLAUDE.md"
+    if (
+        not instructions.exists()
+        or instructions.read_text() != snapshot["instructions"]
+    ):
+        instructions.write_text(snapshot["instructions"])
     for name in ("skills", "commands", "agents", "rules"):
         source = workspace / ".claude" / name
         link = config / name
