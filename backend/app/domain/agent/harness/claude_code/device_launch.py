@@ -251,29 +251,24 @@ fi
 # Linux: match the topic on each process's own environ → per-topic precise. The
 # connector (same user as the screen it spawned) can read that same-uid /proc entry.
 if [ -d /proc ] && [ -r /proc/self/environ ]; then
-  # One reader avoids spawning a tr process for every process on the host.
-  python3 - "$topic" <<'PY'
-import os
-import sys
-
-topic = b"CHEESE_TOPIC=" + os.fsencode(sys.argv[1])
-with os.scandir("/proc") as entries:
-    for entry in entries:
-        if not entry.name.isdigit():
-            continue
-        try:
-            with open(entry.path + "/cmdline", "rb") as source:
-                if b"claude" not in source.read():
-                    continue
-            with open(entry.path + "/environ", "rb") as source:
-                if topic in source.read().split(b"\0"):
-                    print("alive")
-                    sys.exit(0)
-        except OSError:
-            # Processes may exit or belong to another user during the scan.
-            continue
-print("dead")
-PY
+  command -v awk >/dev/null 2>&1 || { echo unknown; exit 0; }
+  # Read NUL-delimited fields in one process, without Python startup per turn.
+  printf '%s\n' /proc/[0-9]*/cmdline | awk -v topic="$topic" '
+  {
+    path=$0; RS="\0"; candidate=0
+    while ((getline part < path)>0) if (index(part,"claude")) candidate=1
+    close(path)
+    if (candidate) {
+      sub(/cmdline$/,"environ",path)
+      while ((getline part < path)>0) {
+        if (part=="CHEESE_TOPIC="topic) { alive=1; print "alive"; exit }
+      }
+      close(path)
+    }
+    RS="\n"
+  }
+  END { if (!alive) print "dead" }
+  '
   exit $?
 fi
 # macOS has no /proc. Read the environment of candidate Claude processes via
