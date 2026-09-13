@@ -241,6 +241,8 @@ class CentralChannel(DeviceChannel):
                             hub=self._hub,
                         )
                 if info is None:
+                    # Exclude scoped tool admission until the replacement is ready.
+                    await execution.lock_release(session, resource)
                     result = await self._hub.exec(
                         executor_id,
                         ["python3", "-"],

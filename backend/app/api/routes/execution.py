@@ -65,10 +65,13 @@ async def execute(
         time.monotonic_ns(),
     )
     try:
+        # Hold admission through the response, including background task creation.
+        await execution.lock_release(db, resource_id, shared=True)
         return await execution.call(
             target, payload.method, payload.params, trace_id=trace_id
         )
     finally:
+        await db.rollback()
         logger.info(
             "execution_timing stage=handler_end trace=%s mono_ns=%d",
             trace_id,
