@@ -347,6 +347,12 @@ def test_generated_prefix_preserves_local_hook_and_remote_command_boundary(
     assert (workspace / "hook receipt.txt").read_text() == "second receipt"
 
 
+def test_direct_chat_hook_uses_resident_mcp_without_node_process_globals():
+    source = Path(central.__file__).with_name("proxy.js").read_text()
+    assert '"publish_chat"' in source
+    assert "process.env" not in source
+
+
 def test_central_tools_reuse_process_and_http_connection(central_transport):
     process, clients, _, work = central_transport
     pid = process.process.pid
