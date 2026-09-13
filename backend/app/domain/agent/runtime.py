@@ -622,6 +622,18 @@ class AgentWorkRunner:
             client_id=client_id,
         )
         turn_id = user_block_id
+        recipient_handle = next(
+            (
+                (payload.get("meta") or {}).get("agent_recipient", {}).get("handle")
+                for payload in payloads
+                if (payload.get("meta") or {}).get("agent_recipient")
+            ),
+            None,
+        )
+        summon = summon or any(
+            (payload.get("meta") or {}).get("agent_recipient", {}).get("mentioned")
+            for payload in payloads
+        )
         persisted_at = time.monotonic()
         for payload in payloads:
             await self._broker.publish(
@@ -660,6 +672,11 @@ class AgentWorkRunner:
                     content,
                     author,
                     attachments,
+                    **(
+                        {"recipient_handle": recipient_handle}
+                        if recipient_handle is not None
+                        else {}
+                    ),
                 )
             # Request completion, not turn completion: no turn was started.
             await self._broker.publish(channel, {"type": "done"})
@@ -685,6 +702,7 @@ class AgentWorkRunner:
                 landed_user_block_id=user_block_id,
                 landed_user_block_ids=user_block_ids,
                 live_delivery_expected=live_delivery_expected,
+                recipient_handle=recipient_handle,
             )
         )
         self._tasks.add(task)
@@ -1511,10 +1529,14 @@ class AgentWorkRunner:
         # work disappears before injection, normal queueing is still a fallback
         # and must be reported as an error.
         live_delivery_expected: bool = False,
+        recipient_handle: str | None = None,
         # Pre-built frame stream (kickoff turns). None → run a converse turn.
         frames: AsyncIterator[Frame] | None = None,
     ) -> None:
         channel = str(topic_id)
+        if recipient_handle is not None:
+            if await chat_service.wait_for_recipient(topic_id, recipient_handle):
+                live_delivery_expected = False
         if landed_user_block_id is not None and (content or attachments):
             delivered = await chat_service.merge_into_running_turn(
                 topic_id,
@@ -1522,6 +1544,11 @@ class AgentWorkRunner:
                 content,
                 author,
                 attachments,
+                **(
+                    {"recipient_handle": recipient_handle}
+                    if recipient_handle is not None
+                    else {}
+                ),
             )
             if delivered is True:
                 ack = await chat_service.ack_summon(landed_user_block_id, topic_id)
@@ -1581,6 +1608,11 @@ class AgentWorkRunner:
                     user_block_id=landed_user_block_id,
                     continuation_id=continuation_id,
                     provision_actor=provision_actor,
+                    **(
+                        {"recipient_handle": recipient_handle}
+                        if recipient_handle is not None
+                        else {}
+                    ),
                 )
             await self._execute(
                 chat_service,
