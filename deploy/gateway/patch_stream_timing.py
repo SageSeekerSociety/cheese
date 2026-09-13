@@ -34,3 +34,13 @@ http_path.write_bytes(
         b"from .provider_http_timing import trace_post\n\n\n" + class_marker,
     ).replace(marker, b"    @trace_post\n" + marker)
 )
+
+router_path = Path('/app/.venv/lib/python3.13/site-packages/litellm/router.py')
+router_source = router_path.read_bytes()
+assert hashlib.sha256(router_source).hexdigest() == (
+    '4c11a670b62c001568c1ffbd6e1a85a46af67b1bd9311ec892a25ed3eb86fca4'
+), 'Review the upstream router before updating this patch'
+eager_debug = b'verbose_router_logger.debug(f"Inside ageneric_api_call_with_fallbacks() - model: {model}; kwargs: {kwargs}")'
+lazy_debug = b'verbose_router_logger.debug("Inside ageneric_api_call_with_fallbacks() - model: %s; kwargs: %s", model, kwargs)'
+assert router_source.count(eager_debug) == 1
+router_path.write_bytes(router_source.replace(eager_debug, lazy_debug))
