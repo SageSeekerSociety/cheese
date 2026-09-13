@@ -164,6 +164,7 @@ class _HookWorkState:
     agent_pool: tuple[MemoryScope, str] | None
     user_text: str
     started_at: datetime
+    agent_instance_handle: str | None = None
     assistant_count: int = 0
     last_chat_at: datetime | None = None
     progress_reminded: bool = False
@@ -1164,9 +1165,14 @@ class ChatService:
 
     @asynccontextmanager
     async def _prompt_lock(
-        self, topic_id: uuid.UUID, work_id: uuid.UUID
+        self,
+        topic_id: uuid.UUID,
+        work_id: uuid.UUID,
+        recipient_handle: str | None = None,
     ) -> AsyncIterator[None]:
         async with self._lock_for(topic_id):
+            if recipient_handle is not None:
+                await self.wait_for_recipient(topic_id, recipient_handle)
             self._active_turn_ids[topic_id] = work_id
             try:
                 yield
@@ -1327,6 +1333,7 @@ class ChatService:
         user_block_id: uuid.UUID,
         continuation_id: uuid.UUID | None = None,
         provision_actor: Actor | None = None,
+        recipient_handle: str | None = None,
     ) -> AsyncIterator[dict]:
         """Run the AI half of a human message that is already durable.
 
@@ -1336,7 +1343,7 @@ class ChatService:
         ack = await self.ack_summon(user_block_id, topic_id)
         if ack is not None:
             yield {"type": "reaction", **ack}
-        async with self._prompt_lock(topic_id, turn_id):
+        async with self._prompt_lock(topic_id, turn_id, recipient_handle):
             async for frame in self._converse_impl(
                 topic_id=topic_id,
                 content=content,
@@ -1354,6 +1361,7 @@ class ChatService:
         content: str,
         author: str,
         attachments: list[dict] | None = None,
+        recipient_handle: str | None = None,
     ) -> bool | None:
         """Inject a just-posted human message into the turn already running on
         this topic.
@@ -1373,6 +1381,14 @@ class ChatService:
         the file write."""
         consuming_turn_id = self._active_turn_ids.get(topic_id)
         if consuming_turn_id is None:
+            return None
+        state = self._hook_work.get((topic_id, consuming_turn_id))
+        if (
+            recipient_handle is not None
+            and state is not None
+            and state.agent_instance_handle is not None
+            and state.agent_instance_handle != recipient_handle
+        ):
             return None
         lines = []
         if content:
@@ -1430,6 +1446,27 @@ class ChatService:
                 pending.remove(entry)
             return False
         return True
+
+    async def wait_for_recipient(
+        self, topic_id: uuid.UUID, recipient_handle: str
+    ) -> bool:
+        from app.domain.agent.runtime import get_broker
+
+        waited = False
+        async with get_broker().subscribe(str(topic_id)) as events:
+            while True:
+                work_id = self._active_turn_ids.get(topic_id)
+                if work_id is None:
+                    return waited
+                state = self._hook_work.get((topic_id, work_id))
+                if (
+                    state is None
+                    or state.agent_instance_handle is None
+                    or state.agent_instance_handle == recipient_handle
+                ):
+                    return waited
+                waited = True
+                await events.get()
 
     async def remind_silent_turns(self) -> int:
         """Queue an internal reminder while a room response is still running."""
@@ -2061,6 +2098,7 @@ class ChatService:
             agent_pool=agent_pool,
             user_text="",
             started_at=datetime.now(UTC),
+            agent_instance_handle=agent.handle,
             known_commits=asyncio.ensure_future(
                 self._known_commits(project_id, topic_id)
             ),
@@ -2459,6 +2497,13 @@ class ChatService:
                 raise NotFoundError("Topic not found")
             topic = place.room
             created_blocks: list[Block] = []
+            agent = await self._resolved_agent(session, topic)
+            agent_handles = await TopicMemberService(session).agent_handles(topic.id)
+            recipient = {
+                "instance_id": str(agent.instance_id) if agent.instance_id else None,
+                "handle": agent.handle,
+                "mentioned": False,
+            }
             anchor_id: uuid.UUID | None = None
             attribution_id = turn_id
             # B3: a reply threads under a block IN THIS TOPIC. A client that
@@ -2491,6 +2536,11 @@ class ChatService:
                     if topic.is_private
                     else await ProjectRepository(session).list_members(topic.project_id)
                 )
+                # Use the same room seat and display name as the mention picker.
+                roster = [
+                    {"handle": handle, "name": agent.display_name}
+                    for handle in agent_handles
+                ] + [row for row in roster if row["handle"] not in agent_handles]
                 if roster:
                     topic_refs = [
                         {"id": str(t.id), "title": t.title}
@@ -2498,6 +2548,9 @@ class ChatService:
                         if t.kind != TopicKind.root and t.id != topic.id
                     ]
                     content = expand_mention_names(content, roster, topic_refs)
+                recipient["mentioned"] = any(
+                    f"<@{handle}>" in content for handle in agent_handles
+                )
                 user_block = await blocks.add(
                     project_id=topic.project_id,
                     topic_id=place.room_id,
@@ -2512,7 +2565,10 @@ class ChatService:
                     # it was typed (§14.1 实时) needs to recognise its own copy
                     # coming home; matching on text cannot do that, because this
                     # method rewrites the text on the way in.
-                    meta={"client_id": client_id} if client_id else None,
+                    meta={
+                        "agent_recipient": recipient,
+                        **({"client_id": client_id} if client_id else {}),
+                    },
                 )
                 if attribution_id is None:
                     attribution_id = user_block.id
@@ -2541,6 +2597,7 @@ class ChatService:
                     turn_id=attribution_id,
                     # An image-only send still honors the reply thread (B3).
                     reply_to=None if content else reply_uuid,
+                    meta={"agent_recipient": recipient},
                 )
                 if attribution_id is None:
                     attribution_id = att_block.id
@@ -2615,7 +2672,13 @@ class ChatService:
         return memory_pool(topic.project_id, agent)
 
     async def _recall_agent_memories(
-        self, memory, session: AsyncSession, *, topic: Topic, query: str = ""
+        self,
+        memory,
+        session: AsyncSession,
+        *,
+        topic: Topic,
+        query: str = "",
+        agent: ResolvedAgent | None = None,
     ) -> RecallResult:
         """What this 芝士 remembers inside this project, given what this turn is
         about.
@@ -2631,7 +2694,11 @@ class ChatService:
         what did *not* come in alongside what did — a pool nobody is told is
         bigger than the prompt is how memory quietly stops existing.
         """
-        own = await self._agent_memory_pool(session, topic)
+        own = (
+            memory_pool(topic.project_id, agent)
+            if agent is not None
+            else await self._agent_memory_pool(session, topic)
+        )
         legacy = legacy_topic_pool(topic.project_id, topic.id)
         pools = [own] + ([legacy] if legacy != own else [])
         pools.append((MemoryScope.project, str(topic.project_id)))
@@ -3826,6 +3893,33 @@ class ChatService:
             history = await blocks.turn_history(place.room_id)
             phases_ms["history"] = (time.monotonic() - started) * 1000
             pending = _pending_human_blocks(history)
+            addressed = next(
+                (block for block in history if block.id == user_block_id),
+                pending[0] if pending else None,
+            )
+            recipient = (
+                (addressed.meta or {}).get("agent_recipient") if addressed else None
+            )
+            agents = AgentInstanceService(session)
+            if recipient is None:
+                agent = await self._resolved_agent(session, topic)
+            elif recipient["instance_id"] is None:
+                agent = IMPLICIT_DEFAULT
+            else:
+                agent = agents.resolved(
+                    await agents.get_in_project(
+                        project_id=topic.project_id,
+                        instance_id=uuid.UUID(recipient["instance_id"]),
+                    )
+                )
+            pending = [
+                block
+                for block in pending
+                if (block.meta or {})
+                .get("agent_recipient", {})
+                .get("handle", agent.handle)
+                == agent.handle
+            ]
             pending_ids = [b.id for b in pending]
             if not pending and user_block_id is not None:
                 # 有人召唤，但他那条消息已经被前一轮读进 prompt 了（两个人几乎同时
@@ -3872,18 +3966,12 @@ class ChatService:
                 )
             else:
                 memories = await self._recall_agent_memories(
-                    memory, session, topic=topic, query=turn_query
+                    memory, session, topic=topic, query=turn_query, agent=agent
                 )
             phases_ms["memory"] = (time.monotonic() - started) * 1000
             projects_repo = ProjectRepository(session)
             project = await projects_repo.get(topic.project_id)
             # Read the selected agent once so this turn's role and model agree.
-            agents = AgentInstanceService(session)
-            agent = (
-                await agents.for_topic(topic, project)
-                if project is not None
-                else IMPLICIT_DEFAULT
-            )
             role = await agents.system_prompt(agent)
             wanted_harness = await agents.harness(agent)
             agent_pool = memory_pool(topic.project_id, agent)
@@ -3909,7 +3997,7 @@ class ChatService:
             # (`_agent_at`) — reading under one key and writing under another
             # does not fail, it hands back None and starts a brand-new
             # conversation, which is the failure this whole path prevents.
-            session_agent = await self._agent_at(session, place)
+            session_agent = agent
             resume_session_id = await AgentSessionService(session).resume_token(
                 place.room_id,
                 session_agent.handle,
@@ -4360,6 +4448,7 @@ class ChatService:
                     agent_pool=agent_pool,
                     user_text=prompt_text,
                     started_at=datetime.now(UTC),
+                    agent_instance_handle=prepared.agent.handle,
                     known_commits=known_commits,
                 )
                 return
