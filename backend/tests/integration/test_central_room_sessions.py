@@ -1,6 +1,8 @@
 """Session placement survives storage while execution stays on the room machine."""
 
+import asyncio
 import json
+import threading
 import uuid
 from types import SimpleNamespace
 from typing import Any
@@ -10,10 +12,14 @@ import pytest
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent import execution
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_provider import DeviceChannel, EnvironmentPreparationError
 from app.domain.agent.harness import Opening, SessionRef
 from app.domain.agent.harness.channel import ScreenSetupError
+from app.domain.agent.harness.claude_code.remote_execution import (
+    runtime as executor_runtime,
+)
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent.harness.codex import CodexChannel
 from app.domain.topic.models import Topic
@@ -101,6 +107,7 @@ async def test_center_uses_the_selected_harness_for_bootstrap_and_history(
             transfer_history=history,
             script=lambda *args: "FIXTURE_EXECUTOR_BOOTSTRAP",
             payload_for=lambda *args: {"fixture_executor": True},
+            can_prepare=lambda info: "prepare" in info.get("capabilities", []),
         ),
     )
     kwargs = dict(
@@ -126,6 +133,41 @@ async def test_center_uses_the_selected_harness_for_bootstrap_and_history(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("digest", [None, "previous-release"])
+async def test_old_executor_process_takes_release_bootstrap(
+    client, room, monkeypatch, digest
+):
+    project, topic = room
+    central = channel(client, monkeypatch)
+    kwargs = dict(
+        project_id=project,
+        topic_id=topic,
+        token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
+        env={},
+        launch=ClaudeLaunch("System"),
+        precheck=await central.precheck(project, topic),
+    )
+    await central.ensure_ready(**kwargs)
+    central._hub.exec.reset_mock()
+    central._hub.call_executor.return_value = {
+        "pid": 123,
+        "capabilities": ["prepare"],
+        "runtime_sha256": digest,
+    }
+    async with client.test_factory() as admitted:
+        await execution.lock_release(admitted, topic, shared=True)
+        update = asyncio.create_task(central.ensure_ready(**kwargs))
+        try:
+            await asyncio.sleep(0.2)
+            central._hub.exec.assert_not_awaited()
+        finally:
+            await admitted.rollback()
+            await asyncio.wait_for(update, 10)
+    central._hub.exec.assert_awaited_once()
+    assert central._hub.call_executor.await_args.args[2] == "ping"
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize("environment_state", ["ready", "pending", "failed"])
 async def test_running_executor_prepares_without_python_launch(
     client, room, monkeypatch, environment_state
@@ -144,7 +186,11 @@ async def test_running_executor_prepares_without_python_launch(
     central._hub.exec.reset_mock()
     central._wait_executor.reset_mock()
     central._hub.call_executor.side_effect = [
-        {"pid": 123, "capabilities": ["prepare"]},
+        {
+            "pid": 123,
+            "capabilities": ["prepare"],
+            "runtime_sha256": executor_runtime.SOURCE_SHA256,
+        },
         {
             "pid": 123,
             "workspace": "/project",
@@ -183,7 +229,11 @@ async def test_running_executor_prepare_failure_is_not_retried_as_install(
     await central.ensure_ready(**kwargs)
     central._hub.exec.reset_mock()
     central._hub.call_executor.side_effect = [
-        {"pid": 123, "capabilities": ["prepare"]},
+        {
+            "pid": 123,
+            "capabilities": ["prepare"],
+            "runtime_sha256": executor_runtime.SOURCE_SHA256,
+        },
         RuntimeError("Executor configuration changed"),
     ]
     with pytest.raises(RuntimeError, match="configuration changed"):
@@ -315,6 +365,52 @@ async def test_running_executor_does_not_hide_failed_environment(
     status.assert_awaited_once()
     ping.assert_not_awaited()
     central._ensure_screen.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_executor_release_excludes_new_tool_admission(client, room, monkeypatch):
+    project, topic = room
+    async with client.test_factory() as db:
+        stored = await db.get(Topic, topic)
+        resource = stored.resource_id or topic
+        stored.session_placement = {
+            "device_id": "center",
+            "resource_id": str(resource),
+            "channel": "device",
+            "execution": {"kind": "device", "device_id": "executor"},
+        }
+        await db.commit()
+    entered = threading.Event()
+
+    async def invoke(*args, **kwargs):
+        entered.set()
+        return {"value": "kept"}
+
+    monkeypatch.setattr(execution, "call", invoke)
+    token = mint_scoped_token(
+        project_id=str(project), topic_id=str(topic), resource_id=str(resource)
+    )
+    async with client.test_factory() as release:
+        await execution.lock_release(release, resource)
+        request = asyncio.create_task(
+            asyncio.to_thread(
+                client.post,
+                f"/topics/{topic}/execution/{resource}",
+                headers={"X-Cheese-Token": token},
+                json={
+                    "method": "invoke",
+                    "params": {"tool": "Read", "args": {"file_path": "draft.md"}},
+                },
+            )
+        )
+        try:
+            assert not await asyncio.to_thread(entered.wait, 0.2)
+        finally:
+            await release.rollback()
+            response = await asyncio.wait_for(request, 5)
+    assert response.status_code == 200, response.text
+    assert entered.is_set()
+    assert response.json() == {"value": "kept"}
 
 
 @pytest.mark.anyio

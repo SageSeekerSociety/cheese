@@ -24,6 +24,13 @@ from app.domain.agent.harness.claude_code.remote_execution import (
 )
 
 
+def can_prepare(info):
+    return (
+        "prepare" in info.get("capabilities", [])
+        and info.get("runtime_sha256") == runtime.SOURCE_SHA256
+    )
+
+
 def payload_for(project_id, resource_id, env, known_files=None):
     files = {
         "remote-execution/bootstrap.py": Path(bootstrap.__file__).read_text(),

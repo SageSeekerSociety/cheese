@@ -159,6 +159,94 @@ def test_executor_bootstrap_starts_in_room_without_a_git_checkout(
         )
 
 
+def test_executor_release_waits_for_commands_and_preserves_results(
+    tmp_path, monkeypatch, capsys
+):
+    from app.domain.agent.harness.claude_code.remote_execution import bootstrap
+    from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
+    project, resource = uuid.uuid4(), uuid.uuid4()
+    payload = payload_for(
+        project, resource, {"CHEESE_API": "http://unused", "CHEESE_TOKEN": "test"}
+    )
+    home = tmp_path / ".cheese/home" / str(project) / str(resource)
+    state = home / ".claude/executor"
+    source = home / ".claude/remote-execution/runtime.py"
+
+    def ready():
+        deadline = time.monotonic() + 10
+        while True:
+            try:
+                return runtime.request(state, "ping")
+            except (ConnectionError, FileNotFoundError):
+                assert time.monotonic() < deadline
+                time.sleep(0.01)
+
+    try:
+        bootstrap.configure(payload)
+        capsys.readouterr()
+        original = ready()
+        task = runtime.request(
+            state,
+            "invoke",
+            {
+                "id": "retained-output",
+                "tool": "Bash",
+                "args": {
+                    "command": (
+                        "while [ ! -f release ]; do sleep 0.05; done; printf kept"
+                    ),
+                    "run_in_background": True,
+                },
+            },
+        )["value"]["backgroundTaskId"]
+        changed = (
+            base64.b64decode(payload["files"]["remote-execution/runtime.py"])
+            + b"\n# release fixture\n"
+        )
+        payload["files"]["remote-execution/runtime.py"] = base64.b64encode(
+            changed
+        ).decode()
+        before = source.read_bytes()
+        with unittest.TestCase().assertRaisesRegex(RuntimeError, "running commands"):
+            bootstrap.configure(payload)
+        assert source.read_bytes() == before
+        assert ready()["pid"] == original["pid"]
+        (home / "room/release").touch()
+        deadline = time.monotonic() + 10
+        while True:
+            result = runtime.request(
+                state, "control", {"subtype": "task_output", "task_id": task}
+            )
+            if result["status"] != "running":
+                break
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        assert result["stdout"] == "kept"
+        bootstrap.configure(payload)
+        capsys.readouterr()
+        updated = ready()
+        assert updated["pid"] != original["pid"]
+        assert updated["runtime_sha256"] == hashlib.sha256(changed).hexdigest()
+        assert (
+            runtime.request(
+                state, "control", {"subtype": "task_output", "task_id": task}
+            )["stdout"]
+            == "kept"
+        )
+        bootstrap.configure(payload)
+        capsys.readouterr()
+        assert ready()["pid"] == updated["pid"]
+    finally:
+        subprocess.run(
+            [sys.executable, str(RUNTIME), "stop", "--state", str(state)],
+            capture_output=True,
+            timeout=15,
+        )
+
+
 def test_running_executor_prepares_updated_room_without_restart(
     tmp_path, monkeypatch, capsys
 ):
