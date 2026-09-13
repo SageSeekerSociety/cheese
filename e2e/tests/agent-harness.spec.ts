@@ -16,7 +16,7 @@ test('a teammate keeps its identity and role across saved harness switches', asy
   await dialog.getByLabel('角色设定（可留空）').fill(role);
 
   async function selectHarness(label: string) {
-    await dialog.getByRole('combobox', { name: '运行方式', exact: true }).click();
+    await dialog.locator('.v-select').filter({ hasText: '运行方式' }).getByRole('combobox').click();
     await page.getByRole('option', { name: label, exact: true }).click();
     await expect(dialog.getByLabel('角色设定（可留空）')).toHaveValue(role);
   }
@@ -42,7 +42,7 @@ test('a teammate keeps its identity and role across saved harness switches', asy
   }
 
   await selectHarness('Codex');
-  await dialog.getByRole('combobox', { name: '模型', exact: true }).click();
+  await dialog.locator('.v-select').filter({ hasText: '模型' }).getByRole('combobox').click();
   await expect(page.getByRole('option', { name: 'codex-ci-fixture', exact: true })).toBeVisible();
   await expect(page.getByRole('option', { name: 'DeepSeek V4.1 Flash', exact: true })).toHaveCount(0);
   await page.getByRole('option', { name: 'codex-ci-fixture', exact: true }).click();
@@ -50,7 +50,7 @@ test('a teammate keeps its identity and role across saved harness switches', asy
   expect(original.configuration).toMatchObject({ harness: 'codex', model: 'codex-ci-fixture', body: role });
 
   await selectHarness('Claude Code');
-  await dialog.getByRole('combobox', { name: '模型', exact: true }).click();
+  await dialog.locator('.v-select').filter({ hasText: '模型' }).getByRole('combobox').click();
   await expect(page.getByRole('option', { name: 'DeepSeek V4.1 Flash', exact: true })).toBeVisible();
   await expect(page.getByRole('option', { name: 'codex-ci-fixture', exact: true })).toHaveCount(0);
   await page.getByRole('option', { name: 'DeepSeek V4.1 Flash', exact: true }).click();
