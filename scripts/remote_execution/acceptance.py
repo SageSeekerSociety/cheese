@@ -282,6 +282,7 @@ def case(folder, options):
                 build_screen_launch,
             )
             from app.domain.agent.device_provider import DeviceChannel
+            from tests.support.harness_prompts import system_prompt
 
             owner = folder / "device-owner"
             (owner / ".local/bin").mkdir(parents=True)
@@ -297,6 +298,7 @@ def case(folder, options):
                 model="claude-sonnet-4-6",
                 extra_env=env,
                 execution_target=target,
+                system_prompt=system_prompt(),
             )
             env.update(screen_env)
 
@@ -321,7 +323,10 @@ def case(folder, options):
             channel._hub = LocalDeviceHub()
             launch["command"] = asyncio.run(
                 channel._ship_launcher(
-                    "fixture", uuid.uuid4(), launch["command"], str(folder / "device-home")
+                    "fixture",
+                    uuid.uuid4(),
+                    launch["command"],
+                    str(folder / "device-home"),
                 )
             )
         if options.mode == "disabled":
@@ -449,6 +454,11 @@ def case(folder, options):
             )
             assert result["value"]["stdout"] == "CANCEL_CONFIRMED", result
             if options.launcher == "device":
+                for request in server.state["requests"]:
+                    text = "\n".join(
+                        block.get("text", "") for block in request["system"]
+                    )
+                    assert text.count(system_prompt()) == 1, text
                 deadline = time.monotonic() + 10
                 hooks_file = folder / "hooks.jsonl"
                 while not hooks_file.exists() and time.monotonic() < deadline:
@@ -458,19 +468,18 @@ def case(folder, options):
                     for line in hooks_file.read_text().splitlines()
                 ]
                 for event in ("PreToolUse", "PostToolUse"):
-                    seen = {
+                    seen = [
                         h.get("tool_use_id")
                         for h in hooks
                         if h.get("hook_event_name") == event
-                    }
-                    assert {f"toolu_acceptance_{i}" for i in range(8)} <= seen, (
-                        event,
-                        seen,
-                    )
+                    ]
+                    for index in range(8):
+                        assert seen.count(f"toolu_acceptance_{index}") == 1, (
+                            event,
+                            seen,
+                        )
                 assert not [
-                    h
-                    for h in hooks
-                    if h.get("tool_name") == "mcp__native__invoke"
+                    h for h in hooks if h.get("tool_name") == "mcp__native__invoke"
                 ], hooks
         else:
             assert results[0].get("is_error"), results

@@ -46,6 +46,7 @@ jobs:
           path: |
             logs/harness-contracts/*/inputs.json
             logs/harness-contracts/*/*.log
+            logs/harness-contracts/*/results.xml
             logs/harness-contracts/*/pytest/**/provider-requests.json
             logs/harness-contracts/*/pytest/**/runner.log
           retention-days: 7

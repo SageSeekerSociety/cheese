@@ -17,6 +17,9 @@ from rc_fixture import RemoteControlFixture
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "backend/app/domain/agent/harness/claude_code/remote_execution"
+sys.path.insert(0, str(ROOT / "backend"))
+from tests.support.harness_prompts import event_prompts, system_prompt  # noqa: E402
+
 sys.path.insert(0, str(SOURCE))
 from client import RemoteClient, prepare  # noqa: E402
 from private import release, target  # noqa: E402
@@ -28,8 +31,12 @@ def main():
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--ordinary", action="store_true")
     args = parser.parse_args()
+    platform_system = system_prompt()
+    platform_events = list(event_prompts().values())
     folder = args.output.resolve()
     folder.mkdir(parents=True, exist_ok=False)
+    prompt_file = folder / "system-prompt.md"
+    prompt_file.write_text(platform_system)
     config = target(uuid.uuid4())
     room = None
     handler = Handler
@@ -115,6 +122,8 @@ def main():
                 "--dangerously-skip-permissions",
                 "--remote-control",
                 "Private acceptance",
+                "--append-system-prompt-file",
+                str(prompt_file),
             ],
         )
         gate = Path(launch["env"]["CLAUDE_CONFIG_DIR"]) / ".claude.json"
@@ -175,7 +184,7 @@ def main():
                 "request": {"subtype": "initialize"},
             }
         )
-        send("Prepare and revise a private document draft.")
+        send("Prepare and revise a private document draft.\n" + platform_events[0])
         wait_requests(4)
         actions.extend(
             [
@@ -192,7 +201,10 @@ def main():
             actions.append(
                 {"name": "mcp__custom__echo", "input": {"message": "ROOM_CUSTOM_MCP"}}
             )
-        send("Continue processing the draft from the last message.")
+        send(
+            "Continue processing the draft from the last message.\n"
+            + platform_events[1]
+        )
         wait_requests(7 if room else 6)
         assert "CROSS_TURN_SHELL_OK" in json.dumps(server.state["requests"][-1])
         assert not (Path(launch["cwd"]) / "draft.md").exists()
@@ -234,6 +246,8 @@ def main():
                     "Resumed acceptance",
                     "--resume",
                     resume,
+                    "--append-system-prompt-file",
+                    str(prompt_file),
                 ],
             )
             resumed_config = Path(resumed["env"]["CLAUDE_CONFIG_DIR"])
@@ -273,7 +287,10 @@ def main():
             actions.extend(
                 [None, {"name": "Read", "input": {"file_path": work + "/draft.md"}}]
             )
-            send("Resume the same conversation and read the revised draft.")
+            send(
+                "Resume the same conversation and read the revised draft.\n"
+                + platform_events[2]
+            )
             wait_requests(9)
             history = json.dumps(server.state["requests"][-1]["messages"])
             assert "Prepare and revise a private document draft." in history
@@ -283,12 +300,35 @@ def main():
             assert {
                 p.relative_to(source): p.read_bytes() for p in source.rglob("*.jsonl")
             } == originals
+        for event in platform_events[3 if room else 2 :]:
+            count = len(server.state["requests"]) + 1
+            send(event)
+            wait_requests(count)
+        requests = server.state["requests"]
+        for request in requests:
+            blocks = request["system"]
+            system = "\n".join(block.get("text", "") for block in blocks)
+            assert system.count(platform_system) == 1, system
+            assert "Bash" in {tool["name"] for tool in request["tools"]}
+        history = requests[-1]["messages"]
+        user_text = "\n".join(
+            message["content"]
+            if isinstance(message["content"], str)
+            else "\n".join(block.get("text", "") for block in message["content"])
+            for message in history
+            if message["role"] == "user"
+        )
+        for event in platform_events:
+            assert event in user_text, event
+        dump(folder / "provider-requests.json", requests)
         terminal()
         dump(
             folder / "summary.json",
             {
                 "passed": True,
-                "turns": 3 if room else 2,
+                "turns": len(platform_events),
+                "platform_system_exact": True,
+                "platform_events": list(event_prompts()),
                 "model_requests": len(server.state["requests"]),
                 "central_file_unchanged": True,
             },
