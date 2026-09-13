@@ -11,11 +11,14 @@ from urllib.parse import unquote, urlsplit
 
 
 class RemoteClient:
-    def __init__(self, config):
+    def __init__(self, config, *, shared_connection=False):
         import threading
+        from types import SimpleNamespace
 
         self.config = config
-        self.transport = threading.local()
+        self.transport = SimpleNamespace() if shared_connection else threading.local()
+        self.publication_lock = threading.Lock()
+        self.publication = None
 
     def connection(self):
         # Shell forwarding exits before creating a client; keep its startup
@@ -94,6 +97,10 @@ class RemoteClient:
         return self.publish_message(payload, {"content": content})
 
     def publish_message(self, payload, args):
+        with self.publication_lock:
+            return self._publish_message(payload, args)
+
+    def _publish_message(self, payload, args):
         content = args.get("content")
         if not isinstance(content, str) or not content.strip():
             raise ValueError("Chat content must be a nonempty string")
@@ -110,11 +117,10 @@ class RemoteClient:
             )
         )
         url = f"{api}/topics/{topic}/messages"
-        if (
-            getattr(self, "publication", None) is None
-            or self.publication.config["url"] != url
-        ):
-            self.publication = RemoteClient({"url": url})
+        if self.publication is None or self.publication.config["url"] != url:
+            # Publication is serialized across MCP workers; its connection must
+            # outlive the worker thread that happened to make the first call.
+            self.publication = RemoteClient({"url": url}, shared_connection=True)
         publisher = self.publication
         connection, path = publisher.connection()
         try:

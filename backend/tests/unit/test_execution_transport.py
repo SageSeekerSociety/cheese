@@ -431,6 +431,34 @@ def test_chat_publication_uses_resident_connection_and_stable_request_id(
     assert events[1]["tool_response"]["stdout"] == result["result"]["stdout"]
 
 
+def test_publication_connection_survives_worker_thread_exit(
+    central_transport, tmp_path, monkeypatch
+):
+    _, clients, _, _ = central_transport
+    config = json.loads((tmp_path / "central.json").read_text())
+    monkeypatch.setenv("CHEESE_API", config["url"].removesuffix("/execution"))
+    monkeypatch.setenv("CHEESE_TOKEN", "fixture")
+    monkeypatch.setenv("CHEESE_TOPIC", "fixture")
+    monkeypatch.setenv("CHEESE_TURN", "fixture-turn")
+    publisher = executor_transport.RemoteClient(config)
+    try:
+        for index in range(2):
+            with ThreadPoolExecutor(max_workers=1) as worker:
+                result = worker.submit(
+                    publisher.publish_message,
+                    {"session_id": "fixture", "id": str(index)},
+                    {"content": "shared connection"},
+                ).result(timeout=10)
+                assert (
+                    json.loads(result["value"]["stdout"])["content"]
+                    == "shared connection"
+                )
+        assert len(clients) == 2 and clients[0] == clients[1]
+    finally:
+        if publisher.publication:
+            publisher.publication.transport.connection.close()
+
+
 def test_chat_lost_response_is_not_replayed_or_sent_to_device(central_transport):
     process, _, drop, _ = central_transport
     drop.append(True)

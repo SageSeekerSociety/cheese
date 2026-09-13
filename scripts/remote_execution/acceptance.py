@@ -234,7 +234,12 @@ def case(folder, options):
         server = Server(("127.0.0.1", 0), rc.handler(Handler) if rc else Handler)
         if rc:
             rc.base = f"http://127.0.0.1:{server.server_port}"
-        server.state = {"dir": folder, "actions": actions, "requests": []}
+        server.state = {
+            "dir": folder,
+            "actions": actions,
+            "requests": [],
+            "claude_binary": options.claude,
+        }
         threading.Thread(target=server.serve_forever, daemon=True).start()
         env = {
             k: v
