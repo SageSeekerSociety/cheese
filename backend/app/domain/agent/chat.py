@@ -2149,6 +2149,7 @@ class ChatService:
                 platform_unsolicited=platform_unsolicited,
                 continuation_id=(state.continuation_id if state is not None else None),
                 at=event.at,
+                author=event.agent_handle,
                 task_id=task_id,
             )
             if payload is not None:
@@ -3259,7 +3260,10 @@ class ChatService:
                 # all), which is why this compares the words. Traced from
                 # production: 46 messages, exactly one with empty meta, sitting
                 # next to a backfilled duplicate of itself.
-                if _canon(message.text) in known_texts:
+                if (
+                    not message.complete_identity
+                    and _canon(message.text) in known_texts
+                ):
                     seen.add(fallback_eid)
                     seen.update(message.eids)
                     return None
@@ -3275,6 +3279,7 @@ class ChatService:
                     eids=message.eids,
                     backfilled=True,
                     at=message.at,
+                    author=message.agent_handle,
                     task_id=await self._work_of_worker(topic_id, message.agent_id),
                 )
                 seen.add(fallback_eid)

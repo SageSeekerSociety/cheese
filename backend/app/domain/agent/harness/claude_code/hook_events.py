@@ -330,6 +330,7 @@ class _PendingMessage:
     #: assembled out of order would come out belonging to nobody.
     agent_id: str | None = None
     agent_type: str | None = None
+    agent_handle: str | None = None
     #: When the first flush of this message arrived — the moment 芝士 started
     #: saying it, which is where it belongs in the timeline. Assembly finishes
     #: later (a message is only known to be whole once something after it
@@ -404,6 +405,7 @@ class MessageAssembler:
                 at=at,
                 agent_id=_agent_id(hook),
                 agent_type=_agent_type(hook),
+                agent_handle=hook.get("_agent_handle"),
             )
         if message_id in self._done:
             return None
@@ -412,6 +414,8 @@ class MessageAssembler:
             return None
         pending.deltas[index] = text
         pending.eids[index] = eid
+        if pending.agent_handle is None:
+            pending.agent_handle = hook.get("_agent_handle")
         # The tag has to survive assembly, not just translation: this is the
         # path a streamed message actually takes, and a whole reply that comes
         # out of it unattributed is one no reader can file under the worker who
@@ -522,6 +526,7 @@ class MessageAssembler:
             at=pending.started_at,
             agent_id=pending.agent_id,
             agent_type=pending.agent_type,
+            agent_handle=pending.agent_handle,
         )
 
 

@@ -9,15 +9,19 @@ import shutil
 import signal
 import subprocess
 import threading
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from unittest.mock import AsyncMock
 
 import pytest
 from PIL import Image
 
+from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.codex.backlog import CodexBacklog, receive
 from app.domain.agent.harness.codex.bundle import build
 from app.domain.agent.harness.codex.host import configure
 from app.domain.agent.harness.codex.runner import socket_path
+from app.domain.agent.harness.codex.subscription import Subscription
 from app.domain.agent.service import AgentMessage, AgentResult
 
 
@@ -170,6 +174,7 @@ async def test_standalone_owner_survives_client_disconnect(
                 "input_id": "message-1",
                 "text": "reply once",
                 "images": [picture],
+                "work_id": str(uuid.uuid4()),
             }
             await rpc("send", request, disconnect=True)
             accepted = await rpc("send", request)
@@ -232,6 +237,23 @@ async def test_standalone_owner_survives_client_disconnect(
             ]
             reopened.landed(through=reopened.unread()[-1].key)
             assert not CodexBacklog(mirror).unread()
+            consume, activity = AsyncMock(), AsyncMock()
+            subscription = Subscription(
+                SessionRef(uuid.uuid4(), uuid.uuid4()),
+                tmp_path / "subscription.sqlite",
+                rpc,
+                consume,
+                activity,
+            )
+            await subscription.drain()
+            delivered = [call.args[3] for call in consume.await_args_list]
+            assert [
+                event.text for event in delivered if isinstance(event, AgentMessage)
+            ] == [
+                "independent process reply",
+            ]
+            assert [call.args[-1] for call in activity.await_args_list] == [True, False]
+            assert await subscription.drain() == 0
     finally:
         (tmp_path / "provider-requests.json").write_text(json.dumps(requests, indent=2))
         os.kill(pid, signal.SIGTERM)

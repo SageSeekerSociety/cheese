@@ -30,6 +30,10 @@ class Assembler:
         identity = {
             key: owner[key] for key in ("agent_handle", "harness") if key in owner
         }
+        message_owner = {
+            "agent_handle": owner.get("agent_handle"),
+            "complete_identity": True,
+        }
         if method == "thread/started":
             thread = params["thread"]
             if parent := thread.get("parentThreadId"):
@@ -43,7 +47,10 @@ class Assembler:
         if method == "item/agentMessage/delta":
             eid = f"codex:{params['threadId']}:{params['itemId']}"
             message = self.pending.setdefault(
-                eid, AgentMessage("", eid=eid, **self.attribution(params["threadId"]))
+                eid,
+                AgentMessage(
+                    "", eid=eid, **message_owner, **self.attribution(params["threadId"])
+                ),
             )
             message.text += params["delta"]
             return []
@@ -58,11 +65,17 @@ class Assembler:
                         eid=eid,
                         at=datetime.fromtimestamp(at / 1000, UTC) if at else None,
                         **self.attribution(params["threadId"]),
+                        **message_owner,
                     )
                     return []
                 message = self.pending.pop(
                     eid,
-                    AgentMessage("", eid=eid, **self.attribution(params["threadId"])),
+                    AgentMessage(
+                        "",
+                        eid=eid,
+                        **message_owner,
+                        **self.attribution(params["threadId"]),
+                    ),
                 )
                 message.text = item["text"]
                 message.eids = (eid,)

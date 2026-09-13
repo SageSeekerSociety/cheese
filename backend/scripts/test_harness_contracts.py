@@ -72,6 +72,7 @@ def main() -> int:
         "tests/unit/test_codex_events.py",
         "tests/unit/test_codex_backlog.py",
         "tests/unit/test_codex_host.py",
+        "tests/unit/test_codex_subscription.py",
         "tests/unit/test_codex_runner_process.py",
         "tests/unit/test_codex_tools.py",
         "tests/unit/test_codex_provider_requests.py",

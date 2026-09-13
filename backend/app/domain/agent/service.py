@@ -40,6 +40,10 @@ class AgentMessage:
     # "the session" are the same answer.
     agent_id: str | None = None
     agent_type: str | None = None
+    agent_handle: str | None = None
+    # Every representation of this message shares its ID. Legacy hooks can
+    # echo a Stop under another ID and still need text-based recovery dedup.
+    complete_identity: bool = False
 
 
 @dataclass
