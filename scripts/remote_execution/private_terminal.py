@@ -35,6 +35,8 @@ def main():
     platform_events = list(event_prompts().values())
     folder = args.output.resolve()
     folder.mkdir(parents=True, exist_ok=False)
+    prompt_file = folder / "system-prompt.md"
+    prompt_file.write_text(platform_system)
     config = target(uuid.uuid4())
     room = None
     handler = Handler
@@ -120,8 +122,8 @@ def main():
                 "--dangerously-skip-permissions",
                 "--remote-control",
                 "Private acceptance",
-                "--append-system-prompt",
-                platform_system,
+                "--append-system-prompt-file",
+                str(prompt_file),
             ],
         )
         gate = Path(launch["env"]["CLAUDE_CONFIG_DIR"]) / ".claude.json"
@@ -244,8 +246,8 @@ def main():
                     "Resumed acceptance",
                     "--resume",
                     resume,
-                    "--append-system-prompt",
-                    platform_system,
+                    "--append-system-prompt-file",
+                    str(prompt_file),
                 ],
             )
             resumed_config = Path(resumed["env"]["CLAUDE_CONFIG_DIR"])

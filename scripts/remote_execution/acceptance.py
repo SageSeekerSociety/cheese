@@ -282,6 +282,7 @@ def case(folder, options):
                 build_screen_launch,
             )
             from app.domain.agent.device_provider import DeviceChannel
+            from tests.support.harness_prompts import system_prompt
 
             owner = folder / "device-owner"
             (owner / ".local/bin").mkdir(parents=True)
@@ -297,6 +298,7 @@ def case(folder, options):
                 model="claude-sonnet-4-6",
                 extra_env=env,
                 execution_target=target,
+                system_prompt=system_prompt(),
             )
             env.update(screen_env)
 
@@ -452,6 +454,11 @@ def case(folder, options):
             )
             assert result["value"]["stdout"] == "CANCEL_CONFIRMED", result
             if options.launcher == "device":
+                for request in server.state["requests"]:
+                    text = "\n".join(
+                        block.get("text", "") for block in request["system"]
+                    )
+                    assert text.count(system_prompt()) == 1, text
                 deadline = time.monotonic() + 10
                 hooks_file = folder / "hooks.jsonl"
                 while not hooks_file.exists() and time.monotonic() < deadline:
