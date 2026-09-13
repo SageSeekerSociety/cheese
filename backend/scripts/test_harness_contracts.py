@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -63,6 +64,8 @@ def main() -> int:
         "-m",
         "pytest",
         "-q",
+        "--junitxml",
+        str(run / "results.xml"),
         "--basetemp",
         str(run / "pytest"),
         "tests/unit/test_harness_prompt_contract.py",
@@ -78,12 +81,16 @@ def main() -> int:
         "tests/unit/test_codex_tools.py",
         "tests/unit/test_codex_provider_requests.py",
         "tests/unit/test_claude_provider_requests.py",
+        "tests/unit/test_claude_interactive_contract.py",
     ]
     with (run / "pytest.log").open("w") as log:
         result = subprocess.run(
             command, cwd=backend, env=env, stdout=log, stderr=subprocess.STDOUT
         )
     print((run / "pytest.log").read_text(), end="")
+    if result.returncode == 0 and ET.parse(run / "results.xml").findall(".//skipped"):
+        print("Required harness contracts were skipped; acceptance is incomplete.")
+        return 1
     return result.returncode
 
 
