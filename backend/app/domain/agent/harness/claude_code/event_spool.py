@@ -133,11 +133,12 @@ def spool_entries(
     if not spool.is_dir():
         return []
     out: list[tuple[Path, str, dict | None]] = []
-    for name in sorted(p.name for p in spool.iterdir()):
-        if name.startswith("."):
-            continue
-        if after is not None and name <= after:
-            continue
+    names = (
+        name
+        for name in os.listdir(spool)
+        if not name.startswith(".") and (after is None or name > after)
+    )
+    for name in sorted(names):
         path = spool / name
         eid = name.split(".", 1)[1] if "." in name else name
         try:
