@@ -3475,12 +3475,13 @@ class ChatService:
         topic_id: uuid.UUID | None = None,
         *,
         agent: ResolvedAgent | None = None,
+        acting_agent: str | None = None,
     ) -> tuple[dict, str]:
         """Resolve a turn's explicit agent model, model environment and usage route.
 
         Machine providers assemble their own scoped credentials. Other providers
         retain their gateway/profile transport, with the agent's saved model.
-        The optional agent snapshot keeps model and role consistent within a turn.
+        The optional snapshots keep model, role and author consistent within a turn.
 
         ``provider=None`` means there is no machine in this turn at all (私聊 走
         platform work): the platform is the one about to call the model, so it needs
@@ -3488,7 +3489,6 @@ class ChatService:
         the not-``builds_model_env`` branch, so it falls through to it rather than
         growing a second way to answer the same question.
         """
-        acting_agent: str | None = None
         environment = None
         async with self._sessions() as session:
             project = await ProjectRepository(session).get(project_id)
@@ -3496,7 +3496,8 @@ class ChatService:
                 raise NotFoundError("Project not found")
             topic = await TopicRepository(session).get(topic_id) if topic_id else None
             if topic is not None:
-                acting_agent = await self._agent_handle(session, topic.id)
+                if acting_agent is None:
+                    acting_agent = await self._agent_handle(session, topic.id)
                 # Overview remains available to repair failed project setup.
                 environment = (
                     EnvironmentConfig().snapshot()
@@ -4245,7 +4246,11 @@ class ChatService:
         # In a private chat, `cheese remember` targets the owner's personal memory
         # (spec §8.4). The provider runs a plain model turn when no Docker (tests).
         model_kwargs, route = await self._model_kwargs(
-            project_id, provider, topic_id, agent=prepared.agent
+            project_id,
+            provider,
+            topic_id,
+            agent=prepared.agent,
+            acting_agent=prepared.acting_agent,
         )
         logger.info(
             "chat_preparation_timing topic=%s turn=%s phase=model_ready "
