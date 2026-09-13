@@ -3822,7 +3822,7 @@ class ChatService:
             # The room's OWN line: its 分身 talk on their cards, and handing
             # the room every card's chatter as its backlog would drown the
             # messages actually addressed to it.
-            history = await blocks.list_for_topic(place.room_id, task_id=None)
+            history = await blocks.turn_history(place.room_id)
             phases_ms["history"] = (time.monotonic() - started) * 1000
             pending = _pending_human_blocks(history)
             pending_ids = [b.id for b in pending]

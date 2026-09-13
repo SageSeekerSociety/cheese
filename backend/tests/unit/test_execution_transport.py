@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import io
 import json
 import os
 import shutil
@@ -20,7 +21,82 @@ from app.domain.agent import execution, executor_transport
 from app.domain.agent.device_hub import DeviceHub
 from app.domain.agent.harness.claude_code.remote_execution import client as central
 from app.domain.agent.harness.claude_code.remote_execution import runtime
+from app.domain.agent.harness.claude_code.remote_execution.client import (
+    _local_chat_send_argv,
+)
 from app.domain.agent.harness.codex.tools import RemoteTools
+
+
+def test_chat_publication_fast_path_accepts_only_standalone_cli_invocations():
+    assert _local_chat_send_argv("cheese chat send 'hello world'") == [
+        "cheese",
+        "chat",
+        "send",
+        "hello world",
+    ]
+    assert _local_chat_send_argv("cheese chat send --file ./update.txt")[-1] == (
+        "./update.txt"
+    )
+    assert _local_chat_send_argv("cheese chat send '$(touch escaped)'") == [
+        "cheese",
+        "chat",
+        "send",
+        "$(touch escaped)",
+    ]
+    assert _local_chat_send_argv("cheese chat send hello; touch escaped") is None
+    assert _local_chat_send_argv("cheese chat send $(touch escaped)") is None
+    assert _local_chat_send_argv("printf x; cheese chat send hello") is None
+
+
+def test_chat_publication_fast_path_posts_with_session_credentials(monkeypatch, capsys):
+    from app.domain.agent.harness.claude_code.remote_execution import client
+
+    class Response(io.BytesIO):
+        def __init__(self):
+            super().__init__(b'{"data":{"id":"published"}}')
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+    seen = {}
+
+    def urlopen(request, timeout):
+        seen.update(
+            {
+                "url": request.full_url,
+                "timeout": timeout,
+                "headers": dict(request.headers),
+                "body": json.loads(request.data),
+            }
+        )
+        return Response()
+
+    monkeypatch.setattr(
+        client.os,
+        "environ",
+        {
+            "CHEESE_API": "http://cheese.test/api",
+            "CHEESE_TOKEN": "scoped-token",
+            "CHEESE_TOPIC": "room",
+            "CHEESE_TURN": "turn",
+        },
+    )
+    import urllib.request
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    status = client._publish_chat_locally(
+        ["cheese", "chat", "send", "published", "--reply-to", "parent"]
+    )
+    assert status == 0
+    assert seen["url"] == "http://cheese.test/api/topics/room/messages"
+    assert seen["headers"]["X-cheese-token"] == "scoped-token"
+    assert seen["headers"]["X-cheese-turn"] == "turn"
+    assert seen["body"]["content"] == "published"
+    assert seen["body"]["reply_to"] == "parent"
+    assert json.loads(capsys.readouterr().out) == {"id": "published"}
 
 
 @pytest.fixture
