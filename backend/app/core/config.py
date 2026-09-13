@@ -355,6 +355,14 @@ class Settings(BaseSettings):
     # channel — MicroCloud's default without the field is newapi, whose default
     # routes to a cheap non-Claude model. "" = leave whatever MicroCloud does.
     microcloud_ai_mode: str = "ccproxy"
+
+    @property
+    def cloud_executor_ai_mode(self) -> str:
+        """Central sessions supply models; their Cloud guests only execute tools."""
+        if self.agent_session_device_id:
+            return "none"
+        return self.microcloud_ai_mode.strip().lower()
+
     # Pin a specific granted offering (machine type + zone + template); 0 = take
     # the first active one, which is right while a tenant is granted exactly one.
     microcloud_offering_id: int = 0

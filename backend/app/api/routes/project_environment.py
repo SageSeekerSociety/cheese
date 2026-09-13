@@ -21,6 +21,8 @@ from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import environment_status
 from app.domain.agent.models import AgentTurn
 from app.domain.device.wiring import sql_device_service
+from app.domain.machine.models import MachineStatus
+from app.domain.machine.repositories import ProjectMachineRepository
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.environment import EnvironmentConfig, project_environment
 from app.domain.project.environment_recovery import (
@@ -136,7 +138,14 @@ async def get_room_environment(
     topic = await room(db, project_id, topic_id)
     binding = await sql_device_service(db).topic_binding(topic_id)
     if binding is None:
-        state = {"state": "pending"}
+        machine = await ProjectMachineRepository(db).get_active_for_topic(
+            topic.resource_id or topic_id
+        )
+        state = (
+            {"state": "failed", "log": "Cloud 机器创建失败，运行环境尚未接入。"}
+            if machine is not None and machine.status == MachineStatus.error
+            else {"state": "pending"}
+        )
     elif not device_hub.is_online(binding.device_id):
         state = {"state": "offline"}
     else:

@@ -1,5 +1,6 @@
 """Install the pinned Codex binary into the central machine's Cheese directory."""
 
+import argparse
 import fcntl
 import json
 import subprocess
@@ -10,7 +11,14 @@ VERSION = "0.154.0"
 
 
 def main() -> None:
-    prefix = Path.home() / ".cheese/tools/codex"
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--prefix",
+        type=Path,
+        default=Path.home() / ".cheese/tools/codex",
+        help="Install under the session connector's HOME, if different from this login",
+    )
+    prefix = parser.parse_args().prefix.expanduser().resolve()
     prefix.mkdir(parents=True, exist_ok=True, mode=0o700)
     binary = prefix / "node_modules/.bin/codex"
     with (prefix / "install.lock").open("a") as lock:

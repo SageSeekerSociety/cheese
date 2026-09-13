@@ -108,7 +108,7 @@ class ProjectMachineRepository:
             ProjectMachine.topic_id.is_not(None),
             ProjectMachine.released_at.is_(None),
             ProjectMachine.status == MachineStatus.running,
-            ProjectMachine.ai_status == AiStatus.ready,
+            ProjectMachine.ai_status.in_((AiStatus.ready, AiStatus.disabled)),
             ProjectMachine.device_id.is_not(None),
         ]
         if device_id is not None:
@@ -268,7 +268,7 @@ class ProjectMachineRepository:
         conditions = [
             ProjectMachine.device_id.is_(None),
             ProjectMachine.status == MachineStatus.running,
-            ProjectMachine.ai_status == AiStatus.ready,
+            ProjectMachine.ai_status.in_((AiStatus.ready, AiStatus.disabled)),
             ProjectMachine.bootstrap_key.is_not(None),
             ProjectMachine.ip.is_not(None),
             ProjectMachine.enroll_attempts < MAX_ENROLL_ATTEMPTS,
