@@ -20,6 +20,28 @@ So this file describes **this project** and nothing else. Anything equally true 
 
 We are the easiest repo in the world to get this wrong in, being both the platform and one of the repos it hosts — so `check-repo-rules.sh` guards it. The tell, when you are unsure: **a rule that is false when you are NOT in a sandbox is leaked platform knowledge.**
 
+## Live deployments are production, including the environment named dev
+
+Treat every shared live Cheese deployment as production. Application, gateway,
+metering proxy, executor, configuration and database changes must go through the
+repository's normal CI/CD: merge through the required checks, then deploy the
+resulting main commit or approved release with its pipeline-built or pinned
+images. A successful feature-branch CI run does not authorize deploying that
+branch to a live environment, even by manually triggering a GitHub workflow.
+
+Do not replace live services with custom Docker images, local builds, patched
+upstream images or retagged candidates. Do not hot-edit containers, mount candidate
+source over deployed code, or run deployment scripts, container recreation or
+database migrations by hand to bypass CI/CD. Changes to image recipes and
+dependency versions belong in the repository and follow the same release path;
+gateways and addons outside the application stack are not exceptions.
+
+Pre-merge experiments use isolated services and databases, without changing live
+traffic, sessions or configuration. If that isolation or a component's deployment
+pipeline is missing, prepare it before testing or releasing there; do not use the
+live deployment as a substitute. Recover failed releases through the normal
+CI/CD path with database-compatible artifacts, not an unchecked older image.
+
 ## Read the issues before the docs, and clean the docs when a design lands
 
 **The design that is still being argued lives in issues.** Whatever `docs/` says about it was written before the argument finished, so starting there means implementing something already superseded — and nothing in the file will tell you.
