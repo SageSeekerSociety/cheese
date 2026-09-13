@@ -21,6 +21,7 @@ import shlex
 import signal
 import subprocess
 import time
+import urllib.request
 import uuid
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -778,48 +779,94 @@ def transport(config, target_path):
                         }
                     ]
                 }
-            elif method == "tools/call":
-                if request["params"]["name"] != "invoke":
-                    raise ValueError("Unknown transport tool")
-                payload = request["params"]["arguments"]
-                with active_lock:
-                    if request["id"] in cancelled:
-                        raise RuntimeError("Tool call was cancelled")
-                if payload["tool"] not in NATIVE_TOOLS:
-                    raise ValueError("Unknown native tool")
-                event = {
-                    "hook_event_name": "PreToolUse",
-                    "session_id": payload["session_id"],
-                    "tool_name": payload["tool"],
-                    "tool_use_id": payload["id"],
-                    "tool_input": payload["args"],
-                    "cwd": config["workspace"],
-                }
-                decision = publish_event(config, event)
-                if decision.get("deny"):
-                    outcome = decision
-                else:
-                    args = decision.get("hookSpecificOutput", {}).get(
-                        "updatedInput", payload["args"]
-                    )
-                    receipt = client.call(
-                        "invoke",
-                        {"id": payload["id"], "tool": payload["tool"], "args": args},
-                    )
-                    if "error" in receipt:
-                        outcome = {"deny": receipt["error"]}
-                    else:
-                        publish_event(
-                            config,
-                            dict(
-                                event,
-                                hook_event_name="PostToolUse",
-                                tool_input=args,
-                                tool_response=receipt["value"],
+                if os.environ.get("CHEESE_API"):
+                    value["tools"].append(
+                        {
+                            "name": "publish_chat",
+                            "description": (
+                                "Publish one chat message through Cheese without "
+                                "device execution."
                             ),
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {"content": {"type": "string"}},
+                                "required": ["content"],
+                            },
+                        }
+                    )
+            elif method == "tools/call":
+                if request["params"]["name"] == "publish_chat":
+                    content = request["params"]["arguments"].get("content")
+                    api = os.environ.get("CHEESE_API", "").rstrip("/")
+                    token = os.environ.get("CHEESE_TOKEN", "")
+                    topic = os.environ.get("CHEESE_TOPIC", "")
+                    if (
+                        not api
+                        or not token
+                        or not topic
+                        or not isinstance(content, str)
+                        or not content.strip()
+                    ):
+                        raise ValueError("Cheese chat publication is not configured")
+                    body = json.dumps({"content": content}).encode()
+                    req = urllib.request.Request(
+                        f"{api}/topics/{topic}/messages",
+                        data=body,
+                        method="POST",
+                        headers={
+                            "Content-Type": "application/json",
+                            "X-Cheese-Token": token,
+                        },
+                    )
+                    with urllib.request.urlopen(req, timeout=15) as response:
+                        payload = json.loads(response.read())
+                    value = {"content": [{"type": "text", "text": json.dumps(payload)}]}
+                elif request["params"]["name"] != "invoke":
+                    raise ValueError("Unknown transport tool")
+                else:
+                    payload = request["params"]["arguments"]
+                    with active_lock:
+                        if request["id"] in cancelled:
+                            raise RuntimeError("Tool call was cancelled")
+                    if payload["tool"] not in NATIVE_TOOLS:
+                        raise ValueError("Unknown native tool")
+                    event = {
+                        "hook_event_name": "PreToolUse",
+                        "session_id": payload["session_id"],
+                        "tool_name": payload["tool"],
+                        "tool_use_id": payload["id"],
+                        "tool_input": payload["args"],
+                        "cwd": config["workspace"],
+                    }
+                    decision = publish_event(config, event)
+                    if decision.get("deny"):
+                        outcome = decision
+                    else:
+                        args = decision.get("hookSpecificOutput", {}).get(
+                            "updatedInput", payload["args"]
                         )
-                        outcome = {"result": receipt["value"]}
-                value = {"content": [{"type": "text", "text": json.dumps(outcome)}]}
+                        receipt = client.call(
+                            "invoke",
+                            {
+                                "id": payload["id"],
+                                "tool": payload["tool"],
+                                "args": args,
+                            },
+                        )
+                        if "error" in receipt:
+                            outcome = {"deny": receipt["error"]}
+                        else:
+                            publish_event(
+                                config,
+                                dict(
+                                    event,
+                                    hook_event_name="PostToolUse",
+                                    tool_input=args,
+                                    tool_response=receipt["value"],
+                                ),
+                            )
+                            outcome = {"result": receipt["value"]}
+                    value = {"content": [{"type": "text", "text": json.dumps(outcome)}]}
             elif method == "ping":
                 value = {}
             else:
