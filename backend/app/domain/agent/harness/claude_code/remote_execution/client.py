@@ -151,7 +151,8 @@ def prepare(
                 "hooks": [
                     {
                         "type": "command",
-                        "command": shlex.join([*helper, "context", str(target_path)]),
+                        "command": helper[0],
+                        "args": [helper[1], "context", str(target_path)],
                     }
                 ]
             },
