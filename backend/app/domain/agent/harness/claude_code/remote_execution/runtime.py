@@ -501,7 +501,7 @@ class Executor:
                 self.foreground_ready[task_id].wait(
                     min(max(args.get("timeout", 120000), 1), 600000) / 1000
                 )
-            if task["status"] == "running":
+            if background or task["status"] == "running":
                 task["background"] = True
                 return {
                     "stdout": "",
