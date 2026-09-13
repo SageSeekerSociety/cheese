@@ -854,6 +854,11 @@ def test_gateway_timing_preserves_request_boundary_and_omits_credentials(
     flow.request.headers["x-cheese-attr"] = "project/topic"
     flow.request.timestamp_start = 100.0
     flow.request.timestamp_end = 100.02
+    flow.client_conn.timestamp_start = 99.0
+    flow.client_conn.timestamp_tls_setup = 99.4
+    flow.server_conn.id = "server-connection"
+    flow.server_conn.timestamp_start = 100.04
+    flow.server_conn.timestamp_tcp_setup = 100.05
     asyncio.run(mod.requestheaders(flow))
     flow.response = _make_response()
     flow.response.headers["x-litellm-call-id"] = "gateway-call"
@@ -876,6 +881,17 @@ def test_gateway_timing_preserves_request_boundary_and_omits_credentials(
     assert event["gateway_request_id"] == "gateway-call"
     assert event["request_start"] == 100.0
     assert event["request_end"] == 100.02
+    assert event["client_connection"] == {
+        "id": flow.client_conn.id,
+        "start": 99.0,
+        "tls_setup": 99.4,
+    }
+    assert event["server_connection"] == {
+        "id": "server-connection",
+        "start": 100.04,
+        "tcp_setup": 100.05,
+        "tls_setup": None,
+    }
     assert event["response_start"] == 102.0
     assert event["response_end"] == 103.0
     assert round(event["admission_ms"]) == 35
