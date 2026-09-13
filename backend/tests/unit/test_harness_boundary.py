@@ -78,6 +78,7 @@ _LEDGER: dict[str, tuple[str, ...]] = {
         "DEVICE_TUNNEL_PROBE",
         "SESSION_TOKEN_TTL_S",
         "build_screen_launch",
+        "resident_release",
     ),
 }
 

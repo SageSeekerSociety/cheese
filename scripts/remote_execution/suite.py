@@ -115,6 +115,19 @@ def main():
                 *args,
             ],
         )
+    name = "resident-release"
+    attempt = len(list(folder.glob(name + ".attempt-*.log"))) + 1
+    case(
+        name,
+        [
+            sys.executable,
+            str(ROOT / "scripts/remote_execution/resident_release.py"),
+            "--claude",
+            options.claude,
+            "--output",
+            str(folder / f"{name}-{attempt}"),
+        ],
+    )
     with socket.socket() as reserved:
         reserved.bind(("127.0.0.1", 0))
         port = reserved.getsockname()[1]
