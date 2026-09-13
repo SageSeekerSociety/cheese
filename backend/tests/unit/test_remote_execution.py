@@ -518,7 +518,11 @@ class RemoteExecutionTests(unittest.TestCase):
         self.assertEqual(removed["instructions"], "")
 
     def test_context_sync_preserves_unchanged_files_and_repairs_local_changes(self):
-        from app.domain.agent.harness.claude_code.remote_execution import client
+        spec = importlib.util.spec_from_file_location(
+            "central_client", RUNTIME.with_name("client.py")
+        )
+        client = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(client)
 
         (self.workspace / "CLAUDE.md").write_text("project instructions")
         central = self.root / "central"
