@@ -69,3 +69,12 @@ def serve(target, synchronize):
             server.shutdown()
             thread.join()
             os.unlink(path)
+
+
+if __name__ == "__main__":
+    import sys
+
+    if not call(sys.argv[1]):
+        from client import sync_context
+
+        sync_context(sys.argv[1])

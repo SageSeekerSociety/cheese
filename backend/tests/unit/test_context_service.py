@@ -1,7 +1,11 @@
 import os
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
+from app.domain.agent.harness.claude_code.remote_execution import context_service
 from app.domain.agent.harness.claude_code.remote_execution.context_service import (
     address,
     call,
@@ -52,3 +56,23 @@ def test_distinct_sessions_do_not_share_context_service(tmp_path):
             assert call(right)
             assert call(left)
     assert calls == ["right", "left"]
+
+
+def test_context_entry_reports_service_failure_without_direct_retry(tmp_path):
+    target = tmp_path / "execution with spaces.json"
+    attempts = []
+
+    def synchronize():
+        attempts.append(True)
+        raise ValueError("context unavailable")
+
+    with serve(target, synchronize):
+        result = subprocess.run(
+            [sys.executable, str(Path(context_service.__file__)), str(target)],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    assert result.returncode != 0
+    assert "context unavailable" in result.stderr
+    assert attempts == [True]
