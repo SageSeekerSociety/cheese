@@ -17,6 +17,7 @@ from app.domain.agent.harness.claude_code.remote_execution import (
     bootstrap,
     cli_client,
     cli_worker,
+    private,
     runtime,
     session_transfer,
 )
@@ -64,6 +65,19 @@ def script(project_id, resource_id, env):
         + "\nconfigure(json.loads("
         + repr(json.dumps(payload))
         + "))\n"
+    )
+
+
+def private_script(target: dict, env: dict) -> str:
+    source = Path(private.__file__).read_text()
+    return (
+        "import json\n"
+        f"scope = {{'__name__': 'cheese_private_executor'}}\nexec({source!r}, scope)\n"
+        f"target = json.loads({json.dumps(target)!r})\n"
+        f"env = json.loads({json.dumps(env)!r})\n"
+        "from pathlib import Path\n"
+        "directory = Path(target['home'].replace('$HOME', str(Path.home())))\n"
+        "print(json.dumps(scope['ensure'](target, directory, env)))\n"
     )
 
 

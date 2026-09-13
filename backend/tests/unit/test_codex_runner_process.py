@@ -45,6 +45,7 @@ async def test_standalone_owner_survives_client_disconnect(
                 data = json.dumps({"tools": []}).encode()
                 content_type = "application/json"
             else:
+                assert self.headers["Authorization"] == "Bearer fixture"
                 requests.append(body)
                 item = {
                     "id": "message-1",
@@ -119,6 +120,7 @@ async def test_standalone_owner_survives_client_disconnect(
         'model = "gpt-6-astra"\nmodel_provider = "fixture"\n'
         '[model_providers.fixture]\nname = "fixture"\n'
         f'base_url = "{endpoint}/v1"\nwire_api = "responses"\n'
+        'env_key = "CHEESE_TOKEN"\n'
         "requires_openai_auth = false\n[analytics]\nenabled = false\n"
     )
     config = tmp_path / "runner.json"

@@ -43,5 +43,9 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: harness-contract-${{ github.sha }}
-          path: logs/harness-contracts/
+          path: |
+            logs/harness-contracts/*/inputs.json
+            logs/harness-contracts/*/*.log
+            logs/harness-contracts/*/pytest/**/provider-requests.json
+            logs/harness-contracts/*/pytest/**/runner.log
           retention-days: 7

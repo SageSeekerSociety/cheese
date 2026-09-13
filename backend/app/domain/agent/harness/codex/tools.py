@@ -64,6 +64,10 @@ class RemoteTools:
         return tools
 
     async def __call__(self, method: str, params: dict) -> dict:
+        if method == "cheese/stage_file":
+            return await asyncio.to_thread(
+                self.client.control, {"subtype": "stage_file", **params}
+            )
         if method != "item/tool/call":
             raise ValueError(f"Unsupported Codex server request: {method}")
         server, tool = self.routes[params["tool"]]

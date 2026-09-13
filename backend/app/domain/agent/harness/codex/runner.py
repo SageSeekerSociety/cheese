@@ -180,6 +180,8 @@ class Runner:
             raise
 
     async def dispatch(self, method: str, params: dict) -> dict:
+        if method == "stage_file":
+            return await self.on_tool("cheese/stage_file", params)
         if method == "events":
             return {"events": self.journal.read(int(params.get("after", 0)))}
         if method == "send":
@@ -198,6 +200,9 @@ class Runner:
                 "pid": os.getpid(),
                 "thread_id": self.journal.recall("thread_id"),
                 "turn_id": self.session.turn_id if self.session else None,
+                "work_id": self.journal.recall(
+                    f"work:{self.journal.recall('thread_id')}"
+                ),
                 "alive": self.process is not None and self.process.returncode is None,
             }
         raise ValueError(f"Unknown session operation: {method}")

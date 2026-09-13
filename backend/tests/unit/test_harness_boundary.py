@@ -66,7 +66,7 @@ _LEDGER: dict[str, tuple[str, ...]] = {
         "build_warm_session_prepare",
     ),
     # --- 装配：池子在这里把 runtime 和 channel 拼起来，也只在这里 ---
-    "app.domain.agent.compute": ("ClaudeCodeRuntime",),
+    "app.domain.agent.compute": ("ClaudeCodeRuntime", "executor_launch"),
     "app.domain.agent.device_hub": (
         "drop_device_subscriptions",
         "drop_screen_subscriptions",

@@ -4365,6 +4365,7 @@ class ChatService:
                 state.user_text = f"{state.user_text}\n{prompt_text}"
 
         try:
+            await self._compute.activate(SessionRef(project_id, topic_id), runtime)
             ready = await runtime.send(
                 SessionRef(project_id, topic_id),
                 prompt_text,

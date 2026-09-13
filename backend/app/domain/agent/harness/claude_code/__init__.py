@@ -50,6 +50,9 @@ from app.domain.agent.harness.claude_code.hooks_substrate import (
     log_cursor,
     read_log,
 )
+from app.domain.agent.harness.claude_code.remote_execution import (
+    launch as executor_launch,
+)
 from app.domain.agent.harness.claude_code.remote_execution.client import (
     REMOTE_CONTROLS,
 )
@@ -68,6 +71,7 @@ from app.domain.agent.harness.claude_code.startup_cache import (
 from app.domain.agent.harness.claude_code.warm_session import build_warm_session_prepare
 
 __all__ = [
+    "executor_launch",
     "CHEESE_HOOK_SCRIPT",
     "REMOTE_CONTROLS",
     "private_execution_target",

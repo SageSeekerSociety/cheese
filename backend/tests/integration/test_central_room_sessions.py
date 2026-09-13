@@ -12,8 +12,10 @@ from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_provider import DeviceChannel, EnvironmentPreparationError
+from app.domain.agent.harness import Opening, SessionRef
 from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
+from app.domain.agent.harness.codex import CodexChannel
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import session_auth_headers
@@ -51,6 +53,39 @@ def channel(client, monkeypatch):
     central._ensure_screen = AsyncMock(return_value=SimpleNamespace(device_id="center"))
     central._wait_executor = AsyncMock()
     return central
+
+
+@pytest.mark.anyio
+async def test_codex_placement_recovers_only_as_codex(client, room, monkeypatch):
+    project, topic = room
+    central = channel(client, monkeypatch)
+    central._hub.exec.side_effect = [
+        {"exit": 0, "stdout": json.dumps({"workspace": "/project", "mcp_servers": []})},
+        {"exit": 0, "stdout": json.dumps({"thread_id": "codex-thread", "alive": True})},
+    ]
+    codex = CodexChannel(central, ClaudeLaunch("system").execution)
+    ref = SessionRef(project, topic)
+    handle = await codex.ensure(
+        ref, Opening("shared system", model="fixture", agent_handle="agent")
+    )
+    assert handle.thread_id == "codex-thread"
+    async with client.test_factory() as db:
+        stored = await db.get(Topic, topic)
+        assert stored.session_placement["runtime"] == {
+            "harness": "codex",
+            "agent_handle": "agent",
+            "state": handle.state,
+        }
+        assert stored.session_placement["execution"]["device_id"] == "executor"
+    central._hub.call_executor.return_value = {
+        "thread_id": "codex-thread",
+        "alive": True,
+    }
+    assert await codex.discover("center") == [handle]
+    central.restore_screens = AsyncMock(return_value=[])
+    central.executor.discover = AsyncMock(return_value=[])
+    assert await central.discover("center") == []
+    central.restore_screens.assert_awaited_once_with([])
 
 
 @pytest.mark.anyio

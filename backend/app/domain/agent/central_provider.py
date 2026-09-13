@@ -76,6 +76,11 @@ class CentralChannel(DeviceChannel):
                 placement = room.session_placement
                 if not placement or placement["channel"] != self.name:
                     continue
+                if (
+                    placement.get("runtime", {}).get("harness", "claude-code")
+                    != "claude-code"
+                ):
+                    continue
                 center = placement["device_id"]
                 if (device_id is None or center == device_id) and self._hub.is_online(
                     center
@@ -149,6 +154,7 @@ class CentralChannel(DeviceChannel):
         memory_scope=None,
         owner=None,
         turn_id=None,
+        runtime_factory=None,
     ):
         assert isinstance(precheck, tuple)
         started_at = time.monotonic()
@@ -277,6 +283,8 @@ class CentralChannel(DeviceChannel):
                 "channel": self.name,
                 "execution": target,
             }
+            if runtime_factory is not None:
+                placement["runtime"] = runtime_factory(resource)
             room.session_placement = placement
             # The central bootstrap calls the scoped executor endpoint before it
             # can start Claude. Publish ownership before opening the screen.

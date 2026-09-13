@@ -24,11 +24,11 @@ async def receive(path: Path, call: Callable[[str, dict], Awaitable[dict]]) -> N
 
 
 class CodexBacklog:
-    def __init__(self, path: Path):
+    def __init__(self, path: Path | None):
         self.path = path
         self.assembler = Assembler()
         self.entries: list[HarnessEvent] = []
-        if not path.exists():
+        if path is None or not path.exists():
             return
         journal = Journal(path)
         try:
@@ -82,6 +82,7 @@ class CodexBacklog:
         return self.assembler.give_up()
 
     def landed(self, *, through: str) -> None:
+        assert self.path is not None
         journal = Journal(self.path)
         try:
             journal.acknowledge(int(through))
@@ -89,7 +90,7 @@ class CodexBacklog:
             journal.close()
 
     def forget(self, *, older_than_s: float) -> None:
-        if not self.path.exists():
+        if self.path is None or not self.path.exists():
             return
         journal = Journal(self.path)
         try:

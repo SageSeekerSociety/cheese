@@ -32,7 +32,9 @@ def ping(state: Path) -> dict | None:
 
 
 def configure(payload: dict) -> dict:
-    state = Path(payload["state"]).expanduser().resolve()
+    state = (
+        Path(payload["state"].replace("$HOME", str(Path.home()))).expanduser().resolve()
+    )
     state.mkdir(parents=True, exist_ok=True, mode=0o700)
     with (state / "bootstrap.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)

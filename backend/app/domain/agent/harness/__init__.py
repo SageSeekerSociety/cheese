@@ -410,6 +410,7 @@ CLAUDE_CODE = "claude-code"
 # the set of harnesses that exist, and everything else reads it from here.
 HARNESSES: dict[str, str] = {
     CLAUDE_CODE: "Claude Code",
+    "codex": "Codex",
 }
 
 # What a type that declines to choose runs on. A type is 出厂设置, not a
