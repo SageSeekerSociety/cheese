@@ -32,6 +32,59 @@ class Body(httpx.AsyncByteStream):
 
 
 async def main():
+    # Distinguish awaiting upstream bytes from time held by the stream consumer.
+    for close_early in (False, True):
+        clock = [0.0]
+        records = []
+
+        class ControlledBody(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                clock[0] += 4
+                yield b"first"
+                clock[0] += 6
+                yield b"last"
+
+            async def aclose(self):
+                pass
+
+        with (
+            patch.object(
+                timing,
+                "time",
+                SimpleNamespace(monotonic=lambda: clock[0], time=lambda: clock[0]),
+            ),
+            patch.object(
+                timing.logger,
+                "info",
+                lambda _, value: records.append(json.loads(value)),
+            ),
+        ):
+            measured = timing.RequestTiming("consumer-boundary")
+            stream = timing.TimedStream(ControlledBody(), measured)
+            iterator = stream.__aiter__()
+            assert await anext(iterator) == b"first"
+            clock[0] += 3
+            if close_early:
+                await stream.aclose()
+                await iterator.aclose()
+            else:
+                assert await anext(iterator) == b"last"
+                clock[0] += 7
+                try:
+                    await anext(iterator)
+                except StopAsyncIteration:
+                    pass
+                else:
+                    raise AssertionError("Stream did not finish")
+                await stream.aclose()
+        ends = [record for record in records if record["phase"] == "request_end"]
+        assert len(ends) == 1
+        assert ends[0]["consumer_hold_ms"] == (3000 if close_early else 10000)
+        assert ends[0]["elapsed_ms"] == (7000 if close_early else 20000)
+        assert ends[0]["outcome"] == (
+            "closed_before_eof" if close_early else "complete"
+        )
+        print(f"Consumer hold timing passed: close_early={close_early}")
     capture = io.StringIO()
     proxy_logger = logging.getLogger("LiteLLM Proxy")
     with (
