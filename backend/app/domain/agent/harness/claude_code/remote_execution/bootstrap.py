@@ -101,6 +101,11 @@ def prepared(payload, owner, verified=None):
             if not destination.exists() or destination.read_bytes() != decoded:
                 destination.write_bytes(decoded)
             destination.chmod(0o700)
+        if "file_names" in payload:
+            manifest = config_dir / "executor-files.json"
+            contents = json.dumps(payload["file_names"])
+            if not manifest.exists() or manifest.read_text() != contents:
+                manifest.write_text(contents)
         env = dict(os.environ)
         for name in list(env):
             if (

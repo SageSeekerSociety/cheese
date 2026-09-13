@@ -236,7 +236,7 @@ class CentralChannel(DeviceChannel):
                             previous["execution"],
                             "prepare",
                             launch.execution.payload_for(
-                                project_id, resource, execute_env
+                                project_id, resource, execute_env, running.get("files")
                             ),
                             hub=self._hub,
                         )

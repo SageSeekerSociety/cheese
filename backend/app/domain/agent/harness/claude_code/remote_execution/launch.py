@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -23,7 +24,7 @@ from app.domain.agent.harness.claude_code.remote_execution import (
 )
 
 
-def payload_for(project_id, resource_id, env):
+def payload_for(project_id, resource_id, env, known_files=None):
     files = {
         "remote-execution/bootstrap.py": Path(bootstrap.__file__).read_text(),
         "remote-execution/runtime.py": Path(runtime.__file__).read_text(),
@@ -51,9 +52,12 @@ def payload_for(project_id, resource_id, env):
         "resource": str(resource_id),
         "env": values,
         "environment": environment,
+        "file_names": list(files),
         "files": {
             name: base64.b64encode(content.encode()).decode()
             for name, content in files.items()
+            if (known_files or {}).get(name)
+            != hashlib.sha256(content.encode()).hexdigest()
         },
     }
 
