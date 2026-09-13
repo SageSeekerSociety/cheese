@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import contextlib
 import fcntl
+import hashlib
 import json
 import os
 import runpy
@@ -80,7 +81,7 @@ def binary(owner, api, verified=None):
 
 
 @contextlib.contextmanager
-def prepared(payload, owner, verified=None):
+def prepared(payload, owner, verified=None, *, refresh_runtime=False):
     project, resource = (
         str(uuid.UUID(payload["project"])),
         str(uuid.UUID(payload["resource"])),
@@ -92,6 +93,26 @@ def prepared(payload, owner, verified=None):
     work.mkdir(parents=True, exist_ok=True)
     with (config_dir / "executor-bootstrap.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
+        if refresh_runtime:
+            source = config_dir / "remote-execution/runtime.py"
+            state = config_dir / "executor"
+            if source.exists() and (state / "config.json").exists():
+                runtime = runpy.run_path(str(source))
+                try:
+                    info = runtime["request"](state, "ping")
+                except (ConnectionError, FileNotFoundError):
+                    info = None
+                expected = hashlib.sha256(
+                    base64.b64decode(payload["files"]["remote-execution/runtime.py"])
+                ).hexdigest()
+                if info and info.get("runtime_sha256") != expected:
+                    tasks = runtime["request"](
+                        state, "control", {"subtype": "background_tasks"}
+                    )["tasks"]
+                    if any(task["status"] == "running" for task in tasks):
+                        raise RuntimeError(
+                            "Executor update is waiting for running commands to finish"
+                        )
         for name, content in payload["files"].items():
             destination = config_dir / name
             destination.relative_to(config_dir)
@@ -152,7 +173,12 @@ def prepared(payload, owner, verified=None):
 
 
 def configure(payload):
-    with prepared(payload, Path.home()) as (home, config, state, env):
+    with prepared(payload, Path.home(), refresh_runtime=True) as (
+        home,
+        config,
+        state,
+        env,
+    ):
         config_dir = home / ".claude"
         work = Path(config["workspace"])
         scoped_env = config["env"]
@@ -173,14 +199,30 @@ def configure(payload):
                     raise RuntimeError(
                         "Executor configuration changed; restart the room environment"
                     )
-                runtime["request"](state, "configure", {"env": scoped_env})
-                if payload.get("environment"):
-                    runner = runpy.run_path(str(config_dir / "cheese-environment.py"))
-                    info["environment_status"] = runner["read_status"](
-                        home / ".cheese-environment"
-                    )["state"]
-                print(json.dumps({**info, "mcp_servers": list(config["mcp_servers"])}))
-                return
+                if info.get("runtime_sha256") == runtime["SOURCE_SHA256"]:
+                    runtime["request"](state, "configure", {"env": scoped_env})
+                    if payload.get("environment"):
+                        runner = runpy.run_path(
+                            str(config_dir / "cheese-environment.py")
+                        )
+                        info["environment_status"] = runner["read_status"](
+                            home / ".cheese-environment"
+                        )["state"]
+                    print(
+                        json.dumps({**info, "mcp_servers": list(config["mcp_servers"])})
+                    )
+                    return
+                subprocess.run(
+                    [
+                        sys.executable,
+                        str(config_dir / "remote-execution/runtime.py"),
+                        "stop",
+                        "--state",
+                        str(state),
+                    ],
+                    check=True,
+                    timeout=15,
+                )
         runtime["write_json"](state / "config.json", config)
         runtime["write_json"](state / "environment.json", payload.get("environment"))
         runtime["write_json"](

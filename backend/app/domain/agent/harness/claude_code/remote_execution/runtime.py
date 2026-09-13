@@ -29,6 +29,8 @@ from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
 
+SOURCE_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+
 NATIVE_TOOLS = {
     "Read",
     "Edit",
@@ -811,6 +813,7 @@ class Executor:
                 "pid": os.getpid(),
                 "workspace": str(self.root),
                 "files": files,
+                "runtime_sha256": SOURCE_SHA256,
                 "capabilities": ["prepare"]
                 + (
                     ["cli_worker"]

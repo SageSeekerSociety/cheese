@@ -14,6 +14,9 @@ from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_provider import DeviceChannel, EnvironmentPreparationError
 from app.domain.agent.harness import Opening, SessionRef
 from app.domain.agent.harness.channel import ScreenSetupError
+from app.domain.agent.harness.claude_code.remote_execution import (
+    runtime as executor_runtime,
+)
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent.harness.codex import CodexChannel
 from app.domain.topic.models import Topic
@@ -101,6 +104,7 @@ async def test_center_uses_the_selected_harness_for_bootstrap_and_history(
             transfer_history=history,
             script=lambda *args: "FIXTURE_EXECUTOR_BOOTSTRAP",
             payload_for=lambda *args: {"fixture_executor": True},
+            can_prepare=lambda info: "prepare" in info.get("capabilities", []),
         ),
     )
     kwargs = dict(
@@ -144,7 +148,11 @@ async def test_running_executor_prepares_without_python_launch(
     central._hub.exec.reset_mock()
     central._wait_executor.reset_mock()
     central._hub.call_executor.side_effect = [
-        {"pid": 123, "capabilities": ["prepare"]},
+        {
+            "pid": 123,
+            "capabilities": ["prepare"],
+            "runtime_sha256": executor_runtime.SOURCE_SHA256,
+        },
         {
             "pid": 123,
             "workspace": "/project",
@@ -183,7 +191,11 @@ async def test_running_executor_prepare_failure_is_not_retried_as_install(
     await central.ensure_ready(**kwargs)
     central._hub.exec.reset_mock()
     central._hub.call_executor.side_effect = [
-        {"pid": 123, "capabilities": ["prepare"]},
+        {
+            "pid": 123,
+            "capabilities": ["prepare"],
+            "runtime_sha256": executor_runtime.SOURCE_SHA256,
+        },
         RuntimeError("Executor configuration changed"),
     ]
     with pytest.raises(RuntimeError, match="configuration changed"):

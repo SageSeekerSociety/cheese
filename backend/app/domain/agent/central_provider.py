@@ -231,7 +231,7 @@ class CentralChannel(DeviceChannel):
                     except RuntimeError:
                         # A stopped executor must take the installation path.
                         running = {}
-                    if "prepare" in running.get("capabilities", []):
+                    if launch.execution.can_prepare(running):
                         info = await execution.call(
                             previous["execution"],
                             "prepare",
