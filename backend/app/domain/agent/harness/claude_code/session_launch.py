@@ -43,7 +43,12 @@ from pathlib import Path
 from app.domain.agent import clone
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD, DISALLOWED_TOOLS
-from app.domain.agent.harness.launch import LaunchSpec, ScreenPlace, SessionFile
+from app.domain.agent.harness.launch import (
+    ExecutorLaunch,
+    LaunchSpec,
+    ScreenPlace,
+    SessionFile,
+)
 from app.domain.agent.skills import native_skill_files
 
 # THE isolation boundary between two claudes on one machine: claude reads AND
@@ -250,6 +255,12 @@ class ClaudeLaunch:
     system_prompt: str
     model: str | None = None
     resume_session_id: str | None = None
+
+    @property
+    def execution(self) -> ExecutorLaunch:
+        from app.domain.agent.harness.claude_code.remote_execution import launch
+
+        return launch
 
     def at(self, place: ScreenPlace) -> LaunchSpec:
         return build_session_launch(

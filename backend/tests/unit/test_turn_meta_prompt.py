@@ -4,11 +4,8 @@ accept cards — facts it previously had no way to see."""
 
 from types import SimpleNamespace
 
-from app.domain.agent.chat import (
-    _build_system_prompt,
-    _turn_meta_lines,
-    _workspace_disk,
-)
+from app.domain.agent.chat import _turn_meta_lines, _workspace_disk
+from app.domain.agent.harness.prompt import build_system_prompt
 from app.domain.review.models import AcceptStatus
 
 
@@ -65,9 +62,9 @@ def test_open_card_lines() -> None:
 
 
 def test_prompt_section_appended_only_when_meta_present() -> None:
-    with_meta = _build_system_prompt("base", "", None, [], turn_meta=["- x"])
+    with_meta = build_system_prompt("base", "", None, [], turn_meta=["- x"])
     assert "## 本轮运行环境" in with_meta
-    without = _build_system_prompt("base", "", None, [])
+    without = build_system_prompt("base", "", None, [])
     assert "## 本轮运行环境" not in without
 
 

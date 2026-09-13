@@ -244,6 +244,9 @@ async def receive_hook(
             status_code=400,
         )
     payload["_eid"] = x_cheese_event_id
+    # Attribute late events to the authenticated sender, not the teammate now
+    # selected in the room. The sender cannot override the token's identity.
+    payload["_agent_handle"] = claims.get("a") if claims else None
     try:
         append_event(spool, x_cheese_event_id, payload)
     except OSError:

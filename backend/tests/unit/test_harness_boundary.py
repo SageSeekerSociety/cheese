@@ -45,18 +45,14 @@ harness 一样都不用付。
 import ast
 from pathlib import Path
 
+import pytest
+
 APP = Path(__file__).resolve().parents[2] / "app"
 PKG = "app.domain.agent.harness.claude_code"
 
 # 模块 → 它从适配器拿走的名字（排序后的元组）。见上面「账本是棘轮」。
 _LEDGER: dict[str, tuple[str, ...]] = {
-    # Session placement uses the harness's executor bootstrap and control adapter.
-    "app.domain.agent.central_provider": (
-        "ScreenSetupError",
-        "build_executor_launch",
-        "executor_prepare_payload",
-    ),
-    "app.domain.agent.private_chat": ("RemoteClient", "private_execution_target"),
+    "app.domain.agent.private_chat": ("private_execution_target",),
     "app.api.routes.remote_control": ("REMOTE_CONTROLS",),
     # Retirement flushes the same native raw-file collector before deletion.
     "app.domain.topic.retire": ("event_drain",),
@@ -70,20 +66,17 @@ _LEDGER: dict[str, tuple[str, ...]] = {
         "build_warm_session_prepare",
     ),
     # --- 装配：池子在这里把 runtime 和 channel 拼起来，也只在这里 ---
-    "app.domain.agent.compute": ("Channel", "ClaudeCodeRuntime"),
+    "app.domain.agent.compute": ("ClaudeCodeRuntime", "executor_launch"),
     "app.domain.agent.device_hub": (
         "drop_device_subscriptions",
         "drop_screen_subscriptions",
     ),
     # --- channels：接缝本身，加上还没搬过缝的 Claude Code 知识 ---
-    "app.domain.agent.cloud_provider": ("ScreenSetupError",),
     "app.domain.agent.device_provider": (
         "CHEESE_HOOK_SCRIPT",
-        "Channel",
         "DEVICE_ALIVE_PROBE",
         "DEVICE_TUNNEL_PROBE",
         "SESSION_TOKEN_TTL_S",
-        "ScreenSetupError",
         "build_screen_launch",
     ),
 }
@@ -93,29 +86,30 @@ def _module_name(path: Path) -> str:
     return "app." + ".".join(path.relative_to(APP).with_suffix("").parts)
 
 
-def _crossings() -> tuple[dict[str, set[str]], list[str]]:
+def _crossings(package: str = PKG) -> tuple[dict[str, set[str]], list[str]]:
     """Who imports the adapter, what they take, and who reached past the door."""
     taken: dict[str, set[str]] = {}
     through_a_submodule: list[str] = []
     for path in sorted(APP.rglob("*.py")):
         module = _module_name(path)
-        if module.startswith(PKG):
+        if module.startswith(package):
             continue
         tree = ast.parse(path.read_text())
         for node in ast.walk(tree):
             if not isinstance(node, ast.ImportFrom) or not node.module:
                 continue
-            if node.module == PKG:
+            if node.module == package:
                 taken.setdefault(module, set()).update(a.name for a in node.names)
-            elif node.module.startswith(PKG + "."):
+            elif node.module.startswith(package + "."):
                 through_a_submodule.append(f"{module} → {node.module}")
     return taken, through_a_submodule
 
 
-def test_nothing_outside_reaches_past_the_package_door():
+@pytest.mark.parametrize("package", [PKG, "app.domain.agent.harness.codex"])
+def test_nothing_outside_reaches_past_the_package_door(package):
     """一个 harness 的内部结构不该是别人能依赖的东西。从包门口拿，门口那张表才
     能当账本用；直接摸子模块，账本就不知道有这回事。"""
-    _, reached_past = _crossings()
+    _, reached_past = _crossings(package)
     assert not reached_past, (
         "这些地方越过了 claude_code 的包门口，直接 import 了它的子模块。"
         "要么从包本身 import，要么把名字加进 __init__ 的导出表：\n  "

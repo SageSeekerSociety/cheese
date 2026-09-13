@@ -12,8 +12,10 @@ from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_provider import DeviceChannel, EnvironmentPreparationError
-from app.domain.agent.harness.claude_code import ScreenSetupError
+from app.domain.agent.harness import Opening, SessionRef
+from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
+from app.domain.agent.harness.codex import CodexChannel
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import session_auth_headers
@@ -51,6 +53,76 @@ def channel(client, monkeypatch):
     central._ensure_screen = AsyncMock(return_value=SimpleNamespace(device_id="center"))
     central._wait_executor = AsyncMock()
     return central
+
+
+@pytest.mark.anyio
+async def test_codex_placement_recovers_only_as_codex(client, room, monkeypatch):
+    project, topic = room
+    central = channel(client, monkeypatch)
+    central._hub.exec.side_effect = [
+        {"exit": 0, "stdout": json.dumps({"workspace": "/project", "mcp_servers": []})},
+        {"exit": 0, "stdout": json.dumps({"thread_id": "codex-thread", "alive": True})},
+    ]
+    codex = CodexChannel(central, ClaudeLaunch("system").execution)
+    ref = SessionRef(project, topic)
+    handle = await codex.ensure(
+        ref, Opening("shared system", model="fixture", agent_handle="agent")
+    )
+    assert handle.thread_id == "codex-thread"
+    async with client.test_factory() as db:
+        stored = await db.get(Topic, topic)
+        assert stored.session_placement["runtime"] == {
+            "harness": "codex",
+            "agent_handle": "agent",
+            "state": handle.state,
+        }
+        assert stored.session_placement["execution"]["device_id"] == "executor"
+    central._hub.call_executor.return_value = {
+        "thread_id": "codex-thread",
+        "alive": True,
+    }
+    assert await codex.discover("center") == [handle]
+    central.restore_screens = AsyncMock(return_value=[])
+    central.executor.discover = AsyncMock(return_value=[])
+    assert await central.discover("center") == []
+    central.restore_screens.assert_awaited_once_with([])
+
+
+@pytest.mark.anyio
+async def test_center_uses_the_selected_harness_for_bootstrap_and_history(
+    client, room, monkeypatch
+):
+    project, topic = room
+    central = channel(client, monkeypatch)
+    history = AsyncMock()
+    launch = SimpleNamespace(
+        resume_session_id="fixture-session",
+        execution=SimpleNamespace(
+            transfer_history=history,
+            script=lambda *args: "FIXTURE_EXECUTOR_BOOTSTRAP",
+            payload_for=lambda *args: {"fixture_executor": True},
+        ),
+    )
+    kwargs = dict(
+        project_id=project,
+        topic_id=topic,
+        token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
+        env={},
+        launch=launch,
+        precheck=await central.precheck(project, topic),
+    )
+    await central.ensure_ready(**kwargs)
+    assert central._hub.exec.await_args.kwargs["stdin"] == "FIXTURE_EXECUTOR_BOOTSTRAP"
+    history.assert_awaited_once_with(
+        central._hub, "executor", "center", project, topic, "fixture-session"
+    )
+    central._hub.call_executor.side_effect = [
+        {"pid": 123, "capabilities": ["prepare"]},
+        {"pid": 123, "workspace": "/project", "mcp_servers": []},
+    ]
+    await central.ensure_ready(**kwargs)
+    assert central._hub.call_executor.await_args.args[3] == {"fixture_executor": True}
+    assert history.await_count == 1
 
 
 @pytest.mark.anyio

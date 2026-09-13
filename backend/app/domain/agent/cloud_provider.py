@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.agent.device_hub import DeviceHub, device_hub
 from app.domain.agent.device_provider import DeviceChannel
-from app.domain.agent.harness.claude_code import ScreenSetupError
+from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor

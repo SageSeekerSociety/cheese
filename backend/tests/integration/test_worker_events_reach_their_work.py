@@ -26,11 +26,9 @@ from sqlalchemy import select
 
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
+from app.domain.agent.harness.channel import Channel
 from app.domain.agent.harness.claude_code.hook_events import HookRouter
-from app.domain.agent.harness.claude_code.hooks_substrate import (
-    Channel,
-    ClaudeCodeRuntime,
-)
+from app.domain.agent.harness.claude_code.hooks_substrate import ClaudeCodeRuntime
 from app.domain.agent.runtime import get_broker
 from app.domain.block.models import Block
 from app.domain.block.repositories import BlockRepository

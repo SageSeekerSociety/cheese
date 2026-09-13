@@ -76,3 +76,21 @@ def test_agents_can_select_each_gateway_model_without_changing_project_supply(
     for model in ("glm-5.2", "deepseek-flash", "sonnet"):
         validate_configuration(AgentConfiguration(model=model), project)
     assert sum(item["default"] for item in model_choices(project)) == 1
+
+
+def test_codex_models_require_the_matching_harness(monkeypatch):
+    monkeypatch.setattr(settings, "agent_codex_models", ["codex-fixture"])
+    validate_configuration(
+        AgentConfiguration(model="codex-fixture", harness="codex"), {}
+    )
+    for config in (
+        AgentConfiguration(model="codex-fixture"),
+        AgentConfiguration(model="glm-5.2", harness="codex"),
+    ):
+        with pytest.raises(ValidationError):
+            validate_configuration(config, {})
+
+
+def test_codex_models_are_not_advertised_without_configured_supply(monkeypatch):
+    monkeypatch.setattr(settings, "agent_codex_models", [])
+    assert all("codex" not in item["harnesses"] for item in model_choices({}))

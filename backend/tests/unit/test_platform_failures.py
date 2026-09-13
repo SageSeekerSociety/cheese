@@ -198,7 +198,7 @@ def test_an_offline_device_declares_itself_through_a_wrapping_raise():
     抛出的地方和把它变成一条轮次结果的地方隔着好几层，中间常有 `raise X from
     exc`：码只看最外层就会在这里丢掉。
     """
-    from app.domain.agent.harness.claude_code.hooks_substrate import ScreenSetupError
+    from app.domain.agent.harness.channel import ScreenSetupError
     from app.domain.agent.platform_failures import (
         DEVICE_OFFLINE_MESSAGE,
         HOST_UNREACHABLE,
@@ -221,7 +221,7 @@ def test_an_offline_device_declares_itself_through_a_wrapping_raise():
 def test_a_setup_failure_the_platform_cannot_name_stays_unnamed():
     """没有码的 ScreenSetupError（比如「这个话题上已有工作正在运行」）不该被
     硬塞进某个分类里——不知道就是不知道，runtime 有专门的一条路走它。"""
-    from app.domain.agent.harness.claude_code.hooks_substrate import ScreenSetupError
+    from app.domain.agent.harness.channel import ScreenSetupError
     from app.domain.agent.platform_failures import classify_platform_failure
 
     assert classify_platform_failure(ScreenSetupError("说不清的失败")) is None

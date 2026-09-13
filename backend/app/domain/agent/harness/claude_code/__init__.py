@@ -39,9 +39,7 @@ from app.domain.agent.harness.claude_code.hooks_substrate import (
     CHEESE_HOOK_SCRIPT,
     SESSION_TOKEN_TTL_S,
     ActivityTracker,
-    Channel,
     ClaudeCodeRuntime,
-    ScreenSetupError,
     SpoolBacklog,
     TopicSubscription,
     acknowledge_log,
@@ -52,15 +50,11 @@ from app.domain.agent.harness.claude_code.hooks_substrate import (
     log_cursor,
     read_log,
 )
+from app.domain.agent.harness.claude_code.remote_execution import (
+    launch as executor_launch,
+)
 from app.domain.agent.harness.claude_code.remote_execution.client import (
     REMOTE_CONTROLS,
-    RemoteClient,
-)
-from app.domain.agent.harness.claude_code.remote_execution.launch import (
-    payload_for as executor_prepare_payload,
-)
-from app.domain.agent.harness.claude_code.remote_execution.launch import (
-    script as build_executor_launch,
 )
 from app.domain.agent.harness.claude_code.remote_execution.private import (
     target as private_execution_target,
@@ -77,11 +71,9 @@ from app.domain.agent.harness.claude_code.startup_cache import (
 from app.domain.agent.harness.claude_code.warm_session import build_warm_session_prepare
 
 __all__ = [
+    "executor_launch",
     "CHEESE_HOOK_SCRIPT",
     "REMOTE_CONTROLS",
-    "RemoteClient",
-    "build_executor_launch",
-    "executor_prepare_payload",
     "private_execution_target",
     "CLAUDE_MIN_VERSION",
     "CLAUDE_PINNED_VERSION",
@@ -90,11 +82,9 @@ __all__ = [
     "HARNESS_ENV",
     "SESSION_TOKEN_TTL_S",
     "ActivityTracker",
-    "Channel",
     "ClaudeCodeRuntime",
     "HookRouter",
     "MessageAssembler",
-    "ScreenSetupError",
     "SpoolBacklog",
     "TopicSubscription",
     "acknowledge_log",

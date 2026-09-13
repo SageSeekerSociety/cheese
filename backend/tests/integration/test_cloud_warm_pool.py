@@ -16,7 +16,13 @@ from app.domain.device.supply import Supply, Visibility
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
 from app.domain.machine.microcloud import MicroCloudError
-from app.domain.machine.models import ProjectMachine, WarmMachine
+from app.domain.machine.models import (
+    AiStatus,
+    MachineStatus,
+    ProjectMachine,
+    WarmMachine,
+)
+from app.domain.machine.repositories import ProjectMachineRepository
 from app.domain.machine.services import MachineService
 from app.domain.machine.warm import WarmPoolService
 from app.domain.user.repositories import UserRepository
@@ -36,6 +42,93 @@ class ClaimCloud(FakeMicroCloud):
         if self.fail_claim:
             raise MicroCloudError("response lost")
         return {"id": machine_id, "status": "running", "aiStatus": "ready"}
+
+
+def test_central_cloud_compute_enrolls_and_wakes_without_provider_login(
+    warm_case, monkeypatch
+):
+    client, topics, actor, cloud = warm_case
+    monkeypatch.setattr(settings, "agent_session_device_id", "center")
+
+    async def run():
+        async with client.test_factory() as session:
+            service = MachineService(session, cloud)
+            machine = await service.ensure_topic_machine(
+                uuid.UUID(topics[0]), actor=actor
+            )
+            assert cloud.created[-1]["aiMode"] == "none"
+            machine.status = MachineStatus.running
+            machine.ai_mode = "none"
+            machine.ai_status = AiStatus.disabled
+            machine.ip = "192.0.2.2"
+            await session.commit()
+            repo = ProjectMachineRepository(session)
+            assert machine in await repo.list_awaiting_enrollment(
+                5, desired_ai_mode="none"
+            )
+            assert await service.reconcile_ai_mode() == 0
+            assert cloud.ai_switches == []
+            machine.device_id = "warm-test"
+            await session.commit()
+            assert (
+                uuid.UUID(topics[0]),
+                "warm-test",
+            ) in await repo.list_ready_topic_devices()
+
+    asyncio.run(run())
+
+
+def test_central_warm_creation_does_not_request_subscription(warm_case, monkeypatch):
+    client, _, _, cloud = warm_case
+    monkeypatch.setattr(settings, "agent_session_device_id", "center")
+    monkeypatch.setattr(settings, "connector_public_base", "https://example.invalid")
+
+    async def run():
+        async with client.test_factory() as session:
+            await WarmPoolService(session, cloud)._new()
+            rows = (
+                await session.scalars(
+                    select(WarmMachine).where(WarmMachine.state == "preparing")
+                )
+            ).all()
+            assert len(rows) == 1
+            assert rows[0].create_request["aiMode"] == "none"
+
+    asyncio.run(run())
+
+
+def test_failed_cloud_creation_is_failed_environment_not_permanent_pending(warm_case):
+    client, topics, actor, cloud = warm_case
+
+    async def run():
+        async with client.test_factory() as session:
+            machine = await MachineService(session, cloud).ensure_topic_machine(
+                uuid.UUID(topics[1]), actor=actor
+            )
+            machine.device_id = None
+            machine.status = MachineStatus.error
+            await session.commit()
+            # Remove the fixture binding to exercise a failed cold enrollment.
+            from app.domain.device.models import DeviceTopicRow
+
+            binding = await session.scalar(
+                select(DeviceTopicRow).where(
+                    DeviceTopicRow.topic_id == uuid.UUID(topics[1])
+                )
+            )
+            if binding is not None:
+                await session.delete(binding)
+                await session.commit()
+
+    asyncio.run(run())
+    token = seed_user(client, "owner")
+    topic = client.get(f"/topics/{topics[1]}").json()["data"]
+    response = client.get(
+        f"/projects/{topic['project_id']}/environment/rooms/{topics[1]}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["state"] == "failed"
 
 
 @pytest.mark.parametrize(

@@ -17,13 +17,14 @@ from pathlib import Path
 
 import pytest
 
-from app.domain.agent import execution
+from app.domain.agent import execution, executor_transport
 from app.domain.agent.device_hub import DeviceHub
 from app.domain.agent.harness.claude_code.remote_execution import client as central
 from app.domain.agent.harness.claude_code.remote_execution import runtime
 from app.domain.agent.harness.claude_code.remote_execution.client import (
     _local_chat_send_argv,
 )
+from app.domain.agent.harness.codex.tools import RemoteTools
 
 
 def test_chat_publication_fast_path_accepts_only_standalone_cli_invocations():
@@ -284,6 +285,26 @@ def native_call(process, identifier, command):
     return json.loads(result["content"][0]["text"])
 
 
+@pytest.mark.anyio
+async def test_codex_tool_retry_uses_the_executor_mutation_receipt(
+    central_transport, tmp_path, monkeypatch
+):
+    _, _, _, workspace = central_transport
+    monkeypatch.setenv("CHEESE_TOKEN", "fixture")
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1")
+    tools = RemoteTools(json.loads((tmp_path / "central.json").read_text()))
+    tools.routes = {"Bash": ("native", "Bash")}
+    request = {
+        "tool": "Bash",
+        "callId": "codex-call",
+        "arguments": {"command": "printf x >> once.txt; cat once.txt"},
+    }
+    first = await tools("item/tool/call", request)
+    assert first["success"] is True
+    assert await tools("item/tool/call", request) == first
+    assert (workspace / "once.txt").read_text() == "x"
+
+
 def test_generated_prefix_preserves_local_hook_and_remote_command_boundary(
     central_transport, tmp_path, monkeypatch
 ):
@@ -296,6 +317,7 @@ def test_generated_prefix_preserves_local_hook_and_remote_command_boundary(
     copied_helper = helpers / source.name
     shutil.copyfile(source, copied_helper)
     shutil.copyfile(source.with_name("proxy.js"), helpers / "proxy.js")
+    shutil.copyfile(executor_transport.__file__, helpers / "executor_transport.py")
     monkeypatch.setattr(central, "__file__", str(copied_helper))
     target = json.loads((tmp_path / "central.json").read_text())
     command = "cat > 'hook receipt.txt'; printf '%s' 'quoted * ? [value]'"

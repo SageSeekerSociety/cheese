@@ -1,10 +1,34 @@
 """ComputePool: which machine a turn lands on (design §3 / review R2)."""
 
 import uuid
+from unittest.mock import AsyncMock
 
 import pytest
 
 from app.domain.agent.compute import ComputePool
+from app.domain.agent.harness import SessionRef
+
+
+@pytest.mark.anyio
+async def test_switch_parks_previous_harness_before_routing_mid_turn_input():
+    native = _FakeBackend("device")
+    codex = _FakeBackend("device", "codex")
+    calls = []
+    native.holds = lambda topic_id: True
+    codex.holds = lambda topic_id: True
+    native.interrupt = AsyncMock(side_effect=lambda ref: calls.append("interrupt"))
+    native.close = AsyncMock(side_effect=lambda ref: calls.append("close"))
+    native.deliver = AsyncMock(return_value=True)
+    codex.deliver = AsyncMock(return_value=True)
+    pool = ComputePool([native, codex], "device")
+    session = SessionRef(uuid.uuid4(), uuid.uuid4())
+    with pytest.raises(RuntimeError, match="multiple live harnesses"):
+        await pool.deliver(session.topic_id, "ambiguous")
+    await pool.activate(session, codex)
+    assert calls == ["interrupt", "close"]
+    assert await pool.deliver(session.topic_id, "follow up")
+    native.deliver.assert_not_awaited()
+    codex.deliver.assert_awaited_once_with(session.topic_id, "follow up")
 
 
 class _EmptyBacklog:

@@ -274,7 +274,7 @@ class MachineService:
         # being set up on newapi first and switched by our sweep — one
         # provisioning of the channel rather than two. A MicroCloud that
         # predates the field ignores it and the sweep switches as before.
-        desired_ai_mode = (settings.microcloud_ai_mode or "").strip().lower()
+        desired_ai_mode = settings.cloud_executor_ai_mode
         if desired_ai_mode:
             body["aiMode"] = desired_ai_mode
         if topic_id is not None and owner_user_id is not None and not ssh_pubkey:
@@ -448,7 +448,9 @@ class MachineService:
         the wrong built-in AI channel gets switched. Catches machines whose
         provision-time switch failed or raced MicroCloud's own wiring, and
         machines that predate the setting."""
-        desired = (settings.microcloud_ai_mode or "").strip().lower()
+        if settings.agent_session_device_id:
+            return 0
+        desired = settings.cloud_executor_ai_mode
         if not desired:
             return 0
         machines = await self._repo.list_ai_mode_mismatch(desired, limit)
@@ -707,7 +709,7 @@ class MachineService:
         """
         machines = await self._repo.list_awaiting_enrollment(
             limit,
-            desired_ai_mode=(settings.microcloud_ai_mode or "").strip().lower(),
+            desired_ai_mode=settings.cloud_executor_ai_mode,
             settle_cutoff=datetime.now(UTC) - ENROLL_SETTLE_GRACE,
         )
         enrolled = failed = 0

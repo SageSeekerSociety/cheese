@@ -338,9 +338,9 @@ class WarmPoolService:
             raise ValidationError(
                 "warm pool requires a reachable connector_public_base"
             )
-        mode = settings.microcloud_ai_mode.strip().lower()
-        if mode != "ccproxy":
-            raise ValidationError("warm pool requires ccproxy AI mode")
+        mode = settings.cloud_executor_ai_mode
+        if mode not in {"none", "ccproxy"}:
+            raise ValidationError("warm pool requires none or ccproxy AI mode")
         offering = await MachineService(self.session, self.client)._pick_offering()
         ref = "cheese-platform-warm-pool"
         customer = await self.client.find_customer(
@@ -428,7 +428,7 @@ class WarmPoolService:
                 origin=settings.connector_public_base,
                 token=device.token,
                 device_id=device.device_id,
-                prepare_native_session=True,
+                prepare_native_session=not bool(settings.agent_session_device_id),
             )
             output = await enrollment.run_bootstrap(
                 ip=ip,

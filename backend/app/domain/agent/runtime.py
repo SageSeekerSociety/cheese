@@ -705,7 +705,7 @@ class AgentWorkRunner:
         pre-built kickoff frame stream rides the same _run pipeline (telemetry,
         timeout, failure events) via the `frames` override."""
         # Imported here, not at module scope: chat imports this module back.
-        from app.domain.agent.chat import KICKOFF_PROMPT
+        from app.domain.agent.harness.prompt import KICKOFF_PROMPT
 
         turn_id = turn_id or uuid.uuid4()
         frames = chat_service.kickoff(topic_id=topic_id, turn_id=turn_id, prompt=prompt)

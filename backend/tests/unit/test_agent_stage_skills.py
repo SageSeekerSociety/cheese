@@ -8,7 +8,7 @@ prompt), not the internals of how the markdown is parsed.
 import pytest
 
 from app.domain.agent.chat import _OPEN_CARD_HINTS, _OPEN_CARD_STATUSES
-from app.domain.agent.chat import _build_system_prompt as build_prompt
+from app.domain.agent.harness.prompt import build_system_prompt as build_prompt
 from app.domain.agent.skills import (
     available_skills,
     load_scenario,

@@ -25,12 +25,9 @@ from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
-from app.domain.agent.chat import (
-    ChatService,
-    thread_relay_prompt,
-    thread_upgraded_prompt,
-)
+from app.domain.agent.chat import ChatService
 from app.domain.agent.device_hub import device_hub
+from app.domain.agent.harness.prompt import thread_relay_prompt, thread_upgraded_prompt
 from app.domain.agent.market import (
     COMPUTE_CLOUD,
     COMPUTE_DEVICE,

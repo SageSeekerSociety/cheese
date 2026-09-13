@@ -827,6 +827,7 @@ export interface AgentFieldChoice {
   label: string
   description: string
   default: boolean
+  harnesses?: string[]
 }
 
 export interface AgentFieldOptions {

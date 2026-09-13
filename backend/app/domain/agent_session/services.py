@@ -11,6 +11,7 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.agent.harness import DEFAULT_HARNESS
 from app.domain.agent_session.repositories import AgentSessionRepository
 
 
@@ -18,16 +19,26 @@ class AgentSessionService:
     def __init__(self, session: AsyncSession):
         self._repo = AgentSessionRepository(session)
 
-    async def resume_token(self, topic_id: uuid.UUID, agent_handle: str) -> str | None:
+    async def resume_token(
+        self, topic_id: uuid.UUID, agent_handle: str, *, harness: str = DEFAULT_HARNESS
+    ) -> str | None:
         """What this agent resumes its conversation in this topic by."""
-        return await self._repo.resume_token(topic_id, agent_handle)
+        return await self._repo.resume_token(topic_id, agent_handle, harness)
 
     async def remember(
-        self, *, topic_id: uuid.UUID, agent_handle: str, resume_token: str
+        self,
+        *,
+        topic_id: uuid.UUID,
+        agent_handle: str,
+        resume_token: str,
+        harness: str = DEFAULT_HARNESS,
     ) -> None:
         """Record where this agent's conversation got to."""
         await self._repo.save(
-            topic_id=topic_id, agent_handle=agent_handle, resume_token=resume_token
+            topic_id=topic_id,
+            agent_handle=agent_handle,
+            resume_token=resume_token,
+            harness=harness,
         )
 
     async def has_run(self, topic_id: uuid.UUID) -> bool:

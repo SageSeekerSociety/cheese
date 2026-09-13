@@ -3,7 +3,7 @@
 // 它们不是随页面一起长出来的展示逻辑，是这一页存在的理由：光看名字和类型，
 // 分不出哪个队友真的在干活、哪个是建完就没人用的空壳。所以这里单独成文件，
 // 由测试直接盯着，而不是埋在组件里靠渲染结果间接验证。
-import type { MemoryEntryOut } from '../api'
+import type { AgentFieldChoice, MemoryEntryOut } from '../api'
 import type { AgentType, ProjectAgent, Topic } from '../cx_types'
 
 // 一个队友在列表里的稳定键。项目从没配过队友时那条隐式的「芝士」没有 id
@@ -88,7 +88,7 @@ export function displayNameError(name: string): string | null {
 
 export interface FieldOptionsLike {
   state: string
-  choices: { id: string; label: string; description: string; default: boolean }[]
+  choices: AgentFieldChoice[]
   reason: string
   note: string
 }

@@ -61,7 +61,7 @@ if TYPE_CHECKING:
 # lived in the Claude Code adapter under names starting with "Hook", which is
 # how they were sensed and not what they are.
 #
-# (project, topic, work id, event, session id, is-replay, is-live)
+# (project, topic, work id, event, event id, final text already seen, unsolicited)
 EventConsumer = Callable[
     [
         uuid.UUID,
@@ -410,6 +410,7 @@ CLAUDE_CODE = "claude-code"
 # the set of harnesses that exist, and everything else reads it from here.
 HARNESSES: dict[str, str] = {
     CLAUDE_CODE: "Claude Code",
+    "codex": "Codex",
 }
 
 # What a type that declines to choose runs on. A type is 出厂设置, not a

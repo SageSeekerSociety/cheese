@@ -18,7 +18,8 @@ import pytest
 
 from app.api.deps import get_chat_service
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.agent.chat import PLATFORM_NOTICE, ChatService
+from app.domain.agent.chat import ChatService
+from app.domain.agent.harness.prompt import PLATFORM_NOTICE
 from app.main import app
 from tests.conftest import stub_compute
 

@@ -32,7 +32,17 @@ from app.core.errors import GatewayUnavailableError, NotFoundError, ValidationEr
 from app.core.text import markdown_preview
 from app.domain.agent.compute import ComputePool, ComputeProvider
 from app.domain.agent.gateway import LlmGateway, drain_new_usage
-from app.domain.agent.harness import Opening, SessionRef, runtime_for
+from app.domain.agent.harness import Opening, SessionRef, harness_name, runtime_for
+from app.domain.agent.harness.prompt import (
+    KICKOFF_PROMPT,
+    attachment_prompt_line,
+    build_system_prompt,
+    chipify_paths,
+    platform_prompt,
+    prompt_line,
+    publication_prompt,
+    strip_platform_notice,
+)
 from app.domain.agent.market import (
     subscription_model_alias,
     subscription_model_listings,
@@ -691,21 +701,6 @@ def _cheese_resource(command: str) -> str | None:
     return None
 
 
-# B2 (引用语法遵循): a bare "backend/app/x.py" inside an injected memory fact is
-# a bad few-shot example — the model imitates whatever shape the prompt shows,
-# so bare paths in memories beget bare paths in docs/replies. Wrap path-looking
-# tokens as <&path> before injection so the prompt itself models the correct
-# form. Conservative on purpose: needs ≥1 slash + an extension; a leading "/",
-# "://" or "&" (already-wrapped / absolute / URL) disqualifies via lookbehind.
-_BARE_PATH_RE = re.compile(
-    r"(?<![\w/.&<-])((?:[\w.-]+/)+[\w-]+\.\w{1,8}(?::\d+(?:-\d+)?)?)(?![\w/])"
-)
-
-
-def _chipify_paths(fact: str) -> str:
-    return _BARE_PATH_RE.sub(r"<&\1>", fact)
-
-
 # Open (non-final) accept-card statuses, worth telling the agent about at turn
 # start — a card in one of these states usually implies "there is follow-up
 # work or a wait the agent should know it's in".
@@ -860,115 +855,6 @@ def _turn_meta_lines(
     return lines
 
 
-def _build_system_prompt(
-    base: str,
-    skills: str,
-    doc: str | None,
-    memories: list[str],
-    role: str | None = None,
-    roster: list[dict] | None = None,
-    topics: list[dict] | None = None,
-    untitled: bool = False,
-    turn_meta: list[str] | None = None,
-    stage_guide: str | None = None,
-    memories_omitted: int = 0,
-    memories_core: int = 0,
-    memories_core_omitted: int = 0,
-) -> str:
-    parts = [base]
-    if untitled:
-        # First in the prompt on purpose: naming the topic is the FIRST action
-        # of the session — before the opening reply, before any other tool —
-        # so the rail never shows a working-but-unnamed 「新话题」.
-        parts.append(
-            "## 本轮第一件事：先给本话题起名（先于一切）\n"
-            "本话题还叫「新话题」（未命名）。**本轮的第一个动作**——在说开场白、"
-            "回复任何内容、调用任何其他工具之前——先根据用户的需求执行 "
-            '`cheese title "<标题>"` 起个 ≤12 字简短标题，然后再照常回应、干活。'
-            "这条优先于「先回应，再干活」：起标题只是一条命令，几乎不花时间。"
-            "（只起一次，定了别反复改。）"
-        )
-    if role:
-        parts.append(f"## 你的专家角色\n{role}")
-    if skills:
-        parts.append(skills)
-    if stage_guide:
-        # 按阶段渐进式披露: the flow knowledge for THIS point in the topic's
-        # lifecycle only. Statically injected (like every other skill) — the
-        # model never gets to decide whether to load it, which is the whole
-        # reason this isn't a lazily-read Agent Skill (see stages.py).
-        parts.append(
-            "## 当前阶段的操作说明（平台按本话题所处的流程阶段自动选出，"
-            "只给你这一段）\n" + stage_guide
-        )
-    if topics:
-        lines = "\n".join(f"- {t['title']}" for t in topics)
-        parts.append(
-            "## 项目话题（交叉引用某个话题/它的文档时，在标题前加 @，如 "
-            "`@搭建推荐算法原型`——会渲染成可点的「#标题」链接）\n"
-            "下面**只列当前活跃的话题**。项目里还有已归档的话题，它们照常存在、"
-            "内容也照常可读，只是不在这里列出来；**没列出来 ≠ 不存在**。需要找"
-            "它们时自己查（返回全部话题，含 archived 的标题和 id）：\n"
-            '`cheese api GET "/topics?project_id=$CHEESE_PROJECT"`\n'
-            "拿到 id 后用 `<#id>` 就能精确引用任何一个话题（包括没列在下面的）。\n"
-            + lines
-        )
-    if roster:
-        lines = "\n".join(
-            f"- {m['name']}（{m['role']}，handle: {m['handle']}）" for m in roster
-        )
-        parts.append(
-            "## 项目成员 & 怎么点名\n"
-            "要让某人去做事/通知到他，**在他名字前加 @**（如 `@张衡`，名字用下表"
-            "准确值）——平台会把它变成可点的「@张衡」链接并给他**强提醒**。"
-            "只写名字而不加 @ 只是普通文字，不会通知。\n" + lines
-        )
-    if doc:
-        parts.append(
-            "## 当前话题的实况文档（这是最新状态；用户可能编辑了它，"
-            "请按它继续工作，并在状态变化时用 update_doc 工具更新它）\n" + doc
-        )
-    if memories or memories_omitted:
-        core = [f"- {_chipify_paths(m)}" for m in memories[:memories_core]]
-        retrieved = [f"- {_chipify_paths(m)}" for m in memories[memories_core:]]
-        block = "## 项目记忆（你已知道的事实，回答时可引用）"
-        if core:
-            block += "\n\n### 核心记忆（每轮都在场，与本轮说什么无关）\n" + "\n".join(
-                core
-            )
-        if retrieved:
-            block += (
-                "\n\n### 本轮检索到的记忆（按本话题/本轮消息挑出来的，**不是全部**）\n"
-                + "\n".join(retrieved)
-            )
-        if memories_omitted:
-            # 没注入必须可见: what did not come in is stated, never dropped in
-            # silence. A reader who cannot tell "nothing was stored" from "this
-            # turn did not ask for it" stops trusting memory entirely — and
-            # stops asking for the part it can still get.
-            block += (
-                f"\n\n> ⚠️ 记忆池里还有 **{memories_omitted} 条这一轮没注入**"
-                "（按与本轮上下文的相关性排的，排在后面的没进来；不是不存在）。"
-                "**没列出来 ≠ 不存在**——换个话题、要用到某条旧约定或踩过的坑时，"
-                '用 `cheese recall "<关键词>"` 现查；一次没查到也不等于没有，'
-                "换个说法、用更短的词再试一次。"
-            )
-        if memories_core_omitted:
-            # Core is the layer that is supposed to be unconditional. If even
-            # it had to be cut, saying so is the only way it gets pruned.
-            block += (
-                f"\n\n> ⚠️ **核心记忆超预算了**：有 {memories_core_omitted} 条核心记忆"
-                "没放下。核心记忆本该每轮全在场，出现这种情况说明它被当成普通记忆写"
-                "了——挑几条降级成普通记忆（`cheese remember` 不加 `--core`）。"
-            )
-        parts.append(block)
-    if turn_meta:
-        parts.append(
-            "## 本轮运行环境（平台元信息，非用户输入）\n" + "\n".join(turn_meta)
-        )
-    return "\n\n".join(parts)
-
-
 # Mentions are an ENCODED token, not guessed-from-prose: 芝士 (and the composer)
 # emit `<@handle>`, which the platform resolves deterministically and the UI
 # renders as a chip showing the member's name. A literal "@name" is just text.
@@ -998,7 +884,7 @@ def _topic_ref_lists(
 
     故意成对返回：这两份**必须**从同一批话题推导，且**必须**保持不同。全量那份
     喂给 `expand_mention_names`（`@标题` → `<#id>` 的解析表，含已归档话题）；子集
-    那份只喂给 `_build_system_prompt`。合成一份就会把"少注入"变成"少了引用能力"
+    那份只喂给 `build_system_prompt`。合成一份就会把"少注入"变成"少了引用能力"
     ——用户自己打 `@某个已归档话题` 会不再变成链接。
     """
     visible = [t for t in topics if t.id != exclude_id and t.kind != TopicKind.root]
@@ -1030,66 +916,6 @@ def _prompt_topic_refs(topics: list[Topic]) -> list[dict]:
     ]
     titles = Counter(t.title for t in live)
     return [{"id": str(t.id), "title": t.title} for t in live if titles[t.title] == 1]
-
-
-# 新话题开工首轮的内部指令 (讨论升级出一个房间时的 auto-kickoff)。Prompt-only: it
-# never appears as a message; what the humans see is 芝士's own opening, generated
-# from the brief preset as the topic's living doc (语义内容由 AI 生成 — see
-# CLAUDE.md). A ROOM is the only thing this still starts: work inside a room is a
-# 分身 in that room's own session, and the room is what raises it.
-KICKOFF_PROMPT = (
-    "这个话题刚从一条消息升级出来，由你负责推进。任务简报在系统提示的"
-    "「当前话题的实况文档」里：被升级的那段讨论 + 它原来所在地方的文档快照。"
-    "现在开工：\n"
-    "1. 先发开场白：一两句复述你理解的任务、说明打算怎么推进（给人纠偏的机会）；"
-    "简报信息不足就明确列出缺什么、@ 升级发起人补充。\n"
-    "2. 把实况文档改写成你自己的状态摘要（目标/约束/下一步），别留着简报原文不动。\n"
-    "3. 能直接开始的活就开始干；需要拍板的用决策请求找对的人。"
-)
-
-
-def thread_relay_prompt(
-    *, task_id: uuid.UUID, task_title: str, author: str, message: str
-) -> str:
-    """The ROOM's wake-up instruction when a person says something on one of its
-    threads — a chat message, a comment on its living doc.
-
-    Same reason as 补证据 and 讨论升级: the person is looking at the thread, but
-    the worker doing it lives in the room's session, so the room is the only
-    thing that can hear them. What was said stays where it was said — this only
-    says who has to act on it.
-    """
-    return (
-        f"有人在活「{task_title}」（task id `{task_id}`）上说话了：\n\n"
-        f"---\n[{author}] {message}\n---\n\n"
-        "**转达给做这条活的分身**：它还在跑就直接给它发消息；已经收工了，你就自己"
-        "看着办——能替它答的当场答，要接着干的照原来的简报重起一个分身并 "
-        f"`cheese bind {task_id} <新的 agent_id>`。"
-        "回话说在这条活上（`cheese tell` 到它），别只在房间里说，"
-        "问话的人看的是那边。"
-    )
-
-
-def thread_upgraded_prompt(*, task_id: uuid.UUID, source_message: str) -> str:
-    """The ROOM's wake-up instruction when one of its messages became a thread.
-
-    Addressed to the room because a thread is a 分身 inside the room's own
-    session and has no session to wake. The platform writes the row, its card
-    block and its brief; raising the worker is the room's, and so is naming the
-    thread — it is created untitled and nothing else is in a position to name it.
-    """
-    return (
-        f"你把一条消息升级成了这个房间里的一条活（task id `{task_id}`）。"
-        "被升级的那段话就是它的简报，平台已经记在卡上了：\n\n"
-        f"---\n{source_message}\n---\n\n"
-        "接下来是你的事：\n"
-        f'1. `cheese title "<≤12 字的标题>" --task {task_id}`——它现在还叫「新话题」，'
-        "只有你能给它起名字。\n"
-        "2. 用你的 Agent 工具起一个分身，**把上面这段简报原文放进它的 prompt**"
-        "（分身不会自己去读文档）。\n"
-        f"3. `cheese bind {task_id} <分身的 agent_id>`——不 bind，这条活在界面上"
-        "永远是「没人做」，分身干的每件事都记在你头上。"
-    )
 
 
 def _topic_refs(text: str) -> list[str]:
@@ -1134,93 +960,6 @@ def _resolve_mentions(text: str, roster: list[dict]) -> tuple[list[str], list[st
 
 def _block_payload(block_out: BlockOut) -> dict:
     return block_out.model_dump(mode="json")
-
-
-# How a platform-initiated turn announces itself. A resume nudge, a 分身's
-# kickoff and a returned conclusion are NOT anyone speaking, and until now they
-# reached 芝士 as bare text indistinguishable from a person's message. Claude
-# Code frames its own non-user input the same way ("The user sent a new message
-# while you were working:" for a human, a peer marker for another session); this
-# is the platform's equivalent for the one channel it owns.
-PLATFORM_NOTICE = "【平台】以下是平台自动发出的指令，不是任何人手打的话："
-
-
-def platform_prompt(content: str) -> str:
-    return f"{PLATFORM_NOTICE}\n{content}"
-
-
-def publication_prompt(content: str, *, is_private: bool = False) -> str:
-    """Carry the chat contract on new and resumed terminal input alike."""
-    if is_private:
-        return (
-            content
-            + "\n\n"
-            + platform_prompt(
-                "这是私聊，最终答复会自动发布给用户。直接回答，"
-                "不要再用 cheese chat send 重复发送同一答复。"
-            )
-        )
-    return (
-        content
-        + "\n\n"
-        + platform_prompt(
-            "普通输出和最终答复都不会自动发到聊天。请用 cheese chat send 发送给用户。"
-            "收到需要回应的用户消息（包括排队或执行中追加的消息）时，能直接回答就发答案；"
-            "需要继续处理就先说明你理解的意思和接下来要做什么，再继续。"
-            "重要进展、改方向、阻碍和完成结果也要主动发消息。"
-            "巡检按 heartbeat 的通知规则发言；分身向主 agent 回报。"
-        )
-    )
-
-
-def _strip_platform_notice(text: str) -> str:
-    """Neutralize the platform marker inside HUMAN text, so a person cannot type
-    a message that reads as a platform instruction. The marker is the one thing
-    in the prompt that claims institutional authority, so it has to be
-    unforgeable from the content side."""
-    return text.replace(PLATFORM_NOTICE, "【平台·用户原文】")
-
-
-def _attachment_prompt_line(
-    author: str, path: str, *, embeds_images: bool, mime: str = "image/png"
-) -> str:
-    if not mime.startswith("image/"):
-        return f"[{author}] 发来一个文件：{path}。请用适合该格式的工具读取文件内容。"
-    if embeds_images:
-        return (
-            f"[{author}] 发来一张图片（图片内容已附在本条消息里；"
-            f"它同时存在你工作目录的 {path}）"
-        )
-    return (
-        f"[{author}] 发来一张图片：**它没有附在本条消息里**，"
-        f"文件在你工作目录的 {path}，需要你自己用 Read 打开它。"
-        f"（打不开就直说打不开，不要猜图里是什么。）"
-    )
-
-
-def _prompt_line(b, *, embeds_images: bool) -> str:
-    """One speaker-labelled prompt line per pending human block.
-
-    An attachment block is a worktree image, and the line has to describe how it
-    actually arrives THIS turn — which is not the same on every backend:
-
-    - ``embeds_images``: the provider produces a native image block. SDK/relay
-      providers embed base64 directly; interactive Claude Code resolves the
-      prompt's ``@path`` through its native attachment path after a remote
-      device has acknowledged staging the bytes.
-    - a third-party provider that declares ``embeds_images=False`` gets the
-      explicit Read fallback and must not claim the image was attached.
-
-    The wording is load-bearing, not cosmetic. Told "图片内容已附在本条消息里"
-    and handed nothing, an agent does not raise — it writes a confident answer
-    about a picture it never saw, and nothing downstream marks that answer as
-    invented. Saying "去打开这个文件" fails safe: worst case it reports it could
-    not read the path."""
-    if b.kind == BlockKind.attachment:
-        return _attachment_prompt_line(
-            b.author, b.content, embeds_images=embeds_images, mime=b.mime_type or ""
-        )
-    return f"[{b.author}]: {_strip_platform_notice(b.content)}"
 
 
 # How much of a turn is used to retrieve memory against. A turn is not a
@@ -1624,7 +1363,7 @@ class ChatService:
         work remained by the time this method checked. Callers use that third
         state to distinguish a normal new message from a raced fallback.
 
-        The text is labelled the same way `_prompt_line` labels a pending block,
+        The text is labelled the same way `prompt_line` labels a pending block,
         so a message that arrives mid-turn reads identically to one that came in
         the prompt — 芝士 must not have to tell the two apart to know who spoke.
 
@@ -1637,7 +1376,7 @@ class ChatService:
             return None
         lines = []
         if content:
-            lines.append(f"[{author}]: {_strip_platform_notice(content)}")
+            lines.append(f"[{author}]: {strip_platform_notice(content)}")
         images = [
             {
                 "path": str(attachment.get("path") or ""),
@@ -1647,7 +1386,7 @@ class ChatService:
             if attachment.get("path")
         ]
         lines.extend(
-            _attachment_prompt_line(
+            attachment_prompt_line(
                 author, image["path"], embeds_images=True, mime=image["media_type"]
             )
             for image in images
@@ -1758,7 +1497,7 @@ class ChatService:
         if topic_id not in self._active_turn_ids:
             return False
         try:
-            line = platform_prompt(_strip_platform_notice(notice))
+            line = platform_prompt(strip_platform_notice(notice))
             return bool(await self._compute.deliver(topic_id, line))
         except Exception:  # noqa: BLE001 — a failed notice must not fail the write
             logger.exception(
@@ -2166,7 +1905,14 @@ class ChatService:
         self._settle_tasks.add(task)
         task.add_done_callback(self._settle_tasks.discard)
 
-    async def _save_session_pointer(self, topic_id: uuid.UUID, session_id: str) -> None:
+    async def _save_session_pointer(
+        self,
+        topic_id: uuid.UUID,
+        session_id: str,
+        *,
+        agent_handle: str | None = None,
+        harness: str | None = None,
+    ) -> None:
         """Best-effort: point the PLACE at the (possibly partial) session so the
         next summon resumes it. Never raises — used on failure paths.
 
@@ -2181,14 +1927,19 @@ class ChatService:
             async with self._sessions() as session:
                 place = await PlaceResolver(session).resolve(topic_id)
                 if place is not None:
-                    # Resolved here rather than threaded in: the hook-consume
-                    # path reaches this with no ResolvedAgent in scope, and this
-                    # already opens a session to do its own write.
-                    agent = await self._agent_at(session, place)
+                    # New event streams carry their original owner. Legacy
+                    # hooks still require resolving the room's current agent.
+                    if agent_handle is None or harness is None:
+                        agent = await self._agent_at(session, place)
+                        agent_handle = agent_handle or agent.handle
+                        harness = harness or harness_name(
+                            agent.configuration.get("harness")
+                        )
                     await AgentSessionService(session).remember(
                         topic_id=place.room_id,
-                        agent_handle=agent.handle,
+                        agent_handle=agent_handle,
                         resume_token=session_id,
+                        harness=harness,
                     )
                     await session.commit()
         except Exception:  # noqa: BLE001 — never mask the original failure
@@ -2362,7 +2113,12 @@ class ChatService:
         # would see an event that a reload then moves somewhere else.
         channel = str(task_id) if task_id is not None else str(topic_id)
         if isinstance(event, AgentSessionInfo):
-            await self._save_session_pointer(topic_id, event.session_id)
+            await self._save_session_pointer(
+                topic_id,
+                event.session_id,
+                agent_handle=event.agent_handle,
+                harness=event.harness,
+            )
         elif isinstance(event, AgentSubagentStart | AgentSubagentStop):
             payload = await self._persist_worker_event(
                 project_id=project_id,
@@ -2393,6 +2149,7 @@ class ChatService:
                 platform_unsolicited=platform_unsolicited,
                 continuation_id=(state.continuation_id if state is not None else None),
                 at=event.at,
+                author=event.agent_handle,
                 task_id=task_id,
             )
             if payload is not None:
@@ -2460,7 +2217,12 @@ class ChatService:
         elif isinstance(event, AgentResult):
             error_line, error_code = "", None
             if event.session_id:
-                await self._save_session_pointer(topic_id, event.session_id)
+                await self._save_session_pointer(
+                    topic_id,
+                    event.session_id,
+                    agent_handle=event.agent_handle,
+                    harness=event.harness,
+                )
             if event.is_error:
                 if event.text.strip() == TURN_TIMEOUT_MESSAGE:
                     # The watchdog's own verdict, and the only failure whose
@@ -3498,7 +3260,10 @@ class ChatService:
                 # all), which is why this compares the words. Traced from
                 # production: 46 messages, exactly one with empty meta, sitting
                 # next to a backfilled duplicate of itself.
-                if _canon(message.text) in known_texts:
+                if (
+                    not message.complete_identity
+                    and _canon(message.text) in known_texts
+                ):
                     seen.add(fallback_eid)
                     seen.update(message.eids)
                     return None
@@ -3514,6 +3279,7 @@ class ChatService:
                     eids=message.eids,
                     backfilled=True,
                     at=message.at,
+                    author=message.agent_handle,
                     task_id=await self._work_of_worker(topic_id, message.agent_id),
                 )
                 seen.add(fallback_eid)
@@ -3549,7 +3315,12 @@ class ChatService:
                         # The finished session is what the next summon must
                         # resume — without this the topic keeps pointing at
                         # whatever SessionStart last managed to save live.
-                        await self._save_session_pointer(topic_id, result.session_id)
+                        await self._save_session_pointer(
+                            topic_id,
+                            result.session_id,
+                            agent_handle=result.agent_handle,
+                            harness=result.harness,
+                        )
                     # `stop_text` stays RAW above (the prefix test matches it
                     # against raw flush text); the dedup compares stored forms.
                     if not stop_text or _canon(result.text or "") in known_texts:
@@ -4139,7 +3910,9 @@ class ChatService:
             # conversation, which is the failure this whole path prevents.
             session_agent = await self._agent_at(session, place)
             resume_session_id = await AgentSessionService(session).resume_token(
-                place.room_id, session_agent.handle
+                place.room_id,
+                session_agent.handle,
+                harness=harness_name(session_agent.configuration.get("harness")),
             )
             untitled = not is_private and topic.title == PLACEHOLDER_TITLE
             # 进度层 (#187): the checklist the last turn left behind. Read inside
@@ -4284,7 +4057,7 @@ class ChatService:
             # 芝士 bare text that looks like a person's message.
             embeds_images = getattr(provider, "embeds_images", True)
             backlog = "\n".join(
-                _prompt_line(b, embeds_images=embeds_images) for b in pending
+                prompt_line(b, embeds_images=embeds_images) for b in pending
             )
             prompt_text = backlog or platform_prompt(content)
             # 平台指令不会被待读消息挤掉。A platform turn EXISTS because of its
@@ -4433,7 +4206,7 @@ class ChatService:
         runtime = runtime_for(provider)
         yield {"type": "turn_ceiling", "seconds": runtime.hard_ceiling_s}
         skills = load_skills(PRIVATE_SKILLS) if is_private else self._skills
-        system_prompt = _build_system_prompt(
+        system_prompt = build_system_prompt(
             self._base_prompt,
             skills,
             doc_text,
@@ -4592,6 +4365,7 @@ class ChatService:
                 state.user_text = f"{state.user_text}\n{prompt_text}"
 
         try:
+            await self._compute.activate(SessionRef(project_id, topic_id), runtime)
             ready = await runtime.send(
                 SessionRef(project_id, topic_id),
                 prompt_text,
@@ -4779,7 +4553,7 @@ class ChatService:
             await session.commit()
 
         # --- run 芝士 with the activity-digestion skill + tools ---
-        system_prompt = _build_system_prompt(
+        system_prompt = build_system_prompt(
             self._base_prompt,
             load_skills(ACTIVITY_SKILLS),
             None,
@@ -4823,6 +4597,7 @@ class ChatService:
                     topic_id=topic_id,
                     agent_handle=agent.handle,
                     resume_token=new_session_id,
+                    harness=harness_name(agent.configuration.get("harness")),
                 )
             await session.commit()
 
@@ -4893,7 +4668,7 @@ class ChatService:
             f"## 临近里程碑\n{milestone_lines or '（暂无）'}"
         )
 
-        system_prompt = _build_system_prompt(
+        system_prompt = build_system_prompt(
             self._base_prompt, load_skills(HEARTBEAT_SKILLS), None, []
         )
         prompt = (
@@ -4978,7 +4753,7 @@ class ChatService:
             f"- {m.title} 截止 {m.due_date.isoformat() if m.due_date else '未定'}"
             for m in upcoming
         )
-        mem_lines = "\n".join(f"- {_chipify_paths(m)}" for m in memories.facts)
+        mem_lines = "\n".join(f"- {chipify_paths(m)}" for m in memories.facts)
         if memories.omitted:
             mem_lines += f"\n- （另有 {memories.omitted} 条相关性较低的记忆未列出）"
         context = (
@@ -4986,7 +4761,7 @@ class ChatService:
             f"## 临近里程碑\n{ms_lines or '（暂无）'}\n\n"
             f"## 关键记忆\n{mem_lines or '（暂无）'}"
         )
-        system_prompt = _build_system_prompt(
+        system_prompt = build_system_prompt(
             self._base_prompt,
             "",  # This call returns a project summary, without chat publication.
             None,

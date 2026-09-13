@@ -10,14 +10,13 @@ from pathlib import Path
 import pytest
 
 from app.domain.agent.harness import Opening, SessionRef
+from app.domain.agent.harness.channel import Channel, ScreenSetupError
 from app.domain.agent.harness.claude_code.hook_events import HookRouter
 from app.domain.agent.harness.claude_code.hooks_substrate import (
     CHEESE_HOOK_SCRIPT,
     SESSION_TOKEN_TTL_S,
     ActivityTracker,
-    Channel,
     ClaudeCodeRuntime,
-    ScreenSetupError,
     SessionActivity,
     WorkAttribution,
     monitor_session_activity,

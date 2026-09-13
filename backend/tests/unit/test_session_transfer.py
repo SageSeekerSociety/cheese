@@ -13,9 +13,10 @@ from typing import Any
 
 import pytest
 
-from app.domain.agent.central_provider import CentralChannel
-from app.domain.agent.device_provider import DeviceChannel
-from app.domain.agent.harness.claude_code import ScreenSetupError
+from app.domain.agent.harness.channel import ScreenSetupError
+from app.domain.agent.harness.claude_code.remote_execution.launch import (
+    transfer_history,
+)
 
 
 @pytest.mark.skipif(not shutil.which("tmux"), reason="requires a real tmux terminal")
@@ -23,7 +24,9 @@ from app.domain.agent.harness.claude_code import ScreenSetupError
 def test_exited_session_with_retained_terminal_allows_transfer(
     tmp_path, monkeypatch, capsys, legacy_workspace
 ):
-    from app.domain.agent.session_transfer import transfer
+    from app.domain.agent.harness.claude_code.remote_execution.session_transfer import (
+        transfer,
+    )
 
     monkeypatch.setenv("HOME", str(tmp_path))
     project, resource = str(uuid.uuid4()), str(uuid.uuid4())
@@ -116,17 +119,16 @@ async def test_history_transfer_preserves_large_transcripts_and_subagents(tmp_pa
         }
 
     hub: Any = SimpleNamespace(exec=execute)
-    central = CentralChannel(DeviceChannel(hub=hub))
-    await central._transfer_history("source", "center", project, resource, resume)
+    await transfer_history(hub, "source", "center", project, resource, resume)
     for path in roots["source"].rglob("*.jsonl"):
         assert (
             roots["center"] / path.relative_to(roots["source"])
         ).read_bytes() == path.read_bytes()
     assert (source / f"{resume}.jsonl").read_bytes() == original
     # A repeated handoff is safe, but an existing divergent history is preserved.
-    await central._transfer_history("source", "center", project, resource, resume)
+    await transfer_history(hub, "source", "center", project, resource, resume)
     destination = roots["center"] / "-old-work" / f"{resume}.jsonl"
     destination.write_bytes(original + b"central continuation\n")
     with pytest.raises(ScreenSetupError, match="different bytes"):
-        await central._transfer_history("source", "center", project, resource, resume)
+        await transfer_history(hub, "source", "center", project, resource, resume)
     assert destination.read_bytes() == original + b"central continuation\n"

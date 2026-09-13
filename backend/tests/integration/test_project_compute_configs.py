@@ -8,7 +8,7 @@ import pytest
 from app.core.config import settings
 from app.domain.agent.compute_configs import ComputeChoice, bind_room_device_choice
 from app.domain.agent.device_provider import resolve_pinned_device
-from app.domain.agent.harness.claude_code.hooks_substrate import ScreenSetupError
+from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
