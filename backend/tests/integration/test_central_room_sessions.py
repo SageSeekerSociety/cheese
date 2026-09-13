@@ -130,6 +130,33 @@ async def test_center_uses_the_selected_harness_for_bootstrap_and_history(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("digest", [None, "previous-release"])
+async def test_old_executor_process_takes_release_bootstrap(
+    client, room, monkeypatch, digest
+):
+    project, topic = room
+    central = channel(client, monkeypatch)
+    kwargs = dict(
+        project_id=project,
+        topic_id=topic,
+        token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
+        env={},
+        launch=ClaudeLaunch("System"),
+        precheck=await central.precheck(project, topic),
+    )
+    await central.ensure_ready(**kwargs)
+    central._hub.exec.reset_mock()
+    central._hub.call_executor.return_value = {
+        "pid": 123,
+        "capabilities": ["prepare"],
+        "runtime_sha256": digest,
+    }
+    await central.ensure_ready(**kwargs)
+    central._hub.exec.assert_awaited_once()
+    assert central._hub.call_executor.await_args.args[2] == "ping"
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize("environment_state", ["ready", "pending", "failed"])
 async def test_running_executor_prepares_without_python_launch(
     client, room, monkeypatch, environment_state
