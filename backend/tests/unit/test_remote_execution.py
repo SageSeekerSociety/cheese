@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 import uuid
@@ -21,6 +22,44 @@ RUNTIME = (
 spec = importlib.util.spec_from_file_location("execution_runtime", RUNTIME)
 runtime = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runtime)
+
+
+def test_background_command_keeps_task_id_when_it_finishes_before_response(
+    tmp_path, monkeypatch
+):
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "config.json").write_text(
+        json.dumps({"workspace": str(tmp_path), "env": {}})
+    )
+    executor = runtime.Executor(state)
+    original_start = threading.Thread.start
+
+    def finish_before_return(thread):
+        original_start(thread)
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+
+    monkeypatch.setattr(threading.Thread, "start", finish_before_return)
+    try:
+        for code in (0, 7):
+            result = executor.invoke(
+                {
+                    "id": str(uuid.uuid4()),
+                    "tool": "Bash",
+                    "args": {
+                        "command": f"printf completed; exit {code}",
+                        "run_in_background": True,
+                    },
+                }
+            )
+            task_id = result["value"]["backgroundTaskId"]
+            output = executor.output(task_id)
+            assert output["stdout"] == "completed"
+            assert output["exit_code"] == code
+            assert output["status"] == ("completed" if code == 0 else "failed")
+    finally:
+        executor.close()
 
 
 def test_executor_bootstrap_starts_in_room_without_a_git_checkout(
