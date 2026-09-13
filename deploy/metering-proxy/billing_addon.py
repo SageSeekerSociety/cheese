@@ -816,6 +816,17 @@ def _log_gateway_timing(flow: http.HTTPFlow) -> None:
                 else None,
                 "request_start": getattr(flow.request, "timestamp_start", None),
                 "request_end": getattr(flow.request, "timestamp_end", None),
+                "client_connection": {
+                    "id": flow.client_conn.id,
+                    "start": getattr(flow.client_conn, "timestamp_start", None),
+                    "tls_setup": getattr(flow.client_conn, "timestamp_tls_setup", None),
+                },
+                "server_connection": {
+                    "id": getattr(flow.server_conn, "id", None),
+                    "start": getattr(flow.server_conn, "timestamp_start", None),
+                    "tcp_setup": getattr(flow.server_conn, "timestamp_tcp_setup", None),
+                    "tls_setup": getattr(flow.server_conn, "timestamp_tls_setup", None),
+                },
                 "route_ready": flow.metadata.get("cheese_route_ready"),
                 "admission_ms": flow.metadata.get("cheese_admission_ms"),
                 "admission_phases_ms": flow.metadata.get("cheese_admission_phases_ms"),
