@@ -224,6 +224,16 @@ def status(tmp_path):
     return json.loads((tmp_path / "home/.cheese-environment/status.json").read_text())
 
 
+def launch_task(tmp_path):
+    return subprocess.run(
+        [sys.executable, environment_runner.__file__, "task", str(tmp_path / "work")],
+        env={**os.environ, "HOME": str(tmp_path / "home")},
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+
 def wait_for(path):
     deadline = time.monotonic() + 5
     while not path.exists() and time.monotonic() < deadline:
@@ -261,7 +271,7 @@ def test_prepared_agent_adoption_follows_project_setup(tmp_path, monkeypatch, fa
             def adopt(environment, directory):
                 assert directory == work.resolve()
                 assert (work / "setup-done").read_text() == "setup\n"
-                assert (work / "startup-value").read_text() == "project-specific"
+                assert not (work / "startup-value").exists()
                 assert environment["PROJECT_VALUE"] == "project-specific"
                 assert "CHEESE_ENVIRONMENT" not in environment
                 assert environment_runner.read_status(root)["state"] == "preparing"
@@ -346,9 +356,11 @@ def test_reuse_initialization_but_update_branch_dependencies(tmp_path):
     (tmp_path / "work/dependency-version").write_text("1")
     first = launch(tmp_path, config)
     assert first.wait(timeout=5) == 0
+    assert launch_task(tmp_path).returncode == 0
     (tmp_path / "work/dependency-version").write_text("2")
     second = launch(tmp_path, config)
     assert second.wait(timeout=5) == 0
+    assert launch_task(tmp_path).returncode == 0
     assert (tmp_path / "work/setup-count").read_text() == "setup\n"
     assert (tmp_path / "work/startup-count").read_text() == "startup\nstartup\n"
     assert (tmp_path / "work/installed-version").read_text() == "2"
@@ -382,6 +394,7 @@ def test_variables_reach_both_scripts_and_agent_without_shell_expansion(tmp_path
         tmp_path, config, ["bash", "-c", 'printf "%s" "$CUSTOM" > agent-value']
     )
     assert process.wait(timeout=5) == 0
+    assert launch_task(tmp_path).returncode == 0
     for name in ("setup-value", "startup-value", "agent-value"):
         assert (tmp_path / "work" / name).read_text() == value
     assert not (tmp_path / "work/injected").exists()
@@ -404,6 +417,7 @@ def test_installers_do_not_route_downloads_through_the_model_meter(
         tmp_path, config, ["bash", "-c", 'printf "%s" "$HTTPS_PROXY" > agent-proxy']
     )
     assert process.wait(timeout=5) == 0
+    assert launch_task(tmp_path).returncode == 0
     expected = "" if model_proxy else "http://model-only.invalid:8444"
     assert (tmp_path / "work/setup-proxy").read_text() == expected
     assert (tmp_path / "work/startup-proxy").read_text() == expected
@@ -465,15 +479,18 @@ def test_a_missing_work_directory_never_runs_scripts_or_agent(tmp_path):
     assert status(tmp_path)["error"] == "work directory is missing"
 
 
-def test_startup_failure_keeps_setup_receipt_for_retry(tmp_path):
+def test_task_startup_failure_keeps_room_ready_and_setup_receipt_for_retry(tmp_path):
     config = EnvironmentConfig(
         setup_script="echo setup >> count", startup_script="test -f allowed"
     )
-    assert launch(tmp_path, config, ["touch", "agent"]).wait(timeout=5) == 1
-    assert status(tmp_path)["stage"] == "startup"
-    assert not (tmp_path / "work/agent").exists()
-    (tmp_path / "work/allowed").touch()
     assert launch(tmp_path, config, ["touch", "agent"]).wait(timeout=5) == 0
+    failed = launch_task(tmp_path)
+    assert failed.returncode == 1
+    assert "startup script exited with status 1" in failed.stderr
+    assert status(tmp_path)["state"] == "ready"
+    assert (tmp_path / "work/agent").exists()
+    (tmp_path / "work/allowed").touch()
+    assert launch_task(tmp_path).returncode == 0
     assert (tmp_path / "work/count").read_text() == "setup\n"
 
 

@@ -60,6 +60,7 @@ def main():
     rc.base = f"http://127.0.0.1:{server.server_port}"
     if room:
         config["url"] = rc.base + "/execution"
+        room.set_api(rc.base)
     actions = [
         {
             "name": "Write",
@@ -201,11 +202,14 @@ def main():
             actions.append(
                 {"name": "mcp__custom__echo", "input": {"message": "ROOM_CUSTOM_MCP"}}
             )
+            actions.append(
+                {"name": "Bash", "input": {"command": f"cheese worktree {room.task}"}}
+            )
         send(
             "Continue processing the draft from the last message.\n"
             + platform_events[1]
         )
-        wait_requests(7 if room else 6)
+        wait_requests(8 if room else 6)
         assert "CROSS_TURN_SHELL_OK" in json.dumps(server.state["requests"][-1])
         assert not (Path(launch["cwd"]) / "draft.md").exists()
         assert (
@@ -217,7 +221,9 @@ def main():
         if room:
             assert (room.work / "custom.txt").read_text() == "ROOM_CUSTOM_MCP"
             assert (room.work / "setup-result").read_text() == "executor-env"
-            assert (room.work / "startup-result").read_text() == "started"
+            assert not (room.work / "backend").exists()
+            task_work = room.home / ".cheese/tasks" / room.task
+            assert (task_work / "backend/startup-result").read_text() == "executor-env"
             assert not (Path(launch["cwd"]) / "custom.txt").exists()
             # Resume the original bytes under a different HOME and cwd, as a
             # session migration does. The chunked transfer has its own test.
@@ -291,7 +297,7 @@ def main():
                 "Resume the same conversation and read the revised draft.\n"
                 + platform_events[2]
             )
-            wait_requests(9)
+            wait_requests(10)
             history = json.dumps(server.state["requests"][-1]["messages"])
             assert "Prepare and revise a private document draft." in history
             assert "ROOM_CUSTOM_MCP" in history

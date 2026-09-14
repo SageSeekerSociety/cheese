@@ -21,10 +21,31 @@ from app.domain.agent.harness.claude_code.remote_execution.launch import script 
 class RoomExecutor:
     def __init__(self, folder, claude):
         project, resource = uuid.uuid4(), uuid.uuid4()
+        self.project = str(project)
+        self.task = str(uuid.uuid4())
         self.owner = folder / "execution-host"
         self.home = self.owner / ".cheese/home" / str(project) / str(resource)
         self.work = self.home / "room"
         self.state = self.home / ".claude/executor"
+        repository = folder / "task-origin"
+        repository.mkdir()
+        (repository / "backend").mkdir()
+        (repository / "backend/dependency-version").write_text("1")
+        for arguments in (
+            ["init", "-q", "-b", "main"],
+            ["add", "."],
+            [
+                "-c",
+                "user.name=fixture",
+                "-c",
+                "user.email=fixture@example.test",
+                "commit",
+                "-qm",
+                "Task dependency fixture",
+            ],
+            ["branch", f"task/{self.task}"],
+        ):
+            subprocess.run(["git", "-C", str(repository), *arguments], check=True)
         original = self.work
         original.mkdir(parents=True)
         (original / "CLAUDE.md").write_text(
@@ -55,6 +76,7 @@ class RoomExecutor:
             "CHEESE_TOKEN": "room-fixture-token",
             "CHEESE_PROJECT": str(project),
             "CHEESE_TOPIC": str(resource),
+            "CHEESE_GIT_REMOTE": str(repository),
             "GIT_AUTHOR_NAME": "fixture",
             "GIT_AUTHOR_EMAIL": "fixture@example.test",
             "GIT_COMMITTER_NAME": "fixture",
@@ -64,7 +86,7 @@ class RoomExecutor:
                     "revision": "room-fixture",
                     "variables": {"PROJECT_VALUE": "executor-env"},
                     "setup_script": 'printf "$PROJECT_VALUE" > setup-result',
-                    "startup_script": "printf started >> startup-result",
+                    "startup_script": 'cd backend\nprintf "$PROJECT_VALUE" > startup-result',
                 }
             ),
         }
@@ -98,10 +120,35 @@ class RoomExecutor:
                     )
                 time.sleep(0.1)
 
+    def set_api(self, url):
+        config = json.loads((self.state / "config.json").read_text())
+        runtime.request(
+            self.state, "configure", {"env": {**config["env"], "CHEESE_API": url}}
+        )
+
     def handler(self, base):
         executor = self
 
         class Handler(base):
+            def do_GET(self):
+                if (
+                    self.path
+                    == f"/projects/{executor.project}/git/tasks/{executor.task}"
+                ):
+                    assert self.headers.get("X-Cheese-Token") == "room-fixture-token"
+                    return self.reply(
+                        {
+                            "data": {
+                                "task_id": executor.task,
+                                "room_id": executor.target["resource_id"],
+                                "branch": f"task/{executor.task}",
+                                "base": "main",
+                                "closed": False,
+                            }
+                        }
+                    )
+                return super().do_GET()
+
             def do_POST(self):
                 if self.path != "/execution":
                     return super().do_POST()

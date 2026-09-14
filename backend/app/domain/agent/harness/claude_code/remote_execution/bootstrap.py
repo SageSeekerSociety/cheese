@@ -143,6 +143,18 @@ def prepared(payload, owner, verified=None, *, refresh_runtime=False):
             CHEESE_PREVIEW_UP=str(config_dir / "cheese-preview-up"),
             PATH=str(config_dir) + os.pathsep + env.get("PATH", ""),
         )
+        if payload.get("environment"):
+            # Retained executors also need the pinned task configuration when
+            # their helpers are upgraded without rerunning room initialization.
+            directory = home / ".cheese-environment"
+            directory.mkdir(exist_ok=True, mode=0o700)
+            configuration = directory / "config.json"
+            if (
+                not configuration.exists()
+                or json.loads(configuration.read_text()) != payload["environment"]
+            ):
+                runner = runpy.run_path(str(config_dir / "cheese-environment.py"))
+                runner["write_json"](configuration, payload["environment"])
         (config_dir / "cheese-preview.token").write_text(env["CHEESE_TOKEN"])
         (config_dir / "cheese-preview.token").chmod(0o600)
         scoped_env = {

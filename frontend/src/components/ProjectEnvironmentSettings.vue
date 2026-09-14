@@ -127,7 +127,7 @@ onBeforeUnmount(() => {
       <v-btn v-if="!info && error" variant="text" @click="load">重新加载</v-btn>
       <template v-if="info">
         <p class="t-body c-muted mb-3">
-          为这个项目安装工具和依赖，让芝士开始工作前做好准备。工作房间共用这份配置；总览使用基础环境，协助处理环境故障。
+          为房间安装工具，并在准备任务代码时安装项目依赖。工作房间共用这份配置；总览使用基础环境，协助处理环境故障。
         </p>
         <v-textarea
           v-model="setup"
@@ -147,15 +147,16 @@ onBeforeUnmount(() => {
           variant="outlined"
           rows="5"
           :readonly="!info.can_edit"
-          hint="芝士每次重新启动前运行，安装当前分支的依赖；重新连接不会重跑"
+          hint="每次创建或重新打开任务工作目录后运行，安装该任务分支的依赖"
           persistent-hint
           class="mb-4"
         />
         <details class="t-body c-muted mb-3">
           <summary>运行说明</summary>
           <p>Cloud、Hosted Machine 使用相同配置方式；Hosted Sandbox 暂未开放。机器需要支持脚本中的命令。</p>
-          脚本以 Bash 在房间仓库目录运行，每段最多 30 分钟；使用机器当前权限。环境变量同时传给两个脚本和 AI
-          进程，脚本里的 export 不会传给下一步。 工具可安装到 $HOME/.local/bin。
+          初始化脚本在房间目录运行，启动脚本在任务代码目录运行。两者使用 Bash，每段最多 30
+          分钟；使用机器当前权限。环境变量同时传给两个脚本和 AI 进程，脚本里的 export 不会传给下一步。 工具可安装到
+          $HOME/.local/bin。
         </details>
         <p class="t-body mb-2">环境变量</p>
         <p class="t-body c-muted mb-3">这些值对项目成员和芝士可见。请不要在这里保存密码或 API 密钥。</p>
