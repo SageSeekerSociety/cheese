@@ -149,8 +149,22 @@ if [ "${CHEESE_CENTRAL_SESSION_HOST:-}" = "1" ] && {
   ! command -v fusermount >/dev/null || ! ldconfig -p | grep 'libfuse.so.2 ' >/dev/null
 }; then
   log "installing central-session FUSE runtime"
-  sudo apt-get update -qq
-  sudo apt-get install -y -qq fuse libfuse2
+  (
+    . /etc/os-release
+    [ -n "${VERSION_CODENAME:-}" ] || fail "/etc/os-release has no VERSION_CODENAME"
+    fuse_apt_source="$(mktemp)"
+    trap 'rm -f "$fuse_apt_source"' EXIT
+    chmod 0644 "$fuse_apt_source"
+    printf '%s\n' \
+      "deb [signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] https://mirrors.tuna.tsinghua.edu.cn/debian $VERSION_CODENAME main" \
+      > "$fuse_apt_source"
+    fuse_apt_options=(
+      -o "Dir::Etc::sourcelist=$fuse_apt_source"
+      -o "Dir::Etc::sourceparts=-"
+    )
+    sudo apt-get "${fuse_apt_options[@]}" update -qq
+    sudo apt-get "${fuse_apt_options[@]}" install -y -qq fuse libfuse2
+  )
 fi
 
 [ -f "$COMPOSE" ] || fail "compose file not found: $COMPOSE"
