@@ -14,6 +14,7 @@ from app.domain.agent.device_hub_rpc import screen_to_json
 
 _executor_calls: dict[str, asyncio.Task[dict]] = {}
 _release_draining = False
+_active_rpc_calls = 0
 _RPC_METHODS = {
     "await_call",
     "adopt_screen",
@@ -57,8 +58,8 @@ async def release_drain(
 ) -> dict[str, bool]:
     _authorize(x_device_connection_secret)
     global _release_draining
-    if any(not task.done() for task in _executor_calls.values()):
-        raise HTTPException(status_code=409, detail="executor calls are active")
+    if _active_rpc_calls or any(not task.done() for task in _executor_calls.values()):
+        raise HTTPException(status_code=409, detail="device calls are active")
     _release_draining = True
     return {"draining": True}
 
@@ -105,6 +106,12 @@ async def call(
     _authorize(x_device_connection_secret)
     if name not in _RPC_METHODS:
         raise HTTPException(status_code=404, detail="unknown device connection call")
+    global _active_rpc_calls
+    if _release_draining and not _is_completed_executor_trace(name, body):
+        raise HTTPException(
+            status_code=503, detail="device connection owner is draining"
+        )
+    _active_rpc_calls += 1
     try:
         result = await _dispatch(name, body)
     except DeviceOffline as exc:
@@ -113,7 +120,19 @@ async def call(
             detail="device offline",
             headers={"X-Device-Id": exc.device_id},
         ) from exc
+    finally:
+        _active_rpc_calls -= 1
     return {"result": result}
+
+
+def _is_completed_executor_trace(name: str, body: dict[str, Any]) -> bool:
+    if name != "call_executor":
+        return False
+    trace_id = body.get("trace_id")
+    if not isinstance(trace_id, str):
+        return False
+    task = _executor_calls.get(trace_id)
+    return task is not None and task.done()
 
 
 async def _dispatch(name: str, body: dict[str, Any]) -> Any:
@@ -121,10 +140,6 @@ async def _dispatch(name: str, body: dict[str, Any]) -> Any:
         trace_id = body["trace_id"]
         task = _executor_calls.get(trace_id)
         if task is None:
-            if _release_draining:
-                raise HTTPException(
-                    status_code=503, detail="device connection owner is draining"
-                )
             if len(_executor_calls) >= 2048:
                 for old_trace, old_task in list(_executor_calls.items()):
                     if old_task.done():

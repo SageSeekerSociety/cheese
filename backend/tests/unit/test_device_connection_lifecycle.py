@@ -32,6 +32,7 @@ async def test_executor_call_survives_backend_client_restart(monkeypatch) -> Non
     device_hub._by_screen_token.clear()
     device_connection_app._executor_calls.clear()
     device_connection_app._release_draining = False
+    device_connection_app._active_rpc_calls = 0
 
     connector = ExecutorTransport()
     await device_hub.attach_device("machine", connector)
@@ -109,6 +110,7 @@ async def test_new_backend_restores_screens_and_observes_later_connections(
     device_hub._by_screen_token.clear()
     device_connection_app._executor_calls.clear()
     device_connection_app._release_draining = False
+    device_connection_app._active_rpc_calls = 0
 
     project_id = uuid.uuid4()
     topic_id = uuid.uuid4()
@@ -303,6 +305,7 @@ async def test_release_drain_blocks_new_trace_but_keeps_completed_trace_readable
     device_hub._devices.clear()
     device_connection_app._executor_calls.clear()
     device_connection_app._release_draining = False
+    device_connection_app._active_rpc_calls = 0
     connector = ExecutorTransport()
     await device_hub.attach_device("machine", connector)
     await connector.sent.get()
@@ -358,4 +361,62 @@ async def test_release_drain_blocks_new_trace_but_keeps_completed_trace_readable
         assert (
             await client.post("/internal/device-connection/release-resume")
         ).status_code == 200
+    await device_hub.detach_device("machine", connector)
+
+
+@pytest.mark.anyio
+async def test_release_drain_waits_for_exec_and_blocks_new_screen_call(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(settings, "device_connection_secret", "test-owner-secret")
+    device_hub._devices.clear()
+    device_connection_app._executor_calls.clear()
+    device_connection_app._release_draining = False
+    device_connection_app._active_rpc_calls = 0
+    connector = ExecutorTransport()
+    await device_hub.attach_device("machine", connector)
+    await connector.sent.get()
+    transport = httpx.ASGITransport(app=device_connection_app.app)
+    headers = {"X-Device-Connection-Secret": "test-owner-secret"}
+    async with httpx.AsyncClient(
+        base_url="http://owner", transport=transport, headers=headers
+    ) as client:
+        exec_waiter = asyncio.create_task(
+            client.post(
+                "/internal/device-connection/call/exec",
+                json={"device_id": "machine", "argv": ["sleep", "1"]},
+            )
+        )
+        outbound = await asyncio.wait_for(connector.sent.get(), 1)
+        assert outbound["t"] == "exec"
+        active = await client.post("/internal/device-connection/release-drain")
+        assert active.status_code == 409
+
+        await device_hub.on_device_message(
+            "machine",
+            {
+                "t": "exec.result",
+                "id": outbound["id"],
+                "exitCode": 0,
+                "stdout": "done",
+                "stderr": "",
+            },
+        )
+        assert (await exec_waiter).status_code == 200
+        assert (
+            await client.post("/internal/device-connection/release-drain")
+        ).status_code == 200
+
+        blocked = await client.post(
+            "/internal/device-connection/call/call_screen",
+            json={
+                "device_id": "machine",
+                "sid": "screen-1",
+                "name": "read",
+                "args": [],
+            },
+        )
+        assert blocked.status_code == 503
+        assert connector.sent.empty()
+        await client.post("/internal/device-connection/release-resume")
     await device_hub.detach_device("machine", connector)
