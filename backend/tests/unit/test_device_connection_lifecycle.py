@@ -144,6 +144,15 @@ async def test_new_backend_restores_screens_and_observes_later_connections(
     )
     await backend.close()
     backend = RemoteDeviceHub("http://owner", "test-owner-secret", transport=transport)
+    from app.domain.agent.harness.claude_code import (
+        drop_device_subscriptions,
+        drop_screen_subscriptions,
+    )
+
+    backend.set_subscription_cleanup_callbacks(
+        drop_device=drop_device_subscriptions,
+        drop_screen=drop_screen_subscriptions,
+    )
     await backend.start()
     after_backend_restart = backend.screen("screen-1")
     assert after_backend_restart is not None
@@ -215,6 +224,9 @@ async def test_backend_drops_subscriptions_from_owner_snapshot_changes(
     )
     transport = httpx.ASGITransport(app=device_connection_app.app)
     backend = RemoteDeviceHub("http://owner", "test-owner-secret", transport=transport)
+    backend.set_subscription_cleanup_callbacks(
+        drop_device=drop_device, drop_screen=drop_screen
+    )
     await backend.start()
 
     await device_hub.detach_device("machine", connector)
@@ -246,6 +258,15 @@ async def test_fast_reconnect_drops_the_real_old_subscription_before_recovery(
     await first.sent.get()
     transport = httpx.ASGITransport(app=device_connection_app.app)
     backend = RemoteDeviceHub("http://owner", "test-owner-secret", transport=transport)
+    from app.domain.agent.harness.claude_code import (
+        drop_device_subscriptions,
+        drop_screen_subscriptions,
+    )
+
+    backend.set_subscription_cleanup_callbacks(
+        drop_device=drop_device_subscriptions,
+        drop_screen=drop_screen_subscriptions,
+    )
     await backend.start()
 
     project_id, topic_id = uuid.uuid4(), uuid.uuid4()

@@ -65,6 +65,12 @@ class RemoteDeviceHub:
         self._online_callback: Callable[[str], Coroutine[Any, Any, object]] | None = (
             None
         )
+        self._drop_device_callback: (
+            Callable[[str], Coroutine[Any, Any, object]] | None
+        ) = None
+        self._drop_screen_callback: (
+            Callable[[HubScreen], Coroutine[Any, Any, object]] | None
+        ) = None
 
     async def start(self) -> None:
         if self._client is None:
@@ -106,11 +112,6 @@ class RemoteDeviceHub:
         self._screens = {
             item["sid"]: screen_from_json(item) for item in payload["screens"]
         }
-        from app.domain.agent.harness.claude_code import (
-            drop_device_subscriptions,
-            drop_screen_subscriptions,
-        )
-
         replaced = {
             device_id
             for device_id, current in self._devices.items()
@@ -125,13 +126,15 @@ class RemoteDeviceHub:
             if old["online"] and (
                 current is None or not current["online"] or device_id in replaced
             ):
-                for screen in previous_screens.values():
-                    if screen.device_id == device_id:
-                        await drop_screen_subscriptions(screen)
-                await drop_device_subscriptions(device_id)
+                if self._drop_screen_callback is not None:
+                    for screen in previous_screens.values():
+                        if screen.device_id == device_id:
+                            await self._drop_screen_callback(screen)
+                if self._drop_device_callback is not None:
+                    await self._drop_device_callback(device_id)
         for sid, screen in previous_screens.items():
-            if sid not in self._screens:
-                await drop_screen_subscriptions(screen)
+            if sid not in self._screens and self._drop_screen_callback is not None:
+                await self._drop_screen_callback(screen)
         if self._online_callback is not None:
             for device_id in self.online_device_ids():
                 previous = previous_devices.get(device_id)
@@ -144,6 +147,15 @@ class RemoteDeviceHub:
         self, callback: Callable[[str], Coroutine[Any, Any, object]]
     ) -> None:
         self._online_callback = callback
+
+    def set_subscription_cleanup_callbacks(
+        self,
+        *,
+        drop_device: Callable[[str], Coroutine[Any, Any, object]],
+        drop_screen: Callable[[HubScreen], Coroutine[Any, Any, object]],
+    ) -> None:
+        self._drop_device_callback = drop_device
+        self._drop_screen_callback = drop_screen
 
     async def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
         if self._client is None:

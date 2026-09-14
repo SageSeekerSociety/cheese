@@ -47,6 +47,19 @@ class DeviceOffline(RuntimeError):
         self.device_id = device_id
 
 
+def configure_subscription_cleanup(remote_hub: Any) -> None:
+    """Wire business subscription cleanup without coupling the RPC transport."""
+    from app.domain.agent.harness.claude_code import (
+        drop_device_subscriptions,
+        drop_screen_subscriptions,
+    )
+
+    remote_hub.set_subscription_cleanup_callbacks(
+        drop_device=drop_device_subscriptions,
+        drop_screen=drop_screen_subscriptions,
+    )
+
+
 PROTOCOL_VERSION = device_link.PROTOCOL_VERSION
 
 

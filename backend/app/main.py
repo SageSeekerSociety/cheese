@@ -66,12 +66,16 @@ async def lifespan(_: FastAPI):
     # from jwt_secret), and there is nothing left to warn about here.
 
     from app.api.deps import get_chat_service, get_work_runner
-    from app.domain.agent.device_hub import device_hub
+    from app.domain.agent.device_hub import (
+        configure_subscription_cleanup,
+        device_hub,
+    )
 
     hub_runtime: Any = device_hub
     if hasattr(hub_runtime, "start"):
         await hub_runtime.start()
         hub_runtime.set_online_callback(get_chat_service().recover_sessions)
+        configure_subscription_cleanup(hub_runtime)
     from app.domain.scheduler.service import SchedulerService
 
     # agent-as-user (fusion-design §2): guarantee 芝士 exists as a real user with
