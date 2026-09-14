@@ -46,29 +46,32 @@ def remote_command(options, command):
     )
 
 
-def setup(folder, options):
+def setup(folder, options, api):
     remote = (
         str(Path(options.remote_root) / folder.name)
         if options.ssh
         else str(folder / "execution")
     )
-    run(remote_command(options, ["mkdir", "-p", remote]))
-    for source in (
-        SOURCE / "runtime.py",
-        Path(__file__).parent / "custom_mcp.py",
-        Path(__file__).parent / "seed.py",
-    ):
+    run(remote_command(options, ["mkdir", "-p", remote + "/remote-execution"]))
+    sources = (
+        (SOURCE / "runtime.py", "runtime.py"),
+        (SOURCE / "cli_worker.py", "remote-execution/cli_worker.py"),
+        (ROOT / "backend/sandbox/cheese", "cheese"),
+        (Path(__file__).parent / "custom_mcp.py", "custom_mcp.py"),
+        (Path(__file__).parent / "seed.py", "seed.py"),
+    )
+    for source, destination in sources:
         if options.ssh:
             run(
                 [
                     "scp",
                     "-q",
                     str(source),
-                    options.ssh + ":" + remote + "/" + source.name,
+                    options.ssh + ":" + remote + "/" + destination,
                 ]
             )
         else:
-            shutil.copyfile(source, Path(remote) / source.name)
+            shutil.copyfile(source, Path(remote) / destination)
     python = options.remote_python if options.ssh else sys.executable
     work = json.loads(
         run(remote_command(options, [python, remote + "/seed.py", remote]))
@@ -76,7 +79,12 @@ def setup(folder, options):
     config = {
         "workspace": work,
         "claude": options.remote_claude if options.ssh else options.claude,
-        "env": {"EXECUTION_ENV": "REMOTE_COMMAND_ENV"},
+        "env": {
+            "EXECUTION_ENV": "REMOTE_COMMAND_ENV",
+            "CHEESE_API": api,
+            "CHEESE_TOPIC": "fixture",
+            "CHEESE_TOKEN": "fixture-place-token",
+        },
         "mcp_servers": {
             "custom": {
                 "command": python,
@@ -138,10 +146,32 @@ def read_background_output(body):
 
 
 def case(folder, options):
-    executor, target = setup(folder, options)
     tmux = ["tmux", "-L", "cheese-acceptance-" + folder.name]
-    server = None
+    rc = (
+        RemoteControlFixture(
+            folder,
+            lambda event, **fields: log(
+                folder / "rc.jsonl", {"event": event, **fields}
+            ),
+        )
+        if options.rc
+        else None
+    )
+    server = Server(("127.0.0.1", 0), rc.handler(Handler) if rc else Handler)
+    if rc:
+        rc.base = f"http://127.0.0.1:{server.server_port}"
+    server.state = {
+        "dir": folder,
+        "actions": [],
+        "requests": [],
+        "claude_binary": options.claude,
+    }
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    executor = None
     try:
+        executor, target = setup(
+            folder, options, f"http://127.0.0.1:{server.server_port}"
+        )
         launch = client.prepare(
             folder / "central",
             target,
@@ -152,7 +182,9 @@ def case(folder, options):
                 "--tools",
                 "Read,Edit,Write,Bash,TaskOutput,TaskStop,Skill",
                 "--allowedTools",
-                "Read,Edit,Write,Bash,TaskOutput,TaskStop,Skill,mcp__custom__echo,mcp__native__chat_send,mcp__native__platform_request",
+                "Read,Edit,Write,Bash,TaskOutput,TaskStop,Skill,mcp__custom__echo,"
+                "mcp__native__chat_send,mcp__native__platform_request,"
+                "mcp__native__cheese_api",
                 "--debug-file",
                 str(folder / "claude-debug.log"),
             ],
@@ -218,30 +250,18 @@ def case(folder, options):
                     "content": "Published 'literally'\n$(touch forbidden-publication)"
                 },
             },
-            {"name": "mcp__native__platform_request", "input": {"method": "GET", "path": "/platform-fixture"}},
+            {
+                "name": "mcp__native__platform_request",
+                "input": {"method": "GET", "path": "/platform-fixture"},
+            },
+            {
+                "name": "mcp__native__cheese_api",
+                "input": {"method": "GET", "path": "/platform-fixture"},
+            },
         ]
         if options.mode != "normal":
             actions = [actions[2]]
-        rc = (
-            RemoteControlFixture(
-                folder,
-                lambda event, **fields: log(
-                    folder / "rc.jsonl", {"event": event, **fields}
-                ),
-            )
-            if options.rc
-            else None
-        )
-        server = Server(("127.0.0.1", 0), rc.handler(Handler) if rc else Handler)
-        if rc:
-            rc.base = f"http://127.0.0.1:{server.server_port}"
-        server.state = {
-            "dir": folder,
-            "actions": actions,
-            "requests": [],
-            "claude_binary": options.claude,
-        }
-        threading.Thread(target=server.serve_forever, daemon=True).start()
+        server.state["actions"] = actions
         env = {
             k: v
             for k, v in os.environ.items()
@@ -443,6 +463,7 @@ def case(folder, options):
             publications = server.state.get("publications", [])
             assert len(publications) == 1, publications
             assert "PLATFORM_API_READ" in json.dumps(results), results
+            assert json.dumps(results).count("PLATFORM_API_READ") == 2, results
             assert (
                 publications[0]["content"]
                 == "Published 'literally'\n$(touch forbidden-publication)"
@@ -530,7 +551,8 @@ def case(folder, options):
         print(json.dumps(summary), flush=True)
     finally:
         subprocess.run(tmux + ["kill-server"], capture_output=True, timeout=10)
-        subprocess.run(executor.command("stop"), capture_output=True, timeout=20)
+        if executor is not None:
+            subprocess.run(executor.command("stop"), capture_output=True, timeout=20)
         if server:
             server.shutdown()
             server.server_close()

@@ -125,7 +125,7 @@ def prepare(
     settings = json.loads(json.dumps(base_settings or {}))
     permissions = settings.setdefault("permissions", {})
     allowed = permissions.setdefault("allow", [])
-    for tool in ("invoke", "chat_send", "platform_request"):
+    for tool in ("invoke", "chat_send", "platform_request", "cheese_*"):
         if f"mcp__native__{tool}" not in allowed:
             allowed.append(f"mcp__native__{tool}")
     hooks = settings.setdefault("hooks", {})
@@ -136,7 +136,7 @@ def prepare(
             matcher = group.get("matcher", "*")
             matcher = ".*" if matcher in ("*", "") else matcher
             group["matcher"] = (
-                f"^(?!mcp__native__(?:invoke|chat_send|platform_request)$).*(?:{matcher})"
+                f"^(?!mcp__native__(?:invoke|chat_send|platform_request|cheese_.*)$).*(?:{matcher})"
             )
     helper = [sys.executable, str(Path(__file__).resolve())]
     guard = shlex.join([*helper, "guard", str(target_path)])
@@ -644,6 +644,7 @@ def transport(config, target_path):
                     "serverInfo": {"name": "cheese-native-execution", "version": "1"},
                 }
             elif method == "tools/list":
+                cli_tools = client.call("cli", {"method": "tools/list"})["tools"]
                 value = {
                     "tools": [
                         {
@@ -722,10 +723,15 @@ def transport(config, target_path):
                             },
                         },
                     ]
+                    + cli_tools
                 }
             elif method == "tools/call":
                 tool = request["params"]["name"]
-                if tool not in ("invoke", "chat_send", "platform_request"):
+                if tool not in (
+                    "invoke",
+                    "chat_send",
+                    "platform_request",
+                ) and not tool.startswith("cheese_"):
                     raise ValueError("Unknown transport tool")
                 payload = request["params"]["arguments"]
                 if tool == "chat_send":
@@ -748,6 +754,17 @@ def transport(config, target_path):
                             key: payload[key]
                             for key in ("method", "path", "body")
                             if key in payload
+                        },
+                    }
+                elif tool.startswith("cheese_"):
+                    payload = {
+                        "id": payload["id"],
+                        "session_id": payload["session_id"],
+                        "tool": "mcp__native__" + tool,
+                        "args": {
+                            key: value
+                            for key, value in payload.items()
+                            if key not in ("id", "session_id")
                         },
                     }
                 with active_lock:
@@ -777,6 +794,15 @@ def transport(config, target_path):
                         if tool == "chat_send"
                         else client.publish_chat(payload, args)
                     )
+                    if tool.startswith("cheese_"):
+                        receipt = client.call(
+                            "invoke",
+                            {
+                                "id": payload["id"],
+                                "tool": payload["tool"],
+                                "args": args,
+                            },
+                        )
                     if receipt is None:
                         receipt = client.call(
                             "invoke",

@@ -64,6 +64,8 @@ def test_staged_release_preserves_context_and_waits_for_reload(tmp_path):
         == settings["hooks"]["PreToolUse"][0]["hooks"]
     )
     assert "mcp__native__chat_send" in current["permissions"]["allow"]
+    assert "mcp__native__cheese_*" in current["permissions"]["allow"]
+    assert "cheese_.*" in current["hooks"]["PreToolUse"][0]["matcher"]
     assert (
         helpers / "release-backups" / staged["version"] / "client.py"
     ).read_text() == "old client"

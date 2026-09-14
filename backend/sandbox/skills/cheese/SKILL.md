@@ -148,4 +148,4 @@ MCP 先读取 `GET /topics/{topic_id}/doc`，写入 `PUT /topics/{topic_id}/doc`
 
 **做出可以"看"的产物就点名它。** 当你产出了一个网页、可视化、SVG 图等能直接展示给用户的东西(如 `Write ./report.html` 后),用 `cheese artifact report.html` 把它设为当前预览——用户在右侧「预览」里就能看到实时画面。**别指望平台去猜该显示哪个文件——你显式指定。** 每次调用都会把预览指向最新那个。
 
-不确定 CLI 参数就先 `cheese --help`。聊天使用提供的 `chat_send` MCP，平台 API 使用 `platform_request` MCP；没有对应工具时用 `cheese`，均经平台鉴权并记录。
+优先使用与上表命令同名的 `cheese_*` MCP 工具：参数结构来自当前机器安装的 CLI，调用仍执行同一份 CLI 语义。聊天使用 `chat_send`，原始平台 API 使用 `platform_request`；只有对应 MCP 工具不可用时才在 shell 里运行 `cheese`。这些入口均经平台鉴权并记录。
