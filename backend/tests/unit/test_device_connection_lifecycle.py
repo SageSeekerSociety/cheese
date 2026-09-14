@@ -10,6 +10,7 @@ import pytest
 
 from app import device_connection_app
 from app.core.config import settings
+from app.core.db import get_db
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_hub_rpc import RemoteDeviceHub
 
@@ -428,3 +429,58 @@ async def test_release_drain_waits_for_exec_and_blocks_new_screen_call(
         assert connector.sent.empty()
         await client.post("/internal/device-connection/release-resume")
     await device_hub.detach_device("machine", connector)
+
+
+@pytest.mark.anyio
+async def test_public_execution_admission_blocks_drain_during_route_preparation(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(settings, "device_connection_secret", "test-owner-secret")
+    device_connection_app._release_draining = False
+    device_connection_app._active_rpc_calls = 0
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    db_calls = 0
+
+    async def blocked_db():
+        nonlocal db_calls
+        db_calls += 1
+        entered.set()
+        await release.wait()
+        yield None
+
+    device_connection_app.app.dependency_overrides[get_db] = blocked_db
+    transport = httpx.ASGITransport(app=device_connection_app.app)
+    try:
+        async with httpx.AsyncClient(
+            base_url="http://owner", transport=transport
+        ) as client:
+            request = asyncio.create_task(
+                client.post(
+                    f"/topics/{uuid.uuid4()}/execution/{uuid.uuid4()}",
+                    json={"method": "ping", "params": {}},
+                )
+            )
+            await asyncio.wait_for(entered.wait(), 1)
+            drain = await client.post(
+                "/internal/device-connection/release-drain",
+                headers={"X-Device-Connection-Secret": "test-owner-secret"},
+            )
+            assert drain.status_code == 409
+            assert device_connection_app._active_rpc_calls == 1
+            release.set()
+            assert (await request).status_code == 401
+
+            device_connection_app._release_draining = True
+            calls_before_blocked = db_calls
+            blocked = await client.post(
+                f"/topics/{uuid.uuid4()}/execution/{uuid.uuid4()}",
+                json={"method": "ping", "params": {}},
+            )
+            assert blocked.status_code == 503
+            assert db_calls == calls_before_blocked
+            assert device_connection_app._active_rpc_calls == 0
+    finally:
+        release.set()
+        device_connection_app.app.dependency_overrides.pop(get_db, None)
+        device_connection_app._release_draining = False

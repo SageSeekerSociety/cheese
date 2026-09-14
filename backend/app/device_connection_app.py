@@ -2,13 +2,16 @@
 
 import asyncio
 import base64
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 
 from app.api.routes.connector import router as connector_router
+from app.api.routes.execution import router as execution_router
 from app.core.config import settings
+from app.core.errors import register_exception_handlers
 from app.domain.agent.device_hub import DeviceOffline, device_hub
 from app.domain.agent.device_hub_rpc import screen_to_json
 
@@ -45,6 +48,23 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Cheese device connection owner", lifespan=lifespan)
 app.include_router(connector_router)
+register_exception_handlers(app)
+
+
+async def admit_execution_request() -> AsyncIterator[None]:
+    global _active_rpc_calls
+    if _release_draining:
+        raise HTTPException(
+            status_code=503, detail="device connection owner is draining"
+        )
+    _active_rpc_calls += 1
+    try:
+        yield
+    finally:
+        _active_rpc_calls -= 1
+
+
+app.include_router(execution_router, dependencies=[Depends(admit_execution_request)])
 
 
 @app.get("/healthz")
@@ -58,7 +78,19 @@ async def release_drain(
 ) -> dict[str, bool]:
     _authorize(x_device_connection_secret)
     global _release_draining
-    if _active_rpc_calls or any(not task.done() for task in _executor_calls.values()):
+    pending = any(
+        device.exec_pending
+        or device.call_pending
+        or device.file_pending
+        or device.executor_pending
+        or device.session_pending
+        for device in device_hub._devices.values()
+    )
+    if (
+        _active_rpc_calls
+        or pending
+        or any(not task.done() for task in _executor_calls.values())
+    ):
         raise HTTPException(status_code=409, detail="device calls are active")
     _release_draining = True
     return {"draining": True}

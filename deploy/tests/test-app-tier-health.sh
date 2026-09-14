@@ -150,6 +150,10 @@ test_rollout_installs_connection_route_without_recreating_api_front() {
     rm -rf "$run_dir"
     fail "api-front config still routes device sockets through the backend"
   }
+  grep -Fq 'location ~ ^/topics/[^/]+/execution/[^/]+$' "$run_dir/nginx.conf" || {
+    rm -rf "$run_dir"
+    fail "api-front config still routes execution requests through the backend"
+  }
   grep -F 'exec cheese-api-front nginx -s reload' "$docker_log" >/dev/null || {
     rm -rf "$run_dir"
     fail "api-front did not gracefully reload the connection-owner route"

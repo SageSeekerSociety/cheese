@@ -1,6 +1,7 @@
 """Session placement survives storage while execution stays on the room machine."""
 
 import asyncio
+import base64
 import json
 import os
 import sys
@@ -11,12 +12,16 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 
+from app import device_connection_app
 from app.core.config import settings
+from app.core.db import get_db
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import execution
 from app.domain.agent.central_provider import CentralChannel
+from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import DeviceChannel, EnvironmentPreparationError
 from app.domain.agent.harness import Opening, SessionRef
 from app.domain.agent.harness.channel import ScreenSetupError
@@ -31,6 +36,14 @@ from app.domain.agent.harness.codex import CodexChannel
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import session_auth_headers
+
+
+class _OwnerExecutorTransport:
+    def __init__(self) -> None:
+        self.sent: asyncio.Queue[dict] = asyncio.Queue()
+
+    async def send_json(self, msg: dict[str, Any]) -> None:
+        await self.sent.put(msg)
 
 
 @pytest.fixture
@@ -417,6 +430,94 @@ async def test_executor_release_excludes_new_tool_admission(client, room, monkey
     assert response.status_code == 200, response.text
     assert entered.is_set()
     assert response.json() == {"value": "kept"}
+
+
+@pytest.mark.anyio
+async def test_owner_execution_route_preserves_scope_and_reaches_device(
+    client, room, monkeypatch
+):
+    project, topic = room
+    async with client.test_factory() as db:
+        stored = await db.get(Topic, topic)
+        resource = stored.resource_id or topic
+        stored.session_placement = {
+            "device_id": "center",
+            "resource_id": str(resource),
+            "channel": "device",
+            "execution": {
+                "kind": "device",
+                "device_id": "executor",
+                "home": "/room",
+            },
+        }
+        await db.commit()
+
+    async def owner_db():
+        async with client.test_factory() as db:
+            yield db
+
+    monkeypatch.setattr(settings, "device_connection_owner", True)
+    device_hub._devices.clear()
+    device_connection_app._release_draining = False
+    device_connection_app._active_rpc_calls = 0
+    connector = _OwnerExecutorTransport()
+    await device_hub.attach_device("executor", connector)
+    await connector.sent.get()
+    await device_hub.on_device_message(
+        "executor", {"t": "hello", "v": 3, "executor": True}
+    )
+    device_connection_app.app.dependency_overrides[get_db] = owner_db
+    transport = httpx.ASGITransport(app=device_connection_app.app)
+    token = mint_scoped_token(
+        project_id=str(project), topic_id=str(topic), resource_id=str(resource)
+    )
+    endpoint = f"/topics/{topic}/execution/{resource}"
+    payload = {"method": "invoke", "params": {"tool": "Read", "args": {}}}
+    try:
+        async with httpx.AsyncClient(
+            base_url="http://owner", transport=transport
+        ) as owner:
+            waiter = asyncio.create_task(
+                owner.post(endpoint, headers={"X-Cheese-Token": token}, json=payload)
+            )
+            outbound = await asyncio.wait_for(connector.sent.get(), 1)
+            assert outbound["t"] == "execution.call"
+            assert outbound["state"] == "/room/.claude/executor"
+            encoded = json.dumps({"result": {"content": "executor file"}}).encode()
+            await device_hub.on_device_message(
+                "executor",
+                {
+                    "t": "execution.data",
+                    "id": outbound["id"],
+                    "data": base64.b64encode(encoded).decode(),
+                },
+            )
+            await device_hub.on_device_message(
+                "executor",
+                {"t": "execution.result", "id": outbound["id"], "error": ""},
+            )
+            response = await asyncio.wait_for(waiter, 2)
+            assert response.status_code == 200, response.text
+            assert response.json() == {"content": "executor file"}
+            assert (await owner.post(endpoint, json=payload)).status_code == 401
+            assert (
+                await owner.post(
+                    endpoint,
+                    headers={"X-Cheese-Token": token},
+                    json={"method": "configure"},
+                )
+            ).status_code == 403
+            assert (
+                await owner.post(
+                    f"/topics/{topic}/execution/{uuid.uuid4()}",
+                    headers={"X-Cheese-Token": token},
+                    json=payload,
+                )
+            ).status_code == 409
+            assert connector.sent.empty()
+    finally:
+        device_connection_app.app.dependency_overrides.pop(get_db, None)
+        await device_hub.detach_device("executor", connector)
 
 
 @pytest.mark.anyio
