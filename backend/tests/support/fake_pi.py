@@ -53,6 +53,11 @@ def main() -> None:
         kind, request = command.get("type"), command.get("id")
 
         if kind == "get_entries":
+            if "since" in command and command["since"] is None:
+                # What the real pi does with a null cursor, so a runner that
+                # sends one fails here too rather than only on a machine.
+                reply(request, kind, {"error": "Entry not found: null"}, success=False)
+                continue
             since = command.get("since")
             if since is None:
                 page = list(produced)

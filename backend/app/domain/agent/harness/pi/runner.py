@@ -38,8 +38,16 @@ SETTLES = frozenset({"message_end", "turn_end", "agent_end", "agent_settled"})
 
 
 def socket_path(state: Path) -> str:
+    """Where the connector will look, given this state directory.
+
+    The name is not ours to choose: ``cli/internal/host/executor.go`` derives it
+    from the state directory the backend recorded and relays one JSON line each
+    way. Matching it is what lets ``hub.call_executor`` reach this runner with no
+    connector change at all — the relay was never about the executor, only about
+    a socket named this way.
+    """
     digest = hashlib.sha256(str(state.resolve()).encode()).hexdigest()[:24]
-    return f"/tmp/cheese-pi-{os.getuid()}-{digest}.sock"
+    return f"/tmp/cheese-execution-{os.getuid()}-{digest}.sock"
 
 
 class Runner:
@@ -100,9 +108,11 @@ class Runner:
             owner = json.loads(self.journal.recall("owner") or "{}")
             while True:
                 since = self.journal.recall("received")
-                page = (await self.client.request("get_entries", since=since))[
-                    "entries"
-                ]
+                # A fresh session has no cursor, and pi REFUSES a null one
+                # ("Entry not found: null") rather than reading it as "from the
+                # start" — so the first pull asks without the field at all.
+                fields = {"since": since} if since is not None else {}
+                page = (await self.client.request("get_entries", **fields))["entries"]
                 if not page:
                     return
                 self.journal.import_entries(
@@ -135,6 +145,14 @@ class Runner:
         )
         # Only the lock owner may remove a socket a crashed runner left behind.
         Path(socket_path(self.state)).unlink(missing_ok=True)
+        # The room's system prompt reaches pi as a FILE it is pointed at, never
+        # as argv: it is assembled per room and runs to multiple KB, and argv is
+        # both size-capped and readable by anyone who can list processes.
+        prompt = self.state / "system-prompt.md"
+        prompt.write_text(opening.system_prompt, encoding="utf-8")
+        appended = (
+            ["--append-system-prompt", str(prompt)] if opening.system_prompt else []
+        )
         self.errors = (self.state / "pi.log").open("ab")
         self.process = await asyncio.create_subprocess_exec(
             binary,
@@ -144,6 +162,7 @@ class Runner:
             session_id,
             "--session-dir",
             str(self.state / "sessions"),
+            *appended,
             *args,
             cwd=cwd,
             env=env,
