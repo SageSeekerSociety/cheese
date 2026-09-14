@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { login, openFirstProject } from './helpers';
 
-test('a teammate keeps its identity and role across saved harness switches', async ({ page }) => {
+test('a teammate keeps its identity and role across saved harness switches', async ({ page }, testInfo) => {
   await login(page);
   await openFirstProject(page);
   const project = page.url().match(/\/projects\/([0-9a-f-]{36})/)?.[1];
@@ -48,6 +48,7 @@ test('a teammate keeps its identity and role across saved harness switches', asy
   await page.getByRole('option', { name: 'codex-ci-fixture', exact: true }).click();
   const original = await save();
   expect(original.configuration).toMatchObject({ harness: 'codex', model: 'codex-ci-fixture', body: role });
+  await dialog.screenshot({ path: testInfo.outputPath('codex-editor.png') });
 
   await selectHarness('Claude Code');
   await dialog.locator('.v-select').filter({ hasText: '模型' }).getByRole('combobox').click();
@@ -57,6 +58,7 @@ test('a teammate keeps its identity and role across saved harness switches', asy
   const claude = await save();
   expect(claude.id).toBe(original.id);
   expect(claude.configuration).toMatchObject({ harness: 'claude-code', model: 'deepseek-flash', body: role });
+  await dialog.screenshot({ path: testInfo.outputPath('claude-editor.png') });
 
   await selectHarness('Codex');
   const restored = await save();
