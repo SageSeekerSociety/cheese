@@ -54,9 +54,7 @@ function applyPreset(name: string | null) {
 }
 
 function changeModel() {
-  const harnesses = modelItems.value.find((item) => item.id === draft.value.model)?.harnesses ?? [
-    'claude-code',
-  ]
+  const harnesses = modelItems.value.find((item) => item.id === draft.value.model)?.harnesses ?? ['claude-code']
   draft.value.harness = harnesses.includes('codex') ? 'codex' : harnesses[0] || 'claude-code'
 }
 
