@@ -182,11 +182,12 @@ class RemoteDeviceHub:
     async def reassert_screen(self, screen: HubScreen, **kwargs: Any) -> None:
         await self._call("reassert_screen", {"sid": screen.sid, **_jsonable(kwargs)})
 
-    def adopt_screen(self, device_id: str, sid: str, **kwargs: Any) -> HubScreen:
-        screen = self._screens.get(sid)
-        if screen is None or screen.device_id != device_id:
-            raise RuntimeError("screen was not adopted by the device connection owner")
-        return screen
+    async def adopt_screen(self, device_id: str, sid: str, **kwargs: Any) -> HubScreen:
+        result = await self._call(
+            "adopt_screen",
+            {"device_id": device_id, "sid": sid, **_jsonable(kwargs)},
+        )
+        return screen_from_json(result)
 
     async def close_screen(self, device_id: str, sid: str) -> bool:
         return bool(

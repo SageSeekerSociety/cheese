@@ -48,7 +48,9 @@ on prod — the 赛题 PDFs). Each box was cut over from bare-metal once
 
 Device control connections have a separate release boundary. The
 `device-connection` service owns `/connector/agent`, live terminal WebSockets,
-and the in-memory `DeviceHub`. A normal app release starts it if it is absent,
+and the in-memory `DeviceHub`. It does not run chat recovery, cleanup, or machine
+wake-up work; the current business backend performs those jobs after reading the
+owner's connection snapshot. A normal app release starts it if it is absent,
 then leaves its running container and image unchanged while backend and frontend
 are replaced. The business backend calls the owner over an authenticated
 compose-network endpoint and restores its online-device and screen view from the

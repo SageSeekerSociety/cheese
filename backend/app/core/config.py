@@ -77,6 +77,7 @@ class Settings(BaseSettings):
     # tests; deployed business backends point at the stable compose service.
     device_connection_url: str = ""
     device_connection_secret: str = ""
+    device_connection_owner: bool = False
 
     @property
     def device_connection_auth_secret(self) -> str:

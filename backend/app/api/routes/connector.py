@@ -224,11 +224,8 @@ async def agent_socket(
     await device_hub.attach_device(
         device.device_id, transport, name=device.name
     )  # sends welcome{v}
-    from app.core.background import spawn
-    from app.core.db import async_session_factory
-    from app.domain.topic.retire import sweep_retired_storage
 
-    async def recover():
+    async def recover_business_state():
         try:
             from app.api.deps import get_chat_service
 
@@ -238,6 +235,10 @@ async def agent_socket(
                 "hook subscription recovery failed for device %s", device.device_id
             )
         # Restore screen ownership before cleanup looks for sessions to close.
+        from app.core.background import spawn
+        from app.core.db import async_session_factory
+        from app.domain.topic.retire import sweep_retired_storage
+
         spawn(
             sweep_retired_storage(async_session_factory),
             name="cleanup device reconnect",
@@ -254,7 +255,11 @@ async def agent_socket(
                 "cloud wake-up on attach failed for device %s", device.device_id
             )
 
-    recovery = asyncio.create_task(recover())
+    recovery = (
+        None
+        if settings.device_connection_owner
+        else asyncio.create_task(recover_business_state())
+    )
     try:
         while True:
             message = await websocket.receive_json()
@@ -262,9 +267,10 @@ async def agent_socket(
     except WebSocketDisconnect:
         pass
     finally:
-        recovery.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await recovery
+        if recovery is not None:
+            recovery.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await recovery
         await device_hub.detach_device(device.device_id, transport)
 
 

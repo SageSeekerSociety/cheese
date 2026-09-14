@@ -15,6 +15,7 @@ from app.domain.agent.device_hub_rpc import screen_to_json
 _executor_calls: dict[str, asyncio.Task[dict]] = {}
 _RPC_METHODS = {
     "await_call",
+    "adopt_screen",
     "call_executor",
     "call_screen",
     "close_screen",
@@ -106,6 +107,11 @@ async def _dispatch(name: str, body: dict[str, Any]) -> Any:
         return await asyncio.shield(task)
     if name == "open_screen":
         result = await device_hub.open_screen(**_uuids(body, "project_id", "topic_id"))
+        return screen_to_json(result)
+    if name == "adopt_screen":
+        result = device_hub.adopt_screen(
+            **_uuids(body, "project_id", "topic_id", "resource_id")
+        )
         return screen_to_json(result)
     if name == "reassert_screen":
         screen = device_hub.screen(body.pop("sid"))

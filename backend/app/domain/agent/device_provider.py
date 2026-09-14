@@ -19,6 +19,7 @@ Per request:
 import asyncio
 import base64
 import hashlib
+import inspect
 import json
 import logging
 import shlex
@@ -547,6 +548,8 @@ class DeviceChannel(Channel):
                         command=entry["command"],
                         hook_key=str(topic_id),
                     )
+                    if inspect.isawaitable(recovered):
+                        recovered = await recovered
                     expiry = env.get("CHEESE_TOKEN_EXPIRES")
                     recovered.credential_expires = int(expiry) if expiry else None
                     target = env.get("CHEESE_EXECUTION_TARGET")

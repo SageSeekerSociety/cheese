@@ -126,7 +126,17 @@ async def test_new_backend_restores_screens_and_observes_later_connections(
     transport = httpx.ASGITransport(app=device_connection_app.app)
     backend = RemoteDeviceHub("http://owner", "test-owner-secret", transport=transport)
     await backend.start()
-    restored = backend.adopt_screen("machine", "screen-1")
+    restored = await backend.adopt_screen(
+        "machine",
+        "screen-1",
+        token="screen-token",
+        agent_user_id=42,
+        agent_handle="agent",
+        project_id=project_id,
+        topic_id=topic_id,
+        resource_id=topic_id,
+        hook_key="hook",
+    )
     assert restored.project_id == project_id
     assert restored.topic_id == topic_id
     assert restored.execution_target == {"home": "/room"}

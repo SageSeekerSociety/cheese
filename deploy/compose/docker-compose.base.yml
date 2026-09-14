@@ -21,6 +21,7 @@ services:
       - ${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}
     environment:
       - DEVICE_CONNECTION_URL=
+      - DEVICE_CONNECTION_OWNER=1
       - DEPLOYED_VIA_COMPOSE=1
     command:
       - uvicorn
