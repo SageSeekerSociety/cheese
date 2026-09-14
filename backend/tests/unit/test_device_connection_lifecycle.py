@@ -14,6 +14,11 @@ from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_hub_rpc import RemoteDeviceHub
 
 
+@pytest.fixture(autouse=True)
+def connection_owner_role(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "device_connection_owner", True)
+
+
 class ExecutorTransport:
     sent: asyncio.Queue[dict]
 

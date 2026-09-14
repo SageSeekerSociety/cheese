@@ -196,6 +196,15 @@ class DeviceHub:
             for future in device.session_pending.values():
                 if not future.done():
                     future.set_exception(DeviceOffline(device_id))
+            if not settings.device_connection_owner:
+                from app.domain.agent.harness.claude_code import (
+                    drop_device_subscriptions,
+                    drop_screen_subscriptions,
+                )
+
+                for screen in list(device.screens.values()):
+                    await drop_screen_subscriptions(screen)
+                await drop_device_subscriptions(device_id)
 
     def is_online(self, device_id: str) -> bool:
         device = self._devices.get(device_id)
@@ -388,6 +397,12 @@ class DeviceHub:
         device.screens.pop(sid, None)
         self._screens.pop(sid, None)
         self._by_screen_token.pop(screen.token, None)
+        if not settings.device_connection_owner:
+            from app.domain.agent.harness.claude_code import (
+                drop_screen_subscriptions,
+            )
+
+            await drop_screen_subscriptions(screen)
         return True
 
     async def session_request(
