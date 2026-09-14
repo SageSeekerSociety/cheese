@@ -102,11 +102,15 @@ def test_executor_prepares_room_without_model_credentials(tmp_path):
         )
         assert "INSTALLED_TOOL_OK" in json.dumps(installed), installed
         (work / "draft.txt").write_text("retain this draft")
+        # Older running rooms have a setup receipt but no task configuration.
+        task_config = home / ".cheese-environment/config.json"
+        task_config.unlink()
         env["CHEESE_TOKEN"] = "rotated-token"
         reused = json.loads(launch().stdout)
         assert reused["pid"] == running["pid"]
         assert (work / "draft.txt").read_text() == "retain this draft"
         assert not (work / "startup-result").exists()
+        assert json.loads(task_config.read_text()) == configuration
         assert (
             json.loads((state / "config.json").read_text())["env"]["CHEESE_TOKEN"]
             == "rotated-token"
