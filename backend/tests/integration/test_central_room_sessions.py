@@ -561,6 +561,11 @@ async def test_scoped_execution_and_rc_use_platform_owned_target(
     assert call.await_args is not None
     assert call.await_args.args == (target, "invoke", payload["params"])
     assert call.await_args.kwargs["trace_id"].startswith("execution-")
+    context_fs = {"method": "context_fs", "params": {"operation": "tree"}}
+    response = client.post(endpoint, headers=headers, json=context_fs)
+    assert response.status_code == 200, response.text
+    assert call.await_args.args == (target, "context_fs", context_fs["params"])
+    assert call.await_args.kwargs["trace_id"].startswith("execution-")
     assert client.post(endpoint, json=payload).status_code == 401
     assert (
         client.post(endpoint, headers=headers, json={"method": "configure"}).status_code
