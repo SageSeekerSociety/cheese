@@ -243,9 +243,6 @@ async function handleUpgradeMessage(messageId: string) {
 // 「新消息从哪开始」只有开话题的那一瞬间知道：markRead 一跑，未读数就归零了。
 // 所以在归零之前抓一次，交给对话栏去画那条线。
 const unreadOnOpen = ref(0)
-// 换了 AI 队友之后 +1。对话栏显示的 AI 名字来自它自己拉的房间名册，而换队友的
-// 按钮长在话题头上——两边是兄弟，够不着彼此，所以这个计数从这里往下发。
-const rosterRevision = ref(0)
 
 // 这个房间现在交给的 AI 队友叫什么。「现场」那一格给它干的每一行署名，而那一格
 // 自己不拉名册。一个项目可以有好几个队友，所以这个名字不能写死。
@@ -259,7 +256,7 @@ async function loadAgentName(id: string) {
   }
 }
 watch(
-  () => [props.topicId, rosterRevision.value],
+  () => props.topicId,
   () => {
     if (props.topicId) void loadAgentName(props.topicId)
   },
@@ -302,7 +299,6 @@ watch(
         :focus="focusMode"
         @toggle-focus="focusMode = !focusMode"
         @open-topic="openTopic"
-        @agent-swapped="rosterRevision += 1"
       />
 
       <!-- 「这个房间还没准备好」——横跨四格，因为环境没起来时改动/现场/预览同样
@@ -327,7 +323,6 @@ watch(
           :members="store.members"
           :topic-list="store.topics"
           :unread-on-open="unreadOnOpen"
-          :roster-revision="rosterRevision"
           v-on="chatEvents"
         />
         <div
@@ -364,7 +359,6 @@ watch(
               :members="store.members"
               :topic-list="store.topics"
               :unread-on-open="unreadOnOpen"
-              :roster-revision="rosterRevision"
               v-on="chatEvents"
             />
           </template>

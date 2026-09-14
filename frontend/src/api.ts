@@ -603,14 +603,6 @@ export function getTopicAgent(topicId: string): Promise<TopicAgent> {
   return request<TopicAgent>(`/topics/${encodeURIComponent(topicId)}/agent`)
 }
 
-// instance_id: null = 交还给项目默认。
-export function setTopicAgent(topicId: string, instanceId: string | null): Promise<TopicAgent> {
-  return request<TopicAgent>(`/topics/${encodeURIComponent(topicId)}/agent`, {
-    method: 'PUT',
-    body: JSON.stringify({ instance_id: instanceId }),
-  })
-}
-
 // ---- 话题级未读 (Feishu-style badges) ----
 
 // {topic_id: unread_count} for one user; topics with zero unread are omitted.

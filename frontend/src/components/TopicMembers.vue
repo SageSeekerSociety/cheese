@@ -13,19 +13,12 @@ import { avatarColor, avatarInitial } from '../utils/avatar'
 import { getAvatarUrl } from '../utils/materials'
 
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
-import TopicAgentPicker from './TopicAgentPicker.vue'
 
 const props = defineProps<{
   topicId: string
-  /** 换 AI 队友要从这个项目的队友里挑，见 TopicAgentPicker。 */
-  projectId: string
   projectMembers: ProjectMemberRow[]
   me: string
 }>()
-
-// 换完 AI 队友要往上说一声：对话栏那边每一条它说的话也挂着它的名字，而那一栏
-// 够不着这个组件。
-const emit = defineEmits<{ 'agent-swapped': [] }>()
 
 const members = ref<TopicMemberRow[]>([])
 const loading = ref(false)
@@ -137,13 +130,6 @@ async function onRemove(handle: string) {
 async function onSetRole(handle: string, role: string) {
   await guard(() => updateTopicMemberRole(props.topicId, handle, role, props.me))
 }
-
-// 换完队友这份名册就过期了：芝士那一行的名字来自它。不重新拉一次的话，屏幕上
-// 留着的是上一个队友的名字，和「换人没生效」长得一模一样。
-function onAgentSwapped() {
-  void load()
-  emit('agent-swapped')
-}
 </script>
 
 <template>
@@ -212,14 +198,6 @@ function onAgentSwapped() {
             <span class="roster__handle">@{{ m.member_handle }}</span>
           </span>
           <span v-if="m.agent" class="roster__badge">AI 队友</span>
-
-          <!-- 芝士那一行：换一个 AI 队友。和换人的角色同一个位置、同一个样子。 -->
-          <TopicAgentPicker
-            v-if="m.agent && canManage"
-            :topic-id="topicId"
-            :project-id="projectId"
-            @swapped="onAgentSwapped"
-          />
 
           <!-- Owner/admin: change role via a small menu; else a static chip. -->
           <template v-if="canManage && !m.agent">

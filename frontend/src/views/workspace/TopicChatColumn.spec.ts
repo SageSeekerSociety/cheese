@@ -100,7 +100,7 @@ describe('对话栏的接线', () => {
       props: { topic, members: [], topicList: [], unreadOnOpen: 1 },
       global: {
         plugins: [vuetify, createPinia()],
-        stubs: { TopicComputePicker: true, TopicAgentPicker: true, TopicAcceptCard: true },
+        stubs: { TopicComputePicker: true, TopicAcceptCard: true },
       },
     })
     await settle()
@@ -118,7 +118,7 @@ describe('对话栏的接线', () => {
       },
       global: {
         plugins: [vuetify, createPinia()],
-        stubs: { TopicComputePicker: true, TopicAgentPicker: true, TopicAcceptCard: true },
+        stubs: { TopicComputePicker: true, TopicAcceptCard: true },
       },
     })
     await settle()
