@@ -21,8 +21,8 @@ import subprocess
 import time
 from pathlib import Path
 
-from app.domain.agent.harness.claude_code import event_spool
-from app.domain.agent.harness.claude_code.hooks_substrate import CHEESE_HOOK_SCRIPT
+from app.domain.agent import event_spool
+from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
 
 
 def _hook(tmp_path: Path) -> Path:

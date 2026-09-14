@@ -13,10 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from app.core.config import settings
 from app.core.db import SessionFactory
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.agent import resource_cleanup
+from app.domain.agent import event_drain, resource_cleanup
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import device_home_dir, list_device_storage
-from app.domain.agent.harness.claude_code import event_drain
 from app.domain.agent.models import AgentTurn
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply

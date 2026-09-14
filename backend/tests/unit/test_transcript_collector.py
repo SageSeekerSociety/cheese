@@ -8,7 +8,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from app.domain.agent.harness.claude_code.event_drain import collect_transcripts
+from app.domain.agent.event_drain import collect_transcripts
 
 
 @pytest.fixture
@@ -145,7 +145,7 @@ def test_replaced_or_rewritten_file_gets_a_new_generation(tmp_path, receiver):
 def test_final_verification_resumes_chunks_but_new_cleanup_checks_them_again(
     tmp_path, receiver, monkeypatch
 ):
-    from app.domain.agent.harness.claude_code import event_drain
+    from app.domain.agent import event_drain
 
     url, saved, _, confirmations = receiver
     root = tmp_path / ".claude/projects/p"

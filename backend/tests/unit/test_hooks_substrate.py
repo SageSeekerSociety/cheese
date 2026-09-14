@@ -13,7 +13,6 @@ from app.domain.agent.harness import Opening, SessionRef
 from app.domain.agent.harness.channel import Channel, ScreenSetupError
 from app.domain.agent.harness.claude_code.hook_events import HookRouter
 from app.domain.agent.harness.claude_code.hooks_substrate import (
-    CHEESE_HOOK_SCRIPT,
     SESSION_TOKEN_TTL_S,
     ActivityTracker,
     ClaudeCodeRuntime,
@@ -21,6 +20,7 @@ from app.domain.agent.harness.claude_code.hooks_substrate import (
     WorkAttribution,
     monitor_session_activity,
 )
+from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
 from app.domain.agent.service import AgentMessage, AgentResult, AgentToolUse
 
 pytestmark = pytest.mark.anyio

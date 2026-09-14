@@ -42,7 +42,6 @@ from app.domain.agent.device_hub import (
 )
 from app.domain.agent.harness.channel import Channel, ScreenSetupError
 from app.domain.agent.harness.claude_code import (
-    CHEESE_HOOK_SCRIPT,
     DEVICE_ALIVE_PROBE,
     DEVICE_TUNNEL_PROBE,
     SESSION_TOKEN_TTL_S,
@@ -50,6 +49,7 @@ from app.domain.agent.harness.claude_code import (
     resident_release,
 )
 from app.domain.agent.harness.launch import LaunchPlan
+from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
 from app.domain.agent.platform_failures import (
     DEVICE_OFFLINE_MESSAGE,
     HOST_UNREACHABLE_CODE,

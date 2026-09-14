@@ -54,10 +54,8 @@ PKG = "app.domain.agent.harness.claude_code"
 _LEDGER: dict[str, tuple[str, ...]] = {
     "app.domain.agent.private_chat": ("private_execution_target",),
     "app.api.routes.remote_control": ("REMOTE_CONTROLS",),
-    # Retirement flushes the same native raw-file collector before deletion.
-    "app.domain.topic.retire": ("event_drain",),
     # --- 边缘：适配器对外的那条边 ---
-    "app.api.routes.sandbox": ("append_event", "hook_router"),
+    "app.api.routes.sandbox": ("hook_router",),
     # Enrollment prepares the native cache and idle process before advertising capacity.
     "app.domain.machine.enrollment": (
         "CLAUDE_MIN_VERSION",
@@ -73,7 +71,6 @@ _LEDGER: dict[str, tuple[str, ...]] = {
     ),
     # --- channels：接缝本身，加上还没搬过缝的 Claude Code 知识 ---
     "app.domain.agent.device_provider": (
-        "CHEESE_HOOK_SCRIPT",
         "DEVICE_ALIVE_PROBE",
         "DEVICE_TUNNEL_PROBE",
         "SESSION_TOKEN_TTL_S",

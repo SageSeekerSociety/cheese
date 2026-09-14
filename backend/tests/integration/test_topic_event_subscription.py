@@ -8,10 +8,10 @@ import pytest
 from sqlalchemy import select
 
 from app.core.config import settings
+from app.domain.agent import event_spool
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
 from app.domain.agent.harness.channel import Channel
-from app.domain.agent.harness.claude_code import event_spool
 from app.domain.agent.harness.claude_code.hook_events import HookRouter
 from app.domain.agent.harness.claude_code.hooks_substrate import ClaudeCodeRuntime
 from app.domain.agent.models import AgentTurn

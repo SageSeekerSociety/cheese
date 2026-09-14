@@ -29,14 +29,12 @@ from app.domain.agent.harness.claude_code.device_launch import (
     DEVICE_TUNNEL_PROBE,
     build_screen_launch,
 )
-from app.domain.agent.harness.claude_code.event_spool import append as append_event
 from app.domain.agent.harness.claude_code.hook_events import (
     HookRouter,
     MessageAssembler,
     hook_router,
 )
 from app.domain.agent.harness.claude_code.hooks_substrate import (
-    CHEESE_HOOK_SCRIPT,
     SESSION_TOKEN_TTL_S,
     ActivityTracker,
     ClaudeCodeRuntime,
@@ -76,7 +74,6 @@ from app.domain.agent.harness.claude_code.warm_session import build_warm_session
 __all__ = [
     "executor_launch",
     "resident_release",
-    "CHEESE_HOOK_SCRIPT",
     "REMOTE_CONTROLS",
     "private_execution_target",
     "CLAUDE_MIN_VERSION",
@@ -92,7 +89,6 @@ __all__ = [
     "SpoolBacklog",
     "TopicSubscription",
     "acknowledge_log",
-    "append_event",
     "build_screen_launch",
     "build_session_launch",
     "build_startup_cache_prepare",

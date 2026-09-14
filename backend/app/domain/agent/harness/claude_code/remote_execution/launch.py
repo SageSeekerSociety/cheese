@@ -13,7 +13,6 @@ from app.domain.agent.harness.claude_code.device_launch import (
     CHEESE_PREVIEW_UP,
     CHEESE_SYNC_SCRIPT,
 )
-from app.domain.agent.harness.claude_code.hooks_substrate import CHEESE_HOOK_SCRIPT
 from app.domain.agent.harness.claude_code.remote_execution import (
     bootstrap,
     cli_client,
@@ -22,6 +21,7 @@ from app.domain.agent.harness.claude_code.remote_execution import (
     runtime,
     session_transfer,
 )
+from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
 
 
 def can_prepare(info):

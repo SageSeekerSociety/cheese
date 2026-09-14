@@ -26,17 +26,18 @@ from pathlib import Path
 # this module's launcher and its callers build on it.
 from app.domain.agent import (
     environment_runner,
+    event_drain,
     machine_tunnel,
     preview_tunnel,
 )
-from app.domain.agent.harness.claude_code import event_drain, startup_cache
+from app.domain.agent.harness.claude_code import startup_cache
 from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD
-from app.domain.agent.harness.claude_code.hooks_substrate import CHEESE_HOOK_SCRIPT
 from app.domain.agent.harness.claude_code.remote_execution import (
     client as execution_client,
 )
 from app.domain.agent.harness.claude_code.remote_execution import release
 from app.domain.agent.harness.claude_code.session_launch import hooks_settings
+from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
 from app.domain.agent.skills import native_skill_files
 
 # First-launch gates (Claude Code 2.1.x) for $CLAUDE_CONFIG_DIR/.claude.json,
@@ -51,7 +52,7 @@ _CLAUDE_JSON_GATES = {
 }
 
 # Kept as a module-level alias so existing callers/tests referencing this name
-# keep working; the source of truth is hooks_substrate.CHEESE_HOOK_SCRIPT.
+# keep working; the source of truth is hook_forwarder.CHEESE_HOOK_SCRIPT.
 _CHEESE_HOOK_SCRIPT = CHEESE_HOOK_SCRIPT
 
 # --- the version this delivery path is pinned to -----------------------------

@@ -11,9 +11,10 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 
-from app.domain.agent.harness.claude_code import device_launch, event_spool
-from app.domain.agent.harness.claude_code.hooks_substrate import CHEESE_HOOK_SCRIPT
+from app.domain.agent import event_spool
+from app.domain.agent.harness.claude_code import device_launch
 from app.domain.agent.harness.claude_code.remote_execution import client
+from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
 
 
 @pytest.fixture
