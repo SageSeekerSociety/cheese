@@ -129,7 +129,8 @@ EOF
 
   : > "$docker_log"
   if PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" \
-    APP_TIER_CURL_FAIL_MATCH=release-drain HOME="$run_dir" \
+    APP_TIER_CURL_DRAIN_STATUSES=409 APP_TIER_CURL_DRAIN_COUNT_FILE="$run_dir/drain-count" \
+    HOME="$run_dir" \
     "$ROOT/deploy/release-device-connection.sh" testsha \
       "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null 2>&1; then
     rm -rf "$run_dir"
@@ -137,6 +138,31 @@ EOF
   fi
   ! grep -F 'force-recreate device-connection' "$docker_log" >/dev/null \
     || { rm -rf "$run_dir"; fail "busy owner was recreated"; }
+
+  : > "$docker_log"
+  PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" \
+    APP_TIER_CURL_DRAIN_STATUSES=409,409,200 APP_TIER_CURL_DRAIN_COUNT_FILE="$run_dir/drain-success-count" \
+    HOME="$run_dir" \
+    "$ROOT/deploy/release-device-connection.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null
+  [ "$(cat "$run_dir/drain-success-count")" = 3 ] \
+    || { rm -rf "$run_dir"; fail "owner release did not retry busy drain"; }
+  grep -F 'force-recreate device-connection' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "owner release did not recreate after drain became idle"; }
+
+  : > "$docker_log"
+  if PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" \
+    APP_TIER_CURL_DRAIN_STATUSES=500 APP_TIER_CURL_DRAIN_COUNT_FILE="$run_dir/drain-error-count" \
+    HOME="$run_dir" \
+    "$ROOT/deploy/release-device-connection.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null 2>&1; then
+    rm -rf "$run_dir"
+    fail "owner release retried a non-busy drain failure"
+  fi
+  [ "$(cat "$run_dir/drain-error-count")" = 1 ] \
+    || { rm -rf "$run_dir"; fail "owner release retried non-409 drain response"; }
+  ! grep -F 'force-recreate device-connection' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "owner was recreated after non-409 drain response"; }
 
   : > "$docker_log"
   if PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" \
@@ -149,7 +175,7 @@ EOF
   grep -F 'release-resume' "$docker_log" >/dev/null \
     || { rm -rf "$run_dir"; fail "failed owner release left the old owner draining"; }
   rm -rf "$run_dir"
-  echo "PASS: owner release reuses box config and stops while execution is active"
+  echo "PASS: owner release waits for atomic idle drain and stops safely on failure"
 }
 
 test_rollout_installs_connection_route_without_recreating_api_front() {
