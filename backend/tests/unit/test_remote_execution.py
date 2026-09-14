@@ -606,7 +606,7 @@ class RemoteExecutionTests(unittest.TestCase):
         self.assertEqual(removed["instructions"], "")
 
     def test_context_fs_lists_metadata_and_reads_bytes_on_demand(self):
-        (self.workspace / "CLAUDE.md").write_text("root @docs/more.md")
+        (self.workspace / "CLAUDE.md").write_text("root @docs/more.md @.claude")
         (self.workspace / "docs").mkdir()
         (self.workspace / "docs/more.md").write_text("imported @nested.md")
         (self.workspace / "docs/nested.md").write_text("nested import")
@@ -618,6 +618,7 @@ class RemoteExecutionTests(unittest.TestCase):
         (skill / "support.bin").write_bytes(b"012345")
         (skill / "support-link").symlink_to("support.bin")
         (self.workspace / ".claude/settings.json").write_text("do not expose")
+        (self.workspace / ".claude/settings.local.json").write_text("do not expose")
 
         tree = runtime.request(self.state, "context_fs", {"operation": "tree"})
         self.assertEqual(tree["unsupported_imports"], [])
@@ -636,6 +637,7 @@ class RemoteExecutionTests(unittest.TestCase):
             "support.bin",
         )
         self.assertNotIn(".claude/settings.json", tree["entries"])
+        self.assertNotIn(".claude/settings.local.json", tree["entries"])
         chunk = runtime.request(
             self.state,
             "context_fs",

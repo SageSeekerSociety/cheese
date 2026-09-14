@@ -881,6 +881,12 @@ class Executor:
                         pass
                 return
             path = candidate
+            relative = path.relative_to(root)
+            if relative in (
+                Path(".claude/settings.json"),
+                Path(".claude/settings.local.json"),
+            ):
+                return
             if path in selected or not path.exists():
                 return
             selected.add(path)
@@ -916,6 +922,8 @@ class Executor:
             root / "CLAUDE.md",
             root / "CLAUDE.local.md",
             root / ".claude/rules",
+            root / ".claude/commands",
+            root / ".claude/agents",
         ):
             include(path, imports=True)
         for name in ("CLAUDE.md", "CLAUDE.local.md"):

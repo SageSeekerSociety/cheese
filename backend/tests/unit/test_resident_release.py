@@ -1,3 +1,4 @@
+import hashlib
 import json
 import subprocess
 import sys
@@ -319,9 +320,13 @@ def test_forwarded_context_replaces_mirror_files_with_links(tmp_path, monkeypatc
     skill.parent.mkdir(parents=True)
     remote_skill.parent.mkdir(parents=True)
     helpers.mkdir(parents=True)
+    (config / "CLAUDE.md").write_text("old aggregated instructions")
+    (config / "skills").symlink_to(workspace / ".claude/skills")
     (workspace / "CLAUDE.md").write_text("mirrored body")
     skill.write_text("mirrored skill")
     (hidden / "CLAUDE.md").write_text("forwarded body")
+    (hidden / "docs").mkdir()
+    (hidden / "docs/more.md").write_text("forwarded import")
     remote_skill.write_text("forwarded skill")
     target_path = directory / "execution.json"
     target_path.write_text(
@@ -346,6 +351,20 @@ def test_forwarded_context_replaces_mirror_files_with_links(tmp_path, monkeypatc
                 "mode": 0o444,
                 "mtime_ns": 1,
                 "size": 14,
+                "nlink": 1,
+            },
+            "docs": {
+                "kind": "directory",
+                "mode": 0o555,
+                "mtime_ns": 1,
+                "size": 0,
+                "nlink": 2,
+            },
+            "docs/more.md": {
+                "kind": "file",
+                "mode": 0o444,
+                "mtime_ns": 1,
+                "size": 16,
                 "nlink": 1,
             },
             ".claude": {
@@ -389,6 +408,18 @@ def test_forwarded_context_replaces_mirror_files_with_links(tmp_path, monkeypatc
     assert (
         workspace / ".claude/skills/check/SKILL.md"
     ).read_text() == "forwarded skill"
+    assert (config / "CLAUDE.md").read_text() == f"@{hidden / 'CLAUDE.md'}\n"
+    user_backup = (
+        helpers
+        / "release-backups/forwarded-context/user-source"
+        / hashlib.sha256(str(config).encode()).hexdigest()[:16]
+    )
+    assert (user_backup / "CLAUDE.md").read_text() == "old aggregated instructions"
+    assert (user_backup / "skills.symlink").read_text() == str(
+        workspace / ".claude/skills"
+    )
+    assert not (config / "docs").exists()
+    assert (config / "skills/check/SKILL.md").read_text() == "forwarded skill"
     assert not (directory / "context-manifest.json").exists()
     backup = helpers / "release-backups/forwarded-context/legacy/context-manifest.json"
     assert json.loads(backup.read_text()) == [

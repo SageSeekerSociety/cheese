@@ -17,7 +17,6 @@ import json
 import os
 import re
 import shlex
-import shutil
 import signal
 import subprocess
 import time
@@ -118,23 +117,7 @@ def prepare(
     target_path.write_text(json.dumps(target))
     target_path.chmod(0o600)
     if forwarded:
-        sync_context(target_path, context_tree)
-    if forwarded and workspace_override:
-        previous_workspace = Path(workspace_override)
-        previous_manifest = directory / "context-manifest.json"
-        if previous_manifest.exists():
-            for name in json.loads(previous_manifest.read_text()):
-                path = previous_workspace / name
-                path.unlink(missing_ok=True)
-                parent = path.parent
-                while parent != previous_workspace:
-                    try:
-                        parent.rmdir()
-                    except OSError:
-                        break
-                    parent = parent.parent
-            previous_manifest.unlink()
-        shutil.rmtree(previous_workspace / ".git", ignore_errors=True)
+        context_tree = sync_context(target_path, context_tree)
     mount_log = directory / "forwarded-project.log"
     if forwarded and not os.path.ismount(workspace):
         with mount_log.open("a") as output:
@@ -157,11 +140,15 @@ def prepare(
             detail = mount_log.read_text()[-1000:] if mount_log.exists() else ""
             raise RuntimeError("Forwarded project mount failed: " + detail)
     if forwarded:
-        (config / "CLAUDE.md").unlink(missing_ok=True)
-        for name in ("skills", "commands", "agents", "rules"):
-            link = config / name
-            if link.is_symlink():
-                link.unlink()
+        if __package__:
+            from .release import link_forwarded_user_context
+        else:
+            sys.path.insert(0, str(Path(__file__).parent))
+            from release import link_forwarded_user_context
+
+        link_forwarded_user_context(
+            directory, config, workspace, context_tree, Path(__file__).parent
+        )
     plugin = directory / "plugin"
     (plugin / ".claude-plugin").mkdir(parents=True, exist_ok=True)
     (plugin / "hooks").mkdir(exist_ok=True)

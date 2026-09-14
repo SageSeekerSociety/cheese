@@ -328,4 +328,82 @@ def apply_forwarded_context(home, target):
             )
         replace(links_path, json.dumps(sorted(links)))
 
+    link_forwarded_user_context(
+        directory, Path(current["central_config"]), hidden, tree, helpers
+    )
     return {"changed": True, "offsets": transcript_offsets(home)}
+
+
+def link_forwarded_user_context(directory, config, forwarded, tree, helpers):
+    """Expose forwarded project context through Claude's managed user source."""
+    directory = Path(directory)
+    config = Path(config)
+    forwarded = Path(forwarded)
+    entries = tree["entries"]
+    backup = (
+        Path(helpers)
+        / "release-backups/forwarded-context/user-source"
+        / hashlib.sha256(str(config).encode()).hexdigest()[:16]
+    )
+    for category in ("skills", "commands", "agents", "rules"):
+        parent = config / category
+        if parent.is_symlink():
+            backup.mkdir(parents=True, exist_ok=True)
+            link_backup = backup / f"{category}.symlink"
+            if not link_backup.exists():
+                link_backup.write_text(os.readlink(parent))
+            parent.unlink()
+            parent.mkdir()
+    links = {}
+    for name in entries:
+        relative = Path(name)
+        if relative.parts[:2] in {
+            (".claude", "skills"),
+            (".claude", "commands"),
+            (".claude", "agents"),
+            (".claude", "rules"),
+        }:
+            if len(relative.parts) == 3:
+                links[config / relative.parts[1] / relative.parts[2]] = (
+                    forwarded / relative
+                )
+            continue
+    instructions = config / "CLAUDE.md"
+    imports = [
+        forwarded / name for name in ("CLAUDE.md", "CLAUDE.local.md") if name in entries
+    ]
+    wrapper = "".join(f"@{path}\n" for path in imports)
+    if instructions.is_symlink():
+        instructions.unlink()
+    elif instructions.exists() and instructions.read_text() != wrapper:
+        instructions_backup = backup / "CLAUDE.md"
+        if not instructions_backup.exists():
+            instructions_backup.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(instructions, instructions_backup)
+    replace(instructions, wrapper)
+
+    state_path = directory / "forwarded-user-links.json"
+    previous = set(json.loads(state_path.read_text())) if state_path.exists() else set()
+    wanted = {str(path.relative_to(config)) for path in links}
+    for name in sorted(
+        previous - wanted, key=lambda value: value.count("/"), reverse=True
+    ):
+        path = config / name
+        if path.is_symlink():
+            path.unlink()
+    for destination, source in links.items():
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.is_symlink():
+            if destination.resolve() == source.resolve():
+                continue
+            destination.unlink()
+        elif destination.exists():
+            raise RuntimeError(
+                f"Forwarded user context conflicts with central file: {destination}"
+            )
+        destination.symlink_to(
+            source,
+            target_is_directory=entries[str(source.relative_to(forwarded))]["kind"]
+            == "directory",
+        )
+    replace(state_path, json.dumps(sorted(wanted)))
