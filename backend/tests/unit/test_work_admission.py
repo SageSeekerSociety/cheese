@@ -92,6 +92,130 @@ class FakeChat:
             self.running -= 1
 
 
+@pytest.mark.anyio
+async def test_slow_agent_subscriber_does_not_block_receive_and_preserves_order():
+    class SlowDelivery(FakeChat):
+        def __init__(self):
+            super().__init__(None)
+            self.entered = asyncio.Event()
+            self.unblock = asyncio.Event()
+            self.delivered = []
+
+        async def merge_into_running_turn(self, topic, ids, content, *args):
+            if content == "first":
+                self.entered.set()
+                await self.unblock.wait()
+            self.delivered.append(content)
+            return True
+
+    chat = SlowDelivery()
+    runner, broker = _runner()
+    topic = uuid.uuid4()
+    try:
+        async with broker.subscribe(str(topic)) as browser:
+            await broker.receive_message(
+                chat, topic, author="u", content="first", summon=False
+            )
+            await chat.entered.wait()
+            assert (await browser.get())["block"]["content"] == "first"
+            await broker.receive_message(
+                chat, topic, author="u", content="second", summon=False
+            )
+            assert (await browser.get())["block"]["content"] == "second"
+            assert chat.delivered == []
+        # Delivery is owned by the subscriber even after the browser leaves.
+        chat.unblock.set()
+        await runner.drain()
+        assert chat.delivered == ["first", "second"]
+        async with broker.subscribe(str(topic)):
+            await asyncio.sleep(0)
+        assert chat.delivered == ["first", "second"]
+    finally:
+        chat.unblock.set()
+        await runner.drain()
+
+
+@pytest.mark.anyio
+async def test_failed_agent_delivery_does_not_stop_next_message():
+    class FailedDelivery(FakeChat):
+        async def merge_into_running_turn(self, topic, ids, content, *args):
+            if content == "first":
+                raise RuntimeError("executor unavailable")
+            self.converse_calls.append({"delivered": content})
+            return True
+
+    chat = FailedDelivery(None)
+    runner, broker = _runner()
+    topic = uuid.uuid4()
+    async with broker.subscribe(str(topic)) as browser:
+        for content in ("first", "second"):
+            await broker.receive_message(
+                chat, topic, author="u", content=content, summon=False
+            )
+        await runner.drain()
+        assert {"delivered": "second"} in chat.converse_calls
+        frames = []
+        while not browser.empty():
+            frames.append(browser.get_nowait())
+        assert sum(frame["type"] == "user_block" for frame in frames) == 2
+        assert sum(frame["type"] == "error" for frame in frames) == 1
+
+
+@pytest.mark.anyio
+async def test_waiting_recipient_does_not_block_current_agent_followup():
+    class Recipients(FakeChat):
+        def __init__(self):
+            super().__init__(None)
+            self.selected = "b"
+            self.waiting = asyncio.Event()
+            self.finish_a = asyncio.Event()
+            self.delivered = []
+
+        async def post_user_message(self, *args, **kwargs):
+            payloads, anchor, ids = await super().post_user_message(*args, **kwargs)
+            for payload in payloads:
+                payload["meta"] = {"agent_recipient": {"handle": self.selected}}
+            return payloads, anchor, ids
+
+        async def wait_for_recipient(self, topic, recipient):
+            if recipient == "b":
+                self.waiting.set()
+                await self.finish_a.wait()
+                return True
+            return False
+
+        async def merge_into_running_turn(self, topic, ids, content, *args, **kwargs):
+            self.delivered.append((kwargs["recipient_handle"], content))
+            return True
+
+        async def ack_summon(self, *args):
+            return None
+
+    chat = Recipients()
+    runner, broker = _runner()
+    # Constructing an unrelated work runner must not replace the subscriber.
+    other = AgentWorkRunner(broker)
+    topic = uuid.uuid4()
+    try:
+        await broker.receive_message(
+            chat, topic, author="u", content="B's next task", summon=True
+        )
+        await chat.waiting.wait()
+        chat.selected = "a"
+        await broker.receive_message(
+            chat, topic, author="u", content="Stop A's current task", summon=False
+        )
+        await _until(lambda: bool(chat.delivered))
+        assert chat.delivered == [("a", "Stop A's current task")]
+        assert other.active_work_count() == 0
+        chat.finish_a.set()
+        await runner.drain()
+        assert chat.delivered[-1] == ("b", "B's next task")
+    finally:
+        chat.finish_a.set()
+        await runner.drain()
+
+
 async def _until(cond, timeout: float = 2.0) -> None:
     async with asyncio.timeout(timeout):
         while not cond():
@@ -110,7 +234,9 @@ async def _frames_through(queue, final_type: str) -> list[dict]:
 
 def _runner() -> tuple[AgentWorkRunner, InProcessBroker]:
     broker = InProcessBroker()
-    return AgentWorkRunner(broker, turn_timeout_s=5.0), broker
+    runner = AgentWorkRunner(broker, turn_timeout_s=5.0)
+    runner.subscribe_messages()
+    return runner, broker
 
 
 @pytest.mark.anyio
@@ -235,7 +361,7 @@ async def test_received_message_lands_before_credit_refusal():
     topic = uuid.uuid4()
 
     async with broker.subscribe(str(topic)) as queue:
-        await runner.submit_message(
+        await broker.receive_message(
             chat, topic, author="u", content="这条必须先落库", summon=True
         )
         frames = []
@@ -268,12 +394,13 @@ async def test_unsummoned_message_never_touches_turn_admission():
     runner, broker = _runner()
     topic = uuid.uuid4()
     async with broker.subscribe(str(topic)) as queue:
-        await runner.submit_message(
+        await broker.receive_message(
             chat, topic, author="u", content="只发消息", summon=False
         )
         assert (await queue.get())["type"] == "user_block"
         assert (await queue.get())["type"] == "done"
-    assert runner.active_work_count() == 0
+    await runner.drain()
+    await _until(lambda: runner.active_work_count() == 0)
 
 
 @pytest.mark.anyio
@@ -289,7 +416,7 @@ async def test_normal_message_without_live_work_queues_without_fallback_error(
     topic = await a_topic(db_factory)
 
     async with broker.subscribe(str(topic)) as queue:
-        await runner.submit_message(
+        await broker.receive_message(
             chat, topic, author="u", content="正常开工", summon=True
         )
         frames = await _frames_through(queue, "turn_finished")
@@ -325,7 +452,7 @@ async def test_live_delivery_fallback_reports_error_then_runs_normally(
     topic = await a_topic(db_factory)
 
     async with broker.subscribe(str(topic)) as queue:
-        await runner.submit_message(
+        await broker.receive_message(
             chat, topic, author="u", content="补充一条", summon=True
         )
         frames = await _frames_through(queue, "turn_finished")
@@ -370,7 +497,7 @@ async def test_receipted_mid_session_message_has_no_second_done():
     )
 
     async with broker.subscribe(str(topic)) as queue:
-        await runner.submit_message(
+        await broker.receive_message(
             chat, topic, author="u", content="补充一条", summon=True
         )
         frames = []
@@ -415,7 +542,7 @@ async def test_image_only_message_can_merge_into_live_session():
     attachment = {"path": "uploads/img-a.png", "mime": "image/png"}
 
     async with broker.subscribe(str(topic)) as queue:
-        await runner.submit_message(
+        await broker.receive_message(
             chat,
             topic,
             author="u",

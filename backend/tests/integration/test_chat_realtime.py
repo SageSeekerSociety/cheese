@@ -60,6 +60,41 @@ class InstantScreen(StubChannel):
         self.stops(topic_id, "done", session_id="s-affinity")
 
 
+@pytest.mark.anyio
+async def test_receiving_message_does_not_create_default_agent(client, tmp_path):
+    from app.domain.agent_instance.repositories import AgentInstanceRepository
+    from app.domain.project.repositories import ProjectRepository
+
+    factory = client.test_factory
+    svc = ChatService(
+        session_factory=factory,
+        compute=stub_compute(InstantScreen()),
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        agents = AgentInstanceRepository(session)
+        project.default_agent_instance_id = None
+        topic.agent_instance_id = None
+        await session.flush()
+        for agent in await agents.list_for_project(project.id):
+            await agents.delete(agent)
+        project_id, topic_id = project.id, topic.id
+        await session.commit()
+    payloads, _, _ = await svc.post_user_message(
+        topic_id, author="u", content="A note for later", turn_id=None, reply_to=None
+    )
+    assert payloads[0]["meta"]["agent_recipient"]["handle"] == "cheese"
+    async with factory() as session:
+        assert await AgentInstanceRepository(session).list_for_project(project_id) == []
+        project = await ProjectRepository(session).get(project_id)
+        assert project.default_agent_instance_id is None
+
+
 class ProcessNotesScreen(StubChannel):
     def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
         self.acknowledges(topic_id, prompt)
@@ -160,7 +195,7 @@ async def test_backend_resolves_room_agent_mention(client, tmp_path, text, menti
 
 @pytest.mark.anyio
 async def test_backend_mention_starts_when_browser_did_not_summon(client, tmp_path):
-    from app.domain.agent.runtime import AgentWorkRunner, get_broker
+    from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
 
     factory = client.test_factory
     screen = InstantScreen()
@@ -177,8 +212,10 @@ async def test_backend_mention_starts_when_browser_did_not_summon(client, tmp_pa
         )
         topic_id = topic.id
         await session.commit()
-    runner = AgentWorkRunner(get_broker())
-    await runner.submit_message(
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker)
+    runner.subscribe_messages()
+    await broker.receive_message(
         svc, topic_id, author="u", content="@芝士 check this", summon=False
     )
     await asyncio.wait_for(asyncio.gather(*runner._tasks), 2)
@@ -190,7 +227,7 @@ async def test_backend_mention_starts_when_browser_did_not_summon(client, tmp_pa
 async def test_other_teammate_message_waits_for_live_turn(
     client, tmp_path, monkeypatch
 ):
-    from app.domain.agent.runtime import AgentWorkRunner, get_broker
+    from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
     from app.domain.agent_instance.services import AgentInstanceService
 
     factory = client.test_factory
@@ -231,8 +268,10 @@ async def test_other_teammate_message_waits_for_live_turn(
         return await wait(*args)
 
     monkeypatch.setattr(svc, "wait_for_recipient", observed_wait)
-    runner = AgentWorkRunner(get_broker())
-    await runner.submit_message(
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker)
+    runner.subscribe_messages()
+    await broker.receive_message(
         svc, topic_id, author="u", content="@Second Second task", summon=False
     )
     await asyncio.wait_for(waiting.wait(), 2)
