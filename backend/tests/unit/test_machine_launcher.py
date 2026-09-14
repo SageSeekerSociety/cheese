@@ -253,11 +253,7 @@ def _place(**overrides) -> MachinePlace:
         pytest.param(ClaudeLaunch(system_prompt="房间的系统提示词"), id="claude-code"),
         pytest.param(
             PiLaunch(
-                system_prompt="房间的系统提示词",
-                state="$HOME/.cheese/harness/P/R/pi/deadbeef",
-                api_base="https://cheese.example/api",
-                model="glm-5.2",
-                agent_handle="ops",
+                system_prompt="房间的系统提示词", model="glm-5.2", agent_handle="ops"
             ),
             id="pi",
         ),
@@ -318,12 +314,7 @@ def test_the_two_harnesses_do_not_produce_the_same_launch():
     plan, so this is the half that says the answers actually differ."""
     place = _place()
     claude = ClaudeLaunch(system_prompt="x").on(place)
-    pi = PiLaunch(
-        system_prompt="x",
-        state=place.state,
-        api_base=place.api_base,
-        model="glm-5.2",
-    ).on(place)
+    pi = PiLaunch(system_prompt="x", model="glm-5.2").on(place)
     assert claude.command != pi.command
     assert "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH" in claude.env
     assert pi.env == {}

@@ -293,6 +293,8 @@ def build_compute_pool(cloud_channel: "Channel | None" = None) -> ComputePool:
     from app.domain.agent.harness.channel import Channel
     from app.domain.agent.harness.claude_code import ClaudeCodeRuntime, executor_launch
     from app.domain.agent.harness.codex import CodexChannel, CodexRuntime
+    from app.domain.agent.harness.pi.channel import PiChannel
+    from app.domain.agent.harness.pi.runtime import PiRuntime
     from app.domain.agent.market import compute_default_name
 
     def runs_claude_code(channel: Channel) -> ClaudeCodeRuntime:
@@ -331,5 +333,16 @@ def build_compute_pool(cloud_channel: "Channel | None" = None) -> ComputePool:
             hard_ceiling_s=settings.agent_turn_hard_ceiling_s,
         )
         for c in channels
+    )
+    # pi is the one backend NOT wrapped in CentralChannel: it runs on the
+    # machine that holds the workspace, so there is no second machine to assign
+    # and no executor to route its tools through. See pi/channel.py.
+    backends.extend(
+        PiRuntime(
+            PiChannel(c),
+            hard_ceiling_s=settings.agent_turn_hard_ceiling_s,
+        )
+        for c in channels
+        if isinstance(c, DeviceChannel)
     )
     return ComputePool(backends, default_name)

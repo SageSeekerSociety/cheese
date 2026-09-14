@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from app.domain.agent.harness.launch import MachinePlace
 from app.domain.agent.harness.pi import device_launch
 from app.domain.agent.harness.pi.device_launch import PiLaunch, build_launch_script
 
@@ -74,13 +75,27 @@ def _launch(**overrides) -> PiLaunch:
     return PiLaunch(
         **{
             "system_prompt": "平台系统提示词。$HOME 和 `backtick` 要原样留着。",
-            "state": STATE,
-            "api_base": "https://cheese.example/api",
             "model": "glm-5.2",
             "agent_handle": "pi",
             **overrides,
         }
     )
+
+
+def _place() -> MachinePlace:
+    return MachinePlace(
+        home="$HOME/session",
+        workdir="$HOME/session/work",
+        state=STATE,
+        api_base="https://cheese.example/api",
+        project_id="proj",
+        topic_id="topic",
+        agent_handle="pi",
+    )
+
+
+def _script(launch: PiLaunch) -> str:
+    return build_launch_script(launch, _place())
 
 
 def _state_of(owner: Path) -> Path:
@@ -100,7 +115,7 @@ def _socket_of(state: Path) -> str:
 
 def _start(tmp_path, env, launch: PiLaunch):
     script = tmp_path / "launch.sh"
-    script.write_text(build_launch_script(launch))
+    script.write_text(_script(launch))
     return subprocess.Popen(
         ["sh", str(script)],
         env=env,
@@ -163,7 +178,7 @@ def test_a_machine_that_already_has_the_pin_installs_nothing(tmp_path):
 
 def test_the_room_token_is_named_never_written(tmp_path):
     """The scoped credential is the room's, and the machine is not ours."""
-    script = build_launch_script(_launch())
+    script = _script(_launch())
     assert "$CHEESE_TOKEN" in script
     owner, session, env, _ = _machine(tmp_path)
     process = _start(tmp_path, env, _launch())
@@ -235,7 +250,7 @@ def test_a_machine_that_cannot_install_pi_says_so_instead_of_starting_nothing(
     _owner, _session, env, _ = _machine(tmp_path, pinned=False, npm=False)
     # A device runs a shipped FILE: this script is megabytes, and argv is not.
     script = tmp_path / "launch.sh"
-    script.write_text(build_launch_script(_launch()))
+    script.write_text(_script(_launch()))
     result = subprocess.run(
         ["sh", str(script)],
         env=env,

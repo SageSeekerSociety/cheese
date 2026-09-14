@@ -40,6 +40,7 @@ startup scripts are the platform's promise about the machine, and they hold
 whichever agent the room asked for.
 """
 
+import hashlib
 import json
 import shlex
 from pathlib import Path
@@ -190,6 +191,24 @@ python3 "$HOME/.claude/cheese-preview.py" \\
 echo $! > "$PIDF"
 printf '%s\\n' "$WANT" > "$STAMPF"
 """
+
+
+def state_dir(project_id, resource_id, harness: str, agent_handle: str) -> str:
+    """一个 harness 在那台机器上放 state 的地方，写成连接器认的那种路径。
+
+    The literal ``$HOME`` is the connector's to expand, to the MACHINE OWNER's
+    home: a session's own home is rebuilt whenever its screen is, and what lives
+    here — the journal, the record of which inputs were already accepted, the
+    identity of the socket derived from this very string — has to outlive that.
+
+    One formula, because two ends read it: the channel writes it down, and
+    whatever reaches the session later derives the socket from the same string.
+    Two copies of this is how four native-tool lists happened.
+    """
+    return (
+        f"$HOME/.cheese/harness/{project_id}/{resource_id}/{harness}/"
+        + hashlib.sha256(agent_handle.encode()).hexdigest()
+    )
 
 
 def screen_launch(

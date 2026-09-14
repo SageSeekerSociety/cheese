@@ -808,7 +808,6 @@ def on_machine(
     )
 
 
-
 def ensure_dir(path: str) -> str:
     """Create ``path`` (the isolated home/work dir) if missing; return it. Used by the
     spike / local-device provider where the device is this same machine."""

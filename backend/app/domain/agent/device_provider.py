@@ -1130,10 +1130,8 @@ class DeviceChannel(Channel):
             # AS THE CONNECTOR RESOLVES IT: the backend records this string
             # and later derives a socket from it, so it is a fact about the
             # machine and belongs on this side of the seam.
-            state=(
-                f"$HOME/.cheese/harness/{project_id}/{resource_id}/"
-                f"{launch.harness}/"
-                + hashlib.sha256(agent_handle.encode()).hexdigest()
+            state=machine_launcher.state_dir(
+                project_id, resource_id, launch.harness, agent_handle
             ),
             api_base=api_base,
             project_id=str(project_id),

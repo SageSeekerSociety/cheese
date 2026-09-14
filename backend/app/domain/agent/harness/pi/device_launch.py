@@ -77,15 +77,12 @@ def provider(api_base: str, model: str) -> str:
 class PiLaunch:
     """跑什么 —— pi 的那一半，等机器说完「在哪」。
 
-    ``state`` is where the runner keeps its journal and binds its socket, AS THE
-    CONNECTOR WILL RESOLVE IT (a literal ``$HOME/...``): it is the backend's only
-    address for this session, and it has to outlive the session home, so it sits
-    under the machine owner's home rather than inside the isolated one.
+    Where the runner keeps its journal and which gateway it reaches are the
+    MACHINE's half of the answer, so they arrive in ``place`` — held here they
+    would be the same two facts written down twice.
     """
 
     system_prompt: str
-    state: str
-    api_base: str
     model: str
     resume_session_id: str | None = None
     agent_handle: str | None = None
@@ -137,7 +134,6 @@ class PiLaunch:
             sort_keys=True,
         )
 
-
     def on(self, place: MachinePlace) -> MachineLaunch:
         """pi, now that a machine has said where.
 
@@ -154,19 +150,9 @@ class PiLaunch:
         )
 
 
-def build_launch_script(launch: PiLaunch) -> str:
+def build_launch_script(launch: PiLaunch, place: MachinePlace) -> str:
     """The device launcher for a pi session: the platform's, filled with pi's."""
-    holes = launch.on(
-        MachinePlace(
-            home="",
-            workdir="",
-            state=launch.state,
-            api_base=launch.api_base,
-            project_id="",
-            topic_id="",
-            agent_handle=launch.agent_handle or "",
-        )
-    )
+    holes = launch.on(place)
     return machine_launcher.launch_script(
         configure=holes.configure,
         prepare=holes.prepare,
