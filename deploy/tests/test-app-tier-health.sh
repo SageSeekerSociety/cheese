@@ -95,6 +95,7 @@ test_owner_release_reuses_box_config_and_stops_when_busy() {
 COMPOSE_OVERLAYS=docker-compose.subscription.yml
 BACKEND_ENV_FILE=$run_dir/backend.env
 BACKEND_IMAGE=repo/backend:box-pinned
+DEVICE_CONNECTION_SECRET=test-owner-secret
 DEPLOY_APP_IMAGE_SOURCE=local
 EOF
   : > "$run_dir/backend.env"
@@ -107,10 +108,12 @@ EOF
     || { rm -rf "$run_dir"; fail "owner release ignored the pinned local backend image"; }
   grep -F 'up -d --no-deps --force-recreate device-connection' "$docker_log" >/dev/null \
     || { rm -rf "$run_dir"; fail "owner release did not isolate its recreate"; }
+  ! grep -F 'test-owner-secret' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "owner release logged its internal secret"; }
 
   : > "$docker_log"
   if PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" \
-    APP_TIER_CURL_FAIL_MATCH=release-ready HOME="$run_dir" \
+    APP_TIER_CURL_FAIL_MATCH=release-drain HOME="$run_dir" \
     "$ROOT/deploy/release-device-connection.sh" testsha \
       "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null 2>&1; then
     rm -rf "$run_dir"
@@ -118,6 +121,17 @@ EOF
   fi
   ! grep -F 'force-recreate device-connection' "$docker_log" >/dev/null \
     || { rm -rf "$run_dir"; fail "busy owner was recreated"; }
+
+  : > "$docker_log"
+  if PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" \
+    APP_TIER_DOCKER_FAIL_MATCH=force-recreate HOME="$run_dir" \
+    "$ROOT/deploy/release-device-connection.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null 2>&1; then
+    rm -rf "$run_dir"
+    fail "owner release succeeded after its recreate failed"
+  fi
+  grep -F 'release-resume' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "failed owner release left the old owner draining"; }
   rm -rf "$run_dir"
   echo "PASS: owner release reuses box config and stops while execution is active"
 }

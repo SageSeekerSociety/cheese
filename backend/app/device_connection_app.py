@@ -13,6 +13,7 @@ from app.domain.agent.device_hub import DeviceOffline, device_hub
 from app.domain.agent.device_hub_rpc import screen_to_json
 
 _executor_calls: dict[str, asyncio.Task[dict]] = {}
+_release_draining = False
 _RPC_METHODS = {
     "await_call",
     "adopt_screen",
@@ -50,11 +51,26 @@ async def healthz() -> dict[str, bool]:
     return {"ok": True}
 
 
-@app.get("/release-ready")
-async def release_ready() -> dict[str, bool]:
+@app.post("/internal/device-connection/release-drain")
+async def release_drain(
+    x_device_connection_secret: str | None = Header(default=None),
+) -> dict[str, bool]:
+    _authorize(x_device_connection_secret)
+    global _release_draining
     if any(not task.done() for task in _executor_calls.values()):
         raise HTTPException(status_code=409, detail="executor calls are active")
-    return {"ready": True}
+    _release_draining = True
+    return {"draining": True}
+
+
+@app.post("/internal/device-connection/release-resume")
+async def release_resume(
+    x_device_connection_secret: str | None = Header(default=None),
+) -> dict[str, bool]:
+    _authorize(x_device_connection_secret)
+    global _release_draining
+    _release_draining = False
+    return {"draining": False}
 
 
 @app.get("/internal/device-connection/snapshot")
@@ -105,6 +121,10 @@ async def _dispatch(name: str, body: dict[str, Any]) -> Any:
         trace_id = body["trace_id"]
         task = _executor_calls.get(trace_id)
         if task is None:
+            if _release_draining:
+                raise HTTPException(
+                    status_code=503, detail="device connection owner is draining"
+                )
             if len(_executor_calls) >= 2048:
                 for old_trace, old_task in list(_executor_calls.items()):
                     if old_task.done():

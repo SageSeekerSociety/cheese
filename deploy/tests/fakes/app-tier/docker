@@ -12,6 +12,9 @@ if [ -n "${APP_TIER_DOCKER_LOG:-}" ]; then
       >> "$APP_TIER_DOCKER_LOG"
   fi
 fi
+if [ -n "${APP_TIER_DOCKER_FAIL_MATCH:-}" ] && [[ "$*" == *"$APP_TIER_DOCKER_FAIL_MATCH"* ]]; then
+  exit 1
+fi
 
 # Fail the first APP_TIER_PULL_FAIL_COUNT pull invocations, counting across both
 # `docker pull` and `docker compose pull`. Lets a test drive the retry path — and
