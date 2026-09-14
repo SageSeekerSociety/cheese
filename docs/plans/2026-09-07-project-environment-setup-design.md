@@ -12,22 +12,22 @@ This design covers environment preparation. It preserves machine selection, owne
 
 | Mode | Execution boundary | Installation behavior |
 | --- | --- | --- |
-| Cloud | A platform-provisioned machine dedicated to the room | Run both scripts in the room's home and checkout. The platform may reclaim the machine under existing lifecycle rules. |
+| Cloud | A platform-provisioned machine dedicated to the room | Initialize tools in the room directory; run startup in each task checkout. The platform may reclaim the machine under existing lifecycle rules. |
 | Hosted Sandbox | An OS-level boundary around the room's processes and writable files | Run both scripts inside that same boundary. No Docker dependency is introduced. |
-| Hosted Machine | The enrolled machine, with its existing execution identity and host access | Run both scripts with the room's home and checkout as defaults. The platform never restores a snapshot over the host or uninstalls its software. |
+| Hosted Machine | The enrolled machine, with its existing execution identity and host access | Initialize tools in the room directory; run startup in each task checkout. The platform never restores a snapshot over the host or uninstalls its software. |
 
 The boundary is established before either user script runs and remains in force for their child processes. Setup gets no additional host access or privilege escalation. A separate HOME is an installation location, not an OS security boundary.
 
 ## Shared execution sequence
 
 1. Resolve the machine using existing supply and visibility rules.
-2. Establish the execution boundary and prepare the room's HOME and checked-out code. Workspace preparation must succeed before project scripts run.
+2. Establish the execution boundary and prepare the room's HOME and conversation directory. Task code is checked out separately when a task is opened.
 3. Resolve the environment revision pinned to the room. Inject project variables while preserving platform-owned routing, identity, HOME, and workspace variables.
 4. Run the initialization script if that revision has not completed successfully in this environment instance, or restore an equivalent supported cache. Record success only after exit zero.
-5. Run the workspace startup script before a new agent process starts. Run it again when restarting an agent process against a retained environment. Reattaching to a live process, reconnecting the connector, and sending another prompt do not rerun it.
-6. Mark the environment ready and permit task delivery only after both required stages succeed.
+5. Mark the room environment ready after initialization succeeds and start the agent. Persist its pinned configuration for task preparation.
+6. On `cheese split` or `cheese worktree`, prepare the task checkout, then run the workspace startup script in that checkout before returning its path. Reopening a task reruns startup against its current files. Failure returns a nonzero exit code and a log location, retaining the files and the running room agent for diagnosis.
 
-Both scripts run as explicit Bash subprocesses from the checkout root, with the same HOME, PATH conventions, environment variables, and execution identity as the agent. Shell exports do not propagate to later stages. Persistent variables belong in project configuration; tools installed under the room's local bin directory are added to PATH by the launcher. Scripts must tolerate reruns after interruption. Empty scripts succeed without spawning an installer.
+Initialization runs as an explicit Bash subprocess in the conversation directory; startup runs in the task checkout root. Both use the room's HOME, PATH conventions, environment variables, and execution identity. Shell exports do not propagate to later stages. Persistent variables belong in project configuration; tools installed under the room's local bin directory are added to PATH by the launcher. Scripts must tolerate reruns after interruption. Empty scripts succeed without spawning an installer.
 
 Initialization installs reusable tools. Workspace startup synchronizes dependencies for the checked-out branch and starts required services. For this repository, startup can run `uv sync --frozen` in backend and `pnpm install --frozen-lockfile` in frontend. The platform does not infer dependency freshness from an unchanged initialization script.
 
@@ -37,7 +37,7 @@ A Bash interface does not translate Linux package commands into macOS commands. 
 
 Processes already running when this feature is deployed continue until their next restart. They have no preparation receipt, so settings show them as pending. Applying a configuration takes effect on the next agent start and preserves the room's files.
 
-Store both scripts and variables in project settings as a versioned environment configuration. New rooms use the latest revision. Existing rooms retain their revision until an explicit apply action at an idle boundary; saving project settings never changes an active room. Applying a revision preserves the checkout and uncommitted files, reruns initialization, then runs workspace startup. It does not promise to undo earlier script side effects on a retained machine.
+Store both scripts and variables in project settings as a versioned environment configuration. New rooms use the latest revision. Existing rooms retain their revision until an explicit apply action at an idle boundary; saving project settings never changes an active room. Applying a revision preserves task checkouts and uncommitted files, reruns initialization, and uses the new startup script when each task is next opened. It does not promise to undo earlier script side effects on a retained machine.
 
 A successful initialization receipt is scoped to the actual environment instance and revision. It is not a project-wide assertion that every machine is prepared. A replacement machine or deleted environment invalidates the receipt. Concurrent starts for the same room share one preparation attempt; interrupted or failed attempts never count as ready.
 
@@ -55,7 +55,7 @@ Cancellation terminates the script and its children. A disconnected backend must
 
 ## Code integration and acceptance
 
-`CloudChannel` already inherits `DeviceChannel`, which calls `build_screen_launch`. Put script execution in this shared machine preparation path, below the agent harness. Keep Claude-specific SessionStart hooks out of the project configuration contract. Hosted Sandbox must eventually wrap setup and startup as well as the agent.
+`CloudChannel` inherits `DeviceChannel`. Their shared machine preparation runs initialization, and the task CLI invokes the same runner for startup after creating or reopening a checkout. Keep Claude-specific SessionStart hooks out of the project configuration contract. Hosted Sandbox must eventually wrap setup and startup as well as the agent.
 
 Replace the sandbox-image API and UI with environment configuration and preparation status. Remove the unused `sandbox_image` parameter and the obsolete cheesex-dev image workflow when the replacement is wired. Migrate any existing selected project to explicit scripts, preserving its intended dependencies. As part of implementation, update `docs/spec.md` to describe the script configuration and the conditions for reusing a cache.
 

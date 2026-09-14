@@ -3,7 +3,9 @@
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
+import sys
 import threading
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -11,6 +13,9 @@ from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 import pytest
+
+from app.domain.agent import environment_runner
+from app.domain.project.environment import EnvironmentConfig
 
 CLI = Path(__file__).resolve().parents[2] / "sandbox/cheese"
 
@@ -226,3 +231,102 @@ def test_renaming_a_checkout_cannot_deliver_it_as_another_task(device):
     assert git(remote, "rev-parse", tasks[task]["branch"]) == head
     assert not git(remote, "branch", "--list", "another-task")
     assert (work / "unfinished.txt").read_text() == "retained"
+
+
+def test_room_starts_before_task_dependencies_and_worktree_prepares_each_branch(device):
+    _, tasks, remote, home = device
+    seed = remote.parent / "seed"
+    for directory in ("backend", "frontend"):
+        (seed / directory).mkdir()
+        (seed / directory / "dependency-version").write_text("1")
+    git(seed, "add", ".")
+    git(seed, "commit", "-m", "Add dependency fixtures")
+    git(seed, "push", str(remote), "main")
+    for data in tasks.values():
+        git(remote, "branch", "-f", data["branch"], "main")
+    room = home / "room"
+    room.mkdir()
+    helpers = home / ".claude"
+    helpers.mkdir()
+    shutil.copy(environment_runner.__file__, helpers / "cheese-environment.py")
+    config = EnvironmentConfig(
+        setup_script=(
+            'echo setup >> "$HOME/setup-count"\n'
+            'mkdir -p "$HOME/.local/bin"\n'
+            "printf '#!/bin/sh\\ncat dependency-version\\n' "
+            '> "$HOME/.local/bin/install-dependencies"\n'
+            'chmod +x "$HOME/.local/bin/install-dependencies"\n'
+            "export ONLY_SETUP=yes"
+        ),
+        startup_script=(
+            "test ! -f fail-install || exit 23\n"
+            "(cd backend && install-dependencies > installed-version)\n"
+            "(cd frontend && install-dependencies > installed-version)\n"
+            'printf "%s" "$PROJECT_VALUE" > project-value\n'
+            'test -z "${ONLY_SETUP:-}"\n'
+            "echo startup >> startup-count"
+        ),
+        variables={"PROJECT_VALUE": "$(touch injected) 'literal'"},
+    )
+    started = subprocess.run(
+        [sys.executable, environment_runner.__file__, "touch", "agent-started"],
+        env={
+            **os.environ,
+            "CHEESE_WORK": str(room),
+            "CHEESE_ENVIRONMENT": json.dumps(config.snapshot()),
+        },
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert started.returncode == 0, started.stderr
+    assert (room / "agent-started").exists()
+    assert not (room / "backend").exists()
+
+    def open_task(task):
+        return subprocess.run(
+            [sys.executable, str(CLI), "worktree", task],
+            cwd=room,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+
+    first, second = tasks
+    opened = open_task(first)
+    assert opened.returncode == 0, opened.stderr
+    first_work = Path(opened.stdout.strip())
+    opened = open_task(second)
+    assert opened.returncode == 0, opened.stderr
+    second_work = Path(opened.stdout.strip())
+    assert first_work != second_work
+    for work in (first_work, second_work):
+        for directory in ("backend", "frontend"):
+            assert (work / directory / "installed-version").read_text() == "1"
+        assert (work / "project-value").read_text() == config.variables["PROJECT_VALUE"]
+        assert not (work / "injected").exists()
+    (first_work / "backend/dependency-version").write_text("2")
+    (first_work / "draft.txt").write_text("unfinished work")
+    assert open_task(first).returncode == 0
+    assert (first_work / "backend/installed-version").read_text() == "2"
+    assert (second_work / "backend/installed-version").read_text() == "1"
+    assert (first_work / "startup-count").read_text() == "startup\nstartup\n"
+
+    (first_work / "fail-install").touch()
+    failed = open_task(first)
+    assert failed.returncode == 23
+    assert not failed.stdout.strip(), "A failed task must not be returned as ready"
+    assert "startup script exited with status 23" in failed.stderr
+    assert (first_work / "draft.txt").read_text() == "unfinished work"
+    root = home / ".cheese-environment"
+    assert json.loads((root / "status.json").read_text())["state"] == "ready"
+    task_status = json.loads((root / "tasks" / first / "status.json").read_text())
+    assert task_status["state"] == "failed"
+    assert task_status["stage"] == "startup"
+    assert task_status["exit_code"] == 23
+    (first_work / "fail-install").unlink()
+    assert open_task(first).returncode == 0
+    task_status = environment_runner.read_status(root / "tasks" / first)
+    assert task_status["state"] == "complete"
+    assert (home / "setup-count").read_text() == "setup\n"
+    assert (first_work / "draft.txt").read_text() == "unfinished work"

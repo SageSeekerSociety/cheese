@@ -40,7 +40,7 @@ def test_executor_prepares_room_without_model_credentials(tmp_path):
             '> "$HOME/.local/bin/room-tool"\n'
             'chmod +x "$HOME/.local/bin/room-tool"'
         ),
-        "startup_script": "printf started >> startup-result",
+        "startup_script": "cd backend\nprintf started >> startup-result",
     }
     env = {
         "CHEESE_API": "http://127.0.0.1:1",
@@ -77,7 +77,7 @@ def test_executor_prepares_room_without_model_credentials(tmp_path):
         assert not (work / ".git").exists()
         assert (work / "notes.txt").read_text() == "original"
         assert (work / "setup-result").read_text() == "project-value"
-        assert (work / "startup-result").read_text() == "started"
+        assert not (work / "startup-result").exists()
         stored = json.loads((state / "config.json").read_text())
         assert "ANTHROPIC_API_KEY" not in stored["env"]
         read = runtime.request(
@@ -106,7 +106,7 @@ def test_executor_prepares_room_without_model_credentials(tmp_path):
         reused = json.loads(launch().stdout)
         assert reused["pid"] == running["pid"]
         assert (work / "draft.txt").read_text() == "retain this draft"
-        assert (work / "startup-result").read_text() == "started"
+        assert not (work / "startup-result").exists()
         assert (
             json.loads((state / "config.json").read_text())["env"]["CHEESE_TOKEN"]
             == "rotated-token"
@@ -136,7 +136,7 @@ def test_executor_prepares_room_without_model_credentials(tmp_path):
                 time.sleep(0.05)
         assert restarted["pid"] != running["pid"]
         assert (work / "draft.txt").read_text() == "retain this draft"
-        assert (work / "startup-result").read_text() == "startedstarted"
+        assert not (work / "startup-result").exists()
         # A failed setup leaves the ownership marker without a running daemon.
         subprocess.run(
             [sys.executable, runtime.__file__, "stop", "--state", str(state)],

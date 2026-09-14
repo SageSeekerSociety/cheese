@@ -902,7 +902,7 @@ def _tmux_ge_30() -> bool:
 
 
 @pytest.mark.skipif(not _tmux_ge_30(), reason="needs a real tmux >= 3.0")
-def test_environment_prepares_once_on_attach_and_runs_startup_after_reset(tmp_path):
+def test_environment_prepares_tools_without_task_code_on_attach_and_reset(tmp_path):
     import json
     import shutil
     import sys
@@ -920,11 +920,12 @@ def test_environment_prepares_once_on_attach_and_runs_startup_after_reset(tmp_pa
     (helpers / "cheese-drain").write_text("#!/bin/sh\nexit 0\n")
     agent = tmp_path / "fake agent.sh"
     agent.write_text(
-        "#!/bin/sh\ntest -f startup || exit 1\necho agent >> agents\nexec sleep 60\n"
+        "#!/bin/sh\ntest -f setup || exit 1\necho agent >> agents\nexec sleep 60\n"
     )
     agent.chmod(0o755)
     config = EnvironmentConfig(
-        setup_script="echo setup >> setup", startup_script="echo startup >> startup"
+        setup_script="echo setup >> setup",
+        startup_script="cd backend\necho startup >> startup",
     )
     env = {
         **os.environ,
@@ -960,7 +961,7 @@ def test_environment_prepares_once_on_attach_and_runs_startup_after_reset(tmp_pa
         attach()
         wait_agents(1)
         attach()
-        assert (work / "startup").read_text() == "startup\n"
+        assert not (work / "startup").exists()
         reset = subprocess.run(
             [sys.executable, str(helpers / "cheese-environment.py"), "reset"],
             env=env,
@@ -973,7 +974,7 @@ def test_environment_prepares_once_on_attach_and_runs_startup_after_reset(tmp_pa
         attach()
         wait_agents(2)
         assert (work / "setup").read_text() == "setup\n"
-        assert (work / "startup").read_text() == "startup\nstartup\n"
+        assert not (work / "startup").exists()
     finally:
         subprocess.run(["tmux", "-S", socket, "kill-server"], capture_output=True)
 

@@ -221,6 +221,19 @@ def _task_worktree(task_id: str) -> Path:
         hook = hooks / "post-commit"
         hook.write_text("#!/bin/sh\nexec cheese sync\n")
         hook.chmod(0o755)
+    # The room has no checkout. Branch dependencies belong to this task and
+    # must be prepared on every open, including after local branch changes.
+    if (Path.home() / ".cheese-environment/config.json").exists():
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(Path.home() / ".claude/cheese-environment.py"),
+                "task",
+                str(task_dir),
+            ],
+        )
+        if result.returncode:
+            raise SystemExit(result.returncode)
     return task_dir
 
 

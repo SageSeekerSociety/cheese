@@ -91,7 +91,7 @@ def wait_status(directory: Path) -> dict:
         time.sleep(min(0.05, remaining))
 
 
-def run(config, directory, command, *, adopt=None):
+def run(config, directory, command, *, adopt=None, task_work=None):
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     lock = (directory / "lock").open("a")
     try:
@@ -153,6 +153,10 @@ def run(config, directory, command, *, adopt=None):
     initialized = json.loads(receipt.read_text()) if receipt.exists() else None
     with (directory / log_name).open("a", buffering=1) as log:
         write_json(directory / f"{attempt}.json", config)
+        if task_work is None:
+            # The agent receives no CHEESE_ENVIRONMENT. Task preparation reads
+            # the room's pinned configuration after the agent has started.
+            write_json(directory / "config.json", config)
         write_json(directory / "status.json", state)
         try:
             # Installs must never land in another cwd, so the room directory has
@@ -162,13 +166,15 @@ def run(config, directory, command, *, adopt=None):
             # directory therefore answers no useful question — and while it was
             # still asked, every room on a deployment failed preparation, which
             # means the agent was never exec'd below and the room went silent.
-            work = Path(os.environ["CHEESE_WORK"]).resolve()
+            work = Path(task_work or os.environ["CHEESE_WORK"]).resolve()
             if not work.is_dir():
                 raise RuntimeError("work directory is missing")
-            for stage, key in (
-                ("setup", "setup_script"),
-                ("startup", "startup_script"),
-            ):
+            stages = (
+                (("setup", "setup_script"),)
+                if task_work is None
+                else (("startup", "startup_script"),)
+            )
+            for stage, key in stages:
                 state["stage"] = stage
                 write_json(directory / "status.json", state)
                 if stage == "setup" and initialized == config["revision"]:
@@ -203,7 +209,7 @@ def run(config, directory, command, *, adopt=None):
                 if stage == "setup":
                     write_json(receipt, config["revision"])
             if adopt is not None:
-                # Bind only after both scripts succeed. Status must follow the
+                # Bind only after tool setup succeeds. Status must follow the
                 # existing agent, not this short-lived preparation process.
                 pid = adopt(environment, work)
                 identity = process_identity(pid)
@@ -211,11 +217,14 @@ def run(config, directory, command, *, adopt=None):
                     raise RuntimeError("prepared agent exited during adoption")
                 state.update(pid=pid, process_identity=identity)
             state.update(
-                state="ready", stage="complete", exit_code=0, finished_at=now()
+                state="ready" if task_work is None else "complete",
+                stage="complete",
+                exit_code=0,
+                finished_at=now(),
             )
             write_json(directory / "status.json", state)
             log.write(f"{now()} ready\n")
-            if adopt is not None:
+            if adopt is not None or task_work is not None:
                 return 0
             # Exec keeps the PID stable for status inspection. The project
             # variables are applied to the agent as well as both scripts.
@@ -237,7 +246,20 @@ def run(config, directory, command, *, adopt=None):
 
 if __name__ == "__main__":
     root = Path.home() / ".cheese-environment"
-    if sys.argv[1:] == ["reset"]:
+    if len(sys.argv) == 3 and sys.argv[1] == "task":
+        work = Path(sys.argv[2]).resolve()
+        config = json.loads((root / "config.json").read_text())
+        directory = root / "tasks" / work.name
+        code = run(config, directory, [], task_work=work)
+        if code:
+            status = read_status(directory)
+            print(
+                status.get("log", status.get("error", "Task preparation is busy")),
+                file=sys.stderr,
+            )
+            print(f"Task environment log: {directory}", file=sys.stderr)
+        raise SystemExit(code)
+    elif sys.argv[1:] == ["reset"]:
         status = read_status(root)
         if status["state"] == "preparing":
             raise SystemExit("environment is still preparing")
