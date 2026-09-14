@@ -391,6 +391,9 @@ async def test_release_drain_waits_for_exec_and_blocks_new_screen_call(
         assert outbound["t"] == "exec"
         active = await client.post("/internal/device-connection/release-drain")
         assert active.status_code == 409
+        status = (await client.get("/internal/device-connection/snapshot")).json()
+        assert status["active_rpc_calls"] == 1
+        assert status["device_pending"]["machine"]["exec"] == 1
 
         await device_hub.on_device_message(
             "machine",

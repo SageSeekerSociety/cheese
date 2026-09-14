@@ -94,6 +94,20 @@ async def snapshot(
     return {
         "devices": devices,
         "screens": [screen_to_json(screen) for screen in device_hub._screens.values()],
+        "active_rpc_calls": _active_rpc_calls,
+        "pending_executor_traces": sum(
+            not task.done() for task in _executor_calls.values()
+        ),
+        "device_pending": {
+            device_id: {
+                "exec": len(device.exec_pending),
+                "call": len(device.call_pending),
+                "file": len(device.file_pending),
+                "executor": len(device.executor_pending),
+                "session": len(device.session_pending),
+            }
+            for device_id, device in device_hub._devices.items()
+        },
     }
 
 
