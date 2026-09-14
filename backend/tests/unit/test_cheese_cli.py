@@ -45,6 +45,42 @@ def test_members_reads_the_current_topic_roster(monkeypatch, capsys):
     assert "Alice（owner）→ 在消息里写 <@alice>" in capsys.readouterr().out
 
 
+def test_direct_mcp_request_plans_cover_only_http_operations():
+    cli = _load()
+    env = {
+        "CHEESE_TOPIC": "room",
+        "CHEESE_PROJECT": "project",
+        "CHEESE_MEMORY_SCOPE": "project",
+    }
+    arguments = {
+        "cheese_ask": {"question": "Pick", "option": ["a", "b"]},
+        "cheese_bind": {"task_id": "task", "agent_id": "agent"},
+        "cheese_close_task": {"task_id": "task", "conclusion": "done"},
+        "cheese_decision": {"text": "chosen"},
+        "cheese_fetch": {"url": "https://example.test", "prompt": None},
+        "cheese_gh_token": {},
+        "cheese_members": {},
+        "cheese_milestone": {"title": "ship", "due": "2026-09-14"},
+        "cheese_notify": {"title": "notice"},
+        "cheese_recall": {"query": "term"},
+        "cheese_remember": {"fact": "fact", "core": False},
+        "cheese_status": {},
+        "cheese_tell": {"target": "task", "message": "update"},
+        "cheese_title": {"text": "title", "task": None},
+    }
+    assert set(arguments) == cli.DIRECT_MCP_TOOLS
+    plans = {
+        tool: cli.request_plan(tool, values, env) for tool, values in arguments.items()
+    }
+    assert all(plan["method"] in {"GET", "POST"} for plan in plans.values())
+    assert plans["cheese_decision"] == {
+        "method": "POST",
+        "path": "/topics/room/decision",
+        "body": {"decision": "chosen"},
+    }
+    assert plans["cheese_milestone"]["body"]["due_date"] == ("2026-09-14T00:00:00Z")
+
+
 def test_artifact_publishes_the_local_file_from_a_subdirectory(monkeypatch, tmp_path):
     cli = _load()
     folder = tmp_path / "site"

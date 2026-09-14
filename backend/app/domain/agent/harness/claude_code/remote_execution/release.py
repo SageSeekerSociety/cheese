@@ -29,6 +29,9 @@ def sources():
     }
     result.update(
         {
+            "cheese.py": (
+                Path(__file__).resolve().parents[6] / "sandbox/cheese"
+            ).read_text(),
             "executor_transport.py": Path(executor_transport.__file__).read_text(),
             "event_spool.py": Path(event_spool.__file__).read_text(),
             "platform-hook-source": CHEESE_HOOK_SCRIPT,

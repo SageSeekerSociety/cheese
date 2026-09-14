@@ -229,6 +229,10 @@ def central_transport(executor, tmp_path, request):
                 assert self.headers["X-Cheese-Turn"] == "fixture-turn"
                 platform_calls.append(payload)
                 result = {"data": payload}
+            elif self.path == "/topics/fixture/decision":
+                assert self.headers["X-Cheese-Turn"] == "fixture-turn"
+                platform_calls.append(payload)
+                result = {"data": payload}
             elif self.path == "/topics/fixture/messages":
                 uuid.UUID(payload["request_id"])
                 assert self.headers["X-Cheese-Turn"] == "fixture-turn"
@@ -314,6 +318,28 @@ def test_platform_mcp_posts_literal_json_without_executor_invocation(central_tra
     assert process.platform_calls == [body, body]
     assert len(clients) == discovery_clients + 2
     assert clients[-2] == clients[-1]
+    assert not (work / "escaped").exists()
+
+
+def test_decision_uses_shared_plan_without_executor_invocation(central_transport):
+    process, _, _, work = central_transport
+    tools = process.call("tools/list", {})["tools"]
+    assert any(tool["name"] == "cheese_decision" for tool in tools)
+    result = process.call(
+        "tools/call",
+        {
+            "name": "cheese_decision",
+            "arguments": {
+                "id": "direct-decision",
+                "session_id": "fixture",
+                "text": "literal $(touch escaped)",
+            },
+        },
+    )
+    outcome = json.loads(result["content"][0]["text"])
+    assert json.loads(outcome["result"]["stdout"])["data"] == {
+        "decision": "literal $(touch escaped)"
+    }
     assert not (work / "escaped").exists()
 
 
