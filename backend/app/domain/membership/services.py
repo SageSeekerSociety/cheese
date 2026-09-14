@@ -23,8 +23,29 @@ from app.domain.project.models import (
 from app.domain.project.repositories import ProjectRepository
 
 
+async def _reject_execution_identity(session: AsyncSession, handle: str) -> None:
+    """执行身份不进项目名册——它进项目走的是另一条路。
+
+    agent-user 是**执行身份**（这一次动作里是谁在说话），不是一个人；长期 Agent 记
+    在 ``agent_instances`` 上、由项目的 Agent 配置管理，项目页那一栏「AI 队友」读的
+    就是它。把执行身份当成人邀请进项目，等于给同一件事开了第二个入口，两边的授权很
+    快就会不一致——而名册是「谁能看这个项目的全部话题」的判据，重复的入口就是漏。
+
+    判定复用 ``IdentityService.is_agent``：带 ``agent_bindings`` 行的才算 agent，不去
+    看 handle 长得像不像（``cheese-<话题hex>`` 是派生格式，不是契约）。解析不出用户的
+    handle 一律放行——脚本和测试夹具会加这种，它们不是 agent。
+    """
+    from app.domain.identity.services import IdentityService
+
+    if await IdentityService(session).is_agent(handle):
+        raise ValidationError(
+            "AI 队友不能加到项目成员里。项目里的 Agent 由 Agent 配置管理，不占人名册。"
+        )
+
+
 class MemberService:
     def __init__(self, session: AsyncSession):
+        self._session = session
         self._repo = MemberRepository(session)
         self._projects = ProjectRepository(session)
 
@@ -69,6 +90,7 @@ class MemberService:
     ) -> ProjectMember:
         await self._ensure_project(project_id)
         await self.require_manager(project_id, actor)
+        await _reject_execution_identity(self._session, user_handle)
         existing = await self._repo.get(project_id=project_id, user_handle=user_handle)
         if existing is not None:
             raise ValidationError("User is already a member of this project")
@@ -151,6 +173,18 @@ class InvitationService:
             raise NotFoundError("Project not found")
         return project
 
+    async def _is_on_project_roster(self, project_id: uuid.UUID, handle: str) -> bool:
+        """「已经在项目里」= 完整名册，不是 ``project_members`` 那一张表。
+
+        名册还有两个来源：项目所有者，和所属小队的成员——两者都不写行，读的时候
+        补出来（``ProjectRepository.list_members`` 说得很清楚）。只查表的话，一个
+        已经通过小队在项目里的人会被再邀请一次；而接受之后落下的那一行，会在他退
+        队之后继续生效，正是那条注释要避免的事。
+        """
+        return any(
+            m["handle"] == handle for m in await self._projects.list_members(project_id)
+        )
+
     async def invite(
         self,
         *,
@@ -166,10 +200,8 @@ class InvitationService:
             raise ValidationError("要邀请谁")
         if actor.handle == invitee_handle:
             raise ValidationError("不用邀请自己")
-        if (
-            await self._members.get(project_id=project_id, user_handle=invitee_handle)
-            is not None
-        ):
+        await _reject_execution_identity(self._session, invitee_handle)
+        if await self._is_on_project_roster(project_id, invitee_handle):
             raise ValidationError("这个人已经在项目里了")
         if (
             await self._repo.pending_for(
@@ -243,6 +275,9 @@ class InvitationService:
         if actor.handle != invitation.invitee_handle:
             raise ForbiddenError("只有被邀请的人能答复这张邀请")
         if accept:
+            # 拦在执行身份上，而不是只拦在发邀请那一刻：一条**在修复之前**发出去的
+            # 邀请还躺在那里，点一下接受就能绕开 invite 里那条判断。
+            await _reject_execution_identity(self._session, invitation.invitee_handle)
             # 中间可能已经被人用别的路加进去了（脚本、直接调接口）。那不是错误，
             # 邀请照样算数，只是不用再加一次。
             existing = await self._members.get(
