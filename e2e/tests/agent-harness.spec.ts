@@ -48,7 +48,7 @@ test('a teammate keeps its identity and role across saved harness switches', asy
   await page.getByRole('option', { name: 'codex-ci-fixture', exact: true }).click();
   const original = await save();
   expect(original.configuration).toMatchObject({ harness: 'codex', model: 'codex-ci-fixture', body: role });
-  await dialog.screenshot({ path: testInfo.outputPath('codex-editor.png') });
+  await dialog.screenshot({ path: testInfo.outputPath('codex-editor.png'), animations: 'disabled' });
 
   await selectHarness('Claude Code');
   await dialog.locator('.v-select').filter({ hasText: '模型' }).getByRole('combobox').click();
@@ -58,7 +58,7 @@ test('a teammate keeps its identity and role across saved harness switches', asy
   const claude = await save();
   expect(claude.id).toBe(original.id);
   expect(claude.configuration).toMatchObject({ harness: 'claude-code', model: 'deepseek-flash', body: role });
-  await dialog.screenshot({ path: testInfo.outputPath('claude-editor.png') });
+  await dialog.screenshot({ path: testInfo.outputPath('claude-editor.png'), animations: 'disabled' });
 
   await selectHarness('Codex');
   const restored = await save();
