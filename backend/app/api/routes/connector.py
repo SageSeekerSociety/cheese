@@ -78,6 +78,33 @@ def get_device_service(db: DbSession) -> DeviceService:
 DeviceServiceDep = Annotated[DeviceService, Depends(get_device_service)]
 
 
+async def recover_business_state(device_id: str) -> None:
+    try:
+        from app.api.deps import get_chat_service
+
+        await get_chat_service().recover_sessions(device_id)
+    except Exception:  # noqa: BLE001 — recovery cannot reject a healthy device
+        logger.exception("hook subscription recovery failed for device %s", device_id)
+    # Restore screen ownership before cleanup looks for sessions to close.
+    from app.core.background import spawn
+    from app.core.db import async_session_factory
+    from app.domain.topic.retire import sweep_retired_storage
+
+    spawn(
+        sweep_retired_storage(async_session_factory),
+        name="cleanup device reconnect",
+    )
+    try:
+        # A Cloud topic whose machine just came up has been holding a message;
+        # this attach is the last fact it was waiting for, so deliver now instead
+        # of at the next sweep tick (machine/wakeup.py).
+        from app.api.deps import get_cloud_wakeup
+
+        await get_cloud_wakeup().wake_device(device_id)
+    except Exception:  # noqa: BLE001 — a wake-up failure cannot reject the device
+        logger.exception("cloud wake-up on attach failed for device %s", device_id)
+
+
 # --- request/response schemas --------------------------------------------------
 
 
@@ -224,37 +251,12 @@ async def agent_socket(
     await device_hub.attach_device(
         device.device_id, transport, name=device.name
     )  # sends welcome{v}
-    from app.core.background import spawn
-    from app.core.db import async_session_factory
-    from app.domain.topic.retire import sweep_retired_storage
 
-    async def recover():
-        try:
-            from app.api.deps import get_chat_service
-
-            await get_chat_service().recover_sessions(device.device_id)
-        except Exception:  # noqa: BLE001 — recovery cannot reject a healthy device
-            logger.exception(
-                "hook subscription recovery failed for device %s", device.device_id
-            )
-        # Restore screen ownership before cleanup looks for sessions to close.
-        spawn(
-            sweep_retired_storage(async_session_factory),
-            name="cleanup device reconnect",
-        )
-        try:
-            # A Cloud topic whose machine just came up has been holding a message;
-            # this attach is the last fact it was waiting for, so deliver now instead
-            # of at the next sweep tick (machine/wakeup.py).
-            from app.api.deps import get_cloud_wakeup
-
-            await get_cloud_wakeup().wake_device(device.device_id)
-        except Exception:  # noqa: BLE001 — a wake-up failure cannot reject the device
-            logger.exception(
-                "cloud wake-up on attach failed for device %s", device.device_id
-            )
-
-    recovery = asyncio.create_task(recover())
+    recovery = (
+        None
+        if settings.device_connection_owner
+        else asyncio.create_task(recover_business_state(device.device_id))
+    )
     try:
         while True:
             message = await websocket.receive_json()
@@ -262,9 +264,10 @@ async def agent_socket(
     except WebSocketDisconnect:
         pass
     finally:
-        recovery.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await recovery
+        if recovery is not None:
+            recovery.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await recovery
         await device_hub.detach_device(device.device_id, transport)
 
 

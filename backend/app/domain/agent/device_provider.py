@@ -19,6 +19,7 @@ Per request:
 import asyncio
 import base64
 import hashlib
+import inspect
 import json
 import logging
 import shlex
@@ -533,6 +534,8 @@ class DeviceChannel(Channel):
                     agent = await IdentityService(session).ensure_topic_agent_user(
                         topic_id
                     )
+                    expiry = env.get("CHEESE_TOKEN_EXPIRES")
+                    target = env.get("CHEESE_EXECUTION_TARGET")
                     recovered = self._hub.adopt_screen(
                         device_id,
                         entry["sid"],
@@ -546,12 +549,12 @@ class DeviceChannel(Channel):
                         ),
                         command=entry["command"],
                         hook_key=str(topic_id),
+                        credential_expires=int(expiry) if expiry else None,
+                        execution_target=json.loads(target) if target else None,
+                        agent_configuration=env.get("CHEESE_AGENT_CONFIG", ""),
                     )
-                    expiry = env.get("CHEESE_TOKEN_EXPIRES")
-                    recovered.credential_expires = int(expiry) if expiry else None
-                    target = env.get("CHEESE_EXECUTION_TARGET")
-                    recovered.execution_target = json.loads(target) if target else None
-                    recovered.agent_configuration = env.get("CHEESE_AGENT_CONFIG", "")
+                    if inspect.isawaitable(recovered):
+                        recovered = await recovered
                     # Retired generations remain registered for durable cleanup;
                     # only the room's current generation can resume its turn.
                     if recovered.resource_id == current_resource:
@@ -1236,6 +1239,13 @@ class DeviceChannel(Channel):
             await self._hub.reassert_screen(existing, command=command, env=screen_env)
             mark("screen_reasserted")
             existing.execution_target = execution_target
+            updated = self._hub.update_screen(
+                existing.sid,
+                resource_id=existing.resource_id,
+                execution_target=execution_target,
+            )
+            if inspect.isawaitable(updated):
+                existing = await updated
             return existing
         screen = await self._hub.open_screen(
             device_id,
@@ -1255,6 +1265,15 @@ class DeviceChannel(Channel):
         screen.agent_configuration = configuration
         screen.resource_id = resource_id
         screen.execution_target = execution_target
+        updated = self._hub.update_screen(
+            screen.sid,
+            resource_id=resource_id,
+            execution_target=execution_target,
+            credential_expires=credential_expires,
+            agent_configuration=configuration,
+        )
+        if inspect.isawaitable(updated):
+            screen = await updated
         return screen
 
     # --- turn --------------------------------------------------------------

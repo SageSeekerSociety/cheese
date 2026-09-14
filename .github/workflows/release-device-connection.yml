@@ -1,0 +1,57 @@
+name: Release device connection owner
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target box
+        required: true
+        type: choice
+        options: [dev, production]
+      ref:
+        description: Commit whose backend image owns device connections
+        required: true
+        default: main
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: device-connection-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  release-dev:
+    if: inputs.environment == 'dev'
+    environment: dev
+    runs-on: [self-hosted, cheese-dev]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          logout: false
+      - run: bash deploy/release-device-connection.sh "$(git rev-parse --short=7 HEAD)"
+
+  release-production:
+    if: inputs.environment == 'production'
+    environment: production
+    runs-on: [self-hosted, cheese-prod]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          logout: false
+      - run: bash deploy/release-device-connection.sh "$(git rev-parse --short=7 HEAD)"

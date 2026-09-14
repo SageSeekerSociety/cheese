@@ -46,6 +46,30 @@ on prod — the 赛题 PDFs). Each box was cut over from bare-metal once
 (`deploy/{dev,prod}-docker-cutover.sh`); the old systemd service is kept
 **installed-but-disabled** as an instant rollback.
 
+Device control connections have a separate release boundary. The
+`device-connection` service owns `/connector/agent`, live terminal WebSockets,
+and the in-memory `DeviceHub`. It does not run chat recovery, cleanup, or machine
+wake-up work; the current business backend performs those jobs after reading the
+owner's connection snapshot. A normal app release starts it if it is absent,
+then leaves its running container and image unchanged while backend and frontend
+are replaced. The business backend calls the owner over an authenticated
+compose-network endpoint and restores its online-device and screen view from the
+owner at startup. Executor calls remain in the owner under their existing trace
+ID, so replacing a backend waiter neither cancels the device call nor prevents a
+replacement backend from collecting its result.
+
+On boxes with `cheese-api-front`, the deploy copies the versioned nginx config,
+checks it, and gracefully reloads nginx before replacing the backend. The exact
+`/connector/agent` and live-terminal paths go to the owner's loopback port;
+other API paths continue through the active backend switch. Updating the owner
+itself is a separate release operation because it closes the connections it
+owns. Dispatch **Release device connection owner** with a tested ref and target;
+that workflow runs `deploy/release-device-connection.sh`, which pulls and
+force-recreates only `device-connection`, then waits for its health check. It is
+manual-only, refuses to replace an owner with an active executor call, and is
+never called by the normal app deployment workflows. It reads the same box-local
+deploy environment and compose overlays as the app deployment.
+
 **On dev the backend rolls out without downtime.** The box's **:8081** is
 `cheese-api-front`, a host-network nginx from `deploy/llm-tunnel/` whose
 backend upstream comes from an include file (`~/ops/llm-tunnel/active/
