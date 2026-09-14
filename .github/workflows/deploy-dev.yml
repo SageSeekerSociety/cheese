@@ -120,10 +120,3 @@ jobs:
       - name: Docker deploy this commit
         if: steps.scope.outputs.skip != 'true'
         run: bash deploy/deploy-docker.sh "$(git rev-parse --short=7 HEAD)"
-
-      - name: Update installed cloud control service
-        if: steps.scope.outputs.skip != 'true'
-        run: |
-          if [ -f "$HOME/.config/systemd/user/cheese-cloud-control.service" ]; then
-            bash deploy/install-cloud-control.sh
-          fi

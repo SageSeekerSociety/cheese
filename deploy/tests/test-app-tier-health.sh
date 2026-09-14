@@ -178,6 +178,69 @@ EOF
   echo "PASS: owner release waits for atomic idle drain and stops safely on failure"
 }
 
+test_cloud_control_has_an_independent_drained_release() {
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/cloud-control-release.XXXXXX")"
+  mkdir -p "$run_dir/ops" "$run_dir/bin"
+  docker_log="$run_dir/docker.log"
+  cat > "$run_dir/ops/deploy.env" <<EOF
+BACKEND_ENV_FILE=$run_dir/backend.env
+DEVICE_CONNECTION_SECRET=test-owner-secret
+EOF
+  : > "$run_dir/backend.env"
+  cat > "$run_dir/bin/loginctl" <<'EOF'
+#!/usr/bin/env bash
+printf 'yes\n'
+EOF
+  cat > "$run_dir/bin/systemctl" <<'EOF'
+#!/usr/bin/env bash
+printf 'systemctl %s\n' "$*" >> "${APP_TIER_DOCKER_LOG:?}"
+if [ -n "${APP_TIER_SYSTEMCTL_FAIL_MATCH:-}" ] && [[ "$*" == *"$APP_TIER_SYSTEMCTL_FAIL_MATCH"* ]]; then exit 1; fi
+EOF
+  chmod +x "$run_dir/bin/loginctl" "$run_dir/bin/systemctl"
+
+  PATH="$run_dir/bin:$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" \
+    APP_TIER_CLOUD_DEVICES=cloud-device \
+    APP_TIER_SNAPSHOT_ONLINE_SEQUENCE=old-online,old-online,offline,new-online \
+    APP_TIER_SNAPSHOT_COUNT_FILE="$run_dir/snapshot-count" HOME="$run_dir" \
+    "$ROOT/deploy/release-cloud-control.sh" >/dev/null
+  grep -F 'release-drain' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "cloud control release did not drain owner"; }
+  grep -F 'systemctl --user restart cheese-cloud-control.service' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "cloud control was not restarted by its release"; }
+  grep -F 'release-resume' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "cloud control release did not resume owner"; }
+  [ "$(cat "$run_dir/snapshot-count")" = 4 ] \
+    || { rm -rf "$run_dir"; fail "cloud control release did not wait for forwards to reconnect"; }
+  ! grep -F 'test-owner-secret' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "cloud control release logged its internal secret"; }
+
+  : > "$docker_log"
+  if PATH="$run_dir/bin:$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" \
+    APP_TIER_CURL_DRAIN_STATUSES=409 APP_TIER_CURL_DRAIN_COUNT_FILE="$run_dir/busy-count" \
+    HOME="$run_dir" "$ROOT/deploy/release-cloud-control.sh" >/dev/null 2>&1; then
+    rm -rf "$run_dir"
+    fail "cloud control release proceeded while owner remained busy"
+  fi
+  ! grep -F 'restart cheese-cloud-control.service' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "busy cloud control release restarted its service"; }
+
+  : > "$docker_log"
+  if PATH="$run_dir/bin:$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" \
+    APP_TIER_SYSTEMCTL_FAIL_MATCH=restart HOME="$run_dir" \
+    "$ROOT/deploy/release-cloud-control.sh" >/dev/null 2>&1; then
+    rm -rf "$run_dir"
+    fail "cloud control release succeeded after restart failed"
+  fi
+  grep -F 'release-resume' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "failed cloud control release left owner draining"; }
+
+  ! grep -Fq 'install-cloud-control.sh' "$ROOT/.github/workflows/deploy-dev.yml" \
+    || { rm -rf "$run_dir"; fail "ordinary app deploy still restarts cloud control"; }
+  rm -rf "$run_dir"
+  echo "PASS: cloud control releases separately after atomic owner drain"
+}
+
 test_rollout_installs_connection_route_without_recreating_api_front() {
   local run_dir docker_log
   run_dir="$(new_rollout_run_dir)"
@@ -832,6 +895,7 @@ case "$CASE" in
   connection-owner) test_deploy_keeps_connection_owner_running ;;
   connection-owner-local) test_local_deploy_installs_owner_from_verified_backend_image ;;
   connection-route) test_rollout_installs_connection_route_without_recreating_api_front ;;
+  cloud-control-release) test_cloud_control_has_an_independent_drained_release ;;
   runtime-images) test_deploy_keeps_agent_runtime_images ;;
   ci-service-images) test_deploy_retains_ci_service_images ;;
   app-only) test_app_only_deploy_does_not_require_agent_images ;;
@@ -859,6 +923,7 @@ case "$CASE" in
     test_deploy_keeps_connection_owner_running
     test_local_deploy_installs_owner_from_verified_backend_image
     test_owner_release_reuses_box_config_and_stops_when_busy
+    test_cloud_control_has_an_independent_drained_release
     test_rollout_installs_connection_route_without_recreating_api_front
     test_deploy_keeps_agent_runtime_images
     test_deploy_retains_ci_service_images

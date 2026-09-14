@@ -4,6 +4,11 @@ set -euo pipefail
 scenario="${APP_TIER_SCENARIO:-healthy}"
 tag="${APP_TIER_MAIN_SHA:-testsha}"
 
+if [ "${1:-}" = exec ] && [ -n "${APP_TIER_CLOUD_DEVICES:-}" ]; then
+  printf '%s\n' "$APP_TIER_CLOUD_DEVICES"
+  exit 0
+fi
+
 if [ -n "${APP_TIER_DOCKER_LOG:-}" ]; then
   printf '%s\n' "$*" >> "$APP_TIER_DOCKER_LOG"
   if [ "${1:-}" = compose ] && [[ "$*" == *" up -d backend frontend"* ]]; then
