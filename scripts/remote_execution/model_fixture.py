@@ -29,6 +29,9 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
+        if self.path == "/platform-fixture":
+            assert self.headers.get("X-Cheese-Token") == "fixture-place-token"
+            return self.reply({"data": {"title": "PLATFORM_API_READ"}})
         if self.path.startswith("/connector/claude/"):
             binary = Path(self.server.state["claude_binary"])
             self.send_response(200)

@@ -204,6 +204,7 @@ def central_transport(executor, tmp_path, request):
     clients = []
     drop = []
     publications = []
+    platform_calls = []
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -215,7 +216,15 @@ def central_transport(executor, tmp_path, request):
             assert self.headers["X-Cheese-Token"] == "fixture"
             clients.append(self.client_address)
             payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-            if self.path == "/topics/fixture/messages":
+            status = 200
+            if self.path == "/platform-denied":
+                status = 403
+                result = {"error": {"code": "room_scope_denied"}}
+            elif self.path == "/platform-fixture":
+                assert self.headers["X-Cheese-Turn"] == "fixture-turn"
+                platform_calls.append(payload)
+                result = {"data": payload}
+            elif self.path == "/topics/fixture/messages":
                 uuid.UUID(payload["request_id"])
                 assert self.headers["X-Cheese-Turn"] == "fixture-turn"
                 publications.append(payload)
@@ -227,7 +236,7 @@ def central_transport(executor, tmp_path, request):
                 self.close_connection = True
                 return
             data = json.dumps(result).encode()
-            self.send_response(200)
+            self.send_response(status)
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
@@ -260,6 +269,7 @@ def central_transport(executor, tmp_path, request):
         log,
     )
     process.publications = publications
+    process.platform_calls = platform_calls
     try:
         yield process, clients, drop, work
     finally:
@@ -267,6 +277,118 @@ def central_transport(executor, tmp_path, request):
         server.shutdown()
         server.server_close()
         log.close()
+
+
+def test_platform_mcp_posts_literal_json_without_executor_invocation(central_transport):
+    process, clients, _, work = central_transport
+    tool = next(
+        t
+        for t in process.call("tools/list", {})["tools"]
+        if t["name"] == "platform_request"
+    )
+    assert set(tool["inputSchema"]["required"]) == {"method", "path"}
+    body = {"title": "中文\n$(touch escaped); `false`", "values": [1, False, None]}
+    for index in range(2):
+        result = process.call(
+            "tools/call",
+            {
+                "name": "platform_request",
+                "arguments": {
+                    "id": str(index),
+                    "session_id": "fixture",
+                    "method": "POST",
+                    "path": "/platform-fixture",
+                    "body": body,
+                },
+            },
+        )
+        outcome = json.loads(result["content"][0]["text"])
+        assert json.loads(outcome["result"]["stdout"]) == {"data": body}
+    assert process.platform_calls == [body, body]
+    assert len(clients) == 2 and clients[0] == clients[1]
+    assert not (work / "escaped").exists()
+
+
+@pytest.mark.parametrize(
+    "path", ["https://other.test/x", "//other.test/x", "relative", "/x#fragment"]
+)
+def test_platform_mcp_cannot_redirect_credentials(central_transport, path):
+    process, clients, _, _ = central_transport
+    with pytest.raises(RuntimeError, match="relative API path"):
+        process.call(
+            "tools/call",
+            {
+                "name": "platform_request",
+                "arguments": {
+                    "id": "invalid",
+                    "session_id": "fixture",
+                    "method": "POST",
+                    "path": path,
+                },
+            },
+        )
+    assert clients == []
+
+
+def test_platform_mcp_preserves_backend_permission_failure(central_transport):
+    process, clients, _, _ = central_transport
+    with pytest.raises(RuntimeError, match="Platform HTTP 403.*room_scope_denied"):
+        process.call(
+            "tools/call",
+            {
+                "name": "platform_request",
+                "arguments": {
+                    "id": "denied",
+                    "session_id": "fixture",
+                    "method": "POST",
+                    "path": "/platform-denied",
+                    "body": {},
+                },
+            },
+        )
+    assert len(clients) == 1
+
+
+@pytest.mark.parametrize(
+    "central_transport",
+    [
+        {
+            "PreToolUse": [
+                {
+                    "matcher": "mcp__native__platform_request",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": (
+                                "printf '%s' '{\"hookSpecificOutput\":"
+                                '{"permissionDecision":"deny",'
+                                '"permissionDecisionReason":"custom policy"}}\''
+                            ),
+                        }
+                    ],
+                }
+            ]
+        }
+    ],
+    indirect=True,
+)
+def test_platform_mcp_respects_custom_policy_before_http(central_transport):
+    process, clients, _, _ = central_transport
+    result = process.call(
+        "tools/call",
+        {
+            "name": "platform_request",
+            "arguments": {
+                "id": "denied",
+                "session_id": "fixture",
+                "method": "POST",
+                "path": "/platform-fixture",
+                "body": {},
+            },
+        },
+    )
+    assert json.loads(result["content"][0]["text"])["deny"] == "custom policy"
+    assert clients == []
 
 
 def native_call(process, identifier, command):

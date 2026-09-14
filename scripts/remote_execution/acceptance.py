@@ -152,7 +152,7 @@ def case(folder, options):
                 "--tools",
                 "Read,Edit,Write,Bash,TaskOutput,TaskStop,Skill",
                 "--allowedTools",
-                "Read,Edit,Write,Bash,TaskOutput,TaskStop,Skill,mcp__custom__echo,mcp__native__chat_send",
+                "Read,Edit,Write,Bash,TaskOutput,TaskStop,Skill,mcp__custom__echo,mcp__native__chat_send,mcp__native__platform_request",
                 "--debug-file",
                 str(folder / "claude-debug.log"),
             ],
@@ -218,6 +218,7 @@ def case(folder, options):
                     "content": "Published 'literally'\n$(touch forbidden-publication)"
                 },
             },
+            {"name": "mcp__native__platform_request", "input": {"method": "GET", "path": "/platform-fixture"}},
         ]
         if options.mode != "normal":
             actions = [actions[2]]
@@ -441,6 +442,7 @@ def case(folder, options):
             assert "REMOTE_BACKGROUND" in json.dumps(results[12]), results[12]
             publications = server.state.get("publications", [])
             assert len(publications) == 1, publications
+            assert "PLATFORM_API_READ" in json.dumps(results), results
             assert (
                 publications[0]["content"]
                 == "Published 'literally'\n$(touch forbidden-publication)"

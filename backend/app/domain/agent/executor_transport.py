@@ -19,6 +19,59 @@ class RemoteClient:
         self.transport = SimpleNamespace() if shared_connection else threading.local()
         self.publication_lock = threading.Lock()
         self.publication = None
+        self.platform_lock = threading.Lock()
+        self.platform = None
+
+    def platform_request(self, args):
+        method = args.get("method", "GET").upper()
+        path = args.get("path", "")
+        parsed = urlsplit(path)
+        if (
+            method not in ("GET", "POST", "PUT", "PATCH", "DELETE")
+            or not path.startswith("/")
+            or parsed.scheme
+            or parsed.netloc
+            or parsed.fragment
+        ):
+            raise ValueError("Platform requests require a relative API path and method")
+        api = os.environ.get("CHEESE_API", "").rstrip("/")
+        token = os.environ.get("CHEESE_TOKEN", "")
+        if not api or not token:
+            raise RuntimeError("Platform requests require room credentials")
+        with self.platform_lock:
+            if self.platform is None or self.platform.config["url"] != api:
+                if self.platform is not None:
+                    previous = getattr(self.platform.transport, "connection", None)
+                    if previous is not None:
+                        previous.close()
+                self.platform = RemoteClient({"url": api}, shared_connection=True)
+            transport = self.platform
+            connection, base = transport.connection()
+            try:
+                connection.request(
+                    method,
+                    base.rstrip("/") + path,
+                    body=json.dumps(args["body"]).encode() if "body" in args else None,
+                    headers={
+                        **transport.transport.headers,
+                        "Content-Type": "application/json",
+                        "X-Cheese-Token": token,
+                        **(
+                            {"X-Cheese-Turn": os.environ["CHEESE_TURN"]}
+                            if os.environ.get("CHEESE_TURN")
+                            else {}
+                        ),
+                    },
+                )
+                response = connection.getresponse()
+                body = response.read().decode()
+                if not 200 <= response.status < 300:
+                    raise RuntimeError(f"Platform HTTP {response.status}: {body}")
+            except Exception:
+                connection.close()
+                transport.transport.connection = None
+                raise
+        return {"value": {"stdout": body, "stderr": ""}}
 
     def connection(self):
         # Shell forwarding exits before creating a client; keep its startup

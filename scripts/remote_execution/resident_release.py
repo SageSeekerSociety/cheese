@@ -126,6 +126,34 @@ def main():
         pid = acceptance.run(identity).strip()
 
         async def update():
+            # Exercise replacement of an established transport, not initial startup.
+            control = Control()
+            deadline = time.monotonic() + 30
+            while True:
+                request_id = str(uuid.uuid4())
+                await control.enqueue(
+                    fixture.sid,
+                    {
+                        "type": "control_request",
+                        "request_id": request_id,
+                        "request": {"subtype": "mcp_status"},
+                    },
+                    "fixture",
+                )
+                status = await control.result(fixture.sid, request_id, 30)
+                servers = (
+                    (status or {})
+                    .get("response", {})
+                    .get("response", {})
+                    .get("mcpServers", [])
+                )
+                if any(
+                    s.get("name") == "native" and s.get("status") == "connected"
+                    for s in servers
+                ):
+                    break
+                assert time.monotonic() < deadline, status
+                await asyncio.sleep(0.1)
             home = str(output / "device-home")
             await channel._refresh_resident(
                 screen, home, {"version": release.digest(previous)}
@@ -167,7 +195,7 @@ def main():
     try:
         acceptance.main()
         requests = sorted(output.glob("request-*.json"))
-        assert len(requests) == 15
+        assert len(requests) == 16
         assert "BEFORE_RELEASE" not in requests[0].read_text()
     finally:
         rendezvous.unlink(missing_ok=True)

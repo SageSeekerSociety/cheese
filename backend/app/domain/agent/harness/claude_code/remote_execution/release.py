@@ -113,18 +113,21 @@ def stage(home, sources):
         sources["proxy.js"].replace("__EXECUTION_CONFIG__", json.dumps(target)),
     )
     allowed = settings.setdefault("permissions", {}).setdefault("allow", [])
-    for name in ("invoke", "chat_send"):
+    for name in ("invoke", "chat_send", "platform_request"):
         tool = "mcp__native__" + name
         if tool not in allowed:
             allowed.append(tool)
     for event in ("PreToolUse", "PostToolUse"):
         for group in settings.get("hooks", {}).get(event, []):
             matcher = group.get("matcher", "")
-            if "^(?!mcp__native__invoke$)" in matcher:
-                group["matcher"] = matcher.replace(
-                    "^(?!mcp__native__invoke$)",
-                    "^(?!mcp__native__(?:invoke|chat_send)$)",
+            for previous in (
+                "^(?!mcp__native__invoke$)",
+                "^(?!mcp__native__(?:invoke|chat_send)$)",
+            ):
+                matcher = matcher.replace(
+                    previous, "^(?!mcp__native__(?:invoke|chat_send|platform_request)$)"
                 )
+            group["matcher"] = matcher
     replace(settings_path, json.dumps(settings))
     offsets = {str(path): path.stat().st_size for path in transcripts}
     return {"changed": True, "version": version, "offsets": offsets}

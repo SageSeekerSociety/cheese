@@ -293,7 +293,9 @@ class RemoteControlFixture:
                 )
 
             def do_GET(self):
-                if urlparse(self.path).path.startswith("/connector/claude/"):
+                if urlparse(self.path).path == "/platform-fixture" or urlparse(
+                    self.path
+                ).path.startswith("/connector/claude/"):
                     return super().do_GET()
                 return self.route("GET")
 

@@ -1,15 +1,15 @@
 ---
 name: cheese
-description: 在 CheeseX（知是）平台里接收用户消息、开始执行任务或改平台状态时用。聊天优先用 chat_send MCP 工具，未提供时用 cheese chat send；普通输出和最终答复不会自动发送。设实况文档、记决策、记项目记忆、拆活、发通知/决策请求、递验收卡、回流结论、钉里程碑用 cheese CLI；代码和文件用原生工具。
+description: 在 CheeseX（知是）平台里接收用户消息、开始执行任务或改平台状态时用。聊天用提供的 chat_send MCP，平台 API 操作用 platform_request MCP；没有对应工具时用 cheese CLI。普通输出和最终答复不会自动发送；代码和文件用原生工具。
 ---
 
-# cheese — 平台动作 CLI
+# cheese — 平台操作
 
 房间保留共同的对话。修改仓库文件前，先用 `cheese split` 创建任务，再进入它返回的工作目录；已有任务用 `cheese worktree <task_id>` 找回目录。每条任务有独立分支和 PR，房间保留共同的对话与会话。
 
 ## 主动发消息
 
-用户通过聊天了解进展，普通输出和最终答复只留在执行会话。提供了 `chat_send` MCP 工具时，用它的 `content` 参数发布正文，回复某条消息可带 `reply_to`；引号和换行按原文传递。未提供该工具时，用 `cheese chat send '正文'`，文件正文用 `cheese chat send --file ./update.txt`。两个入口都返回已保存的消息及其 ID。结果不确定时，用返回的请求 ID、原正文和原回复目标重试：MCP 传 `request_id`，CLI 带 `--request-id`；参数或权限错误先修正。需要用户拍板时用下文的 `cheese ask`。
+用户通过聊天了解进展，普通输出和最终答复只留在执行会话。提供了 `chat_send` MCP 工具时，用它的 `content` 参数发布正文，回复某条消息可带 `reply_to`；引号和换行按原文传递。未提供该工具时，用 `cheese chat send '正文'`，文件正文用 `cheese chat send --file ./update.txt`。两个入口都返回已保存的消息及其 ID。结果不确定时，用返回的请求 ID、原正文和原回复目标重试：MCP 传 `request_id`，CLI 带 `--request-id`；参数或权限错误先修正。需要用户拍板时创建下文的带选项平台决策请求。
 
 直接与用户协作时，接下需要执行的任务，先发一句你理解的目标和第一步，再开始工作。重要进展、改方向、阻碍和完成结果主动告知，简单问题直接发答案。分身把发现交给主 agent，由主 agent 决定发到房间；巡检按 heartbeat 的通知规则决定是否发言。表达自然、简短，跟随用户语言；不要逐条播报工具调用。具体聊天表达按系统中的 chat 技能，实况文档按 doc-form 技能：聊天记录当下协作，文档让没看过聊天的人理解当前全貌。
 
@@ -22,8 +22,8 @@ description: 在 CheeseX（知是）平台里接收用户消息、开始执行�
 - ✅ 直接讲结论,如「评测指标定为 Recall@10。」——下面会自动出现「查看决策记录」卡片。
 - 用户看到的是:对话、右侧实况文档面板、决策记录、通知、里程碑。按这些表达。
 
-- **写代码、跑命令与测试**：在所选任务的工作目录中使用原生工具。交付文件提交到该任务的分支；房间实况文档用 `cheese doc set <文件>` 保存到平台，不为记录进度而提交 `docs/topics/` 文档。临时草稿可放房间目录或临时目录，交付时显式保存到平台或任务分支。
-- **改平台状态**：发聊天消息按上面的 MCP/CLI 规则，其他动作用 `cheese`（经 Bash 调）。环境已注入当前项目/话题，无需你指定。
+- **写代码、跑命令与测试**：在所选任务的工作目录中使用原生工具。交付文件提交到该任务的分支；房间实况文档按下文的版本规则保存到平台，不为记录进度而提交 `docs/topics/` 文档。临时草稿可放房间目录或临时目录，交付时显式保存到平台或任务分支。
+- **改平台状态**：聊天按上面的规则发送；提供 `platform_request` MCP 时，平台 API 操作分别传入 `method`、相对 API 根路径的 `path` 和可选 JSON `body`，不拼 shell。接口不确定时，用它读取 `GET /openapi.json` 并查看对应请求结构，不猜参数。没有该工具时使用 `cheese`。涉及本地文件、Git 和服务进程的操作仍使用执行器里的原生工具或对应 CLI。
 
 ## 房间里的那个人是产品用户,不是平台运维
 
@@ -54,9 +54,9 @@ description: 在 CheeseX（知是）平台里接收用户消息、开始执行�
 
 ## 🚫 硬性禁止(否则会污染现场、把整轮拖垮)
 
-- **绝不 `curl`/直接访问后端 API,绝不去翻 `/home`、`/home/node/.claude`、session 文件、`.git` 内部、系统目录**。读取平台数据用 `cheese` 命令：成员 `cheese members`、当前实况文档 `cheese doc get`；聊天发布可用平台提供的 `chat_send` MCP。找不到东西时**不要满文件系统找**——停下来,用 `cheese` 或直接问用户。
+- **不自行提取凭证拼 `curl` 或裸 HTTP 请求，不翻 `/home`、`/home/node/.claude`、session 文件、`.git` 内部、系统目录**。平台数据通过提供的 `platform_request` MCP 或 `cheese` 访问，两者都按当前房间身份鉴权。找不到平台数据时查接口或命令定义，不满文件系统找。
 - **不确定某个 `cheese` 子命令就先 `cheese --help`**,不要瞎试 `cheese set-milestone`、`cheese doc --markdown` 这种不存在的写法。
-- **要用户拍板一律用 `cheese ask`,不要用原生的「向用户提问」(AskUserQuestion)**。那个工具的选项框画在容器的终端里,用户根本够不着,问了没人能答——平台已经禁用它,调了只会被拒。`cheese ask` 才会在对话里出真按钮,答案下一轮自动带回给你。
+- **要用户拍板时创建平台的带选项决策请求**，通过 `platform_request` 调用已核实的接口，或使用 `cheese ask`。不要使用原生 `AskUserQuestion`，它的选项只显示在执行终端；平台决策请求的按钮显示在对话里，答案下一轮自动带回。
 - 一轮里反复探查、找不到就继续找,会把整轮拖到超时、现场刷出一堆没用的命令卡片。**先想清楚再动手,一步到位。**
 - **绝不 `git stash`**。你的工作区是一个 git worktree,而 `refs/stash` 是**整个仓库共享一个栈**——同仓库其他任务 stash 进去的东西,你 `pop` 会把它取出来并**从栈上删掉**,两边都不会报错。要把改动放一边就直接 `git commit`,或者写成 patch 文件放在工作区里。同理:**绝不写 `.git/hooks/`、不要修改共享 Git 配置**,那两样也是全仓库共享的,你在这里装的 hook 会在别人下次提交时执行。
 
@@ -90,6 +90,8 @@ description: 在 CheeseX（知是）平台里接收用户消息、开始执行�
 
 ## 写实况文档时
 
+MCP 先读取 `GET /topics/{topic_id}/doc`，写入 `PUT /topics/{topic_id}/doc` 时，在 `body.expected_version` 中传入刚读到的 `data.doc_version`，同时传入正文 `content` 和作者 `author`。确认尚无文档时版本为 `0`。版本冲突后重新读取并合并，再提交；MCP 不使用 CLI 的本地版本缓存。
+
 平台会把话题标题渲染成文档大标题——**正文不要再用一级标题重复一遍话题名**，直接从内容开始（小节用二级标题起步）。
 
 ## 引用某个文件
@@ -105,7 +107,7 @@ description: 在 CheeseX（知是）平台里接收用户消息、开始执行�
 | 命令 | 作用 |
 |---|---|
 | `cheese chat send [消息] [--file <文件>] [--reply-to <消息 ID>] [--request-id <请求 ID>]` | 主动发送聊天消息；正文与 `--file` 二选一，`--file -` 从标准输入读取。结果不确定时保持原请求及请求 ID 重试 |
-| `cheese doc set <文件>` | 把文件内容设为本话题实况文档(状态摘要,**整块覆盖**)。写之前必须先 `cheese doc get`:平台按你读到的那一版收这次写入,期间被人改过就直接拒了。被拒就重新 get、把改动合进你的文件、再 set |
+| `cheese doc set <文件>` | CLI 把文件内容设为本话题实况文档（整块覆盖）。使用此命令前先用 `cheese doc get` 记录 CLI 的本地版本；写入冲突时重新 get、合并再 set。MCP 写入按上面的显式版本规则 |
 | `cheese doc get` | 打印当前实况文档。也是拿到写入权的那一步——没读过就写,只有本话题还没文档时才让你建 |
 | `cheese title "<标题>" [--task <task_id>]` | 修改房间标题；带 `--task` 时修改该任务标题 |
 | `cheese decision "<内容>"` | 记一条关键决策到决策记录 |
@@ -116,7 +118,7 @@ description: 在 CheeseX（知是）平台里接收用户消息、开始执行�
 | `cheese sync [--task <id>] [--all]` | 同步当前或指定任务；`--all` 同步本房间机器上已有的任务目录 |
 | `cheese bind <task_id> <agent_id>` | 起完分身立刻调,告诉平台这条活由哪个分身在做。绑了之后分身的每一次工具调用都记进这条活的时间线;**不绑的后果是无声的**——活看着没人做,事件全记在房间头上。一个分身同时只做一条活 |
 | `cheese close-task <task_id> [--conclusion "<原因>"]` | 放弃或撤销任务时显式关闭；正常交付由采纳成功关闭。分身停止只更新完成说明，不代表代码已被采纳 |
-| `cheese ask "<问题>" --option A --option B [--option C]` | 对话里发**带按钮的选项问题**;用户点一下就是答案(自动带回你下一轮)。要用户拍板时优先用它,别让人打字 |
+| `cheese ask "<问题>" --option A --option B [--option C]` | 对话里发**带按钮的选项问题**;用户点一下就是答案(自动带回你下一轮)。使用 CLI 时用它创建决策请求，别让人打字 |
 | `cheese notify --title "<标题>" [--body "..."] [--level silent\|light\|strong] [--kind change_alert\|decision_request] [--to <handle>] [--options "A\|B"]` | 发通知;决策请求带 `--options` 让人一键拍板 |
 | `cheese accept-request [<handle> "<理由>"] --subject "<提交标题>" [--body "<为什么>"] [--task <id>]` | 为一条任务请求验收。默认从当前任务目录识别 id；理由给出验收证据。`--subject` 必填，使用英文 Conventional Commits、≤72 字符、结尾无句号；`--body` 说明原因。卡和 PR 属于同一任务，未指定验收人时沿用派活时的人选；修订后用 `describe` 修改说明。人点击采纳 PR 时合并他看到的 commit |
 | `cheese ready [--task <id>]` | 执行者把自己任务的 draft PR 标记为可评审；只改变 draft 状态。需要请人验收时用 `accept-request`，它也会把 draft 翻成 ready |
@@ -136,9 +138,9 @@ description: 在 CheeseX（知是）平台里接收用户消息、开始执行�
 | `cheese --version` | 打印本 CLI 的源码指纹。怀疑容器里这份跟后端不同版时用它核对(挂载来自后端每轮 stage 的那份) |
 | `cheese artifact <文件> [--as html\|svg]` | 把工作区里的产物设为**当前预览**,渲染进右侧预览窗口 |
 | `cheese serve <端口> ["说明"]` | 把**这台机器上跑起来的应用**设为当前预览。先把 dev server 起在 `127.0.0.1` 上、后台跑(`nohup ... &`),然后把端口报上来。**怎么跑这个项目由你判断**(看 README/package.json/pyproject)——每个项目不一样。**端口你自己挑,但要固定住**(`vite --strictPort`),否则 vite 在端口被占时会静默跳到下一个,你以为起好了,报上来的那个却没人应答。应用通过话题独立域名的根路径预览，资源请求和热更新保持原路径，无需为平台修改项目配置。平台会当场从自己那边敲一次这个端口,敲不通就直接拒绝——不会给用户留一个白框。**只有你报上来的这一个端口会被带出去**,这台机器上别的端口平台碰不到 |
-| `cheese api <METHOD> <path> [--data '<json>']` | **原始 API 逃生口(兜底,不推荐)**。上面的 curated 命令覆盖 80% 场景,优先用它们(语义清晰、有校验)。只有当没有对应的 curated 命令时,才用 `cheese api` 直接打后端。无参 `cheese api` 会列出所有可用操作。它**仍走容器已有鉴权**(不是无鉴权后门,后端照样按你的身份授权),但校验少、易出错——能用 curated 就别用它 |
+| `cheese api <METHOD> <path> [--data '<json>']` | **CLI 原始 API 入口**。使用 CLI 时，上面的 curated 命令覆盖 80% 场景,优先用它们(语义清晰、有校验)。只有当没有对应的 curated 命令时,才用 `cheese api` 直接打后端。无参 `cheese api` 会列出所有可用操作。它**仍走容器已有鉴权**(不是无鉴权后门,后端照样按你的身份授权),但校验少、易出错——能用 curated 就别用它 |
 
-> `cheese api` 与被禁止的裸 `curl` 的区别:`cheese api` 带上容器的 `CHEESE_TOKEN`、经平台鉴权、可追溯——是**受控**的原始通道;裸 `curl`/翻 session 文件仍然禁止。逃生口只是"少校验的原始通道",不改变鉴权纪律。
+> `platform_request` MCP 和 `cheese api` 都使用平台提供的房间凭据，后端逐次鉴权；它们不允许提取凭据自行拼裸 HTTP 请求。`cheese api` 无参输出方法和路径列表，不包含请求正文结构；MCP 可读取 `/openapi.json` 查看接口定义。
 
 **你在一个资源受限的容器里,但别预先假设什么跑不了。** 内存密集的命令(前端 `build`/`typecheck`、大型编译)可能被 OOM 杀掉——**先真的试一次再下结论**,不同后端的机器差得很远,同一条命令在这台上炸、在那台上两分钟跑完。真被杀了:**不要去调 `--max-old-space-size`**,V8 只会一直涨到 cgroup 把它 SIGKILL,调参数改变不了上限;正确做法是说明这条检查在本机没跑成、交给 CI,并且**明说你没跑**,不要写得像跑过了。崩溃的进程还可能在工作区里留下几个 GB 的 core dump,看到就删掉。
 
@@ -146,4 +148,4 @@ description: 在 CheeseX（知是）平台里接收用户消息、开始执行�
 
 **做出可以"看"的产物就点名它。** 当你产出了一个网页、可视化、SVG 图等能直接展示给用户的东西(如 `Write ./report.html` 后),用 `cheese artifact report.html` 把它设为当前预览——用户在右侧「预览」里就能看到实时画面。**别指望平台去猜该显示哪个文件——你显式指定。** 每次调用都会把预览指向最新那个。
 
-不确定 CLI 参数就先 `cheese --help`。聊天发布在提供 `chat_send` MCP 时用它，否则用 `cheese chat send`；其他平台动作用 `cheese`，均经平台鉴权并记录。
+不确定 CLI 参数就先 `cheese --help`。聊天使用提供的 `chat_send` MCP，平台 API 使用 `platform_request` MCP；没有对应工具时用 `cheese`，均经平台鉴权并记录。
