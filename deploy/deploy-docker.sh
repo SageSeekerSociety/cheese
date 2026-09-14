@@ -99,10 +99,12 @@ dc() {
 log() { echo "[deploy-docker $(date '+%H:%M:%S')] $*"; }
 fail() { echo "[deploy-docker $(date '+%H:%M:%S')] ERROR: $*" >&2; exit 1; }
 
-if [ "${CHEESE_CENTRAL_SESSION_HOST:-}" = "1" ] && ! command -v fusermount >/dev/null; then
+if [ "${CHEESE_CENTRAL_SESSION_HOST:-}" = "1" ] && {
+  ! command -v fusermount >/dev/null || ! ldconfig -p | grep 'libfuse.so.2 ' >/dev/null
+}; then
   log "installing central-session FUSE runtime"
   sudo apt-get update -qq
-  sudo apt-get install -y -qq fuse
+  sudo apt-get install -y -qq fuse libfuse2
 fi
 
 [ -f "$COMPOSE" ] || fail "compose file not found: $COMPOSE"
