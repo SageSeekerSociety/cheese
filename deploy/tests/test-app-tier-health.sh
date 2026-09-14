@@ -60,6 +60,58 @@ test_deploy_accepts_healthy_pair() {
   echo "PASS: deploy accepts one healthy current backend/frontend pair"
 }
 
+test_deploy_keeps_connection_owner_running() {
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/connection-owner.XXXXXX")"
+  docker_log="$run_dir/docker.log"
+  PATH="$FAKE_BIN:$PATH" \
+    APP_TIER_SCENARIO=stable_owner \
+    APP_TIER_MAIN_SHA=testsha \
+    APP_TIER_DOCKER_LOG="$docker_log" \
+    DEPLOY_HEALTH_ATTEMPTS=1 \
+    DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
+    HOME="$run_dir" \
+    "$ROOT/deploy/deploy-docker.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null
+
+  if grep -F 'up -d --no-deps device-connection' "$docker_log" >/dev/null; then
+    rm -rf "$run_dir"
+    fail "business deploy recreated the running device connection owner"
+  fi
+  grep -F 'up -d backend frontend' "$docker_log" >/dev/null || {
+    rm -rf "$run_dir"
+    fail "business deploy did not update the app tier"
+  }
+  rm -rf "$run_dir"
+  echo "PASS: business deploy leaves the device connection owner running"
+}
+
+test_rollout_installs_connection_route_without_recreating_api_front() {
+  local run_dir docker_log
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  printf '%s\n' 'events {}' 'http { include /etc/nginx/active/backend.conf; }' \
+    > "$run_dir/nginx.conf"
+  rollout_run "$run_dir" env >/dev/null 2>&1 || {
+    rm -rf "$run_dir"
+    fail "rollout could not install the connection-owner route"
+  }
+  grep -Fq 'location = /connector/agent' "$run_dir/nginx.conf" || {
+    rm -rf "$run_dir"
+    fail "api-front config still routes device sockets through the backend"
+  }
+  grep -F 'exec cheese-api-front nginx -s reload' "$docker_log" >/dev/null || {
+    rm -rf "$run_dir"
+    fail "api-front did not gracefully reload the connection-owner route"
+  }
+  if grep -Eq '(rm|stop|up).*cheese-api-front' "$docker_log"; then
+    rm -rf "$run_dir"
+    fail "business rollout recreated api-front while installing the route"
+  fi
+  rm -rf "$run_dir"
+  echo "PASS: rollout installs the owner route with a graceful api-front reload"
+}
+
 test_deploy_keeps_agent_runtime_images() {
   mkdir -p "$ROOT/.tmp"
   run_dir="$(mktemp -d "$ROOT/.tmp/runtime-images.XXXXXX")"
@@ -355,6 +407,7 @@ rollout_run() {
     APP_TIER_MAIN_SHA=testsha \
     APP_TIER_DOCKER_LOG="$run_dir/docker.log" \
     ACTIVE_BACKEND_DIR="$run_dir/active" \
+    API_FRONT_CONF="$run_dir/nginx.conf" \
     BACKEND_PORT=18081 \
     BACKEND_PORT_NEXT=18082 \
     DEPLOY_DRAIN_SECONDS=0 \
@@ -373,6 +426,7 @@ new_rollout_run_dir() {
   dir="$(mktemp -d "$ROOT/.tmp/rollout.XXXXXX")"
   mkdir -p "$dir/active"
   printf 'upstream backend_active { server 127.0.0.1:18081; }\n' > "$dir/active/backend.conf"
+  cp "$ROOT/deploy/llm-tunnel/nginx.conf" "$dir/nginx.conf"
   : > "$dir/docker.log"
   printf '%s' "$dir"
 }
@@ -444,7 +498,7 @@ test_rollout_leaves_the_running_backend_alone_when_next_never_comes_up() {
   local run_dir docker_log
   run_dir="$(new_rollout_run_dir)"
   docker_log="$run_dir/docker.log"
-  if rollout_run "$run_dir" env APP_TIER_CURL_FAIL=1 >/dev/null 2>&1; then
+  if rollout_run "$run_dir" env APP_TIER_CURL_FAIL_MATCH=:18082/ >/dev/null 2>&1; then
     fail "rollout succeeded although the next backend never answered /healthz"
   fi
   grep -q 'run -d --no-deps --name cheese-backend-next' "$docker_log" \
@@ -658,6 +712,8 @@ test_healthy_current_pair_passes() {
 case "$CASE" in
   deploy) test_deploy_rejects_absent_frontend ;;
   deploy-healthy) test_deploy_accepts_healthy_pair ;;
+  connection-owner) test_deploy_keeps_connection_owner_running ;;
+  connection-route) test_rollout_installs_connection_route_without_recreating_api_front ;;
   runtime-images) test_deploy_keeps_agent_runtime_images ;;
   ci-service-images) test_deploy_retains_ci_service_images ;;
   app-only) test_app_only_deploy_does_not_require_agent_images ;;
@@ -682,6 +738,8 @@ case "$CASE" in
   all)
     test_deploy_rejects_absent_frontend
     test_deploy_accepts_healthy_pair
+    test_deploy_keeps_connection_owner_running
+    test_rollout_installs_connection_route_without_recreating_api_front
     test_deploy_keeps_agent_runtime_images
     test_deploy_retains_ci_service_images
     test_app_only_deploy_does_not_require_agent_images

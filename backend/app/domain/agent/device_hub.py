@@ -739,5 +739,15 @@ class DeviceHub:
         pass
 
 
-# Shared singleton: the connector route and the DeviceChannel import this instance.
-device_hub = DeviceHub()
+# Shared singleton: the connection-owner process keeps the local implementation;
+# rolling business backends use its RPC facade.
+from app.core.config import settings  # noqa: E402
+
+if settings.device_connection_url:
+    from app.domain.agent.device_hub_rpc import RemoteDeviceHub  # noqa: E402
+
+    device_hub = RemoteDeviceHub(
+        settings.device_connection_url, settings.device_connection_auth_secret
+    )
+else:
+    device_hub = DeviceHub()

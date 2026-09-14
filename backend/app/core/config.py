@@ -72,6 +72,17 @@ class Settings(BaseSettings):
     # main's auth (real SRP/JWT login — A3): the merged app uses this as the
     # canonical identity. jwt_secret signs/verifies the product's access tokens.
     redis_url: str = "redis://localhost:6379/0"
+    # The process that owns device WebSockets is released independently from the
+    # business backend. Empty keeps the in-process hub for local development and
+    # tests; deployed business backends point at the stable compose service.
+    device_connection_url: str = ""
+    device_connection_secret: str = ""
+
+    @property
+    def device_connection_auth_secret(self) -> str:
+        """Stable internal credential without adding a second deploy secret."""
+        return self.device_connection_secret or self.jwt_secret
+
     environment: str = "development"
     # "This process was started by the deploy compose file" — a fact that does NOT
     # travel through the box's env file (#439). It is a literal in the compose

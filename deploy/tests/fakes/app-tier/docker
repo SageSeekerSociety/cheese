@@ -63,6 +63,10 @@ if [ "${1:-}" = "compose" ]; then
 
   case "${1:-}" in
     ps)
+      if [ "${2:-}" = -q ] && [ "$scenario" = stable_owner ] && \
+        [ "${3:-}" = device-connection ]; then
+        printf 'device-connection-container\n'
+      fi
       if [ "${2:-}" = -q ] && [ "$scenario" = rollback ]; then
         case "${3:-}" in
           backend) printf 'backend-container\n' ;;
@@ -109,6 +113,7 @@ if [ "${1:-}" = inspect ] && [ "${2:-}" = --format ]; then
       esac
       ;;
     *com.cheese.image_tag*) printf 'oldsha\n' ;;
+    *State.Running*) printf 'true\n' ;;
   esac
   exit 0
 fi

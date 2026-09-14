@@ -12,6 +12,38 @@
 # commit). The frontend image bundles nginx and reverse-proxies /api + /uploads
 # to `backend` (compose service name), so no separate/host nginx is needed.
 services:
+  # Owns machine and terminal WebSockets. deploy-docker.sh starts this service
+  # once and deliberately leaves it alone during app-tier releases, so a backend
+  # image swap cannot close a device link or cancel an in-flight executor call.
+  device-connection:
+    image: ${DEVICE_CONNECTION_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:${IMAGE_TAG:-main}}
+    env_file:
+      - ${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}
+    environment:
+      - DEVICE_CONNECTION_URL=
+      - DEPLOYED_VIA_COMPOSE=1
+    command:
+      - uvicorn
+      - app.device_connection_app:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8082"
+    ports:
+      - "127.0.0.1:${DEVICE_CONNECTION_PORT:-18083}:8082"
+    init: true
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8082/healthz"]
+      interval: 15s
+      timeout: 8s
+      start_period: 20s
+      retries: 5
+    restart: unless-stopped
+    logging:
+      driver: journald
+      options:
+        tag: "{{.Name}}"
+
   backend:
     labels:
       li.zhifei.cheese.room-cleanup: "true"
@@ -31,6 +63,7 @@ services:
       # the guard waves itself through. Anything interpolated here would inherit
       # the same weakness, so this must stay a constant with no ${...} in it.
       - DEPLOYED_VIA_COMPOSE=1
+      - DEVICE_CONNECTION_URL=http://device-connection:8082
       # Uploads live OUTSIDE any release/image, on a host path bind-mounted below,
       # so deploys never touch them (the 赛题 PDFs on prod).
       - STORAGE_LOCAL_PATH=/data/uploads
@@ -144,6 +177,7 @@ services:
       # ops/deploy.env) to host.docker.internal:8081, the host nginx that
       # deploy-docker.sh moves between backends during a rollout.
       - API_UPSTREAM=${API_UPSTREAM:-backend:8081}
+      - DEVICE_CONNECTION_UPSTREAM=${DEVICE_CONNECTION_UPSTREAM:-device-connection:8082}
     # Lets API_UPSTREAM name the host; unused otherwise.
     extra_hosts:
       - "host.docker.internal:host-gateway"

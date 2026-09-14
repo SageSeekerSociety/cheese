@@ -17,6 +17,7 @@ import re
 # (logging is configured right after imports — see basicConfig below.)
 from collections.abc import Callable
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -65,6 +66,12 @@ async def lifespan(_: FastAPI):
     # from jwt_secret), and there is nothing left to warn about here.
 
     from app.api.deps import get_chat_service, get_work_runner
+    from app.domain.agent.device_hub import device_hub
+
+    hub_runtime: Any = device_hub
+    if hasattr(hub_runtime, "start"):
+        await hub_runtime.start()
+        hub_runtime.set_online_callback(get_chat_service().recover_sessions)
     from app.domain.scheduler.service import SchedulerService
 
     # agent-as-user (fusion-design §2): guarantee 芝士 exists as a real user with
@@ -203,6 +210,8 @@ async def lifespan(_: FastAPI):
         finally:
             for job in reversed(jobs):
                 await job.stop()
+            if hasattr(hub_runtime, "close"):
+                await hub_runtime.close()
             # The openviking backend keeps the whole memory tree in one embedded
             # instance (AGFS + vector index) under openviking_data_dir. Nothing
             # else owns its lifecycle, so a redeploy would tear the process down
