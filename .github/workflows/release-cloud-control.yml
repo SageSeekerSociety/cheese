@@ -1,0 +1,41 @@
+name: Release cloud control
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target box
+        required: true
+        type: choice
+        options: [dev, production]
+      sha:
+        description: Full commit SHA already merged into main
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloud-control-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    environment: ${{ inputs.environment }}
+    runs-on: ${{ inputs.environment == 'production' && fromJSON('["self-hosted","cheese-prod"]') || fromJSON('["self-hosted","cheese-dev"]') }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.sha }}
+          fetch-depth: 0
+      - name: Require an exact commit already merged into main
+        env:
+          REQUESTED_SHA: ${{ inputs.sha }}
+        run: |
+          [[ "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
+          git fetch origin main
+          git merge-base --is-ancestor HEAD origin/main
+      - name: Drain execution and release cloud control
+        run: bash deploy/release-cloud-control.sh

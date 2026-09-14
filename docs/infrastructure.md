@@ -66,9 +66,18 @@ itself is a separate release operation because it closes the connections it
 owns. Dispatch **Release device connection owner** with a tested ref and target;
 that workflow runs `deploy/release-device-connection.sh`, which pulls and
 force-recreates only `device-connection`, then waits for its health check. It is
-manual-only, refuses to replace an owner with an active executor call, and is
-never called by the normal app deployment workflows. It reads the same box-local
-deploy environment and compose overlays as the app deployment.
+manual-only, waits for the owner to atomically enter draining after all device
+calls finish, and is never called by the normal app deployment workflows. It
+reads the same box-local deploy environment and compose overlays as the app
+deployment.
+
+Cloud-machine SSH forwards share this stable connection boundary. Normal app
+deployments leave `cheese-cloud-control` running. To update it, dispatch
+**Release cloud control** with the full SHA of a commit already merged into
+`main`; the workflow waits for the same owner drain, restarts the service, and
+confirms every previously online managed device reconnects with a new connection
+generation before resuming execution. This maintenance causes one brief device
+reconnection after active calls have finished.
 
 **On dev the backend rolls out without downtime.** The box's **:8081** is
 `cheese-api-front`, a host-network nginx from `deploy/llm-tunnel/` whose
