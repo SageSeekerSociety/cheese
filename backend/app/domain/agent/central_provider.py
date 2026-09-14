@@ -264,7 +264,6 @@ class CentralChannel(DeviceChannel):
                     "home": device_home_dir(project_id, resource),
                     "workspace": info["workspace"],
                     "mcp_servers": info["mcp_servers"],
-                    "context_tree": info["context_tree"],
                     "url": (
                         f"{await self._device_api_base(center)}"
                         f"/topics/{topic_id}/execution/{resource}"
@@ -279,6 +278,13 @@ class CentralChannel(DeviceChannel):
                     await self._wait_executor(
                         project_id, resource, target, has_environment
                     )
+                target["context_tree"] = (
+                    info["context_tree"]
+                    if "context_tree" in info
+                    else await execution.call(
+                        target, "context_fs", {"operation": "tree"}, hub=self._hub
+                    )
+                )
                 mark("executor_ready")
             placement = {
                 "device_id": center,
