@@ -125,7 +125,7 @@ def prepare(
     settings = json.loads(json.dumps(base_settings or {}))
     permissions = settings.setdefault("permissions", {})
     allowed = permissions.setdefault("allow", [])
-    for tool in ("invoke", "chat_send"):
+    for tool in ("invoke", "chat_send", "platform_request"):
         if f"mcp__native__{tool}" not in allowed:
             allowed.append(f"mcp__native__{tool}")
     hooks = settings.setdefault("hooks", {})
@@ -135,7 +135,9 @@ def prepare(
         for group in hooks.get(event, []):
             matcher = group.get("matcher", "*")
             matcher = ".*" if matcher in ("*", "") else matcher
-            group["matcher"] = f"^(?!mcp__native__(?:invoke|chat_send)$).*(?:{matcher})"
+            group["matcher"] = (
+                f"^(?!mcp__native__(?:invoke|chat_send|platform_request)$).*(?:{matcher})"
+            )
     helper = [sys.executable, str(Path(__file__).resolve())]
     guard = shlex.join([*helper, "guard", str(target_path)])
     hooks.setdefault("PreToolUse", []).insert(
@@ -687,11 +689,43 @@ def transport(config, target_path):
                                 "required": ["content"],
                             },
                         },
+                        {
+                            "name": "platform_request",
+                            "description": (
+                                "Call the Cheese backend with room credentials. "
+                                "Use for platform documents, tasks and metadata. "
+                                "Paths are relative to the API root. "
+                                "Use chat_send for messages and native tools "
+                                "for project files."
+                            ),
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "method": {
+                                        "type": "string",
+                                        "enum": [
+                                            "GET",
+                                            "POST",
+                                            "PUT",
+                                            "PATCH",
+                                            "DELETE",
+                                        ],
+                                    },
+                                    "path": {"type": "string"},
+                                    "body": {
+                                        "description": (
+                                            "JSON body, without shell parsing."
+                                        )
+                                    },
+                                },
+                                "required": ["method", "path"],
+                            },
+                        },
                     ]
                 }
             elif method == "tools/call":
                 tool = request["params"]["name"]
-                if tool not in ("invoke", "chat_send"):
+                if tool not in ("invoke", "chat_send", "platform_request"):
                     raise ValueError("Unknown transport tool")
                 payload = request["params"]["arguments"]
                 if tool == "chat_send":
@@ -702,6 +736,17 @@ def transport(config, target_path):
                         "args": {
                             key: payload[key]
                             for key in ("content", "reply_to", "request_id")
+                            if key in payload
+                        },
+                    }
+                elif tool == "platform_request":
+                    payload = {
+                        "id": payload["id"],
+                        "session_id": payload["session_id"],
+                        "tool": "mcp__native__platform_request",
+                        "args": {
+                            key: payload[key]
+                            for key in ("method", "path", "body")
                             if key in payload
                         },
                     }
@@ -726,7 +771,9 @@ def transport(config, target_path):
                         "updatedInput", payload["args"]
                     )
                     receipt = (
-                        client.publish_message(payload, args)
+                        client.platform_request(args)
+                        if tool == "platform_request"
+                        else client.publish_message(payload, args)
                         if tool == "chat_send"
                         else client.publish_chat(payload, args)
                     )

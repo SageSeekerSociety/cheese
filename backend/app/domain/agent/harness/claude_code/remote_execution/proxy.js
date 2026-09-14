@@ -16,9 +16,9 @@ function remotePath(path) {
 export function register(on) {
   on("tool.call", async ($, e, next) => {
     const { tool, tool_use_id, ...args } = e;
-    if (tool === "mcp__native__chat_send") {
+    if (tool === "mcp__native__chat_send" || tool === "mcp__native__platform_request") {
       try {
-        const response = await $.mcp.call("native", "chat_send", {
+        const response = await $.mcp.call("native", tool.slice("mcp__native__".length), {
           ...args, id: tool_use_id, session_id: await $.session.id(),
         });
         if (response.isError) return { deny: JSON.stringify(response.content) };
@@ -26,7 +26,7 @@ export function register(on) {
         if (outcome.deny) return outcome;
         return { result: [{ type: "text", text: outcome.result.stdout }, { type: "text", text: outcome.result.stderr }] };
       } catch (error) {
-        return { deny: "Chat publication failed: " + String(error) };
+        return { deny: "Platform tool failed: " + String(error) };
       }
     }
     if (native.has(tool)) {
