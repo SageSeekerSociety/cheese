@@ -71,7 +71,7 @@ class FakeChat:
                     "kind": "attachment",
                 }
             )
-        return payloads, ids[0], ids
+        return payloads, ids[0], ids, False
 
     async def merge_into_running_turn(self, *args):
         return None
@@ -172,10 +172,12 @@ async def test_waiting_recipient_does_not_block_current_agent_followup():
             self.delivered = []
 
         async def post_user_message(self, *args, **kwargs):
-            payloads, anchor, ids = await super().post_user_message(*args, **kwargs)
+            payloads, anchor, ids, duplicate = await super().post_user_message(
+                *args, **kwargs
+            )
             for payload in payloads:
                 payload["meta"] = {"agent_recipient": {"handle": self.selected}}
-            return payloads, anchor, ids
+            return payloads, anchor, ids, duplicate
 
         async def wait_for_recipient(self, topic, recipient):
             if recipient == "b":

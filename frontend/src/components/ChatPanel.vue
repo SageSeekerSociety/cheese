@@ -601,6 +601,15 @@ function closeSocket() {
   connected.value = false
 }
 
+function requeueSending() {
+  for (const item of outbox.value) {
+    if (item.state === 'sending') {
+      clearEchoTimer(item.clientId)
+      item.state = 'queued'
+    }
+  }
+}
+
 function openSocket(topicId: string) {
   catchingUp = true
   noteCatchUpFrame()
@@ -622,12 +631,7 @@ function openSocket(topicId: string) {
       connected.value = false
       // Anything still waiting for an echo lost its channel — queue it again
       // rather than let its timer call it undelivered while we reconnect.
-      for (const item of outbox.value) {
-        if (item.state === 'sending') {
-          clearEchoTimer(item.clientId)
-          item.state = 'queued'
-        }
-      }
+      requeueSending()
       scheduleReconnect(topicId)
     }
   }
@@ -819,6 +823,10 @@ async function loadTopic(topic: Topic) {
       ? mergeRefreshedTail(cached, { blocks: payload.data, hasMore: payload.has_more })
       : { blocks: payload.data, hasMore: payload.has_more }
     messages.value = merged.blocks
+    // A reconnect starts with durable history. Settle sends that landed while
+    // their echo was lost before opening the new socket; only absent client ids
+    // remain queued for an idempotent resend.
+    for (const block of merged.blocks) settleOutbox(block)
     hasMore.value = merged.hasMore
     setCachedWindow(topic.id, merged)
     placeUnreadAnchor() // 冻在这一刻：之后来的新消息不再移动这条线
@@ -904,7 +912,25 @@ function clearEchoTimer(clientId: string) {
 function markFailed(clientId: string) {
   clearEchoTimer(clientId)
   const item = outbox.value.find((o) => o.clientId === clientId)
-  if (item && item.state !== 'failed') item.state = 'failed'
+  if (!item || item.state !== 'sending') return
+  const topic = props.topic
+  const stale = socket
+  if (!topic || !stale) {
+    item.state = 'failed'
+    return
+  }
+  // OPEN is only the browser's last observation. If a sent message has had no
+  // durable echo for the full timeout, replace that channel and reconcile
+  // history before deciding whether the same client id still needs sending.
+  requeueSending()
+  socket = null
+  stale.onopen = null
+  stale.onmessage = null
+  stale.onerror = null
+  stale.onclose = null
+  stale.close()
+  connected.value = false
+  void loadTopic(topic)
 }
 
 /** Hand one queued message to the socket, if there is one to hand it to. */

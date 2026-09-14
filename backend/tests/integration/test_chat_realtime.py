@@ -61,6 +61,135 @@ class InstantScreen(StubChannel):
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("content", "attachments", "expected_blocks"),
+    [
+        ("do this", [{"path": "room/a.png", "mime": "image/png"}], 2),
+        ("", [{"path": "room/a.png", "mime": "image/png"}], 1),
+    ],
+)
+async def test_retried_client_delivery_is_persisted_and_submitted_once(
+    client, tmp_path, content, attachments, expected_blocks
+):
+    from app.domain.agent.runtime import InProcessBroker
+
+    factory = client.test_factory
+    svc = ChatService(
+        session_factory=factory,
+        compute=stub_compute(InstantScreen()),
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        topic_id = topic.id
+        await session.commit()
+
+    broker = InProcessBroker()
+    submitted = []
+    broker.subscribe_messages(lambda *args, **kwargs: submitted.append((args, kwargs)))
+    async with broker.subscribe(str(topic_id)) as browser:
+        first, second = await asyncio.gather(
+            broker.receive_message(
+                svc,
+                topic_id,
+                author="u",
+                content=content,
+                summon=True,
+                attachments=attachments,
+                client_id="same-browser-delivery",
+            ),
+            broker.receive_message(
+                svc,
+                topic_id,
+                author="u",
+                content=content,
+                summon=True,
+                attachments=attachments,
+                client_id="same-browser-delivery",
+            ),
+        )
+        echoes = [browser.get_nowait() for _ in range(expected_blocks * 2)]
+        assert browser.empty()
+
+    assert first == second
+    assert len(submitted) == 1
+    assert {frame["block"]["id"] for frame in echoes} == {
+        frame["block"]["id"] for frame in echoes[:expected_blocks]
+    }
+    async with factory() as session:
+        rows = [
+            block
+            for block in await BlockRepository(session).list_for_topic(topic_id)
+            if block.author_type == AuthorType.human
+        ]
+    assert len(rows) == expected_blocks
+    anchor = next(block for block in rows if block.id == first)
+    assert anchor.meta["client_id"] == "same-browser-delivery"
+
+
+@pytest.mark.anyio
+async def test_retry_adopts_a_pre_idempotency_delivery_without_resubmitting(
+    client, tmp_path
+):
+    from app.domain.agent.runtime import InProcessBroker
+
+    factory = client.test_factory
+    svc = ChatService(
+        session_factory=factory,
+        compute=stub_compute(InstantScreen()),
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        topic_id = topic.id
+        await session.commit()
+    _payloads, original, original_ids, _ = await svc.post_user_message(
+        topic_id,
+        author="u",
+        content="saved by the old backend",
+        turn_id=None,
+        reply_to=None,
+        attachments=[{"path": "room/a.png", "mime": "image/png"}],
+    )
+    async with factory() as session:
+        anchor = await BlockRepository(session).get(original)
+        assert anchor is not None
+        anchor.meta = {**(anchor.meta or {}), "client_id": "pre-upgrade-delivery"}
+        await session.commit()
+
+    broker = InProcessBroker()
+    submitted = []
+    broker.subscribe_messages(lambda *args, **kwargs: submitted.append((args, kwargs)))
+    retried = await broker.receive_message(
+        svc,
+        topic_id,
+        author="u",
+        content="saved by the old backend",
+        summon=True,
+        attachments=[{"path": "room/a.png", "mime": "image/png"}],
+        client_id="pre-upgrade-delivery",
+    )
+
+    assert retried == original
+    assert submitted == []
+    async with factory() as session:
+        rows = [
+            block
+            for block in await BlockRepository(session).list_for_topic(topic_id)
+            if block.author_type == AuthorType.human
+        ]
+    assert [block.id for block in rows] == original_ids
+
+
+@pytest.mark.anyio
 async def test_receiving_message_does_not_create_default_agent(client, tmp_path):
     from app.domain.agent_instance.repositories import AgentInstanceRepository
     from app.domain.project.repositories import ProjectRepository
@@ -85,7 +214,7 @@ async def test_receiving_message_does_not_create_default_agent(client, tmp_path)
             await agents.delete(agent)
         project_id, topic_id = project.id, topic.id
         await session.commit()
-    payloads, _, _ = await svc.post_user_message(
+    payloads, _, _, _ = await svc.post_user_message(
         topic_id, author="u", content="A note for later", turn_id=None, reply_to=None
     )
     assert payloads[0]["meta"]["agent_recipient"]["handle"] == "cheese"
@@ -145,7 +274,7 @@ async def test_queued_message_retains_selected_teammate(client, tmp_path):
         topic.agent_instance_id = first.id
         topic_id, second_id = topic.id, second.id
         await session.commit()
-    _, original, _ = await svc.post_user_message(
+    _, original, _, _ = await svc.post_user_message(
         topic_id, author="u", content="For first", turn_id=None, reply_to=None
     )
     async with factory() as session:
@@ -187,7 +316,7 @@ async def test_backend_resolves_room_agent_mention(client, tmp_path, text, menti
         )
         topic_id = topic.id
         await session.commit()
-    payloads, _, _ = await svc.post_user_message(
+    payloads, _, _, _ = await svc.post_user_message(
         topic_id, author="u", content=text, turn_id=None, reply_to=None
     )
     assert payloads[0]["meta"]["agent_recipient"]["mentioned"] is mentioned
@@ -759,7 +888,7 @@ async def test_midturn_message_stays_pending_until_its_receipt(
         topic_id: uuid.UUID = topic.id
         await session.commit()
 
-    _payloads, block_id, block_ids = await svc.post_user_message(
+    _payloads, block_id, block_ids, _ = await svc.post_user_message(
         topic_id, author="u", content="改一下配色", turn_id=None, reply_to=None
     )
 

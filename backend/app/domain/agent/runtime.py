@@ -169,7 +169,12 @@ class InProcessBroker:
         live_delivery_expected = chat_service.has_running_turn(topic_id) or bool(
             self.active_turn_ids(channel)
         )
-        payloads, user_block_id, user_block_ids = await chat_service.post_user_message(
+        (
+            payloads,
+            user_block_id,
+            user_block_ids,
+            duplicate,
+        ) = await chat_service.post_user_message(
             topic_id,
             author=author,
             content=content,
@@ -201,6 +206,8 @@ class InProcessBroker:
             (persisted_at - received_at) * 1000,
             (time.monotonic() - persisted_at) * 1000,
         )
+        if duplicate:
+            return turn_id
         if self._message_subscriber is not None:
             self._message_subscriber(
                 chat_service,
