@@ -166,6 +166,14 @@ test_rollout_installs_connection_route_without_recreating_api_front() {
     rm -rf "$run_dir"
     fail "api-front config still routes device sockets through the backend"
   }
+  grep -Fq 'location = /api/connector/agent' "$run_dir/nginx.conf" || {
+    rm -rf "$run_dir"
+    fail "public device sockets still fall through the stable API ingress"
+  }
+  grep -Fq 'location ~ ^/api/topics/[^/]+/execution/[^/]+$' "$run_dir/nginx.conf" || {
+    rm -rf "$run_dir"
+    fail "public execution requests still fall through the stable API ingress"
+  }
   grep -Fq 'location ~ ^/topics/[^/]+/execution/[^/]+$' "$run_dir/nginx.conf" || {
     rm -rf "$run_dir"
     fail "api-front config still routes execution requests through the backend"
@@ -547,6 +555,10 @@ test_frontend_rollout_keeps_serving() {
   run_dir="$(new_rollout_run_dir)"
   docker_log="$run_dir/docker.log"
   bash "$ROOT/deploy/llm-tunnel/configure-frontend.sh" "$run_dir/active" 8080
+  grep -Fq 'location = /api/connector/agent' "$run_dir/active/sites-frontend.conf" \
+    || fail "stable frontend ingress still sends public device sockets through the rolling frontend"
+  grep -Fq 'location ~ ^/api/topics/[^/]+/execution/[^/]+$' "$run_dir/active/sites-frontend.conf" \
+    || fail "stable frontend ingress still sends public execution through the rolling frontend"
   rollout_run "$run_dir" env ACTIVE_FRONTEND_DIR="$run_dir/active" >"$run_dir/deploy.log" 2>&1 || { cat "$run_dir/deploy.log"; fail "frontend rollout failed"; }
   next_up="$(log_line "$docker_log" 'run -d --no-deps --name cheese-frontend-next')"
   flip="$(nth_log_line "$docker_log" 'exec cheese-api-front nginx -s reload' 3)"
