@@ -482,7 +482,7 @@ async def test_owner_execution_route_preserves_scope_and_reaches_device(
             )
             outbound = await asyncio.wait_for(connector.sent.get(), 1)
             assert outbound["t"] == "execution.call"
-            assert outbound["state"] == "/room/.claude/executor"
+            assert outbound["path"] == "/room/.claude/executor"
             encoded = json.dumps({"result": {"content": "executor file"}}).encode()
             await device_hub.on_device_message(
                 "executor",
