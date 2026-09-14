@@ -147,13 +147,15 @@ def mount(target_path, mountpoint):
     from client import RemoteClient
     from fuse import FUSE, Operations
 
-    target = json.loads(Path(target_path).read_text())
-    tree_path = Path(target_path).with_name("context-tree.json")
+    target_path = Path(target_path)
+    target = json.loads(target_path.read_text())
+    tree_path = target_path.with_name("context-tree.json")
     client = RemoteClient(target)
 
     def call(method, params):
         if method == "context_fs" and params["operation"] == "tree":
             return json.loads(tree_path.read_text())
+        client.config = json.loads(target_path.read_text())
         return client.call(method, params)
 
     class FuseProject(ForwardedProject, Operations):

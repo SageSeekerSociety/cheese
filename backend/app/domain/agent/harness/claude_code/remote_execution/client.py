@@ -85,6 +85,7 @@ def prepare(
 
         ensure(target, directory, os.environ)
     forwarded = target.get("kind") != "private"
+    device_forwarded = target.get("kind") == "device"
     workspace = (
         directory / "forwarded-project"
         if forwarded
@@ -111,11 +112,20 @@ def prepare(
         helper=[sys.executable, str(Path(__file__).resolve())],
         central_hooks=(base_settings or {}).get("hooks", {}),
         target_file=str(directory / "execution.json"),
+        **(
+            {"token_file": str(directory / "execution.token")}
+            if device_forwarded
+            else {}
+        ),
     )
     context_tree = target.pop("context_tree", None)
     target_path = directory / "execution.json"
     target_path.write_text(json.dumps(target))
     target_path.chmod(0o600)
+    if device_forwarded:
+        token_path = directory / "execution.token"
+        token_path.write_text(os.environ["CHEESE_TOKEN"])
+        token_path.chmod(0o600)
     if forwarded:
         context_tree = sync_context(target_path, context_tree)
     mount_log = directory / "forwarded-project.log"

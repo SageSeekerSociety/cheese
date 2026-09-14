@@ -511,7 +511,7 @@ async def test_reuse_checks_and_launcher_transfer_do_not_wait_for_each_other(
     async def tunnel(_screen):
         return await operation("tunnel", False)
 
-    async def ship(*_arguments):
+    async def ship(*_arguments, **_keywords):
         return await operation("launcher", ["bash", "launch.sh"])
 
     monkeypatch.setattr(provider, "confirm_alive", alive)
@@ -836,6 +836,47 @@ async def test_launch_script_ships_as_a_file_never_as_tmux_argv():
     command = hub.opened[0].command
     assert sum(len(part) for part in command) < 1024
     assert f"$HOME/.cheese/launch/{topic_id}.sh" in command[-1]
+
+
+async def test_launcher_transfer_rotates_forwarded_token_without_an_extra_exec(
+    tmp_path,
+):
+    class LocalHub:
+        def __init__(self):
+            self.calls = 0
+
+        async def exec(self, device_id, argv, *, stdin, env, timeout):
+            self.calls += 1
+            result = subprocess.run(
+                argv,
+                input=stdin,
+                text=True,
+                capture_output=True,
+                env={**os.environ, "HOME": str(tmp_path), **(env or {})},
+                timeout=timeout,
+            )
+            return {
+                "exit": result.returncode,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+            }
+
+    hub = LocalHub()
+    provider = DeviceChannel(hub=hub)
+    topic = uuid.uuid4()
+    home = tmp_path / "room-home"
+    for value in ("first", "rotated"):
+        await provider._ship_launcher(
+            "device",
+            topic,
+            ["bash", "-lc", "printf launcher"],
+            str(home),
+            execution_token=value,
+        )
+        token = home / ".claude/remote-session/execution.token"
+        assert token.read_text() == value
+        assert token.stat().st_mode & 0o777 == 0o600
+    assert hub.calls == 2
 
 
 async def test_a_connector_that_never_answers_the_launcher_is_named_in_the_error():

@@ -2,6 +2,7 @@ import hashlib
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -98,6 +99,58 @@ def test_staged_release_preserves_context_and_waits_for_reload(tmp_path):
     old_stat = (helpers / "client.py").stat()
     assert not release.stage(str(tmp_path), sources)["changed"]
     assert (helpers / "client.py").stat().st_mtime_ns == old_stat.st_mtime_ns
+
+
+def test_staged_release_unmounts_only_the_forwarded_view_before_replacement(
+    tmp_path, monkeypatch
+):
+    config = tmp_path / ".claude"
+    directory = config / "remote-session"
+    helpers = config / "remote-execution"
+    directory.mkdir(parents=True)
+    helpers.mkdir()
+    (directory / "execution.json").write_text(
+        json.dumps({"kind": "device", "central_workspace": str(tmp_path / "room")})
+    )
+    (config / "settings.json").write_text("{}")
+    calls = []
+    monkeypatch.setattr(
+        release.os.path,
+        "ismount",
+        lambda path: Path(path) == directory / "forwarded-project",
+    )
+    monkeypatch.setattr(
+        release.subprocess,
+        "run",
+        lambda argv, *, check: calls.append((argv, check)),
+    )
+    release.stage(str(tmp_path), {"client.py": "new", "proxy.js": "new"})
+    assert calls == [
+        (["fusermount3", "-u", str(directory / "forwarded-project")], True)
+    ]
+
+
+def test_staged_release_keeps_a_forwarded_view_used_as_the_native_cwd(
+    tmp_path, monkeypatch
+):
+    config = tmp_path / ".claude"
+    directory = config / "remote-session"
+    helpers = config / "remote-execution"
+    forwarded = directory / "forwarded-project"
+    directory.mkdir(parents=True)
+    helpers.mkdir()
+    (directory / "execution.json").write_text(
+        json.dumps({"kind": "device", "central_workspace": str(forwarded)})
+    )
+    (config / "settings.json").write_text("{}")
+    monkeypatch.setattr(release.os.path, "ismount", lambda path: True)
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("a native cwd mount cannot be normally unmounted")
+
+    monkeypatch.setattr(release.subprocess, "run", unexpected)
+    result = release.stage(str(tmp_path), {"client.py": "new", "proxy.js": "new"})
+    assert result["changed"]
 
 
 def test_staged_release_only_removes_the_managed_context_hook(tmp_path):
@@ -294,7 +347,7 @@ async def test_release_acknowledgement_requires_connection(
     monkeypatch.setattr(channel, "send_prompt", reload)
     screen = HubScreen("screen", "device", [], "token", 1, "agent")
     if connected:
-        await channel._refresh_resident(screen, str(tmp_path), {})
+        assert await channel._refresh_resident(screen, str(tmp_path), {}) is True
         assert (
             config / "remote-execution/release-ready"
         ).read_text() == release.digest(release.sources())
@@ -537,3 +590,57 @@ def test_forwarded_context_rejects_unsupported_paths_before_mutation(tmp_path):
     assert (directory / "context-tree.json").read_text() == '{"generation":"old"}'
     assert (directory / "context-manifest.json").exists()
     assert mirrored.read_text() == "retained mirror"
+
+
+def test_unchanged_forwarded_generation_remounts_after_helper_release(
+    tmp_path, monkeypatch
+):
+    config = tmp_path / ".claude"
+    directory = config / "remote-session"
+    helpers = config / "remote-execution"
+    workspace = tmp_path / "workspace"
+    directory.mkdir(parents=True)
+    helpers.mkdir()
+    workspace.mkdir()
+    target_path = directory / "execution.json"
+    target_path.write_text(
+        json.dumps(
+            {
+                "kind": "device",
+                "central_workspace": str(workspace),
+                "central_config": str(config),
+                "helper": ["python3", "client.py"],
+                "target_file": str(target_path),
+            }
+        )
+    )
+    (directory / "context-generation").write_text("same")
+    (directory / "context-tree.json").write_text(
+        json.dumps({"generation": "same", "entries": {}})
+    )
+    mounted = False
+
+    def ismount(path):
+        return mounted and Path(path) == directory / "forwarded-project"
+
+    class Process:
+        def __init__(self, argv, **kwargs):
+            nonlocal mounted
+            assert argv[1:] == [
+                str(helpers / "forwarded_fs.py"),
+                str(target_path),
+                str(directory / "forwarded-project"),
+            ]
+            mounted = True
+
+    monkeypatch.setattr(release.os.path, "ismount", ismount)
+    monkeypatch.setattr(release.subprocess, "Popen", Process)
+    result = release.apply_forwarded_context(
+        str(tmp_path),
+        {"kind": "device", "context_tree": {"generation": "same", "entries": {}}},
+    )
+    assert result == {"changed": True, "offsets": {}}
+    assert mounted
+    assert json.loads(target_path.read_text())["token_file"] == str(
+        directory / "execution.token"
+    )

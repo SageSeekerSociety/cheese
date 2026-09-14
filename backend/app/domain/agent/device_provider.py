@@ -728,6 +728,7 @@ class DeviceChannel(Channel):
         command: list[str],
         home_dir: str,
         release_state: dict | None = None,
+        execution_token: str | None = None,
     ) -> list[str]:
         """Write the launch script to a FILE on the device (over the link's one-shot
         ``exec``, script on stdin) and return a short command that runs it.
@@ -758,12 +759,23 @@ class DeviceChannel(Channel):
                 f' && if [ -f "{hook_dir}/remote-execution/release-ready" ]; then '
                 f'cat "{hook_dir}/remote-execution/release-ready"; fi'
             )
+        exec_env = None
+        if execution_token is not None:
+            token_path = f"{hook_dir}/remote-session/execution.token"
+            transfer += (
+                f' && mkdir -p "{hook_dir}/remote-session"'
+                f' && umask 077 && printf %s "$CHEESE_FORWARDED_TOKEN"'
+                f' > "{token_path}.next.$$"'
+                f' && mv "{token_path}.next.$$" "{token_path}"'
+            )
+            exec_env = {"CHEESE_FORWARDED_TOKEN": execution_token}
         started = time.monotonic()
         try:
             result = await self._hub.exec(
                 device_id,
                 ["sh", "-c", transfer],
                 stdin=script,
+                env=exec_env,
                 timeout=_LAUNCHER_SHIP_TIMEOUT_S,
             )
         except (TimeoutError, DeviceOffline) as exc:
@@ -797,11 +809,11 @@ class DeviceChannel(Channel):
 
     async def _refresh_resident(
         self, screen: HubScreen, home_dir: str, state: dict
-    ) -> None:
+    ) -> bool:
         sources = resident_release.sources()
         version = resident_release.digest(sources)
         if state.get("version") == version:
-            return
+            return False
         from app.domain.agent.remote_control import store
 
         control = store()
@@ -833,7 +845,7 @@ class DeviceChannel(Channel):
 
         staged = await execute("stage", home_dir, sources)
         if not staged["changed"]:
-            return
+            return False
         # The rendezvous path runs terminal-only slash commands without typing
         # over a person's draft. The transcript confirms plugin loading finished.
         await self.send_prompt(screen, "/reload-plugins")
@@ -877,6 +889,7 @@ class DeviceChannel(Channel):
         logger.info(
             "resident release applied topic=%s version=%s", screen.topic_id, version
         )
+        return True
 
     async def _refresh_forwarded_context(
         self, screen: HubScreen, home_dir: str, target: dict
@@ -1193,7 +1206,13 @@ class DeviceChannel(Channel):
         release_state = {} if existing is not None and execution_target else None
         if existing is None:
             command = await self._ship_launcher(
-                device_id, resource_id, command, home_dir
+                device_id,
+                resource_id,
+                command,
+                home_dir,
+                execution_token=(
+                    screen_env["CHEESE_TOKEN"] if execution_target is not None else None
+                ),
             )
         else:
             # These device requests are independent. Finish all three before
@@ -1206,10 +1225,11 @@ class DeviceChannel(Channel):
                     resource_id,
                     command,
                     home_dir,
-                    **(
-                        {"release_state": release_state}
-                        if release_state is not None
-                        else {}
+                    release_state=release_state,
+                    execution_token=(
+                        screen_env["CHEESE_TOKEN"]
+                        if execution_target is not None
+                        else None
                     ),
                 ),
             )
@@ -1222,12 +1242,16 @@ class DeviceChannel(Channel):
         if existing is not None:
             if release_state is not None:
                 assert execution_target is not None
-                await self._refresh_resident(existing, home_dir, release_state)
+                released = await self._refresh_resident(
+                    existing, home_dir, release_state
+                )
                 previous_tree = (existing.execution_target or {}).get(
                     "context_tree", {}
                 )
                 current_tree = execution_target.get("context_tree", {})
-                if previous_tree.get("generation") != current_tree.get("generation"):
+                if released or previous_tree.get("generation") != current_tree.get(
+                    "generation"
+                ):
                     await self._refresh_forwarded_context(
                         existing, home_dir, execution_target
                     )
