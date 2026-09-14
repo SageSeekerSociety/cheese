@@ -5,8 +5,9 @@
 员、只有本人能答复、答复过的邀请不能再答一次，以及那条待办不会在答复之后还挂在别
 人的收件箱里等一个已经没有答案的问题。
 
-另外两条钉的是**谁可以被邀请**：执行身份（带 agent_bindings 的 user）不进人名册，
-以及「已经在项目里」要按完整名册算而不是成员表。
+另外两条钉的是**谁可以被邀请**：执行身份（带 agent_bindings 的 user）不能被**当人**
+请进来（直加名册那条路照旧，队友就是这么上名册的），以及「已经在项目里」要按完整名册
+算而不是成员表。
 """
 
 import asyncio
@@ -299,8 +300,13 @@ def test_a_topic_derived_agent_handle_is_not_invited(client, bearer):
     assert handle not in _handles(client, project_id)
 
 
-def test_an_agent_is_not_added_to_the_roster_directly_either(client, bearer):
-    """邀请那条堵住了不算数——直接写名册那条是同一个洞的另一半。"""
+def test_an_agent_is_still_added_to_the_roster_directly(client, bearer):
+    """邀请那条挡住了 agent，直加名册这条必须照常——名册是「AI 队友」那一栏的来源。
+
+    agent 上名册走的是 ``MemberService.add``（建项目时铺名册、接受邀请时落行都走
+    它），成员页按这个标记把人 / 队友分成两栏，话题名册也靠它认队友。把这条路也
+    堵掉，队友就从整个界面上消失——那是另一个改动，不该顺手夹在「邀请」这个修复里。
+    """
     project_id = _project(client)
     _seed_agent(client, "cheese-direct")
 
@@ -309,9 +315,8 @@ def test_an_agent_is_not_added_to_the_roster_directly_either(client, bearer):
         json={"user_handle": "cheese-direct"},
         headers=bearer(OWNER),
     )
-    assert r.status_code == 422
-    assert "AI 队友" in r.json()["message"]
-    assert "cheese-direct" not in _handles(client, project_id)
+    assert r.status_code == 200, r.text
+    assert "cheese-direct" in _handles(client, project_id)
 
 
 def test_a_teammate_who_joined_after_the_project_is_not_invited(client, bearer):

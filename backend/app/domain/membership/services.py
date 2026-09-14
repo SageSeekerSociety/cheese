@@ -24,16 +24,20 @@ from app.domain.project.repositories import ProjectRepository
 
 
 async def _reject_execution_identity(session: AsyncSession, handle: str) -> None:
-    """执行身份不进项目名册——它进项目走的是另一条路。
+    """执行身份不能被**当人邀请**进项目——只挡邀请这条路。
 
     agent-user 是**执行身份**（这一次动作里是谁在说话），不是一个人；长期 Agent 记
-    在 ``agent_instances`` 上、由项目的 Agent 配置管理，项目页那一栏「AI 队友」读的
-    就是它。把执行身份当成人邀请进项目，等于给同一件事开了第二个入口，两边的授权很
-    快就会不一致——而名册是「谁能看这个项目的全部话题」的判据，重复的入口就是漏。
+    在 ``agent_instances`` 上、由项目的 Agent 配置管理。成员页那个「邀请成员」先按
+    uid 查人、再拿 handle 发邀请，两步都不区分两者，于是能把 AI 队友当人请进来——
+    同一件事的第二个入口，两边的授权很快会不一致。
 
-    判定复用 ``IdentityService.is_agent``：带 ``agent_bindings`` 行的才算 agent，不去
-    看 handle 长得像不像（``cheese-<话题hex>`` 是派生格式，不是契约）。解析不出用户的
-    handle 一律放行——脚本和测试夹具会加这种，它们不是 agent。
+    **不挡直加名册**（``MemberService.add``）：它是平台给 agent 放座位的原语，也是
+    接受邀请时真正落行的地方（见 ``InvitationService`` 的 docstring），agent 因此照
+    常出现在名册上、带 ``agent`` 标记，成员页的「AI 队友」那一栏读的就是它。
+
+    判定复用 ``IdentityService.is_agent``：带 ``agent_bindings`` 行的才算 agent，不
+    去看 handle 长得像不像（``cheese-<话题hex>`` 是派生格式，不是契约）。解析不出用
+    户的 handle 一律放行——脚本和测试夹具会加这种，它们不是 agent。
     """
     from app.domain.identity.services import IdentityService
 
@@ -45,7 +49,6 @@ async def _reject_execution_identity(session: AsyncSession, handle: str) -> None
 
 class MemberService:
     def __init__(self, session: AsyncSession):
-        self._session = session
         self._repo = MemberRepository(session)
         self._projects = ProjectRepository(session)
 
@@ -90,7 +93,6 @@ class MemberService:
     ) -> ProjectMember:
         await self._ensure_project(project_id)
         await self.require_manager(project_id, actor)
-        await _reject_execution_identity(self._session, user_handle)
         existing = await self._repo.get(project_id=project_id, user_handle=user_handle)
         if existing is not None:
             raise ValidationError("User is already a member of this project")
@@ -159,6 +161,9 @@ class InvitationService:
     的地基（接受之后就是它把人放上去的），也是脚本和测试用的原语。差别在于**谁做的
     决定**：进了项目就看得见这个项目的全部话题，那是别人的工作内容，所以从界面上
     加人得由被加的那个人点头。
+
+    还有一条只属于邀请的规矩：执行身份（agent-user）不能被**当人**请进来，理由见
+    ``_reject_execution_identity``。
     """
 
     def __init__(self, session: AsyncSession):
