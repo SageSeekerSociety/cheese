@@ -168,6 +168,7 @@ def case(folder, options):
     }
     threading.Thread(target=server.serve_forever, daemon=True).start()
     executor = None
+    center_fd = None
     try:
         executor, target = setup(
             folder, options, f"http://127.0.0.1:{server.server_port}"
@@ -191,14 +192,19 @@ def case(folder, options):
         )
         execution_file = folder / "central/execution.json"
         if options.launcher == "device":
-            center = folder / "device-work"
+            center = (
+                folder
+                / "device-home/.claude/remote-session/forwarded-project"
+            )
             center.mkdir(parents=True)
+            center_fd = os.open(center, os.O_RDONLY | os.O_DIRECTORY)
             launch = {"cwd": str(center), "env": {}}
             execution_file = (
                 folder / "device-home/.claude/remote-session/execution.json"
             )
         center = Path(launch["cwd"])
-        (center / "target.txt").write_text("CENTER_SENTINEL\n")
+        if center_fd is None:
+            (center / "target.txt").write_text("CENTER_SENTINEL\n")
         actions = [
             {"name": "Read", "input": {"file_path": str(center / "target.txt")}},
             {
@@ -449,8 +455,19 @@ def case(folder, options):
         terminal = run(tmux + ["capture-pane", "-p", "-t", "agent", "-S", "-300"])
         (folder / "terminal.txt").write_text(terminal)
         assert len(server.state["requests"]) == len(actions) + 1, terminal
-        assert (center / "target.txt").read_text() == "CENTER_SENTINEL\n"
-        assert not (center / "new.txt").exists()
+        if center_fd is None:
+            assert (center / "target.txt").read_text() == "CENTER_SENTINEL\n"
+            assert not (center / "new.txt").exists()
+        else:
+            for name in ("target.txt", "new.txt"):
+                try:
+                    descriptor = os.open(name, os.O_RDONLY, dir_fd=center_fd)
+                except FileNotFoundError:
+                    continue
+                os.close(descriptor)
+                raise AssertionError(
+                    f"Remote file tool modified the central workspace: {name}"
+                )
         results = tool_results(server.state["requests"][-1])
         if options.mode == "normal":
             assert not [r for r in results if r.get("is_error")], results
@@ -550,7 +567,29 @@ def case(folder, options):
         dump(folder / "summary.json", summary)
         print(json.dumps(summary), flush=True)
     finally:
+        if center_fd is not None:
+            os.close(center_fd)
         subprocess.run(tmux + ["kill-server"], capture_output=True, timeout=10)
+        unmount = shutil.which("fusermount") or shutil.which("fusermount3")
+        if unmount:
+            for mountpoint in (
+                folder / "central/forwarded-project",
+                folder / "device-home/.claude/remote-session/forwarded-project",
+            ):
+                if os.path.ismount(mountpoint):
+                    subprocess.run(
+                        [unmount, "-u", str(mountpoint)],
+                        capture_output=True,
+                        timeout=10,
+                    )
+                    if os.path.ismount(mountpoint):
+                        subprocess.run(
+                            [unmount, "-uz", str(mountpoint)],
+                            capture_output=True,
+                            check=True,
+                            timeout=10,
+                        )
+                    assert not os.path.ismount(mountpoint), mountpoint
         if executor is not None:
             subprocess.run(executor.command("stop"), capture_output=True, timeout=20)
         if server:
