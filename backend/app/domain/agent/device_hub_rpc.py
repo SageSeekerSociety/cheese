@@ -111,9 +111,20 @@ class RemoteDeviceHub:
             drop_screen_subscriptions,
         )
 
+        replaced = {
+            device_id
+            for device_id, current in self._devices.items()
+            if current["online"]
+            and (previous := previous_devices.get(device_id)) is not None
+            and previous["online"]
+            and previous.get("connection_generation")
+            != current.get("connection_generation")
+        }
         for device_id, old in previous_devices.items():
             current = self._devices.get(device_id)
-            if old["online"] and (current is None or not current["online"]):
+            if old["online"] and (
+                current is None or not current["online"] or device_id in replaced
+            ):
                 for screen in previous_screens.values():
                     if screen.device_id == device_id:
                         await drop_screen_subscriptions(screen)
@@ -125,12 +136,7 @@ class RemoteDeviceHub:
             for device_id in self.online_device_ids():
                 previous = previous_devices.get(device_id)
                 current = self._devices[device_id]
-                if (
-                    previous is None
-                    or not previous["online"]
-                    or previous.get("connection_generation")
-                    != current.get("connection_generation")
-                ):
+                if previous is None or not previous["online"] or device_id in replaced:
                     task = asyncio.create_task(self._online_callback(device_id))
                     task.add_done_callback(_log_callback_failure)
 

@@ -226,3 +226,47 @@ async def test_backend_drops_subscriptions_from_owner_snapshot_changes(
     await backend.refresh()
     assert dropped_screens == ["screen-1", "screen-1"]
     await backend.close()
+
+
+@pytest.mark.anyio
+async def test_fast_reconnect_drops_the_real_old_subscription_before_recovery(
+    monkeypatch,
+) -> None:
+    from app.domain.agent.device_provider import DeviceChannel
+    from app.domain.agent.harness.claude_code import ClaudeCodeRuntime, HookRouter
+
+    monkeypatch.setattr(settings, "device_connection_secret", "test-owner-secret")
+    device_hub._devices.clear()
+    device_hub._screens.clear()
+    device_hub._by_screen_token.clear()
+    first = ExecutorTransport()
+    await device_hub.attach_device("machine", first)
+    await first.sent.get()
+    transport = httpx.ASGITransport(app=device_connection_app.app)
+    backend = RemoteDeviceHub("http://owner", "test-owner-secret", transport=transport)
+    await backend.start()
+
+    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
+    router = HookRouter()
+    channel = DeviceChannel(hub=backend)
+    runtime = ClaudeCodeRuntime(channel, router=router)
+    await runtime.ensure_subscription(project_id, topic_id, paused=True)
+    channel._subscription_devices[topic_id] = "machine"
+    assert router.push(str(topic_id), {"hook_event_name": "Stop"}) is True
+
+    recovered_after_drop = asyncio.Event()
+
+    async def recover(_: str) -> object:
+        assert router.push(str(topic_id), {"hook_event_name": "Stop"}) is False
+        recovered_after_drop.set()
+        return 1
+
+    backend.set_online_callback(recover)
+    await device_hub.detach_device("machine", first)
+    second = ExecutorTransport()
+    await device_hub.attach_device("machine", second)
+    await second.sent.get()
+    await backend.refresh()
+    await asyncio.wait_for(recovered_after_drop.wait(), 1)
+    await backend.close()
+    await device_hub.detach_device("machine", second)
