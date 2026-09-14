@@ -55,7 +55,7 @@ async def execute(
         or placement["execution"].get("kind") != "device"
     ):
         raise ConflictError("Execution generation is no longer current")
-    if payload.method not in {"ping", "context", "invoke", "mcp", "control"}:
+    if payload.method not in {"ping", "context", "invoke", "mcp", "control", "cli"}:
         raise ForbiddenError("This executor operation is not available to the session")
     target = placement["execution"]
     await db.commit()
