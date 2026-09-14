@@ -1,0 +1,339 @@
+"""Own a pi process on the machine, and outlive whoever is reading from it.
+
+The backend is the thing that gets replaced. pi is not, and neither is this —
+so the session, its entries and the record of which input was already accepted
+all live here, and a backend that comes back asks from a cursor instead of
+starting over.
+
+Two decisions this makes rather than discovers:
+
+**We choose the session id.** ``pi --session-id`` takes one and creates the
+session if it is missing, so resuming is passing the same id again rather than
+finding out what pi called it and storing that somewhere. One less piece of
+state that can be lost, and a resume that works on a machine whose session
+directory was wiped.
+
+**Entries are pulled, not caught.** The live event stream says something
+happened; ``get_entries since=`` says what, with ids that make asking twice
+harmless. So the stream is a doorbell and the journal is the record, which is
+why a missed event costs nothing.
+"""
+
+import asyncio
+import contextlib
+import fcntl
+import hashlib
+import json
+import os
+import uuid
+from pathlib import Path
+
+from app.domain.agent.harness import Opening
+from app.domain.agent.harness.pi.journal import Journal
+from app.domain.agent.harness.pi.rpc import LINE_LIMIT, Connection
+
+# A live event that can only mean an entry was written. Anything else is
+# progress within a message, and the entry for it does not exist yet.
+SETTLES = frozenset({"message_end", "turn_end", "agent_end", "agent_settled"})
+
+
+def socket_path(state: Path) -> str:
+    digest = hashlib.sha256(str(state.resolve()).encode()).hexdigest()[:24]
+    return f"/tmp/cheese-pi-{os.getuid()}-{digest}.sock"
+
+
+class Runner:
+    def __init__(self, state: Path):
+        state.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.state = state
+        self.journal = Journal(state / "entries.sqlite")
+        self.process: asyncio.subprocess.Process | None = None
+        self.client: Connection | None = None
+        self.listener: asyncio.Task | None = None
+        self.server: asyncio.Server | None = None
+        self.inputs: dict[str, asyncio.Task] = {}
+        self.refreshing = asyncio.Lock()
+        self.doorbell = asyncio.Event()
+        self.refresher: asyncio.Task | None = None
+        self.working = False
+        self.errors = None
+        self.lock = None
+
+    # --- reading -------------------------------------------------------------
+
+    async def observe(self, event: dict) -> None:
+        """Ring the doorbell; never answer it here.
+
+        This runs inside the read loop, and fetching entries is a request only
+        that same loop can answer — doing it here is a process waiting on
+        itself. So the reader only records that something happened.
+        """
+        kind = event.get("type")
+        if kind == "agent_start":
+            self.working = True
+        elif kind == "agent_settled":
+            self.working = False
+        if kind in SETTLES:
+            self.doorbell.set()
+
+    async def _answer_the_door(self) -> None:
+        while True:
+            await self.doorbell.wait()
+            self.doorbell.clear()
+            try:
+                await self.refresh()
+            except Exception:
+                # pi going away is the read loop's news to break, not ours;
+                # a failed pull is retried on the next event or socket call.
+                await asyncio.sleep(0.2)
+
+    async def refresh(self) -> None:
+        """Pull whatever pi has written since our cursor and stamp it.
+
+        The stamp is the work in flight, and it is applied here because this is
+        the only place that knows: an entry produced after one input and before
+        the next belongs to that input's turn, and nothing in the entry says so.
+        """
+        if self.client is None:
+            return
+        async with self.refreshing:
+            owner = json.loads(self.journal.recall("owner") or "{}")
+            while True:
+                since = self.journal.recall("received")
+                page = (await self.client.request("get_entries", since=since))[
+                    "entries"
+                ]
+                if not page:
+                    return
+                self.journal.import_entries(
+                    [{**entry, "cheese": owner} for entry in page] if owner else page
+                )
+                if len(page) < 256:
+                    return
+
+    # --- lifecycle -----------------------------------------------------------
+
+    async def start(
+        self,
+        opening: Opening,
+        *,
+        binary: str,
+        cwd: str,
+        env: dict[str, str],
+        args: list[str],
+    ) -> str:
+        self.lock = (self.state / "runner.lock").open("a")
+        fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        saved = self.journal.recall("session_id")
+        if saved is not None and opening.resume_token not in (None, saved):
+            raise ValueError("A session directory cannot resume a different session")
+        session_id = saved or opening.resume_token or str(uuid.uuid4())
+        self.journal.remember("session_id", session_id)
+        self.journal.remember(
+            "owner",
+            json.dumps({"harness": "pi", "agent_handle": opening.agent_handle}),
+        )
+        # Only the lock owner may remove a socket a crashed runner left behind.
+        Path(socket_path(self.state)).unlink(missing_ok=True)
+        self.errors = (self.state / "pi.log").open("ab")
+        self.process = await asyncio.create_subprocess_exec(
+            binary,
+            "--mode",
+            "rpc",
+            "--session-id",
+            session_id,
+            "--session-dir",
+            str(self.state / "sessions"),
+            *args,
+            cwd=cwd,
+            env=env,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=self.errors,
+            limit=LINE_LIMIT,
+        )
+        assert self.process.stdout is not None and self.process.stdin is not None
+        self.client = Connection(
+            self.process.stdout, self.process.stdin, on_event=self.observe
+        )
+        self.listener = asyncio.create_task(self.client.listen())
+        self.refresher = asyncio.create_task(self._answer_the_door())
+        # Whatever the session already holds is ours to land before the first
+        # input: resuming a session means its history is already there.
+        await self.refresh()
+        self.server = await asyncio.start_unix_server(
+            self.handle, path=socket_path(self.state), limit=LINE_LIMIT
+        )
+        os.chmod(socket_path(self.state), 0o600)
+        return session_id
+
+    # --- writing -------------------------------------------------------------
+
+    async def send(
+        self,
+        identifier: str,
+        text: str,
+        *,
+        steering: bool = False,
+        images: list[dict] | None = None,
+        work_id: str | None = None,
+    ) -> dict:
+        """Put one input in, at most once, however many times we are asked.
+
+        The identifier is the platform's, and it is what makes a reconnection
+        safe: a backend that never saw our answer resends the same id and gets
+        the same outcome rather than a second turn.
+        """
+        payload = json.dumps(
+            {
+                "text": text,
+                "images": images or [],
+                "work_id": work_id,
+                "steer": steering,
+            },
+            sort_keys=True,
+        )
+        previous = self.journal.input(identifier)
+        if previous is not None:
+            if previous[0] != payload:
+                raise ValueError("An input ID cannot be reused for different text")
+            if previous[1] == "accepted":
+                return previous[2] or {}
+            if previous[1] == "failed":
+                raise RuntimeError((previous[2] or {})["error"])
+            if identifier not in self.inputs:
+                raise RuntimeError(
+                    "Previous input outcome is unresolved; it was not resubmitted"
+                )
+        else:
+            self.journal.begin_input(identifier, payload)
+            task = asyncio.create_task(
+                self._submit(identifier, text, steering, images, work_id)
+            )
+            self.inputs[identifier] = task
+
+            def finished(task):
+                self.inputs.pop(identifier, None)
+                if not task.cancelled():
+                    task.exception()  # Failure is retained in the input journal.
+
+            task.add_done_callback(finished)
+        return await asyncio.shield(self.inputs[identifier])
+
+    async def _submit(
+        self,
+        identifier: str,
+        text: str,
+        steering: bool,
+        images: list[dict] | None,
+        work_id: str | None,
+    ) -> dict:
+        assert self.client is not None
+        try:
+            if work_id is not None and not steering:
+                # Persist attribution before the call: entries can appear
+                # before the command's own acknowledgement comes back.
+                owner = json.loads(self.journal.recall("owner") or "{}")
+                self.journal.remember(
+                    "owner", json.dumps({**owner, "work_id": work_id})
+                )
+            fields: dict = {"message": text}
+            if images:
+                fields["images"] = images
+            if steering:
+                await self.client.request("steer", **fields)
+            else:
+                await self.client.request("prompt", **fields)
+            result = {"input_id": identifier}
+            self.journal.finish_input(identifier, "accepted", result)
+            return result
+        except Exception as error:
+            self.journal.finish_input(identifier, "failed", {"error": str(error)})
+            raise
+
+    # --- the socket ----------------------------------------------------------
+
+    async def dispatch(self, method: str, params: dict) -> dict:
+        if method == "entries":
+            await self.refresh()
+            since = params.get("since")
+            after = self.journal.sequence_of(since) if since else 0
+            return {"entries": [row["entry"] for row in self.journal.read(after)]}
+        if method == "send":
+            return await self.send(
+                params["input_id"],
+                params["text"],
+                images=params.get("images"),
+                work_id=params.get("work_id"),
+            )
+        if method == "steer":
+            return await self.send(
+                params["input_id"],
+                params["text"],
+                steering=True,
+                images=params.get("images"),
+                work_id=params.get("work_id"),
+            )
+        if method == "abort":
+            if self.client is None:
+                return {"aborted": False}
+            await self.client.request("abort")
+            self.working = False
+            return {"aborted": True}
+        if method == "ping":
+            owner = json.loads(self.journal.recall("owner") or "{}")
+            return {
+                "pid": os.getpid(),
+                "session_id": self.journal.recall("session_id"),
+                "working": self.working,
+                "work_id": owner.get("work_id"),
+                "alive": self.process is not None and self.process.returncode is None,
+            }
+        raise ValueError(f"Unknown pi session operation: {method}")
+
+    async def handle(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        try:
+            request = json.loads(await reader.readline())
+            response = {
+                "result": await self.dispatch(
+                    request["method"], request.get("params", {})
+                )
+            }
+        except Exception as error:
+            response = {"error": str(error)}
+        try:
+            writer.write(json.dumps(response, ensure_ascii=False).encode() + b"\n")
+            await writer.drain()
+        except (ConnectionError, BrokenPipeError):
+            # A disconnected backend does not cancel the accepted input.
+            pass
+        finally:
+            writer.close()
+            with contextlib.suppress(ConnectionError, BrokenPipeError):
+                await writer.wait_closed()
+
+    async def close(self) -> None:
+        if self.refresher is not None:
+            self.refresher.cancel()
+            await asyncio.gather(self.refresher, return_exceptions=True)
+        if self.server is not None:
+            self.server.close()
+            await self.server.wait_closed()
+        if self.process is not None and self.process.returncode is None:
+            self.process.terminate()
+            await self.process.wait()
+        try:
+            if self.listener is not None:
+                with contextlib.suppress(Exception):
+                    await self.listener
+        finally:
+            await asyncio.gather(*self.inputs.values(), return_exceptions=True)
+            if self.errors is not None:
+                self.errors.close()
+            self.journal.close()
+            if self.server is not None:
+                Path(socket_path(self.state)).unlink(missing_ok=True)
+            if self.lock is not None:
+                self.lock.close()
