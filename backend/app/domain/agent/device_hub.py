@@ -343,6 +343,26 @@ class DeviceHub:
         self._by_screen_token[token] = screen
         return screen
 
+    def update_screen(
+        self,
+        sid: str,
+        *,
+        resource_id: uuid.UUID | None,
+        execution_target: dict | None,
+        credential_expires: int | None = None,
+        agent_configuration: str | None = None,
+    ) -> HubScreen:
+        screen = self._screens.get(sid)
+        if screen is None:
+            raise KeyError("screen not found")
+        screen.resource_id = resource_id
+        screen.execution_target = execution_target
+        if credential_expires is not None:
+            screen.credential_expires = credential_expires
+        if agent_configuration is not None:
+            screen.agent_configuration = agent_configuration
+        return screen
+
     async def close_screen(self, device_id: str, sid: str) -> bool:
         """Forget a screen only after its owner confirms that it has stopped."""
         device = self._device(device_id)

@@ -86,6 +86,42 @@ test_deploy_keeps_connection_owner_running() {
   echo "PASS: business deploy leaves the device connection owner running"
 }
 
+test_owner_release_reuses_box_config_and_stops_when_busy() {
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/connection-owner-release.XXXXXX")"
+  mkdir -p "$run_dir/ops"
+  docker_log="$run_dir/docker.log"
+  cat > "$run_dir/ops/deploy.env" <<EOF
+COMPOSE_OVERLAYS=docker-compose.subscription.yml
+BACKEND_ENV_FILE=$run_dir/backend.env
+BACKEND_IMAGE=repo/backend:box-pinned
+DEPLOY_APP_IMAGE_SOURCE=local
+EOF
+  : > "$run_dir/backend.env"
+  PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" HOME="$run_dir" \
+    "$ROOT/deploy/release-device-connection.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null
+  grep -F -- '-f '"$ROOT"'/deploy/compose/docker-compose.subscription.yml' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "owner release ignored the box compose overlay"; }
+  grep -F 'image inspect repo/backend:box-pinned' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "owner release ignored the pinned local backend image"; }
+  grep -F 'up -d --no-deps --force-recreate device-connection' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "owner release did not isolate its recreate"; }
+
+  : > "$docker_log"
+  if PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" \
+    APP_TIER_CURL_FAIL_MATCH=release-ready HOME="$run_dir" \
+    "$ROOT/deploy/release-device-connection.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null 2>&1; then
+    rm -rf "$run_dir"
+    fail "owner release proceeded while executor calls were active"
+  fi
+  ! grep -F 'force-recreate device-connection' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "busy owner was recreated"; }
+  rm -rf "$run_dir"
+  echo "PASS: owner release reuses box config and stops while execution is active"
+}
+
 test_rollout_installs_connection_route_without_recreating_api_front() {
   local run_dir docker_log
   run_dir="$(new_rollout_run_dir)"
@@ -739,6 +775,7 @@ case "$CASE" in
     test_deploy_rejects_absent_frontend
     test_deploy_accepts_healthy_pair
     test_deploy_keeps_connection_owner_running
+    test_owner_release_reuses_box_config_and_stops_when_busy
     test_rollout_installs_connection_route_without_recreating_api_front
     test_deploy_keeps_agent_runtime_images
     test_deploy_retains_ci_service_images

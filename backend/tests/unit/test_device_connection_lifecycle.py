@@ -135,6 +135,22 @@ async def test_new_backend_restores_screens_and_observes_later_connections(
     assert owner_screen.credential_expires == 1234
     assert owner_screen.agent_configuration == "native"
 
+    await backend.update_screen(
+        "screen-1",
+        resource_id=topic_id,
+        execution_target={"home": "/room", "revision": 2},
+    )
+    await backend.close()
+    backend = RemoteDeviceHub("http://owner", "test-owner-secret", transport=transport)
+    await backend.start()
+    after_backend_restart = backend.screen("screen-1")
+    assert after_backend_restart is not None
+    assert after_backend_restart.execution_target == {
+        "home": "/room",
+        "revision": 2,
+    }
+    assert after_backend_restart.credential_expires == 1234
+
     recovered_devices: asyncio.Queue[str] = asyncio.Queue()
 
     async def recover(device_id: str) -> object:

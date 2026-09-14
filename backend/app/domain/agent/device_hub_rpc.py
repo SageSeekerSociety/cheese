@@ -210,6 +210,10 @@ class RemoteDeviceHub:
         )
         return screen_from_json(result)
 
+    async def update_screen(self, sid: str, **kwargs: Any) -> HubScreen:
+        result = await self._call("update_screen", {"sid": sid, **_jsonable(kwargs)})
+        return screen_from_json(result)
+
     async def close_screen(self, device_id: str, sid: str) -> bool:
         return bool(
             await self._call("close_screen", {"device_id": device_id, "sid": sid})

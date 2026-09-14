@@ -24,6 +24,7 @@ _RPC_METHODS = {
     "open_screen",
     "put_file",
     "reassert_screen",
+    "update_screen",
 }
 
 
@@ -47,6 +48,13 @@ app.include_router(connector_router)
 @app.get("/healthz")
 async def healthz() -> dict[str, bool]:
     return {"ok": True}
+
+
+@app.get("/release-ready")
+async def release_ready() -> dict[str, bool]:
+    if any(not task.done() for task in _executor_calls.values()):
+        raise HTTPException(status_code=409, detail="executor calls are active")
+    return {"ready": True}
 
 
 @app.get("/internal/device-connection/snapshot")
@@ -122,6 +130,9 @@ async def _dispatch(name: str, body: dict[str, Any]) -> Any:
             raise KeyError("screen not found")
         await device_hub.reassert_screen(screen, **body)
         return None
+    if name == "update_screen":
+        result = device_hub.update_screen(**_uuids(body, "resource_id"))
+        return screen_to_json(result)
     if name == "put_file":
         body["data"] = base64.b64decode(body["data"], validate=True)
     method = getattr(device_hub, name)

@@ -1191,6 +1191,13 @@ class DeviceChannel(Channel):
             await self._hub.reassert_screen(existing, command=command, env=screen_env)
             mark("screen_reasserted")
             existing.execution_target = execution_target
+            updated = self._hub.update_screen(
+                existing.sid,
+                resource_id=existing.resource_id,
+                execution_target=execution_target,
+            )
+            if inspect.isawaitable(updated):
+                existing = await updated
             return existing
         screen = await self._hub.open_screen(
             device_id,
@@ -1210,6 +1217,15 @@ class DeviceChannel(Channel):
         screen.agent_configuration = configuration
         screen.resource_id = resource_id
         screen.execution_target = execution_target
+        updated = self._hub.update_screen(
+            screen.sid,
+            resource_id=resource_id,
+            execution_target=execution_target,
+            credential_expires=credential_expires,
+            agent_configuration=configuration,
+        )
+        if inspect.isawaitable(updated):
+            screen = await updated
         return screen
 
     # --- turn --------------------------------------------------------------
