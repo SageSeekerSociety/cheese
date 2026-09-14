@@ -250,7 +250,11 @@ class RemoteControl:
         if existing:
             return command
         try:
-            value = await control(target, payload["request"])
+            value = await control(
+                target,
+                payload["request"],
+                trace_id=f"rc-{session['id']}-{request_id}",
+            )
             response = {
                 "subtype": "success",
                 "request_id": request_id,

@@ -97,6 +97,13 @@ class FakeHub:
         screen.command = command
         self.reasserted.append(screen.sid)
 
+    def update_screen(self, sid: str, **values) -> HubScreen:
+        screen = next(screen for screen in self.opened if screen.sid == sid)
+        for name, value in values.items():
+            if value is not None or name in {"resource_id", "execution_target"}:
+                setattr(screen, name, value)
+        return screen
+
     async def exec(
         self, device_id, argv, *, cwd=None, env=None, timeout=60, stdin=None
     ) -> dict:

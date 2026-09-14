@@ -13,6 +13,7 @@ find /usr/share/nginx/html/assets -name '*.js' -exec sed -i \
 # Where nginx sends /api and /connector (see nginx.conf). Substituted at start,
 # like the VITE placeholders above, because nginx reads no environment itself.
 sed -i "s|__API_UPSTREAM__|${API_UPSTREAM:-backend:8081}|g" /etc/nginx/nginx.conf
+sed -i "s|__DEVICE_CONNECTION_UPSTREAM__|${DEVICE_CONNECTION_UPSTREAM:-device-connection:8082}|g" /etc/nginx/nginx.conf
 
 /usr/local/bin/check-static-assets /usr/share/nginx/html
 

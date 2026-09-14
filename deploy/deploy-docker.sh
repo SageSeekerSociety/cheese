@@ -96,6 +96,52 @@ dc() {
   docker compose -f "$COMPOSE" ${_overlay_args[@]+"${_overlay_args[@]}"} \
     -p "$PROJECT" "$@"
 }
+
+ensure_device_connection_owner() {
+  local container started=false waited=0
+  container="$(dc ps -q device-connection 2>/dev/null | head -n 1 || true)"
+  if [ -n "$container" ] && [ "$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null || true)" = true ]; then
+    log "leaving device connection owner $container running across this app release"
+  else
+    log "starting the independently released device connection owner"
+    dc up -d --no-deps device-connection \
+      || fail "device connection owner did not start; the running backend was not touched"
+    started=true
+  fi
+  while [ "$waited" -lt 60 ]; do
+    if curl -fsS -m 3 "http://127.0.0.1:${DEVICE_CONNECTION_PORT:-18083}/healthz" >/dev/null 2>&1; then
+      [ "$started" = false ] || log "device connection owner is healthy"
+      return
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+  fail "device connection owner is not healthy; the running backend was not touched"
+}
+
+reload_api_front_routes() {
+  [ -n "$ACTIVE_BACKEND_DIR" ] || return 0
+  local config backup
+  config="${API_FRONT_CONF:-$(dirname "$ACTIVE_BACKEND_DIR")/nginx.conf}"
+  [ -f "$config" ] || fail "api-front config not found: $config"
+  cmp -s "$HERE/llm-tunnel/nginx.conf" "$config" && return 0
+  backup="${config}.pre-device-connection"
+  cp "$config" "$backup"
+  cp "$HERE/llm-tunnel/nginx.conf" "$config"
+  if ! docker exec "$API_FRONT_CONTAINER" nginx -t; then
+    cp "$backup" "$config"
+    rm -f "$backup"
+    fail "api-front rejected the device connection route; restored its config"
+  fi
+  if ! docker exec "$API_FRONT_CONTAINER" nginx -s reload; then
+    cp "$backup" "$config"
+    docker exec "$API_FRONT_CONTAINER" nginx -s reload >/dev/null 2>&1 || true
+    rm -f "$backup"
+    fail "api-front could not reload the device connection route; restored its config"
+  fi
+  rm -f "$backup"
+  log "api-front now routes device WebSockets to the stable connection owner"
+}
 log() { echo "[deploy-docker $(date '+%H:%M:%S')] $*"; }
 fail() { echo "[deploy-docker $(date '+%H:%M:%S')] ERROR: $*" >&2; exit 1; }
 
@@ -580,6 +626,13 @@ rollout_frontend() {
   docker rm -f "$NEXT_FRONTEND" >/dev/null 2>&1 || true
   log "frontend rollout complete"
 }
+
+# First installation must use the backend image this deploy just pulled or
+# verified. Once running, ensure_device_connection_owner deliberately leaves it
+# untouched until the separate owner release operation.
+export DEVICE_CONNECTION_IMAGE="${DEVICE_CONNECTION_IMAGE:-${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:$SHA}}"
+ensure_device_connection_owner
+reload_api_front_routes
 
 if [ -n "$ACTIVE_BACKEND_DIR" ]; then
   [ -d "$ACTIVE_BACKEND_DIR" ] \

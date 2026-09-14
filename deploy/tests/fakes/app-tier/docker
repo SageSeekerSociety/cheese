@@ -11,6 +11,13 @@ if [ -n "${APP_TIER_DOCKER_LOG:-}" ]; then
       "${BACKEND_IMAGE:-}" "${FRONTEND_IMAGE:-}" "${IMAGE_TAG:-}" \
       >> "$APP_TIER_DOCKER_LOG"
   fi
+  if [ "${1:-}" = compose ] && [[ "$*" == *" up -d --no-deps device-connection"* ]]; then
+    printf 'owner-up-env DEVICE_CONNECTION_IMAGE=%s\n' \
+      "${DEVICE_CONNECTION_IMAGE:-}" >> "$APP_TIER_DOCKER_LOG"
+  fi
+fi
+if [ -n "${APP_TIER_DOCKER_FAIL_MATCH:-}" ] && [[ "$*" == *"$APP_TIER_DOCKER_FAIL_MATCH"* ]]; then
+  exit 1
 fi
 
 # Fail the first APP_TIER_PULL_FAIL_COUNT pull invocations, counting across both
@@ -63,6 +70,10 @@ if [ "${1:-}" = "compose" ]; then
 
   case "${1:-}" in
     ps)
+      if [ "${2:-}" = -q ] && [ "$scenario" = stable_owner ] && \
+        [ "${3:-}" = device-connection ]; then
+        printf 'device-connection-container\n'
+      fi
       if [ "${2:-}" = -q ] && [ "$scenario" = rollback ]; then
         case "${3:-}" in
           backend) printf 'backend-container\n' ;;
@@ -109,6 +120,7 @@ if [ "${1:-}" = inspect ] && [ "${2:-}" = --format ]; then
       esac
       ;;
     *com.cheese.image_tag*) printf 'oldsha\n' ;;
+    *State.Running*) printf 'true\n' ;;
   esac
   exit 0
 fi

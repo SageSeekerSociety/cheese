@@ -89,6 +89,12 @@ class _RecordingHub:
         self.opened.append(screen)
         return screen
 
+    def update_screen(self, sid: str, **values) -> HubScreen:
+        screen = next(screen for screen in self.opened if screen.sid == sid)
+        for name, value in values.items():
+            setattr(screen, name, value)
+        return screen
+
 
 @pytest.mark.anyio
 async def test_device_screen_opens_with_the_system_prompt():

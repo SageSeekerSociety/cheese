@@ -30,11 +30,15 @@ def execution_target(
     }
 
 
-async def control(target: dict, payload: dict, *, hub=None) -> dict:
+async def control(
+    target: dict, payload: dict, *, hub=None, trace_id: str | None = None
+) -> dict:
     if target.get("kind") == "device":
         from app.domain.agent import execution
 
-        return await execution.call(target, "control", payload, hub=hub)
+        return await execution.call(
+            target, "control", payload, hub=hub, trace_id=trace_id
+        )
     if target.get("kind") != "private":
         return await asyncio.to_thread(RemoteClient(target).control, payload)
     # home contains only a literal $HOME followed by server-generated UUID paths.
