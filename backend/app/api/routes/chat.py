@@ -190,7 +190,7 @@ async def chat(
                     received_unix_ms=time.time() * 1000,
                 )
                 try:
-                    turn_id = await runner.submit_message(
+                    turn_id = await broker.receive_message(
                         chat_service,
                         topic_id,
                         author=author,

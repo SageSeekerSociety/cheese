@@ -1545,7 +1545,7 @@ async def answer_options(
         str(blk.topic_id), {"type": "block_updated", "block": updated}
     )
     # The choice lands as the answerer's own message + summons 芝士 to continue.
-    await runner.submit_message(
+    await get_broker().receive_message(
         chat,
         blk.topic_id,
         author=author,

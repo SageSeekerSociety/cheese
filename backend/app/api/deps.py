@@ -200,9 +200,11 @@ def get_work_runner() -> AgentWorkRunner:
     # tmux/SDK path has no screen there → None → the fuse is unchanged.
     from app.domain.agent.device_provider import topic_credential_expiry
 
-    return AgentWorkRunner(
+    runner = AgentWorkRunner(
         get_broker(),
         turn_timeout_s=settings.agent_turn_timeout_s,
         first_output_timeout_s=settings.agent_first_output_timeout_s,
         credential_expiry_of=topic_credential_expiry,
     )
+    runner.subscribe_messages()
+    return runner

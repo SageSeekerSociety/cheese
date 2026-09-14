@@ -100,6 +100,20 @@ class AgentInstanceService:
                 return self.resolved(instance)
         return await self.for_project(project)
 
+    async def recipient_for_topic(
+        self, topic: Topic, project: Project
+    ) -> ResolvedAgent:
+        """Read the message recipient without creating or activating an agent."""
+        for instance_id in (topic.agent_instance_id, project.default_agent_instance_id):
+            if instance_id is not None:
+                instance = await self._repo.get(instance_id)
+                if instance is not None:
+                    return self.resolved(instance)
+        instance = await self._repo.get_by_handle(
+            project_id=project.id, handle=IMPLICIT_DEFAULT.handle
+        )
+        return self.resolved(instance) if instance is not None else IMPLICIT_DEFAULT
+
     async def for_handle(self, project: Project, handle: str | None) -> AgentInstance:
         """The saved teammate a caller named by handle, else the project default.
 

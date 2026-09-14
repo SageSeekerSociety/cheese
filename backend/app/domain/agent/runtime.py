@@ -128,6 +128,7 @@ class InProcessBroker:
         self._active_since: dict[tuple[str, str], float] = {}
         self._last_activity_at: dict[str, float] = {}
         self._replay_size = replay_size
+        self._message_subscriber: Callable[..., None] | None = None
 
     def reset(self) -> None:
         """Drop all buffered frames + subscriptions. The broker is a process-wide
@@ -140,6 +141,95 @@ class InProcessBroker:
         self._active.clear()
         self._active_since.clear()
         self._last_activity_at.clear()
+
+    async def receive_message(
+        self,
+        chat_service,
+        topic_id: uuid.UUID,
+        *,
+        author: str,
+        content: str,
+        summon: bool,
+        reply_to: str | None = None,
+        attachments: list[dict] | None = None,
+        provision_actor: Actor | None = None,
+        client_id: str | None = None,
+    ) -> uuid.UUID:
+        """Persist one human message now, then schedule AI work if requested.
+
+        Receiving a message is free collaboration state; running a model turn is
+        metered work. Keeping those as two operations makes the ordering real:
+        the project queue and credit gate can delay/refuse only the latter.
+        """
+        received_at = time.monotonic()
+        channel = str(topic_id)
+        # Capture the user's arrival-time expectation before the database write.
+        # The live session may finish while the message is being persisted; that
+        # race is still a delivery fallback, not an ordinary idle-topic message.
+        live_delivery_expected = chat_service.has_running_turn(topic_id) or bool(
+            self.active_turn_ids(channel)
+        )
+        payloads, user_block_id, user_block_ids = await chat_service.post_user_message(
+            topic_id,
+            author=author,
+            content=content,
+            turn_id=None,
+            reply_to=reply_to,
+            attachments=attachments,
+            client_id=client_id,
+        )
+        turn_id = user_block_id
+        recipient_handle = next(
+            (
+                (payload.get("meta") or {}).get("agent_recipient", {}).get("handle")
+                for payload in payloads
+                if (payload.get("meta") or {}).get("agent_recipient")
+            ),
+            None,
+        )
+        summon = summon or any(
+            (payload.get("meta") or {}).get("agent_recipient", {}).get("mentioned")
+            for payload in payloads
+        )
+        persisted_at = time.monotonic()
+        for payload in payloads:
+            await self.publish(channel, {"type": "user_block", "block": payload})
+        logger.info(
+            "chat_receive_timing topic=%s turn=%s persist_ms=%.3f publish_ms=%.3f",
+            topic_id,
+            turn_id,
+            (persisted_at - received_at) * 1000,
+            (time.monotonic() - persisted_at) * 1000,
+        )
+        if self._message_subscriber is not None:
+            self._message_subscriber(
+                chat_service,
+                topic_id,
+                turn_id,
+                summon=summon,
+                continuation_id=turn_id,
+                author=author,
+                content=next(
+                    (
+                        payload["content"]
+                        for payload in payloads
+                        if payload.get("id") == str(user_block_id) and content
+                    ),
+                    content,
+                ),
+                reply_to=reply_to,
+                attachments=attachments,
+                provision_actor=provision_actor,
+                landed_user_block_id=user_block_id,
+                landed_user_block_ids=user_block_ids,
+                live_delivery_expected=live_delivery_expected,
+                recipient_handle=recipient_handle,
+            )
+        return turn_id
+
+    def subscribe_messages(self, subscriber: Callable[..., None]) -> None:
+        """Subscribe to accepted sends; browser replay never enters this stream."""
+        self._message_subscriber = subscriber
 
     async def publish(self, channel: str, frame: Frame) -> None:
         kind = frame.get("type")
@@ -261,6 +351,7 @@ class AgentWorkRunner:
         credential_expired_fuse_s: float = 15.0,
     ) -> None:
         self._broker = broker
+        self._message_locks: dict[tuple[uuid.UUID, str | None], asyncio.Lock] = {}
         self._timeout = turn_timeout_s
         # 冷启动看门狗: how long a turn may produce NOTHING before it is called
         # dead. Separate from `turn_timeout_s` because it answers a different
@@ -585,129 +676,60 @@ class AgentWorkRunner:
             task.add_done_callback(lambda _task: _fire_on_done(on_done))
         return turn_id
 
-    async def submit_message(
-        self,
-        chat_service,
-        topic_id: uuid.UUID,
-        *,
-        author: str,
-        content: str,
-        summon: bool,
-        reply_to: str | None = None,
-        attachments: list[dict] | None = None,
-        provision_actor: Actor | None = None,
-        client_id: str | None = None,
-    ) -> uuid.UUID:
-        """Persist one human message now, then schedule AI work if requested.
+    def subscribe_messages(self) -> None:
+        """Attach the process-owned runner to accepted room messages."""
+        self._broker.subscribe_messages(self._receive_message)
 
-        Receiving a message is free collaboration state; running a model turn is
-        metered work. Keeping those as two operations makes the ordering real:
-        the project queue and credit gate can delay/refuse only the latter.
-        """
-        received_at = time.monotonic()
-        channel = str(topic_id)
-        # Capture the user's arrival-time expectation before the database write.
-        # The live session may finish while the message is being persisted; that
-        # race is still a delivery fallback, not an ordinary idle-topic message.
-        live_delivery_expected = chat_service.has_running_turn(topic_id) or bool(
-            self._broker.active_turn_ids(channel)
-        )
-        payloads, user_block_id, user_block_ids = await chat_service.post_user_message(
-            topic_id,
-            author=author,
-            content=content,
-            turn_id=None,
-            reply_to=reply_to,
-            attachments=attachments,
-            client_id=client_id,
-        )
-        turn_id = user_block_id
-        recipient_handle = next(
-            (
-                (payload.get("meta") or {}).get("agent_recipient", {}).get("handle")
-                for payload in payloads
-                if (payload.get("meta") or {}).get("agent_recipient")
-            ),
-            None,
-        )
-        summon = summon or any(
-            (payload.get("meta") or {}).get("agent_recipient", {}).get("mentioned")
-            for payload in payloads
-        )
-        persisted_at = time.monotonic()
-        for payload in payloads:
-            await self._broker.publish(
-                channel, {"type": "user_block", "block": payload}
-            )
-        logger.info(
-            "chat_receive_timing topic=%s turn=%s persist_ms=%.3f publish_ms=%.3f",
-            topic_id,
-            turn_id,
-            (persisted_at - received_at) * 1000,
-            (time.monotonic() - persisted_at) * 1000,
-        )
-        if not summon:
-            # 没 @ 不等于没说 (spec §7.1 所有消息 AI 都会收到). An unsummoned
-            # message is meant to be picked up by the pending window the next
-            # turn assembles — but a summon that arrives while work is live
-            # MERGES into that work instead of assembling anything, and only an
-            # assembled prompt reads the pending window. So for as long as the
-            # topic keeps working, the unsummoned message is never handed over:
-            # type the substance, bare-@ to summon, and 芝士 is handed the bare @
-            # alone, with the sentence it was answering nowhere in its session.
-            #
-            # So deliver it into the live turn, exactly the way a summoned
-            # mid-turn message goes. This starts no turn — the running one is
-            # already paid for, and that is what "no summon" is asking for. A
-            # topic with nothing live answers None here and falls through to the
-            # pending window, which is the right home for it.
-            #
-            # Awaited rather than spawned: two messages typed a second apart
-            # must reach the session in the order they were typed, and the only
-            # thing that orders them is this socket's own sequence.
-            if content or attachments:
-                await chat_service.merge_into_running_turn(
-                    topic_id,
-                    user_block_ids or [user_block_id],
-                    content,
-                    author,
-                    attachments,
-                    **(
-                        {"recipient_handle": recipient_handle}
-                        if recipient_handle is not None
-                        else {}
-                    ),
-                )
-            # Request completion, not turn completion: no turn was started.
-            await self._broker.publish(channel, {"type": "done"})
-            return turn_id
-
-        # Spawned with NOTHING awaited between here and the durable write above.
-        # This request belongs to a socket that may already be closing — the
-        # person hit send and navigated away — and an await in front of the
-        # spawn is a window where the ASGI task is cancelled with the message
-        # persisted and no work ever started.
+    def _receive_message(self, chat_service, topic_id, turn_id, **message) -> None:
         task = asyncio.create_task(
-            self._run(
-                chat_service,
-                topic_id,
-                turn_id,
-                summon=True,
-                continuation_id=turn_id,
-                author=author,
-                content=content,
-                reply_to=reply_to,
-                attachments=attachments,
-                provision_actor=provision_actor,
-                landed_user_block_id=user_block_id,
-                landed_user_block_ids=user_block_ids,
-                live_delivery_expected=live_delivery_expected,
-                recipient_handle=recipient_handle,
-            )
+            self._consume_message(chat_service, topic_id, turn_id, **message)
         )
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
-        return turn_id
+
+    async def _consume_message(
+        self, chat_service, topic_id, turn_id, **message
+    ) -> None:
+        # Order each recipient's messages. Waiting for another agent's turn must
+        # not block a follow-up addressed to the agent that is still running.
+        key = (topic_id, message["recipient_handle"])
+        lock = self._message_locks.setdefault(key, asyncio.Lock())
+        try:
+            async with lock:
+                if not message["summon"]:
+                    if message["content"] or message["attachments"]:
+                        await chat_service.merge_into_running_turn(
+                            topic_id,
+                            message["landed_user_block_ids"] or [turn_id],
+                            message["content"],
+                            message["author"],
+                            message["attachments"],
+                            **(
+                                {"recipient_handle": message["recipient_handle"]}
+                                if message["recipient_handle"] is not None
+                                else {}
+                            ),
+                        )
+                    await self._broker.publish(str(topic_id), {"type": "done"})
+                    return
+                if await self._deliver_message(
+                    chat_service, topic_id, turn_id, **message
+                ):
+                    return
+            message.pop("landed_user_block_ids")
+            message.pop("live_delivery_expected")
+            await self._run(chat_service, topic_id, turn_id, **message)
+        except Exception:
+            logger.exception(
+                "agent message subscription failed topic=%s turn=%s", topic_id, turn_id
+            )
+            await self._broker.publish(
+                str(topic_id),
+                {
+                    "type": "error",
+                    "message": "Agent message delivery failed",
+                },
+            )
 
     def submit_kickoff(
         self,
@@ -1504,35 +1526,21 @@ class AgentWorkRunner:
             }
         )
 
-    async def _run(
+    async def _deliver_message(
         self,
         chat_service,
-        topic_id: uuid.UUID,
-        turn_id: uuid.UUID,
+        topic_id,
+        turn_id,
         *,
-        author: str,
-        content: str,
-        summon: bool,
-        reply_to: str | None = None,
-        attachments: list[dict] | None = None,
-        is_resume: bool = False,
-        resume_reason: str | None = None,
-        nudge_event: str | None = None,
-        nudge_meta: dict | None = None,
-        continuation_id: uuid.UUID | None = None,
-        provision_actor: Actor | None = None,
-        # Human message already persisted by ``submit_message``. Its AI work is
-        # still pending admission and may instead merge into a live turn.
-        landed_user_block_id: uuid.UUID | None = None,
-        landed_user_block_ids: list[uuid.UUID] | None = None,
-        # True when live work existed as this human message arrived. If that
-        # work disappears before injection, normal queueing is still a fallback
-        # and must be reported as an error.
-        live_delivery_expected: bool = False,
-        recipient_handle: str | None = None,
-        # Pre-built frame stream (kickoff turns). None → run a converse turn.
-        frames: AsyncIterator[Frame] | None = None,
-    ) -> None:
+        recipient_handle=None,
+        live_delivery_expected=False,
+        landed_user_block_id=None,
+        landed_user_block_ids=None,
+        content="",
+        author="",
+        attachments=None,
+        **_message,
+    ) -> bool:
         channel = str(topic_id)
         if recipient_handle is not None:
             if await chat_service.wait_for_recipient(topic_id, recipient_handle):
@@ -1554,7 +1562,7 @@ class AgentWorkRunner:
                 ack = await chat_service.ack_summon(landed_user_block_id, topic_id)
                 if ack is not None:
                     await self._broker.publish(channel, {"type": "reaction", **ack})
-                return
+                return True
             if delivered is False or live_delivery_expected:
                 logger.warning(
                     "live delivery fell back to the queue (topic=%s, "
@@ -1573,6 +1581,33 @@ class AgentWorkRunner:
                     meta=fallback_meta,
                 )
 
+        return False
+
+    async def _run(
+        self,
+        chat_service,
+        topic_id: uuid.UUID,
+        turn_id: uuid.UUID,
+        *,
+        author: str,
+        content: str,
+        summon: bool,
+        reply_to: str | None = None,
+        attachments: list[dict] | None = None,
+        is_resume: bool = False,
+        resume_reason: str | None = None,
+        nudge_event: str | None = None,
+        nudge_meta: dict | None = None,
+        continuation_id: uuid.UUID | None = None,
+        provision_actor: Actor | None = None,
+        # Human message already persisted by ``receive_message``. Its AI work is
+        # still pending admission and may instead merge into a live turn.
+        landed_user_block_id: uuid.UUID | None = None,
+        recipient_handle: str | None = None,
+        # Pre-built frame stream (kickoff turns). None → run a converse turn.
+        frames: AsyncIterator[Frame] | None = None,
+    ) -> None:
+        channel = str(topic_id)
         # 算力闸 (spec §9.1): refuse on exhausted credits, queue when the
         # project's concurrent-turn ceiling is reached. Both states are posted
         # into the topic as platform system events, so people SEE why nothing

@@ -1337,7 +1337,7 @@ class ChatService:
     ) -> AsyncIterator[dict]:
         """Run the AI half of a human message that is already durable.
 
-        ``AgentWorkRunner.submit_message`` owns the receive-before-admission ordering;
+        ``InProcessBroker.receive_message`` owns the receive-before-admission ordering;
         this method starts only after the project gate admits the model work.
         """
         ack = await self.ack_summon(user_block_id, topic_id)
@@ -2497,8 +2497,17 @@ class ChatService:
                 raise NotFoundError("Topic not found")
             topic = place.room
             created_blocks: list[Block] = []
-            agent = await self._resolved_agent(session, topic)
-            agent_handles = await TopicMemberService(session).agent_handles(topic.id)
+            project = await ProjectRepository(session).get(topic.project_id)
+            agent = (
+                await AgentInstanceService(session).recipient_for_topic(topic, project)
+                if project is not None
+                else IMPLICIT_DEFAULT
+            )
+            agent_handles = (
+                await TopicMemberService(session).agent_handles(topic.id)
+                if "@" in content
+                else []
+            )
             recipient = {
                 "instance_id": str(agent.instance_id) if agent.instance_id else None,
                 "handle": agent.handle,
@@ -2533,7 +2542,7 @@ class ChatService:
                 # no member list), so they store the content verbatim.
                 roster = (
                     []
-                    if topic.is_private
+                    if topic.is_private or "@" not in content
                     else await ProjectRepository(session).list_members(topic.project_id)
                 )
                 # Use the same room seat and display name as the mention picker.
