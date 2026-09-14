@@ -515,3 +515,48 @@ async def test_scoped_execution_and_rc_use_platform_owned_target(
     # Changing the URL must not let the old credential reach the replacement.
     new_endpoint = f"/topics/{topic}/execution/{new_resource}"
     assert client.post(new_endpoint, headers=headers, json=payload).status_code == 409
+
+
+@pytest.mark.anyio
+async def test_scoped_execution_forwards_cli_tool_catalog(client, room, monkeypatch):
+    project, topic = room
+    async with client.test_factory() as db:
+        stored = await db.get(Topic, topic)
+        resource = stored.resource_id or topic
+        target = {
+            "kind": "device",
+            "device_id": "executor",
+            "resource_id": str(resource),
+        }
+        stored.session_placement = {
+            "device_id": "center",
+            "resource_id": str(resource),
+            "channel": "device",
+            "execution": target,
+        }
+        await db.commit()
+    catalog = {
+        "tools": [
+            {
+                "name": "cheese_status",
+                "inputSchema": {"type": "object", "properties": {}},
+            }
+        ]
+    }
+    call = AsyncMock(return_value=catalog)
+    monkeypatch.setattr("app.domain.agent.execution.call", call)
+    token = mint_scoped_token(
+        project_id=str(project), topic_id=str(topic), resource_id=str(resource)
+    )
+
+    response = client.post(
+        f"/topics/{topic}/execution/{resource}",
+        headers={"X-Cheese-Token": token},
+        json={"method": "cli", "params": {"method": "tools/list"}},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == catalog
+    call.assert_awaited_once()
+    assert call.await_args.args == (target, "cli", {"method": "tools/list"})
+    assert call.await_args.kwargs["trace_id"].startswith("execution-")
