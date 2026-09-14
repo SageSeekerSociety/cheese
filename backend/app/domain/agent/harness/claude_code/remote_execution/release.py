@@ -142,15 +142,29 @@ def stage(home, sources):
                     "^(?!mcp__native__(?:invoke|chat_send|platform_request|cheese_.*)$)",
                 )
             group["matcher"] = matcher
-    if target.get("kind") != "private":
+    if target.get("kind") != "private" and target.get("helper"):
+        managed_context_hook = {
+            "type": "command",
+            "command": target["helper"][0],
+            "args": [
+                str(helpers / "context_service.py"),
+                str(directory / "execution.json"),
+            ],
+        }
         for event in ("SessionStart", "UserPromptSubmit"):
-            settings.get("hooks", {})[event] = [
-                group
-                for group in settings.get("hooks", {}).get(event, [])
-                if not any(
-                    "context_service.py" in str(hook) for hook in group.get("hooks", [])
-                )
-            ]
+            groups = []
+            for group in settings.get("hooks", {}).get(event, []):
+                hooks = [
+                    hook
+                    for hook in group.get("hooks", [])
+                    if not all(
+                        hook.get(key) == value
+                        for key, value in managed_context_hook.items()
+                    )
+                ]
+                if hooks:
+                    groups.append({**group, "hooks": hooks})
+            settings.get("hooks", {})[event] = groups
     replace(settings_path, json.dumps(settings))
     offsets = {str(path): path.stat().st_size for path in transcripts}
     return {"changed": True, "version": version, "offsets": offsets}
@@ -228,6 +242,14 @@ def apply_forwarded_context(home, target):
     target_path = directory / "execution.json"
     current = json.loads(target_path.read_text())
     tree = target.pop("context_tree")
+    unsupported = tree.get("unsupported_imports", []) + tree.get(
+        "unsupported_paths", []
+    )
+    if unsupported:
+        raise RuntimeError(
+            "Project context leaves the forwarded project boundary: "
+            + ", ".join(unsupported)
+        )
     remote_target = {
         **current,
         **target,

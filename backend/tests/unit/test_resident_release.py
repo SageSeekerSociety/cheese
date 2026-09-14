@@ -18,7 +18,14 @@ def test_staged_release_preserves_context_and_waits_for_reload(tmp_path):
     helpers = config / "remote-execution"
     directory.mkdir(parents=True)
     helpers.mkdir()
-    (directory / "execution.json").write_text('{"token":"existing-scoped-token"}')
+    original_target = json.dumps(
+        {
+            "kind": "device",
+            "token": "existing-scoped-token",
+            "helper": [sys.executable, str(helpers / "client.py")],
+        }
+    )
+    (directory / "execution.json").write_text(original_target)
     settings = {
         "customSetting": True,
         "permissions": {"deny": ["Bash(rm *)"]},
@@ -70,9 +77,7 @@ def test_staged_release_preserves_context_and_waits_for_reload(tmp_path):
     assert (
         helpers / "release-backups" / staged["version"] / "client.py"
     ).read_text() == "old client"
-    assert (
-        directory / "execution.json"
-    ).read_text() == '{"token":"existing-scoped-token"}'
+    assert (directory / "execution.json").read_text() == original_target
     assert transcript.read_text() == history
     with transcript.open("a") as stream:
         stream.write(
@@ -93,6 +98,50 @@ def test_staged_release_preserves_context_and_waits_for_reload(tmp_path):
     old_stat = (helpers / "client.py").stat()
     assert not release.stage(str(tmp_path), sources)["changed"]
     assert (helpers / "client.py").stat().st_mtime_ns == old_stat.st_mtime_ns
+
+
+def test_staged_release_only_removes_the_managed_context_hook(tmp_path):
+    config = tmp_path / ".claude"
+    directory = config / "remote-session"
+    helpers = config / "remote-execution"
+    directory.mkdir(parents=True)
+    helpers.mkdir()
+    target_path = directory / "execution.json"
+    helper = [sys.executable, str(helpers / "client.py")]
+    target_path.write_text(json.dumps({"kind": "device", "helper": helper}))
+    managed = {
+        "type": "command",
+        "command": helper[0],
+        "args": [str(helpers / "context_service.py"), str(target_path)],
+    }
+    custom = {
+        "type": "command",
+        "command": "audit-context_service.py",
+        "args": ["custom"],
+    }
+    settings = {
+        "hooks": {
+            event: [
+                {"matcher": "startup", "hooks": [managed, custom], "once": True},
+                {"hooks": [managed]},
+            ]
+            for event in ("SessionStart", "UserPromptSubmit")
+        }
+    }
+    (config / "settings.json").write_text(json.dumps(settings))
+    sources = {
+        "client.py": "new client",
+        "executor_transport.py": "companion",
+        "proxy.js": "const target = __EXECUTION_CONFIG__;",
+    }
+
+    release.stage(str(tmp_path), sources)
+
+    current = json.loads((config / "settings.json").read_text())
+    for event in ("SessionStart", "UserPromptSubmit"):
+        assert current["hooks"][event] == [
+            {"matcher": "startup", "hooks": [custom], "once": True}
+        ]
 
 
 def test_emitted_release_runs_without_backend_imports(tmp_path):
@@ -442,3 +491,49 @@ def test_forwarded_context_replaces_mirror_files_with_links(tmp_path, monkeypatc
     )
     assert unchanged == {"changed": False}
     assert json.loads(target_path.read_text())["token"] == "rotated"
+
+
+def test_forwarded_context_rejects_unsupported_paths_before_mutation(tmp_path):
+    config = tmp_path / ".claude"
+    directory = config / "remote-session"
+    workspace = tmp_path / "workspace"
+    mirrored = workspace / "CLAUDE.md"
+    directory.mkdir(parents=True)
+    workspace.mkdir()
+    mirrored.write_text("retained mirror")
+    target_path = directory / "execution.json"
+    original_target = json.dumps(
+        {
+            "kind": "device",
+            "token": "original",
+            "central_workspace": str(workspace),
+            "central_config": str(config),
+            "helper": ["python3", "client.py"],
+            "target_file": str(target_path),
+        }
+    )
+    target_path.write_text(original_target)
+    (directory / "context-generation").write_text("old")
+    (directory / "context-tree.json").write_text('{"generation":"old"}')
+    (directory / "context-manifest.json").write_text(json.dumps(["CLAUDE.md"]))
+    tree = {
+        "generation": "new",
+        "entries": {},
+        "unsupported_imports": ["~/private.md"],
+        "unsupported_paths": ["/outside/rule.md"],
+    }
+
+    with pytest.raises(
+        RuntimeError,
+        match="Project context leaves the forwarded project boundary",
+    ):
+        release.apply_forwarded_context(
+            str(tmp_path),
+            {"kind": "device", "token": "rotated", "context_tree": tree},
+        )
+
+    assert target_path.read_text() == original_target
+    assert (directory / "context-generation").read_text() == "old"
+    assert (directory / "context-tree.json").read_text() == '{"generation":"old"}'
+    assert (directory / "context-manifest.json").exists()
+    assert mirrored.read_text() == "retained mirror"
