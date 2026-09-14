@@ -170,6 +170,15 @@ test_rollout_installs_connection_route_without_recreating_api_front() {
     rm -rf "$run_dir"
     fail "api-front config still routes execution requests through the backend"
   }
+  awk '
+    /location ~ \^\/topics\/\[\^\/\]\+\/execution\/\[\^\/\]\+\$/ { in_execution=1 }
+    in_execution && /client_max_body_size 100m;/ { large_body=1 }
+    in_execution && /^    }/ { exit !large_body }
+    END { if (!in_execution || !large_body) exit 1 }
+  ' "$run_dir/nginx.conf" || {
+    rm -rf "$run_dir"
+    fail "stable execution route rejects request bodies that the former backend route accepted"
+  }
   grep -F 'exec cheese-api-front nginx -s reload' "$docker_log" >/dev/null || {
     rm -rf "$run_dir"
     fail "api-front did not gracefully reload the connection-owner route"
