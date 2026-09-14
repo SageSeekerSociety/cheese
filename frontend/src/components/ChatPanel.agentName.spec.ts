@@ -133,18 +133,17 @@ describe('AI 说的话署谁的名', () => {
     expect(names).not.toContain('芝士')
   })
 
-  it('换完队友，名字跟着换 —— 靠的是重新拉一次名册', async () => {
+  it('loads the new room roster when navigating between topics', async () => {
     history = [aiMsg('a', '看过了')]
     const { container, rerender } = render(Panel, {
-      props: { topic: topicOf('t1'), showComposer: true, rosterRevision: 0 },
+      props: { topic: topicOf('t1'), showComposer: true },
       global: { plugins: [vuetify] },
     })
     await settle()
     expect(Array.from(container.querySelectorAll('.im-name')).map((n) => n.textContent?.trim())).toContain('芝士')
 
-    // 换人：名册那一行改名了，上面的人把计数 +1 告诉这一栏「过期了」。
     agentName = '评审'
-    await rerender({ topic: topicOf('t1'), showComposer: true, rosterRevision: 1 })
+    await rerender({ topic: topicOf('t2'), showComposer: true })
     await settle()
 
     const names = Array.from(container.querySelectorAll('.im-name')).map((n) => n.textContent?.trim())

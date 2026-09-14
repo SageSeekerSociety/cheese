@@ -146,10 +146,6 @@ const props = withDefaults(
     // 开这个话题的那一刻还有多少条没读（只数别人发的，和侧栏角标同一口径）。
     // 由 host 在 markRead 之前捕获——一旦 markRead 跑过，这个数就没了。
     unreadOnOpen?: number
-    // 换 AI 队友之后 +1。房间的名册（谁在这儿、以及那个 AI 队友现在叫什么）由
-    // 这个组件自己拉，而换队友的按钮长在话题头上——两边够不着，所以由上面的人
-    // 说一声「过期了，重拉」。
-    rosterRevision?: number
   }>(),
   {
     alwaysSummon: false,
@@ -161,7 +157,6 @@ const props = withDefaults(
     titleOverride: null,
     backLabel: null,
     unreadOnOpen: 0,
-    rosterRevision: 0,
   }
 )
 
@@ -223,7 +218,7 @@ async function loadRoster() {
   }
 }
 
-watch(() => [props.topic?.id, props.rosterRevision], loadRoster, { immediate: true })
+watch(() => props.topic?.id, loadRoster, { immediate: true })
 
 // 这个房间现在交给的是哪个 AI 队友。名册那一行说了算（后端把芝士那一行的名字
 // 解析成当前队友的名字）。界面上任何一处写死「芝士」，换完队友都不会变，看起来

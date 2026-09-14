@@ -42,7 +42,6 @@ const emit = defineEmits<{
   (e: 'toggle-focus'): void
   (e: 'open-topic', topicId: string): void
   // 这个话题换了 AI 队友。对话栏要重拉名册——它显示的 AI 名字来自那份名册。
-  (e: 'agent-swapped'): void
 }>()
 
 const { mdAndUp } = useDisplay()
@@ -132,14 +131,7 @@ watch(
 
       <!-- 群聊感 (fusion-design §3): the roster, as a normal child of this row.
            芝士也在这份名册里（带 Agent 标），换 AI 队友就在它那一行上。 -->
-      <TopicMembers
-        v-if="isWorkTopic"
-        :topic-id="topic.id"
-        :project-id="topic.project_id"
-        :project-members="members"
-        :me="me"
-        @agent-swapped="emit('agent-swapped')"
-      />
+      <TopicMembers v-if="isWorkTopic" :topic-id="topic.id" :project-members="members" :me="me" />
 
       <!-- 用量: was the 资源 drawer. -->
       <v-menu v-model="usageOpen" :close-on-content-click="false" location="bottom end">
