@@ -31,12 +31,7 @@ const loading = ref(false)
 const saving = ref(false)
 const error = ref<string | null>(null)
 const submitted = ref(false)
-const harnessItems = computed(() => fieldChoices(options.value, 'harness'))
-const modelItems = computed(() =>
-  fieldChoices(options.value, 'model').filter((item) =>
-    (item.harnesses ?? ['claude-code']).includes(draft.value.harness)
-  )
-)
+const modelItems = computed(() => fieldChoices(options.value, 'model'))
 const presetItems = computed(() => [
   { title: '自行填写', value: null },
   ...props.types.map((preset) => ({ title: preset.title || preset.name, value: preset.name })),
@@ -46,24 +41,23 @@ const handleProblem = computed(() => (isNew.value ? handleError(handle.value.tri
 
 function applyPreset(name: string | null) {
   const preset = props.types.find((item) => item.name === name)
-  const harness = preset?.harness || 'claude-code'
-  const models = fieldChoices(options.value, 'model').filter((item) =>
-    (item.harnesses ?? ['claude-code']).includes(harness)
-  )
+  const models = modelItems.value
   draft.value = {
     body: preset?.body ?? '',
     model: preset?.model || models.find((item) => item.default)?.id || models[0]?.id || '',
-    harness,
+    harness: preset?.harness || 'claude-code',
     skills: [...(preset?.skills ?? [])],
     mcp_servers: [...(preset?.mcp_servers ?? [])],
     effort: preset?.effort ?? null,
   }
+  changeModel()
 }
 
-function changeHarness() {
-  if (!modelItems.value.some((item) => item.id === draft.value.model)) {
-    draft.value.model = modelItems.value.find((item) => item.default)?.id || modelItems.value[0]?.id || ''
-  }
+function changeModel() {
+  const harnesses = modelItems.value.find((item) => item.id === draft.value.model)?.harnesses ?? [
+    'claude-code',
+  ]
+  draft.value.harness = harnesses.includes('codex') ? 'codex' : harnesses[0] || 'claude-code'
 }
 
 watch(
@@ -173,18 +167,6 @@ async function save() {
         />
         <v-textarea v-model="draft.body" autocomplete="off" label="角色设定（可留空）" rows="6" variant="outlined" />
         <v-select
-          v-if="harnessItems.length > 1"
-          v-model="draft.harness"
-          autocomplete="off"
-          :items="harnessItems"
-          item-title="label"
-          item-value="id"
-          label="运行方式"
-          variant="outlined"
-          :disabled="loading"
-          @update:model-value="changeHarness"
-        />
-        <v-select
           v-model="draft.model"
           autocomplete="off"
           :items="modelItems"
@@ -194,6 +176,7 @@ async function save() {
           variant="outlined"
           :loading="loading"
           :disabled="loading"
+          @update:model-value="changeModel"
         />
         <p v-if="!isNew" class="t-meta c-muted">修改只影响这个队友，从下一轮开始生效，已有记忆保留</p>
       </v-card-text>

@@ -94,3 +94,23 @@ def test_codex_models_require_the_matching_harness(monkeypatch):
 def test_codex_models_are_not_advertised_without_configured_supply(monkeypatch):
     monkeypatch.setattr(settings, "agent_codex_models", [])
     assert all("codex" not in item["harnesses"] for item in model_choices({}))
+
+
+@pytest.mark.parametrize("harness", ["claude-code", "codex"])
+def test_api_model_keeps_independent_harness_selection(monkeypatch, harness):
+    monkeypatch.setattr(settings, "agent_codex_models", ["deepseek-flash"])
+    config = AgentConfiguration(model="deepseek-flash", harness=harness)
+    validate_configuration(config, {})
+    assert config.harness == harness
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_subscription_alias_cannot_be_enabled_for_codex(monkeypatch, enabled):
+    monkeypatch.setattr(settings, "subscription_enabled", enabled)
+    monkeypatch.setattr(settings, "agent_codex_models", ["sonnet"])
+    with pytest.raises(ValidationError):
+        validate_configuration(AgentConfiguration(model="sonnet", harness="codex"), {})
+    if enabled:
+        validate_configuration(AgentConfiguration(model="sonnet"), {})
+    else:
+        assert "sonnet" not in {item["id"] for item in model_choices({})}
