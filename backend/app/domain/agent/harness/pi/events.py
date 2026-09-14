@@ -62,6 +62,21 @@ class Assembler:
             + float((usage.get("cost") or {}).get("total", 0.0)),
         )
 
+    def absorb(self, entry: dict) -> None:
+        """Count an entry towards the turn without reporting it again.
+
+        A pass that landed half a turn leaves the rest for the next one, which
+        starts with an empty total. Replaying the part already landed is how the
+        total resumes — the events are not re-emitted, only the arithmetic.
+        """
+        message = entry.get("message") or {}
+        if entry.get("type") != "message":
+            return
+        if message.get("role") == "user":
+            self.spent = AgentUsage()
+        elif message.get("role") == "assistant":
+            self._accumulate(message)
+
     def accept(self, entry: dict) -> list[AgentEvent]:
         if entry.get("type") != "message":
             return []
