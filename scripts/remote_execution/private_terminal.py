@@ -341,6 +341,26 @@ def main():
         )
     finally:
         subprocess.run(tmux + ["kill-server"], capture_output=True)
+        unmount = shutil.which("fusermount") or shutil.which("fusermount3")
+        if room and unmount:
+            for mountpoint in (
+                folder / "central/forwarded-project",
+                room.home / ".claude/remote-session/forwarded-project",
+            ):
+                if os.path.ismount(mountpoint):
+                    subprocess.run(
+                        [unmount, "-u", str(mountpoint)],
+                        capture_output=True,
+                        timeout=10,
+                    )
+                    if os.path.ismount(mountpoint):
+                        subprocess.run(
+                            [unmount, "-uz", str(mountpoint)],
+                            capture_output=True,
+                            check=True,
+                            timeout=10,
+                        )
+                    assert not os.path.ismount(mountpoint), mountpoint
         server.shutdown()
         server.server_close()
         if room:
