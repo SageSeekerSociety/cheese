@@ -45,6 +45,11 @@ owner_post() {
   printf 'silent\nshow-error\nfail\nmax-time = 3\nrequest = POST\nheader = "X-Device-Connection-Secret: %s"\nurl = "%s%s"\n' \
     "$owner_secret" "$owner_url" "$path" | curl --config -
 }
+owner_status() {
+  local path="$1"
+  printf 'silent\nshow-error\nmax-time = 3\nrequest = POST\noutput = /dev/null\nwrite-out = %%{http_code}\nheader = "X-Device-Connection-Secret: %s"\nurl = "%s%s"\n' \
+    "$owner_secret" "$owner_url" "$path" | curl --config -
+}
 drained=false
 resume_owner() {
   [ "$drained" = true ] || return 0
@@ -57,11 +62,25 @@ if [ "${DEPLOY_APP_IMAGE_SOURCE:-registry}" = registry ]; then
 else
   docker image inspect "$DEVICE_CONNECTION_IMAGE" >/dev/null
 fi
-owner_post /internal/device-connection/release-drain >/dev/null || {
-  echo "device connection owner has active executor calls; release stopped" >&2
-  exit 1
-}
-drained=true
+drain_attempts=240
+drain_interval=0.25
+for attempt in $(seq 1 "$drain_attempts"); do
+  status="$(owner_status /internal/device-connection/release-drain)" || {
+    echo "device connection owner drain request failed" >&2
+    exit 1
+  }
+  case "$status" in
+    200) drained=true; break ;;
+    409)
+      if [ "$attempt" -eq "$drain_attempts" ]; then
+        echo "device connection owner remained busy; release stopped" >&2
+        exit 1
+      fi
+      sleep "$drain_interval"
+      ;;
+    *) echo "device connection owner drain returned HTTP $status" >&2; exit 1 ;;
+  esac
+done
 docker compose "${compose_args[@]}" -p "$PROJECT" up -d --no-deps --force-recreate device-connection
 
 for _ in $(seq 1 30); do
