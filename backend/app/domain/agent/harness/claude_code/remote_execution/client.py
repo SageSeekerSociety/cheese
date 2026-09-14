@@ -644,7 +644,12 @@ def transport(config, target_path):
                     "serverInfo": {"name": "cheese-native-execution", "version": "1"},
                 }
             elif method == "tools/list":
-                cli_tools = client.call("cli", {"method": "tools/list"})["tools"]
+                capabilities = client.call("ping", {}).get("capabilities", [])
+                cli_tools = (
+                    client.call("cli", {"method": "tools/list"})["tools"]
+                    if "cli_worker" in capabilities
+                    else []
+                )
                 value = {
                     "tools": [
                         {

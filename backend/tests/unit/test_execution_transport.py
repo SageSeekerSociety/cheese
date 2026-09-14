@@ -292,6 +292,7 @@ def test_platform_mcp_posts_literal_json_without_executor_invocation(central_tra
         for t in process.call("tools/list", {})["tools"]
         if t["name"] == "platform_request"
     )
+    discovery_clients = len(clients)
     assert set(tool["inputSchema"]["required"]) == {"method", "path"}
     body = {"title": "中文\n$(touch escaped); `false`", "values": [1, False, None]}
     for index in range(2):
@@ -311,7 +312,8 @@ def test_platform_mcp_posts_literal_json_without_executor_invocation(central_tra
         outcome = json.loads(result["content"][0]["text"])
         assert json.loads(outcome["result"]["stdout"]) == {"data": body}
     assert process.platform_calls == [body, body]
-    assert len(clients) == 3 and clients[1] == clients[2]
+    assert len(clients) == discovery_clients + 2
+    assert clients[-2] == clients[-1]
     assert not (work / "escaped").exists()
 
 
@@ -667,6 +669,7 @@ def test_structured_chat_publishes_literal_content_without_executor(central_tran
     content = "hello 'world'\n$(touch forbidden); --literal"
     arguments = {"content": content, "id": "typed-publication", "session_id": "fixture"}
     tools = process.call("tools/list", {})["tools"]
+    discovery_clients = len(clients)
     assert any(tool["name"] == "chat_send" for tool in tools)
     for _ in range(2):
         result = process.call(
@@ -675,7 +678,8 @@ def test_structured_chat_publishes_literal_content_without_executor(central_tran
         value = json.loads(result["content"][0]["text"])["result"]
         assert json.loads(value["stdout"])["content"] == content
     assert process.publications[0] == process.publications[1]
-    assert clients[1] == clients[2]
+    assert len(clients) == discovery_clients + 2
+    assert clients[-2] == clients[-1]
     assert not (work / "forbidden").exists()
 
 
