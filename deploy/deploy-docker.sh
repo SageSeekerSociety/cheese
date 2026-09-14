@@ -627,6 +627,10 @@ rollout_frontend() {
   log "frontend rollout complete"
 }
 
+# First installation must use the backend image this deploy just pulled or
+# verified. Once running, ensure_device_connection_owner deliberately leaves it
+# untouched until the separate owner release operation.
+export DEVICE_CONNECTION_IMAGE="${DEVICE_CONNECTION_IMAGE:-${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:$SHA}}"
 ensure_device_connection_owner
 reload_api_front_routes
 

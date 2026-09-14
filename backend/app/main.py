@@ -73,8 +73,10 @@ async def lifespan(_: FastAPI):
 
     hub_runtime: Any = device_hub
     if hasattr(hub_runtime, "start"):
+        from app.api.routes.connector import recover_business_state
+
         await hub_runtime.start()
-        hub_runtime.set_online_callback(get_chat_service().recover_sessions)
+        hub_runtime.set_online_callback(recover_business_state)
         configure_subscription_cleanup(hub_runtime)
     from app.domain.scheduler.service import SchedulerService
 

@@ -11,6 +11,10 @@ if [ -n "${APP_TIER_DOCKER_LOG:-}" ]; then
       "${BACKEND_IMAGE:-}" "${FRONTEND_IMAGE:-}" "${IMAGE_TAG:-}" \
       >> "$APP_TIER_DOCKER_LOG"
   fi
+  if [ "${1:-}" = compose ] && [[ "$*" == *" up -d --no-deps device-connection"* ]]; then
+    printf 'owner-up-env DEVICE_CONNECTION_IMAGE=%s\n' \
+      "${DEVICE_CONNECTION_IMAGE:-}" >> "$APP_TIER_DOCKER_LOG"
+  fi
 fi
 if [ -n "${APP_TIER_DOCKER_FAIL_MATCH:-}" ] && [[ "$*" == *"$APP_TIER_DOCKER_FAIL_MATCH"* ]]; then
   exit 1

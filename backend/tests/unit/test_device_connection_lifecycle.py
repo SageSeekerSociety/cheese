@@ -198,6 +198,50 @@ async def test_new_backend_restores_screens_and_observes_later_connections(
 
 
 @pytest.mark.anyio
+async def test_remote_online_callback_runs_full_business_recovery(monkeypatch) -> None:
+    from app.api.routes.connector import recover_business_state
+
+    monkeypatch.setattr(settings, "device_connection_secret", "test-owner-secret")
+    device_hub._devices.clear()
+    order: list[str] = []
+    recovered = asyncio.Event()
+
+    class Chat:
+        async def recover_sessions(self, device_id: str) -> int:
+            order.append(f"recover:{device_id}")
+            return 0
+
+    class Wakeup:
+        async def wake_device(self, device_id: str) -> None:
+            order.append(f"wake:{device_id}")
+            recovered.set()
+
+    def spawn(coro, *, name: str):
+        order.append(name)
+        coro.close()
+
+    monkeypatch.setattr("app.api.deps.get_chat_service", lambda: Chat())
+    monkeypatch.setattr("app.api.deps.get_cloud_wakeup", lambda: Wakeup())
+    monkeypatch.setattr("app.core.background.spawn", spawn)
+    transport = httpx.ASGITransport(app=device_connection_app.app)
+    backend = RemoteDeviceHub("http://owner", "test-owner-secret", transport=transport)
+    backend.set_online_callback(recover_business_state)
+    await backend.start()
+    connector = ExecutorTransport()
+    await device_hub.attach_device("new-cloud-machine", connector)
+    await connector.sent.get()
+    await backend.refresh()
+    await asyncio.wait_for(recovered.wait(), 1)
+    assert order == [
+        "recover:new-cloud-machine",
+        "cleanup device reconnect",
+        "wake:new-cloud-machine",
+    ]
+    await backend.close()
+    await device_hub.detach_device("new-cloud-machine", connector)
+
+
+@pytest.mark.anyio
 async def test_backend_drops_subscriptions_from_owner_snapshot_changes(
     monkeypatch,
 ) -> None:
