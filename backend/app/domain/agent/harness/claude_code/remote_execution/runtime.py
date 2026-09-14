@@ -918,6 +918,10 @@ class Executor:
             root / ".claude/rules",
         ):
             include(path, imports=True)
+        for name in ("CLAUDE.md", "CLAUDE.local.md"):
+            for path in root.rglob(name):
+                if ".git" not in path.relative_to(root).parts:
+                    include(path, imports=True)
         include(root / ".claude/skills")
 
         entries = {}
@@ -996,6 +1000,7 @@ class Executor:
             info = {
                 **self.dispatch("configure", {"env": config["env"]}),
                 "mcp_servers": list(config["mcp_servers"]),
+                "context_tree": self.context_fs({"operation": "tree"}),
             }
             if payload.get("environment"):
                 runner = runpy.run_path(

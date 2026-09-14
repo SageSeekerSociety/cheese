@@ -99,11 +99,7 @@ dc() {
 log() { echo "[deploy-docker $(date '+%H:%M:%S')] $*"; }
 fail() { echo "[deploy-docker $(date '+%H:%M:%S')] ERROR: $*" >&2; exit 1; }
 
-# A central Claude Code session uses FUSE only when its project executor is a
-# different machine. /dev/fuse is the host's declaration that this box can be
-# such a center; install the matching userspace library during the normal deploy
-# so resident sessions never install packages on demand.
-if [ -r /dev/fuse ] && [ -w /dev/fuse ] && ! command -v fusermount >/dev/null; then
+if [ "${CHEESE_CENTRAL_SESSION_HOST:-}" = "1" ] && ! command -v fusermount >/dev/null; then
   log "installing central-session FUSE runtime"
   sudo apt-get update -qq
   sudo apt-get install -y -qq fuse

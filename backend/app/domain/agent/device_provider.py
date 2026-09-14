@@ -876,32 +876,12 @@ class DeviceChannel(Channel):
         )
 
     async def _refresh_forwarded_context(
-        self, screen: HubScreen, home_dir: str
+        self, screen: HubScreen, home_dir: str, target: dict
     ) -> None:
-        helpers = f"{home_dir}/.claude/remote-execution"
-        target = f"{home_dir}/.claude/remote-session/execution.json"
-
-        async def execute(function, *args):
-            result = await self._hub.exec(
-                screen.device_id,
-                ["python3", "-"],
-                stdin=resident_release.script(function, *args),
-                timeout=40,
-            )
-            if result.get("exit") != 0:
-                raise ScreenSetupError(
-                    f"Forwarded context {function} failed: {result.get('stderr')}"
-                )
-            return json.loads(result["stdout"])
-
-        offsets = await execute("transcript_offsets", home_dir)
         result = await self._hub.exec(
             screen.device_id,
-            [
-                "sh",
-                "-c",
-                f'python3 "{helpers}/client.py" context-status "{target}"',
-            ],
+            ["python3", "-"],
+            stdin=resident_release.script("apply_forwarded_context", home_dir, target),
             timeout=40,
         )
         if result.get("exit") != 0:
@@ -912,21 +892,21 @@ class DeviceChannel(Channel):
         if not status.get("changed"):
             return
         await self.send_prompt(screen, "/reload-skills")
-        await execute("wait_skills_reloaded", offsets)
-
-    async def _forwarded_context_ready(self, screen: HubScreen, home_dir: str) -> bool:
         result = await self._hub.exec(
             screen.device_id,
             ["python3", "-"],
-            stdin=resident_release.script("forwarded_context_ready", home_dir),
+            stdin=resident_release.script(
+                "wait_skills_reloaded",
+                status["offsets"],
+                home_dir,
+                target["context_tree"]["generation"],
+            ),
             timeout=40,
         )
         if result.get("exit") != 0:
             raise ScreenSetupError(
-                "Forwarded context readiness check failed: "
-                + str(result.get("stderr") or "")
+                "Forwarded skill reload failed: " + str(result.get("stderr") or "")
             )
-        return bool(json.loads(result["stdout"]))
 
     def _link_failure(
         self, device_id: str, *, step: str, waited_s: float, offline: bool
@@ -1016,7 +996,12 @@ class DeviceChannel(Channel):
                 return existing
         configuration = (env or {}).get("CHEESE_AGENT_CONFIG", "")
         if execution_target:
-            configuration += json.dumps(execution_target, sort_keys=True)
+            stable_target = {
+                name: value
+                for name, value in execution_target.items()
+                if name != "context_tree"
+            }
+            configuration += json.dumps(stable_target, sort_keys=True)
         if (
             existing is not None
             and configuration
@@ -1233,12 +1218,16 @@ class DeviceChannel(Channel):
         mark("device_checks_complete")
         if existing is not None:
             if release_state is not None:
-                if not await self._forwarded_context_ready(existing, home_dir):
-                    await self._hub.close_screen(existing.device_id, existing.sid)
-                    existing = None
-            if existing is not None and release_state is not None:
+                assert execution_target is not None
                 await self._refresh_resident(existing, home_dir, release_state)
-                await self._refresh_forwarded_context(existing, home_dir)
+                previous_tree = (existing.execution_target or {}).get(
+                    "context_tree", {}
+                )
+                current_tree = execution_target.get("context_tree", {})
+                if previous_tree.get("generation") != current_tree.get("generation"):
+                    await self._refresh_forwarded_context(
+                        existing, home_dir, execution_target
+                    )
         if existing is not None:
             # A reassert keeps the CURRENTLY-RUNNING `claude`, which still holds the
             # credential it was born with — so the recorded birth expiry must NOT be

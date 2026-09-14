@@ -35,7 +35,7 @@ class ForwardedProject:
     def _name(path):
         return path.lstrip("/")
 
-    def getattr(self, path):
+    def getattr(self, path, handle=None):
         self.refresh()
         name = self._name(path)
         if not name or name == ".git":
@@ -66,7 +66,7 @@ class ForwardedProject:
             "st_atime": entry["mtime_ns"] / 1_000_000_000,
         }
 
-    def readdir(self, path):
+    def readdir(self, path, handle=None):
         self.refresh()
         parent = self._name(path)
         prefix = parent + "/" if parent else ""
@@ -79,7 +79,7 @@ class ForwardedProject:
             children.add(".git")
         return [".", "..", *sorted(children)]
 
-    def read(self, path, size, offset):
+    def read(self, path, size, offset, handle=None):
         name = self._name(path)
         entry = self.entries.get(name)
         if entry is None or entry["kind"] != "file":
@@ -156,7 +156,7 @@ def mount(target_path, mountpoint):
             return json.loads(tree_path.read_text())
         return client.call(method, params)
 
-    class FuseProject(Operations, ForwardedProject):
+    class FuseProject(ForwardedProject, Operations):
         def __init__(self, call):
             ForwardedProject.__init__(
                 self,
@@ -167,7 +167,17 @@ def mount(target_path, mountpoint):
 
     view = FuseProject(call)
     view.refresh()
-    FUSE(view, mountpoint, foreground=True, ro=True, nothreads=False)
+    FUSE(
+        view,
+        mountpoint,
+        foreground=True,
+        ro=True,
+        nothreads=False,
+        direct_io=True,
+        attr_timeout=0,
+        entry_timeout=0,
+        negative_timeout=0,
+    )
 
 
 if __name__ == "__main__":

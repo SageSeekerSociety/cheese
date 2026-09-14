@@ -610,6 +610,8 @@ class RemoteExecutionTests(unittest.TestCase):
         (self.workspace / "docs").mkdir()
         (self.workspace / "docs/more.md").write_text("imported @nested.md")
         (self.workspace / "docs/nested.md").write_text("nested import")
+        (self.workspace / "backend").mkdir()
+        (self.workspace / "backend/CLAUDE.md").write_text("nested instructions")
         skill = self.workspace / ".claude/skills/example"
         skill.mkdir(parents=True)
         (skill / "SKILL.md").write_text("skill body")
@@ -623,6 +625,7 @@ class RemoteExecutionTests(unittest.TestCase):
         self.assertIn("CLAUDE.md", tree["entries"])
         self.assertIn("docs/more.md", tree["entries"])
         self.assertIn("docs/nested.md", tree["entries"])
+        self.assertIn("backend/CLAUDE.md", tree["entries"])
         self.assertIn(".claude/skills/example/support.bin", tree["entries"])
         self.assertEqual(
             tree["entries"][".claude/skills/example/support-link"]["kind"],
@@ -650,8 +653,11 @@ class RemoteExecutionTests(unittest.TestCase):
         self.assertNotEqual(changed["generation"], tree["generation"])
 
     def test_context_fs_reports_imports_outside_project_boundary(self):
+        absolute_project_import = str(self.workspace / "inside.md")
+        (self.workspace / "inside.md").write_text("inside")
         (self.workspace / "CLAUDE.md").write_text(
-            "@/etc/hosts @../../outside.md @~/.claude/machine.md"
+            f"@/etc/hosts @../../outside.md @~/.claude/machine.md "
+            f"@{absolute_project_import}"
         )
         tree = runtime.request(self.state, "context_fs", {"operation": "tree"})
         self.assertEqual(
@@ -660,6 +666,7 @@ class RemoteExecutionTests(unittest.TestCase):
                 [
                     "../../outside.md",
                     "/etc/hosts",
+                    absolute_project_import.split()[0],
                     str(Path.home() / ".claude/machine.md"),
                 ]
             ),

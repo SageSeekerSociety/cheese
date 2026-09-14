@@ -154,7 +154,7 @@ def test_emitted_helpers_publish_without_the_backend_package(
     end = launcher.index(
         'EXECUTOR_CLIENT="$HOME/.claude/remote-execution/client.py"', start
     )
-    subprocess.run(["sh", "-c", launcher[start:end]], check=True)
+    subprocess.run(["sh"], input=launcher[start:end], text=True, check=True)
     runner = tmp_path / "standalone.py"
     runner.write_text(
         "import json, os, runpy, subprocess, sys\n"

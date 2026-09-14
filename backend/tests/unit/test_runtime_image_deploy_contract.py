@@ -42,5 +42,6 @@ def test_gateway_healthcheck_only_uses_tools_in_the_gateway_image():
 
 def test_center_host_fuse_runtime_is_installed_by_normal_deploy():
     deploy = (ROOT / "deploy/deploy-docker.sh").read_text()
-    assert "[ -r /dev/fuse ] && [ -w /dev/fuse ]" in deploy
+    assert 'CHEESE_CENTRAL_SESSION_HOST:-}" = "1"' in deploy
     assert "sudo apt-get install -y -qq fuse" in deploy
+    assert "/dev/fuse" not in deploy

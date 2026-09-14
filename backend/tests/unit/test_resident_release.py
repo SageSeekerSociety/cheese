@@ -268,20 +268,15 @@ async def test_forwarded_context_reloads_skills_only_for_a_new_generation(
 
     class Hub:
         async def exec(self, device, command, *, stdin=None, timeout):
-            if command[0] == "sh":
-                return {"exit": 0, "stdout": json.dumps({"changed": changed})}
-            result = subprocess.run(
-                [sys.executable, "-I", "-"],
-                input=stdin,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
-            return {
-                "exit": result.returncode,
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-            }
+            if stdin == "apply_forwarded_context":
+                return {
+                    "exit": 0,
+                    "stdout": json.dumps(
+                        {"changed": changed, **({"offsets": {}} if changed else {})}
+                    ),
+                }
+            assert stdin == "wait_skills_reloaded"
+            return {"exit": 0, "stdout": "true"}
 
     async def send_prompt(screen, prompt):
         prompts.append(prompt)
@@ -302,27 +297,117 @@ async def test_forwarded_context_reloads_skills_only_for_a_new_generation(
 
     channel = object.__new__(DeviceChannel)
     channel._hub = Hub()
+    monkeypatch.setattr(release, "script", lambda function, *args: function)
     monkeypatch.setattr(channel, "send_prompt", send_prompt)
     screen = HubScreen("screen", "device", [], "token", 1, "agent")
-    await channel._refresh_forwarded_context(screen, str(tmp_path))
+    await channel._refresh_forwarded_context(
+        screen,
+        str(tmp_path),
+        {"context_tree": {"generation": "new", "entries": {}}},
+    )
     assert prompts == (["/reload-skills"] if changed else [])
 
 
-def test_forwarded_context_readiness_requires_the_project_mount(tmp_path, monkeypatch):
-    directory = tmp_path / ".claude/remote-session"
-    directory.mkdir(parents=True)
-    workspace = directory / "forwarded-project"
-    workspace.mkdir()
-    target = directory / "execution.json"
-    target.write_text(
-        json.dumps({"kind": "device", "central_workspace": str(workspace)})
-    )
-    monkeypatch.setattr(release.os.path, "ismount", lambda path: path == workspace)
-    assert release.forwarded_context_ready(str(tmp_path))
-
-    target.write_text(
+def test_forwarded_context_replaces_mirror_files_with_links(tmp_path, monkeypatch):
+    config = tmp_path / ".claude"
+    directory = config / "remote-session"
+    helpers = config / "remote-execution"
+    workspace = tmp_path / "old-workspace"
+    hidden = directory / "forwarded-project"
+    skill = workspace / ".claude/skills/check/SKILL.md"
+    remote_skill = hidden / ".claude/skills/check/SKILL.md"
+    skill.parent.mkdir(parents=True)
+    remote_skill.parent.mkdir(parents=True)
+    helpers.mkdir(parents=True)
+    (workspace / "CLAUDE.md").write_text("mirrored body")
+    skill.write_text("mirrored skill")
+    (hidden / "CLAUDE.md").write_text("forwarded body")
+    remote_skill.write_text("forwarded skill")
+    target_path = directory / "execution.json"
+    target_path.write_text(
         json.dumps(
-            {"kind": "device", "central_workspace": str(directory / "workspace")}
+            {
+                "kind": "device",
+                "central_workspace": str(workspace),
+                "central_config": str(config),
+                "helper": ["python3", "client.py"],
+                "target_file": str(target_path),
+            }
         )
     )
-    assert not release.forwarded_context_ready(str(tmp_path))
+    (directory / "context-manifest.json").write_text(
+        json.dumps(["CLAUDE.md", ".claude/skills/check/SKILL.md"])
+    )
+    tree = {
+        "generation": "new",
+        "entries": {
+            "CLAUDE.md": {
+                "kind": "file",
+                "mode": 0o444,
+                "mtime_ns": 1,
+                "size": 14,
+                "nlink": 1,
+            },
+            ".claude": {
+                "kind": "directory",
+                "mode": 0o555,
+                "mtime_ns": 1,
+                "size": 0,
+                "nlink": 2,
+            },
+            ".claude/skills": {
+                "kind": "directory",
+                "mode": 0o555,
+                "mtime_ns": 1,
+                "size": 0,
+                "nlink": 2,
+            },
+            ".claude/skills/check": {
+                "kind": "directory",
+                "mode": 0o555,
+                "mtime_ns": 1,
+                "size": 0,
+                "nlink": 2,
+            },
+            ".claude/skills/check/SKILL.md": {
+                "kind": "file",
+                "mode": 0o444,
+                "mtime_ns": 1,
+                "size": 15,
+                "nlink": 1,
+            },
+        },
+    }
+    monkeypatch.setattr(release.os.path, "ismount", lambda path: path == hidden)
+    result = release.apply_forwarded_context(
+        str(tmp_path), {"kind": "device", "context_tree": tree}
+    )
+    assert result["changed"]
+    assert (workspace / "CLAUDE.md").is_symlink()
+    assert (workspace / "CLAUDE.md").read_text() == "forwarded body"
+    assert (workspace / ".claude/skills").is_symlink()
+    assert (
+        workspace / ".claude/skills/check/SKILL.md"
+    ).read_text() == "forwarded skill"
+    assert not (directory / "context-manifest.json").exists()
+    backup = helpers / "release-backups/forwarded-context/legacy/context-manifest.json"
+    assert json.loads(backup.read_text()) == [
+        "CLAUDE.md",
+        ".claude/skills/check/SKILL.md",
+    ]
+    files_backup = backup.parent / "files"
+    assert (files_backup / "CLAUDE.md").read_text() == "mirrored body"
+    assert (
+        files_backup / ".claude/skills/check/SKILL.md"
+    ).read_text() == "mirrored skill"
+    retry = release.apply_forwarded_context(
+        str(tmp_path), {"kind": "device", "context_tree": tree}
+    )
+    assert retry["changed"]
+    (directory / "context-generation").write_text("new")
+    unchanged = release.apply_forwarded_context(
+        str(tmp_path),
+        {"kind": "device", "token": "rotated", "context_tree": tree},
+    )
+    assert unchanged == {"changed": False}
+    assert json.loads(target_path.read_text())["token"] == "rotated"

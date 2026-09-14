@@ -113,11 +113,12 @@ def prepare(
         central_hooks=(base_settings or {}).get("hooks", {}),
         target_file=str(directory / "execution.json"),
     )
+    context_tree = target.pop("context_tree", None)
     target_path = directory / "execution.json"
     target_path.write_text(json.dumps(target))
     target_path.chmod(0o600)
     if forwarded:
-        sync_context(target_path)
+        sync_context(target_path, context_tree)
     if forwarded and workspace_override:
         previous_workspace = Path(workspace_override)
         previous_manifest = directory / "context-manifest.json"
@@ -196,24 +197,27 @@ def prepare(
             "hooks": [{"type": "command", "command": guard}],
         },
     )
-    for event in ("SessionStart", "UserPromptSubmit"):
-        hooks.setdefault(event, []).insert(
-            0,
-            {
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": helper[0],
-                        "args": [
-                            str(
-                                Path(__file__).with_name("context_service.py").resolve()
-                            ),
-                            str(target_path),
-                        ],
-                    }
-                ]
-            },
-        )
+    if not forwarded:
+        for event in ("SessionStart", "UserPromptSubmit"):
+            hooks.setdefault(event, []).insert(
+                0,
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": helper[0],
+                            "args": [
+                                str(
+                                    Path(__file__)
+                                    .with_name("context_service.py")
+                                    .resolve()
+                                ),
+                                str(target_path),
+                            ],
+                        }
+                    ]
+                },
+            )
     if target.get("kind") == "device":
         hooks.setdefault("Stop", []).insert(
             0,
@@ -341,13 +345,15 @@ def prepare(
     return launch
 
 
-def sync_context(target_path):
+def sync_context(target_path, supplied_tree=None):
     import base64
     import hashlib
 
     target = json.loads(Path(target_path).read_text())
     if target.get("kind") != "private":
-        tree = RemoteClient(target).call("context_fs", {"operation": "tree"})
+        tree = supplied_tree or RemoteClient(target).call(
+            "context_fs", {"operation": "tree"}
+        )
         unsupported = tree.get("unsupported_imports", []) + tree.get(
             "unsupported_paths", []
         )
@@ -945,7 +951,6 @@ def main():
             "bridge",
             "guard",
             "context",
-            "context-status",
             "control",
             "shell",
             "bootstrap",
@@ -1030,11 +1035,6 @@ def main():
         )
     elif args.mode == "context":
         sync_context(args.config)
-    elif args.mode == "context-status":
-        from context_service import call as call_context
-
-        result = call_context(args.config, return_value=True)
-        print(json.dumps(result if result is not False else sync_context(args.config)))
     elif args.mode == "control":
         print(json.dumps(RemoteClient(config).control(json.load(sys.stdin))))
     elif args.mode == "prepare":
