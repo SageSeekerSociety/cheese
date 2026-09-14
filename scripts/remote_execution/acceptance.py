@@ -173,6 +173,9 @@ def case(folder, options):
         executor, target = setup(
             folder, options, f"http://127.0.0.1:{server.server_port}"
         )
+        center = folder / "central/forwarded-project"
+        center.mkdir(parents=True)
+        center_fd = os.open(center, os.O_RDONLY | os.O_DIRECTORY)
         launch = client.prepare(
             folder / "central",
             target,
@@ -192,6 +195,8 @@ def case(folder, options):
         )
         execution_file = folder / "central/execution.json"
         if options.launcher == "device":
+            os.close(center_fd)
+            center_fd = None
             center = (
                 folder
                 / "device-home/.claude/remote-session/forwarded-project"
@@ -203,8 +208,6 @@ def case(folder, options):
                 folder / "device-home/.claude/remote-session/execution.json"
             )
         center = Path(launch["cwd"])
-        if center_fd is None:
-            (center / "target.txt").write_text("CENTER_SENTINEL\n")
         actions = [
             {"name": "Read", "input": {"file_path": str(center / "target.txt")}},
             {
@@ -455,19 +458,15 @@ def case(folder, options):
         terminal = run(tmux + ["capture-pane", "-p", "-t", "agent", "-S", "-300"])
         (folder / "terminal.txt").write_text(terminal)
         assert len(server.state["requests"]) == len(actions) + 1, terminal
-        if center_fd is None:
-            assert (center / "target.txt").read_text() == "CENTER_SENTINEL\n"
-            assert not (center / "new.txt").exists()
-        else:
-            for name in ("target.txt", "new.txt"):
-                try:
-                    descriptor = os.open(name, os.O_RDONLY, dir_fd=center_fd)
-                except FileNotFoundError:
-                    continue
-                os.close(descriptor)
-                raise AssertionError(
-                    f"Remote file tool modified the central workspace: {name}"
-                )
+        for name in ("target.txt", "new.txt"):
+            try:
+                descriptor = os.open(name, os.O_RDONLY, dir_fd=center_fd)
+            except FileNotFoundError:
+                continue
+            os.close(descriptor)
+            raise AssertionError(
+                f"Remote file tool modified the central workspace: {name}"
+            )
         results = tool_results(server.state["requests"][-1])
         if options.mode == "normal":
             assert not [r for r in results if r.get("is_error")], results
