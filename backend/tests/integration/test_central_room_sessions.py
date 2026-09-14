@@ -2,8 +2,11 @@
 
 import asyncio
 import json
+import os
+import sys
 import threading
 import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -17,6 +20,9 @@ from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_provider import DeviceChannel, EnvironmentPreparationError
 from app.domain.agent.harness import Opening, SessionRef
 from app.domain.agent.harness.channel import ScreenSetupError
+from app.domain.agent.harness.claude_code.remote_execution import (
+    client as execution_client,
+)
 from app.domain.agent.harness.claude_code.remote_execution import (
     runtime as executor_runtime,
 )
@@ -560,3 +566,92 @@ async def test_scoped_execution_forwards_cli_tool_catalog(client, room, monkeypa
     call.assert_awaited_once()
     assert call.await_args.args == (target, "cli", {"method": "tools/list"})
     assert call.await_args.kwargs["trace_id"].startswith("execution-")
+
+
+@pytest.mark.anyio
+async def test_native_tool_catalog_crosses_scoped_execution_route(
+    client, room, monkeypatch, tmp_path
+):
+    project, topic = room
+    async with client.test_factory() as db:
+        stored = await db.get(Topic, topic)
+        resource = stored.resource_id or topic
+        target = {
+            "kind": "device",
+            "device_id": "executor",
+            "resource_id": str(resource),
+        }
+        stored.session_placement = {
+            "device_id": "center",
+            "resource_id": str(resource),
+            "channel": "device",
+            "execution": target,
+        }
+        await db.commit()
+    token = mint_scoped_token(
+        project_id=str(project), topic_id=str(topic), resource_id=str(resource)
+    )
+
+    async def call(_target, method, params, **_kwargs):
+        assert _target == target
+        if method == "ping":
+            return {"capabilities": ["cli_worker"]}
+        assert method == "cli"
+        assert params == {"method": "tools/list"}
+        return {
+            "tools": [
+                {
+                    "name": "cheese_status",
+                    "inputSchema": {"type": "object", "properties": {}},
+                }
+            ]
+        }
+
+    monkeypatch.setattr("app.domain.agent.execution.call", call)
+    endpoint = f"/topics/{topic}/execution/{resource}"
+
+    class RouteBridge(BaseHTTPRequestHandler):
+        def do_POST(self):
+            payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            response = client.post(
+                endpoint, headers={"X-Cheese-Token": token}, json=payload
+            )
+            body = response.content
+            self.send_response(response.status_code)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), RouteBridge)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    config = tmp_path / "execution.json"
+    config.write_text(
+        json.dumps(
+            {
+                "kind": "device",
+                "url": f"http://127.0.0.1:{server.server_port}{endpoint}",
+                "workspace": str(tmp_path),
+                "central_hooks": {},
+            }
+        )
+    )
+    log = (tmp_path / "native-mcp.log").open("w+")
+    process = executor_runtime.MCPProcess(
+        [sys.executable, execution_client.__file__, "transport", str(config)],
+        str(tmp_path),
+        {**os.environ, "NO_PROXY": "127.0.0.1", "CHEESE_TOKEN": token},
+        log,
+    )
+    try:
+        tools = {tool["name"] for tool in process.call("tools/list", {})["tools"]}
+        assert {"invoke", "chat_send", "platform_request", "cheese_status"} <= tools
+    finally:
+        process.close()
+        server.shutdown()
+        server.server_close()
+        thread.join()
+        log.close()

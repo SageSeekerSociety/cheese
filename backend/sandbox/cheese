@@ -57,6 +57,163 @@ TURN = os.environ.get("CHEESE_TURN", "")
 MEMORY_SCOPE = os.environ.get("CHEESE_MEMORY_SCOPE", "project")
 OWNER = os.environ.get("CHEESE_OWNER", "")
 
+DIRECT_MCP_TOOLS = frozenset(
+    {
+        "cheese_ask",
+        "cheese_bind",
+        "cheese_close_task",
+        "cheese_decision",
+        "cheese_fetch",
+        "cheese_gh_token",
+        "cheese_members",
+        "cheese_milestone",
+        "cheese_notify",
+        "cheese_recall",
+        "cheese_remember",
+        "cheese_status",
+        "cheese_tell",
+        "cheese_title",
+    }
+)
+
+
+def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
+    """Build the HTTP request shared by the CLI and native MCP transport."""
+    env = os.environ if environ is None else environ
+    topic = TOPIC if environ is None else env.get("CHEESE_TOPIC", "")
+    project = PROJECT if environ is None else env.get("CHEESE_PROJECT", "")
+    if tool in {
+        "cheese_ask",
+        "cheese_bind",
+        "cheese_close_task",
+        "cheese_decision",
+        "cheese_members",
+        "cheese_status",
+        "cheese_tell",
+        "cheese_title",
+    } and not topic:
+        raise ValueError("Missing CHEESE_TOPIC")
+    if tool in {
+        "cheese_milestone",
+        "cheese_notify",
+        "cheese_recall",
+        "cheese_remember",
+    } and not project:
+        raise ValueError("Missing CHEESE_PROJECT")
+    if tool == "cheese_bind":
+        return {
+            "method": "POST",
+            "path": f"/topics/{topic}/tasks/{args['task_id']}/bind",
+            "body": {"agent_id": args["agent_id"]},
+        }
+    if tool == "cheese_close_task":
+        body = {"conclusion": args.get("conclusion", "")}
+        if args.get("reported_by") is not None:
+            body["reporter_handle"] = args["reported_by"]
+        if args.get("contributor") is not None:
+            body["contributor_handles"] = args["contributor"]
+        return {
+            "method": "POST",
+            "path": f"/topics/{topic}/tasks/{args['task_id']}/close",
+            "body": body,
+        }
+    if tool == "cheese_decision":
+        return {
+            "method": "POST",
+            "path": f"/topics/{topic}/decision",
+            "body": {"decision": args["text"]},
+        }
+    if tool == "cheese_title":
+        path = (
+            f"/topics/{topic}/tasks/{args['task']}/title"
+            if args.get("task")
+            else f"/topics/{topic}/title"
+        )
+        return {"method": "POST", "path": path, "body": {"title": args["text"]}}
+    if tool == "cheese_fetch":
+        body = {
+            "url": args["url"],
+            "topic": topic,
+            "project": project,
+        }
+        if args.get("prompt"):
+            body["prompt"] = args["prompt"]
+        return {"method": "POST", "path": "/fetch", "body": body}
+    if tool in {"cheese_remember", "cheese_recall"}:
+        body = {
+            "content" if tool == "cheese_remember" else "query": (
+                args["fact"] if tool == "cheese_remember" else args["query"]
+            ),
+            "topic": topic,
+        }
+        if tool == "cheese_remember" and args.get("core"):
+            body["layer"] = "core"
+        memory_scope = (
+            MEMORY_SCOPE
+            if environ is None
+            else env.get("CHEESE_MEMORY_SCOPE", "project")
+        )
+        owner = OWNER if environ is None else env.get("CHEESE_OWNER", "")
+        if memory_scope == "personal" and owner:
+            body.update(scope="user", owner=owner)
+        suffix = "" if tool == "cheese_remember" else "/search"
+        return {
+            "method": "POST",
+            "path": f"/projects/{project}/memory{suffix}",
+            "body": body,
+        }
+    if tool == "cheese_ask":
+        options = [value.strip() for value in args["option"] if value.strip()]
+        if not 2 <= len(options) <= 4:
+            raise ValueError("ask requires 2-4 options")
+        return {
+            "method": "POST",
+            "path": f"/topics/{topic}/ask",
+            "body": {"question": args["question"], "options": options},
+        }
+    if tool == "cheese_notify":
+        payload = {}
+        if args.get("options"):
+            payload["options"] = [
+                value.strip() for value in args["options"].split("|") if value.strip()
+            ]
+        return {
+            "method": "POST",
+            "path": f"/projects/{project}/alerts",
+            "body": {
+                "level": args.get("level", "light"),
+                "kind": args.get("kind", "change_alert"),
+                "title": args["title"],
+                "body": args.get("body", ""),
+                "target_handle": args.get("to"),
+                "topic_id": topic or None,
+                "payload": payload,
+            },
+        }
+    if tool == "cheese_tell":
+        return {
+            "method": "POST",
+            "path": f"/topics/{topic}/tell",
+            "body": {"target": args["target"], "content": args["message"]},
+        }
+    if tool == "cheese_milestone":
+        body = {"title": args["title"]}
+        if args.get("due"):
+            due = args["due"]
+            body["due_date"] = due if "T" in due else f"{due}T00:00:00Z"
+        return {
+            "method": "POST",
+            "path": f"/projects/{project}/milestones",
+            "body": body,
+        }
+    if tool == "cheese_gh_token":
+        return {"method": "GET", "path": "/sandbox/github-token"}
+    if tool == "cheese_members":
+        return {"method": "GET", "path": f"/topics/{topic}/members"}
+    if tool == "cheese_status":
+        return {"method": "GET", "path": f"/topics/{topic}/status"}
+    raise ValueError(f"No direct platform request plan for {tool}")
+
 
 def _call(
     method: str,
@@ -102,6 +259,14 @@ def _call(
     except Exception as e:  # noqa: BLE001
         print(f"[cheese] {method} {path} 出错: {e}", file=sys.stderr)
         sys.exit(1)
+
+
+def _planned_call(tool: str, args: argparse.Namespace, *, timeout: int = 20) -> dict:
+    plan = request_plan(tool, vars(args))
+    positional = [plan["method"], plan["path"]]
+    if "body" in plan:
+        positional.append(plan["body"])
+    return _call(*positional, **({"timeout": timeout} if timeout != 20 else {}))
 
 
 def _task_root() -> Path:
@@ -1114,25 +1279,12 @@ def main() -> None:
         else:
             _sync_task(_task_id(a.task))
     elif a.cmd == "bind":
-        topic = _need("CHEESE_TOPIC", TOPIC)
-        r = _call(
-            "POST", f"/topics/{topic}/tasks/{a.task_id}/bind", {"agent_id": a.agent_id}
-        )["data"]
+        r = _planned_call("cheese_bind", a)["data"]
         print(
             f"「{r['title']}」现在归分身 {r['subagent_id']}，它干的事会记到这条活上。"
         )
     elif a.cmd == "close-task":
-        topic = _need("CHEESE_TOPIC", TOPIC)
-        body = {"conclusion": a.conclusion}
-        if a.reported_by is not None:
-            body["reporter_handle"] = a.reported_by
-        if a.contributor is not None:
-            body["contributor_handles"] = a.contributor
-        r = _call(
-            "POST",
-            f"/topics/{topic}/tasks/{a.task_id}/close",
-            body,
-        )["data"]
+        r = _planned_call("cheese_close_task", a)["data"]
         print(f"「{r['title']}」收了。结论：{(r.get('conclusion') or '（没有留话）')}")
     elif a.cmd == "lock":
         topic = _need("CHEESE_TOPIC", TOPIC)
@@ -1164,31 +1316,23 @@ def main() -> None:
         else:
             print(f"没有推送：{r.get('reason') or '没有可推的东西'}")
     elif a.cmd == "decision":
-        topic = _need("CHEESE_TOPIC", TOPIC)
-        _call("POST", f"/topics/{topic}/decision", {"decision": a.text})
+        _planned_call("cheese_decision", a)
         print("已记入决策记录。")
     elif a.cmd == "title":
-        topic = _need("CHEESE_TOPIC", TOPIC)
+        r = _planned_call("cheese_title", a).get("data") or {}
         if a.task:
             # 房间给它的活起名字。走房间的地址,因为这一轮的 token 是按房间签的,
             # 直接拿活的 id 当地址会被判成跨话题(403)。
-            r = _call(
-                "POST", f"/topics/{topic}/tasks/{a.task}/title", {"title": a.text}
-            )["data"]
             print(f"这条活现在叫「{r['title']}」。")
         else:
-            _call("POST", f"/topics/{topic}/title", {"title": a.text})
             print(f"话题标题已设为：{a.text}")
     elif a.cmd == "fetch":
         # 带上话题:沙箱 token 是带作用域的,后端要凭它确认这个凭据属于谁。
         # 不带的话每一次调用都会被判成 "Agent credential is invalid or expired"。
-        body = {"url": a.url, "topic": TOPIC, "project": PROJECT}
-        if a.prompt:
-            body["prompt"] = a.prompt
         # Long, because this is the one slow call: the platform tries a ladder
         # of strategies and the last rung renders the page in a real browser.
         # The platform bounds every rung, so this only has to outlast them.
-        data = _call("POST", "/fetch", body, timeout=240).get("data", {})
+        data = _planned_call("cheese_fetch", a, timeout=240).get("data", {})
         if not data.get("ok"):
             # 逐级说清楚怎么失败的。只说"读不到"的话,下次没人知道该改哪一级。
             print(f"[cheese] 读不到 {a.url}", file=sys.stderr)
@@ -1204,29 +1348,17 @@ def main() -> None:
         note = "答案" if data.get("distilled") else "整页"
         print(f"\n[cheese] 来源: {via}({note})", file=sys.stderr)
     elif a.cmd == "remember":
-        proj = _need("CHEESE_PROJECT", PROJECT)
         # 带上话题：后端据此认出是哪个芝士在记，存进它自己的项目记忆
         # (同一个项目里的两个芝士各记各的，跟人一样)。
-        body = {"content": a.fact, "topic": TOPIC}
-        if a.core:
-            body["layer"] = "core"
         kind = "核心记忆（每轮都在场）" if a.core else "记忆"
+        _planned_call("cheese_remember", a)
         if MEMORY_SCOPE == "personal" and OWNER:
-            body["scope"] = "user"
-            body["owner"] = OWNER
-            _call("POST", f"/projects/{proj}/memory", body)
             print(f"已记入个人{kind}。")
         else:
-            _call("POST", f"/projects/{proj}/memory", body)
             print(f"已记入项目{kind}。")
     elif a.cmd == "recall":
-        proj = _need("CHEESE_PROJECT", PROJECT)
-        body = {"query": a.query, "topic": TOPIC}
-        if MEMORY_SCOPE == "personal" and OWNER:
-            body["scope"] = "user"
-            body["owner"] = OWNER
         hits = (
-            _call("POST", f"/projects/{proj}/memory/search", body)
+            _planned_call("cheese_recall", a)
             .get("data", {})
             .get("hits", [])
         )
@@ -1245,24 +1377,11 @@ def main() -> None:
         if not 2 <= len(opts) <= 4:
             print("[cheese] ask 需要 2-4 个 --option", file=sys.stderr)
             sys.exit(2)
-        _call("POST", f"/topics/{topic}/ask", {"question": a.question, "options": opts})
+        _planned_call("cheese_ask", a)
         print(f"[cheese] 已发出选项问题（{len(opts)} 个选项）")
 
     elif a.cmd == "notify":
-        proj = _need("CHEESE_PROJECT", PROJECT)
-        payload = {}
-        if a.options:
-            payload["options"] = [o.strip() for o in a.options.split("|") if o.strip()]
-        body = {
-            "level": a.level,
-            "kind": a.kind,
-            "title": a.title,
-            "body": a.body,
-            "target_handle": a.to,
-            "topic_id": TOPIC or None,
-            "payload": payload,
-        }
-        _call("POST", f"/projects/{proj}/alerts", body)
+        _planned_call("cheese_notify", a)
         print(f"已发送通知给 {a.to or '所有人'}。")
     elif a.cmd == "ready":
         topic = _need("CHEESE_TOPIC", TOPIC)
@@ -1311,29 +1430,21 @@ def main() -> None:
     elif a.cmd == "tell":
         # URL 里的 topic 是**发方**（per-turn token 按它校验作用域）；收方在 body 里，
         # 由后端校验它确实是这个房间派出的活。
-        topic = _need("CHEESE_TOPIC", TOPIC)
-        data = _call(
-            "POST",
-            f"/topics/{topic}/tell",
-            {"target": a.target, "content": a.message},
-        ).get("data", {})
+        data = _planned_call("cheese_tell", a).get("data", {})
         where = data.get("target_title") or data.get("target_topic_id") or a.target
         print(
             f"已写在「{where}」上。**没有人被叫醒**——做这条活的分身在你自己的"
             "会话里，要它动就直接给它发消息。"
         )
     elif a.cmd == "milestone":
-        proj = _need("CHEESE_PROJECT", PROJECT)
-        body = {"title": a.title}
-        if a.due:
-            body["due_date"] = a.due if "T" in a.due else f"{a.due}T00:00:00Z"
-        _call("POST", f"/projects/{proj}/milestones", body)
+        _planned_call("cheese_milestone", a)
         print(f"已钉里程碑：{a.title}")
     elif a.cmd == "gh-token":
         # Same API surface as every other platform endpoint.
         # stdout carries ONLY the token so `GH_TOKEN=$(cheese gh-token)` works;
         # the expiry note goes to stderr.
-        req = urllib.request.Request(f"{_api_root()}/sandbox/github-token")
+        plan = request_plan("cheese_gh_token", vars(a))
+        req = urllib.request.Request(f"{_api_root()}{plan['path']}")
         if TOKEN:
             req.add_header("X-Cheese-Token", TOKEN)
         try:
@@ -1385,15 +1496,13 @@ def main() -> None:
         )
         print("\n".join(lines), file=sys.stderr)
     elif a.cmd == "members":
-        topic = _need("CHEESE_TOPIC", TOPIC)
-        d = _call("GET", f"/topics/{topic}/members").get("data", {})
+        d = _planned_call("cheese_members", a).get("data", {})
         rows = d.get("data", d) if isinstance(d, dict) else d
         for m in rows:
             h = m.get("member_handle")
             print(f"- {m.get('name')}（{m.get('role')}）→ 在消息里写 <@{h}> 点名 ta")
     elif a.cmd == "status":
-        topic = _need("CHEESE_TOPIC", TOPIC)
-        d = _call("GET", f"/topics/{topic}/status").get("data") or {}
+        d = _planned_call("cheese_status", a).get("data") or {}
         print(_format_status(d))
     elif a.cmd == "serve":
         topic = _need("CHEESE_TOPIC", TOPIC)
