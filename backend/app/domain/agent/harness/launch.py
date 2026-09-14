@@ -16,9 +16,9 @@ the adapter that happens to be the first thing to satisfy it. The whole point of
 the seam is that a transport can hold a launch without being able to read it.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 
 class ExecutorLaunch(Protocol):
@@ -73,6 +73,54 @@ class LaunchSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class MachinePlace:
+    """机器说「在哪」—— 一台设备这一侧的那一半。
+
+    Everything here is a fact about the room and the machine, never an
+    instruction about what to do with it: this room has a git remote, an
+    execution target, a CA to trust, an operator who may drive it directly. One
+    harness turns those into a settings file and a version floor; the next one
+    ignores most of them. A channel that decided which is which could only ever
+    host the harness it was written against.
+
+    ``home`` and ``workdir`` are as the SESSION sees them; ``state`` is as the
+    CONNECTOR resolves it (a literal ``$HOME/...``), because that is the string
+    the backend records and later derives a socket from.
+    """
+
+    home: str
+    workdir: str
+    state: str
+    api_base: str
+    project_id: str
+    topic_id: str
+    agent_handle: str
+    git_remote: str | None = None
+    execution_target: dict | None = None
+    remote_control: bool = False
+    ca_pem: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class MachineLaunch:
+    """跑什么 —— 平台骨架上那几段，加上只有这个 harness 自己读的 env。
+
+    The五段 are named for WHEN they run on the machine, which is the only thing
+    the platform half knows about them; ``machine_launcher`` documents each.
+    ``env`` is the harness's own: a channel merges it into the one environment
+    the session is started with, without having to read a line of it.
+    """
+
+    command: str
+    contract: str = ""
+    staging: str = ""
+    configure: str = ""
+    credentials: str = ""
+    prepare: str = ""
+    env: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
 class ScreenPlace:
     """Where a screen keeps a harness's state, as both sides of a mount see it.
 
@@ -93,23 +141,33 @@ class ScreenPlace:
     state_at: Path | None = None
 
 
-class LaunchPlan(Protocol):
+@runtime_checkable
+class MachinePlan(Protocol):
     """跑什么 —— 在任何机器说「在哪」之前。
 
     Handed to a channel in place of the loose values it used to take and turn
-    into a command itself. ``at`` is the whole of it: the channel calls it with
+    into a command itself. ``on`` is the whole of it: the channel calls it with
     the one thing it knows, and gets back a launch it never has to understand —
     which is what lets the same channel host whichever harness was asked for.
 
-    The three below are READ-ONLY, and readable at all only because a transport
-    whose launch is not a command — a remote machine built entirely out of a
-    shell script it writes — still has to put the same three things into that
-    script. Reading them is the part of this seam nobody has paid off yet, and a
-    channel that reads them can host exactly one harness. Writing them was never
-    on the table: a transport that could edit the prompt or swap the model would
-    make what ran differ from what the turn asked for, with nothing left to say
-    where the change came from.
+    The three read-only values below are readable at all only because a
+    transport whose launch is not a command still has to put the same three
+    things into the script it writes. Writing them was never on the table: a
+    transport that could edit the prompt or swap the model would make what ran
+    differ from what the turn asked for, with nothing left to say where the
+    change came from.
+
+    This is everything a MACHINE needs. What a room running on an assigned
+    executor needs on top of it is ``LaunchPlan`` below — a harness that runs
+    where the files are does not have to answer for an executor it never uses.
     """
+
+    # WHICH harness this plan is for. A channel reads it to NAME things — the
+    # directory a machine keeps this session's state in, the row that says what
+    # is running there — never to decide what to do, which is the whole point of
+    # the two methods below.
+    @property
+    def harness(self) -> str: ...
 
     @property
     def system_prompt(self) -> str: ...
@@ -119,6 +177,29 @@ class LaunchPlan(Protocol):
 
     @property
     def resume_session_id(self) -> str | None: ...
+
+    def on(self, place: MachinePlace) -> MachineLaunch:
+        """The launch, for a machine whose launch is a shell script.
+
+        A harness that has to FIND its binary and decide what resuming means
+        can only do that on the machine, so what a device gets is a script it
+        runs rather than a command we assembled."""
+        ...
+
+
+@runtime_checkable
+class LaunchPlan(MachinePlan, Protocol):
+    """跑什么 —— 加上一条只有中心那条路要走的义务。
+
+    A room whose work happens on an assigned executor needs its harness to
+    install one and to move a conversation onto it; a harness that runs where
+    the files already are has neither to offer, and saying so by not
+    implementing this is more honest than a method that raises.
+
+    ``at`` belongs to the transport that hands a container files and a command
+    rather than a script. It is the shape a harness answers when the backend
+    shares a filesystem with the screen.
+    """
 
     @property
     def execution(self) -> ExecutorLaunch: ...

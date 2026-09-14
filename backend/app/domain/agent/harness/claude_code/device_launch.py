@@ -12,8 +12,8 @@ arrive on the rendezvous socket the launcher arms. The raw screen bytes the host
 relays are for the human viewer only — never parsed.
 
 Everything here is pure (string/dict building) so it is unit-testable without a
-device. ``build_screen_launch`` returns ``(command, env)`` for
-``DeviceHub.open_screen``.
+device. ``on_machine`` answers a ``MachinePlace`` with this harness's half of a
+launch; ``machine_launcher`` owns the other half and joins the two.
 """
 
 import json
@@ -32,6 +32,7 @@ from app.domain.agent.harness.claude_code.remote_execution import (
 )
 from app.domain.agent.harness.claude_code.remote_execution import release
 from app.domain.agent.harness.claude_code.session_launch import hooks_settings
+from app.domain.agent.harness.launch import MachineLaunch, MachinePlace
 from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
 from app.domain.agent.skills import native_skill_files
 
@@ -335,17 +336,22 @@ exec cheese sync --all
 """
 
 
-def build_launch_script(
+def launch_holes(
     sync_on_stop: bool = False,
     system_prompt: str = "",
     ca_pem: str = "",
     remote_control: bool = False,
     remote_execution: bool = False,
-) -> str:
-    """The ``bash -lc`` body run as the screen's program. It reads a few env vars the
-    screen is created with: ``CHEESE_HOME`` (isolated config/home dir),
-    ``CHEESE_WORK`` (cwd), plus the hook wiring (``CHEESE_HOOK_URL``/``CHEESE_TOKEN``)
-    and ``CLAUDE_MODEL`` (optional).
+    model: str | None = None,
+    resume_session_id: str | None = None,
+    topic_id: str | None = None,
+) -> MachineLaunch:
+    """Claude Code's half of a device launch: the five holes, and its own env.
+
+    The platform half is ``machine_launcher``; nothing below belongs to it. It
+    reads a few env vars the screen is created with: ``CHEESE_HOME`` (isolated
+    config/home dir), ``CHEESE_WORK`` (cwd), plus the hook wiring
+    (``CHEESE_HOOK_URL``/``CHEESE_TOKEN``) and ``CLAUDE_MODEL`` (optional).
 
     ``system_prompt`` (the platform's assembled system prompt) is embedded in the
     script itself — written to ``$HOME/.claude/cheese-system-prompt.md`` on the
@@ -420,10 +426,37 @@ EXECUTOR_CLIENT="$HOME/.claude/remote-execution/client.py"
 EXECUTOR_TARGET="$HOME/.claude/remote-target.json"
 CLAUDE="python3 \\"$EXECUTOR_CLIENT\\" bootstrap \\"$EXECUTOR_TARGET\\" $CLAUDE"
 """
+    env: dict[str, str] = {
+        # Work is a subagent of the room's session, so these two are the shape
+        # of the room itself. Depth 1: a piece of work does not split further —
+        # its own children would be invisible to the platform (nothing binds
+        # them to a card) and unaddressable by a person. Concurrency 4: how
+        # many pieces of work a room runs at once; they share one worktree, so
+        # the ceiling is about how much simultaneous editing of one tree stays
+        # comprehensible, not about machine capacity.
+        "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "1",
+        "CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS": "4",
+    }
+    if model:
+        env["CLAUDE_MODEL"] = model
+    if resume_session_id:
+        # An OFFER, not an instruction: the launcher takes it only if the
+        # transcript is on that machine's disk (see the script). Carried on the
+        # env for the same reason the tunnel vars are — a remote launch is built
+        # entirely out of its environment, and there is no other channel into it.
+        env["CHEESE_RESUME_SESSION"] = resume_session_id
+    if topic_id:
+        # Where this screen's prompts arrive. The launcher turns these two into
+        # Claude Code's own CLAUDE_BG_* trio and mints the token; the connector
+        # reads the same two to dial. Keyed on the topic so an adopted screen
+        # and a fresh one agree on the path.
+        sock, token_file = rendezvous_paths(topic_id)
+        env[ENV_RV_SOCK] = sock
+        env[ENV_RV_TOKEN_FILE] = token_file
     # The settings.json / cheese-hook heredocs are quoted ('JSON'/'SH') so the shell
     # never expands them. ~/.claude.json is written by the shell (see below) so a
     # machine without node can still launch.
-    return machine_launcher.launch_script(
+    return MachineLaunch(
         staging="""WARM_ROOT=""
 if [ -z "${CHEESE_EXECUTION_TARGET:-}" ] && \\
    [ -f "$REAL_HOME/.cheese/native-warm/binding.json" ]; then
@@ -729,109 +762,51 @@ fi
 """,
         contract=claude_args,
         command="$CLAUDE",
+        env=env,
     )
 
 
-def build_screen_launch(
+def build_launch_script(**named) -> str:
+    """The launcher a device runs for a Claude Code session."""
+    holes = launch_holes(**named)
+    return machine_launcher.launch_script(
+        staging=holes.staging,
+        configure=holes.configure,
+        credentials=holes.credentials,
+        prepare=holes.prepare,
+        contract=holes.contract,
+        command=holes.command,
+    )
+
+
+def on_machine(
+    place: MachinePlace,
     *,
-    hook_url: str,
-    hook_token: str,
-    home_dir: str,
-    work_dir: str,
-    model: str | None = None,
-    resume_session_id: str | None = None,
-    extra_env: dict[str, str] | None = None,
-    api_base: str | None = None,
-    project_id: str | None = None,
-    topic_id: str | None = None,
-    author: str | None = None,
-    git_author: tuple[str, str] | None = None,
-    git_remote: str | None = None,
-    system_prompt: str = "",
-    ca_pem: str = "",
-    execution_target: dict | None = None,
-) -> tuple[list[str], dict[str, str]]:
-    """Assemble ``(command, env)`` for ``DeviceHub.open_screen``.
+    system_prompt: str,
+    model: str | None,
+    resume_session_id: str | None,
+) -> MachineLaunch:
+    """Claude Code, now that a machine has said where and what this room is.
 
-    ``command`` is a self-contained ``bash -lc`` launcher; ``env`` carries the hook
-    wiring + home/work dirs + model + any provider (gateway) vars, and — for a
-    screen with a topic — where its rendezvous socket lives. When
-    ``api_base`` and the ``project_id``/``topic_id`` context are given, the
-    bundled ``cheese`` CLI (accept cards / docs / decisions / memory) uses
-    its ``CHEESE_*`` env — the same actions the in-container agent has locally."""
-    script = build_launch_script(
-        sync_on_stop=bool(git_remote) and execution_target is None,
+    ``place`` states facts; what they mean is decided here. A room with a git
+    remote syncs at turn end (a Stop hook), one with an execution target ships
+    the executor client and hands ``claude`` to it, one whose operator may drive
+    it directly runs without the permission prompt, and a CA to trust is a file
+    only the script can name an absolute path for.
+    """
+    return launch_holes(
+        # A room whose work is done on an executor has nothing of its own to
+        # hand back; the executor owns the checkout.
+        sync_on_stop=bool(place.git_remote) and place.execution_target is None,
         system_prompt=system_prompt,
-        ca_pem=ca_pem,
-        remote_control=(extra_env or {}).get("CHEESE_REMOTE_CONTROL") == "1",
-        remote_execution=execution_target is not None,
+        ca_pem=place.ca_pem,
+        remote_control=place.remote_control,
+        remote_execution=place.execution_target is not None,
+        model=model,
+        resume_session_id=resume_session_id,
+        topic_id=place.topic_id,
     )
-    command = ["bash", "-lc", script]
-    env: dict[str, str] = {
-        "CHEESE_HOOK_URL": hook_url,
-        "CHEESE_TOKEN": hook_token,
-        "CHEESE_HOME": home_dir,
-        "CHEESE_WORK": work_dir,
-        # Work is a subagent of the room's session, so these two are the shape
-        # of the room itself. Depth 1: a piece of work does not split further —
-        # its own children would be invisible to the platform (nothing binds
-        # them to a card) and unaddressable by a person. Concurrency 4: how
-        # many pieces of work a room runs at once; they share one worktree, so
-        # the ceiling is about how much simultaneous editing of one tree stays
-        # comprehensible, not about machine capacity.
-        "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "1",
-        "CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS": "4",
-    }
-    if model:
-        env["CLAUDE_MODEL"] = model
-    if resume_session_id:
-        # An OFFER, not an instruction: the launcher takes it only if the
-        # transcript is on that machine's disk (see the script). Carried on the
-        # env for the same reason the tunnel vars are — a remote launch is built
-        # entirely out of `extra_env`, and there is no other channel into it.
-        env["CHEESE_RESUME_SESSION"] = resume_session_id
-    # Platform-action CLI wiring: the `cheese` script reads these (X-Cheese-Token =
-    # CHEESE_TOKEN, the SAME scoped token the hook forwarder uses).
-    if api_base:
-        env["CHEESE_API"] = api_base
-    if project_id:
-        env["CHEESE_PROJECT"] = project_id
-    if topic_id:
-        env["CHEESE_TOPIC"] = topic_id
-        # Where this screen's prompts arrive. The launcher turns these two into
-        # Claude Code's own CLAUDE_BG_* trio and mints the token; the connector
-        # reads the same two to dial. Keyed on the topic so an adopted screen
-        # and a fresh one agree on the path.
-        sock, token_file = rendezvous_paths(topic_id)
-        env[ENV_RV_SOCK] = sock
-        env[ENV_RV_TOKEN_FILE] = token_file
-    if author:
-        env["CHEESE_AUTHOR"] = author
-    if git_remote:
-        env["CHEESE_GIT_REMOTE"] = git_remote
-    if git_author:
-        # Who the turn's commits belong to (workspace/identity.py). Absent, the
-        # launcher falls back to 芝士 — the same default the in-repo snapshot
-        # path uses, so both surfaces agree.
-        env["CHEESE_GIT_AUTHOR_NAME"], env["CHEESE_GIT_AUTHOR_EMAIL"] = git_author
-        env["GIT_AUTHOR_NAME"], env["GIT_AUTHOR_EMAIL"] = git_author
-        env["GIT_COMMITTER_NAME"] = "芝士"
-        env["GIT_COMMITTER_EMAIL"] = "cheese@zhishi.local"
-    if extra_env:
-        env.update(extra_env)
-    if execution_target is not None:
-        env["CHEESE_EXECUTION_TARGET"] = json.dumps(execution_target)
-        # The assigned executor already owns the checkout and its environment.
-        for name in (
-            "CHEESE_GIT_REMOTE",
-            "CHEESE_GIT_BRANCH",
-            "CHEESE_BRANCH_URL",
-            "CHEESE_ENVIRONMENT",
-            "CHEESE_PREVIEW_URL",
-            "CHEESE_PREVIEW_UP",
-        ):
-            env.pop(name, None)
-    return command, env
+
 
 
 def ensure_dir(path: str) -> str:

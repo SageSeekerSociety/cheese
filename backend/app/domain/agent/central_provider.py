@@ -22,6 +22,7 @@ from app.domain.agent.device_provider import (
     environment_status,
 )
 from app.domain.agent.harness.channel import ScreenSetupError
+from app.domain.agent.harness.launch import LaunchPlan
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
 
@@ -186,6 +187,14 @@ class CentralChannel(DeviceChannel):
                 raise ScreenSetupError("执行机器与本房间已经记录的位置不一致")
             values = {**(env or {}), "CHEESE_RESOURCE_ID": str(resource)}
             token = bind_resource_token(token, str(resource))
+            # This route assigns an executor machine, so the plan has to be able
+            # to install one and move a conversation onto it. A harness that runs
+            # where the files already are answers neither and belongs on the
+            # device channel this one wraps.
+            if not isinstance(launch, LaunchPlan):
+                raise ScreenSetupError(
+                    f"{launch.harness} 不能在独立执行机上运行，它没有执行器"
+                )
             if not previous and launch.resume_session_id:
                 await launch.execution.transfer_history(
                     self._hub,

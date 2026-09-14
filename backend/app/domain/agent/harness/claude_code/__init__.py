@@ -17,7 +17,7 @@ paid off.
 What the list says today, honestly: the transports (tmux / device / cloud) are
 ``Channel`` implementations, so they import that one seam and the errors it
 raises. That is the whole crossing — one runtime driven over any channel — and
-what still shows up next to it (a ledger row taking ``build_screen_launch``,
+what still shows up next to it (a ledger row taking this adapter's names,
 or the hook env a transport still wires by hand) is Claude Code knowledge that
 has not made it across the seam yet.
 """
@@ -27,7 +27,6 @@ from app.domain.agent.harness.claude_code.device_launch import (
     CLAUDE_PINNED_VERSION,
     DEVICE_ALIVE_PROBE,
     DEVICE_TUNNEL_PROBE,
-    build_screen_launch,
 )
 from app.domain.agent.harness.claude_code.hook_events import (
     HookRouter,
@@ -89,7 +88,6 @@ __all__ = [
     "SpoolBacklog",
     "TopicSubscription",
     "acknowledge_log",
-    "build_screen_launch",
     "build_session_launch",
     "build_startup_cache_prepare",
     "build_warm_session_prepare",

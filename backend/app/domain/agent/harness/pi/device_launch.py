@@ -18,6 +18,7 @@ import shlex
 from dataclasses import dataclass
 
 from app.domain.agent import machine_launcher
+from app.domain.agent.harness.launch import MachineLaunch, MachinePlace
 from app.domain.agent.harness.pi.bundle import build
 
 # The pinned CLI. pi ships as an npm package rather than a single binary, so
@@ -88,6 +89,7 @@ class PiLaunch:
     model: str
     resume_session_id: str | None = None
     agent_handle: str | None = None
+    harness: str = "pi"
 
     def arguments(self) -> list[str]:
         """pi's own argv, minus what the runner adds (mode, session, prompt)."""
@@ -136,13 +138,40 @@ class PiLaunch:
         )
 
 
+    def on(self, place: MachinePlace) -> MachineLaunch:
+        """pi, now that a machine has said where.
+
+        Most of what ``place`` states is not pi's business: it has no warm pool
+        to stage, no subscription CA to trust, and no executor to hand its tools
+        to — on this machine the tools ARE local. What it takes is where the
+        session lives and how to reach the model.
+        """
+        return MachineLaunch(
+            configure=_configure(provider(place.api_base, self.model)),
+            prepare=_prepare(place.state, self.configuration()),
+            contract=self.contract(),
+            command='"$PI_RUNNER"',
+        )
+
+
 def build_launch_script(launch: PiLaunch) -> str:
     """The device launcher for a pi session: the platform's, filled with pi's."""
+    holes = launch.on(
+        MachinePlace(
+            home="",
+            workdir="",
+            state=launch.state,
+            api_base=launch.api_base,
+            project_id="",
+            topic_id="",
+            agent_handle=launch.agent_handle or "",
+        )
+    )
     return machine_launcher.launch_script(
-        configure=_configure(provider(launch.api_base, launch.model)),
-        prepare=_prepare(launch.state, launch.configuration()),
-        contract=launch.contract(),
-        command='"$PI_RUNNER"',
+        configure=holes.configure,
+        prepare=holes.prepare,
+        contract=holes.contract,
+        command=holes.command,
     )
 
 

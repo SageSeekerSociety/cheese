@@ -4,7 +4,7 @@ import asyncio
 import uuid
 from typing import Protocol
 
-from app.domain.agent.harness.launch import LaunchPlan
+from app.domain.agent.harness.launch import MachinePlan
 from app.domain.agent.platform_failures import TURN_TIMEOUT_MESSAGE
 
 
@@ -176,17 +176,17 @@ class Channel:
         memory_scope: str | None,
         owner: str | None,
         turn_id: uuid.UUID | None,
-        launch: LaunchPlan,
+        launch: MachinePlan,
         precheck: object,
     ) -> object:
         """Bring the topic's screen to a prompt-ready state; raise
         ``ScreenSetupError`` if it can't be. Implemented by every channel.
 
         ``launch`` is what to run. A channel does not build it and does not read
-        it: it says where this screen keeps its state and what its cwd is
-        (``launch.at(ScreenPlace(...))``), plants the files that come back,
-        starts the command. Which harness that turns out to be is the caller's
-        business — a channel that decided could only ever host the one.
+        it: it says where this screen keeps its state and what its cwd is, and
+        performs the launch that comes back. Which harness that turns out to be
+        is the caller's business — a channel that decided could only ever host
+        the one.
 
         It is a launch-time input, not a per-prompt one. The system prompt
         inside it reaches the session through a file read exactly once at exec,

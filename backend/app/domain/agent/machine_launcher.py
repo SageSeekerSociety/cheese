@@ -40,6 +40,7 @@ startup scripts are the platform's promise about the machine, and they hold
 whichever agent the room asked for.
 """
 
+import json
 import shlex
 from pathlib import Path
 
@@ -49,6 +50,7 @@ from app.domain.agent import (
     machine_tunnel,
     preview_tunnel,
 )
+from app.domain.agent.harness.launch import MachineLaunch, MachinePlace
 from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
 
 # Starts the tunnel helper and does NOT return until its port answers.
@@ -188,6 +190,90 @@ python3 "$HOME/.claude/cheese-preview.py" \\
 echo $! > "$PIDF"
 printf '%s\\n' "$WANT" > "$STAMPF"
 """
+
+
+def screen_launch(
+    place: MachinePlace,
+    spec: MachineLaunch,
+    *,
+    hook_url: str,
+    token: str,
+) -> tuple[list[str], dict[str, str]]:
+    """一次设备启动的两半，合到一起：``(command, env)``。
+
+    The channel says where, the harness said what, and this is the one place
+    the two meet — so that a test can reach the same result a device gets
+    without standing one up, rather than re-deriving the composition and then
+    agreeing with itself.
+    """
+    return (
+        [
+            "bash",
+            "-lc",
+            launch_script(
+                staging=spec.staging,
+                configure=spec.configure,
+                credentials=spec.credentials,
+                prepare=spec.prepare,
+                contract=spec.contract,
+                command=spec.command,
+            ),
+        ],
+        {**screen_env(place, hook_url=hook_url, token=token), **spec.env},
+    )
+
+
+def screen_env(
+    place: MachinePlace,
+    *,
+    hook_url: str,
+    token: str,
+) -> dict[str, str]:
+    """一个会话环境里平台那一半：换哪个 harness 都一样的那些变量。
+
+    The session takes ONE environment and both halves have to be in it, so a
+    channel merges what the harness answered onto this. Everything here is read
+    by the script above, by the ``cheese`` CLI, or by the drainer — never by a
+    particular agent binary.
+    """
+    env = {
+        "CHEESE_HOOK_URL": hook_url,
+        "CHEESE_TOKEN": token,
+        "CHEESE_HOME": place.home,
+        "CHEESE_WORK": place.workdir,
+    }
+    # `CHEESE_API` is the backend root as-is: it maps 1:1 onto it (see
+    # settings.connector_public_base) and every route is bare since #370 step 2,
+    # so the CLI's base IS that base. Appending another `/api` was right only
+    # while the 2.0 routes carried their own prefix; afterwards it injected
+    # `<origin>/api/api` and every `cheese` command in a sandbox 404'd.
+    #
+    # Absent rather than empty. A screen with no topic (a probe, a fixture) has
+    # no `cheese` CLI context to give, and an empty value is not the same answer
+    # as no value: the launcher and the CLI both branch on whether the variable
+    # is set at all.
+    for name, value in (
+        ("CHEESE_API", place.api_base),
+        ("CHEESE_PROJECT", place.project_id),
+        ("CHEESE_TOPIC", place.topic_id),
+        ("CHEESE_AUTHOR", place.agent_handle),
+    ):
+        if value:
+            env[name] = value
+    if place.execution_target is not None:
+        env["CHEESE_EXECUTION_TARGET"] = json.dumps(place.execution_target)
+    if place.git_remote:
+        env["CHEESE_GIT_REMOTE"] = place.git_remote
+        # Who the turn's commits belong to (workspace/identity.py). Absent, the
+        # launcher falls back to 芝士 — the same default the in-repo snapshot
+        # path uses, so both surfaces agree.
+        env["CHEESE_GIT_AUTHOR_NAME"] = place.agent_handle
+        env["CHEESE_GIT_AUTHOR_EMAIL"] = f"{place.agent_handle}@agent.cheese.local"
+        env["GIT_AUTHOR_NAME"] = place.agent_handle
+        env["GIT_AUTHOR_EMAIL"] = env["CHEESE_GIT_AUTHOR_EMAIL"]
+        env["GIT_COMMITTER_NAME"] = "芝士"
+        env["GIT_COMMITTER_EMAIL"] = "cheese@zhishi.local"
+    return env
 
 
 def build_drain_script() -> str:

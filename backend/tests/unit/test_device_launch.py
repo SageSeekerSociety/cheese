@@ -18,6 +18,8 @@ import pytest
 
 from app.domain.agent import machine_launcher
 from app.domain.agent.harness.claude_code import device_launch, warm_session
+from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
+from app.domain.agent.harness.launch import MachinePlace
 
 
 def test_launch_timings_append_without_logging_credentials(tmp_path):
@@ -379,8 +381,52 @@ def test_hooks_settings_wire_command_hook_to_forwarder():
     assert set(s["permissions"]["deny"]) == {"AskUserQuestion"}
 
 
+def _screen_launch(
+    *,
+    hook_url="http://h/sandbox/hooks/T",
+    hook_token="tok",
+    home_dir="/dev/home",
+    work_dir="/dev/work",
+    model=None,
+    resume_session_id=None,
+    extra_env=None,
+    topic_id="",
+    git_remote=None,
+    execution_target=None,
+    remote_control=False,
+    ca_pem="",
+) -> tuple[list[str], dict[str, str]]:
+    """What the device channel now does: say where, ask the plan what to run.
+
+    A helper here rather than in the product, because assembling the two halves
+    is the CHANNEL's job — this is how a test reaches the same result without
+    standing up a device.
+    """
+    place = MachinePlace(
+        home=home_dir,
+        workdir=work_dir,
+        state="$HOME/.cheese/harness/p/r/claude-code/deadbeef",
+        api_base="http://h",
+        project_id="P",
+        topic_id=topic_id,
+        agent_handle="ops",
+        git_remote=git_remote,
+        execution_target=execution_target,
+        remote_control=remote_control,
+        ca_pem=ca_pem,
+    )
+    plan = ClaudeLaunch(
+        system_prompt="", model=model, resume_session_id=resume_session_id
+    )
+    command, env = machine_launcher.screen_launch(
+        place, plan.on(place), hook_url=hook_url, token=hook_token
+    )
+    env.update(extra_env or {})
+    return command, env
+
+
 def test_build_screen_launch_shapes_command_and_env():
-    command, env = device_launch.build_screen_launch(
+    command, env = _screen_launch(
         hook_url="http://h/sandbox/hooks/T",
         hook_token="scoped-tok",
         home_dir="/dev/home",
@@ -415,13 +461,13 @@ def test_agent_authors_real_commit_and_platform_commits_it(tmp_path):
     import os
     import subprocess
 
-    _, env = device_launch.build_screen_launch(
+    _, env = _screen_launch(
         hook_url="http://h/hooks",
         hook_token="test",
         home_dir=str(tmp_path),
         work_dir=str(tmp_path),
         model="test",
-        git_author=("ops", "ops@agent.cheese.local"),
+        git_remote="http://h/projects/P/git",
     )
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     subprocess.run(
@@ -443,7 +489,7 @@ def test_agent_authors_real_commit_and_platform_commits_it(tmp_path):
 def test_the_room_bounds_how_deep_and_how_wide_its_work_can_go():
     # A piece of work IS a subagent of the room's session, so the room's two
     # structural limits are these env vars and nothing else enforces them.
-    _, env = device_launch.build_screen_launch(
+    _, env = _screen_launch(
         hook_url="http://h/sandbox/hooks/T",
         hook_token="tok",
         home_dir="/dev/home",
@@ -511,7 +557,7 @@ def test_no_ca_means_no_ca_block():
 
 
 def test_build_screen_launch_threads_the_ca_through():
-    command, _env = device_launch.build_screen_launch(
+    command, _env = _screen_launch(
         hook_url="http://h/sandbox/hooks/T",
         hook_token="t",
         home_dir="/h",
@@ -1084,7 +1130,7 @@ def _launch_with_tunnel(**overrides):
         "HTTPS_PROXY": "http://127.0.0.1:8445",
     }
     env.update(overrides)
-    command, _env = device_launch.build_screen_launch(
+    command, _env = _screen_launch(
         hook_url="http://h/sandbox/hooks/T",
         hook_token="scoped-tok",
         home_dir="/dev/home",

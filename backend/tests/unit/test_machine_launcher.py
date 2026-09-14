@@ -18,6 +18,9 @@ import time
 import pytest
 
 from app.domain.agent import machine_launcher
+from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
+from app.domain.agent.harness.launch import MachinePlace
+from app.domain.agent.harness.pi.device_launch import PiLaunch
 from app.domain.project.environment import EnvironmentConfig
 
 
@@ -226,3 +229,101 @@ def test_the_platform_half_names_no_harness(harness_only):
     binary.
     """
     assert harness_only not in _skeleton()
+
+
+def _place(**overrides) -> MachinePlace:
+    return MachinePlace(
+        **{
+            "home": "$HOME/.cheese/home/P/R",
+            "workdir": "$HOME/.cheese/home/P/R/work",
+            "state": "$HOME/.cheese/harness/P/R/x/deadbeef",
+            "api_base": "https://cheese.example/api",
+            "project_id": "P",
+            "topic_id": "T",
+            "agent_handle": "ops",
+            "git_remote": "https://cheese.example/api/projects/P/git",
+            **overrides,
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "plan",
+    [
+        pytest.param(ClaudeLaunch(system_prompt="房间的系统提示词"), id="claude-code"),
+        pytest.param(
+            PiLaunch(
+                system_prompt="房间的系统提示词",
+                state="$HOME/.cheese/harness/P/R/pi/deadbeef",
+                api_base="https://cheese.example/api",
+                model="glm-5.2",
+                agent_handle="ops",
+            ),
+            id="pi",
+        ),
+    ],
+)
+def test_one_channel_carries_whichever_harness_it_was_handed(plan):
+    """同一段 channel 逻辑，两个 harness —— 这是「切干净」的那句话本身。
+
+    The platform half of the environment is the same sentence for both, and
+    neither the composition nor anything it reads had to learn which one it is
+    holding. A regression here does not look like a broken test elsewhere: it
+    looks like the second harness never being reachable.
+    """
+    place = _place()
+    command, env = machine_launcher.screen_launch(
+        place,
+        plan.on(place),
+        hook_url="https://cheese.example/api/hooks/T",
+        token="tok",
+    )
+    assert command[:2] == ["bash", "-lc"]
+    # What the platform promises every session, regardless of what runs in it.
+    assert env["CHEESE_HOME"] == place.home
+    assert env["CHEESE_WORK"] == place.workdir
+    assert env["CHEESE_TOKEN"] == "tok"
+    assert env["CHEESE_API"] == place.api_base
+    assert env["GIT_COMMITTER_NAME"] == "芝士"
+    # And the platform's own half of the script, whoever filled the holes.
+    for written in ("cheese-environment.py", "cheese-hook", "cheese-drain"):
+        assert f'cat > "$HOME/.claude/{written}"' in command[2]
+
+
+def test_a_screen_with_no_room_context_is_given_none_rather_than_empty():
+    """A probe or a fixture has no topic to name, and empty is not the same
+    answer as absent: the launcher and the `cheese` CLI both branch on whether
+    the variable is set at all."""
+    bare = MachinePlace(
+        home="/h",
+        workdir="/w",
+        state="",
+        api_base="",
+        project_id="",
+        topic_id="",
+        agent_handle="",
+    )
+    env = machine_launcher.screen_env(bare, hook_url="http://h", token="t")
+    assert not {"CHEESE_API", "CHEESE_PROJECT", "CHEESE_TOPIC", "CHEESE_AUTHOR"} & set(
+        env
+    )
+    assert "CHEESE_EXECUTION_TARGET" not in env
+
+    placed = machine_launcher.screen_env(_place(), hook_url="http://h", token="t")
+    assert placed["CHEESE_TOPIC"] == "T"
+
+
+def test_the_two_harnesses_do_not_produce_the_same_launch():
+    """The parametrised test above would pass just as well if `on` ignored the
+    plan, so this is the half that says the answers actually differ."""
+    place = _place()
+    claude = ClaudeLaunch(system_prompt="x").on(place)
+    pi = PiLaunch(
+        system_prompt="x",
+        state=place.state,
+        api_base=place.api_base,
+        model="glm-5.2",
+    ).on(place)
+    assert claude.command != pi.command
+    assert "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH" in claude.env
+    assert pi.env == {}
