@@ -91,7 +91,8 @@ def _command(parser, tool, arguments):
     for command, leaf in _leaf_commands(parser):
         if _tool_name(command) != tool:
             continue
-        argv: list[str] = list(command)
+        option_argv: list[str] = []
+        positional_argv: list[str] = []
         known = {
             action.dest
             for action in leaf._actions
@@ -106,23 +107,26 @@ def _command(parser, tool, arguments):
             value = arguments[action.dest]
             if not action.option_strings:
                 if isinstance(value, list):
-                    argv.extend(str(item) for item in value)
+                    positional_argv.extend(str(item) for item in value)
                 else:
-                    argv.append(str(value))
+                    positional_argv.append(str(value))
             elif isinstance(action, argparse._StoreTrueAction):
                 if value:
-                    argv.append(action.option_strings[0])
+                    option_argv.append(action.option_strings[0])
             elif isinstance(action, argparse._StoreFalseAction):
                 if not value:
-                    argv.append(action.option_strings[0])
+                    option_argv.append(action.option_strings[0])
             elif isinstance(action, argparse._AppendAction):
                 for item in value:
-                    argv.extend((action.option_strings[0], str(item)))
+                    option_argv.append(f"{action.option_strings[0]}={item}")
             elif action.nargs in ("*", "+"):
-                argv.append(action.option_strings[0])
-                argv.extend(str(item) for item in value)
+                option_argv.append(action.option_strings[0])
+                option_argv.extend(str(item) for item in value)
             else:
-                argv.extend((action.option_strings[0], str(value)))
+                option_argv.append(f"{action.option_strings[0]}={value}")
+        argv = [*command, *option_argv]
+        if positional_argv:
+            argv.extend(("--", *positional_argv))
         # The parser remains the final authority for required fields and values.
         leaf.parse_args(argv[len(command) :])
         return argv

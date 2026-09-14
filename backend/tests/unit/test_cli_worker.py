@@ -166,6 +166,40 @@ def test_worker_translates_values_to_argv_without_shell_interpretation(
     assert not (tmp_path / "escaped").exists()
 
 
+def test_worker_preserves_dash_leading_structured_strings(worker, tmp_path):
+    source = worker[0]
+    source.write_text(
+        "import argparse, json\n"
+        "def build_parser():\n"
+        " p=argparse.ArgumentParser(); s=p.add_subparsers(dest='cmd', required=True)\n"
+        " q=s.add_parser('capture'); q.add_argument('text')\n"
+        " q.add_argument('--title'); q.add_argument('--tag', action='append')\n"
+        " return p\n"
+        "if __name__ == '__main__':\n"
+        " a=build_parser().parse_args(); print(json.dumps(vars(a)))\n"
+    )
+    receipt, stdout, stderr = mcp_call(
+        worker[1],
+        tmp_path,
+        {
+            "method": "tools/call",
+            "tool": "cheese_capture",
+            "arguments": {
+                "text": "--help",
+                "title": "--task",
+                "tag": ["--title=changed"],
+            },
+        },
+    )
+    assert receipt["status"] == 0, stderr
+    assert json.loads(stdout) == {
+        "cmd": "capture",
+        "text": "--help",
+        "title": "--task",
+        "tag": ["--title=changed"],
+    }
+
+
 def test_worker_preserves_actual_cli_help(worker):
     _, address, _ = worker
     args, env = command(address, "chat", "send", "--help")
