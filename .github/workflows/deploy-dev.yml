@@ -119,4 +119,6 @@ jobs:
 
       - name: Docker deploy this commit
         if: steps.scope.outputs.skip != 'true'
+        env:
+          CHEESE_CENTRAL_SESSION_HOST: "1"
         run: bash deploy/deploy-docker.sh "$(git rev-parse --short=7 HEAD)"

@@ -532,6 +532,7 @@ def test_generated_prefix_preserves_local_hook_and_remote_command_boundary(
     _, _, _, remote_work = central_transport
     monkeypatch.setenv("CHEESE_TOKEN", "fixture")
     monkeypatch.setenv("NO_PROXY", "127.0.0.1")
+    monkeypatch.setattr(central.os.path, "ismount", lambda _path: True)
     helpers = tmp_path / "helpers"
     helpers.mkdir()
     source = Path(central.__file__)
@@ -559,7 +560,7 @@ def test_generated_prefix_preserves_local_hook_and_remote_command_boundary(
         },
     )
     env = launch["env"]
-    workspace = directory / "workspace"
+    workspace = directory / "forwarded-project"
     prefix = env["CLAUDE_CODE_SHELL_PREFIX"]
     local = subprocess.run(
         [prefix, command],
@@ -734,40 +735,6 @@ def test_structured_chat_retry_retains_request_id(central_transport):
     with pytest.raises(RuntimeError):
         process.call("tools/call", {"name": "chat_send", "arguments": args})
     assert len(process.publications) == 2
-
-
-@pytest.mark.parametrize("resident", [True, False])
-def test_prompt_context_updates_through_running_mcp(
-    central_transport, tmp_path, resident
-):
-    process, _, _, work = central_transport
-    config_path = tmp_path / "central.json"
-    config = json.loads(config_path.read_text())
-    if not resident:
-        config_path = tmp_path / "cold context.json"
-    workspace = tmp_path / "central-work"
-    settings = tmp_path / "central-settings"
-    workspace.mkdir()
-    settings.mkdir()
-    config.update(central_workspace=str(workspace), central_config=str(settings))
-    config_path.write_text(json.dumps(config))
-    original_pid = process.process.pid
-    for instruction in ("First project instruction", "Updated project instruction"):
-        (work / "CLAUDE.md").write_text(instruction)
-        result = subprocess.run(
-            [
-                sys.executable,
-                str(Path(central.__file__).with_name("context_service.py")),
-                str(config_path),
-            ],
-            env={**os.environ, "NO_PROXY": "127.0.0.1", "CHEESE_TOKEN": "fixture"},
-            capture_output=True,
-            timeout=10,
-        )
-        assert result.returncode == 0, result.stderr.decode()
-        assert instruction in (settings / "CLAUDE.md").read_text()
-    assert process.process.pid == original_pid
-    assert process.process.poll() is None
 
 
 def test_lost_http_response_is_not_replayed_and_original_id_recovers(central_transport):

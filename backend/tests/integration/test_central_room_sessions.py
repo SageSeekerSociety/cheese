@@ -62,7 +62,7 @@ def channel(client, monkeypatch):
     monkeypatch.setattr(settings, "agent_session_device_id", "center")
     hub: Any = SimpleNamespace(
         is_online=lambda device: device in {"center", "executor"},
-        call_executor=AsyncMock(return_value={}),
+        call_executor=AsyncMock(return_value={"generation": "fixture", "entries": {}}),
         exec=AsyncMock(
             return_value={
                 "exit": 0,
@@ -144,7 +144,12 @@ async def test_center_uses_the_selected_harness_for_bootstrap_and_history(
     )
     central._hub.call_executor.side_effect = [
         {"pid": 123, "capabilities": ["prepare"]},
-        {"pid": 123, "workspace": "/project", "mcp_servers": []},
+        {
+            "pid": 123,
+            "workspace": "/project",
+            "mcp_servers": [],
+            "context_tree": {"generation": "fixture", "entries": {}},
+        },
     ]
     await central.ensure_ready(**kwargs)
     assert central._hub.call_executor.await_args.args[3] == {"fixture_executor": True}
@@ -183,7 +188,9 @@ async def test_old_executor_process_takes_release_bootstrap(
             await admitted.rollback()
             await asyncio.wait_for(update, 10)
     central._hub.exec.assert_awaited_once()
-    assert central._hub.call_executor.await_args.args[2] == "ping"
+    assert [
+        call.args[2] for call in central._hub.call_executor.await_args_list[-2:]
+    ] == ["ping", "context_fs"]
 
 
 @pytest.mark.anyio
@@ -204,6 +211,7 @@ async def test_running_executor_prepares_without_python_launch(
     await central.ensure_ready(**kwargs)
     central._hub.exec.reset_mock()
     central._wait_executor.reset_mock()
+    central._hub.call_executor.reset_mock()
     central._hub.call_executor.side_effect = [
         {
             "pid": 123,
@@ -215,6 +223,7 @@ async def test_running_executor_prepares_without_python_launch(
             "workspace": "/project",
             "mcp_servers": [],
             "environment_status": environment_state,
+            "context_tree": {"generation": "fixture", "entries": {}},
         },
     ]
     await central.ensure_ready(**kwargs)
@@ -282,6 +291,7 @@ async def test_room_starts_centrally_and_keeps_recorded_placement(
     assert "CHEESE_ENVIRONMENT" not in opening["env"]
     target = json.loads(opening["env"]["CHEESE_EXECUTION_TARGET"])
     assert target["device_id"] == "executor"
+    assert target["context_tree"] == {"generation": "fixture", "entries": {}}
     assert target["url"].startswith("http://central-api/")
     async with client.test_factory() as db:
         stored = await db.get(Topic, topic)
@@ -336,9 +346,15 @@ async def test_executor_readiness_reuses_bootstrap_reply(
         reply["environment_status"] = "ready"
     central._hub.exec.return_value["stdout"] = json.dumps(reply)
     central._wait_executor = CentralChannel._wait_executor.__get__(central)
-    ping = AsyncMock(return_value={"pid": 123})
+    call = AsyncMock(
+        side_effect=lambda target, method, params, **kwargs: (
+            {"pid": 123}
+            if method == "ping"
+            else {"generation": "fixture", "entries": {}}
+        )
+    )
     status = AsyncMock(return_value={"state": "ready"})
-    monkeypatch.setattr("app.domain.agent.execution.call", ping)
+    monkeypatch.setattr("app.domain.agent.execution.call", call)
     monkeypatch.setattr("app.domain.agent.central_provider.environment_status", status)
     await central.ensure_ready(
         project_id=project,
@@ -348,7 +364,9 @@ async def test_executor_readiness_reuses_bootstrap_reply(
         launch=ClaudeLaunch("System"),
         precheck=("executor", 1, "agent"),
     )
-    assert ping.await_count == (0 if running else 1)
+    assert [item.args[1] for item in call.await_args_list] == (
+        ["context_fs"] if running else ["ping", "context_fs"]
+    )
     assert status.await_count == (1 if has_environment and not running else 0)
     central._ensure_screen.assert_awaited_once()
 

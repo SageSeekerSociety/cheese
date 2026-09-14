@@ -117,7 +117,7 @@ jobs:
       - name: Install terminal test dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y tmux redis-tools openssl ripgrep
+          sudo apt-get install -y tmux redis-tools openssl ripgrep fuse libfuse2
           mkdir -p tmp/remote-execution/deps
           (cd tmp/remote-execution/deps && apt-get download redis-server redis-tools)
           for package in tmp/remote-execution/deps/*.deb; do

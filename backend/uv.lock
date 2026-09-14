@@ -604,6 +604,7 @@ dependencies = [
     { name = "claude-agent-sdk" },
     { name = "curl-cffi" },
     { name = "fastapi" },
+    { name = "fusepy" },
     { name = "httpx" },
     { name = "markdownify" },
     { name = "meilisearch-python-sdk" },
@@ -650,6 +651,7 @@ requires-dist = [
     { name = "claude-agent-sdk", specifier = ">=0.2.101" },
     { name = "curl-cffi", specifier = ">=0.7" },
     { name = "fastapi", specifier = ">=0.137.0" },
+    { name = "fusepy", specifier = ">=3.0.1" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "markdownify", specifier = ">=0.13" },
     { name = "meilisearch-python-sdk", specifier = ">=7.1.4" },
@@ -1021,6 +1023,12 @@ sdist = { url = "https://files.pythonhosted.org/packages/10/a1/ae4e3e5003468d639
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e5/22/4222d7ddf3da30f363edaa98e329c2bce6c65497c9cb2810931c8b2c0fbc/fsspec-2026.6.0-py3-none-any.whl", hash = "sha256:02e0b71817df9b2169dc30a16832045764def1191b43dcff5bb85bdee212d2a1", size = 203949, upload-time = "2026-06-16T01:57:26.358Z" },
 ]
+
+[[package]]
+name = "fusepy"
+version = "3.0.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/04/0b/4506cb2e831cea4b0214d3625430e921faaa05a7fb520458c75a2dbd2152/fusepy-3.0.1.tar.gz", hash = "sha256:72ff783ec2f43de3ab394e3f7457605bf04c8cf288a2f4068b4cde141d4ee6bd", size = 11519, upload-time = "2018-09-17T00:14:52.666Z" }
 
 [[package]]
 name = "google"
