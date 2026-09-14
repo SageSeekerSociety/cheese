@@ -62,6 +62,7 @@ async def execute(
         "invoke",
         "mcp",
         "control",
+        "cli",
     }:
         raise ForbiddenError("This executor operation is not available to the session")
     target = placement["execution"]

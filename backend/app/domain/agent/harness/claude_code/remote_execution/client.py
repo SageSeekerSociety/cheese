@@ -681,6 +681,7 @@ def publish_event(config, payload):
 def transport(config, target_path):
     import threading
     from concurrent.futures import ThreadPoolExecutor
+    from importlib.machinery import SourceFileLoader
 
     if __package__:
         from .context_service import serve
@@ -688,6 +689,10 @@ def transport(config, target_path):
         from context_service import serve
 
     client = RemoteClient(config)
+    cheese_source = Path(__file__).with_name("cheese.py")
+    if not cheese_source.is_file():
+        cheese_source = Path(__file__).resolve().parents[6] / "sandbox/cheese"
+    cheese = SourceFileLoader("cheese_request_plans", str(cheese_source)).load_module()
     output_lock = threading.Lock()
     active = {}
     active_lock = threading.RLock()
@@ -870,14 +875,19 @@ def transport(config, target_path):
                     args = decision.get("hookSpecificOutput", {}).get(
                         "updatedInput", payload["args"]
                     )
+                    direct_cheese = tool in cheese.DIRECT_MCP_TOOLS
                     receipt = (
                         client.platform_request(args)
                         if tool == "platform_request"
+                        else client.platform_request(
+                            cheese.request_plan(tool, args, dict(os.environ))
+                        )
+                        if direct_cheese
                         else client.publish_message(payload, args)
                         if tool == "chat_send"
                         else client.publish_chat(payload, args)
                     )
-                    if tool.startswith("cheese_"):
+                    if tool.startswith("cheese_") and not direct_cheese:
                         receipt = client.call(
                             "invoke",
                             {
