@@ -21,6 +21,7 @@ from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.handles import CHEESE_HANDLE
 from app.domain.machine.services import MachineService
+from app.domain.user.repositories import UserRepository
 
 
 def _project(client, owner: str = "andyl") -> str:
@@ -55,17 +56,19 @@ def _project_devices(client, pid: str, *names: str) -> list[str]:
     async def _seed() -> list[str]:
         async with client.test_factory() as session:
             service = sql_device_service(session)
+            owner = await UserRepository(session).get_by_username(CHEESE_HANDLE)
+            assert owner is not None, "the platform agent row should exist"
             device_ids: list[str] = []
             for name in names:
                 code = await service.start(name)
                 device = await service.approve(
                     code,
-                    owner_user_id=1,
+                    owner_user_id=owner.id,
                     supply=Supply.self_hosted,
                     visibility=Visibility.isolated,
                 )
                 await service.assign_to_project(
-                    device.device_id, uuid.UUID(pid), actor_user_id=1
+                    device.device_id, uuid.UUID(pid), actor_user_id=owner.id
                 )
                 device_ids.append(device.device_id)
             await session.commit()
@@ -319,10 +322,12 @@ def test_two_topics_on_one_machine_report_their_own_visibility(client):
 
         async with client.test_factory() as session:
             svc = DeviceService(SqlDeviceRepository(session))
+            owner = await UserRepository(session).get_by_username(CHEESE_HANDLE)
+            assert owner is not None, "the platform agent row should exist"
             code = await svc.start("dev-box")
             device = await svc.approve(
                 code,
-                owner_user_id=1,
+                owner_user_id=owner.id,
                 supply=Supply.self_hosted,
                 visibility=Visibility.isolated,
             )

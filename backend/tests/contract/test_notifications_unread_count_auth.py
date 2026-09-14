@@ -27,15 +27,14 @@ from app.common.auth import create_access_token
 from app.core.config import settings
 
 _UNREAD_COUNT = "/notifications/unread-count"
-_AGENT_USER_ID = 1
 
 
-def _expired_token() -> str:
+def _expired_token(user_id: int) -> str:
     """一个签名合法、但 15 分钟有效期早已过完的访问令牌。"""
     issued = datetime.now(UTC) - timedelta(hours=2)
     return jwt.encode(
         {
-            "sub": str(_AGENT_USER_ID),
+            "sub": str(user_id),
             "type": "access",
             "handle": "cheese",
             "iat": int(issued.timestamp()),
@@ -47,8 +46,10 @@ def _expired_token() -> str:
 
 
 @pytest.mark.anyio
-async def test_valid_token_gets_a_real_count(python_client: AsyncClient) -> None:
-    token = create_access_token(_AGENT_USER_ID, handle="cheese")
+async def test_valid_token_gets_a_real_count(
+    python_client: AsyncClient, agent_user_id: int
+) -> None:
+    token = create_access_token(agent_user_id, handle="cheese")
     resp = await python_client.get(
         _UNREAD_COUNT, headers={"Authorization": f"Bearer {token}"}
     )
@@ -72,17 +73,20 @@ async def test_bad_credential_is_401(
 
 
 @pytest.mark.anyio
-async def test_expired_token_is_401(python_client: AsyncClient) -> None:
+async def test_expired_token_is_401(
+    python_client: AsyncClient, agent_user_id: int
+) -> None:
     """前端存着的令牌一旦过期，铃铛就是这个 401——和路由在不在没有关系。"""
     resp = await python_client.get(
-        _UNREAD_COUNT, headers={"Authorization": f"Bearer {_expired_token()}"}
+        _UNREAD_COUNT,
+        headers={"Authorization": f"Bearer {_expired_token(agent_user_id)}"},
     )
     assert resp.status_code == 401
 
 
 @pytest.mark.anyio
 async def test_401_alone_cannot_tell_you_the_route_is_missing(
-    python_client: AsyncClient,
+    python_client: AsyncClient, agent_user_id: int
 ) -> None:
     """对照组：一条真不存在的路径，未认证时同样是 401。
 
@@ -94,7 +98,7 @@ async def test_401_alone_cannot_tell_you_the_route_is_missing(
 
     assert (await python_client.get(missing)).status_code == 401
 
-    token = create_access_token(_AGENT_USER_ID, handle="cheese")
+    token = create_access_token(agent_user_id, handle="cheese")
     authed = {"Authorization": f"Bearer {token}"}
     assert (await python_client.get(missing, headers=authed)).status_code == 400
     assert (await python_client.get(_UNREAD_COUNT, headers=authed)).status_code == 200

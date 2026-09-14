@@ -3,9 +3,11 @@ from httpx import AsyncClient
 
 
 @pytest.mark.anyio
-async def test_python_get_user_identity_shape(authed_client: AsyncClient) -> None:
+async def test_python_get_user_identity_shape(
+    authed_client: AsyncClient, agent_user_id: int
+) -> None:
     """GET /users/{userId}/identity 响应结构检查。"""
-    resp = await authed_client.get("/users/1/identity")
+    resp = await authed_client.get(f"/users/{agent_user_id}/identity")
     assert resp.status_code == 200
 
     body = resp.json()
@@ -16,7 +18,9 @@ async def test_python_get_user_identity_shape(authed_client: AsyncClient) -> Non
 
 
 @pytest.mark.anyio
-async def test_python_put_user_identity_shape(authed_client: AsyncClient) -> None:
+async def test_python_put_user_identity_shape(
+    authed_client: AsyncClient, agent_user_id: int
+) -> None:
     """PUT /users/{userId}/identity 响应结构检查。"""
     payload = {
         "realName": "Alice",
@@ -25,7 +29,7 @@ async def test_python_put_user_identity_shape(authed_client: AsyncClient) -> Non
         "major": "CS",
         "className": "1",
     }
-    resp = await authed_client.put("/users/1/identity", json=payload)
+    resp = await authed_client.put(f"/users/{agent_user_id}/identity", json=payload)
     assert resp.status_code == 200
 
     body = resp.json()
@@ -36,11 +40,11 @@ async def test_python_put_user_identity_shape(authed_client: AsyncClient) -> Non
 
 @pytest.mark.anyio
 async def test_python_get_user_identity_access_logs_shape(
-    authed_client: AsyncClient,
+    authed_client: AsyncClient, agent_user_id: int
 ) -> None:
     """GET /users/{userId}/identity/access-logs 响应结构检查。"""
     resp = await authed_client.get(
-        "/users/1/identity/access-logs", params={"pageSize": 10}
+        f"/users/{agent_user_id}/identity/access-logs", params={"pageSize": 10}
     )
     assert resp.status_code == 200
 
