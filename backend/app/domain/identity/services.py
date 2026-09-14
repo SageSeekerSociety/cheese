@@ -63,7 +63,10 @@ class IdentityService:
         an agent — that is still the binding (``is_agent``); the range is there
         so a uid is legible to whoever is looking at one.
         """
-        return int(await self._session.scalar(select(AGENT_UID_SEQUENCE.next_value())))
+        drawn = await self._session.scalar(select(AGENT_UID_SEQUENCE.next_value()))
+        if drawn is None:  # pragma: no cover - nextval() always yields a value
+            raise RuntimeError(f"{AGENT_UID_SEQUENCE.name} returned no value")
+        return int(drawn)
 
     async def _create_agent_user(self, *, handle: str) -> User:
         """Create an agent as a real (main-repo) User row: username == handle,
