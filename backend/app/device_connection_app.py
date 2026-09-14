@@ -12,8 +12,16 @@ from app.api.routes.connector import router as connector_router
 from app.api.routes.execution import router as execution_router
 from app.core.config import settings
 from app.core.errors import register_exception_handlers
+from app.core.obs import configure_logging
 from app.domain.agent.device_hub import DeviceOffline, device_hub
 from app.domain.agent.device_hub_rpc import screen_to_json
+
+# The same logging as the business backend: plain tracebacks rendered off the
+# hot path, secrets scrubbed, application INFO lines visible. Left to structlog's
+# defaults, an unhandled error here renders every frame's locals through rich on
+# the event loop — the same freeze obs.py describes, in the process every
+# executor call of every device goes through.
+configure_logging()
 
 _executor_calls: dict[str, asyncio.Task[dict]] = {}
 _release_draining = False

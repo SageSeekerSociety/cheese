@@ -65,7 +65,10 @@ PROTOCOL_VERSION = device_link.PROTOCOL_VERSION
 
 class DeviceTransport(Protocol):
     """A live device control channel. Satisfied by a ``fastapi.WebSocket`` adapter
-    and trivially fakeable."""
+    and trivially fakeable.
+
+    ``send_json`` raises ``ConnectionError`` when the channel can no longer carry
+    a frame; the hub then treats the device as gone."""
 
     async def send_json(self, msg: dict[str, Any]) -> None: ...
 
@@ -152,8 +155,32 @@ class HubDevice:
         # writes, and the orchestrator, exec, and every viewer's fan-out all send
         # here. Without this, interleaved frames corrupt the channel.
         async with self.send_lock:
-            if self.transport is not None:
-                await self.transport.send_json(msg)
+            transport = self.transport
+            if transport is None:
+                return
+            try:
+                await transport.send_json(msg)
+            except ConnectionError as exc:
+                # The receive loop only learns of a dead link when the peer says
+                # so; a peer that vanished never does, and then the socket stays
+                # attached for good — every caller that trusts ``is_online`` sends
+                # into it and fails, once a minute for a storage sweep. A failed
+                # send is the proof the receive loop never gets.
+                self.drop_transport(transport)
+                raise DeviceOffline(self.device_id) from exc
+
+    def drop_transport(self, transport: DeviceTransport) -> bool:
+        """Forget ``transport`` if it is still the live one; fail what waited on it."""
+        if self.transport is not transport:
+            return False
+        self.transport = None
+        for future, _ in self.executor_pending.values():
+            if not future.done():
+                future.set_exception(DeviceOffline(self.device_id))
+        for future in self.session_pending.values():
+            if not future.done():
+                future.set_exception(DeviceOffline(self.device_id))
+        return True
 
 
 class DeviceHub:
@@ -188,14 +215,7 @@ class DeviceHub:
 
     async def detach_device(self, device_id: str, transport: DeviceTransport) -> None:
         device = self._devices.get(device_id)
-        if device is not None and device.transport is transport:
-            device.transport = None
-            for future, _ in device.executor_pending.values():
-                if not future.done():
-                    future.set_exception(DeviceOffline(device_id))
-            for future in device.session_pending.values():
-                if not future.done():
-                    future.set_exception(DeviceOffline(device_id))
+        if device is not None and device.drop_transport(transport):
             if not settings.device_connection_owner:
                 from app.domain.agent.harness.claude_code import (
                     drop_device_subscriptions,
@@ -511,17 +531,17 @@ class DeviceHub:
         eid = f"e{device.exec_seq}"
         fut: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
         device.exec_pending[eid] = fut
-        await device.send(
-            device_link.exec_cmd(
-                exec_id=eid,
-                command=argv,
-                timeout=int(timeout),
-                cwd=cwd,
-                env=env,
-                stdin=stdin,
-            )
-        )
         try:
+            await device.send(
+                device_link.exec_cmd(
+                    exec_id=eid,
+                    command=argv,
+                    timeout=int(timeout),
+                    cwd=cwd,
+                    env=env,
+                    stdin=stdin,
+                )
+            )
             return await asyncio.wait_for(fut, timeout=timeout + 5)
         except TimeoutError:
             await device.send(device_link.exec_cancel(eid))
