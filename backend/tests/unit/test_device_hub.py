@@ -129,6 +129,41 @@ def test_reconnect_reads_inventory_replies_while_recovery_is_running(monkeypatch
     assert recovered == [{"sid": "survivor"}]
 
 
+def test_connection_owner_attaches_without_running_business_recovery(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.api.routes import connector
+    from app.core.db import get_db
+
+    hub = DeviceHub()
+    monkeypatch.setattr(connector, "device_hub", hub)
+    monkeypatch.setattr(connector.settings, "device_connection_owner", True)
+    monkeypatch.setattr(
+        "app.api.deps.get_chat_service",
+        lambda: (_ for _ in ()).throw(AssertionError("owner ran ChatService")),
+    )
+    app = FastAPI()
+    app.include_router(connector.router)
+    app.dependency_overrides[get_db] = lambda: SimpleNamespace(commit=AsyncMock())
+    service = SimpleNamespace(
+        verify_token=AsyncMock(
+            return_value=SimpleNamespace(device_id="dev", name="fixture")
+        )
+    )
+    app.dependency_overrides[connector.get_device_service] = lambda: service
+
+    with (
+        TestClient(app) as client,
+        client.websocket_connect("/connector/agent?token=fixture") as ws,
+    ):
+        assert ws.receive_json()["t"] == "welcome"
+        assert hub.is_online("dev")
+
+
 def _screen_args() -> dict:
     return {
         "agent_user_id": uuid.uuid4(),

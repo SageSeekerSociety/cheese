@@ -98,18 +98,39 @@ class RemoteDeviceHub:
                 continue
 
     async def refresh(self) -> None:
-        previously_online = {
-            device_id for device_id, value in self._devices.items() if value["online"]
-        }
+        previous_devices = self._devices
+        previous_screens = self._screens
         response = await self._request("GET", "/internal/device-connection/snapshot")
         payload = response.json()
         self._devices = {item["device_id"]: item for item in payload["devices"]}
         self._screens = {
             item["sid"]: screen_from_json(item) for item in payload["screens"]
         }
+        from app.domain.agent.harness.claude_code import (
+            drop_device_subscriptions,
+            drop_screen_subscriptions,
+        )
+
+        for device_id, old in previous_devices.items():
+            current = self._devices.get(device_id)
+            if old["online"] and (current is None or not current["online"]):
+                for screen in previous_screens.values():
+                    if screen.device_id == device_id:
+                        await drop_screen_subscriptions(screen)
+                await drop_device_subscriptions(device_id)
+        for sid, screen in previous_screens.items():
+            if sid not in self._screens:
+                await drop_screen_subscriptions(screen)
         if self._online_callback is not None:
             for device_id in self.online_device_ids():
-                if device_id not in previously_online:
+                previous = previous_devices.get(device_id)
+                current = self._devices[device_id]
+                if (
+                    previous is None
+                    or not previous["online"]
+                    or previous.get("connection_generation")
+                    != current.get("connection_generation")
+                ):
                     task = asyncio.create_task(self._online_callback(device_id))
                     task.add_done_callback(_log_callback_failure)
 

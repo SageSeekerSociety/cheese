@@ -132,6 +132,7 @@ class HubDevice:
     )
     session_pending: dict[str, asyncio.Future[Any]] = field(default_factory=dict)
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    connection_generation: int = 0
 
     async def send(self, msg: dict[str, Any]) -> None:
         # Serialize sends to one device: a WebSocket is not safe for concurrent
@@ -165,6 +166,7 @@ class DeviceHub:
                 if not future.done():
                     future.set_exception(DeviceOffline(device_id))
         device.transport = transport
+        device.connection_generation += 1
         device.executor = False
         if name:
             device.name = name
@@ -181,14 +183,6 @@ class DeviceHub:
             for future in device.session_pending.values():
                 if not future.done():
                     future.set_exception(DeviceOffline(device_id))
-            from app.domain.agent.harness.claude_code import (
-                drop_device_subscriptions,
-                drop_screen_subscriptions,
-            )
-
-            for screen in list(device.screens.values()):
-                await drop_screen_subscriptions(screen)
-            await drop_device_subscriptions(device_id)
 
     def is_online(self, device_id: str) -> bool:
         device = self._devices.get(device_id)
@@ -304,6 +298,9 @@ class DeviceHub:
         topic_id: uuid.UUID | None = None,
         resource_id: uuid.UUID | None = None,
         hook_key: str = "",
+        credential_expires: int | None = None,
+        agent_configuration: str = "",
+        execution_target: dict | None = None,
     ) -> HubScreen:
         """Re-register a screen the *device* is still running after the server lost its
         in-memory state (a restart). The frozen cli auto-reconnects its control channel
@@ -337,6 +334,9 @@ class DeviceHub:
             topic_id=topic_id,
             resource_id=resource_id,
             hook_key=hook_key,
+            credential_expires=credential_expires,
+            agent_configuration=agent_configuration,
+            execution_target=execution_target,
         )
         device.screens[sid] = screen
         self._screens[sid] = screen
@@ -355,11 +355,6 @@ class DeviceHub:
         device.screens.pop(sid, None)
         self._screens.pop(sid, None)
         self._by_screen_token.pop(screen.token, None)
-        from app.domain.agent.harness.claude_code import (
-            drop_screen_subscriptions,
-        )
-
-        await drop_screen_subscriptions(screen)
         return True
 
     async def session_request(

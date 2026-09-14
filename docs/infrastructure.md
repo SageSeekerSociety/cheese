@@ -63,7 +63,10 @@ checks it, and gracefully reloads nginx before replacing the backend. The exact
 `/connector/agent` and live-terminal paths go to the owner's loopback port;
 other API paths continue through the active backend switch. Updating the owner
 itself is a separate release operation because it closes the connections it
-owns.
+owns. Dispatch **Release device connection owner** with a tested ref and target;
+that workflow runs `deploy/release-device-connection.sh`, which pulls and
+force-recreates only `device-connection`, then waits for its health check. It is
+manual-only and is never called by the normal app deployment workflows.
 
 **On dev the backend rolls out without downtime.** The box's **:8081** is
 `cheese-api-front`, a host-network nginx from `deploy/llm-tunnel/` whose

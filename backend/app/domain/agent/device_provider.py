@@ -534,6 +534,8 @@ class DeviceChannel(Channel):
                     agent = await IdentityService(session).ensure_topic_agent_user(
                         topic_id
                     )
+                    expiry = env.get("CHEESE_TOKEN_EXPIRES")
+                    target = env.get("CHEESE_EXECUTION_TARGET")
                     recovered = self._hub.adopt_screen(
                         device_id,
                         entry["sid"],
@@ -547,14 +549,12 @@ class DeviceChannel(Channel):
                         ),
                         command=entry["command"],
                         hook_key=str(topic_id),
+                        credential_expires=int(expiry) if expiry else None,
+                        execution_target=json.loads(target) if target else None,
+                        agent_configuration=env.get("CHEESE_AGENT_CONFIG", ""),
                     )
                     if inspect.isawaitable(recovered):
                         recovered = await recovered
-                    expiry = env.get("CHEESE_TOKEN_EXPIRES")
-                    recovered.credential_expires = int(expiry) if expiry else None
-                    target = env.get("CHEESE_EXECUTION_TARGET")
-                    recovered.execution_target = json.loads(target) if target else None
-                    recovered.agent_configuration = env.get("CHEESE_AGENT_CONFIG", "")
                     # Retired generations remain registered for durable cleanup;
                     # only the room's current generation can resume its turn.
                     if recovered.resource_id == current_resource:

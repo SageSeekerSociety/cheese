@@ -1,8 +1,8 @@
-"""Exercise the connection owner across a killed backend RPC process.
+"""Exercise a real executor task across a killed backend RPC process.
 
-This uses a real uvicorn server and WebSocket. The only fake is device token
-lookup, which keeps the acceptance independent from Postgres while retaining the
-production connector route and wire protocol.
+This uses the production uvicorn owner, connector WebSocket protocol, and remote
+executor runtime. Device token lookup is replaced to avoid a Postgres dependency,
+and a Python connector harness relays frames in place of the packaged Go binary.
 """
 
 import asyncio
@@ -11,6 +11,7 @@ import json
 import multiprocessing
 import os
 import signal
+import subprocess
 import sys
 import time
 from datetime import UTC, datetime
@@ -52,7 +53,20 @@ def owner() -> None:
     uvicorn.run(app, host="127.0.0.1", port=PORT, log_level="warning")
 
 
-async def connector(events: multiprocessing.Queue) -> None:
+async def connector(events: multiprocessing.Queue, task_root: str) -> None:
+    from app.domain.agent.harness.claude_code.remote_execution import runtime
+
+    workspace = Path(task_root)
+    state = workspace / "executor"
+    state.mkdir(parents=True)
+    configuration = {"workspace": str(workspace), "env": {}, "private": True}
+    subprocess.run(
+        [sys.executable, str(Path(runtime.__file__)), "start", "--state", str(state)],
+        input=json.dumps(configuration),
+        text=True,
+        check=True,
+        capture_output=True,
+    )
     async with websockets.connect(
         f"ws://127.0.0.1:{PORT}/connector/agent?token=acceptance"
     ) as socket:
@@ -61,8 +75,11 @@ async def connector(events: multiprocessing.Queue) -> None:
         await socket.send(json.dumps({"t": "hello", "v": 3, "executor": True}))
         message = json.loads(await socket.recv())
         events.put({"event": "execution_received", "id": message["id"]})
-        await asyncio.sleep(4)
-        encoded = json.dumps({"result": {"answer": "owner-retained-result"}}).encode()
+        request = json.loads(message["stdin"])
+        result = await asyncio.to_thread(
+            runtime.request, state, request["method"], request["params"]
+        )
+        encoded = json.dumps({"result": result}).encode()
         await socket.send(
             json.dumps(
                 {
@@ -75,12 +92,23 @@ async def connector(events: multiprocessing.Queue) -> None:
         await socket.send(
             json.dumps({"t": "execution.result", "id": message["id"], "error": ""})
         )
-        events.put({"event": "execution_completed", "id": message["id"]})
-        await asyncio.sleep(2)
+        events.put(
+            {
+                "event": "execution_completed",
+                "id": message["id"],
+                "executor_result": result,
+            }
+        )
+    runtime.request(state, "ping")
+    subprocess.run(
+        [sys.executable, str(Path(runtime.__file__)), "stop", "--state", str(state)],
+        check=True,
+    )
+    events.put({"event": "executor_runtime_stopped"})
 
 
-def connector_process(events: multiprocessing.Queue) -> None:
-    asyncio.run(connector(events))
+def connector_process(events: multiprocessing.Queue, task_root: str) -> None:
+    asyncio.run(connector(events, task_root))
 
 
 def backend_waiter(results: multiprocessing.Queue, generation: int) -> None:
@@ -90,8 +118,17 @@ def backend_waiter(results: multiprocessing.Queue, generation: int) -> None:
         json={
             "device_id": "acceptance-machine",
             "state": "/acceptance/.claude/executor",
-            "method": "control",
-            "params": {"request_id": "same-control-request"},
+            "method": "invoke",
+            "params": {
+                "id": "same-executor-request",
+                "tool": "Bash",
+                "args": {
+                    "command": (
+                        "sleep 4; printf 'run\\n' >> execution-count; "
+                        "printf owner-retained-result"
+                    ),
+                },
+            },
             "timeout": 30,
             "trace_id": TRACE_ID,
         },
@@ -140,9 +177,13 @@ def main() -> int:
     log_path = log_dir / f"device-connection-acceptance-{stamp}.jsonl"
     events: multiprocessing.Queue = multiprocessing.Queue()
     results: multiprocessing.Queue = multiprocessing.Queue()
+    task_root = root / "tmp" / f"device-connection-acceptance-{stamp}"
+    task_root.mkdir(parents=True)
     owner_process = multiprocessing.Process(target=owner, name="connection-owner")
     connector_worker = multiprocessing.Process(
-        target=connector_process, args=(events,), name="device-connector"
+        target=connector_process,
+        args=(events, str(task_root)),
+        name="device-connector",
     )
     first_backend = multiprocessing.Process(
         target=backend_waiter, args=(results, 1), name="backend-generation-1"
@@ -181,7 +222,9 @@ def main() -> int:
             result = results.get(timeout=20)
             second_backend.join(timeout=5)
             completed = events.get(timeout=5)
+            runtime_stopped = events.get(timeout=5)
             record(log, **completed)
+            record(log, **runtime_stopped)
             record(
                 log,
                 "replacement_received",
@@ -189,15 +232,36 @@ def main() -> int:
                 owner_unchanged=owner_process.pid == owner_pid,
                 **result,
             )
-            if result["body"] != {"result": {"answer": "owner-retained-result"}}:
+            expected = {
+                "result": {
+                    "value": {
+                        "stdout": "owner-retained-result",
+                        "stderr": "",
+                        "interrupted": False,
+                        "noOutputExpected": False,
+                        "returnCodeInterpretation": "Exit code 0",
+                    }
+                }
+            }
+            if result["body"] != expected:
                 raise RuntimeError(f"replacement received wrong result: {result}")
+            executions = (task_root / "execution-count").read_text().splitlines()
+            if executions != ["run"]:
+                raise RuntimeError(f"executor task ran {len(executions)} times")
             if received["id"] != completed["id"] or received["id"] != TRACE_ID:
                 raise RuntimeError("device received or completed a different execution")
             if not owner_process.is_alive() or owner_process.pid != owner_pid:
                 raise RuntimeError(
                     "connection owner changed during backend replacement"
                 )
-            record(log, "acceptance_passed", owner_pid=owner_pid)
+            record(
+                log,
+                "acceptance_passed",
+                owner_pid=owner_pid,
+                executor_stdout="owner-retained-result",
+                executor_exit_code=0,
+                execution_count=len(executions),
+            )
         finally:
             for process in (
                 first_backend,
