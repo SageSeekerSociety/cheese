@@ -186,6 +186,7 @@ class Executor:
         self.client_lock = threading.Lock()
         self.log_lock = threading.Lock()
         self.db_lock = threading.Lock()
+        self.context_fs_entries = {}
         # Socket clients load this module without opening the service database.
         import sqlite3
 
@@ -829,6 +830,144 @@ class Executor:
             "instructions": "\n\n".join(instructions),
         }
 
+    def context_fs(self, params):
+        """Expose the native project context as a bounded read-only file view."""
+        if self.config.get("private"):
+            return {"generation": hashlib.sha256(b"private").hexdigest(), "entries": {}}
+
+        root = self.root.resolve()
+        if params.get("operation") == "read":
+            name = params.get("path", "")
+            entry = self.context_fs_entries.get(name)
+            if not entry or entry["kind"] != "file":
+                raise FileNotFoundError(name)
+            offset = params.get("offset", 0)
+            size = params.get("size", 0)
+            if (
+                not isinstance(offset, int)
+                or not isinstance(size, int)
+                or offset < 0
+                or size < 0
+            ):
+                raise ValueError("Invalid context filesystem byte range")
+            path = root / name
+            try:
+                path.resolve().relative_to(root)
+            except (OSError, ValueError) as exc:
+                raise FileNotFoundError(name) from exc
+            with path.open("rb") as stream:
+                stream.seek(offset)
+                content = stream.read(size)
+            return {"data": base64.b64encode(content).decode()}
+
+        selected = set()
+        unsupported_imports = set()
+        unsupported_paths = set()
+
+        def project_path(path):
+            try:
+                path.resolve().relative_to(root)
+            except (OSError, ValueError):
+                return None
+            return path
+
+        def include(path, *, imports=False, depth=0):
+            candidate = project_path(path)
+            if candidate is None:
+                if path.is_symlink():
+                    try:
+                        unsupported_paths.add(str(path.relative_to(root)))
+                    except ValueError:
+                        pass
+                return
+            path = candidate
+            if path in selected or not path.exists():
+                return
+            selected.add(path)
+            if path.is_symlink():
+                target = project_path(path.resolve())
+                if target is None:
+                    unsupported_paths.add(str(path.relative_to(root)))
+                elif target != path:
+                    include(target, imports=imports, depth=depth)
+                return
+            if path.is_dir():
+                for child in path.iterdir():
+                    include(child, imports=imports, depth=depth)
+                return
+            if not imports or path.suffix != ".md" or depth >= 5:
+                return
+            try:
+                text = path.read_text()
+            except (OSError, UnicodeError):
+                return
+            for match in re.finditer(r"(?<![\w`])@([^\s`]+)", text):
+                reference = Path(match.group(1)).expanduser()
+                if reference.is_absolute():
+                    unsupported_imports.add(str(reference))
+                    continue
+                candidate = project_path(path.parent / reference)
+                if candidate is None:
+                    unsupported_imports.add(match.group(1))
+                elif candidate.exists():
+                    include(candidate, imports=True, depth=depth + 1)
+
+        for path in (
+            root / "CLAUDE.md",
+            root / "CLAUDE.local.md",
+            root / ".claude/rules",
+        ):
+            include(path, imports=True)
+        include(root / ".claude/skills")
+
+        entries = {}
+        for path in selected:
+            relative = str(path.relative_to(root))
+            stat = path.lstat()
+            if path.is_symlink():
+                kind = "symlink"
+            elif path.is_dir():
+                kind = "directory"
+            elif path.is_file():
+                kind = "file"
+            else:
+                continue
+            entries[relative] = {
+                "kind": kind,
+                "mode": stat.st_mode & 0o777,
+                "mtime_ns": stat.st_mtime_ns,
+                "size": stat.st_size,
+                "nlink": stat.st_nlink,
+            }
+            if kind == "symlink":
+                entries[relative]["target"] = os.readlink(path)
+            parent = path.parent
+            while parent != root:
+                name = str(parent.relative_to(root))
+                if name not in entries:
+                    parent_stat = parent.lstat()
+                    entries[name] = {
+                        "kind": "directory",
+                        "mode": parent_stat.st_mode & 0o777,
+                        "mtime_ns": parent_stat.st_mtime_ns,
+                        "size": parent_stat.st_size,
+                        "nlink": parent_stat.st_nlink,
+                    }
+                parent = parent.parent
+
+        generation = hashlib.sha256(
+            json.dumps(entries, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        if params.get("operation", "tree") == "tree":
+            self.context_fs_entries = entries
+            return {
+                "generation": generation,
+                "entries": entries,
+                "unsupported_imports": sorted(unsupported_imports),
+                "unsupported_paths": sorted(unsupported_paths),
+            }
+        raise ValueError("Unsupported context filesystem operation")
+
     def prepare(self, payload):
         owner = self.state.parents[5]
         home = (
@@ -903,6 +1042,8 @@ class Executor:
             return self.control(params)
         if method == "context":
             return self.context(params.get("known_files"))
+        if method == "context_fs":
+            return self.context_fs(params)
         if method == "mcp":
             return self.client(params["server"]).call(
                 params["method"], params.get("params")

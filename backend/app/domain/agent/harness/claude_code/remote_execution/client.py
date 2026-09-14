@@ -17,6 +17,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import signal
 import subprocess
 import time
@@ -84,12 +85,16 @@ def prepare(
             from private import ensure
 
         ensure(target, directory, os.environ)
+    forwarded = target.get("kind") != "private"
     workspace = (
-        Path(workspace_override) if workspace_override else directory / "workspace"
+        directory / "forwarded-project"
+        if forwarded
+        else Path(workspace_override)
+        if workspace_override
+        else directory / "workspace"
     )
     workspace.mkdir(exist_ok=True)
-    # Stop native project discovery at this generated mirror's boundary.
-    if not (workspace / ".git").exists():
+    if not forwarded and not (workspace / ".git").exists():
         subprocess.run(["git", "init", "-q", str(workspace)], check=True)
     home = Path(home_override) if home_override else directory / "home"
     home.mkdir(exist_ok=True)
@@ -111,7 +116,51 @@ def prepare(
     target_path = directory / "execution.json"
     target_path.write_text(json.dumps(target))
     target_path.chmod(0o600)
-    sync_context(target_path)
+    if forwarded:
+        sync_context(target_path)
+    if forwarded and workspace_override:
+        previous_workspace = Path(workspace_override)
+        previous_manifest = directory / "context-manifest.json"
+        if previous_manifest.exists():
+            for name in json.loads(previous_manifest.read_text()):
+                path = previous_workspace / name
+                path.unlink(missing_ok=True)
+                parent = path.parent
+                while parent != previous_workspace:
+                    try:
+                        parent.rmdir()
+                    except OSError:
+                        break
+                    parent = parent.parent
+            previous_manifest.unlink()
+        shutil.rmtree(previous_workspace / ".git", ignore_errors=True)
+    mount_log = directory / "forwarded-project.log"
+    if forwarded and not os.path.ismount(workspace):
+        with mount_log.open("a") as output:
+            subprocess.Popen(
+                [
+                    sys.executable,
+                    str(Path(__file__).with_name("forwarded_fs.py")),
+                    str(target_path),
+                    str(workspace),
+                ],
+                stdin=subprocess.DEVNULL,
+                stdout=output,
+                stderr=output,
+                start_new_session=True,
+            )
+        deadline = time.monotonic() + 10
+        while not os.path.ismount(workspace) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if not os.path.ismount(workspace):
+            detail = mount_log.read_text()[-1000:] if mount_log.exists() else ""
+            raise RuntimeError("Forwarded project mount failed: " + detail)
+    if forwarded:
+        (config / "CLAUDE.md").unlink(missing_ok=True)
+        for name in ("skills", "commands", "agents", "rules"):
+            link = config / name
+            if link.is_symlink():
+                link.unlink()
     plugin = directory / "plugin"
     (plugin / ".claude-plugin").mkdir(parents=True, exist_ok=True)
     (plugin / "hooks").mkdir(exist_ok=True)
@@ -297,6 +346,26 @@ def sync_context(target_path):
     import hashlib
 
     target = json.loads(Path(target_path).read_text())
+    if target.get("kind") != "private":
+        tree = RemoteClient(target).call("context_fs", {"operation": "tree"})
+        unsupported = tree.get("unsupported_imports", []) + tree.get(
+            "unsupported_paths", []
+        )
+        if unsupported:
+            raise RuntimeError(
+                "Project context leaves the forwarded project boundary: "
+                + ", ".join(unsupported)
+            )
+        generation_path = Path(target_path).parent / "context-generation"
+        tree_path = Path(target_path).parent / "context-tree.json"
+        previous = generation_path.read_text() if generation_path.exists() else None
+        tree["changed"] = tree["generation"] != previous
+        if tree["changed"]:
+            temporary = tree_path.with_name(tree_path.name + ".next")
+            temporary.write_text(json.dumps(tree))
+            temporary.replace(tree_path)
+            generation_path.write_text(tree["generation"])
+        return tree
     workspace = Path(target["central_workspace"])
     manifest = Path(target_path).parent / "context-manifest.json"
     old = json.loads(manifest.read_text()) if manifest.exists() else []
@@ -350,6 +419,9 @@ def sync_context(target_path):
                         destination.symlink_to(
                             child, target_is_directory=child.is_dir()
                         )
+            elif link.resolve() != source.resolve():
+                link.unlink()
+                link.symlink_to(source, target_is_directory=True)
     return snapshot
 
 
@@ -873,6 +945,7 @@ def main():
             "bridge",
             "guard",
             "context",
+            "context-status",
             "control",
             "shell",
             "bootstrap",
@@ -957,6 +1030,11 @@ def main():
         )
     elif args.mode == "context":
         sync_context(args.config)
+    elif args.mode == "context-status":
+        from context_service import call as call_context
+
+        result = call_context(args.config, return_value=True)
+        print(json.dumps(result if result is not False else sync_context(args.config)))
     elif args.mode == "control":
         print(json.dumps(RemoteClient(config).control(json.load(sys.stdin))))
     elif args.mode == "prepare":

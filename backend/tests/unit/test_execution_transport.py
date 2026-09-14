@@ -506,6 +506,7 @@ def test_generated_prefix_preserves_local_hook_and_remote_command_boundary(
     _, _, _, remote_work = central_transport
     monkeypatch.setenv("CHEESE_TOKEN", "fixture")
     monkeypatch.setenv("NO_PROXY", "127.0.0.1")
+    monkeypatch.setattr(central.os.path, "ismount", lambda _path: True)
     helpers = tmp_path / "helpers"
     helpers.mkdir()
     source = Path(central.__file__)
@@ -533,7 +534,7 @@ def test_generated_prefix_preserves_local_hook_and_remote_command_boundary(
         },
     )
     env = launch["env"]
-    workspace = directory / "workspace"
+    workspace = directory / "forwarded-project"
     prefix = env["CLAUDE_CODE_SHELL_PREFIX"]
     local = subprocess.run(
         [prefix, command],
@@ -726,6 +727,7 @@ def test_prompt_context_updates_through_running_mcp(
     config.update(central_workspace=str(workspace), central_config=str(settings))
     config_path.write_text(json.dumps(config))
     original_pid = process.process.pid
+    generations = []
     for instruction in ("First project instruction", "Updated project instruction"):
         (work / "CLAUDE.md").write_text(instruction)
         result = subprocess.run(
@@ -739,7 +741,22 @@ def test_prompt_context_updates_through_running_mcp(
             timeout=10,
         )
         assert result.returncode == 0, result.stderr.decode()
-        assert instruction in (settings / "CLAUDE.md").read_text()
+        status = subprocess.run(
+            [
+                sys.executable,
+                str(Path(central.__file__)),
+                "context-status",
+                str(config_path),
+            ],
+            env={**os.environ, "NO_PROXY": "127.0.0.1", "CHEESE_TOKEN": "fixture"},
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+        generations.append(json.loads(status.stdout)["generation"])
+        assert not (settings / "CLAUDE.md").exists()
+    assert generations[0] != generations[1]
     assert process.process.pid == original_pid
     assert process.process.poll() is None
 

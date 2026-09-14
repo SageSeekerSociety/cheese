@@ -605,7 +605,77 @@ class RemoteExecutionTests(unittest.TestCase):
         self.assertNotIn("CLAUDE.md", removed["file_names"])
         self.assertEqual(removed["instructions"], "")
 
-    def test_context_sync_preserves_unchanged_files_and_repairs_local_changes(self):
+    def test_context_fs_lists_metadata_and_reads_bytes_on_demand(self):
+        (self.workspace / "CLAUDE.md").write_text("root @docs/more.md")
+        (self.workspace / "docs").mkdir()
+        (self.workspace / "docs/more.md").write_text("imported @nested.md")
+        (self.workspace / "docs/nested.md").write_text("nested import")
+        skill = self.workspace / ".claude/skills/example"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text("skill body")
+        (skill / "support.bin").write_bytes(b"012345")
+        (skill / "support-link").symlink_to("support.bin")
+        (self.workspace / ".claude/settings.json").write_text("do not expose")
+
+        tree = runtime.request(self.state, "context_fs", {"operation": "tree"})
+        self.assertEqual(tree["unsupported_imports"], [])
+        self.assertEqual(tree["unsupported_paths"], [])
+        self.assertIn("CLAUDE.md", tree["entries"])
+        self.assertIn("docs/more.md", tree["entries"])
+        self.assertIn("docs/nested.md", tree["entries"])
+        self.assertIn(".claude/skills/example/support.bin", tree["entries"])
+        self.assertEqual(
+            tree["entries"][".claude/skills/example/support-link"]["kind"],
+            "symlink",
+        )
+        self.assertEqual(
+            tree["entries"][".claude/skills/example/support-link"]["target"],
+            "support.bin",
+        )
+        self.assertNotIn(".claude/settings.json", tree["entries"])
+        chunk = runtime.request(
+            self.state,
+            "context_fs",
+            {
+                "operation": "read",
+                "path": ".claude/skills/example/support.bin",
+                "offset": 2,
+                "size": 3,
+            },
+        )
+        self.assertEqual(base64.b64decode(chunk["data"]), b"234")
+
+        (skill / "SKILL.md").write_text("changed skill body")
+        changed = runtime.request(self.state, "context_fs", {"operation": "tree"})
+        self.assertNotEqual(changed["generation"], tree["generation"])
+
+    def test_context_fs_reports_imports_outside_project_boundary(self):
+        (self.workspace / "CLAUDE.md").write_text(
+            "@/etc/hosts @../../outside.md @~/.claude/machine.md"
+        )
+        tree = runtime.request(self.state, "context_fs", {"operation": "tree"})
+        self.assertEqual(
+            tree["unsupported_imports"],
+            sorted(
+                [
+                    "../../outside.md",
+                    "/etc/hosts",
+                    str(Path.home() / ".claude/machine.md"),
+                ]
+            ),
+        )
+
+        outside = self.root / "outside-skill"
+        outside.mkdir()
+        (outside / "SKILL.md").write_text("outside")
+        skills = self.workspace / ".claude/skills"
+        skills.mkdir(parents=True)
+        (skills / "outside").symlink_to(outside, target_is_directory=True)
+        tree = runtime.request(self.state, "context_fs", {"operation": "tree"})
+        self.assertEqual(tree["unsupported_paths"], [".claude/skills/outside"])
+        self.assertNotIn(".claude/skills/outside/SKILL.md", tree["entries"])
+
+    def test_context_sync_records_generation_without_copying_file_bodies(self):
         spec = importlib.util.spec_from_file_location(
             "central_client", RUNTIME.with_name("client.py")
         )
@@ -623,28 +693,25 @@ class RemoteExecutionTests(unittest.TestCase):
                 {"central_workspace": str(central), "central_config": str(config)}
             )
         )
-        responses = []
 
         def context_request(_client, method, params=None):
-            result = runtime.request(self.state, method, params or {})
-            responses.append(result)
-            return result
+            return runtime.request(self.state, method, params or {})
 
         with patch.object(client.RemoteClient, "call", context_request):
-            client.sync_context(target)
-            copied = central / "CLAUDE.md"
-            before = copied.stat()
-            client.sync_context(target)
-            self.assertEqual(responses[-1]["files"], {})
-            self.assertEqual(copied.stat().st_mtime_ns, before.st_mtime_ns)
-            self.assertEqual(copied.stat().st_ino, before.st_ino)
-            copied.write_text("local corruption")
-            client.sync_context(target)
-            self.assertEqual(copied.read_text(), "project instructions")
-            (self.workspace / "CLAUDE.md").unlink()
-            client.sync_context(target)
-            self.assertFalse(copied.exists())
-            self.assertEqual((config / "CLAUDE.md").read_text(), "")
+            first = client.sync_context(target)
+            self.assertTrue(first["changed"])
+            self.assertEqual(list(central.iterdir()), [])
+            tree_path = target.with_name("context-tree.json")
+            first_tree = tree_path.read_bytes()
+            first_tree_mtime = tree_path.stat().st_mtime_ns
+            unchanged = client.sync_context(target)
+            self.assertFalse(unchanged["changed"])
+            self.assertEqual(tree_path.read_bytes(), first_tree)
+            self.assertEqual(tree_path.stat().st_mtime_ns, first_tree_mtime)
+            (self.workspace / "CLAUDE.md").write_text("updated instructions")
+            changed = client.sync_context(target)
+            self.assertTrue(changed["changed"])
+            self.assertNotEqual(changed["generation"], first["generation"])
 
     def test_disconnected_executor_is_an_error(self):
         self.stop()

@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import time
+from importlib.metadata import distribution
 from pathlib import Path
 
 
@@ -24,9 +25,15 @@ def sources():
             "private.py",
             "runtime.py",
             "context_service.py",
+            "forwarded_fs.py",
             "release.py",
         )
     }
+    fuse_distribution = distribution("fusepy")
+    fuse_source = fuse_distribution.locate_file("fuse.py").read_text()
+    if "Permission to use, copy, modify, and distribute" not in fuse_source:
+        raise RuntimeError("fusepy source does not carry its ISC license")
+    result["fuse.py"] = fuse_source
     result.update(
         {
             "executor_transport.py": Path(executor_transport.__file__).read_text(),
@@ -135,7 +142,7 @@ def stage(home, sources):
     return {"changed": True, "version": version, "offsets": offsets}
 
 
-def reloaded(offsets):
+def local_command_completed(offsets, prefix):
     for name, offset in offsets.items():
         with Path(name).open() as stream:
             stream.seek(offset)
@@ -147,12 +154,18 @@ def reloaded(offsets):
                 if (
                     event.get("type") == "system"
                     and event.get("subtype") == "local_command"
-                    and event.get("content", "").startswith(
-                        "<local-command-stdout>Reloaded:"
-                    )
+                    and event.get("content", "").startswith(prefix)
                 ):
                     return True
     return False
+
+
+def reloaded(offsets):
+    return local_command_completed(offsets, "<local-command-stdout>Reloaded:")
+
+
+def skills_reloaded(offsets):
+    return local_command_completed(offsets, "<local-command-stdout>Reloaded skills:")
 
 
 def acknowledge(home, version):
@@ -169,3 +182,31 @@ def wait_reloaded(offsets):
             return True
         time.sleep(0.05)
     raise TimeoutError("Native plugin reload did not produce a completion receipt")
+
+
+def wait_skills_reloaded(offsets):
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        if skills_reloaded(offsets):
+            return True
+        time.sleep(0.05)
+    raise TimeoutError("Native skill reload did not produce a completion receipt")
+
+
+def transcript_offsets(home):
+    config = Path(os.path.expandvars(home)) / ".claude"
+    return {
+        str(path): path.stat().st_size
+        for path in (config / "projects").glob("*/*.jsonl")
+    }
+
+
+def forwarded_context_ready(home):
+    target_path = (
+        Path(os.path.expandvars(home)) / ".claude/remote-session/execution.json"
+    )
+    target = json.loads(target_path.read_text())
+    if target.get("kind") == "private":
+        return True
+    workspace = Path(target.get("central_workspace", ""))
+    return workspace.name == "forwarded-project" and os.path.ismount(workspace)

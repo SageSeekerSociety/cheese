@@ -875,6 +875,59 @@ class DeviceChannel(Channel):
             "resident release applied topic=%s version=%s", screen.topic_id, version
         )
 
+    async def _refresh_forwarded_context(
+        self, screen: HubScreen, home_dir: str
+    ) -> None:
+        helpers = f"{home_dir}/.claude/remote-execution"
+        target = f"{home_dir}/.claude/remote-session/execution.json"
+
+        async def execute(function, *args):
+            result = await self._hub.exec(
+                screen.device_id,
+                ["python3", "-"],
+                stdin=resident_release.script(function, *args),
+                timeout=40,
+            )
+            if result.get("exit") != 0:
+                raise ScreenSetupError(
+                    f"Forwarded context {function} failed: {result.get('stderr')}"
+                )
+            return json.loads(result["stdout"])
+
+        offsets = await execute("transcript_offsets", home_dir)
+        result = await self._hub.exec(
+            screen.device_id,
+            [
+                "sh",
+                "-c",
+                f'python3 "{helpers}/client.py" context-status "{target}"',
+            ],
+            timeout=40,
+        )
+        if result.get("exit") != 0:
+            raise ScreenSetupError(
+                "Forwarded context refresh failed: " + str(result.get("stderr") or "")
+            )
+        status = json.loads(result["stdout"])
+        if not status.get("changed"):
+            return
+        await self.send_prompt(screen, "/reload-skills")
+        await execute("wait_skills_reloaded", offsets)
+
+    async def _forwarded_context_ready(self, screen: HubScreen, home_dir: str) -> bool:
+        result = await self._hub.exec(
+            screen.device_id,
+            ["python3", "-"],
+            stdin=resident_release.script("forwarded_context_ready", home_dir),
+            timeout=40,
+        )
+        if result.get("exit") != 0:
+            raise ScreenSetupError(
+                "Forwarded context readiness check failed: "
+                + str(result.get("stderr") or "")
+            )
+        return bool(json.loads(result["stdout"]))
+
     def _link_failure(
         self, device_id: str, *, step: str, waited_s: float, offline: bool
     ) -> str:
@@ -1180,7 +1233,13 @@ class DeviceChannel(Channel):
         mark("device_checks_complete")
         if existing is not None:
             if release_state is not None:
+                if not await self._forwarded_context_ready(existing, home_dir):
+                    await self._hub.close_screen(existing.device_id, existing.sid)
+                    existing = None
+            if existing is not None and release_state is not None:
                 await self._refresh_resident(existing, home_dir, release_state)
+                await self._refresh_forwarded_context(existing, home_dir)
+        if existing is not None:
             # A reassert keeps the CURRENTLY-RUNNING `claude`, which still holds the
             # credential it was born with — so the recorded birth expiry must NOT be
             # overwritten with this launch's freshly-minted one (the new token never

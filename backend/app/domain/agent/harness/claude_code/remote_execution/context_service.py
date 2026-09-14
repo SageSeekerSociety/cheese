@@ -11,7 +11,7 @@ def address(target):
     return f"/tmp/cheese-context-{os.getuid()}-{digest}.sock"
 
 
-def call(target):
+def call(target, *, return_value=False):
     with socket.socket(socket.AF_UNIX) as connection:
         connection.settimeout(60)
         try:
@@ -22,16 +22,14 @@ def call(target):
         with connection.makefile("rb") as response:
             raw = response.readline()
         # The resident service emits this exact success response on every turn.
-        if raw == b'{"ok": true}\n':
-            return True
         import json
 
         result = json.loads(raw)
         if "error" in result:
             raise RuntimeError(result["error"])
-        if result != {"ok": True}:
+        if result.get("ok") is not True or set(result) - {"ok", "value"}:
             raise RuntimeError("Invalid context synchronization response")
-        return True
+        return result.get("value") if return_value else True
 
 
 @contextmanager
@@ -46,8 +44,7 @@ def serve(target, synchronize):
             if self.rfile.readline(32) != b"context\n":
                 return
             try:
-                synchronize()
-                result = {"ok": True}
+                result = {"ok": True, "value": synchronize()}
             except Exception as exc:
                 result = {"error": str(exc)}
             self.wfile.write(json.dumps(result).encode() + b"\n")

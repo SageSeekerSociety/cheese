@@ -108,6 +108,34 @@ def test_emitted_release_runs_without_backend_imports(tmp_path):
     ).read_text() == "released"
 
 
+def test_release_bundles_locked_fuse_adapter_with_license():
+    sources = release.sources()
+    assert "class ForwardedProject" in sources["forwarded_fs.py"]
+    assert "Permission to use, copy, modify, and distribute" in sources["fuse.py"]
+
+
+def test_skill_reload_receipt_is_distinct_from_plugin_reload(tmp_path):
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text("")
+    offsets = {str(transcript): 0}
+    with transcript.open("a") as stream:
+        stream.write(
+            json.dumps(
+                {
+                    "type": "system",
+                    "subtype": "local_command",
+                    "content": (
+                        "<local-command-stdout>Reloaded skills: 2 skills available "
+                        "(1 added)</local-command-stdout>"
+                    ),
+                }
+            )
+            + "\n"
+        )
+    assert release.skills_reloaded(offsets)
+    assert not release.reloaded(offsets)
+
+
 def test_active_turn_blocks_changes_until_completion(tmp_path):
     config = tmp_path / ".claude"
     (config / "remote-session").mkdir(parents=True)
@@ -225,3 +253,76 @@ async def test_release_acknowledgement_requires_connection(
         with pytest.raises(ScreenSetupError, match="mcp_reconnect"):
             await channel._refresh_resident(screen, str(tmp_path), {})
         assert not (config / "remote-execution/release-ready").exists()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("changed", [False, True])
+async def test_forwarded_context_reloads_skills_only_for_a_new_generation(
+    tmp_path, monkeypatch, changed
+):
+    config = tmp_path / ".claude"
+    transcript = config / "projects/work/session.jsonl"
+    transcript.parent.mkdir(parents=True)
+    transcript.write_text("")
+    prompts = []
+
+    class Hub:
+        async def exec(self, device, command, *, stdin=None, timeout):
+            if command[0] == "sh":
+                return {"exit": 0, "stdout": json.dumps({"changed": changed})}
+            result = subprocess.run(
+                [sys.executable, "-I", "-"],
+                input=stdin,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            return {
+                "exit": result.returncode,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+            }
+
+    async def send_prompt(screen, prompt):
+        prompts.append(prompt)
+        with transcript.open("a") as stream:
+            stream.write(
+                json.dumps(
+                    {
+                        "type": "system",
+                        "subtype": "local_command",
+                        "content": (
+                            "<local-command-stdout>Reloaded skills: 2 skills "
+                            "available</local-command-stdout>"
+                        ),
+                    }
+                )
+                + "\n"
+            )
+
+    channel = object.__new__(DeviceChannel)
+    channel._hub = Hub()
+    monkeypatch.setattr(channel, "send_prompt", send_prompt)
+    screen = HubScreen("screen", "device", [], "token", 1, "agent")
+    await channel._refresh_forwarded_context(screen, str(tmp_path))
+    assert prompts == (["/reload-skills"] if changed else [])
+
+
+def test_forwarded_context_readiness_requires_the_project_mount(tmp_path, monkeypatch):
+    directory = tmp_path / ".claude/remote-session"
+    directory.mkdir(parents=True)
+    workspace = directory / "forwarded-project"
+    workspace.mkdir()
+    target = directory / "execution.json"
+    target.write_text(
+        json.dumps({"kind": "device", "central_workspace": str(workspace)})
+    )
+    monkeypatch.setattr(release.os.path, "ismount", lambda path: path == workspace)
+    assert release.forwarded_context_ready(str(tmp_path))
+
+    target.write_text(
+        json.dumps(
+            {"kind": "device", "central_workspace": str(directory / "workspace")}
+        )
+    )
+    assert not release.forwarded_context_ready(str(tmp_path))
