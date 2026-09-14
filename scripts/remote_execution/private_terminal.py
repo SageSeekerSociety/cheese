@@ -345,6 +345,7 @@ def main():
         if room and unmount:
             for mountpoint in (
                 folder / "central/forwarded-project",
+                folder / "resumed-center/forwarded-project",
                 room.home / ".claude/remote-session/forwarded-project",
             ):
                 if os.path.ismount(mountpoint):
