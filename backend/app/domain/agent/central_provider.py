@@ -8,6 +8,7 @@ import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
+import httpx
 from sqlalchemy import select
 
 from app.core.config import settings
@@ -228,6 +229,10 @@ class CentralChannel(DeviceChannel):
                         running = await execution.call(
                             previous["execution"], "ping", {}, hub=self._hub
                         )
+                    except httpx.HTTPStatusError as exc:
+                        if exc.response.status_code != 500:
+                            raise
+                        running = {}
                     except RuntimeError:
                         # A stopped executor must take the installation path.
                         running = {}
@@ -338,6 +343,11 @@ class CentralChannel(DeviceChannel):
                 try:
                     await execution.call(target, "ping", {}, hub=self._hub)
                     return
+                except httpx.HTTPStatusError as exc:
+                    if exc.response.status_code != 500:
+                        raise
+                    if time.monotonic() >= deadline:
+                        raise
                 except RuntimeError:
                     if time.monotonic() >= deadline:
                         raise

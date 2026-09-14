@@ -157,6 +157,37 @@ async def test_center_uses_the_selected_harness_for_bootstrap_and_history(
 
 
 @pytest.mark.anyio
+async def test_stopped_previous_executor_http_failure_takes_installation_path(
+    client, room, monkeypatch
+):
+    project, topic = room
+    central = channel(client, monkeypatch)
+    kwargs = dict(
+        project_id=project,
+        topic_id=topic,
+        token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
+        env={},
+        launch=ClaudeLaunch("System"),
+        precheck=await central.precheck(project, topic),
+    )
+    await central.ensure_ready(**kwargs)
+    central._hub.exec.reset_mock()
+    request = httpx.Request("POST", "http://owner/call_executor")
+    central._hub.call_executor.side_effect = [
+        httpx.HTTPStatusError(
+            "executor socket is not ready",
+            request=request,
+            response=httpx.Response(500, request=request),
+        ),
+        {"generation": "fixture", "entries": {}},
+    ]
+
+    await central.ensure_ready(**kwargs)
+
+    central._hub.exec.assert_awaited_once()
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize("digest", [None, "previous-release"])
 async def test_old_executor_process_takes_release_bootstrap(
     client, room, monkeypatch, digest
