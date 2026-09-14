@@ -120,7 +120,7 @@ beforeEach(() => {
 afterEach(() => cleanup())
 
 describe('新建时的校验', () => {
-  it('selects a compatible model when changing harness and preserves the role', async () => {
+  it('selects the harness when changing model and preserves the role', async () => {
     getProjectAgentOptions.mockResolvedValue({
       harness: {
         state: 'choosable',
@@ -140,9 +140,10 @@ describe('新建时的校验', () => {
     mountDialog(null)
     await fireEvent.update(field('名字'), '代码评审')
     await fireEvent.update(field('角色设定'), 'Review code')
-    await waitFor(() => expect(field('运行方式').disabled).toBe(false))
-    await fireEvent.mouseDown(field('运行方式'))
-    await fireEvent.click(await screen.findByText('Codex', { selector: '.v-list-item-title' }))
+    expect(screen.queryByLabelText('运行方式', { exact: false })).toBeNull()
+    await waitFor(() => expect(field('模型').disabled).toBe(false))
+    await fireEvent.mouseDown(field('模型'))
+    await fireEvent.click(await screen.findByText('Codex fixture', { selector: '.v-list-item-title' }))
     await clickSave()
     await waitFor(() =>
       expect(createProjectAgent).toHaveBeenCalledWith(
@@ -243,6 +244,25 @@ describe('修改时', () => {
     )
     expect(updateAgentType).not.toHaveBeenCalled()
     expect(existing.configuration.body).toBe('Review code')
+  })
+
+  it.each(['claude-code', 'codex'])('preserves an API model using %s when only renaming', async (harness) => {
+    getProjectAgentOptions.mockResolvedValue({
+      model: {
+        state: 'choosable',
+        choices: [{ id: 'api-model', label: 'API model', harnesses: ['claude-code', 'codex'] }],
+      },
+    })
+    const configuration = { ...CONFIG, model: 'api-model', harness }
+    mountDialog({ ...existing, configuration })
+    await fireEvent.update(field('名字'), 'New name')
+    await clickSave()
+    await waitFor(() =>
+      expect(updateProjectAgent).toHaveBeenCalledWith(PROJECT, existing.id, {
+        display_name: 'New name',
+        configuration,
+      })
+    )
   })
 
   it('saves the selected model without changing the original draft source', async () => {

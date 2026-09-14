@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { login, openFirstProject } from './helpers';
 
-test('a teammate keeps its identity and role across saved harness switches', async ({ page }, testInfo) => {
+test('model selection chooses the harness and preserves teammate identity and role', async ({ page }, testInfo) => {
   await login(page);
   await openFirstProject(page);
   const project = page.url().match(/\/projects\/([0-9a-f-]{36})/)?.[1];
@@ -15,8 +15,11 @@ test('a teammate keeps its identity and role across saved harness switches', asy
   await dialog.getByLabel('名字', { exact: true }).fill(name);
   await dialog.getByLabel('角色设定（可留空）').fill(role);
 
-  async function selectHarness(label: string) {
-    await dialog.locator('.v-select').filter({ hasText: '运行方式' }).getByRole('combobox').click();
+  async function selectModel(label: string) {
+    await expect(dialog.locator('.v-select').filter({ hasText: '运行方式' })).toHaveCount(0);
+    await dialog.locator('.v-select').filter({ hasText: '模型' }).getByRole('combobox').click();
+    await expect(page.getByRole('option', { name: 'codex-ci-fixture', exact: true })).toBeVisible();
+    await expect(page.getByRole('option', { name: 'DeepSeek V4.1 Flash', exact: true })).toBeVisible();
     await page.getByRole('option', { name: label, exact: true }).click();
     await expect(dialog.getByLabel('角色设定（可留空）')).toHaveValue(role);
   }
@@ -36,31 +39,23 @@ test('a teammate keeps its identity and role across saved harness switches', asy
     await expect(card).toContainText(agent.configuration.model);
     await card.getByRole('button', { name: '编辑', exact: true }).click();
     await expect(dialog.getByRole('button', { name: '保存', exact: true })).toBeEnabled();
-    await expect(dialog.getByText(agent.configuration.harness === 'codex' ? 'Codex' : 'Claude Code', { exact: true })).toBeVisible();
+    await expect(dialog.locator('.v-select').filter({ hasText: '运行方式' })).toHaveCount(0);
     await expect(dialog.getByLabel('角色设定（可留空）')).toHaveValue(role);
     return agent;
   }
 
-  await selectHarness('Codex');
-  await dialog.locator('.v-select').filter({ hasText: '模型' }).getByRole('combobox').click();
-  await expect(page.getByRole('option', { name: 'codex-ci-fixture', exact: true })).toBeVisible();
-  await expect(page.getByRole('option', { name: 'DeepSeek V4.1 Flash', exact: true })).toHaveCount(0);
-  await page.getByRole('option', { name: 'codex-ci-fixture', exact: true }).click();
+  await selectModel('codex-ci-fixture');
   const original = await save();
   expect(original.configuration).toMatchObject({ harness: 'codex', model: 'codex-ci-fixture', body: role });
   await dialog.screenshot({ path: testInfo.outputPath('codex-editor.png'), animations: 'disabled' });
 
-  await selectHarness('Claude Code');
-  await dialog.locator('.v-select').filter({ hasText: '模型' }).getByRole('combobox').click();
-  await expect(page.getByRole('option', { name: 'DeepSeek V4.1 Flash', exact: true })).toBeVisible();
-  await expect(page.getByRole('option', { name: 'codex-ci-fixture', exact: true })).toHaveCount(0);
-  await page.getByRole('option', { name: 'DeepSeek V4.1 Flash', exact: true }).click();
+  await selectModel('DeepSeek V4.1 Flash');
   const claude = await save();
   expect(claude.id).toBe(original.id);
   expect(claude.configuration).toMatchObject({ harness: 'claude-code', model: 'deepseek-flash', body: role });
   await dialog.screenshot({ path: testInfo.outputPath('claude-editor.png'), animations: 'disabled' });
 
-  await selectHarness('Codex');
+  await selectModel('codex-ci-fixture');
   const restored = await save();
   expect(restored.id).toBe(original.id);
   expect(restored.configuration).toMatchObject({ harness: 'codex', model: 'codex-ci-fixture', body: role });

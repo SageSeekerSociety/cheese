@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from app.core.config import settings
 from app.core.errors import ValidationError
 from app.domain.agent.harness import DEFAULT_HARNESS, known_harness
-from app.domain.agent.market import subscription_model_listings
+from app.domain.agent.market import subscription_model_ids, subscription_model_listings
 from app.domain.agent.supply import SUBSCRIPTION, resolve_pool
 
 
@@ -54,6 +54,10 @@ def model_choices(project_settings: dict | None) -> list[dict]:
     for item in choices:
         item["harnesses"] = [DEFAULT_HARNESS]
     for model in dict.fromkeys(settings.agent_codex_models):
+        # Subscription credentials require their native harness, even if an
+        # operator also lists the alias among API models supported by Codex.
+        if model in subscription_model_ids():
+            continue
         existing = next((item for item in choices if item["id"] == model), None)
         if existing is not None:
             existing["harnesses"].append("codex")
