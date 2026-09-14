@@ -16,6 +16,7 @@ import uuid
 
 import pytest
 
+from app.domain.agent import machine_launcher
 from app.domain.agent.harness.claude_code import device_launch, warm_session
 
 
@@ -938,14 +939,9 @@ def test_environment_prepares_tools_without_task_code_on_attach_and_reset(tmp_pa
     }
 
     def attach():
-        script = device_launch.build_launch_script()
-        prefix = (
-            'ENVIRONMENT_CMD=""'
-            + script.split('ENVIRONMENT_CMD=""', 1)[1].split('[ -s "$CHEESE_SP" ]', 1)[
-                0
-            ]
-        )
-        _spawn_supervisor(socket, env, prefix + _supervisor_block())
+        # The supervisor carries the environment wrapper itself, so the block
+        # below is the whole of what a launch runs after the harness's own half.
+        _spawn_supervisor(socket, env, _supervisor_block())
 
     def wait_agents(count):
         deadline = time.monotonic() + 5
@@ -1167,7 +1163,7 @@ def _tunnel_up_home(tmp_path):
     """A HOME laid out the way the launcher leaves one, with a stub helper that
     binds its --port and then sits there — the only thing about the real helper
     this script cares about."""
-    from app.domain.agent.harness.claude_code.device_launch import CHEESE_TUNNEL_UP
+    from app.domain.agent.machine_launcher import CHEESE_TUNNEL_UP
 
     home = tmp_path / "home"
     (home / ".claude").mkdir(parents=True)
@@ -1343,7 +1339,7 @@ def test_the_helper_is_verified_by_the_dash_syntax_check_too():
     does not parse it. Extracting it is the only way this is checked at all."""
     import subprocess
 
-    from app.domain.agent.harness.claude_code.device_launch import CHEESE_TUNNEL_UP
+    from app.domain.agent.machine_launcher import CHEESE_TUNNEL_UP
 
     checked = subprocess.run(
         ["sh", "-n"], input=CHEESE_TUNNEL_UP, text=True, capture_output=True
@@ -1596,7 +1592,7 @@ def test_the_preview_up_script_is_valid_shell_under_dash_too():
     it — extracting it is the only way this is checked at all."""
     checked = subprocess.run(
         ["sh", "-n"],
-        input=device_launch.CHEESE_PREVIEW_UP,
+        input=machine_launcher.CHEESE_PREVIEW_UP,
         text=True,
         capture_output=True,
     )
@@ -1609,7 +1605,7 @@ def test_a_machine_that_never_previews_anything_runs_no_helper(tmp_path):
     python on every enrolled laptop for a feature most topics never use."""
     (tmp_path / ".claude").mkdir()
     result = subprocess.run(
-        ["sh", "-c", device_launch.CHEESE_PREVIEW_UP],
+        ["sh", "-c", machine_launcher.CHEESE_PREVIEW_UP],
         env={
             "HOME": str(tmp_path),
             "PATH": os.environ["PATH"],
@@ -1633,7 +1629,7 @@ def test_declaring_a_port_writes_it_on_the_machine(tmp_path):
         [
             "sh",
             "-c",
-            device_launch.CHEESE_PREVIEW_UP + "\n",
+            machine_launcher.CHEESE_PREVIEW_UP + "\n",
             "cheese-preview-up",
             "5173",
         ],
