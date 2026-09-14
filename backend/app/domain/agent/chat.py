@@ -1244,7 +1244,12 @@ class ChatService:
                 return
             user_block_id = None
         else:
-            user_payloads, user_block_id, user_block_ids = await self.post_user_message(
+            (
+                user_payloads,
+                user_block_id,
+                user_block_ids,
+                _duplicate,
+            ) = await self.post_user_message(
                 topic_id,
                 author=author,
                 content=content,
@@ -2483,12 +2488,14 @@ class ChatService:
         reply_to: str | None,
         attachments: list[dict] | None = None,
         client_id: str | None = None,
-    ) -> tuple[list[dict], uuid.UUID, list[uuid.UUID]]:
+    ) -> tuple[list[dict], uuid.UUID, list[uuid.UUID], bool]:
         """Persist the human message (+ its image attachment blocks) and the
         @mention notifications in one short transaction, outside any turn lock.
-        Returns (payloads, anchor_block_id, all_block_ids) — the anchor is what
-        芝士's reply threads under; all ids are consumed together after a
-        mid-session delivery receipt."""
+        Returns (payloads, anchor_block_id, all_block_ids, duplicate) — the
+        anchor is what 芝士's reply threads under; all ids are consumed together
+        after a mid-session delivery receipt. ``duplicate`` means the browser
+        retried a delivery whose durable result is being echoed again.
+        """
         async with self._sessions() as session:
             topics = TopicRepository(session)
             blocks = BlockRepository(session)
@@ -2496,6 +2503,53 @@ class ChatService:
             if place is None:
                 raise NotFoundError("Topic not found")
             topic = place.room
+            delivery_key = (
+                action_key(place.room_id, "chat_message", author, client_id)
+                if client_id
+                else None
+            )
+            if delivery_key and not await idem.claim(
+                session,
+                delivery_key,
+                action="chat_message",
+                scope_id=str(place.room_id),
+            ):
+                stored = await idem.stored_result(session, delivery_key)
+                if stored is None:
+                    raise RuntimeError("committed chat delivery has no stored result")
+                return (
+                    list(stored["payloads"]),
+                    uuid.UUID(stored["anchor_block_id"]),
+                    [uuid.UUID(value) for value in stored["block_ids"]],
+                    True,
+                )
+            if delivery_key:
+                assert client_id is not None
+                legacy_blocks = await blocks.client_delivery(
+                    place.room_id, author=author, client_id=client_id
+                )
+                if legacy_blocks:
+                    anchor = next(
+                        block
+                        for block in legacy_blocks
+                        if (block.meta or {}).get("client_id") == client_id
+                    )
+                    payloads = [
+                        _block_payload(BlockOut.model_validate(block))
+                        for block in legacy_blocks
+                    ]
+                    block_ids = [block.id for block in legacy_blocks]
+                    await idem.record_result(
+                        session,
+                        delivery_key,
+                        {
+                            "payloads": payloads,
+                            "anchor_block_id": str(anchor.id),
+                            "block_ids": [str(block_id) for block_id in block_ids],
+                        },
+                    )
+                    await session.commit()
+                    return payloads, anchor.id, block_ids, True
             created_blocks: list[Block] = []
             project = await ProjectRepository(session).get(topic.project_id)
             agent = (
@@ -2594,7 +2648,7 @@ class ChatService:
             # 图片输入: each image = an attachment block. content = the worktree
             # path (a REAL file, uploaded before this message), mime_type = how
             # to render it — structured fields, never parsed out of prose.
-            for att in attachments or []:
+            for index, att in enumerate(attachments or []):
                 att_block = await blocks.add(
                     project_id=topic.project_id,
                     topic_id=place.room_id,
@@ -2606,7 +2660,14 @@ class ChatService:
                     turn_id=attribution_id,
                     # An image-only send still honors the reply thread (B3).
                     reply_to=None if content else reply_uuid,
-                    meta={"agent_recipient": recipient},
+                    meta={
+                        "agent_recipient": recipient,
+                        **(
+                            {"client_id": client_id}
+                            if not content and index == 0 and client_id
+                            else {}
+                        ),
+                    },
                 )
                 if attribution_id is None:
                     attribution_id = att_block.id
@@ -2616,12 +2677,23 @@ class ChatService:
                 created_blocks.append(att_block)
             if anchor_id is None:  # guarded by the route, but never crash a turn
                 raise NotFoundError("empty message")
-            await session.commit()
             payloads = [
                 _block_payload(BlockOut.model_validate(block))
                 for block in created_blocks
             ]
-        return payloads, anchor_id, [block.id for block in created_blocks]
+            block_ids = [block.id for block in created_blocks]
+            if delivery_key:
+                await idem.record_result(
+                    session,
+                    delivery_key,
+                    {
+                        "payloads": payloads,
+                        "anchor_block_id": str(anchor_id),
+                        "block_ids": [str(block_id) for block_id in block_ids],
+                    },
+                )
+            await session.commit()
+        return payloads, anchor_id, block_ids, False
 
     async def ack_summon(
         self, user_block_id: uuid.UUID, topic_id: uuid.UUID

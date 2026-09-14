@@ -109,6 +109,35 @@ class BlockRepository:
     async def get(self, block_id: uuid.UUID) -> Block | None:
         return await self._session.get(Block, block_id)
 
+    async def client_delivery(
+        self, topic_id: uuid.UUID, *, author: str, client_id: str
+    ) -> list[Block]:
+        """Return the human block bundle for one browser delivery."""
+        anchor = await self._session.scalar(
+            select(Block)
+            .where(
+                Block.topic_id == topic_id,
+                Block.author == author,
+                Block.author_type == AuthorType.human,
+                Block.meta["client_id"].as_string() == client_id,
+            )
+            .order_by(Block.created_at, Block.id)
+            .limit(1)
+        )
+        if anchor is None:
+            return []
+        rows = await self._session.scalars(
+            select(Block)
+            .where(
+                Block.topic_id == topic_id,
+                Block.author == author,
+                Block.author_type == AuthorType.human,
+                Block.turn_id == anchor.turn_id,
+            )
+            .order_by(Block.created_at, Block.id)
+        )
+        return list(rows)
+
     async def published_text_for_turn(self, turn_id: uuid.UUID) -> str:
         """The agent's actual conversation, excluding terminal activity."""
         texts = await self._session.scalars(
