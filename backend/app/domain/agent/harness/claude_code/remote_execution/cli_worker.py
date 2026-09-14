@@ -1,5 +1,6 @@
 """Single-threaded CLI preload process; each invocation runs in its own child."""
 
+import argparse
 import array
 import json
 import os
@@ -11,7 +12,125 @@ import sys
 import threading
 import traceback
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
+
+
+def _schema(action):
+    value: dict[str, Any] = {"type": "string"}
+    if action.type is int:
+        value = {"type": "integer"}
+    elif action.type is float:
+        value = {"type": "number"}
+    elif action.type is not None and getattr(action.type, "__name__", "") == "UUID":
+        value = {"type": "string", "format": "uuid"}
+    if action.choices is not None:
+        value["enum"] = list(action.choices)
+    if isinstance(action, (argparse._StoreTrueAction, argparse._StoreFalseAction)):
+        value = {"type": "boolean"}
+    elif isinstance(action, argparse._AppendAction) or action.nargs in ("*", "+"):
+        value = {"type": "array", "items": value}
+    if action.help:
+        value["description"] = action.help
+    if action.default is not argparse.SUPPRESS and isinstance(
+        action.default, (str, int, float, bool, list)
+    ):
+        value["default"] = action.default
+    return value
+
+
+def _leaf_commands(parser, prefix=()):
+    subparsers = next(
+        (a for a in parser._actions if isinstance(a, argparse._SubParsersAction)), None
+    )
+    if subparsers is None:
+        yield prefix, parser
+        return
+    seen = set()
+    for name, child in subparsers.choices.items():
+        # argparse aliases point to the same parser; publish its canonical name once.
+        if id(child) in seen:
+            continue
+        seen.add(id(child))
+        yield from _leaf_commands(child, (*prefix, name))
+
+
+def _tool_name(command):
+    return "cheese_" + "_".join(part.replace("-", "_") for part in command)
+
+
+def _tools(parser):
+    if parser is None:
+        raise RuntimeError("Installed Cheese CLI does not publish an argparse parser")
+    tools = []
+    for command, leaf in _leaf_commands(parser):
+        properties = {}
+        required = []
+        for action in leaf._actions:
+            if isinstance(action, argparse._HelpAction):
+                continue
+            properties[action.dest] = _schema(action)
+            positional = not action.option_strings
+            if action.required or (positional and action.nargs not in ("?", "*")):
+                required.append(action.dest)
+        schema = {"type": "object", "properties": properties}
+        if required:
+            schema["required"] = required
+        tools.append(
+            {
+                "name": _tool_name(command),
+                "description": leaf.description or leaf.format_usage().strip(),
+                "inputSchema": schema,
+            }
+        )
+    return tools
+
+
+def _command(parser, tool, arguments):
+    if parser is None:
+        raise RuntimeError("Installed Cheese CLI does not publish an argparse parser")
+    for command, leaf in _leaf_commands(parser):
+        if _tool_name(command) != tool:
+            continue
+        option_argv: list[str] = []
+        positional_argv: list[str] = []
+        known = {
+            action.dest
+            for action in leaf._actions
+            if not isinstance(action, argparse._HelpAction)
+        }
+        unknown = sorted(set(arguments) - known)
+        if unknown:
+            raise ValueError("Unknown arguments: " + ", ".join(unknown))
+        for action in leaf._actions:
+            if isinstance(action, argparse._HelpAction) or action.dest not in arguments:
+                continue
+            value = arguments[action.dest]
+            if not action.option_strings:
+                if isinstance(value, list):
+                    positional_argv.extend(str(item) for item in value)
+                else:
+                    positional_argv.append(str(value))
+            elif isinstance(action, argparse._StoreTrueAction):
+                if value:
+                    option_argv.append(action.option_strings[0])
+            elif isinstance(action, argparse._StoreFalseAction):
+                if not value:
+                    option_argv.append(action.option_strings[0])
+            elif isinstance(action, argparse._AppendAction):
+                for item in value:
+                    option_argv.append(f"{action.option_strings[0]}={item}")
+            elif action.nargs in ("*", "+"):
+                option_argv.append(action.option_strings[0])
+                option_argv.extend(str(item) for item in value)
+            else:
+                option_argv.append(f"{action.option_strings[0]}={value}")
+        argv = [*command, *option_argv]
+        if positional_argv:
+            argv.extend(("--", *positional_argv))
+        # The parser remains the final authority for required fields and values.
+        leaf.parse_args(argv[len(command) :])
+        return argv
+    raise ValueError(f"Unknown Cheese tool: {tool}")
 
 
 class Handler(socketserver.BaseRequestHandler):
@@ -34,7 +153,13 @@ class Handler(socketserver.BaseRequestHandler):
         os.chdir(payload["cwd"])
         os.environ.clear()
         os.environ.update(payload["env"])
-        sys.argv = [str(server.source), *payload["argv"]]
+        request = payload.get("mcp")
+        if request and request["method"] == "tools/list":
+            for descriptor in descriptors:
+                os.close(descriptor)
+            result = {"status": 0, "result": {"tools": _tools(server.parser)}}
+            self.request.sendall(json.dumps(result).encode() + b"\n")
+            return
         # Recreate wrappers: inherited file streams retain seekability after dup2.
         for standard_stream in (sys.stdin, sys.stdout, sys.stderr):
             standard_stream.close()
@@ -53,6 +178,12 @@ class Handler(socketserver.BaseRequestHandler):
         threading.Thread(target=disconnected, daemon=True).start()
         status = 0
         try:
+            argv = (
+                _command(server.parser, request["tool"], request.get("arguments", {}))
+                if request
+                else payload["argv"]
+            )
+            sys.argv = [str(server.source), *argv]
             exec(
                 server.code,
                 {
@@ -89,7 +220,13 @@ class Server(socketserver.ForkingMixIn, socketserver.UnixStreamServer):
         if signature == self.signature:
             return
         self.code = compile(self.source.read_text(), str(self.source), "exec")
-        exec(self.code, {"__name__": "preload", "__file__": str(self.source)})
+        namespace: dict[str, Any] = {
+            "__name__": "preload",
+            "__file__": str(self.source),
+        }
+        exec(self.code, namespace)
+        build_parser = namespace.get("build_parser")
+        self.parser = build_parser() if build_parser else None
         if threading.active_count() != 1:
             raise RuntimeError("CLI preload must remain single-threaded before fork")
         self.signature = signature
@@ -115,9 +252,9 @@ if __name__ == "__main__":
             for child in server.active_children or ():
                 try:
                     os.killpg(child, signal.SIGTERM)
-                except ProcessLookupError:
+                except (ProcessLookupError, PermissionError):
                     try:
                         os.kill(child, signal.SIGTERM)
-                    except ProcessLookupError:
+                    except (ProcessLookupError, PermissionError):
                         pass
             Path(sys.argv[1]).unlink(missing_ok=True)

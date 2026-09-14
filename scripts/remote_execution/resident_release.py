@@ -195,7 +195,7 @@ def main():
     try:
         acceptance.main()
         requests = sorted(output.glob("request-*.json"))
-        assert len(requests) == 16
+        assert len(requests) == 17
         assert "BEFORE_RELEASE" not in requests[0].read_text()
     finally:
         rendezvous.unlink(missing_ok=True)

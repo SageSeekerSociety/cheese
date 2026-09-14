@@ -1,7 +1,9 @@
+import array
 import hashlib
 import json
 import os
 import select
+import socket
 import subprocess
 import sys
 import time
@@ -47,6 +49,154 @@ def command(address, *args):
     return [sys.executable, str(CLIENT), *args], {
         **os.environ,
         "CHEESE_CLI_SOCKET": address,
+    }
+
+
+def mcp_call(address, tmp_path, request):
+    paths = [tmp_path / name for name in ("stdin", "stdout", "stderr")]
+    paths[0].write_text("")
+    with (
+        paths[0].open("rb") as stdin,
+        paths[1].open("wb") as stdout,
+        paths[2].open("wb") as stderr,
+        socket.socket(socket.AF_UNIX) as connection,
+    ):
+        connection.connect(address)
+        connection.sendmsg(
+            [b"\0"],
+            [
+                (
+                    socket.SOL_SOCKET,
+                    socket.SCM_RIGHTS,
+                    array.array(
+                        "i", [stdin.fileno(), stdout.fileno(), stderr.fileno()]
+                    ),
+                )
+            ],
+        )
+        connection.sendall(
+            json.dumps(
+                {
+                    "mcp": request,
+                    "cwd": str(tmp_path),
+                    "env": dict(os.environ),
+                    "stdio": [
+                        {"encoding": "utf-8", "errors": "strict"} for _ in range(3)
+                    ],
+                }
+            ).encode()
+            + b"\n"
+        )
+        receipt = json.loads(connection.makefile("rb").readline())
+    return receipt, paths[1].read_text(), paths[2].read_text()
+
+
+def test_worker_discovers_every_leaf_as_a_structured_tool(worker, tmp_path):
+    receipt, _, _ = mcp_call(worker[1], tmp_path, {"method": "tools/list"})
+    tools = {tool["name"]: tool for tool in receipt["result"]["tools"]}
+    assert set(tools) == {
+        "cheese_accept_request",
+        "cheese_api",
+        "cheese_artifact",
+        "cheese_ask",
+        "cheese_bind",
+        "cheese_chat_send",
+        "cheese_close_task",
+        "cheese_decision",
+        "cheese_describe",
+        "cheese_doc_get",
+        "cheese_doc_set",
+        "cheese_fetch",
+        "cheese_gh_token",
+        "cheese_lock",
+        "cheese_members",
+        "cheese_milestone",
+        "cheese_notify",
+        "cheese_push_fix",
+        "cheese_ready",
+        "cheese_recall",
+        "cheese_remember",
+        "cheese_serve",
+        "cheese_split",
+        "cheese_status",
+        "cheese_sync",
+        "cheese_tell",
+        "cheese_title",
+        "cheese_unlock",
+        "cheese_worktree",
+    }
+    assert tools["cheese_split"]["inputSchema"]["required"] == ["title"]
+    assert tools["cheese_split"]["inputSchema"]["properties"]["contributor"] == {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "实际贡献者的 handle，可重复",
+        "default": [],
+    }
+    assert tools["cheese_serve"]["inputSchema"]["properties"]["port"]["type"] == (
+        "integer"
+    )
+
+
+def test_worker_translates_values_to_argv_without_shell_interpretation(
+    worker, tmp_path
+):
+    source = worker[0]
+    source.write_text(
+        "import argparse, json, pathlib, sys\n"
+        "def build_parser():\n"
+        " p=argparse.ArgumentParser(); s=p.add_subparsers(dest='cmd', required=True)\n"
+        " q=s.add_parser('write'); q.add_argument('path')\n"
+        " q.add_argument('--tag', action='append'); return p\n"
+        "if __name__ == '__main__':\n"
+        " a=build_parser().parse_args()\n"
+        " pathlib.Path(a.path).write_text(json.dumps(a.tag))\n"
+    )
+    target = tmp_path / "literal;$(touch escaped)"
+    receipt, _, stderr = mcp_call(
+        worker[1],
+        tmp_path,
+        {
+            "method": "tools/call",
+            "tool": "cheese_write",
+            "arguments": {"path": str(target), "tag": ["one", "two"]},
+        },
+    )
+    assert receipt["status"] == 0, stderr
+    assert json.loads(target.read_text()) == ["one", "two"]
+    assert not (tmp_path / "escaped").exists()
+
+
+def test_worker_preserves_dash_leading_structured_strings(worker, tmp_path):
+    source = worker[0]
+    source.write_text(
+        "import argparse, json\n"
+        "def build_parser():\n"
+        " p=argparse.ArgumentParser(); s=p.add_subparsers(dest='cmd', required=True)\n"
+        " q=s.add_parser('capture'); q.add_argument('text')\n"
+        " q.add_argument('--title'); q.add_argument('--tag', action='append')\n"
+        " return p\n"
+        "if __name__ == '__main__':\n"
+        " a=build_parser().parse_args(); print(json.dumps(vars(a)))\n"
+    )
+    receipt, stdout, stderr = mcp_call(
+        worker[1],
+        tmp_path,
+        {
+            "method": "tools/call",
+            "tool": "cheese_capture",
+            "arguments": {
+                "text": "--help",
+                "title": "--task",
+                "tag": ["--title=changed"],
+            },
+        },
+    )
+    assert receipt["status"] == 0, stderr
+    assert json.loads(stdout) == {
+        "cmd": "capture",
+        "text": "--help",
+        "title": "--task",
+        "tag": ["--title=changed"],
     }
 
 

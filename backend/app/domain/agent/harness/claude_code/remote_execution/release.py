@@ -113,7 +113,7 @@ def stage(home, sources):
         sources["proxy.js"].replace("__EXECUTION_CONFIG__", json.dumps(target)),
     )
     allowed = settings.setdefault("permissions", {}).setdefault("allow", [])
-    for name in ("invoke", "chat_send", "platform_request"):
+    for name in ("invoke", "chat_send", "platform_request", "cheese_*"):
         tool = "mcp__native__" + name
         if tool not in allowed:
             allowed.append(tool)
@@ -123,9 +123,11 @@ def stage(home, sources):
             for previous in (
                 "^(?!mcp__native__invoke$)",
                 "^(?!mcp__native__(?:invoke|chat_send)$)",
+                "^(?!mcp__native__(?:invoke|chat_send|platform_request)$)",
             ):
                 matcher = matcher.replace(
-                    previous, "^(?!mcp__native__(?:invoke|chat_send|platform_request)$)"
+                    previous,
+                    "^(?!mcp__native__(?:invoke|chat_send|platform_request|cheese_.*)$)",
                 )
             group["matcher"] = matcher
     replace(settings_path, json.dumps(settings))

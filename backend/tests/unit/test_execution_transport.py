@@ -19,8 +19,8 @@ import pytest
 
 from app.domain.agent import execution, executor_transport
 from app.domain.agent.device_hub import DeviceHub
+from app.domain.agent.harness.claude_code.remote_execution import cli_worker, runtime
 from app.domain.agent.harness.claude_code.remote_execution import client as central
-from app.domain.agent.harness.claude_code.remote_execution import runtime
 from app.domain.agent.harness.claude_code.remote_execution.client import (
     _local_chat_send_argv,
 )
@@ -105,6 +105,11 @@ def executor(tmp_path):
     helper = home / ".claude/remote-execution/runtime.py"
     helper.parent.mkdir(parents=True)
     shutil.copyfile(runtime.__file__, helper)
+    shutil.copyfile(cli_worker.__file__, helper.parent / "cli_worker.py")
+    shutil.copyfile(
+        Path(__file__).resolve().parents[2] / "sandbox/cheese",
+        home / ".claude/cheese",
+    )
     state = home / ".claude/executor"
     work = tmp_path / "project"
     work.mkdir()
@@ -200,7 +205,7 @@ async def test_repeated_mutation_id_does_not_repeat_shell_write(executor):
 
 @pytest.fixture
 def central_transport(executor, tmp_path, request):
-    _, work, state = executor
+    target, work, state = executor
     clients = []
     drop = []
     publications = []
@@ -270,6 +275,7 @@ def central_transport(executor, tmp_path, request):
     )
     process.publications = publications
     process.platform_calls = platform_calls
+    process.cli_source = Path(target["home"]) / ".claude/cheese"
     try:
         yield process, clients, drop, work
     finally:
@@ -286,6 +292,7 @@ def test_platform_mcp_posts_literal_json_without_executor_invocation(central_tra
         for t in process.call("tools/list", {})["tools"]
         if t["name"] == "platform_request"
     )
+    discovery_clients = len(clients)
     assert set(tool["inputSchema"]["required"]) == {"method", "path"}
     body = {"title": "中文\n$(touch escaped); `false`", "values": [1, False, None]}
     for index in range(2):
@@ -305,7 +312,73 @@ def test_platform_mcp_posts_literal_json_without_executor_invocation(central_tra
         outcome = json.loads(result["content"][0]["text"])
         assert json.loads(outcome["result"]["stdout"]) == {"data": body}
     assert process.platform_calls == [body, body]
-    assert len(clients) == 2 and clients[0] == clients[1]
+    assert len(clients) == discovery_clients + 2
+    assert clients[-2] == clients[-1]
+    assert not (work / "escaped").exists()
+
+
+@pytest.mark.parametrize(
+    "central_transport",
+    [
+        {
+            "PreToolUse": [
+                {
+                    "matcher": "mcp__native__cheese_echo",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": (
+                                "printf '%s' '{\"hookSpecificOutput\":"
+                                '{"updatedInput":{"value":"changed by policy"}}}'
+                                "'"
+                            ),
+                        }
+                    ],
+                }
+            ]
+        }
+    ],
+    indirect=True,
+)
+def test_structured_cheese_tool_discovers_and_runs_on_executor_with_policy(
+    central_transport,
+):
+    process, _, _, work = central_transport
+    process.cli_source.write_text(
+        "import argparse, pathlib\n"
+        "def build_parser():\n"
+        " p=argparse.ArgumentParser(); s=p.add_subparsers(dest='cmd', required=True)\n"
+        " q=s.add_parser('echo', description='Read a value on the executor.')\n"
+        " q.add_argument('value'); return p\n"
+        "if __name__ == '__main__':\n"
+        " a=build_parser().parse_args(); p=pathlib.Path('structured-calls')\n"
+        " p.write_text((p.read_text() if p.exists() else '') + 'x'); print(a.value)\n"
+    )
+    tool = next(
+        item
+        for item in process.call("tools/list", {})["tools"]
+        if item["name"] == "cheese_echo"
+    )
+    assert tool["inputSchema"]["required"] == ["value"]
+    results = []
+    for _ in range(2):
+        results.append(
+            process.call(
+                "tools/call",
+                {
+                    "name": "cheese_echo",
+                    "arguments": {
+                        "id": "structured-cheese",
+                        "session_id": "fixture",
+                        "value": "$(touch escaped); original",
+                    },
+                },
+            )
+        )
+    for result in results:
+        outcome = json.loads(result["content"][0]["text"])
+        assert outcome["result"]["stdout"] == "changed by policy\n"
+    assert (work / "structured-calls").read_text() == "x"
     assert not (work / "escaped").exists()
 
 
@@ -596,6 +669,7 @@ def test_structured_chat_publishes_literal_content_without_executor(central_tran
     content = "hello 'world'\n$(touch forbidden); --literal"
     arguments = {"content": content, "id": "typed-publication", "session_id": "fixture"}
     tools = process.call("tools/list", {})["tools"]
+    discovery_clients = len(clients)
     assert any(tool["name"] == "chat_send" for tool in tools)
     for _ in range(2):
         result = process.call(
@@ -604,7 +678,8 @@ def test_structured_chat_publishes_literal_content_without_executor(central_tran
         value = json.loads(result["content"][0]["text"])["result"]
         assert json.loads(value["stdout"])["content"] == content
     assert process.publications[0] == process.publications[1]
-    assert clients[0] == clients[1]
+    assert len(clients) == discovery_clients + 2
+    assert clients[-2] == clients[-1]
     assert not (work / "forbidden").exists()
 
 

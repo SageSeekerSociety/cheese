@@ -6,6 +6,7 @@ closing an SSH connection does not discard the command registry or replay writes
 
 from __future__ import annotations
 
+import array
 import base64
 import contextlib
 import fcntl
@@ -272,6 +273,84 @@ class Executor:
                     log.close()
             return self.clients[server]
 
+    def _ready_cli_worker(self):
+        if self.cli_worker is None:
+            raise RuntimeError("Cheese CLI worker is unavailable")
+        if self.cli_worker_ready:
+            return
+        assert self.cli_worker.stdout is not None
+        if (
+            not select.select([self.cli_worker.stdout], [], [], 15)[0]
+            or self.cli_worker.stdout.readline().strip() != "ready"
+        ):
+            self.cli_worker.kill()
+            self.cli_worker.wait()
+            raise RuntimeError("CLI worker startup failed; inspect cli-worker.log")
+        self.env["CHEESE_CLI_SOCKET"] = socket_path(self.state) + ".cli"
+        self.cli_worker_ready = True
+
+    def cli(self, params):
+        with self.cwd_lock:
+            self._ready_cli_worker()
+            call_id = "cli-" + uuid.uuid4().hex[:16]
+            directory = self.state / "tasks" / call_id
+            directory.mkdir(parents=True)
+            paths = [directory / name for name in ("stdin", "stdout", "stderr")]
+            paths[0].write_text(params.get("stdin", ""))
+            with (
+                paths[0].open("rb") as stdin,
+                paths[1].open("wb") as stdout,
+                paths[2].open("wb") as stderr,
+                socket.socket(socket.AF_UNIX) as connection,
+            ):
+                connection.connect(self.env["CHEESE_CLI_SOCKET"])
+                connection.sendmsg(
+                    [b"\0"],
+                    [
+                        (
+                            socket.SOL_SOCKET,
+                            socket.SCM_RIGHTS,
+                            array.array(
+                                "i", [stdin.fileno(), stdout.fileno(), stderr.fileno()]
+                            ),
+                        )
+                    ],
+                )
+                connection.sendall(
+                    json.dumps(
+                        {
+                            "mcp": params,
+                            "cwd": str(self.cwd),
+                            "env": self.env,
+                            "stdio": [
+                                {"encoding": "utf-8", "errors": "strict"}
+                                for _ in range(3)
+                            ],
+                        }
+                    ).encode()
+                    + b"\n"
+                )
+                with connection.makefile("rb") as stream:
+                    line = stream.readline()
+            if not line:
+                raise RuntimeError(
+                    "CLI worker disconnected; query the platform before "
+                    "retrying a write"
+                )
+            receipt = json.loads(line)
+            if "result" in receipt:
+                return receipt["result"]
+            result = {
+                "stdout": paths[1].read_text(),
+                "stderr": paths[2].read_text(),
+                "exit_code": receipt["status"],
+            }
+            if receipt["status"]:
+                raise RuntimeError(
+                    result["stderr"] or f"Cheese exited {receipt['status']}"
+                )
+            return result
+
     def invoke(self, params):
         key = params["id"]
         serialized = json.dumps(params, sort_keys=True)
@@ -382,6 +461,14 @@ class Executor:
             return self.client(server).call(
                 "tools/call", {"name": tool, "arguments": args}
             )
+        if tool.startswith("mcp__native__cheese_"):
+            return self.cli(
+                {
+                    "method": "tools/call",
+                    "tool": tool.removeprefix("mcp__native__"),
+                    "arguments": args,
+                }
+            )
         if tool not in NATIVE_TOOLS:
             raise ValueError(f"Unsupported remote tool: {tool}")
         if tool == "Read":
@@ -430,20 +517,9 @@ class Executor:
     def bash(self, args, request_id):
         background = args.get("run_in_background", False)
         with self.cwd_lock:
-            if self.cli_worker is not None and not self.cli_worker_ready:
+            if self.cli_worker is not None:
                 # Preload overlaps room/model preparation, before the first shell.
-                assert self.cli_worker.stdout is not None
-                if (
-                    not select.select([self.cli_worker.stdout], [], [], 15)[0]
-                    or self.cli_worker.stdout.readline().strip() != "ready"
-                ):
-                    self.cli_worker.kill()
-                    self.cli_worker.wait()
-                    raise RuntimeError(
-                        "CLI worker startup failed; inspect cli-worker.log"
-                    )
-                self.env["CHEESE_CLI_SOCKET"] = socket_path(self.state) + ".cli"
-                self.cli_worker_ready = True
+                self._ready_cli_worker()
             command_env = self.env
             if self.cli_worker_ready:
                 command_env = dict(
@@ -831,6 +907,8 @@ class Executor:
             return self.client(params["server"]).call(
                 params["method"], params.get("params")
             )
+        if method == "cli":
+            return self.cli(params)
         raise ValueError("Unknown executor method")
 
     def close(self):
