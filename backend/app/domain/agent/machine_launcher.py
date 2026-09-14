@@ -87,8 +87,8 @@ from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
 # space, that is a coincidence, and adopting on it leaves the port dead for the
 # life of the screen with nothing anywhere reporting a fault.
 CHEESE_TUNNEL_UP = """#!/bin/sh
-PIDF="$HOME/.claude/cheese-tunnel.pid"
-STAMPF="$HOME/.claude/cheese-tunnel.stamp"
+PIDF="$HOME/.cheese/cheese-tunnel.pid"
+STAMPF="$HOME/.cheese/cheese-tunnel.stamp"
 # Is anything answering on the port `claude` was pointed at? python3 rather than
 # bash's /dev/tcp for the same reason the readiness wait below uses it: /bin/sh
 # is dash on the machine images and dash has no /dev/tcp.
@@ -107,7 +107,7 @@ PROBEPY
 # launcher rewrites cheese-tunnel.py on every launch, so a shipped fix would
 # otherwise never reach a machine whose helper is still alive — it would keep
 # serving the old code indefinitely, and nothing would look wrong.
-WANT="$(cksum "$HOME/.claude/cheese-tunnel.py" 2>/dev/null | cut -d" " -f1)"
+WANT="$(cksum "$HOME/.cheese/cheese-tunnel.py" 2>/dev/null | cut -d" " -f1)"
 HAVE="$(cat "$STAMPF" 2>/dev/null || true)"
 PID="$(cat "$PIDF" 2>/dev/null || true)"
 if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
@@ -119,10 +119,10 @@ if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
   # a permanently stale helper does not heal at all.
   kill "$PID" 2>/dev/null || true
 fi
-nohup python3 "$HOME/.claude/cheese-tunnel.py" \\
+nohup python3 "$HOME/.cheese/cheese-tunnel.py" \\
   --port "$CHEESE_TUNNEL_PORT" --url "$CHEESE_TUNNEL_URL" \\
-  --token-file "$HOME/.claude/cheese-tunnel.token" \\
-  >"$HOME/.claude/cheese-tunnel.log" 2>&1 &
+  --token-file "$HOME/.cheese/cheese-tunnel.token" \\
+  >"$HOME/.cheese/cheese-tunnel.log" 2>&1 &
 echo $! > "$PIDF"
 printf '%s\n' "$WANT" > "$STAMPF"
 # The readiness check runs in python3, NOT with bash's /dev/tcp: this script is
@@ -166,15 +166,15 @@ CHEESE_PREVIEW_UP = """#!/bin/sh
 # `cheese serve`
 # passes it and nothing else does, which is what keeps the file layout of the
 # preview helper entirely inside the launcher — the CLI knows only this script.
-PORTF="$HOME/.claude/cheese-preview.port"
-PIDF="$HOME/.claude/cheese-preview.pid"
-STAMPF="$HOME/.claude/cheese-preview.stamp"
+PORTF="$HOME/.cheese/cheese-preview.port"
+PIDF="$HOME/.cheese/cheese-preview.pid"
+STAMPF="$HOME/.cheese/cheese-preview.stamp"
 if [ -n "$1" ]; then
   printf '%s\\n' "$1" > "$PORTF.tmp" && mv "$PORTF.tmp" "$PORTF"
 fi
 [ -s "$PORTF" ] || exit 0
 [ -n "${CHEESE_PREVIEW_URL:-}" ] || exit 0
-WANT="$(cksum "$HOME/.claude/cheese-preview.py" 2>/dev/null | cut -d" " -f1)"
+WANT="$(cksum "$HOME/.cheese/cheese-preview.py" 2>/dev/null | cut -d" " -f1)"
 HAVE="$(cat "$STAMPF" 2>/dev/null || true)"
 PID="$(cat "$PIDF" 2>/dev/null || true)"
 if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
@@ -183,11 +183,11 @@ if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
   fi
   kill "$PID" 2>/dev/null || true
 fi
-python3 "$HOME/.claude/cheese-preview.py" \\
+python3 "$HOME/.cheese/cheese-preview.py" \\
   --url "$CHEESE_PREVIEW_URL" \\
-  --token-file "$HOME/.claude/cheese-preview.token" \\
+  --token-file "$HOME/.cheese/cheese-preview.token" \\
   --port-file "$PORTF" \\
-  >"$HOME/.claude/cheese-preview.log" 2>&1 &
+  >"$HOME/.cheese/cheese-preview.log" 2>&1 &
 echo $! > "$PIDF"
 printf '%s\\n' "$WANT" > "$STAMPF"
 """
@@ -356,22 +356,23 @@ mkdir -p "$HOME" "$CHEESE_WORK"
 # a tmux-hosted agent runs from a fresh server with a cwd of its own.
 export HOME="$(cd "$HOME" && pwd -P)"
 export CHEESE_WORK="$(cd "$CHEESE_WORK" && pwd -P)"
-# The session directory, for every harness. The name is Claude Code's and
-# stays that way because live machines already have one: renaming it is a
-# migration on other people's disks, not a decision anyone has to make here.
-mkdir -p "$HOME/.claude"
-cat > "$HOME/.claude/cheese-environment.py" <<'CHEESE_ENV_PY'
+# The platform's own directory inside the session home. It used to be
+# $HOME/.claude — the platform squatting in one harness's directory, which
+# read as deliberate to everyone who came after it. A harness that wants a
+# directory of its own makes it in `configure`.
+mkdir -p "$HOME/.cheese"
+cat > "$HOME/.cheese/cheese-environment.py" <<'CHEESE_ENV_PY'
 {environment_helper}CHEESE_ENV_PY
-{configure}cat > "$HOME/.claude/cheese-hook" <<'SH'
+{configure}cat > "$HOME/.cheese/cheese-hook" <<'SH'
 {CHEESE_HOOK_SCRIPT}SH
-chmod +x "$HOME/.claude/cheese-hook"
+chmod +x "$HOME/.cheese/cheese-hook"
 # Ship the platform CLI with the launcher over the existing device connection.
 # A separate public HTTP download added 0.39-1.24s to measured launches and
 # could block each launch for its 10s timeout.
-cat > "$HOME/.claude/cheese" <<'CHEESE_PLATFORM_CLI'
+cat > "$HOME/.cheese/cheese" <<'CHEESE_PLATFORM_CLI'
 {cli_source}CHEESE_PLATFORM_CLI
-chmod +x "$HOME/.claude/cheese"
-export PATH="$HOME/.claude:$PATH"
+chmod +x "$HOME/.cheese/cheese"
+export PATH="$HOME/.cheese:$PATH"
 cheese_launch_phase files_written
 {credentials}\
 # Durable event delivery on the device: cheese-hook spools every hook and (via
@@ -384,36 +385,36 @@ cheese_launch_phase files_written
 # dedups re-deliveries by event-id.
 #
 # The supervisor below owns the drainer for a newly started session.
-export CHEESE_HOOK_SPOOL="$HOME/.claude/cheese-spool"
+export CHEESE_HOOK_SPOOL="$HOME/.cheese/cheese-spool"
 export CHEESE_HOOK_SPOOL_ONLY=1
 mkdir -p "$CHEESE_HOOK_SPOOL"
-cat > "$HOME/.claude/cheese-drain" <<'DRAIN'
+cat > "$HOME/.cheese/cheese-drain" <<'DRAIN'
 {drain_script}DRAIN
-chmod +x "$HOME/.claude/cheese-drain"
-cat > "$HOME/.claude/cheese-drain.env.tmp" <<DRAINENV
+chmod +x "$HOME/.cheese/cheese-drain"
+cat > "$HOME/.cheese/cheese-drain.env.tmp" <<DRAINENV
 CHEESE_HOOK_SPOOL="$CHEESE_HOOK_SPOOL"
 CHEESE_HOOK_URL="$CHEESE_HOOK_URL"
 CHEESE_TOKEN="$CHEESE_TOKEN"
 DRAINENV
-mv "$HOME/.claude/cheese-drain.env.tmp" "$HOME/.claude/cheese-drain.env"
+mv "$HOME/.cheese/cheese-drain.env.tmp" "$HOME/.cheese/cheese-drain.env"
 # The tunnel helper, for a machine that cannot reach the meter's listener
 # directly. Written on EVERY launch, token included: the helper re-reads the
 # token per connection, so replacing this file is how a refreshed credential
 # reaches a still-running helper (#385's shape, one layer down).
 if [ -n "${{CHEESE_TUNNEL_URL:-}}" ]; then
-  cat > "$HOME/.claude/cheese-tunnel.py" <<'TUNNELPY'
+  cat > "$HOME/.cheese/cheese-tunnel.py" <<'TUNNELPY'
 {tunnel_helper}TUNNELPY
   # Use the place-scoped CONNECT credential, including its RC claim. The hook
   # token can have project scope; the machine OAuth ticket is never a tunnel
   # credential. A missing CONNECT token must not fall back to either one.
-  cat > "$HOME/.claude/cheese-tunnel.token.tmp" <<TUNNELTOK
+  cat > "$HOME/.cheese/cheese-tunnel.token.tmp" <<TUNNELTOK
 $CHEESE_CONNECT_TOKEN
 TUNNELTOK
-  chmod 600 "$HOME/.claude/cheese-tunnel.token.tmp"
-  mv "$HOME/.claude/cheese-tunnel.token.tmp" "$HOME/.claude/cheese-tunnel.token"
-  cat > "$HOME/.claude/cheese-tunnel-up" <<'TUNNELUP'
+  chmod 600 "$HOME/.cheese/cheese-tunnel.token.tmp"
+  mv "$HOME/.cheese/cheese-tunnel.token.tmp" "$HOME/.cheese/cheese-tunnel.token"
+  cat > "$HOME/.cheese/cheese-tunnel-up" <<'TUNNELUP'
 {tunnel_up}TUNNELUP
-  chmod +x "$HOME/.claude/cheese-tunnel-up"
+  chmod +x "$HOME/.cheese/cheese-tunnel-up"
 fi
 # 运行环境预览's helper. Written on EVERY launch, token included and for the same
 # reason as the tunnel's: the helper re-reads the token per connection, so
@@ -422,20 +423,20 @@ fi
 # a port with `cheese serve`, so a machine that never previews anything pays for
 # no process.
 if [ -n "${{CHEESE_PREVIEW_URL:-}}" ]; then
-  cat > "$HOME/.claude/cheese-preview.py" <<'PREVIEWPY'
+  cat > "$HOME/.cheese/cheese-preview.py" <<'PREVIEWPY'
 {preview_helper}PREVIEWPY
-  cat > "$HOME/.claude/cheese-preview.token.tmp" <<PREVIEWTOK
+  cat > "$HOME/.cheese/cheese-preview.token.tmp" <<PREVIEWTOK
 $CHEESE_TOKEN
 PREVIEWTOK
-  chmod 600 "$HOME/.claude/cheese-preview.token.tmp"
-  mv "$HOME/.claude/cheese-preview.token.tmp" "$HOME/.claude/cheese-preview.token"
-  cat > "$HOME/.claude/cheese-preview-up" <<'PREVIEWUP'
+  chmod 600 "$HOME/.cheese/cheese-preview.token.tmp"
+  mv "$HOME/.cheese/cheese-preview.token.tmp" "$HOME/.cheese/cheese-preview.token"
+  cat > "$HOME/.cheese/cheese-preview-up" <<'PREVIEWUP'
 {preview_up}PREVIEWUP
-  chmod +x "$HOME/.claude/cheese-preview-up"
+  chmod +x "$HOME/.cheese/cheese-preview-up"
   # The ONE thing `cheese serve` needs to know about the preview helper. Exported
   # rather than reconstructed on the CLI's side: the server cannot know the
   # device user's home, and a path written down twice is a path that drifts.
-  export CHEESE_PREVIEW_UP="$HOME/.claude/cheese-preview-up"
+  export CHEESE_PREVIEW_UP="$HOME/.cheese/cheese-preview-up"
 fi
 cd "$CHEESE_WORK"
 {prepare}# The connector owns the terminal session. This shell owns its children.
@@ -443,13 +444,13 @@ if [ -n "${{TMUX:-}}" ]; then
   CHEESE_TMUX_SOCK="${{TMUX%%,*}}"
   SESSION="$(tmux -S "$CHEESE_TMUX_SOCK" display-message -p -t "$TMUX_PANE" '#S')"
   python3 -c 'import json,sys; json.dump(sys.argv[1:], open(sys.argv[3], "w"))' \\
-    "$CHEESE_TMUX_SOCK" "$SESSION" "$HOME/.claude/environment-session.json"
+    "$CHEESE_TMUX_SOCK" "$SESSION" "$HOME/.cheese/environment-session.json"
 fi
-printf '%s' "${{CHEESE_AGENT_CONFIG:-}}" > "$HOME/.claude/agent-configuration"
-printf '%s' {shlex.quote(contract)} > "$HOME/.claude/launch-contract"
+printf '%s' "${{CHEESE_AGENT_CONFIG:-}}" > "$HOME/.cheese/agent-configuration"
+printf '%s' {shlex.quote(contract)} > "$HOME/.cheese/launch-contract"
 ENVIRONMENT_CMD=""
 if [ -n "${{CHEESE_ENVIRONMENT:-}}" ]; then
-  ENVIRONMENT_CMD="python3 \\"$HOME/.claude/cheese-environment.py\\" "
+  ENVIRONMENT_CMD="python3 \\"$HOME/.cheese/cheese-environment.py\\" "
 fi
 AGENT_PID=""
 DRAIN_PID=""
@@ -464,12 +465,12 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 trap cleanup EXIT
 if [ -n "${{CHEESE_TUNNEL_URL:-}}" ]; then
-  sh "$HOME/.claude/cheese-tunnel-up" || exit 1
+  sh "$HOME/.cheese/cheese-tunnel-up" || exit 1
 fi
 if [ -n "${{CHEESE_PREVIEW_URL:-}}" ]; then
-  sh "$HOME/.claude/cheese-preview-up" || exit 1
+  sh "$HOME/.cheese/cheese-preview-up" || exit 1
 fi
-CHEESE_DRAIN_TETHER=$$ sh "$HOME/.claude/cheese-drain" >/dev/null 2>&1 &
+CHEESE_DRAIN_TETHER=$$ sh "$HOME/.cheese/cheese-drain" >/dev/null 2>&1 &
 DRAIN_PID=$!
 # Preserve input before POSIX sh redirects an asynchronous command's fd 0.
 exec 3<&0

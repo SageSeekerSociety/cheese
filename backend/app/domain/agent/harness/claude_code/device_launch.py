@@ -500,6 +500,13 @@ fi
 # owner's settings.json to be routed at all, hijacking every claude the owner
 # starts by hand. With it, the owner's files are never read and never written.
 export CLAUDE_CONFIG_DIR="$HOME/.claude"
+# Ours to create now that the platform keeps its own files in $HOME/.cheese:
+# this directory is this harness's, and everything below writes into it.
+mkdir -p "$CLAUDE_CONFIG_DIR"
+# cheese-sync and cheese-usage are Stop hooks, and settings.json names them
+# by NAME — so this directory has to be on PATH too. The platform puts its
+# own there later; the two never hold the same name.
+export PATH="$CLAUDE_CONFIG_DIR:$PATH"
 export DISABLE_AUTOUPDATER=1
 cat > "$CLAUDE_CONFIG_DIR/webfetch_transport.cjs" <<'CHEESE_WEBFETCH'
 {webfetch_transport}CHEESE_WEBFETCH

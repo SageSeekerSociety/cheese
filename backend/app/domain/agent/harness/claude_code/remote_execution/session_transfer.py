@@ -19,7 +19,7 @@ def transfer(payload):
     root = home / ".claude/projects"
     action = payload["action"]
     if action == "stop":
-        marker = home / ".claude/environment-session.json"
+        marker = home / ".cheese/environment-session.json"
         if marker.exists():
             socket, session, *_ = json.loads(marker.read_text())
             work = (

@@ -27,7 +27,7 @@ from app.domain.project.environment import EnvironmentConfig
 def _machine(tmp_path):
     """A device's home and workdir, plus the environment a screen carries."""
     home = tmp_path / "home"
-    (home / ".claude").mkdir(parents=True)
+    (home / ".cheese").mkdir(parents=True)
     work = home / "work"
     work.mkdir()
     return (
@@ -85,11 +85,11 @@ def test_a_harness_that_is_only_a_command_still_gets_the_whole_platform(tmp_path
     assert proof.read_text().strip() == str(work.resolve())
     # And the platform put its own half on the machine around it.
     for name in ("cheese", "cheese-hook", "cheese-drain", "cheese-environment.py"):
-        assert (home / ".claude" / name).is_file(), name
-    assert (home / ".claude/launch-contract").read_text() == "--pretend-flags"
+        assert (home / ".cheese" / name).is_file(), name
+    assert (home / ".cheese/launch-contract").read_text() == "--pretend-flags"
     drain = dict(
         line.split("=", 1)
-        for line in (home / ".claude/cheese-drain.env").read_text().splitlines()
+        for line in (home / ".cheese/cheese-drain.env").read_text().splitlines()
     )
     assert drain["CHEESE_TOKEN"] == '"scoped-token"'
 
@@ -109,8 +109,8 @@ def test_the_platform_cli_is_on_path_for_whatever_runs(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert seen.read_text().split() == [
-        str(home / ".claude/cheese"),
-        str(home / ".claude/cheese-hook"),
+        str(home / ".cheese/cheese"),
+        str(home / ".cheese/cheese-hook"),
     ]
 
 
@@ -179,7 +179,7 @@ def test_each_hole_runs_where_the_platform_says_it_does(tmp_path):
         "prepare",
     ]
     assert stages[1] == f"configure:{os.path.realpath(env['CHEESE_HOME'])}"
-    assert stages[2].endswith("/.claude/cheese-hook")
+    assert stages[2].endswith("/.cheese/cheese-hook")
     assert stages[3] == f"prepare:{work.resolve()}"
 
 
@@ -223,12 +223,14 @@ def test_the_platform_half_names_no_harness(harness_only):
     """什么进洞里、什么留在骨架上，靠的是这条。
 
     A skeleton that starts out knowing one harness's flags is a skeleton the
-    second harness has to fork. ``$HOME/.claude`` survives as the session
-    directory because live machines have one by that name — renaming it is a
-    migration, not a decision, and it is a path rather than knowledge of a
-    binary.
+    second harness has to fork. The platform's own files live in
+    ``$HOME/.cheese`` for the same reason: ``$HOME/.claude`` was one harness's
+    directory that the platform had moved into, and the next reader could only
+    read that as deliberate.
     """
     assert harness_only not in _skeleton()
+    # The path, not the word: the skeleton explains in a comment why it moved.
+    assert '"$HOME/.claude' not in _skeleton()
 
 
 def _place(**overrides) -> MachinePlace:
@@ -283,7 +285,7 @@ def test_one_channel_carries_whichever_harness_it_was_handed(plan):
     assert env["GIT_COMMITTER_NAME"] == "芝士"
     # And the platform's own half of the script, whoever filled the holes.
     for written in ("cheese-environment.py", "cheese-hook", "cheese-drain"):
-        assert f'cat > "$HOME/.claude/{written}"' in command[2]
+        assert f'cat > "$HOME/.cheese/{written}"' in command[2]
 
 
 def test_a_screen_with_no_room_context_is_given_none_rather_than_empty():

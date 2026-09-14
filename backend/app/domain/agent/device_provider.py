@@ -384,7 +384,7 @@ async def environment_status(
 ) -> dict:
     home = device_home_dir(project_id, topic_id)
     reset_marker = (
-        'mkdir -p "$HOME/.claude"; touch "$HOME/.claude/environment-restart"; '
+        'mkdir -p "$HOME/.cheese"; touch "$HOME/.cheese/environment-restart"; '
         if action == "reset"
         else ""
     )
@@ -394,9 +394,9 @@ async def environment_status(
             "sh",
             "-c",
             f'export HOME="{home}"; '
-            'if [ -f "$HOME/.claude/cheese-environment.py" ]; then '
+            'if [ -f "$HOME/.cheese/cheese-environment.py" ]; then '
             f"CHEESE_STATUS_WAIT={int(wait_ready)} "
-            f'python3 "$HOME/.claude/cheese-environment.py" {action} || exit $?; '
+            f'python3 "$HOME/.cheese/cheese-environment.py" {action} || exit $?; '
             "else printf '%s' '{\"state\":\"pending\"}'; fi; " + reset_marker,
         ],
         timeout=10,
@@ -984,8 +984,8 @@ class DeviceChannel(Channel):
         # Device-side paths (the launcher mkdir -p's them). Kept under a stable per
         # project/topic root so the screen's git-backed work persists across turns.
         # The home MUST be per topic, not per project: every hook event lands in
-        # a spool under $HOME/.claude, and the drainer ships that spool with the
-        # hook URL + token in $HOME/.claude/cheese-drain.env — which every screen
+        # a spool under $HOME/.cheese, and the drainer ships that spool with the
+        # hook URL + token in $HOME/.cheese/cheese-drain.env — which every screen
         # start overwrites (deliberately, so a rotated ticket reaches a long-lived
         # screen). With a project-shared home, all concurrent screens spool into
         # one dir and the drainer delivers everything to whichever session started

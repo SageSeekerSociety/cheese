@@ -39,7 +39,8 @@ def test_remove_readonly_cache_preserves_symlink_target(tmp_path):
 def terminal_resource(tmp_path):
     project, resource = str(uuid.uuid4()), str(uuid.uuid4())
     home, work = cleanup.resource_paths(tmp_path, project, resource)
-    (home / ".claude").mkdir(parents=True)
+    for name in (".claude", ".cheese"):
+        (home / name).mkdir(parents=True, exist_ok=True)
     work.mkdir(parents=True)
     with tempfile.TemporaryDirectory(prefix="cheese-cleanup-") as runtime:
         from pathlib import Path
@@ -95,7 +96,7 @@ def test_exited_terminal_is_closed_without_touching_prefix_neighbor(
                 }
             ),
         )
-    (home / ".claude/environment-session.json").write_text(json.dumps([socket, name]))
+    (home / ".cheese/environment-session.json").write_text(json.dumps([socket, name]))
     tmux("send-keys", "-t", "=" + name + ":", "Enter")
     wait_for(
         lambda: (
@@ -134,7 +135,7 @@ def test_exit_targets_live_pane_after_the_original_pane_has_exited(terminal_reso
         "sh",
         str(received),
     )
-    (home / ".claude/environment-session.json").write_text(json.dumps([socket, name]))
+    (home / ".cheese/environment-session.json").write_text(json.dumps([socket, name]))
     with (home / "lock").open("w") as lock:
         with pytest.raises(RuntimeError, match="waiting for the agent"):
             cleanup.request_exit(home, work, lock.fileno())
@@ -165,7 +166,8 @@ def test_stop_lock_survives_parent_death_and_late_retry_is_read_only(
 ):
     project, resource, operation = (str(uuid.uuid4()) for _ in range(3))
     home, work = cleanup.resource_paths(tmp_path, project, resource)
-    (home / ".claude").mkdir(parents=True)
+    for name in (".claude", ".cheese"):
+        (home / name).mkdir(parents=True, exist_ok=True)
     work.mkdir(parents=True)
     socket = tmp_path / "tmux.sock"
     socket.touch()
@@ -179,7 +181,7 @@ def test_stop_lock_survives_parent_death_and_late_retry_is_read_only(
         .stdout.decode()
         .split()[0]
     )
-    (home / ".claude/environment-session.json").write_text(
+    (home / ".cheese/environment-session.json").write_text(
         json.dumps([str(socket), "cheese_" + checksum])
     )
     binary = tmp_path / "bin"
@@ -271,7 +273,7 @@ def test_deletion_refuses_tail_written_after_confirmation(tmp_path):
 def test_resource_helpers_stop_even_without_an_executor(tmp_path, name, has_executor):
     resource = str(uuid.uuid4())
     home = tmp_path / resource
-    directory = home / ".claude"
+    directory = home / ".cheese"
     directory.mkdir(parents=True)
     helper = directory / (name + ".py")
     ready = directory / "ready"
