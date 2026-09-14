@@ -119,6 +119,18 @@ class CentralChannel(DeviceChannel):
         owner=None,
         turn_id=None,
     ):
+        # This route assigns an executor machine, so the plan has to be able to
+        # install one and move a conversation onto it. A harness that runs where
+        # the files already are answers neither, and belongs on the device
+        # channel this one wraps. Codex reaches `prepare_session` directly with
+        # exactly those two values and no screen at all, which is why the check
+        # is here and not there.
+        if not isinstance(launch, LaunchPlan):
+            # `harness` is read through getattr because this branch is exactly
+            # the one where the object did not satisfy the protocol that
+            # guarantees it — a message that crashes reports nothing.
+            named = getattr(launch, "harness", type(launch).__name__)
+            raise ScreenSetupError(f"{named} 不能在独立执行机上运行，它没有执行器")
         async with self.prepare_session(
             project_id=project_id,
             topic_id=topic_id,
@@ -187,14 +199,6 @@ class CentralChannel(DeviceChannel):
                 raise ScreenSetupError("执行机器与本房间已经记录的位置不一致")
             values = {**(env or {}), "CHEESE_RESOURCE_ID": str(resource)}
             token = bind_resource_token(token, str(resource))
-            # This route assigns an executor machine, so the plan has to be able
-            # to install one and move a conversation onto it. A harness that runs
-            # where the files already are answers neither and belongs on the
-            # device channel this one wraps.
-            if not isinstance(launch, LaunchPlan):
-                raise ScreenSetupError(
-                    f"{launch.harness} 不能在独立执行机上运行，它没有执行器"
-                )
             if not previous and launch.resume_session_id:
                 await launch.execution.transfer_history(
                     self._hub,

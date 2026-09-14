@@ -188,21 +188,34 @@ class MachinePlan(Protocol):
 
 
 @runtime_checkable
-class LaunchPlan(MachinePlan, Protocol):
-    """跑什么 —— 加上一条只有中心那条路要走的义务。
+class ExecutorPlan(Protocol):
+    """在一台单独的执行机上开工，需要的那一半。
 
     A room whose work happens on an assigned executor needs its harness to
-    install one and to move a conversation onto it; a harness that runs where
-    the files already are has neither to offer, and saying so by not
-    implementing this is more honest than a method that raises.
+    install one and to move a conversation onto it. A harness that runs where
+    the files already are has neither to offer, and saying so by not satisfying
+    this is more honest than a method that raises.
 
-    ``at`` belongs to the transport that hands a container files and a command
-    rather than a script. It is the shape a harness answers when the backend
-    shares a filesystem with the screen.
+    Deliberately smaller than ``LaunchPlan``: Codex prepares an executor and
+    then starts its own runner over ``hub.exec``, never opening a screen, so
+    what it hands this route is these two values and nothing else.
     """
 
     @property
     def execution(self) -> ExecutorLaunch: ...
+
+    @property
+    def resume_session_id(self) -> str | None: ...
+
+
+@runtime_checkable
+class LaunchPlan(MachinePlan, ExecutorPlan, Protocol):
+    """两边都答得上来的计划：一台机器要的，加上一台执行机要的。
+
+    ``at`` belongs to the transport that hands a container files and a command
+    rather than a script — the shape a harness answers when the backend shares
+    a filesystem with the screen.
+    """
 
     def at(self, place: ScreenPlace) -> LaunchSpec:
         """The launch, now that the machine has said where."""

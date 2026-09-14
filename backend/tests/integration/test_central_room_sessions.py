@@ -33,6 +33,7 @@ from app.domain.agent.harness.claude_code.remote_execution import (
 )
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent.harness.codex import CodexChannel
+from app.domain.agent.harness.pi.device_launch import PiLaunch
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import session_auth_headers
@@ -81,6 +82,31 @@ def channel(client, monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_a_harness_without_an_executor_is_refused_by_name(
+    client, room, monkeypatch
+):
+    """这条路要另指派一台执行机，所以计划得会装执行器、会把对话搬过去。
+
+    A harness that runs where the files already are answers neither, and the
+    room has to be told which one it was rather than watch a screen fail to
+    open. Codex hands this same route a plan with ONLY those two answers and
+    no screen at all, so the check cannot be spelled as "a whole launch plan"
+    and cannot live where Codex passes through.
+    """
+    project, topic = room
+    central = channel(client, monkeypatch)
+    with pytest.raises(ScreenSetupError, match="pi"):
+        await central.ensure_ready(
+            project_id=project,
+            topic_id=topic,
+            token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
+            env={},
+            launch=PiLaunch(system_prompt="System", model="glm-5.2"),
+            precheck=await central.precheck(project, topic),
+        )
+
+
+@pytest.mark.anyio
 async def test_codex_placement_recovers_only_as_codex(client, room, monkeypatch):
     project, topic = room
     central = channel(client, monkeypatch)
@@ -121,6 +147,11 @@ async def test_center_uses_the_selected_harness_for_bootstrap_and_history(
     central = channel(client, monkeypatch)
     history = AsyncMock()
     launch = SimpleNamespace(
+        harness="claude-code",
+        system_prompt="System",
+        model=None,
+        on=lambda place: None,
+        at=lambda place: None,
         resume_session_id="fixture-session",
         execution=SimpleNamespace(
             transfer_history=history,
