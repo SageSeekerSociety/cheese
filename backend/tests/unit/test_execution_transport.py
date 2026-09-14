@@ -27,6 +27,45 @@ from app.domain.agent.harness.claude_code.remote_execution.client import (
 from app.domain.agent.harness.codex.tools import RemoteTools
 
 
+def test_device_requests_read_the_current_room_token_file(tmp_path, monkeypatch):
+    token = tmp_path / "execution.token"
+    token.write_text("first")
+    token.chmod(0o600)
+    client = executor_transport.RemoteClient(
+        {"kind": "device", "url": "http://executor.test", "token_file": str(token)}
+    )
+    seen = []
+
+    class Response:
+        status = 200
+
+        @staticmethod
+        def read():
+            return b"{}"
+
+    class Connection:
+        sock = None
+
+        def request(self, method, path, *, body, headers):
+            seen.append(headers["X-Cheese-Token"])
+
+        @staticmethod
+        def getresponse():
+            return Response()
+
+        @staticmethod
+        def close():
+            pass
+
+    monkeypatch.setattr(client, "connection", lambda: (Connection(), "/execution"))
+    client.transport.headers = {}
+    monkeypatch.delenv("CHEESE_TOKEN", raising=False)
+    client.call("context_fs")
+    token.write_text("rotated")
+    client.call("context_fs")
+    assert seen == ["first", "rotated"]
+
+
 def test_chat_publication_fast_path_accepts_only_standalone_cli_invocations():
     assert _local_chat_send_argv("cheese chat send 'hello world'") == [
         "cheese",
@@ -559,6 +598,11 @@ def test_generated_prefix_preserves_local_hook_and_remote_command_boundary(
             }
         },
     )
+    execution = json.loads((directory / "execution.json").read_text())
+    token_file = Path(execution["token_file"])
+    assert token_file.read_text() == "fixture"
+    assert token_file.stat().st_mode & 0o777 == 0o600
+    assert "token" not in execution
     env = launch["env"]
     workspace = directory / "forwarded-project"
     prefix = env["CLAUDE_CODE_SHELL_PREFIX"]

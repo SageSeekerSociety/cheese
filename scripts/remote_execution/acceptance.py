@@ -345,14 +345,17 @@ def case(folder, options):
                 system_prompt=system_prompt(),
             )
             env.update(screen_env)
+            fixture_env = env
 
             class LocalDeviceHub:
-                async def exec(self, device_id, command, *, stdin, timeout):
+                async def exec(
+                    self, device_id, command, *, stdin, env=None, timeout
+                ):
                     result = await asyncio.to_thread(
                         subprocess.run,
                         command,
                         input=stdin,
-                        env=env,
+                        env={**fixture_env, **(env or {})},
                         text=True,
                         capture_output=True,
                         timeout=timeout,
@@ -371,6 +374,7 @@ def case(folder, options):
                     uuid.uuid4(),
                     launch["command"],
                     str(folder / "device-home"),
+                    execution_token=env["CHEESE_TOKEN"],
                 )
             )
         if options.mode == "disabled":

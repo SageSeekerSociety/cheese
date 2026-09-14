@@ -106,6 +106,11 @@ def stage(home, sources):
                 busy = False
         if busy:
             raise RuntimeError("Native conversation must finish before helper release")
+    forwarded = directory / "forwarded-project"
+    if Path(target.get("central_workspace", "")) != forwarded and os.path.ismount(
+        forwarded
+    ):
+        subprocess.run(["fusermount3", "-u", str(forwarded)], check=True)
     backup = helpers / "release-backups" / version
     paths = {name: helpers / name for name in sources}
     paths.update(settings=settings_path, proxy=directory / "plugin/hooks/proxy.js")
@@ -257,16 +262,18 @@ def apply_forwarded_context(home, target):
         "central_config": current["central_config"],
         "helper": current["helper"],
         "target_file": current["target_file"],
+        "token_file": str(directory / "execution.token"),
     }
     replace(target_path, json.dumps(remote_target))
     generation_path = directory / "context-generation"
     previous = generation_path.read_text() if generation_path.exists() else None
-    if tree["generation"] == previous:
-        return {"changed": False}
-    replace(directory / "context-tree.json", json.dumps(tree))
+    changed = tree["generation"] != previous
+    if changed:
+        replace(directory / "context-tree.json", json.dumps(tree))
     hidden = directory / "forwarded-project"
     hidden.mkdir(exist_ok=True)
-    if not os.path.ismount(hidden):
+    mounted = os.path.ismount(hidden)
+    if not mounted:
         log = (directory / "forwarded-project.log").open("a")
         subprocess.Popen(
             [
@@ -285,6 +292,10 @@ def apply_forwarded_context(home, target):
             time.sleep(0.05)
         if not os.path.ismount(hidden):
             raise RuntimeError("Forwarded project mount did not become ready")
+    if not changed and mounted:
+        return {"changed": False}
+    if not changed:
+        return {"changed": True, "offsets": transcript_offsets(home)}
 
     workspace = Path(current["central_workspace"])
     if workspace != hidden:
