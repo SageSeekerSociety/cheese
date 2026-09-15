@@ -485,6 +485,9 @@ mkdir -p "$VIKING_PATH" || fail "cannot create $VIKING_PATH"
 # outlive the container (see the compose file).
 CLAUDE_CACHE_PATH="${CLAUDE_CACHE_HOST_PATH:-/home/nictheboy/cheese-claude-cache}"
 mkdir -p "$CLAUDE_CACHE_PATH" || fail "cannot create $CLAUDE_CACHE_PATH"
+# And the pi builds, which the backend serves to the same machines.
+PI_CACHE_PATH="${PI_CACHE_HOST_PATH:-/home/nictheboy/cheese-pi-cache}"
+mkdir -p "$PI_CACHE_PATH" || fail "cannot create $PI_CACHE_PATH"
 # And for the transcript archives uploaded from device homes before those are
 # deleted: the backend writes them, they must outlive the container, and once
 # the home is gone nothing else holds them.
@@ -498,6 +501,7 @@ OWNERSHIP_PATHS=(
   "${APPHOME_HOST_PATH:-/home/nictheboy/cheese-app-home}"
   "$VIKING_PATH"
   "$CLAUDE_CACHE_PATH"
+  "$PI_CACHE_PATH"
   "$TRANSCRIPTS_PATH"
 )
 OWNERSHIP_IMAGE="${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:$SHA}"

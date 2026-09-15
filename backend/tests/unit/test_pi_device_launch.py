@@ -9,9 +9,11 @@ network, and nothing here needs the real pi installed.
 import hashlib
 import json
 import os
+import shutil
 import socket
 import subprocess
 import sys
+import tarfile
 import time
 import uuid
 from pathlib import Path
@@ -21,42 +23,83 @@ import pytest
 from app.domain.agent.harness.launch import MachinePlace
 from app.domain.agent.harness.pi import device_launch
 from app.domain.agent.harness.pi.device_launch import PiLaunch, build_launch_script
+from app.domain.machine import pi_dist
 
 FAKE = Path(__file__).resolve().parents[1] / "support/fake_pi.py"
 FIXTURE = Path(__file__).parent / "fixtures/pi-entries.json"
 STATE = "$HOME/.cheese/harness/proj/res/pi/deadbeef"
 
 
-def _machine(tmp_path, *, pinned=True, npm=True):
-    """An owner's home with the session's home inside it, plus a PATH."""
+def _pi_program() -> str:
+    """A stand-in `pi`: answers --version, otherwise replays the fixture."""
+    return (
+        "#!/bin/sh\n"
+        'if [ "$1" = "--version" ]; then\n'
+        f'  echo "{device_launch.VERSION}"; exit 0\n'
+        "fi\n"
+        f'exec {sys.executable} {FAKE} {FIXTURE} "$@"\n'
+    )
+
+
+def _release(tmp_path) -> Path:
+    """What the platform serves: the vendor's tarball shape, with a fake pi.
+
+    ``pi/`` at the top and the binary beside its assets, because the launcher
+    strips that first component — an archive of a bare file would unpack to
+    something the version path then holds and nothing can run.
+    """
+    tree = tmp_path / "release/pi"
+    (tree / "theme").mkdir(parents=True)
+    (tree / "pi").write_text(_pi_program())
+    (tree / "pi").chmod(0o755)
+    (tree / "theme/default.json").write_text("{}")
+    archive = tmp_path / "pi-release.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(tree, arcname="pi")
+    return archive
+
+
+def _machine(tmp_path, *, pinned=True, serves=None):
+    """An owner's home with the session's home inside it, plus a PATH.
+
+    ``serves`` is the archive the platform hands this machine when it asks for
+    the pin; None is a machine that cannot get one. Either way the stub keeps
+    the suite off the network — and passes everything that is not the pin
+    download through to the real curl, which the event hooks use.
+    """
     owner = tmp_path / "owner"
     session = owner / "session"
     (session / "work").mkdir(parents=True)
     bindir = tmp_path / "bin"
     bindir.mkdir()
     if pinned:
-        binary = owner / ".cheese/tools/pi/node_modules/.bin/pi"
+        binary = owner / f".cheese/tools/pi/{device_launch.VERSION}/pi"
         binary.parent.mkdir(parents=True)
-        binary.write_text(
-            "#!/bin/sh\n"
-            'if [ "$1" = "--version" ]; then\n'
-            f'  echo "{device_launch.VERSION}"; exit 0\n'
-            "fi\n"
-            f'exec {sys.executable} {FAKE} {FIXTURE} "$@"\n'
-        )
+        binary.write_text(_pi_program())
         binary.chmod(0o755)
-    attempted = tmp_path / "npm.calls"
-    if npm:
-        stub = bindir / "npm"
-        stub.write_text(f'#!/bin/sh\necho "$@" >> "{attempted}"\nexit 1\n')
-        stub.chmod(0o755)
-    else:
-        # A machine that cannot install pi — no npm, or an npm that cannot reach
-        # the registry. The launcher answers both the same way, and this stub is
-        # also what keeps the suite off the network.
-        stub = bindir / "npm"
-        stub.write_text("#!/bin/sh\necho 'npm: offline' >&2\nexit 1\n")
-        stub.chmod(0o755)
+    attempted = tmp_path / "download.calls"
+    served = (
+        f'cp "{serves}" "$out"' if serves else "echo 'no route to the platform' >&2"
+    )
+    stub = bindir / "curl"
+    stub.write_text(
+        "#!/bin/sh\n"
+        'case "$*" in\n'
+        f'  *"/connector/pi/"*) ;;\n'
+        f'  *) exec {shutil.which("curl")} "$@" ;;\n'
+        "esac\n"
+        "out=\n"
+        'for arg in "$@"; do\n'
+        '  case "$arg" in\n'
+        "    -o) out=NEXT ;;\n"
+        '    http*) url="$arg" ;;\n'
+        '    *) [ "$out" = NEXT ] && out="$arg" ;;\n'
+        "  esac\n"
+        "done\n"
+        f'printf "%s\\n" "$url" >> "{attempted}"\n'
+        f"{served}\n"
+    )
+    stub.chmod(0o755)
     env = {
         "PATH": f"{bindir}:{os.path.dirname(sys.executable)}:/usr/bin:/bin",
         "HOME": str(owner),
@@ -64,6 +107,7 @@ def _machine(tmp_path, *, pinned=True, npm=True):
         "CHEESE_WORK": str(session / "work"),
         "CHEESE_TOPIC": "11111111-1111-1111-1111-111111111111",
         "CHEESE_PROJECT": "22222222-2222-2222-2222-222222222222",
+        "CHEESE_API": "https://cheese.example/api",
         "CHEESE_HOOK_URL": "http://127.0.0.1:1/hooks",
         "CHEESE_TOKEN": "scoped-token-value",
         "CHEESE_TOKEN_EXPIRES": str(int(time.time()) + 3600),
@@ -173,7 +217,7 @@ def test_a_machine_that_already_has_the_pin_installs_nothing(tmp_path):
     finally:
         process.terminate()
         process.wait(timeout=20)
-    assert not attempted.exists(), "a machine on the pin must not run npm"
+    assert not attempted.exists(), "a machine on the pin must not re-download it"
 
 
 def test_the_room_token_is_named_never_written(tmp_path):
@@ -244,10 +288,43 @@ def test_a_turn_reaches_pi_and_comes_back_stamped(tmp_path):
         process.wait(timeout=20)
 
 
-def test_a_machine_that_cannot_install_pi_says_so_instead_of_starting_nothing(
+def test_a_machine_without_the_pin_takes_it_from_the_platform(tmp_path):
+    """The whole point of #1035: the machine asks US, and asks for the pin.
+
+    A URL this launcher builds that the serving route would reject is the
+    failure that matters — it would 400 every machine that has no pi yet — so
+    the two ends are checked against each other here.
+    """
+    owner, _session, env, attempted = _machine(
+        tmp_path, pinned=False, serves=_release(tmp_path)
+    )
+    process = _start(tmp_path, env, _launch())
+    try:
+        _await_socket(_socket_of(_state_of(owner)), process)
+    finally:
+        process.terminate()
+        process.wait(timeout=20)
+    asked = attempted.read_text().split()
+    assert len(asked) == 1, asked
+    prefix, _, rest = asked[0].partition(f"/connector/pi/{device_launch.VERSION}/")
+    assert prefix == "https://cheese.example/api", asked[0]
+    platform, _, name = rest.partition("/")
+    assert name == "pi.tar.gz", asked[0]
+    assert pi_dist.PLATFORM_RE.match(platform), platform
+
+    root = owner / f".cheese/tools/pi/{device_launch.VERSION}"
+    assert (root / "pi").is_file(), "the pin is not where the launcher looks"
+    # The assets ship beside the binary and pi reads them from there, so an
+    # install that kept only the executable would start and then misbehave.
+    assert (root / "theme/default.json").is_file()
+    # Nothing half-unpacked is left where a later launch would accept it.
+    assert [p.name for p in root.parent.iterdir()] == [device_launch.VERSION]
+
+
+def test_a_machine_that_cannot_reach_the_platform_says_so_instead_of_starting(
     tmp_path,
 ):
-    _owner, _session, env, _ = _machine(tmp_path, pinned=False, npm=False)
+    _owner, _session, env, _ = _machine(tmp_path, pinned=False)
     # A device runs a shipped FILE: this script is megabytes, and argv is not.
     script = tmp_path / "launch.sh"
     script.write_text(_script(_launch()))
@@ -260,7 +337,7 @@ def test_a_machine_that_cannot_install_pi_says_so_instead_of_starting_nothing(
         timeout=60,
     )
     assert result.returncode != 0
-    assert "could not install" in result.stdout + result.stderr
+    assert "could not fetch pi" in result.stdout + result.stderr
 
 
 def test_the_state_directory_is_the_owners_not_the_sessions(tmp_path):

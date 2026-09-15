@@ -15,9 +15,11 @@ export VIKING_HOST_PATH="$ROOT/.tmp/viking-$$"
 # The claude binary cache is the same shape: created by the deploy so the
 # backend can write it, defaulting to a dev-box path CI cannot create.
 export CLAUDE_CACHE_HOST_PATH="$ROOT/.tmp/claude-cache-$$"
+# And the pi build cache beside it.
+export PI_CACHE_HOST_PATH="$ROOT/.tmp/pi-cache-$$"
 # And the transcript archives, once more the same shape.
 export TRANSCRIPTS_HOST_PATH="$ROOT/.tmp/transcripts-$$"
-trap 'rm -rf "$ROOT/.tmp/viking-$$" "$ROOT/.tmp/claude-cache-$$" "$ROOT/.tmp/transcripts-$$"' EXIT
+trap 'rm -rf "$ROOT/.tmp/viking-$$" "$ROOT/.tmp/claude-cache-$$" "$ROOT/.tmp/pi-cache-$$" "$ROOT/.tmp/transcripts-$$"' EXIT
 
 fail() {
   echo "FAIL: $*" >&2
@@ -718,6 +720,7 @@ ownership_run() {
     APPHOME_HOST_PATH="$run_dir/apphome" \
     VIKING_HOST_PATH="$run_dir/viking" \
     CLAUDE_CACHE_HOST_PATH="$run_dir/claude-cache" \
+    PI_CACHE_HOST_PATH="$run_dir/pi-cache" \
     TRANSCRIPTS_HOST_PATH="$run_dir/transcripts" \
     HOME="$run_dir" \
     "$@"
@@ -792,6 +795,7 @@ test_rollback_leaves_an_already_migrated_box_alone() {
   # unmarked path would make this "nothing moved" scenario move something.
   mkdir -p "$run_dir/viking"; : > "$run_dir/viking/.cheese-uid-1000"
   mkdir -p "$run_dir/claude-cache"; : > "$run_dir/claude-cache/.cheese-uid-1000"
+  mkdir -p "$run_dir/pi-cache"; : > "$run_dir/pi-cache/.cheese-uid-1000"
   mkdir -p "$run_dir/transcripts"; : > "$run_dir/transcripts/.cheese-uid-1000"
 
   if ownership_run "$run_dir" rollback \

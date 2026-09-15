@@ -383,8 +383,12 @@ JSONL over stdio、`prompt`/`steer`/`abort`、`get_entries since=<id>` 是可续
 
 下面是**接上去之后**才知道的，文档里推不出来，也是这一节现在唯一还值得读的部分：
 
-- **包名是 `@earendil-works/pi-coding-agent`**（`bin: {pi: dist/bundle/cli.js}`）。
-  `@earendil-works/pi` 不存在；`@mariozechner/pi` 是同一批人的另一个包（`pi-pods`）。
+- **平台自己分发 pi**，和 claude 同一条路：厂商在 GitHub release 里发各平台的
+  自带运行时二进制（`pi-linux-x64.tar.gz` 等，附 `SHA256SUMS`），后端取一次、
+  校验、缓存，机器只从 `/connector/pi/<version>/<platform>/pi.tar.gz` 取。
+  npm 上的 `@earendil-works/pi-coding-agent` 是同一个 agent 的另一种装法，需要
+  node 和到 npmjs 的网络，两样都是我们凭空加给用户机器的依赖 —— 所以不用。
+  厂商的 Linux 构建链的是 glibc，**没有 musl 版**，Alpine 一类的机器跑不了 pi。
 - **`get_entries since=null` 会被拒绝**（`Entry not found: null`），不是「从头读」。
   新会话第一次拉取不能带这个字段。
 - **`PI_CODING_AGENT_DIR` 只搬 pi 自己的 config。** 配置目录已经指到会话家目录了，
@@ -520,9 +524,9 @@ pi 不走订阅，所以它同机跑，`CentralChannel` 那条路它根本不经
 - [Anthropic《How we built our multi-agent research system》](https://www.anthropic.com/engineering/multi-agent-research-system)（orchestrator-worker，15× token）
 - [Claude Tag（官方）](https://support.claude.com/en/articles/15594475-what-is-claude-tag)
 - [Agent Client Protocol](https://agentclientprotocol.com/protocol/overview) · [Zed ACP](https://zed.dev/acp)
-- [earendil-works/pi](https://github.com/earendil-works/pi)（装的是 npm 上的
-  `@earendil-works/pi-coding-agent`）· 文档随包发布：`docs/rpc.md`、`docs/models.md`、
-  `docs/environment-variables.md` 就在 `node_modules/@earendil-works/pi-coding-agent/docs/`
+- [earendil-works/pi](https://github.com/earendil-works/pi)（我们分发的是它 release
+  里的自带运行时构建）· 文档随构建发布：`docs/rpc.md`、`docs/models.md`、
+  `docs/environment-variables.md` 就在解包后的 `docs/` 里
 - [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) · [架构](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/architecture.md) · [subagent](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/subagent.md) · [Python SDK](https://github.com/deepseek-ai/deepseek-harness/blob/master/python/README.md)
 
 **内部**
