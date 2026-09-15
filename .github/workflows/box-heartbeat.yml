@@ -56,9 +56,9 @@ jobs:
   # an ops step on the machines, deliberately NOT done blind from a sandbox;
   # until then the total-outage case (all heavy CI wedged) is the one that
   # actually stops work, and it is now covered. For an on-demand look at all
-  # three, box-diag.yml's `ci-pool` job already does it: three concurrent jobs on
-  # the one shared label cannot land on the same machine, since each VM has a
-  # single slot.
+  # three, box-diag.yml's `ci-pool` job fans out one
+  # job per runner slot, which is what it takes to be sure every machine
+  # answered.
   #
   # Deliberately NOT that same three-way fan-out here: this workflow runs hourly
   # and feeds an alert, so it must never need more of the pool than a merge burst
