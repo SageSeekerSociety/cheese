@@ -243,6 +243,51 @@ EOF
   echo "PASS: cloud control releases separately after atomic owner drain"
 }
 
+test_deploy_warns_when_the_session_base_will_not_survive() {
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/session-base.XXXXXX")"
+  envf="$run_dir/backend.env"
+  printf 'AGENT_SESSION_API_BASE=http://172.17.0.1:18081\n' > "$envf"
+  out="$(PATH="$FAKE_BIN:$PATH" \
+    APP_TIER_SCENARIO=healthy \
+    APP_TIER_MAIN_SHA=testsha \
+    BACKEND_ENV_FILE="$envf" \
+    BACKEND_PORT=18081 \
+    DEPLOY_HEALTH_ATTEMPTS=1 \
+    DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
+    HOME="$run_dir" \
+    "$ROOT/deploy/deploy-docker.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" 2>&1)"
+  case "$out" in
+    *"AGENT_SESSION_API_BASE=http://172.17.0.1:18081 names :18081"*) ;;
+    *)
+      rm -rf "$run_dir"
+      fail "deploy said nothing about a session address it is about to take down"
+      ;;
+  esac
+  # And it must stay quiet for an address the deploy leaves alone — a warning
+  # on every deploy is a warning nobody reads.
+  printf 'AGENT_SESSION_API_BASE=http://172.17.0.1:8081\n' > "$envf"
+  out="$(PATH="$FAKE_BIN:$PATH" \
+    APP_TIER_SCENARIO=healthy \
+    APP_TIER_MAIN_SHA=testsha \
+    BACKEND_ENV_FILE="$envf" \
+    BACKEND_PORT=18081 \
+    DEPLOY_HEALTH_ATTEMPTS=1 \
+    DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
+    HOME="$run_dir" \
+    "$ROOT/deploy/deploy-docker.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" 2>&1)"
+  case "$out" in
+    *AGENT_SESSION_API_BASE*)
+      rm -rf "$run_dir"
+      fail "deploy warned about a session address that survives it"
+      ;;
+  esac
+  rm -rf "$run_dir"
+  echo "PASS: deploy names a session address its own release would cut off"
+}
+
 test_rollout_installs_connection_route_without_recreating_api_front() {
   local run_dir docker_log
   run_dir="$(new_rollout_run_dir)"
@@ -916,6 +961,7 @@ case "$CASE" in
   operator) test_operator_rejects_stale_frontend ;;
   operator-sha-width) test_operator_uses_registry_sha_width ;;
   workflow) test_workflow_rejects_stale_frontend ;;
+  session-base) test_deploy_warns_when_the_session_base_will_not_survive ;;
   healthy) test_healthy_current_pair_passes ;;
   rollout) test_rollout_keeps_a_backend_serving ;;
   frontend-rollout) test_frontend_rollout_keeps_serving ;;
@@ -929,6 +975,7 @@ case "$CASE" in
     test_owner_release_reuses_box_config_and_stops_when_busy
     test_cloud_control_has_an_independent_drained_release
     test_rollout_installs_connection_route_without_recreating_api_front
+    test_deploy_warns_when_the_session_base_will_not_survive
     test_deploy_keeps_agent_runtime_images
     test_deploy_retains_ci_service_images
     test_app_only_deploy_does_not_require_agent_images

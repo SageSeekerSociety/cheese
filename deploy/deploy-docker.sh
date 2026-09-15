@@ -540,6 +540,35 @@ FRONTEND_PROXY_PORT="${FRONTEND_PROXY_PORT:-18080}"
 FRONTEND_PORT_NEXT="${FRONTEND_PORT_NEXT:-18084}"
 NEXT_FRONTEND="${PROJECT}-frontend-next"
 
+# The address every live room's agent dials for its own tools, its chat
+# publication and its hooks. It must NOT be a port this deploy takes down: on
+# 2026-09-15 it named the backend container's published port, so an ordinary
+# release left every working room with `[Errno 111] Connection refused` on every
+# tool for as long as the recreate took (four minutes, observed) — the very
+# thing the standing api-front and the separately released owner exist to
+# prevent, defeated by an address that bypasses both.
+#
+# Warned, not failed, and only where a central session exists: refusing to
+# deploy over a configuration preference is the worse outage. The value names no
+# secret, so it is printed.
+check_session_base_survives_release() {
+  local envf base port
+  envf="${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}"
+  [ -r "$envf" ] || return 0
+  base="$(awk -F= '$1 == "AGENT_SESSION_API_BASE" { sub(/^[^=]*=/, ""); gsub(/["'"'"']/, ""); print; exit }' "$envf")"
+  [ -n "$base" ] || return 0
+  port="${base##*:}"; port="${port%%/*}"
+  case "$port" in
+    "$BACKEND_PORT"|"$BACKEND_PORT_NEXT")
+      log "WARNING: AGENT_SESSION_API_BASE=$base names :$port, which this deploy"
+      log "         replaces — every live room will see its tools, its chat and"
+      log "         its hooks refused until the new container answers. Point it"
+      log "         at the standing api-front instead (:8081 by default), which"
+      log "         routes execution to the owner and swaps backends underneath."
+      ;;
+  esac
+}
+
 switch_active_backend() {
   local target="$1" tmp
   tmp="$(mktemp "$ACTIVE_BACKEND_DIR/backend.conf.XXXXXX")" \
@@ -659,6 +688,7 @@ rollout_frontend() {
 export DEVICE_CONNECTION_IMAGE="${DEVICE_CONNECTION_IMAGE:-${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:$SHA}}"
 ensure_device_connection_owner
 reload_api_front_routes
+check_session_base_survives_release
 
 if [ -n "$ACTIVE_BACKEND_DIR" ]; then
   [ -d "$ACTIVE_BACKEND_DIR" ] \
