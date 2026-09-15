@@ -1,6 +1,7 @@
 """Central agent sessions with independently selected room execution."""
 
 import asyncio
+import contextlib
 import json
 import logging
 import time
@@ -28,6 +29,37 @@ from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
 
 logger = logging.getLogger(__name__)
+
+# Setup normally clears this stretch in well under a second, and a wait that
+# short has nothing to say. Past a few seconds the room is showing a spinner
+# with no end in sight, so the wait has to name what is holding it — and keep
+# naming it, because a line that only arrives once the wait is over is the very
+# silence this reporting exists to end.
+_WAIT_REPORT_AFTER = 5.0
+_WAIT_REPORT_EVERY = 30.0
+
+
+def _failure_reason(exc: Exception) -> str:
+    """Why a call failed, as one short log field — never itself a raiser."""
+    body = ""
+    with contextlib.suppress(Exception):
+        body = getattr(getattr(exc, "response", None), "text", "") or ""
+    return " ".join((body or str(exc)).split())[:120] or type(exc).__name__
+
+
+async def _report_while_waiting(topic_id, phase, began, detail):
+    """Keep saying what a step is waiting on for as long as it waits."""
+    delay = _WAIT_REPORT_AFTER
+    while True:
+        await asyncio.sleep(delay)
+        logger.info(
+            "central_setup_timing topic=%s phase=%s waited_ms=%.3f %s",
+            topic_id,
+            phase,
+            (time.monotonic() - began) * 1000,
+            detail,
+        )
+        delay = _WAIT_REPORT_EVERY
 
 
 @dataclass(frozen=True, slots=True)
@@ -294,14 +326,12 @@ class CentralChannel(DeviceChannel):
                     has_environment and info.get("environment_status") != "ready"
                 ):
                     await self._wait_executor(
-                        project_id, resource, target, has_environment
+                        project_id, topic_id, resource, target, has_environment
                     )
                 target["context_tree"] = (
                     info["context_tree"]
                     if "context_tree" in info
-                    else await execution.call(
-                        target, "context_fs", {"operation": "tree"}, hub=self._hub
-                    )
+                    else await self._context_tree(topic_id, target, started_at)
                 )
                 mark("executor_ready")
             placement = {
@@ -336,9 +366,17 @@ class CentralChannel(DeviceChannel):
             mark("screen_ready")
         self._subscription_devices[topic_id] = center
 
-    async def _wait_executor(self, project_id, resource, target, has_environment):
-        deadline = time.monotonic() + (3660 if has_environment else 30)
+    async def _wait_executor(
+        self, project_id, topic_id, resource, target, has_environment
+    ):
+        started = time.monotonic()
+        deadline = started + (3660 if has_environment else 30)
+        report_at = started + _WAIT_REPORT_AFTER
+        attempts = 0
+        reported = False
+        detail = "waiting_on=executor_ping"
         while True:
+            attempts += 1
             if has_environment:
                 status = await environment_status(
                     self._hub,
@@ -350,20 +388,72 @@ class CentralChannel(DeviceChannel):
                 if status["state"] == "failed":
                     raise EnvironmentPreparationError(status)
                 ready = status["state"] == "ready"
+                detail = f"waiting_on=environment state={status['state']}"
             else:
                 ready = True
             if ready:
                 try:
                     await execution.call(target, "ping", {}, hub=self._hub)
+                    if reported:
+                        logger.info(
+                            "central_setup_timing topic=%s phase=executor_wait_done "
+                            "waited_ms=%.3f attempts=%d",
+                            topic_id,
+                            (time.monotonic() - started) * 1000,
+                            attempts,
+                        )
                     return
                 except httpx.HTTPStatusError as exc:
                     if exc.response.status_code != 500:
                         raise
+                    detail = (
+                        "waiting_on=executor_ping status=500 "
+                        f"reason={_failure_reason(exc)}"
+                    )
                     if time.monotonic() >= deadline:
                         raise
-                except RuntimeError:
+                except RuntimeError as exc:
+                    detail = f"waiting_on=executor_ping reason={_failure_reason(exc)}"
                     if time.monotonic() >= deadline:
                         raise
-            if time.monotonic() >= deadline:
+            now = time.monotonic()
+            if now >= report_at:
+                logger.info(
+                    "central_setup_timing topic=%s phase=executor_wait "
+                    "waited_ms=%.3f attempts=%d %s",
+                    topic_id,
+                    (now - started) * 1000,
+                    attempts,
+                    detail,
+                )
+                reported = True
+                report_at = now + _WAIT_REPORT_EVERY
+            if now >= deadline:
                 raise ScreenSetupError("执行环境准备超时，请查看环境日志")
             await asyncio.sleep(0.2)
+
+    async def _context_tree(self, topic_id, target, started_at):
+        """Walk the room's workspace, saying so while the walk is what is slow."""
+        began = time.monotonic()
+        notice = asyncio.create_task(
+            _report_while_waiting(
+                topic_id, "context_tree", began, "waiting_on=context_fs"
+            )
+        )
+        try:
+            tree = await execution.call(
+                target, "context_fs", {"operation": "tree"}, hub=self._hub
+            )
+        finally:
+            # Cancel and let it unwind on its own: awaiting it here would make
+            # the turn's own cancellation look like the notice's and swallow it.
+            notice.cancel()
+        now = time.monotonic()
+        logger.info(
+            "central_setup_timing topic=%s phase=context_tree elapsed_ms=%.3f "
+            "took_ms=%.3f",
+            topic_id,
+            (now - started_at) * 1000,
+            (now - began) * 1000,
+        )
+        return tree
