@@ -121,6 +121,14 @@ jobs:
         # produced the lines has sent people to the wrong commit.
         #
         # Same rule as every other probe: fixed window, fixed filter, no inputs.
+        #
+        # The four routine `execution_timing` stages are dropped and
+        # `stage=device_error` deliberately kept. Every executor call logs all
+        # four at INFO, so an unfiltered 600-line tail of a box with live rooms
+        # is twelve seconds of nothing but timings — measured, not guessed:
+        # the first run of this probe returned 600 of 600 such lines. The error
+        # stage is the one that says a call FAILED, which is the whole reason
+        # to read this log.
         run: |
           container="$(docker ps --format '{{.Names}} {{.Image}}' \
             | grep device-connection || true)"
@@ -130,6 +138,7 @@ jobs:
           docker inspect -f 'status={{.State.Status}} started={{.State.StartedAt}} restarts={{.RestartCount}}' "$name" 2>&1 || true
           docker logs --since 2h --timestamps "$name" 2>&1 \
             | grep -v 'uvicorn.access\|\[http\][[:space:]]*bytes=' \
+            | grep -vE 'stage=(device_send_start|device_sent|device_first_data|device_complete)' \
             | tail -600 || true
       - name: Data plane (llm tunnel + api front)
         # The standing pair from #573 carries ALL machine model traffic, and it
