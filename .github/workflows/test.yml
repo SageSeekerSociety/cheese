@@ -400,12 +400,14 @@ jobs:
           uv run pytest tests/ -n "$CHEESE_CI_TEST_WORKERS" --dist worksteal
           --tb=short -k "not kotlin" --durations=20
 
-      # Every run's postgres service container leaves a volume behind, and
-      # nothing ever removed them: 57 had accumulated to 19GB and filled the
-      # box's disk mid-run ("No space left on device" from asyncpg). Only
-      # volumes no container references are touched, so a live deployment's
-      # data is never in scope.
-      - name: Reclaim the service containers' volumes
+      # Volumes nothing references still accumulate here — 57 of them reached
+      # 19GB once and filled the disk mid-run ("No space left on device" from
+      # asyncpg). They used to come from this job's own postgres container,
+      # which no longer exists; what is left over now is whatever a killed job
+      # or a pulled image dropped. Only volumes no container references are
+      # touched, so neither the machine's resident pair nor a live deployment
+      # is ever in scope.
+      - name: Reclaim volumes nothing references
         if: always()
         run: |
           docker volume prune -f >/dev/null 2>&1 || true
