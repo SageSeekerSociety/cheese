@@ -643,6 +643,29 @@ class DeviceChannel(Channel):
             await session.commit()
             return device_id, agent.id, agent.username
 
+    async def _retire_screen(
+        self, screen: HubScreen, *, topic_id: uuid.UUID, reason: str
+    ) -> None:
+        """Close a reused screen, and say which gate decided to.
+
+        Retiring one ends the `claude` behind it, so the turn that asked for the
+        screen is answered by a process seconds old — which a room experiences as
+        its platform tools briefly not existing, and a measurement experiences as a
+        turn that is several seconds slower than the one before it for no reason
+        visible anywhere. Which of the gates above fired was in no log: an
+        occurrence could only be reconstructed afterwards from the connector's
+        access log, which records the close but not the why, and not at all once
+        the backend that decided had been replaced by a release.
+        """
+        logger.info(
+            "device_screen_retired topic=%s device=%s sid=%s reason=%s",
+            topic_id,
+            screen.device_id,
+            screen.sid,
+            reason,
+        )
+        await self._hub.close_screen(screen.device_id, screen.sid)
+
     def _existing_screen(
         self, device_id: str, topic_id: uuid.UUID, resource_id: uuid.UUID | None = None
     ) -> HubScreen | None:
@@ -1136,14 +1159,20 @@ class DeviceChannel(Channel):
             and existing.agent_configuration != configuration
         ):
             # Called between turns. A running CLI cannot adopt a changed model or role.
-            await self._hub.close_screen(existing.device_id, existing.sid)
+            await self._retire_screen(
+                existing, topic_id=topic_id, reason="agent_configuration_changed"
+            )
             existing = None
         if existing is not None and (
             existing.closing or self._credential_is_stale(existing)
         ):
             # A running CLI retains its birth credential. Confirm the old
             # process stopped before opening its replacement with a fresh one.
-            await self._hub.close_screen(existing.device_id, existing.sid)
+            await self._retire_screen(
+                existing,
+                topic_id=topic_id,
+                reason="closing" if existing.closing else "credential_expiring",
+            )
             existing = None
         # Device-side paths (the launcher mkdir -p's them). Kept under a stable per
         # project/topic root so the screen's git-backed work persists across turns.
@@ -1357,7 +1386,11 @@ class DeviceChannel(Channel):
                 # Adopt-create cannot restart a dead process or its tunnel while
                 # the connector still knows the sid. A new sid runs the launcher,
                 # which is why it is shipped only now.
-                await self._hub.close_screen(existing.device_id, existing.sid)
+                await self._retire_screen(
+                    existing,
+                    topic_id=topic_id,
+                    reason="claude_not_alive" if not alive else "tunnel_helper_down",
+                )
                 existing = None
                 command = await self._ship_launcher(
                     device_id,
