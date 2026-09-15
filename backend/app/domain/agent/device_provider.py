@@ -406,6 +406,11 @@ async def environment_status(
     return json.loads(result.get("stdout") or '{"state":"pending"}')
 
 
+def _launcher_command(topic_id: uuid.UUID) -> list[str]:
+    """What a screen runs: the launcher file `_ship_launcher` wrote for this topic."""
+    return ["bash", "-lc", f'exec bash "$HOME/.cheese/launch/{topic_id}.sh"']
+
+
 class DeviceChannel(Channel):
     """The REMOTE channel: a screen on a user's enrolled machine, opened over
     the frozen link.Msg link (DeviceHub). The screen is a ``HubScreen``.
@@ -738,36 +743,16 @@ class DeviceChannel(Channel):
         long``. Since #308 embedded the assembled system prompt in the script, every
         real launch is tens of KB, so argv delivery broke every device spawn (and
         the failure was invisible: session.error is fire-and-forget and the prompt
-        just timed out). The file path is per-topic and rewritten before every
-        create/re-assert, so a respawn always runs the current turn's script."""
+        just timed out). The file path is per-topic and written whenever a screen
+        is created; a live screen is refreshed by ``_refresh_screen_files``
+        instead, since it never runs its launcher again."""
         assert command[:2] == ["bash", "-lc"] and len(command) == 3
         script = command[2]
         path = f"$HOME/.cheese/launch/{topic_id}.sh"
-        hook_dir = f"{home_dir}/.claude"
-        # Reasserting a live screen does not run its launcher. Refresh the hook
-        # during the existing transfer so reused processes receive hook fixes.
-        transfer = (
-            f'mkdir -p "$HOME/.cheese/launch" "{hook_dir}" && cat > "{path}"'
-            f" && printf %s {shlex.quote(CHEESE_HOOK_SCRIPT)}"
-            f' > "{hook_dir}/cheese-hook.next.$$"'
-            f' && chmod 755 "{hook_dir}/cheese-hook.next.$$"'
-            f' && mv "{hook_dir}/cheese-hook.next.$$" "{hook_dir}/cheese-hook"'
+        transfer, exec_env = self._screen_file_refresh(
+            home_dir, release_state=release_state, execution_token=execution_token
         )
-        if release_state is not None:
-            transfer += (
-                f' && if [ -f "{hook_dir}/remote-execution/release-ready" ]; then '
-                f'cat "{hook_dir}/remote-execution/release-ready"; fi'
-            )
-        exec_env = None
-        if execution_token is not None:
-            token_path = f"{hook_dir}/remote-session/execution.token"
-            transfer += (
-                f' && mkdir -p "{hook_dir}/remote-session"'
-                f' && umask 077 && printf %s "$CHEESE_FORWARDED_TOKEN"'
-                f' > "{token_path}.next.$$"'
-                f' && mv "{token_path}.next.$$" "{token_path}"'
-            )
-            exec_env = {"CHEESE_FORWARDED_TOKEN": execution_token}
+        transfer = f'mkdir -p "$HOME/.cheese/launch" && cat > "{path}" && ' + transfer
         started = time.monotonic()
         try:
             result = await self._hub.exec(
@@ -804,7 +789,82 @@ class DeviceChannel(Channel):
             )
         if release_state is not None:
             release_state["version"] = result.get("stdout", "").strip()
-        return ["bash", "-lc", f'exec bash "{path}"']
+        return _launcher_command(topic_id)
+
+    @staticmethod
+    def _screen_file_refresh(
+        home_dir: str,
+        *,
+        release_state: dict | None,
+        execution_token: str | None,
+    ) -> tuple[str, dict[str, str] | None]:
+        """The shell that brings a screen's per-turn files up to date: the hook
+        forwarder (so a reused process picks up hook fixes), the forwarded-fs
+        token (rotated every turn), and a read of the release marker when the
+        caller tracks one. Shared by the launcher ship and the live-screen
+        refresh, so both paths write the same files the same way."""
+        hook_dir = f"{home_dir}/.claude"
+        transfer = (
+            f'mkdir -p "{hook_dir}"'
+            f" && printf %s {shlex.quote(CHEESE_HOOK_SCRIPT)}"
+            f' > "{hook_dir}/cheese-hook.next.$$"'
+            f' && chmod 755 "{hook_dir}/cheese-hook.next.$$"'
+            f' && mv "{hook_dir}/cheese-hook.next.$$" "{hook_dir}/cheese-hook"'
+        )
+        if release_state is not None:
+            transfer += (
+                f' && if [ -f "{hook_dir}/remote-execution/release-ready" ]; then '
+                f'cat "{hook_dir}/remote-execution/release-ready"; fi'
+            )
+        exec_env = None
+        if execution_token is not None:
+            token_path = f"{hook_dir}/remote-session/execution.token"
+            transfer += (
+                f' && mkdir -p "{hook_dir}/remote-session"'
+                f' && umask 077 && printf %s "$CHEESE_FORWARDED_TOKEN"'
+                f' > "{token_path}.next.$$"'
+                f' && mv "{token_path}.next.$$" "{token_path}"'
+            )
+            exec_env = {"CHEESE_FORWARDED_TOKEN": execution_token}
+        return transfer, exec_env
+
+    async def _refresh_screen_files(
+        self,
+        device_id: str,
+        home_dir: str,
+        release_state: dict | None = None,
+        execution_token: str | None = None,
+    ) -> None:
+        """A live screen keeps the `claude` it was born with and never runs its
+        launcher again, so a reused turn ships only what that process will
+        actually read next: the hook, the token, the release marker. The
+        launcher itself is 450 KB of embedded helper sources plus the prompt,
+        and sending it here bought nothing but 46 ms on every turn."""
+        transfer, exec_env = self._screen_file_refresh(
+            home_dir, release_state=release_state, execution_token=execution_token
+        )
+        try:
+            result = await self._hub.exec(
+                device_id,
+                ["sh", "-c", transfer],
+                env=exec_env,
+                timeout=_LAUNCHER_SHIP_TIMEOUT_S,
+            )
+        except (TimeoutError, DeviceOffline) as exc:
+            raise ScreenSetupError(
+                self._link_failure(
+                    device_id,
+                    step="刷新会话文件",
+                    waited_s=_LAUNCHER_SHIP_TIMEOUT_S,
+                    offline=isinstance(exc, DeviceOffline),
+                )
+            ) from exc
+        if result.get("exit") != 0:
+            raise ScreenSetupError(
+                f"无法刷新设备上的会话文件：{result.get('stderr') or result}"
+            )
+        if release_state is not None:
+            release_state["version"] = result.get("stdout", "").strip()
 
     async def _refresh_resident(
         self, screen: HubScreen, home_dir: str, state: dict
@@ -1227,27 +1287,38 @@ class DeviceChannel(Channel):
         else:
             # These device requests are independent. Finish all three before
             # adopting or replacing the screen, without adding their round trips.
-            alive, tunnel_down, command = await asyncio.gather(
+            execution_token = (
+                screen_env["CHEESE_TOKEN"] if execution_target is not None else None
+            )
+            alive, tunnel_down, _ = await asyncio.gather(
                 self.confirm_alive(existing),
                 self._tunnel_helper_is_down(existing),
-                self._ship_launcher(
+                self._refresh_screen_files(
                     device_id,
-                    resource_id,
-                    command,
                     home_dir,
                     release_state=release_state,
-                    execution_token=(
-                        screen_env["CHEESE_TOKEN"]
-                        if execution_target is not None
-                        else None
-                    ),
+                    execution_token=execution_token,
                 ),
             )
             if not alive or tunnel_down:
                 # Adopt-create cannot restart a dead process or its tunnel while
-                # the connector still knows the sid. A new sid runs the launcher.
+                # the connector still knows the sid. A new sid runs the launcher,
+                # which is why it is shipped only now.
                 await self._hub.close_screen(existing.device_id, existing.sid)
                 existing = None
+                command = await self._ship_launcher(
+                    device_id,
+                    resource_id,
+                    command,
+                    home_dir,
+                    execution_token=execution_token,
+                )
+            else:
+                # The adopt-create below re-runs the launcher only for a session
+                # the connector lost; the file the previous turn wrote is still
+                # there for that, and the reuse gate retires a process born from
+                # an expired credential on the next turn.
+                command = _launcher_command(resource_id)
         mark("device_checks_complete")
         if existing is not None:
             if release_state is not None:

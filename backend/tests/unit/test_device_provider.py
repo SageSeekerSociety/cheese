@@ -512,16 +512,58 @@ async def test_reuse_checks_and_launcher_transfer_do_not_wait_for_each_other(
     async def tunnel(_screen):
         return await operation("tunnel", False)
 
-    async def ship(*_arguments, **_keywords):
-        return await operation("launcher", ["bash", "launch.sh"])
+    async def refresh(*_arguments, **_keywords):
+        return await operation("files", None)
 
     monkeypatch.setattr(provider, "confirm_alive", alive)
     monkeypatch.setattr(provider, "_tunnel_helper_is_down", tunnel)
-    monkeypatch.setattr(provider, "_ship_launcher", ship)
+    monkeypatch.setattr(provider, "_refresh_screen_files", refresh)
     reused = await asyncio.wait_for(provider._ensure_screen(**arguments), timeout=2)
     assert reused is screen
-    assert entered == {"alive", "tunnel", "launcher"}
+    assert entered == {"alive", "tunnel", "files"}
     assert hub.reasserted == [screen.sid]
+
+
+async def test_a_live_screen_is_not_sent_the_launcher_again():
+    """The first turn writes the launcher; a reused screen never runs it, so
+    the second turn ships only the per-turn files and points the adopt at the
+    file already on the machine. A screen found dead gets a fresh launcher
+    before it is reopened."""
+    hub = FakeHub()
+    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
+    topic = uuid.uuid4()
+    arguments = dict(
+        device_id="dev1",
+        agent_user_id=1,
+        agent_handle="cheese",
+        project_id=uuid.uuid4(),
+        topic_id=topic,
+        token="tok",
+        env=None,
+        launch=ClaudeLaunch(system_prompt="a prompt the launcher embeds"),
+    )
+    screen = await provider._ensure_screen(**arguments)
+    shipped = [stdin for _argv, stdin in hub.execs if stdin is not None]
+    assert len(shipped) == 1 and "a prompt the launcher embeds" in shipped[0]
+    reused = await provider._ensure_screen(**arguments)
+    assert reused is screen
+    refreshes = [
+        argv for argv, stdin in hub.execs if stdin is None and "cheese-hook" in argv[2]
+    ]
+    assert len(refreshes) == 1
+    assert len([stdin for _argv, stdin in hub.execs if stdin is not None]) == 1
+    assert screen.command == [
+        "bash",
+        "-lc",
+        f'exec bash "$HOME/.cheese/launch/{topic}.sh"',
+    ]
+
+    dead = DeadClaudeHub()
+    provider = DeviceChannel(hub=dead, public_base="http://cheese.test")
+    first = await provider._ensure_screen(**arguments)
+    replacement = await provider._ensure_screen(**arguments)
+    assert replacement is not first and dead.closed == [first.sid]
+    assert len([stdin for _argv, stdin in dead.execs if stdin is not None]) == 2
 
 
 async def test_reused_screen_refreshes_hook_without_restarting(monkeypatch, tmp_path):
@@ -529,7 +571,7 @@ async def test_reused_screen_refreshes_hook_without_restarting(monkeypatch, tmp_
 
     class LocalTransferHub(FakeHub):
         async def exec(self, device_id, argv, *, stdin=None, **kwargs):
-            if stdin is None:
+            if stdin is None and "cheese-hook" not in argv[-1]:
                 return await super().exec(device_id, argv, **kwargs)
             result = subprocess.run(
                 argv,
