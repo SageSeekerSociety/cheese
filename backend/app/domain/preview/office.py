@@ -108,7 +108,9 @@ async def render_to_pdf(
             detail = ""
         if response.status_code >= 500:
             raise OfficeRenderUnavailable(detail or "文档预览服务出错")
-        raise OfficeRenderFailed(detail or f"无法转换这个文件（HTTP {response.status_code}）")
+        raise OfficeRenderFailed(
+            detail or f"无法转换这个文件（HTTP {response.status_code}）"
+        )
 
     pdf = response.content
     if not pdf.startswith(b"%PDF"):
