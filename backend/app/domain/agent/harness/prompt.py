@@ -38,8 +38,9 @@ def build_system_prompt(
             "## 本轮第一件事：先给本话题起名（先于一切）\n"
             "本话题还叫「新话题」（未命名）。**本轮的第一个动作**——在说开场白、"
             "回复任何内容、调用任何其他工具之前——先根据用户的需求执行 "
-            '`cheese title "<标题>"` 起个 ≤12 字简短标题，然后再照常回应、干活。'
-            "这条优先于「先回应，再干活」：起标题只是一条命令，几乎不花时间。"
+            '`cheese_title(text="<标题>")` 起个 ≤12 字简短标题，'
+            "然后再照常回应、干活。"
+            "这条优先于「先回应，再干活」：起标题只是一次工具调用，几乎不花时间。"
             "（只起一次，定了别反复改。）"
         )
     if role:
@@ -63,7 +64,8 @@ def build_system_prompt(
             "下面**只列当前活跃的话题**。项目里还有已归档的话题，它们照常存在、"
             "内容也照常可读，只是不在这里列出来；**没列出来 ≠ 不存在**。需要找"
             "它们时自己查（返回全部话题，含 archived 的标题和 id）：\n"
-            '`cheese api GET "/topics?project_id=$CHEESE_PROJECT"`\n'
+            '`platform_request(method="GET", '
+            'path="/topics?project_id=<本项目 id>")`\n'
             "拿到 id 后用 `<#id>` 就能精确引用任何一个话题（包括没列在下面的）。\n"
             + lines
         )
@@ -104,7 +106,7 @@ def build_system_prompt(
                 f"\n\n> ⚠️ 记忆池里还有 **{memories_omitted} 条这一轮没注入**"
                 "（按与本轮上下文的相关性排的，排在后面的没进来；不是不存在）。"
                 "**没列出来 ≠ 不存在**——换个话题、要用到某条旧约定或踩过的坑时，"
-                '用 `cheese recall "<关键词>"` 现查；一次没查到也不等于没有，'
+                '用 `cheese_recall(query="<关键词>")` 现查；一次没查到也不等于没有，'
                 "换个说法、用更短的词再试一次。"
             )
         if memories_core_omitted:
@@ -113,7 +115,7 @@ def build_system_prompt(
             block += (
                 f"\n\n> ⚠️ **核心记忆超预算了**：有 {memories_core_omitted} 条核心记忆"
                 "没放下。核心记忆本该每轮全在场，出现这种情况说明它被当成普通记忆写"
-                "了——挑几条降级成普通记忆（`cheese remember` 不加 `--core`）。"
+                "了——挑几条降级成普通记忆（`cheese_remember` 不带 `core`）。"
             )
         parts.append(block)
     if turn_meta:
@@ -150,8 +152,8 @@ def thread_relay_prompt(
         f"---\n[{author}] {message}\n---\n\n"
         "**转达给做这条活的分身**：它还在跑就直接给它发消息；已经收工了，你就自己"
         "看着办——能替它答的当场答，要接着干的照原来的简报重起一个分身并 "
-        f"`cheese bind {task_id} <新的 agent_id>`。"
-        "回话说在这条活上（`cheese tell` 到它），别只在房间里说，"
+        f'`cheese_bind(task_id="{task_id}", agent_id=<新的 agent_id>)`。'
+        "回话说在这条活上（`cheese_tell` 到它），别只在房间里说，"
         "问话的人看的是那边。"
     )
 
@@ -169,11 +171,13 @@ def thread_upgraded_prompt(*, task_id: uuid.UUID, source_message: str) -> str:
         "被升级的那段话就是它的简报，平台已经记在卡上了：\n\n"
         f"---\n{source_message}\n---\n\n"
         "接下来是你的事：\n"
-        f'1. `cheese title "<≤12 字的标题>" --task {task_id}`——它现在还叫「新话题」，'
+        f'1. `cheese_title(text="<≤12 字的标题>", task="{task_id}")`'
+        "——它现在还叫「新话题」，"
         "只有你能给它起名字。\n"
         "2. 用你的 Agent 工具起一个分身，**把上面这段简报原文放进它的 prompt**"
         "（分身不会自己去读文档）。\n"
-        f"3. `cheese bind {task_id} <分身的 agent_id>`——不 bind，这条活在界面上"
+        f'3. `cheese_bind(task_id="{task_id}", agent_id=<分身的 agent_id>)`'
+        "——不 bind，这条活在界面上"
         "永远是「没人做」，分身干的每件事都记在你头上。"
     )
 
@@ -193,7 +197,7 @@ def publication_prompt(content: str, *, is_private: bool = False) -> str:
             + "\n\n"
             + platform_prompt(
                 "这是私聊，最终答复会自动发布给用户。直接回答，"
-                "不要再用 cheese chat send 重复发送同一答复。"
+                "不要再用 chat_send 重复发送同一答复。"
             )
         )
     return (
@@ -201,8 +205,7 @@ def publication_prompt(content: str, *, is_private: bool = False) -> str:
         + "\n\n"
         + platform_prompt(
             "Ordinary output and final responses are not published to chat. "
-            "Publish with the chat_send MCP tool when available; "
-            "otherwise use cheese chat send. "
+            "Publish with the chat_send tool. "
             "收到需要回应的用户消息（包括排队或执行中追加的消息）时，能直接回答就发答案；"
             "需要继续处理就先说明你理解的意思和接下来要做什么，再继续。"
             "重要进展、改方向、阻碍和完成结果也要主动发消息。"

@@ -8,10 +8,10 @@ import pytest
 from sqlalchemy import select
 
 from app.core.config import settings
+from app.domain.agent import event_spool
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
 from app.domain.agent.harness.channel import Channel
-from app.domain.agent.harness.claude_code import event_spool
 from app.domain.agent.harness.claude_code.hook_events import HookRouter
 from app.domain.agent.harness.claude_code.hooks_substrate import ClaudeCodeRuntime
 from app.domain.agent.models import AgentTurn
@@ -312,7 +312,7 @@ async def test_mid_run_message_is_consumed_before_the_run_succeeds(
     assert provider.runs == 1
     assert len(provider.delivered) == 1
     assert provider.delivered[0].startswith("[u2]: Also handle B\n")
-    assert "cheese chat send" in provider.delivered[0]
+    assert "chat_send" in provider.delivered[0]
     # #539 decision A: the write-accept delivered it, but the consumed stamp
     # waits for the session's UserPromptSubmit receipt — until then the
     # message stays pending so a session death replays it.

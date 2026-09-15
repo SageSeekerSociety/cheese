@@ -10,7 +10,7 @@ touching every column that stores a user id, across roughly thirty tables, for
 a property nothing is allowed to depend on.
 
 Revision ID: a7f2c9e10b45
-Revises: ab798431c260
+Revises: c4d81f6a27b3
 Create Date: 2026-09-14 03:07:56.596033
 
 """
@@ -21,7 +21,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "a7f2c9e10b45"
-down_revision: str | Sequence[str] | None = "ab798431c260"
+down_revision: str | Sequence[str] | None = "c4d81f6a27b3"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

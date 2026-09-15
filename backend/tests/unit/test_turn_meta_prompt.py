@@ -19,7 +19,7 @@ def test_no_countdown_is_ever_claimed() -> None:
     assert "分钟" not in joined
     assert "到点会被中断" not in joined
     assert "活跃度检测" in joined
-    assert "cheese status" in joined  # the unconditional hint still applies
+    assert "cheese_status" in joined  # the unconditional hint still applies
     assert "本轮接着上一轮跑" not in joined
 
 

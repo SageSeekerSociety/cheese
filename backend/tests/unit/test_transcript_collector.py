@@ -8,7 +8,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from app.domain.agent.harness.claude_code.event_drain import collect_transcripts
+from app.domain.agent.event_drain import collect_transcripts
 
 
 @pytest.fixture
@@ -92,9 +92,10 @@ def test_retry_restart_delayed_tail_and_subagent_preserve_original_bytes(
     root.mkdir(parents=True)
     main = root / "main.jsonl"
     main.write_bytes("你好\n".encode())
-    script = home / ".claude/cheese-drain"
+    home.joinpath(".cheese").mkdir(exist_ok=True)
+    script = home / ".cheese/cheese-drain"
     values = {
-        "CHEESE_HOOK_SPOOL": str(home / ".claude/cheese-spool"),
+        "CHEESE_HOOK_SPOOL": str(home / ".cheese/cheese-spool"),
         "CHEESE_HOOK_URL": url,
         "CHEESE_TOKEN": "test",
     }
@@ -127,9 +128,10 @@ def test_replaced_or_rewritten_file_gets_a_new_generation(tmp_path, receiver):
     root = tmp_path / ".claude/projects/p"
     root.mkdir(parents=True)
     path = root / "s.jsonl"
-    script = tmp_path / ".claude/cheese-drain"
+    tmp_path.joinpath(".cheese").mkdir(exist_ok=True)
+    script = tmp_path / ".cheese/cheese-drain"
     values = {
-        "CHEESE_HOOK_SPOOL": str(tmp_path / ".claude/cheese-spool"),
+        "CHEESE_HOOK_SPOOL": str(tmp_path / ".cheese/cheese-spool"),
         "CHEESE_HOOK_URL": url,
         "CHEESE_TOKEN": "test",
     }
@@ -145,15 +147,16 @@ def test_replaced_or_rewritten_file_gets_a_new_generation(tmp_path, receiver):
 def test_final_verification_resumes_chunks_but_new_cleanup_checks_them_again(
     tmp_path, receiver, monkeypatch
 ):
-    from app.domain.agent.harness.claude_code import event_drain
+    from app.domain.agent import event_drain
 
     url, saved, _, confirmations = receiver
     root = tmp_path / ".claude/projects/p"
     root.mkdir(parents=True)
     (root / "s.jsonl").write_bytes(b"original transcript\n")
-    script = tmp_path / ".claude/cheese-drain"
+    tmp_path.joinpath(".cheese").mkdir(exist_ok=True)
+    script = tmp_path / ".cheese/cheese-drain"
     values = {
-        "CHEESE_HOOK_SPOOL": str(tmp_path / ".claude/cheese-spool"),
+        "CHEESE_HOOK_SPOOL": str(tmp_path / ".cheese/cheese-spool"),
         "CHEESE_HOOK_URL": url,
         "CHEESE_TOKEN": "test",
         "CHEESE_CLEANUP_ID": "first",

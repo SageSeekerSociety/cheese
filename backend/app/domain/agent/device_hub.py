@@ -47,12 +47,28 @@ class DeviceOffline(RuntimeError):
         self.device_id = device_id
 
 
+def configure_subscription_cleanup(remote_hub: Any) -> None:
+    """Wire business subscription cleanup without coupling the RPC transport."""
+    from app.domain.agent.harness.claude_code import (
+        drop_device_subscriptions,
+        drop_screen_subscriptions,
+    )
+
+    remote_hub.set_subscription_cleanup_callbacks(
+        drop_device=drop_device_subscriptions,
+        drop_screen=drop_screen_subscriptions,
+    )
+
+
 PROTOCOL_VERSION = device_link.PROTOCOL_VERSION
 
 
 class DeviceTransport(Protocol):
     """A live device control channel. Satisfied by a ``fastapi.WebSocket`` adapter
-    and trivially fakeable."""
+    and trivially fakeable.
+
+    ``send_json`` raises ``ConnectionError`` when the channel can no longer carry
+    a frame; the hub then treats the device as gone."""
 
     async def send_json(self, msg: dict[str, Any]) -> None: ...
 
@@ -132,14 +148,39 @@ class HubDevice:
     )
     session_pending: dict[str, asyncio.Future[Any]] = field(default_factory=dict)
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    connection_generation: int = 0
 
     async def send(self, msg: dict[str, Any]) -> None:
         # Serialize sends to one device: a WebSocket is not safe for concurrent
         # writes, and the orchestrator, exec, and every viewer's fan-out all send
         # here. Without this, interleaved frames corrupt the channel.
         async with self.send_lock:
-            if self.transport is not None:
-                await self.transport.send_json(msg)
+            transport = self.transport
+            if transport is None:
+                return
+            try:
+                await transport.send_json(msg)
+            except ConnectionError as exc:
+                # The receive loop only learns of a dead link when the peer says
+                # so; a peer that vanished never does, and then the socket stays
+                # attached for good — every caller that trusts ``is_online`` sends
+                # into it and fails, once a minute for a storage sweep. A failed
+                # send is the proof the receive loop never gets.
+                self.drop_transport(transport)
+                raise DeviceOffline(self.device_id) from exc
+
+    def drop_transport(self, transport: DeviceTransport) -> bool:
+        """Forget ``transport`` if it is still the live one; fail what waited on it."""
+        if self.transport is not transport:
+            return False
+        self.transport = None
+        for future, _ in self.executor_pending.values():
+            if not future.done():
+                future.set_exception(DeviceOffline(self.device_id))
+        for future in self.session_pending.values():
+            if not future.done():
+                future.set_exception(DeviceOffline(self.device_id))
+        return True
 
 
 class DeviceHub:
@@ -165,6 +206,7 @@ class DeviceHub:
                 if not future.done():
                     future.set_exception(DeviceOffline(device_id))
         device.transport = transport
+        device.connection_generation += 1
         device.executor = False
         if name:
             device.name = name
@@ -173,22 +215,16 @@ class DeviceHub:
 
     async def detach_device(self, device_id: str, transport: DeviceTransport) -> None:
         device = self._devices.get(device_id)
-        if device is not None and device.transport is transport:
-            device.transport = None
-            for future, _ in device.executor_pending.values():
-                if not future.done():
-                    future.set_exception(DeviceOffline(device_id))
-            for future in device.session_pending.values():
-                if not future.done():
-                    future.set_exception(DeviceOffline(device_id))
-            from app.domain.agent.harness.claude_code import (
-                drop_device_subscriptions,
-                drop_screen_subscriptions,
-            )
+        if device is not None and device.drop_transport(transport):
+            if not settings.device_connection_owner:
+                from app.domain.agent.harness.claude_code import (
+                    drop_device_subscriptions,
+                    drop_screen_subscriptions,
+                )
 
-            for screen in list(device.screens.values()):
-                await drop_screen_subscriptions(screen)
-            await drop_device_subscriptions(device_id)
+                for screen in list(device.screens.values()):
+                    await drop_screen_subscriptions(screen)
+                await drop_device_subscriptions(device_id)
 
     def is_online(self, device_id: str) -> bool:
         device = self._devices.get(device_id)
@@ -304,6 +340,9 @@ class DeviceHub:
         topic_id: uuid.UUID | None = None,
         resource_id: uuid.UUID | None = None,
         hook_key: str = "",
+        credential_expires: int | None = None,
+        agent_configuration: str = "",
+        execution_target: dict | None = None,
     ) -> HubScreen:
         """Re-register a screen the *device* is still running after the server lost its
         in-memory state (a restart). The frozen cli auto-reconnects its control channel
@@ -337,10 +376,33 @@ class DeviceHub:
             topic_id=topic_id,
             resource_id=resource_id,
             hook_key=hook_key,
+            credential_expires=credential_expires,
+            agent_configuration=agent_configuration,
+            execution_target=execution_target,
         )
         device.screens[sid] = screen
         self._screens[sid] = screen
         self._by_screen_token[token] = screen
+        return screen
+
+    def update_screen(
+        self,
+        sid: str,
+        *,
+        resource_id: uuid.UUID | None,
+        execution_target: dict | None,
+        credential_expires: int | None = None,
+        agent_configuration: str | None = None,
+    ) -> HubScreen:
+        screen = self._screens.get(sid)
+        if screen is None:
+            raise KeyError("screen not found")
+        screen.resource_id = resource_id
+        screen.execution_target = execution_target
+        if credential_expires is not None:
+            screen.credential_expires = credential_expires
+        if agent_configuration is not None:
+            screen.agent_configuration = agent_configuration
         return screen
 
     async def close_screen(self, device_id: str, sid: str) -> bool:
@@ -355,11 +417,12 @@ class DeviceHub:
         device.screens.pop(sid, None)
         self._screens.pop(sid, None)
         self._by_screen_token.pop(screen.token, None)
-        from app.domain.agent.harness.claude_code import (
-            drop_screen_subscriptions,
-        )
+        if not settings.device_connection_owner:
+            from app.domain.agent.harness.claude_code import (
+                drop_screen_subscriptions,
+            )
 
-        await drop_screen_subscriptions(screen)
+            await drop_screen_subscriptions(screen)
         return True
 
     async def session_request(
@@ -468,17 +531,17 @@ class DeviceHub:
         eid = f"e{device.exec_seq}"
         fut: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
         device.exec_pending[eid] = fut
-        await device.send(
-            device_link.exec_cmd(
-                exec_id=eid,
-                command=argv,
-                timeout=int(timeout),
-                cwd=cwd,
-                env=env,
-                stdin=stdin,
-            )
-        )
         try:
+            await device.send(
+                device_link.exec_cmd(
+                    exec_id=eid,
+                    command=argv,
+                    timeout=int(timeout),
+                    cwd=cwd,
+                    env=env,
+                    stdin=stdin,
+                )
+            )
             return await asyncio.wait_for(fut, timeout=timeout + 5)
         except TimeoutError:
             await device.send(device_link.exec_cancel(eid))
@@ -739,5 +802,15 @@ class DeviceHub:
         pass
 
 
-# Shared singleton: the connector route and the DeviceChannel import this instance.
-device_hub = DeviceHub()
+# Shared singleton: the connection-owner process keeps the local implementation;
+# rolling business backends use its RPC facade.
+from app.core.config import settings  # noqa: E402
+
+if settings.device_connection_url:
+    from app.domain.agent.device_hub_rpc import RemoteDeviceHub  # noqa: E402
+
+    device_hub = RemoteDeviceHub(
+        settings.device_connection_url, settings.device_connection_auth_secret
+    )
+else:
+    device_hub = DeviceHub()

@@ -49,6 +49,7 @@ import type {
   TodoItem,
   Topic,
   TopicMemberRow,
+  WsClientChatMessage,
   WsClientMessage,
   WsServerFrame,
 } from '../cx_types'
@@ -590,6 +591,7 @@ function scheduleReconnect(topicId: string) {
 
 function closeSocket() {
   cancelRetry()
+  stopHeartbeat()
   if (socket) {
     socket.onopen = null
     socket.onmessage = null
@@ -599,6 +601,69 @@ function closeSocket() {
     socket = null
   }
   connected.value = false
+}
+
+function requeueSending() {
+  for (const item of outbox.value) {
+    if (item.state === 'sending') {
+      clearEchoTimer(item.clientId)
+      item.state = 'queued'
+    }
+  }
+}
+
+// OPEN is only the browser's last observation: a socket whose path stopped
+// carrying frames stays OPEN until TCP gives up, which took 6.5 minutes once.
+// Whoever decides the link is gone (no echo for a sent message, no answer to a
+// ping) comes here: drop that socket without telling it, queue what it was
+// carrying, and let loadTopic reconcile history and open a fresh one.
+function replaceStaleSocket() {
+  const topic = props.topic
+  const stale = socket
+  if (!topic || !stale) return false
+  requeueSending()
+  stopHeartbeat()
+  socket = null
+  stale.onopen = null
+  stale.onmessage = null
+  stale.onerror = null
+  stale.onclose = null
+  stale.close()
+  connected.value = false
+  void loadTopic(topic)
+  return true
+}
+
+// Liveness probe. A page that is only waiting for 芝士's reply sends nothing,
+// so without this a dead link is noticed only when the next message goes
+// unanswered. Any frame counts as an answer — the reply is traffic too.
+const HEARTBEAT_INTERVAL_MS = 15_000
+const HEARTBEAT_TIMEOUT_MS = 10_000
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null
+let pongTimer: ReturnType<typeof setTimeout> | null = null
+
+function noteHeartbeatAnswer() {
+  if (pongTimer) clearTimeout(pongTimer)
+  pongTimer = null
+}
+
+function stopHeartbeat() {
+  if (heartbeatTimer) clearInterval(heartbeatTimer)
+  heartbeatTimer = null
+  noteHeartbeatAnswer()
+}
+
+function startHeartbeat(ws: WebSocket) {
+  stopHeartbeat()
+  heartbeatTimer = setInterval(() => {
+    if (socket !== ws || ws.readyState !== WebSocket.OPEN || pongTimer) return
+    const ping: WsClientMessage = { type: 'ping' }
+    ws.send(JSON.stringify(ping))
+    pongTimer = setTimeout(() => {
+      pongTimer = null
+      if (socket === ws) replaceStaleSocket()
+    }, HEARTBEAT_TIMEOUT_MS)
+  }, HEARTBEAT_INTERVAL_MS)
 }
 
 function openSocket(topicId: string) {
@@ -612,6 +677,7 @@ function openSocket(topicId: string) {
     connected.value = true
     retryDelayMs = 1000 // healthy again → next outage starts backoff fresh
     errorMsg.value = null
+    startHeartbeat(ws)
     // State frames are transient. A doc saved while disconnected may have no
     // remaining turn to replay it; refresh through the panel's conflict guard.
     emit('state-changed', 'doc')
@@ -620,14 +686,10 @@ function openSocket(topicId: string) {
   ws.onclose = () => {
     if (socket === ws) {
       connected.value = false
+      stopHeartbeat()
       // Anything still waiting for an echo lost its channel — queue it again
       // rather than let its timer call it undelivered while we reconnect.
-      for (const item of outbox.value) {
-        if (item.state === 'sending') {
-          clearEchoTimer(item.clientId)
-          item.state = 'queued'
-        }
-      }
+      requeueSending()
       scheduleReconnect(topicId)
     }
   }
@@ -644,6 +706,8 @@ function openSocket(topicId: string) {
     } catch {
       return
     }
+    noteHeartbeatAnswer()
+    if (frame.type === 'pong') return
     handleFrame(frame)
     noteCatchUpFrame()
   }
@@ -819,6 +883,10 @@ async function loadTopic(topic: Topic) {
       ? mergeRefreshedTail(cached, { blocks: payload.data, hasMore: payload.has_more })
       : { blocks: payload.data, hasMore: payload.has_more }
     messages.value = merged.blocks
+    // A reconnect starts with durable history. Settle sends that landed while
+    // their echo was lost before opening the new socket; only absent client ids
+    // remain queued for an idempotent resend.
+    for (const block of merged.blocks) settleOutbox(block)
     hasMore.value = merged.hasMore
     setCachedWindow(topic.id, merged)
     placeUnreadAnchor() // 冻在这一刻：之后来的新消息不再移动这条线
@@ -904,7 +972,9 @@ function clearEchoTimer(clientId: string) {
 function markFailed(clientId: string) {
   clearEchoTimer(clientId)
   const item = outbox.value.find((o) => o.clientId === clientId)
-  if (item && item.state !== 'failed') item.state = 'failed'
+  if (!item || item.state !== 'sending') return
+  // No durable echo for the full timeout: the link is gone whatever OPEN says.
+  if (!replaceStaleSocket()) item.state = 'failed'
 }
 
 /** Hand one queued message to the socket, if there is one to hand it to. */
@@ -912,7 +982,7 @@ function flushOutbox() {
   if (!socket || socket.readyState !== WebSocket.OPEN) return
   for (const item of outbox.value) {
     if (item.state === 'sending') continue
-    const msg: WsClientMessage = {
+    const msg: WsClientChatMessage = {
       type: 'message',
       content: item.content,
       summon: item.summon,

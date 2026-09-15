@@ -30,11 +30,14 @@ def test_exited_session_with_retained_terminal_allows_transfer(
 
     monkeypatch.setenv("HOME", str(tmp_path))
     project, resource = str(uuid.uuid4()), str(uuid.uuid4())
-    home = tmp_path / ".cheese/home" / project / resource / ".claude"
+    session_home = tmp_path / ".cheese/home" / project / resource
+    # The platform's own directory; the harness's ~/.claude sits beside it.
+    home = session_home / ".cheese"
     home.mkdir(parents=True)
+    (session_home / ".claude").mkdir()
     work = tmp_path / ".cheese/work" / project / resource
     if not legacy_workspace:
-        work = home.parent / "room"
+        work = session_home / "room"
     checksum = subprocess.check_output(["cksum"], input=str(work).encode())
     session = "cheese_" + checksum.decode().split()[0]
     # macOS pytest paths can exceed the Unix socket path-length limit.

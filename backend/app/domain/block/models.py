@@ -133,6 +133,21 @@ class Block(UuidPk, Timestamps, Base):
             "created_at",
             postgresql_include=["author"],
         ),
+        # 「这个房间最近一次开机事件是哪条」—— asked once at the top of every
+        # turn (`turn_history`), and answerable only by a predicate no other
+        # index leads with, so the planner read every block the room has ever
+        # had to find the newest of a handful. A room accumulates blocks
+        # forever, so that scan got slower every day the room was used.
+        # Partial on the predicate itself: these events are a handful per room
+        # against a table of every message and every line of agent output, so
+        # the index stays tiny and the write path barely notices it.
+        Index(
+            "ix_blocks_cloud_provisioning",
+            "topic_id",
+            "created_at",
+            "id",
+            postgresql_where=text("(meta ->> 'event_type') = 'cloud_provisioning'"),
+        ),
     )
 
     project_id: Mapped[uuid.UUID] = mapped_column(

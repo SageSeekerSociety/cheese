@@ -19,6 +19,7 @@ Per request:
 import asyncio
 import base64
 import hashlib
+import inspect
 import json
 import logging
 import shlex
@@ -32,7 +33,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token, scoped_token_claims
-from app.domain.agent import provider_env
+from app.domain.agent import machine_launcher, provider_env
 from app.domain.agent.device_hub import (
     DeviceHub,
     DeviceOffline,
@@ -41,14 +42,13 @@ from app.domain.agent.device_hub import (
 )
 from app.domain.agent.harness.channel import Channel, ScreenSetupError
 from app.domain.agent.harness.claude_code import (
-    CHEESE_HOOK_SCRIPT,
     DEVICE_ALIVE_PROBE,
     DEVICE_TUNNEL_PROBE,
     SESSION_TOKEN_TTL_S,
-    build_screen_launch,
     resident_release,
 )
-from app.domain.agent.harness.launch import LaunchPlan
+from app.domain.agent.harness.launch import MachinePlace, MachinePlan
+from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
 from app.domain.agent.platform_failures import (
     DEVICE_OFFLINE_MESSAGE,
     HOST_UNREACHABLE_CODE,
@@ -384,7 +384,7 @@ async def environment_status(
 ) -> dict:
     home = device_home_dir(project_id, topic_id)
     reset_marker = (
-        'mkdir -p "$HOME/.claude"; touch "$HOME/.claude/environment-restart"; '
+        'mkdir -p "$HOME/.cheese"; touch "$HOME/.cheese/environment-restart"; '
         if action == "reset"
         else ""
     )
@@ -394,9 +394,9 @@ async def environment_status(
             "sh",
             "-c",
             f'export HOME="{home}"; '
-            'if [ -f "$HOME/.claude/cheese-environment.py" ]; then '
+            'if [ -f "$HOME/.cheese/cheese-environment.py" ]; then '
             f"CHEESE_STATUS_WAIT={int(wait_ready)} "
-            f'python3 "$HOME/.claude/cheese-environment.py" {action} || exit $?; '
+            f'python3 "$HOME/.cheese/cheese-environment.py" {action} || exit $?; '
             "else printf '%s' '{\"state\":\"pending\"}'; fi; " + reset_marker,
         ],
         timeout=10,
@@ -404,6 +404,11 @@ async def environment_status(
     if result.get("exit") != 0:
         raise ScreenSetupError("无法读取机器上的环境准备状态")
     return json.loads(result.get("stdout") or '{"state":"pending"}')
+
+
+def _launcher_command(topic_id: uuid.UUID) -> list[str]:
+    """What a screen runs: the launcher file `_ship_launcher` wrote for this topic."""
+    return ["bash", "-lc", f'exec bash "$HOME/.cheese/launch/{topic_id}.sh"']
 
 
 class DeviceChannel(Channel):
@@ -533,6 +538,8 @@ class DeviceChannel(Channel):
                     agent = await IdentityService(session).ensure_topic_agent_user(
                         topic_id
                     )
+                    expiry = env.get("CHEESE_TOKEN_EXPIRES")
+                    target = env.get("CHEESE_EXECUTION_TARGET")
                     recovered = self._hub.adopt_screen(
                         device_id,
                         entry["sid"],
@@ -546,12 +553,12 @@ class DeviceChannel(Channel):
                         ),
                         command=entry["command"],
                         hook_key=str(topic_id),
+                        credential_expires=int(expiry) if expiry else None,
+                        execution_target=json.loads(target) if target else None,
+                        agent_configuration=env.get("CHEESE_AGENT_CONFIG", ""),
                     )
-                    expiry = env.get("CHEESE_TOKEN_EXPIRES")
-                    recovered.credential_expires = int(expiry) if expiry else None
-                    target = env.get("CHEESE_EXECUTION_TARGET")
-                    recovered.execution_target = json.loads(target) if target else None
-                    recovered.agent_configuration = env.get("CHEESE_AGENT_CONFIG", "")
+                    if inspect.isawaitable(recovered):
+                        recovered = await recovered
                     # Retired generations remain registered for durable cleanup;
                     # only the room's current generation can resume its turn.
                     if recovered.resource_id == current_resource:
@@ -725,6 +732,7 @@ class DeviceChannel(Channel):
         command: list[str],
         home_dir: str,
         release_state: dict | None = None,
+        execution_token: str | None = None,
     ) -> list[str]:
         """Write the launch script to a FILE on the device (over the link's one-shot
         ``exec``, script on stdin) and return a short command that runs it.
@@ -735,32 +743,23 @@ class DeviceChannel(Channel):
         long``. Since #308 embedded the assembled system prompt in the script, every
         real launch is tens of KB, so argv delivery broke every device spawn (and
         the failure was invisible: session.error is fire-and-forget and the prompt
-        just timed out). The file path is per-topic and rewritten before every
-        create/re-assert, so a respawn always runs the current turn's script."""
+        just timed out). The file path is per-topic and written whenever a screen
+        is created; a live screen is refreshed by ``_refresh_screen_files``
+        instead, since it never runs its launcher again."""
         assert command[:2] == ["bash", "-lc"] and len(command) == 3
         script = command[2]
         path = f"$HOME/.cheese/launch/{topic_id}.sh"
-        hook_dir = f"{home_dir}/.claude"
-        # Reasserting a live screen does not run its launcher. Refresh the hook
-        # during the existing transfer so reused processes receive hook fixes.
-        transfer = (
-            f'mkdir -p "$HOME/.cheese/launch" "{hook_dir}" && cat > "{path}"'
-            f" && printf %s {shlex.quote(CHEESE_HOOK_SCRIPT)}"
-            f' > "{hook_dir}/cheese-hook.next.$$"'
-            f' && chmod 755 "{hook_dir}/cheese-hook.next.$$"'
-            f' && mv "{hook_dir}/cheese-hook.next.$$" "{hook_dir}/cheese-hook"'
+        transfer, exec_env = self._screen_file_refresh(
+            home_dir, release_state=release_state, execution_token=execution_token
         )
-        if release_state is not None:
-            transfer += (
-                f' && if [ -f "{hook_dir}/remote-execution/release-ready" ]; then '
-                f'cat "{hook_dir}/remote-execution/release-ready"; fi'
-            )
+        transfer = f'mkdir -p "$HOME/.cheese/launch" && cat > "{path}" && ' + transfer
         started = time.monotonic()
         try:
             result = await self._hub.exec(
                 device_id,
                 ["sh", "-c", transfer],
                 stdin=script,
+                env=exec_env,
                 timeout=_LAUNCHER_SHIP_TIMEOUT_S,
             )
         except (TimeoutError, DeviceOffline) as exc:
@@ -790,15 +789,90 @@ class DeviceChannel(Channel):
             )
         if release_state is not None:
             release_state["version"] = result.get("stdout", "").strip()
-        return ["bash", "-lc", f'exec bash "{path}"']
+        return _launcher_command(topic_id)
+
+    @staticmethod
+    def _screen_file_refresh(
+        home_dir: str,
+        *,
+        release_state: dict | None,
+        execution_token: str | None,
+    ) -> tuple[str, dict[str, str] | None]:
+        """The shell that brings a screen's per-turn files up to date: the hook
+        forwarder (so a reused process picks up hook fixes), the forwarded-fs
+        token (rotated every turn), and a read of the release marker when the
+        caller tracks one. Shared by the launcher ship and the live-screen
+        refresh, so both paths write the same files the same way."""
+        hook_dir = f"{home_dir}/.claude"
+        transfer = (
+            f'mkdir -p "{hook_dir}"'
+            f" && printf %s {shlex.quote(CHEESE_HOOK_SCRIPT)}"
+            f' > "{hook_dir}/cheese-hook.next.$$"'
+            f' && chmod 755 "{hook_dir}/cheese-hook.next.$$"'
+            f' && mv "{hook_dir}/cheese-hook.next.$$" "{hook_dir}/cheese-hook"'
+        )
+        if release_state is not None:
+            transfer += (
+                f' && if [ -f "{hook_dir}/remote-execution/release-ready" ]; then '
+                f'cat "{hook_dir}/remote-execution/release-ready"; fi'
+            )
+        exec_env = None
+        if execution_token is not None:
+            token_path = f"{hook_dir}/remote-session/execution.token"
+            transfer += (
+                f' && mkdir -p "{hook_dir}/remote-session"'
+                f' && umask 077 && printf %s "$CHEESE_FORWARDED_TOKEN"'
+                f' > "{token_path}.next.$$"'
+                f' && mv "{token_path}.next.$$" "{token_path}"'
+            )
+            exec_env = {"CHEESE_FORWARDED_TOKEN": execution_token}
+        return transfer, exec_env
+
+    async def _refresh_screen_files(
+        self,
+        device_id: str,
+        home_dir: str,
+        release_state: dict | None = None,
+        execution_token: str | None = None,
+    ) -> None:
+        """A live screen keeps the `claude` it was born with and never runs its
+        launcher again, so a reused turn ships only what that process will
+        actually read next: the hook, the token, the release marker. The
+        launcher itself is 450 KB of embedded helper sources plus the prompt,
+        and sending it here bought nothing but 46 ms on every turn."""
+        transfer, exec_env = self._screen_file_refresh(
+            home_dir, release_state=release_state, execution_token=execution_token
+        )
+        try:
+            result = await self._hub.exec(
+                device_id,
+                ["sh", "-c", transfer],
+                env=exec_env,
+                timeout=_LAUNCHER_SHIP_TIMEOUT_S,
+            )
+        except (TimeoutError, DeviceOffline) as exc:
+            raise ScreenSetupError(
+                self._link_failure(
+                    device_id,
+                    step="刷新会话文件",
+                    waited_s=_LAUNCHER_SHIP_TIMEOUT_S,
+                    offline=isinstance(exc, DeviceOffline),
+                )
+            ) from exc
+        if result.get("exit") != 0:
+            raise ScreenSetupError(
+                f"无法刷新设备上的会话文件：{result.get('stderr') or result}"
+            )
+        if release_state is not None:
+            release_state["version"] = result.get("stdout", "").strip()
 
     async def _refresh_resident(
         self, screen: HubScreen, home_dir: str, state: dict
-    ) -> None:
+    ) -> bool:
         sources = resident_release.sources()
         version = resident_release.digest(sources)
         if state.get("version") == version:
-            return
+            return False
         from app.domain.agent.remote_control import store
 
         control = store()
@@ -830,13 +904,32 @@ class DeviceChannel(Channel):
 
         staged = await execute("stage", home_dir, sources)
         if not staged["changed"]:
-            return
+            return False
         # The rendezvous path runs terminal-only slash commands without typing
         # over a person's draft. The transcript confirms plugin loading finished.
         await self.send_prompt(screen, "/reload-plugins")
         await execute("wait_reloaded", staged["offsets"])
 
-        async def request(subtype):
+        request = self._native_control(session)
+        await request("mcp_reconnect")
+        await self._await_native_connected(request)
+        await execute("acknowledge", home_dir, version)
+        logger.info(
+            "resident release applied topic=%s version=%s", screen.topic_id, version
+        )
+        return True
+
+    @staticmethod
+    def _native_control(session: dict):
+        """A caller for this room's live native control session: one control
+        request in, its response out. The session is the terminal 芝士 is
+        actually running in, which is why `mcp_reconnect` through it reaches the
+        running process rather than a new one."""
+        from app.domain.agent.remote_control import store
+
+        control = store()
+
+        async def request(subtype: str) -> dict:
             request_id = str(uuid.uuid4())
             await control.enqueue(
                 session["id"],
@@ -852,28 +945,96 @@ class DeviceChannel(Channel):
                 raise ScreenSetupError(f"Resident MCP {subtype} did not complete")
             return result["response"].get("response", {})
 
-        await request("mcp_reconnect")
-        # Reconnect acknowledges the request while the server can still be pending.
-        deadline = time.monotonic() + 30
+        return request
+
+    @staticmethod
+    def _native_status(status: dict) -> str:
+        return next(
+            (
+                server.get("status", "")
+                for server in status.get("mcpServers", [])
+                if server.get("name") == "native"
+            ),
+            "",
+        )
+
+    async def _await_native_connected(self, request, timeout_s: float = 30) -> None:
+        """A reconnect is acknowledged while the server can still be pending."""
+        deadline = time.monotonic() + timeout_s
         while True:
-            status = await request("mcp_status")
-            native = next(
-                (
-                    server
-                    for server in status.get("mcpServers", [])
-                    if server.get("name") == "native"
-                ),
-                {},
-            )
-            if native.get("status") == "connected":
-                break
-            if native.get("status") != "pending" or time.monotonic() >= deadline:
+            state = self._native_status(await request("mcp_status"))
+            if state == "connected":
+                return
+            if state != "pending" or time.monotonic() >= deadline:
                 raise ScreenSetupError("Released native MCP did not connect")
             await asyncio.sleep(0.1)
-        await execute("acknowledge", home_dir, version)
-        logger.info(
-            "resident release applied topic=%s version=%s", screen.topic_id, version
+
+    async def recover_native_tools(self, topic_id: uuid.UUID) -> bool:
+        """Put this room's platform tools back, and say whether they were gone.
+
+        A turn that publishes nothing is the symptom: 芝士 answered in its
+        terminal and its `chat_send` call failed with `No such tool available`,
+        so the room heard silence. The MCP server can be gone while the session
+        reports ready (observed 2026-09-13/14), and the reconnect that fixes it
+        is the same control request a release uses. Asked only AFTER such a
+        turn, so a healthy room pays nothing.
+
+        True means the tools were missing and are back — the caller re-delivers
+        the message. False means nothing was wrong, or the question could not be
+        asked here (no live control session), which is never a reason to resend.
+        """
+        from app.domain.agent.remote_control import store
+
+        session = await store().current(str(topic_id))
+        if not session or session["status"] != "active":
+            return False
+        request = self._native_control(session)
+        try:
+            if self._native_status(await request("mcp_status")) == "connected":
+                return False
+            await request("mcp_reconnect")
+            await self._await_native_connected(request)
+        except (ScreenSetupError, TimeoutError):
+            logger.exception("native tool recovery failed topic=%s", topic_id)
+            return False
+        logger.warning(
+            "native tools were disconnected and have been reconnected topic=%s",
+            topic_id,
         )
+        return True
+
+    async def _refresh_forwarded_context(
+        self, screen: HubScreen, home_dir: str, target: dict
+    ) -> None:
+        result = await self._hub.exec(
+            screen.device_id,
+            ["python3", "-"],
+            stdin=resident_release.script("apply_forwarded_context", home_dir, target),
+            timeout=40,
+        )
+        if result.get("exit") != 0:
+            raise ScreenSetupError(
+                "Forwarded context refresh failed: " + str(result.get("stderr") or "")
+            )
+        status = json.loads(result["stdout"])
+        if not status.get("changed"):
+            return
+        await self.send_prompt(screen, "/reload-skills")
+        result = await self._hub.exec(
+            screen.device_id,
+            ["python3", "-"],
+            stdin=resident_release.script(
+                "wait_skills_reloaded",
+                status["offsets"],
+                home_dir,
+                target["context_tree"]["generation"],
+            ),
+            timeout=40,
+        )
+        if result.get("exit") != 0:
+            raise ScreenSetupError(
+                "Forwarded skill reload failed: " + str(result.get("stderr") or "")
+            )
 
     def _link_failure(
         self, device_id: str, *, step: str, waited_s: float, offline: bool
@@ -906,7 +1067,7 @@ class DeviceChannel(Channel):
         topic_id: uuid.UUID,
         token: str,
         env: dict[str, str] | None,
-        launch: LaunchPlan,
+        launch: MachinePlan,
         environment_before: dict | None = None,
     ) -> HubScreen:
         """Reuse the topic's screen on the device, or open a fresh one running
@@ -963,7 +1124,12 @@ class DeviceChannel(Channel):
                 return existing
         configuration = (env or {}).get("CHEESE_AGENT_CONFIG", "")
         if execution_target:
-            configuration += json.dumps(execution_target, sort_keys=True)
+            stable_target = {
+                name: value
+                for name, value in execution_target.items()
+                if name != "context_tree"
+            }
+            configuration += json.dumps(stable_target, sort_keys=True)
         if (
             existing is not None
             and configuration
@@ -982,8 +1148,8 @@ class DeviceChannel(Channel):
         # Device-side paths (the launcher mkdir -p's them). Kept under a stable per
         # project/topic root so the screen's git-backed work persists across turns.
         # The home MUST be per topic, not per project: every hook event lands in
-        # a spool under $HOME/.claude, and the drainer ships that spool with the
-        # hook URL + token in $HOME/.claude/cheese-drain.env — which every screen
+        # a spool under $HOME/.cheese, and the drainer ships that spool with the
+        # hook URL + token in $HOME/.cheese/cheese-drain.env — which every screen
         # start overwrites (deliberately, so a rotated ticket reaches a long-lived
         # screen). With a project-shared home, all concurrent screens spool into
         # one dir and the drainer delivers everything to whichever session started
@@ -1117,70 +1283,113 @@ class DeviceChannel(Channel):
         if execution_target:
             model_env["CHEESE_AGENT_CONFIG"] = configuration
         mark("configuration_ready")
-        command, screen_env = build_screen_launch(
-            hook_url=f"{api_base}/sandbox/hooks/{topic_id}",
-            hook_token=token,
-            home_dir=home_dir,
-            work_dir=work_dir,
-            model=launch.model,
-            # The third thing a plan carries, and the one this channel used to
-            # drop on the floor. A screen is retired and reopened for reasons
-            # that say nothing about the conversation (the three gates above),
-            # and until this was passed on, every one of them started the topic's
-            # agent from a blank slate — the room's memory of its own turns
-            # ending at whichever gate last fired.
-            resume_session_id=launch.resume_session_id,
-            extra_env=model_env,
-            # The base already maps 1:1 onto the backend root (see
-            # settings.connector_public_base), and every backend route is bare
-            # since #370 step 2 — so the CLI's base IS that base. Appending
-            # another `/api` was right only while the 2.0 routes carried their
-            # own prefix; afterwards it injected `<origin>/api/api` and every
-            # `cheese` command in a device sandbox 404'd with 话题不存在.
+        # 跑什么，问计划要 —— 这个 channel 只说「在哪」。
+        # Everything below is a fact about this room and this machine; what any
+        # of it means is the harness's to decide. Until this call existed the
+        # answer was assembled here, out of a script that said `claude`.
+        place = MachinePlace(
+            home=home_dir,
+            workdir=work_dir,
+            # Where this harness keeps the session's state on that machine,
+            # AS THE CONNECTOR RESOLVES IT: the backend records this string
+            # and later derives a socket from it, so it is a fact about the
+            # machine and belongs on this side of the seam.
+            state=machine_launcher.state_dir(
+                project_id, resource_id, launch.harness, agent_handle
+            ),
             api_base=api_base,
             project_id=str(project_id),
             topic_id=str(topic_id),
-            author=agent_handle,
-            git_author=(agent_handle, f"{agent_handle}@agent.cheese.local"),
+            agent_handle=agent_handle,
             # Every device owns its checkout and syncs through authenticated git.
             git_remote=f"{api_base}/projects/{project_id}/git",
-            system_prompt=launch.system_prompt,
-            ca_pem=ca_pem,
             execution_target=execution_target,
+            remote_control=model_env.get("CHEESE_REMOTE_CONTROL") == "1",
+            ca_pem=ca_pem,
         )
+        command, screen_env = machine_launcher.screen_launch(
+            place,
+            launch.on(place),
+            hook_url=f"{api_base}/sandbox/hooks/{topic_id}",
+            token=token,
+        )
+        screen_env.update(model_env)
+        if execution_target is not None:
+            # The assigned executor already owns the checkout and its environment.
+            for name in (
+                "CHEESE_GIT_REMOTE",
+                "CHEESE_GIT_BRANCH",
+                "CHEESE_BRANCH_URL",
+                "CHEESE_ENVIRONMENT",
+                "CHEESE_PREVIEW_URL",
+                "CHEESE_PREVIEW_UP",
+            ):
+                screen_env.pop(name, None)
         mark("launcher_built")
         release_state = {} if existing is not None and execution_target else None
         if existing is None:
             command = await self._ship_launcher(
-                device_id, resource_id, command, home_dir
+                device_id,
+                resource_id,
+                command,
+                home_dir,
+                execution_token=(
+                    screen_env["CHEESE_TOKEN"] if execution_target is not None else None
+                ),
             )
         else:
             # These device requests are independent. Finish all three before
             # adopting or replacing the screen, without adding their round trips.
-            alive, tunnel_down, command = await asyncio.gather(
+            execution_token = (
+                screen_env["CHEESE_TOKEN"] if execution_target is not None else None
+            )
+            alive, tunnel_down, _ = await asyncio.gather(
                 self.confirm_alive(existing),
                 self._tunnel_helper_is_down(existing),
-                self._ship_launcher(
+                self._refresh_screen_files(
                     device_id,
-                    resource_id,
-                    command,
                     home_dir,
-                    **(
-                        {"release_state": release_state}
-                        if release_state is not None
-                        else {}
-                    ),
+                    release_state=release_state,
+                    execution_token=execution_token,
                 ),
             )
             if not alive or tunnel_down:
                 # Adopt-create cannot restart a dead process or its tunnel while
-                # the connector still knows the sid. A new sid runs the launcher.
+                # the connector still knows the sid. A new sid runs the launcher,
+                # which is why it is shipped only now.
                 await self._hub.close_screen(existing.device_id, existing.sid)
                 existing = None
+                command = await self._ship_launcher(
+                    device_id,
+                    resource_id,
+                    command,
+                    home_dir,
+                    execution_token=execution_token,
+                )
+            else:
+                # The adopt-create below re-runs the launcher only for a session
+                # the connector lost; the file the previous turn wrote is still
+                # there for that, and the reuse gate retires a process born from
+                # an expired credential on the next turn.
+                command = _launcher_command(resource_id)
         mark("device_checks_complete")
         if existing is not None:
             if release_state is not None:
-                await self._refresh_resident(existing, home_dir, release_state)
+                assert execution_target is not None
+                released = await self._refresh_resident(
+                    existing, home_dir, release_state
+                )
+                previous_tree = (existing.execution_target or {}).get(
+                    "context_tree", {}
+                )
+                current_tree = execution_target.get("context_tree", {})
+                if released or previous_tree.get("generation") != current_tree.get(
+                    "generation"
+                ):
+                    await self._refresh_forwarded_context(
+                        existing, home_dir, execution_target
+                    )
+        if existing is not None:
             # A reassert keeps the CURRENTLY-RUNNING `claude`, which still holds the
             # credential it was born with — so the recorded birth expiry must NOT be
             # overwritten with this launch's freshly-minted one (the new token never
@@ -1188,6 +1397,13 @@ class DeviceChannel(Channel):
             await self._hub.reassert_screen(existing, command=command, env=screen_env)
             mark("screen_reasserted")
             existing.execution_target = execution_target
+            updated = self._hub.update_screen(
+                existing.sid,
+                resource_id=existing.resource_id,
+                execution_target=execution_target,
+            )
+            if inspect.isawaitable(updated):
+                existing = await updated
             return existing
         screen = await self._hub.open_screen(
             device_id,
@@ -1207,6 +1423,15 @@ class DeviceChannel(Channel):
         screen.agent_configuration = configuration
         screen.resource_id = resource_id
         screen.execution_target = execution_target
+        updated = self._hub.update_screen(
+            screen.sid,
+            resource_id=resource_id,
+            execution_target=execution_target,
+            credential_expires=credential_expires,
+            agent_configuration=configuration,
+        )
+        if inspect.isawaitable(updated):
+            screen = await updated
         return screen
 
     # --- turn --------------------------------------------------------------
@@ -1235,18 +1460,17 @@ class DeviceChannel(Channel):
         memory_scope: str | None,
         owner: str | None,
         turn_id: uuid.UUID | None,
-        launch: LaunchPlan,
+        launch: MachinePlan,
         precheck: object,
     ) -> HubScreen:
-        """Reuse/open the topic's screen running `claude` with our hooks on the
-        device resolved by ``precheck``; return the screen (ctx). Raises
-        ScreenSetupError when the screen fails.
+        """Reuse/open the topic's screen on the device resolved by ``precheck``;
+        return the screen (ctx). Raises ScreenSetupError when the screen fails.
 
-        This channel READS the plan rather than performing it — a remote screen
-        is built out of a shell script this side writes, so the launch has to be
-        assembled here, and the script it goes into says ``claude``. That is the
-        crossing the ledger still records against this file: the tmux channel
-        can host whatever it is handed, and this one cannot."""
+        What runs in that screen is the plan's answer, not this file's: a device
+        launch is a shell script, and the platform half of it is the same for
+        every harness (``machine_launcher``) while the harness fills the rest.
+        This channel says where — the home, the workdir, the state directory the
+        connector will resolve — and merges the two environments."""
         assert isinstance(precheck, tuple)  # from our precheck
         device_id, agent_user_id, agent_handle = precheck
         if memory_scope == "personal":

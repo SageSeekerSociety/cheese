@@ -13,10 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from app.core.config import settings
 from app.core.db import SessionFactory
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.agent import resource_cleanup
+from app.domain.agent import event_drain, resource_cleanup
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import device_home_dir, list_device_storage
-from app.domain.agent.harness.claude_code import event_drain
 from app.domain.agent.models import AgentTurn
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
@@ -72,9 +71,9 @@ async def _flush_transcripts(
     source = Path(event_drain.__file__).read_text()
     source = source[: source.index('if __name__ == "__main__":')]
     source += """\nhome = Path(os.environ["CHEESE_COLLECT_HOME"])
-script = home / ".claude/cheese-drain"
+script = home / ".cheese/cheese-drain"
 script.parent.mkdir(parents=True, exist_ok=True)
-values = {"CHEESE_HOOK_SPOOL": str(home / ".claude/cheese-spool"),
+values = {"CHEESE_HOOK_SPOOL": str(home / ".cheese/cheese-spool"),
           "CHEESE_HOOK_URL": os.environ["CHEESE_CLEANUP_HOOK_URL"],
           "CHEESE_CLEANUP_ID": os.environ["CHEESE_CLEANUP_ID"],
           "CHEESE_TOKEN": os.environ["CHEESE_CLEANUP_TOKEN"]}

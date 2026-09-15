@@ -97,6 +97,13 @@ class FakeHub:
         screen.command = command
         self.reasserted.append(screen.sid)
 
+    def update_screen(self, sid: str, **values) -> HubScreen:
+        screen = next(screen for screen in self.opened if screen.sid == sid)
+        for name, value in values.items():
+            if value is not None or name in {"resource_id", "execution_target"}:
+                setattr(screen, name, value)
+        return screen
+
     async def exec(
         self, device_id, argv, *, cwd=None, env=None, timeout=60, stdin=None
     ) -> dict:
@@ -373,7 +380,8 @@ async def test_a_hook_delivered_live_and_again_by_replay_is_consumed_once(
     0f139cd7): the flush landed once by event id, but the Stop's second copy
     arrived in a fresh attribution that had never seen the flush, so the reply
     was posted again. One hook is consumed once, whichever copy comes first."""
-    from app.domain.agent.harness.claude_code import event_spool, hooks_substrate
+    from app.domain.agent import event_spool
+    from app.domain.agent.harness.claude_code import hooks_substrate
 
     project_id, topic_id = uuid.uuid4(), uuid.uuid4()
     spool = tmp_path / "spool"
@@ -504,16 +512,58 @@ async def test_reuse_checks_and_launcher_transfer_do_not_wait_for_each_other(
     async def tunnel(_screen):
         return await operation("tunnel", False)
 
-    async def ship(*_arguments):
-        return await operation("launcher", ["bash", "launch.sh"])
+    async def refresh(*_arguments, **_keywords):
+        return await operation("files", None)
 
     monkeypatch.setattr(provider, "confirm_alive", alive)
     monkeypatch.setattr(provider, "_tunnel_helper_is_down", tunnel)
-    monkeypatch.setattr(provider, "_ship_launcher", ship)
+    monkeypatch.setattr(provider, "_refresh_screen_files", refresh)
     reused = await asyncio.wait_for(provider._ensure_screen(**arguments), timeout=2)
     assert reused is screen
-    assert entered == {"alive", "tunnel", "launcher"}
+    assert entered == {"alive", "tunnel", "files"}
     assert hub.reasserted == [screen.sid]
+
+
+async def test_a_live_screen_is_not_sent_the_launcher_again():
+    """The first turn writes the launcher; a reused screen never runs it, so
+    the second turn ships only the per-turn files and points the adopt at the
+    file already on the machine. A screen found dead gets a fresh launcher
+    before it is reopened."""
+    hub = FakeHub()
+    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
+    topic = uuid.uuid4()
+    arguments = dict(
+        device_id="dev1",
+        agent_user_id=1,
+        agent_handle="cheese",
+        project_id=uuid.uuid4(),
+        topic_id=topic,
+        token="tok",
+        env=None,
+        launch=ClaudeLaunch(system_prompt="a prompt the launcher embeds"),
+    )
+    screen = await provider._ensure_screen(**arguments)
+    shipped = [stdin for _argv, stdin in hub.execs if stdin is not None]
+    assert len(shipped) == 1 and "a prompt the launcher embeds" in shipped[0]
+    reused = await provider._ensure_screen(**arguments)
+    assert reused is screen
+    refreshes = [
+        argv for argv, stdin in hub.execs if stdin is None and "cheese-hook" in argv[2]
+    ]
+    assert len(refreshes) == 1
+    assert len([stdin for _argv, stdin in hub.execs if stdin is not None]) == 1
+    assert screen.command == [
+        "bash",
+        "-lc",
+        f'exec bash "$HOME/.cheese/launch/{topic}.sh"',
+    ]
+
+    dead = DeadClaudeHub()
+    provider = DeviceChannel(hub=dead, public_base="http://cheese.test")
+    first = await provider._ensure_screen(**arguments)
+    replacement = await provider._ensure_screen(**arguments)
+    assert replacement is not first and dead.closed == [first.sid]
+    assert len([stdin for _argv, stdin in dead.execs if stdin is not None]) == 2
 
 
 async def test_reused_screen_refreshes_hook_without_restarting(monkeypatch, tmp_path):
@@ -521,7 +571,7 @@ async def test_reused_screen_refreshes_hook_without_restarting(monkeypatch, tmp_
 
     class LocalTransferHub(FakeHub):
         async def exec(self, device_id, argv, *, stdin=None, **kwargs):
-            if stdin is None:
+            if stdin is None and "cheese-hook" not in argv[-1]:
                 return await super().exec(device_id, argv, **kwargs)
             result = subprocess.run(
                 argv,
@@ -829,6 +879,47 @@ async def test_launch_script_ships_as_a_file_never_as_tmux_argv():
     command = hub.opened[0].command
     assert sum(len(part) for part in command) < 1024
     assert f"$HOME/.cheese/launch/{topic_id}.sh" in command[-1]
+
+
+async def test_launcher_transfer_rotates_forwarded_token_without_an_extra_exec(
+    tmp_path,
+):
+    class LocalHub:
+        def __init__(self):
+            self.calls = 0
+
+        async def exec(self, device_id, argv, *, stdin, env, timeout):
+            self.calls += 1
+            result = subprocess.run(
+                argv,
+                input=stdin,
+                text=True,
+                capture_output=True,
+                env={**os.environ, "HOME": str(tmp_path), **(env or {})},
+                timeout=timeout,
+            )
+            return {
+                "exit": result.returncode,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+            }
+
+    hub = LocalHub()
+    provider = DeviceChannel(hub=hub)
+    topic = uuid.uuid4()
+    home = tmp_path / "room-home"
+    for value in ("first", "rotated"):
+        await provider._ship_launcher(
+            "device",
+            topic,
+            ["bash", "-lc", "printf launcher"],
+            str(home),
+            execution_token=value,
+        )
+        token = home / ".claude/remote-session/execution.token"
+        assert token.read_text() == value
+        assert token.stat().st_mode & 0o777 == 0o600
+    assert hub.calls == 2
 
 
 async def test_a_connector_that_never_answers_the_launcher_is_named_in_the_error():
@@ -1956,3 +2047,55 @@ async def test_interrupt_presses_escape_rather_than_saying_something():
 
     assert hub.keys == [(screen.sid, b"\x1b")]
     assert hub.prompts == []  # nothing was said
+
+
+class _Control:
+    """Stand-in for the room's native control session: answers `mcp_status` from
+    a scripted sequence and records what was asked."""
+
+    def __init__(self, statuses, session_status="active"):
+        self._statuses = list(statuses)
+        self._session = {"id": "sess", "status": session_status}
+        self.asked: list[str] = []
+
+    async def current(self, _topic_id):
+        return self._session
+
+    async def enqueue(self, _session_id, payload, _source):
+        self.asked.append(payload["request"]["subtype"])
+        self._last = payload["request_id"]
+
+    async def result(self, _session_id, request_id, _timeout):
+        subtype = self.asked[-1]
+        response = (
+            {"mcpServers": [{"name": "native", "status": self._statuses.pop(0)}]}
+            if subtype == "mcp_status"
+            else {}
+        )
+        return {"response": {"subtype": "success", "response": response}}
+
+
+async def test_tools_that_are_still_connected_are_left_alone(monkeypatch):
+    control = _Control(["connected"])
+    monkeypatch.setattr("app.domain.agent.remote_control.store", lambda: control)
+    provider = DeviceChannel(hub=FakeHub())
+    assert await provider.recover_native_tools(uuid.uuid4()) is False
+    assert control.asked == ["mcp_status"]
+
+
+async def test_disconnected_tools_are_reconnected_and_reported(monkeypatch):
+    control = _Control(["failed", "pending", "connected"])
+    monkeypatch.setattr("app.domain.agent.remote_control.store", lambda: control)
+    provider = DeviceChannel(hub=FakeHub())
+    assert await provider.recover_native_tools(uuid.uuid4()) is True
+    assert control.asked == ["mcp_status", "mcp_reconnect", "mcp_status", "mcp_status"]
+
+
+async def test_a_room_with_no_live_control_session_is_not_resent(monkeypatch):
+    """No session to ask is not evidence the tools were lost, and a resend on a
+    guess would repeat a message 芝士 may well have answered."""
+    control = _Control([], session_status="closed")
+    monkeypatch.setattr("app.domain.agent.remote_control.store", lambda: control)
+    provider = DeviceChannel(hub=FakeHub())
+    assert await provider.recover_native_tools(uuid.uuid4()) is False
+    assert control.asked == []

@@ -2,9 +2,44 @@
 # Stand-in for the /healthz probe the rollout makes against a published port.
 # APP_TIER_CURL_FAIL=1 makes every probe fail, which is how a test drives the
 # "next backend never comes up" path.
+config=""
+if [ "$*" = "--config -" ]; then config="$(cat)"; fi
 if [ -n "${APP_TIER_DOCKER_LOG:-}" ]; then
-  printf 'curl %s\n' "$*" >> "$APP_TIER_DOCKER_LOG"
+  # Record the URL for assertions, never the config's authentication header.
+  url="$(printf '%s\n' "$config" | sed -n 's/^url = "\(.*\)"$/\1/p')"
+  printf 'curl %s%s\n' "$*" "${url:+ url=$url}" >> "$APP_TIER_DOCKER_LOG"
 fi
 [ -z "${APP_TIER_CURL_FAIL:-}" ] || exit 22
-if [ -n "${APP_TIER_CURL_FAIL_MATCH:-}" ] && [[ "$*" == *"$APP_TIER_CURL_FAIL_MATCH"* ]]; then exit 22; fi
+if [ -n "${APP_TIER_CURL_FAIL_MATCH:-}" ] && [[ "$* $config" == *"$APP_TIER_CURL_FAIL_MATCH"* ]]; then exit 22; fi
+if [ -n "${APP_TIER_CURL_DRAIN_STATUSES:-}" ] && [[ "$config" == *"release-drain"* ]]; then
+  count_file="${APP_TIER_CURL_DRAIN_COUNT_FILE:?}"
+  count=0
+  [ ! -f "$count_file" ] || count="$(cat "$count_file")"
+  count=$((count + 1))
+  printf '%s' "$count" > "$count_file"
+  statuses=(${APP_TIER_CURL_DRAIN_STATUSES//,/ })
+  index=$((count - 1))
+  [ "$index" -lt "${#statuses[@]}" ] || index=$((${#statuses[@]} - 1))
+  printf '%s' "${statuses[$index]}"
+  exit 0
+fi
+if [ -n "${APP_TIER_SNAPSHOT_ONLINE_SEQUENCE:-}" ] && [[ "$config" == *"/snapshot"* ]]; then
+  count_file="${APP_TIER_SNAPSHOT_COUNT_FILE:?}"
+  count=0
+  [ ! -f "$count_file" ] || count="$(cat "$count_file")"
+  count=$((count + 1))
+  printf '%s' "$count" > "$count_file"
+  statuses=(${APP_TIER_SNAPSHOT_ONLINE_SEQUENCE//,/ })
+  index=$((count - 1))
+  [ "$index" -lt "${#statuses[@]}" ] || index=$((${#statuses[@]} - 1))
+  if [ "${statuses[$index]}" != offline ]; then
+    generation=1
+    [ "${statuses[$index]}" != new-online ] || generation=2
+    printf '{"devices":[{"device_id":"cloud-device","online":true,"connection_generation":%s}]}' "$generation"
+  else
+    printf '{"devices":[{"device_id":"cloud-device","online":false,"connection_generation":1}]}'
+  fi
+  exit 0
+fi
+if [[ "$config" == *"write-out = %{http_code}"* ]]; then printf '200'; fi
 exit 0

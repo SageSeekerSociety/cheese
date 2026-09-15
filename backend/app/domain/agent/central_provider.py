@@ -8,6 +8,7 @@ import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
+import httpx
 from sqlalchemy import select
 
 from app.core.config import settings
@@ -22,6 +23,7 @@ from app.domain.agent.device_provider import (
     environment_status,
 )
 from app.domain.agent.harness.channel import ScreenSetupError
+from app.domain.agent.harness.launch import LaunchPlan
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
 
@@ -118,6 +120,18 @@ class CentralChannel(DeviceChannel):
         owner=None,
         turn_id=None,
     ):
+        # This route assigns an executor machine, so the plan has to be able to
+        # install one and move a conversation onto it. A harness that runs where
+        # the files already are answers neither, and belongs on the device
+        # channel this one wraps. Codex reaches `prepare_session` directly with
+        # exactly those two values and no screen at all, which is why the check
+        # is here and not there.
+        if not isinstance(launch, LaunchPlan):
+            # `harness` is read through getattr because this branch is exactly
+            # the one where the object did not satisfy the protocol that
+            # guarantees it — a message that crashes reports nothing.
+            named = getattr(launch, "harness", type(launch).__name__)
+            raise ScreenSetupError(f"{named} 不能在独立执行机上运行，它没有执行器")
         async with self.prepare_session(
             project_id=project_id,
             topic_id=topic_id,
@@ -228,6 +242,10 @@ class CentralChannel(DeviceChannel):
                         running = await execution.call(
                             previous["execution"], "ping", {}, hub=self._hub
                         )
+                    except httpx.HTTPStatusError as exc:
+                        if exc.response.status_code != 500:
+                            raise
+                        running = {}
                     except RuntimeError:
                         # A stopped executor must take the installation path.
                         running = {}
@@ -278,6 +296,13 @@ class CentralChannel(DeviceChannel):
                     await self._wait_executor(
                         project_id, resource, target, has_environment
                     )
+                target["context_tree"] = (
+                    info["context_tree"]
+                    if "context_tree" in info
+                    else await execution.call(
+                        target, "context_fs", {"operation": "tree"}, hub=self._hub
+                    )
+                )
                 mark("executor_ready")
             placement = {
                 "device_id": center,
@@ -331,6 +356,11 @@ class CentralChannel(DeviceChannel):
                 try:
                     await execution.call(target, "ping", {}, hub=self._hub)
                     return
+                except httpx.HTTPStatusError as exc:
+                    if exc.response.status_code != 500:
+                        raise
+                    if time.monotonic() >= deadline:
+                        raise
                 except RuntimeError:
                     if time.monotonic() >= deadline:
                         raise

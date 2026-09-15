@@ -31,6 +31,7 @@ from app.domain.agent.platform_failures import (
 )
 from app.domain.agent.platform_notices import (
     EVENT_DEPLOY_INTERRUPTED,
+    EVENT_TOOLS_RECOVERED,
     EVENT_TURN_FAILED,
     EVENT_TURN_QUEUED,
     EVENT_TURN_TIMEOUT,
@@ -169,7 +170,12 @@ class InProcessBroker:
         live_delivery_expected = chat_service.has_running_turn(topic_id) or bool(
             self.active_turn_ids(channel)
         )
-        payloads, user_block_id, user_block_ids = await chat_service.post_user_message(
+        (
+            payloads,
+            user_block_id,
+            user_block_ids,
+            duplicate,
+        ) = await chat_service.post_user_message(
             topic_id,
             author=author,
             content=content,
@@ -201,6 +207,8 @@ class InProcessBroker:
             (persisted_at - received_at) * 1000,
             (time.monotonic() - persisted_at) * 1000,
         )
+        if duplicate:
+            return turn_id
         if self._message_subscriber is not None:
             self._message_subscriber(
                 chat_service,
@@ -1337,6 +1345,44 @@ class AgentWorkRunner:
     # "被部署中断" — never "AI 服务返回错误" for a failure the deploy made.
     RESEND_REASON = "上一轮被平台部署中断，消息没送到芝士那边，原样重发一次"
 
+    #: Same contract for the other platform-caused silence: the room's tools
+    #: vanished mid-turn, so 芝士 answered where nobody could hear it.
+    TOOLS_REASON = (
+        "上一轮平台的工具通道断了，芝士的回复没能发进房间；已经接回来，原样重发一次"
+    )
+
+    async def _recover_silent_turn(
+        self,
+        chat_service,
+        topic_id: uuid.UUID,
+        content: str,
+        continuation_id: uuid.UUID | None,
+    ) -> None:
+        """Put the room's tools back if they were gone, then re-deliver."""
+        try:
+            recovered = await chat_service.recover_native_tools(topic_id)
+        except Exception:  # noqa: BLE001 — recovery must never fail a finished turn
+            logger.exception("tool recovery check failed for topic %s", topic_id)
+            return
+        if not recovered:
+            return
+        await self._post_orphan_event(
+            chat_service,
+            topic_id,
+            "平台的工具通道断了，刚才那条消息芝士没能回进房间；已经接回来，正在重发",
+            self._TOOLS_RECOVERED_META,
+        )
+        self.submit(
+            chat_service,
+            topic_id,
+            author="system",
+            content=content,
+            summon=True,
+            is_resume=True,
+            resume_reason=self.TOOLS_REASON,
+            continuation_id=continuation_id,
+        )
+
     def _schedule_resend(
         self,
         chat_service,
@@ -1381,6 +1427,15 @@ class AgentWorkRunner:
         if ahead <= 0:
             return "项目同时进行的轮次已满，这轮先排队"
         return f"项目同时进行的轮次已满，这轮先排队，前面还有 {ahead} 个"
+
+    #: 工具断了是平台的事，平台自己接回来并重发；房间里的人不用动手。
+    _TOOLS_RECOVERED_META = notice(
+        EVENT_TOOLS_RECOVERED,
+        severity=SEVERITY_WARN,
+        who=WHO_PLATFORM,
+        detail="重发只发一次。芝士上一轮说的话留在执行会话里，没有发进房间。",
+        detail_label="接下来会发生什么",
+    )
 
     #: 排队不是故障：平台自己会往前推，没人需要动手。
     _QUEUED_META = notice(
@@ -2004,6 +2059,22 @@ class AgentWorkRunner:
             if rec["status"] == "running":
                 rec["status"] = "done"
             rec["duration_s"] = round(time.monotonic() - t0, 1)
+            if (
+                rec["status"] == "done"
+                and rec["first_output_s"] is None
+                and summon
+                and not is_resume
+                and content.strip()
+            ):
+                # A summoned turn that published nothing. Usually 芝士 simply had
+                # nothing to say; sometimes its platform tools were gone and it
+                # answered into a terminal nobody reads (observed 2026-09-13/14:
+                # `chat_send` returning `No such tool available` while the
+                # session reported ready). Only this case pays for the question,
+                # and only a confirmed reconnect re-delivers the message.
+                await self._recover_silent_turn(
+                    chat_service, topic_id, content, continuation_id
+                )
             if not host_failed and str(topic_id) in self._host_failed_topics:
                 self._host_failed_topics.discard(str(topic_id))
                 # Streaming a turn to its end is the machine working. That breaks

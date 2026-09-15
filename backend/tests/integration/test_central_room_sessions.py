@@ -1,6 +1,7 @@
 """Session placement survives storage while execution stays on the room machine."""
 
 import asyncio
+import base64
 import json
 import os
 import sys
@@ -11,12 +12,16 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 
+from app import device_connection_app
 from app.core.config import settings
+from app.core.db import get_db
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import execution
 from app.domain.agent.central_provider import CentralChannel
+from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import DeviceChannel, EnvironmentPreparationError
 from app.domain.agent.harness import Opening, SessionRef
 from app.domain.agent.harness.channel import ScreenSetupError
@@ -28,9 +33,18 @@ from app.domain.agent.harness.claude_code.remote_execution import (
 )
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent.harness.codex import CodexChannel
+from app.domain.agent.harness.pi.device_launch import PiLaunch
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import session_auth_headers
+
+
+class _OwnerExecutorTransport:
+    def __init__(self) -> None:
+        self.sent: asyncio.Queue[dict] = asyncio.Queue()
+
+    async def send_json(self, msg: dict[str, Any]) -> None:
+        await self.sent.put(msg)
 
 
 @pytest.fixture
@@ -49,7 +63,7 @@ def channel(client, monkeypatch):
     monkeypatch.setattr(settings, "agent_session_device_id", "center")
     hub: Any = SimpleNamespace(
         is_online=lambda device: device in {"center", "executor"},
-        call_executor=AsyncMock(return_value={}),
+        call_executor=AsyncMock(return_value={"generation": "fixture", "entries": {}}),
         exec=AsyncMock(
             return_value={
                 "exit": 0,
@@ -65,6 +79,31 @@ def channel(client, monkeypatch):
     central._ensure_screen = AsyncMock(return_value=SimpleNamespace(device_id="center"))
     central._wait_executor = AsyncMock()
     return central
+
+
+@pytest.mark.anyio
+async def test_a_harness_without_an_executor_is_refused_by_name(
+    client, room, monkeypatch
+):
+    """这条路要另指派一台执行机，所以计划得会装执行器、会把对话搬过去。
+
+    A harness that runs where the files already are answers neither, and the
+    room has to be told which one it was rather than watch a screen fail to
+    open. Codex hands this same route a plan with ONLY those two answers and
+    no screen at all, so the check cannot be spelled as "a whole launch plan"
+    and cannot live where Codex passes through.
+    """
+    project, topic = room
+    central = channel(client, monkeypatch)
+    with pytest.raises(ScreenSetupError, match="pi"):
+        await central.ensure_ready(
+            project_id=project,
+            topic_id=topic,
+            token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
+            env={},
+            launch=PiLaunch(system_prompt="System", model="glm-5.2"),
+            precheck=await central.precheck(project, topic),
+        )
 
 
 @pytest.mark.anyio
@@ -108,6 +147,11 @@ async def test_center_uses_the_selected_harness_for_bootstrap_and_history(
     central = channel(client, monkeypatch)
     history = AsyncMock()
     launch = SimpleNamespace(
+        harness="claude-code",
+        system_prompt="System",
+        model=None,
+        on=lambda place: None,
+        at=lambda place: None,
         resume_session_id="fixture-session",
         execution=SimpleNamespace(
             transfer_history=history,
@@ -131,11 +175,47 @@ async def test_center_uses_the_selected_harness_for_bootstrap_and_history(
     )
     central._hub.call_executor.side_effect = [
         {"pid": 123, "capabilities": ["prepare"]},
-        {"pid": 123, "workspace": "/project", "mcp_servers": []},
+        {
+            "pid": 123,
+            "workspace": "/project",
+            "mcp_servers": [],
+            "context_tree": {"generation": "fixture", "entries": {}},
+        },
     ]
     await central.ensure_ready(**kwargs)
     assert central._hub.call_executor.await_args.args[3] == {"fixture_executor": True}
     assert history.await_count == 1
+
+
+@pytest.mark.anyio
+async def test_stopped_previous_executor_http_failure_takes_installation_path(
+    client, room, monkeypatch
+):
+    project, topic = room
+    central = channel(client, monkeypatch)
+    kwargs = dict(
+        project_id=project,
+        topic_id=topic,
+        token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
+        env={},
+        launch=ClaudeLaunch("System"),
+        precheck=await central.precheck(project, topic),
+    )
+    await central.ensure_ready(**kwargs)
+    central._hub.exec.reset_mock()
+    request = httpx.Request("POST", "http://owner/call_executor")
+    central._hub.call_executor.side_effect = [
+        httpx.HTTPStatusError(
+            "executor socket is not ready",
+            request=request,
+            response=httpx.Response(500, request=request),
+        ),
+        {"generation": "fixture", "entries": {}},
+    ]
+
+    await central.ensure_ready(**kwargs)
+
+    central._hub.exec.assert_awaited_once()
 
 
 @pytest.mark.anyio
@@ -170,7 +250,9 @@ async def test_old_executor_process_takes_release_bootstrap(
             await admitted.rollback()
             await asyncio.wait_for(update, 10)
     central._hub.exec.assert_awaited_once()
-    assert central._hub.call_executor.await_args.args[2] == "ping"
+    assert [
+        call.args[2] for call in central._hub.call_executor.await_args_list[-2:]
+    ] == ["ping", "context_fs"]
 
 
 @pytest.mark.anyio
@@ -191,6 +273,7 @@ async def test_running_executor_prepares_without_python_launch(
     await central.ensure_ready(**kwargs)
     central._hub.exec.reset_mock()
     central._wait_executor.reset_mock()
+    central._hub.call_executor.reset_mock()
     central._hub.call_executor.side_effect = [
         {
             "pid": 123,
@@ -202,6 +285,7 @@ async def test_running_executor_prepares_without_python_launch(
             "workspace": "/project",
             "mcp_servers": [],
             "environment_status": environment_state,
+            "context_tree": {"generation": "fixture", "entries": {}},
         },
     ]
     await central.ensure_ready(**kwargs)
@@ -269,6 +353,7 @@ async def test_room_starts_centrally_and_keeps_recorded_placement(
     assert "CHEESE_ENVIRONMENT" not in opening["env"]
     target = json.loads(opening["env"]["CHEESE_EXECUTION_TARGET"])
     assert target["device_id"] == "executor"
+    assert target["context_tree"] == {"generation": "fixture", "entries": {}}
     assert target["url"].startswith("http://central-api/")
     async with client.test_factory() as db:
         stored = await db.get(Topic, topic)
@@ -323,9 +408,15 @@ async def test_executor_readiness_reuses_bootstrap_reply(
         reply["environment_status"] = "ready"
     central._hub.exec.return_value["stdout"] = json.dumps(reply)
     central._wait_executor = CentralChannel._wait_executor.__get__(central)
-    ping = AsyncMock(return_value={"pid": 123})
+    call = AsyncMock(
+        side_effect=lambda target, method, params, **kwargs: (
+            {"pid": 123}
+            if method == "ping"
+            else {"generation": "fixture", "entries": {}}
+        )
+    )
     status = AsyncMock(return_value={"state": "ready"})
-    monkeypatch.setattr("app.domain.agent.execution.call", ping)
+    monkeypatch.setattr("app.domain.agent.execution.call", call)
     monkeypatch.setattr("app.domain.agent.central_provider.environment_status", status)
     await central.ensure_ready(
         project_id=project,
@@ -335,7 +426,9 @@ async def test_executor_readiness_reuses_bootstrap_reply(
         launch=ClaudeLaunch("System"),
         precheck=("executor", 1, "agent"),
     )
-    assert ping.await_count == (0 if running else 1)
+    assert [item.args[1] for item in call.await_args_list] == (
+        ["context_fs"] if running else ["ping", "context_fs"]
+    )
     assert status.await_count == (1 if has_environment and not running else 0)
     central._ensure_screen.assert_awaited_once()
 
@@ -420,6 +513,94 @@ async def test_executor_release_excludes_new_tool_admission(client, room, monkey
 
 
 @pytest.mark.anyio
+async def test_owner_execution_route_preserves_scope_and_reaches_device(
+    client, room, monkeypatch
+):
+    project, topic = room
+    async with client.test_factory() as db:
+        stored = await db.get(Topic, topic)
+        resource = stored.resource_id or topic
+        stored.session_placement = {
+            "device_id": "center",
+            "resource_id": str(resource),
+            "channel": "device",
+            "execution": {
+                "kind": "device",
+                "device_id": "executor",
+                "home": "/room",
+            },
+        }
+        await db.commit()
+
+    async def owner_db():
+        async with client.test_factory() as db:
+            yield db
+
+    monkeypatch.setattr(settings, "device_connection_owner", True)
+    device_hub._devices.clear()
+    device_connection_app._release_draining = False
+    device_connection_app._active_rpc_calls = 0
+    connector = _OwnerExecutorTransport()
+    await device_hub.attach_device("executor", connector)
+    await connector.sent.get()
+    await device_hub.on_device_message(
+        "executor", {"t": "hello", "v": 3, "executor": True}
+    )
+    device_connection_app.app.dependency_overrides[get_db] = owner_db
+    transport = httpx.ASGITransport(app=device_connection_app.app)
+    token = mint_scoped_token(
+        project_id=str(project), topic_id=str(topic), resource_id=str(resource)
+    )
+    endpoint = f"/topics/{topic}/execution/{resource}"
+    payload = {"method": "invoke", "params": {"tool": "Read", "args": {}}}
+    try:
+        async with httpx.AsyncClient(
+            base_url="http://owner", transport=transport
+        ) as owner:
+            waiter = asyncio.create_task(
+                owner.post(endpoint, headers={"X-Cheese-Token": token}, json=payload)
+            )
+            outbound = await asyncio.wait_for(connector.sent.get(), 1)
+            assert outbound["t"] == "execution.call"
+            assert outbound["path"] == "/room/.claude/executor"
+            encoded = json.dumps({"result": {"content": "executor file"}}).encode()
+            await device_hub.on_device_message(
+                "executor",
+                {
+                    "t": "execution.data",
+                    "id": outbound["id"],
+                    "data": base64.b64encode(encoded).decode(),
+                },
+            )
+            await device_hub.on_device_message(
+                "executor",
+                {"t": "execution.result", "id": outbound["id"], "error": ""},
+            )
+            response = await asyncio.wait_for(waiter, 2)
+            assert response.status_code == 200, response.text
+            assert response.json() == {"content": "executor file"}
+            assert (await owner.post(endpoint, json=payload)).status_code == 401
+            assert (
+                await owner.post(
+                    endpoint,
+                    headers={"X-Cheese-Token": token},
+                    json={"method": "configure"},
+                )
+            ).status_code == 403
+            assert (
+                await owner.post(
+                    f"/topics/{topic}/execution/{uuid.uuid4()}",
+                    headers={"X-Cheese-Token": token},
+                    json=payload,
+                )
+            ).status_code == 409
+            assert connector.sent.empty()
+    finally:
+        device_connection_app.app.dependency_overrides.pop(get_db, None)
+        await device_hub.detach_device("executor", connector)
+
+
+@pytest.mark.anyio
 async def test_scoped_execution_and_rc_use_platform_owned_target(
     client, room, monkeypatch
 ):
@@ -459,6 +640,11 @@ async def test_scoped_execution_and_rc_use_platform_owned_target(
     assert response.json() == {"content": "executor file"}
     assert call.await_args is not None
     assert call.await_args.args == (target, "invoke", payload["params"])
+    assert call.await_args.kwargs["trace_id"].startswith("execution-")
+    context_fs = {"method": "context_fs", "params": {"operation": "tree"}}
+    response = client.post(endpoint, headers=headers, json=context_fs)
+    assert response.status_code == 200, response.text
+    assert call.await_args.args == (target, "context_fs", context_fs["params"])
     assert call.await_args.kwargs["trace_id"].startswith("execution-")
     assert client.post(endpoint, json=payload).status_code == 401
     assert (

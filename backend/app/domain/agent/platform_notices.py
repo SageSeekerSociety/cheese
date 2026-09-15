@@ -78,6 +78,8 @@ EVENT_TURN_TIMEOUT: Final = "turn_timeout"
 EVENT_DEPLOY_INTERRUPTED: Final = "deploy_interrupted"
 #: 项目并发已满，这轮在排队。
 EVENT_TURN_QUEUED: Final = "turn_queued"
+#: 房间的平台工具通道断了，回复没能发进来 —— 平台接回来并重发了那条消息。
+EVENT_TOOLS_RECOVERED: Final = "tools_recovered"
 #: 话题的运行环境被重建 —— 会话和后台任务都断了，项目文件没事。
 EVENT_SANDBOX_REBUILT: Final = "sandbox_rebuilt"
 #: 采纳后触发的部署，跑完了。

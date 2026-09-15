@@ -28,7 +28,8 @@ from app.core.db import get_db
 from app.core.errors import BaseError, UnauthorizedError
 from app.core.sandbox_auth import is_valid_cheese_token, scoped_token_claims
 from app.domain.agent.chat import ChatService
-from app.domain.agent.harness.claude_code import append_event, hook_router
+from app.domain.agent.event_spool import append as append_event
+from app.domain.agent.harness.claude_code import hook_router
 from app.domain.workspace import service as ws
 
 logger = logging.getLogger(__name__)

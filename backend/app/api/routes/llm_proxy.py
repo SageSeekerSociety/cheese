@@ -8,7 +8,7 @@ does not control and make spend unattributable.
 
 So a remote screen is launched with ``ANTHROPIC_BASE_URL`` pointing here and
 its own per-turn scoped cheese token as ``ANTHROPIC_AUTH_TOKEN``
-(``device_provider.build_screen_launch``). This route authenticates that token,
+(``machine_launcher.screen_env``). This route authenticates that token,
 swaps in the project's virtual gateway key — the same key its local turns run
 on, so budget and attribution are unchanged — and streams the upstream response
 back verbatim. The credential never leaves the box.

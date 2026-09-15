@@ -87,7 +87,8 @@ DEFAULT_CHAT_SKILLS = ["chat", "doc-form"]
 
 # Every response needs the chat guide; loading it as a tool can add a model round.
 NATIVE_CHAT_GUIDANCE = (
-    "普通输出和最终答复不会发布到聊天；请用 cheese chat send 主动发送。"
+    "普通输出和最终答复不会发布到聊天；用 chat_send 工具主动发送。"
+    "平台操作用同名的 cheese_* 工具，没有对应工具的平台 API 用 platform_request。"
     "聊天说明已在下方提供，无需调用 Skill 工具加载。"
     "编写或更新话题文档时加载 cheese-docs。"
     "能直接回答就发送答案，需要继续处理就先发送你理解的意思和下一步。"

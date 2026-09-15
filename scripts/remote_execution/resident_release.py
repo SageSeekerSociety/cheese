@@ -16,10 +16,9 @@ from model_fixture import log
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
 
-from app.domain.agent import remote_control
+from app.domain.agent import machine_launcher, remote_control
 from app.domain.agent.device_hub import HubScreen
 from app.domain.agent.device_provider import DeviceChannel
-from app.domain.agent.harness.claude_code import device_launch
 from app.domain.agent.harness.claude_code.remote_execution import release
 
 
@@ -45,17 +44,18 @@ def main():
     )
     assert previous["client.py"] != current["client.py"]
     release.sources = lambda: previous
-    original_build = device_launch.build_screen_launch
+    # The fixture supplies the rendezvous pair the backend would normally derive
+    # from a topic id; this launch has none.
+    original_env = machine_launcher.screen_env
 
-    def build(**kwargs):
-        kwargs["extra_env"] = dict(
-            kwargs["extra_env"],
+    def env_with_rendezvous(*args, **kwargs):
+        return dict(
+            original_env(*args, **kwargs),
             CHEESE_RV_SOCK=str(rendezvous),
             CHEESE_RV_TOKEN_FILE=str(token),
         )
-        return original_build(**kwargs)
 
-    device_launch.build_screen_launch = build
+    machine_launcher.screen_env = env_with_rendezvous
     original_send = acceptance.RemoteControlFixture.send
 
     def send(fixture, payload):

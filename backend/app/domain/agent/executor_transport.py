@@ -22,6 +22,13 @@ class RemoteClient:
         self.platform_lock = threading.Lock()
         self.platform = None
 
+    def execution_token(self):
+        token_file = self.config.get("token_file")
+        if token_file:
+            with open(token_file) as stream:
+                return stream.read().strip()
+        return os.environ["CHEESE_TOKEN"]
+
     def platform_request(self, args):
         method = args.get("method", "GET").upper()
         path = args.get("path", "")
@@ -256,7 +263,7 @@ class RemoteClient:
                     body=payload,
                     headers={
                         "Content-Type": "application/json",
-                        "X-Cheese-Token": os.environ["CHEESE_TOKEN"],
+                        "X-Cheese-Token": self.execution_token(),
                         **self.transport.headers,
                     },
                 )

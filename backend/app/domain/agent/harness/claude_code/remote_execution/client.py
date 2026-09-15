@@ -84,12 +84,17 @@ def prepare(
             from private import ensure
 
         ensure(target, directory, os.environ)
+    forwarded = target.get("kind") != "private"
+    device_forwarded = target.get("kind") == "device"
     workspace = (
-        Path(workspace_override) if workspace_override else directory / "workspace"
+        directory / "forwarded-project"
+        if forwarded
+        else Path(workspace_override)
+        if workspace_override
+        else directory / "workspace"
     )
     workspace.mkdir(exist_ok=True)
-    # Stop native project discovery at this generated mirror's boundary.
-    if not (workspace / ".git").exists():
+    if not forwarded and not (workspace / ".git").exists():
         subprocess.run(["git", "init", "-q", str(workspace)], check=True)
     home = Path(home_override) if home_override else directory / "home"
     home.mkdir(exist_ok=True)
@@ -107,11 +112,53 @@ def prepare(
         helper=[sys.executable, str(Path(__file__).resolve())],
         central_hooks=(base_settings or {}).get("hooks", {}),
         target_file=str(directory / "execution.json"),
+        **(
+            {"token_file": str(directory / "execution.token")}
+            if device_forwarded
+            else {}
+        ),
     )
+    context_tree = target.pop("context_tree", None)
     target_path = directory / "execution.json"
     target_path.write_text(json.dumps(target))
     target_path.chmod(0o600)
-    sync_context(target_path)
+    if device_forwarded:
+        token_path = directory / "execution.token"
+        token_path.write_text(os.environ["CHEESE_TOKEN"])
+        token_path.chmod(0o600)
+    if forwarded:
+        context_tree = sync_context(target_path, context_tree)
+    mount_log = directory / "forwarded-project.log"
+    if forwarded and not os.path.ismount(workspace):
+        with mount_log.open("a") as output:
+            subprocess.Popen(
+                [
+                    sys.executable,
+                    str(Path(__file__).with_name("forwarded_fs.py")),
+                    str(target_path),
+                    str(workspace),
+                ],
+                stdin=subprocess.DEVNULL,
+                stdout=output,
+                stderr=output,
+                start_new_session=True,
+            )
+        deadline = time.monotonic() + 10
+        while not os.path.ismount(workspace) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if not os.path.ismount(workspace):
+            detail = mount_log.read_text()[-1000:] if mount_log.exists() else ""
+            raise RuntimeError("Forwarded project mount failed: " + detail)
+    if forwarded:
+        if __package__:
+            from .release import link_forwarded_user_context
+        else:
+            sys.path.insert(0, str(Path(__file__).parent))
+            from release import link_forwarded_user_context
+
+        link_forwarded_user_context(
+            directory, config, workspace, context_tree, Path(__file__).parent
+        )
     plugin = directory / "plugin"
     (plugin / ".claude-plugin").mkdir(parents=True, exist_ok=True)
     (plugin / "hooks").mkdir(exist_ok=True)
@@ -147,24 +194,27 @@ def prepare(
             "hooks": [{"type": "command", "command": guard}],
         },
     )
-    for event in ("SessionStart", "UserPromptSubmit"):
-        hooks.setdefault(event, []).insert(
-            0,
-            {
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": helper[0],
-                        "args": [
-                            str(
-                                Path(__file__).with_name("context_service.py").resolve()
-                            ),
-                            str(target_path),
-                        ],
-                    }
-                ]
-            },
-        )
+    if not forwarded:
+        for event in ("SessionStart", "UserPromptSubmit"):
+            hooks.setdefault(event, []).insert(
+                0,
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": helper[0],
+                            "args": [
+                                str(
+                                    Path(__file__)
+                                    .with_name("context_service.py")
+                                    .resolve()
+                                ),
+                                str(target_path),
+                            ],
+                        }
+                    ]
+                },
+            )
     if target.get("kind") == "device":
         hooks.setdefault("Stop", []).insert(
             0,
@@ -292,11 +342,33 @@ def prepare(
     return launch
 
 
-def sync_context(target_path):
+def sync_context(target_path, supplied_tree=None):
     import base64
     import hashlib
 
     target = json.loads(Path(target_path).read_text())
+    if target.get("kind") != "private":
+        tree = supplied_tree or RemoteClient(target).call(
+            "context_fs", {"operation": "tree"}
+        )
+        unsupported = tree.get("unsupported_imports", []) + tree.get(
+            "unsupported_paths", []
+        )
+        if unsupported:
+            raise RuntimeError(
+                "Project context leaves the forwarded project boundary: "
+                + ", ".join(unsupported)
+            )
+        generation_path = Path(target_path).parent / "context-generation"
+        tree_path = Path(target_path).parent / "context-tree.json"
+        previous = generation_path.read_text() if generation_path.exists() else None
+        tree["changed"] = tree["generation"] != previous
+        if tree["changed"]:
+            temporary = tree_path.with_name(tree_path.name + ".next")
+            temporary.write_text(json.dumps(tree))
+            temporary.replace(tree_path)
+            generation_path.write_text(tree["generation"])
+        return tree
     workspace = Path(target["central_workspace"])
     manifest = Path(target_path).parent / "context-manifest.json"
     old = json.loads(manifest.read_text()) if manifest.exists() else []
@@ -350,6 +422,9 @@ def sync_context(target_path):
                         destination.symlink_to(
                             child, target_is_directory=child.is_dir()
                         )
+            elif link.resolve() != source.resolve():
+                link.unlink()
+                link.symlink_to(source, target_is_directory=True)
     return snapshot
 
 
@@ -539,8 +614,8 @@ def _publish_spooled_hook(command, payload):
     if executable is None:
         return False
     if __package__:
-        from ..event_spool import append
-        from ..hooks_substrate import CHEESE_HOOK_SCRIPT
+        from app.domain.agent.event_spool import append
+        from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
 
         expected = CHEESE_HOOK_SCRIPT.encode()
     else:

@@ -177,6 +177,21 @@ class ComputePool:
                 return True
         return False
 
+    async def recover_native_tools(self, topic_id: uuid.UUID) -> bool:
+        """Ask the machine that owns this room to put its platform tools back.
+
+        Only a backend that can lose them answers; everything else says no, so
+        the caller needs no test for which machine a room is on.
+        """
+        for backend in self._backends.values():
+            recover = getattr(backend, "recover_native_tools", None)
+            if recover is None:
+                continue
+            runtime = runtime_for(backend)
+            if self._owners.get(topic_id) is runtime or runtime.holds(topic_id):
+                return await recover(topic_id)
+        return False
+
     def bind_events(
         self,
         consumer: "EventConsumer",
@@ -293,6 +308,8 @@ def build_compute_pool(cloud_channel: "Channel | None" = None) -> ComputePool:
     from app.domain.agent.harness.channel import Channel
     from app.domain.agent.harness.claude_code import ClaudeCodeRuntime, executor_launch
     from app.domain.agent.harness.codex import CodexChannel, CodexRuntime
+    from app.domain.agent.harness.pi.channel import PiChannel
+    from app.domain.agent.harness.pi.runtime import PiRuntime
     from app.domain.agent.market import compute_default_name
 
     def runs_claude_code(channel: Channel) -> ClaudeCodeRuntime:
@@ -331,5 +348,16 @@ def build_compute_pool(cloud_channel: "Channel | None" = None) -> ComputePool:
             hard_ceiling_s=settings.agent_turn_hard_ceiling_s,
         )
         for c in channels
+    )
+    # pi is the one backend NOT wrapped in CentralChannel: it runs on the
+    # machine that holds the workspace, so there is no second machine to assign
+    # and no executor to route its tools through. See pi/channel.py.
+    backends.extend(
+        PiRuntime(
+            PiChannel(c),
+            hard_ceiling_s=settings.agent_turn_hard_ceiling_s,
+        )
+        for c in channels
+        if isinstance(c, DeviceChannel)
     )
     return ComputePool(backends, default_name)

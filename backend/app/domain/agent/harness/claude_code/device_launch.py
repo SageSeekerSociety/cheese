@@ -12,8 +12,8 @@ arrive on the rendezvous socket the launcher arms. The raw screen bytes the host
 relays are for the human viewer only — never parsed.
 
 Everything here is pure (string/dict building) so it is unit-testable without a
-device. ``build_screen_launch`` returns ``(command, env)`` for
-``DeviceHub.open_screen``.
+device. ``on_machine`` answers a ``MachinePlace`` with this harness's half of a
+launch; ``machine_launcher`` owns the other half and joins the two.
 """
 
 import json
@@ -24,19 +24,16 @@ from pathlib import Path
 # substrate — identical for the local (tmux) and remote (device) backends so it
 # can't drift (fusion-design §8.6). Re-exported here (`hooks_settings`) because
 # this module's launcher and its callers build on it.
-from app.domain.agent import (
-    environment_runner,
-    machine_tunnel,
-    preview_tunnel,
-)
-from app.domain.agent.harness.claude_code import event_drain, startup_cache
+from app.domain.agent import machine_launcher
+from app.domain.agent.harness.claude_code import startup_cache
 from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD
-from app.domain.agent.harness.claude_code.hooks_substrate import CHEESE_HOOK_SCRIPT
 from app.domain.agent.harness.claude_code.remote_execution import (
     client as execution_client,
 )
 from app.domain.agent.harness.claude_code.remote_execution import release
 from app.domain.agent.harness.claude_code.session_launch import hooks_settings
+from app.domain.agent.harness.launch import MachineLaunch, MachinePlace
+from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
 from app.domain.agent.skills import native_skill_files
 
 # First-launch gates (Claude Code 2.1.x) for $CLAUDE_CONFIG_DIR/.claude.json,
@@ -51,7 +48,7 @@ _CLAUDE_JSON_GATES = {
 }
 
 # Kept as a module-level alias so existing callers/tests referencing this name
-# keep working; the source of truth is hooks_substrate.CHEESE_HOOK_SCRIPT.
+# keep working; the source of truth is hook_forwarder.CHEESE_HOOK_SCRIPT.
 _CHEESE_HOOK_SCRIPT = CHEESE_HOOK_SCRIPT
 
 # --- the version this delivery path is pinned to -----------------------------
@@ -332,150 +329,6 @@ echo down
 """
 
 
-# Starts the tunnel helper and does NOT return until its port answers.
-#
-# The wait is the point. `claude` reads HTTPS_PROXY once at startup and makes its
-# first request (the login/profile check) immediately, so a helper that is merely
-# "starting" loses that race and the screen boots looking unauthenticated. Bounded
-# rather than unbounded: if it cannot bind in five seconds it is not going to, and
-# hanging the launch would be a worse failure than a loud one.
-#
-# Adopt-if-alive for the same reason the drainer does: a screen is reused across
-# turns, and a second helper on the same port would exit immediately, leaving
-# whichever one won holding a token file the other launch had already replaced.
-#
-# `nohup`, and the LISTEN check below, are what make the reuse path actually
-# heal. Measured 2026-08-30 on the dev box: fifteen topics whose helper was gone
-# and whose `claude` had been dialling a dead port for days — one of them re-@'d
-# four times in three hours with not one reply. Their `cheese-tunnel.log` said
-# `tunnel listening` at the timestamp of the last launch, so the launcher HAD run
-# and this script HAD started a helper; the helper simply did not outlive the
-# `tmux new-window` the reuse branch starts it from. That window's command is
-# this script, this script backgrounds the helper and returns, and the window's
-# process group is torn down the moment it does — SIGHUP, and the port is dead
-# again before the turn it was started for reaches the model. `nohup` is what
-# makes the helper outlive the window that bore it; the direct call in the CREATE
-# branch never noticed, because there the process that returns is the one that
-# goes on to be `claude`.
-#
-# The adopt test is the port, not the pid, for the reason DEVICE_TUNNEL_PROBE
-# gives: `claude` connects to a port, and ConnectionRefused is exactly "nothing
-# is listening there". A recorded pid that is alive proves only that SOME process
-# holds that number — after a reboot, or on a box that has burnt through the pid
-# space, that is a coincidence, and adopting on it leaves the port dead for the
-# life of the screen with nothing anywhere reporting a fault.
-CHEESE_TUNNEL_UP = """#!/bin/sh
-PIDF="$HOME/.claude/cheese-tunnel.pid"
-STAMPF="$HOME/.claude/cheese-tunnel.stamp"
-# Is anything answering on the port `claude` was pointed at? python3 rather than
-# bash's /dev/tcp for the same reason the readiness wait below uses it: /bin/sh
-# is dash on the machine images and dash has no /dev/tcp.
-tunnel_listening() {
-  python3 - "$CHEESE_TUNNEL_PORT" <<'PROBEPY'
-import socket, sys
-
-try:
-    socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=0.5).close()
-except OSError:
-    raise SystemExit(1)
-raise SystemExit(0)
-PROBEPY
-}
-# Adopt a live helper ONLY if it is running the helper we just wrote. The
-# launcher rewrites cheese-tunnel.py on every launch, so a shipped fix would
-# otherwise never reach a machine whose helper is still alive — it would keep
-# serving the old code indefinitely, and nothing would look wrong.
-WANT="$(cksum "$HOME/.claude/cheese-tunnel.py" 2>/dev/null | cut -d" " -f1)"
-HAVE="$(cat "$STAMPF" 2>/dev/null || true)"
-PID="$(cat "$PIDF" 2>/dev/null || true)"
-if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
-  if [ -n "$WANT" ] && [ "$WANT" = "$HAVE" ] && tunnel_listening; then
-    exit 0
-  fi
-  # Different code, or a pid that is alive without the port being served:
-  # retire it. In-flight turns see one connection reset, which claude retries;
-  # a permanently stale helper does not heal at all.
-  kill "$PID" 2>/dev/null || true
-fi
-nohup python3 "$HOME/.claude/cheese-tunnel.py" \\
-  --port "$CHEESE_TUNNEL_PORT" --url "$CHEESE_TUNNEL_URL" \\
-  --token-file "$HOME/.claude/cheese-tunnel.token" \\
-  >"$HOME/.claude/cheese-tunnel.log" 2>&1 &
-echo $! > "$PIDF"
-printf '%s\n' "$WANT" > "$STAMPF"
-# The readiness check runs in python3, NOT with bash's /dev/tcp: this script is
-# invoked as `sh`, /bin/sh is dash on the machine images, and dash has no
-# /dev/tcp — the redirect fails on EVERY iteration, so the loop would spend its
-# whole budget and then report "not ready" for a helper that came up fine.
-# python3 is not an extra dependency here; the helper itself is written in it.
-python3 - "$CHEESE_TUNNEL_PORT" <<'WAITPY'
-import socket, sys, time
-port = int(sys.argv[1])
-deadline = time.monotonic() + 5.0
-while time.monotonic() < deadline:
-    try:
-        socket.create_connection(("127.0.0.1", port), timeout=0.2).close()
-        raise SystemExit(0)
-    except OSError:
-        # Native adoption waits here; avoid adding a full 100 ms after port bind.
-        time.sleep(0.02)
-raise SystemExit(1)
-WAITPY
-"""
-
-
-# Brings 运行环境预览's helper up, and does nothing at all until an agent has asked
-# for a preview. The port file is that ask: `cheese serve` writes it and then runs
-# this script, and every later launch re-runs it so a preview that was declared
-# once survives a helper's death (a machine reboot, a killed process) without the
-# agent having to declare it again.
-#
-# Adopt-if-alive on the same cksum, for the same reason the tunnel helper does:
-# the launcher rewrites cheese-preview.py on every launch, so a shipped fix would
-# otherwise never reach a machine whose helper is still running — it would keep
-# serving the old code indefinitely with nothing looking wrong.
-#
-# No readiness wait here (unlike the tunnel's): nothing on this machine is
-# blocked on the tunnel being up. The one caller that needs it up — `cheese serve`
-# declaring the preview — waits on the BACKEND side, where the helper's arrival is
-# actually observable.
-CHEESE_PREVIEW_UP = """#!/bin/sh
-# $1, optional: the port.
-# `cheese serve`
-# passes it and nothing else does, which is what keeps the file layout of the
-# preview helper entirely inside the launcher — the CLI knows only this script.
-PORTF="$HOME/.claude/cheese-preview.port"
-PIDF="$HOME/.claude/cheese-preview.pid"
-STAMPF="$HOME/.claude/cheese-preview.stamp"
-if [ -n "$1" ]; then
-  printf '%s\\n' "$1" > "$PORTF.tmp" && mv "$PORTF.tmp" "$PORTF"
-fi
-[ -s "$PORTF" ] || exit 0
-[ -n "${CHEESE_PREVIEW_URL:-}" ] || exit 0
-WANT="$(cksum "$HOME/.claude/cheese-preview.py" 2>/dev/null | cut -d" " -f1)"
-HAVE="$(cat "$STAMPF" 2>/dev/null || true)"
-PID="$(cat "$PIDF" 2>/dev/null || true)"
-if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
-  if [ -n "$WANT" ] && [ "$WANT" = "$HAVE" ]; then
-    exit 0
-  fi
-  kill "$PID" 2>/dev/null || true
-fi
-python3 "$HOME/.claude/cheese-preview.py" \\
-  --url "$CHEESE_PREVIEW_URL" \\
-  --token-file "$HOME/.claude/cheese-preview.token" \\
-  --port-file "$PORTF" \\
-  >"$HOME/.claude/cheese-preview.log" 2>&1 &
-echo $! > "$PIDF"
-printf '%s\\n' "$WANT" > "$STAMPF"
-"""
-
-
-def build_drain_script() -> str:
-    source = Path(event_drain.__file__).read_text(encoding="utf-8")
-    return '#!/bin/sh\nexec python3 - "$0" "$@" <<\'PY\'\n' + source + "\nPY\n"
-
-
 # Rooms start in a plain coordination directory. Task checkouts are prepared
 # by `cheese worktree`; stopping the session backs up every task independently.
 CHEESE_SYNC_SCRIPT = """#!/bin/sh
@@ -483,17 +336,22 @@ exec cheese sync --all
 """
 
 
-def build_launch_script(
+def launch_holes(
     sync_on_stop: bool = False,
     system_prompt: str = "",
     ca_pem: str = "",
     remote_control: bool = False,
     remote_execution: bool = False,
-) -> str:
-    """The ``bash -lc`` body run as the screen's program. It reads a few env vars the
-    screen is created with: ``CHEESE_HOME`` (isolated config/home dir),
-    ``CHEESE_WORK`` (cwd), plus the hook wiring (``CHEESE_HOOK_URL``/``CHEESE_TOKEN``)
-    and ``CLAUDE_MODEL`` (optional).
+    model: str | None = None,
+    resume_session_id: str | None = None,
+    topic_id: str | None = None,
+) -> MachineLaunch:
+    """Claude Code's half of a device launch: the five holes, and its own env.
+
+    The platform half is ``machine_launcher``; nothing below belongs to it. It
+    reads a few env vars the screen is created with: ``CHEESE_HOME`` (isolated
+    config/home dir), ``CHEESE_WORK`` (cwd), plus the hook wiring
+    (``CHEESE_HOOK_URL``/``CHEESE_TOKEN``) and ``CLAUDE_MODEL`` (optional).
 
     ``system_prompt`` (the platform's assembled system prompt) is embedded in the
     script itself — written to ``$HOME/.claude/cheese-system-prompt.md`` on the
@@ -530,20 +388,6 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
         f"{content}\nCHEESE_NATIVE_SKILL"
         for name, content in native_skill_files().items()
     )
-    drain_script = build_drain_script()
-    cli_source = (Path(__file__).resolve().parents[5] / "sandbox" / "cheese").read_text(
-        encoding="utf-8"
-    )
-    # Shipped by reading the module's own bytes rather than by keeping a second
-    # copy here: it is a real, linted, unit-tested module precisely so there is
-    # only one version of it to be wrong.
-    tunnel_helper = Path(machine_tunnel.__file__).read_text().rstrip("\n") + "\n"
-    environment_helper = (
-        Path(environment_runner.__file__).read_text().rstrip("\n") + "\n"
-    )
-    tunnel_up = CHEESE_TUNNEL_UP
-    preview_helper = Path(preview_tunnel.__file__).read_text().rstrip("\n") + "\n"
-    preview_up = CHEESE_PREVIEW_UP
     settings_json = json.dumps(
         hooks_settings(
             ["cheese-sync", "cheese-usage"] if sync_on_stop else ["cheese-usage"],
@@ -582,38 +426,45 @@ EXECUTOR_CLIENT="$HOME/.claude/remote-execution/client.py"
 EXECUTOR_TARGET="$HOME/.claude/remote-target.json"
 CLAUDE="python3 \\"$EXECUTOR_CLIENT\\" bootstrap \\"$EXECUTOR_TARGET\\" $CLAUDE"
 """
+    env: dict[str, str] = {
+        # Work is a subagent of the room's session, so these two are the shape
+        # of the room itself. Depth 1: a piece of work does not split further —
+        # its own children would be invisible to the platform (nothing binds
+        # them to a card) and unaddressable by a person. Concurrency 4: how
+        # many pieces of work a room runs at once; they share one worktree, so
+        # the ceiling is about how much simultaneous editing of one tree stays
+        # comprehensible, not about machine capacity.
+        "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "1",
+        "CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS": "4",
+    }
+    if model:
+        env["CLAUDE_MODEL"] = model
+    if resume_session_id:
+        # An OFFER, not an instruction: the launcher takes it only if the
+        # transcript is on that machine's disk (see the script). Carried on the
+        # env for the same reason the tunnel vars are — a remote launch is built
+        # entirely out of its environment, and there is no other channel into it.
+        env["CHEESE_RESUME_SESSION"] = resume_session_id
+    if topic_id:
+        # Where this screen's prompts arrive. The launcher turns these two into
+        # Claude Code's own CLAUDE_BG_* trio and mints the token; the connector
+        # reads the same two to dial. Keyed on the topic so an adopted screen
+        # and a fresh one agree on the path.
+        sock, token_file = rendezvous_paths(topic_id)
+        env[ENV_RV_SOCK] = sock
+        env[ENV_RV_TOKEN_FILE] = token_file
     # The settings.json / cheese-hook heredocs are quoted ('JSON'/'SH') so the shell
     # never expands them. ~/.claude.json is written by the shell (see below) so a
     # machine without node can still launch.
-    return f"""set -e
-# CHEESE_HOME/CHEESE_WORK arrive with a LITERAL "$HOME/..." placeholder (the
-# server cannot know the device user's home). Substitute the REAL home first —
-# treating it as a relative path only worked by accident from a writable cwd
-# (a fresh service cwd of / made mkdir die with "cannot create '$HOME'").
-# POSIX-only from here: the connector's tmux joins argv with spaces and
-# re-parses through /bin/sh (dash on Debian/Ubuntu) — bashisms die silently.
-REAL_HOME="$HOME"
-# Bash exposes this clock without spawning date. Other shells skip diagnostics.
-# Append across relaunches; only phase names and timestamps enter this file.
-cheese_launch_phase() {{
-  [ -n "${{EPOCHREALTIME:-}}" ] || return 0
-  [ -d "$REAL_HOME/.cheese/launch" ] || return 0
-  printf '%s %s\\n' "$EPOCHREALTIME" "$1" \\
-    >> "$REAL_HOME/.cheese/launch/$CHEESE_TOPIC.timing" 2>/dev/null || :
-}}
-cheese_launch_phase started
-CH="${{CHEESE_HOME:?Cheese session home is required}}"
-CW="${{CHEESE_WORK:?Cheese work directory is required}}"
-case "$CH" in "\\$HOME"*) CH="$REAL_HOME${{CH#\\$HOME}}";; esac
-case "$CW" in "\\$HOME"*) CW="$REAL_HOME${{CW#\\$HOME}}";; esac
-WARM_ROOT=""
-if [ -z "${{CHEESE_EXECUTION_TARGET:-}}" ] && \\
+    return MachineLaunch(
+        staging="""WARM_ROOT=""
+if [ -z "${CHEESE_EXECUTION_TARGET:-}" ] && \\
    [ -f "$REAL_HOME/.cheese/native-warm/binding.json" ]; then
   python3 "$REAL_HOME/.cheese/warm-native-runner.py" recover-room \\
     "$REAL_HOME/.cheese/native-warm"
 fi
 # Reuse one interpreter for the check and staging, including on existing spares.
-if [ -z "${{CHEESE_EXECUTION_TARGET:-}}" ] && \\
+if [ -z "${CHEESE_EXECUTION_TARGET:-}" ] && \\
    [ -f "$REAL_HOME/.cheese/native-warm/state.json" ]; then
   WARM_ROOT="$(python3 - "$REAL_HOME/.cheese/native-warm" "$CH" "$CW" \\
     <<'CHEESE_WARM_STAGE'
@@ -636,16 +487,8 @@ if (directory / "ready").exists() and runner["_native_alive"](state):
 CHEESE_WARM_STAGE
 )"
 fi
-export HOME="$CH" CHEESE_WORK="$CW"
-cheese_launch_phase warm_staged
-mkdir -p "$HOME" "$CHEESE_WORK"
-# Canonicalize to absolutes (resolve symlinks) so nothing depends on cwd —
-# the tmux-hosted claude below runs from a fresh server with its own cwd.
-export HOME="$(cd "$HOME" && pwd -P)"
-export CHEESE_WORK="$(cd "$CHEESE_WORK" && pwd -P)"
-mkdir -p "$HOME/.claude"
-cat > "$HOME/.claude/cheese-environment.py" <<'CHEESE_ENV_PY'
-{environment_helper}CHEESE_ENV_PY
+""",
+        configure=f"""\
 # THE isolation boundary on a machine we do not own (#5): claude reads AND
 # writes its config — settings.json, .claude.json, .credentials.json — under
 # CLAUDE_CONFIG_DIR when it is set, and never falls back to the login user's
@@ -657,6 +500,13 @@ cat > "$HOME/.claude/cheese-environment.py" <<'CHEESE_ENV_PY'
 # owner's settings.json to be routed at all, hijacking every claude the owner
 # starts by hand. With it, the owner's files are never read and never written.
 export CLAUDE_CONFIG_DIR="$HOME/.claude"
+# Ours to create now that the platform keeps its own files in $HOME/.cheese:
+# this directory is this harness's, and everything below writes into it.
+mkdir -p "$CLAUDE_CONFIG_DIR"
+# cheese-sync and cheese-usage are Stop hooks, and settings.json names them
+# by NAME — so this directory has to be on PATH too. The platform puts its
+# own there later; the two never hold the same name.
+export PATH="$CLAUDE_CONFIG_DIR:$PATH"
 export DISABLE_AUTOUPDATER=1
 cat > "$CLAUDE_CONFIG_DIR/webfetch_transport.cjs" <<'CHEESE_WEBFETCH'
 {webfetch_transport}CHEESE_WEBFETCH
@@ -697,17 +547,8 @@ cat > "$HOME/.claude/cheese-usage.py" <<'USAGEPY'
 cat > "$HOME/.claude/cheese-usage" <<'USAGE'
 {usage_script}USAGE
 chmod +x "$HOME/.claude/cheese-usage"
-cat > "$HOME/.claude/cheese-hook" <<'SH'
-{_CHEESE_HOOK_SCRIPT}SH
-chmod +x "$HOME/.claude/cheese-hook"
-# Ship the platform CLI with the launcher over the existing device connection.
-# A separate public HTTP download added 0.39-1.24s to measured launches and
-# could block each launch for its 10s timeout.
-cat > "$HOME/.claude/cheese" <<'CHEESE_PLATFORM_CLI'
-{cli_source}CHEESE_PLATFORM_CLI
-chmod +x "$HOME/.claude/cheese"
-export PATH="$HOME/.claude:$PATH"
-cheese_launch_phase files_written
+""",
+        credentials=f"""\
 # Extract the machine's own ccproxy ticket, READING the owner's files only —
 # see CHEESE_SETTINGS_RECONCILE for why nothing is written there any more
 # (CLAUDE_CONFIG_DIR made the owner's settings.json irrelevant to routing).
@@ -741,70 +582,8 @@ case "$CHEESE_ROUTE" in
   *) printf '{{"hook_event_name":"CheeseRoute","status":"failed","detail":"%s"}}' \\
        "$CHEESE_ROUTE" | cheese-hook >/dev/null 2>&1 || true ;;
 esac
-# Durable event delivery on the device: cheese-hook spools every hook and (via
-# CHEESE_HOOK_SPOOL_ONLY) skips its own inline curl, so the cheese-drain script
-# is the sole sender — it retries each spooled event until the backend DURABLY
-# accepts it (code:200 = the backend wrote the event to the topic's server-side
-# spool; anything else leaves this machine's copy in place, which is the only
-# one there is), so a link/backend outage never drops an event. A 24h age cap
-# stops an unreachable backend from accumulating retries forever. The backend
-# dedups re-deliveries by event-id.
-#
-# The supervisor below owns the drainer for a newly started session.
-export CHEESE_HOOK_SPOOL="$HOME/.claude/cheese-spool"
-export CHEESE_HOOK_SPOOL_ONLY=1
-mkdir -p "$CHEESE_HOOK_SPOOL"
-cat > "$HOME/.claude/cheese-drain" <<'DRAIN'
-{drain_script}DRAIN
-chmod +x "$HOME/.claude/cheese-drain"
-cat > "$HOME/.claude/cheese-drain.env.tmp" <<DRAINENV
-CHEESE_HOOK_SPOOL="$CHEESE_HOOK_SPOOL"
-CHEESE_HOOK_URL="$CHEESE_HOOK_URL"
-CHEESE_TOKEN="$CHEESE_TOKEN"
-DRAINENV
-mv "$HOME/.claude/cheese-drain.env.tmp" "$HOME/.claude/cheese-drain.env"
-# The tunnel helper, for a machine that cannot reach the meter's listener
-# directly. Written on EVERY launch, token included: the helper re-reads the
-# token per connection, so replacing this file is how a refreshed credential
-# reaches a still-running helper (#385's shape, one layer down).
-if [ -n "${{CHEESE_TUNNEL_URL:-}}" ]; then
-  cat > "$HOME/.claude/cheese-tunnel.py" <<'TUNNELPY'
-{tunnel_helper}TUNNELPY
-  # Use the place-scoped CONNECT credential, including its RC claim. The hook
-  # token can have project scope; the machine OAuth ticket is never a tunnel
-  # credential. A missing CONNECT token must not fall back to either one.
-  cat > "$HOME/.claude/cheese-tunnel.token.tmp" <<TUNNELTOK
-$CHEESE_CONNECT_TOKEN
-TUNNELTOK
-  chmod 600 "$HOME/.claude/cheese-tunnel.token.tmp"
-  mv "$HOME/.claude/cheese-tunnel.token.tmp" "$HOME/.claude/cheese-tunnel.token"
-  cat > "$HOME/.claude/cheese-tunnel-up" <<'TUNNELUP'
-{tunnel_up}TUNNELUP
-  chmod +x "$HOME/.claude/cheese-tunnel-up"
-fi
-# 运行环境预览's helper. Written on EVERY launch, token included and for the same
-# reason as the tunnel's: the helper re-reads the token per connection, so
-# replacing this file is how a refreshed credential reaches a still-running one.
-# Nothing is STARTED here — the up script is a no-op until an agent has declared
-# a port with `cheese serve`, so a machine that never previews anything pays for
-# no process.
-if [ -n "${{CHEESE_PREVIEW_URL:-}}" ]; then
-  cat > "$HOME/.claude/cheese-preview.py" <<'PREVIEWPY'
-{preview_helper}PREVIEWPY
-  cat > "$HOME/.claude/cheese-preview.token.tmp" <<PREVIEWTOK
-$CHEESE_TOKEN
-PREVIEWTOK
-  chmod 600 "$HOME/.claude/cheese-preview.token.tmp"
-  mv "$HOME/.claude/cheese-preview.token.tmp" "$HOME/.claude/cheese-preview.token"
-  cat > "$HOME/.claude/cheese-preview-up" <<'PREVIEWUP'
-{preview_up}PREVIEWUP
-  chmod +x "$HOME/.claude/cheese-preview-up"
-  # The ONE thing `cheese serve` needs to know about the preview helper. Exported
-  # rather than reconstructed on the CLI's side: the server cannot know the
-  # device user's home, and a path written down twice is a path that drifts.
-  export CHEESE_PREVIEW_UP="$HOME/.claude/cheese-preview-up"
-fi
-cd "$CHEESE_WORK"
+""",
+        prepare=f"""\
 # --- prompt delivery: the rendezvous socket, and the version floor under it ---
 # Prompts reach this claude over a unix socket it binds ITSELF (three env vars
 # below), where the runtime enqueues them as `origin: {{kind:"human"}}` — the
@@ -942,10 +721,6 @@ fi
 # embedded QUOTED so both consumers survive a home dir with spaces: the tmux
 # branch re-parses $CLAUDE through sh -c, the exec branch through eval.
 CHEESE_SP="$HOME/.claude/cheese-system-prompt.md"
-ENVIRONMENT_CMD=""
-if [ -n "${{CHEESE_ENVIRONMENT:-}}" ]; then
-  ENVIRONMENT_CMD="python3 \\"$HOME/.claude/cheese-environment.py\\" "
-fi
 [ -s "$CHEESE_SP" ] && CLAUDE="$CLAUDE --append-system-prompt-file \\"$CHEESE_SP\\""
 {execution_setup}
 if [ -n "$WARM_ROOT" ]; then
@@ -991,147 +766,53 @@ os.environ.pop("TMUX", None)
 os.execvp("tmux", terminal["command"])
 WARM_ATTACH
 fi
-# The connector owns the terminal session. This shell owns its children.
-if [ -n "${{TMUX:-}}" ]; then
-  CHEESE_TMUX_SOCK="${{TMUX%%,*}}"
-  SESSION="$(tmux -S "$CHEESE_TMUX_SOCK" display-message -p -t "$TMUX_PANE" '#S')"
-  python3 -c 'import json,sys; json.dump(sys.argv[1:], open(sys.argv[3], "w"))' \\
-    "$CHEESE_TMUX_SOCK" "$SESSION" "$HOME/.claude/environment-session.json"
-fi
-printf '%s' "${{CHEESE_AGENT_CONFIG:-}}" > "$HOME/.claude/agent-configuration"
-printf '%s' {shlex.quote(claude_args)} > "$HOME/.claude/launch-contract"
-CLAUDE_PID=""
-DRAIN_PID=""
-cleanup() {{
-  trap '' HUP INT TERM
-  [ -z "$CLAUDE_PID" ] || kill "$CLAUDE_PID" 2>/dev/null || true
-  [ -z "$DRAIN_PID" ] || kill "$DRAIN_PID" 2>/dev/null || true
-  wait 2>/dev/null || true
-}}
-trap 'exit 129' HUP
-trap 'exit 130' INT
-trap 'exit 143' TERM
-trap cleanup EXIT
-if [ -n "${{CHEESE_TUNNEL_URL:-}}" ]; then
-  sh "$HOME/.claude/cheese-tunnel-up" || exit 1
-fi
-if [ -n "${{CHEESE_PREVIEW_URL:-}}" ]; then
-  sh "$HOME/.claude/cheese-preview-up" || exit 1
-fi
-CHEESE_DRAIN_TETHER=$$ sh "$HOME/.claude/cheese-drain" >/dev/null 2>&1 &
-DRAIN_PID=$!
-# Preserve input before POSIX sh redirects an asynchronous command's fd 0.
-exec 3<&0
-eval "exec $ENVIRONMENT_CMD$CLAUDE" <&3 3<&- &
-CLAUDE_PID=$!
-RESULT=0
-wait "$CLAUDE_PID" || RESULT=$?
-CLAUDE_PID=""
-exit "$RESULT"
-
-"""
-
-
-def build_screen_launch(
-    *,
-    hook_url: str,
-    hook_token: str,
-    home_dir: str,
-    work_dir: str,
-    model: str | None = None,
-    resume_session_id: str | None = None,
-    extra_env: dict[str, str] | None = None,
-    api_base: str | None = None,
-    project_id: str | None = None,
-    topic_id: str | None = None,
-    author: str | None = None,
-    git_author: tuple[str, str] | None = None,
-    git_remote: str | None = None,
-    system_prompt: str = "",
-    ca_pem: str = "",
-    execution_target: dict | None = None,
-) -> tuple[list[str], dict[str, str]]:
-    """Assemble ``(command, env)`` for ``DeviceHub.open_screen``.
-
-    ``command`` is a self-contained ``bash -lc`` launcher; ``env`` carries the hook
-    wiring + home/work dirs + model + any provider (gateway) vars, and — for a
-    screen with a topic — where its rendezvous socket lives. When
-    ``api_base`` and the ``project_id``/``topic_id`` context are given, the
-    bundled ``cheese`` CLI (accept cards / docs / decisions / memory) uses
-    its ``CHEESE_*`` env — the same actions the in-container agent has locally."""
-    script = build_launch_script(
-        sync_on_stop=bool(git_remote) and execution_target is None,
-        system_prompt=system_prompt,
-        ca_pem=ca_pem,
-        remote_control=(extra_env or {}).get("CHEESE_REMOTE_CONTROL") == "1",
-        remote_execution=execution_target is not None,
+""",
+        contract=claude_args,
+        command="$CLAUDE",
+        env=env,
     )
-    command = ["bash", "-lc", script]
-    env: dict[str, str] = {
-        "CHEESE_HOOK_URL": hook_url,
-        "CHEESE_TOKEN": hook_token,
-        "CHEESE_HOME": home_dir,
-        "CHEESE_WORK": work_dir,
-        # Work is a subagent of the room's session, so these two are the shape
-        # of the room itself. Depth 1: a piece of work does not split further —
-        # its own children would be invisible to the platform (nothing binds
-        # them to a card) and unaddressable by a person. Concurrency 4: how
-        # many pieces of work a room runs at once; they share one worktree, so
-        # the ceiling is about how much simultaneous editing of one tree stays
-        # comprehensible, not about machine capacity.
-        "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "1",
-        "CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS": "4",
-    }
-    if model:
-        env["CLAUDE_MODEL"] = model
-    if resume_session_id:
-        # An OFFER, not an instruction: the launcher takes it only if the
-        # transcript is on that machine's disk (see the script). Carried on the
-        # env for the same reason the tunnel vars are — a remote launch is built
-        # entirely out of `extra_env`, and there is no other channel into it.
-        env["CHEESE_RESUME_SESSION"] = resume_session_id
-    # Platform-action CLI wiring: the `cheese` script reads these (X-Cheese-Token =
-    # CHEESE_TOKEN, the SAME scoped token the hook forwarder uses).
-    if api_base:
-        env["CHEESE_API"] = api_base
-    if project_id:
-        env["CHEESE_PROJECT"] = project_id
-    if topic_id:
-        env["CHEESE_TOPIC"] = topic_id
-        # Where this screen's prompts arrive. The launcher turns these two into
-        # Claude Code's own CLAUDE_BG_* trio and mints the token; the connector
-        # reads the same two to dial. Keyed on the topic so an adopted screen
-        # and a fresh one agree on the path.
-        sock, token_file = rendezvous_paths(topic_id)
-        env[ENV_RV_SOCK] = sock
-        env[ENV_RV_TOKEN_FILE] = token_file
-    if author:
-        env["CHEESE_AUTHOR"] = author
-    if git_remote:
-        env["CHEESE_GIT_REMOTE"] = git_remote
-    if git_author:
-        # Who the turn's commits belong to (workspace/identity.py). Absent, the
-        # launcher falls back to 芝士 — the same default the in-repo snapshot
-        # path uses, so both surfaces agree.
-        env["CHEESE_GIT_AUTHOR_NAME"], env["CHEESE_GIT_AUTHOR_EMAIL"] = git_author
-        env["GIT_AUTHOR_NAME"], env["GIT_AUTHOR_EMAIL"] = git_author
-        env["GIT_COMMITTER_NAME"] = "芝士"
-        env["GIT_COMMITTER_EMAIL"] = "cheese@zhishi.local"
-    if extra_env:
-        env.update(extra_env)
-    if execution_target is not None:
-        env["CHEESE_EXECUTION_TARGET"] = json.dumps(execution_target)
-        # The assigned executor already owns the checkout and its environment.
-        for name in (
-            "CHEESE_GIT_REMOTE",
-            "CHEESE_GIT_BRANCH",
-            "CHEESE_BRANCH_URL",
-            "CHEESE_ENVIRONMENT",
-            "CHEESE_PREVIEW_URL",
-            "CHEESE_PREVIEW_UP",
-        ):
-            env.pop(name, None)
-    return command, env
+
+
+def build_launch_script(**named) -> str:
+    """The launcher a device runs for a Claude Code session."""
+    holes = launch_holes(**named)
+    return machine_launcher.launch_script(
+        staging=holes.staging,
+        configure=holes.configure,
+        credentials=holes.credentials,
+        prepare=holes.prepare,
+        contract=holes.contract,
+        command=holes.command,
+    )
+
+
+def on_machine(
+    place: MachinePlace,
+    *,
+    system_prompt: str,
+    model: str | None,
+    resume_session_id: str | None,
+) -> MachineLaunch:
+    """Claude Code, now that a machine has said where and what this room is.
+
+    ``place`` states facts; what they mean is decided here. A room with a git
+    remote syncs at turn end (a Stop hook), one with an execution target ships
+    the executor client and hands ``claude`` to it, one whose operator may drive
+    it directly runs without the permission prompt, and a CA to trust is a file
+    only the script can name an absolute path for.
+    """
+    return launch_holes(
+        # A room whose work is done on an executor has nothing of its own to
+        # hand back; the executor owns the checkout.
+        sync_on_stop=bool(place.git_remote) and place.execution_target is None,
+        system_prompt=system_prompt,
+        ca_pem=place.ca_pem,
+        remote_control=place.remote_control,
+        remote_execution=place.execution_target is not None,
+        model=model,
+        resume_session_id=resume_session_id,
+        topic_id=place.topic_id,
+    )
 
 
 def ensure_dir(path: str) -> str:

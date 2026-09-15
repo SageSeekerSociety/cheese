@@ -1,5 +1,7 @@
 #!/bin/sh
 body="$(cat)"
+# Claude Code's resume stamp, cleared by the two hook names that prove the
+# session is live. Absent the file — every other harness — this is a no-op.
 if [ -f "$HOME/.claude/cheese-resume.attempt" ]; then
   printf '%s' "$body" | python3 -c '
 import json, pathlib, sys

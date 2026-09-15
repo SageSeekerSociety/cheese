@@ -271,6 +271,8 @@ export type WsServerFrame =
   // An existing block's data changed in place (e.g. an option question got
   // answered) — replace it in the timeline.
   | { type: 'block_updated'; block: Block }
+  // Answer to the client's liveness ping; carries nothing.
+  | { type: 'pong' }
 
 // An uploaded worktree file the message carries. `path` comes from
 // POST /topics/{id}/attachments; the WS frame only references it (no binary).
@@ -281,7 +283,9 @@ export interface ChatAttachment {
 
 // WebSocket client -> server frame. `summon` = @芝士: true asks the AI to
 // reply, false (default) just posts the message (spec §7.1 默认不 @).
-export interface WsClientMessage {
+export type WsClientMessage = WsClientChatMessage | { type: 'ping' }
+
+export interface WsClientChatMessage {
   type: 'message'
   content: string
   // No `author`: the backend takes it from the socket's ?token=. Sending one

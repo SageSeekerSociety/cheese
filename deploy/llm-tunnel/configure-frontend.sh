@@ -14,6 +14,53 @@ cat > "$CONFIG_TMP" <<EOF
 upstream frontend_active { server 127.0.0.1:$UPSTREAM_PORT; }
 server {
   listen 127.0.0.1:$LISTEN_PORT;
+
+  # Device and execution traffic enters through this stable front door with
+  # the public /api prefix. Keep it off the frontend containers this proxy
+  # replaces during an ordinary application rollout.
+  location = /api/connector/agent {
+    proxy_pass http://127.0.0.1:18083/connector/agent;
+    proxy_http_version 1.1;
+    proxy_set_header Host \$http_host;
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection \$connection_upgrade;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    proxy_read_timeout 24h;
+    proxy_send_timeout 24h;
+    proxy_buffering off;
+  }
+
+  location ~ ^/api/connector/session/[^/]+/screen\$ {
+    rewrite ^/api/(.*)\$ /\$1 break;
+    proxy_pass http://127.0.0.1:18083;
+    proxy_http_version 1.1;
+    proxy_set_header Host \$http_host;
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection \$connection_upgrade;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    proxy_read_timeout 24h;
+    proxy_send_timeout 24h;
+    proxy_buffering off;
+  }
+
+  location ~ ^/api/topics/[^/]+/execution/[^/]+\$ {
+    rewrite ^/api/(.*)\$ /\$1 break;
+    proxy_pass http://127.0.0.1:18083;
+    proxy_http_version 1.1;
+    proxy_set_header Host \$http_host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    client_max_body_size 100m;
+    proxy_read_timeout 15m;
+    proxy_send_timeout 15m;
+    proxy_buffering off;
+  }
+
   location / {
     proxy_pass http://frontend_active;
     proxy_http_version 1.1;

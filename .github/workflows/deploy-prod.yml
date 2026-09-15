@@ -135,5 +135,5 @@ jobs:
             curl -s -o /dev/null -w 'backend health=%{http_code}\n' http://127.0.0.1:8081/healthz || true
             curl -s -o /dev/null -w 'frontend :8080=%{http_code}\n' http://127.0.0.1:8080/ || true
           else
-            bash deploy/deploy-docker.sh "$SHA"
+            CHEESE_CENTRAL_SESSION_HOST=1 bash deploy/deploy-docker.sh "$SHA"
           fi

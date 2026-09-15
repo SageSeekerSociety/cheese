@@ -128,12 +128,12 @@ def test_compose_file_asserts_the_signal_as_a_literal() -> None:
         / "compose"
         / "docker-compose.base.yml"
     )
-    lines = [
-        line.strip()
-        for line in compose.read_text(encoding="utf-8").splitlines()
-        if "DEPLOYED_VIA_COMPOSE" in line and not line.strip().startswith("#")
-    ]
-    assert lines == ["- DEPLOYED_VIA_COMPOSE=1"], (
-        "the deploy compose file must assert DEPLOYED_VIA_COMPOSE as a literal; "
-        f"found {lines!r}"
-    )
+    import yaml
+
+    services = yaml.safe_load(compose.read_text(encoding="utf-8"))["services"]
+    for service in ("backend", "device-connection"):
+        environment = services[service]["environment"]
+        assert "DEPLOYED_VIA_COMPOSE=1" in environment, (
+            f"{service} must assert DEPLOYED_VIA_COMPOSE as a literal; "
+            f"found {environment!r}"
+        )
