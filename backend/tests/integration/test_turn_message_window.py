@@ -180,7 +180,7 @@ async def test_mid_turn_summon_is_not_relabelled_as_a_platform_instruction(
     assert user_text == "[u2]: 顺便把 README 也更了"
     assert PLATFORM_NOTICE not in user_text
     assert reminder.startswith(PLATFORM_NOTICE)
-    assert "cheese chat send" in reminder
+    assert "chat_send" in reminder
 
 
 @pytest.mark.anyio
