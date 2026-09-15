@@ -75,13 +75,9 @@ attempt; reusing it returns the same stored message. Fix validation or
 authorization errors before retrying. Do not assume a failed call reached the
 user or repeat the text as ordinary output.
 
-Only when the tool is unavailable, run the command instead: `cheese chat send
-'正文'`, `--file ./update.txt` for a file, `--reply-to <message-id>` and
-`--request-id` as above; for multiline text use a file or quoted heredoc on
-stdin (`--file -`) so shell substitution cannot change the message. Internal
-CLI commands are for you to run; do not ask the product user to execute them.
+These tools are yours to call; do not ask the product user to run anything.
 
-Use the `cheese_ask` tool (`cheese ask` in the shell) for a decision that benefits from clickable options. A question
+Use the `cheese_ask` tool for a decision that benefits from clickable options. A question
 needs to change what you would do; routine choices are yours to make. Use real
 member and topic references, and file links such as `<&docs/result.md>`, rather
 than invented buttons or links. Mention someone with `@` only when they need

@@ -20,9 +20,11 @@ _SANDBOX = Path(__file__).resolve().parents[2] / "sandbox"
 _CHEESE = _SANDBOX / "cheese"
 _SKILL = _SANDBOX / "skills" / "cheese" / "SKILL.md"
 
-# A command-table row: `| \`cheese <name> ...\` | 说明 |`. Only the first word
-# after "cheese" matters — `doc set` / `doc get` both document `doc`.
-_ROW = re.compile(r"^\|\s*`cheese ([a-z][a-z-]*)")
+# A tool-table row: `| \`cheese_<name>(...)\` | 说明 |`, where the tool name is
+# the subcommand with `-` folded to `_` (`cheese_doc_set` documents `doc`). Two
+# tools stand in for subcommands under their own names.
+_ROW = re.compile(r"^\|\s*`(cheese_[a-z_]+|chat_send|platform_request)\(")
+_TOOL_TO_COMMAND = {"chat_send": "chat", "platform_request": "api"}
 
 
 def _load_cli():
@@ -43,12 +45,29 @@ def _implemented() -> set[str]:
     return {name for name in groups[0].choices if not name.startswith("_")}
 
 
+def _command_for(tool: str) -> str:
+    """`cheese_doc_set` → `doc`: the first subcommand word, `_` written as `-`
+    where the CLI spells it that way (`accept_request` → `accept-request`)."""
+    rest = tool.removeprefix("cheese_")
+    for name in sorted(_implemented(), key=len, reverse=True):
+        if rest == name.replace("-", "_") or rest.startswith(
+            name.replace("-", "_") + "_"
+        ):
+            return name
+    return rest
+
+
 def _documented() -> set[str]:
     names: set[str] = set()
     for line in _SKILL.read_text(encoding="utf-8").splitlines():
         m = _ROW.match(line)
-        if m:
-            names.add(m.group(1))
+        if not m:
+            continue
+        tool = m.group(1)
+        if tool in _TOOL_TO_COMMAND:
+            names.add(_TOOL_TO_COMMAND[tool])
+            continue
+        names.add(_command_for(tool))
     return names
 
 

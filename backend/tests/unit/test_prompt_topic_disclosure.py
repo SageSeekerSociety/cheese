@@ -97,7 +97,10 @@ def test_prompt_section_lists_only_active_and_says_how_to_find_archived():
     assert "- 搭建推荐算法原型" in prompt
     assert "两阶段采纳闭环" not in prompt
     assert "没列出来 ≠ 不存在" in prompt
-    assert 'cheese api GET "/topics?project_id=$CHEESE_PROJECT"' in prompt
+    assert (
+        'platform_request(method="GET", path="/topics?project_id=<本项目 id>")'
+        in prompt
+    )
 
 
 def test_duplicate_titles_resolve_to_the_first_one_only():

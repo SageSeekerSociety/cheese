@@ -258,10 +258,16 @@ check_platform_cli_in_claude_md() {
   # knowledge filed under one gets loaded on an unrelated criterion.
   for f in "$ROOT"/.claude/rules/*.md; do [ -e "$f" ] && targets+=("$f"); done
   [ ${#targets[@]} -eq 0 ] && return 0
-  subs="$(grep -oE '`cheese [a-z][a-z-]*' "$skill" 2>/dev/null \
-    | sed 's/.*cheese //' | sort -u | paste -sd'|' -)"
+  # The skill documents each subcommand as a tool row (`cheese_doc_set(`) and
+  # may still mention the shell form (`cheese doc`); both name the same thing,
+  # and either spelling in CLAUDE.md is the leak. `|| true`: a skill with no
+  # rows must leave this guard inert, not abort the script under `set -e`.
+  subs="$( { grep -oE '`cheese [a-z][a-z-]*' "$skill" 2>/dev/null | sed 's/.*cheese //'; \
+             grep -oE '`cheese_[a-z]+' "$skill" 2>/dev/null | sed 's/.*cheese_//'; } \
+    | tr '_' '-' | sort -u | paste -sd'|' - || true)"
   [ -z "$subs" ] && return 0
-  hits="$(grep -nE "cheese ($subs)\b" "${targets[@]}" 2>/dev/null || true)"
+  tools="$(printf '%s' "$subs" | tr '-' '_')"
+  hits="$(grep -nE "cheese ($subs)\b|cheese_($tools)\b" "${targets[@]}" 2>/dev/null || true)"
   [ -z "$hits" ] && return 0
   echo "FAIL: platform CLI documented in a file only this repo sees"
   report "the cheese CLI in CLAUDE.md / .claude/rules — a hosted repo never sees either" \

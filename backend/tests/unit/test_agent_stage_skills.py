@@ -122,15 +122,15 @@ def test_every_stage_skill_is_registered_by_name():
 def test_the_pre_card_stage_covers_when_to_hand_off_and_the_github_channel():
     """这几条读完就得知道该怎么做，不能散落在别处。"""
     guide = load_scenario(stage_scenario(TopicStage.delegating))
-    assert "accept-request" in guide  # 怎么递
+    assert "accept_request" in guide  # 怎么递
     assert "独立" in guide
-    assert "cheese ready" in guide
+    assert "cheese_ready" in guide
     assert "永远不能" not in guide
 
 
 def test_awaiting_stage_tells_the_agent_how_prs_move_now():
     guide = load_scenario(stage_scenario(TopicStage.awaiting))
-    assert "push-fix" in guide  # 提交不会自己上 PR，得说怎么上
+    assert "push_fix" in guide  # 提交不会自己上 PR，得说怎么上
     assert "实际授权" in guide
     assert "token 是只读的" not in guide
 
