@@ -8,7 +8,7 @@ description: Guide the room's lead agent when responding to user messages, inclu
 # Chat as a collaborator's timeline
 
 People use chat to understand what their collaborator is doing and to steer the
-work. Publish what they need to know through `cheese chat send`. Your ordinary
+work. Publish what they need to know with the `chat_send` tool. Your ordinary
 text and final response remain in the execution view; neither sends a message
 to the conversation. A task checklist or an automatic receipt does not replace
 your own opening message.
@@ -61,22 +61,23 @@ sentence count, ceremonial headings, and a document-length recap on every turn.
 
 ## Publishing
 
-```bash
-cheese chat send '我先核对当前流程，再开始修改。'
-cheese chat send --file ./update.txt
-cheese chat send '这个限制来自当前接口。' --reply-to <message-id>
+Call the `chat_send` tool with `content`; add `reply_to` to answer one message.
+Quotes and line breaks travel as written, so no file or heredoc is needed:
+
+```
+chat_send(content='我先核对当前流程，再开始修改。')
+chat_send(content='这个限制来自当前接口。', reply_to='<message-id>')
 ```
 
-The command returns the stored message, including its ID. If delivery is uncertain,
-retry the unchanged message, including `--reply-to`, with the `--request-id`
-printed by that attempt. Fix validation or authorization errors before retrying.
-Reusing that ID will return the same stored message. Do not
-assume a failed command reached the user or repeat the text as ordinary output.
-For multiline text, use a file or quoted heredoc on stdin (`--file -`) so shell
-substitution cannot change the message. Internal CLI commands are for you to run;
-do not ask the product user to execute them.
+The tool returns the stored message, including its ID. If delivery is uncertain,
+retry the unchanged call, including `reply_to`, with the `request_id` from that
+attempt; reusing it returns the same stored message. Fix validation or
+authorization errors before retrying. Do not assume a failed call reached the
+user or repeat the text as ordinary output.
 
-Use `cheese ask` for a decision that benefits from clickable options. A question
+These tools are yours to call; do not ask the product user to run anything.
+
+Use the `cheese_ask` tool for a decision that benefits from clickable options. A question
 needs to change what you would do; routine choices are yours to make. Use real
 member and topic references, and file links such as `<&docs/result.md>`, rather
 than invented buttons or links. Mention someone with `@` only when they need

@@ -716,14 +716,14 @@ _OPEN_CARD_STATUSES = (
 _OPEN_CARD_HINTS = {
     AcceptStatus.pending: (
         "等 {reviewer} 采纳——采纳即当场合并；改动提交在本分支上，"
-        "要让 PR 立刻看到用 `cheese push-fix`"
+        "要让 PR 立刻看到用 `cheese_push_fix`"
     ),
     AcceptStatus.pending_gate: "闸门检查进行中",
     AcceptStatus.gate_failed: (
-        "闸门检查未过——用 `cheese status` 看失败输出，修复后重新递卡"
+        "闸门检查未过——用 `cheese_status` 看失败输出，修复后重新递卡"
     ),
     AcceptStatus.gate_blocked: (
-        "闸门检查没跑成（不是没通过，是没跑起来）——用 `cheese status` 看输出，"
+        "闸门检查没跑成（不是没通过，是没跑起来）——用 `cheese_status` 看输出，"
         "把检查环境弄起来再重新递卡"
     ),
     AcceptStatus.conflict: "采纳时发现合并冲突，待处理",
@@ -852,7 +852,7 @@ def _turn_meta_lines(
             lines.append(
                 "- 本话题验收卡：" + hint.format(reviewer=f"@{card.reviewer_handle}")
             )
-    lines.append("- 要看完整平台状态（验收卡/闸门输出/额度），运行 `cheese status`。")
+    lines.append("- 要看完整平台状态（验收卡/闸门输出/额度），调用 `cheese_status`。")
     return lines
 
 
@@ -1505,7 +1505,7 @@ class ChatService:
                         state.topic_id,
                         "If you are still working on a response and have not "
                         "posted an update since this reminder was queued, "
-                        "use cheese chat send to tell the user what is known "
+                        "use chat_send to tell the user what is known "
                         "and what you are waiting for. If you have finished, "
                         "ignore this reminder.",
                     )

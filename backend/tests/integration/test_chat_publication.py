@@ -163,8 +163,8 @@ def test_raw_terminal_output_never_publishes_even_after_stop(client, stub_hooks)
     assert output and all(
         b["kind"] == "event" and b["meta"]["in_room"] is False for b in output
     )
-    assert "cheese chat send" in stub_hooks.last_system_prompt
-    assert "cheese chat send" in stub_hooks.last_prompt
+    assert "chat_send" in stub_hooks.last_system_prompt
+    assert "chat_send" in stub_hooks.last_prompt
 
 
 def test_publish_during_work_keeps_turn_open_and_only_published_text_enters_memory(
@@ -270,7 +270,7 @@ def test_silence_reminder_only_queues_for_an_active_silent_response(
         system_event.assert_not_called()
         client.portal.call(release.set)
         assert sweep.result(timeout=2) == 1
-        assert len(notices) == 1 and "cheese chat send" in notices[0]
+        assert len(notices) == 1 and "chat_send" in notices[0]
         assert "If you have finished" in notices[0]
         clock += timedelta(seconds=120)
         assert client.portal.call(chat.remind_silent_turns) == 0
