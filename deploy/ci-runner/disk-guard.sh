@@ -12,12 +12,20 @@
 # Triggered on free space rather than on a clock, so an idle machine pays a single
 # `df` and a busy one reclaims as often as it needs to.
 #
-# `prune -af` keeps every image a RUNNING container uses, so a job in this
-# machine's other slot keeps its service containers. What it can cost that job is
-# an image pulled but not yet started, which is a re-pull, not a failure.
+# `prune -af` keeps every image a RUNNING container uses — but "not running yet"
+# is not the same as "not wanted". `remote-execution.yml` BUILDS
+# `cheese-private-executor` and runs it a few steps later; on 2026-09-15 a guard
+# firing in this machine's other slot deleted it in between, and the job died on
+# `docker run … exit status 125` with nothing to re-pull, because the image was
+# never fetched from anywhere. So only images older than the grace period go: a
+# job's own build is minutes old, and what actually fills a pool machine is older
+# than that.
 set -uo pipefail
 
 FREE_FLOOR_GB="${CHEESE_CI_FREE_FLOOR_GB:-10}"
+# Long enough to outlive any job on this pool (the longest timeout is 20 minutes),
+# short enough that yesterday's layers are still reclaimable.
+KEEP_NEWER_THAN="${CHEESE_CI_KEEP_NEWER_THAN:-2h}"
 
 free_gb() {
   df -BG --output=avail / 2>/dev/null | tail -1 | tr -dc '0-9'
@@ -28,7 +36,7 @@ before="$(free_gb)"
 [ "$before" -lt "$FREE_FLOOR_GB" ] || exit 0
 
 echo "disk guard: ${before}G free is below ${FREE_FLOOR_GB}G, reclaiming"
-docker system prune -af >/dev/null 2>&1 || true
+docker system prune -af --filter "until=$KEEP_NEWER_THAN" >/dev/null 2>&1 || true
 docker volume prune -f >/dev/null 2>&1 || true
 after="$(free_gb)"
 echo "disk guard: ${before}G -> ${after:-?}G free"

@@ -59,8 +59,19 @@ out="$(run_guard 30)"
 out="$(run_guard 4 22)"
 grep -q "4G free is below 10G" <<<"$out" || fail "no reason given: $out"
 grep -q "4G -> 22G free" <<<"$out" || fail "no before/after given: $out"
-grep -qx -- "system prune -af" "$CALLS" || fail "expected an image prune: $(cat "$CALLS")"
+# With a grace period, not without one: a job BUILDS its own images and runs them
+# a few steps later, and a bare `prune -af` deleted one in between — `docker run`
+# then fails with exit 125 and there is nothing to re-pull, because the image was
+# never fetched from anywhere.
+grep -q -- "system prune -af --filter until=" "$CALLS" \
+  || fail "expected an image prune with a grace period: $(cat "$CALLS")"
 grep -qx -- "volume prune -f" "$CALLS" || fail "expected a volume prune: $(cat "$CALLS")"
+
+# 3. The grace period is long enough to outlive a job on this pool: the longest
+#    job timeout is 20 minutes, and an image a job built has to survive its own run.
+period="$(grep -oE 'CHEESE_CI_KEEP_NEWER_THAN:-[0-9]+h' "$GUARD" | grep -oE '[0-9]+')"
+[ -n "$period" ] || fail "the grace period is not stated in hours"
+[ "$period" -ge 1 ] || fail "a grace period of ${period}h cannot outlive a job"
 
 # 3. Exactly at the floor is not below it.
 out="$(run_guard 10)"
