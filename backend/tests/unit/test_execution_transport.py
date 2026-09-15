@@ -987,40 +987,36 @@ def test_a_lost_response_is_never_replayed(monkeypatch):
     assert len(attempts) == 1
 
 
-def test_the_tool_list_waits_for_the_executor_instead_of_coming_back_short(
-    monkeypatch, capsys
-):
-    """The platform tools are named from what the executor reports, so a listing
-    that lands while it is still starting used to omit the whole `cheese_*`
-    family — and the agent was told the tool does not exist."""
-    attempts = []
+def test_every_tool_listing_says_how_many_platform_tools_it_found(monkeypatch, capsys):
+    """Three turns have been lost to a list that silently arrived without the
+    `cheese_*` family, and each investigation ended at the same wall: nothing
+    recorded what had been listed."""
 
-    class Client:
+    class Ready:
         @staticmethod
         def call(method, params=None):
-            attempts.append(method)
             if method == "ping":
-                ready = attempts.count("ping") >= 3
-                return {"capabilities": ["prepare"] + (["cli_worker"] if ready else [])}
+                return {"capabilities": ["prepare", "cli_worker"]}
             return {"tools": [{"name": "cheese_status", "inputSchema": {}}]}
 
-    monkeypatch.setattr(central.time, "sleep", lambda _delay: None)
-    assert central._cli_tools(Client()) == [
-        {"name": "cheese_status", "inputSchema": {}}
-    ]
-    assert attempts.count("ping") == 3
+    assert central._cli_tools(Ready()) == [{"name": "cheese_status", "inputSchema": {}}]
     assert "1 platform tools" in capsys.readouterr().err
 
-
-def test_an_executor_with_no_cli_worker_is_reported_not_silently_trimmed(
-    monkeypatch, capsys
-):
-    class Client:
+    class NoWorker:
         @staticmethod
         def call(method, params=None):
             return {"capabilities": ["prepare"]}
 
-    monkeypatch.setattr(central.time, "sleep", lambda _delay: None)
-    monkeypatch.setattr(central, "CLI_TOOLS_READY_TIMEOUT_S", 0)
-    assert central._cli_tools(Client()) == []
-    assert "no platform tools" in capsys.readouterr().err
+    assert central._cli_tools(NoWorker()) == []
+    assert "no CLI worker" in capsys.readouterr().err
+
+    class Unreachable:
+        @staticmethod
+        def call(method, params=None):
+            raise ConnectionRefusedError(111, "Connection refused")
+
+    # An executor that cannot be reached still gets a listing: the file and
+    # shell tools are the transport's own, and a first tool call must not race
+    # a probe of something else.
+    assert central._cli_tools(Unreachable()) == []
+    assert "ConnectionRefusedError" in capsys.readouterr().err

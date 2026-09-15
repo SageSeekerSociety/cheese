@@ -676,51 +676,34 @@ def publish_event(config, payload):
 
 
 # A listing names the platform tools from what the executor answers right then,
-# so an executor that is still coming up — a release, a reconnect, the first
-# request after a deploy — yields a list without the whole `cheese_*` family,
-# and the agent is told `No such tool available: mcp__native__cheese_status`.
-# Twice now that has cost a turn (2026-09-13/14, and 2026-09-15 06:57) with
-# nothing written down anywhere to say the list had been short, which is why
-# every listing now says what it found. The wait is small on purpose: an
-# executor that has no CLI worker at all is a normal configuration and must not
-# pay for one that is merely slow.
-CLI_TOOLS_READY_TIMEOUT_S = 3
-
-
-def _cli_tools(client, timeout_s: float = CLI_TOOLS_READY_TIMEOUT_S):
-    """The platform tools, and a line on stderr saying how many were listed.
-
-    An empty list stays a legitimate answer — a room whose executor serves only
-    file and shell tools has one — but it is now a stated answer rather than a
-    silent one, and a listing that arrives a moment too early waits instead of
-    publishing a short list as if it were complete.
-    """
-    deadline = time.monotonic() + timeout_s
-    delay = 0.2
-    while True:
-        try:
-            capabilities = client.call("ping", {}).get("capabilities", [])
-            if "cli_worker" in capabilities:
-                tools = client.call("cli", {"method": "tools/list"})["tools"]
-                print(
-                    f"[cheese] native tools/list: {len(tools)} platform tools",
-                    file=sys.stderr,
-                    flush=True,
-                )
-                return tools
-            reason = "the executor reports no CLI worker"
-        except Exception as exc:  # noqa: BLE001 — the executor may still be coming up
-            reason = f"{type(exc).__name__}: {exc}"
-        if time.monotonic() >= deadline:
-            print(
-                f"[cheese] native tools/list: no platform tools ({reason}); "
-                "serving file and shell tools only",
-                file=sys.stderr,
-                flush=True,
-            )
-            return []
-        time.sleep(delay)
-        delay = min(delay * 2, 1.0)
+# so a listing taken at the wrong moment can come back without the whole
+# `cheese_*` family, and the agent is told `No such tool available:
+# mcp__native__cheese_status`. That has cost three turns (2026-09-13, -14 and
+# 2026-09-15 06:57) and every investigation ran out of evidence at the same
+# place: nothing anywhere recorded what the list had contained. Waiting for the
+# executor was tried and reverted — it delays the listing, and the first tool
+# call of a session races it (the private-chat acceptance fails that way). So
+# this says what it found and nothing else; the next short list will be a line
+# in the MCP server's log instead of a mystery.
+def _cli_tools(client):
+    """The platform tools the executor can name right now, reported either way."""
+    try:
+        capabilities = client.call("ping", {}).get("capabilities", [])
+        tools = (
+            client.call("cli", {"method": "tools/list"})["tools"]
+            if "cli_worker" in capabilities
+            else []
+        )
+        reason = "" if tools else "the executor reports no CLI worker"
+    except Exception as exc:  # noqa: BLE001 — a listing must still answer
+        tools, reason = [], f"{type(exc).__name__}: {exc}"
+    print(
+        f"[cheese] native tools/list: {len(tools)} platform tools"
+        + (f" ({reason})" if reason else ""),
+        file=sys.stderr,
+        flush=True,
+    )
+    return tools
 
 
 def transport(config, target_path):
