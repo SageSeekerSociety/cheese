@@ -130,16 +130,14 @@ function width(i: number): string {
       </div>
     </template>
 
-    <!-- 现场的一条动作：圆点 + 动作，下面缩进一行参数。参数那一行照常画——
-         「读了哪个文件」「跑了什么命令」是常态，不带参数的工具调用才是例外。 -->
+    <!-- 现场的一条动作：一行里是圆点 + 动词 + 参数。参数那一截照常画——「读了哪
+         个文件」「跑了什么命令」是常态，不带参数的工具调用才是例外。时间不画：
+         它悬停才出现，画上去就是承诺一个静止时没有的东西。 -->
     <template v-else-if="variant === 'site'">
       <div v-for="i in rows || DEFAULT_ROWS.site" :key="i" class="skel__site" :style="{ '--skel-i': i }">
         <div class="skel__bone skel__bone--sdot" />
-        <div class="skel__site-main">
-          <div class="skel__bone skel__bone--meta skel__bone--verb" />
-          <div class="skel__bone skel__bone--meta skel__bone--arg" :style="{ width: width(i) }" />
-        </div>
-        <div class="skel__bone skel__bone--when" />
+        <div class="skel__bone skel__bone--meta skel__bone--verb" />
+        <div class="skel__bone skel__bone--meta skel__bone--arg" :style="{ width: width(i) }" />
       </div>
     </template>
 
@@ -436,41 +434,35 @@ function width(i: number): string {
   margin-left: auto;
 }
 
-/* PanelSite 的 .site-log：padding 12px、gap 14px（列）。一条 .site-act 是
-   8px 圆点（margin-top 5px）+ 一行动作 + 缩进一行参数，右端一个时间。 */
+/* PanelSite 的 .site-log：padding 12px、gap 4px（列）。一条 .site-act 是一行：
+   5px 圆点 + 4em 宽的动词 + 占满剩下宽度的参数。 */
 .skel--site {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 4px;
   padding: 12px;
 }
 .skel__site {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 8px;
   min-width: 0;
+  padding: 1px 6px;
 }
 .skel__bone--sdot {
-  width: 8px;
-  height: 8px;
+  width: 5px;
+  height: 5px;
   flex: none;
-  margin-top: 5px;
   border-radius: 50%;
 }
-.skel__site-main {
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 auto;
-  min-width: 0;
-}
-/* 动作名是「读取文件」「执行命令」这样的短词，不是一整行。 */
+/* 动词那一列是固定宽度的四个汉字，参数从它右边同一个 x 开始。 */
 .skel__bone--verb {
-  width: 64px;
+  width: 4em;
+  flex: none;
+  margin: 0;
 }
-/* 参数那一行比动作缩进一格（.site-act__argicon 12px + 3px 的 gap）。 */
 .skel__bone--arg {
-  margin-top: 5px; /* .t-meta 行盒的 4px + .site-act__arg 自己的 1px */
-  margin-left: 15px;
+  margin: 0;
 }
 
 /* PanelCard 的头三段，尺寸逐条照抄：

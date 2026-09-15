@@ -451,6 +451,7 @@ defineExpose({ pulse, highlightTurn, openFile })
           :topic="topic"
           :active="active === 'site'"
           :agent-name="agentName"
+          :working="working"
         />
         <PanelChanges
           v-if="mounted.has('changes')"

@@ -3,10 +3,18 @@
 // screen 通道），接不上就渲染重建出来的 transcript 时间线。
 import type { Block, Topic } from '../../cx_types'
 
-import { nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 
 import { getTerminal, getTranscript, SITE_PAGE_SIZE } from '../../api'
-import { countLines, isLongSiteEntry, shouldKeepPinning, SITE_CLAMP_LINES } from '../../lib/siteLog'
+import {
+  countLines,
+  formatSpan,
+  groupByTurn,
+  isLongSiteEntry,
+  isNarration,
+  shouldKeepPinning,
+  SITE_CLAMP_LINES,
+} from '../../lib/siteLog'
 import { isPlatformEvent, toolLabel } from '../../lib/toolLabels'
 import AgentControls from '../AgentControls.vue'
 import CheeseAvatar from '../CheeseAvatar.vue'
@@ -22,8 +30,11 @@ const props = withDefaults(
     // 这个房间现在交给的那个 AI 队友叫什么。一个项目可以有好几个队友，房间随时
     // 能换，所以这里不能写死「芝士」——这一栏和对话栏说的是同一个人。
     agentName?: string
+    // 这个房间现在有没有活在跑。现场自己听不到轮次帧（WS 在对话栏那边），而
+    // 「最后一组还没完」和「最后一组是上一轮留下的」看起来一模一样。
+    working?: boolean
   }>(),
-  { active: false, agentName: '芝士' }
+  { active: false, agentName: '芝士', working: false }
 )
 
 const loading = ref(false)
@@ -202,6 +213,21 @@ function eventArg(b: Block): string {
 function eventPlatform(b: Block): boolean {
   return isPlatformEvent(b.meta, b.refs)
 }
+
+// 芝士自己说的话也走 kind=event —— 没有显式发布的输出就是这么落库的（后端
+// `_persist_assistant_message` 的 as_progress 分支）。它不是一步操作，所以既不
+// 按工具行渲染，也不计进步数。旧数据没有 meta，按原样走工具行那条路。
+function isSay(b: Block): boolean {
+  return b.kind !== 'event' || isNarration(b.meta)
+}
+
+const turns = computed(() => groupByTurn(transcript.value))
+
+// 最后一组还在跑吗。现场没有逐轮的生命周期，只有「这个房间有没有活」，所以只
+// 给最后一组打这个标 —— 再往前的组都已经结束了。
+function isLive(index: number): boolean {
+  return props.working && index === turns.value.length - 1
+}
 </script>
 
 <template>
@@ -230,55 +256,74 @@ function eventPlatform(b: Block): boolean {
         <div v-if="hasOlder" class="site-older">
           {{ loadingOlder ? '加载更早的现场…' : '更早的现场' }}
         </div>
-        <template v-for="b in transcript" :key="b.id">
-          <!-- Tool action — Claude Code style: 圆点 + 动作 + 参数预览 -->
-          <div v-if="b.kind === 'event'" class="site-act">
-            <v-icon class="site-act__dot" :class="{ 'site-act__dot--platform': eventPlatform(b) }" size="8"
-              >mdi-circle</v-icon
-            >
-            <div class="site-act__body">
-              <span class="site-act__verb">{{ eventVerb(b) }}</span>
-              <div v-if="eventArg(b)" class="site-act__arg">
-                <v-icon class="site-act__argicon" size="12">mdi-subdirectory-arrow-right</v-icon>
-                <span class="site-act__argtext" data-testid="site-act-arg">{{ eventArg(b) }}</span>
-              </div>
-            </div>
-            <span class="site-act__time">{{ fmtTime(b.created_at) }}</span>
+        <section v-for="(turn, index) in turns" :key="turn.key" class="turn">
+          <!-- 组头：这一轮从什么时候开始、几步、多久。触发这一轮的那句话在对话
+               栏，现场读不到它（人写的块不带 turn_id），所以这里不写标题。 -->
+          <div class="turn__head">
+            <span class="turn__time">{{ fmtTime(turn.startedAt) }}</span>
+            <span v-if="isLive(index)" class="turn__live">
+              <i class="turn__pulse" />
+              进行中
+            </span>
+            <span class="turn__meta">
+              {{ turn.steps }} 步<template v-if="turn.seconds > 0"> · {{ formatSpan(turn.seconds) }}</template>
+            </span>
           </div>
-          <!-- 芝士 speaks — shown as a person, with avatar (like the chat) -->
-          <div v-else class="site-msg">
-            <!-- 头像上的字取的是这个房间当前那个队友的名字，和它右边写的名字同一个来源。 -->
-            <CheeseAvatar :size="26" :name="agentName" class="site-msg__av" />
-            <div class="site-msg__main">
-              <div class="site-msg__meta">
-                <span class="site-msg__name">{{ authorLabel(b) }}</span>
-                <span class="t-meta">{{ fmtTime(b.created_at) }}</span>
-              </div>
-              <!-- Raw transcript text on purpose (决定: 现场内容改为raw): 现场 shows
+          <template v-for="b in turn.entries" :key="b.id">
+            <!-- 一步一行：动词成列，参数占满剩下的宽度，时间悬停才出现。参数太
+                 长时截断而不是折行 —— 点这一行摊开全文。 -->
+            <div v-if="!isSay(b)" class="site-act" :class="{ 'site-act--platform': eventPlatform(b) }">
+              <i class="site-act__dot" :class="{ 'site-act__dot--platform': eventPlatform(b) }" />
+              <span class="site-act__verb">{{ eventVerb(b) }}</span>
+              <button
+                v-if="eventArg(b)"
+                type="button"
+                class="site-act__argtext"
+                :class="{ 'site-act__argtext--full': expandedSite.has(b.id) }"
+                data-testid="site-act-arg"
+                :title="eventArg(b)"
+                @click="toggleSiteEntry(b.id)"
+              >
+                {{ eventArg(b) }}
+              </button>
+              <span v-else class="site-act__argtext"></span>
+              <span class="site-act__time">{{ fmtTime(b.created_at) }}</span>
+            </div>
+            <!-- 芝士 speaks — shown as a person, with avatar (like the chat) -->
+            <div v-else class="site-msg">
+              <!-- 头像上的字取的是这个房间当前那个队友的名字，和它右边写的名字同一个来源。 -->
+              <CheeseAvatar :size="26" :name="agentName" class="site-msg__av" />
+              <div class="site-msg__main">
+                <div class="site-msg__meta">
+                  <span class="site-msg__name">{{ authorLabel(b) }}</span>
+                  <span class="t-meta">{{ fmtTime(b.created_at) }}</span>
+                </div>
+                <!-- Raw transcript text on purpose (决定: 现场内容改为raw): 现场 shows
                    what 芝士 actually emitted — markdown syntax, <@handle> tokens
                    and all — like a Claude Code session, NOT the rendered chat
                    version. -->
-              <div
-                class="site-msg__raw"
-                :class="{ 'site-msg__raw--clamped': isLongSiteEntry(b.content) && !expandedSite.has(b.id) }"
-                :style="{ '--site-clamp-lines': SITE_CLAMP_LINES }"
-              >
-                {{ b.content }}
-              </div>
-              <!-- 过长时不直接摊开：一条几千字的输出会把它前后的所有东西挤出
+                <div
+                  class="site-msg__raw"
+                  :class="{ 'site-msg__raw--clamped': isLongSiteEntry(b.content) && !expandedSite.has(b.id) }"
+                  :style="{ '--site-clamp-lines': SITE_CLAMP_LINES }"
+                >
+                  {{ b.content }}
+                </div>
+                <!-- 过长时不直接摊开：一条几千字的输出会把它前后的所有东西挤出
                    屏幕，而 现场 的价值恰恰是「一眼看完发生了什么」。折叠到 12
                    行，想看全的自己点开。 -->
-              <button
-                v-if="isLongSiteEntry(b.content)"
-                type="button"
-                class="site-msg__more"
-                @click="toggleSiteEntry(b.id)"
-              >
-                {{ expandedSite.has(b.id) ? '收起' : `展开全部（${countLines(b.content)} 行）` }}
-              </button>
+                <button
+                  v-if="isLongSiteEntry(b.content)"
+                  type="button"
+                  class="site-msg__more"
+                  @click="toggleSiteEntry(b.id)"
+                >
+                  {{ expandedSite.has(b.id) ? '收起' : `展开全部（${countLines(b.content)} 行）` }}
+                </button>
+              </div>
             </div>
-          </div>
-        </template>
+          </template>
+        </section>
       </div>
     </template>
   </div>
@@ -306,11 +351,65 @@ function eventPlatform(b: Block): boolean {
 .site-log {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 4px;
+}
+/* 组内密、组间疏：一轮里的步骤挨着，轮与轮之间隔开并划一条发丝线。全都等距
+   就等于没有分组 —— 二十条等距的行读起来是一堵墙，不是一段经过。 */
+.turn + .turn {
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.turn__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--faint);
+}
+.turn__time {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.turn__meta {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.turn__live {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ok-ink);
+}
+.turn__pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--ok);
+  animation: site-breathe 1.6s ease-in-out infinite;
+}
+/* 全局的减弱动效兜底会把时长压到 0.001ms，1.6s 的呼吸就变成频闪 —— 比不动更
+   糟，所以这里自己关掉。关掉之后那个点还在，「进行中」三个字也还在。 */
+@media (prefers-reduced-motion: reduce) {
+  .turn__pulse {
+    animation: none;
+  }
+}
+@keyframes site-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
 }
 .site-msg {
   display: flex;
   gap: 8px;
+  margin: 6px 0 2px;
 }
 .site-msg__av {
   flex: 0 0 auto;
@@ -331,57 +430,96 @@ function eventPlatform(b: Block): boolean {
   font-weight: 600;
   color: var(--ink);
 }
+/* 一步一行。重复的是动词，有信息的是参数，所以动词退成固定宽度的次要列，参数
+   拿正文色 —— 扫下来看见的是文件名和命令在变，不是二十遍「执行命令」。 */
 .site-act {
   display: flex;
-  align-items: flex-start;
+  align-items: baseline;
   gap: 8px;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
   font-family: var(--font-mono);
-  font-size: 12.5px;
-  line-height: 1.5;
+  font-size: 13px;
+  line-height: 1.55;
+  transition: background-color 0.12s ease;
+}
+.site-act:hover {
+  background: var(--fill);
+}
+.site-act:hover .site-act__time {
+  opacity: 1;
+}
+/* 平台动作是这一轮的产出（交出一份成果、写文档、递验收卡），不该和 ls 长得
+   一样。 */
+.site-act--platform {
+  background: var(--accent-wash);
 }
 /* 圆点分级: neutral = plain work (read/search/run), amber = platform action
    (cheese tool / cheese CLI / doc edit). */
-/* 图标盒子没有文字基线，行改成顶对齐后要手动把 8px 圆点压到第一行的中线上
-   ((12.5px × 1.5 − 8px) / 2 ≈ 5px)。 */
 .site-act__dot {
   flex: 0 0 auto;
-  margin-top: 5px;
-  color: var(--faint);
-}
-.site-act__argicon {
-  flex: 0 0 auto;
-  margin-top: 3px;
-  color: var(--faint);
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-pill);
+  background: var(--faint);
+  /* 圆点没有文字基线，按行高把它压到第一行的中线上。 */
+  transform: translateY(-3px);
 }
 .site-act__dot--platform {
-  color: var(--accent);
+  background: var(--accent);
 }
-.site-act__body {
+/* 4em = 四个汉字，绝大多数动词正好这么宽，参数因此对齐成一列。更长的那几个
+   （平台动作）自己把这一行的参数推开，而它们本来就该显眼。 */
+.site-act__verb {
+  flex: 0 0 auto;
+  min-width: 4em;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.site-act--platform .site-act__verb {
+  color: var(--accent-ink);
+}
+/* 截断而不是折行：一条几百字符的命令折下来能占掉半屏，而这一列的用处是扫。
+   想看全文的点开这一行，鼠标停住也有完整的一份。
+   是个 button 而不是带 click 的 span：摊开是一个真的操作，键盘要够得着它。 */
+.site-act__argtext {
   flex: 1 1 auto;
   min-width: 0;
-}
-.site-act__verb {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
   color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
 }
-/* 图标和文字分成两个 flex 子项（而不是把图标塞进 pre-wrap 的文本流里）：
-   pre-wrap 会把模板里的换行和缩进照样画出来，而 flex 布局顺带给了折行时的
-   悬挂缩进 —— 第二行对齐到箭头右边，正是那个箭头本来的意思。 */
-.site-act__arg {
-  display: flex;
-  gap: 3px;
-  margin-top: 1px;
-  color: var(--faint);
+.site-act__argtext:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
 }
-.site-act__argtext {
-  min-width: 0;
+.site-act__argtext--full {
   white-space: pre-wrap;
   word-break: break-word;
 }
+.site-act--platform .site-act__argtext {
+  color: var(--accent-ink);
+}
+/* 时间悬停才出现：二十个同样的 20:28 占着最右边的强位置，却不说明任何事，这一
+   轮的时间写在组头上。位置照留，不然一行会在鼠标划过时改变宽度。 */
 .site-act__time {
   flex: 0 0 auto;
   color: var(--faint);
-  font-size: 11px;
+  font-size: 12px;
   font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  opacity: 0;
+  transition: opacity 0.12s ease;
 }
 /* 现场 is a transcript, not a doc — 芝士's messages are shown RAW (markdown
    source, <@handle> tokens intact), Claude Code style: mono + pre-wrap. */
