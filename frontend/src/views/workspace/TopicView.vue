@@ -102,6 +102,7 @@ const panelRef = ref<{
 const chatColumn = ref<{
   connected: boolean
   reloadAccept: (silent?: boolean) => void
+  say: (content: string) => boolean
 } | null>(null)
 
 // Drag the chat|panel splitter: set chat's width as a % of the panes row.
@@ -131,6 +132,12 @@ const activityTick = ref(0)
 // The chat column's own composer is the one this topic uses; TopicView only
 // needs a handle on the panel it lives in for the connection dot in the header.
 const composerReady = computed(() => !!chatColumn.value?.connected)
+
+// 预览里指出的一处位置，作为一条普通消息进这个房间的对话。没有新接口，也没有
+// 长期锚点：它只在下一轮被读一次。
+function onLocate(message: string) {
+  chatColumn.value?.say(message)
+}
 
 // 对话那一栏在两端挂在不同位置（左栏 / tab 栏第一格），但接的是同一组事件。
 const chatEvents = {
@@ -349,6 +356,7 @@ watch(
           @open-card="onOpenCard"
           @mention-click="handleMentionClick"
           @update:tab="onPanelTab"
+          @locate="onLocate"
         >
           <!-- 手机：一屏放不下两栏，对话是 tab 栏里的第一格。 -->
           <template #chat>
