@@ -1488,6 +1488,14 @@ export function removeProjectMember(projectId: string, handle: string): Promise<
   )
 }
 
+// 退出项目：地址里是 `me`，不是 handle —— 这条路上唯一能被摘掉的人就是调用者。
+// 后端也不收 handle（members.py），所以这里没有任何位置放别人的名字。
+export function leaveProject(projectId: string): Promise<{ left: boolean }> {
+  return request<{ left: boolean }>(`/projects/${encodeURIComponent(projectId)}/members/me`, {
+    method: 'DELETE',
+  })
+}
+
 // ---- 邀请：加人这件事要两个人同意 --------------------------------------------
 // 进了项目就看得见这个项目的全部话题，那是别人的工作内容，所以从界面上加人得由
 // 被加的那个人点头。`addProjectMember` 那条路仍然在，它是接受之后真正把人放上名册

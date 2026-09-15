@@ -1,11 +1,15 @@
 """Project membership routes (nested under /api/projects).
 
-The three write routes decide who is a member of the project, and project
-membership is what ``authorize_topic_access`` reads to let someone into every
-topic of that project. So the acting identity is resolved at the trust boundary
+The write routes decide who is a member of the project, and project membership
+is what ``authorize_topic_access`` reads to let someone into every topic of that
+project. So the acting identity is resolved at the trust boundary
 (``ActorResolverDep``) and the service authorizes it — unlike most 2.0 routes
 these do NOT honor a handle passed in the body: a claimed handle is exactly the
 forgery this surface must not accept. Reading the roster stays open, as it was.
+
+Four of them manage someone ELSE and need owner/lead; one (``leave_project``,
+the path that says ``me``) lets anyone take themselves off. The authorization
+for each lives in ``MemberService``.
 """
 
 import uuid
@@ -115,6 +119,26 @@ async def update_member_role(
         project_id=project_id, user_handle=user_handle, role=body.role, actor=who
     )
     return ok(MemberOut.model_validate(member).model_dump(mode="json"))
+
+
+@router.delete("/projects/{project_id}/members/me")
+async def leave_project(
+    project_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """「我退出这个项目」。
+
+    路径里写死 ``me``，不收 handle：这条接口唯一能摘掉的人就是调用者，而调用者
+    是从凭据里解析出来的 —— 收一个 handle 等于开一条把别人踢出去的口子，只是
+    伪装成自助退出。
+
+    必须排在下面 ``/members/{user_handle}`` **之前**：路由按注册顺序匹配，排在
+    后面的话 ``me`` 会先被当成一个人的 handle，这条永远进不来。
+    """
+    who = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await MemberService(db).leave(project_id=project_id, actor=who)
+    return ok({"left": True})
 
 
 @router.delete("/projects/{project_id}/members/{user_handle}")

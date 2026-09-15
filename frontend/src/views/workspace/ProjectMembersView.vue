@@ -8,6 +8,10 @@
 // 一行 = 一个人 = 两件事：找到他（点开是他的主页，右边是私聊），和管理他（角色、
 // 移出）。管理动作只对 owner / lead 出现，这条判断在后端也各做一次
 // （membership/services.py），前端藏起来只是为了不给人一个必定失败的按钮。
+//
+// 这一页上还有一份**对自己**的动作：退出项目。它和管理别人的那套不是一回事
+// （后端也是两条路，见 membership/services.py 的 leave），所以它不在行菜单里，
+// 在页头。
 import type { ProjectAgent, ProjectInvitation, ProjectMemberRow } from '@/cx_types'
 
 import { computed, ref, watch } from 'vue'
@@ -17,6 +21,7 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import {
   inviteProjectMember,
+  leaveProject,
   listProjectAgents,
   listProjectInvitations,
   removeProjectMember,
@@ -193,6 +198,35 @@ function confirmRemove() {
   void run(m.user_handle, () => removeProjectMember(props.projectId, m.user_handle))
 }
 
+// ---- 退出项目 ----
+// 和上面那个「移出」成对：那个是把别人摘下去（要 owner / lead），这个是把自己摘
+// 下去（谁都可以）。两种人被后端拒，所以干脆不给按钮：所有者不在成员表里，退的是
+// 一个空动作（要先交所有权）；小队带进来的人（source: team）名下没有行可删，他的
+// 出路是退出小队。
+const myRow = computed<ProjectMemberRow | null>(() => store.members.find((m) => m.user_handle === me.value) ?? null)
+const canLeave = computed(() => !!myRow.value && !myRow.value.source)
+
+const leaveOpen = ref(false)
+const leaving = ref(false)
+async function confirmLeave() {
+  leaveOpen.value = false
+  leaving.value = true
+  error.value = null
+  try {
+    await leaveProject(props.projectId)
+    // 卡在这一页没有意义了：项目的门已经关了，而这个项目也从「我的项目」里消失
+    // 了。所以重新拉一遍那份清单，然后整页跳走 —— 用整页跳转而不是 router.replace，
+    // 是因为左侧 rail 上那份项目清单是 App.vue 自己的 ref，只有重新加载才会重新问
+    // 服务端；不这么做，刚退出的那一格还立在那儿，点进去就是 403。
+    await store.refreshProjects()
+    const next = store.projects.find((p) => p.id !== props.projectId)
+    window.location.assign(next ? `/projects/${next.id}` : '/')
+  } catch (e) {
+    leaving.value = false
+    error.value = e instanceof Error ? e.message : '退出失败'
+  }
+}
+
 // ---- 邀请 ----
 // 按 uid 邀请，而不是按 handle：uid 是个人主页地址里那个数字，找得到、抄得准；
 // handle 得对方自己告诉你，而且打错一个字母的后果是「查无此人」还是「加错了人」
@@ -290,6 +324,8 @@ async function submitInvite() {
         >
           邀请成员
         </v-btn>
+        <!-- 退出自己在这儿，不在名册任何一行的 ⋯ 菜单里：那个菜单管的是别人。 -->
+        <v-btn v-if="canLeave" class="ml-2" variant="text" color="error" @click="leaveOpen = true"> 退出项目 </v-btn>
       </div>
 
       <p class="t-body c-muted mb-5" style="max-width: 640px">
@@ -514,6 +550,21 @@ async function submitInvite() {
           <v-spacer />
           <v-btn variant="text" @click="removeTarget = null">取消</v-btn>
           <v-btn color="error" variant="flat" @click="confirmRemove">移出</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- 退出自己：说清楚「退完会怎样」和「怎么回来」，再让人按第二下。 -->
+    <v-dialog v-model="leaveOpen" max-width="420">
+      <v-card>
+        <v-card-title class="t-title pt-4">退出「{{ project?.name || '这个项目' }}」？</v-card-title>
+        <v-card-text class="t-body c-muted">
+          你将看不到这个项目的话题。已经发过的消息和做过的事都留着，重新被邀请可以再进来。
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" :disabled="leaving" @click="leaveOpen = false">取消</v-btn>
+          <v-btn color="error" variant="flat" :loading="leaving" @click="confirmLeave">退出项目</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>

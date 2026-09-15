@@ -10,7 +10,7 @@ import type { ProjectMemberRow } from '@/cx_types'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const inviteProjectMember = vi.fn()
@@ -18,6 +18,7 @@ const listProjectInvitations = vi.fn()
 const revokeInvitation = vi.fn()
 const updateProjectMemberRole = vi.fn()
 const removeProjectMember = vi.fn()
+const leaveProject = vi.fn()
 const listProjectAgents = vi.fn()
 
 vi.mock('@/api', async () => {
@@ -29,6 +30,7 @@ vi.mock('@/api', async () => {
     revokeInvitation: (...a: unknown[]) => revokeInvitation(...a),
     updateProjectMemberRole: (...a: unknown[]) => updateProjectMemberRole(...a),
     removeProjectMember: (...a: unknown[]) => removeProjectMember(...a),
+    leaveProject: (...a: unknown[]) => leaveProject(...a),
     listProjectAgents: (...a: unknown[]) => listProjectAgents(...a),
   }
 })
@@ -45,14 +47,19 @@ let meHandle = 'alice'
 vi.mock('@/me', () => ({ myHandle: () => meHandle }))
 
 const refreshMembers = vi.fn()
+// 退出自己之后要问一遍「你现在还在哪些项目里」——那份清单由 store 持有，页面不
+// 自己拼，所以这里也得让它能被换掉（退出成功之后 p1 就该不在里面了）。
+const refreshProjects = vi.fn()
+let projects: { id: string; name: string; created_at: string; owner_handle: string }[] = []
 let members: ProjectMemberRow[] = []
 let privateUnreadMap: Record<string, number> = {}
 vi.mock('@/stores/workspace', () => ({
   useWorkspaceStore: () => ({
     members,
     privateUnreadMap,
-    projects: [{ id: 'p1', name: 'P1', created_at: '', owner_handle: 'alice' }],
+    projects,
     refreshMembers,
+    refreshProjects,
   }),
 }))
 
@@ -66,8 +73,15 @@ function member(over: Partial<ProjectMemberRow> = {}): ProjectMemberRow {
 
 let vuetify: ReturnType<typeof createVuetify>
 
+// 退出成功之后这一页整跳（不是 router.replace，理由见页面里的注释）。jsdom 里真的
+// 跳会打一行 "Not implemented: navigation"，所以把落点拦下来看看去了哪。
+const assign = vi.fn()
+
 beforeAll(() => {
   vuetify = createVuetify({ components, directives })
+  vi.spyOn(window.location, 'assign').mockImplementation((url: string | URL) => {
+    assign(String(url))
+  })
   // 菜单和对话框是真的 overlay，Vuetify 的定位策略直接读这几个全局量；jsdom 没有。
   // 同 ResizeObserver 一样是环境缺件，不补的话第一个点击用例炸掉。
   if (!('ResizeObserver' in globalThis)) {
@@ -95,7 +109,11 @@ beforeAll(() => {
 
 beforeEach(() => {
   push.mockReset()
+  assign.mockReset()
   refreshMembers.mockReset()
+  refreshProjects.mockReset().mockResolvedValue(undefined)
+  projects = [{ id: 'p1', name: 'P1', created_at: '', owner_handle: 'alice' }]
+  leaveProject.mockReset().mockResolvedValue({ left: true })
   inviteProjectMember.mockReset().mockResolvedValue({})
   listProjectInvitations.mockReset().mockResolvedValue({ data: [], total: 0 })
   revokeInvitation.mockReset().mockResolvedValue({})
@@ -372,5 +390,98 @@ describe('成员页：所有者那一行', () => {
     expect(rowFor(container, 'alice').querySelector('[aria-label="管理成员"]')).toBeNull()
     // 名册里真有他自己那一行时（他也被显式加进过成员表），也只画一行。
     expect(container.querySelectorAll('.member-row').length).toBe(2)
+  })
+})
+
+// 「退出项目」是这一页上唯一一条**对自己**的动作：上面那套管理菜单管的是别人，
+// 后端也要 owner / lead 才让按。这一组守三件事——按钮该出现的时候出现、不该出现
+// 的时候不出现（给一个必定失败的按钮比没有按钮更糟），以及它是一个两下的动作。
+describe('成员页：退出项目', () => {
+  const ownerRow = (): ProjectMemberRow => ({
+    user_handle: 'alice',
+    role: 'lead',
+    name: '爱丽丝',
+    source: 'owner',
+  })
+
+  // 页头那颗和对话框里那颗同名——不能靠「第几颗」来分，页头那颗一出现就查得到，
+  // 文档顺序也随 Vuetify 的 overlay 挂载时机变。所以各自限定范围：页头那颗在
+  // 组件容器里，确认那颗在 role=dialog 里。
+  async function clickHeaderLeave(container: Element) {
+    await fireEvent.click(within(container as HTMLElement).getByRole('button', { name: '退出项目' }))
+  }
+  async function confirmLeaveDialog() {
+    const dialog = await screen.findByRole('dialog')
+    await fireEvent.click(within(dialog).getByRole('button', { name: '退出项目' }))
+  }
+
+  it('普通成员在页头看得见——找不到它的人只剩「求组长把自己移出去」这一条路', () => {
+    meHandle = 'ligan'
+    const { queryByText } = mount()
+    expect(queryByText('退出项目')).toBeTruthy()
+  })
+
+  it('所有者和靠小队进来的人没有这颗按钮——后端对这两种人分别是「先交所有权」和「名册上没有你这一行」', () => {
+    members = [ownerRow(), member({ user_handle: 'bob', name: '波比', source: 'team', team_id: 7 })]
+    const asOwner = mount()
+    expect(asOwner.queryByText('退出项目')).toBeNull()
+    asOwner.unmount()
+
+    meHandle = 'bob'
+    const asTeammate = mount()
+    expect(asTeammate.queryByText('退出项目')).toBeNull()
+  })
+
+  it('按一下不会直接退——先问一次，说清楚退完会怎样', async () => {
+    meHandle = 'ligan'
+    const { container } = mount()
+    await clickHeaderLeave(container)
+    expect(leaveProject).not.toHaveBeenCalled()
+    expect(await screen.findByText(/退出「P1」？/)).toBeTruthy()
+
+    await confirmLeaveDialog()
+    await waitFor(() => expect(leaveProject).toHaveBeenCalledWith('p1'))
+  })
+
+  it('退成之后离开这一页，并且重新问一遍「我还在哪些项目里」', async () => {
+    meHandle = 'ligan'
+    refreshProjects.mockImplementation(async () => {
+      projects.splice(0, projects.length, {
+        id: 'p2',
+        name: 'P2',
+        created_at: '',
+        owner_handle: 'bob',
+      })
+    })
+    const { container } = mount()
+    await clickHeaderLeave(container)
+    await confirmLeaveDialog()
+
+    await waitFor(() => expect(refreshProjects).toHaveBeenCalled())
+    // 不整跳的话左侧 rail 上刚退出的那一格还立着，点进去就是一扇关上的门。
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('/projects/p2'))
+  })
+
+  it('一个项目都不剩时回首页', async () => {
+    meHandle = 'ligan'
+    refreshProjects.mockImplementation(async () => {
+      projects.splice(0, projects.length)
+    })
+    const { container } = mount()
+    await clickHeaderLeave(container)
+    await confirmLeaveDialog()
+
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('/'))
+  })
+
+  it('退不掉就把后端说的话摆出来——不能退的人得知道自己该做什么', async () => {
+    meHandle = 'ligan'
+    leaveProject.mockRejectedValue(new Error('你是这个项目的所有者，不能退出；请先把所有权转交其他人'))
+    const { container } = mount()
+    await clickHeaderLeave(container)
+    await confirmLeaveDialog()
+
+    expect(await screen.findByText(/不能退出/)).toBeTruthy()
+    expect(assign).not.toHaveBeenCalled()
   })
 })

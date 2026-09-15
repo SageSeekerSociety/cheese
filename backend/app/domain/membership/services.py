@@ -10,7 +10,12 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.core.errors import (
+    AuthenticationRequiredError,
+    ForbiddenError,
+    NotFoundError,
+    ValidationError,
+)
 from app.domain.authz.policy import can_manage_project_members
 from app.domain.identity.actor import Actor
 from app.domain.membership.repositories import InvitationRepository, MemberRepository
@@ -127,6 +132,37 @@ class MemberService:
         member = await self._repo.get(project_id=project_id, user_handle=user_handle)
         if member is None:
             raise NotFoundError("Member not found")
+        await self._repo.delete(member)
+
+    async def leave(self, *, project_id: uuid.UUID, actor: Actor) -> None:
+        """把**调用者自己**摘下名册 —— 「我退出这个项目」。
+
+        ``remove`` 的镜像，但故意不过 ``require_manager``：这条写动不了别人，
+        「成员不能给自己提权」在这里没有对应的风险 (authz/policy.py)。代价是那
+        道闸顺带挡住的东西得自己挡，也就是下面两条。
+
+        所有者不能退：他不在成员表里（``ProjectService._seed_roster``），而
+        ``_is_project_member`` 认的是 owner_handle —— 删掉一个并不存在的成员行
+        什么也改不了，他退完照样进得来。真正要做的是把所有权交出去，所以这里直
+        说，而不是返回一个骗人的成功。
+
+        退不掉的还有一种人：靠所属小队进项目的（``_is_project_member`` 的第三
+        个分支），他对这个项目压根没有成员行 —— 那种情况下出路是退出小队，报
+        404 而不是硬删。名册上这些人带 ``source``，界面上不给这颗按钮。
+        """
+        await self._ensure_project(project_id)
+        if not actor.authenticated:
+            # resolve() 对没有凭据的调用者给的是 anonymous，而它没通过验证 ——
+            # 退出是一次写，得知道是谁在写。
+            raise AuthenticationRequiredError("退出项目需要登录身份")
+        project = await self._projects.get(project_id)
+        if project is not None and project.owner_handle == actor.handle:
+            raise ForbiddenError(
+                "你是这个项目的所有者，不能退出；请先把所有权转交其他人"
+            )
+        member = await self._repo.get(project_id=project_id, user_handle=actor.handle)
+        if member is None:
+            raise NotFoundError("你不在这个项目的成员名册上")
         await self._repo.delete(member)
 
 
