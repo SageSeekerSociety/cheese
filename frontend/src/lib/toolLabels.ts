@@ -31,6 +31,14 @@ export const TOOL_LABELS: Record<string, string> = {
   AskUserQuestion: '向用户提问',
   Skill: '调用技能',
   ToolSearch: '查找工具',
+  // pi 原生工具 — 全小写，和上面那批一个都不重合。
+  bash: '执行命令',
+  read: '读取文件',
+  write: '写入文件',
+  edit: '修改文件',
+  ls: '列出目录',
+  find: '查找文件',
+  grep: '搜索内容',
 }
 
 export function toolLabel(name: string): string {
