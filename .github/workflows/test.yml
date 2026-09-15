@@ -340,6 +340,16 @@ jobs:
       - name: Report Cargo target cache size
         run: du -sh "$CARGO_TARGET_DIR" 2>/dev/null || echo "(no cache dir yet)"
 
+      # The resident Postgres outlives the job, and a service container used to
+      # bring this database into being by being new. Empty every run on purpose:
+      # what the step below proves is that the migrations apply from nothing.
+      - name: Give this run an empty database
+        run: |
+          docker exec cheese-ci-postgres psql -U postgres -v ON_ERROR_STOP=1 -c \
+            "DROP DATABASE IF EXISTS \"cheese_test_$CHEESE_CI_SLOT\" WITH (FORCE)"
+          docker exec cheese-ci-postgres psql -U postgres -v ON_ERROR_STOP=1 -c \
+            "CREATE DATABASE \"cheese_test_$CHEESE_CI_SLOT\""
+
       # DATABASE_URL comes from the slot step above.
       - name: Run database migrations
         run: uv run alembic upgrade head

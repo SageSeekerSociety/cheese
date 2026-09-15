@@ -605,6 +605,31 @@ async def _clone_db(db_name: str, template: str) -> None:
         await conn.close()
 
 
+async def _drop_superseded_templates() -> None:
+    """Remove every `cheesex_tpl_*` but this migration history's own.
+
+    Never raises: a template that cannot be dropped (another run is cloning from
+    it this second) is not this run's problem, and the next build tries again.
+    """
+    import asyncpg
+
+    dsn = _PG_BASE.replace("+asyncpg", "") + "/postgres"
+    conn = await asyncpg.connect(dsn)
+    try:
+        stale = await conn.fetch(
+            "SELECT datname FROM pg_database"
+            " WHERE datname LIKE 'cheesex_tpl_%' AND datname <> $1",
+            _TEMPLATE_DB,
+        )
+        for row in stale:
+            try:
+                await conn.execute(f'DROP DATABASE IF EXISTS "{row["datname"]}"')
+            except Exception:  # noqa: BLE001, PERF203 — in use is not an error here
+                continue
+    finally:
+        await conn.close()
+
+
 async def _rename_db(old: str, new: str) -> None:
     import asyncpg
 
@@ -633,6 +658,11 @@ def _ensure_template() -> bool:
     The template is built under a temporary name and renamed on success, so its
     existence means "complete" — a run killed mid-migration leaves the failed
     build behind, not a half-migrated template that later runs would trust.
+
+    Building a new one also drops the templates of migration histories that are
+    no longer current. That used to take care of itself, because the server was a
+    container thrown away with the job; on a CI machine's resident Postgres they
+    would accumulate instead, and its data directory is a 3 GB tmpfs.
     """
     import fcntl
     import tempfile
@@ -647,6 +677,7 @@ def _ensure_template() -> bool:
             building = f"{_TEMPLATE_DB}_building"
             _migrate_fresh_db(building, f"{_PG_BASE}/{building}")
             asyncio.run(_rename_db(building, _TEMPLATE_DB))
+            asyncio.run(_drop_superseded_templates())
             return True
     except Exception:  # noqa: BLE001 — fall back to the slow path, never block
         return False
