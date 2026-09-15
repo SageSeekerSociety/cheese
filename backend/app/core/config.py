@@ -149,6 +149,13 @@ class Settings(BaseSettings):
     # concurrent pages in 4.7s where per-caller browsers took 9.5s for three.
     fetch_browser_endpoint: str | None = None
 
+    # LibreOffice, reached over HTTP for the same reasons as the browser above:
+    # it is ~800MB and wants a writable profile directory, which rules it out of
+    # both the backend image and the sandbox image. It converts a Word or
+    # PowerPoint deliverable to PDF so the room can show it instead of offering a
+    # download. Unset, the preview panel says so and still hands the file over.
+    office_render_endpoint: str | None = None
+
     # --- LLM gateway admin (L1/L2 — defined in `app.domain.agent.gateway`) ---
     # When the pool routes through the self-hosted LiteLLM gateway, the backend can
     # use the gateway's ADMIN API to (L1) mint a per-project virtual key — injected

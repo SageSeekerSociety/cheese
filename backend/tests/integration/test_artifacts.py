@@ -341,3 +341,78 @@ def test_serve_is_refused_when_nothing_answers_on_the_declared_port(client):
     assert r.status_code == 422, r.text
     assert "端口" in r.json()["message"], "must say what is wrong with the port"
     assert client.get(f"/topics/{tid}/preview").json()["data"] is None
+
+
+def test_a_word_report_is_converted_so_a_browser_can_show_it(client, monkeypatch):
+    """The panel asks for a PDF; the platform converts the .docx into one.
+
+    Without this the 预览 tab has nothing to draw for the format a room most often
+    produces, and falls back to a download — the state this route exists to end.
+    """
+    import base64
+
+    from app.api.routes import topics as topics_routes
+
+    _pid, tid = _topic(client)
+    raw = b"PK\x03\x04a word file"
+    client.post(
+        f"/topics/{tid}/artifact",
+        json={"path": "评审简报.docx", "content_b64": base64.b64encode(raw).decode()},
+    )
+
+    seen: dict = {}
+
+    async def fake_render(data, path, endpoint, timeout=90.0):
+        seen["data"], seen["path"], seen["endpoint"] = data, path, endpoint
+        return b"%PDF-1.7 converted"
+
+    monkeypatch.setattr(settings, "office_render_endpoint", "http://renderer:8901")
+    monkeypatch.setattr(topics_routes, "render_to_pdf", fake_render)
+
+    r = client.get(f"/topics/{tid}/attachments/pdf", params={"path": "评审简报.docx"})
+
+    assert r.status_code == 200, r.text
+    assert r.content == b"%PDF-1.7 converted"
+    assert r.headers["content-type"] == "application/pdf"
+    # The file's own bytes go to the renderer, not a path it cannot reach.
+    assert seen["data"] == raw
+
+
+def test_a_spreadsheet_is_never_sent_for_conversion(client):
+    """Paginating a sheet breaks its columns apart and throws away the cell
+    addresses — the only thing a reader can point at afterwards. The browser
+    draws those from the original bytes instead."""
+    import base64
+
+    _pid, tid = _topic(client)
+    client.post(
+        f"/topics/{tid}/artifact",
+        json={
+            "path": "预算表.xlsx",
+            "content_b64": base64.b64encode(b"PK\x03\x04").decode(),
+        },
+    )
+
+    r = client.get(f"/topics/{tid}/attachments/pdf", params={"path": "预算表.xlsx"})
+
+    assert r.status_code == 422, r.text
+
+
+def test_a_deployment_without_a_renderer_says_so_rather_than_failing(client):
+    """503, not 500: the panel pairs this with the download and a sentence about
+    the deployment. A 500 would read as "this file is broken", which it is not."""
+    import base64
+
+    _pid, tid = _topic(client)
+    client.post(
+        f"/topics/{tid}/artifact",
+        json={
+            "path": "报告.docx",
+            "content_b64": base64.b64encode(b"PK\x03\x04").decode(),
+        },
+    )
+
+    r = client.get(f"/topics/{tid}/attachments/pdf", params={"path": "报告.docx"})
+
+    assert r.status_code == 503, r.text
+    assert "文档预览" in r.json()["message"]

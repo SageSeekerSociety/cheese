@@ -411,6 +411,11 @@ case "$APP_IMAGE_SOURCE" in
     # trade the whole platform for one rung.
     dc pull browser-render >/dev/null 2>&1 \
       || log "WARNING: browser-render image unavailable; fetching will fall back a rung"
+    # Same shape, same reason: without the renderer a Word or PowerPoint
+    # deliverable falls back to a download, which the preview panel reports on
+    # screen. Nothing else in the platform is affected.
+    dc pull office-render >/dev/null 2>&1 \
+      || log "WARNING: office-render image unavailable; documents will offer download only"
     ;;
   local)
     [ -n "${BACKEND_IMAGE:-}" ] || \
@@ -709,6 +714,8 @@ fi
 # start must not hold back a backend that would have served.
 dc up -d browser-render >/dev/null 2>&1 \
   || log "WARNING: browser-render did not start; fetching will fall back a rung"
+dc up -d office-render >/dev/null 2>&1 \
+  || log "WARNING: office-render did not start; documents will offer download only"
 
 log "waiting for health…"
 code=""
