@@ -384,6 +384,42 @@ def test_the_gateway_is_described_as_the_plain_openai_shape_it_is():
     assert compat["supportsDeveloperRole"] is False
 
 
+def test_a_runner_that_dies_on_the_way_up_leaves_its_reason_on_the_machine(tmp_path):
+    """The runner IS the screen's program, so unredirected its stderr goes to a
+    tmux pane — and a runner that fails on the way up takes that pane with it.
+
+    What is left for anyone to find is the socket it never bound: a turn reports
+    `dial unix …: no such file or directory`, which names the consequence and
+    nothing else. pi's own stderr had a file the whole time; the runner's did
+    not, and on dev 2026-09-15 that cost an afternoon of probes against the box.
+    """
+    owner, _session, env, _ = _machine(tmp_path)
+    # A pi on the pinned path that passes the version check and then refuses to
+    # speak: the runner gets as far as starting it and no further.
+    binary = owner / f".cheese/tools/pi/{device_launch.VERSION}/pi"
+    binary.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "--version" ]; then\n'
+        f'  echo "{device_launch.VERSION}"; exit 0\n'
+        "fi\n"
+        'echo "this pi will not start here" >&2\n'
+        "exit 3\n"
+    )
+    binary.chmod(0o755)
+    process = _start(tmp_path, env, _launch())
+    state = _state_of(owner)
+    try:
+        process.wait(timeout=60)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=20)
+    assert not os.path.exists(_socket_of(state)), "nothing may be listening there"
+    assert (state / "runner.log").read_text().strip(), (
+        "the machine kept no record of why the runner did not come up"
+    )
+
+
 def test_the_platforms_own_skills_reach_the_room(tmp_path):
     """`--no-skills` shuts out the owner's files; the platform's come back by name.
 
