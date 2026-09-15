@@ -115,7 +115,11 @@ class Settings(BaseSettings):
     # GLM: base_url=https://open.bigmodel.cn/api/anthropic, token=ZHIPU_API_KEY.
     # Swapping to LiteLLM / Anthropic later is just env, no code change.
     agent_model: str = "glm-5.2"
-    agent_codex_models: list[str] = []
+    # Which models each harness that does NOT speak the platform gateway may
+    # be pointed at ({"codex": ["gpt-5.2"]}). A harness that speaks the gateway
+    # needs no entry: everything the project can use is something it can drive,
+    # and listing those again would be a second copy to fall out of date.
+    agent_harness_models: dict[str, list[str]] = {}
     # Shared central session host; private scratch runs in isolated containers.
     agent_session_device_id: str | None = None
     agent_session_api_base: str | None = None

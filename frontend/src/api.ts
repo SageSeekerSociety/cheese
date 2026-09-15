@@ -819,7 +819,10 @@ export interface AgentFieldChoice {
   label: string
   description: string
   default: boolean
-  harnesses?: string[]
+  /** 只有「运行方式」的选项带这个：这个 harness 在本项目里能被指向哪些模型。
+   *  约束的方向是 harness → model（后端 agent/harness/__init__.py 写了为什么），
+   *  所以这份清单只会挂在 harness 上，模型自己对运行方式没有意见。 */
+  models?: string[]
 }
 
 export interface AgentFieldOptions {

@@ -102,6 +102,13 @@ const CONFIG = {
 
 beforeEach(() => {
   getProjectAgentOptions.mockReset().mockResolvedValue({
+    harness: {
+      state: 'choosable',
+      choices: [
+        { id: 'claude-code', label: 'Claude Code', default: true, models: ['sonnet', 'opus'] },
+        { id: 'pi', label: 'pi', default: false, models: ['sonnet', 'opus'] },
+      ],
+    },
     model: {
       state: 'choosable',
       choices: [
@@ -120,36 +127,63 @@ beforeEach(() => {
 afterEach(() => cleanup())
 
 describe('新建时的校验', () => {
-  it('selects the harness when changing model and preserves the role', async () => {
+  // 人挑运行方式，模型列表跟着它筛。反过来（选模型、倒推 harness）是这里之前
+  // 的做法：选中一个只有 Codex 能跑的模型，队友就"变成"了 Codex 队友 —— 没人
+  // 挑过，界面上也从没显示过。
+  it('filters the model list by the chosen harness and preserves the role', async () => {
     getProjectAgentOptions.mockResolvedValue({
       harness: {
         state: 'choosable',
         choices: [
-          { id: 'claude-code', label: 'Claude Code' },
-          { id: 'codex', label: 'Codex' },
+          { id: 'claude-code', label: 'Claude Code', default: true, models: ['sonnet'] },
+          { id: 'codex', label: 'Codex', default: false, models: ['codex-fixture'] },
         ],
       },
       model: {
         state: 'choosable',
         choices: [
-          { id: 'sonnet', label: 'Sonnet', default: true, harnesses: ['claude-code'] },
-          { id: 'codex-fixture', label: 'Codex fixture', harnesses: ['codex'] },
+          { id: 'sonnet', label: 'Sonnet', default: true },
+          { id: 'codex-fixture', label: 'Codex fixture', default: false },
         ],
       },
     })
     mountDialog(null)
     await fireEvent.update(field('名字'), '代码评审')
     await fireEvent.update(field('角色设定'), 'Review code')
-    expect(screen.queryByLabelText('运行方式', { exact: false })).toBeNull()
-    await waitFor(() => expect(field('模型').disabled).toBe(false))
+    await waitFor(() => expect(field('运行方式').disabled).toBe(false))
+    await fireEvent.mouseDown(field('运行方式'))
+    await fireEvent.click(await screen.findByText('Codex', { selector: '.v-list-item-title' }))
+    // Codex 驱动不了 Sonnet，所以它根本不出现在可选项里 —— 人当场看见约束，
+    // 而不是存下去之后收一条拒绝。
     await fireEvent.mouseDown(field('模型'))
-    await fireEvent.click(await screen.findByText('Codex fixture', { selector: '.v-list-item-title' }))
+    expect(await screen.findByText('Codex fixture', { selector: '.v-list-item-title' })).toBeTruthy()
+    expect(screen.queryByText('Sonnet', { selector: '.v-list-item-title' })).toBeNull()
     await clickSave()
     await waitFor(() =>
       expect(createProjectAgent).toHaveBeenCalledWith(
         PROJECT,
         expect.objectContaining({
           configuration: { ...CONFIG, model: 'codex-fixture', harness: 'codex' },
+        })
+      )
+    )
+  })
+
+  // 换运行方式不该顺手把人挑好的模型也换掉 —— 除非新的运行方式确实驱动不了它。
+  it('keeps the chosen model when the new harness can still drive it', async () => {
+    mountDialog(null)
+    await fireEvent.update(field('名字'), '代码评审')
+    await waitFor(() => expect(field('模型').disabled).toBe(false))
+    await fireEvent.mouseDown(field('模型'))
+    await fireEvent.click(await screen.findByText('Opus', { selector: '.v-list-item-title' }))
+    await fireEvent.mouseDown(field('运行方式'))
+    await fireEvent.click(await screen.findByText('pi', { selector: '.v-list-item-title' }))
+    await clickSave()
+    await waitFor(() =>
+      expect(createProjectAgent).toHaveBeenCalledWith(
+        PROJECT,
+        expect.objectContaining({
+          configuration: { ...CONFIG, body: '', model: 'opus', harness: 'pi' },
         })
       )
     )
@@ -248,9 +282,16 @@ describe('修改时', () => {
 
   it.each(['claude-code', 'codex'])('preserves an API model using %s when only renaming', async (harness) => {
     getProjectAgentOptions.mockResolvedValue({
+      harness: {
+        state: 'choosable',
+        choices: [
+          { id: 'claude-code', label: 'Claude Code', default: true, models: ['api-model'] },
+          { id: 'codex', label: 'Codex', default: false, models: ['api-model'] },
+        ],
+      },
       model: {
         state: 'choosable',
-        choices: [{ id: 'api-model', label: 'API model', harnesses: ['claude-code', 'codex'] }],
+        choices: [{ id: 'api-model', label: 'API model', default: true }],
       },
     })
     const configuration = { ...CONFIG, model: 'api-model', harness }

@@ -7,8 +7,10 @@ from app.core.errors import ValidationError
 from app.domain.agent.market import subscription_model_alias
 from app.domain.agent_instance.configuration import (
     AgentConfiguration,
+    harness_choices,
     initial_model,
     model_choices,
+    models_for,
     validate_configuration,
 )
 
@@ -78,39 +80,91 @@ def test_agents_can_select_each_gateway_model_without_changing_project_supply(
     assert sum(item["default"] for item in model_choices(project)) == 1
 
 
-def test_codex_models_require_the_matching_harness(monkeypatch):
-    monkeypatch.setattr(settings, "agent_codex_models", ["codex-fixture"])
+def test_a_harness_is_offered_only_where_it_has_something_to_drive(monkeypatch):
+    """A deployment that serves no model a harness supports does not have that
+    harness, whatever the registry says. Offering it produces a teammate that
+    cannot take a turn."""
+    monkeypatch.setattr(settings, "agent_harness_models", {})
+    offered = {item["id"] for item in harness_choices({})}
+    assert "codex" not in offered, "Codex brings its own list and none was named"
+    # The two that speak the platform gateway need no list to be usable.
+    assert {"claude-code", "pi"} <= offered
+
+
+def test_a_harness_that_speaks_the_gateway_drives_every_model_the_project_has(
+    monkeypatch,
+):
+    """It reaches models through the same gateway the project's own pool is,
+    so restating which ones would be a second list to fall out of date."""
+    monkeypatch.setattr(settings, "subscription_enabled", False)
+    everything = {item["id"] for item in model_choices({})}
+    for harness in ("claude-code", "pi"):
+        assert set(models_for(harness, {})) == everything
+        for model in everything:
+            validate_configuration(AgentConfiguration(model=model, harness=harness), {})
+
+
+def test_a_harness_drives_only_what_was_named_for_it(monkeypatch):
+    monkeypatch.setattr(settings, "agent_harness_models", {"codex": ["codex-fixture"]})
     validate_configuration(
         AgentConfiguration(model="codex-fixture", harness="codex"), {}
     )
-    for config in (
-        AgentConfiguration(model="codex-fixture"),
-        AgentConfiguration(model="glm-5.2", harness="codex"),
-    ):
-        with pytest.raises(ValidationError):
-            validate_configuration(config, {})
-
-
-def test_codex_models_are_not_advertised_without_configured_supply(monkeypatch):
-    monkeypatch.setattr(settings, "agent_codex_models", [])
-    assert all("codex" not in item["harnesses"] for item in model_choices({}))
-
-
-@pytest.mark.parametrize("harness", ["claude-code", "codex"])
-def test_api_model_keeps_independent_harness_selection(monkeypatch, harness):
-    monkeypatch.setattr(settings, "agent_codex_models", ["deepseek-flash"])
-    config = AgentConfiguration(model="deepseek-flash", harness=harness)
-    validate_configuration(config, {})
-    assert config.harness == harness
-
-
-@pytest.mark.parametrize("enabled", [True, False])
-def test_subscription_alias_cannot_be_enabled_for_codex(monkeypatch, enabled):
-    monkeypatch.setattr(settings, "subscription_enabled", enabled)
-    monkeypatch.setattr(settings, "agent_codex_models", ["sonnet"])
     with pytest.raises(ValidationError):
-        validate_configuration(AgentConfiguration(model="sonnet", harness="codex"), {})
-    if enabled:
-        validate_configuration(AgentConfiguration(model="sonnet"), {})
-    else:
-        assert "sonnet" not in {item["id"] for item in model_choices({})}
+        validate_configuration(AgentConfiguration(model="glm-5.2", harness="codex"), {})
+    # And a model named for one harness is not thereby withheld from the rest:
+    # it reaches the same gateway.
+    validate_configuration(AgentConfiguration(model="codex-fixture"), {})
+
+
+def test_refusing_a_pair_names_the_harness_rather_than_the_model(monkeypatch):
+    """The two halves fail for different reasons, and naming the wrong one
+    sends a person to change the half they chose on purpose. This read as
+    「当前项目无法使用模型 X」 while the model was perfectly available."""
+    monkeypatch.setattr(settings, "agent_harness_models", {"codex": ["codex-fixture"]})
+    with pytest.raises(ValidationError) as refusal:
+        validate_configuration(AgentConfiguration(model="glm-5.2", harness="codex"), {})
+    assert "Codex" in str(refusal.value)
+    assert "glm-5.2" in str(refusal.value)
+
+
+def test_an_unknown_harness_is_refused_as_a_harness(monkeypatch):
+    with pytest.raises(ValidationError, match="运行方式"):
+        validate_configuration(
+            AgentConfiguration(model="glm-5.2", harness="nothing-we-run"), {}
+        )
+
+
+def test_a_subscription_model_stays_with_the_harness_its_credential_is_for(
+    monkeypatch,
+):
+    """The credential, not the request shape: a subscription turn authenticates
+    with something minted for one harness, so listing the alias among another
+    harness's API models must not make it selectable there."""
+    monkeypatch.setattr(settings, "subscription_enabled", True)
+    monkeypatch.setattr(
+        settings, "agent_harness_models", {"codex": ["sonnet", "codex-fixture"]}
+    )
+    for harness in ("codex", "pi"):
+        assert "sonnet" not in models_for(harness, {})
+        with pytest.raises(ValidationError):
+            validate_configuration(
+                AgentConfiguration(model="sonnet", harness=harness), {}
+            )
+    validate_configuration(AgentConfiguration(model="sonnet"), {})
+
+
+def test_a_new_agent_starts_on_a_model_its_harness_can_drive(monkeypatch):
+    """A preset that asks for a harness of its own would otherwise start
+    pointed at the project's default model and be refused on the way in, for a
+    combination nobody chose."""
+    monkeypatch.setattr(settings, "subscription_enabled", True)
+    monkeypatch.setattr(settings, "agent_harness_models", {"codex": ["codex-fixture"]})
+    project = {"supply": "subscription"}
+    # The project's own default is a subscription model Codex cannot carry.
+    assert initial_model(project) == "sonnet"
+    assert initial_model(project, "codex") == "codex-fixture"
+    for harness in ("claude-code", "codex", "pi"):
+        validate_configuration(
+            AgentConfiguration(model=initial_model(project, harness), harness=harness),
+            project,
+        )

@@ -345,29 +345,23 @@ async def create_project_agent(
 
 @router.get("/{project_id}/agent-options")
 async def project_agent_options(project_id: uuid.UUID, db: DbSession) -> dict:
-    from app.domain.agent_instance.configuration import model_choices
+    from app.domain.agent_instance.configuration import harness_choices, model_choices
 
     project = await ProjectService(db).get_or_404(project_id)
     choices = model_choices(project.settings)
-    harnesses = {harness for item in choices for harness in item["harnesses"]}
+    # Every harness this deployment can actually run here, each carrying the
+    # models it can be pointed at. The editor picks the harness and filters the
+    # model list by it — the direction the constraint really runs, so nothing
+    # downstream has to restate which pairs are legal.
+    harnesses = harness_choices(project.settings)
     return ok(
         {
             "harness": {
                 "state": "choosable" if harnesses else "unavailable",
-                "choices": [
-                    dict(
-                        id=name,
-                        label=label,
-                        description="",
-                        default=name == "claude-code",
-                    )
-                    for name, label in (
-                        ("claude-code", "Claude Code"),
-                        ("codex", "Codex"),
-                    )
-                    if name in harnesses
-                ],
-                "reason": "",
+                "choices": harnesses,
+                "reason": ""
+                if harnesses
+                else "当前项目没有可用的运行方式，请检查模型服务",
                 "note": "",
             },
             "model": {

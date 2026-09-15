@@ -17,6 +17,7 @@ const listMemory = vi.fn()
 const listTopics = vi.fn()
 const setProjectDefaultAgent = vi.fn()
 const deactivateProjectAgent = vi.fn()
+const getProjectAgentOptions = vi.fn()
 
 vi.mock('../api', async (importOriginal) => {
   // ApiError / isEndpointMissing stay REAL: "the backend is not deployed here"
@@ -31,6 +32,7 @@ vi.mock('../api', async (importOriginal) => {
     listTopics: (...a: unknown[]) => listTopics(...a),
     setProjectDefaultAgent: (...a: unknown[]) => setProjectDefaultAgent(...a),
     deactivateProjectAgent: (...a: unknown[]) => deactivateProjectAgent(...a),
+    getProjectAgentOptions: (...a: unknown[]) => getProjectAgentOptions(...a),
   }
 })
 
@@ -100,11 +102,42 @@ beforeEach(() => {
   listTopics.mockReset().mockResolvedValue({ data: [], total: 0 })
   setProjectDefaultAgent.mockReset()
   deactivateProjectAgent.mockReset()
+  getProjectAgentOptions.mockReset().mockResolvedValue({
+    harness: {
+      state: 'choosable',
+      choices: [
+        { id: 'claude-code', label: 'Claude Code', default: true, models: ['sonnet'] },
+        { id: 'pi', label: 'pi', default: false, models: ['sonnet'] },
+      ],
+    },
+    model: { state: 'choosable', choices: [{ id: 'sonnet', label: 'Sonnet', default: true }] },
+  })
 })
 
 afterEach(() => cleanup())
 
 describe('队友名册', () => {
+  // 「用什么跑」和「哪个模型」现在都是人挑的，名册就得把两件都说出来 —— 否则
+  // 一个走 pi、一个走 Claude Code 的两个队友，这一栏长得一模一样。
+  it('每一行说清这个队友用什么跑、背后是哪个模型', async () => {
+    listProjectAgents.mockResolvedValue({
+      data: [
+        agent({ id: 'a1', handle: 'cheese', display_name: '芝士' }),
+        agent({
+          id: 'a2',
+          handle: 'pi-mate',
+          display_name: 'pi 队友',
+          is_default: false,
+          configuration: { body: '', model: 'sonnet', harness: 'pi', skills: [], mcp_servers: [], effort: null },
+        }),
+      ],
+      total: 2,
+    })
+    mountPage()
+    expect(await screen.findByText('@cheese · Claude Code · sonnet')).toBeTruthy()
+    expect(await screen.findByText('@pi-mate · pi · sonnet')).toBeTruthy()
+  })
+
   it('每一行带上这个队友自己的记忆条数和在用话题数', async () => {
     listProjectAgents.mockResolvedValue({
       data: [

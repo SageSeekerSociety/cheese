@@ -41,10 +41,15 @@ def test_agents_own_independent_configuration(db_session, _portal, monkeypatch):
         assert (
             await service.system_prompt(service.resolved(first))
         ) == "Only review security"
-        # Replacing the creation preset cannot change an existing agent.
+        # Replacing the creation preset cannot change an existing agent. A
+        # preset is where a teammate STARTED, not what it is: editing one is a
+        # change to what gets created next, and an agent somebody has been
+        # working with must not silently acquire a different role, model or
+        # harness because the catalogue moved under it.
         monkeypatch.setitem(
             preset_types(), "product-design", preset_types()["fullstack-engineer"]
         )
+        assert second.configuration == original
         assert await service.system_prompt(service.resolved(second)) == original["body"]
         project.settings = {"subscription_model": "fable"}
         assert await service.model(service.resolved(second)) == original["model"]
