@@ -675,43 +675,52 @@ def publish_event(config, payload):
     return output
 
 
-# How long a listing waits for the executor to be able to name the platform
-# tools. The list is assembled per request from what the executor reports, so a
-# listing that lands while the executor is starting — a release, a reconnect,
-# the first request after a deploy — silently omits the whole `cheese_*` family,
-# and the agent is told `No such tool available: mcp__native__cheese_status`
-# with nothing in any log to say why (observed 2026-09-13, -14 and again
-# 2026-09-15 06:57). A short list is indistinguishable from a tool that does not
-# exist, so it is worth waiting for the real one.
-CLI_TOOLS_READY_TIMEOUT_S = 20
+# A listing names the platform tools from what the executor answers right then,
+# so an executor that is still coming up — a release, a reconnect, the first
+# request after a deploy — yields a list without the whole `cheese_*` family,
+# and the agent is told `No such tool available: mcp__native__cheese_status`.
+# Twice now that has cost a turn (2026-09-13/14, and 2026-09-15 06:57) with
+# nothing written down anywhere to say the list had been short, which is why
+# every listing now says what it found. The wait is small on purpose: an
+# executor that has no CLI worker at all is a normal configuration and must not
+# pay for one that is merely slow.
+CLI_TOOLS_READY_TIMEOUT_S = 3
 
 
 def _cli_tools(client, timeout_s: float = CLI_TOOLS_READY_TIMEOUT_S):
-    """The platform tools, or an empty list once the executor has had its say.
+    """The platform tools, and a line on stderr saying how many were listed.
 
-    Empty stays possible — an executor genuinely without a CLI worker serves
-    file and shell tools and nothing else — but only after the wait, and it
-    says so on stderr rather than passing for a complete answer."""
+    An empty list stays a legitimate answer — a room whose executor serves only
+    file and shell tools has one — but it is now a stated answer rather than a
+    silent one, and a listing that arrives a moment too early waits instead of
+    publishing a short list as if it were complete.
+    """
     deadline = time.monotonic() + timeout_s
     delay = 0.2
     while True:
         try:
             capabilities = client.call("ping", {}).get("capabilities", [])
             if "cli_worker" in capabilities:
-                return client.call("cli", {"method": "tools/list"})["tools"]
+                tools = client.call("cli", {"method": "tools/list"})["tools"]
+                print(
+                    f"[cheese] native tools/list: {len(tools)} platform tools",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                return tools
             reason = "the executor reports no CLI worker"
         except Exception as exc:  # noqa: BLE001 — the executor may still be coming up
             reason = f"{type(exc).__name__}: {exc}"
         if time.monotonic() >= deadline:
             print(
-                f"[cheese] platform tools are not listable ({reason}); "
+                f"[cheese] native tools/list: no platform tools ({reason}); "
                 "serving file and shell tools only",
                 file=sys.stderr,
                 flush=True,
             )
             return []
         time.sleep(delay)
-        delay = min(delay * 2, 2.0)
+        delay = min(delay * 2, 1.0)
 
 
 def transport(config, target_path):

@@ -1009,6 +1009,7 @@ def test_the_tool_list_waits_for_the_executor_instead_of_coming_back_short(
         {"name": "cheese_status", "inputSchema": {}}
     ]
     assert attempts.count("ping") == 3
+    assert "1 platform tools" in capsys.readouterr().err
 
 
 def test_an_executor_with_no_cli_worker_is_reported_not_silently_trimmed(
@@ -1022,4 +1023,4 @@ def test_an_executor_with_no_cli_worker_is_reported_not_silently_trimmed(
     monkeypatch.setattr(central.time, "sleep", lambda _delay: None)
     monkeypatch.setattr(central, "CLI_TOOLS_READY_TIMEOUT_S", 0)
     assert central._cli_tools(Client()) == []
-    assert "not listable" in capsys.readouterr().err
+    assert "no platform tools" in capsys.readouterr().err
