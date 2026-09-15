@@ -72,6 +72,23 @@ jobs:
                       cur.execute(Q)
                       show(cur.fetchone())
           '
+      - name: Runner capacity and build contention
+        # Every build job in build.yml runs on THIS box's cheese-dev label, and
+        # so does every deploy, so whether they can run at once is a property of
+        # how many runner services are registered here rather than of the
+        # workflow. The count, the cores and memory they would share, and what
+        # the box already carries only mean something read together.
+        run: |
+          echo "cores: $(nproc)"
+          free -h | head -2 || true
+          uptime
+          echo "--- runner services ---"
+          systemctl list-units --type=service --all --no-pager --plain 2>/dev/null \
+            | grep -i "actions.runner" || echo "(none under systemd)"
+          echo "--- runner dirs ---"
+          ls -d "$HOME"/actions-runner* 2>/dev/null || echo "(none in $HOME)"
+          echo "--- docker reclaimable ---"
+          docker system df 2>/dev/null | head -5 || true
       - name: Deployed images and disk
         run: |
           docker ps --format '{{.Names}}  {{.Image}}' || true
