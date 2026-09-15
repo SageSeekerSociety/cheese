@@ -94,9 +94,51 @@ jobs:
         # tick of a 60s maintenance loop, which is exactly what the probe is for.
         # The access lines are dropped for the same reason; what is left is
         # startup, the maintenance loops and anything that raised.
+        #
+        # The httpx line for every call INTO the device connection owner goes
+        # with them: one live room emits several a second, so on 2026-09-15 a
+        # 600-line tail covered four seconds of wall clock and nothing else —
+        # the same failure the line budget had, arriving through a different
+        # door. Calls that raised still show up; it is the 200s that are noise.
         run: |
           docker logs --since 2h --timestamps cheese-backend-1 2>&1 \
             | grep -v 'uvicorn.access\|\[http\][[:space:]]*bytes=' \
+            | grep -v 'device-connection:8082.*"HTTP/1.1 200 OK"' \
+            | tail -600 || true
+      - name: Device connection log tail
+        # The owner of the DeviceHub is a SEPARATE process on a separate release
+        # boundary (deploy/release-device-connection.sh), and every executor call,
+        # every machine link and every terminal WebSocket lives in it — not in the
+        # backend the probe above reads. The backend only ever sees its HTTP
+        # status, so a device-side failure reaches a person as a bare
+        # `500 Internal Server Error for url .../call/call_executor` with the
+        # reason — a refused socket, an offline machine, a connector's own error
+        # string — visible nowhere but here.
+        #
+        # Its image sha is printed above on purpose: an app release deliberately
+        # leaves this container alone, so it routinely runs older code than the
+        # backend beside it, and reading its log without knowing which build
+        # produced the lines has sent people to the wrong commit.
+        #
+        # Same rule as every other probe: fixed window, fixed filter, no inputs.
+        #
+        # The four routine `execution_timing` stages are dropped and
+        # `stage=device_error` deliberately kept. Every executor call logs all
+        # four at INFO, so an unfiltered 600-line tail of a box with live rooms
+        # is twelve seconds of nothing but timings — measured, not guessed:
+        # the first run of this probe returned 600 of 600 such lines. The error
+        # stage is the one that says a call FAILED, which is the whole reason
+        # to read this log.
+        run: |
+          container="$(docker ps --format '{{.Names}} {{.Image}}' \
+            | grep device-connection || true)"
+          echo "===== $container ====="
+          name="${container%% *}"
+          [ -n "$name" ] || exit 0
+          docker inspect -f 'status={{.State.Status}} started={{.State.StartedAt}} restarts={{.RestartCount}}' "$name" 2>&1 || true
+          docker logs --since 2h --timestamps "$name" 2>&1 \
+            | grep -v 'uvicorn.access\|\[http\][[:space:]]*bytes=' \
+            | grep -vE 'stage=(device_send_start|device_sent|device_first_data|device_complete)' \
             | tail -600 || true
       - name: Data plane (llm tunnel + api front)
         # The standing pair from #573 carries ALL machine model traffic, and it

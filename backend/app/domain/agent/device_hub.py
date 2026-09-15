@@ -567,8 +567,15 @@ class DeviceHub:
             raise RuntimeError("Device connector must finish updating before execution")
         future = asyncio.get_running_loop().create_future()
         device.executor_pending[identifier] = (future, bytearray())
+        # The stage lines are DEBUG, and `device_error` below is not. They carry
+        # raw `mono_ns` for someone to subtract while chasing latency (#951) —
+        # a debugging artifact, not an event an operator acts on. At INFO they
+        # made this process's log unreadable: measured 2026-09-15, four of them
+        # per call meant a 600-line tail of the owner held TWELVE SECONDS, and
+        # the refused-socket RuntimeError behind a room that would not answer
+        # had already scrolled out of reach of the only probe that can read it.
         try:
-            logger.info(
+            logger.debug(
                 "execution_timing stage=device_send_start trace=%s mono_ns=%d",
                 identifier,
                 time.monotonic_ns(),
@@ -582,7 +589,7 @@ class DeviceHub:
                     "timeout": int(timeout),
                 }
             )
-            logger.info(
+            logger.debug(
                 "execution_timing stage=device_sent trace=%s mono_ns=%d",
                 identifier,
                 time.monotonic_ns(),
@@ -687,7 +694,7 @@ class DeviceHub:
             try:
                 if msg.t == "execution.data":
                     if not data:
-                        logger.info(
+                        logger.debug(
                             "execution_timing stage=device_first_data "
                             "trace=%s mono_ns=%d",
                             msg.id,
@@ -702,7 +709,7 @@ class DeviceHub:
                     )
                     raise RuntimeError(msg.error)
                 else:
-                    logger.info(
+                    logger.debug(
                         "execution_timing stage=device_complete trace=%s mono_ns=%d",
                         msg.id,
                         time.monotonic_ns(),
