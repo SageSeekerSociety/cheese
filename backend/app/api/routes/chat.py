@@ -11,8 +11,13 @@ Protocol (unchanged frontend contract):
   connect → /api/topics/{id}/chat?token=<session token>   (required)
   client → {"type":"message","content": str, "summon": bool,
             "attachments"?: [{"path": str, "mime": str}]}
+  client → {"type":"ping"}  →  server → {"type":"pong"}
   server → user_block / reaction / tool / todo / state / event_block /
            assistant_block / error / done
+(The ping is the browser's liveness probe. A socket can sit OPEN for minutes
+after its path stopped carrying frames — the browser only learns when TCP
+gives up — so the client asks every few seconds and replaces the socket when
+no answer comes; the reply is the whole point, it carries nothing.)
 (No token streaming: explicit chat publications arrive as assistant_block
 messages; terminal output arrives as activity event_block records.)
 
@@ -146,6 +151,9 @@ async def chat(
         try:
             while True:
                 payload = await websocket.receive_json()
+                if payload.get("type") == "ping":
+                    await send({"type": "pong"})
+                    continue
                 if payload.get("type") != "message":
                     await send({"type": "error", "message": "unsupported message type"})
                     continue
