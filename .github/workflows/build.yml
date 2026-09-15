@@ -493,8 +493,16 @@ jobs:
   build-browser-render:
     needs: plan
     if: needs.plan.outputs.browser_render == 'true'
-    runs-on: [self-hosted, cheese-dev]
-    # Pulling Playwright's base image is most of this job; nothing compiles.
+    # On the cheese-ci pool, not the dev box. Pulling Playwright's base image is most of this job; nothing compiles. So this job has no
+    # use for the warm layer cache that keeps the other builds on the box
+    # — and the box has ONE runner slot, shared with every other build
+    # and with deploys. Measured 2026-09-15: plan+build-backend alone
+    # took 2.0 min on an idle box and 25.3 min behind a queue, and two
+    # builds landing together took 58.9 and 45.5 min. Every minute this
+    # job holds that slot is a minute a deploy waits, which users see as
+    # the dev site hanging. The pool is three machines, so these two run
+    # beside the box's builds instead of in front of them.
+    runs-on: [self-hosted, cheese-ci]
     timeout-minutes: 30
     permissions:
       contents: read
@@ -575,8 +583,16 @@ jobs:
   build-office-render:
     needs: plan
     if: needs.plan.outputs.office_render == 'true'
-    runs-on: [self-hosted, cheese-dev]
-    # Most of this job is apt installing LibreOffice (~800MB); nothing compiles.
+    # On the cheese-ci pool, not the dev box. Most of this job is apt installing LibreOffice (~800MB); nothing compiles. So this job has no
+    # use for the warm layer cache that keeps the other builds on the box
+    # — and the box has ONE runner slot, shared with every other build
+    # and with deploys. Measured 2026-09-15: plan+build-backend alone
+    # took 2.0 min on an idle box and 25.3 min behind a queue, and two
+    # builds landing together took 58.9 and 45.5 min. Every minute this
+    # job holds that slot is a minute a deploy waits, which users see as
+    # the dev site hanging. The pool is three machines, so these two run
+    # beside the box's builds instead of in front of them.
+    runs-on: [self-hosted, cheese-ci]
     timeout-minutes: 30
     permissions:
       contents: read
