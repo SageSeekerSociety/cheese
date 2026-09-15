@@ -12,6 +12,9 @@ VER="${3:-2.336.0}"
 # ~/actions-runner and each further slot in ~/actions-runner-<slot>, which also
 # gives it its own RUNNER_TEMP and therefore its own uv venv and Cargo target.
 SLOT="${4:-0}"
+# Resolved before the cd below: the files this script installs sit beside it,
+# and $0 is relative to wherever it was invoked from.
+BUNDLE="$(cd "$(dirname "$0")" && pwd)"
 REPO_URL="https://github.com/SageSeekerSociety/cheese"
 ROOT="$HOME/actions-runner"
 [ "$SLOT" = 0 ] || ROOT="$HOME/actions-runner-$SLOT"
@@ -44,8 +47,8 @@ grep -q ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE .env 2>/dev/null || \
 # 2026-09-15 wedged every later job on that machine in a 15-minute timeout. The
 # run that leaves one cannot clean up after itself (it was killed), so the clean-up
 # belongs to whoever comes next.
-install -m 0755 "$(dirname "$0")/job-started-hook.sh" "$ROOT/job-started-hook.sh"
-install -m 0755 "$(dirname "$0")/disk-guard.sh" "$ROOT/disk-guard.sh"
+install -m 0755 "$BUNDLE/job-started-hook.sh" "$ROOT/job-started-hook.sh"
+install -m 0755 "$BUNDLE/disk-guard.sh" "$ROOT/disk-guard.sh"
 grep -q ACTIONS_RUNNER_HOOK_JOB_STARTED .env 2>/dev/null || \
   echo "ACTIONS_RUNNER_HOOK_JOB_STARTED=$ROOT/job-started-hook.sh" >> .env
 
@@ -64,7 +67,7 @@ fi
 
 # The machine's own Postgres and Valkey, shared by its slots. Idempotent, so this
 # is both the first-time setup and the repair after a prune took them away.
-bash "$(dirname "$0")/resident-services.sh"
+bash "$BUNDLE/resident-services.sh"
 
 sudo ./svc.sh install "$(whoami)" 2>&1 | tail -1
 sudo ./svc.sh start 2>&1 | tail -1
@@ -73,9 +76,16 @@ sudo ./svc.sh start 2>&1 | tail -1
 # runner once died silently for 25+ hours after an OOM kill (2026-08-07).
 # By name, not the first one listed: a machine with a second slot has two runner
 # units, and the first would be the other slot's.
-UNIT="$(systemctl list-units --all 'actions.runner.*.service' --no-legend | awk '{print $1}' | grep -F ".$NAME." | head -1)"
-sudo mkdir -p "/etc/systemd/system/${UNIT}.d"
-printf '[Service]\nRestart=always\nRestartSec=10\nOOMPolicy=continue\n' | sudo tee "/etc/systemd/system/${UNIT}.d/override.conf" >/dev/null
-sudo systemctl daemon-reload
-sudo systemctl restart "$UNIT"
-echo "unit=${UNIT} active=$(systemctl is-active "$UNIT")"
+UNIT="$(systemctl list-units --all 'actions.runner.*.service' --no-legend \
+  | awk '{print $1}' | grep -F ".$NAME." | head -1 || true)"
+if [ -z "$UNIT" ]; then
+  # Nothing to harden and nothing to restart; saying so beats dying with `set -e`
+  # after the runner is already registered and configured.
+  echo "unit=none (no systemd unit for $NAME)"
+else
+  sudo mkdir -p "/etc/systemd/system/${UNIT}.d"
+  printf '[Service]\nRestart=always\nRestartSec=10\nOOMPolicy=continue\n' | sudo tee "/etc/systemd/system/${UNIT}.d/override.conf" >/dev/null
+  sudo systemctl daemon-reload
+  sudo systemctl restart "$UNIT"
+  echo "unit=${UNIT} active=$(systemctl is-active "$UNIT")"
+fi
