@@ -675,6 +675,45 @@ def publish_event(config, payload):
     return output
 
 
+# How long a listing waits for the executor to be able to name the platform
+# tools. The list is assembled per request from what the executor reports, so a
+# listing that lands while the executor is starting — a release, a reconnect,
+# the first request after a deploy — silently omits the whole `cheese_*` family,
+# and the agent is told `No such tool available: mcp__native__cheese_status`
+# with nothing in any log to say why (observed 2026-09-13, -14 and again
+# 2026-09-15 06:57). A short list is indistinguishable from a tool that does not
+# exist, so it is worth waiting for the real one.
+CLI_TOOLS_READY_TIMEOUT_S = 20
+
+
+def _cli_tools(client, timeout_s: float = CLI_TOOLS_READY_TIMEOUT_S):
+    """The platform tools, or an empty list once the executor has had its say.
+
+    Empty stays possible — an executor genuinely without a CLI worker serves
+    file and shell tools and nothing else — but only after the wait, and it
+    says so on stderr rather than passing for a complete answer."""
+    deadline = time.monotonic() + timeout_s
+    delay = 0.2
+    while True:
+        try:
+            capabilities = client.call("ping", {}).get("capabilities", [])
+            if "cli_worker" in capabilities:
+                return client.call("cli", {"method": "tools/list"})["tools"]
+            reason = "the executor reports no CLI worker"
+        except Exception as exc:  # noqa: BLE001 — the executor may still be coming up
+            reason = f"{type(exc).__name__}: {exc}"
+        if time.monotonic() >= deadline:
+            print(
+                f"[cheese] platform tools are not listable ({reason}); "
+                "serving file and shell tools only",
+                file=sys.stderr,
+                flush=True,
+            )
+            return []
+        time.sleep(delay)
+        delay = min(delay * 2, 2.0)
+
+
 def transport(config, target_path):
     import threading
     from concurrent.futures import ThreadPoolExecutor
@@ -724,12 +763,7 @@ def transport(config, target_path):
                     "serverInfo": {"name": "cheese-native-execution", "version": "1"},
                 }
             elif method == "tools/list":
-                capabilities = client.call("ping", {}).get("capabilities", [])
-                cli_tools = (
-                    client.call("cli", {"method": "tools/list"})["tools"]
-                    if "cli_worker" in capabilities
-                    else []
-                )
+                cli_tools = _cli_tools(client)
                 value = {
                     "tools": [
                         {

@@ -985,3 +985,41 @@ def test_a_lost_response_is_never_replayed(monkeypatch):
     with pytest.raises(ConnectionResetError):
         client.call("invoke")
     assert len(attempts) == 1
+
+
+def test_the_tool_list_waits_for_the_executor_instead_of_coming_back_short(
+    monkeypatch, capsys
+):
+    """The platform tools are named from what the executor reports, so a listing
+    that lands while it is still starting used to omit the whole `cheese_*`
+    family — and the agent was told the tool does not exist."""
+    attempts = []
+
+    class Client:
+        @staticmethod
+        def call(method, params=None):
+            attempts.append(method)
+            if method == "ping":
+                ready = attempts.count("ping") >= 3
+                return {"capabilities": ["prepare"] + (["cli_worker"] if ready else [])}
+            return {"tools": [{"name": "cheese_status", "inputSchema": {}}]}
+
+    monkeypatch.setattr(central.time, "sleep", lambda _delay: None)
+    assert central._cli_tools(Client()) == [
+        {"name": "cheese_status", "inputSchema": {}}
+    ]
+    assert attempts.count("ping") == 3
+
+
+def test_an_executor_with_no_cli_worker_is_reported_not_silently_trimmed(
+    monkeypatch, capsys
+):
+    class Client:
+        @staticmethod
+        def call(method, params=None):
+            return {"capabilities": ["prepare"]}
+
+    monkeypatch.setattr(central.time, "sleep", lambda _delay: None)
+    monkeypatch.setattr(central, "CLI_TOOLS_READY_TIMEOUT_S", 0)
+    assert central._cli_tools(Client()) == []
+    assert "not listable" in capsys.readouterr().err
