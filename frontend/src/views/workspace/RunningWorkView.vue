@@ -199,6 +199,30 @@ function emptyLine(column: BoardColumn): string {
   return `暂无${columnLabel(column)}的活`
 }
 
+/** 这个项目还什么都没有：没有活，也没有一个话题。
+ *
+ *  和「三列都空」不是一回事。三列空是常态——活干完了、都归到已完成里去了，板还是
+ *  在答「什么在跑」这个问题，答案是「没有」。而一个刚建出来的项目连这个问题都还
+ *  不成立：它需要的是一个能说话的地方，不是一张说「暂无」的板。
+ *
+ *  两边都等到位再判断，否则加载途中会先闪一下这块空白。 */
+const nothingYet = computed(
+  () =>
+    !loading.value &&
+    !store.loadingTopics &&
+    rows.value.length === 0 &&
+    !(store.topics as Topic[]).some((t) => t.kind !== 'root')
+)
+const rootTopicId = computed(() => store.rootTopic?.id ?? null)
+
+function openHomeRoom() {
+  if (rootTopicId.value)
+    void router.push({
+      name: 'workspace-topic',
+      params: { projectId: props.projectId, topicId: rootTopicId.value },
+    })
+}
+
 /** 每个房间在跑几条 —— 撞额度的那些，一眼看得出来。
  *
  *  数的是整块板，不是筛过的那一份：房间满没满和「谁的活」无关，按筛过的结果数会
@@ -267,6 +291,16 @@ function openTask(task: RoomTask) {
       {{ errorMsg }}
       <v-btn class="ms-2" size="small" variant="text" @click="load()">重试</v-btn>
     </div>
+
+    <template v-else-if="nothingYet">
+      <!-- 刚建出来的项目落在这儿时，四列空格子是它的整个第一屏。把那一屏换成
+           「去哪儿开始」——板要等到真有东西可摆的时候才是有用的界面。 -->
+      <div class="board__start">
+        <p class="t-body">这个项目还没有开始的工作</p>
+        <p class="t-meta c-muted">去大本营说一句你想做什么，芝士会把它拆成具体的活，之后这块板才有东西可看</p>
+        <v-btn v-if="rootTopicId" class="mt-4" color="primary" variant="flat" @click="openHomeRoom">进入大本营</v-btn>
+      </div>
+    </template>
 
     <template v-else>
       <!-- 列永远都在，空了也留着列头和 0。整列消失会让板在两次刷新之间跳，而位置
@@ -488,6 +522,11 @@ function openTask(task: RoomTask) {
    边距由骨架那边的 .skel__card 出 —— 它画的就是一张 .board-card。 */
 .board-col__skel {
   padding: 8px;
+}
+
+.board__start {
+  padding: 48px 24px;
+  text-align: center;
 }
 
 .board-col__empty {

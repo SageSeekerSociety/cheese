@@ -335,7 +335,13 @@ async function confirmNewProject() {
     const project = await createProject(name, myHandle(), newProjectTeamId.value, sourceTask.value?.id)
     await loadCxProjects()
     newProjectDialog.value = false
-    router.push(`/projects/${project.id}`)
+    // 直接落到大本营，而不是项目地址。一个刚建出来的项目没有任何活，而 /projects
+    // 的落点是看板——它此刻是四列空格子，答的是「什么在跑」，对一个还没开始的项目
+    // 只有一个答案：没有。人第一眼该看到的是能说话的地方。这里知道它是新的，所以
+    // 不用等话题列表回来才推断（WorkspaceEntry 负责那种情况）。
+    router.push(
+      project.root_topic_id ? `/projects/${project.id}/topics/${project.root_topic_id}` : `/projects/${project.id}`
+    )
   } catch (e) {
     // Inline error inside the dialog — not a native alert() chrome.
     newProjectError.value = e instanceof Error ? e.message : '创建项目失败'
