@@ -16,9 +16,10 @@ pytestmark = pytest.mark.anyio
 
 
 def test_the_launch_names_the_files_claude_reads_before_it_starts():
-    """All three are read exactly once, at exec: the hook wiring that is this
+    """Each is read exactly once, at exec: the hook wiring that is this
     harness's only sense organ, the first-launch gates (without which the
-    onboarding dialog eats the first prompt), and the system prompt."""
+    onboarding dialog eats the first prompt), the system prompt, and the
+    platform's own skills."""
     launch = session_launch.build_session_launch(
         config_dir="/sessions/x", workdir="/topics/t", system_prompt="你是芝士。"
     )
@@ -29,6 +30,7 @@ def test_the_launch_names_the_files_claude_reads_before_it_starts():
         "cheese-system-prompt.md",
         "webfetch_transport.cjs",
         "skills/cheese-docs/SKILL.md",
+        "skills/documents/SKILL.md",
     }
     assert planted["cheese-system-prompt.md"] == "你是芝士。"
     assert json.loads(planted["settings.json"])["enableArtifact"] is False

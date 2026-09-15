@@ -137,15 +137,72 @@ def test_artifact_requires_path(client):
 
 
 def test_an_unknown_artifact_type_is_refused_by_name(client):
-    """The renderer is chosen from what 芝士 DECLARED, never guessed from an
-    extension — so a type the platform has no renderer for has to be refused
-    here, and the refusal has to say which ones exist."""
+    """A type the platform has no renderer for is refused here, and the refusal
+    says which ones exist — otherwise the caller has to guess twice."""
     _pid, tid = _topic(client)
 
-    r = client.post(f"/topics/{tid}/artifact", json={"path": "slides.pdf", "as": "pdf"})
+    r = client.post(f"/topics/{tid}/artifact", json={"path": "scan.tiff", "as": "tiff"})
 
     assert r.status_code == 422
     assert "html" in r.json()["message"], "must name the types that do work"
+    assert client.get(f"/topics/{tid}/preview").json()["data"] is None
+
+
+def test_a_declared_type_is_not_needed_when_the_name_says_it(client):
+    """A caller that names `report.docx` has already said what it is.
+
+    Requiring the type to be restated is a step that can be skipped, and
+    skipping it used to be silent: the default was html, so a Word file was
+    stored as a web page and reached the panel as a mis-typed blob. Reading the
+    extension makes the same call land on the right renderer.
+    """
+    _pid, tid = _topic(client)
+
+    for name, expected in (
+        ("评审简报.docx", "wordprocessingml"),
+        ("预算.xlsx", "spreadsheetml"),
+        ("结题报告.pdf", "application/pdf"),
+        ("页面.html", "text/html"),
+    ):
+        assert (
+            client.post(f"/topics/{tid}/artifact", json={"path": name}).status_code
+            == 200
+        )
+        assert expected in client.get(f"/topics/{tid}/preview").json()["data"]["mime"]
+
+
+def test_an_office_file_survives_the_trip_to_the_platform(client):
+    """A .docx is a zip, so it travels base64-encoded and must arrive byte-exact.
+
+    The machine that wrote it is usually not the one serving the panel, so the
+    bytes cross the wire; a round trip that mangles them produces a file that
+    downloads and then refuses to open.
+    """
+    import base64
+
+    _pid, tid = _topic(client)
+    raw = b"PK\x03\x04binary\x00\xff payload"
+
+    r = client.post(
+        f"/topics/{tid}/artifact",
+        json={"path": "报告.docx", "content_b64": base64.b64encode(raw).decode()},
+    )
+
+    assert r.status_code == 200
+    back = client.get(f"/topics/{tid}/attachments/raw?path=报告.docx&download=true")
+    assert back.status_code == 200
+    assert back.content == raw
+
+
+def test_malformed_base64_is_refused_rather_than_written(client):
+    _pid, tid = _topic(client)
+
+    r = client.post(
+        f"/topics/{tid}/artifact",
+        json={"path": "报告.docx", "content_b64": "not base64 at all!!"},
+    )
+
+    assert r.status_code == 422
     assert client.get(f"/topics/{tid}/preview").json()["data"] is None
 
 
@@ -264,7 +321,7 @@ def test_serve_is_refused_when_the_machine_carries_no_preview_out(client, monkey
     )
 
     assert r.status_code == 422, r.text
-    assert "cheese artifact" in r.json()["message"], "must name the way that works"
+    assert "cheese_artifact" in r.json()["message"], "must name the way that works"
     # And nothing was recorded — an unreachable app must not become the preview.
     assert client.get(f"/topics/{tid}/preview").json()["data"] is None
 

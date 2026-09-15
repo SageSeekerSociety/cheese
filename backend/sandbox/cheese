@@ -24,13 +24,14 @@
   cheese milestone "中期汇报" --due 2026-06-20
   cheese status                             # 平台状态快照
   cheese artifact report.html               # 把产物设为本话题当前预览(进预览窗口)
+  cheese artifact 评审简报.docx              # 文档类交付物同理,用户可以打开和下载
   cheese serve 5173 "Vue dev server"        # 应用起在 127.0.0.1:5173 后,设为预览
-  cheese artifact chart.svg --as svg        # SVG 同理
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
 import fcntl
 import hashlib
 import json
@@ -56,6 +57,36 @@ TURN = os.environ.get("CHEESE_TURN", "")
 # In a private chat, `remember` writes the owner's personal memory (跟着人走).
 MEMORY_SCOPE = os.environ.get("CHEESE_MEMORY_SCOPE", "project")
 OWNER = os.environ.get("CHEESE_OWNER", "")
+
+# What `artifact` may publish, and which of those are not text. The backend owns
+# the authoritative table (`api/routes/topics.py`); this copy exists because the
+# CLI ships into the container as one stdlib-only file and cannot import it. Keep
+# them in step — a kind listed only here is rejected on arrival with a message
+# naming kinds the caller was never offered.
+ARTIFACT_KIND_BY_SUFFIX = {
+    ".html": "html",
+    ".htm": "html",
+    ".svg": "svg",
+    ".pdf": "pdf",
+    ".docx": "docx",
+    ".pptx": "pptx",
+    ".xlsx": "xlsx",
+    ".md": "md",
+    ".markdown": "md",
+    ".csv": "csv",
+    ".png": "png",
+    ".jpg": "jpg",
+    ".jpeg": "jpg",
+}
+ARTIFACT_KINDS = frozenset(ARTIFACT_KIND_BY_SUFFIX.values())
+BINARY_ARTIFACT_KINDS = frozenset({"pdf", "docx", "pptx", "xlsx", "png", "jpg"})
+
+
+def artifact_kind_for(path: str) -> str:
+    """The kind `path`'s extension implies; `html` when it implies none."""
+    name = os.path.basename(path)
+    _, dot, suffix = name.rpartition(".")
+    return ARTIFACT_KIND_BY_SUFFIX.get("." + suffix.lower(), "html") if dot else "html"
 
 DIRECT_MCP_TOOLS = frozenset(
     {
@@ -1144,20 +1175,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     part = sub.add_parser(
         "artifact",
-        help="把工作区文件设为可渲染产物(当前预览)",
+        help="把工作区文件设为交付物(当前预览)",
         description=(
-            "做出了能直接「看」的东西(网页/可视化/SVG)就点名它,用户在右侧预览里"
-            "就能看到。平台不会去猜该显示哪个文件——你显式指定。"
-            "每次调用都会把预览指向最新那个。"
+            "做出了要交给用户的东西就点名它——网页、可视化、SVG,以及报告、简报、"
+            "表格这类 PDF 和 Office 文件。点名之后用户在右侧看得到,也能下载;"
+            "没点名的文件他在界面上根本看不见。平台不会去猜该显示哪个文件——"
+            "你显式指定。每次调用都会把预览指向最新那个。"
         ),
     )
-    part.add_argument("path", help="工作区相对路径,如 report.html")
+    part.add_argument("path", help="工作区相对路径,如 report.docx")
     part.add_argument(
         "--as",
         dest="as_",
-        default="html",
-        choices=["html", "svg"],
-        help="渲染类型(默认 html)",
+        default=None,
+        choices=sorted(ARTIFACT_KINDS),
+        help="渲染类型(默认按扩展名判断)",
     )
 
     papi = sub.add_parser(
@@ -1517,7 +1549,8 @@ def main() -> None:
             # render as a white frame.
             print(
                 "[cheese] 这个运行环境没有预览通道,运行中的应用到不了预览面板。\n"
-                "[cheese] 要给人看结果,用 cheese artifact <文件> 点名一个网页或 SVG。",
+                "[cheese] 要给人看结果,用 cheese_artifact 点名一个文件——网页、图片,"
+                "或报告、表格这类文档。",
                 file=sys.stderr,
             )
             sys.exit(2)
@@ -1543,18 +1576,26 @@ def main() -> None:
         rel = os.path.relpath(os.path.abspath(a.path), root)
         if rel.startswith(".."):  # outside the worktree — let the backend validate
             rel = a.path
+        kind = a.as_ or artifact_kind_for(a.path)
         try:
-            with open(a.path, encoding="utf-8") as source:
-                content = source.read()
-        except (OSError, UnicodeError) as exc:
+            raw = open(a.path, "rb").read()
+        except OSError as exc:
             print(f"[cheese] 无法读取 {a.path}: {exc}", file=sys.stderr)
             sys.exit(1)
-        _call(
-            "POST",
-            f"/topics/{topic}/artifact",
-            {"path": rel, "as": a.as_, "content": content},
-        )
-        print(f"已把 {rel} 设为当前预览（{a.as_}）。")
+        # Read as bytes either way — a .docx is a zip, and decoding it as text
+        # used to fail the command outright. Text kinds still travel as text so
+        # the request stays readable and this stays compatible with what the
+        # backend already accepted.
+        if kind in BINARY_ARTIFACT_KINDS:
+            payload = {"content_b64": base64.b64encode(raw).decode("ascii")}
+        else:
+            try:
+                payload = {"content": raw.decode("utf-8")}
+            except UnicodeError as exc:
+                print(f"[cheese] {a.path} 不是文本文件: {exc}", file=sys.stderr)
+                sys.exit(1)
+        _call("POST", f"/topics/{topic}/artifact", {"path": rel, "as": kind, **payload})
+        print(f"已把 {rel} 设为当前预览（{kind}）。")
     elif a.cmd == "api":
         if not a.method:
             _print_api_index()

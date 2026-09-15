@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import type { FileContent, PreviewInfo } from '../../cx_types'
 
-import { nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
 import { useFullscreen } from '@vueuse/core'
 
-import { getPreview, readPreviewFile, requestPreviewSession } from '../../api'
+import { attachmentRawUrl, downloadFile, getPreview, readPreviewFile, requestPreviewSession } from '../../api'
 import { postPreviewSession } from '../../lib/previewSession'
 
 const props = withDefaults(
@@ -41,6 +41,42 @@ let generation = 0
 
 function openPreviewInNewTab() {
   if (props.topicId) window.open(`/previews/${encodeURIComponent(props.topicId)}`, '_blank', 'noopener')
+}
+
+// 文档类交付物: a report, a deck or a budget is not a page to render — it is a
+// file to take away. The panel used to reach these through the same branch as a
+// corrupt binary ("这个文件不是文本"), which is true and useless: the file is
+// exactly what was asked for, and the one thing the reader wants is to open it.
+// So they get a name, a type and a download instead of a diagnosis.
+const DOCUMENT_TYPES: Record<string, { label: string; icon: string }> = {
+  'application/pdf': { label: 'PDF', icon: 'mdi-file-pdf-box' },
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': {
+    label: 'Word 文档',
+    icon: 'mdi-file-word-outline',
+  },
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': {
+    label: '幻灯片',
+    icon: 'mdi-file-powerpoint-outline',
+  },
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': {
+    label: '表格',
+    icon: 'mdi-file-excel-outline',
+  },
+  'text/csv': { label: 'CSV 表格', icon: 'mdi-file-delimited-outline' },
+}
+const documentType = computed(() => DOCUMENT_TYPES[previewMime.value] ?? null)
+const documentName = computed(() => previewFile.value?.path.split('/').pop() ?? '')
+const downloadError = ref('')
+
+async function downloadArtifact() {
+  downloadError.value = ''
+  const path = previewFile.value?.path
+  if (!props.topicId || !path) return
+  try {
+    await downloadFile(attachmentRawUrl(props.topicId, path), documentName.value || 'file')
+  } catch (e) {
+    downloadError.value = e instanceof Error ? e.message : '下载失败'
+  }
 }
 
 async function fullscreen() {
@@ -285,6 +321,24 @@ watch(
       <div v-else class="text-caption mt-1">
         跑这个话题的机器现在没有把预览通道拨出来（机器离线，或者这一轮还没开始）。再 @ 芝士一次即可重新拉起。
       </div>
+    </div>
+    <div v-else-if="documentType && previewFile" class="text-center py-8">
+      <v-icon size="40" class="text-medium-emphasis mb-3">{{ documentType.icon }}</v-icon>
+      <div class="text-body-1">{{ documentName }}</div>
+      <div class="text-caption text-medium-emphasis mt-1">{{ documentType.label }}</div>
+      <v-btn
+        class="mt-4"
+        size="small"
+        color="primary"
+        variant="flat"
+        prepend-icon="mdi-download"
+        @click="downloadArtifact"
+      >
+        下载
+      </v-btn>
+      <v-alert v-if="downloadError" type="warning" density="compact" class="mt-3 text-left">
+        {{ downloadError }}
+      </v-alert>
     </div>
     <div v-else-if="previewFile && previewFile.content === null" class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-warning mb-2">mdi-file-alert-outline</v-icon>

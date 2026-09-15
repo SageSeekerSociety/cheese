@@ -27,7 +27,16 @@ RUN --mount=type=cache,target=/var/lib/apt,sharing=locked \
       git ca-certificates curl xz-utils python3 python3-pip \
       build-essential pkg-config ripgrep jq less unzip \
       postgresql-client libpq-dev \
-      procps openssh-client
+      procps openssh-client \
+      fonts-noto-cjk
+
+# Fonts are here rather than beside the document tooling below because the way
+# they go missing is silent: typst exits 0 and pandoc exits 0 on a machine with
+# no CJK face, and every Chinese character in the PDF renders as an empty box.
+# The file opens, its size is normal, and text extraction returns the correct
+# characters — so nothing the platform can check catches it, only a person
+# looking at the page. `fonts-noto-cjk` also carries several weights, which is
+# what keeps bold from silently flattening to regular.
 
 # git refuses to commit without an identity, so an image without one turns every
 # commit — 芝士's own, and any a hosted repo's test suite makes — into a failure
@@ -59,6 +68,37 @@ RUN ARCH="$(dpkg --print-architecture)" \
     && mv "/tmp/gh_${GH_VERSION}_linux_${ARCH}/bin/gh" /usr/local/bin/gh \
     && rm -rf "/tmp/gh_${GH_VERSION}_linux_${ARCH}" \
     && gh --version
+
+# Document tooling. A room that produces a report, a paper or a set of slides
+# needs these the way a code room needs a compiler, and neither can be installed
+# from inside a room: the container runs as `node` and project setup scripts have
+# no root, so anything that is not a single relocatable binary has to be here.
+#
+# pandoc READS what people upload. Without it an agent hand-parses WordprocessingML
+# and gets it wrong in a way that looks like it worked — an empty `<w:t/>` makes a
+# regex swallow the tags between two cells, and the garbage flows into the report.
+# `pandoc x.docx -t markdown` is the whole problem, solved.
+#
+# typst WRITES PDFs. The alternatives both lose: LibreOffice wants a writable HOME
+# profile, starts slowly and drags in Java for some filters, and headless Chromium
+# needs ten system libraries this image does not carry (libnspr4, libnss3, libatk,
+# libcups, libXcomposite, libatspi…), so it cannot be added from userland either.
+# typst is one static binary with no system dependency, which is also why it is the
+# only one of the three that behaves identically on an enrolled device.
+ARG PANDOC_VERSION=3.7.0.2
+ARG TYPST_VERSION=0.15.1
+RUN ARCH="$(dpkg --print-architecture)" \
+    && curl -fsSL "https://github.com/jgm/pandoc/releases/download/${PANDOC_VERSION}/pandoc-${PANDOC_VERSION}-linux-${ARCH}.tar.gz" \
+      | tar xz -C /tmp \
+    && mv "/tmp/pandoc-${PANDOC_VERSION}/bin/pandoc" /usr/local/bin/pandoc \
+    && rm -rf "/tmp/pandoc-${PANDOC_VERSION}" \
+    && case "$ARCH" in amd64) TARCH=x86_64 ;; arm64) TARCH=aarch64 ;; *) echo "unsupported arch $ARCH" >&2; exit 1 ;; esac \
+    && curl -fsSL "https://github.com/typst/typst/releases/download/v${TYPST_VERSION}/typst-${TARCH}-unknown-linux-musl.tar.xz" \
+      | tar xJ -C /tmp \
+    && mv "/tmp/typst-${TARCH}-unknown-linux-musl/typst" /usr/local/bin/typst \
+    && rm -rf "/tmp/typst-${TARCH}-unknown-linux-musl" \
+    && pandoc --version | head -1 \
+    && typst --version
 
 # Claude Code CLI (the agent runtime that runs in-container). Pinned, and pinned
 # to the SAME version app.domain.agent.device_launch.CLAUDE_PINNED_VERSION hands
