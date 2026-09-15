@@ -23,6 +23,12 @@ VALKEY_IMAGE="mirror.gcr.io/valkey/valkey:8.0.2@sha256:57bcc49c6ade1813ef25206c5
 # 4 KB sync write cost 3.5 ms on a busy host and the DB-bound part of the suite
 # ran 4-5x slower. Nothing in a CI database outlives the job.
 PG_TMPFS_SIZE="${CHEESE_CI_PG_TMPFS:-3g}"
+# Postgres defaults to 100 connections. A job's own container had all of them;
+# here a machine's slots share one server, and each run opens a connection per
+# xdist worker per test database — so the default is a ceiling two runs can
+# reach together, and reaching it is `FATAL: sorry, too many clients already` in
+# whichever run got there second.
+PG_MAX_CONNECTIONS="${CHEESE_CI_PG_MAX_CONNECTIONS:-300}"
 # Redis ships 16 databases; each runner slot takes a block of that many, so the
 # server has to offer more than one block's worth.
 VALKEY_DATABASES="${CHEESE_CI_VALKEY_DATABASES:-64}"
@@ -44,7 +50,7 @@ ensure cheese-ci-postgres \
   --tmpfs "/var/lib/postgresql/data:rw,size=$PG_TMPFS_SIZE" \
   --health-cmd="pg_isready -U postgres" --health-interval=10s \
   --health-timeout=5s --health-retries=5 \
-  "$PG_IMAGE"
+  "$PG_IMAGE" -c max_connections="$PG_MAX_CONNECTIONS"
 
 ensure cheese-ci-valkey \
   -p 127.0.0.1:6389:6379 \
