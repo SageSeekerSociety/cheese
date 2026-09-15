@@ -281,42 +281,33 @@ jobs:
     # the migration-heads job above for the full reasoning (why this path,
     # why it's immune to docker prune, and why it's job-keyed rather than
     # shared with migration-heads/e2e).
-    services:
-      postgres:
-        image: mirror.gcr.io/paradedb/paradedb:v0.18.8-pg16@sha256:8a14fee5257f554a60d70afc89490a6460a9833c3f7f99f7d88dbbf12e4042a2
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: cheese_test
-        # The data directory lives in RAM. The cheese-ci VMs sit on Proxmox
-        # storage shared with every MicroCloud machine, and a Postgres at its
-        # defaults fsyncs every commit onto it: measured 2026-09-02, a 4 KB
-        # sync write cost 3.5 ms on a busy host and the DB-bound two-thirds of
-        # the suite ran 4-5x slower than on a quiet one (#668 needed five
-        # attempts to fit the 20-minute timeout). Nothing in a CI database
-        # outlives the job, so durability buys nothing here. A full run writes
-        # ~1 GB (measured locally, WAL included); 3g leaves room for WAL growth
-        # on an 8 GB runner that otherwise sits at ~4 GB free.
-        options: >-
-          --tmpfs /var/lib/postgresql/data:rw,size=3g
-          --health-cmd="pg_isready -U postgres"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
-        ports:
-          - 5432:5432
-
-      redis:
-        image: mirror.gcr.io/valkey/valkey:8.0.2@sha256:57bcc49c6ade1813ef25206c571b65b66bb0094235ff7fb767941622892297d9
-        options: >-
-          --health-cmd="valkey-cli ping"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
-        ports:
-          - 6379:6379
-
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # Postgres and Valkey are resident on the machine (deploy/ci-runner/
+      # resident-services.sh), not service containers of this job. A job's own
+      # containers bind host 5432/6379 and bring a 3 GB tmpfs each, so two jobs
+      # on one machine collided on the port and did not fit in 8 GB of RAM —
+      # which is why a pool machine could only run one job at a time.
+      #
+      # What keeps two concurrent runs apart is the slot, declared by the
+      # machine's runner configuration. Unset is the only slot, as on a laptop.
+      - name: Scope this run to its runner slot
+        run: |
+          slot="${CHEESE_CI_SLOT:-0}"
+          echo "CHEESE_CI_SLOT=$slot" >> "$GITHUB_ENV"
+          # Redis keys are scoped by user id and user ids restart from 1 in every
+          # database, so two runs must not share an index: each slot takes its
+          # own block of 16, and the resident Valkey has room for both.
+          echo "CHEESE_CI_REDIS_BASE_DB=$((slot * 16))" >> "$GITHUB_ENV"
+          # `-n auto` is the whole machine; two slots of it is twice the cores.
+          # A machine with one slot sets nothing and keeps `auto`.
+          echo "CHEESE_CI_TEST_WORKERS=${CHEESE_CI_TEST_WORKERS:-auto}" >> "$GITHUB_ENV"
+          # The database `alembic upgrade head` is proved against below. Its own
+          # per slot: two runs migrating one database race on its version table.
+          root="postgresql+asyncpg://postgres:postgres@localhost:5442"
+          echo "TEST_PG_BASE=$root" >> "$GITHUB_ENV"
+          echo "DATABASE_URL=$root/cheese_test_$slot" >> "$GITHUB_ENV"
 
       - name: Point Cargo at the persistent target dir
         run: echo "CARGO_TARGET_DIR=$(dirname "$RUNNER_TEMP")/cargo-target/test" >> "$GITHUB_ENV"
@@ -349,9 +340,8 @@ jobs:
       - name: Report Cargo target cache size
         run: du -sh "$CARGO_TARGET_DIR" 2>/dev/null || echo "(no cache dir yet)"
 
+      # DATABASE_URL comes from the slot step above.
       - name: Run database migrations
-        env:
-          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/cheese_test
         run: uv run alembic upgrade head
 
       # The sandbox test runs `docker run python:3.12-slim`. On the self-hosted
@@ -370,11 +360,10 @@ jobs:
 
       - name: Run tests
         env:
-          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/cheese_test
-          # Per-worker test DBs are provisioned over the network from this server
-          # root (the conftest no longer shells out to `docker exec`).
-          TEST_PG_BASE: postgresql+asyncpg://postgres:postgres@localhost:5432
-          REDIS_URL: redis://localhost:6379/0
+          # DATABASE_URL and TEST_PG_BASE come from the slot step above: the
+          # per-worker databases are provisioned over the network from that
+          # server root (the conftest no longer shells out to `docker exec`).
+          REDIS_URL: redis://localhost:6389/0
           JWT_SECRET: test-secret
           ENVIRONMENT: test
           # LLM tests mock the completions; the client just needs to construct
@@ -398,7 +387,7 @@ jobs:
         # whether it took 3ms or 40s. This prints the twenty worst on every
         # run, so the question stops being re-asked from zero.
         run: >-
-          uv run pytest tests/ -n auto --dist worksteal
+          uv run pytest tests/ -n "$CHEESE_CI_TEST_WORKERS" --dist worksteal
           --tb=short -k "not kotlin" --durations=20
 
       # Every run's postgres service container leaves a volume behind, and

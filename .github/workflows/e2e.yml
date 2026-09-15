@@ -140,42 +140,41 @@ jobs:
     # migration-heads there for the full reasoning (why this path survives
     # actions/checkout and is immune to docker prune, and why it's keyed per
     # job rather than shared).
-    services:
-      postgres:
-        image: mirror.gcr.io/paradedb/paradedb:v0.18.8-pg16@sha256:8a14fee5257f554a60d70afc89490a6460a9833c3f7f99f7d88dbbf12e4042a2
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: cheese
-        # The data directory lives in RAM. The cheese-ci VMs sit on Proxmox
-        # storage shared with every MicroCloud machine, and a Postgres at its
-        # defaults fsyncs every commit onto it: measured 2026-09-02, a 4 KB
-        # sync write cost 3.5 ms on a busy host and the DB-bound two-thirds of
-        # the suite ran 4-5x slower than on a quiet one (#668 needed five
-        # attempts to fit the 20-minute timeout). Nothing in a CI database
-        # outlives the job, so durability buys nothing here. A full run writes
-        # ~1 GB (measured locally, WAL included); 3g leaves room for WAL growth
-        # on an 8 GB runner that otherwise sits at ~4 GB free.
-        options: >-
-          --tmpfs /var/lib/postgresql/data:rw,size=3g
-          --health-cmd="pg_isready -U postgres"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
-        ports:
-          - 5432:5432
-
-      redis:
-        image: mirror.gcr.io/valkey/valkey:8.0.2@sha256:57bcc49c6ade1813ef25206c571b65b66bb0094235ff7fb767941622892297d9
-        options: >-
-          --health-cmd="valkey-cli ping"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
-        ports:
-          - 6379:6379
-
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # Postgres and Valkey are resident on the machine (deploy/ci-runner/
+      # resident-services.sh) rather than service containers of this job: a
+      # job's own bind host 5432/6379 and bring a 3 GB tmpfs each, which is why
+      # a pool machine could only ever run one job at a time.
+      #
+      # Everything this job binds or names therefore has to be its own. The slot
+      # comes from the machine's runner configuration; unset is the only slot.
+      - name: Scope this run to its runner slot
+        run: |
+          slot="${CHEESE_CI_SLOT:-0}"
+          echo "CHEESE_CI_SLOT=$slot" >> "$GITHUB_ENV"
+          # Playwright starts a backend and a frontend on fixed ports; two runs
+          # on one machine would take the same two.
+          echo "E2E_BACKEND_PORT=$((8791 + slot))" >> "$GITHUB_ENV"
+          echo "E2E_FRONTEND_PORT=$((3100 + slot))" >> "$GITHUB_ENV"
+          echo "CHEESE_E2E_DB=cheese_e2e_$slot" >> "$GITHUB_ENV"
+          root="postgresql+asyncpg://postgres:postgres@localhost:5442"
+          echo "DATABASE_URL=$root/cheese_e2e_$slot" >> "$GITHUB_ENV"
+          # Redis keys are scoped by user id, and user ids restart from 1 in each
+          # database; each slot takes its own block of 16.
+          echo "REDIS_URL=redis://localhost:6389/$((slot * 16))" >> "$GITHUB_ENV"
+
+      # The resident Postgres outlives the job, so this database has to be made
+      # empty deliberately — a service container used to do it by being new. The
+      # seed step below is not idempotent, and a run that inherited the previous
+      # run's rows would fail somewhere far from the cause.
+      - name: Give this run an empty database
+        run: |
+          docker exec cheese-ci-postgres psql -U postgres -v ON_ERROR_STOP=1 -c \
+            "DROP DATABASE IF EXISTS \"$CHEESE_E2E_DB\" WITH (FORCE)"
+          docker exec cheese-ci-postgres psql -U postgres -v ON_ERROR_STOP=1 -c \
+            "CREATE DATABASE \"$CHEESE_E2E_DB\""
 
       - name: Point Cargo at the persistent target dir
         run: echo "CARGO_TARGET_DIR=$(dirname "$RUNNER_TEMP")/cargo-target/e2e" >> "$GITHUB_ENV"
@@ -215,8 +214,6 @@ jobs:
 
       - name: Run migrations
         working-directory: backend
-        env:
-          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/cheese
         run: uv run alembic upgrade head
 
       # alice (seeded by the migration above) owns no project until this runs;
@@ -224,8 +221,6 @@ jobs:
       # rail tile. This is the same fusion demo the dev box is seeded with.
       - name: Seed fusion demo data
         working-directory: backend
-        env:
-          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/cheese
         run: uv run python -m scripts.seed_fusion_demo
 
       - name: Install frontend deps
@@ -248,10 +243,7 @@ jobs:
       - name: Run E2E tests
         working-directory: e2e
         env:
-          E2E_BACKEND_PORT: '8791'
-          E2E_FRONTEND_PORT: '3100'
-          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/cheese
-          REDIS_URL: redis://localhost:6379/0
+          # Ports, DATABASE_URL and REDIS_URL come from the slot step above.
           JWT_SECRET: test-secret
           ENVIRONMENT: test
           CI: true
