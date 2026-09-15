@@ -382,3 +382,38 @@ def test_the_gateway_is_described_as_the_plain_openai_shape_it_is():
     assert compat["maxTokensField"] == "max_tokens"
     # A reasoning model would otherwise be handed a `developer` role.
     assert compat["supportsDeveloperRole"] is False
+
+
+def test_the_platforms_own_skills_reach_the_room(tmp_path):
+    """`--no-skills` shuts out the owner's files; the platform's come back by name.
+
+    Both halves matter and they are easy to confuse. Dropping the flag lets a
+    room read whatever the person who lent us the machine keeps in ``~/.agents``;
+    dropping the explicit paths leaves the room told to load skills that are not
+    there — the guide names ``cheese-docs`` on every turn.
+    """
+    owner, _session, env, _ = _machine(tmp_path)
+    recorded = tmp_path / "pi-argv.json"
+    env["PI_FAKE_ARGV"] = str(recorded)
+    launch = _launch()
+    process = _start(tmp_path, env, launch)
+    state = _state_of(owner)
+    try:
+        _await_socket(_socket_of(state), process)
+        argv = json.loads(recorded.read_text())
+
+        assert "--no-skills" in argv, "the owner's own files stay out"
+        named = [argv[i + 1] for i, item in enumerate(argv) if item == "--skill"]
+        assert named, "the platform's skills have to be named to be loaded"
+        for directory in named:
+            body = Path(directory) / "SKILL.md"
+            assert body.is_file(), f"{directory} was named but not written"
+            assert body.read_text().startswith("---"), "a skill needs its frontmatter"
+        # Whatever the platform ships, all of it arrives — a skill present on one
+        # harness and missing on the other is the split nobody notices.
+        assert {Path(d).name for d in named} == {
+            name.split("/")[1] for name in launch.configuration()["skills"]
+        }
+    finally:
+        process.terminate()
+        process.wait(timeout=20)

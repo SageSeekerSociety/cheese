@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from app.domain.agent import machine_launcher
 from app.domain.agent.harness.launch import MachineLaunch, MachinePlace
 from app.domain.agent.harness.pi.bundle import build
+from app.domain.agent.skills import native_skill_files
 
 # The pinned agent, served by the platform the way the claude pin is: the
 # machine fetches it from us, never from the vendor. `pi_dist` carries the
@@ -189,7 +190,10 @@ class PiLaunch:
             # 2026-09-14 — a plain run carried the owner's SKILL.md files into
             # the system prompt with the config dir already pointed elsewhere.
             # A room's agent must not read what the person who lent us the
-            # machine happens to keep in their home.
+            # machine happens to keep in their home. The platform's own skills
+            # come back through `--skill`, which is additive even with this —
+            # the runner adds those, being the only side that knows where it
+            # wrote them.
             "--no-skills",
             "--no-extensions",
             "--no-prompt-templates",
@@ -210,6 +214,10 @@ class PiLaunch:
                 "agent_handle": self.agent_handle,
             },
             "args": self.arguments(),
+            # Carried as content, not as paths: these are the platform's files,
+            # and the machine has no copy of them. Same reason the system prompt
+            # travels this way — the runner writes both and points pi at them.
+            "skills": native_skill_files(),
         }
 
     def contract(self) -> str:
