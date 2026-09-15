@@ -21,6 +21,12 @@ test('the harness is chosen, and the model list follows it', async ({ page }, te
   const field = (label: string) => dialog.locator('.v-select').filter({ hasText: label });
 
   async function openOptions(label: string): Promise<string[]> {
+    // Options are read page-wide, because Vuetify renders a select's menu into
+    // the overlay container rather than inside the field. So the menu that was
+    // just closed has to be GONE before the next one opens: while it fades out
+    // its options are still in the DOM, and this returns both lists — 运行方式's
+    // three harnesses arriving in what should be the model list.
+    await expect(page.getByRole('option')).toHaveCount(0);
     await field(label).getByRole('combobox').click();
     await expect(page.getByRole('option').first()).toBeVisible();
     return (await page.getByRole('option').allInnerTexts()).map((text) => text.trim());
