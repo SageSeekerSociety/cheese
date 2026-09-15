@@ -65,6 +65,10 @@ services:
       # the same weakness, so this must stay a constant with no ${...} in it.
       - DEPLOYED_VIA_COMPOSE=1
       - DEVICE_CONNECTION_URL=http://device-connection:8082
+      # The browser-render service below. Unset, the fetch ladder simply never
+      # reaches its browser rung — no error anywhere, just worse coverage — so
+      # this belongs here and not in a doc telling an operator to set it.
+      - FETCH_BROWSER_ENDPOINT=${FETCH_BROWSER_ENDPOINT:-http://cheese-browser-render:8900}
       # Uploads live OUTSIDE any release/image, on a host path bind-mounted below,
       # so deploys never touch them (the 赛题 PDFs on prod).
       - STORAGE_LOCAL_PATH=/data/uploads

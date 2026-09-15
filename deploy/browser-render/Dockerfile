@@ -1,3 +1,10 @@
+# Built and pushed by .github/workflows/build.yml, like the other three images.
+# It was not, for the first six months it existed: docker-compose.base.yml
+# pulled `browser-render:${IMAGE_TAG}` from a registry path nothing ever wrote
+# to, and both the pull and the `up` are deliberately `|| log WARNING` so that a
+# browser which will not start cannot hold back a backend that would have
+# served. The result read as a working deployment on every check we have.
+#
 # Playwright's own image, not a bare python one: it ships the browser AND the
 # system libraries Chromium needs (about 20 shared objects). Installing those by
 # hand is where a browser container usually fails — apt-get succeeds, then
