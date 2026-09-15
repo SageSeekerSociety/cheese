@@ -46,11 +46,14 @@ os.environ.setdefault("ANTHROPIC_AUTH_TOKEN", "test-anthropic-token")
 # it) to THIS worker's integration DB — must happen before any app import (the
 # engine is built from settings.database_url at import time). -------------------
 from app.core.config import settings  # noqa: E402
+from tests import isolation  # noqa: E402
 
 _XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER", "")  # "gw0"… or "" (serial)
-_DB_SUFFIX = f"_{_XDIST_WORKER}" if _XDIST_WORKER else ""
-_INTG_DB_NAME = f"cheesex_test{_DB_SUFFIX}"
-_CLIENT_DB_NAME = f"cheesex_test{_DB_SUFFIX}_c"
+# The runner slot this run is on, empty everywhere but a pool machine with more
+# than one. Two runs sharing a machine otherwise share every name below, and the
+# harness drops its databases WITH (FORCE) — see tests/isolation.py.
+_SLOT = os.environ.get("CHEESE_CI_SLOT", "")
+_INTG_DB_NAME, _CLIENT_DB_NAME = isolation.database_names(_XDIST_WORKER, _SLOT)
 # Postgres server root (no database). Defaults to the TEST server the repo-root
 # docker-compose.yml publishes on :5433 (separate from the dev database on
 # :5432, so a test run never touches what you were developing against). CI (and
@@ -66,11 +69,12 @@ settings.database_url = f"{_PG_BASE}/{_INTG_DB_NAME}"
 # user 5 and gw1's user 5 are the same account. A 15-minute lockout earned by
 # one worker would then land on an unrelated test in another, at whatever rate
 # the two id sequences happen to align: the flakiest possible failure. Redis
-# ships 16 numbered databases; one per worker keeps them apart.
+# ships numbered databases; one per worker keeps them apart, and a slot takes a
+# block of them so two runs sharing a machine cannot land on the same index.
 _REDIS_BASE = re.sub(r"/\d*$", "", os.environ.get("REDIS_URL", settings.redis_url))
-# Redis ships 16 numbered databases, so the modulo only bites past -n 16, where
-# it degrades to the shared-Redis behaviour this replaces rather than erroring.
-_REDIS_DB = (int(_XDIST_WORKER[2:]) + 1) % 16 if _XDIST_WORKER.startswith("gw") else 0
+_REDIS_DB = isolation.redis_database(
+    _XDIST_WORKER, int(os.environ.get("CHEESE_CI_REDIS_BASE_DB", "0"))
+)
 settings.redis_url = f"{_REDIS_BASE}/{_REDIS_DB}"
 os.environ["REDIS_URL"] = settings.redis_url
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", f"{_PG_BASE}/{_CLIENT_DB_NAME}")
@@ -601,6 +605,31 @@ async def _clone_db(db_name: str, template: str) -> None:
         await conn.close()
 
 
+async def _drop_superseded_templates() -> None:
+    """Remove every `cheesex_tpl_*` but this migration history's own.
+
+    Never raises: a template that cannot be dropped (another run is cloning from
+    it this second) is not this run's problem, and the next build tries again.
+    """
+    import asyncpg
+
+    dsn = _PG_BASE.replace("+asyncpg", "") + "/postgres"
+    conn = await asyncpg.connect(dsn)
+    try:
+        stale = await conn.fetch(
+            "SELECT datname FROM pg_database"
+            " WHERE datname LIKE 'cheesex_tpl_%' AND datname <> $1",
+            _TEMPLATE_DB,
+        )
+        for row in stale:
+            try:
+                await conn.execute(f'DROP DATABASE IF EXISTS "{row["datname"]}"')
+            except Exception:  # noqa: BLE001, PERF203 — in use is not an error here
+                continue
+    finally:
+        await conn.close()
+
+
 async def _rename_db(old: str, new: str) -> None:
     import asyncpg
 
@@ -629,6 +658,11 @@ def _ensure_template() -> bool:
     The template is built under a temporary name and renamed on success, so its
     existence means "complete" — a run killed mid-migration leaves the failed
     build behind, not a half-migrated template that later runs would trust.
+
+    Building a new one also drops the templates of migration histories that are
+    no longer current. That used to take care of itself, because the server was a
+    container thrown away with the job; on a CI machine's resident Postgres they
+    would accumulate instead, and its data directory is a 3 GB tmpfs.
     """
     import fcntl
     import tempfile
@@ -643,6 +677,7 @@ def _ensure_template() -> bool:
             building = f"{_TEMPLATE_DB}_building"
             _migrate_fresh_db(building, f"{_PG_BASE}/{building}")
             asyncio.run(_rename_db(building, _TEMPLATE_DB))
+            asyncio.run(_drop_superseded_templates())
             return True
     except Exception:  # noqa: BLE001 — fall back to the slow path, never block
         return False

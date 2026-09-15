@@ -271,8 +271,12 @@ jobs:
   ci-pool:
     strategy:
       fail-fast: false
+      # One job per runner SLOT, not per machine: a machine carries two, so
+      # three jobs could land on two machines and leave the third unseen. Six
+      # jobs cover every slot, and therefore every machine — twice over, which
+      # the hostname line below makes obvious rather than confusing.
       matrix:
-        slot: [1, 2, 3]
+        slot: [1, 2, 3, 4, 5, 6]
     runs-on: [self-hosted, cheese-ci]
     timeout-minutes: 5
     steps:

@@ -1,6 +1,9 @@
+import re
 from pathlib import Path
 
 import yaml
+
+from tests import isolation
 
 ROOT = Path(__file__).resolve().parents[3]
 MIRROR = "mirror.gcr.io/"
@@ -89,11 +92,34 @@ def test_backend_lint_is_a_separate_hosted_job():
 
 
 def test_ci_service_images_do_not_depend_on_docker_hub():
+    """The pool cannot reach Docker Hub — auth.docker.io closes the connection —
+    so every image a CI machine pulls comes from the mirror, pinned by digest.
+
+    They live in `resident-services.sh` now rather than in a job's `services:`
+    block: one Postgres and one Valkey per MACHINE, because a job's own bind host
+    5432/6379 and bring a 3 GB tmpfs each, which is what kept a machine to one job.
+    """
+    script = (ROOT / "deploy/ci-runner/resident-services.sh").read_text()
+    images = re.findall(r'^[A-Z_]*IMAGE="([^"]+)"', script, re.MULTILINE)
+    assert len(images) == 2, images
+    for image in images:
+        assert image.startswith(MIRROR), image
+        assert "@sha256:" in image, image
+
     for filename, job_name in (("test.yml", "test"), ("e2e.yml", "e2e")):
-        services = load_workflow(filename)["jobs"][job_name]["services"]
-        for service in services.values():
-            assert service["image"].startswith(MIRROR)
-            assert "@sha256:" in service["image"]
+        job = load_workflow(filename)["jobs"][job_name]
+        assert "services" not in job, filename
+
+
+def test_the_resident_valkey_has_room_for_every_slot():
+    """Each runner slot takes its own block of Redis databases so two runs on one
+    machine cannot share an index. Valkey ships 16; one block is all of them."""
+    script = (ROOT / "deploy/ci-runner/resident-services.sh").read_text()
+    default = re.search(
+        r'VALKEY_DATABASES="\$\{CHEESE_CI_VALKEY_DATABASES:-(\d+)\}"', script
+    )
+    assert default, script
+    assert int(default[1]) >= 2 * isolation.REDIS_DATABASES_PER_SLOT, default[1]
 
 
 def test_buildkit_uses_the_mirror_and_keeps_cache_on_the_persistent_runner():
