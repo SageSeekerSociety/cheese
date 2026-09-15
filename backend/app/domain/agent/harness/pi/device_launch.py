@@ -21,17 +21,102 @@ from app.domain.agent import machine_launcher
 from app.domain.agent.harness.launch import MachineLaunch, MachinePlace
 from app.domain.agent.harness.pi.bundle import build
 
-# The pinned CLI. pi ships as an npm package rather than a single binary, so
-# unlike the claude pin there is nothing for the platform to serve — the machine
-# installs it from the registry into a versioned prefix of its own.
-PACKAGE = "@earendil-works/pi-coding-agent"
+# The pinned agent, served by the platform the way the claude pin is: the
+# machine fetches it from us, never from the vendor. `pi_dist` carries the
+# argument; what matters here is that the version in this path is a fact about
+# what we handed the machine rather than about what a registry resolved for it.
 VERSION = "0.85.1"
 
 # pi's config directory, which is to pi what CLAUDE_CONFIG_DIR is to Claude
 # Code: set it and pi reads and writes nothing of the machine owner's.
 CONFIG_DIR = "$HOME/.pi/agent"
 
-BINARY = "$REAL_HOME/.cheese/tools/pi/node_modules/.bin/pi"
+
+def root(home: str) -> str:
+    """Where the pin lives, under the machine OWNER's home.
+
+    Version-named, so "is the pin installed" is a question about a path rather
+    than about running a 100MB binary to ask it its name — and so a pin bump
+    installs beside the old one instead of over a copy something may still be
+    running. The owner's home and not the session's: a room is torn down and
+    rebuilt for reasons that say nothing about which pi is installed.
+
+    ``home`` is spelled differently by the two callers — the launcher has
+    already resolved the owner's home into ``$REAL_HOME``, an enrollment script
+    is simply running as that owner — and getting it wrong is not visible
+    anywhere until a room fails to start, which is why neither writes the path
+    out itself.
+    """
+    return f"{home}/.cheese/tools/pi/{VERSION}"
+
+
+def install(*, home: str, base: str) -> str:
+    """Shell that leaves the pinned pi installed and ``PI_BIN`` naming it.
+
+    Run both by the launcher, so a pin bump reaches a machine enrolled under
+    the previous one and a machine that never ran an enrollment script gets it
+    at all, and by enrollment, so a cloud machine does not carry capacity it
+    cannot deliver until the first room discovers it (#1034).
+
+    ``base`` is the platform origin WITHOUT a trailing slash — ours, never the
+    vendor's, for every reason ``pi_dist`` sets out.
+    """
+    target = root(home)
+    return f"""\
+PI_BIN="{target}/pi"
+if [ ! -x "$PI_BIN" ]; then
+  case "$(uname -m)" in
+    x86_64|amd64) _piarch=x64 ;;
+    aarch64|arm64) _piarch=arm64 ;;
+    *) echo "pi has no build for $(uname -m)" >&2; exit 1 ;;
+  esac
+  if [ "$(uname -s)" = "Linux" ]; then
+    # The vendor's Linux builds link glibc and there is no musl variant, so on
+    # an Alpine-style machine the download would succeed and the loader would
+    # then refuse the binary with a message about no such file. Say the real
+    # reason instead of arranging for that one.
+    if ldd /bin/ls 2>&1 | grep -q musl; then
+      echo "pi has no musl build; this machine cannot run it." >&2
+      exit 1
+    fi
+    _piplat="linux-$_piarch"
+  else
+    _piplat="darwin-$_piarch"
+  fi
+  _pitmp="{target}.incoming.$$"
+  _pitgz="{target}.incoming.$$.tar.gz"
+  mkdir -p "$(dirname "{target}")"
+  rm -rf "$_pitmp"
+  # Downloaded whole and then unpacked, not piped into tar: /bin/sh here is
+  # dash, which has no pipefail, so a curl that died mid-transfer would leave
+  # tar's success as the only status the script could see.
+  if ! curl -fsSL --retry 3 --retry-delay 2 -m 600 \
+      "{base}/connector/pi/{VERSION}/$_piplat/pi.tar.gz" -o "$_pitgz" \
+      || [ ! -s "$_pitgz" ]; then
+    rm -f "$_pitgz"
+    echo "could not fetch pi {VERSION} for $_piplat from the platform" >&2
+    exit 1
+  fi
+  mkdir -p "$_pitmp"
+  if ! tar xzf "$_pitgz" --strip-components=1 -C "$_pitmp"; then
+    rm -rf "$_pitmp" "$_pitgz"
+    echo "pi {VERSION} for $_piplat did not unpack" >&2
+    exit 1
+  fi
+  rm -f "$_pitgz"
+  # Renamed last, so the version-named path is either absent or a complete
+  # install — never a half-unpacked tree the next launch would accept as done.
+  mv "$_pitmp" "{target}"
+  # Only on the branch that just installed: what we placed has to run before
+  # anything believes it is there, and asking an already-installed pin its
+  # version on every launch buys nothing for a third of a second each time.
+  if [ "$("$PI_BIN" --version 2>/dev/null)" != "{VERSION}" ]; then
+    rm -rf "{target}"
+    echo "pi at $PI_BIN is not {VERSION} and will not run here" >&2
+    exit 1
+  fi
+fi
+"""
 
 
 def provider(api_base: str, model: str) -> str:
@@ -190,24 +275,10 @@ def _prepare(state: str, configuration: dict) -> str:
     config = base64.b64encode(
         json.dumps(configuration, ensure_ascii=False).encode()
     ).decode()
-    return f"""\
-# --- pi, pinned, and the runner that owns it ------------------------------
-# The pin lives under the machine owner's home, not the session's: a room is
-# torn down and rebuilt for reasons that say nothing about which pi is
-# installed, and re-installing the package on every one of those is a minute of
-# someone's machine spent proving what the last launch already knew.
-PI_BIN="{BINARY}"
-if [ "$("$PI_BIN" --version 2>/dev/null)" != "{VERSION}" ]; then
-  # One guard, not two: a machine with no npm and a machine whose npm cannot
-  # reach the registry are the same answer to the room, and the shell's own
-  # "npm: not found" lands on stderr right above this line either way.
-  if ! npm install --prefix "$REAL_HOME/.cheese/tools/pi" \\
-      --no-audit --no-fund --loglevel error "{PACKAGE}@{VERSION}" >&2; then
-    echo "cheese-launch: could not install {PACKAGE}@{VERSION} on this machine; \\
-it needs node and npm on PATH and access to the npm registry." >&2
-    exit 1
-  fi
-fi
+    return (
+        "# --- pi, pinned, and the runner that owns it ---------------------------\n"
+        + install(home="$REAL_HOME", base="${CHEESE_API%/}")
+        + f"""\
 # The runner outlives this launch and every backend that talks to it, so its
 # state goes where the CONNECTOR resolves the socket from (runner.socket_path),
 # which is the owner's home — the session home is rebuilt, this is not.
@@ -234,3 +305,4 @@ PIRUNNER
 PI_RUNNER="python3 -I -S \\"$PI_ARTIFACT\\" --state \\"$PI_STATE\\" \\
   --config \\"$PI_STATE/runner.json\\" --binary \\"$PI_BIN\\" --cwd \\"$CHEESE_WORK\\""
 """
+    )

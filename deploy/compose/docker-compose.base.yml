@@ -109,6 +109,9 @@ services:
       # next enrolment re-downloaded ~40MB inside its own timeout (a dev box
       # deploys many times a day, so in practice every enrolment paid).
       - ${CLAUDE_CACHE_HOST_PATH:-/home/nictheboy/cheese-claude-cache}:/app/connector-dist/claude-cache
+      # The pi builds, cached for exactly the same reason and thrown away by
+      # exactly the same deploy — and this archive is ~40MB per platform too.
+      - ${PI_CACHE_HOST_PATH:-/home/nictheboy/cheese-pi-cache}:/app/connector-dist/pi-cache
     # Bind 0.0.0.0, NOT 127.0.0.1: the ghg edge (APISIX) reaches these boxes from
     # a SEPARATE host (192.168.16.13) and proxies straight to the backend on :8081
     # and the frontend on :8080 — a localhost-only bind would be unreachable from

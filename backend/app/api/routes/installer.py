@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, PlainTextResponse, Response
 
 from app.core.config import settings
 from app.domain.agent import connector_build
-from app.domain.machine import claude_dist
+from app.domain.machine import claude_dist, pi_dist
 
 router = APIRouter(prefix="/connector", tags=["connector"])
 
@@ -160,6 +160,28 @@ async def download_claude(version: str, platform: str) -> Response:
         )
     return FileResponse(
         binary, media_type="application/octet-stream", filename="claude"
+    )
+
+
+# pi, served for the same reason and in the same shape. The artifact is a
+# tarball rather than a bare binary because that is how the vendor ships it: the
+# compiled agent plus the assets it reads beside itself. The machine unpacks it
+# into a version-named directory, which is what makes the pin a fact about what
+# we handed over rather than about what a registry resolved.
+@router.get("/pi/{version}/{platform}/pi.tar.gz")
+async def download_pi(version: str, platform: str) -> Response:
+    if not pi_dist.VERSION_RE.match(version):
+        return PlainTextResponse("bad version", status_code=400)
+    if not pi_dist.PLATFORM_RE.match(platform):
+        return PlainTextResponse("unknown platform", status_code=400)
+    try:
+        archive = await pi_dist.ensure_cached(_dist_dir(), version, platform)
+    except pi_dist.PiDistError as exc:
+        # 503 for the reason the claude route answers 503: the build may well
+        # exist and be fetchable later, and a 404 tells a machine to give up.
+        return PlainTextResponse(f"pi {version} unavailable: {exc}", status_code=503)
+    return FileResponse(
+        archive, media_type="application/gzip", filename=pi_dist.archive_name(platform)
     )
 
 
