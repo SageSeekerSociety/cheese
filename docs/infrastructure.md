@@ -138,8 +138,8 @@ auto-delete on merge). Every PR lands as one squashed commit.
 
 Heavy CI (`test.yml`'s migration-heads/test, `e2e.yml`'s e2e) runs on the
 **cheese-ci** label — a pool of MicroCloud VMs (prod tenant, customer
-`cheese-ci`, offering 103 standard-vm, 8c/8G/40G, one runner slot per machine:
-`cheese-ci-runner-{1..3}` at `192.168.30.{3..5}`), NOT on the dev box. The box
+`cheese-ci`, offering 103 standard-vm, 8c/8G/40G, `cheese-ci-runner-{1..3}` at
+`192.168.30.{3..5}`, two runner slots each), NOT on the dev box. The box
 keeps `cheese-dev` exclusively for what genuinely needs it (deploy, drift,
 heartbeat, backup checks) — its single slot used to serialize every heavy job
 (measured: 61% of CI time was queueing).
@@ -171,11 +171,17 @@ heartbeat, backup checks) — its single slot used to serialize every heavy job
   suite ever outgrows the tmpfs, Postgres fails with ENOSPC and the size in the
   workflow is the knob. The unit-test third never touched the disk and runs at
   the same pace either way.
-- One runner slot per machine is deliberate: the workflows bind host ports
-  5432/6379 for service containers, so two heavy jobs on one machine would
-  collide (`port is already allocated`). Lifting this (常驻 PG/Valkey + drop the
-  host port bindings) would double the pool to 6 slots on the same three
-  machines — the open follow-up from the CI plan's P2.
+- Two runner slots per machine, six in the pool. Slot 0 is `~/actions-runner`
+  and slot 1 `~/actions-runner-1`, which is also what gives each its own
+  `RUNNER_TEMP` and therefore its own uv venv and Cargo target rather than a
+  concurrent `uv sync` into one. Postgres and Valkey are resident on the machine
+  (`deploy/ci-runner/resident-services.sh`, on 5442/6389) and shared by its
+  slots: a job's own service containers bind 5432/6379 and bring a 3 GB tmpfs
+  each, which is what held a machine to one job. What keeps two concurrent runs
+  apart is the slot each declares in its runner `.env` — see
+  `backend/tests/isolation.py` for the names it scopes, and note that the test
+  harness creates its databases with `DROP DATABASE ... WITH (FORCE)`, so two
+  runs handed one name delete each other's data mid-test.
 - Liveness (alerting): `box-heartbeat.yml`'s `ci-pool` job proves **at least
   one** of the three is alive; `box-uptime.yml` alerts when it stays queued. It
   cannot see a partial outage, because `provision.sh` gives every machine the
@@ -183,13 +189,14 @@ heartbeat, backup checks) — its single slot used to serialize every heavy job
   `--labels cheese-ci,<name>` (`config.sh --replace`), then fan the heartbeat
   out to a matrix over the per-machine labels. Until that lands, a single dead
   pool machine shows up only as slower CI.
-- Liveness (on demand): `box-diag.yml`'s `ci-pool` job **does** cover all three
-  today — three concurrent jobs on the one shared label cannot land on the same
-  machine, since each VM has a single slot. It prints hostname, disk, and
-  dangling-volume count per machine; a job left **Queued** means the pool is
-  short a machine. This trick is fine for a manual probe (it saturates the pool
-  for ~20s) but not for the hourly heartbeat, which would then false-alarm
-  whenever a merge burst holds the slots — hence the ops step above.
+- Liveness (on demand): `box-diag.yml`'s `ci-pool` job covers the whole pool by
+  fanning out one job per SLOT — six, not three: with two slots per machine,
+  three jobs can take two machines and leave the third unseen. It prints
+  hostname, disk, and dangling-volume count, so each machine appears twice; a
+  job left **Queued** means the pool is short a slot. This trick is fine for a
+  manual probe (it saturates the pool for ~20s) but not for the hourly
+  heartbeat, which would then false-alarm whenever a merge burst holds the
+  slots — hence the ops step above.
 
 ## Disk — what actually fills a box, and what may be deleted
 
