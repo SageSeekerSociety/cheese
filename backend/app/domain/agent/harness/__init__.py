@@ -439,12 +439,26 @@ class Harness:
     # minted for ONE harness; no other can carry it, whatever it can otherwise
     # drive.
     carries_subscription: bool = False
+    # Does the agent DRAW on the screen it was started in? Claude Code is a TUI,
+    # so its pane is the 现场 — a person watching it sees the work happen. A
+    # harness whose screen runs a runner and talks to the agent over RPC has a
+    # pane with nothing in it, for ever.
+    #
+    # Read by the terminal endpoint, which must answer "will the drawer
+    # actually show a pane?" and until now answered "is a screen open" — the
+    # same thing for a TUI, and not the same thing at all for a runner. The
+    # drawer replaces the 施工记录 timeline with the embed on a true, so
+    # answering it wrongly is what leaves someone in front of a black frame
+    # with no way back to the timeline.
+    draws_on_its_screen: bool = True
 
 
 HARNESSES: dict[str, Harness] = {
     CLAUDE_CODE: Harness(CLAUDE_CODE, "Claude Code", carries_subscription=True),
-    CODEX: Harness(CODEX, "Codex", speaks_gateway=False),
-    PI: Harness(PI, "pi"),
+    # Both of these run a runner as the screen's program and drive the agent
+    # over RPC, so neither has a pane worth attaching to.
+    CODEX: Harness(CODEX, "Codex", speaks_gateway=False, draws_on_its_screen=False),
+    PI: Harness(PI, "pi", draws_on_its_screen=False),
 }
 
 # What a type that declines to choose runs on. A type is 出厂设置, not a
