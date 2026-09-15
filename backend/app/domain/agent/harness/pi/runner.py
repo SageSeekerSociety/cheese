@@ -131,6 +131,7 @@ class Runner:
         cwd: str,
         env: dict[str, str],
         args: list[str],
+        skills: dict[str, str] | None = None,
     ) -> str:
         self.lock = (self.state / "runner.lock").open("a")
         fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -153,6 +154,16 @@ class Runner:
         appended = (
             ["--append-system-prompt", str(prompt)] if opening.system_prompt else []
         )
+        # pi starts with `--no-skills` because it would otherwise read whatever
+        # the machine's owner keeps in ~/.agents and cwd. Explicit `--skill`
+        # paths are additive even then, so the platform's own skills are written
+        # here and named — for the same reason the system prompt is: they are
+        # assembled by the platform, and the machine has no copy to point at.
+        for relative, content in sorted((skills or {}).items()):
+            skill = self.state / relative
+            skill.parent.mkdir(parents=True, exist_ok=True)
+            skill.write_text(content, encoding="utf-8")
+            appended += ["--skill", str(skill.parent)]
         self.errors = (self.state / "pi.log").open("ab")
         self.process = await asyncio.create_subprocess_exec(
             binary,

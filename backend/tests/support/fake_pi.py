@@ -10,6 +10,7 @@ its pipes and its framing, and none of that is exercised by a fake object.
 """
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -37,6 +38,10 @@ def main() -> None:
     # `--session-id <id>` is how the platform names the session; echo it back
     # through get_session_stats so a test can see the id it asked for.
     arguments = sys.argv[2:]
+    # A test that wants to see what pi was told asks for it here; the runner
+    # builds this argv and nothing else can observe it.
+    if os.environ.get("PI_FAKE_ARGV"):
+        Path(os.environ["PI_FAKE_ARGV"]).write_text(json.dumps(arguments))
     session_id = (
         arguments[arguments.index("--session-id") + 1]
         if "--session-id" in arguments
