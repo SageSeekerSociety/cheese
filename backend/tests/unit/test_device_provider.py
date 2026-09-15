@@ -737,6 +737,31 @@ async def _two_turns(provider, router, project_id, topic_id):
         await asyncio.wait_for(task, timeout=5)
 
 
+async def test_a_retired_screen_says_which_gate_decided(caplog):
+    """A room whose screen is retired meets a `claude` seconds old: its platform
+    tools are briefly not listed and its next turn is seconds slower. Reading the
+    connector's access log afterwards shows the close and never the why, and a
+    release that replaces the deciding backend takes even that away — so the reason
+    is written where it is read, at the moment the gate fires."""
+    hub = DeadClaudeHub()
+    router = HookRouter()
+    provider = _provider(hub, router, uuid.uuid4())
+    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
+
+    with caplog.at_level("INFO"):
+        await _two_turns(provider, router, project_id, topic_id)
+
+    retired = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("device_screen_retired")
+    ]
+    assert len(retired) == 1, retired
+    assert f"topic={topic_id}" in retired[0]
+    assert "sid=s1" in retired[0]
+    assert "reason=claude_not_alive" in retired[0]
+
+
 async def test_a_reused_screen_whose_tunnel_helper_died_is_relaunched(monkeypatch):
     """`claude` dials a machine-local tunnel helper it was handed at startup and
     never re-reads. That helper is brought up ONLY by the launcher's prefix, and a

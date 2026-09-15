@@ -69,6 +69,10 @@ services:
       # falls back to a download and the panel says why — so this belongs here
       # rather than in a deployment note nobody reads.
       - OFFICE_RENDER_ENDPOINT=${OFFICE_RENDER_ENDPOINT:-http://cheese-office-render:8901}
+      # The browser-render service below. Unset, the fetch ladder simply never
+      # reaches its browser rung — no error anywhere, just worse coverage — so
+      # this belongs here and not in a doc telling an operator to set it.
+      - FETCH_BROWSER_ENDPOINT=${FETCH_BROWSER_ENDPOINT:-http://cheese-browser-render:8900}
       # Uploads live OUTSIDE any release/image, on a host path bind-mounted below,
       # so deploys never touch them (the 赛题 PDFs on prod).
       - STORAGE_LOCAL_PATH=/data/uploads

@@ -63,6 +63,7 @@ jobs:
       sandbox: ${{ steps.plan.outputs.sandbox }}
       frontend: ${{ steps.plan.outputs.frontend }}
       office_render: ${{ steps.plan.outputs.office_render }}
+      browser_render: ${{ steps.plan.outputs.browser_render }}
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -120,7 +121,8 @@ jobs:
           steps.plan.outputs.backend == 'false' ||
           steps.plan.outputs.sandbox == 'false' ||
           steps.plan.outputs.frontend == 'false' ||
-          steps.plan.outputs.office_render == 'false'
+          steps.plan.outputs.office_render == 'false' ||
+          steps.plan.outputs.browser_render == 'false'
         uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08 # v3
         with:
           timeout_minutes: 3
@@ -135,12 +137,14 @@ jobs:
           steps.plan.outputs.backend == 'false' ||
           steps.plan.outputs.sandbox == 'false' ||
           steps.plan.outputs.frontend == 'false' ||
-          steps.plan.outputs.office_render == 'false'
+          steps.plan.outputs.office_render == 'false' ||
+          steps.plan.outputs.browser_render == 'false'
         env:
           BUILD_BACKEND: ${{ steps.plan.outputs.backend }}
           BUILD_SANDBOX: ${{ steps.plan.outputs.sandbox }}
           BUILD_FRONTEND: ${{ steps.plan.outputs.frontend }}
           BUILD_OFFICE_RENDER: ${{ steps.plan.outputs.office_render }}
+          BUILD_BROWSER_RENDER: ${{ steps.plan.outputs.browser_render }}
           BASE_TAG: ${{ steps.plan.outputs.base_tag }}
           CURRENT_TAG: ${{ steps.plan.outputs.current_tag }}
         run: |
@@ -173,6 +177,7 @@ jobs:
           fi
           [ "$BUILD_FRONTEND" = true ] || promote frontend
           [ "$BUILD_OFFICE_RENDER" = true ] || promote office-render
+          [ "$BUILD_BROWSER_RENDER" = true ] || promote browser-render
 
       - name: Remove registry credentials
         if: always()
@@ -478,6 +483,88 @@ jobs:
       # compile alone pushed a build to 32min against its 45min timeout on
       # 2026-08-10. 20GB holds all three caches warm; --min-free-space still
       # floors the disk independently. (In-use images are never touched.)
+      - name: Reclaim build cache
+        if: always()
+        run: |
+          docker buildx prune --builder cheese-box-builder -af \
+            --max-used-space 20GB --min-free-space 10GB >/dev/null 2>&1 || true
+          df -h / | tail -1
+
+  build-browser-render:
+    needs: plan
+    if: needs.plan.outputs.browser_render == 'true'
+    runs-on: [self-hosted, cheese-dev]
+    # Pulling Playwright's base image is most of this job; nothing compiles.
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        with:
+          # A stable builder name: the default is per-run, which would throw away
+          # the box's layer cache between builds — the very cache that replaces
+          # the removed type=gha export.
+          name: cheese-box-builder
+          driver-opts: |
+            image=${{ env.BUILDKIT_IMAGE }}
+          buildkitd-config-inline: |
+            # The runner's UDP resolver returns fake IPs; TCP reaches public DNS.
+            [dns]
+              nameservers = ["1.1.1.1", "1.0.0.1"]
+              options = ["use-vc"]
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
+          keep-state: true
+
+      - name: Retain the BuildKit image
+        run: |
+          docker rm -f cheese-buildkit-image-retainer >/dev/null 2>&1 || true
+          docker create --name cheese-buildkit-image-retainer \
+            --label com.cheese.image-retainer=buildkit \
+            "$BUILDKIT_IMAGE" >/dev/null
+
+      # Retry: the box reaches ghcr through ghg's egress, which resets
+      # connections often enough to have failed a build on the login step alone
+      # ("read: connection reset by peer"). A hosted runner never saw this.
+      - name: Log in to Container Registry
+        uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08 # v3
+        with:
+          timeout_minutes: 3
+          max_attempts: 4
+          retry_wait_seconds: 15
+          command: >-
+            echo "${{ secrets.GITHUB_TOKEN }}" |
+            docker login ${{ env.REGISTRY }} -u ${{ github.repository_owner }} --password-stdin
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/browser-render
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=
+            # An unambiguous handle for THIS run: `type=sha` is the short sha, so
+            # ${{ github.sha }} would name a tag that does not exist.
+            type=raw,value=run-${{ github.run_id }}
+
+      - name: Build and push browser-render image
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+        with:
+          context: ./deploy/browser-render
+          file: ./deploy/browser-render/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
       - name: Reclaim build cache
         if: always()
         run: |
