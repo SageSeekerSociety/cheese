@@ -79,5 +79,8 @@ jobs:
       - name: CI runner job-started hook
         run: bash deploy/tests/test-ci-runner-job-hook.sh
 
+      - name: CI runner disk guard
+        run: bash deploy/tests/test-ci-runner-disk-guard.sh
+
       - name: Openviking memory backup
         run: bash deploy/tests/test-viking-backup.sh

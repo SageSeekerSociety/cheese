@@ -48,6 +48,14 @@ printf '%s\n' "$*" >> "${FAKE_FUSERMOUNT_CALLS:?}"
 exit 0
 EOF
 
+# The hook also runs the disk guard, which is its own suite's subject. Give it a
+# machine with room so it stays out of these cases — otherwise this test passes or
+# fails on how full the developer's laptop happens to be.
+cat > "$FAKE_BIN/df" <<'EOF'
+#!/bin/sh
+printf 'Avail\n99G\n'
+EOF
+
 chmod +x "$FAKE_BIN"/*
 
 run_hook() {

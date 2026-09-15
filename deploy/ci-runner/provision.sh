@@ -37,6 +37,7 @@ grep -q ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE .env 2>/dev/null || \
 # run that leaves one cannot clean up after itself (it was killed), so the clean-up
 # belongs to whoever comes next.
 install -m 0755 "$(dirname "$0")/job-started-hook.sh" "$HOME/actions-runner/job-started-hook.sh"
+install -m 0755 "$(dirname "$0")/disk-guard.sh" "$HOME/actions-runner/disk-guard.sh"
 grep -q ACTIONS_RUNNER_HOOK_JOB_STARTED .env 2>/dev/null || \
   echo "ACTIONS_RUNNER_HOOK_JOB_STARTED=$HOME/actions-runner/job-started-hook.sh" >> .env
 
