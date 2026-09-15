@@ -302,7 +302,21 @@ if not artifact.exists():
 print(artifact, end="")
 PIRUNNER
 )"
+# The runner's own stderr, kept. It is the screen's program, so unredirected it
+# goes to the tmux pane and dies with it — and a runner that fails on the way up
+# takes the pane with it, leaving the machine with NO record that anything went
+# wrong. What a turn then sees is the socket that was never bound: a raw
+# `dial unix …: no such file or directory` from the connector, which names the
+# consequence and nothing else. Diagnosing one such failure on dev 2026-09-15
+# took an afternoon and four one-off probes precisely because this was missing;
+# pi's own stderr had a file (`pi.log`) the whole time and the runner did not.
+#
+# Appended, not truncated: a launch that succeeds writes nothing, and when one
+# does fail the launch before it is usually the interesting one. The redirect
+# rides inside the value because the supervisor `eval`s it — a pane is not a
+# record, and this runner has no TUI to show there anyway (pi runs --mode rpc).
 PI_RUNNER="python3 -I -S \\"$PI_ARTIFACT\\" --state \\"$PI_STATE\\" \\
-  --config \\"$PI_STATE/runner.json\\" --binary \\"$PI_BIN\\" --cwd \\"$CHEESE_WORK\\""
+  --config \\"$PI_STATE/runner.json\\" --binary \\"$PI_BIN\\" \\
+  --cwd \\"$CHEESE_WORK\\" 2>>\\"$PI_STATE/runner.log\\""
 """
     )
