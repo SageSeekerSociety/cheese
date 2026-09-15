@@ -106,7 +106,7 @@ def remove_tree(path: Path) -> None:
 
 
 def request_exit(home: Path, work: Path, lock_fd: int) -> None:
-    marker = home / ".claude/environment-session.json"
+    marker = home / ".cheese/environment-session.json"
     if not marker.exists():
         return
     socket, name, *_ = json.loads(marker.read_text())
@@ -224,7 +224,7 @@ def check_transcripts(home: Path, receipts: list[dict]) -> None:
         source: (item["size"], item["sha256"]) for source, item in expected.items()
     }:
         raise RuntimeError("transcripts changed after durable confirmation")
-    if any((home / ".claude/cheese-spool").glob("[0-9]*")):
+    if any((home / ".cheese/cheese-spool").glob("[0-9]*")):
         raise RuntimeError("hook events still await backend acknowledgement")
 
 
@@ -261,12 +261,12 @@ def stop_executor(home: Path, resource: str) -> None:
                 raise RuntimeError("executor has not stopped: " + result.stderr)
     # Both helpers can outlive the agent, including launches without an executor.
     for name in ("cheese-preview", "cheese-tunnel"):
-        marker = home / ".claude" / (name + ".pid")
+        marker = home / ".cheese" / (name + ".pid")
         if not marker.exists():
             continue
         pid = int(marker.read_text())
         command = run_command(["ps", "-p", str(pid), "-o", "args="])
-        expected = str(home / ".claude" / (name + ".py"))
+        expected = str(home / ".cheese" / (name + ".py"))
         if expected in command.stdout:
             try:
                 os.kill(pid, 15)

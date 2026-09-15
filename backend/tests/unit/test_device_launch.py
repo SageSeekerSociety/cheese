@@ -16,7 +16,10 @@ import uuid
 
 import pytest
 
+from app.domain.agent import machine_launcher
 from app.domain.agent.harness.claude_code import device_launch, warm_session
+from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
+from app.domain.agent.harness.launch import MachinePlace
 
 
 def test_launch_timings_append_without_logging_credentials(tmp_path):
@@ -69,7 +72,7 @@ def test_warm_adoption_waits_for_room_configuration(
         "def stage(*args, **kwargs):\n"
         f"    if {stage_exit}: raise SystemExit({stage_exit})\n"
         "def adopt_room(directory):\n"
-        "    assert (Path(os.environ['HOME']) / '.claude/cheese-drain.env').exists()\n"
+        "    assert (Path(os.environ['HOME']) / '.cheese/cheese-drain.env').exists()\n"
         "    (Path(os.environ['HOME']) / 'adopted').touch()\n"
         f"    return {adoption_exit}\n"
         "def connection(directory, project, topic):\n"
@@ -378,8 +381,52 @@ def test_hooks_settings_wire_command_hook_to_forwarder():
     assert set(s["permissions"]["deny"]) == {"AskUserQuestion"}
 
 
+def _screen_launch(
+    *,
+    hook_url="http://h/sandbox/hooks/T",
+    hook_token="tok",
+    home_dir="/dev/home",
+    work_dir="/dev/work",
+    model=None,
+    resume_session_id=None,
+    extra_env=None,
+    topic_id="",
+    git_remote=None,
+    execution_target=None,
+    remote_control=False,
+    ca_pem="",
+) -> tuple[list[str], dict[str, str]]:
+    """What the device channel now does: say where, ask the plan what to run.
+
+    A helper here rather than in the product, because assembling the two halves
+    is the CHANNEL's job — this is how a test reaches the same result without
+    standing up a device.
+    """
+    place = MachinePlace(
+        home=home_dir,
+        workdir=work_dir,
+        state="$HOME/.cheese/harness/p/r/claude-code/deadbeef",
+        api_base="http://h",
+        project_id="P",
+        topic_id=topic_id,
+        agent_handle="ops",
+        git_remote=git_remote,
+        execution_target=execution_target,
+        remote_control=remote_control,
+        ca_pem=ca_pem,
+    )
+    plan = ClaudeLaunch(
+        system_prompt="", model=model, resume_session_id=resume_session_id
+    )
+    command, env = machine_launcher.screen_launch(
+        place, plan.on(place), hook_url=hook_url, token=hook_token
+    )
+    env.update(extra_env or {})
+    return command, env
+
+
 def test_build_screen_launch_shapes_command_and_env():
-    command, env = device_launch.build_screen_launch(
+    command, env = _screen_launch(
         hook_url="http://h/sandbox/hooks/T",
         hook_token="scoped-tok",
         home_dir="/dev/home",
@@ -414,13 +461,13 @@ def test_agent_authors_real_commit_and_platform_commits_it(tmp_path):
     import os
     import subprocess
 
-    _, env = device_launch.build_screen_launch(
+    _, env = _screen_launch(
         hook_url="http://h/hooks",
         hook_token="test",
         home_dir=str(tmp_path),
         work_dir=str(tmp_path),
         model="test",
-        git_author=("ops", "ops@agent.cheese.local"),
+        git_remote="http://h/projects/P/git",
     )
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     subprocess.run(
@@ -442,7 +489,7 @@ def test_agent_authors_real_commit_and_platform_commits_it(tmp_path):
 def test_the_room_bounds_how_deep_and_how_wide_its_work_can_go():
     # A piece of work IS a subagent of the room's session, so the room's two
     # structural limits are these env vars and nothing else enforces them.
-    _, env = device_launch.build_screen_launch(
+    _, env = _screen_launch(
         hook_url="http://h/sandbox/hooks/T",
         hook_token="tok",
         home_dir="/dev/home",
@@ -510,7 +557,7 @@ def test_no_ca_means_no_ca_block():
 
 
 def test_build_screen_launch_threads_the_ca_through():
-    command, _env = device_launch.build_screen_launch(
+    command, _env = _screen_launch(
         hook_url="http://h/sandbox/hooks/T",
         hook_token="t",
         home_dir="/h",
@@ -534,7 +581,7 @@ def test_drainer_config_is_rewritten_each_launch_and_read_each_pass():
     with the CURRENT turn's token/URL: the launcher rewrites the config file
     atomically on every run, and the loop re-sources it on every pass."""
     script = device_launch.build_launch_script()
-    tmp = '"$HOME/.claude/cheese-drain.env.tmp"'
+    tmp = '"$HOME/.cheese/cheese-drain.env.tmp"'
     assert f"cat > {tmp}" in script, "config must be staged to a tmp file"
     assert f"mv {tmp}" in script, "and moved into place atomically"
     for line in (
@@ -818,7 +865,7 @@ def test_full_launcher_installs_platform_cli_without_network(tmp_path):
         ).read_bytes()
     )
     assert (home / "bun-options").read_text() == f'"--preload={transport}"'
-    installed = home / ".claude/cheese"
+    installed = home / ".cheese/cheese"
     source = (
         device_launch.Path(device_launch.__file__).resolve().parents[5]
         / "sandbox/cheese"
@@ -912,7 +959,7 @@ def test_environment_prepares_tools_without_task_code_on_attach_and_reset(tmp_pa
 
     socket = f"/tmp/ce{os.getpid()}.sock"  # noqa: S108 — test-owned tmux socket
     home = tmp_path / "home"
-    helpers = home / ".claude"
+    helpers = home / ".cheese"
     helpers.mkdir(parents=True)
     work = tmp_path / "work"
     subprocess.run(["git", "init", "-q", str(work)], check=True)
@@ -938,14 +985,9 @@ def test_environment_prepares_tools_without_task_code_on_attach_and_reset(tmp_pa
     }
 
     def attach():
-        script = device_launch.build_launch_script()
-        prefix = (
-            'ENVIRONMENT_CMD=""'
-            + script.split('ENVIRONMENT_CMD=""', 1)[1].split('[ -s "$CHEESE_SP" ]', 1)[
-                0
-            ]
-        )
-        _spawn_supervisor(socket, env, prefix + _supervisor_block())
+        # The supervisor carries the environment wrapper itself, so the block
+        # below is the whole of what a launch runs after the harness's own half.
+        _spawn_supervisor(socket, env, _supervisor_block())
 
     def wait_agents(count):
         deadline = time.monotonic() + 5
@@ -992,10 +1034,11 @@ def test_fresh_token_overrides_a_stale_tmux_server_global(tmp_path):
     # pytest's tmp_path alone already blows past it on macOS.
     sock = f"/tmp/ct{os.getpid()}.sock"  # noqa: S108 — ephemeral, kill-server'd below
     home = tmp_path / "home"
-    (home / ".claude").mkdir(parents=True)
+    for name in (".claude", ".cheese"):
+        (home / name).mkdir(parents=True, exist_ok=True)
     work = home / "work"
     work.mkdir()
-    (home / ".claude" / "cheese-drain").write_text("#!/bin/sh\nsleep 3\n")
+    (home / ".cheese" / "cheese-drain").write_text("#!/bin/sh\nsleep 3\n")
     token_out = tmp_path / "claude_token.out"
     fake_claude = tmp_path / "fakeclaude.sh"
     # Write-then-rename: the waiter below keys on the file EXISTING, and a plain
@@ -1037,7 +1080,7 @@ def test_fresh_token_overrides_a_stale_tmux_server_global(tmp_path):
             "CHEESE_WORK": str(work),
             "CLAUDE": f"sh {fake_claude}",
             "CLAUDE_CODE_OAUTH_TOKEN": "FRESH-live-token",
-            "CHEESE_HOOK_SPOOL": f"{home}/.claude/cheese-spool",
+            "CHEESE_HOOK_SPOOL": f"{home}/.cheese/cheese-spool",
             "CHEESE_TOKEN_EXPIRES": str(int(time.time()) + 100_000),
             # What a pane of the connector's own tmux sees. The launcher reads
             # the socket out of it, so the seeded server IS the one it hosts in
@@ -1060,7 +1103,7 @@ def test_fresh_token_overrides_a_stale_tmux_server_global(tmp_path):
         assert got[2:] and got[2].startswith(str(bindir)), (
             f"the inner claude's PATH does not lead with this launch's: {got}"
         )
-        assert got[3:] == [f"{home}/.claude/cheese-spool"], (
+        assert got[3:] == [f"{home}/.cheese/cheese-spool"], (
             "an UNLISTED var (CHEESE_HOOK_SPOOL) did not survive into the inner "
             f"claude — the sourced env dump is not reaching the session: {got}"
         )
@@ -1088,7 +1131,7 @@ def _launch_with_tunnel(**overrides):
         "HTTPS_PROXY": "http://127.0.0.1:8445",
     }
     env.update(overrides)
-    command, _env = device_launch.build_screen_launch(
+    command, _env = _screen_launch(
         hook_url="http://h/sandbox/hooks/T",
         hook_token="scoped-tok",
         home_dir="/dev/home",
@@ -1116,13 +1159,13 @@ def test_the_helper_and_its_token_are_written_every_launch():
     how a refreshed credential reaches a helper that is already running — the
     thing that stops #385 repeating one layer down."""
     script = _launch_with_tunnel()
-    assert 'cat > "$HOME/.claude/cheese-tunnel.py"' in script
+    assert 'cat > "$HOME/.cheese/cheese-tunnel.py"' in script
     # The real module, not a paraphrase of it.
     assert "def open_tunnel(" in script and "Sec-WebSocket-Key" in script
     # Written atomically and mode-restricted: it holds a spendable token.
-    assert 'chmod 600 "$HOME/.claude/cheese-tunnel.token.tmp"' in script
+    assert 'chmod 600 "$HOME/.cheese/cheese-tunnel.token.tmp"' in script
     assert (
-        'mv "$HOME/.claude/cheese-tunnel.token.tmp" "$HOME/.claude/cheese-tunnel.token"'
+        'mv "$HOME/.cheese/cheese-tunnel.token.tmp" "$HOME/.cheese/cheese-tunnel.token"'
         in script
     )
 
@@ -1157,7 +1200,7 @@ def test_a_helper_running_older_code_is_retired_not_adopted():
     script = _launch_with_tunnel()
     # The stamp is what makes "same helper" decidable at all.
     assert "cheese-tunnel.stamp" in script
-    assert 'cksum "$HOME/.claude/cheese-tunnel.py"' in script
+    assert 'cksum "$HOME/.cheese/cheese-tunnel.py"' in script
     # Adoption is conditional on it, and the mismatch path kills.
     assert '[ "$WANT" = "$HAVE" ]' in script
     assert 'kill "$PID"' in script
@@ -1167,11 +1210,12 @@ def _tunnel_up_home(tmp_path):
     """A HOME laid out the way the launcher leaves one, with a stub helper that
     binds its --port and then sits there — the only thing about the real helper
     this script cares about."""
-    from app.domain.agent.harness.claude_code.device_launch import CHEESE_TUNNEL_UP
+    from app.domain.agent.machine_launcher import CHEESE_TUNNEL_UP
 
     home = tmp_path / "home"
-    (home / ".claude").mkdir(parents=True)
-    (home / ".claude" / "cheese-tunnel.py").write_text(
+    for name in (".claude", ".cheese"):
+        (home / name).mkdir(parents=True, exist_ok=True)
+    (home / ".cheese" / "cheese-tunnel.py").write_text(
         "import socket, sys, time\n"
         "port = int(sys.argv[sys.argv.index('--port') + 1])\n"
         "s = socket.socket()\n"
@@ -1181,8 +1225,8 @@ def _tunnel_up_home(tmp_path):
         "print('tunnel listening on 127.0.0.1:%d' % port, flush=True)\n"
         "time.sleep(300)\n"
     )
-    (home / ".claude" / "cheese-tunnel.token").write_text("")
-    up = home / ".claude" / "cheese-tunnel-up"
+    (home / ".cheese" / "cheese-tunnel.token").write_text("")
+    up = home / ".cheese" / "cheese-tunnel-up"
     up.write_text(CHEESE_TUNNEL_UP)
     up.chmod(0o755)
     return home, up
@@ -1219,7 +1263,7 @@ def _kill_pidfile(home) -> None:
     import signal
 
     try:
-        pid = int((home / ".claude" / "cheese-tunnel.pid").read_text().strip())
+        pid = int((home / ".cheese" / "cheese-tunnel.pid").read_text().strip())
     except (OSError, ValueError):
         return
     with contextlib.suppress(OSError):
@@ -1251,7 +1295,7 @@ def test_the_tunnel_helper_outlives_the_window_that_started_it(tmp_path):
             [
                 tmux, "-S", sock, "new-window", "-d", "-t", "s:", "-n", "cheese-tunnel",
                 f'HOME={home} CHEESE_TUNNEL_PORT={port} CHEESE_TUNNEL_URL=wss://x/y '
-                f'exec sh "{home}/.claude/cheese-tunnel-up"',
+                f'exec sh "{home}/.cheese/cheese-tunnel-up"',
             ],
             check=True,
         )  # fmt: skip
@@ -1272,7 +1316,7 @@ def test_the_tunnel_helper_outlives_the_window_that_started_it(tmp_path):
 
 def _run_tunnel_up(home, port: int):
     return subprocess.run(
-        ["sh", str(home / ".claude" / "cheese-tunnel-up")],
+        ["sh", str(home / ".cheese" / "cheese-tunnel-up")],
         env={
             **os.environ,
             "HOME": str(home),
@@ -1290,7 +1334,7 @@ def test_a_helper_it_already_started_is_adopted_rather_than_churned(tmp_path):
     a working helper each time would reset every in-flight connection."""
     home, _up = _tunnel_up_home(tmp_path)
     port = _free_port()
-    pidf = home / ".claude" / "cheese-tunnel.pid"
+    pidf = home / ".cheese" / "cheese-tunnel.pid"
     try:
         _run_tunnel_up(home, port)
         assert _await_listening(port)
@@ -1311,7 +1355,7 @@ def test_a_recorded_pid_that_is_alive_but_serves_no_port_is_replaced(tmp_path):
     of the screen, which is the failure this script exists to end."""
     home, _up = _tunnel_up_home(tmp_path)
     port = _free_port()
-    claude = home / ".claude"
+    claude = home / ".cheese"
     impostor = subprocess.Popen(["sh", "-c", "sleep 300"])
     try:
         # The state the box is actually found in: a pid that resolves, a stamp
@@ -1343,7 +1387,7 @@ def test_the_helper_is_verified_by_the_dash_syntax_check_too():
     does not parse it. Extracting it is the only way this is checked at all."""
     import subprocess
 
-    from app.domain.agent.harness.claude_code.device_launch import CHEESE_TUNNEL_UP
+    from app.domain.agent.machine_launcher import CHEESE_TUNNEL_UP
 
     checked = subprocess.run(
         ["sh", "-n"], input=CHEESE_TUNNEL_UP, text=True, capture_output=True
@@ -1578,11 +1622,11 @@ def test_the_preview_helper_and_its_token_are_written_every_launch():
     connection, so rewriting the file is how a refreshed credential reaches a
     helper that is already running."""
     script = _launch_with_preview()
-    assert 'cat > "$HOME/.claude/cheese-preview.py"' in script
+    assert 'cat > "$HOME/.cheese/cheese-preview.py"' in script
     # The real module, not a paraphrase of it.
     assert "class PortSource:" in script and "OP_WS_OPEN" in script
     # Written atomically and mode-restricted: it holds a scoped token.
-    assert 'chmod 600 "$HOME/.claude/cheese-preview.token.tmp"' in script
+    assert 'chmod 600 "$HOME/.cheese/cheese-preview.token.tmp"' in script
 
 
 def test_a_deployment_without_a_preview_url_writes_and_runs_none_of_it():
@@ -1596,7 +1640,7 @@ def test_the_preview_up_script_is_valid_shell_under_dash_too():
     it — extracting it is the only way this is checked at all."""
     checked = subprocess.run(
         ["sh", "-n"],
-        input=device_launch.CHEESE_PREVIEW_UP,
+        input=machine_launcher.CHEESE_PREVIEW_UP,
         text=True,
         capture_output=True,
     )
@@ -1607,9 +1651,9 @@ def test_a_machine_that_never_previews_anything_runs_no_helper(tmp_path):
     """The point of the port file: a preview costs a process only once somebody
     has asked for one. Starting the helper on every screen would put an idle
     python on every enrolled laptop for a feature most topics never use."""
-    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".cheese").mkdir()
     result = subprocess.run(
-        ["sh", "-c", device_launch.CHEESE_PREVIEW_UP],
+        ["sh", "-c", machine_launcher.CHEESE_PREVIEW_UP],
         env={
             "HOME": str(tmp_path),
             "PATH": os.environ["PATH"],
@@ -1619,7 +1663,7 @@ def test_a_machine_that_never_previews_anything_runs_no_helper(tmp_path):
         text=True,
     )
     assert result.returncode == 0, result.stderr
-    assert not (tmp_path / ".claude/cheese-preview.pid").exists()
+    assert not (tmp_path / ".cheese/cheese-preview.pid").exists()
 
 
 def test_declaring_a_port_writes_it_on_the_machine(tmp_path):
@@ -1628,12 +1672,12 @@ def test_declaring_a_port_writes_it_on_the_machine(tmp_path):
     the platform sends can move it — the whole reason the port is not a field on
     the wire. (No CHEESE_PREVIEW_URL here, so the helper itself never starts;
     what is under test is where the port ends up.)"""
-    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".cheese").mkdir()
     result = subprocess.run(
         [
             "sh",
             "-c",
-            device_launch.CHEESE_PREVIEW_UP + "\n",
+            machine_launcher.CHEESE_PREVIEW_UP + "\n",
             "cheese-preview-up",
             "5173",
         ],
@@ -1642,7 +1686,7 @@ def test_declaring_a_port_writes_it_on_the_machine(tmp_path):
         text=True,
     )
     assert result.returncode == 0, result.stderr
-    assert (tmp_path / ".claude/cheese-preview.port").read_text() == "5173\n"
+    assert (tmp_path / ".cheese/cheese-preview.port").read_text() == "5173\n"
 
 
 def test_no_mcp_server_is_planted_in_a_sandbox():
@@ -1709,7 +1753,7 @@ def _supervised_program(tmp_path):
     import sys
 
     home = tmp_path / "home"
-    config = home / ".claude"
+    config = home / ".cheese"
     config.mkdir(parents=True)
     (config / "cheese-drain").write_text(_drain_body())
     spool = config / "spool"

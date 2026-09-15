@@ -380,7 +380,8 @@ async def test_a_hook_delivered_live_and_again_by_replay_is_consumed_once(
     0f139cd7): the flush landed once by event id, but the Stop's second copy
     arrived in a fresh attribution that had never seen the flush, so the reply
     was posted again. One hook is consumed once, whichever copy comes first."""
-    from app.domain.agent.harness.claude_code import event_spool, hooks_substrate
+    from app.domain.agent import event_spool
+    from app.domain.agent.harness.claude_code import hooks_substrate
 
     project_id, topic_id = uuid.uuid4(), uuid.uuid4()
     spool = tmp_path / "spool"

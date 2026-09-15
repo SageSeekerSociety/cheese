@@ -44,6 +44,8 @@ def _machine(tmp_path, *, transcript_for: str | None = SESSION_ID):
     """A device home with a stub tmux, and (by default) a transcript of an
     earlier conversation sitting where Claude Code left it."""
     home, env, log = _stub_tmux_env(tmp_path)
+    # The slice below starts after the platform made its own directory.
+    (home / ".cheese").mkdir(exist_ok=True)
     config_dir = home / ".claude"
     if transcript_for is not None:
         slug = config_dir / "projects" / "-home-agent-work"

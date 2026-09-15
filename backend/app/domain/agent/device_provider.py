@@ -33,7 +33,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token, scoped_token_claims
-from app.domain.agent import provider_env
+from app.domain.agent import machine_launcher, provider_env
 from app.domain.agent.device_hub import (
     DeviceHub,
     DeviceOffline,
@@ -42,14 +42,13 @@ from app.domain.agent.device_hub import (
 )
 from app.domain.agent.harness.channel import Channel, ScreenSetupError
 from app.domain.agent.harness.claude_code import (
-    CHEESE_HOOK_SCRIPT,
     DEVICE_ALIVE_PROBE,
     DEVICE_TUNNEL_PROBE,
     SESSION_TOKEN_TTL_S,
-    build_screen_launch,
     resident_release,
 )
-from app.domain.agent.harness.launch import LaunchPlan
+from app.domain.agent.harness.launch import MachinePlace, MachinePlan
+from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
 from app.domain.agent.platform_failures import (
     DEVICE_OFFLINE_MESSAGE,
     HOST_UNREACHABLE_CODE,
@@ -385,7 +384,7 @@ async def environment_status(
 ) -> dict:
     home = device_home_dir(project_id, topic_id)
     reset_marker = (
-        'mkdir -p "$HOME/.claude"; touch "$HOME/.claude/environment-restart"; '
+        'mkdir -p "$HOME/.cheese"; touch "$HOME/.cheese/environment-restart"; '
         if action == "reset"
         else ""
     )
@@ -395,9 +394,9 @@ async def environment_status(
             "sh",
             "-c",
             f'export HOME="{home}"; '
-            'if [ -f "$HOME/.claude/cheese-environment.py" ]; then '
+            'if [ -f "$HOME/.cheese/cheese-environment.py" ]; then '
             f"CHEESE_STATUS_WAIT={int(wait_ready)} "
-            f'python3 "$HOME/.claude/cheese-environment.py" {action} || exit $?; '
+            f'python3 "$HOME/.cheese/cheese-environment.py" {action} || exit $?; '
             "else printf '%s' '{\"state\":\"pending\"}'; fi; " + reset_marker,
         ],
         timeout=10,
@@ -955,7 +954,7 @@ class DeviceChannel(Channel):
         topic_id: uuid.UUID,
         token: str,
         env: dict[str, str] | None,
-        launch: LaunchPlan,
+        launch: MachinePlan,
         environment_before: dict | None = None,
     ) -> HubScreen:
         """Reuse the topic's screen on the device, or open a fresh one running
@@ -1036,8 +1035,8 @@ class DeviceChannel(Channel):
         # Device-side paths (the launcher mkdir -p's them). Kept under a stable per
         # project/topic root so the screen's git-backed work persists across turns.
         # The home MUST be per topic, not per project: every hook event lands in
-        # a spool under $HOME/.claude, and the drainer ships that spool with the
-        # hook URL + token in $HOME/.claude/cheese-drain.env — which every screen
+        # a spool under $HOME/.cheese, and the drainer ships that spool with the
+        # hook URL + token in $HOME/.cheese/cheese-drain.env — which every screen
         # start overwrites (deliberately, so a rotated ticket reaches a long-lived
         # screen). With a project-shared home, all concurrent screens spool into
         # one dir and the drainer delivers everything to whichever session started
@@ -1171,37 +1170,48 @@ class DeviceChannel(Channel):
         if execution_target:
             model_env["CHEESE_AGENT_CONFIG"] = configuration
         mark("configuration_ready")
-        command, screen_env = build_screen_launch(
-            hook_url=f"{api_base}/sandbox/hooks/{topic_id}",
-            hook_token=token,
-            home_dir=home_dir,
-            work_dir=work_dir,
-            model=launch.model,
-            # The third thing a plan carries, and the one this channel used to
-            # drop on the floor. A screen is retired and reopened for reasons
-            # that say nothing about the conversation (the three gates above),
-            # and until this was passed on, every one of them started the topic's
-            # agent from a blank slate — the room's memory of its own turns
-            # ending at whichever gate last fired.
-            resume_session_id=launch.resume_session_id,
-            extra_env=model_env,
-            # The base already maps 1:1 onto the backend root (see
-            # settings.connector_public_base), and every backend route is bare
-            # since #370 step 2 — so the CLI's base IS that base. Appending
-            # another `/api` was right only while the 2.0 routes carried their
-            # own prefix; afterwards it injected `<origin>/api/api` and every
-            # `cheese` command in a device sandbox 404'd with 话题不存在.
+        # 跑什么，问计划要 —— 这个 channel 只说「在哪」。
+        # Everything below is a fact about this room and this machine; what any
+        # of it means is the harness's to decide. Until this call existed the
+        # answer was assembled here, out of a script that said `claude`.
+        place = MachinePlace(
+            home=home_dir,
+            workdir=work_dir,
+            # Where this harness keeps the session's state on that machine,
+            # AS THE CONNECTOR RESOLVES IT: the backend records this string
+            # and later derives a socket from it, so it is a fact about the
+            # machine and belongs on this side of the seam.
+            state=machine_launcher.state_dir(
+                project_id, resource_id, launch.harness, agent_handle
+            ),
             api_base=api_base,
             project_id=str(project_id),
             topic_id=str(topic_id),
-            author=agent_handle,
-            git_author=(agent_handle, f"{agent_handle}@agent.cheese.local"),
+            agent_handle=agent_handle,
             # Every device owns its checkout and syncs through authenticated git.
             git_remote=f"{api_base}/projects/{project_id}/git",
-            system_prompt=launch.system_prompt,
-            ca_pem=ca_pem,
             execution_target=execution_target,
+            remote_control=model_env.get("CHEESE_REMOTE_CONTROL") == "1",
+            ca_pem=ca_pem,
         )
+        command, screen_env = machine_launcher.screen_launch(
+            place,
+            launch.on(place),
+            hook_url=f"{api_base}/sandbox/hooks/{topic_id}",
+            token=token,
+        )
+        screen_env.update(model_env)
+        if execution_target is not None:
+            # The assigned executor already owns the checkout and its environment.
+            for name in (
+                "CHEESE_GIT_REMOTE",
+                "CHEESE_GIT_BRANCH",
+                "CHEESE_BRANCH_URL",
+                "CHEESE_ENVIRONMENT",
+                "CHEESE_PREVIEW_URL",
+                "CHEESE_PREVIEW_UP",
+            ):
+                screen_env.pop(name, None)
         mark("launcher_built")
         release_state = {} if existing is not None and execution_target else None
         if existing is None:
@@ -1326,18 +1336,17 @@ class DeviceChannel(Channel):
         memory_scope: str | None,
         owner: str | None,
         turn_id: uuid.UUID | None,
-        launch: LaunchPlan,
+        launch: MachinePlan,
         precheck: object,
     ) -> HubScreen:
-        """Reuse/open the topic's screen running `claude` with our hooks on the
-        device resolved by ``precheck``; return the screen (ctx). Raises
-        ScreenSetupError when the screen fails.
+        """Reuse/open the topic's screen on the device resolved by ``precheck``;
+        return the screen (ctx). Raises ScreenSetupError when the screen fails.
 
-        This channel READS the plan rather than performing it — a remote screen
-        is built out of a shell script this side writes, so the launch has to be
-        assembled here, and the script it goes into says ``claude``. That is the
-        crossing the ledger still records against this file: the tmux channel
-        can host whatever it is handed, and this one cannot."""
+        What runs in that screen is the plan's answer, not this file's: a device
+        launch is a shell script, and the platform half of it is the same for
+        every harness (``machine_launcher``) while the harness fills the rest.
+        This channel says where — the home, the workdir, the state directory the
+        connector will resolve — and merges the two environments."""
         assert isinstance(precheck, tuple)  # from our precheck
         device_id, agent_user_id, agent_handle = precheck
         if memory_scope == "personal":

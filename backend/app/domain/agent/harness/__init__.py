@@ -411,6 +411,7 @@ CLAUDE_CODE = "claude-code"
 HARNESSES: dict[str, str] = {
     CLAUDE_CODE: "Claude Code",
     "codex": "Codex",
+    "pi": "pi",
 }
 
 # What a type that declines to choose runs on. A type is 出厂设置, not a

@@ -614,8 +614,8 @@ def _publish_spooled_hook(command, payload):
     if executable is None:
         return False
     if __package__:
-        from ..event_spool import append
-        from ..hooks_substrate import CHEESE_HOOK_SCRIPT
+        from app.domain.agent.event_spool import append
+        from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
 
         expected = CHEESE_HOOK_SCRIPT.encode()
     else:

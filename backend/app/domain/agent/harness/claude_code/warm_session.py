@@ -393,7 +393,7 @@ def connection(directory: Path, project_id: str, topic_id: str) -> dict:
     state = json.loads((directory / "state.json").read_text())
     if not _native_alive(state):
         raise RuntimeError("Bound native process is no longer running")
-    session_file = Path(state["home"]) / ".claude/environment-session.json"
+    session_file = Path(state["home"]) / ".cheese/environment-session.json"
     _write(
         session_file,
         json.dumps([state["socket"], "native-warm", str(session_file)]),
@@ -615,7 +615,7 @@ if __name__ == "__main__":
         environment["CHEESE_DRAIN_TETHER"] = sys.argv[3]
         os.execve(
             "/bin/sh",
-            ["sh", str(Path(environment["HOME"]) / ".claude/cheese-drain")],
+            ["sh", str(Path(environment["HOME"]) / ".cheese/cheese-drain")],
             environment,
         )
     elif action == "attach":

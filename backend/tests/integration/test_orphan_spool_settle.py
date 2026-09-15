@@ -13,8 +13,8 @@ import pytest
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent import event_spool
 from app.domain.agent.chat import ChatService
-from app.domain.agent.harness.claude_code import event_spool
 from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import AuthorType, BlockKind

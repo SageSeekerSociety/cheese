@@ -322,10 +322,12 @@ def case(folder, options):
                 )
         if options.launcher == "device":
             sys.path.insert(0, str(ROOT / "backend"))
-            from app.domain.agent.harness.claude_code.device_launch import (
-                build_screen_launch,
-            )
+            from app.domain.agent import machine_launcher
             from app.domain.agent.device_provider import DeviceChannel
+            from app.domain.agent.harness.claude_code.session_launch import (
+                ClaudeLaunch,
+            )
+            from app.domain.agent.harness.launch import MachinePlace
             from tests.support.harness_prompts import system_prompt
 
             owner = folder / "device-owner"
@@ -334,15 +336,24 @@ def case(folder, options):
             env["HOME"] = str(owner)
             if rc:
                 env["CHEESE_REMOTE_CONTROL"] = "1"
-            launch["command"], screen_env = build_screen_launch(
-                hook_url=f"http://127.0.0.1:{server.server_port}/hook",
-                hook_token="fixture-place-token",
-                home_dir=str(folder / "device-home"),
-                work_dir=str(folder / "device-work"),
-                model="claude-sonnet-4-6",
-                extra_env=env,
+            place = MachinePlace(
+                home=str(folder / "device-home"),
+                workdir=str(folder / "device-work"),
+                state="",
+                api_base="",
+                project_id="",
+                topic_id="",
+                agent_handle="",
                 execution_target=target,
-                system_prompt=system_prompt(),
+                remote_control=bool(rc),
+            )
+            launch["command"], screen_env = machine_launcher.screen_launch(
+                place,
+                ClaudeLaunch(
+                    system_prompt=system_prompt(), model="claude-sonnet-4-6"
+                ).on(place),
+                hook_url=f"http://127.0.0.1:{server.server_port}/hook",
+                token="fixture-place-token",
             )
             env.update(screen_env)
             fixture_env = env

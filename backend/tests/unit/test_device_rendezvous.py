@@ -10,6 +10,8 @@ import subprocess
 from pathlib import Path
 
 from app.domain.agent.harness.claude_code import device_launch
+from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
+from app.domain.agent.harness.launch import MachinePlace
 
 TOPIC = "c43d2e12-6d4f-436d-b436-05278a879f81"
 
@@ -33,25 +35,27 @@ def test_socket_path_is_per_topic_and_stable():
     assert device_launch.rendezvous_paths(TOPIC)[0] == a
 
 
-def test_screen_env_carries_the_socket_only_with_a_topic():
-    _, env = device_launch.build_screen_launch(
-        hook_url="http://h",
-        hook_token="t",
-        home_dir="/h",
-        work_dir="/w",
-        topic_id=TOPIC,
+def _env(topic: str) -> dict[str, str]:
+    place = MachinePlace(
+        home="/h",
+        workdir="/w",
+        state="$HOME/.cheese/harness/p/r/claude-code/d",
+        api_base="http://h",
+        project_id="P",
+        topic_id=topic,
+        agent_handle="ops",
     )
+    return ClaudeLaunch(system_prompt="").on(place).env
+
+
+def test_screen_env_carries_the_socket_only_with_a_topic():
+    env = _env(TOPIC)
     assert env[device_launch.ENV_RV_SOCK] == device_launch.rendezvous_paths(TOPIC)[0]
     assert env[device_launch.ENV_RV_TOKEN_FILE].endswith(".token")
 
     # No topic (a probe / bare screen) means no delivery socket to name; a made-up
     # path would just be a file nobody binds.
-    _, bare = device_launch.build_screen_launch(
-        hook_url="http://h",
-        hook_token="t",
-        home_dir="/h",
-        work_dir="/w",
-    )
+    bare = _env("")
     assert device_launch.ENV_RV_SOCK not in bare
     assert device_launch.ENV_RV_TOKEN_FILE not in bare
 

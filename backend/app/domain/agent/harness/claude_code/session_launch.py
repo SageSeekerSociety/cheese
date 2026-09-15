@@ -1,6 +1,6 @@
 """怎么在一块屏幕上把 claude 开起来，以及它开机前要在盘上看到什么。
 
-Symmetric to ``device_launch.build_screen_launch``, for a screen the backend
+Symmetric to ``device_launch.on_machine``, for a screen the backend
 shares a filesystem with: the argv, the env keys ``claude`` itself reads, and
 the files it reads exactly once at launch. A channel takes the three and does
 its own transport with them — write the files where its mount points, pass the
@@ -46,6 +46,8 @@ from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD, DISALLOWED
 from app.domain.agent.harness.launch import (
     ExecutorLaunch,
     LaunchSpec,
+    MachineLaunch,
+    MachinePlace,
     ScreenPlace,
     SessionFile,
 )
@@ -255,12 +257,29 @@ class ClaudeLaunch:
     system_prompt: str
     model: str | None = None
     resume_session_id: str | None = None
+    harness: str = CLAUDE_CODE
 
     @property
     def execution(self) -> ExecutorLaunch:
         from app.domain.agent.harness.claude_code.remote_execution import launch
 
         return launch
+
+    def on(self, place: MachinePlace) -> MachineLaunch:
+        from app.domain.agent.harness.claude_code.device_launch import on_machine
+
+        return on_machine(
+            place,
+            system_prompt=self.system_prompt,
+            model=self.model,
+            # The third thing a plan carries, and the one the device channel
+            # used to drop on the floor. A screen is retired and reopened for
+            # reasons that say nothing about the conversation, and until this
+            # was passed on, every one of them started the topic's agent from a
+            # blank slate — the room's memory of its own turns ending at
+            # whichever gate last fired.
+            resume_session_id=self.resume_session_id,
+        )
 
     def at(self, place: ScreenPlace) -> LaunchSpec:
         return build_session_launch(

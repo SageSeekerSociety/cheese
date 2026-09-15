@@ -1,4 +1,33 @@
-#!/bin/sh
+"""平台的事件转发器：任何 harness 都用它把一条事件送回后端。
+
+``cheese-hook`` is a shell script rather than a module because its callers are
+whatever the machine has: a harness's hook configuration, the ``cheese`` CLI
+reporting a sync, a launcher reporting its own failure. It is on PATH in every
+session this platform starts, and reading JSON on stdin is the only interface
+all three can agree on.
+
+It lives here, not beside a harness, for the same reason the drain does: the
+spool it writes and the drain that empties it are how THIS platform delivers
+events, and a second harness does not get a second copy of that.
+"""
+
+# The forwarder: reads an event's JSON on stdin, durably spools it (when
+# CHEESE_HOOK_SPOOL is set — the local/tmux backend only) so the event survives a
+# backend outage, then best-effort POSTs it with the screen's token + a stable
+# per-event id (X-Cheese-Event-Id, used to dedup the spool backfill against the live
+# delivery). Exit 0 + empty stdout = "no decision" → the tool proceeds. The device
+# backend writes this via its launcher; the local (tmux) image bakes the same script
+# (kept identical so sensing can't drift); the spool block no-ops without the env.
+#
+# The spooled name is `<seq>.<eid>`, and `seq` is claimed the way event_spool.py
+# claims it — an O_EXCL create under `set -C`, seeded from a `.seq` hint. That
+# module's docstring says why the clock was not good enough; the short of it is
+# that a `date` without `%N` (any BSD userland, i.e. a device on macOS) sorts a
+# whole second's events at random, and a `date` that fails at all produces a
+# name starting with `.`, which every reader skips forever.
+# NOTE: the device launcher embeds this in a <<'SH' heredoc — never add a line
+# consisting of just `SH` here or the heredoc would silently truncate.
+CHEESE_HOOK_SCRIPT = """#!/bin/sh
 body="$(cat)"
 # Claude Code's resume stamp, cleared by the two hook names that prove the
 # session is live. Absent the file — every other harness — this is a no-op.
@@ -55,10 +84,11 @@ fi
 # On the device a background drainer is the sole sender (CHEESE_HOOK_SPOOL_ONLY set);
 # locally we curl inline for low latency (the backend reconciles the spool for gaps).
 if [ -z "$CHEESE_HOOK_SPOOL_ONLY" ] && [ -n "$CHEESE_HOOK_URL" ]; then
-  printf '%s' "$body" | curl -s -m 10 -X POST \
-    -H 'Content-Type: application/json' \
-    -H "X-Cheese-Token: $CHEESE_TOKEN" \
-    -H "X-Cheese-Event-Id: $eid" \
+  printf '%s' "$body" | curl -s -m 10 -X POST \\
+    -H 'Content-Type: application/json' \\
+    -H "X-Cheese-Token: $CHEESE_TOKEN" \\
+    -H "X-Cheese-Event-Id: $eid" \\
     --data-binary @- "$CHEESE_HOOK_URL" >/dev/null 2>&1 || true
 fi
 exit 0
+"""

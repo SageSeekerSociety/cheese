@@ -23,6 +23,7 @@ from app.domain.agent.device_provider import (
     environment_status,
 )
 from app.domain.agent.harness.channel import ScreenSetupError
+from app.domain.agent.harness.launch import LaunchPlan
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
 
@@ -119,6 +120,18 @@ class CentralChannel(DeviceChannel):
         owner=None,
         turn_id=None,
     ):
+        # This route assigns an executor machine, so the plan has to be able to
+        # install one and move a conversation onto it. A harness that runs where
+        # the files already are answers neither, and belongs on the device
+        # channel this one wraps. Codex reaches `prepare_session` directly with
+        # exactly those two values and no screen at all, which is why the check
+        # is here and not there.
+        if not isinstance(launch, LaunchPlan):
+            # `harness` is read through getattr because this branch is exactly
+            # the one where the object did not satisfy the protocol that
+            # guarantees it — a message that crashes reports nothing.
+            named = getattr(launch, "harness", type(launch).__name__)
+            raise ScreenSetupError(f"{named} 不能在独立执行机上运行，它没有执行器")
         async with self.prepare_session(
             project_id=project_id,
             topic_id=topic_id,

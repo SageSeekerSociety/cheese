@@ -279,7 +279,7 @@ if __name__ == "__main__":
                 timeout=30,
             )
             status = read_status(root)
-        session_file = Path.home() / ".claude/environment-session.json"
+        session_file = Path.home() / ".cheese/environment-session.json"
         if session_file.exists():
             socket, session, _ = json.loads(session_file.read_text())
             probe = subprocess.run(

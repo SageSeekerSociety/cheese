@@ -12,8 +12,8 @@ from pathlib import Path
 import pytest
 
 from app.core.config import settings
+from app.domain.agent import event_spool
 from app.domain.agent.chat import _SPOOL_PARTIAL_GRACE_S, ChatService
-from app.domain.agent.harness.claude_code import event_spool
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.project.models import ProjectMember

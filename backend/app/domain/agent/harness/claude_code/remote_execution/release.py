@@ -14,9 +14,8 @@ from pathlib import Path
 
 
 def sources():
-    from app.domain.agent import executor_transport
-    from app.domain.agent.harness.claude_code import event_spool
-    from app.domain.agent.harness.claude_code.hooks_substrate import CHEESE_HOOK_SCRIPT
+    from app.domain.agent import event_spool, executor_transport
+    from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
 
     directory = Path(__file__).parent
     result = {

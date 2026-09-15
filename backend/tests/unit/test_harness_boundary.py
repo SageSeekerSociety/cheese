@@ -25,10 +25,11 @@ harness 一样都不用付。
 - **channels**（device / cloud）：它们实现 ``Channel``，拿走这一个接缝和它抛
   的错——这些都是 transport 拿来照做的，不是它自己定的。**「跑什么」不在这张表
   里**：那是 ``harness.launch`` 的 ``LaunchPlan``，通道说自己的坐标、拿回一份它读
-  不懂的 ``LaunchSpec``。device 还有：一台远程机器的启动是这边写出来的一段 shell，
-  脚本里写着 claude，所以 ``build_screen_launch`` 留在账上。剩下
-  ``SESSION_TOKEN_TTL_S``、``DEVICE_*_PROBE`` 同理：Claude Code 的知识，今天还长在
-  传输层里。「起来了」的判据今天是 rendezvous socket 开始接受连接，那是连接器在
+  不懂的 ``LaunchSpec``。device 那段 shell 也还清了：平台那一半是
+  ``machine_launcher``，harness 那一半是 ``LaunchPlan.on`` 答的，channel 只说
+  「在哪」。剩下 ``SESSION_TOKEN_TTL_S``、``DEVICE_*_PROBE`` 还没还：Claude Code
+  的知识，今天还长在传输层里。「起来了」的判据今天是 rendezvous socket 开始接受
+  连接，那是连接器在
   ``dialWhenReady`` 里等的；等第二个 harness 的 spike 说清它那儿长什么样，再考虑
   把这个判据搬进 ``LaunchPlan``。
 - **平台侧（chat.py）：一行也没有了。** 曾经它拿走 ``MessageAssembler`` 和 spool 的
@@ -54,10 +55,8 @@ PKG = "app.domain.agent.harness.claude_code"
 _LEDGER: dict[str, tuple[str, ...]] = {
     "app.domain.agent.private_chat": ("private_execution_target",),
     "app.api.routes.remote_control": ("REMOTE_CONTROLS",),
-    # Retirement flushes the same native raw-file collector before deletion.
-    "app.domain.topic.retire": ("event_drain",),
     # --- 边缘：适配器对外的那条边 ---
-    "app.api.routes.sandbox": ("append_event", "hook_router"),
+    "app.api.routes.sandbox": ("hook_router",),
     # Enrollment prepares the native cache and idle process before advertising capacity.
     "app.domain.machine.enrollment": (
         "CLAUDE_MIN_VERSION",
@@ -73,11 +72,9 @@ _LEDGER: dict[str, tuple[str, ...]] = {
     ),
     # --- channels：接缝本身，加上还没搬过缝的 Claude Code 知识 ---
     "app.domain.agent.device_provider": (
-        "CHEESE_HOOK_SCRIPT",
         "DEVICE_ALIVE_PROBE",
         "DEVICE_TUNNEL_PROBE",
         "SESSION_TOKEN_TTL_S",
-        "build_screen_launch",
         "resident_release",
     ),
 }
