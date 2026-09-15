@@ -76,6 +76,9 @@ jobs:
       - name: Disk-pressure guard
         run: bash deploy/tests/test-disk-pressure-guard.sh
 
+      - name: Foreign-container eviction
+        run: bash deploy/tests/test-evict-foreign-container.sh
+
       - name: CI runner job-started hook
         run: bash deploy/tests/test-ci-runner-job-hook.sh
 

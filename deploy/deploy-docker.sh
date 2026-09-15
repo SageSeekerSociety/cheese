@@ -719,9 +719,22 @@ fi
 # a container of that name left behind by a manual `docker compose up`, so
 # compose could never create its own — was printed by docker on every attempt
 # and discarded by this script on every attempt.
+#
+# The eviction is what actually unblocks it: these services declare a fixed
+# `container_name`, and while anything else holds that name compose cannot
+# create its own. See deploy/evict-foreign-container.sh.
 start_optional_service() {
   service="$1"
-  consequence="$2"
+  container="$2"
+  consequence="$3"
+  evicted="$("$HERE/evict-foreign-container.sh" "$container" "$PROJECT" 2>&1)" \
+    || log "WARNING: could not free $container; $service cannot start while it is held"
+  # An `[ -n … ] && log` here would be the last command of this branch under
+  # `set -e`, so the common case — nothing to evict, empty string — would end
+  # the deploy.
+  if [ -n "${evicted:-}" ]; then
+    log "$evicted"
+  fi
   if out="$(dc up -d "$service" 2>&1)"; then
     log "$service is up"
     return 0
@@ -733,8 +746,10 @@ start_optional_service() {
   return 0
 }
 
-start_optional_service browser-render "fetching will fall back a rung"
-start_optional_service office-render "documents will offer download only"
+start_optional_service browser-render cheese-browser-render \
+  "fetching will fall back a rung"
+start_optional_service office-render cheese-office-render \
+  "documents will offer download only"
 
 log "waiting for health…"
 code=""
