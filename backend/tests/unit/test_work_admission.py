@@ -434,6 +434,44 @@ async def test_normal_message_without_live_work_queues_without_fallback_error(
 
 
 @pytest.mark.anyio
+async def test_the_wait_before_a_turn_assembles_is_accounted_for(db_factory, caplog):
+    """Every other stretch of a turn is timed. The one between a message being
+    durably received and its turn starting to assemble was not, and it holds three
+    waits that can each be long: the queue behind this recipient's other messages,
+    a live-delivery attempt that reaches the database, and the credit and
+    concurrency gates. Measured end to end it showed as a gap with nothing in it —
+    on a real room, a fifth of the time a person waits before the model is asked
+    anything."""
+
+    class Prepared(FakeChat):
+        async def converse_prepared(self, **kwargs):
+            yield {"type": "done"}
+
+    chat = Prepared(None, db_factory)
+    runner, broker = _runner()
+    topic = await a_topic(db_factory)
+
+    with caplog.at_level("INFO"):
+        async with broker.subscribe(str(topic)) as queue:
+            await broker.receive_message(
+                chat, topic, author="u", content="正常开工", summon=True
+            )
+            await _frames_through(queue, "turn_finished")
+        await _until(lambda: runner.active_work_count() == 0)
+
+    timings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("chat_admission_timing")
+    ]
+    phases = [line.split("phase=")[1].split()[0] for line in timings]
+    assert phases == ["message_lock", "live_delivery_declined", "admitted"]
+    assert all(f"topic={topic}" in line for line in timings)
+    assert all("elapsed_ms=" in line and "unix_ms=" in line for line in timings)
+    assert "verdict=ok" in timings[-1]
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize("delivery_result", [False, None])
 async def test_live_delivery_fallback_reports_error_then_runs_normally(
     db_factory,

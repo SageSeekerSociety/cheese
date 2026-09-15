@@ -702,8 +702,23 @@ class AgentWorkRunner:
         # not block a follow-up addressed to the agent that is still running.
         key = (topic_id, message["recipient_handle"])
         lock = self._message_locks.setdefault(key, asyncio.Lock())
+        # The window this and the two lines below measure runs from a message
+        # being durably received to its turn starting to assemble. Every other
+        # stretch of a turn is timed; this one never was, and it is not small —
+        # it holds a queue behind the recipient's other messages, a live-delivery
+        # attempt that reaches the database, and the credit and concurrency gates.
+        # Measured through it, a turn only shows a gap with nothing in it.
+        admission_started = time.monotonic()
         try:
             async with lock:
+                logger.info(
+                    "chat_admission_timing topic=%s turn=%s phase=message_lock "
+                    "elapsed_ms=%.3f unix_ms=%.3f",
+                    topic_id,
+                    turn_id,
+                    (time.monotonic() - admission_started) * 1000,
+                    time.time() * 1000,
+                )
                 if not message["summon"]:
                     if message["content"] or message["attachments"]:
                         await chat_service.merge_into_running_turn(
@@ -724,6 +739,14 @@ class AgentWorkRunner:
                     chat_service, topic_id, turn_id, **message
                 ):
                     return
+            logger.info(
+                "chat_admission_timing topic=%s turn=%s phase=live_delivery_declined "
+                "elapsed_ms=%.3f unix_ms=%.3f",
+                topic_id,
+                turn_id,
+                (time.monotonic() - admission_started) * 1000,
+                time.time() * 1000,
+            )
             message.pop("landed_user_block_ids")
             message.pop("live_delivery_expected")
             await self._run(chat_service, topic_id, turn_id, **message)
@@ -1667,7 +1690,17 @@ class AgentWorkRunner:
         # project's concurrent-turn ceiling is reached. Both states are posted
         # into the topic as platform system events, so people SEE why nothing
         # is streaming yet.
+        admit_started = time.monotonic()
         verdict, gate = await self._admit(chat_service, topic_id, turn_id)
+        logger.info(
+            "chat_admission_timing topic=%s turn=%s phase=admitted verdict=%s "
+            "elapsed_ms=%.3f unix_ms=%.3f",
+            topic_id,
+            turn_id,
+            verdict,
+            (time.monotonic() - admit_started) * 1000,
+            time.time() * 1000,
+        )
         if verdict == "reject":
             if isinstance(frames, AsyncGenerator):
                 await frames.aclose()  # never-started kickoff stream: close it
