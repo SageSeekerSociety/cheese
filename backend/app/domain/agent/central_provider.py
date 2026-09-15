@@ -445,9 +445,9 @@ class CentralChannel(DeviceChannel):
                 target, "context_fs", {"operation": "tree"}, hub=self._hub
             )
         finally:
+            # Cancel and let it unwind on its own: awaiting it here would make
+            # the turn's own cancellation look like the notice's and swallow it.
             notice.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await notice
         now = time.monotonic()
         logger.info(
             "central_setup_timing topic=%s phase=context_tree elapsed_ms=%.3f "
