@@ -33,15 +33,28 @@ class _FakeChat:
     `session_factory` is where the runner keeps its turn intervals — a real
     ChatService carries one, so a stand-in that runs turns has to as well."""
 
-    def __init__(self, frames, session_factory=None):
+    def __init__(self, frames, session_factory=None, tools_recovered=False):
         self._frames = frames
         self.session_factory = session_factory
         self.ran = False
         self.kwargs: dict = {}
+        self.calls: list[dict] = []
+        self.tool_checks = 0
+        self._tools_recovered = tools_recovered
+        self.events: list[str] = []
+
+    async def recover_native_tools(self, topic_id):
+        self.tool_checks += 1
+        return self._tools_recovered
+
+    async def post_system_event(self, topic_id, text, *args, **kwargs):
+        self.events.append(text)
+        return None
 
     async def converse(self, **kwargs):
         self.ran = True
         self.kwargs = kwargs
+        self.calls.append(kwargs)
         for f in self._frames:
             await asyncio.sleep(0)  # yield control, like a real streaming turn
             yield f
@@ -1661,3 +1674,49 @@ async def test_crossing_the_ceiling_is_recorded_and_ends_nothing(db_factory, cap
         "ceiling" in r.getMessage() and "recorded" in r.getMessage()
         for r in caplog.records
     ), [r.getMessage() for r in caplog.records]
+
+
+@pytest.mark.anyio
+async def test_a_summoned_turn_that_published_nothing_checks_its_tools(db_factory):
+    """芝士 answering into a terminal whose platform tools are gone looks, from
+    the room, exactly like 芝士 having nothing to say. The turn that published
+    nothing is the only one that pays for the question."""
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker)
+    silent = _FakeChat([{"type": "user_block"}, {"type": "done"}], db_factory)
+    topic = await a_topic(db_factory)
+    runner.submit(silent, topic, author="u", content="修一下登录", summon=True)
+    await runner.drain()
+    assert silent.tool_checks == 1
+    assert silent.events == []  # nothing was wrong, so the room hears nothing
+
+    spoke = _FakeChat(
+        [{"type": "user_block"}, {"type": "assistant_block"}, {"type": "done"}],
+        db_factory,
+    )
+    runner.submit(
+        spoke, await a_topic(db_factory), author="u", content="hi", summon=True
+    )
+    await runner.drain()
+    assert spoke.tool_checks == 0, "a turn that spoke needs no recovery"
+
+
+@pytest.mark.anyio
+async def test_reconnected_tools_re_deliver_the_message_once(db_factory):
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker)
+    chat = _FakeChat(
+        [{"type": "user_block"}, {"type": "done"}], db_factory, tools_recovered=True
+    )
+    topic = await a_topic(db_factory)
+    runner.submit(chat, topic, author="u", content="修一下登录", summon=True)
+    for _ in range(3):  # the first turn's tail submits the re-delivery
+        await runner.drain()
+    assert chat.events and "已经接回来" in chat.events[0]
+    assert len(chat.calls) == 2, "the message is re-delivered exactly once"
+    # The re-delivery carries the ORIGINAL text, as a resume so it cannot chain.
+    resent = chat.calls[1]
+    assert resent["content"] == "修一下登录"
+    assert resent["is_resume"] is True
+    assert resent["resume_reason"] == AgentWorkRunner.TOOLS_REASON
+    assert chat.tool_checks == 1, "the re-delivery must not ask again"

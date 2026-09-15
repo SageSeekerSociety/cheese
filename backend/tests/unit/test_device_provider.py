@@ -2047,3 +2047,55 @@ async def test_interrupt_presses_escape_rather_than_saying_something():
 
     assert hub.keys == [(screen.sid, b"\x1b")]
     assert hub.prompts == []  # nothing was said
+
+
+class _Control:
+    """Stand-in for the room's native control session: answers `mcp_status` from
+    a scripted sequence and records what was asked."""
+
+    def __init__(self, statuses, session_status="active"):
+        self._statuses = list(statuses)
+        self._session = {"id": "sess", "status": session_status}
+        self.asked: list[str] = []
+
+    async def current(self, _topic_id):
+        return self._session
+
+    async def enqueue(self, _session_id, payload, _source):
+        self.asked.append(payload["request"]["subtype"])
+        self._last = payload["request_id"]
+
+    async def result(self, _session_id, request_id, _timeout):
+        subtype = self.asked[-1]
+        response = (
+            {"mcpServers": [{"name": "native", "status": self._statuses.pop(0)}]}
+            if subtype == "mcp_status"
+            else {}
+        )
+        return {"response": {"subtype": "success", "response": response}}
+
+
+async def test_tools_that_are_still_connected_are_left_alone(monkeypatch):
+    control = _Control(["connected"])
+    monkeypatch.setattr("app.domain.agent.remote_control.store", lambda: control)
+    provider = DeviceChannel(hub=FakeHub())
+    assert await provider.recover_native_tools(uuid.uuid4()) is False
+    assert control.asked == ["mcp_status"]
+
+
+async def test_disconnected_tools_are_reconnected_and_reported(monkeypatch):
+    control = _Control(["failed", "pending", "connected"])
+    monkeypatch.setattr("app.domain.agent.remote_control.store", lambda: control)
+    provider = DeviceChannel(hub=FakeHub())
+    assert await provider.recover_native_tools(uuid.uuid4()) is True
+    assert control.asked == ["mcp_status", "mcp_reconnect", "mcp_status", "mcp_status"]
+
+
+async def test_a_room_with_no_live_control_session_is_not_resent(monkeypatch):
+    """No session to ask is not evidence the tools were lost, and a resend on a
+    guess would repeat a message 芝士 may well have answered."""
+    control = _Control([], session_status="closed")
+    monkeypatch.setattr("app.domain.agent.remote_control.store", lambda: control)
+    provider = DeviceChannel(hub=FakeHub())
+    assert await provider.recover_native_tools(uuid.uuid4()) is False
+    assert control.asked == []
