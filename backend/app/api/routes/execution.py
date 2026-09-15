@@ -33,7 +33,7 @@ async def execute(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
     trace_id = "execution-" + uuid.uuid4().hex
-    logger.info(
+    logger.debug(
         "execution_timing stage=handler_start trace=%s mono_ns=%d method=%s tool_id=%s",
         trace_id,
         time.monotonic_ns(),
@@ -67,7 +67,7 @@ async def execute(
         raise ForbiddenError("This executor operation is not available to the session")
     target = placement["execution"]
     await db.commit()
-    logger.info(
+    logger.debug(
         "execution_timing stage=admitted trace=%s mono_ns=%d",
         trace_id,
         time.monotonic_ns(),
@@ -80,7 +80,7 @@ async def execute(
         )
     finally:
         await db.rollback()
-        logger.info(
+        logger.debug(
             "execution_timing stage=handler_end trace=%s mono_ns=%d",
             trace_id,
             time.monotonic_ns(),

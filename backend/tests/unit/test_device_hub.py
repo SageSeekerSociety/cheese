@@ -238,7 +238,7 @@ async def test_executor_does_not_wait_for_an_unsupported_connector():
 
 
 async def test_executor_result_waits_for_complete_response(caplog):
-    caplog.set_level("INFO", logger="app.domain.agent.device_hub")
+    caplog.set_level("DEBUG", logger="app.domain.agent.device_hub")
     hub, transport, task, identifier = await _executor_call()
     data = json.dumps({"result": {"text": "中文"}}, ensure_ascii=False).encode()
     for chunk in (data[:23], data[23:]):
