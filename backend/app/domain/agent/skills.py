@@ -98,9 +98,25 @@ NATIVE_CHAT_GUIDANCE = (
 )
 
 
+#: Skills that are already written as native Claude skills, shipped verbatim.
+#:
+#: The container gets these by having the whole `sandbox/skills` tree copied into
+#: its session directory (`workspace.service.session_dir`); an enrolled device
+#: never sees that tree, so the same file has to travel here too. Reading it from
+#: one place is what stops the two paths from drifting — a skill fixed in the
+#: container and stale on a device is exactly the kind of split nobody notices,
+#: because both machines run and only one of them is right.
+_NATIVE_SKILL_SRC = Path(__file__).resolve().parents[3] / "sandbox" / "skills"
+_SHIPPED_NATIVE_SKILLS = ("documents",)
+
+
 def native_skill_files() -> dict[str, str]:
     """Files relative to the session's CLAUDE_CONFIG_DIR, never its worktree."""
     files = {}
+    for name in _SHIPPED_NATIVE_SKILLS:
+        source = _NATIVE_SKILL_SRC / name / "SKILL.md"
+        if source.is_file():
+            files[f"skills/{name}/SKILL.md"] = source.read_text(encoding="utf-8")
     for source, name in (("doc_form.md", "cheese-docs"),):
         meta, body = _parse(_SKILL_DIR / source)
         body = body.replace("doc-form", "cheese-docs")

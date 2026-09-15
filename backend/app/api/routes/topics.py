@@ -1,6 +1,8 @@
 """Topic routes."""
 
 import asyncio
+import base64
+import binascii
 import re
 import shutil
 import uuid
@@ -1997,12 +1999,62 @@ async def tell_topic(
 _ARTIFACT_MIME = {
     "html": "text/html",
     "svg": "image/svg+xml",
+    # A deliverable is not always a web page. A room that writes a report, a
+    # budget or a deck produces one of these, and until the platform accepted
+    # them the only way to hand one over was to describe where it sat in the
+    # worktree — which the person in the room cannot open.
+    "pdf": "application/pdf",
+    "docx": ("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+    "pptx": (
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    ),
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "md": "text/markdown",
+    "csv": "text/csv",
+    "png": "image/png",
+    "jpg": "image/jpeg",
     # 运行环境预览: the artifact is a RUNNING app on the machine this place's turn
     # lives on, reached over the preview tunnel that machine dialled out. HOW to
     # run it — and on which port — is the agent's judgment; the platform only
     # carries what answers there.
     "app": "application/x-cheesex-app",
 }
+
+#: Which artifact kind a filename implies, when the caller named none.
+#:
+#: Asking the agent to restate in a flag what the extension already says is a
+#: rule it can get wrong, and the wrong answer here is silent: `report.docx`
+#: declared as html reaches the panel as a mis-typed blob rather than an error.
+#: An unknown extension still falls back to html, which is what every caller
+#: predating this table sent.
+_ARTIFACT_KIND_BY_SUFFIX = {
+    ".html": "html",
+    ".htm": "html",
+    ".svg": "svg",
+    ".pdf": "pdf",
+    ".docx": "docx",
+    ".pptx": "pptx",
+    ".xlsx": "xlsx",
+    ".md": "md",
+    ".markdown": "md",
+    ".csv": "csv",
+    ".png": "png",
+    ".jpg": "jpg",
+    ".jpeg": "jpg",
+}
+
+#: Ceiling on a published artifact, matching the chat attachment limit below —
+#: both are "a file a person will open in this room", and a report that is too
+#: big to send as an attachment is too big to publish as a deliverable.
+MAX_ARTIFACT_BYTES = 10 * 1024 * 1024
+
+
+def artifact_kind_for(path: str) -> str:
+    """The kind `path`'s extension implies; `html` when it implies none."""
+    suffix = path.rsplit("/", 1)[-1]
+    dot = suffix.rfind(".")
+    return _ARTIFACT_KIND_BY_SUFFIX.get(suffix[dot:].lower() if dot > 0 else "", "html")
+
 
 # How long ``cheese serve`` may wait for the helper it just started to finish its
 # upgrade. It declares the preview in the same breath as starting the tunnel, so
@@ -2035,7 +2087,8 @@ async def _reject_unreachable_app(topic_id: uuid.UUID) -> None:
         raise ValidationError(
             "这台机器还没有把预览通道拨出来，预览到不了运行中的应用。"
             "用 cheese serve <端口> 登记（它会把通道带起来）；"
-            "要给人看结果也可以用 cheese artifact 点名一个网页或 SVG 文件。"
+            "要给人看结果也可以用 cheese_artifact 点名一个文件——网页、图片，"
+            "或报告、表格这类文档。"
         )
     if not await preview_hub.probe(topic_id):
         raise ValidationError(
@@ -2055,24 +2108,43 @@ async def set_artifact(
     `cheese artifact`. With no anchor it becomes this place's current preview."""
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
-    as_ = (body.get("as") or "html").strip().lower()
-    if as_ == "app":
+    declared = (body.get("as") or "").strip().lower()
+    if declared == "app":
         # An app artifact points at the running server, not a file — the stored
         # content is a human note ("Vue dev server"), not a path.
         path = (body.get("path") or "app").strip()[:120]
         await _reject_unreachable_app(topic_id)
     else:
         path = _clean_artifact_path(body.get("path") or "")
+    as_ = declared or artifact_kind_for(path)
     mime = _ARTIFACT_MIME.get(as_)
     if mime is None:
         allowed = "、".join(_ARTIFACT_MIME)
         raise ValidationError(f"暂不支持的类型 {as_!r}（可选：{allowed}）")
-    if as_ != "app" and "content" in body:
-        content = body["content"]
-        if not isinstance(content, str):
-            raise ValidationError("content 必须是文本")
+    if as_ != "app" and ("content" in body or "content_b64" in body):
         # A remote machine's file is not in the backend worktree until published.
-        ws.write_room_file(place.project_id, topic_id, path, content.encode())
+        # Office files and PDFs are not text, so they travel base64-encoded; a
+        # caller that sends them as `content` would either fail to read them or
+        # corrupt them on the way, which is why the two fields are separate
+        # rather than one field that guesses.
+        if "content_b64" in body:
+            encoded = body["content_b64"]
+            if not isinstance(encoded, str):
+                raise ValidationError("content_b64 必须是文本")
+            try:
+                raw = base64.b64decode(encoded, validate=True)
+            except (ValueError, binascii.Error) as exc:
+                raise ValidationError("content_b64 不是合法的 base64") from exc
+        else:
+            content = body["content"]
+            if not isinstance(content, str):
+                raise ValidationError("content 必须是文本")
+            raw = content.encode()
+        if len(raw) > MAX_ARTIFACT_BYTES:
+            raise ValidationError(
+                f"产物太大（上限 {MAX_ARTIFACT_BYTES // (1024 * 1024)}MB）"
+            )
+        ws.write_room_file(place.project_id, topic_id, path, raw)
     block = await BlockRepository(db).add(
         project_id=place.project_id,
         topic_id=topic_id,  # the place; `add` splits it
