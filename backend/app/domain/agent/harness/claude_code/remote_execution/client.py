@@ -675,6 +675,37 @@ def publish_event(config, payload):
     return output
 
 
+# A listing names the platform tools from what the executor answers right then,
+# so a listing taken at the wrong moment can come back without the whole
+# `cheese_*` family, and the agent is told `No such tool available:
+# mcp__native__cheese_status`. That has cost three turns (2026-09-13, -14 and
+# 2026-09-15 06:57) and every investigation ran out of evidence at the same
+# place: nothing anywhere recorded what the list had contained. Waiting for the
+# executor was tried and reverted — it delays the listing, and the first tool
+# call of a session races it (the private-chat acceptance fails that way). So
+# this says what it found and nothing else; the next short list will be a line
+# in the MCP server's log instead of a mystery.
+def _cli_tools(client):
+    """The platform tools the executor can name right now, reported either way."""
+    try:
+        capabilities = client.call("ping", {}).get("capabilities", [])
+        tools = (
+            client.call("cli", {"method": "tools/list"})["tools"]
+            if "cli_worker" in capabilities
+            else []
+        )
+        reason = "" if tools else "the executor reports no CLI worker"
+    except Exception as exc:  # noqa: BLE001 — a listing must still answer
+        tools, reason = [], f"{type(exc).__name__}: {exc}"
+    print(
+        f"[cheese] native tools/list: {len(tools)} platform tools"
+        + (f" ({reason})" if reason else ""),
+        file=sys.stderr,
+        flush=True,
+    )
+    return tools
+
+
 def transport(config, target_path):
     import threading
     from concurrent.futures import ThreadPoolExecutor
@@ -724,12 +755,7 @@ def transport(config, target_path):
                     "serverInfo": {"name": "cheese-native-execution", "version": "1"},
                 }
             elif method == "tools/list":
-                capabilities = client.call("ping", {}).get("capabilities", [])
-                cli_tools = (
-                    client.call("cli", {"method": "tools/list"})["tools"]
-                    if "cli_worker" in capabilities
-                    else []
-                )
+                cli_tools = _cli_tools(client)
                 value = {
                     "tools": [
                         {

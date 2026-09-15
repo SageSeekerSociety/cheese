@@ -985,3 +985,38 @@ def test_a_lost_response_is_never_replayed(monkeypatch):
     with pytest.raises(ConnectionResetError):
         client.call("invoke")
     assert len(attempts) == 1
+
+
+def test_every_tool_listing_says_how_many_platform_tools_it_found(monkeypatch, capsys):
+    """Three turns have been lost to a list that silently arrived without the
+    `cheese_*` family, and each investigation ended at the same wall: nothing
+    recorded what had been listed."""
+
+    class Ready:
+        @staticmethod
+        def call(method, params=None):
+            if method == "ping":
+                return {"capabilities": ["prepare", "cli_worker"]}
+            return {"tools": [{"name": "cheese_status", "inputSchema": {}}]}
+
+    assert central._cli_tools(Ready()) == [{"name": "cheese_status", "inputSchema": {}}]
+    assert "1 platform tools" in capsys.readouterr().err
+
+    class NoWorker:
+        @staticmethod
+        def call(method, params=None):
+            return {"capabilities": ["prepare"]}
+
+    assert central._cli_tools(NoWorker()) == []
+    assert "no CLI worker" in capsys.readouterr().err
+
+    class Unreachable:
+        @staticmethod
+        def call(method, params=None):
+            raise ConnectionRefusedError(111, "Connection refused")
+
+    # An executor that cannot be reached still gets a listing: the file and
+    # shell tools are the transport's own, and a first tool call must not race
+    # a probe of something else.
+    assert central._cli_tools(Unreachable()) == []
+    assert "ConnectionRefusedError" in capsys.readouterr().err
