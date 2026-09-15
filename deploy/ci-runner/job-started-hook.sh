@@ -29,4 +29,10 @@ while read -r point; do
   echo "job-started hook: released a dead forwarded mount at $point"
 done < <(mount 2>/dev/null | awk '$1 == "FuseProject" { print $3 }')
 
+# The other way this machine stops being able to run a job. Kept in its own script
+# because it is a different failure with a different trigger; both belong here
+# because "before the next job" is when a machine can be repaired at all.
+guard="$(dirname "$0")/disk-guard.sh"
+[ -x "$guard" ] && "$guard"
+
 exit 0
