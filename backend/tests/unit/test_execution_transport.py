@@ -888,3 +888,100 @@ def test_resident_transport_cancels_a_running_shell(central_transport):
         outcome = pending.result(timeout=5)
     assert outcome["result"]["interrupted"]
     assert not (work / "finished").exists()
+
+
+def test_a_tool_call_waits_out_a_platform_that_is_being_redeployed(monkeypatch):
+    """An app deploy recreates the endpoint the central session dials, so every
+    tool call in every live room is refused for as long as it takes. A refused
+    connect sent nothing, so waiting for it cannot run the call twice."""
+    client = executor_transport.RemoteClient(
+        {"kind": "device", "url": "http://executor.test"}
+    )
+    monkeypatch.setenv("CHEESE_TOKEN", "t")
+    slept: list[float] = []
+    monkeypatch.setattr(executor_transport.time, "sleep", slept.append)
+    attempts = []
+
+    class Response:
+        status = 200
+
+        @staticmethod
+        def read():
+            return b'{"ok": true}'
+
+    class Connection:
+        sock = None
+
+        def request(self, method, path, *, body, headers):
+            attempts.append(path)
+            if len(attempts) < 4:
+                raise ConnectionRefusedError(111, "Connection refused")
+
+        @staticmethod
+        def getresponse():
+            return Response()
+
+        @staticmethod
+        def close():
+            pass
+
+    monkeypatch.setattr(client, "connection", lambda: (Connection(), "/execution"))
+    client.transport.headers = {}
+    assert client.call("invoke") == {"ok": True}
+    assert len(attempts) == 4
+    assert slept and all(
+        delay <= executor_transport.CONNECT_RETRY_MAX_DELAY_S for delay in slept
+    )
+
+
+def test_a_refusal_that_outlasts_the_window_is_still_reported(monkeypatch):
+    client = executor_transport.RemoteClient(
+        {"kind": "device", "url": "http://executor.test"}
+    )
+    monkeypatch.setenv("CHEESE_TOKEN", "t")
+    monkeypatch.setattr(executor_transport, "CONNECT_RETRY_WINDOW_S", 0)
+
+    class Connection:
+        sock = None
+
+        def request(self, method, path, *, body, headers):
+            raise ConnectionRefusedError(111, "Connection refused")
+
+        @staticmethod
+        def close():
+            pass
+
+    monkeypatch.setattr(client, "connection", lambda: (Connection(), "/execution"))
+    client.transport.headers = {}
+    with pytest.raises(ConnectionRefusedError):
+        client.call("invoke")
+
+
+def test_a_lost_response_is_never_replayed(monkeypatch):
+    """The other failures can follow a mutation the executor already ran, so
+    they travel straight up exactly as before."""
+    client = executor_transport.RemoteClient(
+        {"kind": "device", "url": "http://executor.test"}
+    )
+    monkeypatch.setenv("CHEESE_TOKEN", "t")
+    attempts = []
+
+    class Connection:
+        sock = None
+
+        def request(self, method, path, *, body, headers):
+            attempts.append(path)
+
+        @staticmethod
+        def getresponse():
+            raise ConnectionResetError("peer went away mid-answer")
+
+        @staticmethod
+        def close():
+            pass
+
+    monkeypatch.setattr(client, "connection", lambda: (Connection(), "/execution"))
+    client.transport.headers = {}
+    with pytest.raises(ConnectionResetError):
+        client.call("invoke")
+    assert len(attempts) == 1

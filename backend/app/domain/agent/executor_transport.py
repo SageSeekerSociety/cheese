@@ -6,8 +6,35 @@ import re
 import select
 import shlex
 import subprocess
+import time
 import uuid
 from urllib.parse import unquote, urlsplit
+
+# How long a request waits out a platform endpoint that is not listening.
+# An app deploy recreates the backend container, and the central session reaches
+# it directly, so every tool call and every chat publication in every live room
+# gets ECONNREFUSED for as long as the recreate takes — measured 2026-09-15:
+# a room went four minutes with `Bash`, `Read` and chat all refused, and the
+# agent read that as the sandbox being broken. Waiting is the honest answer: a
+# refused connect means the request never left this process, so nothing can have
+# happened twice, and the deploy that caused it ends by itself.
+CONNECT_RETRY_WINDOW_S = 180
+CONNECT_RETRY_MAX_DELAY_S = 5
+
+
+def _retry_connect(attempt: int, deadline: float) -> bool:
+    """Sleep before the next attempt, or say the window is over.
+
+    ONLY for a connection that was refused: `http.client` raises that before it
+    writes anything, which is what makes the replay safe. A failure any later —
+    a reset, a lost response — can follow a mutation the server already
+    committed, and those still travel straight up (see `call`).
+    """
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return False
+    time.sleep(min(2**attempt * 0.5, CONNECT_RETRY_MAX_DELAY_S, remaining))
+    return True
 
 
 class RemoteClient:
@@ -182,22 +209,47 @@ class RemoteClient:
             # outlive the worker thread that happened to make the first call.
             self.publication = RemoteClient({"url": url}, shared_connection=True)
         publisher = self.publication
+        body = json.dumps(
+            {
+                "content": content,
+                "request_id": publication_id,
+                **({"reply_to": args["reply_to"]} if args.get("reply_to") else {}),
+            }
+        ).encode()
+        deadline = time.monotonic() + CONNECT_RETRY_WINDOW_S
+        attempt = 0
+        while True:
+            try:
+                result = self._publish_once(publisher, body, token, publication_id)
+                break
+            except ConnectionRefusedError:
+                # The room is mid-deploy: nothing was sent, so waiting cannot
+                # publish the same message twice.
+                if not _retry_connect(attempt, deadline):
+                    raise RuntimeError(
+                        "Chat publication failed; the platform refused connections "
+                        f"for {CONNECT_RETRY_WINDOW_S}s; "
+                        f"request_id={publication_id}"
+                    ) from None
+                attempt += 1
+        return {
+            "value": {
+                "stdout": json.dumps(result["data"], ensure_ascii=False),
+                "stderr": f"[cheese] request_id={publication_id}",
+                "interrupted": False,
+                "noOutputExpected": False,
+                "returnCodeInterpretation": "Exit code 0",
+            }
+        }
+
+    @staticmethod
+    def _publish_once(publisher, body, token, publication_id):
         connection, path = publisher.connection()
         try:
             connection.request(
                 "POST",
                 path,
-                body=json.dumps(
-                    {
-                        "content": content,
-                        "request_id": publication_id,
-                        **(
-                            {"reply_to": args["reply_to"]}
-                            if args.get("reply_to")
-                            else {}
-                        ),
-                    }
-                ).encode(),
+                body=body,
                 headers={
                     "Content-Type": "application/json",
                     "X-Cheese-Token": token,
@@ -216,22 +268,17 @@ class RemoteClient:
                     f"Chat publication failed: HTTP {response.status}; "
                     f"request_id={publication_id}"
                 )
-            result = json.loads(data)
+            return json.loads(data)
+        except ConnectionRefusedError:
+            connection.close()
+            publisher.transport.connection = None
+            raise
         except Exception as exc:
             connection.close()
             publisher.transport.connection = None
             raise RuntimeError(
                 f"Chat publication failed; request_id={publication_id}: {exc}"
             ) from exc
-        return {
-            "value": {
-                "stdout": json.dumps(result["data"], ensure_ascii=False),
-                "stderr": f"[cheese] request_id={publication_id}",
-                "interrupted": False,
-                "noOutputExpected": False,
-                "returnCodeInterpretation": "Exit code 0",
-            }
-        }
 
     def command(self, mode, server=None):
         command = [*self.config["command"], mode, "--state", self.config["state"]]
@@ -255,31 +302,42 @@ class RemoteClient:
     def call(self, method, params=None):
         if self.config.get("kind") == "device":
             payload = json.dumps({"method": method, "params": params or {}}).encode()
-            connection, path = self.connection()
-            try:
-                connection.request(
-                    "POST",
-                    path,
-                    body=payload,
-                    headers={
-                        "Content-Type": "application/json",
-                        "X-Cheese-Token": self.execution_token(),
-                        **self.transport.headers,
-                    },
-                )
-                response = connection.getresponse()
-                data = response.read()
-                if response.status != 200:
-                    raise RuntimeError(
-                        f"Executor HTTP request failed: {response.status}"
+            deadline = time.monotonic() + CONNECT_RETRY_WINDOW_S
+            attempt = 0
+            while True:
+                connection, path = self.connection()
+                try:
+                    connection.request(
+                        "POST",
+                        path,
+                        body=payload,
+                        headers={
+                            "Content-Type": "application/json",
+                            "X-Cheese-Token": self.execution_token(),
+                            **self.transport.headers,
+                        },
                     )
-                return json.loads(data)
-            except Exception:
-                # A lost response can follow a committed mutation. Reconnect only
-                # for the next call; never replay this request automatically.
-                connection.close()
-                self.transport.connection = None
-                raise
+                    response = connection.getresponse()
+                    data = response.read()
+                    if response.status != 200:
+                        raise RuntimeError(
+                            f"Executor HTTP request failed: {response.status}"
+                        )
+                    return json.loads(data)
+                except ConnectionRefusedError:
+                    # Nothing was sent, so this is the one failure worth waiting
+                    # out: the platform endpoint is being replaced.
+                    connection.close()
+                    self.transport.connection = None
+                    if not _retry_connect(attempt, deadline):
+                        raise
+                    attempt += 1
+                except Exception:
+                    # A lost response can follow a committed mutation. Reconnect
+                    # only for the next call; never replay this one.
+                    connection.close()
+                    self.transport.connection = None
+                    raise
         result = subprocess.run(
             self.command("request"),
             input=json.dumps({"method": method, "params": params or {}}),
