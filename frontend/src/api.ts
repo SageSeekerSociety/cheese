@@ -1054,6 +1054,39 @@ export function attachmentRawUrl(topicId: string, path: string): string {
   return `${BASE}/topics/${encodeURIComponent(topicId)}/attachments/raw?path=${encodeURIComponent(path)}`
 }
 
+/** A published file's bytes, for a viewer that draws them in the page. */
+export async function previewFileBytes(topicId: string, path: string): Promise<ArrayBuffer> {
+  // `download=true` is what makes the raw endpoint serve a non-image at all; it
+  // only changes the Content-Disposition, which nothing here reads.
+  const res = await fetch(`${attachmentRawUrl(topicId, path)}&download=true`, {
+    headers: authHeaders(),
+  })
+  if (!res.ok) throw new Error(`读取文件失败（HTTP ${res.status}）`)
+  return res.arrayBuffer()
+}
+
+/** Raised when the deployment has no document renderer, as opposed to when this
+ *  particular file cannot be converted. The panel says a different thing for
+ *  each: one is about the deployment and one is about the file. */
+export class PreviewRendererUnavailable extends Error {}
+
+/** A Word or PowerPoint file converted to PDF, so a browser can draw it. */
+export async function previewDocumentPdf(topicId: string, path: string): Promise<ArrayBuffer> {
+  const url = `${BASE}/topics/${encodeURIComponent(topicId)}/attachments/pdf` + `?path=${encodeURIComponent(path)}`
+  const res = await fetch(url, { headers: authHeaders() })
+  if (res.ok) return res.arrayBuffer()
+  let message = ''
+  try {
+    message = String((await res.json())?.message || '')
+  } catch {
+    message = ''
+  }
+  if (res.status === 503) {
+    throw new PreviewRendererUnavailable(message || '这个部署没有启用文档预览')
+  }
+  throw new Error(message || `无法生成预览（HTTP ${res.status}）`)
+}
+
 // Downloads carry the same credentials as API requests, including token-only sessions.
 export async function downloadFile(rawUrl: string, filename: string): Promise<void> {
   const res = await fetch(`${rawUrl}&download=true`, { headers: authHeaders() })

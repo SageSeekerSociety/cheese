@@ -11,21 +11,63 @@ const readPreviewFile = vi.fn()
 const requestPreviewSession = vi.fn()
 const downloadFile = vi.fn()
 const attachmentRawUrl = vi.fn()
+const previewFileBytes = vi.fn()
+const previewDocumentPdf = vi.fn()
+
+// Declared through vi.hoisted: the vi.mock factory below is lifted above every
+// other statement in this file, so a plain `class` here is still in its temporal
+// dead zone when the factory runs.
+const { PreviewRendererUnavailable } = vi.hoisted(() => ({
+  PreviewRendererUnavailable: class extends Error {},
+}))
+
 vi.mock('../../api', () => ({
   getPreview: (...args: unknown[]) => getPreview(...args),
   readPreviewFile: (...args: unknown[]) => readPreviewFile(...args),
   requestPreviewSession: (...args: unknown[]) => requestPreviewSession(...args),
   downloadFile: (...args: unknown[]) => downloadFile(...args),
   attachmentRawUrl: (...args: unknown[]) => attachmentRawUrl(...args),
+  previewFileBytes: (...args: unknown[]) => previewFileBytes(...args),
+  previewDocumentPdf: (...args: unknown[]) => previewDocumentPdf(...args),
+  PreviewRendererUnavailable,
+}))
+
+// The two viewers draw with pdf.js and exceljs, neither of which belongs in a
+// unit test of this panel. They are replaced by stubs that report what they were
+// handed and can fire the events a reader's gesture produces.
+vi.mock('./preview/PreviewPages.vue', () => ({
+  default: {
+    name: 'PreviewPages',
+    props: ['data'],
+    emits: ['quote'],
+    template:
+      '<div data-testid="pages" :data-bytes="data ? data.byteLength : 0"' +
+      " @click=\"$emit('quote', { text: '平台在真实课程中完成了部署', page: 2 })\" />",
+  },
+}))
+vi.mock('./preview/PreviewSheet.vue', () => ({
+  default: {
+    name: 'PreviewSheet',
+    props: ['data'],
+    emits: ['cell'],
+    template:
+      '<div data-testid="sheet" :data-bytes="data ? data.byteLength : 0"' +
+      " @click=\"$emit('cell', { address: 'B7', value: '1200', sheet: 'Sheet1' })\" />",
+  },
 }))
 
 import PanelPreview from './PanelPreview.vue'
 
 const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
-/** 一份芝士交出来的 Word 报告：工作区里的真实文件，读不成文本。 */
-function wordReport(path = 'output/评审简报.docx'): PreviewInfo {
-  return { kind: 'file', path, mime: DOCX, url: null, artifact_id: 'artifact-doc', tunnel_up: false }
+/** A deliverable in the worktree: real bytes, and not readable as text. */
+function artifact(path: string, mime: string): PreviewInfo {
+  return { kind: 'file', path, mime, url: null, artifact_id: `artifact-${path}`, tunnel_up: false }
+}
+
+function fileContent(path: string) {
+  return { path, content: null, version: 'v1', bytes: 38705, binary: true, too_large: false }
 }
 
 function mount() {
@@ -37,49 +79,95 @@ function mount() {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  getPreview.mockResolvedValue(wordReport())
-  readPreviewFile.mockResolvedValue({
-    path: 'output/评审简报.docx',
-    content: null,
-    version: null,
-    bytes: 38705,
-    binary: true,
-    too_large: false,
-  })
+  getPreview.mockResolvedValue(artifact('output/评审简报.docx', DOCX))
+  readPreviewFile.mockResolvedValue(fileContent('output/评审简报.docx'))
   attachmentRawUrl.mockReturnValue('/api/topics/topic-a/attachments/raw?path=x')
   downloadFile.mockResolvedValue(undefined)
+  previewDocumentPdf.mockResolvedValue(new ArrayBuffer(4096))
+  previewFileBytes.mockResolvedValue(new ArrayBuffer(2048))
 })
 afterEach(cleanup)
 
-it('offers a Word report by name and type, not as a broken web page', async () => {
+it('shows a Word report rather than offering it as a download', async () => {
   mount()
 
-  // 交付物的名字是人认得的那个，不是工作区里的完整路径。
-  await waitFor(() => expect(screen.getByText('评审简报.docx')).toBeTruthy())
-  expect(screen.getByText('Word 文档')).toBeTruthy()
-  // 「这个文件不是文本」说的是诊断，而这份文件正是用户要的东西。
-  expect(screen.queryByText('这个文件不是文本')).toBeNull()
+  const pages = await screen.findByTestId('pages')
+  // The file the room produced is on screen, converted, not described.
+  expect(pages.getAttribute('data-bytes')).toBe('4096')
+  expect(previewDocumentPdf).toHaveBeenCalledWith('topic-a', 'output/评审简报.docx')
+  expect(screen.getByText('评审简报.docx')).toBeTruthy()
 })
 
-it('hands the file over when asked', async () => {
+it('reads a spreadsheet from its own bytes, not from a converted copy', async () => {
+  getPreview.mockResolvedValue(artifact('output/预算表.xlsx', XLSX))
+  readPreviewFile.mockResolvedValue(fileContent('output/预算表.xlsx'))
+
   mount()
-  await waitFor(() => expect(screen.getByText('下载')).toBeTruthy())
 
-  await fireEvent.click(screen.getByText('下载'))
-
-  await waitFor(() => expect(downloadFile).toHaveBeenCalled())
-  expect(attachmentRawUrl).toHaveBeenCalledWith('topic-a', 'output/评审简报.docx')
-  expect(downloadFile.mock.calls[0][1]).toBe('评审简报.docx')
+  // Paginating a sheet would throw away the cell addresses, so it is never sent
+  // for conversion.
+  const sheet = await screen.findByTestId('sheet')
+  expect(sheet.getAttribute('data-bytes')).toBe('2048')
+  expect(previewDocumentPdf).not.toHaveBeenCalled()
 })
 
-it('says so when the download fails instead of looking like nothing happened', async () => {
-  downloadFile.mockRejectedValue(new Error('下载失败（HTTP 502）'))
+it('says the deployment has no renderer, and still hands the file over', async () => {
+  previewDocumentPdf.mockRejectedValue(new PreviewRendererUnavailable('这个部署没有启用文档预览'))
+
   mount()
-  await waitFor(() => expect(screen.getByText('下载')).toBeTruthy())
 
-  await fireEvent.click(screen.getByText('下载'))
+  await waitFor(() => expect(screen.getByText('文档预览未启用')).toBeTruthy())
+  // Not the same sentence as a file that cannot be converted — and the way out
+  // is still there.
+  expect(screen.queryByText('无法显示这个文件')).toBeNull()
+  expect(screen.getByText('下载')).toBeTruthy()
+})
 
-  await waitFor(() => expect(screen.getByText('下载失败（HTTP 502）')).toBeTruthy())
+it('separates a file it cannot convert from a deployment that cannot convert', async () => {
+  previewDocumentPdf.mockRejectedValue(new Error('转换超时'))
+
+  mount()
+
+  await waitFor(() => expect(screen.getByText('无法显示这个文件')).toBeTruthy())
+  expect(screen.getByText('转换超时')).toBeTruthy()
+  expect(screen.queryByText('文档预览未启用')).toBeNull()
+})
+
+it('turns a pointed-at cell into a message naming the file and the address', async () => {
+  getPreview.mockResolvedValue(artifact('output/预算表.xlsx', XLSX))
+  readPreviewFile.mockResolvedValue(fileContent('output/预算表.xlsx'))
+  const { emitted } = mount()
+
+  await fireEvent.click(await screen.findByTestId('sheet'))
+  await fireEvent.update(screen.getByPlaceholderText('说明要改什么'), '这个数字应该按季度摊')
+  await fireEvent.click(screen.getByText('发送'))
+
+  await waitFor(() => expect(emitted().locate).toBeTruthy())
+  expect((emitted().locate as unknown[][])[0][0]).toBe(
+    '在 output/预算表.xlsx 的 Sheet1!B7（「1200」）：这个数字应该按季度摊'
+  )
+})
+
+it('turns a selected sentence into a message naming the page it came from', async () => {
+  const { emitted } = mount()
+
+  await fireEvent.click(await screen.findByTestId('pages'))
+  await fireEvent.update(screen.getByPlaceholderText('说明要改什么'), '这句话和摘要对不上')
+  await fireEvent.click(screen.getByText('发送'))
+
+  await waitFor(() => expect(emitted().locate).toBeTruthy())
+  expect((emitted().locate as unknown[][])[0][0]).toBe(
+    '在 output/评审简报.docx 的 第 2 页（「平台在真实课程中完成了部署」）：这句话和摘要对不上'
+  )
+})
+
+it('says nothing until the reader has written what is wrong', async () => {
+  const { emitted } = mount()
+
+  await fireEvent.click(await screen.findByTestId('pages'))
+  await fireEvent.click(screen.getByText('发送'))
+
+  expect(emitted().locate).toBeFalsy()
 })
 
 it('still renders a web page as a page', async () => {
@@ -104,5 +192,5 @@ it('still renders a web page as a page', async () => {
   mount()
 
   await waitFor(() => expect(requestPreviewSession).toHaveBeenCalled())
-  expect(screen.queryByText('下载')).toBeNull()
+  expect(screen.queryByTestId('pages')).toBeNull()
 })
