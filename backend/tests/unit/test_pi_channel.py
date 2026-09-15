@@ -30,6 +30,10 @@ class Hub:
         self.calls: list[tuple[str, str, str]] = []
         self.session_id = str(uuid.uuid4())
         self.alive = True
+        # What the connector reports when nothing is listening on the runner's
+        # socket, and what the machine kept of why.
+        self.dial_error: str | None = None
+        self.runner_log = ""
 
     def online_device_ids(self):
         return ["dev1"]
@@ -45,6 +49,13 @@ class Hub:
     ):
         if stdin is not None:
             self.shipped.append(stdin)
+        if any("runner.log" in word for word in argv):
+            return {
+                "stdout": self.runner_log,
+                "stderr": "",
+                "exit": 0,
+                "truncated": False,
+            }
         return {"stdout": "", "stderr": "", "exit": 0, "truncated": False}
 
     async def open_screen(self, device_id, command, **kw) -> HubScreen:
@@ -70,6 +81,8 @@ class Hub:
 
     async def call_executor(self, device_id, state, method, params, **kw):
         self.calls.append((device_id, state, method))
+        if self.dial_error is not None:
+            raise RuntimeError(self.dial_error)
         if method == "ping":
             return {"alive": self.alive, "session_id": self.session_id}
         return {}
@@ -152,6 +165,50 @@ async def test_a_pi_session_starts_on_the_machine_that_holds_the_workspace(chann
     assert handle.state == machine_launcher.state_dir(PROJECT, TOPIC, "pi", "agent-x")
     assert handle.session_id == hub.session_id
     assert ("dev1", handle.state, "ping") in hub.calls
+
+
+DIAL = (
+    "dial unix /tmp/cheese-execution-1000-7c754fd98f8e424280793729.sock: "
+    "connect: no such file or directory"
+)
+
+
+@pytest.mark.anyio
+async def test_a_runner_that_never_bound_reports_its_own_last_words(channel):
+    """The runner binds its socket last, so "nothing is listening there" IS
+    "the session did not come up" — and the machine is the only place the
+    reason is written down.
+
+    Left as the transport's own error this reached a person on 2026-09-15 as a
+    bare `500 Internal Server Error for url …/call/call_executor`: the pipe the
+    answer did not come back through, and nothing about why. Finding out why
+    took an afternoon of one-off probes against the box.
+    """
+    rooms, hub = Rooms(), Hub()
+    hub.dial_error = DIAL
+    hub.runner_log = "Traceback (most recent call last):\nRuntimeError: pi 没有握上手"
+
+    with pytest.raises(ScreenSetupError) as refused:
+        await channel(rooms, hub).ensure(
+            SessionRef(PROJECT, TOPIC), Opening(system_prompt="x")
+        )
+    assert "pi 没有握上手" in str(refused.value)
+
+
+@pytest.mark.anyio
+async def test_a_machine_that_kept_no_reason_still_reports_the_refusal(channel):
+    """A runner that died before it could write anything, or a box that cannot
+    be asked, must not turn into a blank refusal — the connector's own sentence
+    is still evidence, and it is what names the socket."""
+    rooms, hub = Rooms(), Hub()
+    hub.dial_error = DIAL
+    hub.runner_log = "   \n"
+
+    with pytest.raises(ScreenSetupError) as refused:
+        await channel(rooms, hub).ensure(
+            SessionRef(PROJECT, TOPIC), Opening(system_prompt="x")
+        )
+    assert "no such file or directory" in str(refused.value)
 
 
 @pytest.mark.anyio

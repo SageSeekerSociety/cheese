@@ -99,7 +99,19 @@ class PiChannel:
         # The runner chose the session id (or resumed the one it was given), and
         # it is the only thing that knows which: asking beats recording a second
         # copy that a rebuilt room could disagree with.
-        status = await self.channel._hub.call_executor(device_id, state, "ping", {})
+        try:
+            status = await self.channel._hub.call_executor(device_id, state, "ping", {})
+        except RuntimeError as exc:
+            # The runner binds its socket last, so "nothing is listening there"
+            # is this channel's shape of "the session did not come up" — not a
+            # transport fault, which is how it escaped: `_dispatch` turns any
+            # RuntimeError into a bare 500, and the room showed a person
+            # `500 Internal Server Error for url …/call/call_executor`. That
+            # names the pipe the answer did not come back through, and nothing
+            # about why. `ScreenSetupError` is the one a turn reports as itself.
+            raise ScreenSetupError(
+                f"pi 会话进程没有起来：{await self._why(device_id, state, exc)}"
+            ) from exc
         if not status.get("alive"):
             raise ScreenSetupError("pi 会话进程没有起来")
         await self._remember(session, device_id, resource_id, state, agent)
@@ -111,6 +123,25 @@ class PiChannel:
             agent,
             self._mirror(session, str(resource_id) + agent),
         )
+
+    async def _why(self, device_id: str, state: str, failure: Exception) -> str:
+        """The runner's last words, when we have them.
+
+        The machine is the only place a startup failure is written down, and
+        nobody reads a file on somebody else's box — so the reason travels back
+        with the refusal, into the room, where the person who asked is waiting.
+        Falls back to the transport's own message: a device that cannot even be
+        asked has told us something too.
+        """
+        try:
+            result = await self.channel._hub.exec(
+                device_id,
+                ["sh", "-c", f'tail -c 1200 "{state}/runner.log" 2>/dev/null'],
+                timeout=15,
+            )
+        except Exception:  # noqa: BLE001 — a failed read must not replace the failure
+            return str(failure)
+        return (result.get("stdout") or "").strip() or str(failure)
 
     async def _remember(
         self,
