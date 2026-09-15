@@ -1,3 +1,4 @@
+import errno
 import hashlib
 import json
 import subprocess
@@ -101,6 +102,42 @@ def test_staged_release_preserves_context_and_waits_for_reload(tmp_path):
     assert (helpers / "client.py").stat().st_mtime_ns == old_stat.st_mtime_ns
 
 
+def test_a_forwarded_view_whose_server_died_is_released_not_read_as_empty(
+    tmp_path, monkeypatch
+):
+    """A FUSE mount outlives the process serving it. The directory stays occupied
+    and every stat on it fails with ENOTCONN, which `os.path.ismount` swallows —
+    so the answer it gives for a dead mount is the answer it gives for an empty
+    directory. That is how a killed run leaves a mountpoint nothing ever clears:
+    the next run's cleanup sees "nothing mounted" and skips it, a fresh mount onto
+    it fails, and anything that merely walks the directory blocks there.
+    """
+    dead = tmp_path / "forwarded-project"
+    dead.mkdir()
+    occupied = {dead}
+    real_lstat = release.os.lstat
+
+    def lstat(path, *args, **kwargs):
+        if Path(path) in occupied:
+            raise OSError(errno.ENOTCONN, "Transport endpoint is not connected")
+        return real_lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(release.os, "lstat", lstat)
+    monkeypatch.setattr(release.shutil, "which", lambda name: "/bin/" + name)
+    calls = []
+
+    def unmount(argv, **_kwargs):
+        calls.append(argv)
+        occupied.discard(Path(argv[-1]))
+
+    monkeypatch.setattr(release.subprocess, "run", unmount)
+
+    assert release.os.path.ismount(dead) is False  # what every caller used to see
+    assert release.mount_state(dead) == release.MOUNT_DEAD
+    assert release.release_mount(dead) is True
+    assert calls == [["/bin/fusermount3", "-u", str(dead)]]
+
+
 def test_staged_release_unmounts_only_the_forwarded_view_before_replacement(
     tmp_path, monkeypatch
 ):
@@ -113,21 +150,22 @@ def test_staged_release_unmounts_only_the_forwarded_view_before_replacement(
         json.dumps({"kind": "device", "central_workspace": str(tmp_path / "room")})
     )
     (config / "settings.json").write_text("{}")
+    forwarded = directory / "forwarded-project"
+    forwarded.mkdir()
     calls = []
-    monkeypatch.setattr(
-        release.os.path,
-        "ismount",
-        lambda path: Path(path) == directory / "forwarded-project",
-    )
-    monkeypatch.setattr(
-        release.subprocess,
-        "run",
-        lambda argv, *, check: calls.append((argv, check)),
-    )
+    mounted = {forwarded}
+    monkeypatch.setattr(release.os.path, "ismount", lambda path: Path(path) in mounted)
+    monkeypatch.setattr(release.shutil, "which", lambda name: "/bin/" + name)
+
+    def unmount(argv, **_kwargs):
+        calls.append(argv)
+        mounted.discard(Path(argv[-1]))
+
+    monkeypatch.setattr(release.subprocess, "run", unmount)
     release.stage(str(tmp_path), {"client.py": "new", "proxy.js": "new"})
-    assert calls == [
-        (["fusermount3", "-u", str(directory / "forwarded-project")], True)
-    ]
+    # One plain unmount, and no lazy follow-up: the lazy flag detaches a mount a
+    # reader may still hold, so it is only ever reached when the plain one failed.
+    assert calls == [["/bin/fusermount3", "-u", str(forwarded)]]
 
 
 def test_staged_release_keeps_a_forwarded_view_used_as_the_native_cwd(

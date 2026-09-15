@@ -30,6 +30,16 @@ mkdir -p "$HOME/actions-runner/action-archive-cache"
 grep -q ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE .env 2>/dev/null || \
   echo "ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE=$HOME/actions-runner/action-archive-cache" >> .env
 
+# Clear what a killed job left, before the next job touches the workspace. A
+# forwarded-project mount whose server was killed stays there answering ENOTCONN,
+# and `actions/checkout` walks the workspace before cloning — one left behind on
+# 2026-09-15 wedged every later job on that machine in a 15-minute timeout. The
+# run that leaves one cannot clean up after itself (it was killed), so the clean-up
+# belongs to whoever comes next.
+install -m 0755 "$(dirname "$0")/job-started-hook.sh" "$HOME/actions-runner/job-started-hook.sh"
+grep -q ACTIONS_RUNNER_HOOK_JOB_STARTED .env 2>/dev/null || \
+  echo "ACTIONS_RUNNER_HOOK_JOB_STARTED=$HOME/actions-runner/job-started-hook.sh" >> .env
+
 sudo ./svc.sh install "$(whoami)" 2>&1 | tail -1
 sudo ./svc.sh start 2>&1 | tail -1
 

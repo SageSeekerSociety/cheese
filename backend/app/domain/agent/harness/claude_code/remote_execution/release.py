@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -11,6 +12,54 @@ import sys
 import time
 from importlib.metadata import distribution
 from pathlib import Path
+
+# What a mountpoint is doing — told apart in the one way `os.path.ismount` cannot.
+#
+# When a forwarded_fs server process dies, its mount does NOT go away: the
+# directory stays occupied and answers every stat with ENOTCONN. `os.path.ismount`
+# swallows that OSError and returns False, which every caller reads as "nothing is
+# mounted here" — so a mount is attempted onto it and fails, and the cleanup that
+# would have removed it skips it. Nothing ever clears it again.
+#
+# It is not only the room's problem. Anything that walks the directory blocks
+# there, `actions/checkout` included: one left in a CI runner's workspace on
+# 2026-09-15 wedged every job that machine picked up afterwards, each in a
+# 15-minute timeout with an empty workspace and no git process, until the mount
+# was released by hand.
+MOUNT_LIVE = "live"
+MOUNT_DEAD = "dead"
+MOUNT_NONE = "none"
+
+
+def mount_state(path):
+    """``live``, ``dead`` or ``none`` for one mountpoint."""
+    try:
+        os.lstat(path)
+    except OSError as error:
+        if error.errno in (errno.ENOTCONN, errno.ETIMEDOUT, errno.EHOSTDOWN):
+            return MOUNT_DEAD
+        return MOUNT_NONE
+    return MOUNT_LIVE if os.path.ismount(path) else MOUNT_NONE
+
+
+def release_mount(path):
+    """Unmount ``path`` whatever state it is in. True when nothing is left there.
+
+    Takes a dead mount too, which is the case the callers actually need: a live
+    one they could have found themselves.
+    """
+    if mount_state(path) == MOUNT_NONE:
+        return True
+    unmount = shutil.which("fusermount3") or shutil.which("fusermount")
+    if unmount is None:
+        return False
+    # Plain unmount first; lazy only if the directory is still occupied, since a
+    # lazy unmount detaches a mount that may still have a live reader.
+    for flag in ("-u", "-uz"):
+        subprocess.run([unmount, flag, str(path)], capture_output=True, timeout=10)
+        if mount_state(path) == MOUNT_NONE:
+            return True
+    return False
 
 
 def sources():
@@ -106,10 +155,13 @@ def stage(home, sources):
         if busy:
             raise RuntimeError("Native conversation must finish before helper release")
     forwarded = directory / "forwarded-project"
-    if Path(target.get("central_workspace", "")) != forwarded and os.path.ismount(
-        forwarded
-    ):
-        subprocess.run(["fusermount3", "-u", str(forwarded)], check=True)
+    if Path(target.get("central_workspace", "")) != forwarded:
+        # `release_mount`, not a bare fusermount: it also takes down a mount whose
+        # server has died, which is the one that would otherwise stay here forever.
+        # Still loud on failure — replacing the helpers under a view that is still
+        # mounted is what this unmount exists to prevent.
+        if not release_mount(forwarded):
+            raise RuntimeError(f"Could not release the forwarded view at {forwarded}")
     backup = helpers / "release-backups" / version
     paths = {name: helpers / name for name in sources}
     paths.update(settings=settings_path, proxy=directory / "plugin/hooks/proxy.js")
@@ -271,8 +323,11 @@ def apply_forwarded_context(home, target):
         replace(directory / "context-tree.json", json.dumps(tree))
     hidden = directory / "forwarded-project"
     hidden.mkdir(exist_ok=True)
-    mounted = os.path.ismount(hidden)
+    mounted = mount_state(hidden) == MOUNT_LIVE
     if not mounted:
+        # A mount whose server died still occupies the directory and cannot be
+        # mounted over; take it down before spawning its replacement.
+        release_mount(hidden)
         log = (directory / "forwarded-project.log").open("a")
         subprocess.Popen(
             [
@@ -287,9 +342,9 @@ def apply_forwarded_context(home, target):
             start_new_session=True,
         )
         deadline = time.monotonic() + 10
-        while not os.path.ismount(hidden) and time.monotonic() < deadline:
+        while mount_state(hidden) != MOUNT_LIVE and time.monotonic() < deadline:
             time.sleep(0.05)
-        if not os.path.ismount(hidden):
+        if mount_state(hidden) != MOUNT_LIVE:
             raise RuntimeError("Forwarded project mount did not become ready")
     if not changed and mounted:
         return {"changed": False}
