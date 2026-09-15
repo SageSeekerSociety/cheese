@@ -19,8 +19,10 @@ state directory the backend recorded and relays one JSON line each way
 names, so the existing channel carries it unchanged.
 """
 
+import asyncio
 import base64
 import hashlib
+import time
 import uuid
 from pathlib import Path
 
@@ -30,6 +32,7 @@ from app.core.config import settings
 from app.core.db import async_session_factory
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import machine_launcher
+from app.domain.agent.device_hub import DeviceOffline
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness import Opening, SessionRef
 from app.domain.agent.harness.channel import ScreenSetupError
@@ -39,6 +42,14 @@ from app.domain.topic.models import Topic
 from app.domain.workspace import service as ws
 
 SESSION_TOKEN_TTL_S = 30 * 24 * 3600
+
+# How long a room's first call waits for the runner to bind its socket, and how
+# often it asks. Generous because the cost of being wrong is asymmetric: waiting
+# too long delays a turn that was going to fail anyway, while giving up too
+# early refuses a session that was seconds from answering — which is what a new
+# room got every time, since the wait was zero.
+STARTUP_WAIT_S = 120.0
+STARTUP_POLL_S = 1.0
 
 
 class PiChannel:
@@ -99,19 +110,7 @@ class PiChannel:
         # The runner chose the session id (or resumed the one it was given), and
         # it is the only thing that knows which: asking beats recording a second
         # copy that a rebuilt room could disagree with.
-        try:
-            status = await self.channel._hub.call_executor(device_id, state, "ping", {})
-        except RuntimeError as exc:
-            # The runner binds its socket last, so "nothing is listening there"
-            # is this channel's shape of "the session did not come up" — not a
-            # transport fault, which is how it escaped: `_dispatch` turns any
-            # RuntimeError into a bare 500, and the room showed a person
-            # `500 Internal Server Error for url …/call/call_executor`. That
-            # names the pipe the answer did not come back through, and nothing
-            # about why. `ScreenSetupError` is the one a turn reports as itself.
-            raise ScreenSetupError(
-                f"pi 会话进程没有起来：{await self._why(device_id, state, exc)}"
-            ) from exc
+        status = await self._greet(device_id, state)
         if not status.get("alive"):
             raise ScreenSetupError("pi 会话进程没有起来")
         await self._remember(session, device_id, resource_id, state, agent)
@@ -123,6 +122,45 @@ class PiChannel:
             agent,
             self._mirror(session, str(resource_id) + agent),
         )
+
+    async def _greet(self, device_id: str, state: str) -> dict:
+        """The first call into a runner that may still be starting.
+
+        The runner binds its socket LAST — after it has started pi and traded a
+        first round of RPC with it — while the screen reports ready as soon as
+        the machine has a program running. A cold pi is a 100MB bun binary
+        opening a session, so a room's FIRST turn asks before there is anything
+        to answer: measured on dev 2026-09-15, a new room's socket appeared
+        about a minute after the turn that had already been refused.
+
+        So a refused socket is retried, not reported. Only a window that runs
+        out means the session is not coming: at that point the machine's own
+        record of why travels back with the refusal (``_why``).
+        """
+        deadline = time.monotonic() + STARTUP_WAIT_S
+        while True:
+            try:
+                return await self.channel._hub.call_executor(
+                    device_id, state, "ping", {}
+                )
+            except DeviceOffline:
+                # Not the runner's doing, and not something waiting fixes.
+                raise
+            except Exception as exc:  # noqa: BLE001 — see below
+                # Deliberately not `RuntimeError`. The hub the backend holds is
+                # usually a PROXY: the owner raises RuntimeError in its own
+                # process, answers 500, and `raise_for_status` turns that into
+                # an `httpx.HTTPStatusError` here. Catching the owner's type
+                # caught nothing where it mattered, and a person kept seeing
+                # `500 Internal Server Error for url …/call/call_executor` —
+                # the pipe the answer did not come back through, and nothing
+                # about why. Whatever shape it arrives in, a ping that does not
+                # come back means the session cannot be reached.
+                if time.monotonic() >= deadline:
+                    raise ScreenSetupError(
+                        f"pi 会话进程没有起来：{await self._why(device_id, state, exc)}"
+                    ) from exc
+            await asyncio.sleep(STARTUP_POLL_S)
 
     async def _why(self, device_id: str, state: str, failure: Exception) -> str:
         """The runner's last words, when we have them.

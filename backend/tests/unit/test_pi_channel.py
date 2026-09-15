@@ -9,6 +9,7 @@ lost its memory finds the session by reading that row back.
 import uuid
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from app.domain.agent import machine_launcher
@@ -31,8 +32,10 @@ class Hub:
         self.session_id = str(uuid.uuid4())
         self.alive = True
         # What the connector reports when nothing is listening on the runner's
-        # socket, and what the machine kept of why.
+        # socket, how many calls report it before one gets through, and what the
+        # machine kept of why. `dial_failures` is None for "for ever".
         self.dial_error: str | None = None
+        self.dial_failures: int | None = None
         self.runner_log = ""
 
     def online_device_ids(self):
@@ -81,8 +84,20 @@ class Hub:
 
     async def call_executor(self, device_id, state, method, params, **kw):
         self.calls.append((device_id, state, method))
-        if self.dial_error is not None:
-            raise RuntimeError(self.dial_error)
+        if self.dial_error is not None and (
+            self.dial_failures is None or self.dial_failures > 0
+        ):
+            if self.dial_failures is not None:
+                self.dial_failures -= 1
+            # The shape the BACKEND sees, not the owner's: a proxied hub answers
+            # 500 and httpx raises this. A test that raised RuntimeError here
+            # agreed with a `except RuntimeError` that caught nothing in
+            # production.
+            raise httpx.HTTPStatusError(
+                self.dial_error,
+                request=httpx.Request("POST", "http://owner/call/call_executor"),
+                response=httpx.Response(500, text=self.dial_error),
+            )
         if method == "ping":
             return {"alive": self.alive, "session_id": self.session_id}
         return {}
@@ -173,8 +188,39 @@ DIAL = (
 )
 
 
+@pytest.fixture
+def impatient(monkeypatch):
+    """The startup wait, compressed. What is under test is that there IS one and
+    where it ends, not how many seconds a person would really wait."""
+    from app.domain.agent.harness.pi import channel as module
+
+    monkeypatch.setattr(module, "STARTUP_WAIT_S", 0.2)
+    monkeypatch.setattr(module, "STARTUP_POLL_S", 0.01)
+
+
 @pytest.mark.anyio
-async def test_a_runner_that_never_bound_reports_its_own_last_words(channel):
+async def test_a_first_turn_waits_for_the_runner_to_bind(channel, impatient):
+    """The runner binds its socket LAST — after starting pi and trading a first
+    round of RPC with it — while the screen reports ready as soon as a program
+    is running. A cold pi is a 100MB binary opening a session, so a new room's
+    first turn asked before there was anything to answer and was refused every
+    time; on dev 2026-09-15 the socket appeared about a minute later, and the
+    room worked from the second turn on.
+    """
+    rooms, hub = Rooms(), Hub()
+    hub.dial_error = DIAL
+    hub.dial_failures = 3
+
+    handle = await channel(rooms, hub).ensure(
+        SessionRef(PROJECT, TOPIC), Opening(system_prompt="x")
+    )
+
+    assert handle.session_id == hub.session_id
+    assert len([call for call in hub.calls if call[2] == "ping"]) == 4
+
+
+@pytest.mark.anyio
+async def test_a_runner_that_never_bound_reports_its_own_last_words(channel, impatient):
     """The runner binds its socket last, so "nothing is listening there" IS
     "the session did not come up" — and the machine is the only place the
     reason is written down.
@@ -196,7 +242,9 @@ async def test_a_runner_that_never_bound_reports_its_own_last_words(channel):
 
 
 @pytest.mark.anyio
-async def test_a_machine_that_kept_no_reason_still_reports_the_refusal(channel):
+async def test_a_machine_that_kept_no_reason_still_reports_the_refusal(
+    channel, impatient
+):
     """A runner that died before it could write anything, or a box that cannot
     be asked, must not turn into a blank refusal — the connector's own sentence
     is still evidence, and it is what names the socket."""
