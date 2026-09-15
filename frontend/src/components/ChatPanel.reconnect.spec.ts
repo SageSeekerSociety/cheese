@@ -164,4 +164,40 @@ describe('chat recovery after history errors', () => {
     expect(retried.client_id).toBe(first.client_id)
     expect(retried.content).toBe(first.content)
   })
+
+  it('pings an idle socket and replaces it when nothing answers', async () => {
+    mountPanel()
+    await flushPromises()
+    sockets[0].onopen?.()
+    await flushPromises()
+    expect(sockets[0].send).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(JSON.parse(String(sockets[0].send.mock.calls[0][0]))).toEqual({ type: 'ping' })
+
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(sockets[0].close).toHaveBeenCalledOnce()
+    expect(sockets).toHaveLength(2)
+    expect(vi.mocked(listBlocks)).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps a socket whose ping is answered', async () => {
+    mountPanel()
+    await flushPromises()
+    sockets[0].onopen?.()
+    await flushPromises()
+
+    await vi.advanceTimersByTimeAsync(15_000)
+    sockets[0].onmessage?.({ data: JSON.stringify({ type: 'pong' }) })
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(sockets[0].close).not.toHaveBeenCalled()
+    expect(sockets).toHaveLength(1)
+
+    // Ordinary traffic answers too: a frame arriving instead of the pong.
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(sockets[0].send).toHaveBeenCalledTimes(2)
+    sockets[0].onmessage?.({ data: JSON.stringify({ type: 'done' }) })
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(sockets[0].close).not.toHaveBeenCalled()
+  })
 })

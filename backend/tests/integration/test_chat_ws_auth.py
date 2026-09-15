@@ -113,6 +113,16 @@ def test_authenticated_socket_still_posts(client):
     assert posted and all(b["author"] == "alice" for b in posted)
 
 
+def test_a_member_socket_answers_the_liveness_ping(client):
+    """A page waiting for 芝士 sends nothing; the ping is how it learns the
+    link is still there, so it must be answered without posting anything."""
+    _, tid = _project_topic(client, owner="alice")
+    with client.websocket_connect(chat_ws_url(tid, "alice")) as ws:
+        ws.send_json({"type": "ping"})
+        assert ws.receive_json() == {"type": "pong"}
+    assert _blocks(client, tid) == []
+
+
 def test_anonymous_escape_hatch_never_covers_a_bad_token(client, monkeypatch):
     """`chat_ws_allow_anonymous` re-opens the tokenless harness path only.
 
