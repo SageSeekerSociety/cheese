@@ -14,6 +14,7 @@ backend=false
 sandbox=false
 frontend=false
 browser_render=false
+office_render=false
 
 # Tags and manual runs are explicit release/rebuild requests. A repository with
 # no earlier successful build also needs a complete bootstrap.
@@ -23,6 +24,7 @@ if [[ "$event_name" != "push" || "$ref_type" == "tag" || -z "$base_sha" ]] \
   sandbox=true
   frontend=true
   browser_render=true
+  office_render=true
 else
   while IFS= read -r -d '' changed_path; do
     case "$changed_path" in
@@ -37,6 +39,9 @@ else
         ;;
       deploy/browser-render/*)
         browser_render=true
+        ;;
+      deploy/office-render/*)
+        office_render=true
         ;;
     esac
 
@@ -59,6 +64,7 @@ fi
   echo "sandbox=$sandbox"
   echo "frontend=$frontend"
   echo "browser_render=$browser_render"
+  echo "office_render=$office_render"
   echo "base_sha=$base_sha"
   echo "base_tag=${base_sha:0:7}"
   echo "current_tag=$(git rev-parse --short=7 "$current_sha")"

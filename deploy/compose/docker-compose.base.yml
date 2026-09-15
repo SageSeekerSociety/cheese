@@ -69,6 +69,10 @@ services:
       # reaches its browser rung — no error anywhere, just worse coverage — so
       # this belongs here and not in a doc telling an operator to set it.
       - FETCH_BROWSER_ENDPOINT=${FETCH_BROWSER_ENDPOINT:-http://cheese-browser-render:8900}
+      # The office-render service below. Unset, a Word or PowerPoint deliverable
+      # falls back to a download and the panel says why — so this too must be set
+      # here rather than left to a deployment note nobody reads.
+      - OFFICE_RENDER_ENDPOINT=${OFFICE_RENDER_ENDPOINT:-http://cheese-office-render:8901}
       # Uploads live OUTSIDE any release/image, on a host path bind-mounted below,
       # so deploys never touch them (the 赛题 PDFs on prod).
       - STORAGE_LOCAL_PATH=/data/uploads
@@ -259,6 +263,41 @@ services:
       # Chromium's first launch is slow; failing the check before then would
       # restart it into the same cold start forever.
       start_period: 60s
+      retries: 3
+    restart: unless-stopped
+    logging:
+      driver: journald
+      options:
+        tag: "{{.Name}}"
+
+  # LibreOffice for the box, so a Word report or a deck can be SHOWN rather than
+  # only downloaded. It sits here beside browser-render for the same reason that
+  # one does: it has to survive every event the platform survives, and a service
+  # started by hand is a service that disappears at the first full redeploy.
+  #
+  # Measured on this image: 1.1s for a one-page paper (docx) and 1.1s for a deck
+  # (pptx), cold or warm — which is why it runs a process per request instead of
+  # supervising a resident LibreOffice. Five concurrent conversions complete in
+  # 2.2s at the concurrency cap below.
+  office-render:
+    image: ${OFFICE_RENDER_IMAGE:-ghcr.io/sageseekersociety/cheese/office-render:${IMAGE_TAG:-main}}
+    container_name: cheese-office-render
+    environment:
+      - OFFICE_RENDER_CONCURRENT=${OFFICE_RENDER_CONCURRENCY:-4}
+    # LibreOffice is memory-hungry per process and this runs several at once.
+    # These bounds make a burst queue behind the semaphore instead of swapping.
+    mem_limit: 2g
+    cpus: 2.0
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - |
+          import urllib.request; urllib.request.urlopen('http://127.0.0.1:8901/healthz', timeout=3)
+      interval: 30s
+      timeout: 8s
+      start_period: 20s
       retries: 3
     restart: unless-stopped
     logging:

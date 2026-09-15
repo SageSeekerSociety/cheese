@@ -26,7 +26,12 @@ from app.api.deps import (
 from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
-from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.core.errors import (
+    ForbiddenError,
+    NotFoundError,
+    SystemBusyError,
+    ValidationError,
+)
 from app.domain.agent.chat import ChatService
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.harness.prompt import thread_relay_prompt, thread_upgraded_prompt
@@ -55,6 +60,12 @@ from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
 from app.domain.machine.services import MachineService
 from app.domain.mentions import canonicalize_refs
+from app.domain.preview.office import (
+    OfficeRenderFailed,
+    OfficeRenderUnavailable,
+    is_renderable,
+    render_to_pdf,
+)
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review import archive
 from app.domain.review.models import AcceptCard
@@ -2319,6 +2330,59 @@ async def attachment_raw(
             "Content-Disposition": (
                 f"attachment; filename*=UTF-8''{filename}" if download else "inline"
             ),
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+            "Cache-Control": "private, max-age=3600",
+        },
+    )
+
+
+@router.get("/{topic_id}/attachments/pdf")
+async def attachment_as_pdf(
+    topic_id: uuid.UUID,
+    path: str,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> Response:
+    """A Word or PowerPoint deliverable, converted so a browser can show it.
+
+    Browsers draw PDF and nothing else in this family, so this is what stands
+    between "看得见的成果" and a download button on a tab labelled 预览.
+
+    Spreadsheets are not here on purpose: paginating a sheet breaks the columns
+    apart and throws away the cell addresses, which are the only thing anyone can
+    point at afterwards. Those are drawn from the original bytes instead.
+    """
+    topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
+    clean = _clean_artifact_path(path)
+    if not is_renderable(clean):
+        raise ValidationError("这个格式不能转换为预览")
+    data = ws.read_room_file(topic.project_id, topic_id, clean)
+    if len(data) > MAX_ARTIFACT_BYTES:
+        raise ValidationError(
+            f"文件超过 {MAX_ARTIFACT_BYTES // (1024 * 1024)}MB，无法生成预览"
+        )
+    try:
+        pdf = await render_to_pdf(data, clean, settings.office_render_endpoint)
+    except OfficeRenderUnavailable as exc:
+        # 503 (SystemBusyError is this codebase's 503), not 500: the renderer is
+        # absent or unreachable, which the panel reports as its own state and
+        # pairs with the download — a different sentence from "这个文件转换不了",
+        # which is about the file and will not improve on a retry.
+        raise SystemBusyError(str(exc)) from exc
+    except OfficeRenderFailed as exc:
+        raise ValidationError(str(exc)) from exc
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": "inline",
             "X-Content-Type-Options": "nosniff",
             "Content-Security-Policy": "default-src 'none'; sandbox",
             "Cache-Control": "private, max-age=3600",
