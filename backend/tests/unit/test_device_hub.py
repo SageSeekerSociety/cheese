@@ -643,3 +643,52 @@ async def test_update_is_pushed_once_per_connection_and_again_on_reconnect(
     await hub.attach_device("dev1", t2)
     await hub.on_device_message("dev1", {"t": "hello", "v": 1})
     assert t2.sent[-1] == {"t": "update"}
+
+
+class DyingTransport(FakeDeviceTransport):
+    """A socket whose peer vanishes mid-life: writes start failing, but the
+    receive loop hears nothing, so nobody calls ``detach_device``."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.alive = True
+
+    async def send_json(self, msg: dict) -> None:
+        if not self.alive:
+            raise ConnectionError(
+                'Cannot call "send" once a close message has been sent.'
+            )
+        self.sent.append(msg)
+
+
+async def test_a_failed_send_takes_the_device_offline_and_leaks_nothing():
+    hub = DeviceHub()
+    transport = DyingTransport()
+    await hub.attach_device("dev", transport)
+    await hub.on_device_message("dev", {"t": "hello", "executor": True})
+    waiting = asyncio.create_task(hub.call_executor("dev", "/state", "ping", {}))
+    await asyncio.sleep(0)
+    assert not waiting.done()
+    transport.alive = False
+    # The first write into the dead link fails at once, not after the timeout.
+    with pytest.raises(DeviceOffline):
+        await asyncio.wait_for(hub.exec("dev", ["true"], timeout=30), 1)
+    assert not hub.is_online("dev") and "dev" not in hub.online_device_ids()
+    # Work that was waiting on the link learns it is gone, and nothing waits on.
+    with pytest.raises(DeviceOffline):
+        await waiting
+    assert hub._device("dev").exec_pending == {}
+    assert hub._device("dev").executor_pending == {}
+    # A later caller does not even try the dead link.
+    with pytest.raises(DeviceOffline):
+        await hub.exec("dev", ["true"], timeout=1)
+    # The machine dialing back in is fully usable again.
+    fresh = FakeDeviceTransport()
+    await hub.attach_device("dev", fresh)
+    assert hub.is_online("dev")
+    pending = asyncio.create_task(hub.exec("dev", ["true"], timeout=1))
+    await asyncio.sleep(0)
+    assert fresh.sent[-1]["t"] == "exec"
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending

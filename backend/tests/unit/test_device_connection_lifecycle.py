@@ -528,3 +528,23 @@ async def test_public_execution_admission_blocks_drain_during_route_preparation(
         release.set()
         device_connection_app.app.dependency_overrides.pop(get_db, None)
         device_connection_app._release_draining = False
+
+
+def test_the_owner_process_scrubs_secrets_from_its_log() -> None:
+    """The owner logs like the backend: through the root handler that redacts
+    credentials (and renders tracebacks plainly), not structlog's defaults."""
+    import importlib
+    import logging
+
+    from app.core.obs import RedactSecrets
+
+    root = logging.getLogger()
+    before = list(root.handlers)
+    root.handlers.clear()
+    try:
+        importlib.reload(device_connection_app)
+        assert any(
+            isinstance(f, RedactSecrets) for h in root.handlers for f in h.filters
+        )
+    finally:
+        root.handlers[:] = before

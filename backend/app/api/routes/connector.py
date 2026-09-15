@@ -215,7 +215,13 @@ class _WebSocketDeviceTransport:
         self._websocket = websocket
 
     async def send_json(self, msg: dict[str, Any]) -> None:
-        await self._websocket.send_json(msg)
+        try:
+            await self._websocket.send_json(msg)
+        except (WebSocketDisconnect, RuntimeError) as exc:
+            # Starlette answers a write on a socket it already closed with a
+            # RuntimeError, and a peer that dropped mid-write with a disconnect;
+            # to the hub both mean the same thing: no link.
+            raise ConnectionError(str(exc)) from exc
 
 
 @router.websocket("/agent")
