@@ -399,19 +399,52 @@ def runtime_for(provider: "ComputeProvider") -> AgentRuntime:
 # --- which harness ----------------------------------------------------------
 #
 # ``AgentType.harness`` has existed as a column for a while with nobody reading
-# it. This is the reader. One entry today, and the registry earns its keep
-# anyway: a type that names a harness this deployment does not have must be
-# refused when it is WRITTEN rather than quietly running Claude Code — a stored
-# value nothing honours is how the column got here in the first place.
+# it. This is the reader. A type that names a harness this deployment does not
+# have must be refused when it is WRITTEN rather than quietly running Claude
+# Code — a stored value nothing honours is how the column got here in the first
+# place.
 
 CLAUDE_CODE = "claude-code"
+CODEX = "codex"
+PI = "pi"
 
-# Name → what a person would call it. Not a display concern: the set of keys is
-# the set of harnesses that exist, and everything else reads it from here.
-HARNESSES: dict[str, str] = {
-    CLAUDE_CODE: "Claude Code",
-    "codex": "Codex",
-    "pi": "pi",
+
+@dataclass(frozen=True, slots=True)
+class Harness:
+    """One harness, and what it can be pointed at.
+
+    These two facts used to be recorded the other way round — every MODEL
+    carried a list of the harnesses allowed to drive it — and the direction was
+    backwards in a way that cost real things. It is the harness that can or
+    cannot speak to something: Codex supports the models it has adapters for,
+    an Anthropic subscription credential is minted for the one harness that can
+    present it. A model has no opinion about any of that.
+
+    Written the wrong way round, adding a harness meant editing the model
+    catalogue, an editor had to infer the harness from the model the person
+    picked, and refusing a combination produced an error about the model — the
+    half the person had actually chosen on purpose.
+    """
+
+    name: str
+    # What a person would call it. Not a display concern: this is the only
+    # place the name a human sees is written down.
+    label: str
+    # Does it speak the platform gateway's own shape? Then every model the
+    # project can use is one it can drive, and no deployment has to list them.
+    # False means it supports only what it has its own adapter for, and an
+    # operator names those in ``agent_harness_models``.
+    speaks_gateway: bool = True
+    # Can it present an Anthropic subscription credential? That credential is
+    # minted for ONE harness; no other can carry it, whatever it can otherwise
+    # drive.
+    carries_subscription: bool = False
+
+
+HARNESSES: dict[str, Harness] = {
+    CLAUDE_CODE: Harness(CLAUDE_CODE, "Claude Code", carries_subscription=True),
+    CODEX: Harness(CODEX, "Codex", speaks_gateway=False),
+    PI: Harness(PI, "pi"),
 }
 
 # What a type that declines to choose runs on. A type is 出厂设置, not a

@@ -214,10 +214,16 @@ class AgentInstanceService:
         self, project: Project, type_name: str | None = None
     ) -> AgentConfiguration:
         preset = preset_types().get(type_name) if type_name else None
+        harness = harness_name(preset.harness if preset else None)
         return AgentConfiguration(
             body=preset.body if preset else "",
-            model=(preset.model if preset else None) or initial_model(project.settings),
-            harness=harness_name(preset.harness if preset else None),
+            # The harness first, and the model chosen for it: a preset that asks
+            # to run on something other than the default would otherwise start
+            # pointed at a model that harness cannot drive, and fail validation
+            # on the way in for a combination nobody chose.
+            model=(preset.model if preset else None)
+            or initial_model(project.settings, harness),
+            harness=harness,
             skills=list(preset.skills) if preset else [],
             mcp_servers=list(preset.mcp_servers) if preset else [],
             effort=preset.effort if preset else None,

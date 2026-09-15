@@ -16,6 +16,7 @@ import { useCachedResource } from '@/composables/useCachedResource'
 
 import {
   deactivateProjectAgent,
+  getProjectAgentOptions,
   isEndpointMissing,
   listAgentTypes,
   listMemory,
@@ -37,6 +38,10 @@ interface AgentsPayload {
   types: AgentType[]
   memories: MemoryEntryOut[]
   topicCounts: Record<string, number>
+  // 运行方式的人话名字。名字只有后端那份目录知道（HARNESSES），在这里留第二份
+  // 清单就是留一份会过期的副本 —— 所以它跟别的补充数据一样，拉得到就用，拉不到
+  // 就退回 id 本身。
+  harnessLabels: Record<string, string>
   // 后端那一半是单独上线的。没上线时这一页不能是白屏，也不能是一句看起来像
   // bug 的报错 —— 它得说清楚「功能还没到这个环境」。
   backendMissing: boolean
@@ -54,6 +59,7 @@ const { data, loading, refreshing, refresh } = useCachedResource(
       types: [],
       memories: [],
       topicCounts: {},
+      harnessLabels: {},
       backendMissing: false,
       loadError: null,
     }
@@ -64,8 +70,8 @@ const { data, loading, refreshing, refresh } = useCachedResource(
       else payload.loadError = e instanceof Error ? e.message : '加载 AI 队友失败'
       return payload
     }
-    // 三个补充数据，谁失败谁空着。
-    const [typeList, memoryList, topicList] = await Promise.all([
+    // 四个补充数据，谁失败谁空着。
+    const [typeList, memoryList, topicList, harnessLabels] = await Promise.all([
       listAgentTypes().then(
         (r) => r.data,
         () => [] as AgentType[]
@@ -78,10 +84,15 @@ const { data, loading, refreshing, refresh } = useCachedResource(
         (r) => r.data,
         () => []
       ),
+      getProjectAgentOptions(props.projectId).then(
+        (r) => Object.fromEntries((r.harness?.choices ?? []).map((c) => [c.id, c.label])),
+        () => ({}) as Record<string, string>
+      ),
     ])
     payload.types = typeList
     payload.memories = memoryList
     payload.topicCounts = topicCountsByAgent(topicList, payload.agents)
+    payload.harnessLabels = harnessLabels
     return payload
   }
 )
@@ -90,6 +101,7 @@ const agents = computed<ProjectAgent[]>(() => data.value?.agents ?? [])
 const types = computed<AgentType[]>(() => data.value?.types ?? [])
 const memories = computed<MemoryEntryOut[]>(() => data.value?.memories ?? [])
 const topicCounts = computed<Record<string, number>>(() => data.value?.topicCounts ?? {})
+const harnessLabels = computed<Record<string, string>>(() => data.value?.harnessLabels ?? {})
 const backendMissing = computed<boolean>(() => data.value?.backendMissing ?? false)
 // 名册取不回来，和「设为默认 / 停用」那一下失败，都显示在同一条 alert 上。
 const actionError = ref<string | null>(null)
@@ -116,8 +128,14 @@ function memoriesOf(agent: ProjectAgent): MemoryEntryOut[] {
   return memories.value.filter((m) => m.scope === 'agent_project' && m.scope_id === `${prefix}${agent.handle}`)
 }
 
+// 一个队友是「用什么跑的」和「背后是哪个模型」两件事，现在两件都是人挑的，
+// 所以名册上两件都得看得见 —— 否则两个队友一个走 pi 一个走 Claude Code，这一栏
+// 长得一模一样。
 function subtitleOf(agent: ProjectAgent): string {
-  return agent.configuration.model
+  const model = agent.configuration.model
+  const harness = agent.configuration.harness
+  if (!harness) return model
+  return `${harnessLabels.value[harness] ?? harness} · ${model}`
 }
 
 function openCreate() {
