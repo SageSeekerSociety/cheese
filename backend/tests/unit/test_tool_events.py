@@ -114,3 +114,20 @@ def test_tool_event_meta_never_borrows_the_platform_action_key():
     # meta.action 已经归平台动作卡所有（它答的是「这张卡指向哪个资源」）。现场
     # 的动词覆盖挤进同一个键，卡片就会指向一个叫 "Grep" 的资源。
     assert "action" not in _meta("Bash", {"command": "grep -rn TODO backend/"})
+
+
+# ---- pi 原生工具 ----
+
+
+def test_format_tool_event_translates_pis_tools_too():
+    assert _text("read", {"path": "hello.py"}) == "读文件\nhello.py"
+    assert _text("write", {"path": "notes.md", "content": "x"}) == "写文件\nnotes.md"
+    assert _text("grep", {"pattern": "TODO"}) == "搜内容\nTODO"
+    assert _text("ls", {"path": "backend"}) == "列目录\nbackend"
+
+
+def test_a_platform_action_is_one_wherever_the_cheese_cli_runs():
+    # pi 没有平台工具，它的平台动作全部是 shell 里的 cheese CLI —— 认不出这个
+    # 房间的 shell 工具，整轮现场就没有一个琥珀点。
+    assert _is_platform_tool("bash", {"command": "cheese artifact output/x.docx"})
+    assert not _is_platform_tool("bash", {"command": "echo cheese"})

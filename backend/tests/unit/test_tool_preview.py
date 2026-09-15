@@ -209,3 +209,39 @@ def test_search_and_web_tools_keep_their_argument():
     assert tool_preview("WebFetch", {"url": "https://example.com"}).text == (
         "https://example.com"
     )
+
+
+# ---- pi 原生工具：同样的动作，另一套名字和参数名 ----
+
+
+def test_pi_shell_calls_are_parsed_like_any_other_shell_call():
+    # pi 的 bash 没有 description 这个参数，所以只剩命令原文可读 —— 四档退让
+    # 本来就是为这种情况写的。
+    preview = tool_preview(
+        "bash",
+        {"command": f"cd {ABS}; cat backend/app/main.py"},
+        work_dir=WORK,
+    )
+    assert preview == ToolPreview("backend/app/main.py", "Read")
+
+
+def test_pi_file_tools_show_the_workspace_relative_path():
+    assert tool_preview("read", {"path": f"{ABS}/hello.py"}, work_dir=WORK) == (
+        ToolPreview("hello.py")
+    )
+    assert tool_preview(
+        "write", {"path": f"{ABS}/notes.md", "content": "..."}, work_dir=WORK
+    ) == ToolPreview("notes.md")
+    assert tool_preview(
+        "edit",
+        {"path": f"{ABS}/hello.py", "edits": [{"oldText": "a", "newText": "b"}]},
+        work_dir=WORK,
+    ) == ToolPreview("hello.py")
+    assert tool_preview("ls", {"path": f"{ABS}/backend"}, work_dir=WORK) == (
+        ToolPreview("backend")
+    )
+
+
+def test_pi_search_tools_show_what_is_being_looked_for():
+    assert tool_preview("grep", {"pattern": "TODO", "path": "backend"}).text == "TODO"
+    assert tool_preview("find", {"pattern": "**/*.jsonl"}).text == "**/*.jsonl"

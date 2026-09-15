@@ -318,6 +318,20 @@ _TOOL_VERB.update(
     }
 )
 
+# pi 原生工具。同样的动词，另一套名字 —— 两个 harness 的工具名没有一个重合，所以
+# 少了这几行，一个 pi 房间的现场从头到尾只有 bash / read / write 这些英文原名。
+_TOOL_VERB.update(
+    {
+        "bash": "执行命令",
+        "read": "读文件",
+        "write": "写文件",
+        "edit": "改文件",
+        "ls": "列目录",
+        "find": "找文件",
+        "grep": "搜内容",
+    }
+)
+
 
 def _format_tool_event(name: str, preview: ToolPreview) -> str:
     """Human-readable FALLBACK text for an event block (old clients / old rows).
@@ -335,13 +349,17 @@ def _format_tool_event(name: str, preview: ToolPreview) -> str:
 # word pair inside a Bash command. NEVER inferred from natural language.
 _CHEESE_CMD_RE = re.compile(r"\bcheese\s+\w+")
 
+#: 能跑 `cheese` CLI 的工具，每个 harness 一个名字。这里漏掉谁，谁的房间里平台
+#: 动作就一路是灰点 —— 而在没有平台工具的 harness 上，平台动作全都从这里过。
+_SHELL_TOOLS = frozenset({"Bash", "bash"})
+
 
 def _is_platform_tool(raw_name: str, args: dict) -> bool:
     """True when the tool call is a platform action: a cheese MCP tool, or a
-    Bash command that invokes the in-sandbox `cheese` CLI."""
+    shell command that invokes the machine's `cheese` CLI."""
     if raw_name.startswith("mcp__cheese__"):
         return True
-    if raw_name == "Bash" and isinstance(args, dict):
+    if raw_name in _SHELL_TOOLS and isinstance(args, dict):
         return _CHEESE_CMD_RE.search(str(args.get("command", ""))) is not None
     return False
 

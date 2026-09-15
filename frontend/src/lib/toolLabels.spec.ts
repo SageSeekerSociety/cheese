@@ -13,6 +13,13 @@ describe('toolLabel', () => {
     expect(toolLabel('Task')).toBe('派出分身')
   })
 
+  it('translates the pi tools, whose names are another set entirely', () => {
+    expect(toolLabel('bash')).toBe('执行命令')
+    expect(toolLabel('read')).toBe('读取文件')
+    expect(toolLabel('edit')).toBe('修改文件')
+    expect(toolLabel('grep')).toBe('搜索内容')
+  })
+
   it('strips the mcp__cheese__ prefix and falls back to the raw name', () => {
     expect(toolLabel('mcp__cheese__update_doc')).toBe('更新文档')
     expect(toolLabel('FutureTool')).toBe('FutureTool')

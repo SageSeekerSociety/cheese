@@ -90,10 +90,34 @@ _TOOL_ARG = {
     "NotebookEdit": "notebook_path",
     "Skill": "skill",
     "ToolSearch": "query",
+    # pi 原生工具。名字全小写，参数名也自成一套，和上面那批没有一个重合 —— 漏掉
+    # 一个的后果不是报错，是现场那一行后面什么都不跟，看不出这步在动哪个文件。
+    "bash": "command",
+    "read": "path",
+    "write": "path",
+    "edit": "path",
+    "ls": "path",
+    "find": "pattern",
+    "grep": "pattern",
 }
 
+#: 参数是一条 shell 命令的工具 —— 命令要拆开读，不是照着参数名取一截就完事。
+_SHELL_TOOLS = frozenset({"Bash", "bash"})
+
 # 参数本身就是一条路径的工具 —— 这些要剪工作区前缀。
-_PATH_TOOLS = frozenset({"Read", "Edit", "Write", "NotebookEdit", "write_file"})
+_PATH_TOOLS = frozenset(
+    {
+        "Read",
+        "Edit",
+        "Write",
+        "NotebookEdit",
+        "write_file",
+        "read",
+        "edit",
+        "write",
+        "ls",
+    }
+)
 
 
 def _collapse(value: object) -> str:
@@ -291,7 +315,9 @@ def tool_preview(name: str, args: dict, *, work_dir: str = "") -> ToolPreview:
     """一次工具调用在现场怎么显示。"""
     if not isinstance(args, dict):
         return ToolPreview()
-    if name == "Bash":
+    if name in _SHELL_TOOLS:
+        # pi 的 bash 没有 description 这个参数，所以它总是走下面的解析那条路 ——
+        # 四档退让本来就是为「只有一行命令」写的，不必为它再分一支。
         described = _collapse(args.get("description") or "")
         if described and _HAS_CHINESE.search(described):
             return ToolPreview(described[:PREVIEW_MAX])
