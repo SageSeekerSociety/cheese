@@ -17,6 +17,9 @@ from rc_fixture import RemoteControlFixture
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "backend/app/domain/agent/harness/claude_code/remote_execution"
+sys.path.insert(0, str(SOURCE))
+import release as execution_release  # noqa: E402 — from the source tree above
+
 sys.path.insert(0, str(ROOT / "backend"))
 from tests.support.harness_prompts import event_prompts, system_prompt  # noqa: E402
 
@@ -341,27 +344,15 @@ def main():
         )
     finally:
         subprocess.run(tmux + ["kill-server"], capture_output=True)
-        unmount = shutil.which("fusermount") or shutil.which("fusermount3")
-        if room and unmount:
+        if room:
             for mountpoint in (
                 folder / "central/forwarded-project",
                 folder / "resumed-center/forwarded-project",
                 room.home / ".claude/remote-session/forwarded-project",
             ):
-                if os.path.ismount(mountpoint):
-                    subprocess.run(
-                        [unmount, "-u", str(mountpoint)],
-                        capture_output=True,
-                        timeout=10,
-                    )
-                    if os.path.ismount(mountpoint):
-                        subprocess.run(
-                            [unmount, "-uz", str(mountpoint)],
-                            capture_output=True,
-                            check=True,
-                            timeout=10,
-                        )
-                    assert not os.path.ismount(mountpoint), mountpoint
+                # See acceptance.py: a dead mount is the one that has to go, and
+                # it is the one `os.path.ismount` reports as nothing at all.
+                assert execution_release.release_mount(mountpoint), mountpoint
         server.shutdown()
         server.server_close()
         if room:

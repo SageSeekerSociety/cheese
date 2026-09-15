@@ -128,8 +128,22 @@ def prepare(
         token_path.chmod(0o600)
     if forwarded:
         context_tree = sync_context(target_path, context_tree)
+    # Imported here rather than at module scope, like `link_forwarded_user_context`
+    # below: the prompt-hook entry point at the top of this file returns before any
+    # of it, and the shell prefix runs this file from a directory its siblings need
+    # not share.
+    if __package__:
+        from .release import MOUNT_LIVE, mount_state, release_mount
+    else:
+        sys.path.insert(0, str(Path(__file__).parent))
+        from release import MOUNT_LIVE, mount_state, release_mount
+
     mount_log = directory / "forwarded-project.log"
-    if forwarded and not os.path.ismount(workspace):
+    if forwarded and mount_state(workspace) != MOUNT_LIVE:
+        # A previous mount whose server died still occupies this directory and
+        # cannot be mounted over, so without this the spawn below fails and the
+        # room is stuck reporting a mount failure on every turn from then on.
+        release_mount(workspace)
         with mount_log.open("a") as output:
             subprocess.Popen(
                 [
@@ -144,9 +158,9 @@ def prepare(
                 start_new_session=True,
             )
         deadline = time.monotonic() + 10
-        while not os.path.ismount(workspace) and time.monotonic() < deadline:
+        while mount_state(workspace) != MOUNT_LIVE and time.monotonic() < deadline:
             time.sleep(0.05)
-        if not os.path.ismount(workspace):
+        if mount_state(workspace) != MOUNT_LIVE:
             detail = mount_log.read_text()[-1000:] if mount_log.exists() else ""
             raise RuntimeError("Forwarded project mount failed: " + detail)
     if forwarded:

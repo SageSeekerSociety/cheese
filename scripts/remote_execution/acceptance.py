@@ -24,6 +24,9 @@ from rc_fixture import RemoteControlFixture
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "backend/app/domain/agent/harness/claude_code/remote_execution"
+sys.path.insert(0, str(SOURCE))
+import release as execution_release  # noqa: E402 — from the source tree above
+
 spec = importlib.util.spec_from_file_location("execution_client", SOURCE / "client.py")
 client = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(client)
@@ -197,10 +200,7 @@ def case(folder, options):
         if options.launcher == "device":
             os.close(center_fd)
             center_fd = None
-            center = (
-                folder
-                / "device-home/.claude/remote-session/forwarded-project"
-            )
+            center = folder / "device-home/.claude/remote-session/forwarded-project"
             center.mkdir(parents=True)
             center_fd = os.open(center, os.O_RDONLY | os.O_DIRECTORY)
             launch = {"cwd": str(center), "env": {}}
@@ -359,9 +359,7 @@ def case(folder, options):
             fixture_env = env
 
             class LocalDeviceHub:
-                async def exec(
-                    self, device_id, command, *, stdin, env=None, timeout
-                ):
+                async def exec(self, device_id, command, *, stdin, env=None, timeout):
                     result = await asyncio.to_thread(
                         subprocess.run,
                         command,
@@ -584,26 +582,17 @@ def case(folder, options):
         if center_fd is not None:
             os.close(center_fd)
         subprocess.run(tmux + ["kill-server"], capture_output=True, timeout=10)
-        unmount = shutil.which("fusermount") or shutil.which("fusermount3")
-        if unmount:
-            for mountpoint in (
-                folder / "central/forwarded-project",
-                folder / "device-home/.claude/remote-session/forwarded-project",
-            ):
-                if os.path.ismount(mountpoint):
-                    subprocess.run(
-                        [unmount, "-u", str(mountpoint)],
-                        capture_output=True,
-                        timeout=10,
-                    )
-                    if os.path.ismount(mountpoint):
-                        subprocess.run(
-                            [unmount, "-uz", str(mountpoint)],
-                            capture_output=True,
-                            check=True,
-                            timeout=10,
-                        )
-                    assert not os.path.ismount(mountpoint), mountpoint
+        for mountpoint in (
+            folder / "central/forwarded-project",
+            folder / "device-home/.claude/remote-session/forwarded-project",
+        ):
+            # `release_mount` rather than a local ismount-then-unmount: this runs
+            # in a `finally`, so the run that most needs it is the one that got
+            # here at all — and a run killed outright (this suite kills a case at
+            # 300s) leaves a mount this block never sees. What clears THAT one is
+            # the next run reaching this line, which only works if a dead mount
+            # can be recognised, which `os.path.ismount` cannot do.
+            assert execution_release.release_mount(mountpoint), mountpoint
         if executor is not None:
             subprocess.run(executor.command("stop"), capture_output=True, timeout=20)
         if server:
