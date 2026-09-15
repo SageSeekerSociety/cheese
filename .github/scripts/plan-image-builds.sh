@@ -13,6 +13,7 @@ ref_type="${REF_TYPE:-branch}"
 backend=false
 sandbox=false
 frontend=false
+office_render=false
 browser_render=false
 
 # Tags and manual runs are explicit release/rebuild requests. A repository with
@@ -23,6 +24,7 @@ if [[ "$event_name" != "push" || "$ref_type" == "tag" || -z "$base_sha" ]] \
   sandbox=true
   frontend=true
   browser_render=true
+  office_render=true
 else
   while IFS= read -r -d '' changed_path; do
     case "$changed_path" in
@@ -34,6 +36,9 @@ else
         ;;
       frontend/*)
         frontend=true
+        ;;
+      deploy/office-render/*)
+        office_render=true
         ;;
       deploy/browser-render/*)
         browser_render=true
@@ -58,6 +63,7 @@ fi
   echo "backend=$backend"
   echo "sandbox=$sandbox"
   echo "frontend=$frontend"
+  echo "office_render=$office_render"
   echo "browser_render=$browser_render"
   echo "base_sha=$base_sha"
   echo "base_tag=${base_sha:0:7}"

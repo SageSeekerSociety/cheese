@@ -71,6 +71,8 @@ const emit = defineEmits<{
   (e: 'open-card', taskId: string | null): void
   (e: 'mention-click', handle: string): void
   (e: 'update:tab', key: string): void
+  // 预览面板里读者指着文档说的那一句，交给拿着对话的那一层。
+  (e: 'locate', message: string): void
 }>()
 
 type TabKey = 'chat' | 'overview' | 'site' | 'changes' | 'preview'
@@ -469,6 +471,7 @@ defineExpose({ pulse, highlightTurn, openFile })
           :active="active === 'preview'"
           :refresh-tick="refreshTick"
           @loaded="markPreviewSeen"
+          @locate="emit('locate', $event)"
         />
       </div>
     </template>

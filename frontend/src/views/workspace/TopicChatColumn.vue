@@ -47,7 +47,10 @@ const emit = defineEmits<{
 
 const { mdAndUp } = useDisplay()
 // 算力是**房间**的选择，首轮就锁死；一条支线既改不了它，问它也 404。
-const chatRef = ref<{ connected: boolean } | null>(null)
+const chatRef = ref<{
+  connected: boolean
+  send: (content: string, summon: boolean) => boolean
+} | null>(null)
 const acceptRef = ref<{ reload: (silent?: boolean) => Promise<void> } | null>(null)
 
 const connected = computed(() => !!chatRef.value?.connected)
@@ -55,6 +58,9 @@ const connected = computed(() => !!chatRef.value?.connected)
 defineExpose({
   connected,
   reloadAccept: (silent?: boolean) => acceptRef.value?.reload(silent),
+  // 预览面板里「指出位置」发出来的那一句。带 summon：读者指着文档说了一处要改，
+  // 等下一轮顺路捎上等于没说。
+  say: (content: string) => chatRef.value?.send(content, true) ?? false,
 })
 </script>
 
