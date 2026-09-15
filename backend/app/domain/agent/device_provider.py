@@ -910,7 +910,26 @@ class DeviceChannel(Channel):
         await self.send_prompt(screen, "/reload-plugins")
         await execute("wait_reloaded", staged["offsets"])
 
-        async def request(subtype):
+        request = self._native_control(session)
+        await request("mcp_reconnect")
+        await self._await_native_connected(request)
+        await execute("acknowledge", home_dir, version)
+        logger.info(
+            "resident release applied topic=%s version=%s", screen.topic_id, version
+        )
+        return True
+
+    @staticmethod
+    def _native_control(session: dict):
+        """A caller for this room's live native control session: one control
+        request in, its response out. The session is the terminal 芝士 is
+        actually running in, which is why `mcp_reconnect` through it reaches the
+        running process rather than a new one."""
+        from app.domain.agent.remote_control import store
+
+        control = store()
+
+        async def request(subtype: str) -> dict:
             request_id = str(uuid.uuid4())
             await control.enqueue(
                 session["id"],
@@ -926,27 +945,61 @@ class DeviceChannel(Channel):
                 raise ScreenSetupError(f"Resident MCP {subtype} did not complete")
             return result["response"].get("response", {})
 
-        await request("mcp_reconnect")
-        # Reconnect acknowledges the request while the server can still be pending.
-        deadline = time.monotonic() + 30
+        return request
+
+    @staticmethod
+    def _native_status(status: dict) -> str:
+        return next(
+            (
+                server.get("status", "")
+                for server in status.get("mcpServers", [])
+                if server.get("name") == "native"
+            ),
+            "",
+        )
+
+    async def _await_native_connected(self, request, timeout_s: float = 30) -> None:
+        """A reconnect is acknowledged while the server can still be pending."""
+        deadline = time.monotonic() + timeout_s
         while True:
-            status = await request("mcp_status")
-            native = next(
-                (
-                    server
-                    for server in status.get("mcpServers", [])
-                    if server.get("name") == "native"
-                ),
-                {},
-            )
-            if native.get("status") == "connected":
-                break
-            if native.get("status") != "pending" or time.monotonic() >= deadline:
+            state = self._native_status(await request("mcp_status"))
+            if state == "connected":
+                return
+            if state != "pending" or time.monotonic() >= deadline:
                 raise ScreenSetupError("Released native MCP did not connect")
             await asyncio.sleep(0.1)
-        await execute("acknowledge", home_dir, version)
-        logger.info(
-            "resident release applied topic=%s version=%s", screen.topic_id, version
+
+    async def recover_native_tools(self, topic_id: uuid.UUID) -> bool:
+        """Put this room's platform tools back, and say whether they were gone.
+
+        A turn that publishes nothing is the symptom: 芝士 answered in its
+        terminal and its `chat_send` call failed with `No such tool available`,
+        so the room heard silence. The MCP server can be gone while the session
+        reports ready (observed 2026-09-13/14), and the reconnect that fixes it
+        is the same control request a release uses. Asked only AFTER such a
+        turn, so a healthy room pays nothing.
+
+        True means the tools were missing and are back — the caller re-delivers
+        the message. False means nothing was wrong, or the question could not be
+        asked here (no live control session), which is never a reason to resend.
+        """
+        from app.domain.agent.remote_control import store
+
+        session = await store().current(str(topic_id))
+        if not session or session["status"] != "active":
+            return False
+        request = self._native_control(session)
+        try:
+            if self._native_status(await request("mcp_status")) == "connected":
+                return False
+            await request("mcp_reconnect")
+            await self._await_native_connected(request)
+        except (ScreenSetupError, TimeoutError):
+            logger.exception("native tool recovery failed topic=%s", topic_id)
+            return False
+        logger.warning(
+            "native tools were disconnected and have been reconnected topic=%s",
+            topic_id,
         )
         return True
 

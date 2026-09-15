@@ -1596,6 +1596,10 @@ class ChatService:
                     )
                 return
 
+    async def recover_native_tools(self, topic_id: uuid.UUID) -> bool:
+        """Platform tools back for this room; True when they had been gone."""
+        return await self._compute.recover_native_tools(topic_id)
+
     def has_running_turn(self, topic_id: uuid.UUID) -> bool:
         """Whether this process currently owns live work for the topic."""
         return topic_id in self._active_turn_ids
