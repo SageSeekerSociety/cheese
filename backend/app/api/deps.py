@@ -68,7 +68,12 @@ def _cloud_lease(machine: ProjectMachine) -> CloudLease:
         project_id=machine.project_id,
         device_id=machine.device_id,
         machine_ready=machine.status == MachineStatus.running,
-        ai_ready=machine.ai_status == AiStatus.ready,
+        # `disabled` is a settled channel too: the built-in AI access is off
+        # because the machine reaches the model through the gateway. Enrolment
+        # and the wake-up sweep already count it as ready; reading it as "not
+        # yet" here made every such room wake, find itself unready, and wait
+        # again, once every sweep, forever.
+        ai_ready=machine.ai_status in (AiStatus.ready, AiStatus.disabled),
         error=error,
     )
 

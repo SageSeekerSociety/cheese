@@ -6,10 +6,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.api.deps import _cloud_lease
 from app.domain.agent.cloud_provider import CloudChannel, CloudLease
 from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.device.supply import Supply
 from app.domain.identity.actor import Actor
+from app.domain.machine.models import AiStatus, MachineStatus
 
 pytestmark = pytest.mark.anyio
 
@@ -128,3 +130,27 @@ async def test_cloud_resolution_never_accepts_a_hosted_endpoint(monkeypatch):
 
     with pytest.raises(ScreenSetupError, match="有效的云端连接器"):
         await provider._resolve_device_agent(project_id, topic_id)
+
+
+@pytest.mark.parametrize(
+    ("ai_status", "ready"),
+    [
+        (AiStatus.ready, True),
+        # The built-in channel switched off because the machine reaches the
+        # model through the gateway: the same settled state the wake-up sweep
+        # hands out, so the turn it wakes must agree that the machine is ready.
+        (AiStatus.disabled, True),
+        (AiStatus.provisioning, False),
+        (AiStatus.unknown, False),
+    ],
+)
+def test_a_running_machine_is_ready_once_its_ai_channel_has_settled(ai_status, ready):
+    machine = SimpleNamespace(
+        project_id=uuid.uuid4(),
+        device_id="cloud-1",
+        status=MachineStatus.running,
+        ai_status=ai_status,
+    )
+    lease = _cloud_lease(machine)  # type: ignore[arg-type]
+    assert lease.machine_ready and lease.error is None
+    assert lease.ai_ready is ready
