@@ -300,7 +300,10 @@ async def _advance(session, cleanup_id: uuid.UUID, inventory: dict) -> None:
             return
         operation.state = "preparing"
     await session.commit()
-    logger.info(
+    logger.log(
+        # A retry is not news either — `last_error` is set only by an attempt
+        # that already failed, so it is exactly "we have been here before".
+        logging.DEBUG if operation.last_error else logging.INFO,
         "cleanup start operation=%s room=%s state=%s",
         cleanup_id,
         operation.topic_id,
@@ -385,9 +388,24 @@ async def _advance(session, cleanup_id: uuid.UUID, inventory: dict) -> None:
             operation.state = (
                 "pending" if stopped and not parking_started else "preparing"
             )
-            operation.last_error = str(exc)[:2048]
+            reason = str(exc)[:2048]
+            # Reported when it CHANGES, not on every attempt. A cleanup whose
+            # resource is still held retries for as long as something holds it,
+            # and an unchanged reason carries nothing a person can act on that
+            # the row does not already hold — `last_error` is the current one,
+            # queryable, and does not scroll. Four such operations on dev
+            # 2026-09-15 were repeating a six-line remote traceback about once a
+            # minute each, filling over half of the only window anyone can read
+            # the backend's log through, for hours.
+            changed = reason != operation.last_error
+            operation.last_error = reason
             await session.commit()
-            logger.warning("cleanup pending operation=%s reason=%s", cleanup_id, exc)
+            logger.log(
+                logging.WARNING if changed else logging.DEBUG,
+                "cleanup pending operation=%s reason=%s",
+                cleanup_id,
+                exc,
+            )
             return
     for entry in operation.resources:
         if entry.get("removed"):
