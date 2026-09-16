@@ -8,6 +8,7 @@ import asyncio
 import logging
 import time
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final, NoReturn
@@ -945,7 +946,17 @@ class AcceptService:
         its retries — a wide window in which an unreferenced task can be
         collected mid-await. Losing it means the room never learns the accept's
         outcome at all. The accepter's HTTP response still doesn't wait on the
-        notification succeeding — only on the merge itself."""
+        notification succeeding — only on the merge itself.
+
+        房间里留一句，不点名任何人。要人动手、而且**说的时候没有人在看**的那几
+        条走 `_tell_the_reviewer`：判据不是「这句话说给谁听」，而是「说的时候谁
+        在」。轮询每 60 秒替没人看着的卡看一眼，它发现的事除了通知没有别的路能
+        到人手上。
+
+        留在这里的是另外三类：不要人动手的结局（合了、芝士去改）；采纳当场的那几
+        条 —— 停下的，或者人工放行成功的 —— 点的人正读着自己那次请求的回应，再投
+        一条通知给他，说的是他刚刚已经读到的那句话；以及递卡当场的提醒（递卡本身
+        已经通知过验收人，他来了就看见它）。"""
         spawn(
             webhook_service.post_with_retries(
                 async_session_factory,
@@ -2282,7 +2293,7 @@ class AcceptService:
             # or merge a returned delivery, even when its checks are green.
             return
         if status.state == "closed":
-            self._note_pr_closed_unmerged(card=card, topic=topic)
+            await self._note_pr_closed_unmerged(card=card, topic=topic)
             await self._session.flush()
             return
 
@@ -2371,7 +2382,7 @@ class AcceptService:
 
         if verdict.state == "clean":
             # CLEAN → 通知验收人（按 head 去重）。
-            self._notify_ready(card, topic)
+            await self._notify_ready(card, topic)
         elif verdict.state == "blocked" and "required_check_missing" in kinds:
             # BLOCKED 必跑检查没报到 → 等 CI，不发；超过宽限期转人 ——
             # workflow 改名、被禁用、Actions 断供都长这样，等下去没有尽头，
@@ -2387,7 +2398,7 @@ class AcceptService:
                         }
                     )
                 )
-                self._note_needs_human(
+                await self._note_needs_human(
                     card=card,
                     topic=topic,
                     reason=(
@@ -2445,7 +2456,7 @@ class AcceptService:
         的。换基后 head 变化，下一轮从新 CI 重新等起；反复换基追不上 main 就
         叫人（上限 3，芝士推新提交时清零 —— `_repush_if_local_head_moved`）。"""
         if card.rebase_count >= 3:
-            self._note_needs_human(
+            await self._note_needs_human(
                 card=card,
                 topic=topic,
                 reason=(
@@ -2476,7 +2487,10 @@ class AcceptService:
         GitHub 的「Dismiss stale pull request approvals when new commits are
         pushed」，这里默认开着 —— GitHub 默认关，因为它假设推代码的是可信的
         人；这里推代码的是拿着 App 写权限的芝士。清掉旧 head 挣到的一切
-        （批准票、auto-merge 布防），且只在真有东西被作废时通知验收人。"""
+        （批准票、auto-merge 布防），且只在真有东西被作废时说话。
+
+        通知投给验收人和**被作废的那几票的主人**：重新投一次只有投票的人能做，
+        而这句话已经点了他们的名字。"""
         from app.domain.project.protection import branch_protection_of
 
         project = await self._projects.get(topic.project_id)
@@ -2490,7 +2504,8 @@ class AcceptService:
         card.auto_merge_armed_by = None
         card.auto_merge_armed_at = None
         voided = "、".join(sorted({*approvers, *((armed,) if armed else ())}))
-        self._notify_merge_result(
+        await self._tell_the_reviewer(
+            card,
             topic,
             f"PR #{card.pr_number} 有新提交，已有的采纳批准被作废",
             meta=notice(
@@ -2505,16 +2520,53 @@ class AcceptService:
                 ),
                 detail_label="为什么作废",
             ),
+            also=(*approvers, *((armed,) if armed else ())),
         )
 
-    def _notify_ready(self, card: AcceptCard, topic: Topic) -> None:
+    async def _tell_the_reviewer(
+        self,
+        card: AcceptCard,
+        topic: Topic,
+        content: str,
+        *,
+        meta: dict,
+        also: Sequence[str] = (),
+    ) -> None:
+        """房间里说这一句，并通知这张卡的验收人（`also` 再加几个人）。
+
+        收件人是卡点了名的验收人；判据是**这件事由后台发现**。采纳当场停下的那几
+        条不走这里 —— 点采纳的人正看着自己那次请求的回应，再投一条通知给他，说的
+        是他刚刚已经读到的那句话。轮询不一样：它每 60 秒替没人看着的卡看一眼，它
+        发现的事除了通知没有别的路能到人手上。
+
+        `also` 是那句话点到名、却不是验收人的人：批准票被作废时，被作废的是投票
+        的人的判断，而重新投一次这件事只有他能做。一条点了某人名字的提示不该绕开
+        他 —— 同一个人在两处都出现只收一条（`announce` 按人去重）。
+
+        走调用方的 session，不是 `_notify_merge_result` 的新 session：这几处都在
+        轮询那一拍的事务里，房间里那一行、卡上的码、去重的账、通知一起提交。整拍
+        回滚就当这一拍没发生过，下一拍重新发现同一件事会再说一次，所以什么都不会
+        丢。那几条**已经在 GitHub 上发生了**的结局（合了、被拒了）是另一回事：它
+        们的事实不会重来，所以继续走新 session 的重试。
+        """
+        await announce(
+            self._session,
+            place_id=topic.id,
+            content=content,
+            meta={"source": "accept", **meta},
+            author="accept",
+            recipients=(card.reviewer_handle, *also),
+        )
+
+    async def _notify_ready(self, card: AcceptCard, topic: Topic) -> None:
         """CLEAN → 通知验收人，按 (head, clean) 经账本去重 —— 一个 head 只说
         一次「可以采纳了」，重跑的检查、反复的轮询都不重复。"""
         ledger = pr_signals.NudgeLedger.load(card.nudge_state)
         signature = pr_signals.signature("ready", card.pr_head_sha or "")
         if ledger.already_sent(pr_signals.NudgeKind.ready, signature):
             return
-        self._notify_merge_result(
+        await self._tell_the_reviewer(
+            card,
             topic,
             f"PR #{card.pr_number} 可以合并了，等 {card.reviewer_handle} 采纳",
             meta=notice(
@@ -2571,7 +2623,7 @@ class AcceptService:
         approvers = await self._repo.list_approver_handles(card.id)
         votes = len(set(approvers) | {armer})
         if votes < protection.approvals_required:
-            self._note_needs_human(
+            await self._note_needs_human(
                 card=card,
                 topic=topic,
                 reason=(
@@ -2618,7 +2670,7 @@ class AcceptService:
         card.decided_at = datetime.now(UTC)
         await self._finish_pr_accept(card=card, topic=topic)
 
-    def _note_needs_human(
+    async def _note_needs_human(
         self,
         *,
         card: AcceptCard,
@@ -2647,7 +2699,8 @@ class AcceptService:
         notes.record(card, notes.NoteCode.merge_withheld, note)
         logger.warning("card %s: poller stopped — %s", card.id, reason)
         why = explain or reason
-        self._notify_merge_result(
+        await self._tell_the_reviewer(
+            card,
             topic,
             f"PR #{card.pr_number} 平台不会自动合并",
             meta=notice(
@@ -2679,7 +2732,7 @@ class AcceptService:
             card.pr_head_sha = status.merge_commit_sha
         await self._finish_pr_accept(card=card, topic=topic, merged_externally=True)
 
-    def _note_pr_closed_unmerged(self, *, card: AcceptCard, topic: Topic) -> None:
+    async def _note_pr_closed_unmerged(self, *, card: AcceptCard, topic: Topic) -> None:
         """The PR was closed on GitHub WITHOUT merging. Say so and stop there.
 
         No auto-settle and no local-merge fallback: a human closing the PR is
@@ -2699,7 +2752,8 @@ class AcceptService:
             card.id,
             card.pr_number,
         )
-        self._notify_merge_result(
+        await self._tell_the_reviewer(
+            card,
             topic,
             f"PR #{card.pr_number} 已关闭且没有合并",
             meta=notice(
