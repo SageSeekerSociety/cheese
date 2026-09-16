@@ -28,6 +28,16 @@ const queue: PendingError[] = []
 let sessionCount = 0
 let timer: number | null = null
 
+// 浏览器自己发的通告，不是任何人写的代码抛出来的异常。ResizeObserver 那一条说
+// 的是「一次回调改了布局，这一轮量不完了」—— 浏览器把剩下的推到下一帧，什么都
+// 没丢，页面也没坏。它偏偏是以 window error 的形式发出来的，于是每次都落进房间
+// 的现场，把真正的报错埋在里面。没有栈、没有文件、没有人能修，就别上报。
+const IGNORED = [/^ResizeObserver loop/]
+
+export function isIgnorable(message: string): boolean {
+  return IGNORED.some((re) => re.test(message))
+}
+
 function fingerprint(e: PendingError): string {
   return `${e.message}\n${(e.stack || '').split('\n')[0]}\n${e.source || ''}`
 }
@@ -47,7 +57,7 @@ function context(): { projectId: string | null; topicId: string | null } {
 
 export function reportError(message: string, stack?: string, source?: string): void {
   try {
-    if (!message || sessionCount >= MAX_PER_SESSION) return
+    if (!message || isIgnorable(message) || sessionCount >= MAX_PER_SESSION) return
     const item: PendingError = {
       message: String(message).slice(0, 500),
       stack: stack ? String(stack).slice(0, 4000) : undefined,
