@@ -139,6 +139,28 @@ class AgentTurnRepository:
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
+    async def open_turn_author_for_topic(self, topic_id: uuid.UUID) -> str | None:
+        """这一轮由谁的消息发起 —— 也就是「这一轮的结果由谁在等」。
+
+        芝士在轮次中途提出待确认问题，本轮就停在那里等回答。等的不是房间里任意一个
+        人，而是把这件事交给它的那个人，而那条消息的作者正是 `AgentTurn.author`。
+
+        平台发起的轮次（resume、各类提醒）作者是 `system`，那种轮次里的提问指不到
+        具体的人 —— 这里照样把 `system` 返回，由调用点决定它意味着什么，和
+        `open_turn_id_for_topic` 一样只回答被问到的那件事。
+        """
+        stmt = (
+            select(AgentTurn.author)
+            .where(
+                AgentTurn.topic_id == topic_id,
+                AgentTurn.task_id.is_(None),
+                AgentTurn.stopped_at.is_(None),
+            )
+            .order_by(AgentTurn.started_at.desc())
+            .limit(1)
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
     async def close(self, turn_ids: Iterable[uuid.UUID], at: datetime) -> None:
         """End these intervals. Closing is not deleting — the ids stay readable
         next to the blocks that carry them."""

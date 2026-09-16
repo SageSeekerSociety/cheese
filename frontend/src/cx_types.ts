@@ -215,7 +215,7 @@ export interface RoomTask {
  *
  *    building   施工中 —— 还没递出交付
  *    delivering 交付中 —— 下一步在平台/芝士手上
- *    needs_you  等你   —— 下一步在人手上
+ *    needs_you  待处理 —— 下一步在人手上
  *    done       已完成 —— 已采纳，或已收工且没交付
  *    archived   已归档 —— 房间才有；活不归档
  */

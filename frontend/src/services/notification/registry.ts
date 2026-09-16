@@ -1,6 +1,7 @@
 import type { Component } from 'vue'
 import type { NotificationType } from '@/network/api/notifications/types'
 
+import RenderCheeseQuestionNotification from '@/components/common/Notification/renders/RenderCheeseQuestionNotification.vue'
 import RenderDeadlineRemindNotification from '@/components/common/Notification/renders/RenderDeadlineRemindNotification.vue'
 import RenderDefaultNotification from '@/components/common/Notification/renders/RenderDefaultNotification.vue'
 // 导入渲染组件
@@ -34,6 +35,7 @@ const notificationRendererRegistry: Record<NotificationType, Component> = {
   TEAM_INVITATION_CANCELED: RenderTeamInvitationCanceledNotification,
   TEAM_REQUEST_CANCELED: RenderTeamRequestCanceledNotification,
   ROOM_NOTICE: RenderRoomNoticeNotification,
+  CHEESE_QUESTION: RenderCheeseQuestionNotification,
 }
 
 /**
@@ -80,6 +82,8 @@ export function getNotificationIcon(type: NotificationType): string {
       return 'mdi-cancel'
     case 'ROOM_NOTICE':
       return 'mdi-bell-ring-outline'
+    case 'CHEESE_QUESTION':
+      return 'mdi-help-circle-outline'
     default:
       return 'mdi-bell'
   }
@@ -100,10 +104,11 @@ export function getNotificationColor(type: NotificationType): string {
     case 'TEAM_INVITATION_CANCELED':
     case 'TEAM_REQUEST_CANCELED':
       return 'error'
-    // ROOM_NOTICE：平台只在事情落到人手上时才发这一条，所以它总是「要你处理」
-    // ——和看板上那一列同一个暖色。
+    // 这两条都只在事情落到人手上时才发出，所以它们总是「待你处理」——和看板上
+    // 那一列同一个暖色。CHEESE_QUESTION 更甚：本轮已经停在那个问题上。
     case 'DEADLINE_REMIND':
     case 'ROOM_NOTICE':
+    case 'CHEESE_QUESTION':
       return 'warning'
     default:
       return 'primary'
