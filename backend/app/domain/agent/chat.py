@@ -89,6 +89,7 @@ from app.domain.agent.supply import SUBSCRIPTION
 from app.domain.agent.tool_preview import (
     SHELL_TOOLS,
     ToolPreview,
+    tool_detail,
     tool_preview,
     work_subpath,
 )
@@ -366,7 +367,9 @@ def _is_platform_tool(raw_name: str, args: dict) -> bool:
     return False
 
 
-def _tool_event_meta(name: str, preview: ToolPreview, *, platform: bool) -> dict:
+def _tool_event_meta(
+    name: str, preview: ToolPreview, *, platform: bool, detail: str = ""
+) -> dict:
     """Structured payload persisted on an event block: the UI translates the
     tool name and colors the dot from these fields at DISPLAY time, so a verb
     missing from today's table is never baked in untranslated forever.
@@ -376,12 +379,21 @@ def _tool_event_meta(name: str, preview: ToolPreview, *, platform: bool) -> dict
     `cat foo.py` is still a Bash call, but 「读取文件」 is what it did). NOT named
     ``action`` — that key already means "which platform resource this card points
     at" (see the frontend's platformNotice), and one name answering two questions
-    is how a card ends up pointing at a resource called "Read"."""
+    is how a card ends up pointing at a resource called "Read".
+
+    ``detail`` is the argument as it was actually written, for the reader who
+    opens the line. It is stored NEXT TO ``arg`` rather than replacing it
+    because the two want opposite things: ``arg`` is rewritten and cut to stay
+    scannable on one line, and what the opener came for is exactly what that
+    rewriting removed. Only the preview is ever computed from it, so a line
+    with nothing more to say carries no second copy."""
     meta: dict = {"tool": name, "platform": platform}
     if preview.text:
         meta["arg"] = preview.text
     if preview.action:
         meta["as_tool"] = preview.action
+    if detail:
+        meta["detail"] = detail
     return meta
 
 
@@ -3068,7 +3080,12 @@ class ChatService:
             project_id=project_id,
             topic_id=topic_id,
             content=_format_tool_event(name, preview),
-            meta=_tool_event_meta(name, preview, platform=platform),
+            meta=_tool_event_meta(
+                name,
+                preview,
+                platform=platform,
+                detail=tool_detail(name, tool_input, preview),
+            ),
             turn_id=turn_id,
             eid=eid,
             backfilled=backfilled,

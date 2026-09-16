@@ -96,6 +96,9 @@ export interface BlockMeta {
   [key: string]: unknown
   tool?: string
   arg?: string
+  // 参数原文，给摊开这一行的人看。和 `arg` 并存而不是替掉它：那一行为了能扫而
+  // 重写过、剪短过，摊开的人要的正是被剪掉的那截。
+  detail?: string
   platform?: boolean
   // 现场那一行的动词覆盖：值是「标签更贴切的那个工具名」（Bash 跑的 `cat x.py`
   // 显示成「读取文件」）。和 `action` 是两回事 —— 那个答的是「这张平台动作卡指

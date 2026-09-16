@@ -208,6 +208,11 @@ function eventArg(b: Block): string {
   const nl = b.content.indexOf('\n')
   return nl >= 0 ? b.content.slice(nl + 1).trim() : ''
 }
+// 摊开这一行之后显示的那一份：参数原文，一个字都没剪。没有第二份时摊开的仍是
+// 这一行本身 —— 面板窄到把它省略掉时，展开是唯一能看全的办法。
+function eventDetail(b: Block): string {
+  return b.meta?.detail || eventArg(b)
+}
 // 圆点分级: amber = platform action, neutral = plain work (structured fields
 // only — never guessed from the content text).
 function eventPlatform(b: Block): boolean {
@@ -284,7 +289,7 @@ function isLive(index: number): boolean {
                 :title="eventArg(b)"
                 @click="toggleSiteEntry(b.id)"
               >
-                {{ eventArg(b) }}
+                {{ expandedSite.has(b.id) ? eventDetail(b) : eventArg(b) }}
               </button>
               <span v-else class="site-act__argtext"></span>
               <span class="site-act__time">{{ fmtTime(b.created_at) }}</span>
@@ -482,7 +487,7 @@ function isLive(index: number): boolean {
   color: var(--accent-ink);
 }
 /* 截断而不是折行：一条几百字符的命令折下来能占掉半屏，而这一列的用处是扫。
-   想看全文的点开这一行，鼠标停住也有完整的一份。
+   点开这一行换成参数原文，整条摊开，不再截第二次。
    是个 button 而不是带 click 的 span：摊开是一个真的操作，键盘要够得着它。 */
 .site-act__argtext {
   flex: 1 1 auto;

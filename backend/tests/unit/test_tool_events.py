@@ -7,7 +7,7 @@ from app.domain.agent.chat import (
     _is_platform_tool,
     _tool_event_meta,
 )
-from app.domain.agent.tool_preview import tool_preview
+from app.domain.agent.tool_preview import tool_detail, tool_preview
 
 
 def _text(name: str, args: dict) -> str:
@@ -16,7 +16,10 @@ def _text(name: str, args: dict) -> str:
 
 
 def _meta(name: str, args: dict, *, platform: bool = False) -> dict:
-    return _tool_event_meta(name, tool_preview(name, args), platform=platform)
+    preview = tool_preview(name, args)
+    return _tool_event_meta(
+        name, preview, platform=platform, detail=tool_detail(name, args, preview)
+    )
 
 
 # ---- fallback text (baked into content for old clients / old rows) ----
@@ -102,6 +105,7 @@ def test_tool_event_meta_records_what_ran_and_how_to_label_it():
         "tool": "Bash",
         "as_tool": "Grep",
         "arg": "TODO",
+        "detail": "grep -rn TODO backend/",
         "platform": False,
     }
 
@@ -131,3 +135,15 @@ def test_a_platform_action_is_one_wherever_the_cheese_cli_runs():
     # 房间的 shell 工具，整轮现场就没有一个琥珀点。
     assert _is_platform_tool("bash", {"command": "cheese artifact output/x.docx"})
     assert not _is_platform_tool("bash", {"command": "echo cheese"})
+
+
+def test_meta_carries_the_argument_as_it_was_written():
+    # 一行写的是「写入文件 · report.md」，摊开要能看见真正跑的那条命令。
+    command = "cat > report.md <<'EOF'\n# 标题\nEOF"
+    meta = _meta("bash", {"command": command})
+    assert meta["arg"] == "report.md"
+    assert meta["detail"] == command
+
+
+def test_meta_omits_the_second_copy_when_the_line_already_says_it_all():
+    assert "detail" not in _meta("Bash", {"command": "make test"})

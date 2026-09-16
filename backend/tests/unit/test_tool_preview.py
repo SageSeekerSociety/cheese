@@ -7,8 +7,11 @@
 import uuid
 
 from app.domain.agent.tool_preview import (
+    DETAIL_MAX,
+    PREVIEW_MAX,
     ToolPreview,
     command_preview,
+    tool_detail,
     tool_preview,
     work_subpath,
 )
@@ -276,3 +279,56 @@ def test_output_thrown_away_is_not_a_file_that_was_written():
 def test_merging_file_descriptors_is_not_a_redirect_target():
     preview = command_preview("cat notes.md 2>&1")
     assert preview == ToolPreview("notes.md", "Read")
+
+
+# ---- 摊开这一行：参数原文 ----
+
+
+def _detail(name: str, args: dict, *, work_dir: str = "") -> str:
+    """按生产路径算：预览先出来，原文再拿它对照。"""
+    return tool_detail(name, args, tool_preview(name, args, work_dir=work_dir))
+
+
+def test_opening_a_rewritten_line_shows_the_command_that_was_run():
+    # 一行显示的是「写文件 · build.py」——那是重写过的说法，heredoc 里的内容和
+    # 重定向都不在上面。摊开的人要的正是这些。
+    command = "cat > /tmp/build.py <<'EOF'\nprint(1)\nEOF"
+    assert tool_preview("bash", {"command": command}).text == "/tmp/build.py"
+    assert _detail("bash", {"command": command}) == command
+
+
+def test_opening_a_long_command_is_not_cut_at_the_one_line_limit():
+    command = "pytest " + " ".join(f"tests/test_{i}.py" for i in range(40))
+    assert len(_detail("Bash", {"command": command})) > PREVIEW_MAX
+
+
+def test_opening_a_shortened_path_shows_where_the_file_actually_is():
+    args = {"path": f"{ABS}/backend/app/main.py"}
+    assert tool_preview("read", args, work_dir=WORK).text == "backend/app/main.py"
+    assert _detail("read", args, work_dir=WORK) == args["path"]
+
+
+def test_a_chinese_description_still_opens_onto_the_command():
+    args = {
+        "command": f"cd {ABS}; docker compose up -d",
+        "description": "把数据库拉起来",
+    }
+    assert _detail("Bash", args, work_dir=WORK) == args["command"]
+
+
+def test_a_line_with_nothing_more_to_say_carries_no_second_copy():
+    # 摊开之后看见同一句话，等于什么也没摊开。
+    assert _detail("Grep", {"pattern": "TODO"}) == ""
+    assert _detail("read", {"path": "notes.md"}) == ""
+    assert _detail("Bash", {"command": "make test"}) == ""
+
+
+def test_an_enormous_argument_is_capped_and_says_so():
+    detail = _detail("Bash", {"command": "echo " + "x" * (DETAIL_MAX * 2)})
+    assert len(detail) == DETAIL_MAX + 1
+    assert detail.endswith("…")
+
+
+def test_a_tool_with_no_telling_argument_has_nothing_to_open():
+    assert _detail("FutureTool", {"x": 1}) == ""
+    assert tool_detail("Bash", "not a dict", ToolPreview()) == ""  # type: ignore[arg-type]

@@ -33,6 +33,11 @@ from dataclasses import dataclass
 #: 预览的长度上限。现场是一行，不是一段。
 PREVIEW_MAX = 120
 
+#: 摊开那一行之后的长度上限。一行管的是扫，这一份管的是看 —— 一条命令连着
+#: heredoc 能有几千字符，而摊开的人要的正是被剪掉的那截。真的封顶时末尾留一个
+#: 省略号，读的人自己就看得出来还有。
+DETAIL_MAX = 4000
+
 #: 「这句话是中文吗」—— 有没有汉字就够了，不需要语言识别库。判错的代价只是多走
 #: 一次解析器，而解析器认不出来时又会退回原文，两头都不会把话说坏。
 _HAS_CHINESE = re.compile(r"[一-鿿]")
@@ -344,6 +349,28 @@ def command_preview(command: str, *, work_dir: str = "") -> ToolPreview:
         # 本身，比留空更说明问题。
         return ToolPreview(_collapse(meaningful)[:PREVIEW_MAX], action)
     return ToolPreview(text[:PREVIEW_MAX], action)
+
+
+def tool_detail(name: str, args: dict, preview: ToolPreview) -> str:
+    """摊开这一行时给人看的那一份：参数原文。
+
+    和预览分开算，是因为两者要的东西相反 —— 预览要短、要重写（``cat > x.py
+    <<EOF`` 说成「写文件 x.py」才读得懂），而摊开的人要的恰恰是被重写掉、被剪掉
+    的原文。原文不剪路径、不折行、不换说法，只封顶。
+
+    和那一行说的一样时返回空：摊开之后看见同一句话，等于什么也没摊开。
+    """
+    if not isinstance(args, dict):
+        return ""
+    key = "command" if name in SHELL_TOOLS else _TOOL_ARG.get(name)
+    if key is None or args.get(key) is None:
+        return ""
+    text = str(args[key]).strip()
+    if not text or _collapse(text) == preview.text:
+        return ""
+    if len(text) > DETAIL_MAX:
+        return text[:DETAIL_MAX] + "…"
+    return text
 
 
 def tool_preview(name: str, args: dict, *, work_dir: str = "") -> ToolPreview:
