@@ -32,6 +32,7 @@ from app.core.errors import (
     SystemBusyError,
     ValidationError,
 )
+from app.domain.agent.announce import notify_question
 from app.domain.agent.chat import ChatService
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.harness.prompt import thread_relay_prompt, thread_upgraded_prompt
@@ -46,6 +47,7 @@ from app.domain.agent.market import (
     visibility_listings,
 )
 from app.domain.agent.preview_hub import preview_hub
+from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent_instance.schemas import TopicAgentIn
 from app.domain.agent_instance.services import ResolvedAgent
@@ -239,6 +241,7 @@ def _topic_out(
     cards: dict[uuid.UUID, AcceptCard] | None = None,
     now: datetime | None = None,
     managed_ids: set[uuid.UUID] | None = None,
+    asked: set[uuid.UUID] | None = None,
 ) -> dict:
     """TopicOut plus the signals the ORM row cannot carry: the in-memory
     turn-running flag (separate from `status`/归档 — see TopicOut.running: a
@@ -263,7 +266,12 @@ def _topic_out(
     out.awaits_me = mine.awaits_me
     data = out.model_dump(mode="json")
     data["running"] = topic.id in running_ids
-    facts = presentation.facts_for_room(topic, running_ids, (cards or {}).get(topic.id))
+    facts = presentation.facts_for_room(
+        topic,
+        running_ids,
+        (cards or {}).get(topic.id),
+        awaiting_answer=topic.id in (asked or set()),
+    )
     data["presentation"] = presentation.room_presentation(
         facts, now=now or datetime.now(UTC)
     ).as_dict()
@@ -306,10 +314,12 @@ async def list_topics(
         if actor.authenticated
         else set()
     )
+    # 哪几个房间停在一个未回答的提问上（房间自己那条线）——一次查完。
+    asked = await BlockRepository(db).rooms_awaiting_an_answer([t.id for t in topics])
     # 一次，给整页用同一个「现在几点」——见 list_project_tasks 里同一行的理由。
     now = datetime.now(UTC)
     items = [
-        _topic_out(t, running_ids, last_activity, relevance, cards, now, managed)
+        _topic_out(t, running_ids, last_activity, relevance, cards, now, managed, asked)
         for t in topics
     ]
     return ok(page(items, total))
@@ -360,6 +370,7 @@ async def get_topic(
             relevance,
             cards,
             managed_ids=managed,
+            asked=await BlockRepository(db).rooms_awaiting_an_answer([topic.id]),
         )
     )
 
@@ -484,6 +495,7 @@ async def list_room_tasks(
     thread_ids = [t.id for t, _ in threads]
     cards = await AcceptCardRepository(db).latest_by_task(thread_ids)
     beats = await TaskRepository(db).last_block_at_for_tasks(thread_ids)
+    asked = await BlockRepository(db).tasks_awaiting_an_answer(thread_ids)
     # One answer for the whole room: every thread's worker lives in this room's
     # one session, so the screen is alive for all of them or for none.
     screen_live = chat.has_live_screen(topic_id)
@@ -501,6 +513,7 @@ async def list_room_tasks(
                         card,
                         beats.get(task.id),
                         room_screen_live=screen_live,
+                        awaiting_answer=task.id in asked,
                     ),
                     now=now,
                 ).as_dict(),
@@ -559,6 +572,9 @@ async def get_room_task(
             # 做这条活的分身住在房间的会话里 —— 屏幕没了它就没了，而它不会来说
             # 一声。这一位是内存里的当下事实，不是库里的一列。
             room_screen_live=chat.has_live_screen(place.room_id),
+            awaiting_answer=bool(
+                await BlockRepository(db).tasks_awaiting_an_answer([task.id])
+            ),
         ),
         now=datetime.now(UTC),
     ).as_dict()
@@ -1426,7 +1442,12 @@ async def ask_options(
 ) -> dict:
     """芝士 asks an option question IN the chat (cheese ask): a message block
     whose meta.options renders as one-click buttons. Structured interaction —
-    the answer comes back as data, never parsed from prose (spec §14.5)."""
+    the answer comes back as data, never parsed from prose (spec §14.5).
+
+    本轮停在这里等回答，所以它同时通知发起这一轮的人（#1084）：其余每一种「下一步
+    在人手上」都是一轮结束之后的状态，唯独这一种**中断**运行，而房间安静下来这件事
+    本身没有人会注意到。
+    """
     place = await TopicService(db).place_or_404(topic_id)
     actor = await _actor_in_place(resolver, place)
     question = (body.get("question") or "").strip()
@@ -1455,6 +1476,19 @@ async def ask_options(
         content=question,
         kind=BlockKind.message,
         meta={"options": options},
+    )
+    # 发起这一轮的人 —— 芝士是代他执行这件事的，这个问题也只有他能回答。平台发起
+    # 的轮次（resume、各类提醒）作者是 system，那种提问指不到具体的人。
+    waiting_for = await AgentTurnRepository(db).open_turn_author_for_topic(
+        place.room_id
+    )
+    await notify_question(
+        db,
+        place=place,
+        block_id=blk.id,
+        question=question,
+        asker=blk.author,
+        recipients=() if waiting_for in (None, "system") else (waiting_for,),
     )
     await db.commit()
     payload = BlockOut.model_validate(blk).model_dump(mode="json")

@@ -46,6 +46,7 @@ import type {
   UpstreamSyncResult,
   UsageStats,
   UserProfile,
+  WaitingItem,
   WorkspaceFile,
 } from './cx_types'
 
@@ -447,6 +448,15 @@ export function screenWsUrl(sid: string): string {
 export function listProjects(teamId?: number): Promise<ListPayload<Project>> {
   const q = teamId != null ? `?team_id=${teamId}` : ''
   return request<ListPayload<Project>>(`/projects${q}`)
+}
+
+/** 待我处理：跨项目、点到我的那些事项，最近动过的在前。
+ *
+ *  和看板读同一份规则（后端 `room_task/presentation.py`），所以一件事在看板上是待
+ *  处理，在这里就是待处理。它不是通知列表的另一种视图：通知是事件记录，答不出
+ *  「现在还没处理完的有哪些」。 */
+export function listAwaitingMe(): Promise<ListPayload<WaitingItem>> {
+  return request<ListPayload<WaitingItem>>('/awaiting-me')
 }
 
 export function createProject(

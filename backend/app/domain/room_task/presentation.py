@@ -13,7 +13,7 @@
 
 - `building` 施工中 —— 还没递出交付。
 - `delivering` 交付中 —— 下一步在**平台/芝士**手上。
-- `needs_you` 等你 —— 下一步在**人**手上。
+- `needs_you` 待处理 —— 下一步在**人**手上。
 - `done` 已完成 —— 已采纳，或已收工且没交付。
 - `archived` 已归档 —— 房间才有；活不归档。
 
@@ -100,6 +100,9 @@ class NeedsYou(enum.StrEnum):
     checks_failed = "检查未通过"
     awaiting_review = "等待验收"
     bounced = "交付被退回"
+    #: 芝士提出了待确认问题，本轮停止等待回答。这是唯一一种**会中断运行**的：
+    #: 其余几格都是一轮结束之后的状态。
+    awaiting_answer = "待确认"
 
 
 class Done(enum.StrEnum):
@@ -183,6 +186,10 @@ class TaskFacts:
     #: 不是断了 —— 但它也可能只是把一条长命令停在后台就先交了一次话，所以这一位
     #: 只用来解释安静，从不用来说这条活结束了。
     has_conclusion: bool = False
+    #: 最近一条提问消息还没有回答（`BlockRepository.tasks_awaiting_an_answer`）。
+    #: 回答记在提问那一块上，所以这一位不需要新增存储；但它要查一次库，所以和别的
+    #: 事实一样从外面喂进来。
+    awaiting_answer: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,6 +200,8 @@ class RoomFacts:
     running: bool
     accepted_at: datetime | None
     card: CardFacts | None
+    #: 见 `TaskFacts.awaiting_answer`，问的是房间自己那条线。
+    awaiting_answer: bool = False
 
 
 def facts_for_card(card: "AcceptCard | None") -> CardFacts | None:
@@ -215,6 +224,7 @@ def facts_for_task(
     last_block_at: datetime | None = None,
     *,
     room_screen_live: bool = True,
+    awaiting_answer: bool = False,
 ) -> TaskFacts:
     """把一行 `Task`（加上它的卡、加上它最后一次说话的时间）折成这层要读的事实。
 
@@ -231,17 +241,23 @@ def facts_for_task(
         has_worker=bool(task.subagent_id),
         room_screen_live=room_screen_live,
         has_conclusion=bool(task.conclusion),
+        awaiting_answer=awaiting_answer,
     )
 
 
 def facts_for_room(
-    topic: Topic, running_ids: set[uuid.UUID], card: "AcceptCard | None" = None
+    topic: Topic,
+    running_ids: set[uuid.UUID],
+    card: "AcceptCard | None" = None,
+    *,
+    awaiting_answer: bool = False,
 ) -> RoomFacts:
     return RoomFacts(
         status=str(topic.status),
         running=topic.id in running_ids,
         accepted_at=topic.accepted_at,
         card=facts_for_card(card),
+        awaiting_answer=awaiting_answer,
     )
 
 
@@ -290,7 +306,7 @@ def _card_presentation(card: CardFacts) -> Presentation | None:
         return _show(NeedsYou.checks_failed)
     # 其余所有「停住了」的码。刻意不再列一遍名字：`notes.py` 已经维护着那张表，
     # 而它的注释说得很清楚 —— 漏进 info 的码会和「还在等检查」长得一模一样。新增
-    # 的停住码在这里自动落到「等你」，而不是安静地被算成还在走。
+    # 的停住码在这里自动落到「待处理」，而不是安静地被算成还在走。
     if _is_stuck(card.note_code):
         return _show(NeedsYou.bounced)
 
@@ -332,6 +348,15 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
     if facts.accepted_at is not None:
         return _show(Done.accepted)
 
+    # 芝士提出了待确认问题 —— **压过「运行中」**。这是规矩 2 唯一的例外，而它正是
+    # 规矩 2 的道理：进程可能还在，但「在跑」已经不是此刻成立的事实，它不会自己往下
+    # 走。而看板显示「运行中」，正是让人不来看的那一句，所以这一格必须排在前面。
+    #
+    # 也压过卡：一条活同时有未回答的提问和一张待验收的卡，两者都在等人，而提问是挡
+    # 住其余所有事的那一件。
+    if facts.awaiting_answer:
+        return _show(NeedsYou.awaiting_answer)
+
     # 有分身在做这条活。它住在**房间的**会话里，所以「它还在不在」有两个答案，
     # 先问屏幕：房间的屏幕没了，它一定也没了 —— 而它自己不会来说一声。
     #
@@ -352,7 +377,7 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
             return shown
 
     # 说自己有人在做，却没有任何东西确认过 —— **在卡说完之后才轮到这一句**。一条
-    # 递了卡、安静地等人验收的活，安静得理直气壮：它不是断了联系，它在等你。分身
+    # 递了卡、安静地等人验收的活，安静得理直气壮：它不是断了联系，它在等人来看。分身
     # 干完活并不会把 `subagent_id` 抹掉，所以抢在卡前面说，等于把每一条等验收的活
     # 都误报成失联。
     if worker_on_it:
@@ -393,6 +418,11 @@ def room_presentation(facts: RoomFacts, *, now: datetime) -> Presentation:
         return _show(Done.accepted)
     if facts.status == TopicStatus.archived:
         return _show(Archived.archived)
+
+    # 见 `task_presentation` 里同一格的理由：提问压过「运行中」，因为本轮不会自己
+    # 往下走了。
+    if facts.awaiting_answer:
+        return _show(NeedsYou.awaiting_answer)
 
     if facts.running:
         return _show(Building.running)

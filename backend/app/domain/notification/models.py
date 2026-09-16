@@ -31,6 +31,11 @@ class NotificationType(str, Enum):
     #: 类别拼模板，具体是哪件事看 `payload.eventType`。
     ROOM_NOTICE = "ROOM_NOTICE"
 
+    #: 芝士提出待确认问题，本轮停止等待回答（`announce.notify_question`）。
+    #: 与 `ROOM_NOTICE` 分开是因为它不是平台说的：文字是芝士自己的话，不受那一行
+    #: 40 字的约束，前端也要按「一个问题」渲染，而不是按一条平台提示。
+    CHEESE_QUESTION = "CHEESE_QUESTION"
+
 
 class Notification(Base):
     __tablename__ = "notification"

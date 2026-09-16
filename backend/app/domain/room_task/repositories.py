@@ -128,6 +128,21 @@ class TaskRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
+    async def list_for_projects(self, project_ids: list[uuid.UUID]) -> list[Task]:
+        """同一个列表，跨若干个项目 —— 「待我处理」要问的是我能看见的全部项目。
+
+        逐个项目问一遍是一个人几个项目就几次往返；而这个列表是一个页面打开就要的
+        东西，所以它一次问完。
+        """
+        if not project_ids:
+            return []
+        stmt = (
+            select(Task)
+            .where(Task.project_id.in_(project_ids))
+            .order_by(Task.created_at, Task.id)
+        )
+        return list((await self._session.scalars(stmt)).all())
+
     async def last_block_at_for_tasks(
         self, task_ids: list[uuid.UUID]
     ) -> dict[uuid.UUID, datetime]:
