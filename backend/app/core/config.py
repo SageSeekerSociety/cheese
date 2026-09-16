@@ -34,8 +34,25 @@ class Settings(BaseSettings):
     # single page load fans out dozens of them, and a request that cannot get a
     # connection within `db_pool_timeout_s` raises TimeoutError — a 500 on a
     # perfectly healthy database.
-    db_pool_size: int = 20
-    db_max_overflow: int = 30
+    #
+    # The number below the pool must also fit is the SERVER's, which nothing in
+    # this process can see. THREE pools share it during an ordinary release: the
+    # outgoing backend, the incoming one the rollout brings up beside it, and the
+    # separately released connection owner. At 20+30 each that is 150 against a
+    # `max_connections` of 100, and on 2026-09-16 it landed exactly as the
+    # arithmetic predicts — 19 seconds after a new backend answered /healthz,
+    # PostgreSQL refused 83 connections in one minute with `sorry, too many
+    # clients already`, and every request in flight failed with it. Users read
+    # that as the rooms mysteriously 401-ing and recovering, several times a day,
+    # once per deploy.
+    #
+    # So the ceiling is per-process but the budget is shared: 3 x (size +
+    # overflow) has to leave room for the migration the deploy runs and for
+    # anyone holding a psql. 3 x 25 = 75 of the 97 a default PostgreSQL offers
+    # once its superuser reserve is taken out. A box whose server is configured
+    # larger can raise these; a box that adds a fourth pool has to lower them.
+    db_pool_size: int = 15
+    db_max_overflow: int = 10
     db_pool_timeout_s: float = 30.0
     # Hand out a connection only after checking it is still alive: a pooled
     # asyncpg connection that the database (or anything in between) closed while
