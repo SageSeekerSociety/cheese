@@ -100,9 +100,9 @@ export function getNotificationColor(type: NotificationType): string {
     case 'TEAM_INVITATION_CANCELED':
     case 'TEAM_REQUEST_CANCELED':
       return 'error'
+    // ROOM_NOTICE：平台只在事情落到人手上时才发这一条，所以它总是「要你处理」
+    // ——和看板上那一列同一个暖色。
     case 'DEADLINE_REMIND':
-    // 平台只在事情落到人手上时才发这一条，所以它总是「要你处理」——和看板
-    // 上那一列同一个暖色。
     case 'ROOM_NOTICE':
       return 'warning'
     default:
