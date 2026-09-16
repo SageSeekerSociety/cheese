@@ -48,11 +48,13 @@ vi.mock('./preview/PreviewPages.vue', () => ({
 vi.mock('./preview/PreviewSheet.vue', () => ({
   default: {
     name: 'PreviewSheet',
-    props: ['data'],
+    props: ['data', 'kind'],
     emits: ['cell'],
+    // A workbook's cell carries a sheet name; a CSV has no sheet, and the stub
+    // reports that the same way the real viewer does.
     template:
-      '<div data-testid="sheet" :data-bytes="data ? data.byteLength : 0"' +
-      " @click=\"$emit('cell', { address: 'B7', value: '1200', sheet: 'Sheet1' })\" />",
+      '<div data-testid="sheet" :data-bytes="data ? data.byteLength : 0" :data-kind="kind"' +
+      " @click=\"$emit('cell', { address: 'B7', value: '1200', sheet: kind === 'csv' ? '' : 'Sheet1' })\" />",
   },
 }))
 
@@ -146,6 +148,19 @@ it('turns a pointed-at cell into a message naming the file and the address', asy
   expect((emitted().locate as unknown[][])[0][0]).toBe(
     '在 output/预算表.xlsx 的 Sheet1!B7（「1200」）：这个数字应该按季度摊'
   )
+})
+
+it('a CSV has no sheet, so its address is the cell alone', async () => {
+  getPreview.mockResolvedValue(artifact('output/报名名单.csv', 'text/csv'))
+  readPreviewFile.mockResolvedValue(fileContent('output/报名名单.csv'))
+  const { emitted } = mount()
+
+  await fireEvent.click(await screen.findByTestId('sheet'))
+  await fireEvent.update(screen.getByPlaceholderText('说明要改什么'), '这一行重复了')
+  await fireEvent.click(screen.getByText('发送'))
+
+  await waitFor(() => expect(emitted().locate).toBeTruthy())
+  expect((emitted().locate as unknown[][])[0][0]).toBe('在 output/报名名单.csv 的 B7（「1200」）：这一行重复了')
 })
 
 it('turns a selected sentence into a message naming the page it came from', async () => {

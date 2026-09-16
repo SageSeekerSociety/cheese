@@ -161,7 +161,9 @@ function onQuote(payload: { text: string; page: number }) {
 }
 
 function onCell(payload: { address: string; value: string; sheet: string }) {
-  openLocator(`${payload.sheet}!${payload.address}`, payload.value || '（空）', `${payload.sheet}!${payload.address}`)
+  // CSV 没有工作表名，`!B7` 会让读者以为前面漏了个名字。
+  const where = payload.sheet ? `${payload.sheet}!${payload.address}` : payload.address
+  openLocator(where, payload.value || '（空）', where)
 }
 
 function sendLocator() {
@@ -473,7 +475,7 @@ watch(
         <div class="t-meta mt-1">{{ docError }}</div>
       </div>
       <PreviewPages v-else-if="documentType.view === 'pages'" :data="docBytes" @quote="onQuote" />
-      <PreviewSheet v-else :data="docBytes" @cell="onCell" />
+      <PreviewSheet v-else :data="docBytes" :kind="documentSuffix === 'csv' ? 'csv' : 'workbook'" @cell="onCell" />
 
       <!-- 指出位置：读者选中一句话或点中一个格子，这条就是交给芝士的坐标。 -->
       <Transition name="locator">
