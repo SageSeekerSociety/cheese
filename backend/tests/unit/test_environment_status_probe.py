@@ -63,7 +63,9 @@ class ShellHub:
         }
 
 
-def _place(tmp_path, *, shipped_by=(), state='{"state": "ready"}', exit_code=0) -> Place:
+def _place(
+    tmp_path, *, shipped_by=(), state='{"state": "ready"}', exit_code=0
+) -> Place:
     """A device $HOME with one place in it, prepared by the named launchers.
 
     `shipped_by` names the directories a launcher has dropped the runner into —
@@ -104,7 +106,7 @@ async def test_machine_launcher_copy_wins_when_both_are_on_disk(tmp_path):
     place = _place(tmp_path, shipped_by=(".cheese",))
     other = place.home / ".claude"
     other.mkdir()
-    (other / "cheese-environment.py").write_text("print('{\"state\": \"failed\"}')\n")
+    (other / "cheese-environment.py").write_text('print(\'{"state": "failed"}\')\n')
 
     assert await _probe(place) == {"state": "ready"}
 
