@@ -373,6 +373,21 @@ def device_work_dir(project_id: uuid.UUID, place_id: uuid.UUID) -> str:
     return f"{DEVICE_WORK_ROOT}/{project_id}/{place_id}"
 
 
+# Where a place's environment runner may have been left, relative to that
+# place's home, in precedence order. Two launchers ship the same program to two
+# different directories: the machine launcher writes it under `$HOME/.cheese`,
+# while the claude-code remote-execution payload writes it into the harness
+# config dir `$HOME/.claude`. Both copies are byte-identical and both keep their
+# state in the same `$HOME/.cheese-environment/status.json`, so whichever one we
+# find answers for the place. Probing only `.cheese` is what made a place
+# prepared by the other launcher read as `pending` forever: the ready status was
+# on disk the whole time, one directory over.
+ENVIRONMENT_RUNNER_PATHS = (
+    "$HOME/.cheese/cheese-environment.py",
+    "$HOME/.claude/cheese-environment.py",
+)
+
+
 async def environment_status(
     hub: DeviceHub,
     device_id: str,
@@ -388,16 +403,20 @@ async def environment_status(
         if action == "reset"
         else ""
     )
+    candidates = " ".join(f'"{path}"' for path in ENVIRONMENT_RUNNER_PATHS)
     result = await hub.exec(
         device_id,
         [
             "sh",
             "-c",
             f'export HOME="{home}"; '
-            'if [ -f "$HOME/.cheese/cheese-environment.py" ]; then '
+            f"for candidate in {candidates}; do "
+            'if [ -f "$candidate" ]; then '
             f"CHEESE_STATUS_WAIT={int(wait_ready)} "
-            f'python3 "$HOME/.cheese/cheese-environment.py" {action} || exit $?; '
-            "else printf '%s' '{\"state\":\"pending\"}'; fi; " + reset_marker,
+            f'python3 "$candidate" {action} || exit $?; '
+            "CHEESE_ENVIRONMENT_RAN=1; break; fi; done; "
+            'if [ -z "$CHEESE_ENVIRONMENT_RAN" ]; then '
+            "printf '%s' '{\"state\":\"pending\"}'; fi; " + reset_marker,
         ],
         timeout=10,
     )
