@@ -20,7 +20,9 @@ from tests.turn_log import open_turn
 def _room(client) -> tuple[str, str]:
     """alice 创建的房间 —— 创建者即名册上的第一个人，而提问要求调用者在名册内。"""
     auth = session_auth_headers("alice")
-    pid = client.post("/projects", json={"name": "P"}, headers=auth).json()["data"]["id"]
+    pid = client.post("/projects", json={"name": "P"}, headers=auth).json()["data"][
+        "id"
+    ]
     tid = client.post(
         "/topics", json={"project_id": pid, "title": "预算复核"}, headers=auth
     ).json()["data"]["id"]

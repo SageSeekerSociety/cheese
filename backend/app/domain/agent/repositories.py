@@ -161,6 +161,29 @@ class AgentTurnRepository:
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
+    async def open_turn_authors_for_topics(
+        self, topic_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, str]:
+        """{房间: 这一轮由谁发起}，一次查完 —— 跨项目的「待我处理」用。
+
+        和 `open_turn_author_for_topic` 同一个判据，只是批量：那个列表要对几十个
+        房间问同一件事，逐个问就是一个列表一次请求变成几十次。
+        """
+        if not topic_ids:
+            return {}
+        stmt = (
+            select(AgentTurn.topic_id, AgentTurn.author)
+            .where(
+                AgentTurn.topic_id.in_(topic_ids),
+                AgentTurn.task_id.is_(None),
+                AgentTurn.stopped_at.is_(None),
+            )
+            .order_by(AgentTurn.topic_id, AgentTurn.started_at.desc())
+            .distinct(AgentTurn.topic_id)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return {topic_id: author for topic_id, author in rows}
+
     async def close(self, turn_ids: Iterable[uuid.UUID], at: datetime) -> None:
         """End these intervals. Closing is not deleting — the ids stay readable
         next to the blocks that carry them."""

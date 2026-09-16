@@ -307,9 +307,7 @@ def test_an_unanswered_question_beats_the_live_fact():
 
 def test_delivery_still_beats_an_unanswered_question():
     """已交付压过它 —— 已经采纳，那个旧问题不再挡住任何事。"""
-    shown = task_presentation(
-        task(awaiting_answer=True, accepted_at=JUST_NOW), now=NOW
-    )
+    shown = task_presentation(task(awaiting_answer=True, accepted_at=JUST_NOW), now=NOW)
     assert (shown.column, shown.display_status) == (Column.done, "已采纳")
 
 

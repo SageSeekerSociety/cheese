@@ -131,6 +131,19 @@ class TopicRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
+    async def list_for_projects(self, project_ids: list[uuid.UUID]) -> list[Topic]:
+        """同一棵树，跨若干个项目 —— 「待我处理」要问的是我能看见的全部项目。
+
+        私聊照样不在里面（见 `_project_topics_stmt`）：它不是话题树的一部分，也从
+        来不会有验收卡或者待确认问题挂在上面。
+        """
+        if not project_ids:
+            return []
+        stmt = select(Topic).where(
+            Topic.project_id.in_(project_ids), Topic.is_private.is_(False)
+        )
+        return list((await self._session.scalars(stmt)).all())
+
     def _project_topics_stmt(
         self,
         project_id: uuid.UUID,
