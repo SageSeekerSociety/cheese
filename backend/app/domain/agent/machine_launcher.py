@@ -53,6 +53,7 @@ from app.domain.agent import (
 )
 from app.domain.agent.harness.launch import MachineLaunch, MachinePlace
 from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
+from app.domain.machine import toolchain_dist
 
 # Starts the tunnel helper and does NOT return until its port answers.
 #
@@ -193,6 +194,115 @@ printf '%s\\n' "$WANT" > "$STAMPF"
 """
 
 
+def toolchain_block() -> str:
+    """Place the room's document toolchain on this machine, once per machine.
+
+    These are capabilities, not dependencies — a room that never writes a
+    document needs none of them — so nothing here may fail a launch or delay
+    one. It runs detached behind a directory lock, and a room that asks for
+    pandoc while the fetch is still running finds it missing and says so, which
+    is the honest answer and the one `skills/documents` now gives.
+
+    Under $REAL_HOME, not the session home: the tools belong to the MACHINE.
+    Every room on it shares one copy, and the copy outlives any of them. The
+    version is in the path for the same reason claude's pin is — a bump lands
+    beside the old one and is fetched on the next launch, with no
+    re-provisioning and nothing to uninstall.
+
+    TYPST_FONT_PATHS, and deliberately NOT TYPST_IGNORE_SYSTEM_FONTS. Ours are
+    found first either way (typst resolves --font-path before system fonts), so
+    ignoring the machine's own fonts would only take away faces a user
+    legitimately has. Which family a document names is the skill's business,
+    not an environment variable's.
+    """
+    fonts_pin = toolchain_dist.fonts_pin()
+    places = "\n".join(
+        f"cheese_place {tool} {version} {kind} {name}"
+        for tool, version, kind, name in toolchain_dist.PLACEMENTS
+    )
+    fetcher = f"""#!/bin/sh
+  case "$(uname -m)" in
+    x86_64|amd64) _tarch=x64 ;;
+    aarch64|arm64) _tarch=arm64 ;;
+    *) exit 0 ;;
+  esac
+  if [ "$(uname -s)" = Darwin ]; then _tos=darwin; else _tos=linux; fi
+  _tplat="$_tos-$_tarch"
+  mkdir -p "$CHEESE_TOOLCHAIN/bin" || exit 0
+  # `mkdir` is the lock: it is atomic on every filesystem a machine might use,
+  # and two rooms starting at once must not both pull 111MB. A stale lock costs
+  # the next launch a retry, never a wedged room, because nothing waits on this.
+  mkdir "$CHEESE_TOOLCHAIN/.fetching" 2>/dev/null || exit 0
+  trap 'rmdir "$CHEESE_TOOLCHAIN/.fetching" 2>/dev/null' EXIT INT TERM
+
+  cheese_place() {{
+    # tool version kind name
+    _dest="$CHEESE_TOOLCHAIN/$1/$2"
+    if [ "$3" = font ]; then
+      _dest="$CHEESE_TOOLCHAIN/fonts/{fonts_pin}"
+      [ -s "$_dest/$4" ] && return 0
+    else
+      if [ -x "$_dest/$4" ]; then
+        ln -sf "$_dest/$4" "$CHEESE_TOOLCHAIN/bin/$4"
+        return 0
+      fi
+    fi
+    _work="$CHEESE_TOOLCHAIN/.part.$1"
+    rm -rf "$_work"
+    mkdir -p "$_work" || return 0
+    if ! curl -fsSL --retry 3 --retry-delay 2 -m 900 \\
+        "${{CHEESE_API%/}}/connector/toolchain/$1/$_tplat/artifact" \\
+        -o "$_work/a"; then
+      rm -rf "$_work"
+      return 0
+    fi
+    mkdir -p "$_dest" || {{ rm -rf "$_work"; return 0; }}
+    if [ "$3" = font ]; then
+      mv "$_work/a" "$_dest/$4"
+      rm -rf "$_work"
+      return 0
+    fi
+    # The archive's inside is the vendor's business and it changes between
+    # releases, so the binary is found by name rather than by a path spelled
+    # out here. tar reads .tar.gz and .tar.xz; macOS pandoc ships a zip.
+    ( cd "$_work" && tar -xf a 2>/dev/null ) \\
+      || ( cd "$_work" && unzip -q a 2>/dev/null ) \\
+      || {{ rm -rf "$_work"; return 0; }}
+    _found="$(find "$_work" -type f -name "$4" 2>/dev/null | head -n 1)"
+    if [ -z "$_found" ]; then
+      rm -rf "$_work"
+      return 0
+    fi
+    chmod +x "$_found" 2>/dev/null || true
+    mv "$_found" "$_dest/$4" || {{ rm -rf "$_work"; return 0; }}
+    rm -rf "$_work"
+    ln -sf "$_dest/$4" "$CHEESE_TOOLCHAIN/bin/$4"
+  }}
+
+{places}
+"""
+    return f"""CHEESE_TOOLCHAIN="$REAL_HOME/.cheese/toolchain"
+export CHEESE_TOOLCHAIN
+export PATH="$CHEESE_TOOLCHAIN/bin:$PATH"
+export TYPST_FONT_PATHS="$CHEESE_TOOLCHAIN/fonts/{fonts_pin}"
+if [ -n "${{CHEESE_API:-}}" ]; then
+  cat > "$HOME/.cheese/cheese-toolchain" <<'TOOLCHAIN'
+{fetcher}TOOLCHAIN
+  chmod +x "$HOME/.cheese/cheese-toolchain"
+  # `( cmd & )` — a double fork, and the parentheses are the whole point.
+  # `cleanup` below ends with a bare `wait`, which waits for every remaining
+  # CHILD of this shell. A plain `&` would make the fetch one of them, so
+  # tearing a screen down would block on a 100MB download nothing was waiting
+  # for; measured, it spent the pi launcher's entire 20s shutdown budget every
+  # time. The inner `&` inside a subshell that exits at once leaves the fetch
+  # parented to init instead, where this shell's `wait` cannot see it, and
+  # `nohup` keeps it off the terminal's hangup. It then either finishes or dies
+  # with the machine, and neither outcome reaches a room.
+  ( nohup "$HOME/.cheese/cheese-toolchain" </dev/null >/dev/null 2>&1 & )
+fi
+"""
+
+
 def state_dir(project_id, resource_id, harness: str, agent_handle: str) -> str:
     """一个 harness 在那台机器上放 state 的地方，写成连接器认的那种路径。
 
@@ -328,6 +438,7 @@ def launch_script(
     preview_helper = Path(preview_tunnel.__file__).read_text().rstrip("\n") + "\n"
     tunnel_up = CHEESE_TUNNEL_UP
     preview_up = CHEESE_PREVIEW_UP
+    toolchain = toolchain_block()
     return f"""set -e
 # CHEESE_HOME/CHEESE_WORK arrive with a LITERAL "$HOME/..." placeholder (the
 # server cannot know the device user's home). Substitute the REAL home first —
@@ -373,7 +484,7 @@ cat > "$HOME/.cheese/cheese" <<'CHEESE_PLATFORM_CLI'
 {cli_source}CHEESE_PLATFORM_CLI
 chmod +x "$HOME/.cheese/cheese"
 export PATH="$HOME/.cheese:$PATH"
-cheese_launch_phase files_written
+{toolchain}cheese_launch_phase files_written
 {credentials}\
 # Durable event delivery on the device: cheese-hook spools every hook and (via
 # CHEESE_HOOK_SPOOL_ONLY) skips its own inline curl, so the cheese-drain script

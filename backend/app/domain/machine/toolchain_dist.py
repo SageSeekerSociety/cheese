@@ -163,6 +163,29 @@ ARTIFACTS: dict[tuple[str, str], Artifact] = {
 #: platform and get the one file.
 PLATFORM_FREE = frozenset({"font-sans", "font-serif"})
 
+
+def fonts_pin() -> str:
+    """One directory name for the font pair, so bumping either refetches both.
+
+    Two fonts with two commits would otherwise need two directories and two
+    entries in TYPST_FONT_PATHS, and the pair is only ever shipped together.
+    """
+    return f"{_SANS_COMMIT[:12]}-{_SERIF_COMMIT[:12]}"
+
+
+#: What the launcher places on a machine: (tool, version, kind, filename).
+#: `kind` is what the machine does with the artifact — unpack and find an
+#: executable of that name, or drop the file into the font directory. The
+#: version is the directory name on the machine, which is what makes a bump land
+#: beside the old copy rather than over it.
+PLACEMENTS: tuple[tuple[str, str, str, str], ...] = (
+    ("typst", TYPST_VERSION, "bin", "typst"),
+    ("pandoc", PANDOC_VERSION, "bin", "pandoc"),
+    ("uv", UV_VERSION, "bin", "uv"),
+    ("font-sans", "pinned", "font", "NotoSansSC-VF.otf"),
+    ("font-serif", "pinned", "font", "NotoSerifSC-VF.otf"),
+)
+
 _FETCH_TIMEOUT_S = 600.0
 
 # One in-flight fetch per artifact. A fleet preparing at once asks for the same
