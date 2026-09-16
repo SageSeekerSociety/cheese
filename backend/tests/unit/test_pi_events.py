@@ -9,8 +9,9 @@ happens to do; these came out of the harness we are translating.
 import json
 from pathlib import Path
 
-from app.domain.agent.harness.pi.events import STEP_ERROR_MAX, Assembler
+from app.domain.agent.harness.pi.events import Assembler
 from app.domain.agent.service import (
+    STEP_ERROR_MAX,
     AgentMessage,
     AgentResult,
     AgentStepFailed,

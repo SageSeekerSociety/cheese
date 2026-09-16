@@ -492,7 +492,8 @@ function isLive(index: number): boolean {
   margin: 2px 0 0;
   padding-left: calc(5px + 8px + 4em + 8px);
   color: var(--danger-ink);
-  font-size: 12px;
+  /* 13px 而不是 12：这一行是挂了的那一步上唯一有人真去读的字。 */
+  font-size: 13px;
   line-height: 1.5;
   white-space: nowrap;
   overflow: hidden;

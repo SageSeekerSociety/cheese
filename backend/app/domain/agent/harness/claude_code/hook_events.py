@@ -19,7 +19,7 @@ Event mapping:
                                             assembled from its line-batch
                                             flushes; see the class docstring)
   PostToolUse{tool_name, tool_response}   → AgentToolResult (subagents only)
-                                          → AgentStepFailed (a tool that errored)
+  PostToolUseFailure{tool_use_id, error}  → AgentStepFailed
   SubagentStart{agent_id, agent_type}     → AgentSubagentStart
   SubagentStop{agent_id, last_assistant_message, agent_transcript_path}
                                           → AgentSubagentStop
@@ -41,6 +41,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.domain.agent.service import (
+    STEP_ERROR_MAX,
     AgentEvent,
     AgentMessage,
     AgentResult,
@@ -140,34 +141,6 @@ def _tool_response_text(response: Any) -> str:
     return ""
 
 
-#: 一条失败摘要在现场占多少。和分身结论同一个数（``_SUBAGENT_RESULT_MAX``），
-#: 理由也一样：房间是给人读的地方。失败的输出取末尾 —— 命令在最后一行说它为什么
-#: 不行，开头往往还是正常的编译日志。
-STEP_ERROR_MAX = 500
-
-
-def _tool_failed(response: Any) -> bool:
-    """这次工具调用是不是报错回来的。
-
-    只认结构化的说法，不认文本里的 "Error"：一次 grep 的正常输出里就有这个词，
-    而把成功的一步标成红的，比不标更糟 —— 读的人会开始不信那个颜色。说不出来的
-    harness 就是不标，现场照旧。
-    """
-    if not isinstance(response, dict):
-        return False
-    for key in ("is_error", "isError"):
-        if response.get(key):
-            return True
-    if response.get("success") is False:
-        return True
-    return bool(response.get("error"))
-
-
-def _error_tail(response: Any) -> str:
-    text = " ".join(_tool_response_text(response).split())
-    return text[-STEP_ERROR_MAX:]
-
-
 def translate_hook(hook: dict) -> AgentEvent | None:
     """One hook payload → one AgentEvent, or None when the hook has no
     platform-visible counterpart (e.g. PostToolUse). A returned AgentResult
@@ -228,25 +201,33 @@ def translate_hook(hook: dict) -> AgentEvent | None:
             agent_type=_agent_type(hook),
         )
 
+    if event == "PostToolUseFailure":
+        # The one return value worth forwarding for EVERY tool. A tool's output
+        # does not become an event — a Read's return is the whole file, and the
+        # room is for people to read — but a failure is the one thing the room
+        # cannot learn from the effect: the effect of a failed step is that
+        # nothing happened, which looks exactly like a step still running.
+        # Not a block of its own either: it marks the step already on the
+        # timeline.
+        call = hook.get("tool_use_id")
+        if not isinstance(call, str) or hook.get("is_interrupt"):
+            # An interrupt is a person pressing stop, not a tool going wrong.
+            # Painting it red would tell the room something broke.
+            return None
+        text = " ".join(str(hook.get("error") or "").split())
+        return AgentStepFailed(
+            call_id=call,
+            text=text[-STEP_ERROR_MAX:],
+            agent_id=_agent_id(hook),
+        )
+
     if event == "PostToolUse":
-        # A tool's return value does not become an event of its own: a Read's
-        # return is the whole file, and the room is for people to read. Two
-        # exceptions, each for the same reason — the room cannot learn it any
-        # other way. A subagent's conclusion reaches only whoever spawned it,
-        # and a FAILURE is invisible in a timeline whose every line looks the
-        # same. The failure is not a block either: it marks the step that is
-        # already there.
+        # Only the subagent tools. Surfacing every tool's return would double the
+        # 现场 timeline to say what its effect already says, and a Read's return
+        # is the whole file — the room is for people to read.
         name = str(hook.get("tool_name") or "")
-        response = hook.get("tool_response")
         if name not in _SUBAGENT_TOOLS:
-            call = hook.get("tool_use_id")
-            if not isinstance(call, str) or not _tool_failed(response):
-                return None
-            return AgentStepFailed(
-                call_id=call,
-                text=_error_tail(response),
-                agent_id=_agent_id(hook),
-            )
+            return None
         text = _tool_response_text(hook.get("tool_response"))
         if not text:
             return None

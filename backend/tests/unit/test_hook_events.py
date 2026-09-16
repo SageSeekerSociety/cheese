@@ -6,12 +6,12 @@ import pytest
 
 from app.domain.agent.harness.claude_code.hook_events import (
     RECORDED_AT_KEY,
-    STEP_ERROR_MAX,
     HookRouter,
     MessageAssembler,
     translate_hook,
 )
 from app.domain.agent.service import (
+    STEP_ERROR_MAX,
     AgentMessage,
     AgentResult,
     AgentSessionInfo,
@@ -610,20 +610,28 @@ def test_the_launch_subscribes_to_stop_failure():
 
 
 # ---- 挂了的一步 ----
+#
+# 载荷形状取自 Claude Code 2.1.272 自己的 hook schema:
+#   PostToolUseFailure{tool_name, tool_input, tool_use_id, error,
+#                      is_interrupt?, duration_ms?}
+# 失败走的是这个事件，不是 PostToolUse —— 后者的 schema 里根本没有 error 字段。
 
 
-def _post(response, name="Bash", call="toolu_1"):
+def _failure(**overrides):
     return translate_hook(
         {
-            "hook_event_name": "PostToolUse",
-            "tool_name": name,
-            "tool_use_id": call,
-            "tool_response": response,
+            "hook_event_name": "PostToolUseFailure",
+            "tool_name": "Bash",
+            "tool_input": {"command": "pandoc a.md -o a.docx"},
+            "tool_use_id": "toolu_1",
+            "error": "bash: pandoc: command not found",
+            "duration_ms": 12,
+            **overrides,
         }
     )
 
 
-def test_a_tool_call_carries_the_id_its_result_will_name():
+def test_a_tool_call_carries_the_id_its_failure_will_name():
     ev = translate_hook(
         {
             "hook_event_name": "PreToolUse",
@@ -637,7 +645,7 @@ def test_a_tool_call_carries_the_id_its_result_will_name():
 
 
 def test_a_failed_tool_says_which_step_failed_and_why():
-    ev = _post({"is_error": True, "content": "bash: pandoc: command not found"})
+    ev = _failure()
     assert isinstance(ev, AgentStepFailed)
     assert ev.call_id == "toolu_1"
     assert ev.text == "bash: pandoc: command not found"
@@ -646,27 +654,27 @@ def test_a_failed_tool_says_which_step_failed_and_why():
 def test_a_tool_that_worked_reaches_the_room_through_its_effect_only():
     # 每一步的返回值都上报，等于把现场变成一份日志 —— 一次 Read 的返回值是整个
     # 文件。只有「挂了」是房间无法从效果看出来的。
-    assert _post({"stdout": "ok", "stderr": ""}) is None
-    assert _post("done") is None
+    assert (
+        translate_hook(
+            {
+                "hook_event_name": "PostToolUse",
+                "tool_name": "Bash",
+                "tool_use_id": "toolu_1",
+                "tool_response": {"stdout": "ok", "stderr": ""},
+            }
+        )
+        is None
+    )
 
 
-def test_a_failure_is_recognised_however_the_cli_phrases_it():
-    assert isinstance(_post({"isError": True, "text": "boom"}), AgentStepFailed)
-    assert isinstance(_post({"success": False, "output": "boom"}), AgentStepFailed)
-    assert isinstance(_post({"error": "boom"}), AgentStepFailed)
-
-
-def test_the_word_error_in_a_tools_output_is_not_a_failure():
-    # 一次 grep 的正常输出里就有这个词。把成功的一步标成红的比不标更糟 —— 读的
-    # 人会开始不信那个颜色。
-    assert _post({"stdout": "Error handling in main.py:12"}) is None
+def test_someone_pressing_stop_is_not_a_tool_going_wrong():
+    assert _failure(is_interrupt=True, error="Interrupted by user") is None
 
 
 def test_a_long_failure_keeps_its_ending():
     # 命令在最后一行说它为什么不行，开头往往还是正常的编译日志。
     tail = "FAILED tests/test_x.py::test_y"
-    ev = _post({"is_error": True, "content": "x " * 2000 + tail})
-    assert isinstance(ev, AgentStepFailed)
+    ev = _failure(error="x " * 2000 + tail)
     assert ev.text.endswith(tail)
     assert len(ev.text) == STEP_ERROR_MAX
 

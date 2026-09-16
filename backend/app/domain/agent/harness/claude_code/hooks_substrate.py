@@ -151,8 +151,8 @@ class ActivityTracker:
     #: The one state a hook stream states outright: a tool is running. Set on
     #: `PreToolUse`; the first hook of any other kind afterwards means the tool
     #: returned (the model cannot emit anything else while a tool is in flight).
-    #: `PostToolUse` is the usual one, but reading "anything else" keeps this
-    #: right when a tool fails, since `PostToolUseFailure` is not subscribed.
+    #: `PostToolUse` is the usual one and `PostToolUseFailure` the other, but
+    #: reading "anything else" keeps this right whatever a build sends.
     tool_started_at: float | None = None
     tool_returned_at: float | None = None
     #: Last hook that means work moved: a tool about to run, or the turn ending.
@@ -189,12 +189,12 @@ class ActivityTracker:
 
 
 #: The hooks that mean work moved. `PreToolUse` is a tool about to run,
-#: `PostToolUse` is one that came back (a 40-minute command returning IS
-#: progress, and the model's next line after it must not look like a session
-#: that has done nothing since), `Stop` is the turn finishing on its own.
-#: Nothing else counts, and assistant output least of all: a session wedged in
-#: a loop produces exactly that.
-_PROGRESS_HOOKS = frozenset({"PreToolUse", "PostToolUse", "Stop"})
+#: `PostToolUse` / `PostToolUseFailure` one that came back (a 40-minute
+#: command returning IS progress whether or not it worked, and the model's next
+#: line after it must not look like a session that has done nothing since),
+#: `Stop` is the turn finishing on its own. Nothing else counts, and assistant
+#: output least of all: a session wedged in a loop produces exactly that.
+_PROGRESS_HOOKS = frozenset({"PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"})
 #: The hook that means the assistant produced text.
 _OUTPUT_HOOKS = frozenset({"MessageDisplay"})
 

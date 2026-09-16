@@ -66,6 +66,12 @@ class AgentToolUse:
     agent_type: str | None = None
 
 
+#: 一条失败摘要在现场占多少。和分身结论同一个数（``_SUBAGENT_RESULT_MAX``），
+#: 理由也一样：房间是给人读的地方。取末尾 —— 命令在最后一行说它为什么不行，
+#: 开头往往还是正常的编译日志。
+STEP_ERROR_MAX = 500
+
+
 @dataclass
 class AgentStepFailed:
     """A tool call came back an error.

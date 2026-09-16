@@ -24,6 +24,7 @@ and a read's return is the whole file.
 from datetime import UTC, datetime
 
 from app.domain.agent.service import (
+    STEP_ERROR_MAX,
     AgentEvent,
     AgentMessage,
     AgentResult,
@@ -34,9 +35,6 @@ from app.domain.agent.service import (
 
 # pi stops for a tool call and keeps going; every other reason ends the turn.
 CONTINUES = "toolUse"
-
-#: 一条失败摘要在现场占多少 —— 和 Claude Code 那一侧同一个数。
-STEP_ERROR_MAX = 500
 
 
 def _said(content: object) -> str:
