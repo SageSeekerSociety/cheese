@@ -319,6 +319,49 @@ describe('对话栏自己的输入栏', () => {
     expect(btn.getAttribute('aria-pressed'), '正文里 @ 了它，按钮却没亮——两边说的不是同一件事').toBe('true')
   })
 
+  // 切进一个房间的头几百毫秒里，房间名册还没到。那一瞬间名单里唯一带 AI 标记的是
+  // **项目**名册上那行共用的芝士——照它把 @ 写进正文，写出来的是另一个 handle：
+  // 消息照发、房间里会动的那位不动，而时间线上那条消息写着「叫了它」。
+  it('房间名册还没到的时候，按钮不认项目名册上那行共用的芝士', async () => {
+    const api = await import('../../api')
+    let release!: () => void
+    vi.mocked(api.listTopicMembers).mockReturnValueOnce(
+      new Promise((resolve) => {
+        release = () =>
+          resolve({
+            data: [
+              { id: 'm1', member_handle: 'alice', name: 'Alice', role: 'owner', agent: false },
+              { id: 'm2', member_handle: 'cheese-topicL', name: '芝士', role: 'member', agent: true },
+            ],
+            total: 2,
+          } as Awaited<ReturnType<typeof api.listTopicMembers>>)
+      })
+    )
+
+    const { container, getByRole } = mountPanel({}, 'topic-late-roster')
+    await flush()
+
+    const before = getByRole('button', { name: /交给/ }) as HTMLButtonElement
+    expect(before.disabled, '房间名册还没到，按钮却已经能点了——这时候它认的是项目名册上那行共用的芝士').toBe(true)
+
+    release()
+    await flush()
+
+    const box = composerBox(container)!
+    await fireEvent.update(box, '看看这个')
+    await fireEvent.click(getByRole('button', { name: /交给芝士/ }))
+    expect(box.value).toBe('@芝士 看看这个')
+
+    box.focus()
+    await fireEvent.keyDown(box, { key: 'Enter' })
+    await flush()
+    // 时间线上那条消息里的 @ 得指向**这个房间**那位，不是项目名册上共用的那位。
+    expect(JSON.parse(sent[0].payload)).toMatchObject({
+      content: '<@cheese-topicL> 看看这个',
+      summon: true,
+    })
+  })
+
   // ⌘/Ctrl+Enter 是键盘上的同一个入口。它把 @ 写进正文再发，而不是在帧上偷偷把
   // summon 置真：时间线上那条消息得自己说明它叫了谁，否则读的人看到的是一条谁也
   // 没 @ 的消息、芝士却动了。
