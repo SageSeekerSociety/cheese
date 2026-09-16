@@ -16,7 +16,6 @@ import pytest
 from app.api.routes import webhooks as webhooks_route
 from app.core.errors import AuthenticationRequiredError, ValidationError
 from app.core.webhook_auth import mint_webhook_token, webhook_token_claims
-from app.domain.block.models import AuthorType, BlockKind
 from app.domain.webhook import service as webhook_service
 
 # ---------------------------------------------------------------------------
@@ -102,18 +101,6 @@ async def test_service_verify_rejects_when_no_credential_ever_minted(monkeypatch
 # ---------------------------------------------------------------------------
 
 
-class FakeBlockRepository:
-    def __init__(self, session, sink: list, remaining: dict):
-        self._sink = sink
-        self._remaining = remaining
-
-    async def add(self, **kwargs):
-        if self._remaining["fail"] > 0:
-            self._remaining["fail"] -= 1
-            raise RuntimeError("db unavailable")
-        self._sink.append(kwargs)
-
-
 class FakeSession:
     async def commit(self):
         pass
@@ -130,25 +117,30 @@ class FakeSessionCM:
         return False
 
 
-def _wire_fake_block_repo(monkeypatch, *, fail_times: int = 0):
+def _wire_fake_announce(monkeypatch, *, fail_times: int = 0):
+    """post_with_retries owns the retry and the session, `announce` owns the
+    write — so this stubs `announce` and watches what the wrapper hands it."""
     sink: list = []
     remaining = {"fail": fail_times}
-    monkeypatch.setattr(
-        webhook_service,
-        "BlockRepository",
-        lambda session: FakeBlockRepository(session, sink, remaining),
-    )
+
+    async def fake_announce(session, **kwargs):
+        if remaining["fail"] > 0:
+            remaining["fail"] -= 1
+            raise RuntimeError("db unavailable")
+        sink.append(kwargs)
+        return object()
+
+    monkeypatch.setattr(webhook_service, "announce", fake_announce)
     return sink
 
 
 @pytest.mark.anyio
 async def test_post_with_retries_lands_content_and_source_annotation(monkeypatch):
-    sink = _wire_fake_block_repo(monkeypatch)
-    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
+    sink = _wire_fake_announce(monkeypatch)
+    topic_id = uuid.uuid4()
 
     landed = await webhook_service.post_with_retries(
         lambda: FakeSessionCM(FakeSession()),
-        project_id=project_id,
         topic_id=topic_id,
         content="build #42 passed",
         source="ci-runner",
@@ -157,11 +149,9 @@ async def test_post_with_retries_lands_content_and_source_annotation(monkeypatch
     assert landed is True
     assert len(sink) == 1
     call = sink[0]
-    assert call["project_id"] == project_id
-    assert call["topic_id"] == topic_id
+    assert call["place_id"] == topic_id
     assert call["content"] == "build #42 passed"
-    assert call["author_type"] == AuthorType.system
-    assert call["kind"] == BlockKind.event
+    assert call["author"] == "ci-runner"
     assert call["meta"] == {"source": "ci-runner"}
 
 
@@ -169,11 +159,10 @@ async def test_post_with_retries_lands_content_and_source_annotation(monkeypatch
 async def test_post_with_retries_succeeds_after_transient_failures(monkeypatch):
     real_sleep = asyncio.sleep
     monkeypatch.setattr(asyncio, "sleep", lambda *_: real_sleep(0))
-    sink = _wire_fake_block_repo(monkeypatch, fail_times=2)
+    sink = _wire_fake_announce(monkeypatch, fail_times=2)
 
     landed = await webhook_service.post_with_retries(
         lambda: FakeSessionCM(FakeSession()),
-        project_id=uuid.uuid4(),
         topic_id=uuid.uuid4(),
         content="x",
         source="ci",
@@ -187,11 +176,10 @@ async def test_post_with_retries_succeeds_after_transient_failures(monkeypatch):
 async def test_post_with_retries_gives_up_after_exhausting_retries(monkeypatch):
     real_sleep = asyncio.sleep
     monkeypatch.setattr(asyncio, "sleep", lambda *_: real_sleep(0))
-    sink = _wire_fake_block_repo(monkeypatch, fail_times=99)
+    sink = _wire_fake_announce(monkeypatch, fail_times=99)
 
     landed = await webhook_service.post_with_retries(
         lambda: FakeSessionCM(FakeSession()),
-        project_id=uuid.uuid4(),
         topic_id=uuid.uuid4(),
         content="x",
         source="ci",
@@ -199,6 +187,30 @@ async def test_post_with_retries_gives_up_after_exhausting_retries(monkeypatch):
 
     assert landed is False
     assert sink == []
+
+
+@pytest.mark.anyio
+async def test_post_with_retries_does_not_retry_a_room_that_is_gone(monkeypatch):
+    """房间没了不是暂时故障 —— 重试三次改变不了这件事，直接放弃。"""
+    real_sleep = asyncio.sleep
+    monkeypatch.setattr(asyncio, "sleep", lambda *_: real_sleep(0))
+    attempts = {"n": 0}
+
+    async def gone(session, **kwargs):
+        attempts["n"] += 1
+        return None
+
+    monkeypatch.setattr(webhook_service, "announce", gone)
+
+    landed = await webhook_service.post_with_retries(
+        lambda: FakeSessionCM(FakeSession()),
+        topic_id=uuid.uuid4(),
+        content="x",
+        source="ci",
+    )
+
+    assert landed is False
+    assert attempts["n"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -268,6 +280,5 @@ async def test_receive_webhook_lands_the_post_for_a_valid_token(monkeypatch):
     assert result["data"]["accepted"] is True
     post_mock.assert_awaited_once()
     _, kwargs = post_mock.call_args
-    assert kwargs["project_id"] == project_id
     assert kwargs["topic_id"] == topic_id
     assert kwargs["source"] == "deploy-bot"

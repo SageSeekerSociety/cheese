@@ -8,6 +8,7 @@ import RenderMentionNotification from '@/components/common/Notification/renders/
 import RenderProjectInviteNotification from '@/components/common/Notification/renders/RenderProjectInviteNotification.vue'
 import RenderReactionNotification from '@/components/common/Notification/renders/RenderReactionNotification.vue'
 import RenderReplyNotification from '@/components/common/Notification/renders/RenderReplyNotification.vue'
+import RenderRoomNoticeNotification from '@/components/common/Notification/renders/RenderRoomNoticeNotification.vue'
 import RenderTeamInvitationAcceptedNotification from '@/components/common/Notification/renders/RenderTeamInvitationAcceptedNotification.vue'
 import RenderTeamInvitationCanceledNotification from '@/components/common/Notification/renders/RenderTeamInvitationCanceledNotification.vue'
 import RenderTeamInvitationDeclinedNotification from '@/components/common/Notification/renders/RenderTeamInvitationDeclinedNotification.vue'
@@ -32,6 +33,7 @@ const notificationRendererRegistry: Record<NotificationType, Component> = {
   TEAM_INVITATION_DECLINED: RenderTeamInvitationDeclinedNotification,
   TEAM_INVITATION_CANCELED: RenderTeamInvitationCanceledNotification,
   TEAM_REQUEST_CANCELED: RenderTeamRequestCanceledNotification,
+  ROOM_NOTICE: RenderRoomNoticeNotification,
 }
 
 /**
@@ -76,6 +78,8 @@ export function getNotificationIcon(type: NotificationType): string {
       return 'mdi-cancel'
     case 'TEAM_REQUEST_CANCELED':
       return 'mdi-cancel'
+    case 'ROOM_NOTICE':
+      return 'mdi-bell-ring-outline'
     default:
       return 'mdi-bell'
   }
@@ -97,6 +101,9 @@ export function getNotificationColor(type: NotificationType): string {
     case 'TEAM_REQUEST_CANCELED':
       return 'error'
     case 'DEADLINE_REMIND':
+    // 平台只在事情落到人手上时才发这一条，所以它总是「要你处理」——和看板
+    // 上那一列同一个暖色。
+    case 'ROOM_NOTICE':
       return 'warning'
     default:
       return 'primary'
