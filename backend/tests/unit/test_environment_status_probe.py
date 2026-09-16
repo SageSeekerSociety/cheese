@@ -11,15 +11,20 @@ launcher read as `{"state": "pending"}` forever — the room waited out its whol
 deadline with `"state": "ready"` sitting on disk one directory over.
 """
 
+import importlib.util
 import os
 import subprocess
 import uuid
 from dataclasses import dataclass
+from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 import pytest
 
-from app.domain.agent.device_provider import environment_status
+from app.domain.agent.device_provider import (
+    ENVIRONMENT_RUNNER_PATHS,
+    environment_status,
+)
 from app.domain.agent.harness.channel import ScreenSetupError
 
 
@@ -145,3 +150,23 @@ async def test_probe_asks_the_runner_for_the_action_it_was_given(tmp_path):
 
     assert "prepare" in hub.commands[0][-1]
     assert "CHEESE_STATUS_WAIT=1" in hub.commands[0][-1]
+
+
+def test_the_cli_looks_for_the_runner_where_the_probe_does():
+    """The CLI runs the runner too, from inside the place, and cannot import
+    this module — it ships into the sandbox as a stdlib-only script. So its
+    candidates are a second copy, and a copy that drifts is exactly how a room
+    on a machine prepared by the other launcher stopped being able to open a
+    task at all: the write side moved and the read side did not."""
+    loader = SourceFileLoader(
+        "cheese_cli", str(Path(__file__).resolve().parents[2] / "sandbox" / "cheese")
+    )
+    cli = importlib.util.module_from_spec(
+        importlib.util.spec_from_loader(loader.name, loader)
+    )
+    loader.exec_module(cli)
+
+    assert [
+        f"$HOME/{directory}/cheese-environment.py"
+        for directory in cli.ENVIRONMENT_RUNNER_PATHS
+    ] == list(ENVIRONMENT_RUNNER_PATHS)
