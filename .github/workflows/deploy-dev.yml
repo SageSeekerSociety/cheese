@@ -5,12 +5,9 @@ name: Deploy (dev/test box)
 # GitHub-hosted runners can't reach it — a self-hosted runner (label
 # `cheese-dev`) lives ON the box and pulls jobs outbound.
 #
-# dev runs the unified DOCKER deploy (deploy/deploy-docker.sh): pull the
-# per-commit images, migrate, up, health-check. The box was cut over from
-# bare-metal to containers by deploy/dev-docker-cutover.sh (host nginx dropped —
-# the frontend image bundles its own; the ghg edge terminates TLS and hits :80).
-# The bare-metal service is kept installed-but-disabled as an instant fallback.
-# (prod still uses deploy-blue-green.sh via deploy-prod.yml until it cuts over.)
+# dev runs the unified DOCKER deploy (deploy/deploy-docker.sh), the same one
+# prod runs: pull the per-commit images, migrate, up, health-check. The frontend
+# image bundles its own nginx; the ghg edge terminates TLS and hits :80.
 
 # Triggered BY the image build finishing, not by the push. The deploy pulls
 # per-commit images, so it must not start before they exist — that used to be a

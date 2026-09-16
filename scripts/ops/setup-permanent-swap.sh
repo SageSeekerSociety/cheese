@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # Provision a permanent 4G swapfile on the bare-metal build boxes (dev + prod).
 #
-# The boxes have ~8G RAM and no swap, and the frontend (vite) build over ~4000
-# modules OOM-kills without headroom. deploy-blue-green.sh used to add/remove a
-# temp swapfile around each build (needing swapon/swapoff sudo every deploy) —
-# a workaround. Permanent swap makes the build reliable and lets the deploy
-# script drop that dance entirely. Idempotent; safe to re-run.
+# The boxes have ~8G RAM and no swap. Application images are built in CI now,
+# so nothing compiles here per deploy, but the box runs the whole app tier plus
+# a runner on that 8G and has no headroom for a burst. Idempotent; safe to
+# re-run.
 set -euo pipefail
 SWAP=/swapfile
 SIZE=4G

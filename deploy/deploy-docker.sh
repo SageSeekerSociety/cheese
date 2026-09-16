@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Unified Docker deploy for the bare-metal-turned-container boxes (dev / prod RUC).
+# Unified Docker deploy for the dev and prod (RUC) boxes.
 #
-# Selects the per-commit images, migrates, and brings the app tier up — the
-# Docker equivalent of deploy-blue-green.sh. Registry images remain the default;
+# Selects the per-commit images, migrates, and brings the app tier up.
+# Registry images remain the default;
 # an operator may instead use images built locally on the box. The DB/Redis are
 # EXTERNAL (this script never touches them); uploads live on a host path outside
 # the containers. Rollback restores the exact image references captured below.
