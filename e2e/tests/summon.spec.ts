@@ -107,6 +107,67 @@ test.describe('把消息交给芝士', () => {
     await expect(sent.locator('.mention', { hasText: `@${agent}` })).toBeVisible();
   });
 
+  // 刚切进一个房间的头几百毫秒：房间名册还没回来，而按钮已经画出来了。这个窗口里
+  // 点下去，写进正文的曾经是**项目**那位共用的芝士（`<@cheese>`）——消息照发、房间
+  // 照样醒，但时间线上那条消息里的 @ 指的是另一个身份，而它自己写着「叫了它」。
+  //
+  // 名册是另一条 HTTP 请求，平时几百毫秒就跑完，肉眼撞不上。这条把它扣住不答，
+  // 把那个窗口拉到能测的长度——测的是「名册没到时按钮关着」这句话真的成立，以及
+  // 名册一到，@ 的就是这个房间那位。
+  test('房间名册没到时按钮是关着的；到了以后 @ 的是这个房间那位', async ({ page }) => {
+    const projects = (await api(page, 'get', '/projects')).data as { id: string }[];
+    const project = projects[0];
+    expect(project, 'alice 名下没有项目').toBeTruthy();
+    const topics = (await api(page, 'get', `/topics?project_id=${project.id}`)).data as { id: string }[];
+    const topic = topics[0];
+    expect(topic, '这个项目里一个话题都没有').toBeTruthy();
+
+    // 这个房间自己的座位是哪个 handle——后面要拿它比对时间线上的那枚 @ 名片。
+    const roster = (await api(page, 'get', `/topics/${topic.id}/members`)).data as {
+      member_handle: string;
+      agent?: boolean;
+    }[];
+    const seat = roster.find((m) => m.agent);
+    expect(seat, '这个房间名册上没有 AI 座位，这条用例无从谈起').toBeTruthy();
+
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    await page.route(`**/topics/${topic.id}/members*`, async (route) => {
+      await held;
+      await route.continue();
+    });
+
+    await page.goto(`/projects/${project.id}/topics/${topic.id}`);
+    const composer = page.locator('.composer-input textarea').first();
+    await expect(composer).toBeEnabled({ timeout: 30_000 });
+
+    const button = page.locator('.summon-btn');
+    await expect(button).toBeVisible();
+    await expect(button).toBeDisabled();
+    // 键盘那一头同样关着：名册没到时它只是一次普通发送，正文里不会多出任何 @。
+    // （这条消息不召唤，所以房间里不会有芝士跑起来。）
+    const early = `e2e before roster ${Date.now()}`;
+    await composer.fill(early);
+    await composer.press('Control+Enter');
+    const earlyRow = page.getByTestId('chat-scroll').locator('.im-text', { hasText: early }).last();
+    await expect(earlyRow).toBeVisible({ timeout: 15_000 });
+    await expect(earlyRow.locator('.mention')).toHaveCount(0);
+
+    release();
+    await expect(button).toBeEnabled({ timeout: 15_000 });
+
+    const text = `e2e roster seat ${Date.now()}`;
+    await composer.fill(text);
+    await button.click();
+    await composer.press('Enter');
+
+    const sent = page.getByTestId('chat-scroll').locator('.im-text', { hasText: text }).last();
+    await expect(sent).toBeVisible({ timeout: 15_000 });
+    // 断在 handle 上，不是断在名字上：两行都叫「芝士」，只有这个 handle 说的是
+    // 这个房间里会动的那一位。
+    await expect(sent.locator(`.mention[data-handle="${seat!.member_handle}"]`)).toBeVisible();
+  });
+
   // 手机宽度上按钮收成一个 @ 图标。这条不是审美，是排版会不会塌：那一行右边还站着
   // 发送，按钮带着三个字的时候它们挤不下就要换行。
   //
