@@ -92,6 +92,11 @@ class Settings(BaseSettings):
     # The process that owns device WebSockets is released independently from the
     # business backend. Empty keeps the in-process hub for local development and
     # tests; deployed business backends point at the stable compose service.
+    # Where an alert goes when something breaks that nobody is watching. A
+    # Feishu group's custom-bot webhook URL; empty disables alerting entirely,
+    # which is what a developer's machine and every test wants.
+    feishu_alert_webhook: str = ""
+
     device_connection_url: str = ""
     device_connection_secret: str = ""
     device_connection_owner: bool = False
