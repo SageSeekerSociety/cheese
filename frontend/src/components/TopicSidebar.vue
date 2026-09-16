@@ -392,7 +392,7 @@ function rowRunning(row: VisibleRow<Topic>): boolean {
 }
 function toggleTitle(row: VisibleRow<Topic>): string {
   if (!row.collapsed) return '收起'
-  if (row.hiddenAwaits) return '展开：里面有事等你处理'
+  if (row.hiddenAwaits) return '展开：里面有待处理的事项'
   if (row.hiddenRunning) return '展开：芝士正在里面工作'
   return '展开'
 }
@@ -704,7 +704,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                     <!-- 等你处理：有点名给你的验收卡，或有 @你 的未读。排在"在跑"
                          前面——芝士在忙是它的事，等你做事才是你的事。 -->
                     <span v-else-if="row.topic.awaits_me" class="row-slot">
-                      <span class="await-dot" title="有事等你处理" />
+                      <span class="await-dot" title="有待处理的事项" />
                     </span>
                     <!-- 芝士还在这个话题里工作：呼吸点，人凭它判断啥时候该派下一个
                          任务——和归档/采纳状态无关，只是这会儿有没有跑完。 -->

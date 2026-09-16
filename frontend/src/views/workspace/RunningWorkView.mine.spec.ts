@@ -1,6 +1,6 @@
 /** 「只看我的」。
  *
- * 一个项目上百个房间，「等你」那一列里大部分不是等你、是等别人。所以板上要有一个
+ * 一个项目上百个房间，「待处理」那一列里大部分不是待你处理、是等别人。所以板上要有一个
  * 开关——而它必须住在地址栏里：一刷新就丢会让人反复点，写进地址还顺带让「我手上这
  * 些」变成一条能发出去的链接。
  *
@@ -66,7 +66,7 @@ function task(over: Partial<RoomTask> = {}): RoomTask {
   }
 }
 
-/** 三件「等你」，其中一件是我的；外加一件别人的「施工中」。 */
+/** 三件「待处理」，其中一件是我的；外加一件别人的「施工中」。 */
 const MIXED = [
   task({ id: 'a', title: '我的那件', owner_handle: 'n1ctheboy' }),
   task({ id: 'b', title: '别人的一', owner_handle: 'ligan' }),
@@ -171,24 +171,24 @@ describe('筛完之后板还是一块板', () => {
     await waitFor(() => expect(countOf(container, 'needs_you')).toBe('1 / 3'))
   })
 
-  it('筛到一件不剩的时候，每一列自己说「暂无归你的活」', async () => {
-    // 「暂无施工中的活」在这一刻是句错话：那一列有活，只是不归你。
+  it('筛到一件不剩的时候，每一列自己说「暂无归你的任务」', async () => {
+    // 「暂无施工中的任务」在这一刻是句错话：那一列有活，只是不归你。
     query = { mine: '1' }
     listProjectTasks.mockResolvedValue({ data: [task({ owner_handle: 'ligan' })], total: 1 })
     const { container, getAllByText, queryByText } = mount()
     await waitFor(() => expect(countOf(container, 'needs_you')).toBe('0 / 1'))
-    expect(getAllByText('暂无归你的活').length).toBe(3)
-    expect(queryByText('暂无施工中的活')).toBeNull()
+    expect(getAllByText('暂无归你的任务').length).toBe(3)
+    expect(queryByText('暂无施工中的任务')).toBeNull()
     // 顶上那行数的仍然是整块板：它说的是这个项目有多少活，和取景无关。
-    expect(container.querySelector('.board__head p')?.textContent?.replace(/\s+/g, '')).toBe('等你1')
+    expect(container.querySelector('.board__head p')?.textContent?.replace(/\s+/g, '')).toBe('待处理1')
   })
 
-  it('筛掉之后那一列的下一步提示也收起来 —— 「在房间里说一声」在这一刻是句错话', async () => {
+  it('筛掉之后那一列的下一步提示也收起来 —— 「在房间里说明要做什么」在这一刻是句错话', async () => {
     query = { mine: '1' }
     listProjectTasks.mockResolvedValue({ data: [task({ owner_handle: 'ligan' })], total: 1 })
     const { container, queryByText } = mount()
     await waitFor(() => expect(countOf(container, 'needs_you')).toBe('0 / 1'))
-    expect(queryByText('在房间里说一声，芝士会把它拆成活')).toBeNull()
+    expect(queryByText('在房间里说明要做什么，芝士会把它拆成任务')).toBeNull()
   })
 
   it('「房间满员」数的是整块板，不是筛过的那一份', async () => {

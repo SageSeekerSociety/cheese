@@ -80,13 +80,13 @@ it('a project with nothing in it is told where to start', async () => {
   mount()
 
   expect(await screen.findByText('这个项目还没有开始的工作')).toBeTruthy()
-  expect(await screen.findByText('进入大本营')).toBeTruthy()
+  expect(await screen.findByText('进入对话')).toBeTruthy()
 })
 
 it('the way in actually goes to the home room', async () => {
   mount()
 
-  await fireEvent.click(await screen.findByText('进入大本营'))
+  await fireEvent.click(await screen.findByText('进入对话'))
 
   expect(push).toHaveBeenCalledWith({
     name: 'workspace-topic',

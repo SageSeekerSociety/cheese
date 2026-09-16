@@ -150,7 +150,7 @@ describe('标题旁边那个数', () => {
     })
     const { container } = mount()
     await waitFor(() =>
-      expect(container.querySelector('.task-progress__tally')?.textContent?.replace(/\s+/g, '')).toBe('3件，2件等你')
+      expect(container.querySelector('.task-progress__tally')?.textContent?.replace(/\s+/g, '')).toBe('3件，2件待处理')
     )
   })
 })

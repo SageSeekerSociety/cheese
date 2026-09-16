@@ -134,7 +134,7 @@ const needsYouCount = computed(() => (byColumn.value.get('needs_you') ?? []).len
       <span class="task-progress__title t-body">看板</span>
       <span class="task-progress__tally t-meta">
         <template v-if="rows.length">
-          {{ rows.length }} 件<template v-if="needsYouCount">，{{ needsYouCount }} 件等你</template>
+          {{ rows.length }} 件<template v-if="needsYouCount">，{{ needsYouCount }} 件待处理</template>
         </template>
       </span>
     </button>
@@ -145,7 +145,7 @@ const needsYouCount = computed(() => (byColumn.value.get('needs_you') ?? []).len
       <div v-else-if="errorMsg" class="px-3 py-2 t-body c-muted">{{ errorMsg }}</div>
 
       <div v-else-if="!rows.length" class="px-3 py-2">
-        <div class="t-meta c-muted">暂无派出去的活</div>
+        <div class="t-meta c-muted">暂无派出去的任务</div>
       </div>
 
       <template v-else>
