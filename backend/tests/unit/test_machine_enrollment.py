@@ -511,20 +511,57 @@ async def test_a_service_that_dies_is_recorded_as_a_failure(monkeypatch):
     assert "did not stay up" in machine.enroll_error
 
 
-def test_bootstrap_ensures_both_tools_the_image_may_not_have():
-    """A machine missing either tool enrolls "successfully" and then fails
-    silently — tmux makes the connector die while systemctl still returns 0, and
-    without git the agent's turn runs in an empty dir and its work is never seen.
-
-    Neither is guaranteed by the image: MicroCloud's LXC template lists git but
-    not tmux, and the VM template installs neither.
-    """
+def _tool_check_block() -> str:
+    """The generated script's tool loop, ready to run on its own."""
     script = enrollment.bootstrap_script(
         origin="http://cheese.test", token="tok", device_id="dev"
     )
-    assert "for tool in tmux git; do" in script
-    # Missing tools must abort enrollment rather than produce a broken machine.
-    assert "exit 1" in script.split("for tool in")[1].split("done")[0]
+    start = script.index("for tool in")
+    return script[start : script.index("\ndone", start) + len("\ndone")]
+
+
+@pytest.mark.parametrize("missing", ["tmux", "git", "python3"])
+def test_a_machine_missing_one_of_these_refuses_to_enrol(missing):
+    """Each of these fails SILENTLY when discovered later, which is the whole
+    reason the check is here rather than in whatever breaks first.
+
+    Without tmux the connector dies while systemctl still returns 0. Without git
+    the agent's turn runs in an empty dir and its work is never seen. Without
+    python3 the connector (Go) comes up fine and every room on the machine dies
+    at environment preparation instead, because the platform's own programs on a
+    machine — `cheese` and the environment helper — are python3.
+
+    None is guaranteed by the image: MicroCloud's LXC template lists git but not
+    tmux, and the VM template installs neither.
+    """
+    import subprocess
+
+    harness = f"""
+command() {{ [ "$2" = "{missing}" ] && return 1; return 0; }}
+sudo() {{ return 1; }}
+{_tool_check_block()}
+"""
+    done = subprocess.run(["bash", "-c", harness], capture_output=True, text=True)
+
+    assert done.returncode == 1, "a machine without it must not become a host"
+    assert missing in done.stderr, "the operator has to be told which tool"
+
+
+def test_the_check_installs_nothing_on_a_machine_that_already_has_them(tmp_path):
+    """An image that carries all three must not pay for an apt transaction — and
+    must not need passwordless sudo at all to enrol."""
+    import subprocess
+
+    calls = tmp_path / "sudo-calls"
+    harness = f"""
+command() {{ return 0; }}
+sudo() {{ printf '%s\\n' "$*" >> {calls}; }}
+{_tool_check_block()}
+"""
+    done = subprocess.run(["bash", "-c", harness], capture_output=True, text=True)
+
+    assert done.returncode == 0, done.stderr
+    assert not calls.exists(), "nothing should have been installed"
 
 
 def test_bootstrap_is_valid_shell():

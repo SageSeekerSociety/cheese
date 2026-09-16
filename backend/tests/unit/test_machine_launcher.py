@@ -320,3 +320,218 @@ def test_the_two_harnesses_do_not_produce_the_same_launch():
     assert claude.command != pi.command
     assert "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH" in claude.env
     assert pi.env == {}
+
+
+# --- the machine's document toolchain ---------------------------------------
+#
+# These are capabilities rather than dependencies, which decides every assertion
+# below: the placement may not fail a launch, may not delay one, and belongs to
+# the machine rather than to the room that happened to start first.
+
+
+def _fake_upstream(tmp_path):
+    """A `curl` on PATH serving real archives for this repo's pinned tools.
+
+    Real archives, not stubs: the launcher finds the binary by name inside
+    whatever the vendor packed, so a test that handed it a bare file would skip
+    the step most likely to break on a version bump.
+    """
+    import tarfile
+
+    served = tmp_path / "served"
+    served.mkdir()
+    payload = tmp_path / "payload"
+    for tool in ("typst", "pandoc", "uv"):
+        directory = payload / f"{tool}-some-vendor-layout"
+        directory.mkdir(parents=True)
+        (directory / tool).write_text(f"#!/bin/sh\necho {tool}\n")
+        (directory / tool).chmod(0o755)
+        with tarfile.open(served / tool, "w:gz") as tar:
+            tar.add(directory, arcname=directory.name)
+    (served / "font-sans").write_bytes(b"OTTO sans")
+    (served / "font-serif").write_bytes(b"OTTO serif")
+
+    bin_dir = tmp_path / "fakebin"
+    bin_dir.mkdir()
+    log = tmp_path / "curl.log"
+    curl = bin_dir / "curl"
+    curl.write_text(
+        "#!/bin/sh\n"
+        'out=""; url=""\n'
+        "while [ $# -gt 0 ]; do\n"
+        '  case "$1" in\n'
+        '    -o) out="$2"; shift 2 ;;\n'
+        '    http*) url="$1"; shift ;;\n'
+        "    *) shift ;;\n"
+        "  esac\n"
+        "done\n"
+        f'printf "%s\\n" "$url" >> "{log}"\n'
+        'tool="${url%/*}"; tool="${tool%/*}"; tool="${tool##*/}"\n'
+        f'[ -f "{served}/$tool" ] || exit 22\n'
+        f'cp "{served}/$tool" "$out"\n'
+    )
+    curl.chmod(0o755)
+    return bin_dir, log
+
+
+def _agent_waiting_for(tmp_path, target, report, variable):
+    """A harness that waits for the detached placement, then records what it saw.
+
+    The launch deliberately does not wait for the toolchain, so the test needs
+    something that does — and an agent reaching for a tool it wants is exactly
+    what a real room does.
+    """
+    agent = tmp_path / f"agent-{report.name}.sh"
+    agent.write_text(
+        "#!/bin/sh\n"
+        "i=0\n"
+        f'while [ $i -lt 150 ] && [ ! -e "{target}" ]; do i=$((i+1)); sleep 0.1; done\n'
+        f'printf "%s" "${variable}" > "{report}"\n'
+    )
+    agent.chmod(0o755)
+    return f'AGENT="{agent}"\n'
+
+
+def _machine_with_upstream(tmp_path):
+    home, work, env = _machine(tmp_path)
+    bin_dir, log = _fake_upstream(tmp_path)
+    env["PATH"] = f"{bin_dir}:{env['PATH']}"
+    env["CHEESE_API"] = "http://cheese.test/api"
+    return home, env, log
+
+
+def test_the_toolchain_belongs_to_the_machine_not_to_the_room(tmp_path):
+    """Every room on a machine shares one copy, and it outlives all of them.
+
+    A per-room copy would refetch for each room and then be thrown away with
+    that room's session home.
+    """
+    home, env, _log = _machine_with_upstream(tmp_path)
+    session = home / "rooms" / "one"
+    session.mkdir(parents=True)
+    env = {**env, "CHEESE_HOME": str(session)}
+
+    chain = home / ".cheese" / "toolchain"
+    report = tmp_path / "chain"
+    prepare = _agent_waiting_for(
+        tmp_path, chain / "bin" / "typst", report, "CHEESE_TOOLCHAIN"
+    )
+    result = _run(tmp_path, env, prepare=prepare, command='"$AGENT"')
+
+    assert result.returncode == 0, result.stderr
+    assert report.read_text() == str(chain), "the tools live in the machine's home"
+    assert (chain / "bin" / "typst").exists()
+    # Version-named, so a bump lands beside the old copy instead of over it.
+    assert (chain / "typst" / machine_launcher.toolchain.TYPST_VERSION).is_dir()
+    assert not (session / ".cheese" / "toolchain").exists()
+
+
+def test_a_toolchain_that_cannot_be_fetched_never_fails_the_launch(tmp_path):
+    """A room that only answers a question needs none of these tools. Upstream
+    being down must not be the reason nobody can talk to it."""
+    home, work, env = _machine(tmp_path)
+    bin_dir = tmp_path / "deadbin"
+    bin_dir.mkdir()
+    (bin_dir / "curl").write_text("#!/bin/sh\nexit 7\n")
+    (bin_dir / "curl").chmod(0o755)
+    env["PATH"] = f"{bin_dir}:{env['PATH']}"
+    env["CHEESE_API"] = "http://cheese.test/api"
+
+    ran = tmp_path / "agent.ran"
+    result = _run(
+        tmp_path,
+        env,
+        prepare=_harness(tmp_path, f'touch "{ran}"\n'),
+        command='"$AGENT"',
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert ran.exists(), "the room still runs without its document tools"
+
+
+def test_a_tool_already_on_the_machine_is_not_fetched_again(tmp_path):
+    """The placement runs on EVERY launch, so anything but a cheap no-op would
+    re-download the whole toolchain for every room start on that machine."""
+    home, env, log = _machine_with_upstream(tmp_path)
+
+    chain = home / ".cheese" / "toolchain"
+    for tool, version, kind, name in machine_launcher.toolchain.PLACEMENTS:
+        if kind == "font":
+            target = chain / "fonts" / machine_launcher.toolchain.fonts_pin()
+        else:
+            target = chain / tool / version
+        target.mkdir(parents=True, exist_ok=True)
+        (target / name).write_text("already here")
+        (target / name).chmod(0o755)
+
+    ran = tmp_path / "agent.ran"
+    result = _run(
+        tmp_path,
+        env,
+        prepare=_harness(tmp_path, f'sleep 1; touch "{ran}"\n'),
+        command='"$AGENT"',
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert ran.exists()
+    assert not log.exists(), "a placed toolchain must not be fetched again"
+
+
+def test_tearing_a_screen_down_does_not_wait_for_the_toolchain(tmp_path):
+    """`cleanup` ends in a bare `wait`, which waits for every CHILD of the
+    launcher. A fetch started as an ordinary background job becomes one, so
+    shutting a screen down would block on a download nobody was waiting for —
+    it spent the whole 20s teardown budget before this was a double fork.
+    """
+    home, work, env = _machine(tmp_path)
+    bin_dir = tmp_path / "slowbin"
+    bin_dir.mkdir()
+    (bin_dir / "curl").write_text("#!/bin/sh\nsleep 60\n")
+    (bin_dir / "curl").chmod(0o755)
+    env["PATH"] = f"{bin_dir}:{env['PATH']}"
+    env["CHEESE_API"] = "http://cheese.test/api"
+
+    launcher = tmp_path / "launch.sh"
+    launcher.write_text(
+        machine_launcher.launch_script(
+            prepare=_harness(tmp_path, "sleep 60\n"), command='"$AGENT"'
+        )
+    )
+    process = subprocess.Popen(
+        ["sh", str(launcher)],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        time.sleep(1.0)  # long enough for the fetch to be under way
+        process.terminate()
+        # Ten seconds is already generous; the failure this guards against was
+        # unbounded, held open by a curl with its own minutes-long timeout.
+        process.wait(timeout=10)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=10)
+            pytest.fail("the launcher waited for the toolchain fetch")
+
+
+def test_typst_is_pointed_at_the_fonts_we_ship(tmp_path):
+    """With no CJK face typst exits 0 and writes a PDF of ordinary size in which
+    every Chinese character is an empty box. Nothing the platform can check sees
+    that, so the fonts have to be where typst looks without being asked."""
+    home, env, _log = _machine_with_upstream(tmp_path)
+
+    pin = machine_launcher.toolchain.fonts_pin()
+    fonts = home / ".cheese" / "toolchain" / "fonts" / pin
+    report = tmp_path / "fontpaths"
+    prepare = _agent_waiting_for(
+        tmp_path, fonts / "NotoSerifSC-VF.otf", report, "TYPST_FONT_PATHS"
+    )
+    result = _run(tmp_path, env, prepare=prepare, command='"$AGENT"')
+
+    assert result.returncode == 0, result.stderr
+    assert report.read_text() == str(fonts)
+    assert (fonts / "NotoSansSC-VF.otf").exists()
+    assert (fonts / "NotoSerifSC-VF.otf").exists()
