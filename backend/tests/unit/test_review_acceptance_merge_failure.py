@@ -118,7 +118,6 @@ async def test_merge_exception_keeps_acceptance_retryable(monkeypatch):
     await _drain_notify()
     notify.assert_awaited_once()
     _, kwargs = notify.await_args
-    assert kwargs["project_id"] == topic.project_id
     assert kwargs["topic_id"] == topic.id
     assert kwargs["source"] == "accept"
     # 房间只看到一行；报错原话在展开区里，一个字没少。
@@ -177,7 +176,6 @@ async def test_conflict_with_paths_marks_card_conflict_and_notifies(monkeypatch)
     await _drain_notify()
     notify.assert_awaited_once()
     _, kwargs = notify.await_args
-    assert kwargs["project_id"] == topic.project_id
     assert kwargs["topic_id"] == topic.id
     assert kwargs["source"] == "accept"
     assert kwargs["content"] == "采纳未完成：合并冲突"
@@ -206,7 +204,6 @@ async def test_explicit_merge_noop_remains_acceptable(monkeypatch, reason):
     await _drain_notify()
     notify.assert_awaited_once()
     _, kwargs = notify.await_args
-    assert kwargs["project_id"] == topic.project_id
     assert kwargs["topic_id"] == topic.id
     assert kwargs["source"] == "accept"
     assert "alice" in kwargs["content"]

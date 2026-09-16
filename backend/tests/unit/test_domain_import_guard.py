@@ -46,7 +46,9 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # without dragging their full DI graph into credential minting)
         ("app.domain.agent_credential.services", "app.domain.project.repositories"),
         ("app.domain.agent_credential.services", "app.domain.topic.repositories"),
-        # --- agent ---
+        # --- agent --- (announce writes the room line itself: 平台说的每一句
+        # 都从这一个函数出去，走 block 领域的 service 就要把整条 DI 图拖进来)
+        ("app.domain.agent.announce", "app.domain.block.repositories"),
         ("app.domain.agent.chat", "app.domain.block.repositories"),
         ("app.domain.agent.chat", "app.domain.milestone.repositories"),
         ("app.domain.agent.chat", "app.domain.project.repositories"),
@@ -126,7 +128,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.topic_membership.services", "app.domain.user.repositories"),
         # --- webhook / workspace ---
         ("app.domain.usage.subscription_ingest", "app.domain.project.repositories"),
-        ("app.domain.webhook.service", "app.domain.block.repositories"),
     }
 )
 

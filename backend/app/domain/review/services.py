@@ -17,12 +17,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.background import spawn
 from app.core.db import async_session_factory
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.domain.agent.announce import announce
 from app.domain.agent.platform_notices import (
     EVENT_ACCEPT_CONFLICT,
     EVENT_ACCEPT_DISMISSED,
     EVENT_ACCEPT_DONE,
     EVENT_ACCEPT_READY,
     EVENT_ACCEPT_STOPPED,
+    EVENT_CARD_FILED,
     EVENT_CARD_REDESCRIBED,
     EVENT_CARD_VOIDED,
     EVENT_CI_FAILED,
@@ -498,8 +500,43 @@ class AcceptService:
             delivered_task_ids=[task.id],
         )
         card.pr_number, card.pr_url = task.pr_number, task.pr_url
+        await self._announce_filed(topic, card, task)
         await self._warn_about_a_second_pending_migration(topic, task.id)
         return card
+
+    async def _announce_filed(self, topic: Topic, card: AcceptCard, task: Task) -> None:
+        """递卡说一声，并通知等着这件事的两个人。
+
+        卡的每一种结局在房间里都有一行 —— 驳回、作废、改描述、合了、卡住了 ——
+        唯独等待的**开始**没有。而验收卡本身钉在对话末尾，不随时间线往上滚，所以
+        翻历史也找不到它是什么时候递上来的：一张卡递出去，房间里此前没有任何痕迹。
+
+        通知发给两个人：验收人（这件事现在在他手上）和提需求的人（他等的东西有
+        结果了）。同一个人只收一条。GitHub 项目上另有一条 `EVENT_ACCEPT_READY`，
+        说的是另一件事 —— 那是 PR 的检查全绿、可以当场合并；这一条说的是卡递到
+        了，两件事之间可能隔着一次 CI。
+
+        房间里那一行用第三人称：一屋子人都看得见它，而「待你验收」只对其中一个人
+        成立。改动主题（最长 72 字）进 `detail`，房间里那一行保持一行。
+        """
+        detail = "\n\n".join(
+            part
+            for part in (card.change_subject or "", (card.change_body or "").strip())
+            if part
+        )
+        await announce(
+            self._session,
+            place_id=topic.id,
+            content=f"验收卡已提交，待 {card.reviewer_handle} 验收",
+            meta=notice(
+                EVENT_CARD_FILED,
+                severity=SEVERITY_INFO,
+                who=WHO_HUMAN,
+                detail=detail or None,
+                detail_label="这次改动",
+            ),
+            recipients=(card.reviewer_handle, task.reporter_handle or ""),
+        )
 
     async def _warn_about_a_second_pending_migration(
         self, topic: Topic, task_id: uuid.UUID
@@ -912,7 +949,6 @@ class AcceptService:
         spawn(
             webhook_service.post_with_retries(
                 async_session_factory,
-                project_id=topic.project_id,
                 topic_id=topic.id,
                 content=content,
                 source="accept",

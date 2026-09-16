@@ -10,7 +10,7 @@
 - **接收入口**（外部）：`POST /webhooks/{topic_id}`（根挂载，不在 `/api` 下），body `{content, source}`，鉴权失败 401、缺字段 400；来源标注塞进 `Block.meta = {"source": ...}`（没新开 `AuthorType` 枚举），落库失败按 (0,5,30) 秒重试三次再放弃。
 - **两层拆分**（review #190 追加要求 b）：`<&backend/app/domain/webhook/service.py>` 明确分两层——`mint()`/`verify()` 是 token 鉴权层，只被 HTTP 门面（`app.api.routes.webhooks`）调用；`post_with_retries()` 是内部共享的落地函数，不做任何鉴权，任何可信的进程内调用方（包括未来"merge 后结果回房间"那张卡）可以直接调用它、完全跳过 HTTP 和 token 校验——已在函数 docstring 里写清楚这个边界。
 - **WS 匿名 author 风险**（review #190 追加要求 a）：`<&backend/app/api/routes/chat.py>` 里未带 token 的 WS 连接仍可在 payload 里自定义 `author`，属已知 Phase-0 兼容路径。这次只做了最小卫生处理（trim + cap 64 字符），没有做真实性收紧——收紧需要梳理全部现存未带 token 的调用方，超出本卡范围，留作后续独立卡。风险接受已通过 `cheese decision` 显式记录，不是悄悄放过。
-- 单测 `<&backend/tests/unit/test_webhook.py>`（14 个）：签名/版本校验（含篡改签名、跨话题、轮换失效）、`post_with_retries` 的来源落库 + 重试到放弃、路由层鉴权失败/校验失败/成功落地。
+- 单测 `<&backend/tests/unit/test_webhook.py>`：签名/版本校验（含篡改签名、跨话题、轮换失效）、`post_with_retries` 的来源落库 + 重试到放弃、路由层鉴权失败/校验失败/成功落地。
 
 ## 验证状态（已在真实 Postgres 上验证，不是纯静态检查）
 

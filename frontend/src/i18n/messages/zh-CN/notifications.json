@@ -96,5 +96,9 @@
     "title_anonymous": "加入请求已取消",
     "body": "已取消加入团队 \"{team}\" 的请求",
     "status": "已取消"
+  },
+  "ROOM_NOTICE": {
+    "body": "在「{topicTitle}」",
+    "untitled": "平台有一条提示"
   }
 }

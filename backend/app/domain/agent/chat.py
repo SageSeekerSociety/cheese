@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import settings
 from app.core.errors import GatewayUnavailableError, NotFoundError, ValidationError
 from app.core.text import markdown_preview
+from app.domain.agent.announce import announce
 from app.domain.agent.compute import ComputePool, ComputeProvider
 from app.domain.agent.gateway import LlmGateway, drain_new_usage
 from app.domain.agent.harness import Opening, SessionRef, harness_name, runtime_for
@@ -575,11 +576,16 @@ _CHEESE_RESOURCE = {
 # NOTE: no "doc" entry — a doc edit already lands the SAME 「编辑了文档」
 # event every human edit gets (via the save path). One fact, one line,
 # whoever the author is (用户拍板: 芝士不需要专属提示行).
+#
+# No "accept" entry either, for the same reason: filing a card and correcting
+# one each announce themselves (EVENT_CARD_FILED / EVENT_CARD_REDESCRIBED), and
+# those lines say who is now waiting on what. A generic 「芝士 提交了验收卡」 next
+# to them is the same fact told twice, worse. The resource stays in
+# `_CHEESE_RESOURCE` — that is what refreshes the accept panel.
 _ACTION_LABEL = {
     "decision": "记录了决策",
     "topics": "更新了这个房间的活",
     "milestone": "添加了里程碑",
-    "accept": "提交了验收卡",
     "notify": "发送了通知",
 }
 
@@ -1698,22 +1704,22 @@ class ChatService:
         the conversation, scrolls with it, and survives a reload — unlike a
         transient banner. It carries no ``meta.in_room``, and absent means shown,
         which is the whole point of this call: the platform says it out loud.
-        Returns the block payload, or None if the topic died."""
+        Returns the block payload, or None if the topic died.
+
+        Room-only: every caller here reports something about the room itself
+        (a turn that failed, an environment that was rebuilt), which nobody was
+        named for. A notice that knows whose turn it now is passes `recipients`
+        to `announce` directly."""
         async with self._sessions() as session:
-            blocks = BlockRepository(session)
-            place = await PlaceResolver(session).resolve(topic_id)
-            if place is None:
-                return None
-            block = await blocks.add(
-                project_id=place.project_id,
-                topic_id=place.room_id,
-                author="system",
-                author_type=AuthorType.system,
+            block = await announce(
+                session,
+                place_id=topic_id,
                 content=content,
-                kind=BlockKind.event,
-                turn_id=turn_id,
                 meta=meta,
+                turn_id=turn_id,
             )
+            if block is None:
+                return None
             payload = _block_payload(BlockOut.model_validate(block))
             await session.commit()
         return payload
