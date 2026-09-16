@@ -5,6 +5,7 @@ import { computed, ref } from 'vue'
 import { clearPageCache } from '@/lib/pageCache'
 import { UserApi } from '@/network/api/users'
 import { BusinessError } from '@/network/types/error'
+import { disablePush } from '@/services/webPush'
 
 // 令牌快到期时也当过期处理：留一点余量，免得请求刚发出去令牌就死在路上。
 const EXPIRY_SKEW_MS = 30_000
@@ -190,6 +191,11 @@ export class AccountService {
   }
 
   public async logout() {
+    // 先退订推送，趁令牌还在：那一行订阅是按 user_id 存的，留着就等于这台浏览器继
+    // 续替上一个人收他的推送 —— 和下面两份缓存同一类问题，只是这一个会主动响。
+    // 它自己吞掉所有错误，最坏的后果是后端往一个死地址发几次，投递侧按 404/410
+    // 自己删掉。
+    await disablePush()
     this.loggedIn = false
     this.user = null
     this._accessToken = null

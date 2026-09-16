@@ -35,3 +35,7 @@ connector-dist/
 backend/.cli-src/
 .cli-src/
 uploads/
+
+# VAPID keys, if someone runs `uv run vapid --gen` in place. The private one is
+# the credential for "send push as this site" — it must never be committed.
+*.pem

@@ -179,6 +179,14 @@ export default defineConfig({
         // Inline the workbox runtime into sw.js — one root file to keep
         // no-cached in nginx, instead of a separate workbox-*.js.
         inlineWorkboxRuntime: true,
+        // The `push` / `notificationclick` handlers (#1084 step 5). generateSW
+        // writes sw.js itself, so a custom event listener cannot go in it —
+        // importScripts pulls ours into the same worker scope instead. The
+        // alternative is injectManifest, which means hand-copying all four
+        // runtimeCaching rules below along with everything their comments
+        // record about what must not be cached. Not worth it for two listeners.
+        // nginx serves /push-sw.js no-cache, same as sw.js.
+        importScripts: ['/push-sw.js'],
         // A precache-only NavigationRoute keeps workspace refreshes on old code
         // until the next worker finishes installing. Use the online route below,
         // with the same cached shell as its offline fallback.
