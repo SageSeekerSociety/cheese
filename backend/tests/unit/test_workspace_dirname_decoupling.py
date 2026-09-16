@@ -98,7 +98,7 @@ def test_renaming_the_branch_does_not_move_a_real_workspace(
     )
     wt = ws._ensure_worktree(project, topic)  # noqa: SLF001
     workdir = ws.sandbox_topic_workdir(topic)
-    before = ws.sandbox_project_mounts(project, topic)
+    before = ws.sandbox_vcs_mounts(project, topic, container_workdir=workdir)
 
     monkeypatch.setattr(
         ws, "branch_for_task", lambda tid: f"feat/renamed-{tid.hex[:8]}"
@@ -106,7 +106,7 @@ def test_renaming_the_branch_does_not_move_a_real_workspace(
 
     # 目录还在原地（没被搬走、没被重建），挂载参数逐字相同。
     assert ws._ensure_worktree(project, topic) == wt  # noqa: SLF001
-    assert ws.sandbox_project_mounts(project, topic) == before
+    assert ws.sandbox_vcs_mounts(project, topic, container_workdir=workdir) == before
     assert ws.sandbox_topic_workdir(topic) == workdir
 
     # 并且这套挂载确实还落在指针解析出来的位置上——层级没被悄悄改深或改浅。
