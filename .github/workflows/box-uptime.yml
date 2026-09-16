@@ -19,7 +19,10 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Check monitor behavior
-        run: python3 -m unittest discover -s .github/scripts -p 'test_box_uptime.py'
+        # Every test beside a script in .github/scripts, not one named file:
+        # the next script added there is covered without anyone remembering to
+        # extend this line.
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
       - name: Assess heartbeat execution and observation coverage
         env:
           GH_TOKEN: ${{ github.token }}
