@@ -15,6 +15,8 @@ from typing import Any
 
 import structlog
 
+from app.core import alerting
+
 # Credential-bearing key names. `token` is the one that actually leaked: browsers
 # cannot set an Authorization header on a WebSocket, so every WS carries
 # `?token=<jwt>` — and uvicorn's access log prints the full URL, which put live
@@ -111,6 +113,61 @@ class RedactSecrets(logging.Filter):
         return True
 
 
+class AlertOnError(logging.Handler):
+    """Put what the backend logs as an error where a person will actually see it.
+
+    An error a browser shows is one way this platform fails. The other is
+    background work failing where nobody is looking, and that is the one that
+    went unnoticed: on 2026-09-16 the database refused 83 connections inside a
+    single minute, and exactly ONE of them reached the request error handler.
+    The rest were a harness poller, a hook-subscription recovery and two journal
+    reads — each logged an exception and carried on, and the incident was found
+    hours later by reading the logs. So this listens at the one place all of
+    them already spoke: the root logger.
+
+    `alerting.send` is fire-and-forget and carries its own budget (ten in five
+    minutes, and it says so in the last one it sends), which is what keeps a
+    storm of errors from becoming a storm of messages. With no webhook
+    configured — every developer machine, every test — it is a no-op.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.ERROR)
+
+    @staticmethod
+    def _summary(record: logging.LogRecord) -> tuple[str, list[str]]:
+        # structlog hands the formatter a dict; uvicorn and friends hand it a
+        # string. Both reach this handler, so both shapes are read here.
+        event = record.msg
+        context: dict = {}
+        if isinstance(event, dict):
+            context = event
+            title = str(event.get("event", ""))
+        else:
+            try:
+                title = record.getMessage()
+            except Exception:  # noqa: BLE001 — a bad format string is not our bug
+                title = str(event)
+        lines = [f"来源：{record.name}"]
+        for key in ("method", "path", "error", "topic", "device"):
+            value = context.get(key)
+            if value:
+                lines.append(f"{key}：{value}")
+        if record.exc_info and record.exc_info[0] is not None:
+            lines.append(f"异常：{record.exc_info[0].__name__}")
+        return title or record.name, lines
+
+    def emit(self, record: logging.LogRecord) -> None:
+        # The alerter logs its own failures; forwarding those would be a loop.
+        if record.name.startswith("app.core.alerting"):
+            return
+        try:
+            title, lines = self._summary(record)
+            alerting.send(f"后端报错：{title}", lines)
+        except Exception:  # noqa: BLE001 — logging must never raise into a caller
+            pass
+
+
 def configure_logging() -> None:
     """Idempotent process-wide logging setup. Call before the app starts."""
     timestamper = structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S", utc=False)
@@ -165,6 +222,8 @@ def configure_logging() -> None:
     root = logging.getLogger()
     root.handlers.clear()
     root.addHandler(handler)
+    # Errors also go where a person is looking, not only into the stream.
+    root.addHandler(AlertOnError())
     root.setLevel(logging.INFO)
     # uvicorn installs its own handlers; route them through ours instead so the
     # whole stream is uniform (and timestamped).
