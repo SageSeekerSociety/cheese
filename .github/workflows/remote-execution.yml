@@ -97,6 +97,11 @@ jobs:
           --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
           --output tmp/remote-execution/private-ci-terminal-${{ github.run_id }}-${{ github.run_attempt }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        # Tolerated: this is debug output, and the account's artifact storage
+        # filling up is not this change being broken. On 2026-09-16 it reported
+        # exactly that — E2E, acceptance and harness contracts all red with every
+        # test passing and only the upload step failing.
+        continue-on-error: true
         if: always()
         with:
           name: private-chat-${{ github.sha }}
@@ -139,6 +144,11 @@ jobs:
       - name: Upload acceptance receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        # Tolerated: this is debug output, and the account's artifact storage
+        # filling up is not this change being broken. On 2026-09-16 it reported
+        # exactly that — E2E, acceptance and harness contracts all red with every
+        # test passing and only the upload step failing.
+        continue-on-error: true
         with:
           name: remote-execution-${{ github.sha }}
           path: |
