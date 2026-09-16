@@ -143,6 +143,57 @@ describe('对话栏自己的输入栏', () => {
     expect(queryByRole('button', { name: '起草文档' })).toBeNull()
   })
 
+  // 退休判据是「芝士在这个房间里说过话」，不是「房间里有没有东西」。新用户常常先
+  // 自己说一句（而且往往忘了 @），那句话落在房间里，却没有任何一行字替他说明下一
+  // 步该说什么——入口正是在这个时刻最该还在。
+  it('keeps the starter drafts in a room 芝士 has not answered yet', async () => {
+    const api = await import('../../api')
+    vi.mocked(api.listBlocks).mockResolvedValueOnce({
+      data: [
+        {
+          id: 'm1',
+          topic_id: 'starter-talked',
+          kind: 'message',
+          content: '我打算把这学期的课程材料整理成一份大纲',
+          author: 'alice',
+          author_type: 'human',
+          created_at: '2026-09-16T10:00:00Z',
+        } as never,
+      ],
+      total: 1,
+      has_more: false,
+      oldest_id: 'm1',
+    })
+    const { rerender, queryByRole } = mountPanel({}, 'starter-talked')
+    await rerender({ topic: { ...topic('starter-talked'), kind: 'root' } })
+    await flush()
+    expect(queryByRole('button', { name: '起草文档' })).toBeTruthy()
+  })
+
+  it('retires the starter drafts once 芝士 has spoken in the room', async () => {
+    const api = await import('../../api')
+    vi.mocked(api.listBlocks).mockResolvedValueOnce({
+      data: [
+        {
+          id: 'm2',
+          topic_id: 'starter-answered',
+          kind: 'message',
+          content: '好，我先把材料归拢一下，再跟你确认大纲的结构。',
+          author: 'cheese-topica',
+          author_type: 'ai',
+          created_at: '2026-09-16T10:01:00Z',
+        } as never,
+      ],
+      total: 1,
+      has_more: false,
+      oldest_id: 'm2',
+    })
+    const { rerender, queryByRole } = mountPanel({}, 'starter-answered')
+    await rerender({ topic: { ...topic('starter-answered'), kind: 'root' } })
+    await flush()
+    expect(queryByRole('button', { name: '起草文档' })).toBeNull()
+  })
+
   it('previews a document and sends its uploaded path', async () => {
     const api = await import('../../api')
     vi.mocked(api.uploadAttachment).mockResolvedValue({
