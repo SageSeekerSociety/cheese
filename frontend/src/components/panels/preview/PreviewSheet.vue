@@ -8,10 +8,16 @@
 
 import { computed, ref, watch } from 'vue'
 
-const props = defineProps<{
-  /** 表格文件的原始字节。 */
-  data: ArrayBuffer | null
-}>()
+const props = withDefaults(
+  defineProps<{
+    /** 表格文件的原始字节。 */
+    data: ArrayBuffer | null
+    /** 这份字节是什么。CSV 是一串文本，工作簿是一个 zip，读法没有一处相同，而
+     *  字节本身看不出区别 —— 后缀只有调用方知道。 */
+    kind?: 'workbook' | 'csv'
+  }>(),
+  { kind: 'workbook' }
+)
 
 const emit = defineEmits<{
   /** 读者点了一个格子，带上它的地址和当前的值。 */
@@ -41,6 +47,79 @@ function columnName(index: number): string {
   return name
 }
 
+/** CSV 的编码取决于谁写的。芝士 写 UTF-8；而人从 Excel 导出的 CSV 在中文 Windows
+ *  上是 GBK，按 UTF-8 解出来是一整片乱码，而且不抛错 —— 所以先严格按 UTF-8 解，
+ *  它失败了才说明这不是 UTF-8，退到 GBK。 */
+function decodeText(data: ArrayBuffer): string {
+  const bytes = new Uint8Array(data)
+  let text: string
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch {
+    try {
+      text = new TextDecoder('gbk').decode(bytes)
+    } catch {
+      text = new TextDecoder('utf-8').decode(bytes)
+    }
+  }
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text
+}
+
+/** 分隔符不总是逗号：Excel 按系统的列表分隔符导出，某些区域设置下是分号；从数据库
+ *  导出的常是制表符。数第一行里哪个多就用哪个。引号里的分隔符也被数进去了，但一份
+ *  真表里真正的分隔符仍然占多数，而猜错的表现是整张表挤成一列 —— 一眼就看得出。 */
+function sniffSeparator(text: string): string {
+  const end = text.search(/\r?\n/)
+  const line = end === -1 ? text : text.slice(0, end)
+  let best = ','
+  let most = 0
+  for (const sep of [',', ';', '\t']) {
+    const n = line.split(sep).length - 1
+    if (n > most) {
+      best = sep
+      most = n
+    }
+  }
+  return best
+}
+
+/** 按 RFC 4180 读：引号里的分隔符、换行和 `""` 转义的引号都不是边界。自己写而不是
+ *  按行 split，因为一个带地址或备注的单元格里就有逗号和换行，split 会把一行拆散，
+ *  而拆散之后地址全错 —— 而地址是这个视图存在的理由。 */
+function parseCsv(text: string, sep: string): string[][] {
+  const rows: string[][] = []
+  let row: string[] = []
+  let field = ''
+  let quoted = false
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i]
+    if (quoted) {
+      if (ch !== '"') field += ch
+      else if (text[i + 1] === '"') {
+        field += '"'
+        i += 1
+      } else quoted = false
+      continue
+    }
+    if (ch === '"') quoted = true
+    else if (ch === sep) {
+      row.push(field)
+      field = ''
+    } else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && text[i + 1] === '\n') i += 1
+      row.push(field)
+      field = ''
+      rows.push(row)
+      row = []
+    } else field += ch
+  }
+  if (field !== '' || row.length) {
+    row.push(field)
+    rows.push(row)
+  }
+  return rows
+}
+
 /** 单元格里可能是数字、日期、公式结果或富文本，屏幕上要的都是它显示出来的样子。 */
 function display(value: unknown): string {
   if (value === null || value === undefined) return ''
@@ -58,6 +137,20 @@ function display(value: unknown): string {
   return String(value)
 }
 
+/** CSV 只有一张表，而且它没有名字 —— 没有名字就不该编一个：地址栏里写 `B7`，
+ *  和一个真有工作表名的 `Sheet1!B7` 是两种不同的坐标，编出来的名字会让读者以为
+ *  这份文件里还有别的表。 */
+function openCsv(data: ArrayBuffer) {
+  const text = decodeText(data)
+  const rows = parseCsv(text, sniffSeparator(text))
+  if (!rows.length) {
+    failure.value = '这个文件是空的'
+    return
+  }
+  sheets.value = [{ name: '', rows, width: Math.max(...rows.map((r) => r.length)) }]
+  activeIndex.value = 0
+}
+
 async function open(data: ArrayBuffer) {
   const mine = ++generation
   loading.value = true
@@ -65,6 +158,10 @@ async function open(data: ArrayBuffer) {
   sheets.value = []
   selected.value = ''
   try {
+    if (props.kind === 'csv') {
+      openCsv(data)
+      return
+    }
     const ExcelJS = await import('exceljs')
     const book = new ExcelJS.Workbook()
     await book.xlsx.load(data.slice(0))
@@ -109,8 +206,8 @@ function choose(rowIndex: number, colIndex: number) {
 }
 
 watch(
-  () => props.data,
-  (data) => {
+  [() => props.data, () => props.kind],
+  ([data]) => {
     if (data) void open(data)
     else {
       generation += 1
