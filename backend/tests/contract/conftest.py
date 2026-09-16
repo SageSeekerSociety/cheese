@@ -7,12 +7,17 @@ they get a blanket 401 which hides the real contract.
 
 ``authed_client`` returns the same ``python_client`` with an
 ``Authorization: Bearer <token>`` default header attached, issued for the seeded
-platform agent user (id=1, "cheese") that ``python_client`` already creates via
+platform agent user ("cheese") that ``python_client`` already creates via
 ``IdentityService.ensure_agent_user()`` in its own setup. We reuse that row rather
 than seeding a fresh user here because a separate seeding session opened from the
 fixture would bind an asyncpg connection to a *different* event loop than the one
 anyio drives the test body on ("attached to a different loop"). The agent user has
 a real profile, so it satisfies endpoints that join the user.
+
+Its uid is read back rather than assumed: agents now draw their id from their own
+sequence (``app.domain.identity.uids``), so "the first row is id 1" stopped being
+true. ``python_client`` is itself an anyio fixture, so looking the row up through
+its session factory runs on the same loop as the test body.
 
 The token is the same shape the main auth flow issues: ``create_access_token``
 embeds ``sub`` = int user id, which ``get_current_user_id`` reads (it validates the
@@ -27,26 +32,32 @@ import pytest
 from httpx import AsyncClient
 
 from app.common.auth import create_access_token
-
-# The platform agent user seeded by python_client (IdentityService.ensure_agent_user
-# allocates it as the first row → id=1, username "cheese").
-_AGENT_USER_ID = 1
-_AGENT_HANDLE = "cheese"
+from app.domain.identity.handles import CHEESE_HANDLE
+from app.domain.user.repositories import UserRepository
 
 
 @pytest.fixture
-async def authed_client(python_client: AsyncClient) -> AsyncClient:
+async def agent_user_id(python_client: AsyncClient) -> int:
+    """The platform agent's uid, read back rather than assumed to be 1."""
+    async with python_client.test_factory() as session:  # type: ignore[attr-defined]
+        agent = await UserRepository(session).get_by_username(CHEESE_HANDLE)
+    assert agent is not None, "python_client should have seeded the platform agent"
+    return agent.id
+
+
+@pytest.fixture
+async def authed_client(python_client: AsyncClient, agent_user_id: int) -> AsyncClient:
     """``python_client`` with a valid bearer token attached to every request, so
     endpoints guarded by ``require_auth_user`` see a real principal instead of
     returning 401."""
-    token = create_access_token(_AGENT_USER_ID, handle=_AGENT_HANDLE)
+    token = create_access_token(agent_user_id, handle=CHEESE_HANDLE)
     python_client.headers["Authorization"] = f"Bearer {token}"
     return python_client
 
 
 @pytest.fixture
-async def seeded_team(authed_client: AsyncClient) -> int:
-    """A team with the authed user (agent, id=1) as OWNER, seeded on the client's
+async def seeded_team(authed_client: AsyncClient, agent_user_id: int) -> int:
+    """A team with the authed user (the platform agent) as OWNER, seeded on the client's
     isolated per-worker DB. Lets the team/knowledge shape tests hit the real 200
     path (membership-gated) instead of a 403 for a non-existent team.
 
@@ -72,7 +83,7 @@ async def seeded_team(authed_client: AsyncClient) -> int:
         session.add(
             TeamUserRelation(
                 team_id=team.id,
-                user_id=_AGENT_USER_ID,
+                user_id=agent_user_id,
                 role=TeamMemberRole.OWNER,
                 created_at=now,
                 updated_at=now,

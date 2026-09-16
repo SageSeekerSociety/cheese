@@ -7,8 +7,9 @@ per-worker ``test_factory``, on the same DB the app reads through the overridden
 pagination, so a regression in the wiring — not just the response envelope — is
 caught.
 
-All rows are addressed to the seeded platform agent user (id=1, "cheese") that
-``authed_client`` authenticates as.
+All rows are addressed to the seeded platform agent user ("cheese") that
+``authed_client`` authenticates as; its uid comes from the ``agent_user_id``
+fixture rather than being assumed to be 1.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -18,11 +19,10 @@ from httpx import AsyncClient
 
 from app.domain.notification.models import Notification, NotificationType
 
-_AGENT_USER_ID = 1
-
 
 async def _seed(
     factory,
+    receiver_id: int,
     *,
     read: bool = False,
     type_: NotificationType = NotificationType.MENTION,
@@ -32,7 +32,7 @@ async def _seed(
     now = datetime.now(UTC)
     async with factory() as session:
         row = Notification(
-            receiver_id=_AGENT_USER_ID,
+            receiver_id=receiver_id,
             type=type_,
             read=read,
             finalized=True,
@@ -48,10 +48,12 @@ async def _seed(
 
 
 @pytest.mark.anyio
-async def test_lifecycle_read_and_delete(authed_client: AsyncClient) -> None:
+async def test_lifecycle_read_and_delete(
+    authed_client: AsyncClient, agent_user_id: int
+) -> None:
     factory = authed_client.test_factory  # type: ignore[attr-defined]
-    id1 = await _seed(factory)
-    id2 = await _seed(factory)
+    id1 = await _seed(factory, agent_user_id)
+    id2 = await _seed(factory, agent_user_id)
 
     # Two unread in the inbox.
     resp = await authed_client.get("/notifications/unread-count")
@@ -87,15 +89,17 @@ async def test_lifecycle_read_and_delete(authed_client: AsyncClient) -> None:
 
 
 @pytest.mark.anyio
-async def test_cursor_pagination_round_trip(authed_client: AsyncClient) -> None:
+async def test_cursor_pagination_round_trip(
+    authed_client: AsyncClient, agent_user_id: int
+) -> None:
     """Seed 3 rows with distinct timestamps and page through them 2-at-a-time,
     round-tripping the opaque ``nextStart`` cursor back into ``pageStart``."""
     factory = authed_client.test_factory  # type: ignore[attr-defined]
     base = datetime.now(UTC)
     # Newest-first ordering: newer created_at comes first.
-    oldest = await _seed(factory, created_at=base - timedelta(minutes=3))
-    middle = await _seed(factory, created_at=base - timedelta(minutes=2))
-    newest = await _seed(factory, created_at=base - timedelta(minutes=1))
+    oldest = await _seed(factory, agent_user_id, created_at=base - timedelta(minutes=3))
+    middle = await _seed(factory, agent_user_id, created_at=base - timedelta(minutes=2))
+    newest = await _seed(factory, agent_user_id, created_at=base - timedelta(minutes=1))
 
     resp = await authed_client.get("/notifications", params={"pageSize": 2})
     page1 = resp.json()["data"]
@@ -114,10 +118,12 @@ async def test_cursor_pagination_round_trip(authed_client: AsyncClient) -> None:
 
 
 @pytest.mark.anyio
-async def test_read_filter_and_type_filter(authed_client: AsyncClient) -> None:
+async def test_read_filter_and_type_filter(
+    authed_client: AsyncClient, agent_user_id: int
+) -> None:
     factory = authed_client.test_factory  # type: ignore[attr-defined]
-    await _seed(factory, read=False, type_=NotificationType.MENTION)
-    await _seed(factory, read=True, type_=NotificationType.REPLY)
+    await _seed(factory, agent_user_id, read=False, type_=NotificationType.MENTION)
+    await _seed(factory, agent_user_id, read=True, type_=NotificationType.REPLY)
 
     # read=false filter → only the unread mention.
     resp = await authed_client.get(
@@ -174,13 +180,16 @@ async def _seed_user_with_profile(factory, nickname: str) -> int:
 
 
 @pytest.mark.anyio
-async def test_entities_resolved_from_metadata(authed_client: AsyncClient) -> None:
+async def test_entities_resolved_from_metadata(
+    authed_client: AsyncClient, agent_user_id: int
+) -> None:
     """A notification whose metadata references a user resolves to that user's
     display info through the wired resolvers."""
     factory = authed_client.test_factory  # type: ignore[attr-defined]
     actor_id = await _seed_user_with_profile(factory, "Mochi")
     await _seed(
         factory,
+        agent_user_id,
         metadata={"actor": {"type": "user", "id": str(actor_id)}},
     )
 
