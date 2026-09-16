@@ -4,9 +4,8 @@ name: Deploy (prod RUC box)
 # cheese.ruc.edu.cn). Like the dev box it's on ghg's private network with no
 # public inbound, so a self-hosted runner (label `cheese-prod`) lives ON the box
 # and pulls jobs outbound; it runs the SAME unified Docker deploy as dev
-# (deploy/deploy-docker.sh — the box was cut over from bare-metal by
-# deploy/prod-docker-cutover.sh; bare-metal kept installed-but-disabled as the
-# rollback). The only difference from dev is the gate: prod never auto-deploys —
+# (deploy/deploy-docker.sh). The only difference from dev is the gate: prod
+# never auto-deploys —
 # it fires on a published GitHub Release (or a manual dispatch of a specific
 # ref) and requires a human approval before anything runs.
 #

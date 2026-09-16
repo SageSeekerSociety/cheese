@@ -42,9 +42,17 @@ dev and prod (RUC) run the app as **Docker containers** (`deploy/deploy-docker.s
 The frontend image bundles nginx (SPA + `/api` reverse-proxy). DB/Redis are
 **external** ghg hosts (the app only holds `DATABASE_URL`/`REDIS_URL`); uploads
 bind-mount a host dir outside the containers (`/home/nictheboy/shared/uploads`
-on prod — the 赛题 PDFs). Each box was cut over from bare-metal once
-(`deploy/{dev,prod}-docker-cutover.sh`); the old systemd service is kept
-**installed-but-disabled** as an instant rollback.
+on prod — the 赛题 PDFs).
+
+The boxes ran bare-metal releases before this, and two traces of that are still
+load-bearing rather than historical. `~/cheese-backend-py` is still a SYMLINK
+into a release directory under `~/releases/`, and the deploy reads the backend
+env file and the compose file through it — so neither the symlink nor that
+release directory can be cleaned up as leftovers; moving them takes a deliberate
+migration to a version-free path such as `~/ops/`. The old
+`cheese-backend-py.service` systemd unit is also still installed and disabled;
+it would start that same July release, so treat it as an artefact, not as a
+rollback path. Rollback is `deploy-docker.sh` restoring the previous images.
 
 Device control connections have a separate release boundary. The
 `device-connection` service owns `/connector/agent`, live terminal WebSockets,
