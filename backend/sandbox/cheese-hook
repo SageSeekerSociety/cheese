@@ -1,5 +1,13 @@
 #!/bin/sh
 body="$(cat)"
+# An empty body is not an event, and spooling one strands the spool: the backend
+# answers `hook body must be a JSON object` (400) to anything that is not a JSON
+# object, and the drain only removes an event on a 200 — so a zero-byte file is
+# asked for and refused forever. One of them cost 12,658 requests in a day
+# (2026-09-16), a tenth of everything the platform served. Exit 0 because a hook
+# that exits non-zero interrupts the session, and there is nothing wrong with the
+# session — there was simply nothing on stdin.
+[ -n "$body" ] || exit 0
 # Claude Code's resume stamp, cleared by the two hook names that prove the
 # session is live. Absent the file — every other harness — this is a no-op.
 if [ -f "$HOME/.claude/cheese-resume.attempt" ]; then
