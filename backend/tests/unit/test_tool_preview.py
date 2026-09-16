@@ -350,6 +350,12 @@ def test_a_segment_that_is_only_assignments_is_preparation_not_a_step():
     assert preview.text == "ls -la"
 
 
+def test_a_command_that_only_sets_a_variable_is_shown_as_it_is():
+    # 整条命令都是准备动作时没有更好的说法 —— 原样显示，别把它说成一件它不是的
+    # 事，也别只留一个动词让这一步看起来什么都没干。
+    assert command_preview(f"root={ABS}").text == f"root={ABS}"
+
+
 def test_the_platform_step_is_the_segment_shown():
     # 做的两件事里，房间要看见的是改了这个项目的那件。
     assert command_preview("make && cheese doc set").text == "cheese doc set"
@@ -385,6 +391,12 @@ def test_a_skill_read_through_the_shell_says_the_same_thing():
     assert command_preview("cat ~/.config/pi/skills/documents/SKILL.md") == (
         ToolPreview("documents", "Skill")
     )
+
+
+def test_a_skill_line_still_opens_onto_the_command_that_read_it():
+    # 这一行只剩「调用技能 · documents」，读的人点开是要看它到底动了哪个文件。
+    command = "cat skills/documents/SKILL.md"
+    assert _detail("bash", {"command": command}) == command
 
 
 def test_writing_a_skill_is_not_using_one():
