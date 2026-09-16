@@ -173,7 +173,12 @@ class _HookWorkState:
     agent_instance_handle: str | None = None
     assistant_count: int = 0
     last_chat_at: datetime | None = None
-    progress_reminded: bool = False
+    # When this turn was last told it had gone quiet — NOT whether it has been.
+    # A flag meant one reminder per silent stretch, so a turn that worked for
+    # three hours without publishing was asked once, at the ten-minute mark, and
+    # then left alone for the remaining two hours and fifty minutes. The room
+    # showing nothing for that long is the complaint this reminder exists for.
+    last_progress_reminder_at: datetime | None = None
     todo: list[dict] = field(default_factory=list)
     #: 每个分身自己那份清单，按它做的那条活分开。Claude Code 的任务编号是**每个
     #: agent 各数各的**，都从 1 开始，所以几份清单混进一个 list 里不只是看着乱：
@@ -1508,8 +1513,14 @@ class ChatService:
             # work answering a person owes a periodic chat update.
             if state.reply_to is not None
             and not state.is_private
-            and not state.progress_reminded
-            and (now - (state.last_chat_at or state.started_at)).total_seconds()
+            and (
+                now
+                - max(
+                    state.last_chat_at or state.started_at,
+                    state.last_progress_reminder_at
+                    or (state.last_chat_at or state.started_at),
+                )
+            ).total_seconds()
             >= settings.chat_progress_reminder_after_s
             and self._active_turn_ids.get(state.topic_id) == state.work_id
         ]
@@ -1520,20 +1531,40 @@ class ChatService:
                 or self._active_turn_ids.get(state.topic_id) != state.work_id
             ):
                 return False
+            silent_for = now - (state.last_chat_at or state.started_at)
+            minutes = int(silent_for.total_seconds() // 60)
             try:
-                # Once per silent stretch. Only a new publication re-arms this;
-                # tool output and duplicate send requests do not.
-                state.progress_reminded = True
+                # Repeats every `chat_progress_reminder_after_s` of continued
+                # silence. A publication clears this and `last_chat_at` together,
+                # so speaking is what stops the reminders; tool output and
+                # duplicate send requests are not speaking.
+                state.last_progress_reminder_at = now
                 # A blocked terminal must not hold up reminders in other rooms.
                 async with asyncio.timeout(5):
-                    return await self.notify_running_turn(
+                    delivered = await self.notify_running_turn(
                         state.topic_id,
-                        "If you are still working on a response and have not "
-                        "posted an update since this reminder was queued, "
-                        "use chat_send to tell the user what is known "
-                        "and what you are waiting for. If you have finished, "
-                        "ignore this reminder.",
+                        f"You have published nothing to this room for {minutes} "
+                        "minutes and the person who asked is still waiting. If "
+                        "this turn is still running, call chat_send now with "
+                        "what you know so far and what you are waiting on — a "
+                        "room that shows nothing cannot be told apart from one "
+                        "that is stuck. Ignore this only if the turn is already "
+                        "finished.",
                     )
+                # Whether a reminder reached a room was invisible: the old code
+                # logged only its own exceptions, so neither 「it never fired」
+                # nor 「it fired and the agent said nothing」 could be told from
+                # the outside. One line per reminder is what makes that
+                # answerable.
+                logger.info(
+                    "chat progress reminder topic=%s turn=%s silent_min=%d "
+                    "delivered=%s",
+                    state.topic_id,
+                    state.work_id,
+                    minutes,
+                    delivered,
+                )
+                return delivered
             except Exception:  # noqa: BLE001 — one room must not stop the sweep
                 logger.exception(
                     "chat progress reminder failed (topic=%s)", state.topic_id
@@ -3010,7 +3041,7 @@ class ChatService:
             state = self._hook_work.get((topic_id, turn_id))
             if state is not None:
                 state.last_chat_at = datetime.now(UTC)
-                state.progress_reminded = False
+                state.last_progress_reminder_at = None
         return payload
 
     async def _persist_progress(

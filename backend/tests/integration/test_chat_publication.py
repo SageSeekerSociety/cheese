@@ -271,9 +271,16 @@ def test_silence_reminder_only_queues_for_an_active_silent_response(
         client.portal.call(release.set)
         assert sweep.result(timeout=2) == 1
         assert len(notices) == 1 and "chat_send" in notices[0]
-        assert "If you have finished" in notices[0]
-        clock += timedelta(seconds=120)
+        assert "Ignore this only if the turn is already finished" in notices[0]
+        # Inside the interval there is one reminder, not a stream of them.
+        clock += timedelta(seconds=threshold - 1)
         assert client.portal.call(chat.remind_silent_turns) == 0
+        # Past it again with still nothing published, the silence is reminded
+        # about again. Being asked once and then left alone is what let a turn
+        # work for hours while the room showed nothing.
+        clock += timedelta(seconds=1)
+        assert client.portal.call(chat.remind_silent_turns) == 1
+        assert len(notices) == 2
         request_id = str(uuid.uuid4())
         sent = publish(client, topic, headers, request_id=request_id).json()["data"]
         assert ws.receive_json()["block"]["id"] == sent["id"]
@@ -283,7 +290,7 @@ def test_silence_reminder_only_queues_for_an_active_silent_response(
         assert publish(client, topic, headers, request_id=request_id).status_code == 200
         assert ws.receive_json()["block"]["id"] == sent["id"]
         assert client.portal.call(chat.remind_silent_turns) == 1
-        assert len(notices) == 2
+        assert len(notices) == 3
         system_event.assert_not_called()
         # Stop must disarm a fresh silence interval, not merely a sent reminder.
         sent = publish(client, topic, headers, content="检查已经结束。").json()["data"]
@@ -293,4 +300,4 @@ def test_silence_reminder_only_queues_for_an_active_silent_response(
             pass
         clock += timedelta(seconds=threshold)
         assert client.portal.call(chat.remind_silent_turns) == 0
-        assert len(notices) == 2
+        assert len(notices) == 3
