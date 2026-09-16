@@ -1271,6 +1271,18 @@ const starterPrompts = [
   { label: '起草文档', text: '帮我起草一份文档，先和我确认目标与读者。我想写的是：' },
   { label: '拆解任务', text: '帮我把目标拆成可执行的任务，先给我看分工建议。我的目标是：' },
 ]
+// 起手区块什么时候退休：芝士在这个房间里说过第一句话之后。
+//
+// 退休判据**不是「房间里有东西」**。平台自己发的公告、赛题报名写进去的简报、
+// 用户对着同事说的那几句，都能把房间填满，但一件都不能替代「跟芝士说上话」这
+// 件事本身；照旧判据，新用户只要先说了句没 @ 的话，这个入口就没了，而他要找的
+// 恰恰是「我该跟它说什么」。
+//
+// 只看 message / attachment：芝士也可能留下 event 行（「芝士处理中」那类），
+// 那是它干活的过程，不是它对这个人开过口。
+const startersRetired = computed(() =>
+  visible.value.some((b) => b.author_type === 'ai' && (b.kind === 'message' || b.kind === 'attachment'))
+)
 const showStarters = computed(
   () =>
     props.topic?.kind === 'root' &&
@@ -1279,7 +1291,11 @@ const showStarters = computed(
     !loadingHistory.value &&
     !errorMsg.value &&
     !hasMore.value &&
-    !visible.value.length &&
+    !startersRetired.value &&
+    // 正在回话也先收起来：这一轮已经开了，芝士的答复落地之后由 `startersRetired`
+    // 接手。两者中间不留一条缝——不然刚 @ 完、还没等到回话的那几秒里，起手区块
+    // 会闪一下。
+    !awaitingReply.value &&
     !draft.value.trim() &&
     !outbox.value.length
 )
