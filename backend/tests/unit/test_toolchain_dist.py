@@ -13,6 +13,7 @@ import hashlib
 import httpx
 import pytest
 
+from app.domain.agent import toolchain
 from app.domain.machine import toolchain_dist
 
 BODY = b"\xfd7zXZ\x00fake archive bytes" * 200
@@ -26,9 +27,9 @@ def pinned(monkeypatch):
     """A tool pinned to the digest of BODY, so the fetch path can be exercised
     without depending on which upstream release is current."""
     monkeypatch.setitem(
-        toolchain_dist.ARTIFACTS,
+        toolchain.ARTIFACTS,
         (TOOL, PLATFORM),
-        toolchain_dist.Artifact(
+        toolchain.Artifact(
             "https://upstream.test/probe.tar.xz", DIGEST, len(BODY), ".tar.xz"
         ),
     )
@@ -120,7 +121,7 @@ def test_a_font_is_the_same_file_on_every_platform():
     """Fonts carry no machine code, and a per-platform copy would be a second
     place for the two to drift — a PDF that renders differently on a Mac."""
     resolved = {
-        toolchain_dist.resolve("font-sans", platform)
+        toolchain.resolve("font-sans", platform)
         for platform in ("linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64")
     }
     assert len(resolved) == 1
@@ -134,18 +135,18 @@ def test_every_binary_tool_is_pinned_for_every_platform_we_serve():
     platforms = {"linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64"}
     tools = {
         tool
-        for tool, _ in toolchain_dist.ARTIFACTS
+        for tool, _ in toolchain.ARTIFACTS
         if tool not in ("font-sans", "font-serif")
     }
     assert tools, "the table must actually carry the binaries"
     for tool in tools:
         for platform in platforms:
-            assert toolchain_dist.resolve(tool, platform), f"{tool} has no {platform}"
+            assert toolchain.resolve(tool, platform), f"{tool} has no {platform}"
 
 
 def test_every_pin_is_a_real_digest_over_https():
     """A blank or short digest would verify nothing while looking like a pin."""
-    for (tool, platform), artifact in toolchain_dist.ARTIFACTS.items():
+    for (tool, platform), artifact in toolchain.ARTIFACTS.items():
         assert artifact.url.startswith("https://"), f"{tool}/{platform}"
         assert len(artifact.sha256) == 64, f"{tool}/{platform}"
         assert artifact.sha256 == artifact.sha256.lower().strip()
@@ -154,7 +155,7 @@ def test_every_pin_is_a_real_digest_over_https():
 
 
 def test_unknown_names_and_traversal_never_reach_upstream():
-    assert toolchain_dist.resolve("typst", "../../etc") is None
-    assert toolchain_dist.resolve("../claude", "linux-x64") is None
-    assert toolchain_dist.resolve("typst", "windows-x64") is None
-    assert toolchain_dist.resolve("no-such-tool", "linux-x64") is None
+    assert toolchain.resolve("typst", "../../etc") is None
+    assert toolchain.resolve("../claude", "linux-x64") is None
+    assert toolchain.resolve("typst", "windows-x64") is None
+    assert toolchain.resolve("no-such-tool", "linux-x64") is None

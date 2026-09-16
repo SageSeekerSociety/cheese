@@ -50,10 +50,10 @@ from app.domain.agent import (
     event_drain,
     machine_tunnel,
     preview_tunnel,
+    toolchain,
 )
 from app.domain.agent.harness.launch import MachineLaunch, MachinePlace
 from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
-from app.domain.machine import toolchain_dist
 
 # Starts the tunnel helper and does NOT return until its port answers.
 #
@@ -215,10 +215,10 @@ def toolchain_block() -> str:
     legitimately has. Which family a document names is the skill's business,
     not an environment variable's.
     """
-    fonts_pin = toolchain_dist.fonts_pin()
+    fonts_pin = toolchain.fonts_pin()
     places = "\n".join(
         f"cheese_place {tool} {version} {kind} {name}"
-        for tool, version, kind, name in toolchain_dist.PLACEMENTS
+        for tool, version, kind, name in toolchain.PLACEMENTS
     )
     fetcher = f"""#!/bin/sh
   case "$(uname -m)" in

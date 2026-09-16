@@ -422,7 +422,7 @@ def test_the_toolchain_belongs_to_the_machine_not_to_the_room(tmp_path):
     assert report.read_text() == str(chain), "the tools live in the machine's home"
     assert (chain / "bin" / "typst").exists()
     # Version-named, so a bump lands beside the old copy instead of over it.
-    assert (chain / "typst" / machine_launcher.toolchain_dist.TYPST_VERSION).is_dir()
+    assert (chain / "typst" / machine_launcher.toolchain.TYPST_VERSION).is_dir()
     assert not (session / ".cheese" / "toolchain").exists()
 
 
@@ -455,9 +455,9 @@ def test_a_tool_already_on_the_machine_is_not_fetched_again(tmp_path):
     home, env, log = _machine_with_upstream(tmp_path)
 
     chain = home / ".cheese" / "toolchain"
-    for tool, version, kind, name in machine_launcher.toolchain_dist.PLACEMENTS:
+    for tool, version, kind, name in machine_launcher.toolchain.PLACEMENTS:
         if kind == "font":
-            target = chain / "fonts" / machine_launcher.toolchain_dist.fonts_pin()
+            target = chain / "fonts" / machine_launcher.toolchain.fonts_pin()
         else:
             target = chain / tool / version
         target.mkdir(parents=True, exist_ok=True)
@@ -523,7 +523,7 @@ def test_typst_is_pointed_at_the_fonts_we_ship(tmp_path):
     that, so the fonts have to be where typst looks without being asked."""
     home, env, _log = _machine_with_upstream(tmp_path)
 
-    pin = machine_launcher.toolchain_dist.fonts_pin()
+    pin = machine_launcher.toolchain.fonts_pin()
     fonts = home / ".cheese" / "toolchain" / "fonts" / pin
     report = tmp_path / "fontpaths"
     prepare = _agent_waiting_for(

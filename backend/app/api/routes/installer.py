@@ -16,7 +16,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 
 from app.core.config import settings
-from app.domain.agent import connector_build
+from app.domain.agent import connector_build, toolchain
 from app.domain.machine import claude_dist, pi_dist, toolchain_dist
 
 router = APIRouter(prefix="/connector", tags=["connector"])
@@ -187,7 +187,7 @@ async def download_pi(version: str, platform: str) -> Response:
 
 # The document toolchain, served for the reason the two above are and pinned in
 # a way they are not: neither typst nor pandoc publishes a checksum, so the
-# digest lives in `toolchain_dist` and a release re-cut under the same tag fails
+# digest lives in `agent/toolchain` and a release re-cut under the same tag fails
 # to verify rather than being handed to a machine.
 #
 # No version in the path. claude and pi are version-addressed because a machine
@@ -197,7 +197,7 @@ async def download_pi(version: str, platform: str) -> Response:
 # to ask for another.
 @router.get("/toolchain/{tool}/{platform}/artifact")
 async def download_toolchain(tool: str, platform: str) -> Response:
-    resolved = toolchain_dist.resolve(tool, platform)
+    resolved = toolchain.resolve(tool, platform)
     if resolved is None:
         return PlainTextResponse("unknown tool or platform", status_code=404)
     platform_key, artifact = resolved
