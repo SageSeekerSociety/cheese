@@ -13,6 +13,7 @@ import UserRoutes from './user'
 import { workspaceRoutes } from './workspaceRoutes'
 
 import { recordEntry } from '@/lib/projectEntry'
+import { reloadForNewBuild } from '@/services/staleBuild'
 import { usePageTitleStore } from '@/stores/title'
 
 const routes: RouteRecordRaw[] = [
@@ -140,6 +141,13 @@ router.afterEach((to, from) => {
     }
     return ''
   })
+})
+
+// A lazily imported view is fetched at navigation time, so a release that
+// lands while this tab is open turns the next click into a rejected import
+// rather than a page the user can see.
+router.onError((error) => {
+  reloadForNewBuild(error)
 })
 
 export default router

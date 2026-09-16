@@ -48,10 +48,15 @@ import i18n from '@/i18n'
 import { registerPlugins } from '@/plugins'
 import vuetify from '@/plugins/vuetify'
 import AccountService from '@/services/account'
+import { clearStaleBuildGuard, watchForStaleBuild } from '@/services/staleBuild'
 
 AccountService.init()
 
 const app = createApp(App)
+
+// A tab open across a deploy asks for chunks the new build does not
+// serve; recover it before the failure reaches the user as a dead click.
+watchForStaleBuild()
 
 // 现场即事实记录: browser-side errors report into the open topic's 现场 so
 // agents (who can't read a user's console) can debug them. See errorReporter.ts.
@@ -80,4 +85,8 @@ watch(
 
 registerPlugins(app)
 app.mount('#app')
+
+// Mounting is the proof that a reload recovered the tab, so the one-shot
+// guard reopens for the next release.
+clearStaleBuildGuard()
 registerPwa()
