@@ -283,6 +283,25 @@ class BlockRepository:
         await self._session.flush()
         return highest
 
+    async def mark_step_failed(self, block_id: uuid.UUID, error: str) -> bool:
+        """Record on a 现场 step that its tool came back an error.
+
+        Written onto the step that is already there rather than as a second
+        block: "it failed" is a property of that one line, and a block of its
+        own would put the verdict somewhere the eye has to pair back up with
+        the action. Same `meta` replacement rule as `mark_consumed` — an
+        in-place mutation of a JSON column never saves.
+        """
+        block = await self._session.get(Block, block_id)
+        if block is None:
+            return False
+        meta = {**(block.meta or {}), "failed": True}
+        if error:
+            meta["error"] = error
+        block.meta = meta
+        await self._session.flush()
+        return True
+
     async def update_node(
         self, block: Block, *, node_type: str, struct_order: float
     ) -> Block:

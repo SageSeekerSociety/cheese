@@ -15,6 +15,10 @@ what makes landing the same entry twice harmless.
 Thinking is dropped rather than shown. It is not a message the agent addressed
 to the room, and the room's timeline is what people read — the same call the
 Claude Code path already makes, where hooks never deliver it either.
+
+Tool returns are dropped too, with one exception: a failed one marks the step it
+belongs to. Everything else a tool returns is already visible through its effect,
+and a read's return is the whole file.
 """
 
 from datetime import UTC, datetime
@@ -23,12 +27,30 @@ from app.domain.agent.service import (
     AgentEvent,
     AgentMessage,
     AgentResult,
+    AgentStepFailed,
     AgentToolUse,
     AgentUsage,
 )
 
 # pi stops for a tool call and keeps going; every other reason ends the turn.
 CONTINUES = "toolUse"
+
+#: 一条失败摘要在现场占多少 —— 和 Claude Code 那一侧同一个数。
+STEP_ERROR_MAX = 500
+
+
+def _said(content: object) -> str:
+    """一次工具返回里的文字。pi 的 content 是内容块的列表（文本、图片…）。"""
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    parts = [
+        part.get("text", "")
+        for part in content
+        if isinstance(part, dict) and part.get("type") == "text"
+    ]
+    return "\n".join(part for part in parts if part)
 
 
 def _stamp(entry: dict) -> datetime | None:
@@ -87,10 +109,21 @@ class Assembler:
             # so this is where the running total goes back to zero.
             self.spent = AgentUsage()
             return []
+        if role == "toolResult":
+            # A tool's return value does not become an event: a read's return is
+            # the whole file, and the room is for people to read. A FAILURE is
+            # the exception, because it is the one thing the room cannot learn
+            # from the effect — the effect of a failed step is that nothing
+            # happened, which looks exactly like a step that is still going.
+            # It marks the step already on the timeline rather than adding one.
+            if not message.get("isError"):
+                return []
+            call = message.get("toolCallId")
+            if not isinstance(call, str):
+                return []
+            text = " ".join(_said(message.get("content")).split())
+            return [AgentStepFailed(call_id=call, text=text[-STEP_ERROR_MAX:])]
         if role != "assistant":
-            # A tool's return value is visible in the room through its effect —
-            # a file changed, a command's output scrolled past. pi has no
-            # subagents, so there is no return that reaches nobody.
             return []
         self._accumulate(message)
         events: list[AgentEvent] = []
@@ -114,6 +147,7 @@ class Assembler:
                         part.get("name", ""),
                         part.get("arguments") or {},
                         eid=eid,
+                        call_id=part.get("id"),
                     )
                 )
         if message.get("stopReason") != CONTINUES:

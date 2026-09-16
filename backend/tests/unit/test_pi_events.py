@@ -9,8 +9,13 @@ happens to do; these came out of the harness we are translating.
 import json
 from pathlib import Path
 
-from app.domain.agent.harness.pi.events import Assembler
-from app.domain.agent.service import AgentMessage, AgentResult, AgentToolUse
+from app.domain.agent.harness.pi.events import STEP_ERROR_MAX, Assembler
+from app.domain.agent.service import (
+    AgentMessage,
+    AgentResult,
+    AgentStepFailed,
+    AgentToolUse,
+)
 
 RECORDING = json.loads((Path(__file__).parent / "fixtures/pi-entries.json").read_text())
 
@@ -88,3 +93,51 @@ def test_landing_the_same_entries_twice_is_harmless():
     ]
     ids = [event.eid for event in once if getattr(event, "eid", None)]
     assert len(ids) == len(set(ids)), "two events cannot share one id"
+
+
+# ---- 挂了的一步 ----
+
+
+def _returns():
+    return [
+        entry
+        for entry in RECORDING["entries"]
+        if entry.get("message", {}).get("role") == "toolResult"
+    ]
+
+
+def test_every_tool_call_carries_the_id_its_result_names():
+    called = {tool.call_id for tool in landed() if isinstance(tool, AgentToolUse)}
+    returned = {entry["message"]["toolCallId"] for entry in _returns()}
+    assert returned, "the recording has no tool returns to pair with"
+    assert returned <= called
+
+
+def test_a_tool_that_worked_reaches_the_room_through_its_effect_only():
+    # 录下来这一轮四次调用全成功 —— 现场里不该因此多出任何一条。
+    assert not [e for e in landed() if isinstance(e, AgentStepFailed)]
+
+
+def test_a_failed_tool_says_which_step_failed_and_why():
+    entry = json.loads(json.dumps(_returns()[0]))
+    entry["message"]["isError"] = True
+    entry["message"]["content"] = [{"type": "text", "text": "pandoc: not found"}]
+
+    events = Assembler("session-1").accept(entry)
+
+    assert [type(e) for e in events] == [AgentStepFailed]
+    assert events[0].call_id == entry["message"]["toolCallId"]
+    assert events[0].text == "pandoc: not found"
+
+
+def test_a_long_failure_keeps_its_ending():
+    entry = json.loads(json.dumps(_returns()[0]))
+    entry["message"]["isError"] = True
+    entry["message"]["content"] = [
+        {"type": "text", "text": "x " * 2000 + "FAILED test_y"}
+    ]
+
+    failed = Assembler("session-1").accept(entry)[0]
+
+    assert failed.text.endswith("FAILED test_y")
+    assert len(failed.text) == STEP_ERROR_MAX

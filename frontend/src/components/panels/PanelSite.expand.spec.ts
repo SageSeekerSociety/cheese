@@ -1,5 +1,5 @@
-// 点开现场的一行看到的是参数原文：一行为了能扫而重写过、剪短过，摊开的人要的
-// 正是被剪掉的那截。
+// 现场的一行：点开看到的是参数原文（一行为了能扫而重写过、剪短过，摊开的人要
+// 的正是被剪掉的那截），挂了的那一步还要一眼看得出来它挂了。
 import type { Component } from 'vue'
 import type { Block, Topic } from '../../cx_types'
 
@@ -97,5 +97,29 @@ describe('点开现场的一行', () => {
 
     await fireEvent.click(arg)
     expect(arg.textContent).toBe('make test')
+  })
+})
+
+describe('挂了的一步', () => {
+  it('那一行标成失败，并写出它最后说的那截', async () => {
+    const container = await openSite([
+      event({
+        tool: 'bash',
+        arg: 'pandoc report.md -o report.docx',
+        failed: true,
+        error: 'bash: pandoc: command not found',
+      }),
+    ])
+
+    expect(container.querySelector('.site-act--failed')).not.toBeNull()
+    const error = container.querySelector('[data-testid="site-act-error"]')
+    expect(error?.textContent).toBe('bash: pandoc: command not found')
+  })
+
+  it('成功的一步什么都不多说', async () => {
+    const container = await openSite([event({ tool: 'bash', arg: 'make test' })])
+
+    expect(container.querySelector('.site-act--failed')).toBeNull()
+    expect(container.querySelector('[data-testid="site-act-error"]')).toBeNull()
   })
 })

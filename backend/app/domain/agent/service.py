@@ -56,9 +56,35 @@ class AgentToolUse:
     # Lets the durable-spool reconcile dedup a backfilled 现场 event against the one
     # the live hook path already persisted. None off the hooks path (sdk backend).
     eid: str | None = None
+    # The HARNESS's own id for this call (Claude Code `tool_use_id`, pi's
+    # `toolCall.id`), which is what its later result names. Not the same key as
+    # ``eid``: that one identifies the DELIVERY, and a call and its result are
+    # two deliveries. None where the harness does not say.
+    call_id: str | None = None
     # Which subagent did this; None for the session's own thread (AgentMessage).
     agent_id: str | None = None
     agent_type: str | None = None
+
+
+@dataclass
+class AgentStepFailed:
+    """A tool call came back an error.
+
+    NOT the tool's return value — only that it failed, and the tail of what it
+    said. The room shows one line per step, and a failed step that looks
+    exactly like a successful one is the reason a reader has to open the
+    transcript to find out whether anything worked.
+
+    Deliberately not an AgentToolResult: that event means "a subagent reported
+    its conclusion" and is persisted as its own block. This one has no block of
+    its own — it marks the step that is already on the timeline.
+
+    The tail rather than the head: a command that failed says why at the end.
+    """
+
+    call_id: str
+    text: str = ""
+    agent_id: str | None = None
 
 
 @dataclass
@@ -194,6 +220,7 @@ class AgentSubagentStop:
 AgentEvent = (
     AgentMessage
     | AgentToolUse
+    | AgentStepFailed
     | AgentToolResult
     | AgentSessionInfo
     | AgentResult

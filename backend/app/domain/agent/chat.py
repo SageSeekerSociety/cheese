@@ -76,6 +76,7 @@ from app.domain.agent.service import (
     AgentMessage,
     AgentResult,
     AgentSessionInfo,
+    AgentStepFailed,
     AgentSubagentStart,
     AgentSubagentStop,
     AgentToolResult,
@@ -182,6 +183,10 @@ class _HookWorkState:
     #: 分身的 `TaskUpdate("1")` 会去勾掉房间自己的第一条。
     worker_todo: dict[str, list[dict]] = field(default_factory=dict)
     actions: list[str] = field(default_factory=list)
+    #: 这一轮每次工具调用落在哪个现场块上，按 harness 自己的调用 id。失败的结果
+    #: 回来时要标的就是那一块。只在内存里、只活这一轮：成功的调用（绝大多数）因此
+    #: 一个字节都不必落库，而重启丢掉的只是几个红点，不是记录。
+    steps: dict[str, uuid.UUID] = field(default_factory=dict)
 
     def todo_of(self, work_id: uuid.UUID | None) -> list[dict]:
         """这条事件该记进谁的清单。None = 房间自己的。"""
@@ -2263,6 +2268,8 @@ class ChatService:
                 )
                 if payload is not None:
                     frame = {"type": "event_block", "block": payload}
+                    if state is not None and event.call_id:
+                        state.steps[event.call_id] = uuid.UUID(payload["id"])
                 if name in SHELL_TOOLS:
                     resource = _cheese_resource(str(args.get("command", "")))
                     if resource is not None:
@@ -2282,6 +2289,14 @@ class ChatService:
                             and resource not in state.actions
                         ):
                             state.actions.append(resource)
+        elif isinstance(event, AgentStepFailed):
+            # No frame: 现场 rebuilds its timeline when the tab is opened, and
+            # this changes a line that is already in it rather than adding one.
+            # A step whose call we never saw (a restart mid-turn) is simply not
+            # marked — the timeline is still true, just less helpful.
+            block_id = state.steps.get(event.call_id) if state is not None else None
+            if block_id is not None:
+                await self._mark_step_failed(block_id, event.text)
         elif isinstance(event, AgentToolResult):
             payload = await self._persist_subagent_result(
                 project_id=project_id,
@@ -3088,6 +3103,15 @@ class ChatService:
             platform_unsolicited=platform_unsolicited,
             task_id=task_id,
         )
+
+    async def _mark_step_failed(self, block_id: uuid.UUID, error: str) -> None:
+        """Stamp a 现场 step as failed. Never fails a turn over a red dot."""
+        try:
+            async with self._sessions() as session:
+                await BlockRepository(session).mark_step_failed(block_id, error)
+                await session.commit()
+        except Exception:  # noqa: BLE001 — a step's verdict is not worth a turn
+            logger.warning("could not mark step %s failed", block_id)
 
     async def _persist_room_event(
         self,

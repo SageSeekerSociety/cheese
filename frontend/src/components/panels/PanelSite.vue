@@ -213,6 +213,13 @@ function eventArg(b: Block): string {
 function eventDetail(b: Block): string {
   return b.meta?.detail || eventArg(b)
 }
+// 这一步挂了没有。后端只在挂了的时候写这两个字段，所以「没有」就是「没挂」。
+function eventFailed(b: Block): boolean {
+  return b.meta?.failed === true
+}
+function eventError(b: Block): string {
+  return b.meta?.error ?? ''
+}
 // 圆点分级: amber = platform action, neutral = plain work (structured fields
 // only — never guessed from the content text).
 function eventPlatform(b: Block): boolean {
@@ -277,7 +284,11 @@ function isLive(index: number): boolean {
           <template v-for="b in turn.entries" :key="b.id">
             <!-- 一步一行：动词成列，参数占满剩下的宽度，时间悬停才出现。参数太
                  长时截断而不是折行 —— 点这一行摊开全文。 -->
-            <div v-if="!isSay(b)" class="site-act" :class="{ 'site-act--platform': eventPlatform(b) }">
+            <div
+              v-if="!isSay(b)"
+              class="site-act"
+              :class="{ 'site-act--platform': eventPlatform(b), 'site-act--failed': eventFailed(b) }"
+            >
               <i class="site-act__dot" :class="{ 'site-act__dot--platform': eventPlatform(b) }" />
               <span class="site-act__verb">{{ eventVerb(b) }}</span>
               <button
@@ -293,6 +304,15 @@ function isLive(index: number): boolean {
               </button>
               <span v-else class="site-act__argtext"></span>
               <span class="site-act__time">{{ fmtTime(b.created_at) }}</span>
+              <!-- 挂了的那一步：错误摘要另起一行，缩进到参数那一列，和上面对齐。 -->
+              <p
+                v-if="eventFailed(b) && eventError(b)"
+                class="site-act__error"
+                :class="{ 'site-act__error--full': expandedSite.has(b.id) }"
+                data-testid="site-act-error"
+              >
+                {{ eventError(b) }}
+              </p>
             </div>
             <!-- 芝士 speaks — shown as a person, with avatar (like the chat) -->
             <div v-else class="site-msg">
@@ -439,6 +459,7 @@ function isLive(index: number): boolean {
    拿正文色 —— 扫下来看见的是文件名和命令在变，不是二十遍「执行命令」。 */
 .site-act {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 8px;
   padding: 1px 6px;
@@ -458,6 +479,28 @@ function isLive(index: number): boolean {
    一样。 */
 .site-act--platform {
   background: var(--accent-wash);
+}
+/* 挂了的一步：圆点换成危险色。动词和参数照旧 —— 这一行说的还是它做了什么，
+   变的只是它有没有做成。 */
+.site-act--failed .site-act__dot {
+  background: var(--danger);
+}
+/* 错误摘要缩进到参数那一列，和上面那一行对齐。这个缩进是圆点 + 间隙 + 动词列
+   + 间隙 —— 写成 calc 而不是量出来的一个数，改了上面这一行不用回来改它。 */
+.site-act__error {
+  flex: 0 0 100%;
+  margin: 2px 0 0;
+  padding-left: calc(5px + 8px + 4em + 8px);
+  color: var(--danger-ink);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.site-act__error--full {
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 /* 圆点分级: neutral = plain work (read/search/run), amber = platform action
    (cheese tool / cheese CLI / doc edit). */
