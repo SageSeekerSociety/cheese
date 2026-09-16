@@ -688,3 +688,92 @@ def test_a_store_that_cannot_be_created_does_not_fail_the_launch(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert proof.read_text().strip() == "ok"
+
+
+# The room-local copies the tools used to keep, and the one that must survive.
+_DEAD_CACHES = (".cache/uv/w", ".cache/pip/w", ".npm/_cacache/w")
+_LIVE_INTERPRETER = ".local/share/uv/python/cpython-3.13/bin/python"
+
+
+def _seed_caches(home):
+    for rel in (*_DEAD_CACHES, _LIVE_INTERPRETER):
+        path = home / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("x")
+
+
+def _settled(home, rel, *, gone: bool, timeout=10.0):
+    """The sweep is detached, so read the answer rather than assume the timing."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if (home / rel).exists() is not gone:
+            return True
+        time.sleep(0.02)
+    return (home / rel).exists() is not gone
+
+
+def test_a_rooms_dead_package_caches_are_reclaimed(tmp_path):
+    """Redirecting the stores leaves the room's old copies unreachable, not
+    gone. A room made before the store existed keeps them until it is retired,
+    and nothing retires an idle room — so the launch that redirects them is
+    also the one that reclaims them.
+
+    Worth (measured 2026-09-17): every byte of `.npm/_cacache` (792MiB) and
+    `.cache/pip` (240MiB), and the 12%/2% of uv's and pnpm's stores that is not
+    hardlinked into an install that stays.
+    """
+    _machine_home, home, env = _room(tmp_path, "proj", "room")
+    _seed_caches(home)
+
+    result = _run(tmp_path, env, prepare=_harness(tmp_path, "true\n"), command="$AGENT")
+    assert result.returncode == 0, result.stderr
+
+    for rel in _DEAD_CACHES:
+        assert _settled(home, rel, gone=True), rel
+    # But NOT the managed interpreter: a venv reaches it by absolute symlink and
+    # `pyvenv.cfg` names it, so removing it strands every venv in the room.
+    assert (home / _LIVE_INTERPRETER).exists()
+
+
+def test_a_machine_owners_own_caches_are_never_swept(tmp_path):
+    """The guard that matters. A session whose HOME *is* the machine's home is
+    not a room with leftovers — it is someone's actual account, and `~/.cache`
+    there belongs to them. Deleting it would be the platform destroying data on
+    a machine it was lent."""
+    home = tmp_path / "owner"
+    (home / ".cheese").mkdir(parents=True)
+    work = home / "work"
+    work.mkdir()
+    _seed_caches(home)
+    env = {
+        **os.environ,
+        "HOME": str(home),
+        # The machine's home and the session's home are the same directory.
+        "CHEESE_HOME": str(home),
+        "CHEESE_WORK": str(work),
+        "CHEESE_STORE": str(tmp_path / "store"),
+        "CHEESE_TOPIC": "t",
+        "CHEESE_PROJECT": "p",
+        "CHEESE_HOOK_URL": "http://127.0.0.1:1/hooks",
+        "CHEESE_TOKEN": "scoped-token",
+        "CHEESE_TOKEN_EXPIRES": str(int(time.time()) + 3600),
+    }
+
+    result = _run(tmp_path, env, prepare=_harness(tmp_path, "true\n"), command="$AGENT")
+    assert result.returncode == 0, result.stderr
+
+    for rel in (*_DEAD_CACHES, _LIVE_INTERPRETER):
+        assert _settled(home, rel, gone=False), rel
+
+
+def test_nothing_is_swept_when_the_stores_were_not_redirected(tmp_path):
+    """No store means every tool is still using the directories below — they are
+    live caches, not leftovers, and sweeping them would delete work in use."""
+    _machine_home, home, env = _room(tmp_path, "proj", "room", store=None)
+    _seed_caches(home)
+
+    result = _run(tmp_path, env, prepare=_harness(tmp_path, "true\n"), command="$AGENT")
+    assert result.returncode == 0, result.stderr
+
+    for rel in (*_DEAD_CACHES, _LIVE_INTERPRETER):
+        assert _settled(home, rel, gone=False), rel
