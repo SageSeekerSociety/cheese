@@ -238,6 +238,7 @@ def _place(**overrides) -> MachinePlace:
         **{
             "home": "$HOME/.cheese/home/P/R",
             "workdir": "$HOME/.cheese/home/P/R/work",
+            "store": "$HOME/.cheese/store/P",
             "state": "$HOME/.cheese/harness/P/R/x/deadbeef",
             "api_base": "https://cheese.example/api",
             "project_id": "P",
@@ -295,6 +296,7 @@ def test_a_screen_with_no_room_context_is_given_none_rather_than_empty():
     bare = MachinePlace(
         home="/h",
         workdir="/w",
+        store="",
         state="",
         api_base="",
         project_id="",
@@ -302,9 +304,13 @@ def test_a_screen_with_no_room_context_is_given_none_rather_than_empty():
         agent_handle="",
     )
     env = machine_launcher.screen_env(bare, hook_url="http://h", token="t")
-    assert not {"CHEESE_API", "CHEESE_PROJECT", "CHEESE_TOPIC", "CHEESE_AUTHOR"} & set(
-        env
-    )
+    assert not {
+        "CHEESE_API",
+        "CHEESE_PROJECT",
+        "CHEESE_TOPIC",
+        "CHEESE_AUTHOR",
+        "CHEESE_STORE",
+    } & set(env)
     assert "CHEESE_EXECUTION_TARGET" not in env
 
     placed = machine_launcher.screen_env(_place(), hook_url="http://h", token="t")
@@ -535,3 +541,150 @@ def test_typst_is_pointed_at_the_fonts_we_ship(tmp_path):
     assert report.read_text() == str(fonts)
     assert (fonts / "NotoSansSC-VF.otf").exists()
     assert (fonts / "NotoSerifSC-VF.otf").exists()
+
+
+def _room(tmp_path, project: str, room: str, store: str | None = "$HOME"):
+    """One room of ``project`` on a machine whose own home is ``tmp_path``.
+
+    Laid out the way `device_provider` lays it out, because the whole question
+    these tests ask is where a path falls RELATIVE to the room — a fixture that
+    put the room's home at the machine's home could not tell the two apart.
+    """
+    machine_home = tmp_path / "machine"
+    room_home = machine_home / ".cheese/home" / project / room
+    (room_home / ".cheese").mkdir(parents=True)
+    work = machine_home / ".cheese/work" / project / room
+    work.mkdir(parents=True)
+    env = {
+        **os.environ,
+        "HOME": str(machine_home),
+        "CHEESE_HOME": str(room_home),
+        "CHEESE_WORK": str(work),
+        "CHEESE_TOPIC": room,
+        "CHEESE_PROJECT": project,
+        "CHEESE_HOOK_URL": "http://127.0.0.1:1/hooks",
+        "CHEESE_TOKEN": "scoped-token",
+        "CHEESE_TOKEN_EXPIRES": str(int(time.time()) + 3600),
+    }
+    if store == "$HOME":
+        # The literal placeholder a real launch carries — the backend cannot
+        # know the device user's home, so the script resolves it.
+        env["CHEESE_STORE"] = f"$HOME/.cheese/store/{project}"
+    elif store is not None:
+        env["CHEESE_STORE"] = store
+    return machine_home, room_home, env
+
+
+_STORE_VARS = (
+    "UV_CACHE_DIR",
+    "UV_PYTHON_INSTALL_DIR",
+    "npm_config_store_dir",
+    "npm_config_cache",
+    "PIP_CACHE_DIR",
+)
+
+
+def _installer_env(tmp_path, env, dump):
+    """Run one launch whose "agent" reports the environment an install sees."""
+    result = _run(
+        tmp_path,
+        env,
+        prepare=_harness(
+            tmp_path,
+            "".join(f'printf "%s=%s\\n" {v} "${v}" >> "{dump}"\n' for v in _STORE_VARS),
+        ),
+        command="$AGENT",
+    )
+    assert result.returncode == 0, result.stderr
+    seen = dict(
+        line.split("=", 1) for line in dump.read_text().splitlines() if "=" in line
+    )
+    dump.unlink()
+    assert set(seen) == set(_STORE_VARS)
+    # An unset variable reports as an empty VALUE here, never as a missing key,
+    # so "did the launcher set this" is only ever a question about the value.
+    return {name: value for name, value in seen.items() if value}
+
+
+def test_two_rooms_of_one_project_install_into_one_store(tmp_path):
+    """The saving itself: two rooms, one set of package directories.
+
+    Each room's HOME is its own, and every one of these tools defaults its
+    store inside HOME — so without this the second room downloads and unpacks
+    a copy of everything the first one already has, and keeps it. That is the
+    failure measured on the container path this replaces (one project's 220
+    worktrees holding 236GB) and again on CI (#1104: a venv built from a warm
+    cache is 8MB of links, the same venv kept unshared is 1.3GB).
+    """
+    _machine_home, home_a, env_a = _room(tmp_path, "proj", "room-a")
+    _machine_home, home_b, env_b = _room(tmp_path, "proj", "room-b")
+
+    seen_a = _installer_env(tmp_path, env_a, tmp_path / "a.env")
+    seen_b = _installer_env(tmp_path, env_b, tmp_path / "b.env")
+
+    assert set(seen_a) == set(_STORE_VARS)
+    assert seen_a == seen_b
+    # And it is nobody's HOME, so neither room's retirement takes it away.
+    for value in seen_a.values():
+        assert not value.startswith(str(home_a))
+        assert not value.startswith(str(home_b))
+
+
+def test_another_project_on_the_same_machine_gets_its_own_store(tmp_path):
+    """Sharing stops at the project, which is where the sharing that already
+    exists stops: rooms of one project read each other's checkouts anyway."""
+    _m, _home, env_ours = _room(tmp_path, "ours", "room")
+    _m, _home, env_theirs = _room(tmp_path, "theirs", "room")
+
+    seen_ours = _installer_env(tmp_path, env_ours, tmp_path / "ours.env")
+    seen_theirs = _installer_env(tmp_path, env_theirs, tmp_path / "theirs.env")
+
+    assert set(seen_ours) == set(seen_theirs) == set(_STORE_VARS)
+    for name in _STORE_VARS:
+        assert seen_ours[name] != seen_theirs[name], name
+
+
+def test_the_store_lands_on_the_machine_home_the_placeholder_names(tmp_path):
+    """`$HOME` in the value is a LITERAL the backend sends, not an expansion —
+    it cannot know the device user's home. Resolved against the machine's home,
+    never against the room's, or every room would have a store of its own and
+    the whole exercise would be a rename."""
+    machine_home, room_home, env = _room(tmp_path, "proj", "room")
+    assert env["CHEESE_STORE"].startswith("$HOME/")
+
+    seen = _installer_env(tmp_path, env, tmp_path / "s.env")
+
+    assert seen["UV_CACHE_DIR"] == f"{machine_home}/.cheese/store/proj/uv-cache"
+    assert not seen["UV_CACHE_DIR"].startswith(str(room_home))
+    assert "$HOME" not in seen["UV_CACHE_DIR"]
+
+
+def test_a_screen_with_no_store_leaves_every_tool_on_its_own_default(tmp_path):
+    """A probe or a fixture has no project and so no project store. It must get
+    no store rather than an empty one: pointing UV_CACHE_DIR at `/uv-cache`
+    would be worse than not pointing it anywhere."""
+    _m, _home, env = _room(tmp_path, "proj", "room", store=None)
+
+    seen = _installer_env(tmp_path, env, tmp_path / "n.env")
+
+    assert seen == {}
+
+
+def test_a_store_that_cannot_be_created_does_not_fail_the_launch(tmp_path):
+    """None of this is worth a room for. `set -e` is in force around it, so a
+    machine whose store path is not creatable has to come up anyway — on the
+    tools' own defaults, which is exactly where it was before this existed."""
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("")
+    _m, _home, env = _room(tmp_path, "proj", "room", store=f"{blocker}/store")
+    proof = tmp_path / "agent.ran"
+
+    result = _run(
+        tmp_path,
+        env,
+        prepare=_harness(tmp_path, f'echo ok > "{proof}"\n'),
+        command="$AGENT",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert proof.read_text().strip() == "ok"

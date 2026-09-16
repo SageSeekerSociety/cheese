@@ -86,10 +86,16 @@ class MachinePlace:
     ``home`` and ``workdir`` are as the SESSION sees them; ``state`` is as the
     CONNECTOR resolves it (a literal ``$HOME/...``), because that is the string
     the backend records and later derives a socket from.
+
+    ``store`` is the room's project's shared dependency store on this machine —
+    outside ``home``, because its whole point is to outlive any one room and be
+    found by the next. No harness reads it; the platform half of the launcher
+    points the package managers at it.
     """
 
     home: str
     workdir: str
+    store: str
     state: str
     api_base: str
     project_id: str
