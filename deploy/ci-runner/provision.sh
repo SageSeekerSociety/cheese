@@ -29,8 +29,16 @@ sudo ./bin/installdependencies.sh >/dev/null 2>&1 || true
 # docker group so service containers work without sudo
 sudo usermod -aG docker "$(whoami)" 2>/dev/null || true
 
+# The box label is what lets liveness name a machine rather than count slots:
+# every runner answers to `cheese-ci`, so with that alone a dead machine is
+# invisible while its neighbours answer. Derived from the runner name, whose
+# convention is `cheese-ci-runner-<box>[<slot letter>]`.
+BOX="$(printf '%s' "$NAME" | sed -E 's/^cheese-ci-runner-([0-9]+).*/\1/')"
+LABELS="cheese-ci"
+[ "$BOX" = "$NAME" ] || LABELS="cheese-ci,cheese-ci-box-$BOX"
+
 ./config.sh --unattended --url "$REPO_URL" --token "$TOKEN" \
-  --name "$NAME" --labels cheese-ci --replace 2>&1 | tail -3
+  --name "$NAME" --labels "$LABELS" --replace 2>&1 | tail -3
 
 # Cache downloaded action archives across jobs. Without this the runner pulls
 # every action's tarball from codeload.github.com on EVERY job; with three

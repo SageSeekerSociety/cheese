@@ -182,13 +182,15 @@ heartbeat, backup checks) — its single slot used to serialize every heavy job
   `backend/tests/isolation.py` for the names it scopes, and note that the test
   harness creates its databases with `DROP DATABASE ... WITH (FORCE)`, so two
   runs handed one name delete each other's data mid-test.
-- Liveness (alerting): `box-heartbeat.yml`'s `ci-pool` job proves **at least
-  one** of the three is alive; `box-uptime.yml` alerts when it stays queued. It
-  cannot see a partial outage, because `provision.sh` gives every machine the
-  same single `cheese-ci` label. **Open ops step**: re-register each runner with
-  `--labels cheese-ci,<name>` (`config.sh --replace`), then fan the heartbeat
-  out to a matrix over the per-machine labels. Until that lands, a single dead
-  pool machine shows up only as slower CI.
+- Liveness (alerting): `box-uptime.yml`'s `ci-pool` job names every machine that
+  is not there, hourly, by ASKING the runner API rather than running a job on
+  each — a job per machine would need a slot per machine every hour and would
+  queue behind a merge burst, which the alert would have to read as death. Each
+  machine's slots carry a `cheese-ci-box-<n>` label beside the shared one, so a
+  half-dead machine (one slot gone) is named rather than averaged away. It says
+  so in Feishu when `FEISHU_ALERT_WEBHOOK` is set, and reddens the run either
+  way. `box-heartbeat.yml`'s `ci-pool` job remains as the "can the pool still
+  run anything at all" check.
 - Liveness (on demand): `box-diag.yml`'s `ci-pool` job covers the whole pool by
   fanning out one job per SLOT — six, not three: with two slots per machine,
   three jobs can take two machines and leave the third unseen. It prints
