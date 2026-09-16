@@ -113,6 +113,30 @@ _TOOL_ARG = {
 #: 参数是一条 shell 命令的工具 —— 命令要拆开读，不是照着参数名取一截就完事。
 SHELL_TOOLS = frozenset({"Bash", "bash"})
 
+#: 只是在看这条路径的工具。写一份 SKILL.md 是在写技能，读一份是在照着它干活 ——
+#: 两件事不能显示成同一句。
+_READ_TOOLS = frozenset({"Read", "read"})
+
+#: 一份技能就是一个目录加一份 ``SKILL.md``（``agent/skills.py`` 发到机器上的就是
+#: 这个形状）。名字在目录上，文件名对每一份技能都一样。
+_SKILL_FILE = "SKILL.md"
+
+
+def _skill_name(raw: object) -> str:
+    """这条路径指的是哪份技能；不是技能文件时是空的。
+
+    读 ``…/skills/documents/SKILL.md`` 这一步，说成「读取文件 · SKILL.md」等于
+    什么都没说 —— 每份技能的文件名都叫这个，而这一步真正发生的是芝士开始按
+    documents 这份说明干活。Claude Code 有个 Skill 工具，房间里本来就这么显示；
+    pi 和 Codex 没有，它们是直接把文件读进去的，于是同一件事在两种房间里长得不
+    一样。
+    """
+    parts = [p for p in _collapse(raw).replace("\\", "/").split("/") if p]
+    if len(parts) > 1 and parts[-1] == _SKILL_FILE:
+        return parts[-2]
+    return ""
+
+
 # 参数本身就是一条路径的工具 —— 这些要剪工作区前缀。
 _PATH_TOOLS = frozenset(
     {
@@ -378,6 +402,9 @@ def command_preview(command: str, *, work_dir: str = "") -> ToolPreview:
         return ToolPreview(_collapse(meaningful)[:PREVIEW_MAX])
 
     operand = _first_operand(head, tokens)
+    skill = _skill_name(operand) if action == "Read" else ""
+    if skill:
+        return ToolPreview(skill, "Skill")
     if action == "Grep":
         text = _collapse(operand)
     else:
@@ -433,6 +460,9 @@ def tool_preview(name: str, args: dict, *, work_dir: str = "") -> ToolPreview:
     key = _TOOL_ARG.get(name)
     if key is None or args.get(key) is None:
         return ToolPreview()
+    skill = _skill_name(args[key]) if name in _READ_TOOLS else ""
+    if skill:
+        return ToolPreview(skill, "Skill")
     if name in _PATH_TOOLS:
         return ToolPreview(short_path(args[key], work_dir=work_dir))
     return ToolPreview(_collapse(args[key])[:PREVIEW_MAX])

@@ -366,3 +366,33 @@ def test_the_cheese_word_somewhere_else_is_not_a_platform_action():
     assert cheese_subcommand("grep -rn cheese doc backend/") == ""
     assert cheese_subcommand("docker exec cheese-backend-1 sh -lc 'ls'") == ""
     assert cheese_subcommand("echo cheese") == ""
+
+
+# ---- 读一份技能，不是读一个叫 SKILL.md 的文件 ----
+
+
+def test_reading_a_skill_reads_as_using_it():
+    # 每份技能的文件名都叫 SKILL.md，「读取文件 · SKILL.md」等于什么都没说。
+    assert tool_preview(
+        "read", {"path": f"{ABS}/.claude/skills/documents/SKILL.md"}, work_dir=WORK
+    ) == ToolPreview("documents", "Skill")
+    assert tool_preview(
+        "Read", {"file_path": "/home/x/skills/cheese-docs/SKILL.md"}
+    ) == (ToolPreview("cheese-docs", "Skill"))
+
+
+def test_a_skill_read_through_the_shell_says_the_same_thing():
+    assert command_preview("cat ~/.config/pi/skills/documents/SKILL.md") == (
+        ToolPreview("documents", "Skill")
+    )
+
+
+def test_writing_a_skill_is_not_using_one():
+    # 写一份说明和照着它干活是两件事。
+    preview = tool_preview("write", {"path": "skills/documents/SKILL.md"})
+    assert preview.action is None
+    assert preview.text == "skills/documents/SKILL.md"
+
+
+def test_a_lone_skill_file_has_no_skill_to_name():
+    assert tool_preview("read", {"path": "SKILL.md"}) == ToolPreview("SKILL.md")
