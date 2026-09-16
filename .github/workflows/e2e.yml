@@ -199,11 +199,21 @@ jobs:
             frontend/pnpm-lock.yaml
             e2e/pnpm-lock.yaml
 
-      # Persistent venv (same trick as test.yml): checkout wipes the workspace
-      # every run; an out-of-workspace venv turns the measured ~93s uv sync
-      # into a no-op re-check.
-      - name: Point uv at a persistent venv
-        run: echo "UV_PROJECT_ENVIRONMENT=$(dirname "$RUNNER_TEMP")/uv-venv/e2e" >> "$GITHUB_ENV"
+      # The venv is built per job out of uv's cache, which is the thing worth
+      # keeping between runs. uv unpacks every wheel into ~/.cache/uv once and
+      # HARDLINKS out of it, so a venv built from a warm cache holds 8 MB of its
+      # own and takes 0.9s to produce (measured on a CI box, 2026-09-16), and
+      # that cache is already shared by every slot on the machine.
+      #
+      # Keeping the venv between runs instead is what cost the disk: it stops
+      # sharing the moment the cache is rebuilt under it, and never repairs
+      # itself. All eight venvs found on one box had a link count of 1 on every
+      # file — 9.9 GB, none of it shared, against the 1.3 GB cache they were
+      # supposed to be views of. The seconds this used to save are a COLD cache;
+      # the cache is what makes it fast, and the cache is not in the workspace
+      # checkout wipes.
+      - name: Point uv at a venv built from the shared cache
+        run: echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
 
       - name: Install backend deps
         working-directory: backend
