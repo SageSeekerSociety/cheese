@@ -89,6 +89,7 @@ from app.domain.agent.supply import SUBSCRIPTION
 from app.domain.agent.tool_preview import (
     SHELL_TOOLS,
     ToolPreview,
+    cheese_subcommand,
     tool_detail,
     tool_preview,
     work_subpath,
@@ -352,18 +353,17 @@ def _format_tool_event(name: str, preview: ToolPreview) -> str:
 
 
 # 现场圆点分级: a PLATFORM action (amber dot) vs plain work (neutral dot).
-# Deterministic by construction — tool-name prefix, or a literal `cheese <sub>`
-# word pair inside a Bash command. NEVER inferred from natural language.
-_CHEESE_CMD_RE = re.compile(r"\bcheese\s+\w+")
-
-
+# Deterministic by construction — tool-name prefix, or the `cheese` CLI at the
+# head of the command segment 现场 displays. NEVER inferred from natural
+# language, and never from the word appearing somewhere else in the command:
+# the dot and the text on that line have to be about the same thing.
 def _is_platform_tool(raw_name: str, args: dict) -> bool:
     """True when the tool call is a platform action: a cheese MCP tool, or a
     shell command that invokes the machine's `cheese` CLI."""
     if raw_name.startswith("mcp__cheese__"):
         return True
     if raw_name in SHELL_TOOLS and isinstance(args, dict):
-        return _CHEESE_CMD_RE.search(str(args.get("command", ""))) is not None
+        return bool(cheese_subcommand(str(args.get("command", ""))))
     return False
 
 
@@ -732,11 +732,7 @@ def _parse_uuid(raw: str | None) -> uuid.UUID | None:
 
 def _cheese_resource(command: str) -> str | None:
     """Resource hint for a Bash `cheese <sub>` command, else None."""
-    parts = command.split()
-    for i, tok in enumerate(parts):
-        if tok.endswith("cheese") and i + 1 < len(parts):
-            return _CHEESE_RESOURCE.get(parts[i + 1])
-    return None
+    return _CHEESE_RESOURCE.get(cheese_subcommand(command))
 
 
 # Open (non-final) accept-card statuses, worth telling the agent about at turn

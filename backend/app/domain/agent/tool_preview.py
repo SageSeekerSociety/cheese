@@ -17,6 +17,10 @@
 - **解析命令时先把没信息量的前置段落剥掉**（``cd``、``export``、开头的
   ``VAR=值``）。剩下那段的头一个词认得出来的，连动词一起换成更贴切的那个
   （``action``）—— 认不出来就原样显示，不猜：动词说错比英文更难读。
+- **一条命令里有 cheese CLI 那一段时，显示的就是那一段。** ``make && cheese doc
+  set`` 做的两件事里，房间要看见的是后一件：它改的是这个项目的东西，不只是这台
+  机器上的文件。圆点也判在同一段上（``cheese_subcommand``）—— 判断和显示咬在一
+  起，才不会出现「这一行写着 make，点却是琥珀色的」。
 
 ``action`` 只是「按哪个工具的标签来显示」，``tool`` 仍然如实记录真正跑的是哪个
 工具。两者分开，是因为「跑了什么」和「怎么称呼它」是两个问题，合成一个字段就
@@ -154,8 +158,15 @@ def short_path(raw: object, *, work_dir: str = "") -> str:
 _NOISE_HEADS = frozenset({"cd", "export", "set", "unset", "source", ".", "true", ":"})
 
 #: 段首的 ``VAR=值`` 是给后面那条命令用的环境，不是命令本身。
+#:
+#: 值里的 ``$(...)`` 要整个算进来，否则 ``T=$(cheese gh-token 2>/dev/null)`` 会
+#: 在第一个空格处断开，现场显示的是 ``gh-token 2>/dev/null)`` —— 半截替换出来的
+#: 残句，不是任何人写过的命令。同理，最后一个赋值后面允许什么都不跟：整段只有
+#: 赋值时它该被当成没信息量而跳过，而不是原样显示一行 ``root=/home/…``。
 _LEADING_ASSIGNMENTS = re.compile(
-    r"""^(?:[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"[^"]*"|\S*)\s+)+"""
+    r"""^(?:[A-Za-z_][A-Za-z0-9_]*="""
+    r"""(?:'[^']*'|"[^"]*"|\$\([^)]*\)|`[^`]*`|[^\s'"`$]+|\$)*"""
+    r"""(?:\s+|$))+"""
 )
 
 #: 头一个词 → 标签更贴切的那个工具。只收录操作数位置没有歧义的命令：认错动词
@@ -303,25 +314,52 @@ def _first_operand(head: str, tokens: list[str]) -> str:
     return ""
 
 
+#: 机器上那个平台 CLI。段首是它，这一段就是一次平台动作。
+CHEESE_CLI = "cheese"
+
+
+def _chosen_segment(command: str) -> tuple[str, list[str]]:
+    """这条命令在现场显示的是哪一段。
+
+    平台动作优先，其余取第一段有信息量的。返回显示用的原文（引号照留）和切好的
+    词 —— 两者分开，才不会为了认出命令而把它显示成一句它没写过的话。
+    """
+    first: tuple[str, list[str]] = ("", [])
+    for segment in _split_segments(command):
+        text = _LEADING_ASSIGNMENTS.sub("", segment).strip()
+        if not text:
+            continue
+        tokens = _tokenize(text)
+        if not tokens or _head_word(tokens) in _NOISE_HEADS:
+            continue
+        if _head_word(tokens) == CHEESE_CLI:
+            return text, tokens
+        if not first[1]:
+            first = (text, tokens)
+    return first
+
+
+def cheese_subcommand(command: str) -> str:
+    """现场显示的那一段跑的是哪个 cheese 子命令；不是平台动作时是空的。
+
+    判断和显示咬在同一段上。按整条命令找 ``cheese`` 两个字会让一行写着
+    ``gh pr list``、圆点却是琥珀色的 —— 因为命令别处有个
+    ``T=$(cheese gh-token)``。读的人看到的是两件对不上的事，而琥珀色本该只说
+    一件：这一步改了这个项目的东西。
+    """
+    _, tokens = _chosen_segment(command)
+    if len(tokens) > 1 and _head_word(tokens) == CHEESE_CLI:
+        return tokens[1]
+    return ""
+
+
 def command_preview(command: str, *, work_dir: str = "") -> ToolPreview:
     """一条 shell 命令在现场怎么写。
 
     说明是英文、或者压根没写说明时都走这里。``action`` 非空表示认出来了，调用方
     可以据此决定要不要用它顶掉那句英文。
     """
-    meaningful = ""
-    tokens: list[str] = []
-    for segment in _split_segments(command):
-        # 显示用原文（引号照留），分类用切好的词 —— 两者分开，才不会为了认出
-        # 命令而把它显示成一句它没写过的话。
-        text = _LEADING_ASSIGNMENTS.sub("", segment).strip()
-        if not text:
-            continue
-        segment_tokens = _tokenize(text)
-        if not segment_tokens or _head_word(segment_tokens) in _NOISE_HEADS:
-            continue
-        meaningful, tokens = text, segment_tokens
-        break
+    meaningful, tokens = _chosen_segment(command)
     if not meaningful:
         # 整条命令都是准备动作（``cd x && export Y=1``）—— 没有更好的说法了，
         # 原样显示，别把它说成一件它不是的事。

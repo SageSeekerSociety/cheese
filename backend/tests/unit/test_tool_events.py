@@ -3,6 +3,7 @@ plain work). The platform rule is deterministic — tool-name prefix or a litera
 `cheese <sub>` word pair in a Bash command — never natural-language guessing."""
 
 from app.domain.agent.chat import (
+    _cheese_resource,
     _format_tool_event,
     _is_platform_tool,
     _tool_event_meta,
@@ -69,8 +70,8 @@ def test_cheese_mcp_tool_is_platform():
 def test_bash_with_cheese_cli_is_platform():
     assert _is_platform_tool("Bash", {"command": 'cheese title "新标题"'})
     assert _is_platform_tool("Bash", {"command": "/usr/local/bin/cheese doc set"})
-    # cheese appearing PAST the 120-char preview cut still counts: platform is
-    # decided on the full command, not the truncated display preview.
+    # A cheese segment past the 120-char preview cut still counts — and 现场
+    # shows that segment, so the dot and the line say the same thing.
     assert _is_platform_tool("Bash", {"command": "x" * 200 + " && cheese notify hi"})
 
 
@@ -147,3 +148,23 @@ def test_meta_carries_the_argument_as_it_was_written():
 
 def test_meta_omits_the_second_copy_when_the_line_already_says_it_all():
     assert "detail" not in _meta("Bash", {"command": "make test"})
+
+
+def test_the_amber_dot_is_judged_on_the_line_it_sits_next_to():
+    # 一行写着 `gh pr list`，点却因为命令别处有个 $(cheese gh-token) 而发亮 ——
+    # 读的人看到的是两件对不上的事，而琥珀色本该只说一件：这一步改了项目的东西。
+    command = "GH_TOKEN=$(cheese gh-token 2>/dev/null) gh pr list"
+    assert _text("Bash", {"command": command}) == "执行命令\ngh pr list"
+    assert not _is_platform_tool("Bash", {"command": command})
+
+
+def test_the_platform_step_is_the_one_the_line_shows():
+    command = "make && cheese doc set"
+    assert _text("Bash", {"command": command}) == "执行命令\ncheese doc set"
+    assert _is_platform_tool("Bash", {"command": command})
+
+
+def test_a_doc_written_late_in_a_command_still_refreshes_the_panel():
+    # 这个返回值是「哪个面板过期了」的来源；漏掉它，卡片要等读的人刷新才出现。
+    assert _cheese_resource("make && cheese doc set") == "doc"
+    assert _cheese_resource("GH_TOKEN=$(cheese gh-token) gh pr list") is None

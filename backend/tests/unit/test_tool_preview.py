@@ -10,6 +10,7 @@ from app.domain.agent.tool_preview import (
     DETAIL_MAX,
     PREVIEW_MAX,
     ToolPreview,
+    cheese_subcommand,
     command_preview,
     tool_detail,
     tool_preview,
@@ -332,3 +333,36 @@ def test_an_enormous_argument_is_capped_and_says_so():
 def test_a_tool_with_no_telling_argument_has_nothing_to_open():
     assert _detail("FutureTool", {"x": 1}) == ""
     assert tool_detail("Bash", "not a dict", ToolPreview()) == ""  # type: ignore[arg-type]
+
+
+# ---- 显示哪一段，圆点就判哪一段 ----
+
+
+def test_a_command_substitution_is_part_of_the_value_it_sits_in():
+    # 在第一个空格处断开，现场显示的是 `gh-token 2>/dev/null)` —— 半截替换出来的
+    # 残句，不是任何人写过的命令。
+    preview = command_preview("GH_TOKEN=$(cheese gh-token 2>/dev/null) gh pr list")
+    assert preview.text == "gh pr list"
+
+
+def test_a_segment_that_is_only_assignments_is_preparation_not_a_step():
+    preview = command_preview(f"root={ABS}; cd $root; ls -la")
+    assert preview.text == "ls -la"
+
+
+def test_the_platform_step_is_the_segment_shown():
+    # 做的两件事里，房间要看见的是改了这个项目的那件。
+    assert command_preview("make && cheese doc set").text == "cheese doc set"
+
+
+def test_a_platform_action_is_read_off_the_segment_that_is_shown():
+    assert cheese_subcommand("cheese doc set") == "doc"
+    assert cheese_subcommand("make && cheese accept-request nic") == "accept-request"
+    assert cheese_subcommand("/usr/local/bin/cheese notify hi") == "notify"
+
+
+def test_the_cheese_word_somewhere_else_is_not_a_platform_action():
+    assert cheese_subcommand("GH_TOKEN=$(cheese gh-token) gh pr list") == ""
+    assert cheese_subcommand("grep -rn cheese doc backend/") == ""
+    assert cheese_subcommand("docker exec cheese-backend-1 sh -lc 'ls'") == ""
+    assert cheese_subcommand("echo cheese") == ""
