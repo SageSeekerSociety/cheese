@@ -133,19 +133,26 @@ case "$arch" in
   aarch64|arm64) target=linux-arm64 ;;
   *) echo "unsupported arch: $arch" >&2; exit 1 ;;
 esac
-# Tools the machine must have before it is worth enrolling. Both failures are
-# SILENT if left to be discovered later, which is why they are fatal here:
-#   tmux — the connector hosts every session in it and exits immediately
+# Tools the machine must have before it is worth enrolling. Every one of these
+# failures is SILENT if left to be discovered later, which is why they are fatal
+# here:
+#   tmux    — the connector hosts every session in it and exits immediately
 #     without one, yet `link connect` still reports success (systemctl returns
 #     before the process falls over);
-#   git  — the agent clones the project into its work dir and pushes the topic
+#   git     — the agent clones the project into its work dir and pushes the topic
 #     branch back. Without git the turn runs in an EMPTY directory, reports
 #     success, and the work is never seen by anyone.
-# Neither is guaranteed by the image: MicroCloud's LXC template lists git but
-# not tmux, and the VM template installs neither (it adds only curl + Docker on
-# top of a stock Debian cloud image). Depending on which offering a machine came
-# from is exactly the kind of assumption that fails quietly.
-for tool in tmux git; do
+#   python3 — the platform's own programs ON a machine are python3, not shell:
+#     `cheese` (the agent's whole platform surface — publishing a message, a
+#     document, an artifact) and the environment helper the launcher runs before
+#     every agent start, whose exit code it propagates (`agent/device_provider`).
+#     The connector is Go and comes up fine without python3, so the machine
+#     reports healthy and every room on it dies at environment preparation.
+# None of them is guaranteed by the image: MicroCloud's LXC template lists git
+# but not tmux, and the VM template installs neither (it adds only curl + Docker
+# on top of a stock Debian cloud image). Depending on which offering a machine
+# came from is exactly the kind of assumption that fails quietly.
+for tool in tmux git python3; do
   command -v "$tool" >/dev/null 2>&1 && continue
   sudo -n apt-get install -y -q "$tool" >/dev/null 2>&1 \
     || {{ sudo -n apt-get update -q >/dev/null 2>&1 \
