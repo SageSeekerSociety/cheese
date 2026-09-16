@@ -38,6 +38,16 @@ jobs:
           uv sync --frozen --group dev
       - name: Verify actual provider requests with pinned binaries
         run: uv run python scripts/test_harness_contracts.py
+      # A log with no ceiling on it filled the account's artifact storage on
+      # 2026-09-12: four uploads from this step carried 4.5 GB between them, one
+      # of them 2.25 GB, and four days later every job in the repository failed
+      # its upload with `Artifact storage quota has been hit` — tests green, only
+      # the upload red. Capping here rather than not retaining: the tail of a log
+      # is what anyone would have read anyway.
+      - name: Cap what this run retains
+        if: always()
+        run: python3 .github/scripts/cap-retained-logs.py logs/harness-contracts
+
       - name: Retain synthetic requests and test logs
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
