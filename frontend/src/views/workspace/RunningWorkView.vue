@@ -195,8 +195,8 @@ function countLabel(column: BoardColumn): string {
  *  条，三列全空、底下一条「已完成 292」才是常态。所以「施工中」那一列还要多说一
  *  句下一步——一块空板本身说不出该做什么。 */
 function emptyLine(column: BoardColumn): string {
-  if (mine.value) return '暂无归你的活'
-  return `暂无${columnLabel(column)}的活`
+  if (mine.value) return '暂无归你的任务'
+  return `暂无${columnLabel(column)}的任务`
 }
 
 /** 这个项目还什么都没有：没有活，也没有一个话题。
@@ -283,7 +283,7 @@ function openTask(task: RoomTask) {
             {{ t.label }} {{ t.n }}
           </template>
         </template>
-        <template v-else-if="!loading">暂无派出去的活</template>
+        <template v-else-if="!loading">暂无派出去的任务</template>
       </p>
     </header>
 
@@ -297,8 +297,8 @@ function openTask(task: RoomTask) {
            「去哪儿开始」——板要等到真有东西可摆的时候才是有用的界面。 -->
       <div class="board__start">
         <p class="t-body">这个项目还没有开始的工作</p>
-        <p class="t-meta c-muted">去大本营说一句你想做什么，芝士会把它拆成具体的活，之后这块板才有东西可看</p>
-        <v-btn v-if="rootTopicId" class="mt-4" color="primary" variant="flat" @click="openHomeRoom">进入大本营</v-btn>
+        <p class="t-meta c-muted">在对话里说明你要完成什么，芝士会把它拆成具体任务</p>
+        <v-btn v-if="rootTopicId" class="mt-4" color="primary" variant="flat" @click="openHomeRoom">进入对话</v-btn>
       </div>
     </template>
 
@@ -324,7 +324,7 @@ function openTask(task: RoomTask) {
             <li v-if="!inColumn(col.key).length" class="board-col__empty t-body">
               {{ emptyLine(col.key) }}
               <span v-if="col.key === 'building' && !mine" class="board-col__next t-meta"
-                >在房间里说一声，芝士会把它拆成活</span
+                >在房间里说明要做什么，芝士会把它拆成任务</span
               >
             </li>
             <li v-for="row in inColumn(col.key)" :key="row.id">
@@ -380,7 +380,7 @@ function openTask(task: RoomTask) {
           <span class="t-meta board-col__count">{{ countLabel('done') }}</span>
         </button>
         <ul v-if="showDone" class="board__done-list">
-          <li v-if="!doneRows.length" class="board-col__empty t-body">暂无归你的活</li>
+          <li v-if="!doneRows.length" class="board-col__empty t-body">暂无归你的任务</li>
           <li v-for="row in doneRows" :key="row.id">
             <button type="button" class="done-row" @click="openTask(row)">
               <span class="board-dot" :style="columnDotStyle(row.presentation.column)" aria-hidden="true" />

@@ -129,8 +129,8 @@ describe('空列不消失', () => {
       total: 1,
     })
     const { container } = mount()
-    await waitFor(() => expect(columnHead(container, 'needs_you')).toBe('等你 1'))
-    // 整列消失会让板在两次刷新之间跳，而「等你」在哪个位置本身就是信息。
+    await waitFor(() => expect(columnHead(container, 'needs_you')).toBe('待处理 1'))
+    // 整列消失会让板在两次刷新之间跳，而「待处理」在哪个位置本身就是信息。
     expect(columnHead(container, 'building')).toBe('施工中 0')
     expect(columnHead(container, 'delivering')).toBe('交付中 0')
   })
@@ -199,7 +199,7 @@ describe('这一页原来的两个用处都还在', () => {
     const { container } = mount()
     await waitFor(() => {
       const head = container.querySelector('.board__head p')?.textContent?.replace(/\s+/g, '')
-      expect(head).toBe('施工中1·等你1·已完成1')
+      expect(head).toBe('施工中1·待处理1·已完成1')
     })
   })
 
@@ -273,10 +273,10 @@ describe('卡片上的其余几行', () => {
 })
 
 describe('一件活都没有', () => {
-  it('说「暂无派出去的活」，而不是画三个空列了事', async () => {
+  it('说「暂无派出去的任务」，而不是画三个空列了事', async () => {
     listProjectTasks.mockResolvedValue({ data: [], total: 0 })
     const { findByText } = mount()
-    await findByText('暂无派出去的活')
+    await findByText('暂无派出去的任务')
   })
 
   it('每一列自己说它空，「施工中」那一列还说得出下一步', async () => {
@@ -284,10 +284,10 @@ describe('一件活都没有', () => {
     // 第一屏的常态，所以那几行字就是这一屏的主要内容。
     listProjectTasks.mockResolvedValue({ data: [], total: 0 })
     const { findByText } = mount()
-    await findByText('暂无施工中的活')
-    await findByText('暂无交付中的活')
-    await findByText('暂无等你的活')
-    await findByText('在房间里说一声，芝士会把它拆成活')
+    await findByText('暂无施工中的任务')
+    await findByText('暂无交付中的任务')
+    await findByText('暂无待处理的任务')
+    await findByText('在房间里说明要做什么，芝士会把它拆成任务')
   })
 
   it('活全在「已完成」里的时候，板面照样说得出下一步', async () => {
@@ -303,6 +303,6 @@ describe('一件活都没有', () => {
     await waitFor(() =>
       expect(container.querySelector('.board__head p')?.textContent?.replace(/\s+/g, '')).toBe('已完成2')
     )
-    getByText('在房间里说一声，芝士会把它拆成活')
+    getByText('在房间里说明要做什么，芝士会把它拆成任务')
   })
 })

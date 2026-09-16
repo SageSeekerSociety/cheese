@@ -196,7 +196,7 @@ function liveRefWidget(topicId: string): HTMLElement {
   el.dataset.topic = topicId
   el.contentEditable = 'false'
   el.setAttribute('role', 'button')
-  el.title = `「${sub?.title ?? '这件活'}」· ${statusLabel(status)} — 点击打开`
+  el.title = `「${sub?.title ?? '这件任务'}」· ${statusLabel(status)} — 点击打开`
   const dot = document.createElement('span')
   dot.className = `doc-liveref__dot is-${status}`
   // 图标而不是 🧩：emoji 在不同系统上是彩色位图，尺寸和基线都不跟随字号，混在

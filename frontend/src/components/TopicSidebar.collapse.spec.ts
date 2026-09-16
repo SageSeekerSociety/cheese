@@ -225,7 +225,7 @@ describe('左侧话题列表：房间下面那些活的折叠', () => {
     expect(toggle.classList.contains('subtree-toggle--awaits')).toBe(true)
     // 两种状态同时存在时只显示一种，否则一个槽要上两个颜色
     expect(toggle.classList.contains('subtree-toggle--running')).toBe(false)
-    expect(toggle.getAttribute('title')).toBe('展开：里面有事等你处理')
+    expect(toggle.getAttribute('title')).toBe('展开：里面有待处理的事项')
   })
 
   // 选中 + 收起是最需要看见聚合状态的组合（人正站在这个话题里，子话题在替他跑）。
