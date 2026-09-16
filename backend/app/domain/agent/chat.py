@@ -1551,11 +1551,13 @@ class ChatService:
                         "that is stuck. Ignore this only if the turn is already "
                         "finished.",
                     )
-                # Whether a reminder reached a room was invisible: the old code
-                # logged only its own exceptions, so neither 「it never fired」
-                # nor 「it fired and the agent said nothing」 could be told from
-                # the outside. One line per reminder is what makes that
-                # answerable.
+                # THAT a reminder fired was already visible — the periodic
+                # loop logs `chat progress reminder: <count>` on any cycle whose
+                # result is worth reporting (app/core/background.py). What a
+                # count cannot carry is which room, which turn, how long it had
+                # been dark, and whether the transport took it, and those are
+                # the four things needed to tell 「the agent was reminded and
+                # stayed quiet」 from 「the reminder never reached it」.
                 logger.info(
                     "chat progress reminder topic=%s turn=%s silent_min=%d "
                     "delivered=%s",
