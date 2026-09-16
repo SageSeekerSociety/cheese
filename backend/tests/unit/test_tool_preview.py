@@ -245,3 +245,34 @@ def test_pi_file_tools_show_the_workspace_relative_path():
 def test_pi_search_tools_show_what_is_being_looked_for():
     assert tool_preview("grep", {"pattern": "TODO", "path": "backend"}).text == "TODO"
     assert tool_preview("find", {"pattern": "**/*.jsonl"}).text == "**/*.jsonl"
+
+
+# ---- 重定向：这一段在写文件，不是在读 ----
+
+
+def test_a_heredoc_written_through_cat_is_a_write():
+    # agent 落脚本的常用写法。按 `cat` 的字面查表会显示成「读文件 · >」——
+    # 一次写被说成读，参数还是个重定向符号。
+    preview = command_preview("cat > /tmp/build_docx.py <<'EOF'")
+    assert preview == ToolPreview("/tmp/build_docx.py", "Write")
+
+
+def test_a_redirect_without_spaces_is_still_the_file_it_writes():
+    assert command_preview("echo hi >>notes.md") == ToolPreview("notes.md", "Write")
+
+
+def test_a_command_that_merely_redirects_its_output_is_not_a_write():
+    # 做的是跑脚本，把它说成写 out.log 同样是说错。
+    preview = command_preview("python3 build.py > out.log")
+    assert preview.action is None
+    assert preview.text == "python3 build.py > out.log"
+
+
+def test_output_thrown_away_is_not_a_file_that_was_written():
+    preview = command_preview("cat huge.log > /dev/null")
+    assert preview.action is None
+
+
+def test_merging_file_descriptors_is_not_a_redirect_target():
+    preview = command_preview("cat notes.md 2>&1")
+    assert preview == ToolPreview("notes.md", "Read")

@@ -102,7 +102,7 @@ _TOOL_ARG = {
 }
 
 #: 参数是一条 shell 命令的工具 —— 命令要拆开读，不是照着参数名取一截就完事。
-_SHELL_TOOLS = frozenset({"Bash", "bash"})
+SHELL_TOOLS = frozenset({"Bash", "bash"})
 
 # 参数本身就是一条路径的工具 —— 这些要剪工作区前缀。
 _PATH_TOOLS = frozenset(
@@ -182,6 +182,34 @@ _VALUE_FLAGS = {
 
 #: find 的第一个操作数是搜索起点（多半是 ``.``），真正说明问题的是 -name 的值。
 _NAME_FLAGS = {"-name", "-iname", "-path", "-ipath"}
+
+#: ``>`` / ``>>``，前面可以带一个文件描述符号，目标可以贴着写。``2>&1`` 和
+#: ``&>`` 不算：它们指的是另一个描述符，不是一个能显示出来的文件。
+_REDIRECT_RE = re.compile(r"^\d?>>?$|^\d?>>?(?P<target>[^&>].*)$")
+
+#: 内容从别处来、只负责把它落到重定向目标里的命令。这几个配上重定向就是「写
+#: 文件」，写的是目标那个文件 —— ``cat > x.py <<'EOF'`` 是 agent 落脚本的常用
+#: 写法，按 ``cat`` 的字面显示成「读文件」，读的人看到的是它没做过的事。
+#: 表只收这几个：``python3 s.py > out.log`` 做的是跑脚本，把它说成写 out.log
+#: 同样是说错。
+_WRITE_HEADS = frozenset({"cat", "tee", "echo", "printf"})
+
+#: 重定向到这里等于扔掉，不是产出，别把它当成写出来的文件。
+_DISCARD = "/dev/null"
+
+
+def _redirect_target(tokens: list[str]) -> str:
+    """这一段把输出写去哪个文件；没有重定向，或写去的不是文件时是空的。"""
+    for index, token in enumerate(tokens):
+        match = _REDIRECT_RE.match(token)
+        if match is None:
+            continue
+        target = match.group("target")
+        if target is None:
+            target = tokens[index + 1] if index + 1 < len(tokens) else ""
+        if target and not target.startswith(("&", "-")):
+            return target
+    return ""
 
 
 def _split_segments(command: str) -> list[str]:
@@ -295,6 +323,13 @@ def command_preview(command: str, *, work_dir: str = "") -> ToolPreview:
         return ToolPreview(_collapse(command)[:PREVIEW_MAX])
 
     head = _head_word(tokens)
+    redirect = _redirect_target(tokens)
+    if redirect:
+        # 重定向改的是这条命令在做什么，所以它先于头一个词。认得出是在落文件就
+        # 说落的哪个，认不出就原样显示 —— 按头一个词查表会把写说成读。
+        if head in _WRITE_HEADS and redirect != _DISCARD:
+            return ToolPreview(short_path(redirect, work_dir=work_dir), "Write")
+        return ToolPreview(_collapse(meaningful)[:PREVIEW_MAX])
     action = _ACTION_BY_HEAD.get(head)
     if action is None:
         return ToolPreview(_collapse(meaningful)[:PREVIEW_MAX])
@@ -315,7 +350,7 @@ def tool_preview(name: str, args: dict, *, work_dir: str = "") -> ToolPreview:
     """一次工具调用在现场怎么显示。"""
     if not isinstance(args, dict):
         return ToolPreview()
-    if name in _SHELL_TOOLS:
+    if name in SHELL_TOOLS:
         # pi 的 bash 没有 description 这个参数，所以它总是走下面的解析那条路 ——
         # 四档退让本来就是为「只有一行命令」写的，不必为它再分一支。
         described = _collapse(args.get("description") or "")

@@ -63,3 +63,75 @@ export function shouldKeepPinning(
 ): boolean {
   return height !== lastHeight && frames < maxFrames
 }
+
+// ---- 按轮分组 ----
+//
+// 现场是一条平铺的时间线，而干活本来是一轮一轮发生的：一次调用二十个工具，铺
+// 成二十条等权的行，读的人看不出哪些是同一件事的经过。每个块都带 `turn_id`
+// （人写的块为空），按它把相邻的块收成一组，组头才有地方写这一轮几步、多久。
+//
+// 相邻才收：一个 `turn_id` 在时间线上本来就是连续的，按 id 建表反而会把中间
+// 隔着别的轮次的两段拼到一起，显示出一段从未发生过的连续工作。
+
+interface NarrationMeta {
+  [key: string]: unknown
+  tool?: string
+  progress?: unknown
+}
+
+/** 这一行是工具调用，还是芝士自己说的话。 */
+export function isNarration(meta?: NarrationMeta | null): boolean {
+  if (!meta) return false
+  return meta.tool === undefined && meta.progress === true
+}
+
+export interface SiteTurn<T> {
+  /** 分组键：轮次 id，没有 id 的那些用它们头一条的 id。 */
+  key: string
+  entries: T[]
+  /** 这一组头一条的时间，组头显示它。 */
+  startedAt: string
+  /** 工具调用的条数 —— 芝士说的话不是「一步」。 */
+  steps: number
+  /** 首末之差，秒。只有一条时是 0，组头就不显示用时。 */
+  seconds: number
+}
+
+interface TurnLike {
+  id: string
+  turn_id?: string | null
+  created_at: string
+  meta?: NarrationMeta | null
+}
+
+export function groupByTurn<T extends TurnLike>(blocks: T[]): SiteTurn<T>[] {
+  const turns: SiteTurn<T>[] = []
+  for (const block of blocks) {
+    const last = turns[turns.length - 1]
+    const id = block.turn_id ?? null
+    // 没有轮次 id 的块（旧数据、人写的）各自成组：把它们收进上一组，等于声称
+    // 它们属于那一轮，而那正是我们不知道的事。
+    const sameTurn = last !== undefined && id !== null && last.key === id
+    if (sameTurn) {
+      last.entries.push(block)
+    } else {
+      turns.push({ key: id ?? block.id, entries: [block], startedAt: block.created_at, steps: 0, seconds: 0 })
+    }
+  }
+  for (const turn of turns) {
+    turn.steps = turn.entries.filter((b) => !isNarration(b.meta)).length
+    const first = Date.parse(turn.entries[0].created_at)
+    const last = Date.parse(turn.entries[turn.entries.length - 1].created_at)
+    turn.seconds = Number.isFinite(first) && Number.isFinite(last) ? Math.max(0, Math.round((last - first) / 1000)) : 0
+  }
+  return turns
+}
+
+/** 一轮用了多久，写成组头上的那一小截。 */
+export function formatSpan(seconds: number): string {
+  if (seconds < 60) return `${seconds} 秒`
+  const minutes = Math.floor(seconds / 60)
+  const rest = seconds % 60
+  if (minutes < 60) return `${minutes} 分 ${String(rest).padStart(2, '0')} 秒`
+  return `${Math.floor(minutes / 60)} 小时 ${String(minutes % 60).padStart(2, '0')} 分`
+}

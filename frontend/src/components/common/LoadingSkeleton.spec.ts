@@ -107,12 +107,13 @@ describe('每一行长得像它替代的那一行', () => {
     expect(row.querySelector('.skel__bone--when'), '右端那个时间').not.toBeNull()
   })
 
-  it('现场的一条动作：小圆点 + 动作 + 缩进的参数 + 右端的时间', () => {
+  it('现场的一条动作：一行里是小圆点 + 动词 + 参数', () => {
     const row = rows(draw({ variant: 'site', rows: 1 }), 'site')[0]
     expect(row.querySelector('.skel__bone--sdot')).not.toBeNull()
     expect(row.querySelector('.skel__bone--verb')).not.toBeNull()
-    expect(row.querySelector('.skel__bone--arg'), '不画参数那一行，一条动作就只有真的一半高').not.toBeNull()
-    expect(row.querySelector('.skel__bone--when')).not.toBeNull()
+    expect(row.querySelector('.skel__bone--arg'), '不画参数那一截，动作行就只剩一个动词').not.toBeNull()
+    // 时间悬停才出现，静止时那一格是空的 —— 骨架画上它，记录到达时反而少一块。
+    expect(row.querySelector('.skel__bone--when')).toBeNull()
   })
 
   it('一条活：标题 + 一行元信息 + 简报那一段，不画结论', () => {

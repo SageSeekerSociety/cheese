@@ -85,7 +85,12 @@ from app.domain.agent.service import (
 from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE, load_scenario, load_skills
 from app.domain.agent.stages import TopicStage, resolve_stage, stage_scenario
 from app.domain.agent.supply import SUBSCRIPTION
-from app.domain.agent.tool_preview import ToolPreview, tool_preview, work_subpath
+from app.domain.agent.tool_preview import (
+    SHELL_TOOLS,
+    ToolPreview,
+    tool_preview,
+    work_subpath,
+)
 from app.domain.agent_instance.configuration import (
     AgentConfiguration,
     validate_configuration,
@@ -349,17 +354,13 @@ def _format_tool_event(name: str, preview: ToolPreview) -> str:
 # word pair inside a Bash command. NEVER inferred from natural language.
 _CHEESE_CMD_RE = re.compile(r"\bcheese\s+\w+")
 
-#: 能跑 `cheese` CLI 的工具，每个 harness 一个名字。这里漏掉谁，谁的房间里平台
-#: 动作就一路是灰点 —— 而在没有平台工具的 harness 上，平台动作全都从这里过。
-_SHELL_TOOLS = frozenset({"Bash", "bash"})
-
 
 def _is_platform_tool(raw_name: str, args: dict) -> bool:
     """True when the tool call is a platform action: a cheese MCP tool, or a
     shell command that invokes the machine's `cheese` CLI."""
     if raw_name.startswith("mcp__cheese__"):
         return True
-    if raw_name in _SHELL_TOOLS and isinstance(args, dict):
+    if raw_name in SHELL_TOOLS and isinstance(args, dict):
         return _CHEESE_CMD_RE.search(str(args.get("command", ""))) is not None
     return False
 
@@ -2248,7 +2249,7 @@ class ChatService:
                 )
                 if payload is not None:
                     frame = {"type": "event_block", "block": payload}
-                if name == "Bash":
+                if name in SHELL_TOOLS:
                     resource = _cheese_resource(str(args.get("command", "")))
                     if resource is not None:
                         # Tell the room a panel just went stale, the moment it
