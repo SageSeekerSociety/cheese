@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -22,6 +23,8 @@ from app.domain.agent.device_hub_rpc import screen_to_json
 # the event loop — the same freeze obs.py describes, in the process every
 # executor call of every device goes through.
 configure_logging()
+
+logger = logging.getLogger(__name__)
 
 _executor_calls: dict[str, asyncio.Task[dict]] = {}
 _release_draining = False
@@ -198,6 +201,27 @@ async def call(
     return {"result": result}
 
 
+def _read_the_failure(task: asyncio.Task) -> None:
+    """Take the exception off a call that nobody came back for.
+
+    The point of the shield above is that this process finishes the call even
+    when the backend that asked for it has rolled over. When such a call ends by
+    raising and nobody ever awaits it again, asyncio reports 「Future exception
+    was never retrieved」 as it is collected — an ERROR with no route, no trace
+    id and a traceback pointing into garbage collection, which the alert channel
+    then carries as though a new thing had broken. Seven of those went out on
+    2026-09-17 and every one of them was a device already reported as offline.
+
+    Reading it here is what makes that report untrue. It costs a waiter nothing:
+    awaiting a task that has already finished re-raises the same exception.
+    """
+    if task.cancelled():
+        return
+    failure = task.exception()
+    if failure is not None:
+        logger.debug("executor call ended with no waiter: %r", failure)
+
+
 def _is_completed_executor_trace(name: str, body: dict[str, Any]) -> bool:
     if name != "call_executor":
         return False
@@ -220,6 +244,7 @@ async def _dispatch(name: str, body: dict[str, Any]) -> Any:
                     if len(_executor_calls) < 2048:
                         break
             task = asyncio.create_task(device_hub.call_executor(**body))
+            task.add_done_callback(_read_the_failure)
             _executor_calls[trace_id] = task
         # Shield makes an HTTP client disappearing during backend rollout unable
         # to cancel the call that the stable owner has already sent to the device.

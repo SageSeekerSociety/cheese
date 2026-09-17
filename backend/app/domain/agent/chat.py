@@ -32,6 +32,7 @@ from app.core.errors import GatewayUnavailableError, NotFoundError, ValidationEr
 from app.core.text import markdown_preview
 from app.domain.agent.announce import announce
 from app.domain.agent.compute import ComputePool, ComputeProvider
+from app.domain.agent.device_hub import DeviceOffline
 from app.domain.agent.gateway import LlmGateway, drain_new_usage
 from app.domain.agent.harness import Opening, SessionRef, harness_name, runtime_for
 from app.domain.agent.harness.prompt import (
@@ -1980,6 +1981,13 @@ class ChatService:
                 # is the harness's.
                 await self._compute.replay(
                     session, known_texts=await self._said(session)
+                )
+            except DeviceOffline:
+                # The machine holding this session is not there. Nothing to
+                # recover and nothing to fix; its next connection runs this.
+                logger.warning(
+                    "session not recovered for topic %s: device offline",
+                    session.topic_id,
                 )
             except Exception:  # noqa: BLE001 — one topic cannot block startup
                 logger.exception(
