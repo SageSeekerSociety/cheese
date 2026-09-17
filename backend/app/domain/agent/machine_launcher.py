@@ -498,6 +498,11 @@ if [ -n "$CS" ] && mkdir -p "$CS" 2>/dev/null; then
   export npm_config_store_dir="$CS/pnpm-store"
   export npm_config_cache="$CS/npm-cache"
   export PIP_CACHE_DIR="$CS/pip-cache"
+  # Re-export it RESOLVED. What arrived carries a literal `$HOME` the backend
+  # could not expand, and `cheese-environment.py` reads this variable to find
+  # the prefix it installs the project's tools into — a program that gets
+  # "$HOME/.cheese/store/..." as a path would make a directory called `$HOME`.
+  export CHEESE_STORE="$CS"
   CSLIVE=1
 fi
 {staging}export HOME="$CH" CHEESE_WORK="$CW"
