@@ -166,6 +166,33 @@ EOF
   ! grep -F 'force-recreate device-connection' "$docker_log" >/dev/null \
     || { rm -rf "$run_dir"; fail "owner was recreated after non-409 drain response"; }
 
+  # DEVICE_CONNECTION_INTERRUPT=1 waives the wait, and only the wait: it takes
+  # one look at the drain, and a busy answer no longer stops the release.
+  : > "$docker_log"
+  PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" \
+    APP_TIER_CURL_DRAIN_STATUSES=409 APP_TIER_CURL_DRAIN_COUNT_FILE="$run_dir/drain-interrupt-count" \
+    DEVICE_CONNECTION_INTERRUPT=1 HOME="$run_dir" \
+    "$ROOT/deploy/release-device-connection.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null
+  grep -F 'force-recreate device-connection' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "interrupting release did not recreate a busy owner"; }
+  [ "$(cat "$run_dir/drain-interrupt-count")" = 1 ] \
+    || { rm -rf "$run_dir"; fail "interrupting release polled a busy drain more than once"; }
+
+  # Waiving the wait is not waiving the error handling: a drain that answers
+  # something other than 200/409 still stops the release.
+  : > "$docker_log"
+  if PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" \
+    APP_TIER_CURL_DRAIN_STATUSES=500 APP_TIER_CURL_DRAIN_COUNT_FILE="$run_dir/drain-interrupt-error" \
+    DEVICE_CONNECTION_INTERRUPT=1 HOME="$run_dir" \
+    "$ROOT/deploy/release-device-connection.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null 2>&1; then
+    rm -rf "$run_dir"
+    fail "interrupting release ignored a broken drain endpoint"
+  fi
+  ! grep -F 'force-recreate device-connection' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "interrupting release recreated after a broken drain endpoint"; }
+
   : > "$docker_log"
   if PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" \
     APP_TIER_DOCKER_FAIL_MATCH=force-recreate HOME="$run_dir" \
