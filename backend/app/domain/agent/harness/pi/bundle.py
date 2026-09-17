@@ -19,18 +19,14 @@ def build() -> bytes:
         "app/domain/__init__.py": "",
         "app/domain/agent/__init__.py": "",
         "app/domain/agent/harness/pi/__init__.py": "",
-        # The CLI catalog is read out of the OTHER harness's worker module, and
-        # travels whole rather than as an extracted copy: it is one file, it is
-        # standard-library-only, and importing it defines classes and nothing
-        # else. Two copies of the mapping between argparse and a tool schema is
-        # the thing worth spending a package stub to avoid.
-        "app/domain/agent/harness/claude_code/__init__.py": "",
-        "app/domain/agent/harness/claude_code/remote_execution/__init__.py": "",
     }
     for relative in (
         "domain/agent/service.py",
+        # The platform CLI's own argparse tree, whole: it is one
+        # standard-library-only file, and a second copy of the mapping between
+        # a command and a tool schema is the thing worth carrying it to avoid.
+        "domain/agent/cli_worker.py",
         "domain/agent/harness/__init__.py",
-        "domain/agent/harness/claude_code/remote_execution/cli_worker.py",
         "domain/agent/harness/pi/rpc.py",
         "domain/agent/harness/pi/journal.py",
         "domain/agent/harness/pi/catalog.py",

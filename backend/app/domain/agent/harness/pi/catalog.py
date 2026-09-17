@@ -5,7 +5,7 @@ other harness. What CAN arrive is the same thing the other harness's MCP server
 is itself built out of: the CLI's own argparse tree. `cli_worker` already turns
 that tree into tool schemas and turns a tool call back into argv, and it is the
 CLI that decides what is valid — so this module reads the CLI **installed on
-this machine** and asks that module, rather than restating either half.
+this machine** and asks that one, rather than restating either half.
 
 Two consequences worth stating, because they are the point:
 
@@ -27,7 +27,7 @@ from importlib.machinery import SourceFileLoader
 from pathlib import Path
 from typing import Any
 
-from app.domain.agent.harness.claude_code.remote_execution import cli_worker
+from app.domain.agent import cli_worker
 
 # The CLI's own name on PATH. The launcher puts it in the platform's directory
 # and exports that directory, for every harness — a pi room gets it because it
