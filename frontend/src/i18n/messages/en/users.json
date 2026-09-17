@@ -1,3 +1,24 @@
 {
-  "showUsers": "Showing no users | Showing 1 user | Showing {count} users"
+  "showUsers": "Showing no users | Showing 1 user | Showing {count} users",
+  "settings": {
+    "sidebar": {
+      "profile": "Profile",
+      "realName": "Real name",
+      "privacy": "Privacy center",
+      "security": "Password & security",
+      "app": "Install on your phone"
+    },
+    "profile": {
+      "title": "Profile",
+      "avatar": "Avatar",
+      "uploadAvatar": "Upload avatar",
+      "nickname": "Nickname",
+      "intro": "Bio",
+      "nicknameRequired": "Nickname can't be empty",
+      "nicknameMax": "Nickname can be at most 50 characters",
+      "nicknameCharset": "Nickname must contain at least one Chinese character, letter or digit",
+      "avatarTooLarge": "File must be smaller than 2MB",
+      "uploadAvatarFailed": "Couldn't upload the avatar"
+    }
+  }
 }

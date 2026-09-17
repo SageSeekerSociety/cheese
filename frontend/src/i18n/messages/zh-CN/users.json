@@ -1,3 +1,24 @@
 {
-  "showUsers": "展示了 {count} 个用户"
+  "showUsers": "展示了 {count} 个用户",
+  "settings": {
+    "sidebar": {
+      "profile": "个人资料",
+      "realName": "实名信息",
+      "privacy": "隐私中心",
+      "security": "密码与安全",
+      "app": "安装到手机"
+    },
+    "profile": {
+      "title": "个人资料",
+      "avatar": "头像",
+      "uploadAvatar": "上传头像",
+      "nickname": "昵称",
+      "intro": "个人简介",
+      "nicknameRequired": "昵称不能为空",
+      "nicknameMax": "昵称最多 50 个字符",
+      "nicknameCharset": "昵称至少包含一个汉字、字母或数字",
+      "avatarTooLarge": "文件大小不能超过 2MB",
+      "uploadAvatarFailed": "上传头像失败"
+    }
+  }
 }

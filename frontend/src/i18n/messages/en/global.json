@@ -11,6 +11,10 @@
   "reply": "Reply",
   "replyFailed": "Couldn't reply",
   "replySuccess": "Replied",
+  "reset": "Reset",
+  "save": "Save",
+  "updateFailed": "Couldn't update",
+  "updateSuccess": "Updated",
   "editor": {
     "placeholder": "Say something..."
   },
