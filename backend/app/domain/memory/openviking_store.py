@@ -343,28 +343,6 @@ class OpenVikingMemoryStore:
         this is a full listing rather than a search."""
         return await self._cards(scope, scope_id, MemoryLayer.core)
 
-    async def rank_facts(
-        self,
-        scope: MemoryScope,
-        scope_id: str,
-        query: str,
-        limit: int = 500,
-    ) -> list[tuple[float, str]]:
-        """Non-core facts scored against the turn's context.
-
-        This is the one place the two backends genuinely differ in kind: here
-        the ranking is OpenViking's semantic search, so a fact can be retrieved
-        for meaning something related rather than for sharing a word. An empty
-        query has nothing to search with, so it degrades to newest-first at
-        score 0.0 — the same floor the flat backend has.
-        """
-        if not query.strip():
-            return [
-                (0.0, line) for line in reversed(await self.recall(scope, scope_id))
-            ]
-        hits = await self.search(scope, scope_id, query, limit=limit)
-        return [(h.score, h.abstract) for h in hits if h.abstract]
-
     async def count(self, scope: MemoryScope, scope_id: str) -> int:
         """Memory cards in the scope, both layers, including the ones a turn
         did not retrieve — injection subtracts the two to report what is

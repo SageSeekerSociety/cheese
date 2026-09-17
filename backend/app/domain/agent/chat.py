@@ -1007,23 +1007,6 @@ def _block_payload(block_out: BlockOut) -> dict:
     return block_out.model_dump(mode="json")
 
 
-# How much of a turn is used to retrieve memory against. A turn is not a
-# question — it is a title, a few messages and a live doc — and all of it is
-# signal, but past a couple of thousand characters the keyword set stops
-# discriminating between facts and starts matching everything equally.
-_MEMORY_QUERY_CHARS = 2000
-
-
-def _memory_query(*parts: str | None) -> str:
-    """What this turn is about, as one string, to retrieve memory against.
-
-    Pass the parts in descending order of how much they say about *this* turn —
-    what was just said, then the topic's title, then its doc. The cap cuts from
-    the tail, so a long doc can never crowd out what somebody just asked.
-    """
-    return "\n".join(p.strip() for p in parts if p and p.strip())[:_MEMORY_QUERY_CHARS]
-
-
 def _pending_human_blocks(history: list[Block]) -> list[Block]:
     """The human messages/attachments no agent turn has read into a prompt yet.
 
@@ -2844,11 +2827,9 @@ class ChatService:
         session: AsyncSession,
         *,
         topic: Topic,
-        query: str = "",
         agent: ResolvedAgent | None = None,
     ) -> RecallResult:
-        """What this 芝士 remembers inside this project, given what this turn is
-        about.
+        """What this 芝士 carries into every turn inside this project.
 
         Its own pool first, then two read-only tails: what this ROOM learned
         while memory was keyed by topic, and the shared ``project`` pool from
@@ -2856,10 +2837,9 @@ class ChatService:
         first, so neither tail grows — but dropping them would make the day this
         shipped look, from inside a room, exactly like amnesia.
 
-        ``query`` is the turn's own context: core memory ignores it (it is in
-        every turn by definition), everything else is ranked against it. Returns
-        what did *not* come in alongside what did — a pool nobody is told is
-        bigger than the prompt is how memory quietly stops existing.
+        Only the core layer comes back; everything else is counted, not
+        carried, and reached with `recall`. A pool nobody is told is bigger
+        than what arrived is how memory quietly stops existing.
         """
         own = (
             memory_pool(topic.project_id, agent)
@@ -2869,7 +2849,7 @@ class ChatService:
         legacy = legacy_topic_pool(topic.project_id, topic.id)
         pools = [own] + ([legacy] if legacy != own else [])
         pools.append((MemoryScope.project, str(topic.project_id)))
-        return await recall_pools(memory, pools, query=query)
+        return await recall_pools(memory, pools)
 
     async def _agent_handle(self, session: AsyncSession, topic_id: uuid.UUID) -> str:
         """The handle 芝士 authors under in this topic.
@@ -4128,28 +4108,14 @@ class ChatService:
             doc_root = None if is_private else await blocks.doc_root(place.room_id)
             doc_text = doc_root.content if doc_root else None
             phases_ms["identity"] = (time.monotonic() - started) * 1000
-            # Memory is retrieved against what this turn is actually about —
-            # newest message first, since a turn is usually about the thing
-            # somebody just said, and the doc last because it is the slowest-
-            # moving of the three. Fetched before the recall below, which is
-            # the only reason the doc lookup moved above it.
-            turn_query = _memory_query(
-                *(
-                    b.content
-                    for b in reversed(pending)
-                    if b.kind == BlockKind.message and b.content
-                ),
-                topic.title,
-                doc_text,
-            )
             if is_private and private_owner:
                 # Private chat: the owner's cross-project personal memory.
                 memories = await recall_pools(
-                    memory, [(MemoryScope.user, private_owner)], query=turn_query
+                    memory, [(MemoryScope.user, private_owner)]
                 )
             else:
                 memories = await self._recall_agent_memories(
-                    memory, session, topic=topic, query=turn_query, agent=agent
+                    memory, session, topic=topic, agent=agent
                 )
             phases_ms["memory"] = (time.monotonic() - started) * 1000
             projects_repo = ProjectRepository(session)
@@ -4488,7 +4454,6 @@ class ChatService:
             topic_refs_for_prompt,
             untitled,
             memories_omitted=memories.omitted,
-            memories_core=memories.core_count,
             memories_core_omitted=memories.core_omitted,
             turn_meta=_turn_meta_lines(
                 is_resume=is_resume,
@@ -4815,14 +4780,7 @@ class ChatService:
                 # 原始素材，不是房间里的一句话：房间读的是芝士消化出来的结构化文档。
                 meta={"in_room": False},
             )
-            memories = await self._recall_agent_memories(
-                memory,
-                session,
-                topic=topic,
-                # The activity note IS the whole context here — there is no
-                # history yet, the topic was created two statements ago.
-                query=_memory_query(text),
-            )
+            memories = await self._recall_agent_memories(memory, session, topic=topic)
             topic_id = topic.id
             compute_id = _resolve_compute_id(
                 project.settings,
@@ -4836,7 +4794,6 @@ class ChatService:
             None,
             memories.facts,
             memories_omitted=memories.omitted,
-            memories_core=memories.core_count,
             memories_core_omitted=memories.core_omitted,
         )
         prompt = (
@@ -5005,14 +4962,7 @@ class ChatService:
             # summary describes the project, and what a 芝士 learned for itself is
             # not project knowledge.
             memories = await recall_pools(
-                memory,
-                [(MemoryScope.project, str(project_id))],
-                # The one-pager is about the project as a whole, so its name and
-                # its topic titles are the context to pull memory against — the
-                # nearest thing this call has to "what is being asked".
-                query=_memory_query(
-                    project.name, *(t.title for t in all_topics if t.title)
-                ),
+                memory, [(MemoryScope.project, str(project_id))]
             )
             agents = AgentInstanceService(session)
             agent = await agents.for_project(project)
