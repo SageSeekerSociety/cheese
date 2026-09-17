@@ -1,10 +1,14 @@
-// 软键盘盖住多少：这一份守的是「基准是 CSS 此刻认的那个 100dvh」。
+// 软键盘盖住多少：这一份守的是「基准是布局视口本身」。
 //
-// 手机浏览器分两派：一派把布局视口跟着键盘一起缩（`100dvh` 自己就变小了），一派
-// 只缩「看得见的那块」而让页面毫不知情。同一段减法要在两派上都对，唯一的办法是
-// 拿 CSS 真正在减的那个数当基准——量一根 100dvh 高的尺子——而不是任何一个可能
-// 跟着缩、也可能不跟着缩的 window 属性。下面第二条用例钉的就是这个。
-import { afterEach, describe, expect, it } from 'vitest'
+// 手机浏览器分两派：一派把布局视口跟着键盘一起缩（那时页面自己就矮了，不该再减
+// 一次），一派只缩「看得见的那块」（那时要减掉整块）。同一段减法要在两派上都对，
+// 基准就只能取布局视口 `document.documentElement.clientHeight`——它要么跟着键盘
+// 一起缩、要么纹丝不动，两种都不需要分支。
+//
+// 注意：`trackKeyboardInset` 往 window 上挂的是全局监听，用例之间不会自己摘掉。
+// 下面几条会依次触发它，靠的是「后注册的监听后触发」——每个用例都在最前面调它，
+// 于是它写进去的那个值总是最后一个落的。
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { hiddenByKeyboard, trackKeyboardInset } from './keyboardInset'
 
@@ -13,7 +17,7 @@ describe('hiddenByKeyboard', () => {
     expect(hiddenByKeyboard(780, 480, 0)).toBe(300)
   })
 
-  it('浏览器自己把布局视口缩掉了（Chrome 的 resizes-content）：尺子跟着变短，不能再减一次', () => {
+  it('浏览器自己把布局视口缩掉了（Chrome 的 resizes-content）：不能再减一次', () => {
     expect(hiddenByKeyboard(480, 480, 0)).toBe(0)
   })
 
@@ -46,39 +50,109 @@ function fakeVisualViewport(height: number, offsetTop = 0): FakeVv {
   }
 }
 
-// 那根 100dvh 的尺子：happy-dom 不做布局，getBoundingClientRect 恒为 0，所以这里
-// 按尺子被插进 body 的那一刻把它的高度钉住。
-function withCssViewportHeight(px: number) {
-  const realAppend = document.body.appendChild.bind(document.body)
-  document.body.appendChild = ((el: HTMLElement) => {
-    const node = realAppend(el)
-    if (el.hasAttribute?.('data-keyboard-probe')) {
-      el.getBoundingClientRect = () => ({ height: px }) as DOMRect
-    }
-    return node
-  }) as typeof document.body.appendChild
+function setVisualViewport(vv: unknown) {
+  ;(globalThis as unknown as { visualViewport: unknown }).visualViewport = vv
 }
+
+/** happy-dom 不做布局，clientHeight 恒为 0：布局视口多高由用例钉住。 */
+function fakeLayoutHeight(px: number) {
+  const box = { px }
+  Object.defineProperty(document.documentElement, 'clientHeight', {
+    configurable: true,
+    get: () => box.px,
+  })
+  return box
+}
+
+const appHeight = () => document.documentElement.style.getPropertyValue('--app-height')
+const inset = () => document.documentElement.style.getPropertyValue('--keyboard-inset')
 
 // 量高度合并到下一帧，所以断言前要等一帧。
 const raf = () => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)))
 
-afterEach(() => {
+afterEach(async () => {
+  vi.useRealTimers() // 先还回真时钟，否则下面那一帧永远等不到
+  // 再放一帧：上一条用例可能还排着「下一帧再量一次」（rAF 按注册顺序执行），让它
+  // 在这一帧里跑完，别落进下一条用例的帧里把断言写花。
+  await raf()
+  document.documentElement.style.removeProperty('--app-height')
   document.documentElement.style.removeProperty('--keyboard-inset')
 })
 
 describe('trackKeyboardInset', () => {
-  it('把遮挡高度写成 <html> 上的 --keyboard-inset，键盘一动就跟着改', async () => {
+  it('把布局视口高度和遮挡高度一起写在 <html> 上，键盘一动就跟着改', async () => {
     const vv = fakeVisualViewport(780)
-    ;(globalThis as unknown as { visualViewport: unknown }).visualViewport = vv
-    withCssViewportHeight(780)
+    setVisualViewport(vv)
+    fakeLayoutHeight(780)
 
     trackKeyboardInset()
     await raf()
-    expect(document.documentElement.style.getPropertyValue('--keyboard-inset')).toBe('0px')
+    // CSS 减的就是这两个数：视口多高、被盖住多少。没有键盘时遮挡是 0。
+    expect(appHeight()).toBe('780px')
+    expect(inset()).toBe('0px')
 
-    vv.height = 480 // 键盘弹起来
+    vv.height = 480 // 键盘弹起来，布局视口没动
     vv.fire()
     await raf()
-    expect(document.documentElement.style.getPropertyValue('--keyboard-inset')).toBe('300px')
+    expect(inset()).toBe('300px')
+  })
+
+  it('浏览器把布局视口一起缩了：两个数都矮下去，遮挡是 0', async () => {
+    const vv = fakeVisualViewport(480)
+    setVisualViewport(vv)
+    const box = fakeLayoutHeight(480)
+
+    trackKeyboardInset()
+    await raf()
+    expect(appHeight()).toBe('480px')
+    expect(inset()).toBe('0px')
+
+    box.px = 780 // 键盘收起来
+    vv.height = 780
+    window.dispatchEvent(new Event('resize'))
+    await raf()
+    expect(appHeight()).toBe('780px')
+    expect(inset()).toBe('0px')
+  })
+
+  it('只发 window.resize 的浏览器也要醒', async () => {
+    // 有的浏览器键盘弹出时 visualViewport 一个事件都不发。挂在 vv 上的那两条
+    // 监听这时全是哑的，只剩 window.resize 能把我们叫起来。
+    const vv = fakeVisualViewport(900)
+    setVisualViewport(vv)
+    fakeLayoutHeight(900)
+
+    trackKeyboardInset()
+    await raf()
+
+    vv.height = 600
+    window.dispatchEvent(new Event('resize'))
+    await raf()
+    expect(inset()).toBe('300px')
+  })
+
+  it('焦点变化后过一拍、再过一拍各量一次（有的浏览器收键盘时什么都不发）', async () => {
+    const vv = fakeVisualViewport(800)
+    setVisualViewport(vv)
+    fakeLayoutHeight(800)
+
+    trackKeyboardInset()
+    await raf()
+
+    vi.useFakeTimers()
+    vv.height = 500
+    window.dispatchEvent(new Event('focusin'))
+    vi.advanceTimersByTime(600)
+    expect(inset()).toBe('300px')
+  })
+
+  it('没有 visualViewport 的浏览器：不遮挡，照报视口高度', async () => {
+    setVisualViewport(undefined)
+    fakeLayoutHeight(700)
+
+    trackKeyboardInset()
+    await raf()
+    expect(appHeight()).toBe('700px')
+    expect(inset()).toBe('0px')
   })
 })
