@@ -408,6 +408,12 @@ function registerBackgroundTools(pi: any, spec: Manifest) {
         ],
         { detached: true, stdio: "ignore" },
       );
+      // A spawn that never reached a program (no python3, no such file) reports
+      // itself here and nowhere else — there is no process to have left a trace.
+      let unstarted = "";
+      child.on("error", (cause: any) => {
+        unstarted = String(cause?.message ?? cause);
+      });
       child.unref();
       await new Promise((done) => setTimeout(done, SETTLE_MS));
       started.set(id, { id, dir });
@@ -416,13 +422,22 @@ function registerBackgroundTools(pi: any, spec: Manifest) {
       // milliseconds still returned 「已启动…(还没有输出)」, and every later
       // tool agreed — a job that is running, silent and unreachable reads
       // exactly like a server that has not printed its banner yet.
+      //
+      // Said only when it is known, never inferred from an empty directory: the
+      // outer process exits as soon as it has forked, so its status is the one
+      // fact available at this point that separates a guardian that died from
+      // one that is merely slow — python3 starting cold on a loaded machine can
+      // outlast this wait, and a job wrongly reported dead is started again,
+      // which is two dev servers fighting over one port.
       const why = failure(dir);
       if (why) {
         return { ...text(`${id} 没能起来：\n${why}`), isError: true };
       }
-      if (!meta(dir).pid) {
+      if (unstarted || (child.exitCode !== null && child.exitCode !== 0)) {
         return {
-          ...text(`${id} 没能起来：看守进程没有留下任何记录（${dir}）`),
+          ...text(
+            `${id} 没能起来：看守进程没有留下任何记录（${unstarted || dir}）`,
+          ),
           isError: true,
         };
       }

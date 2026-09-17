@@ -367,6 +367,17 @@ describe("后台任务起不来的时候", () => {
     assert.match(answer.content[0].text, /没能起来/);
   });
 
+  it("只是起得慢，不算起不来", async () => {
+    // python3 在一台负载满的机器上冷启动可以超过这段等待，而机器正忙恰恰是有人
+    // 把活放到后台去的时候。把慢说成死，模型会再起一遍 —— 两个 dev server 抢
+    // 同一个端口，正是这套东西本来要避免的那种残留。
+    const { pi } = await guarded(`sleep 3 &`);
+
+    const answer = await pi.call("bash_start", { command: "sleep 30" });
+    assert.notEqual(answer.isError, true);
+    assert.match(answer.content[0].text, /started/);
+  });
+
   it("看守进程不在了的任务，不叫 running", async () => {
     // `exit` is written by the guardian, so a guardian that was killed outright
     // leaves none — and a reader going by that file alone waits for an answer
