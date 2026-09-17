@@ -615,6 +615,7 @@ dependencies = [
     { name = "pymupdf4llm" },
     { name = "pyotp" },
     { name = "python-dotenv" },
+    { name = "pywebpush" },
     { name = "pyyaml" },
     { name = "redis" },
     { name = "segno" },
@@ -662,6 +663,7 @@ requires-dist = [
     { name = "pymupdf4llm", specifier = ">=1.28.0" },
     { name = "pyotp", specifier = ">=2.10.0" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
+    { name = "pywebpush", specifier = ">=2.5.0" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "redis", specifier = ">=8.0.1" },
     { name = "segno", specifier = ">=1.6.6" },
@@ -1217,6 +1219,15 @@ sdist = { url = "https://files.pythonhosted.org/packages/ac/b6/b55c3f49042f1df3d
 wheels = [
     { url = "https://files.pythonhosted.org/packages/6c/dd/a834df6482147d48e225a49515aabc28974ad5a4ca3215c18a882565b028/html5lib-1.1-py2.py3-none-any.whl", hash = "sha256:0d78f8fde1c230e99fe37986a60526d7049ed4bf8a9fadbad5f00e22e58e041d", size = 112173, upload-time = "2020-06-22T23:32:36.781Z" },
 ]
+
+[[package]]
+name = "http-ece"
+version = "1.2.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/7c/af/249d1576653b69c20b9ac30e284b63bd94af6a175d72d87813235caf2482/http_ece-1.2.1.tar.gz", hash = "sha256:8c6ab23116bbf6affda894acfd5f2ca0fb8facbcbb72121c11c75c33e7ce8cff", size = 8830, upload-time = "2024-08-08T00:10:47.301Z" }
 
 [[package]]
 name = "httpcore"
@@ -2370,6 +2381,18 @@ wheels = [
 ]
 
 [[package]]
+name = "py-vapid"
+version = "1.9.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a3/ed/c648c8018fab319951764f4babe68ddcbbff7f2bbcd7ff7e531eac1788c8/py_vapid-1.9.4.tar.gz", hash = "sha256:a004023560cbc54e34fc06380a0580f04ffcc788e84fb6d19e9339eeb6551a28", size = 74750, upload-time = "2026-01-05T22:13:25.201Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7f/15/f9d0171e1ad863ca49e826d5afb6b50566f20dc9b4f76965096d3555ce9e/py_vapid-1.9.4-py2.py3-none-any.whl", hash = "sha256:f165a5bf90dcf966b226114f01f178f137579a09784c7f0628fa2f0a299741b6", size = 23912, upload-time = "2026-01-05T20:42:05.455Z" },
+]
+
+[[package]]
 name = "pyasn1"
 version = "0.6.4"
 source = { registry = "https://pypi.org/simple" }
@@ -2782,6 +2805,22 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/ff/46/dd499ec9038423421951e4fad73051febaa13d2df82b4064f87af8b8c0c3/pytz-2026.2.tar.gz", hash = "sha256:0e60b47b29f21574376f218fe21abc009894a2321ea16c6754f3cad6eb7cdd6a", size = 320861, upload-time = "2026-05-04T01:35:29.667Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ec/dd/96da98f892250475bdf2328112d7468abdd4acc7b902b6af23f4ed958ea0/pytz-2026.2-py2.py3-none-any.whl", hash = "sha256:04156e608bee23d3792fd45c94ae47fae1036688e75032eea2e3bf0323d1f126", size = 510141, upload-time = "2026-05-04T01:35:27.408Z" },
+]
+
+[[package]]
+name = "pywebpush"
+version = "2.5.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "cryptography" },
+    { name = "http-ece" },
+    { name = "py-vapid" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/54/ff/db9efe7454d329bfa6fe433e0f881eb9d28489fc4b8427ee2fbaedc5f42b/pywebpush-2.5.0.tar.gz", hash = "sha256:8260f8e42d70ed95a3bd00527ffcb43b5b3df8983a4a48b059fe29b06dc3d92c", size = 28565, upload-time = "2026-08-29T21:57:11.062Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/65/fc/32c8902ce796e8b21c229fa50478fd70e2be2fe7c3ac2259771cf1d5aa07/pywebpush-2.5.0-py3-none-any.whl", hash = "sha256:b5f5d45024223a04e73fe17f7a8e62540f35bbcc62b49e64d0a1080ff2dc26f2", size = 22520, upload-time = "2026-08-30T20:32:15.039Z" },
 ]
 
 [[package]]

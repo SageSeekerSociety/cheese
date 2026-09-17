@@ -37,6 +37,7 @@ dependencies = [
     "webauthn>=3.0.0",
     "websockets>=16.0",
     "fusepy>=3.0.1",
+    "pywebpush>=2.5.0",
 ]
 
 [dependency-groups]
