@@ -333,3 +333,69 @@ describe("读后台任务的输出", () => {
     );
   });
 });
+
+// 任务起不来的时候，这一侧是唯一会说话的一侧。
+//
+// The guardian daemonizes, so from the moment it forks it has no stdout, no
+// stderr and nobody waiting on it. Everything it fails to do reaches the room
+// only if these tools go looking — and until they did, a guardian that died in
+// its first milliseconds was reported as a job that had started and simply not
+// printed anything yet, by every one of them, forever.
+describe("后台任务起不来的时候", () => {
+  /** A stand-in guardian: whatever this shell leaves in the job directory. */
+  async function guarded(script: string) {
+    const home = scratch();
+    const guardian = path.join(home, "guardian.sh");
+    fs.writeFileSync(guardian, `#!/bin/sh\ndir="$2"\nmkdir -p "$dir"\n${script}\n`);
+    fs.chmodSync(guardian, 0o755);
+    return load({ python: "/bin/sh", background: guardian });
+  }
+
+  it("看守进程留下的原因，就是这个工具的回答", async () => {
+    const { pi } = await guarded(`printf 'AF_UNIX path too long' > "$dir/error"`);
+
+    const answer = await pi.call("bash_start", { command: "sleep 30" });
+    assert.equal(answer.isError, true);
+    assert.match(answer.content[0].text, /AF_UNIX path too long/);
+  });
+
+  it("看守进程什么都没留下时，也说出来", async () => {
+    const { pi } = await guarded("exit 1");
+
+    const answer = await pi.call("bash_start", { command: "sleep 30" });
+    assert.equal(answer.isError, true);
+    assert.match(answer.content[0].text, /没能起来/);
+  });
+
+  it("看守进程不在了的任务，不叫 running", async () => {
+    // `exit` is written by the guardian, so a guardian that was killed outright
+    // leaves none — and a reader going by that file alone waits for an answer
+    // that is never coming.
+    const { pi, jobs } = await load({ python: "python3", background: "/bg.py" });
+    const dir = path.join(jobs, "job-1-gone");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, "meta.json"),
+      JSON.stringify({ command: "sleep 30", pid: 0x400000 }),
+    );
+
+    const said = (await pi.call("bash_list", {})).content[0].text;
+    assert.doesNotMatch(said, /running/);
+  });
+
+  it("打字进一个已经结束的任务，得到的是它结束了", async () => {
+    const { pi, jobs } = await load({ python: "python3", background: "/bg.py" });
+    const dir = path.join(jobs, "job-1-over");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, "meta.json"),
+      JSON.stringify({ command: "x", sock: path.join(dir, "never-bound.sock") }),
+    );
+    fs.writeFileSync(path.join(dir, "exit"), JSON.stringify({ status: 3, at: 0 }));
+
+    await assert.rejects(
+      () => pi.call("bash_write", { id: "job-1-over", text: "hello" }),
+      /退出码 3/,
+    );
+  });
+});

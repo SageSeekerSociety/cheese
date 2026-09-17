@@ -235,11 +235,40 @@ function finished(dir: string): { status: number; at: number } | null {
   return body ? JSON.parse(body) : null;
 }
 
+function meta(dir: string): any {
+  try {
+    return JSON.parse(readFile(path.join(dir, "meta.json")) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+// What the guardian wrote on its way out when it never got to hold a terminal.
+// Empty for every job that ran, which is why it can be reported wherever it is
+// not empty: a job that printed nothing and a job whose guardian died having
+// printed nothing are the same silence until this file is read.
+function failure(dir: string): string {
+  return readFile(path.join(dir, "error")).trim();
+}
+
+// `exit` is written by the guardian, so it is missing both while a job runs and
+// after a guardian is killed outright — and a reader with only that file to go
+// on calls the second one `running`, forever. The pid settles it.
+function alive(pid: unknown): boolean {
+  if (typeof pid !== "number") return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function describe(dir: string, id: string): string {
-  const meta = JSON.parse(readFile(path.join(dir, "meta.json")) || "{}");
+  const info = meta(dir);
   const over = finished(dir);
-  const state = over ? `exited ${over.status}` : "running";
-  return `${id}  ${state}  ${meta.label || meta.command || ""}`;
+  const state = over ? `exited ${over.status}` : alive(info.pid) ? "running" : "lost";
+  return `${id}  ${state}  ${info.label || info.command || ""}`;
 }
 
 // Everything is asked for a dumb terminal, so most of this never arrives — but
@@ -302,14 +331,35 @@ function drain(
   }
 }
 
+// Why this job cannot be reached, in the order a reader wants to hear it: it
+// finished, or its guardian died and said why, or the connection itself failed
+// and the errno is all anyone has. Reported as one answer rather than the flat
+// "is not running any more" — that sentence was also true of a job whose
+// control socket had never been bound, and it sent the reader looking at the
+// command instead of at us.
+function unreachable(dir: string, id: string, cause: unknown): Error {
+  const over = finished(dir);
+  if (over) return new Error(`${id} 已结束，退出码 ${over.status}`);
+  const why = failure(dir);
+  if (why) return new Error(`${id} 的看守进程没能起来：\n${why}`);
+  return new Error(`${id} 的控制口连不上：${(cause as any)?.message ?? cause}`);
+}
+
 function tell(spec: Manifest, id: string, request: unknown): Promise<any> {
+  const dir = jobDir(spec, id);
+  // The address comes from the job's own record rather than from a second copy
+  // of the naming rule on this side: it is short for a reason (background.py
+  // says which), and of two copies of a rule one eventually becomes the wrong
+  // one.
+  const address = meta(dir).sock;
   return new Promise((resolve, reject) => {
-    const connection = net.connect(path.join(jobDir(spec, id), "sock"));
+    if (typeof address !== "string" || !address) {
+      return reject(unreachable(dir, id, "任务没有记下控制口的位置"));
+    }
+    const connection = net.connect(address);
     let received = "";
     connection.setEncoding("utf8");
-    connection.on("error", () =>
-      reject(new Error(`${id} is not running any more`)),
-    );
+    connection.on("error", (cause: unknown) => reject(unreachable(dir, id, cause)));
     connection.on("data", (chunk: string) => {
       received += chunk;
     });
@@ -361,6 +411,21 @@ function registerBackgroundTools(pi: any, spec: Manifest) {
       child.unref();
       await new Promise((done) => setTimeout(done, SETTLE_MS));
       started.set(id, { id, dir });
+      // The settle wait is already being spent, so spend it on the one question
+      // this answer used to get wrong: a guardian that died in its first
+      // milliseconds still returned 「已启动…(还没有输出)」, and every later
+      // tool agreed — a job that is running, silent and unreachable reads
+      // exactly like a server that has not printed its banner yet.
+      const why = failure(dir);
+      if (why) {
+        return { ...text(`${id} 没能起来：\n${why}`), isError: true };
+      }
+      if (!meta(dir).pid) {
+        return {
+          ...text(`${id} 没能起来：看守进程没有留下任何记录（${dir}）`),
+          isError: true,
+        };
+      }
       const over = finished(dir);
       const first = drain(dir).body;
       return text(
@@ -392,6 +457,10 @@ function registerBackgroundTools(pi: any, spec: Manifest) {
       const dir = jobDir(spec, params.id);
       const { body, drawing } = drain(dir, params.from);
       const over = finished(dir);
+      const why = failure(dir);
+      if (why) {
+        return { ...text(`${params.id} 的看守进程出错了：\n${why}`), isError: true };
+      }
       const screen = drawing
         ? "\n\n[这个程序切到了全屏界面，之后它输出的是画面控制指令，读不出内容。" +
           "用 bash_kill 结束它，改用非交互的等价命令。]"
