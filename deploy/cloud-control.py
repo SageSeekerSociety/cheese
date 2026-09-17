@@ -66,7 +66,7 @@ async def inventory(container):
     return {identity(row): row for row in rows}
 
 
-async def forward(key, state_dir, backend_port):
+async def forward(key, state_dir, backend_port, owner_port):
     machine_id, device_id, ip, user = key
     while True:
         process = None
@@ -80,7 +80,24 @@ async def forward(key, state_dir, backend_port):
                 # IPs are recycled; a new provider/device identity gets a new key pin.
                 "-o", f"HostKeyAlias=cheese-cloud-{machine_id}-{device_id}",
                 "-o", f"UserKnownHostsFile={state_dir / 'known_hosts'}",
-                "-R", f"127.0.0.1:18080:127.0.0.1:{backend_port}", f"{user}@{ip}",
+                "-R", f"127.0.0.1:18080:127.0.0.1:{backend_port}",
+                # The device's control channel gets its own forward, landing on
+                # the connection owner instead of on api-front. Both ports on
+                # the box are loopback-only, so the tunnel is the only way in
+                # either way — what changes is which process answers.
+                #
+                # Sharing :18080 cost a reconnect on every deploy. api-front's
+                # backend upstream is swapped by `nginx -s reload`, and a reload
+                # retires the old worker: `worker_shutdown_timeout 30s` then
+                # closes whatever long-lived connections it still held. The
+                # device link was one of them — for nothing, since its own
+                # target (`location = /connector/agent` → 127.0.0.1:18083) is a
+                # literal that no release touches. Measured on dev
+                # (2026-09-16 18:16:37): several hundred `connection closed` in
+                # the owner's log in one second, and `connection open` again at
+                # :38, inside a deploy window. Ten-odd deploys a day, ten-odd
+                # rounds of that.
+                "-R", f"127.0.0.1:18083:127.0.0.1:{owner_port}", f"{user}@{ip}",
                 stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.PIPE,
@@ -120,13 +137,15 @@ async def run(args):
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stop.set)
-    log("started", backend_container=args.backend_container, backend_port=args.backend_port)
+    log("started", backend_container=args.backend_container,
+        backend_port=args.backend_port, owner_port=args.owner_port)
     try:
         while not stop.is_set():
             try:
                 desired = await inventory(args.backend_container)
                 await reconcile(tasks, desired,
-                                lambda key: forward(key, args.state_dir, args.backend_port))
+                                lambda key: forward(key, args.state_dir, args.backend_port,
+                                                    args.owner_port))
             except Exception as error:
                 # A container rollout must not tear down established connections.
                 log("inventory_failed", error=repr(error))
@@ -143,6 +162,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--backend-container", default="cheese-backend-1")
     parser.add_argument("--backend-port", type=int, default=8081)
+    # The connection owner, published loopback-only by the standing
+    # compose stack. Deploys never recreate it, which is the point of
+    # sending the device link here rather than through api-front.
+    parser.add_argument("--owner-port", type=int, default=18083)
     parser.add_argument("--state-dir", type=Path,
                         default=Path.home() / ".local/state/cheese-cloud-control")
     asyncio.run(run(parser.parse_args()))

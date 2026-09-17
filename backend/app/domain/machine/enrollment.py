@@ -99,8 +99,20 @@ def bootstrap_script(
             "base": f"{origin.rstrip('/')}/connector",
             "token": token,
             "device_id": device_id,
+            # :18083 rather than :18080, which the rest of this tunnel uses.
+            # Both are forwards `cloud-control.py` opens on the machine, but
+            # this one lands on the connection owner instead of api-front.
+            #
+            # api-front is reloaded by every release (its backend upstream
+            # is swapped that way) and a reload retires the old worker,
+            # taking the long-lived connections it held with it after
+            # `worker_shutdown_timeout`. The control channel was losing a
+            # reconnect to that on every deploy while its own destination
+            # never moved. The owner is the process deploys deliberately do
+            # not recreate, so a link that lands on it directly survives
+            # them.
             **(
-                {"ws": "ws://127.0.0.1:18080/connector/agent"}
+                {"ws": "ws://127.0.0.1:18083/connector/agent"}
                 if settings.microcloud_direct_control
                 else {}
             ),
