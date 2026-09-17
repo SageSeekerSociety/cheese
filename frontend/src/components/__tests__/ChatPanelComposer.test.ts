@@ -38,6 +38,9 @@ vi.mock('../../api', async () => {
     // 带不了这个头，挂上去的结果是 401。输入框的缩略图得用 attachmentImageUrl 取字节。
     attachmentRawUrl: () => '',
     attachmentImageUrl: vi.fn().mockResolvedValue('blob:composer-thumb'),
+    // PDF 缩略图要取的原始字节。jsdom 里画不出一页 PDF，所以让它拿不到——
+    // 这一格于是落到「图标 + title 写名字」的兜底上，正是下面断言的那个形状。
+    previewFileBytes: vi.fn().mockRejectedValue(new Error('no bytes under test')),
     uploadAttachment: vi.fn(),
     downloadFile: vi.fn(),
   }
@@ -210,7 +213,9 @@ describe('对话栏自己的输入栏', () => {
     const file = new File(['%PDF'], '需求 文档.pdf', { type: 'application/pdf' })
     await fireEvent.change(input, { target: { files: [file] } })
     await flush()
-    expect(container.querySelector('.att-strip')?.textContent).toContain('需求 文档.pdf')
+    // PDF 占一个和图片一样的方格，名字挂在 title 上——发之前要确认的是「附的是
+    // 哪一份」，一行 `需求 文档.pdf` 回答不了，首页能。
+    expect(container.querySelector('.att-strip .pdf-thumb')?.getAttribute('title')).toBe('需求 文档.pdf')
     expect(container.querySelector('.att-strip img')).toBeNull()
     await fireEvent.click(container.querySelector('[title="发送"]')!)
     await flush()
