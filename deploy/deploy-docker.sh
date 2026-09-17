@@ -849,6 +849,12 @@ RECLAIM_PENDING=0
 # quietly reclaiming nothing forever. Best-effort, exactly like the reclaim
 # above — a box with no rooms on it is the normal case, not a failure.
 bash "$HERE/reclaim-room-caches.sh" --apply 2>&1 | sed 's/^/  /' || true
+# And the checkouts the old layout left behind. Until #936 a room's working
+# directory was `~/.cheese/work/<project>/<room>`; nothing has written there
+# since, and on dev that was still 107GB. Gated on publication, from the same
+# module archival uses — a checkout holding work that never left the box is the
+# user's only copy of it, and is kept and reported instead.
+python3 "$HERE/reclaim-legacy-room-checkouts.py" --apply 2>&1 | sed 's/^/  /' || true
 echo "$(date -Iseconds) $SHA" >> "$HERE/deploy-docker.log"
 if [ "$AGENT_RUNTIME_IMAGES_REQUIRED" = true ]; then
   log "DEPLOY OK: sha=$SHA healthy; agent runtime images verified and retained"
