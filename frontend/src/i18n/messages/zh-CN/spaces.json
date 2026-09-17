@@ -128,6 +128,91 @@
     "analytics": {
       "title": "数据分析"
     },
+    "memberTasks": {
+      "viewAllChallenges": "去看全部赛题",
+      "filter": "筛选",
+      "clearFilters": "清空筛选",
+      "all": "全部",
+      "sortBy": "排序字段",
+      "sortOrder": "排序方向",
+      "sortDesc": "降序",
+      "sortAsc": "升序",
+      "notAvailable": "暂无",
+      "approval": {
+        "pending": "待审核",
+        "approved": "已通过",
+        "notApproved": "未通过"
+      },
+      "completion": {
+        "status": "完成状态",
+        "notSubmitted": "待提交",
+        "pendingReview": "待评审",
+        "resubmittable": "可重提",
+        "failed": "未完成",
+        "success": "已成功"
+      },
+      "visibility": {
+        "ended": "已结项",
+        "approvedVisible": "已通过且可见",
+        "approvedHidden": "已通过但隐藏",
+        "rejected": "已驳回"
+      },
+      "identity": {
+        "label": "参与身份",
+        "individual": "个人参与",
+        "team": "团队参与"
+      },
+      "deadline": {
+        "none": "无截止时间",
+        "passed": "已于 {date} 截止",
+        "today": "今日截止",
+        "tomorrow": "明日截止",
+        "inDays": "{days} 天后截止",
+        "onDate": "{date} 截止"
+      },
+      "participating": {
+        "approvalStatus": "报名审批状态",
+        "emptyTitle": "还没有参与记录",
+        "emptyText": "你在这个空间里还没有参与任何赛题，可以先去全部赛题里挑一个开始。",
+        "overview": {
+          "pendingApproval": "报名还在等待老师或管理员确认",
+          "awaitingSubmission": "已经通过审核，但还没有完成提交",
+          "pendingReview": "作品已经提交，等待老师给出评审结果",
+          "resubmittable": "被打回但仍然可以继续修改并重新提交"
+        },
+        "sort": {
+          "joinedAt": "最近加入",
+          "deadline": "截止时间",
+          "latestSubmission": "最近提交"
+        },
+        "loadOverviewFailed": "加载参与概览失败",
+        "loadFailed": "加载我参与的赛题失败"
+      },
+      "publishing": {
+        "approvalStatus": "题目审批状态",
+        "category": "分类",
+        "emptyTitle": "还没有发布记录",
+        "emptyText": "你在这个空间下还没有发布过赛题，发布后会在这里集中查看审核和参与状态。",
+        "goPublish": "去发布赛题",
+        "overview": {
+          "pendingTaskApproval": "待审核题目",
+          "pendingTaskApprovalHint": "还在等待空间管理员审核的题目数",
+          "pendingParticipantApproval": "待审核报名",
+          "pendingParticipantApprovalHint": "需要你尽快确认的报名主体",
+          "pendingReviewSubmission": "待评审提交",
+          "pendingReviewSubmissionHint": "已经提交但还没有完成评审的作品",
+          "successfulParticipants": "成功主体数",
+          "successfulParticipantsHint": "当前空间内通过你题目的成功主体"
+        },
+        "sort": {
+          "participantCount": "报名主体数",
+          "pendingReview": "待评审数",
+          "successRate": "成功率"
+        },
+        "loadOverviewFailed": "加载发布概览失败",
+        "loadFailed": "加载我发布的赛题失败"
+      }
+    },
     "publishTask": {
       "title": "发布赛题",
       "back": "返回",
