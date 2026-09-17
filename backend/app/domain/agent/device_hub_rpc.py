@@ -102,6 +102,19 @@ class RemoteDeviceHub:
                 # A release remains healthy enough to finish requests already in
                 # flight; the next successful poll restores the read view.
                 continue
+            except Exception:  # noqa: BLE001 — the read view must not freeze
+                # Anything else used to end this loop for the life of the
+                # process, and nothing observes the task: it is created bare and
+                # only ever awaited by `close()` under `return_exceptions=True`,
+                # which discards what killed it. The read view then froze at its
+                # last good snapshot — `is_online` kept answering yes about a
+                # machine that had gone, and the screen and device teardown that
+                # `refresh` drives stopped happening — with nothing said
+                # anywhere. A malformed body is enough to do it: the owner
+                # answering HTML instead of JSON raises inside `response.json()`,
+                # which is neither an HTTPError nor an OSError.
+                logger.exception("device snapshot refresh failed; retrying in 1s")
+                continue
 
     async def refresh(self) -> None:
         previous_devices = self._devices

@@ -1377,15 +1377,34 @@ class ClaudeCodeRuntime:
                 attribution = subscription.current_work
                 consumer = self._event_consumer
                 if attribution is not None and consumer is not None:
-                    await consumer(
-                        subscription.project_id,
-                        subscription.topic_id,
-                        attribution.work_id,
-                        event,
-                        None,
-                        False,
-                        attribution.platform_unsolicited,
-                    )
+                    try:
+                        await consumer(
+                            subscription.project_id,
+                            subscription.topic_id,
+                            attribution.work_id,
+                            event,
+                            None,
+                            False,
+                            attribution.platform_unsolicited,
+                        )
+                    except Exception:  # noqa: BLE001 — keep the subscription alive
+                        # The same call one screen up is already guarded this
+                        # way ("keep the stream alive"); this one was not, and
+                        # it is the one that runs while reporting a watchdog
+                        # verdict. A database blip here left by the
+                        # `except BaseException` below, which re-raises — out of
+                        # the consumer task, which nothing awaits — so that
+                        # topic's hooks were never translated again: no
+                        # assistant message, no Stop, no spool cursor, for the
+                        # life of the process, and the exception surfaced hours
+                        # later under a device-teardown line naming something
+                        # else entirely.
+                        logger.exception(
+                            "session error result could not be recorded "
+                            "(topic=%s, turn=%s)",
+                            subscription.topic_id,
+                            attribution.work_id,
+                        )
                 await self._end_session_activity(
                     subscription, activity, clear_work=True
                 )
