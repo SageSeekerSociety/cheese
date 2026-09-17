@@ -8,6 +8,7 @@ import publicSite from './publicSite.json'
 import questions from './questions.json'
 import spaces from './spaces.json'
 import tasks from './tasks.json'
+import teams from './teams.json'
 import users from './users.json'
 
 export default {
@@ -21,5 +22,6 @@ export default {
   comments,
   spaces,
   tasks,
+  teams,
   notifications,
 }
