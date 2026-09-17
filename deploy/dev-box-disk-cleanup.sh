@@ -2,10 +2,12 @@
 # Routine reclaim of REGENERABLE caches on a dev/agent box.
 #
 # Why this exists next to cheesex-disk-pressure-guard.sh rather than inside it:
-# the guard is an EMERGENCY brake on the app box — it waits for 85%, checks that
-# no turn is active, then removes sandbox containers. It never touches build
-# caches, and it is not installed on the dev/agent boxes at all. So the caches
-# that actually fill those boxes had nothing watching them.
+# the guard is an EMERGENCY brake — it waits for 85%, checks that no turn is
+# active, then removes sandbox containers. It never touches a build cache, so on
+# a box whose space is in caches it brakes against something it cannot reclaim.
+# This script reclaims the caches, and `cheese-disk-cleanup.timer`
+# (deploy/install-disk-cleanup-timer.sh) runs it nightly above 75%, which is
+# under the guard's 85% on purpose.
 #
 # Measured on cheese-dev-env6-app, 2026-08-11, at 92% full (2.6G free):
 #   docker build cache   3.0G   71 entries, 0 in use
