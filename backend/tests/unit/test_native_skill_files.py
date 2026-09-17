@@ -91,9 +91,14 @@ def test_skill_md_only_points_at_files_that_travel():
     """SKILL.md 里写 `references/xxx.md` 而文件不在，agent 照做只会扑空。"""
     shipped = _shipped()
     skill_md = shipped["skills/documents/SKILL.md"]
-    for reference in ("references/reading.md", "references/word.md",
-                      "references/slides.md", "references/sheets.md",
-                      "references/pdf.md", "scripts/office.py"):
+    for reference in (
+        "references/reading.md",
+        "references/word.md",
+        "references/slides.md",
+        "references/sheets.md",
+        "references/pdf.md",
+        "scripts/office.py",
+    ):
         assert reference in skill_md, f"SKILL.md 没提到 {reference}"
         assert f"skills/documents/{reference}" in shipped, f"{reference} 没有装船"
 

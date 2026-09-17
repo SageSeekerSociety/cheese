@@ -41,7 +41,7 @@ import re
 import stat as statmod
 import sys
 import zipfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 try:
@@ -66,7 +66,8 @@ AQ = f"{{{A}}}"
 #: and notes. An edit has to reach all of them: a document whose title lives in
 #: a header is the normal case, not the exception.
 DOCX_TEXT_PARTS = re.compile(
-    r"^word/(document|header\d*|footer\d*|footnotes|endnotes)\.xml$")
+    r"^word/(document|header\d*|footer\d*|footnotes|endnotes)\.xml$"
+)
 PPTX_TEXT_PARTS = re.compile(r"^ppt/slides/slide\d+\.xml$")
 
 INS = WQ + "ins"
@@ -323,8 +324,17 @@ def _make_revision(tag: str, author: str, date: str, counter: list):
     return el
 
 
-def replace_once(paragraph, kind: str, pattern: str, replacement: str, offset: int,
-                 track: bool, author: str, date: str, counter: list) -> int:
+def replace_once(
+    paragraph,
+    kind: str,
+    pattern: str,
+    replacement: str,
+    offset: int,
+    track: bool,
+    author: str,
+    date: str,
+    counter: list,
+) -> int:
     """Replace the first occurrence of `pattern` at or after `offset`.
 
     Returns the offset just past the new text, or -1 when there is no further
@@ -355,14 +365,17 @@ def replace_once(paragraph, kind: str, pattern: str, replacement: str, offset: i
         index = list(parent).index(run)
         pieces = []
         if local_start > 0:
-            pieces.append(clone_run_with_text(
-                run, text_tag, rpr_tag, seg.text[:local_start]))
+            pieces.append(
+                clone_run_with_text(run, text_tag, rpr_tag, seg.text[:local_start])
+            )
         mid = clone_run_with_text(
-            run, text_tag, rpr_tag, seg.text[local_start:local_end])
+            run, text_tag, rpr_tag, seg.text[local_start:local_end]
+        )
         pieces.append(mid)
         if local_end < len(seg.text):
-            pieces.append(clone_run_with_text(
-                run, text_tag, rpr_tag, seg.text[local_end:]))
+            pieces.append(
+                clone_run_with_text(run, text_tag, rpr_tag, seg.text[local_end:])
+            )
         for piece in pieces:
             parent.insert(index, piece)
             index += 1
@@ -434,8 +447,17 @@ def replace_once(paragraph, kind: str, pattern: str, replacement: str, offset: i
     return at + len(replacement)
 
 
-def insert_after(paragraph, kind: str, anchor_text: str, new_text: str, offset: int,
-                 track: bool, author: str, date: str, counter: list) -> int:
+def insert_after(
+    paragraph,
+    kind: str,
+    anchor_text: str,
+    new_text: str,
+    offset: int,
+    track: bool,
+    author: str,
+    date: str,
+    counter: list,
+) -> int:
     """Insert `new_text` after the first occurrence of `anchor_text`."""
     _, run_tag, text_tag, rpr_tag = _tags(kind)
     split_runs(paragraph, kind)
@@ -470,7 +492,7 @@ def insert_after(paragraph, kind: str, anchor_text: str, new_text: str, offset: 
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def cmd_unpack(args) -> int:
@@ -484,8 +506,10 @@ def cmd_unpack(args) -> int:
         if statmod.S_ISLNK(info.external_attr >> 16):
             # Nothing in an Office package is a link. One that claims to be is
             # someone else's file trying to leave this directory.
-            raise Failed(f"{name} 在包里是个符号链接。Office 文件不含链接，"
-                         "这个包来路可疑，不拆它。")
+            raise Failed(
+                f"{name} 在包里是个符号链接。Office 文件不含链接，"
+                "这个包来路可疑，不拆它。"
+            )
         target = (dest / name).resolve()
         if target != dest and dest not in target.parents:
             raise Failed(f"{name} 指向了目录之外，不拆这个包")
@@ -498,18 +522,24 @@ def cmd_unpack(args) -> int:
         # has to write them back, and a package without them still opens --
         # which is exactly the kind of difference nobody notices until it is
         # compared.
-        entries.append({
-            "name": name,
-            "date_time": list(info.date_time),
-            "compress_type": info.compress_type,
-            "external_attr": info.external_attr,
-            "internal_attr": info.internal_attr,
-            "create_system": info.create_system,
-        })
+        entries.append(
+            {
+                "name": name,
+                "date_time": list(info.date_time),
+                "compress_type": info.compress_type,
+                "external_attr": info.external_attr,
+                "internal_attr": info.internal_attr,
+                "create_system": info.create_system,
+            }
+        )
     (dest / ".office-package.json").write_text(
-        json.dumps({"source": str(source.resolve()), "entries": entries},
-                   ensure_ascii=False, indent=2),
-        encoding="utf-8")
+        json.dumps(
+            {"source": str(source.resolve()), "entries": entries},
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     print(f"拆开 {source} → {dest}（{len(entries)} 个部件）")
     print("改完用 pack 装回去；目录里的 .office-package.json 要留着。")
     return 0
@@ -543,8 +573,10 @@ def cmd_pack(args) -> int:
     if missing:
         dest.unlink(missing_ok=True)
         shown = "、".join(missing[:5]) + ("…" if len(missing) > 5 else "")
-        raise Failed(f"这些部件原包里有、现在磁盘上没有：{shown}\n"
-                     "少了任何一个部件，Word 都会说文件已损坏。")
+        raise Failed(
+            f"这些部件原包里有、现在磁盘上没有：{shown}\n"
+            "少了任何一个部件，Word 都会说文件已损坏。"
+        )
     print(f"装回 {dest}（{len(manifest['entries'])} 个部件）")
     return 0
 
@@ -567,8 +599,11 @@ def cmd_text(args) -> int:
             print(f"--- {name}")
         print(f"（{len(paragraphs)} 段）")
         for index, paragraph in enumerate(paragraphs):
-            body = (annotated_text(paragraph, kind) if args.revisions
-                    else paragraph_text(paragraph, kind))
+            body = (
+                annotated_text(paragraph, kind)
+                if args.revisions
+                else paragraph_text(paragraph, kind)
+            )
             print(f"[{index:>4}] {body}")
     return 0
 
@@ -617,8 +652,9 @@ def cmd_edit(args) -> int:
     if not jobs:
         raise Failed("没有说要改什么：用 --replace / --delete / --insert-after")
     if args.track and kind != "word":
-        raise Failed("修订标记只有 Word 有，PowerPoint 里没有这个东西；"
-                     "去掉 --track 才是直接改。")
+        raise Failed(
+            "修订标记只有 Word 有，PowerPoint 里没有这个东西；去掉 --track 才是直接改。"
+        )
     if args.occurrence and args.all:
         raise Failed("--occurrence 和 --all 只能给一个")
 
@@ -656,11 +692,29 @@ def cmd_edit(args) -> int:
                 position = 0
                 while True:
                     if flag == "replace":
-                        nxt = replace_once(paragraph, kind, old, new, position,
-                                           args.track, args.author, date, counter)
+                        nxt = replace_once(
+                            paragraph,
+                            kind,
+                            old,
+                            new,
+                            position,
+                            args.track,
+                            args.author,
+                            date,
+                            counter,
+                        )
                     else:
-                        nxt = insert_after(paragraph, kind, old, new, position,
-                                           args.track, args.author, date, counter)
+                        nxt = insert_after(
+                            paragraph,
+                            kind,
+                            old,
+                            new,
+                            position,
+                            args.track,
+                            args.author,
+                            date,
+                            counter,
+                        )
                     if nxt < 0:
                         break
                     position = nxt
@@ -682,8 +736,9 @@ def cmd_edit(args) -> int:
     mode = "Word 修订" if args.track else "直接改（没有修订标记）"
     print(f"写出 {dest}（{mode}，署名 {args.author}）")
     if args.track:
-        print("接着跑 validate --base 原文件：它会确认「拒绝全部修订」"
-              "能逐字回到原文档。")
+        print(
+            "接着跑 validate --base 原文件：它会确认「拒绝全部修订」能逐字回到原文档。"
+        )
     return 0
 
 
@@ -731,21 +786,24 @@ def _live_text(root, kind: str) -> str:
 
 
 def _revision_elements(root) -> list:
-    return [el for el in root.iter()
-            if isinstance(el.tag, str) and el.tag in (INS, DEL)]
+    return [
+        el for el in root.iter() if isinstance(el.tag, str) and el.tag in (INS, DEL)
+    ]
 
 
 def _first_diff(a: str, b: str, width: int = 60) -> list[str]:
     for i in range(min(len(a), len(b))):
         if a[i] != b[i]:
             start = max(0, i - width // 2)
-            return [f"第 {i} 个字符起不一样：",
-                    f"  原文档 …{a[start:i + width]}…",
-                    f"  新文档 …{b[start:i + width]}…"]
+            return [
+                f"第 {i} 个字符起不一样：",
+                f"  原文档 …{a[start : i + width]}…",
+                f"  新文档 …{b[start : i + width]}…",
+            ]
     if len(a) != len(b):
         shorter = min(len(a), len(b))
         which = "原文档" if len(a) > len(b) else "新文档"
-        rest = (a if len(a) > len(b) else b)[shorter:shorter + width]
+        rest = (a if len(a) > len(b) else b)[shorter : shorter + width]
         return [f"长度不同：{which}多出 {abs(len(a) - len(b))} 个字（{rest!r}）"]
     return []
 
@@ -762,16 +820,19 @@ def cmd_validate(args) -> int:
                 package.elements(name)
             except ET.XMLSyntaxError as exc:  # noqa: PERF203 - report every part
                 problems.append(f"{name} 不是合法 XML：{exc}")
-    print(f"{target}：{len(package.names)} 个部件，"
-          + ("XML 全部解析成功" if not problems else "有解析失败的部件"))
+    print(
+        f"{target}：{len(package.names)} 个部件，"
+        + ("XML 全部解析成功" if not problems else "有解析失败的部件")
+    )
 
     if not args.base:
         for name in package.text_parts():
             root = package.elements(name)
             revisions = _revision_elements(root)
             if revisions:
-                authors = sorted({r.get(WQ + "author") or "（没写署名）"
-                                  for r in revisions})
+                authors = sorted(
+                    {r.get(WQ + "author") or "（没写署名）" for r in revisions}
+                )
                 print(f"{name}：{len(revisions)} 处修订，署名 {'、'.join(authors)}")
         if problems:
             print("\n".join("问题：" + p for p in problems))
@@ -780,14 +841,17 @@ def cmd_validate(args) -> int:
         return 0
 
     base = Package(Path(args.base))
-    changed = [n for n in package.names
-               if base.has(n) and base.blobs[n] != package.blobs[n]]
+    changed = [
+        n for n in package.names if base.has(n) and base.blobs[n] != package.blobs[n]
+    ]
     removed = [n for n in base.names if not package.has(n)]
     added = [n for n in package.names if not base.has(n)]
     if removed:
         problems.append("这些部件原文件里有、新文件里没了：" + "、".join(removed[:5]))
-    print(f"改动过的部件：{'、'.join(changed) if changed else '（没有）'}"
-          + (f"；新增 {len(added)} 个" if added else ""))
+    print(
+        f"改动过的部件：{'、'.join(changed) if changed else '（没有）'}"
+        + (f"；新增 {len(added)} 个" if added else "")
+    )
 
     for name in changed:
         if kind != "word" or not name.endswith(".xml"):
@@ -801,8 +865,10 @@ def cmd_validate(args) -> int:
         original = _live_text(base_root, kind)
         after_reject = _live_text(rejected, kind)
         if after_reject != original:
-            problems.append(f"{name}：拒绝全部修订之后正文和原文档对不上——"
-                            "有改动没被放进修订标记里。")
+            problems.append(
+                f"{name}：拒绝全部修订之后正文和原文档对不上——"
+                "有改动没被放进修订标记里。"
+            )
             for line in _first_diff(original, after_reject):
                 print("    " + line)
         else:
@@ -818,8 +884,9 @@ def cmd_validate(args) -> int:
             if not author:
                 problems.append(f"{name}：有一处修订没写署名")
             elif args.author and author != args.author:
-                problems.append(f"{name}：有一处修订署名是 {author!r}，"
-                                f"不是 {args.author!r}")
+                problems.append(
+                    f"{name}：有一处修订署名是 {author!r}，不是 {args.author!r}"
+                )
 
     if problems:
         print("\n".join("问题：" + p for p in problems))
@@ -833,8 +900,8 @@ def cmd_validate(args) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="office.py",
-        description="在已有的 Office 文件上做最小的、可核对的修改")
+        prog="office.py", description="在已有的 Office 文件上做最小的、可核对的修改"
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("unpack", help="把 Office 文件拆成目录，逐个部件改")
@@ -850,26 +917,41 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("text", help="打印正文，带段号")
     p.add_argument("package")
     p.add_argument("--part", help="只看某个部件，可只写文件名")
-    p.add_argument("--revisions", action="store_true",
-                   help="标出已有的修订：⟦+插入⟧ ⟦-删除⟧")
+    p.add_argument(
+        "--revisions", action="store_true", help="标出已有的修订：⟦+插入⟧ ⟦-删除⟧"
+    )
     p.set_defaults(func=cmd_text)
 
     p = sub.add_parser("edit", help="查找替换，默认写成 Word 修订")
     p.add_argument("package")
     p.add_argument("-o", "--output", help="输出文件；省略则覆盖原文件")
     p.add_argument("--replace", action="append", metavar="原文=新文本")
-    p.add_argument("--delete", action="append", metavar="原文",
-                   help="删掉这段（等于 --replace 原文=）")
-    p.add_argument("--insert-after", action="append", metavar="锚点=新文本",
-                   help="在锚点文字后面插入，不动原有文字")
+    p.add_argument(
+        "--delete",
+        action="append",
+        metavar="原文",
+        help="删掉这段（等于 --replace 原文=）",
+    )
+    p.add_argument(
+        "--insert-after",
+        action="append",
+        metavar="锚点=新文本",
+        help="在锚点文字后面插入，不动原有文字",
+    )
     p.add_argument("--all", action="store_true", help="每一处都改")
     p.add_argument("--occurrence", type=int, metavar="N", help="只改第 N 处")
     p.add_argument("--author", default="Cheese", help="修订里署的名字")
     track = p.add_mutually_exclusive_group()
-    track.add_argument("--track", dest="track", action="store_true", default=True,
-                       help="写成修订标记（默认）")
-    track.add_argument("--plain", dest="track", action="store_false",
-                       help="直接改，不留修订标记")
+    track.add_argument(
+        "--track",
+        dest="track",
+        action="store_true",
+        default=True,
+        help="写成修订标记（默认）",
+    )
+    track.add_argument(
+        "--plain", dest="track", action="store_false", help="直接改，不留修订标记"
+    )
     p.set_defaults(func=cmd_edit)
 
     p = sub.add_parser("validate", help="查文件完整性；给了 --base 就查「没动到原文」")
