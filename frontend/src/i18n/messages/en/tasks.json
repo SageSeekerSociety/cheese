@@ -115,6 +115,59 @@
       "domainGroups": "Domain groups",
       "domainGroupsHint": "Choose which domain groups can access this challenge. With none selected, everyone can.",
       "noDomainGroups": "No domain groups available"
+    },
+    "basicInfo": "Basic info",
+    "schedule": "Schedule",
+    "classification": "Classification",
+    "realNameTitle": "Real-name requirement",
+    "videoTitle": "Video link",
+    "participantLimit": "Participant limit",
+    "deadlineHint": "Leave empty for no registration deadline",
+    "defaultDeadlinePrefix": "",
+    "defaultDeadlineSuffix": "days after claiming the challenge",
+    "markdownDescription": "Challenge details (Markdown)",
+    "requireRealName": "Require participants to provide their real name",
+    "requireRealNameHint": "Real-name details include a student's real name, student ID, year and more",
+    "realNameNotRequired": "Real-name verification is off, so participants can join this challenge anonymously",
+    "realNameChosen": {
+      "title": "You are requiring real-name details",
+      "line1": "Participants must verify their real name before joining this challenge",
+      "line2": "Everything is stored encrypted and access is tightly controlled",
+      "line3": "Every access to real-name details is logged"
+    },
+    "video": {
+      "label": "Video link (optional)",
+      "hint": "Bilibili video links are supported",
+      "dialogTitle": "About this video link",
+      "dialogBody": "We could not read this video link, so it may be wrong. Only Bilibili videos can be embedded right now. Save anyway?",
+      "dialogContinue": "Save anyway"
+    },
+    "pdfParametersName": "PDF batch publish parameters",
+    "validation": {
+      "categoryRequired": "Select a category",
+      "httpsRequired": "Enter a valid HTTPS link"
+    },
+    "privacy": {
+      "title": "How we protect real-name details",
+      "intro": "To protect participants, challenges that ask for real-name details come with several safeguards:",
+      "anonymousTitle": "Anonymous participation",
+      "anonymousBody": "Everyday activity on the platform stays anonymous, so other users never see a participant's real identity",
+      "purposeTitle": "Limited use",
+      "purposeBody": "Real-name details are used only where they are needed: verification, credits and awards",
+      "encryptionTitle": "Encrypted storage",
+      "encryptionBody": "Real-name details are stored and sent with end-to-end encryption, so unauthorised access is impossible",
+      "accessTitle": "Access log",
+      "accessBody": "Every access to real-name details is logged, and participants can review the log at any time",
+      "scenariosTitle": "Where the details are used",
+      "verificationTitle": "Identity verification",
+      "verificationBody": "Verify who a participant is, so mentors know their background",
+      "certificationTitle": "Project certification",
+      "certificationBody": "Used to issue certificates and award credits once a challenge closes",
+      "awardsTitle": "Awards",
+      "awardsBody": "Used to judge prizes and select projects once a challenge closes",
+      "commitmentTitle": "Our commitment",
+      "commitmentBody": "As a challenge publisher, follow the privacy rules strictly and view real-name details only where necessary. Every view is logged, and misuse is penalised.",
+      "understood": "Understand and accept"
     }
   },
   "publish": {

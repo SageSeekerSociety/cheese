@@ -29,6 +29,59 @@
       "domainGroups": "域名组",
       "domainGroupsHint": "选择允许访问的域名组，未选择任何域名组时所有用户均可访问",
       "noDomainGroups": "暂无可用域名组"
+    },
+    "basicInfo": "基本信息",
+    "schedule": "时间设置",
+    "classification": "分类标签",
+    "realNameTitle": "实名信息要求",
+    "videoTitle": "视频链接",
+    "participantLimit": "参与者人数限制",
+    "deadlineHint": "留空表示不设置报名截止时间",
+    "defaultDeadlinePrefix": "领取赛题后",
+    "defaultDeadlineSuffix": "天",
+    "markdownDescription": "赛题详情（Markdown 格式）",
+    "requireRealName": "要求参与者提供实名信息",
+    "requireRealNameHint": "实名信息包括学生的真实姓名、学号、年级等信息",
+    "realNameNotRequired": "未启用实名认证要求，参与者可匿名参与此赛题",
+    "realNameChosen": {
+      "title": "您已选择要求实名信息",
+      "line1": "参与者需完成实名认证方可参与此赛题",
+      "line2": "所有信息经过加密存储，访问受到严格控制",
+      "line3": "系统会记录所有对实名信息的访问行为"
+    },
+    "video": {
+      "label": "视频链接（选填）",
+      "hint": "支持 Bilibili 视频链接",
+      "dialogTitle": "视频链接提示",
+      "dialogBody": "无法解析该视频链接，视频链接可能有误。当前仅支持 Bilibili 视频嵌入播放，是否继续保存？",
+      "dialogContinue": "继续保存"
+    },
+    "pdfParametersName": "PDF 批量发布参数",
+    "validation": {
+      "categoryRequired": "请选择所属分类",
+      "httpsRequired": "请输入有效的 HTTPS 链接"
+    },
+    "privacy": {
+      "title": "实名信息隐私保护",
+      "intro": "为保护参与者隐私，我们对需要实名信息的赛题采取了多重保护措施：",
+      "anonymousTitle": "匿名参与",
+      "anonymousBody": "平台上的日常活动保持匿名，其他用户无法看到参与者的真实身份信息",
+      "purposeTitle": "用途限制",
+      "purposeBody": "实名信息仅用于身份验证、学分认定和评优评奖等必要场景",
+      "encryptionTitle": "加密存储",
+      "encryptionBody": "采用端到端加密技术存储和传输实名信息，防止未授权访问",
+      "accessTitle": "访问记录",
+      "accessBody": "所有对实名信息的访问都被记录，参与者可随时查看访问记录",
+      "scenariosTitle": "信息使用场景",
+      "verificationTitle": "身份验证",
+      "verificationBody": "验证参与者身份，帮助导师了解学生背景",
+      "certificationTitle": "项目认证",
+      "certificationBody": "用于赛题结题后的证书发放和学分认定",
+      "awardsTitle": "评奖评优",
+      "awardsBody": "用于赛题结题后的奖项评定与项目评选",
+      "commitmentTitle": "合规承诺",
+      "commitmentBody": "作为赛题发布者，您应当严格遵守隐私保护规范，只有在必要的场景下才能查看参与者的实名信息。平台会记录每次查看行为，并对滥用行为采取相应处罚。",
+      "understood": "了解并接受"
     }
   },
   "detail": {

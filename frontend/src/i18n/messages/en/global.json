@@ -36,5 +36,6 @@
     "runtime": "Environments are created on demand; a new project can run {count} AI tasks at once by default, and further ones queue.",
     "machines": "Cloud machines: a team shares {count} by default. Your actual quota and usage are on the team compute page.",
     "loadFailed": "Couldn't load the resource limits"
-  }
+  },
+  "submit": "Submit"
 }

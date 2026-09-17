@@ -70,7 +70,7 @@
     "src/components/tasks/AIAdviceChatDialog.vue": 1,
     "src/components/tasks/AIAdvicePanel.vue": 11,
     "src/components/tasks/SubmissionReviewStatus.vue": 3,
-    "src/components/tasks/TaskForm.vue": 57,
+    "src/components/tasks/TaskForm.vue": 8,
     "src/components/tasks/TaskSubmissionHistory.vue": 21,
     "src/components/tasks/VerifyInfoForm.vue": 20,
     "src/components/TopicAcceptCard.vue": 53,
