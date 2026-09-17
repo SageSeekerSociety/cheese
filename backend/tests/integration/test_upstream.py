@@ -848,3 +848,82 @@ def test_local_content_the_upstream_lacks_is_merged_not_discarded(client, tmp_pa
     assert d["synced"] is True, d
     assert (repo / "mine.txt").read_text() == "local work\n"
     assert (repo / "hello.txt").read_text() == "hi from upstream\n"
+
+
+@pytest.mark.anyio
+async def test_a_failed_sync_is_not_counted_as_a_synced_one(
+    client, tmp_path, monkeypatch
+):
+    """The job's own line is the only place anyone learns a base is behind.
+
+    `sync_upstream` reports a non-conflict failure as {"synced": False,
+    "reason": ...} with no "conflicts" key — an expired App token, a 403, a
+    fetch that blew its timeout. The count used to treat the absent key as
+    「nothing conflicted, so it worked」, so the line read `synced: 1` for a
+    project that had not fetched a byte, and the reason went nowhere.
+    """
+    from app.domain.agent.chat import ChatService
+    from app.domain.scheduler.service import SchedulerService
+    from app.domain.workspace import service as ws
+
+    up = _make_upstream(tmp_path)
+    pid = _project(client)
+    client.put(f"/projects/{pid}/upstream", json={"url": str(up)})
+
+    chat = ChatService(
+        session_factory=client.test_factory,
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+        compute=stub_compute(),
+    )
+
+    def refuses(_pid, *, token=None):
+        return {"synced": False, "reason": "远端拒绝：凭证已过期"}
+
+    monkeypatch.setattr(ws, "sync_upstream", refuses)
+    result = await SchedulerService(chat_service=chat).sync_upstreams()
+
+    assert result["synced"] == 0, result
+    assert result["dispatched"] == 0, result
+    assert len(result["failed"]) == 1, result
+    assert "凭证已过期" in result["failed"][0], result
+
+
+@pytest.mark.anyio
+async def test_a_conflict_with_no_owner_to_ask_is_named_rather_than_dropped(
+    client, tmp_path, monkeypatch
+):
+    """Skipping is right — there is no owner to hand it to — but the project
+    stays behind until somebody notices, so the cycle has to say which one."""
+    import uuid as _uuid
+
+    from app.domain.agent.chat import ChatService
+    from app.domain.project.repositories import ProjectRepository
+    from app.domain.scheduler.service import SchedulerService
+    from app.domain.workspace import service as ws
+
+    up = _make_upstream(tmp_path)
+    pid = _project(client)
+    client.put(f"/projects/{pid}/upstream", json={"url": str(up)})
+
+    async with client.test_factory() as session:
+        project = await ProjectRepository(session).get(_uuid.UUID(pid))
+        project.owner_handle = None
+        await session.commit()
+
+    chat = ChatService(
+        session_factory=client.test_factory,
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+        compute=stub_compute(),
+    )
+
+    def conflicts(_pid, *, token=None):
+        return {"synced": False, "reason": "冲突", "conflicts": ["hello.txt"]}
+
+    monkeypatch.setattr(ws, "sync_upstream", conflicts)
+    result = await SchedulerService(chat_service=chat).sync_upstreams()
+
+    assert result["synced"] == 0, result
+    assert result["dispatched"] == 0, result
+    assert result["undispatched"] == [pid], result
