@@ -22,7 +22,7 @@
     "publish": "Publish",
     "noAdmins": "No admins yet",
     "creator": "Created by {creator}",
-    "creatorAndAdmins": "Created by {creator} · {count} admins",
+    "creatorAndAdmins": "Created by {creator} · {count} admin(s)",
     "confirmDeleteAnnouncement": "Delete this announcement?",
     "updateSuccess": "Updated",
     "updateFailed": "Couldn't update",
