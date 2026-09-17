@@ -25,6 +25,8 @@ import fcntl
 import hashlib
 import json
 import os
+import signal
+import sys
 import uuid
 from pathlib import Path
 
@@ -124,7 +126,7 @@ class Runner:
 
     # --- the platform extension ----------------------------------------------
 
-    def write_extension(self, source: str, notice: str = "") -> Path:
+    def write_extension(self, files: dict[str, str], notice: str = "") -> Path:
         """Put the extension and its tool catalog on disk; answer with the entry.
 
         The catalog is built HERE, from the CLI installed on this machine,
@@ -139,7 +141,8 @@ class Runner:
         """
         home = self.state / "extension"
         home.mkdir(parents=True, exist_ok=True)
-        (home / "index.ts").write_text(source, encoding="utf-8")
+        for name, content in sorted(files.items()):
+            (home / name).write_text(content, encoding="utf-8")
         cli = catalog.cli_path()
         try:
             tools = catalog.tools(cli) if cli is not None else []
@@ -151,6 +154,14 @@ class Runner:
                 {
                     "socket": socket_path(self.state),
                     "state": str(self.state),
+                    # A backgrounded command has to survive this session, so
+                    # what starts it is a script and an interpreter, not a
+                    # thread. Both named here because the runner is the side
+                    # that knows: it was started by that interpreter and it
+                    # just wrote that script.
+                    "python": sys.executable,
+                    "background": str(home / "background.py"),
+                    "jobs": str(self.state / "bg"),
                     "tools": tools,
                     "unavailable": reason,
                     # The marker every platform instruction in this room already
@@ -203,7 +214,7 @@ class Runner:
         env: dict[str, str],
         args: list[str],
         skills: dict[str, str] | None = None,
-        extension: str | None = None,
+        extension: dict[str, str] | None = None,
         notice: str = "",
     ) -> str:
         self.lock = (self.state / "runner.lock").open("a")
@@ -429,7 +440,37 @@ class Runner:
             with contextlib.suppress(ConnectionError, BrokenPipeError):
                 await writer.wait_closed()
 
+    def end_background_jobs(self) -> None:
+        """Take down what the room started, now that the room is going.
+
+        A backgrounded command is deliberately not killed at the end of a turn —
+        that is the whole point of it. But it is not the machine's to keep
+        either: this runner IS the screen's program, so when it goes the room
+        is being torn down, and a dev server nobody can reach any more would
+        hold its port until somebody found it by hand.
+
+        What is signalled is the COMMAND's process group, not the supervisor's.
+        The two are different sessions — that separation is what lets a job
+        outlive pi — so a signal aimed at the supervisor would leave the command
+        running with nothing left holding its name. Signalled this way the
+        supervisor sees its child go, drains what it printed on the way out and
+        records the exit, which is also what a reader needs afterwards.
+        """
+        jobs = self.state / "bg"
+        if not jobs.is_dir():
+            return
+        for job in jobs.iterdir():
+            if (job / "exit").exists():
+                continue
+            try:
+                meta = json.loads((job / "meta.json").read_text())
+                os.killpg(os.getpgid(meta["child"]), signal.SIGTERM)
+            except (OSError, ValueError, KeyError):
+                # Already gone, never written, or ours no longer to signal.
+                continue
+
     async def close(self) -> None:
+        self.end_background_jobs()
         if self.refresher is not None:
             self.refresher.cancel()
             await asyncio.gather(self.refresher, return_exceptions=True)

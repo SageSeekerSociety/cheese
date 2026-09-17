@@ -35,15 +35,22 @@ VERSION = "0.85.1"
 CONFIG_DIR = "$HOME/.pi/agent"
 
 
-def extension() -> str:
-    """The platform's own pi extension, as source.
+# What the extension is, as files. `index.ts` is what pi is pointed at —
+# TypeScript uncompiled, because pi loads extensions through jiti, so the file
+# written is the file that runs. `background.py` is not loaded by pi at all: the
+# extension spawns it, and it has to be Python because it must outlive pi (see
+# its own docstring). Both travel as content rather than as paths for the reason
+# the skills and the system prompt do — the machine has no copy of them.
+EXTENSION_FILES = ("index.ts", "background.py")
 
-    TypeScript, uncompiled: pi loads extensions through jiti, so the file it is
-    pointed at is the file written here. Travelling as content rather than as a
-    path for the reason the skills and the system prompt do — it is assembled
-    by the platform and the machine has no copy of it.
-    """
-    return Path(__file__).with_name("platform.ts").read_text(encoding="utf-8")
+
+def extension() -> dict[str, str]:
+    here = Path(__file__).parent
+    sources = {"index.ts": "platform.ts", "background.py": "background.py"}
+    return {
+        name: (here / sources[name]).read_text(encoding="utf-8")
+        for name in EXTENSION_FILES
+    }
 
 
 def root(home: str) -> str:

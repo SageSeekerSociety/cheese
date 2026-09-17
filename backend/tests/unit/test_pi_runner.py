@@ -175,6 +175,13 @@ async def test_steering_is_not_a_second_turn_and_abort_stops_the_work(tmp_path):
 
 CLI = Path(__file__).resolve().parents[2] / "sandbox/cheese"
 
+# Shape, not content: what the runner does with these files is write them
+# where pi and the extension will look.
+EXTENSION = {
+    "index.ts": "export default function () {}\n",
+    "background.py": "# holds one command\n",
+}
+
 ECHOING_CLI = '''#!/usr/bin/env python3
 """A CLI shaped like the platform's: a parser to publish, and argv to report."""
 import argparse, json, os, sys
@@ -219,7 +226,7 @@ async def with_tools(tmp_path, monkeypatch, program=None):
         cwd=str(tmp_path),
         env={"PATH": os.environ["PATH"]},
         args=["--no-context-files"],
-        extension="export default function () {}\n",
+        extension=EXTENSION,
     )
     return runner
 
@@ -267,7 +274,7 @@ async def test_a_machine_without_the_cli_still_opens_and_says_why(
         cwd=str(tmp_path),
         env={"PATH": os.environ["PATH"]},
         args=["--no-context-files"],
-        extension="export default function () {}\n",
+        extension=EXTENSION,
     )
     try:
         spec = json.loads(
