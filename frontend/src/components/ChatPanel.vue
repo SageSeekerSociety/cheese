@@ -91,6 +91,7 @@ import { getAvatarUrl } from '../utils/materials'
 
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import AgentControls from './AgentControls.vue'
+import AttachmentImage from './AttachmentImage.vue'
 import CheeseAvatar from './CheeseAvatar.vue'
 import DispatchedMarker from './DispatchedMarker.vue'
 import TimelineMark from './TimelineMark.vue'
@@ -968,10 +969,11 @@ function replySnippet(m: Block): string {
   return t.length > 24 ? t.slice(0, 24) + '…' : t
 }
 
-// An image attachment block (图片输入) — rendered as an inline <img>.
+// An image attachment block (图片输入) — drawn in place by AttachmentImage.
 function isImageBlock(m: Block): boolean {
   return m.kind === 'attachment' && (m.mime_type || '').startsWith('image/')
 }
+// 只给下载用：downloadFile 自己会带上 Authorization。显示图片不走这里。
 function imageUrl(m: Block): string {
   return props.topic ? attachmentRawUrl(props.topic.id, m.content) : ''
 }
@@ -1954,10 +1956,9 @@ onBeforeUnmount(() => {
                   回复 {{ displayName(parentOf(m)!) }}：{{ replySnippet(parentOf(m)!) }}
                 </button>
                 <!-- 图片输入: an attachment block renders as the image itself
-                   (click opens the original in a new tab). -->
-                <a v-if="isImageBlock(m)" class="im-image-link" :href="imageUrl(m)" target="_blank" rel="noopener">
-                  <img class="im-image" :src="imageUrl(m)" :alt="m.content" loading="lazy" />
-                </a>
+                   (click opens the original in a new tab). 字节在 AttachmentImage
+                   里取——raw 端点只认 Authorization 头，裸挂 URL 是匿名请求。 -->
+                <AttachmentImage v-if="isImageBlock(m)" :topic-id="topic?.id ?? null" :path="m.content" />
                 <v-btn
                   v-else-if="m.kind === 'attachment'"
                   variant="text"
@@ -2978,20 +2979,8 @@ details.sys-row > summary::-webkit-details-marker {
 .im-text--verbatim {
   white-space: pre-wrap;
 }
-/* 图片输入: an image message — bounded thumbnail, click opens the original. */
-.im-image-link {
-  display: inline-block;
-  margin-top: 2px;
-  line-height: 0;
-}
-.im-image {
-  max-width: min(360px, 100%);
-  max-height: 260px;
-  border-radius: 8px;
-  border: 1px solid var(--line);
-  background: var(--fill);
-  object-fit: contain;
-}
+/* 图片输入那两张图自己的样式跟着 AttachmentImage 走了（它要负责取字节，样式
+   留在这里也够不着它内部的 <img>——scoped 只到子组件的根元素）。 */
 .im-file-link,
 .att-thumb,
 .att-thumb .v-chip {
