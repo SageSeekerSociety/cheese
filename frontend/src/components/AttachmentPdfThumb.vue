@@ -66,7 +66,10 @@ async function draw() {
       // tile and gets cropped, the way an image thumbnail does, rather than
       // sitting in the middle of two grey bars.
       const base = page.getViewport({ scale: 1 })
-      const tile = el.clientWidth || el.width || 56
+      // The box's own width, so the page is rendered at the size it is shown
+      // at. The fallback is for an environment with no layout at all (jsdom),
+      // where nothing is drawn anyway and 0 would only make `scale` collapse.
+      const tile = el.clientWidth || 40
       const ratio = Math.min(window.devicePixelRatio || 1, 2)
       const scale = (tile / Math.min(base.width, base.height)) * ratio
       const viewport = page.getViewport({ scale })
@@ -94,40 +97,28 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <span class="pdf-thumb" :title="title()">
+  <span class="att-face" :title="title()">
     <canvas ref="canvas" class="pdf-thumb__page" :class="{ 'pdf-thumb__page--ready': drawn }" />
-    <v-icon v-if="!drawn" size="16" class="pdf-thumb__mark">mdi-file-pdf-box</v-icon>
+    <v-icon v-if="!drawn" size="16">mdi-file-pdf-box</v-icon>
   </span>
 </template>
 
 <style scoped>
-/* Size comes from --att-tile (style.css): uploading, image, PDF and plain file
-   are four states of one position, so none of them may name its own number. */
-.pdf-thumb {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--att-tile);
-  height: var(--att-tile);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--line);
-  background: var(--fill);
-  overflow: hidden;
-}
+/* The box itself is `.att-face` (style.css), shared by every attachment state;
+   only what sits inside it is this component's.
+   Absolute, and hidden with opacity rather than `display: none`: an undrawn
+   canvas would otherwise measure 0 wide, and `draw()` reads that width to
+   decide how large a page to render. */
 .pdf-thumb__page {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  /* Hidden until a page is actually on it, so an empty canvas does not flash
-     as a white square inside the tile. */
-  display: none;
+  opacity: 0;
 }
 .pdf-thumb__page--ready {
-  display: block;
-}
-.pdf-thumb__mark {
-  color: var(--muted);
+  opacity: 1;
 }
 /* No "PDF" badge over the page: a rendered cover page already reads as a
    document, and the label would have needed a font size outside the scale. */
