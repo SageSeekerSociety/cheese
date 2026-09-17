@@ -16,6 +16,8 @@ const props = defineProps<{
   /** 附件在话题工作区里的路径（消息块里的 content）。 */
   path: string
   alt?: string
+  /** 输入框里那张待发的缩略图：不带外链、点不开，尺寸固定成一个小方块。 */
+  thumb?: boolean
 }>()
 
 // 路径是工作区里的，`uploads/<id>/…`；说给读者听的是文件名那一段。
@@ -60,7 +62,13 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <a v-if="url" class="im-image-link" :href="url" target="_blank" rel="noopener">
+  <!-- 缩略图：盒子先占住位置，成败都一样大——候选条不会因为一张图慢半拍而跳动。
+       文件名挂在 title 上，图没出来时鼠标移上去还知道它是什么。 -->
+  <span v-if="thumb" class="im-thumb" :title="altText">
+    <img v-if="url" class="im-thumb__img" :src="url" :alt="altText" />
+    <v-icon v-else-if="failed" size="16" class="im-thumb__failed">mdi-image-broken-variant</v-icon>
+  </span>
+  <a v-else-if="url" class="im-image-link" :href="url" target="_blank" rel="noopener">
     <img class="im-image" :src="url" :alt="altText" loading="lazy" />
   </a>
   <!-- 失败说一句，别留一块空白：空白和「这条消息本来就没图」长得一样。 -->
@@ -83,6 +91,27 @@ onBeforeUnmount(() => {
 }
 .im-image-failed {
   font-size: 13px;
+  color: var(--muted);
+}
+/* 缩略图的尺寸在这儿定，不在输入框那边：加载中、加载成功、加载失败是同一个盒子，
+   所以尺寸只能有一个主人。 */
+.im-thumb {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--fill);
+  overflow: hidden;
+}
+.im-thumb__img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.im-thumb__failed {
   color: var(--muted);
 }
 </style>
