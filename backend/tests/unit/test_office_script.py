@@ -408,7 +408,7 @@ def test_unpack_refuses_a_part_that_escapes_the_directory(tmp_path: Path):
     with zipfile.ZipFile(bad, "w") as z:
         z.writestr("[Content_Types].xml", CONTENT_TYPES)
         z.writestr("../逃出去.xml", "<x/>")
-    refused("unpack", bad, "-d", tmp_path / "拆开")
+    refused("unpack", bad, tmp_path / "拆开")
     assert not (tmp_path / "逃出去.xml").exists()
 
 
@@ -422,7 +422,7 @@ def test_unpack_refuses_a_symlink_entry(tmp_path: Path):
         link.create_system = 3
         link.external_attr = (0xA1FF << 16) | 0o120000
         z.writestr(link, "/etc/passwd")
-    refused("unpack", bad, "-d", tmp_path / "拆开")
+    refused("unpack", bad, tmp_path / "拆开")
 
 
 # --------------------------------------------------------------------------

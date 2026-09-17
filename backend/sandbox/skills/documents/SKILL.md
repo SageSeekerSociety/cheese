@@ -5,6 +5,21 @@ description: 需要读取、产出或修改 Word、PowerPoint、Excel、PDF 文�
 
 # 办公文档
 
+## 先问这份文件是谁的
+
+**保真的义务来自「这份文档是别人的」，不来自「它是 `.docx`」。** 这个判断比「文件是什么
+格式」更早决定做法，所以放在最前面。
+
+- **用户给的文档**：格式必须保留，因此**不应大幅修改**。改动面大意味着结构变化，而
+  「结构变了、原格式还在」是自相矛盾的——这时候回到用户那里确认要怎么改，而不是自己动手
+  构造大段 XML。定点改几句话走下面的 `office.py`。
+- **你自己上一轮产出的文档**：没有别人的格式需要保留，按新要求重新生成就好，不必绕着
+  修改走。
+
+分不清的时候按「是别人的」办：多问一句的代价，比交回一份排版散掉的文件小得多。
+
+## 工具在哪
+
 平台把 pandoc、typst、uv 和一对中文字体放在这台机器的 `$CHEESE_TOOLCHAIN` 下，并且已经
 在 PATH 和 `TYPST_FONT_PATHS` 里。Python 库用 `uv run --with` 按需取用；不需要安装系统包，
 也没有权限安装。
@@ -29,6 +44,7 @@ command -v typst && command -v pandoc
 | 读或改一份表格 | `openpyxl`，改完 `cheese recalc` | `references/sheets.md` |
 | 做/读 PDF | `typst` / `pypdf` | `references/pdf.md` |
 | 造一份全新的文件 | `python-docx` / `python-pptx` / `openpyxl` / `typst` | 本文件下面 |
+| `.doc` / `.ppt` / `.xls` | 只读不改，要改请用户升级格式 | `references/reading.md` |
 
 参考文件在技能目录的 `references/` 下，和 `scripts/office.py` 在同一个地方（下一节有定位
 它们的两行命令）。要动手做哪一类活，先读对应的那一份。
@@ -81,6 +97,12 @@ uv run --with lxml python3 "$SKILL/scripts/office.py" validate 改后.docx --bas
   的修订，`validate` 照样通过。要核对改了哪几处，跑 `revisions` 看清单。
 
 改完把 `-o` 出来的那份**点名**（见下），别改坏原件、也别改完不告诉用户改了什么。
+
+另外两条在 `references/word.md` 里展开，动手前值得知道它们存在：**改格式要改
+`styles.xml` 里的样式定义，不逐处改行内属性**（一处改动影响全篇，这也是 Word 用户自己的
+正确做法）；**遇到图表、SmartArt、OLE 这类复杂元素，只在用户要求的改动正好落在它们上面时
+才说明界线**——没被要求改的元素，没有被碰到是默认行为，不是成果，预先申报只会让用户以为
+你动过别的东西。
 
 `--plain` 是不留修订标记直接改。用户明确说「不要修订痕迹」「给我干净的最终版」时才用；
 其余情况留修订，让用户自己决定接受还是拒绝。
