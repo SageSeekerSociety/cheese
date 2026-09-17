@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import type { EnvironmentStatus, ProjectEnvironmentInfo } from '../cx_types'
 
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 import { applyRoomEnvironment, getProjectEnvironment, getRoomEnvironment, saveProjectEnvironment } from '../api'
 
 const props = defineProps<{ projectId: string }>()
+const { t, locale } = useI18n()
 const info = ref<ProjectEnvironmentInfo | null>(null)
 const setup = ref('')
 const startup = ref('')
@@ -19,14 +21,27 @@ const applying = ref(false)
 let timer: ReturnType<typeof setTimeout> | undefined
 let disposed = false
 let generation = 0
-const labels: Record<EnvironmentStatus['state'], string> = {
-  unbound: '尚未接入机器',
-  pending: '等待下次启动',
-  preparing: '正在准备',
-  ready: '已就绪',
-  failed: '准备失败',
-  stopped: '芝士已停止',
-  offline: '机器离线',
+// computed 而不是模块级常量表：常量表在 setup 时求值一次，切语言不会重算，
+// 状态文案就会一直停在旧语言。
+const labels = computed<Record<EnvironmentStatus['state'], string>>(() => ({
+  unbound: t('projects.environment.status.unbound'),
+  pending: t('projects.environment.status.pending'),
+  preparing: t('projects.environment.status.preparing'),
+  ready: t('projects.environment.status.ready'),
+  failed: t('projects.environment.status.failed'),
+  stopped: t('projects.environment.status.stopped'),
+  offline: t('projects.environment.status.offline'),
+}))
+
+/** 时间按界面语言格式化：不传语言，en 界面里会冒出中文的日期格式。 */
+function formatTime(iso: string) {
+  return new Date(iso).toLocaleString(locale.value === 'en' ? 'en' : 'zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
 async function load() {
@@ -43,7 +58,7 @@ async function load() {
     variables.value = Object.entries(result.config.variables).map(([key, value]) => ({ key, value }))
     selectedRoom.value = result.rooms[0]?.id ?? null
   } catch (e) {
-    if (current === generation) error.value = e instanceof Error ? e.message : '读取环境失败'
+    if (current === generation) error.value = e instanceof Error ? e.message : t('projects.environment.loadFailed')
   }
 }
 
@@ -58,7 +73,7 @@ async function refreshStatus() {
     status.value = result
   } catch (e) {
     if (current === generation && room === selectedRoom.value)
-      error.value = e instanceof Error ? e.message : '读取安装状态失败'
+      error.value = e instanceof Error ? e.message : t('projects.environment.statusLoadFailed')
   } finally {
     if (!disposed && current === generation && room === selectedRoom.value) timer = setTimeout(refreshStatus, 5000)
   }
@@ -71,7 +86,7 @@ async function save() {
   try {
     const values: Record<string, string> = Object.create(null)
     for (const row of variables.value) {
-      if (!row.key || Object.hasOwn(values, row.key)) throw new Error('环境变量名称不能为空或重复')
+      if (!row.key || Object.hasOwn(values, row.key)) throw new Error(t('projects.environment.variableNameInvalid'))
       values[row.key] = row.value
     }
     const config = await saveProjectEnvironment(props.projectId, {
@@ -80,9 +95,9 @@ async function save() {
       variables: values,
     })
     if (info.value) info.value.config = config
-    notice.value = '已保存。新房间使用这份配置；已有房间保持当前版本。'
+    notice.value = t('projects.environment.savedNotice')
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '保存环境失败'
+    error.value = e instanceof Error ? e.message : t('projects.environment.saveFailed')
   } finally {
     saving.value = false
   }
@@ -95,10 +110,10 @@ async function apply(latest: boolean) {
   notice.value = ''
   try {
     await applyRoomEnvironment(props.projectId, selectedRoom.value, latest)
-    notice.value = '已安排在下次启动时准备环境，房间里的文件已保留。'
+    notice.value = t('projects.environment.scheduledNotice')
     await refreshStatus()
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '应用环境失败'
+    error.value = e instanceof Error ? e.message : t('projects.environment.applyFailed')
   } finally {
     applying.value = false
   }
@@ -119,57 +134,53 @@ onBeforeUnmount(() => {
   <section class="page-section">
     <div class="page-section-head">
       <v-icon size="14" class="c-faint">mdi-console</v-icon>
-      <span class="page-section-title">运行环境</span>
+      <span class="page-section-title" data-section="environment">{{ t('projects.environment.title') }}</span>
     </div>
     <div class="page-section-body">
       <v-alert v-if="error" type="error" variant="tonal" class="mb-3">{{ error }}</v-alert>
       <v-alert v-if="notice" type="success" variant="tonal" class="mb-3">{{ notice }}</v-alert>
       <v-progress-linear v-if="!info && !error" indeterminate />
-      <v-btn v-if="!info && error" variant="text" @click="load">重新加载</v-btn>
+      <v-btn v-if="!info && error" variant="text" @click="load">{{ t('projects.environment.reload') }}</v-btn>
       <template v-if="info">
         <p class="t-body c-muted mb-3">
-          为房间安装工具，并在准备任务代码时安装项目依赖。工作房间共用这份配置；总览使用基础环境，协助处理环境故障。
+          {{ t('projects.environment.intro') }}
         </p>
         <v-textarea
           v-model="setup"
           autocomplete="off"
-          label="安装工具（初始化脚本）"
+          :label="t('projects.environment.setupLabel')"
           variant="outlined"
           rows="5"
           :readonly="!info.can_edit"
-          hint="安装 Python、Node 等工具。同一台机器上每个项目运行一次，应用新配置时重新运行"
+          :hint="t('projects.environment.setupHint')"
           persistent-hint
           class="mb-4"
         />
         <v-textarea
           v-model="startup"
           autocomplete="off"
-          label="准备项目（启动脚本）"
+          :label="t('projects.environment.startupLabel')"
           variant="outlined"
           rows="5"
           :readonly="!info.can_edit"
-          hint="每次创建或重新打开任务工作目录后运行，安装该任务分支的依赖"
+          :hint="t('projects.environment.startupHint')"
           persistent-hint
           class="mb-4"
         />
         <details class="t-body c-muted mb-3">
-          <summary>运行说明</summary>
-          <p>Cloud、Hosted Machine 使用相同配置方式；Hosted Sandbox 暂未开放。机器需要支持脚本中的命令。</p>
-          初始化脚本在房间目录运行，启动脚本在任务代码目录运行。两者使用 Bash，每段最多 30
-          分钟；使用机器当前权限。环境变量同时传给两个脚本和 AI 进程，脚本里的 export 不会传给下一步。 工具可安装到
-          $HOME/.local/bin。
+          <summary>{{ t('projects.environment.howItWorksSummary') }}</summary>
+          <p>{{ t('projects.environment.howItWorks') }}</p>
           <p class="mt-2">
-            初始化脚本的 $HOME 是该项目在这台机器上共用的工具目录，所以工具只安装一份，后开的房间直接用。启动脚本和 AI
-            进程的 $HOME 是房间自己的，因此不要在初始化脚本里写入某个房间专有的内容。
+            {{ t('projects.environment.howItWorksHome') }}
           </p>
         </details>
-        <p class="t-body mb-2">环境变量</p>
-        <p class="t-body c-muted mb-3">这些值对项目成员和芝士可见。请不要在这里保存密码或 API 密钥。</p>
+        <p class="t-body mb-2">{{ t('projects.environment.variablesTitle') }}</p>
+        <p class="t-body c-muted mb-3">{{ t('projects.environment.variablesHint') }}</p>
         <div v-for="(row, index) in variables" :key="index" class="d-flex align-start ga-2 mb-2">
           <v-text-field
             v-model="row.key"
             autocomplete="off"
-            label="名称"
+            :label="t('projects.environment.varName')"
             variant="outlined"
             density="compact"
             :readonly="!info.can_edit"
@@ -177,7 +188,7 @@ onBeforeUnmount(() => {
           <v-textarea
             v-model="row.value"
             autocomplete="off"
-            label="值"
+            :label="t('projects.environment.varValue')"
             variant="outlined"
             density="compact"
             rows="1"
@@ -189,18 +200,20 @@ onBeforeUnmount(() => {
             icon="mdi-close"
             variant="text"
             size="small"
-            aria-label="删除环境变量"
+            :aria-label="t('projects.environment.removeVariable')"
             @click="variables.splice(index, 1)"
           />
         </div>
         <div v-if="info.can_edit" class="d-flex ga-2 mb-3">
-          <v-btn variant="text" @click="variables.push({ key: '', value: '' })">添加变量</v-btn>
-          <v-btn color="primary" :loading="saving" @click="save">保存配置</v-btn>
+          <v-btn variant="text" @click="variables.push({ key: '', value: '' })">{{
+            t('projects.environment.addVariable')
+          }}</v-btn>
+          <v-btn color="primary" :loading="saving" @click="save">{{ t('projects.environment.save') }}</v-btn>
         </div>
-        <p class="t-body c-muted mb-3">保存只影响新房间，已有房间保持当前配置</p>
+        <p class="t-body c-muted mb-3">{{ t('projects.environment.saveHint') }}</p>
         <details class="t-body c-faint mb-4">
-          <summary>已保存的配置</summary>
-          版本：{{ info.config.revision.slice(0, 12) }}
+          <summary>{{ t('projects.environment.savedConfigSummary') }}</summary>
+          {{ t('projects.environment.version', { revision: info.config.revision.slice(0, 12) }) }}
         </details>
         <template v-if="info.rooms.length">
           <v-select
@@ -209,56 +222,74 @@ onBeforeUnmount(() => {
             :items="info.rooms"
             item-title="title"
             item-value="id"
-            label="查看房间环境"
+            :label="t('projects.environment.viewRoomEnvironment')"
             variant="outlined"
             density="compact"
           />
           <p v-if="status" class="t-body mb-2">
             {{ labels[status.state]
             }}<span v-if="status.stage">
-              · {{ status.stage === 'setup' ? '安装工具' : status.stage === 'startup' ? '准备项目' : '脚本完成' }}</span
+              ·
+              {{
+                status.stage === 'setup'
+                  ? t('projects.environment.stageSetup')
+                  : status.stage === 'startup'
+                    ? t('projects.environment.stageStartup')
+                    : t('projects.environment.stageDone')
+              }}</span
             >
           </p>
           <p v-if="status?.error" class="t-body mb-2">
-            {{ status.error }}<span v-if="status.exit_code != null">（退出码 {{ status.exit_code }}）</span>
+            {{ status.error
+            }}<span v-if="status.exit_code != null">{{
+              t('projects.environment.exitCode', { code: status.exit_code })
+            }}</span>
           </p>
           <details v-if="status" class="t-body c-muted mb-2">
-            <summary>配置与执行详情</summary>
-            <p>版本：{{ status.pinned_revision?.slice(0, 12) ?? '尚未绑定' }}</p>
-            <p v-if="status.started_at">
-              开始：{{ new Date(status.started_at).toLocaleString() }}
-              <span v-if="status.finished_at"> · 结束：{{ new Date(status.finished_at).toLocaleString() }}</span>
+            <summary>{{ t('projects.environment.detailsSummary') }}</summary>
+            <p>
+              {{
+                t('projects.environment.version', {
+                  revision: status.pinned_revision?.slice(0, 12) ?? t('projects.environment.notBound'),
+                })
+              }}
             </p>
-            <p>日志显示最近 32 KB，历史日志保存在该房间 HOME 下</p>
+            <p v-if="status.started_at">
+              {{ t('projects.environment.startedAt', { time: formatTime(status.started_at) }) }}
+              <span v-if="status.finished_at">
+                · {{ t('projects.environment.finishedAt', { time: formatTime(status.finished_at) }) }}</span
+              >
+            </p>
+            <p>{{ t('projects.environment.logNote') }}</p>
           </details>
           <p v-if="status?.recovery_state === 'requested'" class="t-body mb-2">
-            已交给总览芝士检查，可在总览查看处理情况
+            {{ t('projects.environment.recoveryRequested') }}
           </p>
           <p v-else-if="status?.recovery_state === 'retrying'" class="t-body mb-2">
-            总览芝士已修正环境配置，正在重新启动
+            {{ t('projects.environment.recoveryRetrying') }}
           </p>
           <p v-else-if="status?.recovery_state === 'needs_help'" class="t-body mb-2">
-            自动处理未能恢复环境，请在总览查看需要的协助
+            {{ t('projects.environment.recoveryNeedsHelp') }}
           </p>
           <div class="d-flex flex-wrap ga-2 mb-3">
-            <v-btn variant="text" @click="refreshStatus">刷新状态</v-btn>
+            <v-btn variant="text" @click="refreshStatus">{{ t('projects.environment.refreshStatus') }}</v-btn>
             <v-btn
               v-if="info.can_edit"
               variant="outlined"
               :loading="applying"
               :disabled="saving || status?.busy || status?.state === 'preparing'"
               @click="apply(true)"
-              >下次启动时应用</v-btn
+              >{{ t('projects.environment.applyNextStart') }}</v-btn
             >
             <v-btn
               v-if="info.can_edit && status?.state === 'failed'"
               variant="text"
               :disabled="applying || status?.busy"
               @click="apply(false)"
-              >下次启动时重试</v-btn
+              >{{ t('projects.environment.retryNextStart') }}</v-btn
             >
           </div>
-          <p class="t-body c-faint mb-2">房间文件会保留。正在工作的房间需要等当前工作结束后才能应用配置。</p>
+          <p class="t-body c-faint mb-2">{{ t('projects.environment.applyNote') }}</p>
           <pre v-if="status?.log" class="environment-log">{{ status.log }}</pre>
         </template>
       </template>

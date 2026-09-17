@@ -58,7 +58,6 @@
     "src/components/panels/preview/PreviewSheet.vue": 4,
     "src/components/panels/TaskProgress.vue": 8,
     "src/components/ProjectComputeSettings.vue": 9,
-    "src/components/ProjectEnvironmentSettings.vue": 52,
     "src/components/projects/forms/ProjectForm.vue": 11,
     "src/components/projects/forms/ProjectFormDialog.vue": 4,
     "src/components/projects/header/ProjectHeader.vue": 11,
