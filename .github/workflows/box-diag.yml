@@ -246,14 +246,12 @@ jobs:
   # The cheese-ci pool, which now runs every heavy job (test, migration-heads,
   # e2e) and had no diagnostic probe at all.
   #
-  # Three concurrent jobs on the SINGLE shared `cheese-ci` label necessarily
-  # land on three different machines: each pool VM registers exactly one runner
-  # slot, so no two of these can be scheduled onto the same host. That covers
-  # the whole pool WITHOUT the per-machine labels a partial-outage alert would
-  # need — affordable here only because this workflow is workflow_dispatch-only,
-  # so saturating all three slots for ~20s costs nothing. box-heartbeat.yml
-  # deliberately does NOT fan out this way: an hourly probe that needs all three
-  # slots at once would queue behind an ordinary merge burst and alert on a
+  # Each pool VM registers TWO runner slots, so covering the pool means covering
+  # six slots, not three — three concurrent jobs can land on two machines and
+  # leave the third unseen. Saturating all six for ~20s is affordable only
+  # because this workflow is workflow_dispatch-only. box-heartbeat.yml
+  # deliberately does NOT fan out this way: an hourly probe that needs every
+  # slot at once would queue behind an ordinary merge burst and alert on a
   # perfectly healthy pool.
   #
   # `slot` is a fan-out counter only — it is not a machine identity and does not
@@ -261,6 +259,12 @@ jobs:
   # If a pool machine is down, its job stays QUEUED rather than failing
   # (timeout-minutes bounds execution, not queueing) — a job stuck in "Queued"
   # here IS the signal that the pool is short a machine.
+  #
+  # Memory is probed because it is what kills jobs here: two runner slots share
+  # one VM's RAM, and a job that loses that race is SIGKILLed by the kernel —
+  # `exit code 137`, with no message from the tool that died. That failure is
+  # unreadable from the job log alone, which is exactly the case this workflow
+  # exists for.
   #
   # No database probe: these VMs run no deployment — no cheese-backend-1, no
   # DATABASE_URL. Disk is what matters. They are 40G, every run's postgres
@@ -286,3 +290,19 @@ jobs:
           df -h / | tail -1
           docker system df
           echo "dangling volumes: $(docker volume ls -qf dangling=true | wc -l)"
+      - name: Memory, and what the kernel killed
+        run: |
+          echo "host: $(hostname)  cores: $(nproc)"
+          free -m
+          echo "--- swap"
+          swapon --show || echo "(no swap configured)"
+          echo "--- biggest resident processes"
+          ps -eo rss,etimes,comm --sort=-rss | head -8
+          echo "--- runner slots on this host"
+          pgrep -af 'Runner.Listener' | sed 's/ --.*//' || echo "(none visible)"
+          echo "--- kernel OOM kills (this boot)"
+          # A probe must not fail on a box that does not let it read the ring
+          # buffer; an empty section is a real answer here.
+          { dmesg -T 2>/dev/null || journalctl -k --no-pager -q 2>/dev/null; } \
+            | grep -iE 'out of memory|oom-kill|killed process' | tail -10 \
+            || echo "(none found, or the ring buffer is not readable)"
