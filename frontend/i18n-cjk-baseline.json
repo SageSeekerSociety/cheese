@@ -198,7 +198,6 @@
     "src/views/tasks/composables/useTaskParticipation.ts": 15,
     "src/views/tasks/composables/useTeamParticipation.ts": 7,
     "src/views/tasks/detail/AIAdvice.vue": 7,
-    "src/views/tasks/detail/Participants.vue": 47,
     "src/views/tasks/detail/Submissions.vue": 11,
     "src/views/tasks/detail/Submit.vue": 33,
     "src/views/tasks/Edit.vue": 6,
