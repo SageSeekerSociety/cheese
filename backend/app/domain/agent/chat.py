@@ -77,6 +77,7 @@ from app.domain.agent.service import (
     AgentMessage,
     AgentResult,
     AgentSessionInfo,
+    AgentStepFailed,
     AgentSubagentStart,
     AgentSubagentStop,
     AgentToolResult,
@@ -90,6 +91,8 @@ from app.domain.agent.supply import SUBSCRIPTION
 from app.domain.agent.tool_preview import (
     SHELL_TOOLS,
     ToolPreview,
+    cheese_subcommand,
+    tool_detail,
     tool_preview,
     work_subpath,
 )
@@ -186,6 +189,10 @@ class _HookWorkState:
     #: 分身的 `TaskUpdate("1")` 会去勾掉房间自己的第一条。
     worker_todo: dict[str, list[dict]] = field(default_factory=dict)
     actions: list[str] = field(default_factory=list)
+    #: 这一轮每次工具调用落在哪个现场块上，按 harness 自己的调用 id。失败的结果
+    #: 回来时要标的就是那一块。只在内存里、只活这一轮：成功的调用（绝大多数）因此
+    #: 一个字节都不必落库，而重启丢掉的只是几个红点，不是记录。
+    steps: dict[str, uuid.UUID] = field(default_factory=dict)
 
     def todo_of(self, work_id: uuid.UUID | None) -> list[dict]:
         """这条事件该记进谁的清单。None = 房间自己的。"""
@@ -357,22 +364,23 @@ def _format_tool_event(name: str, preview: ToolPreview) -> str:
 
 
 # 现场圆点分级: a PLATFORM action (amber dot) vs plain work (neutral dot).
-# Deterministic by construction — tool-name prefix, or a literal `cheese <sub>`
-# word pair inside a Bash command. NEVER inferred from natural language.
-_CHEESE_CMD_RE = re.compile(r"\bcheese\s+\w+")
-
-
+# Deterministic by construction — tool-name prefix, or the `cheese` CLI at the
+# head of the command segment 现场 displays. NEVER inferred from natural
+# language, and never from the word appearing somewhere else in the command:
+# the dot and the text on that line have to be about the same thing.
 def _is_platform_tool(raw_name: str, args: dict) -> bool:
     """True when the tool call is a platform action: a cheese MCP tool, or a
     shell command that invokes the machine's `cheese` CLI."""
     if raw_name.startswith("mcp__cheese__"):
         return True
     if raw_name in SHELL_TOOLS and isinstance(args, dict):
-        return _CHEESE_CMD_RE.search(str(args.get("command", ""))) is not None
+        return bool(cheese_subcommand(str(args.get("command", ""))))
     return False
 
 
-def _tool_event_meta(name: str, preview: ToolPreview, *, platform: bool) -> dict:
+def _tool_event_meta(
+    name: str, preview: ToolPreview, *, platform: bool, detail: str = ""
+) -> dict:
     """Structured payload persisted on an event block: the UI translates the
     tool name and colors the dot from these fields at DISPLAY time, so a verb
     missing from today's table is never baked in untranslated forever.
@@ -382,12 +390,21 @@ def _tool_event_meta(name: str, preview: ToolPreview, *, platform: bool) -> dict
     `cat foo.py` is still a Bash call, but 「读取文件」 is what it did). NOT named
     ``action`` — that key already means "which platform resource this card points
     at" (see the frontend's platformNotice), and one name answering two questions
-    is how a card ends up pointing at a resource called "Read"."""
+    is how a card ends up pointing at a resource called "Read".
+
+    ``detail`` is the argument as it was actually written, for the reader who
+    opens the line. It is stored NEXT TO ``arg`` rather than replacing it
+    because the two want opposite things: ``arg`` is rewritten and cut to stay
+    scannable on one line, and what the opener came for is exactly what that
+    rewriting removed. Only the preview is ever computed from it, so a line
+    with nothing more to say carries no second copy."""
     meta: dict = {"tool": name, "platform": platform}
     if preview.text:
         meta["arg"] = preview.text
     if preview.action:
         meta["as_tool"] = preview.action
+    if detail:
+        meta["detail"] = detail
     return meta
 
 
@@ -726,11 +743,7 @@ def _parse_uuid(raw: str | None) -> uuid.UUID | None:
 
 def _cheese_resource(command: str) -> str | None:
     """Resource hint for a Bash `cheese <sub>` command, else None."""
-    parts = command.split()
-    for i, tok in enumerate(parts):
-        if tok.endswith("cheese") and i + 1 < len(parts):
-            return _CHEESE_RESOURCE.get(parts[i + 1])
-    return None
+    return _CHEESE_RESOURCE.get(cheese_subcommand(command))
 
 
 # Open (non-final) accept-card statuses, worth telling the agent about at turn
@@ -2289,6 +2302,8 @@ class ChatService:
                 )
                 if payload is not None:
                     frame = {"type": "event_block", "block": payload}
+                    if state is not None and event.call_id:
+                        state.steps[event.call_id] = uuid.UUID(payload["id"])
                 if name in SHELL_TOOLS:
                     resource = _cheese_resource(str(args.get("command", "")))
                     if resource is not None:
@@ -2308,6 +2323,14 @@ class ChatService:
                             and resource not in state.actions
                         ):
                             state.actions.append(resource)
+        elif isinstance(event, AgentStepFailed):
+            # No frame: 现场 rebuilds its timeline when the tab is opened, and
+            # this changes a line that is already in it rather than adding one.
+            # A step whose call we never saw (a restart mid-turn) is simply not
+            # marked — the timeline is still true, just less helpful.
+            block_id = state.steps.get(event.call_id) if state is not None else None
+            if block_id is not None:
+                await self._mark_step_failed(block_id, event.text)
         elif isinstance(event, AgentToolResult):
             payload = await self._persist_subagent_result(
                 project_id=project_id,
@@ -3102,13 +3125,27 @@ class ChatService:
             project_id=project_id,
             topic_id=topic_id,
             content=_format_tool_event(name, preview),
-            meta=_tool_event_meta(name, preview, platform=platform),
+            meta=_tool_event_meta(
+                name,
+                preview,
+                platform=platform,
+                detail=tool_detail(name, tool_input, preview),
+            ),
             turn_id=turn_id,
             eid=eid,
             backfilled=backfilled,
             platform_unsolicited=platform_unsolicited,
             task_id=task_id,
         )
+
+    async def _mark_step_failed(self, block_id: uuid.UUID, error: str) -> None:
+        """Stamp a 现场 step as failed. Never fails a turn over a red dot."""
+        try:
+            async with self._sessions() as session:
+                await BlockRepository(session).mark_step_failed(block_id, error)
+                await session.commit()
+        except Exception:  # noqa: BLE001 — a step's verdict is not worth a turn
+            logger.warning("could not mark step %s failed", block_id)
 
     async def _persist_room_event(
         self,

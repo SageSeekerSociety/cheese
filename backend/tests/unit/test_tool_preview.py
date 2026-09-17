@@ -7,8 +7,12 @@
 import uuid
 
 from app.domain.agent.tool_preview import (
+    DETAIL_MAX,
+    PREVIEW_MAX,
     ToolPreview,
+    cheese_subcommand,
     command_preview,
+    tool_detail,
     tool_preview,
     work_subpath,
 )
@@ -276,3 +280,131 @@ def test_output_thrown_away_is_not_a_file_that_was_written():
 def test_merging_file_descriptors_is_not_a_redirect_target():
     preview = command_preview("cat notes.md 2>&1")
     assert preview == ToolPreview("notes.md", "Read")
+
+
+# ---- 摊开这一行：参数原文 ----
+
+
+def _detail(name: str, args: dict, *, work_dir: str = "") -> str:
+    """按生产路径算：预览先出来，原文再拿它对照。"""
+    return tool_detail(name, args, tool_preview(name, args, work_dir=work_dir))
+
+
+def test_opening_a_rewritten_line_shows_the_command_that_was_run():
+    # 一行显示的是「写文件 · build.py」——那是重写过的说法，heredoc 里的内容和
+    # 重定向都不在上面。摊开的人要的正是这些。
+    command = "cat > /tmp/build.py <<'EOF'\nprint(1)\nEOF"
+    assert tool_preview("bash", {"command": command}).text == "/tmp/build.py"
+    assert _detail("bash", {"command": command}) == command
+
+
+def test_opening_a_long_command_is_not_cut_at_the_one_line_limit():
+    command = "pytest " + " ".join(f"tests/test_{i}.py" for i in range(40))
+    assert len(_detail("Bash", {"command": command})) > PREVIEW_MAX
+
+
+def test_opening_a_shortened_path_shows_where_the_file_actually_is():
+    args = {"path": f"{ABS}/backend/app/main.py"}
+    assert tool_preview("read", args, work_dir=WORK).text == "backend/app/main.py"
+    assert _detail("read", args, work_dir=WORK) == args["path"]
+
+
+def test_a_chinese_description_still_opens_onto_the_command():
+    args = {
+        "command": f"cd {ABS}; docker compose up -d",
+        "description": "把数据库拉起来",
+    }
+    assert _detail("Bash", args, work_dir=WORK) == args["command"]
+
+
+def test_a_line_with_nothing_more_to_say_carries_no_second_copy():
+    # 摊开之后看见同一句话，等于什么也没摊开。
+    assert _detail("Grep", {"pattern": "TODO"}) == ""
+    assert _detail("read", {"path": "notes.md"}) == ""
+    assert _detail("Bash", {"command": "make test"}) == ""
+
+
+def test_an_enormous_argument_is_capped_and_says_so():
+    detail = _detail("Bash", {"command": "echo " + "x" * (DETAIL_MAX * 2)})
+    assert len(detail) == DETAIL_MAX + 1
+    assert detail.endswith("…")
+
+
+def test_a_tool_with_no_telling_argument_has_nothing_to_open():
+    assert _detail("FutureTool", {"x": 1}) == ""
+    assert tool_detail("Bash", "not a dict", ToolPreview()) == ""  # type: ignore[arg-type]
+
+
+# ---- 显示哪一段，圆点就判哪一段 ----
+
+
+def test_a_command_substitution_is_part_of_the_value_it_sits_in():
+    # 在第一个空格处断开，现场显示的是 `gh-token 2>/dev/null)` —— 半截替换出来的
+    # 残句，不是任何人写过的命令。
+    preview = command_preview("GH_TOKEN=$(cheese gh-token 2>/dev/null) gh pr list")
+    assert preview.text == "gh pr list"
+
+
+def test_a_segment_that_is_only_assignments_is_preparation_not_a_step():
+    preview = command_preview(f"root={ABS}; cd $root; ls -la")
+    assert preview.text == "ls -la"
+
+
+def test_a_command_that_only_sets_a_variable_is_shown_as_it_is():
+    # 整条命令都是准备动作时没有更好的说法 —— 原样显示，别把它说成一件它不是的
+    # 事，也别只留一个动词让这一步看起来什么都没干。
+    assert command_preview(f"root={ABS}").text == f"root={ABS}"
+
+
+def test_the_platform_step_is_the_segment_shown():
+    # 做的两件事里，房间要看见的是改了这个项目的那件。
+    assert command_preview("make && cheese doc set").text == "cheese doc set"
+
+
+def test_a_platform_action_is_read_off_the_segment_that_is_shown():
+    assert cheese_subcommand("cheese doc set") == "doc"
+    assert cheese_subcommand("make && cheese accept-request nic") == "accept-request"
+    assert cheese_subcommand("/usr/local/bin/cheese notify hi") == "notify"
+
+
+def test_the_cheese_word_somewhere_else_is_not_a_platform_action():
+    assert cheese_subcommand("GH_TOKEN=$(cheese gh-token) gh pr list") == ""
+    assert cheese_subcommand("grep -rn cheese doc backend/") == ""
+    assert cheese_subcommand("docker exec cheese-backend-1 sh -lc 'ls'") == ""
+    assert cheese_subcommand("echo cheese") == ""
+
+
+# ---- 读一份技能，不是读一个叫 SKILL.md 的文件 ----
+
+
+def test_reading_a_skill_reads_as_using_it():
+    # 每份技能的文件名都叫 SKILL.md，「读取文件 · SKILL.md」等于什么都没说。
+    assert tool_preview(
+        "read", {"path": f"{ABS}/.claude/skills/documents/SKILL.md"}, work_dir=WORK
+    ) == ToolPreview("documents", "Skill")
+    assert tool_preview(
+        "Read", {"file_path": "/home/x/skills/cheese-docs/SKILL.md"}
+    ) == (ToolPreview("cheese-docs", "Skill"))
+
+
+def test_a_skill_read_through_the_shell_says_the_same_thing():
+    assert command_preview("cat ~/.config/pi/skills/documents/SKILL.md") == (
+        ToolPreview("documents", "Skill")
+    )
+
+
+def test_a_skill_line_still_opens_onto_the_command_that_read_it():
+    # 这一行只剩「调用技能 · documents」，读的人点开是要看它到底动了哪个文件。
+    command = "cat skills/documents/SKILL.md"
+    assert _detail("bash", {"command": command}) == command
+
+
+def test_writing_a_skill_is_not_using_one():
+    # 写一份说明和照着它干活是两件事。
+    preview = tool_preview("write", {"path": "skills/documents/SKILL.md"})
+    assert preview.action is None
+    assert preview.text == "skills/documents/SKILL.md"
+
+
+def test_a_lone_skill_file_has_no_skill_to_name():
+    assert tool_preview("read", {"path": "SKILL.md"}) == ToolPreview("SKILL.md")
