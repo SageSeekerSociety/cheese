@@ -155,6 +155,26 @@
       "generateCodesFailed": "生成备份码失败",
       "updateSettingsFailed": "更新设置失败",
       "copied": "已复制到剪贴板"
+    },
+    "install": {
+      "title": "安装到手机",
+      "intro": "装到主屏幕上，芝士就是一个独立的应用：有自己的图标，打开没有浏览器的地址栏，已看过的内容离线也打得开。",
+      "installed": "这台设备已经装好了——你现在就是以应用形态在使用芝士。",
+      "installButton": "安装到这台设备",
+      "resultAccepted": "已交给系统安装，稍后主屏幕上会出现芝士。",
+      "resultDismissed": "这次取消了。想装的时候可以再用下面的方法。",
+      "resultNoPrompt": "这个浏览器这次没有给出安装入口，用下面的方法手动装。",
+      "stepsTitleIos": "在 iPhone / iPad 上：",
+      "stepsTitleOther": "自己从浏览器菜单装：",
+      "iosStepOpen": "用 {browser} 打开本页（别的 App 里内置的浏览器没有「添加到主屏幕」）。",
+      "iosStepShare": "点屏幕底部中间的「分享」按钮。",
+      "iosStepAdd": "在菜单里选「添加到主屏幕」，再点右上角的「添加」。",
+      "otherStepOpen": "用 {browser} 打开本页（三星手机上用三星浏览器也行）。",
+      "otherStepMenu": "点右上角的「⋮」。",
+      "otherStepInstall": "选「安装应用」——部分版本写的是「添加到主屏幕」。",
+      "desktopNote": "电脑上也可以用同样的方法：Chrome 地址栏右侧会出现一个带向下箭头的安装图标。",
+      "warningTitle": "请用 Chrome 装，别用「添加到桌面」的国产浏览器",
+      "warningBody": "国产浏览器、以及大多数只提供「添加到桌面」的浏览器，装出来的不是应用，是一个包着网页的壳：壳里选不了文件（发不了图、传不了文件），也收不到消息推送。用 Chrome 装出来的才是真应用。"
     }
   }
 }

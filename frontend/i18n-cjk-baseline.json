@@ -221,7 +221,6 @@
     "src/views/user/privacy/PrivacyCenter.vue": 9,
     "src/views/user/privacy/PrivacyPolicy.vue": 63,
     "src/views/user/privacy/RealNameInfo.vue": 51,
-    "src/views/user/settings/Install.vue": 18,
     "src/views/workspace/DmView.vue": 2,
     "src/views/workspace/ProjectMembersView.vue": 42,
     "src/views/workspace/RunningWorkView.vue": 18,

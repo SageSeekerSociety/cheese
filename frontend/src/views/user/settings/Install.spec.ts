@@ -12,6 +12,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 import Install from './Install.vue'
 
+import i18n, { setLocale } from '@/i18n'
 import { __resetInstallPromptForTests, watchInstallPrompt } from '@/lib/pwaInstall'
 
 const Page = Install as unknown as Parameters<typeof render>[0]
@@ -62,6 +63,9 @@ function restartWatch() {
 }
 
 beforeEach(() => {
+  // 下面断言的是中文原文：这一页搬进词表之后，这些句子仍然要一模一样。
+  // （换成英文的例子在最后一个 describe 里。）
+  setLocale('zh-CN')
   stubStandalone(false)
   stubUserAgent('Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/120 Safari/537.36')
   restartWatch()
@@ -73,7 +77,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-const mount = () => render(Page, { global: { plugins: [vuetify] } })
+const mount = () => render(Page, { global: { plugins: [vuetify, i18n] } })
 
 describe('浏览器愿意让我们问的时候', () => {
   it('给出安装按钮，点了就是把机会交给系统', async () => {
@@ -124,5 +128,19 @@ describe('已经装好了', () => {
     expect(container.textContent).toContain('已经装好了')
     expect(queryByText('安装到这台设备')).toBeNull()
     expect(container.querySelector('.steps')).toBeNull()
+  })
+})
+
+describe('换成英文', () => {
+  it('整页没有一个汉字，步骤里的浏览器名还是加粗的', () => {
+    setLocale('en')
+    const { container } = mount()
+
+    // 步骤第一句用的是 i18n-t 的 {browser} 插槽：写错了不会报错，只会把
+    // `{browser}` 原样印出来。
+    expect(container.textContent).not.toContain('{browser}')
+    expect(container.querySelector('ol strong')?.textContent).toBe('Chrome')
+    expect(container.textContent).toContain('Install with Chrome, not with')
+    expect(container.textContent ?? '').not.toMatch(/[㐀-䶿一-鿿豈-﫿]/)
   })
 })

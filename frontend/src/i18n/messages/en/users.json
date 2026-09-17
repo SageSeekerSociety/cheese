@@ -155,6 +155,26 @@
       "generateCodesFailed": "Couldn't generate the backup codes",
       "updateSettingsFailed": "Couldn't update the setting",
       "copied": "Copied to the clipboard"
+    },
+    "install": {
+      "title": "Install on your phone",
+      "intro": "On your home screen, Cheese is a standalone app: its own icon, no address bar, and pages you have already read open offline.",
+      "installed": "This device already has it — you are using Cheese as an app right now.",
+      "installButton": "Install on this device",
+      "resultAccepted": "Handed off to the system installer; Cheese will show up on your home screen shortly.",
+      "resultDismissed": "Cancelled this time. The steps below work whenever you want to install.",
+      "resultNoPrompt": "This browser did not offer an install prompt this time. Use the steps below to install by hand.",
+      "stepsTitleIos": "On iPhone / iPad:",
+      "stepsTitleOther": "Install it yourself from the browser menu:",
+      "iosStepOpen": "Open this page in {browser} — the browser built into other apps has no “Add to Home Screen”.",
+      "iosStepShare": "Tap the share button in the middle of the bottom bar.",
+      "iosStepAdd": "Choose “Add to Home Screen”, then tap “Add” in the top right.",
+      "otherStepOpen": "Open this page in {browser} — on a Samsung phone, Samsung Internet works too.",
+      "otherStepMenu": "Tap “⋮” in the top right.",
+      "otherStepInstall": "Choose “Install app” — some versions call it “Add to Home Screen”.",
+      "desktopNote": "The same works on a computer: Chrome puts an install icon with a down arrow at the right of the address bar.",
+      "warningTitle": "Install with Chrome, not with “Add to desktop”",
+      "warningBody": "Most browsers that only offer “Add to desktop” — the ones common in China among them — install a shell around the web page rather than the app: no file picker inside it (so you cannot send images or upload files) and no push notifications. Chrome installs the real app."
     }
   }
 }
