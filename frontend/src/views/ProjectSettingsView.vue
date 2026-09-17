@@ -9,6 +9,7 @@ import type {
 } from '../cx_types'
 
 import { computed, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
 import {
@@ -41,6 +42,7 @@ import { myId } from '../me'
 const props = defineProps<{ projectId: string }>()
 const router = useRouter()
 const route = useRoute()
+const { t } = useI18n()
 
 const projectName = ref('')
 const loading = ref(false)
@@ -80,7 +82,7 @@ async function loadGithubAccountConnection() {
   const userId = myId()
   if (!userId) {
     githubAccountLoadState.value = 'error'
-    githubAccountLoadError.value = '未登录'
+    githubAccountLoadError.value = t('projects.account.notSignedIn')
     return
   }
   githubAccountLoadState.value = 'loading'
@@ -90,7 +92,7 @@ async function loadGithubAccountConnection() {
     githubAccountConn.value = findGithubAccountConnection(connections)
     githubAccountLoadState.value = 'loaded'
   } catch (e) {
-    githubAccountLoadError.value = e instanceof Error ? e.message : '加载连接状态失败'
+    githubAccountLoadError.value = e instanceof Error ? e.message : t('projects.account.loadFailed')
     githubAccountLoadState.value = 'error'
   }
 }
@@ -104,7 +106,7 @@ async function disconnectGithubAccount() {
     await deleteOAuthConnection(userId, conn.id)
     githubAccountConn.value = null
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '断开 GitHub 账号失败'
+    error.value = e instanceof Error ? e.message : t('projects.account.disconnectFailed')
   } finally {
     disconnectingGithubAccount.value = false
   }
@@ -139,11 +141,16 @@ const bpMemberItems = computed(() =>
   bpMembers.value
     .filter((m) => !m.agent)
     .map((m) => ({
-      title: m.name ? `${m.name}（${m.user_handle}）` : m.user_handle,
+      title: m.name
+        ? t('projects.branchProtection.memberOption', { name: m.name, handle: m.user_handle })
+        : m.user_handle,
       value: m.user_handle,
     }))
 )
-const bpReviewerItems = computed(() => [{ title: '未指定', value: '' }, ...bpMemberItems.value])
+const bpReviewerItems = computed(() => [
+  { title: t('projects.branchProtection.reviewerUnspecified'), value: '' },
+  ...bpMemberItems.value,
+])
 
 async function loadBranchProtection() {
   bpLoadState.value = 'loading'
@@ -158,7 +165,7 @@ async function loadBranchProtection() {
     approvalsDraft.value = String(rules.approvals_required)
     bpLoadState.value = 'loaded'
   } catch (e) {
-    bpLoadError.value = e instanceof Error ? e.message : '加载分支保护规则失败'
+    bpLoadError.value = e instanceof Error ? e.message : t('projects.branchProtection.loadFailed')
     bpLoadState.value = 'error'
   }
 }
@@ -175,7 +182,7 @@ async function saveBranchProtection(patch: BranchProtectionPatch, key: string): 
     approvalsDraft.value = String(rules.approvals_required)
     return true
   } catch (e) {
-    bpError.value = e instanceof Error ? e.message : '保存分支保护规则失败'
+    bpError.value = e instanceof Error ? e.message : t('projects.branchProtection.saveFailed')
     return false
   } finally {
     bpSaving.value = null
@@ -204,7 +211,7 @@ async function saveApprovals() {
   if (!bp.value) return
   const parsed = parseApprovalsInput(approvalsDraft.value)
   if (parsed === null) {
-    bpError.value = '批准人数要是不小于 1 的整数'
+    bpError.value = t('projects.branchProtection.approvalsInvalid')
     approvalsDraft.value = String(bp.value.approvals_required)
     return
   }
@@ -233,7 +240,7 @@ async function load() {
     upstreamUrl.value = upP.url ?? ''
     githubConnection.value = ghP
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '加载设置失败'
+    error.value = e instanceof Error ? e.message : t('projects.settings.loadFailed')
   } finally {
     loading.value = false
   }
@@ -248,7 +255,7 @@ async function saveUpstream() {
     upstreamSaved.value = r.url
     upstreamUrl.value = r.url ?? ''
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '保存上游仓库失败'
+    error.value = e instanceof Error ? e.message : t('projects.upstream.saveFailed')
   } finally {
     savingUpstream.value = false
   }
@@ -262,7 +269,7 @@ async function doSyncUpstream() {
   try {
     syncResult.value = await syncUpstream(props.projectId)
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '同步上游失败'
+    error.value = e instanceof Error ? e.message : t('projects.upstream.syncFailed')
   } finally {
     syncing.value = false
   }
@@ -279,7 +286,7 @@ async function connectGithubRepo() {
     const res = await apiConnectGithubRepo(props.projectId)
     if (res.connected) {
       githubConnection.value = { connected: true, repo: res.repo, account: res.account }
-      githubRepoNotice.value = { type: 'success', text: `已连接 ${res.repo}` }
+      githubRepoNotice.value = { type: 'success', text: t('projects.repo.connected', { repo: res.repo }) }
       connectingGithubRepo.value = false
       return
     }
@@ -287,10 +294,10 @@ async function connectGithubRepo() {
       window.location.href = res.install_url
       return
     }
-    error.value = '连接失败：后端没有返回安装链接'
+    error.value = t('projects.repo.noInstallUrl')
     connectingGithubRepo.value = false
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '连接 GitHub 仓库失败'
+    error.value = e instanceof Error ? e.message : t('projects.repo.connectFailed')
     connectingGithubRepo.value = false
   }
 }
@@ -303,7 +310,7 @@ async function connectGithubAccount() {
     const { url } = await getGithubAccountAuthorizeUrl(props.projectId)
     window.location.href = url
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '获取授权链接失败'
+    error.value = e instanceof Error ? e.message : t('projects.account.authorizeUrlFailed')
     connectingGithubAccount.value = false
   }
 }
@@ -319,13 +326,13 @@ function consumeGithubCallbackNotice() {
   const reason = route.query.reason as string | undefined
   if (install === 'success') {
     const repo = route.query.repo as string | undefined
-    githubRepoNotice.value = { type: 'success', text: `已连接仓库 ${repo ?? ''}`.trim() }
+    githubRepoNotice.value = { type: 'success', text: t('projects.repo.connectedCallback', { repo: repo ?? '' }) }
   } else if (install === 'pending') {
-    githubRepoNotice.value = { type: 'info', text: '安装请求已提交，等待组织管理员批准' }
+    githubRepoNotice.value = { type: 'info', text: t('projects.repo.installPending') }
   } else if (install === 'error') {
     githubRepoNotice.value = { type: 'error', text: explainRepoInstallFailure(reason) }
   } else if (account === 'success') {
-    githubAccountNotice.value = { type: 'success', text: '已连接 GitHub 账号' }
+    githubAccountNotice.value = { type: 'success', text: t('projects.account.connectedNotice') }
   } else if (account === 'error') {
     githubAccountNotice.value = { type: 'error', text: explainAccountLinkFailure(reason) }
   }
@@ -364,15 +371,15 @@ watch(
           append-icon="mdi-storefront-outline"
           @click="router.push({ name: 'market' })"
         >
-          市场
+          {{ t('projects.settings.market') }}
         </v-btn>
       </div>
 
       <div class="mb-6">
-        <div class="t-eyebrow mb-1">项目设置 · {{ projectName }}</div>
-        <h1 class="t-page-title">项目设置</h1>
+        <div class="t-eyebrow mb-1">{{ t('projects.settings.eyebrow', { name: projectName }) }}</div>
+        <h1 class="t-page-title">{{ t('projects.settings.title') }}</h1>
         <p class="t-body c-muted mt-1" style="max-width: 640px">
-          管理运行环境、仓库连接和分支保护。角色设定和模型请到“AI 队友”中修改对应的队友。
+          {{ t('projects.settings.subtitle') }}
         </p>
       </div>
 
@@ -393,7 +400,7 @@ watch(
         <section class="page-section">
           <div class="page-section-head">
             <v-icon size="14" class="c-faint">mdi-source-branch-sync</v-icon>
-            <span class="page-section-title">上游仓库</span>
+            <span class="page-section-title" data-section="upstream">{{ t('projects.upstream.title') }}</span>
           </div>
           <div class="page-section-body">
             <div class="d-flex align-center" style="gap: 8px">
@@ -403,11 +410,13 @@ watch(
                 density="compact"
                 variant="outlined"
                 hide-details
-                placeholder="https://… 或本机绝对路径（留空 = 取消关联）"
+                :placeholder="t('projects.upstream.placeholder')"
                 style="flex: 1"
                 @keydown.enter="saveUpstream"
               />
-              <v-btn size="small" variant="tonal" :loading="savingUpstream" @click="saveUpstream"> 保存 </v-btn>
+              <v-btn size="small" variant="tonal" :loading="savingUpstream" @click="saveUpstream">{{
+                t('global.save')
+              }}</v-btn>
               <v-btn
                 size="small"
                 color="primary"
@@ -416,7 +425,7 @@ watch(
                 :loading="syncing"
                 @click="doSyncUpstream"
               >
-                同步上游
+                {{ t('projects.upstream.sync') }}
               </v-btn>
             </div>
             <p
@@ -426,14 +435,13 @@ watch(
               :class="syncResult.synced ? 'c-muted' : 'text-error'"
             >
               <template v-if="syncResult.synced && (syncResult.commits ?? 0) > 0">
-                已合入上游 {{ syncResult.commits }} 个提交
+                {{ t('projects.upstream.syncedCommits', { count: syncResult.commits ?? 0 }) }}
               </template>
-              <template v-else-if="syncResult.synced">已是最新，没有新提交</template>
-              <template v-else>同步失败：{{ syncResult.reason }}</template>
+              <template v-else-if="syncResult.synced">{{ t('projects.upstream.upToDate') }}</template>
+              <template v-else>{{ t('projects.upstream.syncFailed', { reason: syncResult.reason }) }}</template>
             </p>
             <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
-              关联一个已有的 git
-              仓库，把它的历史拉进这个项目；之后可随时同步新提交。有冲突时会原样中止，不会只合并一部分。
+              {{ t('projects.upstream.description') }}
             </p>
           </div>
         </section>
@@ -443,31 +451,33 @@ watch(
         <section class="page-section">
           <div class="page-section-head">
             <v-icon size="14" class="c-faint">mdi-shield-outline</v-icon>
-            <span class="page-section-title">分支保护</span>
+            <span class="page-section-title" data-section="branchProtection">{{
+              t('projects.branchProtection.title')
+            }}</span>
           </div>
           <div class="page-section-body">
             <!-- 加载中 -->
             <div v-if="bpLoadState === 'loading'" class="d-flex align-center" style="gap: 8px">
               <v-progress-circular indeterminate size="16" width="2" color="primary" />
-              <span class="t-body c-muted">正在加载分支保护规则…</span>
+              <span class="t-body c-muted">{{ t('projects.branchProtection.loading') }}</span>
             </div>
 
             <!-- 加载失败 -->
             <div v-else-if="bpLoadState === 'error'" class="d-flex align-center" style="gap: 8px">
               <v-icon size="18" color="error">mdi-alert-circle-outline</v-icon>
-              <span class="t-body text-error">{{ bpLoadError ?? '加载分支保护规则失败' }}</span>
+              <span class="t-body text-error">{{ bpLoadError ?? t('projects.branchProtection.loadFailed') }}</span>
               <v-spacer />
-              <v-btn size="small" variant="text" @click="loadBranchProtection">重试</v-btn>
+              <v-btn size="small" variant="text" @click="loadBranchProtection">{{ t('global.retry') }}</v-btn>
             </div>
 
             <template v-else-if="bp">
               <!-- GitHub 已开保护: 顶行提示 + 同名规则灰掉；查不到状态只说明，不灰 -->
               <div v-if="bp.github_protection.enforced" class="bp-github-note">
                 <v-icon size="16" class="c-muted">mdi-github</v-icon>
-                <span>GitHub 已在执行以下规则</span>
+                <span>{{ t('projects.branchProtection.enforcedByGithub') }}</span>
               </div>
               <p v-else-if="bp.github_protection.status === 'unknown'" class="t-body c-faint" style="font-size: 0.8rem">
-                暂时查不到 GitHub 侧的保护状态，以下规则按平台配置执行
+                {{ t('projects.branchProtection.statusUnknown') }}
               </p>
 
               <v-alert v-if="bpError" type="error" density="compact" closable @click:close="bpError = null">
@@ -477,22 +487,24 @@ watch(
               <!-- 1. 合并前必须通过的检查 -->
               <div class="bp-row bp-row--stack">
                 <div class="bp-main">
-                  <div class="bp-label">合并前必须通过的检查</div>
+                  <div class="bp-label">{{ t('projects.branchProtection.requiredChecks') }}</div>
                   <div class="bp-hint c-faint">
-                    点名的检查全部通过才能合并；填了路径范围的检查只在改到对应文件时要求
+                    {{ t('projects.branchProtection.requiredChecksHint') }}
                   </div>
                 </div>
-                <div v-if="bp.required_checks.length === 0" class="bp-hint c-muted">暂无必须通过的检查</div>
+                <div v-if="bp.required_checks.length === 0" class="bp-hint c-muted">
+                  {{ t('projects.branchProtection.requiredChecksEmpty') }}
+                </div>
                 <div v-for="(c, i) in bp.required_checks" :key="`${c.name}-${i}`" class="bp-check">
                   <span class="bp-check-name">{{ c.name }}</span>
                   <span v-if="c.paths?.length" class="bp-check-paths c-muted">{{ c.paths.join('、') }}</span>
-                  <span v-else class="bp-check-paths c-faint">所有文件</span>
+                  <span v-else class="bp-check-paths c-faint">{{ t('projects.branchProtection.allFiles') }}</span>
                   <v-spacer />
                   <v-btn
                     icon
                     size="x-small"
                     variant="text"
-                    title="移除这条检查"
+                    :title="t('projects.branchProtection.removeCheck')"
                     :disabled="ghEnforced || bpBusy"
                     @click="removeRequiredCheck(i)"
                   >
@@ -506,7 +518,7 @@ watch(
                     density="compact"
                     variant="outlined"
                     hide-details
-                    placeholder="检查名"
+                    :placeholder="t('projects.branchProtection.checkNamePlaceholder')"
                     style="flex: 1"
                     :disabled="ghEnforced || bpBusy"
                     @keydown.enter="addRequiredCheck"
@@ -517,7 +529,7 @@ watch(
                     density="compact"
                     variant="outlined"
                     hide-details
-                    placeholder="路径范围，如 backend/**，可留空"
+                    :placeholder="t('projects.branchProtection.checkPathsPlaceholder')"
                     style="flex: 1"
                     :disabled="ghEnforced || bpBusy"
                     @keydown.enter="addRequiredCheck"
@@ -529,7 +541,7 @@ watch(
                     :loading="bpSaving === 'required_checks'"
                     @click="addRequiredCheck"
                   >
-                    添加
+                    {{ t('projects.branchProtection.add') }}
                   </v-btn>
                 </div>
               </div>
@@ -537,8 +549,8 @@ watch(
               <!-- 2. strict -->
               <div class="bp-row">
                 <div class="bp-main">
-                  <div class="bp-label">合并前分支必须跟上 main</div>
-                  <div class="bp-hint c-faint">开启后落后的分支由平台先更新再合并</div>
+                  <div class="bp-label">{{ t('projects.branchProtection.strict') }}</div>
+                  <div class="bp-hint c-faint">{{ t('projects.branchProtection.strictHint') }}</div>
                 </div>
                 <v-switch
                   density="compact"
@@ -554,8 +566,8 @@ watch(
               <!-- 3. dismiss_stale -->
               <div class="bp-row">
                 <div class="bp-main">
-                  <div class="bp-label">新提交作废已有的采纳</div>
-                  <div class="bp-hint c-faint">这里推送代码的通常是芝士，新的提交需要重新采纳，所以默认开启</div>
+                  <div class="bp-label">{{ t('projects.branchProtection.dismissStale') }}</div>
+                  <div class="bp-hint c-faint">{{ t('projects.branchProtection.dismissStaleHint') }}</div>
                 </div>
                 <v-switch
                   density="compact"
@@ -571,8 +583,8 @@ watch(
               <!-- 4. auto_merge_allowed（平台自己的概念，不随 GitHub 灰掉） -->
               <div class="bp-row">
                 <div class="bp-main">
-                  <div class="bp-label">允许自动合并</div>
-                  <div class="bp-hint c-faint">开启后，被规则拦住的采纳可以选择在检查全部通过时自动合并</div>
+                  <div class="bp-label">{{ t('projects.branchProtection.autoMerge') }}</div>
+                  <div class="bp-hint c-faint">{{ t('projects.branchProtection.autoMergeHint') }}</div>
                 </div>
                 <v-switch
                   density="compact"
@@ -588,8 +600,8 @@ watch(
               <!-- 5. override_handles -->
               <div class="bp-row">
                 <div class="bp-main">
-                  <div class="bp-label">人工放行的人</div>
-                  <div class="bp-hint c-faint">检查未过时可以放行合并的人；留空时是项目 owner 和 lead</div>
+                  <div class="bp-label">{{ t('projects.branchProtection.overrideHandles') }}</div>
+                  <div class="bp-hint c-faint">{{ t('projects.branchProtection.overrideHandlesHint') }}</div>
                 </div>
                 <v-select
                   autocomplete="off"
@@ -599,7 +611,7 @@ watch(
                   multiple
                   chips
                   closable-chips
-                  placeholder="owner 和 lead"
+                  :placeholder="t('projects.branchProtection.overrideHandlesPlaceholder')"
                   style="max-width: 320px"
                   :items="bpMemberItems"
                   :model-value="bp.override_handles ?? []"
@@ -612,8 +624,8 @@ watch(
               <!-- 6. approvals_required -->
               <div class="bp-row">
                 <div class="bp-main">
-                  <div class="bp-label">需要几个人批准</div>
-                  <div class="bp-hint c-faint">采纳数达到这个数量才会合并</div>
+                  <div class="bp-label">{{ t('projects.branchProtection.approvals') }}</div>
+                  <div class="bp-hint c-faint">{{ t('projects.branchProtection.approvalsHint') }}</div>
                 </div>
                 <v-text-field
                   v-model="approvalsDraft"
@@ -633,8 +645,8 @@ watch(
               <!-- 7. merge_method（只读附注） -->
               <div class="bp-row">
                 <div class="bp-main">
-                  <div class="bp-label">合并方式</div>
-                  <div class="bp-hint c-faint">绑定 GitHub 的项目从仓库设置读取，这里不可修改</div>
+                  <div class="bp-label">{{ t('projects.branchProtection.mergeMethod') }}</div>
+                  <div class="bp-hint c-faint">{{ t('projects.branchProtection.mergeMethodHint') }}</div>
                 </div>
                 <span class="bp-check-name">{{ bp.merge_method }}</span>
               </div>
@@ -642,8 +654,8 @@ watch(
               <!-- 8. default_reviewer（平台自己的概念，不随 GitHub 灰掉） -->
               <div class="bp-row">
                 <div class="bp-main">
-                  <div class="bp-label">任务默认 reviewer</div>
-                  <div class="bp-hint c-faint">派任务没有指定 reviewer 时用这个人</div>
+                  <div class="bp-label">{{ t('projects.branchProtection.defaultReviewer') }}</div>
+                  <div class="bp-hint c-faint">{{ t('projects.branchProtection.defaultReviewerHint') }}</div>
                 </div>
                 <v-select
                   autocomplete="off"
@@ -667,7 +679,7 @@ watch(
         <section class="page-section">
           <div class="page-section-head">
             <v-icon size="14" class="c-faint">mdi-github</v-icon>
-            <span class="page-section-title">连接 GitHub 仓库</span>
+            <span class="page-section-title" data-section="repo">{{ t('projects.repo.title') }}</span>
           </div>
           <div class="page-section-body">
             <v-alert
@@ -683,15 +695,19 @@ watch(
             <div v-if="githubConnection?.connected" class="d-flex align-center" style="gap: 8px">
               <v-icon size="18" color="success">mdi-check-circle</v-icon>
               <span class="t-body">
-                已连接 <strong>{{ githubConnection.repo }}</strong>
+                <i18n-t keypath="projects.repo.connected" scope="global" tag="span">
+                  <template #repo
+                    ><strong>{{ githubConnection.repo }}</strong></template
+                  >
+                </i18n-t>
               </span>
               <v-spacer />
               <v-btn size="small" variant="tonal" :loading="connectingGithubRepo" @click="connectGithubRepo">
-                重新连接
+                {{ t('projects.repo.reconnect') }}
               </v-btn>
             </div>
             <div v-else class="d-flex align-center" style="gap: 8px">
-              <span class="t-body c-muted">暂无关联仓库</span>
+              <span class="t-body c-muted">{{ t('projects.repo.none') }}</span>
               <v-spacer />
               <v-btn
                 size="small"
@@ -700,12 +716,11 @@ watch(
                 :loading="connectingGithubRepo"
                 @click="connectGithubRepo"
               >
-                连接 GitHub 仓库
+                {{ t('projects.repo.title') }}
               </v-btn>
             </div>
             <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
-              通过 cheesex-app 把这个项目接到一个 GitHub 仓库；之后芝士查看 CI/CD 所需的临时凭据
-              会按这个连接自动签发，不用再手工配置。
+              {{ t('projects.repo.description') }}
             </p>
           </div>
         </section>
@@ -716,7 +731,7 @@ watch(
         <section class="page-section">
           <div class="page-section-head">
             <v-icon size="14" class="c-faint">mdi-account-box-outline</v-icon>
-            <span class="page-section-title">连接 GitHub 账号</span>
+            <span class="page-section-title" data-section="account">{{ t('projects.account.title') }}</span>
           </div>
           <div class="page-section-body">
             <!-- The 账号 flow's own outcome, in the 账号 section. -->
@@ -734,15 +749,15 @@ watch(
             <!-- 加载中 -->
             <div v-if="githubAccountLoadState === 'loading'" class="d-flex align-center" style="gap: 8px">
               <v-progress-circular indeterminate size="16" width="2" color="primary" />
-              <span class="t-body c-muted">正在加载连接状态…</span>
+              <span class="t-body c-muted">{{ t('projects.account.loading') }}</span>
             </div>
 
             <!-- 请求失败: never fall through to the "未连接" look, that would lie -->
             <div v-else-if="githubAccountLoadState === 'error'" class="d-flex align-center" style="gap: 8px">
               <v-icon size="18" color="error">mdi-alert-circle-outline</v-icon>
-              <span class="t-body text-error">{{ githubAccountLoadError ?? '加载连接状态失败' }}</span>
+              <span class="t-body text-error">{{ githubAccountLoadError ?? t('projects.account.loadFailed') }}</span>
               <v-spacer />
-              <v-btn size="small" variant="text" @click="loadGithubAccountConnection">重试</v-btn>
+              <v-btn size="small" variant="text" @click="loadGithubAccountConnection">{{ t('global.retry') }}</v-btn>
             </div>
 
             <!-- 已连接 -->
@@ -750,14 +765,18 @@ watch(
               <div class="d-flex align-center" style="gap: 8px">
                 <v-icon size="18" color="success">mdi-check-circle</v-icon>
                 <span class="t-body">
-                  已连接 <strong>{{ githubAccountConn.login ?? githubAccountConn.providerUserId }}</strong>
+                  <i18n-t keypath="projects.account.connected" scope="global" tag="span">
+                    <template #login>
+                      <strong>{{ githubAccountConn.login ?? githubAccountConn.providerUserId }}</strong>
+                    </template>
+                  </i18n-t>
                   <span v-if="githubAccountConn.connectedAt" class="c-faint" style="font-size: 0.8rem">
-                    （{{ relTime(githubAccountConn.connectedAt) }}连接）
+                    {{ t('projects.account.connectedAt', { time: relTime(githubAccountConn.connectedAt) }) }}
                   </span>
                 </span>
                 <v-spacer />
                 <v-btn size="small" variant="tonal" :loading="connectingGithubAccount" @click="connectGithubAccount">
-                  重新连接
+                  {{ t('projects.account.reconnect') }}
                 </v-btn>
                 <v-btn
                   size="small"
@@ -766,7 +785,7 @@ watch(
                   :loading="disconnectingGithubAccount"
                   @click="disconnectGithubAccount"
                 >
-                  断开
+                  {{ t('projects.account.disconnect') }}
                 </v-btn>
               </div>
               <v-alert
@@ -776,23 +795,21 @@ watch(
                 variant="tonal"
                 class="mt-2"
               >
-                GitHub 授权已过期：采纳你参与的话题时将无法用你的身份自动开 PR，会退回为直接合并到
-                main。请点击「重新连接」刷新授权。
+                {{ t('projects.account.expired') }}
               </v-alert>
             </template>
 
             <!-- 未连接 -->
             <div v-else class="d-flex align-center" style="gap: 8px">
-              <span class="t-body c-muted">暂无关联账号</span>
+              <span class="t-body c-muted">{{ t('projects.account.none') }}</span>
               <v-spacer />
               <v-btn size="small" variant="tonal" :loading="connectingGithubAccount" @click="connectGithubAccount">
-                连接 GitHub 账号
+                {{ t('projects.account.title') }}
               </v-btn>
             </div>
 
             <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
-              用于把你合并的提交正确归到你名下，也是采纳时能代表你的身份开 PR 的前提。这与登录用的 GitHub
-              授权是两回事，可以是同一个账号，也可以不是。
+              {{ t('projects.account.description') }}
             </p>
           </div>
         </section>

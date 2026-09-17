@@ -4,6 +4,7 @@ import editor from './editor.json'
 import global from './global.json'
 import navigation from './navigation.json'
 import notifications from './notifications.json'
+import projects from './projects.json'
 import publicSite from './publicSite.json'
 import questions from './questions.json'
 import spaces from './spaces.json'
@@ -14,6 +15,7 @@ import users from './users.json'
 export default {
   global,
   navigation,
+  projects,
   publicSite,
   account,
   editor,

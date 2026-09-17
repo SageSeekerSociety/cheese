@@ -149,7 +149,6 @@
     "src/views/projects/views/ProjectKnowledgeView.vue": 3,
     "src/views/projects/views/subproject/SubprojectDiscussions.vue": 5,
     "src/views/projects/views/subproject/SubprojectOverview.vue": 19,
-    "src/views/ProjectSettingsView.vue": 80,
     "src/views/question/Ask.vue": 13,
     "src/views/question/Detail.vue": 4,
     "src/views/searches/Index.vue": 6,
