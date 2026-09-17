@@ -23,6 +23,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import time
 import uuid
 from typing import Annotated, Any
 
@@ -263,17 +264,37 @@ async def agent_socket(
         if settings.device_connection_owner
         else asyncio.create_task(recover_business_state(device.device_id))
     )
+    opened_at = time.monotonic()
+    close_code: int | None = None
     try:
         while True:
             message = await websocket.receive_json()
             await device_hub.on_device_message(device.device_id, message)
-    except WebSocketDisconnect:
-        pass
+    except WebSocketDisconnect as disconnect:
+        close_code = disconnect.code
     finally:
         if recovery is not None:
             recovery.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await recovery
+        # This link is meant to last the machine's whole uptime, and when it does
+        # not, nothing anywhere said so: `except WebSocketDisconnect: pass`
+        # discarded the close code, the only fact that names who hung up, and the
+        # device's own cli has logged one line since it started. On dev the whole
+        # fleet is replaced about once a minute — 71 closes and 71 accepts per
+        # minute against 71 online devices — and that was invisible until the
+        # alert noise around it was cleared (#1140).
+        #
+        # The code tells the halves apart: 1000/1001 is the peer closing on
+        # purpose, 1006 is the connection dropping under it, and None means this
+        # loop left by raising rather than by a disconnect at all. The age says
+        # whether a link died young, which a count of closes cannot.
+        logger.info(
+            "device link closed device=%s code=%s after=%.1fs",
+            device.device_id,
+            close_code,
+            time.monotonic() - opened_at,
+        )
         await device_hub.detach_device(device.device_id, transport)
 
 

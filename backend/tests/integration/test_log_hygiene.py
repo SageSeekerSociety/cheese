@@ -139,11 +139,49 @@ def test_credentials_in_a_traceback_are_scrubbed(raw, secret):
         "status_code=500 upstream=timeout",
         "GET /api/topics/abc/blocks 200",
         "rows=3 elapsed_ms=12",
+        # A bare `code` is not a credential. It was, and the alert channel then
+        # carried the one field that mattered as `***`.
+        '{"code":409,"message":"Error: device offline"}',
+        "device link closed device=abc123 code=1000 after=42.0s",
     ],
 )
 def test_ordinary_diagnostics_survive_the_filter(raw):
     """Over-scrubbing costs the thing these reports exist to provide."""
     assert scrub_secrets(raw) == raw
+
+
+def test_scrubbing_a_format_string_does_not_break_the_log_call():
+    """The filter runs on `record.msg`, which for a lazy log call is the FORMAT
+    STRING — so removing a placeholder there is not cosmetic. `code=%s` used to
+    become `code=***`, leaving one placeholder fewer than arguments, and the
+    logging call raised TypeError back into whatever was being logged. A close
+    code logged on a WebSocket teardown took three connector tests down that way.
+    """
+    log = logging.getLogger("test.log.hygiene.format")
+    log.handlers.clear()
+    records: list[logging.LogRecord] = []
+
+    class Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            # getMessage() is where the mismatch raises, and it is what every
+            # real handler calls.
+            records.append(record)
+            record.getMessage()
+
+    handler = Capture()
+    handler.addFilter(RedactSecrets())
+    log.addHandler(handler)
+    log.propagate = False
+    log.setLevel(logging.INFO)
+    try:
+        log.info(
+            "device link closed device=%s code=%s after=%.1fs", "abc123", 1000, 42.0
+        )
+        assert records[0].getMessage() == (
+            "device link closed device=abc123 code=1000 after=42.0s"
+        )
+    finally:
+        log.handlers.clear()
 
 
 def test_the_filter_covers_records_from_other_libraries():
