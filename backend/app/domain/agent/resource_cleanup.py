@@ -56,18 +56,30 @@ def check_published_commits(repo: Path, *, include_head: bool = False) -> None:
 
 
 def check_no_writers(paths: list[Path]) -> None:
-    for path in paths:
-        if not path.exists():
-            continue
-        result = run_command(["lsof", "-t", "+D", str(path)])
-        if result.stdout.strip():
-            raise RuntimeError(
-                "resource still has processes holding files or working directories"
-            )
-        if result.returncode not in {0, 1} or result.stderr.strip():
-            raise RuntimeError(
-                "could not establish whether the resource has active writers"
-            )
+    """Refuse if anything holds a file or a working directory under these.
+
+    ONE lsof call, never one per path. `lsof +D` spends about two seconds
+    walking every process's descriptors before it so much as looks at the
+    directory, so its cost is per INVOCATION and not per tree: measured
+    2026-09-18, an empty directory costs the same 1.97s as a repository, five
+    directories in one call cost 2.07s, and the same five in five calls cost
+    10.14s. A sweep over 102 rooms was therefore 3.4 minutes of lsof alone.
+
+    Nothing is given up by batching: the message never named which path it was,
+    because for every caller the answer is the same either way — do not delete.
+    """
+    present = [str(path) for path in paths if path.exists()]
+    if not present:
+        return
+    result = run_command(["lsof", "-t", "+D", *present])
+    if result.stdout.strip():
+        raise RuntimeError(
+            "resource still has processes holding files or working directories"
+        )
+    if result.returncode not in {0, 1} or result.stderr.strip():
+        raise RuntimeError(
+            "could not establish whether the resource has active writers"
+        )
 
 
 def check_resource_publication(home: Path, work: Path) -> None:

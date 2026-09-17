@@ -94,6 +94,19 @@ def reclaim(root: Path, *, apply: bool, cleanup, out=sys.stdout) -> int:
     print(f"{verb} legacy room checkouts under {root}", file=out)
     freed = kept = skipped = 0
     held: dict[str, int] = {}
+
+    def hold(exc: RuntimeError) -> None:
+        nonlocal kept
+        kept += 1
+        held[str(exc)] = held.get(str(exc), 0) + 1
+
+    # The publication check first, and it is the cheap one: `git status` reads an
+    # index, while `lsof +D` costs ~2s per CALL no matter what it is pointed at
+    # (see `check_no_writers`). Checked in this order, a directory held back for
+    # unpublished work never reaches lsof at all — and those are exactly the
+    # directories that survive every sweep and would otherwise pay that 2s
+    # forever.
+    candidates: list[Path] = []
     for project_dir in sorted(root.iterdir()):
         if not project_dir.is_dir() or project_dir.is_symlink():
             continue
@@ -104,15 +117,34 @@ def reclaim(root: Path, *, apply: bool, cleanup, out=sys.stdout) -> int:
                 skipped += 1
                 continue
             try:
-                cleanup.check_no_writers([work])
                 cleanup.check_published(work)
             except RuntimeError as exc:
-                kept += 1
-                held[str(exc)] = held.get(str(exc), 0) + 1
+                hold(exc)
                 continue
-            freed += size_of(work)
-            if apply:
-                cleanup.remove_tree(work)
+            candidates.append(work)
+
+    # Then one lsof for all of them. If it comes back clean — the ordinary case,
+    # since these rooms have not run in weeks — that is the entire writer check,
+    # two seconds for the whole box. Only a hit makes it worth asking per
+    # directory which one it was, and that answer costs 2s each.
+    if candidates:
+        try:
+            cleanup.check_no_writers(candidates)
+        except RuntimeError:
+            remaining = []
+            for work in candidates:
+                try:
+                    cleanup.check_no_writers([work])
+                except RuntimeError as exc:
+                    hold(exc)
+                    continue
+                remaining.append(work)
+            candidates = remaining
+
+    for work in candidates:
+        freed += size_of(work)
+        if apply:
+            cleanup.remove_tree(work)
     print(f"  {human(freed)} {'reclaimed' if apply else 'reclaimable'}", file=out)
     # Loudly, and per reason: a checkout held back is the user's only copy of
     # something, and the number is how anyone learns that before it is lost to
