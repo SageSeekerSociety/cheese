@@ -1,17 +1,21 @@
 <script setup lang="ts">
-// A PDF's first page, drawn at tile size, for the composer's attachment strip.
+// 一份文档的第一页，画在附件块那个方格里。
 //
-// Without this a PDF was a filename on a chip, which says nothing about which
-// document it is — and the one thing a person checks before sending is that
-// they attached the right file. A name like `report.pdf` does not answer that;
-// the cover page does.
+// 发之前真正要确认的是「附的是不是那一份」，而 `report.docx` 这个名字答不了，
+// 封面能。
 //
-// The bytes come from `previewFileBytes`, not the image URL helper: the raw
-// endpoint only serves a non-image with `download=true`, which that helper does
-// not set. The same reason PreviewPages uses it.
+// 两种来源，同一张画布。PDF 浏览器自己就读得了，直接取原始字节——走
+// `previewFileBytes` 而不是图片那个地址助手，因为原始端点对非图片只在
+// `download=true` 时才发字节（PreviewPages 也是为这个用它）。Word 和幻灯片
+// 浏览器画不了，平台先用 LibreOffice 转一次：一份约 2.5 秒，后端按内容哈希缓存，
+// 所以同一个文件只转一次，而且读者后面在预览面板里打开它时也是这一份。
+//
+// 这 2.5 秒里方格不转圈，就摆这个类型的图标：转两秒半的圈比直接给一个说明类型的
+// 图标更难受，而且图标本身已经是一个正确的答案，页面来了再替上去。
 import { onBeforeUnmount, ref, watch } from 'vue'
 
-import { previewFileBytes } from '../api'
+import { previewDocumentPdf, previewFileBytes } from '../api'
+import { fileIcon, NEEDS_CONVERSION, suffixOf } from '../lib/fileKind'
 
 type PdfLib = typeof import('pdfjs-dist')
 
@@ -28,6 +32,15 @@ let generation = 0
 const canvas = ref<HTMLCanvasElement | null>(null)
 const failed = ref(false)
 const drawn = ref(false)
+
+/** 画不出来的时候这个方格里摆什么。给这个文件自己的类型图标，而不是一律 PDF：
+ *  一份转换失败的 .docx 顶着 PDF 图标，比没有缩略图更容易让人读错。 */
+const mark = () => fileIcon(props.path)
+
+/** 这份文档的 PDF 字节：本来就是 PDF 就直接取，否则让平台转一次。 */
+function pdfBytes(topicId: string, path: string): Promise<ArrayBuffer> {
+  return NEEDS_CONVERSION.has(suffixOf(path)) ? previewDocumentPdf(topicId, path) : previewFileBytes(topicId, path)
+}
 
 /** pdf.js needs its worker pinned before the first getDocument, or it guesses
  *  an address it cannot reach. Shared across tiles — loading it is the
@@ -49,7 +62,7 @@ async function draw() {
   drawn.value = false
   if (!props.topicId || !props.path) return
   try {
-    const [bytes, pdfjs] = await Promise.all([previewFileBytes(props.topicId, props.path), library()])
+    const [bytes, pdfjs] = await Promise.all([pdfBytes(props.topicId, props.path), library()])
     if (mine !== generation) return
     // pdf.js takes ownership of the buffer it is handed, so it gets a copy —
     // otherwise re-opening the same bytes finds them empty.
@@ -96,8 +109,8 @@ onBeforeUnmount(() => {
 
 <template>
   <span class="att-face">
-    <canvas ref="canvas" class="pdf-thumb__page" :class="{ 'pdf-thumb__page--ready': drawn }" />
-    <v-icon v-if="!drawn" size="16">mdi-file-pdf-box</v-icon>
+    <canvas ref="canvas" class="doc-thumb__page" :class="{ 'doc-thumb__page--ready': drawn }" />
+    <v-icon v-if="!drawn" size="22">{{ mark() }}</v-icon>
   </span>
 </template>
 
@@ -107,7 +120,7 @@ onBeforeUnmount(() => {
    Absolute, and hidden with opacity rather than `display: none`: an undrawn
    canvas would otherwise measure 0 wide, and `draw()` reads that width to
    decide how large a page to render. */
-.pdf-thumb__page {
+.doc-thumb__page {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -115,9 +128,9 @@ onBeforeUnmount(() => {
   object-fit: cover;
   opacity: 0;
 }
-.pdf-thumb__page--ready {
+.doc-thumb__page--ready {
   opacity: 1;
 }
-/* No "PDF" badge over the page: a rendered cover page already reads as a
-   document, and the label would have needed a font size outside the scale. */
+/* 页面上不压类型角标：画出来的封面本身就说明它是一份文档，而那个标签还需要一个
+   不在字号尺度里的字号。 */
 </style>
