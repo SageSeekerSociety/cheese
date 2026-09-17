@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from app.domain.agent.device_hub import DeviceOffline
 from app.domain.agent.harness import (
     ActivityConsumer,
     EventConsumer,
@@ -158,6 +159,10 @@ class PiRuntime:
 
     async def _poll(self, topic: uuid.UUID) -> None:
         checked_at = 0.0
+        # Waiting for a device to come back is this loop's job, not a failure of
+        # it, so the wait is said once and the return is said once. Per-task
+        # state: one of these runs per topic.
+        waiting = False
         while topic in self.subscriptions:
             try:
                 await self.subscriptions[topic].drain()
@@ -168,6 +173,19 @@ class PiRuntime:
                     if not status.get("alive", True):
                         await self._died(handle)
                         return
+            except DeviceOffline:
+                # A room whose machine is switched off is the ordinary state of
+                # a platform nobody is using this minute, and this loop exists
+                # to wait it out. Logged as an exception it was two ERROR lines
+                # a second per topic, every one of them an alert: 37 of the 53
+                # messages in the alert channel on 2026-09-16 were this, under
+                # a name that described a fault. Only #1114 made it nameable —
+                # before that the offline device arrived as a bare
+                # `HTTPStatusError` and could not be told apart from a real one.
+                if not waiting:
+                    waiting = True
+                    logger.warning("pi entries waiting for the device topic=%s", topic)
+                await asyncio.sleep(2)
             except Exception:
                 # The runner outlives a backend or connector outage. Re-reading
                 # is safe because the landing cursor only moves after the
@@ -175,6 +193,9 @@ class PiRuntime:
                 logger.exception("pi entry read failed topic=%s", topic)
                 await asyncio.sleep(2)
             else:
+                if waiting:
+                    waiting = False
+                    logger.info("pi entries resumed topic=%s", topic)
                 await asyncio.sleep(0.1)
 
     async def _died(self, handle: Handle) -> None:

@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from app.domain.agent.device_hub import DeviceOffline
 from app.domain.agent.harness import (
     ActivityConsumer,
     EventConsumer,
@@ -140,6 +141,8 @@ class CodexRuntime:
 
     async def _poll(self, topic: uuid.UUID) -> None:
         checked_at = 0.0
+        # One of these runs per topic, so a plain local carries the wait state.
+        waiting = False
         while topic in self.subscriptions:
             try:
                 await self.subscriptions[topic].drain()
@@ -169,6 +172,17 @@ class CodexRuntime:
                         )
                         self.live.pop(topic, None)
                         return
+            except DeviceOffline:
+                # Same shape as the pi runtime's poller: a switched-off machine
+                # is what this loop waits for, not a failure to report. At
+                # ERROR every retry became an alert, and the alert named a
+                # journal read rather than an absent device.
+                if not waiting:
+                    waiting = True
+                    logger.warning(
+                        "Codex journal waiting for the device topic=%s", topic
+                    )
+                await asyncio.sleep(2)
             except Exception:
                 # The runner survives a backend or connector outage. Retrying
                 # reads is safe because the durable landing cursor only moves
@@ -176,6 +190,9 @@ class CodexRuntime:
                 logger.exception("Codex journal read failed topic=%s", topic)
                 await asyncio.sleep(2)
             else:
+                if waiting:
+                    waiting = False
+                    logger.info("Codex journal resumed topic=%s", topic)
                 await asyncio.sleep(0.1)
 
     async def ensure(self, session, opening, *, work_id=None) -> Handle:
