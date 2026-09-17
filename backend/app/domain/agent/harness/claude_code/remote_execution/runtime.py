@@ -1028,7 +1028,11 @@ class Executor:
             self.env.update(params["env"])
             self.config["env"] = params["env"]
             write_json(self.state / "config.json", self.config)
-            return {"pid": os.getpid(), "workspace": str(self.root)}
+            return {
+                "pid": os.getpid(),
+                "workspace": str(self.root),
+                "state": str(self.state),
+            }
         if method == "ping":
             manifest = self.state.parent / "executor-files.json"
             files = {}
