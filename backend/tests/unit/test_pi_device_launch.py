@@ -504,3 +504,21 @@ def test_the_extension_speaks_with_the_same_platform_voice_as_everything_else():
     marker = _launch().configuration()["notice"]
     assert marker
     assert platform_prompt("说点什么").startswith(marker)
+
+
+def test_what_the_room_is_told_to_publish_with_is_a_tool_the_room_has():
+    """The prompt says `chat_send` on every turn; the CLI catalog can only call
+    the command what it is. The extension serves both names, so the instruction
+    and the session agree — the exact disagreement this whole extension exists
+    to end.
+    """
+    from app.domain.agent.harness import prompt
+
+    source = _launch().configuration()["extension"]["index.ts"]
+    published = prompt.publication_prompt("x")
+    named = {word.strip("`. ") for word in published.split() if "chat_send" in word}
+    assert named, "the room's prompt no longer names a publishing tool"
+    for name in named:
+        assert f'const PUBLISH = "{name}"' in source, (
+            f"the prompt says to use {name}; the extension serves no such tool"
+        )

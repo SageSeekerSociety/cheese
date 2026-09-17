@@ -35,7 +35,15 @@ type Manifest = {
 
 // What a room is published with. Everything else a turn produces stays on the
 // machine, so a turn that never calls this said nothing to anybody.
-const PUBLISH = "cheese_chat_send";
+//
+// Two names for it, and not by choice here: the room's system prompt says
+// `chat_send` on every turn, while the CLI catalog can only ever call the
+// command what it is — `cheese chat send`. The other harness resolves this by
+// serving both, so a pi room that served only one would be the same
+// instruction failing for one teammate and working for the other. The prompt's
+// name is the one anything here asks for.
+const PUBLISH = "chat_send";
+const PUBLISH_COMMAND = "cheese_chat_send";
 
 const HOME = process.env.CHEESE_PI_EXTENSION ?? "";
 
@@ -98,21 +106,31 @@ function text(body: string) {
 // exists here exactly when the command exists there.
 
 function registerPlatformTools(pi: any, spec: Manifest) {
-  for (const tool of spec.tools) {
+  const named = spec.tools.flatMap((tool) =>
+    tool.name === PUBLISH_COMMAND
+      ? [
+          { ...tool, command: tool.name },
+          { ...tool, command: tool.name, name: PUBLISH },
+        ]
+      : [{ ...tool, command: tool.name }],
+  );
+  for (const tool of named) {
     pi.registerTool({
       name: tool.name,
       description: tool.description,
       parameters: tool.inputSchema,
       async execute(_id: string, params: any, _signal: any, _update: any, ctx: any) {
         const result = await ask(spec.socket, "cli", {
-          tool: tool.name,
+          // The CLI only knows the command's own name; `chat_send` is the name
+          // the room's prompt uses for it.
+          tool: tool.command,
           arguments: params ?? {},
           cwd: ctx?.cwd,
         });
         const body = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
         if (result.status !== 0) {
           return {
-            ...text(body || `${tool.name} exited with status ${result.status}`),
+            ...text(body || `${tool.name} 以状态 ${result.status} 结束`),
             isError: true,
           };
         }
@@ -526,8 +544,12 @@ function watchForSilence(pi: any, spec: Manifest) {
   pi.on("turn_end", async (event: any) => {
     for (const result of event.toolResults ?? []) {
       // In order, so a publish halfway through a turn clears what came before
-      // it and the calls after it start the count again.
-      if (result.toolName === PUBLISH && !result.isError) since = 0;
+      // it and the calls after it start the count again. Either name counts:
+      // they are one command, and which one the model reached for says nothing
+      // about whether the room heard it.
+      const published =
+        result.toolName === PUBLISH || result.toolName === PUBLISH_COMMAND;
+      if (published && !result.isError) since = 0;
       else since += 1;
     }
   });
@@ -560,7 +582,9 @@ export default function (pi: any) {
   }
   // Nothing to ask for if the room has no way to publish: a reminder naming a
   // tool that is not registered is worse than silence.
-  if (spec.tools.some((tool) => tool.name === PUBLISH) && spec.notice) {
+  // Asked of the catalog, which carries the command's own name — `chat_send`
+  // is a name this file adds and would answer for itself.
+  if (spec.tools.some((tool) => tool.name === PUBLISH_COMMAND) && spec.notice) {
     watchForSilence(pi, spec);
   }
   else if (spec.unavailable) {
