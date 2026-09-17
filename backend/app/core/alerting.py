@@ -103,9 +103,26 @@ def send(title: str, lines: list[str]) -> None:
         task = asyncio.create_task(_post(text))
         _running.add(task)
         task.add_done_callback(_running.discard)
+        task.add_done_callback(_delivery_finished)
     except RuntimeError:
         # No running loop (a sync context, a test). Nothing to alert from here.
         logger.debug("alert dropped: no running event loop")
+
+
+def _delivery_finished(task: asyncio.Task) -> None:
+    """Say when an alert did not get out.
+
+    Deliberately NOT `background.hold`: that logs under `cheesex.background`,
+    which `obs.AlertOnError` picks up and turns into another alert — a webhook
+    that is down would then post about failing to post, forever. This logger is
+    named `app.core.alerting`, the one name that handler skips, so the failure
+    reaches the log file and stops there.
+    """
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error("alert delivery failed", exc_info=exc)
 
 
 # Keep a reference so the task is not garbage-collected mid-flight.
