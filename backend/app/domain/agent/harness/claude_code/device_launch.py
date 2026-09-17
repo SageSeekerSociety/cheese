@@ -34,7 +34,7 @@ from app.domain.agent.harness.claude_code.remote_execution import release
 from app.domain.agent.harness.claude_code.session_launch import hooks_settings
 from app.domain.agent.harness.launch import MachineLaunch, MachinePlace
 from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
-from app.domain.agent.skills import native_skill_files
+from app.domain.agent.skills import SKILL_HEREDOC_MARKER, native_skill_files
 
 # First-launch gates (Claude Code 2.1.x) for $CLAUDE_CONFIG_DIR/.claude.json,
 # kept here as the readable statement of what the launch script writes inline.
@@ -384,8 +384,8 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
     webfetch_transport = Path(__file__).with_name("webfetch_transport.cjs").read_text()
     skill_setup = "\n".join(
         f'mkdir -p "$CLAUDE_CONFIG_DIR/{Path(name).parent}"\n'
-        f"cat > \"$CLAUDE_CONFIG_DIR/{name}\" <<'CHEESE_NATIVE_SKILL'\n"
-        f"{content}\nCHEESE_NATIVE_SKILL"
+        f"cat > \"$CLAUDE_CONFIG_DIR/{name}\" <<'{SKILL_HEREDOC_MARKER}'\n"
+        f"{content}\n{SKILL_HEREDOC_MARKER}"
         for name, content in native_skill_files().items()
     )
     settings_json = json.dumps(
