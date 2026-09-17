@@ -23,8 +23,7 @@
 # gives: every action is a download from codeload.github.com, and maintenance
 # that dies of the disease it treats cannot cure anyone.
 #
-# Idempotent. Re-run it until the summary has named all three hosts; a slot that
-# was busy simply did not get one of these.
+# Idempotent, and one job per machine label, so a single run covers all three.
 name: Runner swap
 
 on:
@@ -37,18 +36,26 @@ jobs:
   add-swap:
     strategy:
       fail-fast: false
-      # One job per runner SLOT, not per machine: a machine carries two, so
-      # three jobs could land on two machines and leave the third untouched.
+      # One job per MACHINE, addressed by that machine's own label. Fanning out
+      # over the shared `cheese-ci` label and hoping the jobs spread does not
+      # work when the pool is busy: a box whose two slots are held by a long
+      # test run takes none of them, and every job piles onto whichever slots
+      # free first. Measured — six jobs, five landed on runner-2 and one on
+      # runner-3, and runner-1 was never touched.
+      #
+      # A box whose slots are both busy leaves its job QUEUED rather than
+      # skipping it, which is what makes this deterministic: the job waits for
+      # that machine instead of being served by another one.
       matrix:
-        slot: [1, 2, 3, 4, 5, 6]
-    runs-on: [self-hosted, cheese-ci]
-    timeout-minutes: 10
+        box: [cheese-ci-box-1, cheese-ci-box-2, cheese-ci-box-3]
+    runs-on: [self-hosted, "${{ matrix.box }}"]
+    timeout-minutes: 30
     steps:
       - name: Add 4G of swap if the box has none
         run: |
           set -uo pipefail
           HOST="$(hostname)"
-          echo "runner: $RUNNER_NAME  host: $HOST  slot: ${{ matrix.slot }}"
+          echo "runner: $RUNNER_NAME  host: $HOST  label: ${{ matrix.box }}"
 
           say() { echo "$HOST: $1" >> "$GITHUB_STEP_SUMMARY"; }
 
@@ -90,6 +97,3 @@ jobs:
           sudo swapon --show
           free -m | head -3
           say "4G swap added (had ${FREE_G}G free on /)"
-
-      - name: Hold so the other slots land on other runners
-        run: sleep 45
