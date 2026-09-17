@@ -4,13 +4,16 @@ The entries the fake runner hands back are the recording of a real GLM-5.2 turn,
 so what lands in the room here is what a room actually gets.
 """
 
+import asyncio
 import json
+import logging
 import uuid
 from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
 
+from app.domain.agent.device_hub import DeviceOffline
 from app.domain.agent.harness import AgentRuntime, Opening, SessionRef
 from app.domain.agent.harness.pi.runtime import Handle, PiRuntime
 from app.domain.agent.service import AgentResult, AgentSessionInfo, AgentToolUse
@@ -30,8 +33,12 @@ class Runner:
         self.steers: list[dict] = []
         self.working = False
         self.work_id: str | None = None
+        # The device's link is down: every call to it raises, as the hub does.
+        self.offline = False
 
     async def call(self, handle, method, params):
+        if self.offline:
+            raise DeviceOffline("device")
         if method == "entries":
             since = params.get("since")
             if since is None:
@@ -184,3 +191,54 @@ async def test_interrupt_takes_the_work_without_taking_the_session(tmp_path):
     assert runtime.holds(session.topic_id)
     await runtime.close(session)
     assert not runtime.holds(session.topic_id)
+
+
+@pytest.mark.anyio
+async def test_a_device_that_went_offline_is_not_reported_as_a_read_failure(
+    tmp_path, caplog
+):
+    """A room whose machine is off is what the poller waits for.
+
+    Reported as an exception it was two ERROR lines a second per topic, and
+    every ERROR line is an alert: 37 of the 53 messages in the alert channel on
+    2026-09-16 were this one, named after a journal read rather than an absent
+    device.
+    """
+    session, runtime, runner = wire(tmp_path)
+    runtime.bind_events(AsyncMock())
+    runtime.bind_receipts(AsyncMock())
+    runtime.bind_activity(AsyncMock())
+
+    assert await runtime.send(
+        session,
+        "改一下 greet",
+        Opening("system"),
+        work_id=uuid.uuid4(),
+        on_mark=lambda _: None,
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="app.domain.agent.harness.pi.runtime"):
+        caplog.clear()
+        runner.offline = True
+        # Long enough for the poller's 2s retry wait to come round again, which
+        # is what would repeat the line.
+        await asyncio.sleep(2.4)
+
+        errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
+        assert errors == []
+        waits = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(waits) == 1, [r.getMessage() for r in waits]
+        assert "waiting for the device" in waits[0].getMessage()
+
+        runner.offline = False
+        # The retry wait above is 2s, so the loop can be mid-sleep when the
+        # device comes back; the resume lands on its next pass, not at once.
+        await asyncio.sleep(2.4)
+        resumed = [
+            r
+            for r in caplog.records
+            if r.levelno == logging.INFO and "resumed" in r.getMessage()
+        ]
+        assert len(resumed) == 1, [r.getMessage() for r in caplog.records]
+
+    await runtime.close(session)
