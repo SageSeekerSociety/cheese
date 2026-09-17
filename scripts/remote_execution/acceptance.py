@@ -200,12 +200,12 @@ def case(folder, options):
         if options.launcher == "device":
             os.close(center_fd)
             center_fd = None
-            center = folder / "device-home/.claude/remote-session/forwarded-project"
+            center = folder / "device-home/.cheese/remote-session/forwarded-project"
             center.mkdir(parents=True)
             center_fd = os.open(center, os.O_RDONLY | os.O_DIRECTORY)
             launch = {"cwd": str(center), "env": {}}
             execution_file = (
-                folder / "device-home/.claude/remote-session/execution.json"
+                folder / "device-home/.cheese/remote-session/execution.json"
             )
         center = Path(launch["cwd"])
         actions = [
@@ -585,7 +585,7 @@ def case(folder, options):
         subprocess.run(tmux + ["kill-server"], capture_output=True, timeout=10)
         for mountpoint in (
             folder / "central/forwarded-project",
-            folder / "device-home/.claude/remote-session/forwarded-project",
+            folder / "device-home/.cheese/remote-session/forwarded-project",
         ):
             # `release_mount` rather than a local ismount-then-unmount: this runs
             # in a `finally`, so the run that most needs it is the one that got

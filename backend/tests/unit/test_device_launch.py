@@ -1872,3 +1872,24 @@ def test_closing_real_tmux_ends_agent_and_drainer(tmp_path):
             _assert_exited(drainer)
         finally:
             run("kill-server")
+
+
+def test_the_executor_client_is_told_the_config_dir_before_it_needs_it():
+    """The client hands `claude` its config directory, and reads that directory
+    from the environment rather than deriving it from where it was installed —
+    the platform's files and the harness's config are two different places now,
+    and only the launcher knows both. It is a plain environment lookup, so a
+    launcher that invoked the client before exporting it would fail every
+    executor-backed screen at startup, and nothing else in the script would say
+    why. Nothing exercises that branch in-process: it runs on the machine."""
+    script = device_launch.build_launch_script(
+        remote_execution=True,
+        system_prompt="x",
+        model=None,
+        resume_session_id=None,
+        topic_id="t",
+    )
+
+    assert script.index('export CLAUDE_CONFIG_DIR="$HOME/.claude"') < script.index(
+        'CLAUDE="python3 \\"$EXECUTOR_CLIENT\\" bootstrap'
+    )

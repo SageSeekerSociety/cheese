@@ -11,6 +11,7 @@ from app.domain.agent.executor_transport import RemoteClient
 from app.domain.agent.harness.claude_code import (
     private_execution_target as target,
 )
+from app.domain.agent.resource_cleanup import PLATFORM_DIRS
 
 
 def execution_target(
@@ -43,9 +44,17 @@ async def control(
         return await asyncio.to_thread(RemoteClient(target).control, payload)
     # home contains only a literal $HOME followed by server-generated UUID paths.
     home = target["home"]
+    # Every root the platform has installed into, the current one first: a room
+    # prepared before the last move still has its client and its session marker
+    # where that launcher put them, and a command that names one root only goes
+    # quietly nowhere on it.
+    roots = " ".join(PLATFORM_DIRS)
     command = (
-        f'exec python3 "{home}/.claude/remote-execution/client.py" control '
-        f'"{home}/.claude/remote-session/execution.json"'
+        f"for d in {roots}; do "
+        f'if test -f "{home}/$d/remote-session/execution.json"; then '
+        f'exec python3 "{home}/$d/remote-execution/client.py" control '
+        f'"{home}/$d/remote-session/execution.json"; fi; done; '
+        'echo "no private executor is installed for this room" >&2; exit 1'
     )
     result = await (hub or device_hub).exec(
         target["device_id"],
@@ -65,9 +74,10 @@ async def release(project_id, topic_id, device_id, hub):
         [
             "sh",
             "-c",
-            f'if test -f "{home}/.claude/remote-target.json"; then '
-            f'exec python3 "{home}/.claude/remote-execution/client.py" release '
-            f'"{home}/.claude/remote-target.json"; fi',
+            f"for d in {' '.join(PLATFORM_DIRS)}; do "
+            f'if test -f "{home}/$d/remote-target.json"; then '
+            f'exec python3 "{home}/$d/remote-execution/client.py" release '
+            f'"{home}/$d/remote-target.json"; fi; done',
         ],
         timeout=45,
     )

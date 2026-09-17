@@ -1065,15 +1065,19 @@ def main():
     elif args.mode == "shell":
         raise SystemExit(shell(args.config, args.args[0]))
     elif args.mode == "bootstrap":
+        # The platform's own directory holds the target file and this client;
+        # the harness's config dir is the harness's, and is where `claude` reads
+        # the settings we are extending and writes everything it owns.
         base_dir = args.config.parent
+        config_dir = Path(os.environ["CLAUDE_CONFIG_DIR"])
         launch = prepare(
             base_dir / "remote-session",
             config,
             claude=args.args[0],
             extra_args=args.args[1:],
-            base_settings=json.loads((base_dir / "settings.json").read_text()),
+            base_settings=json.loads((config_dir / "settings.json").read_text()),
             home_override=os.environ["HOME"],
-            config_override=base_dir,
+            config_override=config_dir,
             workspace_override=os.environ["CHEESE_WORK"],
         )
         os.chdir(launch["cwd"])

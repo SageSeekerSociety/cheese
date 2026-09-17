@@ -76,7 +76,6 @@ def test_a_harness_that_is_only_a_command_still_gets_the_whole_platform(tmp_path
         tmp_path,
         env,
         prepare=_harness(tmp_path, f'pwd > "{proof}"\n'),
-        contract="--pretend-flags",
         command="$AGENT",
     )
 
@@ -86,7 +85,6 @@ def test_a_harness_that_is_only_a_command_still_gets_the_whole_platform(tmp_path
     # And the platform put its own half on the machine around it.
     for name in ("cheese", "cheese-hook", "cheese-drain", "cheese-environment.py"):
         assert (home / ".cheese" / name).is_file(), name
-    assert (home / ".cheese/launch-contract").read_text() == "--pretend-flags"
     drain = dict(
         line.split("=", 1)
         for line in (home / ".cheese/cheese-drain.env").read_text().splitlines()
@@ -190,7 +188,7 @@ def _skeleton() -> str:
     helper — and what those say about any harness is their own business. What
     this module must not know is in the lines around them.
     """
-    script = machine_launcher.launch_script(contract="", command="$AGENT")
+    script = machine_launcher.launch_script(command="$AGENT")
     lines, delimiter = [], None
     for line in script.split("\n"):
         if delimiter is not None:

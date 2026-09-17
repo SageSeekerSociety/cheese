@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.core.config import settings
+from app.domain.agent import machine_launcher
 from app.domain.agent.device_hub import HubScreen
 from app.domain.agent.device_provider import (
     DeviceChannel,
@@ -608,8 +609,11 @@ async def test_reused_screen_refreshes_hook_without_restarting(monkeypatch, tmp_
     )
     screen = await provider._ensure_screen(**arguments)
     home = device_home_dir(project, topic).replace("$HOME", str(tmp_path))
-    hook_path = Path(home) / ".claude/cheese-hook"
-    settings_path = hook_path.with_name("settings.json")
+    hook_path = Path(home) / ".cheese/cheese-hook"
+    # The harness config dir, which the refresh must not reach into — it does
+    # not even create it any more, so the test has to.
+    settings_path = Path(home) / ".claude/settings.json"
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
     settings_path.write_text('{"keep":true}')
     hook_path.write_text("#!/bin/sh\necho old\n")
     reused = await provider._ensure_screen(**arguments)
@@ -945,7 +949,7 @@ async def test_launcher_transfer_rotates_forwarded_token_without_an_extra_exec(
             str(home),
             execution_token=value,
         )
-        token = home / ".claude/remote-session/execution.token"
+        token = home / ".cheese/remote-session/execution.token"
         assert token.read_text() == value
         assert token.stat().st_mode & 0o777 == 0o600
     assert hub.calls == 2
@@ -1964,9 +1968,87 @@ async def test_agent_config_change_replaces_screen_at_next_launch(monkeypatch):
     second = await ensure("edited")
     assert second.sid != first.sid
     assert hub.closed == [first.sid]
-    assert second.agent_configuration == "edited"
+    assert second.agent_configuration != first.agent_configuration
+    # And the machine is told what it is, so a backend that restarts can
+    # ask the connector rather than guess.
+    assert hub.envs[-1]["CHEESE_AGENT_CONFIG"] == second.agent_configuration
     assert hub.envs[-1]["CLAUDE_MODEL"] == "requested-model"
     assert hub.envs[-1]["ANTHROPIC_DEFAULT_SONNET_MODEL"] == "requested-model"
+
+
+@pytest.mark.anyio
+async def test_a_changed_harness_argv_replaces_the_screen_that_has_the_old_one(
+    monkeypatch,
+):
+    """A running CLI holds the argv it was started with, and nothing can hand it
+    new ones — so a change to what the backend would start today has to close it.
+
+    This is the hole the launch contract was written for and never closed: the
+    contract was put on the machine and read by nobody, while the gate compared
+    the model and the role alone. Repin the harness version, add a flag, change
+    the executor it is handed, and every reused screen kept running the old
+    thing with nothing anywhere saying so.
+    """
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "subscription_enabled", False)
+    hub = ReuseGateHub()
+    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
+    pid, tid = uuid.uuid4(), uuid.uuid4()
+
+    async def ensure(**extra_env):
+        return await provider._ensure_screen(
+            device_id="dev1",
+            agent_user_id=1,
+            agent_handle="cheese",
+            project_id=pid,
+            topic_id=tid,
+            token="tok",
+            env={"CHEESE_AGENT_CONFIG": "unchanged", **extra_env},
+            launch=ClaudeLaunch(system_prompt=""),
+        )
+
+    first = await ensure()
+    assert await ensure() is first
+
+    # Same agent configuration, different argv — `--remote-control` is decided
+    # by the harness out of what the room is, not by the caller's config hash.
+    second = await ensure(CHEESE_REMOTE_CONTROL="1")
+
+    assert second.sid != first.sid
+    assert hub.closed == [first.sid]
+
+
+@pytest.mark.anyio
+async def test_a_screen_installed_under_another_root_is_not_reused(monkeypatch):
+    """What makes a move of the platform's own directory reach the rooms already
+    running. Their files are at the old place and their processes are pointed
+    there; a deploy that changed the root and reused them would leave each room
+    half under each."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "subscription_enabled", False)
+    hub = ReuseGateHub()
+    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
+    pid, tid = uuid.uuid4(), uuid.uuid4()
+
+    async def ensure():
+        return await provider._ensure_screen(
+            device_id="dev1",
+            agent_user_id=1,
+            agent_handle="cheese",
+            project_id=pid,
+            topic_id=tid,
+            token="tok",
+            env={"CHEESE_AGENT_CONFIG": "unchanged"},
+            launch=ClaudeLaunch(system_prompt=""),
+        )
+
+    first = await ensure()
+    monkeypatch.setattr(machine_launcher, "PLATFORM_DIR", ".somewhere-else")
+
+    assert (await ensure()).sid != first.sid
+    assert hub.closed == [first.sid]
 
 
 def test_topic_credential_expiry_reads_the_live_screens_stamp():
