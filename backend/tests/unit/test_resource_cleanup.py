@@ -309,6 +309,66 @@ def test_resource_helpers_stop_even_without_an_executor(tmp_path, name, has_exec
             child.wait(timeout=5)
 
 
+def test_teardown_stops_the_executor_a_previous_root_installed(tmp_path):
+    """Closing a room reads what preparing it wrote.
+
+    A room prepared before the platform moved its own files still has its
+    executor, and every marker describing it, where that launcher put them —
+    nothing moves them until the room is prepared again, and a room being torn
+    down never will be. Reading only the current root answers "this room never
+    had an executor", and that answer is acted on: the detached daemon is left
+    running under a home that is then deleted out from under it, the private
+    seat it holds is never released, and publication is checked on the branch
+    meant for rooms that have no executor.
+    """
+    resource = str(uuid.uuid4())
+    home = tmp_path / resource
+    previous = home / ".claude"
+    (previous / "remote-execution").mkdir(parents=True)
+    (previous / "executor").mkdir()
+    (previous / "executor/socket").touch()
+    (previous / "execution-owner.json").write_text(json.dumps({"resource": resource}))
+    (previous / "remote-target.json").write_text(
+        json.dumps({"kind": "device", "resource_id": resource})
+    )
+    asked = tmp_path / "asked-to-stop.json"
+    (previous / "remote-execution/runtime.py").write_text(
+        "import json, sys\n"
+        "from pathlib import Path\n"
+        "def socket_path(state):\n"
+        "    return Path(state) / 'socket'\n"
+        "if __name__ == '__main__':\n"
+        f"    json.dump(sys.argv[1:], open({str(asked)!r}, 'w'))\n"
+    )
+
+    # Not a room that never had one — which is what decides three branches.
+    assert cleanup.session_target(home, resource)["kind"] == "device"
+    cleanup.stop_executor(home, resource)
+
+    assert json.loads(asked.read_text()) == [
+        "stop",
+        "--state",
+        str(previous / "executor"),
+    ]
+
+
+def test_teardown_reads_the_current_root_when_a_room_has_moved(tmp_path):
+    """A migrated room has leftovers under both. What is running decides."""
+    resource = str(uuid.uuid4())
+    home = tmp_path / resource
+    (home / ".claude/remote-execution").mkdir(parents=True)
+    for name in (".cheese", ".claude"):
+        (home / name / "executor").mkdir(parents=True, exist_ok=True)
+    (home / ".cheese/remote-target.json").write_text(
+        json.dumps({"kind": "private", "topic": resource})
+    )
+    (home / ".claude/remote-target.json").write_text(
+        json.dumps({"kind": "private", "topic": str(uuid.uuid4())})
+    )
+
+    assert cleanup.session_target(home, resource)["topic"] == resource
+
+
 def test_unpublished_source_blocks_cleanup(tmp_path):
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     (tmp_path / "source.py").write_text("work in progress")

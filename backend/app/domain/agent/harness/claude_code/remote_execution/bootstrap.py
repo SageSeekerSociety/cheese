@@ -118,7 +118,12 @@ def stop_previous_root(home):
             timeout=30,
         )
     shutil.rmtree(state, ignore_errors=True)
+    # Every marker that says a room is installed here goes with it. What stays
+    # under the previous root is inert copies of programs; anything that still
+    # ANSWERS "the executor is over here" would go on being believed, by the
+    # teardown path most of all — it reads these to find what to stop.
     (previous / "execution-owner.json").unlink(missing_ok=True)
+    (previous / "remote-target.json").unlink(missing_ok=True)
 
 
 @contextlib.contextmanager

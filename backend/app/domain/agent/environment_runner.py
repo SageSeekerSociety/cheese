@@ -75,6 +75,24 @@ def write_json(path, value):
     temporary.replace(path)
 
 
+# Every directory the platform has installed this room's own files into, the
+# current one first. A reset has to stop the executor that is actually running,
+# and a room prepared before the last move has it where that launcher put it —
+# looking only where we would install today finds nothing, skips the stop, and
+# then kills the terminal out from under a daemon that goes on writing the
+# status file this reset is about to read.
+PLATFORM_DIRS = (".cheese", ".claude")
+
+
+def platform_dir(home):
+    """Where this room's platform files actually are."""
+    for name in PLATFORM_DIRS:
+        directory = home / name
+        if (directory / "executor").exists():
+            return directory
+    return home / PLATFORM_DIRS[0]
+
+
 def read_status(directory: Path) -> dict:
     path = directory / "status.json"
     if not path.exists():
@@ -343,17 +361,18 @@ if __name__ == "__main__":
         status = read_status(root)
         if status["state"] == "preparing":
             raise SystemExit("environment is still preparing")
-        executor = Path.home() / ".cheese/execution-owner.json"
+        installed = platform_dir(Path.home())
+        executor = installed / "execution-owner.json"
         if executor.exists():
             if json.loads(executor.read_text())["resource"] != Path.home().name:
                 raise SystemExit("executor belongs to another room resource")
             subprocess.run(
                 [
                     sys.executable,
-                    str(Path.home() / ".cheese/remote-execution/runtime.py"),
+                    str(installed / "remote-execution/runtime.py"),
                     "stop",
                     "--state",
-                    str(Path.home() / ".cheese/executor"),
+                    str(installed / "executor"),
                 ],
                 check=True,
                 timeout=30,
