@@ -28,7 +28,7 @@ def test_executor_prepares_room_without_model_credentials(tmp_path):
     project, resource = uuid.uuid4(), uuid.uuid4()
     home = owner / ".cheese/home" / str(project) / str(resource)
     work = home / "room"
-    state = home / ".claude/executor"
+    state = home / ".cheese/executor"
     configuration = {
         "revision": "fixture-revision",
         "variables": {"EXECUTOR_SETTING": "project-value"},
@@ -72,7 +72,7 @@ def test_executor_prepares_room_without_model_credentials(tmp_path):
                 break
             except (ConnectionError, FileNotFoundError):
                 if time.monotonic() >= deadline:
-                    pytest.fail((home / ".claude/executor-bootstrap.log").read_text())
+                    pytest.fail((home / ".cheese/executor-bootstrap.log").read_text())
                 time.sleep(0.05)
         assert not (work / ".git").exists()
         assert (work / "notes.txt").read_text() == "original"
@@ -117,7 +117,7 @@ def test_executor_prepares_room_without_model_credentials(tmp_path):
         )
         # The existing environment reset must stop the execution daemon too.
         reset = subprocess.run(
-            [sys.executable, str(home / ".claude/cheese-environment.py"), "reset"],
+            [sys.executable, str(home / ".cheese/cheese-environment.py"), "reset"],
             env={**os.environ, "HOME": str(home)},
             capture_output=True,
             text=True,
@@ -156,7 +156,7 @@ def test_executor_prepares_room_without_model_credentials(tmp_path):
             assert time.monotonic() < deadline
             time.sleep(0.05)
         repaired = subprocess.run(
-            [sys.executable, str(home / ".claude/cheese-environment.py"), "reset"],
+            [sys.executable, str(home / ".cheese/cheese-environment.py"), "reset"],
             env={**os.environ, "HOME": str(home)},
             capture_output=True,
             text=True,
