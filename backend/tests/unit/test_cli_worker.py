@@ -114,6 +114,7 @@ def test_worker_discovers_every_leaf_as_a_structured_tool(worker, tmp_path):
         "cheese_notify",
         "cheese_push_fix",
         "cheese_ready",
+        "cheese_recalc",
         "cheese_recall",
         "cheese_remember",
         "cheese_serve",
