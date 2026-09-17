@@ -27,9 +27,10 @@ for row in ws.iter_rows(min_row=1, max_row=10, values_only=True):
 "
 ```
 
-`data_only=True` 读的是上次 Excel 保存时缓存下来的计算结果。**如果这个文件从来没被 Excel
-打开过（是程序生成的），缓存里没有值，读出来会是 `None`**——这时候去掉 `data_only`，
-看到的是公式本身，它同样是有用的信息，但别把它当成算好的数字念给用户。
+`data_only=True` 读的是上次保存时缓存下来的计算结果。**如果这个文件从来没被 Excel 打开过
+（是程序生成的），缓存里没有值，读出来会是 `None`**——这不是文件坏了。先 `cheese recalc`
+把公式算出来再读（见 `sheets.md`）；不重算就去掉 `data_only` 的话，看到的是公式本身，
+那同样是有用的信息，但别把它当成算好的数字念给用户。
 
 ## PDF 用 pypdf
 

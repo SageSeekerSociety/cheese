@@ -26,7 +26,7 @@ command -v typst && command -v pandoc
 | 读一份用户给的材料 | Word/PPT/ODT/HTML 用 `pandoc`，PDF 用 `pypdf` | `references/reading.md` |
 | **在一份已有的 Word 上改** | `scripts/office.py` | `references/word.md` |
 | **在一份已有的 PPT 上改** | `scripts/office.py --plain` | `references/slides.md` |
-| 读或改一份表格 | `openpyxl` | `references/sheets.md` |
+| 读或改一份表格 | `openpyxl`，改完 `cheese recalc` | `references/sheets.md` |
 | 做/读 PDF | `typst` / `pypdf` | `references/pdf.md` |
 | 造一份全新的文件 | `python-docx` / `python-pptx` / `openpyxl` / `typst` | 本文件下面 |
 
@@ -98,9 +98,10 @@ uv run --with lxml python3 "$SKILL/scripts/office.py" validate 改后.docx --bas
 | `.xlsx` | `uv run --with openpyxl` |
 | `.pdf` | `typst compile 源文件.typ 输出.pdf` |
 
-PDF 走 typst 直接排版，不要绕道「先生成 Word 再转 PDF」。这台机器上没有 LibreOffice；
-用户的界面里确实能把 Word 转成 PDF 显示（那是平台另起的服务在做），但那个服务在你的环境
-外面，你调不到它，所以「转一下就行」这条路是走不通的。
+PDF 走 typst 直接排版，不要绕道「先生成 Word 再转 PDF」。这台机器上没有 LibreOffice，
+转换是平台另起的服务在做；你能调到它的只有一件事——`cheese recalc` 重算表格里的公式
+（见 `references/sheets.md`）。排版不要交给它：Word 转 PDF 是把文档重新渲染一遍，
+版面会变，而 typst 排出来的就是最终样子。
 
 ### python-docx 的默认纸张是 US Letter，必须改成 A4
 
@@ -135,9 +136,10 @@ for s in doc.sections:
 这类任务的失败大多不报错。生成命令退出码为 0、文件大小正常、文字提取也正确，但打开是错的。
 交付前至少确认三件事：
 
-- **格式**：改的是已有文件时，跑 `office.py validate --base 原文件`，确认拒绝全部修订能回到原文。
+- **格式**：改的是已有文件时，跑 `office.py validate --base 原文件`，确认拒绝全部修订能回到原文；
+  再跑 `office.py revisions` 核对改动就是用户要的那几处，`validate` 管不到这一条。
 - **内容**：把产出的文件读回来（`pandoc 产出.docx -t markdown`），对照原始材料，确认没有编造
-  数据、数字能对上。
+  数据、数字能对上。表格先 `cheese recalc`，确认算不出来的格一个都没有。
 - **版面**：中文有没有变成空心方框（缺字体时 typst 和 pandoc 都不报错）、纸张对不对、
   页数是不是和要求的差不多。用 `typst compile --format png` 可以直接看一页的样子。
 

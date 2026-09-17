@@ -57,6 +57,11 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.device.supply import Visibility
 from app.domain.device.wiring import sql_device_service
+from app.domain.documents.spreadsheet import (
+    SpreadsheetRecalcFailed,
+    SpreadsheetRecalcUnavailable,
+    recalculate,
+)
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
@@ -2195,6 +2200,54 @@ async def set_artifact(
         refs=[path],
     )
     return ok(BlockOut.model_validate(block).model_dump(mode="json"))
+
+
+@router.post("/{topic_id}/documents/recalc")
+async def recalc_spreadsheet(
+    topic_id: uuid.UUID,
+    body: dict,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """Recompute a workbook's formulas — used by `cheese recalc`.
+
+    The room cannot do this itself: recomputing means loading the workbook in
+    something that evaluates formulas, and the sandbox image carries no
+    LibreOffice and has no root to install one. The platform already runs one
+    for previews, so this is the path to it.
+
+    The workbook travels in the body rather than being read from the worktree,
+    because a room on a remote machine has no file here — the same reason
+    `artifact` takes `content_b64`.
+    """
+    place = await TopicService(db).place_or_404(topic_id)
+    await _actor_in_place(resolver, place)
+    path = _clean_artifact_path(body.get("path") or "")
+    encoded = body.get("content_b64")
+    if isinstance(encoded, str):
+        try:
+            raw = base64.b64decode(encoded, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise ValidationError("content_b64 不是合法的 base64") from exc
+    else:
+        raw = ws.read_room_file(place.project_id, topic_id, path)
+    if len(raw) > MAX_ARTIFACT_BYTES:
+        raise ValidationError(
+            f"文件超过 {MAX_ARTIFACT_BYTES // (1024 * 1024)}MB，无法重算"
+        )
+    try:
+        book, bad = await recalculate(raw, path, settings.office_render_endpoint)
+    except SpreadsheetRecalcUnavailable as exc:
+        raise SystemBusyError(str(exc)) from exc
+    except SpreadsheetRecalcFailed as exc:
+        raise ValidationError(str(exc)) from exc
+    return ok(
+        {
+            "path": path,
+            "content_b64": base64.b64encode(book).decode(),
+            "errors": [cell.as_dict() for cell in bad],
+        }
+    )
 
 
 @router.get("/{topic_id}/preview")
