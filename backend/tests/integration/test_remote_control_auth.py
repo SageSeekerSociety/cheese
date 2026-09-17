@@ -64,6 +64,55 @@ def test_control_state_reads_tasks_only_for_connected_session(
         client.portal.call(cleanup)
 
 
+def test_a_machine_that_is_off_does_not_break_the_state_the_page_polls(
+    client, place, monkeypatch
+):
+    """The browser asks for this every few seconds. Everything it wants is
+    knowable with the machine off — everything except the background tasks,
+    which live on the machine — so failing the whole read paints an error over
+    a room whose state we can read, and did it every three seconds."""
+    from app.api.routes.remote_control import store
+    from app.domain.agent.device_hub import DeviceOffline
+    from app.domain.agent.remote_control import key
+
+    project, topic = place
+
+    async def create_session():
+        row = await store().create(
+            {"p": project, "t": topic, "exp": int(time.time()) + 3600},
+            {
+                "execution": {
+                    "resource_id": topic,
+                    "execution": {"device_id": "machine-7"},
+                }
+            },
+        )
+        await store().update(row["id"], {"status": "active", "last_seen": time.time()})
+        return row["id"]
+
+    async def the_machine_is_off(_target, _request):
+        raise DeviceOffline("machine-7")
+
+    monkeypatch.setattr(
+        "app.api.routes.remote_control.private_chat.control", the_machine_is_off
+    )
+    sid = client.portal.call(create_session)
+    try:
+        response = client.get(
+            f"/topics/{topic}/agent/control", headers=session_auth_headers("alice")
+        )
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert data["tasks"] == {}
+        assert data["device_offline"] == "machine-7"
+    finally:
+
+        async def cleanup():
+            await store().redis.delete(key(sid), key(topic, "current"))
+
+        client.portal.call(cleanup)
+
+
 @pytest.fixture(autouse=True)
 def signing_key(monkeypatch):
     monkeypatch.setattr("app.core.tokens._SECRET", "rc-http-test-key-at-least-32-bytes")

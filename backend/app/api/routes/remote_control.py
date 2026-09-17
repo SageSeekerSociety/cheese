@@ -21,6 +21,7 @@ from app.core.errors import (
 )
 from app.core.sandbox_auth import scoped_token_claims
 from app.domain.agent import private_chat
+from app.domain.agent.device_hub import DeviceOffline
 from app.domain.agent.harness.claude_code import REMOTE_CONTROLS
 from app.domain.agent.remote_control import CONTROLS, store
 from app.domain.topic.services import TopicService
@@ -257,8 +258,16 @@ async def control_state(
             target = placement["execution"]
         await db.commit()
     if session and target:
-        tasks = await private_chat.control(target, {"subtype": "background_tasks"})
-        result["tasks"].update({task["task_id"]: task for task in tasks["tasks"]})
+        # The machine being off does not make the rest of this unknown. The page
+        # polls here every few seconds, so raising would paint an error over a
+        # room whose state we can read perfectly well — everything but the
+        # background tasks, which live on the machine that is not there.
+        try:
+            tasks = await private_chat.control(target, {"subtype": "background_tasks"})
+        except DeviceOffline as exc:
+            result["device_offline"] = exc.device_id
+        else:
+            result["tasks"].update({task["task_id"]: task for task in tasks["tasks"]})
     return ok(result)
 
 

@@ -20,6 +20,7 @@ still costs nothing to call, so the call sites do not grow an `if`.
 import asyncio
 import logging
 import time
+from datetime import datetime
 
 import httpx
 
@@ -32,6 +33,19 @@ logger = logging.getLogger(__name__)
 # and the rest are left to the timeline and the digest.
 MAX_PER_WINDOW = 10
 WINDOW_S = 300.0
+# How long one distinct failure stays reported. The paragraph above promises the
+# first occurrence and not the repeats, and for the first day this module ran
+# nothing enforced it: 600 messages in 15 hours, of which the largest single
+# family was one condition — a device being off — restated 162 times. A poller
+# that runs every 60 seconds against a machine somebody closed for the night
+# will do that, and the ten-per-five-minutes budget below then spends itself on
+# the repetition, so a NEW failure arriving during it is the one that gets
+# dropped. Suppressing the repeat is therefore not tidiness; it is what keeps
+# the budget meaning "ten different problems".
+REPEAT_WINDOW_S = 3600.0
+# Distinct failures remembered at once. Past this the oldest are forgotten — a
+# forgotten one reports again, which is the failure direction to prefer.
+MAX_TRACKED = 512
 # A webhook that is slow must not hold anything up; it is told or it is not.
 TIMEOUT_S = 5.0
 
@@ -59,6 +73,54 @@ class _Budget:
 budget = _Budget()
 
 
+class _Repeats:
+    """The first occurrence of each distinct failure, and what came back after.
+
+    Keyed by whatever the caller says makes two reports the same problem, not by
+    the message text: the text carries the room and the device that happened to
+    hit it, and one broken thing on seventy machines is one broken thing.
+    """
+
+    def __init__(self) -> None:
+        self._first: dict[str, float] = {}
+        self._suppressed: dict[str, int] = {}
+
+    def take(self, key: str, now: float) -> int | None:
+        """How many repeats to mention (0 = first time anyone hears of it), or
+        ``None`` when this is a repeat inside the window and must not go out."""
+        first = self._first.get(key)
+        if first is not None and now - first < REPEAT_WINDOW_S:
+            self._suppressed[key] = self._suppressed.get(key, 0) + 1
+            return None
+        repeats = self._suppressed.pop(key, 0)
+        self._first[key] = now
+        self._forget_oldest()
+        return repeats
+
+    def _forget_oldest(self) -> None:
+        excess = len(self._first) - MAX_TRACKED
+        if excess <= 0:
+            return
+        for key in sorted(self._first, key=lambda k: self._first[k])[:excess]:
+            del self._first[key]
+            self._suppressed.pop(key, None)
+
+
+repeated = _Repeats()
+
+
+def _clock(ts: float) -> str:
+    """When it happened, with the zone spelled out.
+
+    The message's own timestamp is when Feishu accepted it, and the two are not
+    the same number: this send is queued behind an event loop, a repeat is
+    reported up to an hour after it started, and the backend keeps UTC while the
+    person reading keeps whatever their phone says. So the alert carries the
+    moment the error was logged, and names the zone it is in.
+    """
+    return datetime.fromtimestamp(ts).astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+
+
 def configured() -> bool:
     return bool(settings.feishu_alert_webhook.strip())
 
@@ -80,25 +142,47 @@ async def _post(text: str) -> None:
         logger.exception("alert webhook failed")
 
 
-def send(title: str, lines: list[str]) -> None:
+def send(
+    title: str,
+    lines: list[str],
+    *,
+    key: str | None = None,
+    when: float | None = None,
+) -> None:
     """Fire-and-forget. Never raises, never blocks the caller.
 
     Not awaited on purpose: every caller is on a request path or an event loop
     that has something better to do, and an alert nobody is waiting for must not
     add its round trip to a user's request.
+
+    ``key`` is what makes two reports the same problem; the title is used when
+    the caller has nothing better, which is right for a title that already names
+    the thing and wrong for one carrying an id. ``when`` is when it happened,
+    which is not when this runs for anything queued or replayed.
     """
     if not configured():
         return
-    verdict = budget.take(time.time())
+    now = time.time()
+    repeats = repeated.take(key or title, now)
+    if repeats is None:
+        return
+    verdict = budget.take(now)
     if verdict == "drop":
         return
+    stamp = f"时间：{_clock(now if when is None else when)}"
     if verdict == "flood":
         text = (
-            f"{title}\n（同一时间还有更多新错误，已超过 {MAX_PER_WINDOW} 条/"
+            f"{title}\n{stamp}\n（同一时间还有更多新错误，已超过 {MAX_PER_WINDOW} 条/"
             f"{int(WINDOW_S / 60)} 分钟的上限，其余只记在时间线里）"
         )
     else:
-        text = "\n".join([title, *lines])
+        body = [title, stamp, *lines]
+        if repeats:
+            body.append(
+                f"（上一条之后这个问题又发生了 {repeats} 次，"
+                f"{int(REPEAT_WINDOW_S / 60)} 分钟内只报一条）"
+            )
+        text = "\n".join(body)
     try:
         task = asyncio.create_task(_post(text))
         _running.add(task)

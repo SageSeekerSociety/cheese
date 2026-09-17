@@ -626,6 +626,43 @@ async def test_owner_execution_route_preserves_scope_and_reaches_device(
 
 
 @pytest.mark.anyio
+async def test_a_machine_that_does_not_answer_is_not_a_fault_of_this_server(
+    client, room, monkeypatch
+):
+    """A device that holds its link and stays silent answered 500「服务器内部
+    错误」, which blames the one process it cannot be — and, an unhandled error
+    being logged three times on its way out, said so three times into the alert
+    channel. The connection owner's own RPC path has answered 504 for this
+    since it was written."""
+    project, topic = room
+    async with client.test_factory() as db:
+        stored = await db.get(Topic, topic)
+        resource = stored.resource_id or topic
+        stored.session_placement = {
+            "device_id": "center",
+            "resource_id": str(resource),
+            "channel": "device",
+            "execution": {"kind": "device", "device_id": "executor"},
+        }
+        await db.commit()
+
+    async def never_answers(*_args, **_kwargs):
+        raise TimeoutError
+
+    monkeypatch.setattr(execution, "call", never_answers)
+    token = mint_scoped_token(
+        project_id=str(project), topic_id=str(topic), resource_id=str(resource)
+    )
+    response = await asyncio.to_thread(
+        client.post,
+        f"/topics/{topic}/execution/{resource}",
+        headers={"X-Cheese-Token": token},
+        json={"method": "invoke", "params": {"tool": "Read"}},
+    )
+    assert response.status_code == 504, response.text
+
+
+@pytest.mark.anyio
 async def test_scoped_execution_and_rc_use_platform_owned_target(
     client, room, monkeypatch
 ):
