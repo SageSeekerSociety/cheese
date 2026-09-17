@@ -115,7 +115,22 @@ class Package:
         return ET.fromstring(self.blobs[name], parser)
 
     def put(self, name: str, root) -> None:
-        self.blobs[name] = ET.tostring(root, xml_declaration=True, encoding="UTF-8")
+        # Word writes `standalone="yes"` on every part, and lxml omits the
+        # attribute unless it is asked for one. Carrying the original
+        # declaration over keeps the rewritten part differing from its source
+        # only where the edit is.
+        self.blobs[name] = ET.tostring(
+            root,
+            xml_declaration=True,
+            encoding="UTF-8",
+            standalone=self._standalone(name),
+        )
+
+    def _standalone(self, name: str) -> bool | None:
+        head = self.blobs[name][:200].lower()
+        if b"standalone=" not in head:
+            return None
+        return b'standalone="yes"' in head or b"standalone='yes'" in head
 
     def save(self, dest: Path) -> None:
         dest = Path(dest)
@@ -284,8 +299,15 @@ def split_runs(paragraph, kind: str) -> None:
 
 
 def clone_run_with_text(run, text_tag: str, rpr_tag: str, text: str):
-    """A copy of a run carrying just its formatting and the given text."""
-    clone = ET.Element(run.tag)
+    """A copy of a run carrying just its formatting and the given text.
+
+    The run's own attributes travel with it. Word stamps `w:rsidR` on every run
+    it writes, and this function builds the pieces a partial match leaves
+    behind — text nobody asked to change. Dropping the attribute there would
+    rewrite the revision history of a sentence because someone edited three
+    characters in the middle of it.
+    """
+    clone = ET.Element(run.tag, attrib=dict(run.attrib))
     if len(run) and run[0].tag == rpr_tag:
         clone.append(copy.deepcopy(run[0]))
     node = ET.SubElement(clone, text_tag)
@@ -617,6 +639,21 @@ def _pair(raw: str, flag: str) -> tuple[str, str]:
     return left, right
 
 
+def _offsets(text: str, pattern: str) -> list[int]:
+    """Where `pattern` starts, left to right, without overlapping itself.
+
+    Used to reach the Nth occurrence without editing the N-1 in front of it,
+    so it has to count the way `str.count` does — the same way `_edit_targets`
+    reported the total the caller is choosing from.
+    """
+    out: list[int] = []
+    at = text.find(pattern)
+    while at >= 0:
+        out.append(at)
+        at = text.find(pattern, at + len(pattern))
+    return out
+
+
 def _edit_targets(package, kind: str, pattern: str) -> list[tuple[str, int, int]]:
     """(part, paragraph index, occurrences) for every paragraph holding `pattern`."""
     p_tag = _tags(kind)[0]
@@ -657,6 +694,8 @@ def cmd_edit(args) -> int:
         )
     if args.occurrence and args.all:
         raise Failed("--occurrence 和 --all 只能给一个")
+    if args.occurrence is not None and args.occurrence < 1:
+        raise Failed("--occurrence 从 1 数起，第 1 处就是最前面那一处")
 
     date = _now()
     touched: dict[str, int] = {}
@@ -677,19 +716,38 @@ def cmd_edit(args) -> int:
                 "把原文写长一点只留一处，或者 --all 全改，"
                 "或者 --occurrence N 指定第几处。"
             )
-        want = None if args.all else (args.occurrence or 1)
+        # `--occurrence N` names ONE occurrence, so the N-1 before it are
+        # passed over untouched. Counting them as they were edited would make
+        # `--occurrence 2` mean "the first two" — and `validate` cannot catch
+        # that, because an extra edit that is itself a well-formed revision
+        # still rejects back to the original. The check passes and the
+        # delivered file carries a change nobody asked for.
+        if args.occurrence and args.occurrence > total:
+            raise Failed(
+                f"{old!r} 只出现了 {total} 次，没有第 {args.occurrence} 处。\n"
+                "跑 `text` 看一眼原文，或者用 --all 全改。"
+            )
+        skip = args.occurrence - 1 if args.occurrence else 0
+        only_one = not args.all
         seen = 0
         p_tag = _tags(kind)[0]
         for name in package.text_parts():
-            if want is not None and seen >= want:
+            if only_one and seen:
                 break
             root = package.elements(name)
             counter = [_next_revision_id(root)]
             changed = 0
             for paragraph in root.iter(p_tag):
-                if want is not None and seen >= want:
+                if only_one and seen:
                     break
-                position = 0
+                here = _offsets(paragraph_text(paragraph, kind), old)
+                if not here:
+                    continue
+                if skip >= len(here):
+                    skip -= len(here)
+                    continue
+                position = here[skip]
+                skip = 0
                 while True:
                     if flag == "replace":
                         nxt = replace_once(
@@ -720,9 +778,7 @@ def cmd_edit(args) -> int:
                     position = nxt
                     seen += 1
                     changed += 1
-                    if want is not None and seen >= want:
-                        break
-                    if flag == "replace" and not new:
+                    if only_one:
                         break
             if changed:
                 package.put(name, root)

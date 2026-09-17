@@ -45,6 +45,12 @@ dev = [
     "aiosqlite>=0.22.1",
     "anyio>=4.13.0",
     "httpx>=0.28.1",
+    # The `documents` skill ships `office.py`, which edits Word XML with
+    # lxml because it is the only parser that writes a part back without
+    # rewriting namespace declarations it had no reason to touch. In a room
+    # the script takes it from `uv run --with lxml`; here it is a test
+    # dependency, so those edits stay under test.
+    "lxml>=5.3.0",
     "pyright>=1.1.410",
     "pytest>=9.1.0",
     "pytest-anyio>=0.0.0",
