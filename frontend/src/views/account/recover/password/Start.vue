@@ -5,11 +5,11 @@
       <div class="d-flex align-center mb-3">
         <v-icon color="primary" size="28" class="mr-3">mdi-lock-reset</v-icon>
         <h1 class="text-h3 font-weight-light" style="color: var(--ink); line-height: 1.2">
-          {{ t('website.resetYourPassword') }}
+          {{ t('account.resetYourPassword') }}
         </h1>
       </div>
       <p class="text-body-1" style="color: var(--muted); line-height: 1.5">
-        {{ t('website.verifyYourIdentityWithYourAccountEmail') }}
+        {{ t('account.verifyYourIdentityWithYourAccountEmail') }}
       </p>
     </div>
 
@@ -30,7 +30,7 @@
               v-model="email"
               autocomplete="email"
               name="email"
-              :label="t('website.accountEmail')"
+              :label="t('account.accountEmail')"
               variant="outlined"
               :loading="isSubmitting"
               v-bind="emailProps"
@@ -46,11 +46,11 @@
               style="text-transform: none; font-weight: 500; height: 48px"
               class="mb-4"
             >
-              {{ t('website.sendResetEmail') }}
+              {{ t('account.sendResetEmail') }}
             </v-btn>
 
             <p class="text-body-2" style="color: var(--muted)">
-              {{ t('website.rememberYourPassword') }}
+              {{ t('account.rememberYourPassword') }}
               <v-btn
                 variant="text"
                 color="primary"
@@ -59,7 +59,7 @@
                 style="text-transform: none; padding: 0; min-width: auto; height: auto; vertical-align: baseline"
                 class="text-decoration-none"
               >
-                <v-icon start size="16">mdi-arrow-left</v-icon> {{ t('website.backToSignIn') }}
+                <v-icon start size="16">mdi-arrow-left</v-icon> {{ t('account.backToSignIn') }}
               </v-btn>
             </p>
           </v-form>
@@ -108,12 +108,12 @@ const submit = handleSubmit(async (value) => {
   try {
     await UserApi.recoverPasswordRequest(value.email)
     myAlert.value = {
-      message: t('website.checkYourInboxForAPasswordReset'),
+      message: t('account.checkYourInboxForAPasswordReset'),
       type: 'success',
     }
   } catch (e) {
     myAlert.value = {
-      message: requestErrorMessage(e, t('website.couldNotSendTheEmailPleaseTry')),
+      message: requestErrorMessage(e, t('account.couldNotSendTheEmailPleaseTry')),
       type: 'error',
     }
   }

@@ -24,8 +24,8 @@ const route = useRoute()
   <template v-else>
     <Teleport v-if="!mdAndUp" to="#app-bar-slot">
       <v-tabs class="home-sections" grow slider-color="primary" bg-color="transparent" height="56">
-        <v-tab :to="{ name: 'HomeSpaces' }">{{ t('website.spaces') }}</v-tab>
-        <v-tab :to="{ name: 'HomeTeams' }">{{ t('website.teams') }}</v-tab>
+        <v-tab :to="{ name: 'HomeSpaces' }">{{ t('navigation.spaces') }}</v-tab>
+        <v-tab :to="{ name: 'HomeTeams' }">{{ t('navigation.teams') }}</v-tab>
       </v-tabs>
     </Teleport>
     <div class="home-shell">

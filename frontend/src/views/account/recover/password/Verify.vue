@@ -5,11 +5,11 @@
       <div class="d-flex align-center mb-3">
         <v-icon color="primary" size="28" class="mr-3">mdi-key-change</v-icon>
         <h1 class="text-h3 font-weight-light" style="color: var(--ink); line-height: 1.2">
-          {{ t('website.setANewPassword') }}
+          {{ t('account.setANewPassword') }}
         </h1>
       </div>
       <p class="text-body-1" style="color: var(--muted); line-height: 1.5">
-        {{ t('website.chooseASecurePasswordForYourAccount') }}
+        {{ t('account.chooseASecurePasswordForYourAccount') }}
       </p>
     </div>
 
@@ -32,7 +32,7 @@
                   v-model="password"
                   autocomplete="new-password"
                   name="password"
-                  :label="t('website.newPassword')"
+                  :label="t('account.newPassword')"
                   type="password"
                   variant="outlined"
                   :loading="isSubmitting"
@@ -46,7 +46,7 @@
                   v-model="confirmPassword"
                   autocomplete="new-password"
                   name="confirmPassword"
-                  :label="t('website.confirmPassword')"
+                  :label="t('account.confirmPassword')"
                   type="password"
                   variant="outlined"
                   :loading="isSubmitting"
@@ -65,11 +65,11 @@
               style="text-transform: none; font-weight: 500; height: 48px"
               class="mb-4"
             >
-              {{ t('website.resetPassword') }}
+              {{ t('account.resetPassword') }}
             </v-btn>
 
             <p class="text-body-2" style="color: var(--muted)">
-              {{ t('website.wantToGoBack') }}
+              {{ t('account.wantToGoBack') }}
               <v-btn
                 variant="text"
                 color="primary"
@@ -78,7 +78,7 @@
                 style="text-transform: none; padding: 0; min-width: auto; height: auto; vertical-align: baseline"
                 class="text-decoration-none"
               >
-                <v-icon start size="16">mdi-arrow-left</v-icon> {{ t('website.backToSignIn') }}
+                <v-icon start size="16">mdi-arrow-left</v-icon> {{ t('account.backToSignIn') }}
               </v-btn>
             </p>
           </v-form>
@@ -137,18 +137,18 @@ const { handleSubmit, defineField, isSubmitting } = useForm({
           password: z
             .string()
             .min(8)
-            .regex(REGEX_PASSWORD, { message: t('website.yourPasswordMustContainALetterA') }),
+            .regex(REGEX_PASSWORD, { message: t('account.yourPasswordMustContainALetterA') }),
           confirmPassword: z
             .string()
             .min(8)
-            .regex(REGEX_PASSWORD, { message: t('website.yourPasswordMustContainALetterA') }),
+            .regex(REGEX_PASSWORD, { message: t('account.yourPasswordMustContainALetterA') }),
         })
         .superRefine(({ password, confirmPassword }, ctx) => {
           if (password !== confirmPassword) {
             ctx.addIssue({
               code: z.ZodIssueCode.custom,
               path: ['confirmPassword'],
-              message: t('website.passwordsDoNotMatch'),
+              message: t('account.passwordsDoNotMatch'),
             })
           }
         })
@@ -164,7 +164,7 @@ const router = useRouter()
 const submit = handleSubmit(async (value) => {
   try {
     if (!username.value) {
-      throw new Error(t('website.invalidPasswordResetLink'))
+      throw new Error(t('account.invalidPasswordResetLink'))
     }
 
     // 生成 SRP 盐值和验证器
@@ -178,17 +178,17 @@ const submit = handleSubmit(async (value) => {
       srpVerifier,
     })
 
-    toast.success(t('website.passwordResetPleaseSignInAgain'))
+    toast.success(t('account.passwordResetPleaseSignInAgain'))
     router.replace({
       name: 'SignIn',
       query: {
         username: username.value,
-        message: t('website.yourPasswordHasBeenResetSignIn'),
+        message: t('account.yourPasswordHasBeenResetSignIn'),
       },
     })
   } catch (e) {
     myAlert.value = {
-      message: requestErrorMessage(e, t('website.couldNotResetYourPasswordPleaseTry')),
+      message: requestErrorMessage(e, t('account.couldNotResetYourPasswordPleaseTry')),
       type: 'error',
     }
   }

@@ -26,7 +26,7 @@ export function isTransportFailure(body: unknown): boolean {
 // one thing they cannot know. The app may have applied the write before
 // an intermediary returned the error page.
 export function transportFailureMessage(method: string, status: number): string {
-  return t(method.toUpperCase() === 'GET' ? 'website.transportReadFailure' : 'website.transportWriteFailure', {
+  return t(method.toUpperCase() === 'GET' ? 'global.transportReadFailure' : 'global.transportWriteFailure', {
     status,
   })
 }

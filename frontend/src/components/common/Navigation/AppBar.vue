@@ -72,7 +72,7 @@ const { getRouteHierarchy } = usePageTitle()
 const notificationMenuOpen = ref(false)
 const unreadNotificationsCount = ref(0)
 
-const currentTitle = ref(t('website.cheese2'))
+const currentTitle = ref(t('global.cheese2'))
 
 const updateTitle = () => {
   const hierarchy = getRouteHierarchy.value
@@ -82,7 +82,7 @@ const updateTitle = () => {
       return
     }
   }
-  currentTitle.value = t('website.cheese2')
+  currentTitle.value = t('global.cheese2')
 }
 
 watch([getRouteHierarchy, () => updateTrigger], updateTitle, { immediate: true })

@@ -1,0 +1,6 @@
+{
+  "cheese": "Cheese",
+  "cheese2": "Cheese",
+  "transportReadFailure": "Service temporarily unavailable. Please try again later. (HTTP {status})",
+  "transportWriteFailure": "Service temporarily unavailable. The operation may have completed. Refresh to check before trying again. (HTTP {status})"
+}

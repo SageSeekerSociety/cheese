@@ -18,7 +18,7 @@ export default {
       name: 'HomeDefault',
       meta: {
         title: '首页',
-        titleKey: 'website.home',
+        titleKey: 'navigation.home',
         publicLanding: true,
       },
       component: () => import('@/views/home/Landing.vue'),
@@ -33,7 +33,7 @@ export default {
       name: 'About',
       meta: {
         title: '了解知是',
-        titleKey: 'website.aboutCheese',
+        titleKey: 'publicSite.aboutCheese',
         publicLanding: true,
       },
       component: () => import('@/views/home/Landing.vue'),
@@ -44,7 +44,7 @@ export default {
       component: () => import('@/views/spaces/Index.vue'),
       meta: {
         title: '空间',
-        titleKey: 'website.spaces',
+        titleKey: 'navigation.spaces',
         isFullPage: true,
       },
     },
@@ -56,7 +56,7 @@ export default {
       redirect: { name: 'HomeTeamsMine' },
       meta: {
         title: '小队',
-        titleKey: 'website.teams',
+        titleKey: 'navigation.teams',
         isFullPage: true,
       },
       children: [

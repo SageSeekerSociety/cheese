@@ -12,7 +12,8 @@
     "unknownDiscussion": "未知讨论",
     "teamAdmin": "团队管理员",
     "reason": "原因",
-    "member": "成员"
+    "member": "成员",
+    "unknownProject": "未知项目"
   },
   "default": {
     "title": "未知类型通知: {type}",

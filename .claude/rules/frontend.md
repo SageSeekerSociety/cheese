@@ -103,11 +103,13 @@ avoid a white flash before first paint. Change the storage key
   10–11px and they are not a precedent to follow.
 - Spacing: 8px grid (4/8/12/16/24/32). Prefer Vuetify's `pa-*`/`ma-*` utilities.
 
-## The Chinese copy is part of the design system, and nothing lints it
+## The Chinese copy is part of the design system
 
 Full rules: [`docs/design-system.md` §8](../../docs/design-system.md#8-文案). Colours
-and radii have stylelint; copy has nothing — a bad string ships silently. So the
-one thing to internalise before you type user-facing Chinese:
+and radii have stylelint; copy has nothing — a badly worded string ships silently.
+(The *structure* around strings — keys, locales, placeholders — is gated; see the
+next section. The words themselves are not.) So the one thing to internalise
+before you type user-facing Chinese:
 
 - **正式、清晰、自然、简明.** Both failure directions are wrong: `平台检查没跑成`
   (too colloquial) and `平台检查未能顺利完成执行` (公文腔) — write
@@ -128,6 +130,27 @@ one thing to internalise before you type user-facing Chinese:
 - **Deleting a UI element is riskier than rewording it.** If you are not certain
   an element is pure meta, keep it and raise it — see the §8.7 counter-example
   where the "废话" was also the only signal of an unavailable state.
+
+## Interface strings live in the catalog, and that part IS gated
+
+Full rules: [`docs/i18n.md`](../../docs/i18n.md). The parts you will otherwise get
+wrong on turn one:
+
+- **Never hardcode a user-visible string** — not in a template, not in a script,
+  not as a `title` / `label` / `placeholder`, not in text the code assembles. Put
+  it in `frontend/src/i18n/messages/<locale>/<namespace>.json` and call `t()`.
+- **Key names are `namespace.component.role`** (`account.signIn.submit`), never an
+  English sentence and never a sentence fragment. A sentence-shaped key means
+  rewording the Chinese forces renaming the key, which throws the translation away.
+- **Never create an empty English namespace to satisfy a check.** That turns
+  "missing" into "present but blank", which is exactly the silent state the gates
+  exist to prevent. Either write the translation, or leave the keys in
+  `frontend/src/i18n/untranslated.json`.
+- **Never edit `untranslated.json` / `unused.json` just to get green.**
+  `catalog.spec.ts` fails on entries that no longer describe reality (already
+  translated, already referenced, or dangling), so the lists can only shrink
+  honestly.
+- `pnpm exec vitest run --dir src/i18n` is the whole i18n gate — seconds, runs anywhere.
 
 ## The two ratchets
 
