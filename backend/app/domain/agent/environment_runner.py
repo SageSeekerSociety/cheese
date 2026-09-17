@@ -42,6 +42,33 @@ def process_identity(pid, *, reference=None):
     ).stdout.strip()
 
 
+def tool_prefix():
+    """Where this project's tools are installed, shared by every room of it on
+    this machine — or None when the machine has no store.
+
+    The setup script's only addressable output is `$HOME`, and a room's `$HOME`
+    has to be its own (hook events spool under it, and the drainer ships that
+    spool with whichever token the last screen start wrote). Those two facts
+    together are why every room of a project downloaded and kept its own copy of
+    the same toolchain: measured on dev 2026-09-17, one Node 22 per room,
+    ~254MB each across 228 rooms, and five rooms fetching the same 54MB tarball
+    within three hours.
+
+    So the script gets a HOME of its own instead. It is the platform's to give:
+    `HOME` is already a reserved variable a project may not set
+    (`project/environment.py`), and the product already calls this script
+    「安装工具」 over a configuration it says the rooms share.
+
+    The agent keeps the room's HOME. Only the installer's moves.
+    """
+    store = os.environ.get("CHEESE_STORE", "")
+    if not store or not store.startswith("/"):
+        # No store means no shared prefix, and every tool falls back to the
+        # room's own HOME — exactly where it was before this existed.
+        return None
+    return Path(store) / "env"
+
+
 def write_json(path, value):
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(value))
@@ -137,19 +164,34 @@ def run(config, directory, command, *, adopt=None, task_work=None):
 
     previous_term = signal.signal(signal.SIGTERM, cancel)
     previous_int = signal.signal(signal.SIGINT, cancel)
+    prefix = tool_prefix()
     environment = dict(os.environ)
     environment.update(config["variables"])
     environment.pop("CHEESE_ENVIRONMENT", None)
-    environment["PATH"] = (
-        str(Path.home() / ".local/bin") + os.pathsep + environment["PATH"]
-    )
+    # The prefix first: a room that installed its own copy before the prefix
+    # existed still has one, and the shared one is the answer from now on.
+    bins = [str(Path.home() / ".local/bin")]
+    if prefix is not None:
+        bins.insert(0, str(prefix / ".local/bin"))
+    environment["PATH"] = os.pathsep.join([*bins, environment["PATH"]])
     model_proxy = environment.pop("CHEESE_MODEL_PROXY", "")
     script_environment = dict(environment)
     if model_proxy:
         # This proxy admits only model service hosts. Package downloads use
         # ordinary machine egress; the agent retains its metered model route.
         script_environment.pop("HTTPS_PROXY", None)
+    # `setup` installs tools and is the project's, so it runs in the project's
+    # prefix. `startup` prepares one task's checkout and writes into that
+    # checkout; it keeps the room's HOME, because giving it a shared one would
+    # let two tasks of one project race in a directory neither of them locks.
+    shared_lock = None
     receipt = directory / "initialized.json"
+    if prefix is not None and task_work is None:
+        script_environment["HOME"] = str(prefix)
+        prefix_state = prefix / ".cheese-environment"
+        prefix_state.mkdir(parents=True, exist_ok=True, mode=0o700)
+        shared_lock = prefix_state / "lock"
+        receipt = prefix_state / "initialized.json"
     initialized = json.loads(receipt.read_text()) if receipt.exists() else None
     with (directory / log_name).open("a", buffering=1) as log:
         write_json(directory / f"{attempt}.json", config)
@@ -180,34 +222,72 @@ def run(config, directory, command, *, adopt=None, task_work=None):
                 if stage == "setup" and initialized == config["revision"]:
                     log.write(f"{now()} setup: reused successful initialization\n")
                     continue
-                script = directory / f"{attempt}-{stage}.sh"
-                script.write_text(config[key])
-                log.write(f"{now()} {stage}: started\n")
-                if config[key].strip():
-                    child = subprocess.Popen(
-                        ["bash", "-e", str(script)],
-                        cwd=work,
-                        env=script_environment,
-                        stdout=log,
-                        stderr=subprocess.STDOUT,
-                        start_new_session=True,
-                    )
-                    try:
-                        code = child.wait(timeout=1800)
-                    except subprocess.TimeoutExpired:
-                        cancel(signal.SIGTERM, None)
-                    if code:
-                        # Failed scripts must not leave background installers.
+                installing = None
+                try:
+                    if stage == "setup" and shared_lock is not None:
+                        # One prefix, many rooms. The room lock above says "this
+                        # room is not preparing twice"; this one says "this
+                        # project's tools are not being installed twice into the
+                        # same directory", which is a different claim and the
+                        # one that matters once the directory is shared.
+                        installing = shared_lock.open("a")
                         try:
-                            os.killpg(child.pid, signal.SIGTERM)
-                        except ProcessLookupError:
-                            pass
-                        state["exit_code"] = code
-                        raise RuntimeError(f"{stage} script exited with status {code}")
-                    child = None
-                log.write(f"{now()} {stage}: completed\n")
-                if stage == "setup":
-                    write_json(receipt, config["revision"])
+                            fcntl.flock(installing, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        except BlockingIOError:
+                            # WAIT, never fail: the other room is doing this
+                            # room's work. `status.json` already says preparing
+                            # / setup, so the room reads as 「正在安装工具」
+                            # throughout — which is true, just not by us.
+                            log.write(
+                                f"{now()} setup: another room of this project is"
+                                " installing its tools; waiting\n"
+                            )
+                            fcntl.flock(installing, fcntl.LOCK_EX)
+                        # It may have just finished the very revision we want.
+                        current = (
+                            json.loads(receipt.read_text())
+                            if receipt.exists()
+                            else None
+                        )
+                        if current == config["revision"]:
+                            log.write(
+                                f"{now()} setup: installed by another room of"
+                                " this project\n"
+                            )
+                            continue
+                    script = directory / f"{attempt}-{stage}.sh"
+                    script.write_text(config[key])
+                    log.write(f"{now()} {stage}: started\n")
+                    if config[key].strip():
+                        child = subprocess.Popen(
+                            ["bash", "-e", str(script)],
+                            cwd=work,
+                            env=script_environment,
+                            stdout=log,
+                            stderr=subprocess.STDOUT,
+                            start_new_session=True,
+                        )
+                        try:
+                            code = child.wait(timeout=1800)
+                        except subprocess.TimeoutExpired:
+                            cancel(signal.SIGTERM, None)
+                        if code:
+                            # Failed scripts must not leave background installers.
+                            try:
+                                os.killpg(child.pid, signal.SIGTERM)
+                            except ProcessLookupError:
+                                pass
+                            state["exit_code"] = code
+                            raise RuntimeError(
+                                f"{stage} script exited with status {code}"
+                            )
+                        child = None
+                    log.write(f"{now()} {stage}: completed\n")
+                    if stage == "setup":
+                        write_json(receipt, config["revision"])
+                finally:
+                    if installing is not None:
+                        installing.close()
             if adopt is not None:
                 # Bind only after tool setup succeeds. Status must follow the
                 # existing agent, not this short-lived preparation process.

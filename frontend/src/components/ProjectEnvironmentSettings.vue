@@ -136,7 +136,7 @@ onBeforeUnmount(() => {
           variant="outlined"
           rows="5"
           :readonly="!info.can_edit"
-          hint="为房间安装 Python、Node 等工具。首次准备或应用新配置时运行"
+          hint="安装 Python、Node 等工具。同一台机器上每个项目运行一次，应用新配置时重新运行"
           persistent-hint
           class="mb-4"
         />
@@ -157,6 +157,10 @@ onBeforeUnmount(() => {
           初始化脚本在房间目录运行，启动脚本在任务代码目录运行。两者使用 Bash，每段最多 30
           分钟；使用机器当前权限。环境变量同时传给两个脚本和 AI 进程，脚本里的 export 不会传给下一步。 工具可安装到
           $HOME/.local/bin。
+          <p class="mt-2">
+            初始化脚本的 $HOME 是该项目在这台机器上共用的工具目录，所以工具只安装一份，后开的房间直接用。启动脚本和 AI
+            进程的 $HOME 是房间自己的，因此不要在初始化脚本里写入某个房间专有的内容。
+          </p>
         </details>
         <p class="t-body mb-2">环境变量</p>
         <p class="t-body c-muted mb-3">这些值对项目成员和芝士可见。请不要在这里保存密码或 API 密钥。</p>
