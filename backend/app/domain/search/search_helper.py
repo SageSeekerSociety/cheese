@@ -42,7 +42,11 @@ async def meilisearch_search_ids(
         total = result.get("estimatedTotalHits", len(ids))
         return ids, total
     except Exception:
-        _logger.debug(
+        # WARNING, matching `get_search_client`'s own line for the same
+        # degradation: results come back from PG FTS instead, which is a
+        # different ranking and a different set of hits. At DEBUG the whole
+        # platform could be serving the fallback and nothing would say so.
+        _logger.warning(
             "Meilisearch search failed, falling back to PG FTS", exc_info=True
         )
         return None
@@ -58,4 +62,7 @@ async def index_document(index_uid: str, doc: dict) -> None:
     try:
         await client.add_documents(index_uid, [doc])
     except Exception:
-        _logger.debug("Failed to index document in %s", index_uid, exc_info=True)
+        # Best-effort means nobody retries: this document is unsearchable until
+        # something else happens to reindex it, so the one line saying so is all
+        # anyone will ever get.
+        _logger.warning("Failed to index document in %s", index_uid, exc_info=True)
