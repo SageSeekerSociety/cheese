@@ -243,6 +243,28 @@ Two mechanisms, deliberately different in kind:
   the things that actually fill them.
 - **`deploy/dev-box-disk-cleanup.sh`** is the *routine* reclaim for any box.
   Reports by default; `--apply` deletes; `--self-test` checks its own arithmetic.
+  Run by hand — nothing schedules it.
+- **`deploy/reclaim-room-caches.sh`** is the *room-local* reclaim, and the only
+  one of the three a deploy runs on its own (`deploy-docker.sh`, right before
+  `DEPLOY OK`). Every room of a project now installs out of one store, so the
+  copies a room made under its own HOME are read by nothing; the launcher drops
+  them when that room next starts, and this reaches the rooms that never do.
+  On dev, 2026-09-17, that was nearly all of them: of 102 checkouts, 3 had been
+  touched in a week.
+
+  Same idiom as the one above — reports by default, `--apply` deletes,
+  `--self-test` checks itself — plus one thing neither of the others needs: it
+  takes each room's own `.cheese-environment/lock`, the lock
+  `agent/environment_runner.py` holds while a setup script installs, and skips a
+  room that is installing right now. It never touches `.claude` (transcripts),
+  `.cheese` (the room's spool and credentials) or `.local/share/uv` (the
+  interpreter a venv points at by absolute path).
+
+  What it CANNOT reclaim is the bulk: the checkout, the per-room Node install,
+  the interpreter. Those need the room gone, which is archival's job and
+  verifies the backend holds the transcript first — see
+  `deploy/README-room-cleanup.md`. The script counts rooms with no checkout and
+  prints the number, because that count is archival's input list.
 
 What filled `cheese-dev-env6-app` (measured 2026-08-11 at **92%**, 2.6G free):
 docker build cache 3.0G (71 entries, none in use) · apt archives 1.7G · Go build

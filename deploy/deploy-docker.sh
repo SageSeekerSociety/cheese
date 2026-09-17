@@ -837,6 +837,18 @@ fi
 # stops the trap from repeating it.
 reclaim_docker_disk "successful deploy" true
 RECLAIM_PENDING=0
+# The other half of what fills this box. Docker images are one; the package
+# caches rooms kept before they shared a project store are the other, and they
+# are the half nothing was reclaiming: the launcher drops a room's copies when
+# that room next starts, but a room only starts when someone uses it, and the
+# rooms holding the most disk are the ones nobody has opened in a month.
+#
+# Here rather than on a timer because a deploy is when someone is watching: the
+# line it prints names the directory it swept, so a box where rooms belong to a
+# different user than the deploy says "0 rooms" next to that path instead of
+# quietly reclaiming nothing forever. Best-effort, exactly like the reclaim
+# above — a box with no rooms on it is the normal case, not a failure.
+bash "$HERE/reclaim-room-caches.sh" --apply 2>&1 | sed 's/^/  /' || true
 echo "$(date -Iseconds) $SHA" >> "$HERE/deploy-docker.log"
 if [ "$AGENT_RUNTIME_IMAGES_REQUIRED" = true ]; then
   log "DEPLOY OK: sha=$SHA healthy; agent runtime images verified and retained"
