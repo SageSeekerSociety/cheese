@@ -36,13 +36,22 @@ _SECRET_KEY_TAILS = (
     "apikey",
     "credential",
 )
-_SECRET_KEY_EXACT = ("code",)
-_SECRET_KEY = (
-    r"(?:[A-Za-z0-9]+_)*(?:"
-    + "|".join(_SECRET_KEY_TAILS)
-    + r")|"
-    + "|".join(_SECRET_KEY_EXACT)
-)
+_SECRET_KEY = r"(?:[A-Za-z0-9]+_)*(?:" + "|".join(_SECRET_KEY_TAILS) + r")"
+# `code` is only a credential in the OAuth device flow, where it arrives in a
+# query string. As a bare `key=value` it matched everything else named code as
+# well, and the damage was not limited to redacting a readable value:
+#
+# - an error code was replaced by `***` in the one place it mattered, so the
+#   alert channel carried `{"code":***,"message":"Error: device offline"}` when
+#   the status was the point (2026-09-16)
+# - a log FORMAT STRING is scrubbed before logging formats it, so
+#   `"... code=%s ..."` became `"... code=*** ..."` — one placeholder fewer than
+#   arguments — and the logging call raised TypeError back into whatever was
+#   being logged. Found by a line that logged a WebSocket close code, which took
+#   three connector tests down with it.
+#
+# Anchored to `?`/`&` it still covers the flow it was added for and nothing else.
+_OAUTH_CODE_RE = re.compile(r"([?&]code=)[^\s&#]+", re.IGNORECASE)
 # `key=value`, `key: value`, and the QUOTED forms a repr produces: `token='x'`,
 # `{"token": "x"}`. The original pattern excluded quotes from the value, which
 # meant it matched the query-string form and nothing else — a repr put the quote
@@ -91,6 +100,7 @@ def scrub_secrets(value: Any) -> Any:
         return value
     out = _AUTH_SCHEME_RE.sub(r"\1\2***", value)
     out = _SECRET_KV_RE.sub(r"\1\2\3***\3", out)
+    out = _OAUTH_CODE_RE.sub(r"\1***", out)
     out = _URL_CRED_RE.sub(r"\1***\2", out)
     return _SECRET_VALUE_RE.sub("***", out)
 

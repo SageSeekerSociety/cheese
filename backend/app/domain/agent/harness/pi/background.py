@@ -25,16 +25,19 @@ runner itself is written in, so a machine that can host a pi room can run this.
 State is entirely in the filesystem, under one directory per job, because the
 reader is a process that did not start it and may not have existed when it did:
 
-    meta.json   what was run, where, by whom, when     (written once)
+    meta.json   what was run, where, by whom, when, and where to reach it
     output      everything the terminal has shown      (append-only)
     cursor      how far a reader has got               (the reader's)
     exit        status and when                        (written once, last)
-    sock        write to it / signal it, while it runs
+    error       why nothing else here happened         (only when that is so)
+
+The control socket is the one thing NOT in that directory; see ``_address``.
 """
 
 import argparse
 import errno
 import fcntl
+import hashlib
 import json
 import os
 import pty
@@ -44,6 +47,7 @@ import struct
 import sys
 import termios
 import time
+import traceback
 from pathlib import Path
 
 # A terminal wide enough that a log line, a stack trace or a table is not folded
@@ -112,8 +116,29 @@ def _spawn(command: str, cwd: str, environ: dict) -> tuple[int, int]:
     return master, child
 
 
-def _control(directory: Path) -> socket.socket:
-    address = str(directory / "sock")
+#: 控制口不在任务目录里 —— 那里放不下它。
+#:
+#: A Unix socket address is 108 bytes, terminator included, and that is a kernel
+#: constant rather than a filesystem limit: `bind` on a longer path fails, and
+#: every other file in the job directory is written happily at any length. A
+#: room's state directory alone is past it — a project id, a topic id and a
+#: session digest, none of which this module is in a position to shorten — so a
+#: socket in the job directory is not "long on some machines", it is a job that
+#: cannot be typed into or signalled on any machine.
+#:
+#: So the address is short by construction, and the job directory carries the
+#: name in ``meta.json`` rather than the other side deriving it a second time.
+#: The runner's own socket is named the same way for the same reason
+#: (``runner.socket_path``); the uid is in the name because /tmp is shared.
+_CONTROL_ROOT = Path("/tmp")
+
+
+def _address(directory: Path) -> str:
+    digest = hashlib.sha256(str(directory).encode()).hexdigest()[:24]
+    return str(_CONTROL_ROOT / f"cheese-bg-{os.getuid()}-{digest}.sock")
+
+
+def _control(address: str) -> socket.socket:
     Path(address).unlink(missing_ok=True)
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     listener.bind(address)
@@ -206,6 +231,51 @@ def _obey(listener: socket.socket, master: int, child: int) -> None:
         connection.close()
 
 
+def _hold(args: argparse.Namespace) -> None:
+    """One job, from its terminal to its exit status.
+
+    The control socket is bound BEFORE the command is started. Bound after, a
+    guardian that cannot listen has already put a command on a pty nobody can
+    reach — running, unreadable, and unkillable except by pid.
+    """
+    address = _address(args.dir)
+    listener = _control(address)
+    try:
+        master, child = _spawn(args.command, args.cwd, {})
+        (args.dir / "meta.json").write_text(
+            json.dumps(
+                {
+                    "command": args.command,
+                    "cwd": args.cwd,
+                    "label": args.label,
+                    "pid": os.getpid(),
+                    "child": child,
+                    "sock": address,
+                    "started_at": time.time(),
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        try:
+            status = _serve(args.dir, master, child, listener)
+        finally:
+            os.close(master)
+    finally:
+        listener.close()
+        Path(address).unlink(missing_ok=True)
+    # Written last and once: its presence is what "finished" means to a reader,
+    # so it must not appear before the output it belongs to is on disk.
+    (args.dir / "exit").write_text(
+        json.dumps({"status": status, "at": time.time()}), encoding="utf-8"
+    )
+
+
+#: 看守进程自己死掉时的退出码，和命令的退出码取自同一个字段，所以要能分得开。
+#: ``sysexits.h`` 的 EX_SOFTWARE：一条命令几乎不会拿它当退出码。
+_GUARDIAN_FAILED = 70
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="hold one backgrounded command")
     parser.add_argument("--dir", type=Path, required=True)
@@ -215,33 +285,23 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     args.dir.mkdir(parents=True, exist_ok=True)
     _daemonize(args.dir)
-    master, child = _spawn(args.command, args.cwd, {})
-    (args.dir / "meta.json").write_text(
-        json.dumps(
-            {
-                "command": args.command,
-                "cwd": args.cwd,
-                "label": args.label,
-                "pid": os.getpid(),
-                "child": child,
-                "started_at": time.time(),
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
-    listener = _control(args.dir)
     try:
-        status = _serve(args.dir, master, child, listener)
-    finally:
-        listener.close()
-        Path(args.dir / "sock").unlink(missing_ok=True)
-        os.close(master)
-    # Written last and once: its presence is what "finished" means to a reader,
-    # so it must not appear before the output it belongs to is on disk.
-    (args.dir / "exit").write_text(
-        json.dumps({"status": status, "at": time.time()}), encoding="utf-8"
-    )
+        _hold(args)
+    except BaseException:
+        # Past `_daemonize` this process has no voice: stdin, stdout and stderr
+        # are /dev/null, the caller stopped waiting long ago, and the reader is
+        # a model in another process that only ever sees these files. An
+        # exception left to propagate here is a job that reports itself running
+        # forever, having printed nothing, for a reason nobody can recover —
+        # which is the same silence as no failure at all.
+        (args.dir / "error").write_text(traceback.format_exc(), encoding="utf-8")
+        exit_file = args.dir / "exit"
+        if not exit_file.exists():
+            exit_file.write_text(
+                json.dumps({"status": _GUARDIAN_FAILED, "at": time.time()}),
+                encoding="utf-8",
+            )
+        raise
 
 
 if __name__ == "__main__":

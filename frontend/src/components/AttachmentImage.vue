@@ -64,7 +64,7 @@ onBeforeUnmount(() => {
 <template>
   <!-- 缩略图：盒子先占住位置，成败都一样大——候选条不会因为一张图慢半拍而跳动。
        文件名挂在 title 上，图没出来时鼠标移上去还知道它是什么。 -->
-  <span v-if="thumb" class="im-thumb" :title="altText">
+  <span v-if="thumb" class="att-face" :title="altText">
     <img v-if="url" class="im-thumb__img" :src="url" :alt="altText" />
     <v-icon v-else-if="failed" size="16" class="im-thumb__failed">mdi-image-broken-variant</v-icon>
   </span>
@@ -93,19 +93,7 @@ onBeforeUnmount(() => {
   font-size: 13px;
   color: var(--muted);
 }
-/* 缩略图的尺寸在这儿定，不在输入框那边：加载中、加载成功、加载失败是同一个盒子，
-   所以尺寸只能有一个主人。 */
-.im-thumb {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 56px;
-  height: 56px;
-  border-radius: 8px;
-  border: 1px solid var(--line);
-  background: var(--fill);
-  overflow: hidden;
-}
+/* 盒子本身是 .att-face（style.css），四种附件状态共用；这里只管盒子里的图。 */
 .im-thumb__img {
   width: 100%;
   height: 100%;

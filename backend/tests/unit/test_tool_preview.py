@@ -330,6 +330,27 @@ def test_an_enormous_argument_is_capped_and_says_so():
     assert detail.endswith("…")
 
 
+# ---- 平台命令和后台任务：pi 房间里它们是工具，不是一行 shell ----
+
+
+def test_a_platform_command_shows_the_argument_that_says_which_one():
+    assert tool_preview("cheese_accept_request", {"reviewer": "alice"}).text == "alice"
+    remembered = tool_preview("cheese_remember", {"fact": "构建走 pnpm"})
+    assert remembered.text == "构建走 pnpm"
+
+
+def test_a_platform_command_writing_a_file_is_cut_to_the_workspace():
+    preview = tool_preview("cheese_doc_set", {"file": f"{ABS}/notes.md"}, work_dir=WORK)
+    assert preview == ToolPreview("notes.md")
+
+
+def test_a_background_job_shows_the_command_and_typing_shows_what_was_typed():
+    # 任务号是刚生出来的，对读的人什么也不说明；这两步真正在做的是那条命令和
+    # 那句话。
+    assert tool_preview("bash_start", {"command": "pnpm dev"}).text == "pnpm dev"
+    assert tool_preview("bash_write", {"id": "job-1-a", "text": "y"}).text == "y"
+
+
 def test_a_tool_with_no_telling_argument_has_nothing_to_open():
     assert _detail("FutureTool", {"x": 1}) == ""
     assert tool_detail("Bash", "not a dict", ToolPreview()) == ""  # type: ignore[arg-type]

@@ -109,7 +109,7 @@ it('draws the composer thumbnail from the fetched bytes as well', async () => {
   expect(attachmentImageUrl).toHaveBeenCalledWith('topic-a', 'uploads/a/图.png')
 })
 
-// 缩略图挂了也得占住那 56×56：塌下去的时候候选条会整体跳一下，而且读者分不清
+// 缩略图挂了也得占住那个方格：塌下去的时候待发条会整体跳一下，而且读者分不清
 // 「这张图加载不出来」和「我还没选图」。
 it('keeps the thumbnail the same size when its bytes never arrive', async () => {
   attachmentImageUrl.mockRejectedValue(new Error('图片加载失败（HTTP 401）'))
@@ -117,7 +117,7 @@ it('keeps the thumbnail the same size when its bytes never arrive', async () => 
   const { container } = mount({ thumb: true })
 
   await waitFor(() => expect(container.querySelector('.im-thumb__failed')).toBeTruthy())
-  expect(container.querySelector('.im-thumb')).toBeTruthy()
+  expect(container.querySelector('.att-face')).toBeTruthy()
   expect(container.querySelector('img')).toBeNull()
 })
 

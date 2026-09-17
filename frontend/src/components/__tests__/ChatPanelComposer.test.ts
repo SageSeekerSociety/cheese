@@ -38,6 +38,9 @@ vi.mock('../../api', async () => {
     // 带不了这个头，挂上去的结果是 401。输入框的缩略图得用 attachmentImageUrl 取字节。
     attachmentRawUrl: () => '',
     attachmentImageUrl: vi.fn().mockResolvedValue('blob:composer-thumb'),
+    // PDF 缩略图要取的原始字节。jsdom 里画不出一页 PDF，所以让它拿不到——
+    // 这一格于是落到「图标 + title 写名字」的兜底上，正是下面断言的那个形状。
+    previewFileBytes: vi.fn().mockRejectedValue(new Error('no bytes under test')),
     uploadAttachment: vi.fn(),
     downloadFile: vi.fn(),
   }
@@ -210,13 +213,55 @@ describe('对话栏自己的输入栏', () => {
     const file = new File(['%PDF'], '需求 文档.pdf', { type: 'application/pdf' })
     await fireEvent.change(input, { target: { files: [file] } })
     await flush()
-    expect(container.querySelector('.att-strip')?.textContent).toContain('需求 文档.pdf')
+    // 每一格都是同一个块：左边那个方格说明它是什么，右边一直写着名字。PDF 在
+    // 方格里画首页——发之前要确认的是「附的是哪一份」，光有名字答不了。
+    const card = container.querySelector('.att-strip .att-card')!
+    expect(card.querySelector('.att-card__name')?.textContent).toBe('需求 文档.pdf')
+    expect(card.querySelector('canvas')).toBeTruthy()
     expect(container.querySelector('.att-strip img')).toBeNull()
     await fireEvent.click(container.querySelector('[title="发送"]')!)
     await flush()
     expect(JSON.parse(sent[0].payload).attachments).toEqual([
       { path: 'uploads/id/需求 文档.pdf', mime: 'application/pdf' },
     ])
+  })
+
+  // 一条消息里常常同时有图片和文档。两种形状并排是两样不相干的东西，而上传完成
+  // 的那一刻形状一换，整条会跳——所以图片和一份 .docx 占的是同一个块，区别只在
+  // 方格里画的是缩略图还是这个类型的图标。名字两种都写着。
+  it('gives an image and a document the same block, and always the name', async () => {
+    const api = await import('../../api')
+    vi.mocked(api.uploadAttachment)
+      .mockResolvedValueOnce({ path: 'uploads/id/截图.png', mime: 'image/png' })
+      .mockResolvedValueOnce({
+        path: 'uploads/id/Writing替换词.docx',
+        mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      })
+    const { container } = mountPanel({}, 'topic-mixed')
+    await flush()
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!
+    await fireEvent.change(input, {
+      target: {
+        files: [
+          new File(['png'], '截图.png', { type: 'image/png' }),
+          new File(['doc'], 'Writing替换词.docx', {
+            type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          }),
+        ],
+      },
+    })
+    await flush()
+
+    const cards = Array.from(container.querySelectorAll('.att-strip .att-card'))
+    expect(cards.map((c) => c.querySelector('.att-card__name')?.textContent)).toEqual([
+      '截图.png',
+      'Writing替换词.docx',
+    ])
+    // 同一个块、同一个方格；里面一个是图，一个是这个类型的图标。
+    expect(cards.every((c) => c.querySelector('.att-face'))).toBe(true)
+    expect(cards[0].querySelector('img')).toBeTruthy()
+    expect(cards[1].querySelector('img')).toBeNull()
+    expect(cards[1].querySelector('.mdi-file-word-outline')).toBeTruthy()
   })
 
   // 输入框里那张图曾经是一张裂图：它被挂上了一个只认 Authorization 头的地址，而

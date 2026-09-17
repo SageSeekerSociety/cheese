@@ -126,6 +126,9 @@
 
     <!-- 离线指示: shows only while offline, auto-hides when the network returns. -->
     <OfflineBanner />
+
+    <!-- 有新版本: shows while a new service worker waits for the user to click. -->
+    <UpdateBanner />
   </my-app>
 </template>
 
@@ -151,6 +154,7 @@ import { createProject, listProjects } from '@/api'
 import AppBar from '@/components/common/Navigation/AppBar.vue'
 import MobileAppBar from '@/components/common/Navigation/MobileAppBar.vue'
 import OfflineBanner from '@/components/common/OfflineBanner.vue'
+import UpdateBanner from '@/components/common/UpdateBanner.vue'
 import VersionBadge from '@/components/common/VersionBadge.vue'
 import ResourceLimitsNotice from '@/components/ResourceLimitsNotice.vue'
 import { trackKeyboardInset } from '@/lib/keyboardInset'

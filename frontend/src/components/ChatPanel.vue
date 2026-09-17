@@ -18,6 +18,11 @@ const BOTTOM_THRESHOLD = 80
 // 之前只有待发图片被清掉，文字和回复目标原地不动地跟着你换话题：打了一半的话
 // 可能发错房间，而**回复目标**更糟——它指向的块在另一个话题里，屏幕上看不出
 // 异常（本话题找不到父块就不画引用条），库里的会话树已经串了。
+//
+// 这份内存镜像**不是持久的那一份**：service worker 更新触发的刷新没有卸载、没有
+// 切话题，这个 Map 连同页面一起没了。所以同一份内容还写进 localStorage
+// (lib/composerDrafts.ts)，刷新后由 restoreComposer 接回来；内存里这份仍然是
+// 权威——它连发件箱都带着，而发件箱故意不落盘。
 interface ComposerDraft {
   draft: string
   reply: Block | null
@@ -53,6 +58,7 @@ import type {
   WsClientMessage,
   WsServerFrame,
 } from '../cx_types'
+import type { StoredComposerDraft } from '../lib/composerDrafts'
 
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
@@ -72,9 +78,10 @@ import {
   summonAgent,
   toggleReaction as apiToggleReaction,
 } from '../api'
-import { usePendingAttachments } from '../lib/attachments'
+import { uploaded, usePendingAttachments } from '../lib/attachments'
 import { cachedWindow, setCachedWindow } from '../lib/blockCache'
 import { mergeRefreshedTail, PAGE_SIZE, prependOlder, scrollTopAfterPrepend, shouldLoadOlder } from '../lib/blockPaging'
+import { forgetComposerDraft, loadComposerDraft, saveComposerDraft } from '../lib/composerDrafts'
 import { parseDiffLines } from '../lib/diff'
 import { expandMentions as expandMentionNames } from '../lib/expandMentions'
 import { collapseNotices } from '../lib/platformNotice'
@@ -92,6 +99,7 @@ import { getAvatarUrl } from '../utils/materials'
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import AgentControls from './AgentControls.vue'
 import AttachmentImage from './AttachmentImage.vue'
+import AttachmentTile from './AttachmentTile.vue'
 import CheeseAvatar from './CheeseAvatar.vue'
 import DispatchedMarker from './DispatchedMarker.vue'
 import TimelineMark from './TimelineMark.vue'
@@ -1269,6 +1277,19 @@ const prState = computed(() => topicStateBadge(props.topic?.status))
 const draft = ref('')
 // 拖文件到输入栏 (spec §7.1)。只是把落区标出来，判断留给 usePendingAttachments。
 const dragOver = ref(false)
+// 只有真拖着文件才亮：拖一段选中的文字经过输入栏，落区亮起来是在承诺一件它不会
+// 做的事。
+function onDragOverFiles(e: DragEvent) {
+  if (!e.dataTransfer?.types.includes('Files')) return
+  dragOver.value = true
+}
+// dragleave 在指针移到**子元素**上时也会触发，所以一路拖过输入栏时落区会一路闪。
+// relatedTarget 是指针进入的那个元素：它还在盒子里，就不算离开。
+function onDragLeaveFiles(e: DragEvent) {
+  const entering = e.relatedTarget
+  if (entering instanceof Node && (e.currentTarget as HTMLElement).contains(entering)) return
+  dragOver.value = false
+}
 function onDropFiles(e: DragEvent) {
   dragOver.value = false
   onComposerDrop(e)
@@ -1541,7 +1562,7 @@ function sendDraft(opts?: { summon?: boolean }) {
   if (attsUploading.value) return
   if (!draft.value.trim() && !pendingAtts.value.length) return
   const content = expandMentions(opts?.summon ? withAgentMention(draft.value) : draft.value)
-  if (send(content, props.alwaysSummon || mentionsAgent(content), pendingAtts.value.slice())) {
+  if (send(content, props.alwaysSummon || mentionsAgent(content), uploaded(pendingAtts.value))) {
     draft.value = ''
     clearPendingAtts()
   }
@@ -1553,18 +1574,34 @@ function sendDraft(opts?: { summon?: boolean }) {
 function rememberComposer(topicId: string) {
   const hasContent =
     !!draft.value.trim() || pendingAtts.value.length > 0 || !!replyTarget.value || outbox.value.length > 0
-  if (!hasContent) composerMemory.delete(topicId)
-  else
+  if (!hasContent) {
+    composerMemory.delete(topicId)
+    forgetComposerDraft(topicId)
+  } else {
     composerMemory.set(topicId, {
       draft: draft.value,
       reply: replyTarget.value,
-      atts: pendingAtts.value.slice(),
+      atts: uploaded(pendingAtts.value),
       outbox: outbox.value.slice(),
     })
+    // 同一份内容落到磁盘上（发件箱除外，见 lib/composerDrafts.ts 的解释）。
+    saveComposerDraft(topicId, {
+      draft: draft.value,
+      reply: replyTarget.value,
+      atts: uploaded(pendingAtts.value),
+    })
+  }
+}
+
+/** 落盘的那份没有发件箱（它不跨刷新，也不该跨）。 */
+function asComposerDraft(stored: StoredComposerDraft | null): ComposerDraft | undefined {
+  return stored ? { draft: stored.draft, reply: stored.reply, atts: stored.atts, outbox: [] } : undefined
 }
 
 function restoreComposer(topicId: string | undefined) {
-  const saved = topicId ? composerMemory.get(topicId) : undefined
+  // 内存里那一份优先：它带着发件箱。只有它不在时（刚刷新过、刚开机）才回落到
+  // 磁盘上那份。
+  const saved = topicId ? composerMemory.get(topicId) ?? asComposerDraft(loadComposerDraft(topicId)) : undefined
   draft.value = saved?.draft ?? ''
   replyTarget.value = saved?.reply ?? null
   pendingAtts.value = saved?.atts ?? []
@@ -1572,6 +1609,48 @@ function restoreComposer(topicId: string | undefined) {
   // 下次连上再走。它们不会在别的房间里露面。
   outbox.value = (saved?.outbox ?? []).map((o) => (o.state === 'sending' ? { ...o, state: 'queued' } : o))
 }
+
+// 边打边落盘。刷新是唯一会丢草稿的路径，而它**不会**经过 rememberComposer
+// （那个跑在切话题和卸载时）——所以输入本身也要定期存一次。800ms 是打字停顿的
+// 量级；localStorage 是同步的，写一次的成本就是这次停顿。
+let draftSaveTimer: ReturnType<typeof setTimeout> | null = null
+function flushComposer(topicId: string) {
+  if (draftSaveTimer) {
+    clearTimeout(draftSaveTimer)
+    draftSaveTimer = null
+  }
+  saveComposerDraft(topicId, {
+    draft: draft.value,
+    reply: replyTarget.value,
+    atts: uploaded(pendingAtts.value),
+  })
+}
+
+watch(
+  [draft, replyTarget, pendingAtts],
+  () => {
+    const topicId = props.topic?.id
+    if (!topicId) return
+    if (draftSaveTimer) clearTimeout(draftSaveTimer)
+    draftSaveTimer = setTimeout(() => {
+      draftSaveTimer = null
+      // 停了 800ms 之后当前话题可能已经换了：那样这一笔该记在旧话题上，而旧话题
+      // 走的是 rememberComposer，不差这一下。
+      if (props.topic?.id === topicId) flushComposer(topicId)
+    }, 800)
+  },
+  { deep: false }
+)
+
+// 页面被切到后台 / 关掉之前最后记一次：手机上的标签页可以被直接丢掉，不一定会
+// 走 onBeforeUnmount。用的是同步写，来得及。
+function flushComposerOnHide() {
+  if (props.topic) flushComposer(props.topic.id)
+}
+useEventListener(window, 'pagehide', flushComposerOnHide)
+useEventListener(document, 'visibilitychange', () => {
+  if (document.visibilityState === 'hidden') flushComposerOnHide()
+})
 
 // IME (输入法) guard — see TopicView.vue for the full story: Safari fires
 // compositionend BEFORE the commit-Enter keydown, which then looks like a
@@ -2167,10 +2246,10 @@ onBeforeUnmount(() => {
         <div
           class="composer pa-2 px-3"
           :class="{ 'composer--drop': dragOver }"
-          @dragenter.prevent="dragOver = true"
-          @dragover.prevent="dragOver = true"
-          @dragleave="dragOver = false"
-          @drop="onDropFiles"
+          @dragenter.prevent="onDragOverFiles"
+          @dragover.prevent="onDragOverFiles"
+          @dragleave="onDragLeaveFiles"
+          @drop.prevent="onDropFiles"
         >
           <!-- @-autocomplete: pick a teammate / topic / broadcast while typing @ -->
           <div v-if="mentionMatches.length" class="mention-menu">
@@ -2203,26 +2282,15 @@ onBeforeUnmount(() => {
                「待发的图片 + 输入框 + 动作」框成一块。盒子自己就是和时间线之间的
                分隔，所以上面那条 divider 没了。 -->
           <div class="composer-box">
-            <!-- 图片输入: images waiting to go with the next send. -->
-            <div v-if="pendingAtts.length || attsUploading" class="att-strip">
-              <div v-for="(a, i) in pendingAtts" :key="a.path" class="att-thumb">
-                <!-- 待发的图走 AttachmentImage：附件字节的端点从 Authorization 头认人，
-                     裸 <img src> 挂上去只会拿到 401 和一张裂图。 -->
-                <AttachmentImage v-if="a.mime.startsWith('image/')" thumb :topic-id="topic.id" :path="a.path" />
-                <v-chip
-                  v-else
-                  variant="tonal"
-                  class="pe-6"
-                  prepend-icon="mdi-file-document-outline"
-                  :title="a.path.split('/').pop()"
-                >
-                  <span class="text-truncate">{{ a.path.split('/').pop() }}</span>
-                </v-chip>
-                <button type="button" class="att-remove" title="移除" @click="removePendingAtt(i)">
-                  <v-icon size="12">mdi-close</v-icon>
-                </button>
-              </div>
-              <v-progress-circular v-if="attsUploading" indeterminate size="18" width="2" />
+            <!-- 待发条: the attachments waiting to go with the next send. -->
+            <div v-if="pendingAtts.length" class="att-strip">
+              <AttachmentTile
+                v-for="(a, i) in pendingAtts"
+                :key="a.path"
+                :topic-id="topic.id"
+                :attachment="a"
+                @remove="removePendingAtt(i)"
+              />
             </div>
             <!-- 输入框独占一整行。它旁边并排放按钮时，真正能打字的那块在手机上只剩
                半屏——而按钮的数量只会往上加。 -->
@@ -2489,10 +2557,12 @@ details.sys-row > summary::-webkit-details-marker {
   border-top: 1px solid var(--line);
   padding-top: 4px;
 }
-/* 拖文件进来时的落区，只描一圈，不改布局（改了会把输入框顶一下）。 */
+/* 拖文件进来时的落区。描边加粗一档、底色垫一层琥珀的淡色，让它在一屏中性里真的
+   跳出来；两样都不占位置——占了会把输入框顶一下。 */
 .composer--drop {
-  outline: 1px dashed var(--accent);
-  outline-offset: -3px;
+  outline: 2px dashed var(--accent);
+  outline-offset: -4px;
+  background: var(--accent-wash);
 }
 /* 发件箱: 已显示、还没落库。淡一档，不换形状——它就是那条消息。 */
 .im-row--pending .im-text,
@@ -2988,52 +3058,20 @@ details.sys-row > summary::-webkit-details-marker {
 .im-text--verbatim {
   white-space: pre-wrap;
 }
-/* 图片输入那两张图自己的样式跟着 AttachmentImage 走了（它要负责取字节，样式
-   留在这里也够不着它内部的 <img>——scoped 只到子组件的根元素）。 */
-.im-file-link,
-.att-thumb,
-.att-thumb .v-chip {
+.im-file-link {
   max-width: 100%;
 }
 .im-file-link :deep(.v-btn__content) {
   min-width: 0;
 }
-/* Pending attachments, each with a remove button. */
+/* 待发条。一格长什么样归 AttachmentTile，这里只排它们；行距留 10px，因为每格
+   右上角那个移除按钮探出了边界 6px。 */
 .att-strip {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   flex-wrap: wrap;
-  padding: 6px 2px;
-}
-.att-thumb {
-  position: relative;
-  line-height: 0;
-}
-.att-thumb .v-chip {
-  line-height: normal;
-}
-/* 缩略图那个 56×56 的盒子跟着 AttachmentImage 走了——它要负责取字节，而且加载中、
-   加载成功、加载失败必须是同一个尺寸的盒子。这里也够不着它内部的 <img>：scoped
-   样式只到子组件的根元素。 */
-.att-remove {
-  display: inline-flex;
-  position: absolute;
-  top: -6px;
-  right: -6px;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  border: 1px solid var(--line);
-  background: var(--surface);
-  color: var(--muted);
-  line-height: 1;
-  cursor: pointer;
-}
-.att-remove:hover {
-  color: var(--ink);
+  padding: 10px 2px 6px;
 }
 /* Live link from an upgraded block to its new topic. */
 /* B3: the "回复 X：…" cue above a reply, and the composer reply-to bar. */

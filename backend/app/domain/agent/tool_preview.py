@@ -113,6 +113,39 @@ _TOOL_ARG = {
     "ls": "path",
     "find": "pattern",
     "grep": "pattern",
+    # 平台 CLI 的命令，在 pi 房间里各是一个工具。这张表是判断题不是覆盖题 ——
+    # 收录的是「后面跟哪个参数才说得出这一步在动什么」有答案的那些。`cheese
+    # status`、`cheese members`、`cheese doc get` 这种只有动词就够了，硬找一个
+    # 参数填进去反而不如留空。
+    "cheese_chat_send": "content",
+    "chat_send": "content",
+    "cheese_doc_set": "file",
+    "cheese_split": "title",
+    # 任务的 id 是个 UUID，跟在动词后面等于什么都没说 —— 同一条理由让上面那批
+    # 路径要剪掉工作区前缀。关掉一条活时说的是为什么关。
+    "cheese_close_task": "conclusion",
+    "cheese_fetch": "url",
+    "cheese_lock": "kind",
+    "cheese_unlock": "kind",
+    "cheese_decision": "text",
+    "cheese_title": "text",
+    "cheese_remember": "fact",
+    "cheese_recall": "query",
+    "cheese_notify": "title",
+    "cheese_ask": "question",
+    "cheese_accept_request": "reviewer",
+    "cheese_describe": "subject",
+    "cheese_tell": "message",
+    "cheese_milestone": "title",
+    "cheese_serve": "note",
+    "cheese_artifact": "path",
+    "cheese_api": "path",
+    # 后台任务。起任务时说的是那条命令 —— 任务号是刚生出来的，对读的人不说明
+    # 任何事；往里打字时说的是打进去的那句，同理。
+    "bash_start": "command",
+    "bash_read": "id",
+    "bash_write": "text",
+    "bash_kill": "id",
 }
 
 #: 参数是一条 shell 命令的工具 —— 命令要拆开读，不是照着参数名取一截就完事。
@@ -154,6 +187,8 @@ _PATH_TOOLS = frozenset(
         "edit",
         "write",
         "ls",
+        "cheese_doc_set",
+        "cheese_artifact",
     }
 )
 
