@@ -454,3 +454,38 @@ def test_the_platforms_own_skills_reach_the_room(tmp_path):
     finally:
         process.terminate()
         process.wait(timeout=20)
+
+
+def test_the_platform_extension_reaches_the_room(tmp_path):
+    """`--no-extensions` shuts out the owner's; the platform's comes back by name.
+
+    Without it a pi room has no platform tools at all — the room's skill names
+    `cheese_*` on every turn and the agent's only remaining move is to type the
+    CLI into a shell, which is what it does today.
+    """
+    owner, _session, env, _ = _machine(tmp_path)
+    recorded = tmp_path / "pi-argv.json"
+    env["PI_FAKE_ARGV"] = str(recorded)
+    process = _start(tmp_path, env, _launch())
+    state = _state_of(owner)
+    try:
+        _await_socket(_socket_of(state), process)
+        argv = json.loads(recorded.read_text())
+
+        assert "--no-extensions" in argv, "the owner's own extensions stay out"
+        named = [argv[i + 1] for i, item in enumerate(argv) if item == "--extension"]
+        assert len(named) == 1, "the platform's extension has to be named to load"
+        entry = Path(named[0])
+        assert entry.is_file(), f"{entry} was named but not written"
+        assert "export default" in entry.read_text(encoding="utf-8")
+
+        # Built here, from the CLI this launch just installed on this machine.
+        spec = json.loads((entry.parent / "platform.json").read_text(encoding="utf-8"))
+        assert not spec["unavailable"], spec["unavailable"]
+        assert {"cheese_chat_send", "cheese_doc_get"} <= {
+            tool["name"] for tool in spec["tools"]
+        }
+        assert spec["socket"] == _socket_of(state)
+    finally:
+        process.terminate()
+        process.wait(timeout=20)

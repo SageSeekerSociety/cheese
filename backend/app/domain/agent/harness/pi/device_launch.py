@@ -16,6 +16,7 @@ import base64
 import json
 import shlex
 from dataclasses import dataclass
+from pathlib import Path
 
 from app.domain.agent import machine_launcher
 from app.domain.agent.harness.launch import MachineLaunch, MachinePlace
@@ -31,6 +32,17 @@ VERSION = "0.85.1"
 # pi's config directory, which is to pi what CLAUDE_CONFIG_DIR is to Claude
 # Code: set it and pi reads and writes nothing of the machine owner's.
 CONFIG_DIR = "$HOME/.pi/agent"
+
+
+def extension() -> str:
+    """The platform's own pi extension, as source.
+
+    TypeScript, uncompiled: pi loads extensions through jiti, so the file it is
+    pointed at is the file written here. Travelling as content rather than as a
+    path for the reason the skills and the system prompt do — it is assembled
+    by the platform and the machine has no copy of it.
+    """
+    return Path(__file__).with_name("platform.ts").read_text(encoding="utf-8")
 
 
 def root(home: str) -> str:
@@ -218,6 +230,11 @@ class PiLaunch:
             # and the machine has no copy of them. Same reason the system prompt
             # travels this way — the runner writes both and points pi at them.
             "skills": native_skill_files(),
+            # `--extension` paths are additive even under `--no-extensions`,
+            # the same way `--skill` is under `--no-skills`: what the machine's
+            # owner keeps in their home stays out, and the platform's own comes
+            # back by being named.
+            "extension": extension(),
         }
 
     def contract(self) -> str:
