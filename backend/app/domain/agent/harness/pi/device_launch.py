@@ -21,6 +21,7 @@ from pathlib import Path
 from app.domain.agent import machine_launcher
 from app.domain.agent.harness.launch import MachineLaunch, MachinePlace
 from app.domain.agent.harness.pi.bundle import build
+from app.domain.agent.harness.prompt import PLATFORM_NOTICE
 from app.domain.agent.skills import native_skill_files
 
 # The pinned agent, served by the platform the way the claude pin is: the
@@ -235,6 +236,10 @@ class PiLaunch:
             # owner keeps in their home stays out, and the platform's own comes
             # back by being named.
             "extension": extension(),
+            # The marker platform instructions carry in this room, so the one
+            # the extension raises is not a second convention the agent has to
+            # learn — and cannot drift from the one every other notice uses.
+            "notice": PLATFORM_NOTICE,
         }
 
     def contract(self) -> str:

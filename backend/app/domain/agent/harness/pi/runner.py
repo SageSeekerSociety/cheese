@@ -124,7 +124,7 @@ class Runner:
 
     # --- the platform extension ----------------------------------------------
 
-    def write_extension(self, source: str) -> Path:
+    def write_extension(self, source: str, notice: str = "") -> Path:
         """Put the extension and its tool catalog on disk; answer with the entry.
 
         The catalog is built HERE, from the CLI installed on this machine,
@@ -153,6 +153,11 @@ class Runner:
                     "state": str(self.state),
                     "tools": tools,
                     "unavailable": reason,
+                    # The marker every platform instruction in this room already
+                    # carries, handed over rather than restated: it is the one
+                    # string in a prompt that claims institutional authority,
+                    # and a second copy of it is a copy that drifts.
+                    "notice": notice,
                 },
                 ensure_ascii=False,
             ),
@@ -199,6 +204,7 @@ class Runner:
         args: list[str],
         skills: dict[str, str] | None = None,
         extension: str | None = None,
+        notice: str = "",
     ) -> str:
         self.lock = (self.state / "runner.lock").open("a")
         fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -232,7 +238,7 @@ class Runner:
             skill.write_text(content, encoding="utf-8")
             appended += ["--skill", str(skill.parent)]
         if extension is not None:
-            home = self.write_extension(extension)
+            home = self.write_extension(extension, notice)
             appended += ["--extension", str(home / "index.ts")]
             # Named rather than derived: an extension that had to work out
             # where it was written would be guessing at a path the runner

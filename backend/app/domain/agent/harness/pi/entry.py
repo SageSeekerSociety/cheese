@@ -38,6 +38,7 @@ async def serve(state: Path, config: dict, *, binary: str, cwd: str) -> None:
             args=config["args"],
             skills=config.get("skills"),
             extension=config.get("extension"),
+            notice=config.get("notice", ""),
         )
         assert runner.process is not None
         process = asyncio.create_task(runner.process.wait())

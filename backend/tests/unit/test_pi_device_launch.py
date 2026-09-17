@@ -489,3 +489,18 @@ def test_the_platform_extension_reaches_the_room(tmp_path):
     finally:
         process.terminate()
         process.wait(timeout=20)
+
+
+def test_the_extension_speaks_with_the_same_platform_voice_as_everything_else():
+    """A notice the extension raises is a platform instruction like any other.
+
+    The marker is the one string in a prompt that claims institutional
+    authority, so a second copy of it living in the extension is a copy that
+    drifts — and the day it does, the agent is reading two conventions and can
+    trust neither.
+    """
+    from app.domain.agent.harness.prompt import platform_prompt
+
+    marker = _launch().configuration()["notice"]
+    assert marker
+    assert platform_prompt("说点什么").startswith(marker)
