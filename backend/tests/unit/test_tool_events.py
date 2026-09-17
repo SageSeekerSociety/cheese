@@ -67,6 +67,20 @@ def test_cheese_mcp_tool_is_platform():
     assert _is_platform_tool("mcp__cheese__remember", {})
 
 
+def test_a_platform_command_called_as_a_tool_is_platform():
+    """The same action, under the name the harness publishes it as.
+
+    A pi room reaches the platform through a tool per CLI command rather than
+    through MCP, so every step that changed something outside the machine was
+    wearing the neutral dot — the one distinction the dot exists to draw, drawn
+    backwards, in the rooms where it mattered.
+    """
+    assert _is_platform_tool("cheese_doc_set", {"file": "notes.md"})
+    assert _is_platform_tool("cheese_accept_request", {"reviewer": "alice"})
+    # The alias the room's own system prompt names on every turn.
+    assert _is_platform_tool("chat_send", {"content": "第一版好了"})
+
+
 def test_bash_with_cheese_cli_is_platform():
     assert _is_platform_tool("Bash", {"command": 'cheese title "新标题"'})
     assert _is_platform_tool("Bash", {"command": "/usr/local/bin/cheese doc set"})
@@ -82,6 +96,8 @@ def test_plain_work_is_not_platform():
     assert not _is_platform_tool("Grep", {"pattern": "cheese title"})
     assert not _is_platform_tool("Read", {"file_path": "/tmp/cheese title.txt"})
     assert not _is_platform_tool("Agent", {"description": "去查 cheese 的用法"})
+    # A background job is the agent working on the machine, like any command.
+    assert not _is_platform_tool("bash_start", {"command": "pnpm dev"})
 
 
 # ---- structured meta persisted on event blocks ----

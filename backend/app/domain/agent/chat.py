@@ -372,10 +372,18 @@ def _format_tool_event(name: str, preview: ToolPreview) -> str:
 # head of the command segment 现场 displays. NEVER inferred from natural
 # language, and never from the word appearing somewhere else in the command:
 # the dot and the text on that line have to be about the same thing.
+#: 平台动作在各个 harness 里叫什么。同一件事三种拼法，因为把工具交给模型的机制
+#: 各不相同：MCP 服务器自己加前缀，pi 那边的目录是从 CLI 的命令树生成的，而
+#: `chat_send` 是系统提示每一轮都在点名、于是 extension 额外注册的那个别名。
+_PLATFORM_PREFIXES = ("mcp__cheese__", "cheese_")
+_PLATFORM_ALIASES = frozenset({"chat_send"})
+
+
 def _is_platform_tool(raw_name: str, args: dict) -> bool:
-    """True when the tool call is a platform action: a cheese MCP tool, or a
-    shell command that invokes the machine's `cheese` CLI."""
-    if raw_name.startswith("mcp__cheese__"):
+    """True when the tool call is a platform action: a cheese tool under any of
+    the names a harness publishes it as, or a shell command that invokes the
+    machine's `cheese` CLI."""
+    if raw_name.startswith(_PLATFORM_PREFIXES) or raw_name in _PLATFORM_ALIASES:
         return True
     if raw_name in SHELL_TOOLS and isinstance(args, dict):
         return bool(cheese_subcommand(str(args.get("command", ""))))
