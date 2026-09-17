@@ -11,6 +11,13 @@ on:
       sha:
         description: Full commit SHA already merged into main
         required: true
+      interrupt:
+        description: >-
+          Recreate even while device calls are in flight. Each interrupted
+          executor call fails once; the forwards reconnect on their own.
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -39,3 +46,5 @@ jobs:
           git merge-base --is-ancestor HEAD origin/main
       - name: Drain execution and release cloud control
         run: bash deploy/release-cloud-control.sh
+        env:
+          DEVICE_CONNECTION_INTERRUPT: ${{ inputs.interrupt && '1' || '0' }}

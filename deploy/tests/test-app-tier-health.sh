@@ -254,6 +254,34 @@ EOF
   ! grep -F 'restart cheese-cloud-control.service' "$docker_log" >/dev/null \
     || { rm -rf "$run_dir"; fail "busy cloud control release restarted its service"; }
 
+  # DEVICE_CONNECTION_INTERRUPT=1 waives the wait, and only the wait: one look
+  # at the drain, and a busy answer no longer stops the release. Without it the
+  # forwards cannot be released at all while anyone is using the platform.
+  : > "$docker_log"
+  PATH="$run_dir/bin:$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" \
+    APP_TIER_CURL_DRAIN_STATUSES=409 \
+    APP_TIER_CURL_DRAIN_COUNT_FILE="$run_dir/interrupt-count" \
+    APP_TIER_CLOUD_DEVICES=cloud-device \
+    APP_TIER_SNAPSHOT_ONLINE_SEQUENCE=old-online,old-online,offline,new-online \
+    APP_TIER_SNAPSHOT_COUNT_FILE="$run_dir/interrupt-snapshots" \
+    DEVICE_CONNECTION_INTERRUPT=1 HOME="$run_dir" \
+    "$ROOT/deploy/release-cloud-control.sh" >/dev/null
+  grep -F 'restart cheese-cloud-control.service' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "interrupting cloud control release did not restart it"; }
+  [ "$(cat "$run_dir/interrupt-count")" = 1 ] \
+    || { rm -rf "$run_dir"; fail "interrupting release polled a busy drain more than once"; }
+
+  # Waiving the wait is not waiving the error handling.
+  : > "$docker_log"
+  if PATH="$run_dir/bin:$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" \
+    APP_TIER_CURL_DRAIN_STATUSES=500 DEVICE_CONNECTION_INTERRUPT=1 \
+    HOME="$run_dir" "$ROOT/deploy/release-cloud-control.sh" >/dev/null 2>&1; then
+    rm -rf "$run_dir"
+    fail "interrupting cloud control release ignored a broken drain endpoint"
+  fi
+  ! grep -F 'restart cheese-cloud-control.service' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "interrupting release restarted after a broken drain"; }
+
   : > "$docker_log"
   if PATH="$run_dir/bin:$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" \
     APP_TIER_SYSTEMCTL_FAIL_MATCH=restart HOME="$run_dir" \

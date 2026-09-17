@@ -71,6 +71,12 @@ resume_owner() {
 }
 trap resume_owner EXIT
 
+# Same waiver the owner's own release carries, for the same reason: an idle
+# owner never arrives on a platform anybody is using, because `call_executor`
+# is held open under a shield and re-polled about once a second. Without it the
+# forwards cannot be released at all — the owner sat unreleasable for two days
+# that way while #1114 waited for it. Default unchanged; this is opt-in.
+interrupt="${DEVICE_CONNECTION_INTERRUPT:-0}"
 for attempt in $(seq 1 240); do
   status="$(owner_status /internal/device-connection/release-drain)" || {
     echo "device connection owner drain request failed" >&2
@@ -79,6 +85,10 @@ for attempt in $(seq 1 240); do
   case "$status" in
     200) drained=true; break ;;
     409)
+      if [ "$interrupt" = 1 ]; then
+        echo "device connection owner is busy; interrupting its in-flight calls as asked" >&2
+        break
+      fi
       if [ "$attempt" -eq 240 ]; then
         echo "device connection owner remained busy; cloud control release stopped" >&2
         exit 1
