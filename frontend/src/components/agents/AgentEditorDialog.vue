@@ -157,7 +157,14 @@ async function save() {
         <v-spacer />
         <v-btn variant="text" icon="mdi-close" size="small" aria-label="关闭" @click="close" />
       </v-card-title>
-      <v-card-text class="pa-5 pt-0">
+      <!-- pt-2, not pt-0: in a `scrollable` dialog THIS element is the scroller
+           (VDialog.sass: `.v-dialog--scrollable > ... > .v-card-text { overflow-y:
+           auto }`), and an outlined field's floating label is `translateY(-50%)`
+           on its own top border — ~8px of it sits above the field's box. At
+           padding-top 0 the scroller clipped the top half of 「名字」, and pt-2
+           lands the label exactly ON the clip edge, so it needs the next step
+           up rather than the exact 8px. -->
+      <v-card-text class="pa-5 pt-3">
         <v-alert v-if="error" type="error" density="comfortable" class="mb-4">{{ error }}</v-alert>
         <v-text-field
           v-model="displayName"
