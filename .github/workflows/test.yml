@@ -300,7 +300,17 @@ jobs:
     # is the last thing standing between a hang and an hour of the shared
     # runner. The scheduler and per-test timeout above are what buy the
     # margin back; if it is hit again, the durations report says where to look.
-    timeout-minutes: 20
+    # A hang detector, not a performance budget. Measured over the last 40
+    # runs, a successful `test` takes 13m42s at best, 15m27s in the middle
+    # and 17m26s at worst — so 20 minutes sat two and a half minutes above
+    # the slowest healthy run, and the cancellations clustered exactly
+    # there: 17m32s, 18m47s, 20m27s. A branch that is merely slow then goes
+    # red in a way that reads as its own code failing, and the rerun it
+    # invites costs another full run on machines that are already
+    # contended. Swap (runner-swap.yml) makes this worse before it makes it
+    # better: it turns a kill into a slowdown, and a slowdown is what this
+    # number punishes.
+    timeout-minutes: 35
     # Persists backend/srp_rs's Cargo build cache outside the checkout — see
     # the migration-heads job above for the full reasoning (why this path,
     # why it's immune to docker prune, and why it's job-keyed rather than

@@ -134,7 +134,10 @@ jobs:
     # slot each — see docs/infrastructure.md), NOT on the dev box: the box is
     # the deploy target and its single slot serialized every heavy job.
     runs-on: [self-hosted, cheese-ci]
-    timeout-minutes: 15
+    # Same reasoning as test.yml's: a successful `e2e` runs 5m41s to 10m26s
+    # (median 7m33s) over the last 40 runs, and 15 minutes has already
+    # cancelled a run at 20m01s that was slow rather than stuck.
+    timeout-minutes: 25
     # Persists backend/srp_rs's Cargo build cache outside the checkout, same
     # as test.yml's migration-heads/test jobs — see the comment on
     # migration-heads there for the full reasoning (why this path survives
