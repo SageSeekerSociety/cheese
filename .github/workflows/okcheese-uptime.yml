@@ -30,7 +30,11 @@ on:
     - cron: '8,38 * * * *'
   workflow_dispatch: {}
 
-permissions: {}
+permissions:
+  # checkout needs this and nothing else: the probe reads a script out of the
+  # repo and talks only to the public domain. A private repo refuses the
+  # checkout without it, so an empty block here fails on the first scheduled run.
+  contents: read
 
 jobs:
   probe:
