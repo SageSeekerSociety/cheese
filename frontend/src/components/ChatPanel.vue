@@ -457,17 +457,24 @@ const contentRef = ref<HTMLElement | null>(null)
 // the catch-up idle timer), so the tail visibly popped in a beat late.
 // ResizeObserver callbacks run after layout but before paint: the re-pin lands
 // in the SAME frame as the growth, so no flash is ever painted.
+//
+// 盯的是**两个**元素，不是内容一个：内容变高是「新消息来了」，而容器变矮是
+// 「地方变小了」——手机弹出软键盘缩的正是这个容器（`--keyboard-inset` 减的就是
+// 它），内容高度一个像素都没动。只盯内容时，键盘一起来回调一次都不发，停在底部
+// 的人就看着最新几条滑到键盘底下（真机反馈 2026-09-17）。两个都在同一个
+// observer 里，重钉只有一条路径，不会互相打架。
 let contentObserver: ResizeObserver | null = null
-watch(contentRef, (el) => {
+watch([contentRef, scrollRef], ([content, pane]) => {
   contentObserver?.disconnect()
   contentObserver = null
-  if (!el) return
+  if (!content && !pane) return
   contentObserver = new ResizeObserver(() => {
     const sc = scrollRef.value
     if (!sc) return
     if (atBottom.value && !isAtBottom(sc)) sc.scrollTop = sc.scrollHeight
   })
-  contentObserver.observe(el)
+  if (content) contentObserver.observe(content)
+  if (pane) contentObserver.observe(pane)
 })
 
 // Whether the user is parked at (or near) the bottom — drives whether incoming
