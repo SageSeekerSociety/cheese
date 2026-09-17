@@ -29,7 +29,7 @@ uv run --with lxml python3 "$SKILL/scripts/office.py" validate 改后.docx --bas
 | `--replace 原文=新文本` | 换掉，可重复多次 |
 | `--delete 原文` | 删掉（不写 `=`） |
 | `--insert-after 锚点=新文本` | 在锚点后面加一句，不动原有文字 |
-| `--all` / `--occurrence 2` | 多处出现时明确改哪些 |
+| `--all` / `--occurrence 2` | 多处出现时说清改哪些：全改，或者只改第二处 |
 | `--author 名字` | 修订里署的名字，写用户看得懂的 |
 | `--plain` | 不留修订标记，直接改 |
 
@@ -50,6 +50,42 @@ uv run --with lxml python3 "$SKILL/scripts/office.py" validate 改后.docx --bas
 `validate` 检查的不变量是：**把所有修订都拒绝之后，正文必须和原文档逐字相同**。这条过了，
 才能说「除了你让我改的，原文一个字没动」。它同时会打印接受全部修订之后的正文，让你在交付前
 核对一眼改出来的句子。
+
+注意它管不到的那一半：多改的那一处也是格式正确的修订，拒绝全部之后照样回到原文，所以
+`validate` 会通过。**改了几处、改的是哪几处，要靠 `revisions` 的清单核对。**
+
+## 逐条接受或拒绝
+
+```bash
+uv run --with lxml python3 "$SKILL/scripts/office.py" revisions 改后.docx
+```
+
+```
+改后.docx：3 处修订
+[  1] 把 '30 天' 改成 '60 天'    （word/document.xml 第 4 段，芝士）
+[  2] 加了 '并按季度复核。'      （word/document.xml 第 4 段，芝士）
+[  3] 删了 '（暂定）'            （word/document.xml 第 9 段，芝士）
+```
+
+一次替换在 XML 里是一个 `<w:ins>` 加一个 `<w:del>`，清单把它们合成一行——因为用户要决定的
+是「这处改动要不要」，而不是分别处理新文字和旧文字；只接受一半的结果是新句子进来了、旧句子
+还留在文件里。
+
+用户说「第二处不要」时：
+
+```bash
+uv run --with lxml python3 "$SKILL/scripts/office.py" revisions 改后.docx -o 定稿.docx \
+    --accept 1 --reject 2
+```
+
+接受一处插入等于拆掉 `<w:ins>` 外壳保留文字，接受一处删除等于把文字一并删掉，拒绝则相反。
+没点到的那几处原样留在文件里。`--accept-all` / `--reject-all` 是全部。
+
+**序号只对你刚列出来的那份清单有效。** 处理完之后剩下的修订会重新从 1 数起，所以要按清单
+操作就在同一条命令里把该处理的都点掉，或者每次重列一遍。
+
+`--json` 输出同样的清单，给需要拿它做界面的地方用。页码不在里面：XML 里没有页的概念，
+页要等排版之后才存在，段号是这里唯一靠得住的坐标。
 
 ## 拆在几个 run 里的句子
 

@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -422,3 +423,112 @@ def test_unpack_refuses_a_symlink_entry(tmp_path: Path):
         link.external_attr = (0xA1FF << 16) | 0o120000
         z.writestr(link, "/etc/passwd")
     refused("unpack", bad, "-d", tmp_path / "拆开")
+
+
+# --------------------------------------------------------------------------
+# revisions: the list a person decides from, one row per decision
+
+
+@pytest.fixture
+def edited(report: Path, tmp_path: Path) -> Path:
+    """三处替换加一句插入——清单里因此有两种形状的行。"""
+    out = tmp_path / "改后.docx"
+    ran(
+        "edit",
+        report,
+        "-o",
+        out,
+        "--replace",
+        "旧的说法=新的说法",
+        "--all",
+        "--insert-after",
+        "末段。=另起一句。",
+        "--author",
+        "芝士",
+    )
+    return out
+
+
+def test_a_replacement_is_one_row_not_two(edited: Path):
+    """一次替换在 XML 里是插入加删除两个元素，读的人看到的是一处改动。
+
+    分成两行的代价是可以只接受一半：新句子进来了，旧句子还留在文件里。
+    """
+    rows = json.loads(ran("revisions", edited, "--json"))
+    assert [r["kind"] for r in rows] == ["replace", "replace", "replace", "insert"]
+    assert rows[0]["removed"] == "旧的说法"
+    assert rows[0]["added"] == "新的说法"
+    assert rows[3]["removed"] == ""
+    assert rows[3]["added"] == "另起一句。"
+
+
+def test_the_list_gives_the_same_paragraph_numbers_as_text(edited: Path):
+    """段号是清单和正文之间唯一的坐标，两条命令必须报同一个。"""
+    rows = json.loads(ran("revisions", edited, "--json"))
+    numbered = {
+        int(m.group(1)): m.group(2)
+        for m in re.finditer(r"^\[\s*(\d+)\] (.*)$", ran("text", edited), re.M)
+    }
+    for row in rows:
+        assert row["paragraph"] in numbered, row
+        wanted = row["added"] or row["removed"]
+        assert wanted in numbered[row["paragraph"]], (row, numbered[row["paragraph"]])
+
+
+def test_accepting_one_row_leaves_the_others_alone(edited: Path, tmp_path: Path):
+    """逐条处理的意义就在这里：动第一处，第二处必须原样留着。"""
+    out = tmp_path / "处理过.docx"
+    ran("revisions", edited, "-o", out, "--accept", "1", "--reject", "2")
+    lines = visible(out)
+    assert lines[1] == "本季度预算按 新的说法 编制，合计 120 万元。"
+    assert lines[2] == "下一段提到旧的说法，用来测试多处匹配。"
+    assert len(json.loads(ran("revisions", out, "--json"))) == 2
+
+
+def test_accepting_a_replacement_leaves_no_trace_of_the_old_text(
+    edited: Path, tmp_path: Path
+):
+    """接受一处替换之后，被换掉的文字不该还躺在文件里。"""
+    out = tmp_path / "处理过.docx"
+    ran("revisions", edited, "-o", out, "--accept", "1")
+    first = re.findall(r"<w:p\b.*?</w:p>", part(out), re.S)[1]
+    assert "新的说法" in first
+    assert "旧的说法" not in first
+    assert "<w:ins" not in first
+    assert "<w:del" not in first
+
+
+def test_rejecting_everything_gets_the_original_text_back(
+    report: Path, edited: Path, tmp_path: Path
+):
+    """全部拒绝和 `validate` 守的是同一个不变量，这里从命令行走一遍。"""
+    out = tmp_path / "全拒.docx"
+    ran("revisions", edited, "-o", out, "--reject-all")
+    assert visible(out) == visible(report)
+    assert "没有修订" in ran("revisions", out)
+
+
+def test_accepting_everything_leaves_a_clean_document(edited: Path, tmp_path: Path):
+    """用户说「都采纳」时，交出去的文件里不该再有修订标记。"""
+    out = tmp_path / "全接.docx"
+    ran("revisions", edited, "-o", out, "--accept-all")
+    body = part(out)
+    assert "<w:ins" not in body
+    assert "<w:del" not in body
+    assert visible(out)[1] == "本季度预算按 新的说法 编制，合计 120 万元。"
+
+
+def test_a_row_number_that_is_not_in_the_list_is_refused(edited: Path, tmp_path: Path):
+    """序号来自上一次的清单；对不上就是在照另一份清单操作，不能猜。"""
+    said = refused("revisions", edited, "-o", tmp_path / "x.docx", "--accept", "9")
+    assert "一共 4 处" in said
+
+
+def test_deciding_without_saying_where_to_write_is_refused(edited: Path):
+    """接受和拒绝都会改内容，没有 -o 就只能覆盖原件。"""
+    assert "-o" in refused("revisions", edited, "--accept", "1")
+
+
+def test_a_document_without_revisions_says_so(report: Path):
+    """没有修订时给一句话，而不是一张空表。"""
+    assert "没有修订" in ran("revisions", report)

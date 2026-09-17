@@ -18,6 +18,8 @@ These subcommands are the pieces of that:
   edit      find and replace text, as Word tracked changes by default
   validate  the package is intact, and rejecting every revision reproduces the
             original text exactly
+  revisions the changes a reader would see, one row per decision, and accept
+            or reject them by row
 
 Two things it deliberately does not do. It never rewrites a part it was not
 asked to change, so an edit cannot disturb a page break in a part it never
@@ -951,6 +953,186 @@ def cmd_validate(args) -> int:
     return 0
 
 
+#: How far apart two revision wrappers may sit and still be one change. A
+#: replacement is written as a `<w:ins>` and a `<w:del>` side by side, and the
+#: unchanged text they were cut out of sits between them often enough that
+#: requiring adjacency would split every replacement into two rows.
+_SAME_CHANGE_GAP = 2
+
+
+def _groups_in(paragraph) -> list[list]:
+    """The revisions in one paragraph, grouped the way a reader sees them.
+
+    One replacement is two elements in the XML — the new text as an insertion,
+    the old text as a deletion — and a person looking at the document sees one
+    change. Grouping them gives the list a row per decision, so accepting
+    「把 30 天改成 60 天」 cannot leave half of it behind.
+
+    Everything that addresses a revision by number goes through here, so the
+    listing and the command that acts on it cannot drift apart.
+    """
+    groups: list[list] = []
+    for parent in paragraph.iter():
+        if not isinstance(parent.tag, str):
+            continue
+        for position, child in enumerate(parent):
+            if child.tag not in (INS, DEL):
+                continue
+            if groups and _joins(groups[-1], child, position):
+                groups[-1].append(child)
+            else:
+                groups.append([child])
+    # A `<w:del/>` inside a paragraph mark's properties says the mark itself
+    # was removed. It carries no text, and a row offering to accept nothing is
+    # noise in a list someone has to read.
+    return [g for g in groups if _texts_of(g) != ("", "")]
+
+
+def _joins(group: list, child, position: int) -> bool:
+    """Does `child` belong to the change `group` already describes?"""
+    last = group[-1]
+    if last.getparent() is not child.getparent():
+        return False
+    if last.get(WQ + "author") != child.get(WQ + "author"):
+        return False
+    if last.get(WQ + "date") != child.get(WQ + "date"):
+        return False
+    return position - list(child.getparent()).index(last) <= _SAME_CHANGE_GAP
+
+
+def _texts_of(group: list) -> tuple[str, str]:
+    """(inserted, removed) text of one change."""
+    added = "".join(
+        node.text or "" for el in group if el.tag == INS for node in el.iter(WQ + "t")
+    )
+    removed = "".join(
+        node.text or "" for el in group if el.tag == DEL for node in el.iter(DEL_TEXT)
+    )
+    return added, removed
+
+
+def _revision_rows(package, kind: str) -> list[dict]:
+    """Every revision in the file, numbered in the order they are read."""
+    p_tag = _tags(kind)[0]
+    rows: list[dict] = []
+    for name in package.text_parts():
+        root = package.elements(name)
+        for index, paragraph in enumerate(root.iter(p_tag)):
+            for group in _groups_in(paragraph):
+                added, removed = _texts_of(group)
+                if added and removed:
+                    what = "replace"
+                elif added:
+                    what = "insert"
+                else:
+                    what = "delete"
+                first = group[0]
+                rows.append(
+                    {
+                        "number": len(rows) + 1,
+                        "part": name,
+                        "paragraph": index,
+                        "kind": what,
+                        "added": added,
+                        "removed": removed,
+                        "author": first.get(WQ + "author") or "",
+                        "date": first.get(WQ + "date") or "",
+                    }
+                )
+    return rows
+
+
+def _apply_one(group: list, accept: bool) -> None:
+    """Accept or reject one change, with nothing left to render it."""
+    for el in group:
+        if (el.tag == INS) == accept:
+            # Kept: an accepted insertion, or a rejected deletion coming back.
+            if el.tag == DEL:
+                for node in el.iter(DEL_TEXT):
+                    node.tag = WQ + "t"
+            _unwrap(el)
+        else:
+            parent = el.getparent()
+            if parent is not None:
+                parent.remove(el)
+
+
+def cmd_revisions(args) -> int:
+    target = Path(args.package)
+    package = Package(target)
+    kind = package.kind()
+    if kind != "word":
+        raise Failed("修订是 Word 的东西，只有 .docx 有这份清单。")
+
+    rows = _revision_rows(package, kind)
+    chosen = {n: True for n in args.accept or []}
+    chosen.update({n: False for n in args.reject or []})
+    if args.accept_all or args.reject_all:
+        if chosen:
+            raise Failed(
+                "--accept-all / --reject-all 不能和逐条的 --accept / --reject 同用"
+            )
+        chosen = {row["number"]: bool(args.accept_all) for row in rows}
+
+    if not chosen:
+        if args.json:
+            print(json.dumps(rows, ensure_ascii=False, indent=2))
+            return 0
+        if not rows:
+            print(f"{target}：没有修订。")
+            return 0
+        print(f"{target}：{len(rows)} 处修订")
+        for row in rows:
+            where = f"{row['part']} 第 {row['paragraph']} 段"
+            print(
+                f"[{row['number']:>3}] {_reads_as(row)}    （{where}，{row['author']}）"
+            )
+        print("\n逐条处理：--accept 1 --accept 3 / --reject 2；全部用 --accept-all。")
+        print("段号和 `text` 报的是同一个坐标；页码要等排版之后才有。")
+        return 0
+
+    unknown = sorted(n for n in chosen if not 1 <= n <= len(rows))
+    if unknown:
+        raise Failed(
+            f"没有第 {'、'.join(str(n) for n in unknown)} 处修订，"
+            f"这份文件一共 {len(rows)} 处。先跑一次 `revisions` 看清单。"
+        )
+    if not args.output:
+        raise Failed("要落到文件上就得给 -o：接受和拒绝都会改内容")
+
+    dest = Path(args.output)
+    p_tag = _tags(kind)[0]
+    number = 0
+    for name in package.text_parts():
+        root = package.elements(name)
+        touched = 0
+        for paragraph in root.iter(p_tag):
+            for group in _groups_in(paragraph):
+                number += 1
+                if number not in chosen:
+                    continue
+                _apply_one(group, chosen[number])
+                touched += 1
+        if touched:
+            package.put(name, root)
+            print(f"{name}：处理了 {touched} 处")
+    package.save(dest)
+    taken = sum(1 for v in chosen.values() if v)
+    print(f"写出 {dest}（接受 {taken} 处，拒绝 {len(chosen) - taken} 处）")
+    left = len(rows) - len(chosen)
+    if left:
+        print(f"还剩 {left} 处没处理；序号是按当时那份清单数的，再列一次会重新数。")
+    return 0
+
+
+def _reads_as(row: dict) -> str:
+    if row["kind"] == "replace":
+        return f"把 {row['removed']!r} 改成 {row['added']!r}"
+    if row["kind"] == "insert":
+        return f"加了 {row['added']!r}"
+    return f"删了 {row['removed']!r}"
+
+
 # --------------------------------------------------------------------------
 
 
@@ -1015,6 +1197,20 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--base", help="改动前的原文件")
     p.add_argument("--author", help="本次修订应当署的名字")
     p.set_defaults(func=cmd_validate)
+
+    p = sub.add_parser("revisions", help="列出文件里的修订，逐条接受或拒绝")
+    p.add_argument("package")
+    p.add_argument("-o", "--output", help="接受或拒绝之后写到哪里")
+    p.add_argument(
+        "--accept", action="append", type=int, metavar="N", help="接受第 N 处"
+    )
+    p.add_argument(
+        "--reject", action="append", type=int, metavar="N", help="拒绝第 N 处"
+    )
+    p.add_argument("--accept-all", action="store_true", help="接受全部")
+    p.add_argument("--reject-all", action="store_true", help="拒绝全部，回到原文")
+    p.add_argument("--json", action="store_true", help="按 JSON 输出清单")
+    p.set_defaults(func=cmd_revisions)
 
     args = parser.parse_args(argv)
     try:
