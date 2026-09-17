@@ -50,7 +50,11 @@ const online = useOnline()
   color: rgb(var(--v-theme-on-primary));
   white-space: nowrap;
   background: rgb(var(--v-theme-primary));
-  border-radius: 0 0 10px 10px;
+  /* 只圆下面两角：横幅贴着屏幕顶边，上面两角必须方。写成 longhand 是因为
+     stylelint 的圆角阶梯只认单值（`0 0 x x` 这种简写一律判越界）。 */
+  border-radius: 0;
+  border-bottom-left-radius: var(--radius-md);
+  border-bottom-right-radius: var(--radius-md);
   box-shadow: var(--shadow-1);
   transform: translateX(-50%);
 }
