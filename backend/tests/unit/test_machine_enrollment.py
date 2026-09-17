@@ -593,9 +593,17 @@ def test_enrollment_config_routes_cloud_control_without_changing_api_identity(
     assert config["token"] == "test-token"
     assert config["device_id"] == "test-device"
     if direct:
-        assert config["ws"] == "ws://127.0.0.1:18080/connector/agent"
+        # The control channel lands on the connection owner's forward, not on
+        # the one that carries the HTTP API. api-front is reloaded by every
+        # release and a reload retires the worker holding this link; the owner
+        # is the process a release deliberately leaves alone.
+        assert config["ws"] == "ws://127.0.0.1:18083/connector/agent"
+        assert "18080" not in config["ws"], "the device link must not share the proxy"
     else:
         assert "ws" not in config
+
+    # The HTTP identity is unchanged either way — only the control channel moved.
+    assert config["base"] == "https://cheese.test/api/connector"
 
 
 # --- the machine's ccproxy identity ----------------------------------------
