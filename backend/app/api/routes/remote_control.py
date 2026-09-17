@@ -1,5 +1,6 @@
 """Native RC worker transport and Cheese's authenticated controller API."""
 
+import asyncio
 import json
 import time
 import uuid
@@ -27,6 +28,15 @@ from app.domain.agent.remote_control import CONTROLS, store
 from app.domain.topic.services import TopicService
 
 router = APIRouter(tags=["remote-control"])
+# How long the control read waits for the machine's background-task list.
+# Everything else in this response comes from the platform's own store; only the
+# task list crosses to the machine, and only that part can hang. The page asks
+# again a couple of seconds later, so waiting past this buys a task list nobody
+# is still waiting for while it holds a request open: on 2026-09-17 a connection
+# owner being recreated held this read until it failed, and the page turned each
+# failure into a 「后端报错」 line in the room. A normal read of this list takes
+# about a tenth of a second.
+TASK_LIST_BUDGET_S = 5
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
@@ -263,9 +273,18 @@ async def control_state(
         # room whose state we can read perfectly well — everything but the
         # background tasks, which live on the machine that is not there.
         try:
-            tasks = await private_chat.control(target, {"subtype": "background_tasks"})
+            async with asyncio.timeout(TASK_LIST_BUDGET_S):
+                tasks = await private_chat.control(
+                    target, {"subtype": "background_tasks"}
+                )
         except DeviceOffline as exc:
             result["device_offline"] = exc.device_id
+        except TimeoutError:
+            # Not an error the room needs told about: the rest of this response
+            # is already correct, and the next poll reads the list again. The
+            # owner keeps the call it is running, so giving up on the answer
+            # here does not stop the work that produces it.
+            result["tasks_unread"] = True
         else:
             result["tasks"].update({task["task_id"]: task for task in tasks["tasks"]})
     return ok(result)
