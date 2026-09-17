@@ -16,10 +16,12 @@ import base64
 import json
 import shlex
 from dataclasses import dataclass
+from pathlib import Path
 
 from app.domain.agent import machine_launcher
 from app.domain.agent.harness.launch import MachineLaunch, MachinePlace
 from app.domain.agent.harness.pi.bundle import build
+from app.domain.agent.harness.prompt import PLATFORM_NOTICE
 from app.domain.agent.skills import native_skill_files
 
 # The pinned agent, served by the platform the way the claude pin is: the
@@ -31,6 +33,24 @@ VERSION = "0.85.1"
 # pi's config directory, which is to pi what CLAUDE_CONFIG_DIR is to Claude
 # Code: set it and pi reads and writes nothing of the machine owner's.
 CONFIG_DIR = "$HOME/.pi/agent"
+
+
+# What the extension is, as files. `index.ts` is what pi is pointed at —
+# TypeScript uncompiled, because pi loads extensions through jiti, so the file
+# written is the file that runs. `background.py` is not loaded by pi at all: the
+# extension spawns it, and it has to be Python because it must outlive pi (see
+# its own docstring). Both travel as content rather than as paths for the reason
+# the skills and the system prompt do — the machine has no copy of them.
+EXTENSION_FILES = ("index.ts", "background.py")
+
+
+def extension() -> dict[str, str]:
+    here = Path(__file__).parent
+    sources = {"index.ts": "platform.ts", "background.py": "background.py"}
+    return {
+        name: (here / sources[name]).read_text(encoding="utf-8")
+        for name in EXTENSION_FILES
+    }
 
 
 def root(home: str) -> str:
@@ -218,6 +238,15 @@ class PiLaunch:
             # and the machine has no copy of them. Same reason the system prompt
             # travels this way — the runner writes both and points pi at them.
             "skills": native_skill_files(),
+            # `--extension` paths are additive even under `--no-extensions`,
+            # the same way `--skill` is under `--no-skills`: what the machine's
+            # owner keeps in their home stays out, and the platform's own comes
+            # back by being named.
+            "extension": extension(),
+            # The marker platform instructions carry in this room, so the one
+            # the extension raises is not a second convention the agent has to
+            # learn — and cannot drift from the one every other notice uses.
+            "notice": PLATFORM_NOTICE,
         }
 
     def contract(self) -> str:

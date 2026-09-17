@@ -13,7 +13,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 CLI = ROOT / "sandbox/cheese"
-WORKER = ROOT / "app/domain/agent/harness/claude_code/remote_execution/cli_worker.py"
+WORKER = ROOT / "app/domain/agent/cli_worker.py"
 CLIENT = ROOT / "app/domain/agent/harness/claude_code/remote_execution/cli_client.py"
 
 

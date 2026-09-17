@@ -454,3 +454,71 @@ def test_the_platforms_own_skills_reach_the_room(tmp_path):
     finally:
         process.terminate()
         process.wait(timeout=20)
+
+
+def test_the_platform_extension_reaches_the_room(tmp_path):
+    """`--no-extensions` shuts out the owner's; the platform's comes back by name.
+
+    Without it a pi room has no platform tools at all — the room's skill names
+    `cheese_*` on every turn and the agent's only remaining move is to type the
+    CLI into a shell, which is what it does today.
+    """
+    owner, _session, env, _ = _machine(tmp_path)
+    recorded = tmp_path / "pi-argv.json"
+    env["PI_FAKE_ARGV"] = str(recorded)
+    process = _start(tmp_path, env, _launch())
+    state = _state_of(owner)
+    try:
+        _await_socket(_socket_of(state), process)
+        argv = json.loads(recorded.read_text())
+
+        assert "--no-extensions" in argv, "the owner's own extensions stay out"
+        named = [argv[i + 1] for i, item in enumerate(argv) if item == "--extension"]
+        assert len(named) == 1, "the platform's extension has to be named to load"
+        entry = Path(named[0])
+        assert entry.is_file(), f"{entry} was named but not written"
+        assert "export default" in entry.read_text(encoding="utf-8")
+
+        # Built here, from the CLI this launch just installed on this machine.
+        spec = json.loads((entry.parent / "platform.json").read_text(encoding="utf-8"))
+        assert not spec["unavailable"], spec["unavailable"]
+        assert {"cheese_chat_send", "cheese_doc_get"} <= {
+            tool["name"] for tool in spec["tools"]
+        }
+        assert spec["socket"] == _socket_of(state)
+    finally:
+        process.terminate()
+        process.wait(timeout=20)
+
+
+def test_the_extension_speaks_with_the_same_platform_voice_as_everything_else():
+    """A notice the extension raises is a platform instruction like any other.
+
+    The marker is the one string in a prompt that claims institutional
+    authority, so a second copy of it living in the extension is a copy that
+    drifts — and the day it does, the agent is reading two conventions and can
+    trust neither.
+    """
+    from app.domain.agent.harness.prompt import platform_prompt
+
+    marker = _launch().configuration()["notice"]
+    assert marker
+    assert platform_prompt("说点什么").startswith(marker)
+
+
+def test_what_the_room_is_told_to_publish_with_is_a_tool_the_room_has():
+    """The prompt says `chat_send` on every turn; the CLI catalog can only call
+    the command what it is. The extension serves both names, so the instruction
+    and the session agree — the exact disagreement this whole extension exists
+    to end.
+    """
+    from app.domain.agent.harness import prompt
+
+    source = _launch().configuration()["extension"]["index.ts"]
+    published = prompt.publication_prompt("x")
+    named = {word.strip("`. ") for word in published.split() if "chat_send" in word}
+    assert named, "the room's prompt no longer names a publishing tool"
+    for name in named:
+        assert f'const PUBLISH = "{name}"' in source, (
+            f"the prompt says to use {name}; the extension serves no such tool"
+        )

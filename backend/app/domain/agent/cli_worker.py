@@ -1,4 +1,21 @@
-"""Single-threaded CLI preload process; each invocation runs in its own child."""
+"""平台 CLI 在机器上的那一份：一棵 argparse 树，一个预加载进程。
+
+Nothing here is about any one harness. What it knows is the platform CLI —
+how its argparse tree becomes tool schemas, how a tool call becomes the argv
+that CLI would have been typed with, and how to run one without paying the
+interpreter's startup on every call. Both harnesses need the first two: Claude
+Code serves them through its MCP transport, pi registers them as extension
+tools. Neither of them is what makes any of it true.
+
+It lived inside the Claude Code adapter until 2026-09-17, which is the only
+reason this docstring says so — it was the first caller, not the owner, and a
+second harness reaching into that package to fetch it was the architecture
+guard going off rather than a debt to write down.
+
+Standard library only, and one file. It is shipped to a session machine as a
+loose script, so it cannot import a sibling of its own — which is also why the
+argparse half is not split out into a module of its own.
+"""
 
 import argparse
 import array

@@ -25,10 +25,13 @@ import fcntl
 import hashlib
 import json
 import os
+import signal
+import sys
 import uuid
 from pathlib import Path
 
 from app.domain.agent.harness import Opening
+from app.domain.agent.harness.pi import catalog
 from app.domain.agent.harness.pi.journal import Journal
 from app.domain.agent.harness.pi.rpc import LINE_LIMIT, Connection
 
@@ -121,6 +124,85 @@ class Runner:
                 if len(page) < 256:
                     return
 
+    # --- the platform extension ----------------------------------------------
+
+    def write_extension(self, files: dict[str, str], notice: str = "") -> Path:
+        """Put the extension and its tool catalog on disk; answer with the entry.
+
+        The catalog is built HERE, from the CLI installed on this machine,
+        because that is the copy the calls will run against. A list shipped
+        from the backend would be a claim about a file the backend cannot see,
+        and the first thing to go wrong would be a tool the agent can name and
+        the machine cannot run.
+
+        A machine with no CLI still gets the extension: it has four more
+        reasons to exist than the platform tools, and a room where the CLI
+        failed to install is one where saying so beats loading nothing.
+        """
+        home = self.state / "extension"
+        home.mkdir(parents=True, exist_ok=True)
+        for name, content in sorted(files.items()):
+            (home / name).write_text(content, encoding="utf-8")
+        cli = catalog.cli_path()
+        try:
+            tools = catalog.tools(cli) if cli is not None else []
+            reason = "" if cli is not None else f"no {catalog.CLI} on PATH"
+        except Exception as error:  # noqa: BLE001 — a room still opens without them
+            tools, reason = [], f"{type(error).__name__}: {error}"
+        (home / "platform.json").write_text(
+            json.dumps(
+                {
+                    "socket": socket_path(self.state),
+                    "state": str(self.state),
+                    # A backgrounded command has to survive this session, so
+                    # what starts it is a script and an interpreter, not a
+                    # thread. Both named here because the runner is the side
+                    # that knows: it was started by that interpreter and it
+                    # just wrote that script.
+                    "python": sys.executable,
+                    "background": str(home / "background.py"),
+                    "jobs": str(self.state / "bg"),
+                    "tools": tools,
+                    "unavailable": reason,
+                    # The marker every platform instruction in this room already
+                    # carries, handed over rather than restated: it is the one
+                    # string in a prompt that claims institutional authority,
+                    # and a second copy of it is a copy that drifts.
+                    "notice": notice,
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        return home
+
+    async def run_cli(self, tool: str, arguments: dict, cwd: str | None) -> dict:
+        """One platform tool call, as the CLI would have been typed.
+
+        argparse is the authority twice over: it says what the arguments mean,
+        and ``catalog.argv`` re-parses what it built, so a call that could not
+        have been typed fails here rather than reaching the CLI as a malformed
+        command line.
+        """
+        source = catalog.cli_path()
+        if source is None:
+            raise RuntimeError(f"{catalog.CLI} is not installed on this machine")
+        process = await asyncio.create_subprocess_exec(
+            str(source),
+            *catalog.argv(source, tool, arguments),
+            cwd=cwd or None,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            limit=LINE_LIMIT,
+        )
+        out, err = await process.communicate()
+        return {
+            "status": process.returncode,
+            "stdout": out.decode("utf-8", "replace"),
+            "stderr": err.decode("utf-8", "replace"),
+        }
+
     # --- lifecycle -----------------------------------------------------------
 
     async def start(
@@ -132,6 +214,8 @@ class Runner:
         env: dict[str, str],
         args: list[str],
         skills: dict[str, str] | None = None,
+        extension: dict[str, str] | None = None,
+        notice: str = "",
     ) -> str:
         self.lock = (self.state / "runner.lock").open("a")
         fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -164,6 +248,14 @@ class Runner:
             skill.parent.mkdir(parents=True, exist_ok=True)
             skill.write_text(content, encoding="utf-8")
             appended += ["--skill", str(skill.parent)]
+        if extension is not None:
+            home = self.write_extension(extension, notice)
+            appended += ["--extension", str(home / "index.ts")]
+            # Named rather than derived: an extension that had to work out
+            # where it was written would be guessing at a path the runner
+            # already knows, and the first thing a wrong guess costs is every
+            # platform tool in the room.
+            env = {**env, "CHEESE_PI_EXTENSION": str(home)}
         self.errors = (self.state / "pi.log").open("ab")
         self.process = await asyncio.create_subprocess_exec(
             binary,
@@ -304,6 +396,10 @@ class Runner:
                 images=params.get("images"),
                 work_id=params.get("work_id"),
             )
+        if method == "cli":
+            return await self.run_cli(
+                params["tool"], params.get("arguments") or {}, params.get("cwd")
+            )
         if method == "abort":
             if self.client is None:
                 return {"aborted": False}
@@ -344,7 +440,37 @@ class Runner:
             with contextlib.suppress(ConnectionError, BrokenPipeError):
                 await writer.wait_closed()
 
+    def end_background_jobs(self) -> None:
+        """Take down what the room started, now that the room is going.
+
+        A backgrounded command is deliberately not killed at the end of a turn —
+        that is the whole point of it. But it is not the machine's to keep
+        either: this runner IS the screen's program, so when it goes the room
+        is being torn down, and a dev server nobody can reach any more would
+        hold its port until somebody found it by hand.
+
+        What is signalled is the COMMAND's process group, not the supervisor's.
+        The two are different sessions — that separation is what lets a job
+        outlive pi — so a signal aimed at the supervisor would leave the command
+        running with nothing left holding its name. Signalled this way the
+        supervisor sees its child go, drains what it printed on the way out and
+        records the exit, which is also what a reader needs afterwards.
+        """
+        jobs = self.state / "bg"
+        if not jobs.is_dir():
+            return
+        for job in jobs.iterdir():
+            if (job / "exit").exists():
+                continue
+            try:
+                meta = json.loads((job / "meta.json").read_text())
+                os.killpg(os.getpgid(meta["child"]), signal.SIGTERM)
+            except (OSError, ValueError, KeyError):
+                # Already gone, never written, or ours no longer to signal.
+                continue
+
     async def close(self) -> None:
+        self.end_background_jobs()
         if self.refresher is not None:
             self.refresher.cancel()
             await asyncio.gather(self.refresher, return_exceptions=True)

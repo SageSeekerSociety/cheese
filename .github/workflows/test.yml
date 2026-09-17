@@ -309,6 +309,32 @@ jobs:
           uvx pre-commit run --all-files --show-diff-on-failure ruff-format
           uvx pre-commit run --all-files pyright
 
+  # The one piece of backend code that is not Python: the extension a pi room
+  # gives its agent. It runs inside pi on a session machine, so the only thing
+  # it may ever need is what that machine has — and this lane is held to the
+  # same bar. Node strips the types itself; there is no package.json here, no
+  # install step, and nothing to keep in a lockfile. A toolchain here would be
+  # the first place "a session machine needs no toolchain" stopped being true.
+  #
+  # Node 24 rather than the 22 the frontend pins: type stripping is on by
+  # default from 23.6, and the alternative is carrying an experimental flag
+  # that exists only to say so.
+  extension:
+    needs: scope
+    # See the note on `lint`: `scope` is an optimisation and must not veto.
+    if: ${{ !cancelled() && needs.scope.outputs.run_heavy != 'false' }}
+    runs-on: [self-hosted, cheese-ci]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+
+      - name: Run the pi extension's tests
+        run: node --test tests/extension/*.test.ts
+
   test:
     needs: scope
     # See the note on the job above: `scope` is an optimisation and must
