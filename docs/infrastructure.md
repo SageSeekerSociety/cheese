@@ -152,6 +152,16 @@ keeps `cheese-dev` exclusively for what genuinely needs it (deploy, drift,
 heartbeat, backup checks) — its single slot used to serialize every heavy job
 (measured: 61% of CI time was queueing).
 
+- **Memory**: 8G per box, shared by its two runner slots, plus 4G of swap
+  (`/swapfile`, in `/etc/fstab`, applied by `runner-swap.yml`). Without the swap
+  two jobs that together want more than 8G did not slow down — the kernel killed
+  a process, and not necessarily one belonging to the job that caused it:
+  `oom-kill: cpuset=...runner-1.service, global_oom, task_memcg=...runner-1b.service,
+  task=esbuild`. What that looks like from inside the job is `exit code 137`, or
+  a Vite dev server that stops answering, or four pytest workers reporting "node
+  down" at once — none of which name memory. Swap does not make a box bigger; it
+  makes the same overload arrive as slowness, which is why `test` and `e2e` carry
+  timeouts at roughly twice their median runtime rather than just above it.
 - Provisioning is scripted: `deploy/ci-runner/deps.sh` (build-essential +
   rustup — `uv sync` compiles the local srp_rs crate; weekly docker prune —
   nothing else reclaims layers here) then `deploy/ci-runner/provision.sh
@@ -190,21 +200,31 @@ heartbeat, backup checks) — its single slot used to serialize every heavy job
   `backend/tests/isolation.py` for the names it scopes, and note that the test
   harness creates its databases with `DROP DATABASE ... WITH (FORCE)`, so two
   runs handed one name delete each other's data mid-test.
+- **Addressing one machine**: every runner carries its box's own label as well
+  as the shared one — `cheese-ci-runner-1` and `cheese-ci-runner-1b` are both
+  `cheese-ci-box-1`. `runs-on: [self-hosted, cheese-ci-box-1]` therefore reaches
+  that machine and only that machine, and a job for a box whose slots are both
+  busy stays **queued** rather than being served by another box. That is the
+  only way to be sure a given machine was touched; `runner-swap.yml` uses it.
+- **Fanning out over slots does not cover the pool.** The intuition that N jobs
+  on the shared label must land on N different machines is false, in both its
+  three-job and six-job forms: a job goes to whichever slot frees first, so one
+  machine can take several while another, busy with a long `test`, takes none.
+  Measured 2026-09-17 with six jobs: five landed on `cheese-ci-runner-2`, one on
+  `cheese-ci-runner-3`, and `cheese-ci-runner-1` was never touched.
 - Liveness (alerting): `box-heartbeat.yml`'s `ci-pool` job proves **at least
-  one** of the three is alive; `box-uptime.yml` alerts when it stays queued. It
-  cannot see a partial outage, because `provision.sh` gives every machine the
-  same single `cheese-ci` label. **Open ops step**: re-register each runner with
-  `--labels cheese-ci,<name>` (`config.sh --replace`), then fan the heartbeat
-  out to a matrix over the per-machine labels. Until that lands, a single dead
-  pool machine shows up only as slower CI.
-- Liveness (on demand): `box-diag.yml`'s `ci-pool` job covers the whole pool by
-  fanning out one job per SLOT — six, not three: with two slots per machine,
-  three jobs can take two machines and leave the third unseen. It prints
-  hostname, disk, and dangling-volume count, so each machine appears twice; a
-  job left **Queued** means the pool is short a slot. This trick is fine for a
-  manual probe (it saturates the pool for ~20s) but not for the hourly
-  heartbeat, which would then false-alarm whenever a merge burst holds the
-  slots — hence the ops step above.
+  one** of the three is alive; `box-uptime.yml` alerts when the last two
+  heartbeats both failed to complete. It cannot see a partial outage, so a
+  single dead pool machine shows up only as slower CI. The per-machine labels
+  above now make a matrix over the three boxes possible; what has not been
+  measured is whether an hourly probe that wants one slot on **each** box would
+  sit queued through an ordinary merge burst often enough to trip the two-strike
+  rule. That measurement is the open step, not the labels.
+- Liveness (on demand): `box-diag.yml`'s `ci-pool` job prints hostname, disk,
+  dangling-volume count, memory, swap and this boot's kernel OOM kills. It fans
+  out over slots, so by the paragraph above it samples the pool rather than
+  covering it — read the `host:` line of each job to see which machines you
+  actually got, and dispatch it again for the ones you did not.
 
 ## Disk — what actually fills a box, and what may be deleted
 
