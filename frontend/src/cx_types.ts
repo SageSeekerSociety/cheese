@@ -180,6 +180,22 @@ export interface WaitingItem {
   at: string
 }
 
+/** 一份 .docx 里的一处修订（后端 `documents/revisions.py`）。
+ *
+ *  一次替换在 XML 里是一个 `<w:ins>` 加一个 `<w:del>`，这里是**一条**：读者要判断的
+ *  是「这处改动要不要」，分成两条就可以只接受一半——新句子进来了，旧句子还留着。
+ *  `paragraph` 是段号，和 `office.py text` 报的是同一个坐标；XML 里没有页的概念，
+ *  页要等排版之后才存在。 */
+export interface DocumentRevision {
+  number: number
+  paragraph: number
+  kind: 'replace' | 'insert' | 'delete'
+  added: string
+  removed: string
+  author: string
+  date: string
+}
+
 // A working-log task item (芝士's TaskCreate/TaskUpdate, rendered as a checklist
 // in the in-progress message). Live during a turn; persisted between turns as
 // the topic's 进度层 (#187) so a new machine — and the room — can still see how
