@@ -1,3 +1,6 @@
+import { createVuetify } from 'vuetify'
+import * as components from 'vuetify/components'
+import * as directives from 'vuetify/directives'
 import { cleanup, render, screen, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
@@ -32,7 +35,11 @@ afterEach(() => {
 })
 
 function mount(props: Record<string, unknown>) {
-  return render(AttachmentImage, { props: { topicId: 'topic-a', path: 'uploads/a/图.png', ...props } })
+  return render(AttachmentImage, {
+    props: { topicId: 'topic-a', path: 'uploads/a/图.png', ...props },
+    // 缩略图加载不出来时画的 <v-icon> 需要一个 Vuetify 实例才认得出来。
+    global: { plugins: [createVuetify({ components, directives })] },
+  })
 }
 
 it('draws the bytes it fetched, not a bare URL the browser cannot authenticate', async () => {
@@ -87,4 +94,40 @@ it('says the picture failed instead of leaving a blank the reader reads as “no
 
   await waitFor(() => expect(screen.getByText('图片加载失败')).toBeTruthy())
   expect(container.querySelector('img')).toBeNull()
+})
+
+// 输入框里那张待发的缩略图：同一个组件、同一份字节，只是长得小，而且点不开
+// （「看原图」是发出去之后的事）。
+it('draws the composer thumbnail from the fetched bytes as well', async () => {
+  attachmentImageUrl.mockResolvedValue('blob:image-1')
+
+  const { container } = mount({ thumb: true })
+
+  await waitFor(() => expect(container.querySelector('.im-thumb__img')).toBeTruthy())
+  expect(container.querySelector('.im-thumb__img')!.getAttribute('src')).toBe('blob:image-1')
+  expect(container.querySelector('a')).toBeNull()
+  expect(attachmentImageUrl).toHaveBeenCalledWith('topic-a', 'uploads/a/图.png')
+})
+
+// 缩略图挂了也得占住那 56×56：塌下去的时候候选条会整体跳一下，而且读者分不清
+// 「这张图加载不出来」和「我还没选图」。
+it('keeps the thumbnail the same size when its bytes never arrive', async () => {
+  attachmentImageUrl.mockRejectedValue(new Error('图片加载失败（HTTP 401）'))
+
+  const { container } = mount({ thumb: true })
+
+  await waitFor(() => expect(container.querySelector('.im-thumb__failed')).toBeTruthy())
+  expect(container.querySelector('.im-thumb')).toBeTruthy()
+  expect(container.querySelector('img')).toBeNull()
+})
+
+it('gives the thumbnail back when it is taken out of the composer', async () => {
+  attachmentImageUrl.mockResolvedValue('blob:image-1')
+
+  const { container, unmount } = mount({ thumb: true })
+  await waitFor(() => expect(container.querySelector('.im-thumb__img')).toBeTruthy())
+
+  unmount()
+
+  expect(revoked).toEqual(['blob:image-1'])
 })

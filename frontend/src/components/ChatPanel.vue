@@ -2199,7 +2199,9 @@ onBeforeUnmount(() => {
             <!-- 图片输入: images waiting to go with the next send. -->
             <div v-if="pendingAtts.length || attsUploading" class="att-strip">
               <div v-for="(a, i) in pendingAtts" :key="a.path" class="att-thumb">
-                <img v-if="a.mime.startsWith('image/')" :src="attachmentRawUrl(topic.id, a.path)" :alt="a.path" />
+                <!-- 待发的图走 AttachmentImage：附件字节的端点从 Authorization 头认人，
+                     裸 <img src> 挂上去只会拿到 401 和一张裂图。 -->
+                <AttachmentImage v-if="a.mime.startsWith('image/')" thumb :topic-id="topic.id" :path="a.path" />
                 <v-chip
                   v-else
                   variant="tonal"
@@ -3004,14 +3006,9 @@ details.sys-row > summary::-webkit-details-marker {
 .att-thumb .v-chip {
   line-height: normal;
 }
-.att-thumb img {
-  width: 56px;
-  height: 56px;
-  object-fit: cover;
-  border-radius: 8px;
-  border: 1px solid var(--line);
-  background: var(--fill);
-}
+/* 缩略图那个 56×56 的盒子跟着 AttachmentImage 走了——它要负责取字节，而且加载中、
+   加载成功、加载失败必须是同一个尺寸的盒子。这里也够不着它内部的 <img>：scoped
+   样式只到子组件的根元素。 */
 .att-remove {
   display: inline-flex;
   position: absolute;

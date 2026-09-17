@@ -34,7 +34,10 @@ vi.mock('../../api', async () => {
       total: 2,
     }),
     chatWsUrl: () => 'ws://test/ws',
+    // 这个地址挂不上 <img src>：附件端点从 Authorization 头认人，浏览器发图片请求
+    // 带不了这个头，挂上去的结果是 401。输入框的缩略图得用 attachmentImageUrl 取字节。
     attachmentRawUrl: () => '',
+    attachmentImageUrl: vi.fn().mockResolvedValue('blob:composer-thumb'),
     uploadAttachment: vi.fn(),
     downloadFile: vi.fn(),
   }
@@ -214,6 +217,26 @@ describe('对话栏自己的输入栏', () => {
     expect(JSON.parse(sent[0].payload).attachments).toEqual([
       { path: 'uploads/id/需求 文档.pdf', mime: 'application/pdf' },
     ])
+  })
+
+  // 输入框里那张图曾经是一张裂图：它被挂上了一个只认 Authorization 头的地址，而
+  // 浏览器发图片请求时带不了头。缩略图现在跟消息里的图走同一条路——先取字节。
+  it('shows a pending image from its bytes, not from the address that only trusts a header', async () => {
+    const api = await import('../../api')
+    vi.mocked(api.uploadAttachment).mockResolvedValue({
+      path: 'uploads/id/截图.png',
+      mime: 'image/png',
+    })
+    const { container } = mountPanel({}, 'topic-image')
+    await flush()
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!
+    const file = new File(['png'], '截图.png', { type: 'image/png' })
+    await fireEvent.change(input, { target: { files: [file] } })
+    await flush()
+    const img = container.querySelector<HTMLImageElement>('.att-strip img')!
+    expect(img.getAttribute('src')).toBe('blob:composer-thumb')
+    expect(img.getAttribute('src')).not.toContain('/attachments/raw')
+    expect(api.attachmentImageUrl).toHaveBeenCalledWith('topic-image', 'uploads/id/截图.png')
   })
 
   it('renders a received document with a download action', async () => {
