@@ -55,6 +55,28 @@ async def reuse_s3_connections():
         _s3_connections = previous
 
 
+def _object_is_absent(exc: Exception) -> bool:
+    """True when the bucket answered "no such key", rather than not answering.
+
+    Every other failure — a refused connection, a 403 from a rotated key, a 500
+    from the gateway — means we do not know what is in the bucket. Reporting
+    that as the same absence a genuinely missing object produces is what lets a
+    caller act on it: `AttachmentService.delete` asks `exists` precisely to
+    avoid dropping the only pointer to an object that is still there, and a
+    swallowed connection error answers "gone" to that question.
+
+    Duck-typed on botocore's `ClientError` shape so this module keeps its lazy
+    `aioboto3` import; anything without that shape is not an absence.
+    """
+    response = getattr(exc, "response", None)
+    if not isinstance(response, dict):
+        return False
+    error = response.get("Error")
+    if not isinstance(error, dict):
+        return False
+    return str(error.get("Code", "")) in {"404", "NoSuchKey", "NotFound"}
+
+
 class StorageBackend(ABC):
     @abstractmethod
     async def upload(self, file: BinaryIO, key: str, content_type: str) -> str:
@@ -170,30 +192,41 @@ class S3StorageBackend(StorageBackend):
             )
         return self.get_url(key)
 
+    # The three below answer "absent" only for an object the bucket says is not
+    # there. Anything else raises, which is what the local backend already does
+    # and what every caller here is written against: `None` and `False` are
+    # answers about the object, not about whether we could reach the bucket.
+
     async def download(self, key: str) -> bytes | None:
         async with self._get_client() as client:
+            buffer = io.BytesIO()
             try:
-                buffer = io.BytesIO()
                 await client.download_fileobj(self._bucket, key, buffer)
-                return buffer.getvalue()
-            except Exception:
-                return None
+            except Exception as exc:
+                if _object_is_absent(exc):
+                    return None
+                raise
+            return buffer.getvalue()
 
     async def delete(self, key: str) -> bool:
         async with self._get_client() as client:
             try:
                 await client.delete_object(Bucket=self._bucket, Key=key)
-                return True
-            except Exception:
-                return False
+            except Exception as exc:
+                if _object_is_absent(exc):
+                    return False
+                raise
+            return True
 
     async def exists(self, key: str) -> bool:
         async with self._get_client() as client:
             try:
                 await client.head_object(Bucket=self._bucket, Key=key)
-                return True
-            except Exception:
-                return False
+            except Exception as exc:
+                if _object_is_absent(exc):
+                    return False
+                raise
+            return True
 
     def get_url(self, key: str) -> str:
         if self._public_url:
