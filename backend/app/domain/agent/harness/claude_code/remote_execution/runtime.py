@@ -988,7 +988,7 @@ class Executor:
             / str(uuid.UUID(payload["project"]))
             / str(uuid.UUID(payload["resource"]))
         )
-        if home / ".claude/executor" != self.state:
+        if home / ".cheese/executor" != self.state:
             raise ValueError("Executor preparation belongs to another room")
         bootstrap = runpy.run_path(
             str(self.state.parent / "remote-execution/bootstrap.py")

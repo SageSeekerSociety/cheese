@@ -125,8 +125,9 @@ def replace(path, content):
 
 def stage(home, sources):
     config = Path(os.path.expandvars(home)) / ".claude"
-    helpers = config / "remote-execution"
-    directory = config / "remote-session"
+    platform_dir = Path(os.path.expandvars(home)) / ".cheese"
+    helpers = platform_dir / "remote-execution"
+    directory = platform_dir / "remote-session"
     target = json.loads((directory / "execution.json").read_text())
     settings_path = config / "settings.json"
     settings = json.loads(settings_path.read_text())
@@ -254,7 +255,7 @@ def skills_reloaded(offsets):
 
 def acknowledge(home, version):
     replace(
-        Path(os.path.expandvars(home)) / ".claude/remote-execution/release-ready",
+        Path(os.path.expandvars(home)) / ".cheese/remote-execution/release-ready",
         version,
     )
 
@@ -275,7 +276,7 @@ def wait_skills_reloaded(offsets, home=None, generation=None):
             if home is not None and generation is not None:
                 replace(
                     Path(os.path.expandvars(home))
-                    / ".claude/remote-session/context-generation",
+                    / ".cheese/remote-session/context-generation",
                     generation,
                 )
             return True
@@ -292,9 +293,9 @@ def transcript_offsets(home):
 
 
 def apply_forwarded_context(home, target):
-    config = Path(os.path.expandvars(home)) / ".claude"
-    directory = config / "remote-session"
-    helpers = config / "remote-execution"
+    platform_dir = Path(os.path.expandvars(home)) / ".cheese"
+    directory = platform_dir / "remote-session"
+    helpers = platform_dir / "remote-execution"
     target_path = directory / "execution.json"
     current = json.loads(target_path.read_text())
     tree = target.pop("context_tree")

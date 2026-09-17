@@ -343,17 +343,17 @@ if __name__ == "__main__":
         status = read_status(root)
         if status["state"] == "preparing":
             raise SystemExit("environment is still preparing")
-        executor = Path.home() / ".claude/execution-owner.json"
+        executor = Path.home() / ".cheese/execution-owner.json"
         if executor.exists():
             if json.loads(executor.read_text())["resource"] != Path.home().name:
                 raise SystemExit("executor belongs to another room resource")
             subprocess.run(
                 [
                     sys.executable,
-                    str(Path.home() / ".claude/remote-execution/runtime.py"),
+                    str(Path.home() / ".cheese/remote-execution/runtime.py"),
                     "stop",
                     "--state",
-                    str(Path.home() / ".claude/executor"),
+                    str(Path.home() / ".cheese/executor"),
                 ],
                 check=True,
                 timeout=30,

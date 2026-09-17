@@ -249,7 +249,6 @@ def build_launch_script(launch: PiLaunch, place: MachinePlace) -> str:
     return machine_launcher.launch_script(
         configure=holes.configure,
         prepare=holes.prepare,
-        contract=holes.contract,
         command=holes.command,
     )
 

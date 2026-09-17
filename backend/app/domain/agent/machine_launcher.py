@@ -30,10 +30,6 @@ WHEN they run, because that is the only thing this side knows about them:
                 be one shell word; a command spelled out here with quotes of
                 its own would end the string it lands in.
 
-``contract`` is what the connector compares to decide whether a live session
-still matches what the backend would start today; it is written down rather
-than recomputed because the machine is the only place both versions exist.
-
 The environment runner wraps whatever runs here (``CHEESE_ENVIRONMENT``), which
 is why it is the supervisor's line and not a harness's: a project's setup and
 startup scripts are the platform's promise about the machine, and they hold
@@ -42,7 +38,6 @@ whichever agent the room asked for.
 
 import hashlib
 import json
-import shlex
 from pathlib import Path
 
 from app.domain.agent import (
@@ -54,6 +49,12 @@ from app.domain.agent import (
 )
 from app.domain.agent.harness.launch import MachineLaunch, MachinePlace
 from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
+
+# The platform's own directory inside a session home. The launcher below spells
+# it literally, because the script is one long string and a name threaded
+# through it would be harder to read than the path it stands for; this constant
+# is that path under a name, for the backend code that has to reason about it.
+PLATFORM_DIR = ".cheese"
 
 # Starts the tunnel helper and does NOT return until its port answers.
 #
@@ -344,7 +345,6 @@ def screen_launch(
                 configure=spec.configure,
                 credentials=spec.credentials,
                 prepare=spec.prepare,
-                contract=spec.contract,
                 command=spec.command,
             ),
         ],
@@ -421,7 +421,6 @@ def launch_script(
     configure: str = "",
     credentials: str = "",
     prepare: str = "",
-    contract: str = "",
     command: str,
 ) -> str:
     """The launcher a device runs, with this harness's five holes filled.
@@ -645,8 +644,6 @@ if [ -n "${{TMUX:-}}" ]; then
   python3 -c 'import json,sys; json.dump(sys.argv[1:], open(sys.argv[3], "w"))' \\
     "$CHEESE_TMUX_SOCK" "$SESSION" "$HOME/.cheese/environment-session.json"
 fi
-printf '%s' "${{CHEESE_AGENT_CONFIG:-}}" > "$HOME/.cheese/agent-configuration"
-printf '%s' {shlex.quote(contract)} > "$HOME/.cheese/launch-contract"
 ENVIRONMENT_CMD=""
 if [ -n "${{CHEESE_ENVIRONMENT:-}}" ]; then
   ENVIRONMENT_CMD="python3 \\"$HOME/.cheese/cheese-environment.py\\" "

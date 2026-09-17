@@ -319,7 +319,7 @@ def test_unpublished_source_blocks_cleanup(tmp_path):
 
 def test_private_cleanup_rejects_another_generation(tmp_path):
     resource = str(uuid.uuid4())
-    marker = tmp_path / ".claude/remote-target.json"
+    marker = tmp_path / ".cheese/remote-target.json"
     marker.parent.mkdir()
     marker.write_text(json.dumps({"kind": "private", "topic": resource}))
     assert cleanup.session_target(tmp_path, resource)["topic"] == resource

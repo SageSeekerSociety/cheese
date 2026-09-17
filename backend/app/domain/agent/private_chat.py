@@ -44,8 +44,8 @@ async def control(
     # home contains only a literal $HOME followed by server-generated UUID paths.
     home = target["home"]
     command = (
-        f'exec python3 "{home}/.claude/remote-execution/client.py" control '
-        f'"{home}/.claude/remote-session/execution.json"'
+        f'exec python3 "{home}/.cheese/remote-execution/client.py" control '
+        f'"{home}/.cheese/remote-session/execution.json"'
     )
     result = await (hub or device_hub).exec(
         target["device_id"],
@@ -65,9 +65,9 @@ async def release(project_id, topic_id, device_id, hub):
         [
             "sh",
             "-c",
-            f'if test -f "{home}/.claude/remote-target.json"; then '
-            f'exec python3 "{home}/.claude/remote-execution/client.py" release '
-            f'"{home}/.claude/remote-target.json"; fi',
+            f'if test -f "{home}/.cheese/remote-target.json"; then '
+            f'exec python3 "{home}/.cheese/remote-execution/client.py" release '
+            f'"{home}/.cheese/remote-target.json"; fi',
         ],
         timeout=45,
     )

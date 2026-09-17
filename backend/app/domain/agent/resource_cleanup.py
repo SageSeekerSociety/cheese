@@ -229,7 +229,7 @@ def check_transcripts(home: Path, receipts: list[dict]) -> None:
 
 
 def session_target(home: Path, resource: str) -> dict | None:
-    marker = home / ".claude/remote-target.json"
+    marker = home / ".cheese/remote-target.json"
     if not marker.exists():
         return None
     target = json.loads(marker.read_text())
@@ -246,12 +246,12 @@ def session_target(home: Path, resource: str) -> dict | None:
 
 
 def stop_executor(home: Path, resource: str) -> None:
-    marker = home / ".claude/execution-owner.json"
+    marker = home / ".cheese/execution-owner.json"
     if marker.exists():
         if json.loads(marker.read_text())["resource"] != str(uuid.UUID(resource)):
             raise RuntimeError("execution marker names another resource generation")
-        runtime = home / ".claude/remote-execution/runtime.py"
-        state = home / ".claude/executor"
+        runtime = home / ".cheese/remote-execution/runtime.py"
+        state = home / ".cheese/executor"
         helper = runpy.run_path(str(runtime))
         if Path(helper["socket_path"](state)).exists():
             result = run_command(
@@ -326,7 +326,7 @@ def main() -> None:
                 home, json.loads(os.environ["CHEESE_TRANSCRIPT_RECEIPTS"])
             )
         if executor is not None and executor["kind"] == "private":
-            helper = runpy.run_path(str(home / ".claude/remote-execution/private.py"))
+            helper = runpy.run_path(str(home / ".cheese/remote-execution/private.py"))
             helper["release"](executor)
         for path in (work, home):
             if path.exists():
