@@ -16,11 +16,10 @@ import hashlib
 import json
 import logging
 import re
-import shutil
 import time
 import uuid
 from collections import Counter
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -115,6 +114,7 @@ from app.domain.block.models import (
     AuthorType,
     Block,
     BlockKind,
+    agent_notice,
     consumed_turn,
 )
 from app.domain.block.repositories import BlockRepository
@@ -129,7 +129,7 @@ from app.domain.mentions import expand_mention_names
 from app.domain.milestone.repositories import MilestoneRepository
 from app.domain.project.environment import EnvironmentConfig, pin_environment
 from app.domain.project.repositories import ProjectRepository
-from app.domain.review.models import AcceptCard, AcceptStatus
+from app.domain.review.models import AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
@@ -237,6 +237,11 @@ class _TurnContext:
     # What this turn was given, and what it is being asked about.
     prompt_text: str
     pending_ids: list[uuid.UUID]
+    # The platform notices this prompt carries. Stamped consumed alongside the
+    # human blocks and by the same turn — a notice this turn actually read must
+    # not be read again — but kept separate up to that point, because every
+    # other question asked of `pending_ids` is about who spoke.
+    notice_ids: list[uuid.UUID]
     turn_images: list[dict]
     replay_notice: str | None
     resume_session_id: str | None
@@ -246,7 +251,6 @@ class _TurnContext:
     doc_text: str | None
     memories: RecallResult
     prior_progress: list[dict]
-    open_cards: list[AcceptCard]
     topic_stage: TopicStage | None
     topic_refs: list[dict]
     topic_refs_for_prompt: list[dict]
@@ -757,33 +761,6 @@ _OPEN_CARD_STATUSES = (
     AcceptStatus.conflict,
 )
 
-_OPEN_CARD_HINTS = {
-    AcceptStatus.pending: (
-        "等 {reviewer} 采纳——采纳即当场合并；改动提交在本分支上，"
-        "要让 PR 立刻看到用 `cheese_push_fix`"
-    ),
-    AcceptStatus.pending_gate: "闸门检查进行中",
-    AcceptStatus.gate_failed: (
-        "闸门检查未过——用 `cheese_status` 看失败输出，修复后重新递卡"
-    ),
-    AcceptStatus.gate_blocked: (
-        "闸门检查没跑成（不是没通过，是没跑起来）——用 `cheese_status` 看输出，"
-        "把检查环境弄起来再重新递卡"
-    ),
-    AcceptStatus.conflict: "采纳时发现合并冲突，待处理",
-}
-
-
-def _workspace_disk(root: str) -> tuple[int, int] | None:
-    """(free, total) bytes of the workspace filesystem; None when the root
-    doesn't exist (fresh deploy, unit tests without a workspace)."""
-    try:
-        du = shutil.disk_usage(root)
-    except OSError:
-        return None
-    return du.free, du.total
-
-
 _PROGRESS_MARK = {"completed": "x", "in_progress": "~", "pending": " "}
 
 
@@ -832,34 +809,28 @@ def _sandbox_limits(provider: object) -> tuple[int, int] | None:
     return None
 
 
-def _turn_meta_lines(
+def _session_opening_lines(
     *,
-    is_resume: bool,
-    disk: tuple[int, int] | None,
-    open_cards: list[AcceptCard] | None,
     progress: list[dict] | None = None,
     sandbox: tuple[int, int] | None = None,
 ) -> list[str]:
-    """盲飞防护: the run facts an agent has no other way to see — whether it's a
-    continuation, disk headroom, and where this topic's accept cards stand.
-    Plain bullet lines so the prompt stays small.
+    """盲飞防护: what a session cannot find out for itself, at the moment it opens.
 
-    There is no countdown line because there is no countdown (turn 活跃度检测):
-    a session ends on real idleness (checked, then confirmed dead) or a
-    many-hours hard ceiling, never on a fixed minute count. Saying otherwise was
-    observed making the agent rush (dev, 2026-08-08: it shortened verification
-    to "save time" against a deadline that was only ever a wedged-turn safety
-    net)."""
-    lines = [
-        "- 这轮跑在有活跃度检测的后端上：没有固定时长倒计时，只要还在"
-        "产生动静（工具调用、终端输出）就不会被打断，真的卡死了才会兜底"
-        "结束。长活照样要边做边落盘/提交，别把成果都压在最后一步。"
-    ]
-    if is_resume:
-        lines.append(
-            "- 本轮接着上一轮跑：上一轮中途断了，这是同一件事的继续。"
-            "先确认上一轮做到哪了再继续（翻消息记录、git status），别凭印象重做。"
-        )
+    Both survive being written once. The machine's size does not change under a
+    session, and the checklist is here to answer 「我做到哪了」 for a session that
+    was not there — once one is running, its own history answers that.
+
+    This is what is left of a per-turn header that came from #175, where the
+    complaint was 29 turns timing out against a 900s ceiling nobody had been
+    told about. Two things happened to it. The ceiling went away (there is no
+    countdown; saying there was one made the agent rush — dev, 2026-08-08), and
+    `cheese_status` — added in that same commit, for that same complaint — took
+    over the rest: cards, gate output and disk are all one call away, and the
+    header was restating them every turn, from a snapshot that stopped being
+    true after the first one. What is left is the part no call and no turn can
+    reconstruct.
+    """
+    lines: list[str] = []
     # 机器有多大: the agent cannot read its own cgroup limit, and the failure it
     # produces without knowing — a build the kernel OOM-kills — looks like a
     # broken toolchain rather than a small box. Only the FACT goes here; what to
@@ -876,28 +847,32 @@ def _turn_meta_lines(
             "（前端 build/typecheck、大型编译）可能被内核 OOM 杀掉——那不是代码"
             "有问题，也不是工具链坏了。"
         )
-
-    # 进度层: right after the resume line on purpose — that line tells the agent
-    # to work out where it got to, and until now the platform gave it nothing to
-    # work that out FROM. It is listed for every turn, not just resumes: a topic
-    # picked up days later on a different machine has the same problem.
     lines.extend(_progress_lines(progress or []))
-    if disk is not None:
-        free_b, total_b = disk
-        if total_b > 0:
-            used_pct = round((total_b - free_b) * 100 / total_b)
-            line = f"- 工作区磁盘：可用 {free_b / 2**30:.1f}G（已用 {used_pct}%）。"
-            if used_pct >= 90:
-                line += "空间紧张——先清理自己产生的临时文件再写大文件。"
-            lines.append(line)
-    for card in open_cards or []:
-        hint = _OPEN_CARD_HINTS.get(card.status)
-        if hint:
-            lines.append(
-                "- 本话题验收卡：" + hint.format(reviewer=f"@{card.reviewer_handle}")
-            )
-    lines.append("- 要看完整平台状态（验收卡/闸门输出/额度），调用 `cheese_status`。")
     return lines
+
+
+def _platform_preamble(notices: list[Block]) -> str:
+    """What moved under the session, as the frame the rest of the prompt is read
+    in — so it goes first: a request to revise the 验收标准 means something else
+    once you know that section moved ten minutes ago.
+
+    One marker over all of them. The marker is the one thing in a prompt that
+    claims institutional authority, and repeating it per line spends that.
+
+    Neutralized exactly as the live push neutralizes it: a notice quotes what
+    people typed — a document's own headings — so the marker must not be
+    forgeable from the content side.
+    """
+    said = "\n".join(str(agent_notice(b)) for b in notices)
+    return platform_prompt(strip_platform_notice(said)) if said else ""
+
+
+def _resume_notice() -> str:
+    """The one thing that is true of a turn rather than of its session."""
+    return (
+        "本轮接着上一轮跑：上一轮中途断了，这是同一件事的继续。"
+        "先确认上一轮做到哪了再继续（翻消息记录、git status），别凭印象重做。"
+    )
 
 
 # Mentions are an ENCODED token, not guessed-from-prose: 芝士 (and the composer)
@@ -1034,6 +1009,22 @@ def _pending_human_blocks(history: list[Block]) -> list[Block]:
         and consumed_turn(b) is None
         and (CONSUMED_TURN_META_KEY in (b.meta or {}) or i > legacy_watermark)
     ]
+
+
+def _pending_platform_notices(history: list[Block]) -> list[Block]:
+    """What the platform has to say to 芝士 and has not managed to say yet.
+
+    A turn is built on a snapshot taken when the SESSION started — the document,
+    the roster, the cards — and the session outlives many turns. Everything that
+    can invalidate that snapshot is something the platform did, so the code that
+    did it leaves a sentence on the block it was already writing, and this reads
+    whatever nobody has read yet.
+
+    No watermark and no legacy fallback, unlike the human window above: a notice
+    is pending exactly while it has something to say and no turn has stamped it,
+    and blocks written before this existed say nothing to 芝士 at all.
+    """
+    return [b for b in history if agent_notice(b) and consumed_turn(b) is None]
 
 
 # 重放可见 (#416). The first notice fires on the third attempt: one retry is
@@ -1572,29 +1563,55 @@ class ChatService:
 
         return sum(await asyncio.gather(*(remind(state) for state in due)))
 
-    async def notify_running_turn(self, topic_id: uuid.UUID, notice: str) -> bool:
+    async def notify_running_turn(
+        self,
+        topic_id: uuid.UUID,
+        notice: str,
+        *,
+        blocks: Sequence[uuid.UUID] = (),
+    ) -> bool:
         """Tell the turn already running on this topic that the world changed
         under it. Returns whether the live session took it.
 
         The same channel as a person's mid-turn message, carrying the other kind
         of thing a turn needs to hear. A long turn is built on a snapshot taken
-        at its first second — the doc, the roster, the cards — and until now the
-        only way anything could reach it afterwards was somebody typing. So a
-        person editing the living doc mid-turn changed nothing 芝士 could see,
-        and it kept working from, and writing back, the version it started with.
+        at its first second — the doc, the roster, the cards — and the only way
+        anything could reach it afterwards was somebody typing. So a person
+        editing the living doc mid-turn changed nothing 芝士 could see, and it
+        kept working from, and writing back, the version it started with.
 
         Framed as a platform notice, and the body is neutralized first: the
         marker is the one thing in a prompt that claims institutional authority,
         so a heading someone typed into the doc must not be able to carry it in.
 
-        A notice that does not land is dropped rather than replayed. It says
-        what is true right now — the next turn reads the doc fresh anyway — and
-        a version claim replayed into a later session is worse than silence.
+        ``blocks`` is where this notice is written down. Given them, delivery
+        stops being all-or-nothing: the receipt stamps them consumed, and a
+        notice that never landed stays pending for the next turn to read — the
+        same 宁可重复不可丢失 a person's mid-turn message already gets. Without
+        them a notice that misses is gone, which is right only for something
+        that is worthless a minute later (the chat-silence reminder), and was
+        wrong for everything else: the old reasoning was that the next turn
+        reads the doc fresh anyway, and the next turn does not — a reused
+        session keeps the system prompt it was started with.
         """
-        if topic_id not in self._active_turn_ids:
+        consuming_turn_id = self._active_turn_ids.get(topic_id)
+        if consuming_turn_id is None:
             return False
+        line = platform_prompt(strip_platform_notice(notice))
+        if blocks:
+            # Registered BEFORE the write, for the reason the human-message path
+            # registers first: a fast receipt must not race its own entry.
+            pending = self._pending_receipts.setdefault(topic_id, [])
+            pending.append(
+                (
+                    line,
+                    list(blocks),
+                    consuming_turn_id,
+                    asyncio.get_running_loop().time(),
+                )
+            )
+            del pending[:-16]  # a dead session must not grow this forever
         try:
-            line = platform_prompt(strip_platform_notice(notice))
             return bool(await self._compute.deliver(topic_id, line))
         except Exception:  # noqa: BLE001 — a failed notice must not fail the write
             logger.exception(
@@ -4056,6 +4073,11 @@ class ChatService:
             history = await blocks.turn_history(place.room_id)
             phases_ms["history"] = (time.monotonic() - started) * 1000
             pending = _pending_human_blocks(history)
+            # Kept apart from `pending` on purpose: that list answers
+            # 「谁说话了」 for the recipient routing, the replay counter and
+            # the 「没人在等」 bail, and a platform notice is an answer to
+            # none of those. It only rides into the prompt and gets stamped.
+            notices = _pending_platform_notices(history)
             addressed = next(
                 (block for block in history if block.id == user_block_id),
                 pending[0] if pending else None,
@@ -4160,9 +4182,9 @@ class ChatService:
             prior_progress = [
                 dict(item) for item in (progress_row.items if progress_row else [])
             ]
-            # 盲飞防护: this topic's open accept cards, surfaced in the prompt's
-            # turn-meta header so the agent knows a gate/adoption is pending
-            # without polling.
+            # Read for the stage derivation below, and for nothing else: what
+            # the cards SAY is `cheese_status`'s answer, and restating it in a
+            # prompt only froze one turn's copy of it into the whole session.
             open_cards = []
             if not is_private:
                 open_cards = [
@@ -4308,6 +4330,13 @@ class ChatService:
             # a rare race.
             if platform_turn and backlog:
                 prompt_text = f"{backlog}\n\n{platform_prompt(content)}"
+            # 先背景，再这一轮要做的事。What moved under the session is the frame
+            # the rest of the prompt has to be read in — a request to revise the
+            # 验收标准 means something different once you know that section moved
+            # ten minutes ago. One marker over all of them: the marker claims
+            # institutional authority, and repeating it per line spends that.
+            if preamble := _platform_preamble(notices):
+                prompt_text = f"{preamble}\n\n{prompt_text}"
             # 重放可见 (#416): count this attempt on the blocks themselves. A
             # turn that dies stamps no `consumed_turn`, so the SAME batch is
             # re-sent next turn, and the next — correct (a dead turn must not
@@ -4353,8 +4382,8 @@ class ChatService:
             doc_text=doc_text,
             is_private=is_private,
             memories=memories,
-            open_cards=open_cards,
             pending_ids=pending_ids,
+            notice_ids=[b.id for b in notices],
             prior_progress=prior_progress,
             private_owner=private_owner,
             project_id=project_id,
@@ -4419,8 +4448,8 @@ class ChatService:
         doc_text = prepared.doc_text
         is_private = prepared.is_private
         memories = prepared.memories
-        open_cards = prepared.open_cards
         pending_ids = prepared.pending_ids
+        consumed_ids = pending_ids + prepared.notice_ids
         prior_progress = prepared.prior_progress
         private_owner = prepared.private_owner
         project_id = prepared.project_id
@@ -4455,10 +4484,7 @@ class ChatService:
             untitled,
             memories_omitted=memories.omitted,
             memories_core_omitted=memories.core_omitted,
-            turn_meta=_turn_meta_lines(
-                is_resume=is_resume,
-                disk=_workspace_disk(self._workspace_root),
-                open_cards=open_cards,
+            session_opening=_session_opening_lines(
                 progress=prior_progress,
                 sandbox=_sandbox_limits(provider),
             ),
@@ -4468,6 +4494,8 @@ class ChatService:
                 else None
             ),
         )
+        if is_resume:
+            prompt_text = f"{platform_prompt(_resume_notice())}\n\n{prompt_text}"
         prompt_text = publication_prompt(prompt_text, is_private=is_private)
         logger.info(
             "chat_preparation_timing topic=%s turn=%s phase=prompt_built "
@@ -4584,7 +4612,7 @@ class ChatService:
                     project_id=project_id,
                     topic_id=topic_id,
                     work_id=marked_work_id,
-                    pending_ids=set(pending_ids),
+                    pending_ids=set(consumed_ids),
                     reply_to=user_block_id,
                     roster=roster,
                     topic_refs=topic_refs,
@@ -4600,7 +4628,7 @@ class ChatService:
                     known_commits=known_commits,
                 )
                 return
-            state.pending_ids.update(pending_ids)
+            state.pending_ids.update(consumed_ids)
             if state.reply_to is None:
                 state.reply_to = user_block_id
             if prompt_text not in state.user_text:

@@ -4,7 +4,7 @@ import asyncio
 import uuid
 
 from app.domain.identity.handles import topic_agent_handle
-from app.domain.memory.models import MemoryScope
+from app.domain.memory.models import MemoryLayer, MemoryScope
 from app.domain.memory.store import DbMemoryStore
 from tests.integration.conftest import chat_ws_url, session_auth_headers
 
@@ -123,13 +123,70 @@ def test_session_id_persisted_for_resume(client):
         _drain_until_done(ws)
 
 
-def test_memory_injected_into_system_prompt(client, stub_hooks):
+def test_a_doc_edit_between_turns_reaches_the_next_turns_prompt(client, stub_hooks):
+    """The whole point of writing the notice down, end to end.
+
+    A session keeps the system prompt it was started with, so the document the
+    agent is holding is the one from turn one. An edit that lands between turns
+    has no running session to be pushed at — it waits on the event, and the next
+    turn is handed it the way it is handed a message somebody typed.
+    """
+    _, topic_id = _create_project_and_topic(client)
+    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+        ws.send_json({"type": "message", "content": "开工", "summon": True})
+        _drain_until_done(ws)
+
+    doc = "# 目标\n\n做推荐\n\n## 验收标准\n\nRecall@10 > 0.15\n"
+    for version, content in ((0, doc), (1, doc.replace("0.15", "0.25"))):
+        assert (
+            client.put(
+                f"/topics/{topic_id}/doc",
+                json={
+                    "content": content,
+                    "author": "user-1",
+                    "expected_version": version,
+                },
+            ).status_code
+            == 200
+        )
+
+    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+        ws.send_json({"type": "message", "content": "接着做", "summon": True})
+        _drain_until_done(ws)
+
+    said = stub_hooks.last_prompt
+    assert said is not None
+    assert "实况文档已被" in said and "第 2 版" in said
+    assert "「验收标准」" in said
+    # It locates the change without carrying it: a document pushed at a turn
+    # displaces the work instead of informing it.
+    assert "Recall@10 > 0.25" not in said
+    # And having been read, it is not said again.
+    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+        ws.send_json({"type": "message", "content": "继续", "summon": True})
+        _drain_until_done(ws)
+    assert "实况文档已被" not in (stub_hooks.last_prompt or "")
+
+
+def test_core_memory_is_carried_and_an_ordinary_fact_is_only_counted(
+    client, stub_hooks
+):
+    """What a turn opens with, end to end. Core is there because it is what the
+    agent must know to be itself; the rest is not, and the prompt says so — a
+    prompt that looks complete is one nobody searches, and `recall` is the only
+    way those facts reach a turn at all."""
     project_id, topic_id = _create_project_and_topic(client)
 
-    # Seed a project memory fact.
     async def _seed() -> None:
         async with client.test_factory() as session:
-            await DbMemoryStore(session).remember(
+            store = DbMemoryStore(session)
+            await store.remember(
+                MemoryScope.project,
+                project_id,
+                "你是芝士，回答先给结论",
+                layer=MemoryLayer.core,
+            )
+            await store.remember(
                 MemoryScope.project, project_id, "项目用 FastAPI 写后端"
             )
             await session.commit()
@@ -140,8 +197,12 @@ def test_memory_injected_into_system_prompt(client, stub_hooks):
         ws.send_json({"type": "message", "content": "技术栈是什么", "summon": True})
         _drain_until_done(ws)
 
-    assert stub_hooks.last_system_prompt is not None
-    assert "项目用 FastAPI 写后端" in stub_hooks.last_system_prompt
+    prompt = stub_hooks.last_system_prompt
+    assert prompt is not None
+    assert "你是芝士，回答先给结论" in prompt
+    assert "项目用 FastAPI 写后端" not in prompt
+    assert "记忆池里另有 **1 条**" in prompt
+    assert "cheese_recall" in prompt
 
 
 def test_empty_content_rejected(client):

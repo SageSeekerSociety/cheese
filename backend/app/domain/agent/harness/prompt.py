@@ -23,7 +23,7 @@ def build_system_prompt(
     roster: list[dict] | None = None,
     topics: list[dict] | None = None,
     untitled: bool = False,
-    turn_meta: list[str] | None = None,
+    session_opening: list[str] | None = None,
     stage_guide: str | None = None,
     memories_omitted: int = 0,
     memories_core_omitted: int = 0,
@@ -111,9 +111,13 @@ def build_system_prompt(
                 "了——挑几条降级成普通记忆（`cheese_remember` 不带 `core`）。"
             )
         parts.append(block)
-    if turn_meta:
+    if session_opening:
+        # 会话开场，不是本轮：这两条一次写对就一直对（机器多大不会变；上次的清单
+        # 是给「不在场的那一轮」看的，会话活着的时候它自己的历史就是答案）。会变的
+        # 东西不在这里 —— 它们在变的那一刻写成平台提醒，跟着下一轮的消息进来。
         parts.append(
-            "## 本轮运行环境（平台元信息，非用户输入）\n" + "\n".join(turn_meta)
+            "## 这个会话开场时的运行环境（平台元信息，非用户输入）\n"
+            + "\n".join(session_opening)
         )
     return "\n\n".join(parts)
 
