@@ -29,5 +29,12 @@
   "formValidation": {
     "maxLength": "Must be at most {max} characters",
     "required": "This field is required"
+  },
+  "retry": "Try again",
+  "resourceLimits": {
+    "projectCount": "Projects: no limit is set",
+    "runtime": "Environments are created on demand; a new project can run {count} AI tasks at once by default, and further ones queue.",
+    "machines": "Cloud machines: a team shares {count} by default. Your actual quota and usage are on the team compute page.",
+    "loadFailed": "Couldn't load the resource limits"
   }
 }
