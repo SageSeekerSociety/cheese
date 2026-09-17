@@ -17,10 +17,10 @@ from pathlib import Path
 
 import pytest
 
-from app.domain.agent import execution, executor_transport
+from app.domain.agent import cli_worker, execution, executor_transport
 from app.domain.agent.device_hub import DeviceHub
-from app.domain.agent.harness.claude_code.remote_execution import cli_worker, runtime
 from app.domain.agent.harness.claude_code.remote_execution import client as central
+from app.domain.agent.harness.claude_code.remote_execution import runtime
 from app.domain.agent.harness.claude_code.remote_execution.client import (
     _local_chat_send_argv,
 )
