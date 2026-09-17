@@ -295,6 +295,15 @@ async def _advance(session, cleanup_id: uuid.UUID, inventory: dict) -> None:
             if not operation.resources:
                 operation.resources = await _inventory(session, operation, inventory)
         except Exception as exc:
+            # Nothing else reports this one. The operation stays `pending`, so the
+            # sweeper retries it forever, and setting `last_error` is what drops
+            # every later "cleanup start" line to DEBUG — a room that can never be
+            # inventoried would otherwise be retried in complete silence.
+            logger.exception(
+                "cleanup inventory failed operation=%s room=%s",
+                cleanup_id,
+                operation.topic_id,
+            )
             operation.last_error = str(exc)[:2048]
             await session.commit()
             return
