@@ -14,6 +14,7 @@ import {
   readPreviewFile,
   requestPreviewSession,
 } from '../../api'
+import { DOCUMENT_TYPES, suffixOf } from '../../lib/fileKind'
 import { markdown, sanitizeRendered } from '../../lib/markdown'
 import { postPreviewSession } from '../../lib/previewSession'
 
@@ -70,32 +71,11 @@ function openPreviewInNewTab() {
 // can open directly — paginating it would destroy exactly that. A markdown file
 // has neither pages nor cells, and nothing here converts it: it is shown as the
 // text it already is, parsed by the same renderer the chat uses.
-const DOCUMENT_TYPES: Record<string, { label: string; icon: string; view: 'pages' | 'sheet' | 'markdown' }> = {
-  pdf: { label: 'PDF', icon: 'mdi-file-pdf-box', view: 'pages' },
-  docx: { label: 'Word 文档', icon: 'mdi-file-word-outline', view: 'pages' },
-  doc: { label: 'Word 文档', icon: 'mdi-file-word-outline', view: 'pages' },
-  odt: { label: '文档', icon: 'mdi-file-document-outline', view: 'pages' },
-  rtf: { label: '文档', icon: 'mdi-file-document-outline', view: 'pages' },
-  pptx: { label: '幻灯片', icon: 'mdi-file-powerpoint-outline', view: 'pages' },
-  ppt: { label: '幻灯片', icon: 'mdi-file-powerpoint-outline', view: 'pages' },
-  odp: { label: '幻灯片', icon: 'mdi-file-powerpoint-outline', view: 'pages' },
-  xlsx: { label: '表格', icon: 'mdi-file-excel-outline', view: 'sheet' },
-  xls: { label: '表格', icon: 'mdi-file-excel-outline', view: 'sheet' },
-  csv: { label: 'CSV 表格', icon: 'mdi-file-delimited-outline', view: 'sheet' },
-  md: { label: 'Markdown', icon: 'mdi-language-markdown-outline', view: 'markdown' },
-  markdown: { label: 'Markdown', icon: 'mdi-language-markdown-outline', view: 'markdown' },
-}
 //: Formats the browser cannot draw itself, so the platform converts them first.
 const NEEDS_CONVERSION = new Set(['docx', 'doc', 'odt', 'rtf', 'pptx', 'ppt', 'odp'])
 //: 浏览器自己画得出来的图片。它们读不成文本（`content` 是 null），但那不是「没
 //: 法显示」——内容域就是拿 image/png、image/jpeg 把这些字节发出来的。
 const IMAGE_SUFFIXES = new Set(['png', 'jpg', 'jpeg'])
-
-function suffixOf(path: string): string {
-  const name = path.split('/').pop() ?? ''
-  const dot = name.lastIndexOf('.')
-  return dot > 0 ? name.slice(dot + 1).toLowerCase() : ''
-}
 
 const documentSuffix = computed(() => suffixOf(previewFile.value?.path ?? ''))
 const documentType = computed(() => DOCUMENT_TYPES[documentSuffix.value] ?? null)

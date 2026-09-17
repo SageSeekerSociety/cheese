@@ -78,7 +78,7 @@ import {
   summonAgent,
   toggleReaction as apiToggleReaction,
 } from '../api'
-import { type PendingAttachment, uploaded, usePendingAttachments } from '../lib/attachments'
+import { uploaded, usePendingAttachments } from '../lib/attachments'
 import { cachedWindow, setCachedWindow } from '../lib/blockCache'
 import { mergeRefreshedTail, PAGE_SIZE, prependOlder, scrollTopAfterPrepend, shouldLoadOlder } from '../lib/blockPaging'
 import { forgetComposerDraft, loadComposerDraft, saveComposerDraft } from '../lib/composerDrafts'
@@ -99,7 +99,7 @@ import { getAvatarUrl } from '../utils/materials'
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import AgentControls from './AgentControls.vue'
 import AttachmentImage from './AttachmentImage.vue'
-import AttachmentPdfThumb from './AttachmentPdfThumb.vue'
+import AttachmentTile from './AttachmentTile.vue'
 import CheeseAvatar from './CheeseAvatar.vue'
 import DispatchedMarker from './DispatchedMarker.vue'
 import TimelineMark from './TimelineMark.vue'
@@ -1277,6 +1277,19 @@ const prState = computed(() => topicStateBadge(props.topic?.status))
 const draft = ref('')
 // 拖文件到输入栏 (spec §7.1)。只是把落区标出来，判断留给 usePendingAttachments。
 const dragOver = ref(false)
+// 只有真拖着文件才亮：拖一段选中的文字经过输入栏，落区亮起来是在承诺一件它不会
+// 做的事。
+function onDragOverFiles(e: DragEvent) {
+  if (!e.dataTransfer?.types.includes('Files')) return
+  dragOver.value = true
+}
+// dragleave 在指针移到**子元素**上时也会触发，所以一路拖过输入栏时落区会一路闪。
+// relatedTarget 是指针进入的那个元素：它还在盒子里，就不算离开。
+function onDragLeaveFiles(e: DragEvent) {
+  const entering = e.relatedTarget
+  if (entering instanceof Node && (e.currentTarget as HTMLElement).contains(entering)) return
+  dragOver.value = false
+}
 function onDropFiles(e: DragEvent) {
   dragOver.value = false
   onComposerDrop(e)
@@ -1418,17 +1431,6 @@ const {
     errorMsg.value = msg
   }
 )
-// 待发条里一格长什么样。形状由类型定，不由上传有没有结束定——否则上传完成的那一
-// 刻，一个方格会变成一枚宽 chip，整条跟着跳。
-function attKind(a: PendingAttachment): 'image' | 'pdf' | 'file' {
-  if (a.mime.startsWith('image/')) return 'image'
-  if (a.mime === 'application/pdf') return 'pdf'
-  return 'file'
-}
-// 上传中那一格还没有工作区路径，名字只有它自己记着的那一份。
-function attName(a: PendingAttachment): string {
-  return a.name ?? a.path.split('/').pop() ?? '附件'
-}
 function pickFiles() {
   fileInput.value?.click()
 }
@@ -2244,10 +2246,10 @@ onBeforeUnmount(() => {
         <div
           class="composer pa-2 px-3"
           :class="{ 'composer--drop': dragOver }"
-          @dragenter.prevent="dragOver = true"
-          @dragover.prevent="dragOver = true"
-          @dragleave="dragOver = false"
-          @drop="onDropFiles"
+          @dragenter.prevent="onDragOverFiles"
+          @dragover.prevent="onDragOverFiles"
+          @dragleave="onDragLeaveFiles"
+          @drop.prevent="onDropFiles"
         >
           <!-- @-autocomplete: pick a teammate / topic / broadcast while typing @ -->
           <div v-if="mentionMatches.length" class="mention-menu">
@@ -2282,27 +2284,13 @@ onBeforeUnmount(() => {
           <div class="composer-box">
             <!-- 待发条: the attachments waiting to go with the next send. -->
             <div v-if="pendingAtts.length" class="att-strip">
-              <div v-for="(a, i) in pendingAtts" :key="a.path" class="att-thumb">
-                <!-- 上传中先把格子画出来，圈在格子里转。等上传完才出现的话，这段
-                     时间条里是空的，读者看不出自己那个文件有没有进来。 -->
-                <span v-if="a.uploading && attKind(a) !== 'file'" class="att-waiting" :title="attName(a)">
-                  <v-progress-circular indeterminate size="18" width="2" />
-                </span>
-                <!-- 待发的图走 AttachmentImage：附件字节的端点从 Authorization 头认人，
-                     裸 <img src> 挂上去只会拿到 401 和一张裂图。PDF 同理，走首页缩略图。 -->
-                <AttachmentImage v-else-if="attKind(a) === 'image'" thumb :topic-id="topic.id" :path="a.path" />
-                <AttachmentPdfThumb v-else-if="attKind(a) === 'pdf'" :topic-id="topic.id" :path="a.path" />
-                <v-chip v-else variant="tonal" class="pe-6" :title="attName(a)">
-                  <template #prepend>
-                    <v-progress-circular v-if="a.uploading" class="me-1" indeterminate size="14" width="2" />
-                    <v-icon v-else class="me-1">mdi-file-document-outline</v-icon>
-                  </template>
-                  <span class="text-truncate">{{ attName(a) }}</span>
-                </v-chip>
-                <button type="button" class="att-remove" title="移除" @click="removePendingAtt(i)">
-                  <v-icon size="12">mdi-close</v-icon>
-                </button>
-              </div>
+              <AttachmentTile
+                v-for="(a, i) in pendingAtts"
+                :key="a.path"
+                :topic-id="topic.id"
+                :attachment="a"
+                @remove="removePendingAtt(i)"
+              />
             </div>
             <!-- 输入框独占一整行。它旁边并排放按钮时，真正能打字的那块在手机上只剩
                半屏——而按钮的数量只会往上加。 -->
@@ -2569,10 +2557,12 @@ details.sys-row > summary::-webkit-details-marker {
   border-top: 1px solid var(--line);
   padding-top: 4px;
 }
-/* 拖文件进来时的落区，只描一圈，不改布局（改了会把输入框顶一下）。 */
+/* 拖文件进来时的落区。描边加粗一档、底色垫一层琥珀的淡色，让它在一屏中性里真的
+   跳出来；两样都不占位置——占了会把输入框顶一下。 */
 .composer--drop {
-  outline: 1px dashed var(--accent);
-  outline-offset: -3px;
+  outline: 2px dashed var(--accent);
+  outline-offset: -4px;
+  background: var(--accent-wash);
 }
 /* 发件箱: 已显示、还没落库。淡一档，不换形状——它就是那条消息。 */
 .im-row--pending .im-text,
@@ -3068,64 +3058,20 @@ details.sys-row > summary::-webkit-details-marker {
 .im-text--verbatim {
   white-space: pre-wrap;
 }
-/* 图片输入那两张图自己的样式跟着 AttachmentImage 走了（它要负责取字节，样式
-   留在这里也够不着它内部的 <img>——scoped 只到子组件的根元素）。 */
-.im-file-link,
-.att-thumb,
-.att-thumb .v-chip {
+.im-file-link {
   max-width: 100%;
 }
 .im-file-link :deep(.v-btn__content) {
   min-width: 0;
 }
-/* Pending attachments, each with a remove button. */
+/* 待发条。一格长什么样归 AttachmentTile，这里只排它们；行距留 10px，因为每格
+   右上角那个移除按钮探出了边界 6px。 */
 .att-strip {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   flex-wrap: wrap;
-  padding: 6px 2px;
-}
-.att-thumb {
-  position: relative;
-  line-height: 0;
-}
-.att-thumb .v-chip {
-  line-height: normal;
-}
-/* 图片和 PDF 那两个格子的样式跟着各自的组件走了——它们要负责取字节，而这里也
-   够不着它们内部的 <img>/<canvas>：scoped 样式只到子组件的根元素。上传中这一格
-   没有组件，画在这儿，尺寸和圆角都引用同一组 token，所以上传结束的那一刻只有格
-   子里的内容变了，整条不动。 */
-.att-waiting {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--att-tile);
-  height: var(--att-tile);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--line);
-  background: var(--fill);
-  color: var(--muted);
-}
-.att-remove {
-  display: inline-flex;
-  position: absolute;
-  top: -6px;
-  right: -6px;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  border: 1px solid var(--line);
-  background: var(--surface);
-  color: var(--muted);
-  line-height: 1;
-  cursor: pointer;
-}
-.att-remove:hover {
-  color: var(--ink);
+  padding: 10px 2px 6px;
 }
 /* Live link from an upgraded block to its new topic. */
 /* B3: the "回复 X：…" cue above a reply, and the composer reply-to bar. */
