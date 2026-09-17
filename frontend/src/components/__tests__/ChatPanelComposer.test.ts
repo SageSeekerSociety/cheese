@@ -91,6 +91,24 @@ function composerBox(container: Element): HTMLTextAreaElement | null {
 }
 
 beforeAll(() => {
+  // happy-dom 少两个东西，而 Vuetify 的浮层定位正好都要：visualViewport，以及
+  // **裸的** devicePixelRatio（它不是 window.devicePixelRatio ?? 1，取不到就抛）。
+  // 少了任何一个，tooltip 一弹就是一条未捕获异常。照这个文件既有的做法补，不是
+  // 替——真有的时候不动它。
+  if (!('devicePixelRatio' in globalThis)) {
+    ;(globalThis as unknown as { devicePixelRatio: number }).devicePixelRatio = 1
+  }
+  if (!('visualViewport' in globalThis)) {
+    ;(globalThis as unknown as { visualViewport: unknown }).visualViewport = {
+      offsetLeft: 0,
+      offsetTop: 0,
+      width: 1280,
+      height: 800,
+      scale: 1,
+      addEventListener() {},
+      removeEventListener() {},
+    }
+  }
   if (!('ResizeObserver' in globalThis)) {
     ;(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
       observe() {}
@@ -262,6 +280,37 @@ describe('对话栏自己的输入栏', () => {
     expect(cards[0].querySelector('img')).toBeTruthy()
     expect(cards[1].querySelector('img')).toBeNull()
     expect(cards[1].querySelector('.mdi-file-word-outline')).toBeTruthy()
+  })
+
+  // 名字在块边缘就截断了，所以悬停是拿到全名的唯一出口——它得真的弹出来。原来
+  // 用的是 title 属性：系统气泡要鼠标停住约一秒才出现，读者多半以为没有。
+  it('gives the whole filename on hover', async () => {
+    const api = await import('../../api')
+    vi.mocked(api.uploadAttachment).mockResolvedValue({
+      path: 'uploads/id/一份名字长得放不进那一格的说明文档.docx',
+      mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    })
+    const { container } = mountPanel({}, 'topic-hover')
+    await flush()
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!
+    await fireEvent.change(input, {
+      target: {
+        files: [
+          new File(['d'], '一份名字长得放不进那一格的说明文档.docx', {
+            type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          }),
+        ],
+      },
+    })
+    await flush()
+
+    const card = container.querySelector('.att-strip .att-card')!
+    expect(card.getAttribute('title')).toBeNull()
+    await fireEvent.mouseEnter(card)
+    await flush()
+    expect(document.querySelector('.v-tooltip .v-overlay__content')?.textContent?.trim()).toBe(
+      '一份名字长得放不进那一格的说明文档.docx'
+    )
   })
 
   // 输入框里那张图曾经是一张裂图：它被挂上了一个只认 Authorization 头的地址，而

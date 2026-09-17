@@ -28,7 +28,7 @@ const isPdf = computed(() => props.attachment.mime === 'application/pdf')
 </script>
 
 <template>
-  <div class="att-card" :title="name">
+  <div class="att-card">
     <!-- 一张卡里只有一个方格。图片和 PDF 那两个组件的根元素自己就是这个方格
          （它们要在加载中、成功、失败三种状态下都占住它），所以这里不再包一层；
          剩下两种状态没有组件，方格由这里画。 -->
@@ -39,7 +39,12 @@ const isPdf = computed(() => props.attachment.mime === 'application/pdf')
       <v-icon v-else size="22">{{ fileIcon(name) }}</v-icon>
     </span>
     <span class="att-card__name t-meta c-text">{{ name }}</span>
-    <button type="button" class="att-card__remove" title="移除" @click="emit('remove')">
+    <!-- 名字在块边缘就截断了，全名得有地方看。不用 title 属性：系统原生气泡要
+         鼠标停住约一秒才弹，弹出来又是屏幕上唯一不跟随主题的东西，读者多半会
+         以为没有。 -->
+    <v-tooltip activator="parent" location="top" :text="name" />
+    <!-- × 自己说得清，标签只给读屏软件；给它 title 的话，这里会同时冒出两个气泡。 -->
+    <button type="button" class="att-card__remove" aria-label="移除" @click="emit('remove')">
       <v-icon size="12">mdi-close</v-icon>
     </button>
   </div>
