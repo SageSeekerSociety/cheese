@@ -144,18 +144,31 @@ export default createVuetify({
       border: 'thin',
     },
     VSheet: { rounded: 'lg' },
+    // The four field components deliberately do NOT default `hideDetails`, and
+    // this is load-bearing rather than an omission. An outlined field's floating
+    // label sits ON its own top border, so it needs clearance above that border
+    // — and `.v-input` carries no margin of its own (vuetify/lib/components/
+    // VInput/VInput.sass: it is a bare `display: grid`). Every pixel between two
+    // stacked fields comes from the `.v-input__details` row underneath the upper
+    // one. `hideDetails: 'auto'` drops that row whenever a field happens to have
+    // no hint, error or counter, which is most fields — so two plain fields stack
+    // flush and the lower one's label lands on the upper one's bottom border.
+    // That shipped: 「运行方式」and「模型」in the AI-teammate dialog both sat on the
+    // border of the field above them.
+    // Compact call sites (toolbar search, inline filters, chat composer) say
+    // `hide-details` explicitly and are unaffected — 66 of the 149 fields in the
+    // tree already do, which is why the default was never the thing holding them
+    // tight. Set it per instance, never here.
     VTextField: {
       variant: 'outlined',
       density: 'comfortable',
       rounded: 'lg',
-      hideDetails: 'auto',
       color: 'primary',
     },
     VTextarea: {
       variant: 'outlined',
       density: 'comfortable',
       rounded: 'lg',
-      hideDetails: 'auto',
       color: 'primary',
       autoGrow: true,
     },
@@ -163,7 +176,6 @@ export default createVuetify({
       variant: 'outlined',
       density: 'comfortable',
       rounded: 'lg',
-      hideDetails: 'auto',
       color: 'primary',
       menuProps: { rounded: 'lg' },
     },
@@ -171,9 +183,10 @@ export default createVuetify({
       variant: 'outlined',
       density: 'comfortable',
       rounded: 'lg',
-      hideDetails: 'auto',
       color: 'primary',
     },
+    // VCheckbox keeps it: a checkbox's label sits beside the box, not on a
+    // border, so there is no collision to fix here — only 28px to lose.
     VCheckbox: { density: 'compact', hideDetails: 'auto', color: 'primary' },
     // Chips default neutral: 6px radius, small. Color opted in per-instance.
     VChip: { rounded: 'sm', size: 'small', label: true },
