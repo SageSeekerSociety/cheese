@@ -1,0 +1,46 @@
+{
+  "ask": {
+    "buttons": {
+      "createTopic": "Create {name} topic"
+    }
+  },
+  "detail": {
+    "createdAt": "Posted {time}",
+    "updatedAt": "Edited {time}",
+    "viewCount": "No views | 1 view | {count} views",
+    "buttons": {
+      "follow": "Follow | Follow · 1 | Follow · {count}",
+      "unfollow": "Unfollow",
+      "comment": "Comment",
+      "favorite": "Favorite",
+      "unfavorite": "Unfavorite",
+      "postAnswer": "Post answer",
+      "allAnswers": "View all answers | View all {count} answers",
+      "invite": "Invite to answer",
+      "bounty": "Bounty",
+      "addBounty": "Add bounty",
+      "accept": "Accept this answer",
+      "viewAcceptedAnswer": "View this answer",
+      "showAll": "Show all"
+    },
+    "postAnswerTitle": "Answer this question",
+    "postAnswerPlaceholder": "Write your answer",
+    "postAnswerSuccess": "Answer posted",
+    "postAnswerEmpty": "Your answer can't be empty",
+    "postAnswerExist": "You've already answered this question — tap to view",
+    "inviteTitle": "Invite others to answer and get an answer faster",
+    "bounty": "Bounty {bounty}",
+    "addBountyTitle": "Add bounty",
+    "addBountySuccess": "Bounty added — awaiting answers",
+    "acceptedAnswerTitle": "{user}'s answer was accepted"
+  },
+  "invitationList": {
+    "buttons": {
+      "invite": "Invite to answer",
+      "invited": "Invited"
+    },
+    "errors": {
+      "inviteFailed": "Couldn't invite: {reason}"
+    }
+  }
+}
