@@ -78,7 +78,7 @@ import {
   summonAgent,
   toggleReaction as apiToggleReaction,
 } from '../api'
-import { usePendingAttachments } from '../lib/attachments'
+import { type PendingAttachment, uploaded, usePendingAttachments } from '../lib/attachments'
 import { cachedWindow, setCachedWindow } from '../lib/blockCache'
 import { mergeRefreshedTail, PAGE_SIZE, prependOlder, scrollTopAfterPrepend, shouldLoadOlder } from '../lib/blockPaging'
 import { forgetComposerDraft, loadComposerDraft, saveComposerDraft } from '../lib/composerDrafts'
@@ -99,6 +99,7 @@ import { getAvatarUrl } from '../utils/materials'
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import AgentControls from './AgentControls.vue'
 import AttachmentImage from './AttachmentImage.vue'
+import AttachmentPdfThumb from './AttachmentPdfThumb.vue'
 import CheeseAvatar from './CheeseAvatar.vue'
 import DispatchedMarker from './DispatchedMarker.vue'
 import TimelineMark from './TimelineMark.vue'
@@ -1417,6 +1418,17 @@ const {
     errorMsg.value = msg
   }
 )
+// 待发条里一格长什么样。形状由类型定，不由上传有没有结束定——否则上传完成的那一
+// 刻，一个方格会变成一枚宽 chip，整条跟着跳。
+function attKind(a: PendingAttachment): 'image' | 'pdf' | 'file' {
+  if (a.mime.startsWith('image/')) return 'image'
+  if (a.mime === 'application/pdf') return 'pdf'
+  return 'file'
+}
+// 上传中那一格还没有工作区路径，名字只有它自己记着的那一份。
+function attName(a: PendingAttachment): string {
+  return a.name ?? a.path.split('/').pop() ?? '附件'
+}
 function pickFiles() {
   fileInput.value?.click()
 }
@@ -1548,7 +1560,7 @@ function sendDraft(opts?: { summon?: boolean }) {
   if (attsUploading.value) return
   if (!draft.value.trim() && !pendingAtts.value.length) return
   const content = expandMentions(opts?.summon ? withAgentMention(draft.value) : draft.value)
-  if (send(content, props.alwaysSummon || mentionsAgent(content), pendingAtts.value.slice())) {
+  if (send(content, props.alwaysSummon || mentionsAgent(content), uploaded(pendingAtts.value))) {
     draft.value = ''
     clearPendingAtts()
   }
@@ -1567,14 +1579,14 @@ function rememberComposer(topicId: string) {
     composerMemory.set(topicId, {
       draft: draft.value,
       reply: replyTarget.value,
-      atts: pendingAtts.value.slice(),
+      atts: uploaded(pendingAtts.value),
       outbox: outbox.value.slice(),
     })
     // 同一份内容落到磁盘上（发件箱除外，见 lib/composerDrafts.ts 的解释）。
     saveComposerDraft(topicId, {
       draft: draft.value,
       reply: replyTarget.value,
-      atts: pendingAtts.value.slice(),
+      atts: uploaded(pendingAtts.value),
     })
   }
 }
@@ -1608,7 +1620,7 @@ function flushComposer(topicId: string) {
   saveComposerDraft(topicId, {
     draft: draft.value,
     reply: replyTarget.value,
-    atts: pendingAtts.value.slice(),
+    atts: uploaded(pendingAtts.value),
   })
 }
 
@@ -2268,26 +2280,29 @@ onBeforeUnmount(() => {
                「待发的图片 + 输入框 + 动作」框成一块。盒子自己就是和时间线之间的
                分隔，所以上面那条 divider 没了。 -->
           <div class="composer-box">
-            <!-- 图片输入: images waiting to go with the next send. -->
-            <div v-if="pendingAtts.length || attsUploading" class="att-strip">
+            <!-- 待发条: the attachments waiting to go with the next send. -->
+            <div v-if="pendingAtts.length" class="att-strip">
               <div v-for="(a, i) in pendingAtts" :key="a.path" class="att-thumb">
+                <!-- 上传中先把格子画出来，圈在格子里转。等上传完才出现的话，这段
+                     时间条里是空的，读者看不出自己那个文件有没有进来。 -->
+                <span v-if="a.uploading && attKind(a) !== 'file'" class="att-waiting" :title="attName(a)">
+                  <v-progress-circular indeterminate size="18" width="2" />
+                </span>
                 <!-- 待发的图走 AttachmentImage：附件字节的端点从 Authorization 头认人，
-                     裸 <img src> 挂上去只会拿到 401 和一张裂图。 -->
-                <AttachmentImage v-if="a.mime.startsWith('image/')" thumb :topic-id="topic.id" :path="a.path" />
-                <v-chip
-                  v-else
-                  variant="tonal"
-                  class="pe-6"
-                  prepend-icon="mdi-file-document-outline"
-                  :title="a.path.split('/').pop()"
-                >
-                  <span class="text-truncate">{{ a.path.split('/').pop() }}</span>
+                     裸 <img src> 挂上去只会拿到 401 和一张裂图。PDF 同理，走首页缩略图。 -->
+                <AttachmentImage v-else-if="attKind(a) === 'image'" thumb :topic-id="topic.id" :path="a.path" />
+                <AttachmentPdfThumb v-else-if="attKind(a) === 'pdf'" :topic-id="topic.id" :path="a.path" />
+                <v-chip v-else variant="tonal" class="pe-6" :title="attName(a)">
+                  <template #prepend>
+                    <v-progress-circular v-if="a.uploading" class="me-1" indeterminate size="14" width="2" />
+                    <v-icon v-else class="me-1">mdi-file-document-outline</v-icon>
+                  </template>
+                  <span class="text-truncate">{{ attName(a) }}</span>
                 </v-chip>
                 <button type="button" class="att-remove" title="移除" @click="removePendingAtt(i)">
                   <v-icon size="12">mdi-close</v-icon>
                 </button>
               </div>
-              <v-progress-circular v-if="attsUploading" indeterminate size="18" width="2" />
             </div>
             <!-- 输入框独占一整行。它旁边并排放按钮时，真正能打字的那块在手机上只剩
                半屏——而按钮的数量只会往上加。 -->
@@ -3078,9 +3093,21 @@ details.sys-row > summary::-webkit-details-marker {
 .att-thumb .v-chip {
   line-height: normal;
 }
-/* 缩略图那个 56×56 的盒子跟着 AttachmentImage 走了——它要负责取字节，而且加载中、
-   加载成功、加载失败必须是同一个尺寸的盒子。这里也够不着它内部的 <img>：scoped
-   样式只到子组件的根元素。 */
+/* 图片和 PDF 那两个格子的样式跟着各自的组件走了——它们要负责取字节，而这里也
+   够不着它们内部的 <img>/<canvas>：scoped 样式只到子组件的根元素。上传中这一格
+   没有组件，画在这儿，尺寸和圆角都引用同一组 token，所以上传结束的那一刻只有格
+   子里的内容变了，整条不动。 */
+.att-waiting {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--att-tile);
+  height: var(--att-tile);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line);
+  background: var(--fill);
+  color: var(--muted);
+}
 .att-remove {
   display: inline-flex;
   position: absolute;

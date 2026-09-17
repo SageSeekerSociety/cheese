@@ -128,6 +128,15 @@
   --font-display: 'Bricolage Grotesque', var(--font-sans);
   --font-mono:
     'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* ---- Sizes shared across components ---- */
+  /* One tile in the composer's attachment strip. Anything with a picture in it
+     — waiting, image, PDF — has to be the SAME box, because they are three
+     states of one position and the strip jumps at the moment an upload
+     finishes if any of them disagrees. Lives here because three components
+     need it; in any one of them, that one owns the other two. (A file with no
+     picture to show stays a chip carrying its name, so it is not in this set.) */
+  --att-tile: 56px;
 }
 
 /* ---------------------------------------------------------------------------

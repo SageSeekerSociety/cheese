@@ -93,15 +93,15 @@ onBeforeUnmount(() => {
   font-size: 13px;
   color: var(--muted);
 }
-/* 缩略图的尺寸在这儿定，不在输入框那边：加载中、加载成功、加载失败是同一个盒子，
-   所以尺寸只能有一个主人。 */
+/* 尺寸来自 --att-tile（style.css）：上传中、图片、PDF、普通文件是同一个位置的四种
+   状态，谁自己写一个数字，上传完成的那一刻整条就会跳。这里只引用，不定义。 */
 .im-thumb {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 56px;
-  height: 56px;
-  border-radius: 8px;
+  width: var(--att-tile);
+  height: var(--att-tile);
+  border-radius: var(--radius-md);
   border: 1px solid var(--line);
   background: var(--fill);
   overflow: hidden;
