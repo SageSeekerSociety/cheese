@@ -237,7 +237,14 @@ async def sweep_retired_storage(sessions: SessionFactory) -> dict[str, int]:
         try:
             inventory[device_id] = await list_device_storage(device_id)
         except Exception:
-            logger.exception("cleanup device inventory failed device=%s", device_id)
+            # WARNING for the same reason as the inventory failure in `_advance`
+            # below: the usual cause is a device that is offline, which is what
+            # the sweep exists to retry. At ERROR every cycle of every waiting
+            # room became a Feishu alert, and the budget those spent is taken
+            # from the alerts somebody needs to see.
+            logger.warning(
+                "cleanup device inventory failed device=%s", device_id, exc_info=True
+            )
     assert isinstance(engine, AsyncEngine)
     for cleanup_id in ids:
         # Keep one physical connection across commits: a session advisory lock
@@ -299,10 +306,16 @@ async def _advance(session, cleanup_id: uuid.UUID, inventory: dict) -> None:
             # sweeper retries it forever, and setting `last_error` is what drops
             # every later "cleanup start" line to DEBUG — a room that can never be
             # inventoried would otherwise be retried in complete silence.
-            logger.exception(
-                "cleanup inventory failed operation=%s room=%s",
+            #
+            # WARNING, not ERROR: `_inventory` raises for an offline device, which
+            # is the ordinary reason an archived room waits, and `obs.AlertOnError`
+            # would make every sweep cycle of every such room a Feishu alert.
+            logger.warning(
+                "cleanup inventory failed operation=%s room=%s: %s",
                 cleanup_id,
                 operation.topic_id,
+                exc,
+                exc_info=True,
             )
             operation.last_error = str(exc)[:2048]
             await session.commit()
