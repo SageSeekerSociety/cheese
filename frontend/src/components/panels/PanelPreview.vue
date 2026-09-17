@@ -151,6 +151,8 @@ const revisions = ref<DocumentRevision[]>([])
 const revisionsError = ref('')
 const deciding = ref(0)
 let revisionsKey = ''
+// 读这份清单时文件是哪一版：处理时带回去，芝士在这中间重新交付过就不会被盖掉。
+let revisionsVersion = ''
 // 处理完一条之后 PDF 要重画，而它是按文件版本缓存的——版本没变，所以要自己打一下。
 const docNonce = ref(0)
 
@@ -169,10 +171,13 @@ async function loadRevisions() {
   revisionsKey = key
   revisionsError.value = ''
   try {
-    revisions.value = (await documentRevisions(tid, path)).revisions
+    const read = await documentRevisions(tid, path)
+    revisions.value = read.revisions
+    revisionsVersion = read.version
   } catch (e) {
     // 读不到修订不该把文档也弄没：文档本身还好好地显示着。
     revisions.value = []
+    revisionsVersion = ''
     revisionsError.value = e instanceof Error ? e.message : '未能读取修订'
   }
 }
@@ -184,7 +189,9 @@ async function decide(decision: { accept?: number[]; reject?: number[] }) {
   deciding.value += 1
   revisionsError.value = ''
   try {
-    revisions.value = (await decideDocumentRevisions(tid, path, decision)).revisions
+    const done = await decideDocumentRevisions(tid, path, revisionsVersion, decision)
+    revisions.value = done.revisions
+    revisionsVersion = done.version
     // 文件改了，重新数的序号也变了：把两边都刷新，别让读者对着旧清单点第二下。
     revisionsKey = ''
     docNonce.value += 1
@@ -192,7 +199,11 @@ async function decide(decision: { accept?: number[]; reject?: number[] }) {
     await loadDocument()
     await loadRevisions()
   } catch (e) {
-    revisionsError.value = e instanceof Error ? e.message : '未能处理这处修订'
+    const said = e instanceof Error ? e.message : '未能处理这处修订'
+    // 写不进去多半是文件已经变了：先把清单换成现在这份，再说刚才那下没生效。
+    revisionsKey = ''
+    await loadRevisions()
+    revisionsError.value = said
   } finally {
     deciding.value -= 1
   }

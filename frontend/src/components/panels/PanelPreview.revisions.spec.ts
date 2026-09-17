@@ -91,14 +91,14 @@ beforeEach(() => {
   attachmentRawUrl.mockReturnValue('/api/topics/topic-a/attachments/raw?path=x')
   previewDocumentPdf.mockResolvedValue(new ArrayBuffer(4096))
   previewFileBytes.mockResolvedValue(new ArrayBuffer(2048))
-  documentRevisions.mockResolvedValue({ path: PATH, revisions: [] })
-  decideDocumentRevisions.mockResolvedValue({ path: PATH, revisions: [] })
+  documentRevisions.mockResolvedValue({ path: PATH, version: 'doc-1', revisions: [] })
+  decideDocumentRevisions.mockResolvedValue({ path: PATH, version: 'doc-2', revisions: [] })
 })
 afterEach(cleanup)
 
 it('每处修订读成一句话，新旧文字都在同一条上', async () => {
   // 一次替换在 XML 里是插入加删除两个元素；分成两条就可以只接受一半。
-  documentRevisions.mockResolvedValue({ path: PATH, revisions: [revision()] })
+  documentRevisions.mockResolvedValue({ path: PATH, version: 'doc-1', revisions: [revision()] })
 
   mount()
 
@@ -112,6 +112,7 @@ it('每条都说这是谁改的', async () => {
   // 不知不觉接受了才不是——所以作者必须写在条目上。
   documentRevisions.mockResolvedValue({
     path: PATH,
+    version: 'doc-1',
     revisions: [revision({ author: '张伟' })],
   })
 
@@ -124,10 +125,12 @@ it('每条都说这是谁改的', async () => {
 it('接受一条只提交那一条', async () => {
   documentRevisions.mockResolvedValue({
     path: PATH,
+    version: 'doc-1',
     revisions: [revision(), revision({ number: 2, kind: 'delete', removed: '（暂定）' })],
   })
   decideDocumentRevisions.mockResolvedValue({
     path: PATH,
+    version: 'doc-2',
     revisions: [revision({ number: 1, kind: 'delete', removed: '（暂定）' })],
   })
 
@@ -136,12 +139,12 @@ it('接受一条只提交那一条', async () => {
   await waitFor(() => expect(screen.getByText('删了「（暂定）」')).toBeTruthy())
   await fireEvent.click(screen.getAllByText('接受')[0])
 
-  await waitFor(() => expect(decideDocumentRevisions).toHaveBeenCalledWith('topic-a', PATH, { accept: [1] }))
+  await waitFor(() => expect(decideDocumentRevisions).toHaveBeenCalledWith('topic-a', PATH, 'doc-1', { accept: [1] }))
 })
 
 it('处理完之后重新取一次 PDF，页面上看到的才是处理过的那一版', async () => {
   // 文件版本没变（是这里改的，不是芝士改的），所以缓存不会自己失效。
-  documentRevisions.mockResolvedValue({ path: PATH, revisions: [revision()] })
+  documentRevisions.mockResolvedValue({ path: PATH, version: 'doc-1', revisions: [revision()] })
 
   mount()
 
@@ -154,6 +157,7 @@ it('处理完之后重新取一次 PDF，页面上看到的才是处理过的那
 it('全部接受把每一条的序号都带上', async () => {
   documentRevisions.mockResolvedValue({
     path: PATH,
+    version: 'doc-1',
     revisions: [revision(), revision({ number: 2 }), revision({ number: 3 })],
   })
 
@@ -163,7 +167,7 @@ it('全部接受把每一条的序号都带上', async () => {
   await fireEvent.click(screen.getByText('全部接受'))
 
   await waitFor(() =>
-    expect(decideDocumentRevisions).toHaveBeenCalledWith('topic-a', PATH, {
+    expect(decideDocumentRevisions).toHaveBeenCalledWith('topic-a', PATH, 'doc-1', {
       accept: [1, 2, 3],
     })
   )
@@ -197,8 +201,33 @@ it('清单读不出来时文档照旧显示', async () => {
   expect(screen.getByTestId('pages')).toBeTruthy()
 })
 
+it('每次处理带的都是刚读到的那一版文件', async () => {
+  // 房间随时会重新交付同一个产出。带着旧版本去处理，写回去就把芝士刚交付的那份盖掉了。
+  documentRevisions
+    .mockResolvedValueOnce({ path: PATH, version: 'doc-1', revisions: [revision(), revision({ number: 2 })] })
+    .mockResolvedValue({ path: PATH, version: 'doc-3', revisions: [revision()] })
+  decideDocumentRevisions.mockResolvedValue({
+    path: PATH,
+    version: 'doc-2',
+    revisions: [revision()],
+  })
+
+  mount()
+
+  await waitFor(() => expect(screen.getByText('修订 2 处')).toBeTruthy())
+  await fireEvent.click(screen.getAllByText('接受')[0])
+  await waitFor(() => expect(documentRevisions).toHaveBeenCalledTimes(2))
+  await fireEvent.click(screen.getAllByText('接受')[0])
+
+  await waitFor(() =>
+    expect(decideDocumentRevisions).toHaveBeenLastCalledWith('topic-a', PATH, 'doc-3', {
+      accept: [1],
+    })
+  )
+})
+
 it('处理失败时说一句，清单留在原地', async () => {
-  documentRevisions.mockResolvedValue({ path: PATH, revisions: [revision()] })
+  documentRevisions.mockResolvedValue({ path: PATH, version: 'doc-1', revisions: [revision()] })
   decideDocumentRevisions.mockRejectedValue(new Error('清单可能已经变了，重新读一次。'))
 
   mount()
@@ -208,4 +237,6 @@ it('处理失败时说一句，清单留在原地', async () => {
 
   await waitFor(() => expect(screen.getByText(/重新读一次/)).toBeTruthy())
   expect(screen.getByText('把「30 天」改成「60 天」')).toBeTruthy()
+  // 写不进去多半是文件已经变了，所以清单要换成现在这份——而那句话得留着。
+  expect(documentRevisions).toHaveBeenCalledTimes(2)
 })

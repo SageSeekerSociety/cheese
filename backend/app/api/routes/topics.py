@@ -27,6 +27,7 @@ from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import (
+    ConflictError,
     ForbiddenError,
     NotFoundError,
     SystemBusyError,
@@ -118,6 +119,7 @@ from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
 from app.domain.webhook import service as webhook_service
 from app.domain.workspace import service as ws
+from app.domain.workspace.textfile import content_version
 
 router = APIRouter(prefix="/topics", tags=["topics"])
 
@@ -2313,7 +2315,13 @@ async def list_document_revisions(
         raise ValidationError(str(exc)) from exc
     except RevisionsFailed as exc:
         raise ValidationError(str(exc)) from exc
-    return ok({"path": clean, "revisions": [r.as_dict() for r in found]})
+    return ok(
+        {
+            "path": clean,
+            "version": content_version(raw),
+            "revisions": [r.as_dict() for r in found],
+        }
+    )
 
 
 @router.post("/{topic_id}/documents/revisions")
@@ -2329,6 +2337,11 @@ async def decide_document_revisions(
     deletion removes the text with it; rejecting does the opposite. All of it is
     a determinate transformation of the XML, so the file the reader downloads
     afterwards is the file Word would have produced.
+
+    ``version`` is the one the list was read at. A room re-publishing the
+    artifact between that read and this write would otherwise lose its newer
+    copy to a decision taken against the older one, so a moved file is a
+    conflict here rather than an overwrite.
     """
     topic = await TopicService(db).get_or_404(topic_id)
     actor = await resolver.resolve(
@@ -2340,7 +2353,16 @@ async def decide_document_revisions(
     clean = _clean_artifact_path(body.get("path") or "")
     accept = _row_numbers(body.get("accept"), "accept")
     reject = _row_numbers(body.get("reject"), "reject")
+    expected = str(body.get("version") or "")
+    if not expected:
+        raise ValidationError("缺少 version：要处理的是哪一版清单")
     raw = ws.read_room_file(topic.project_id, topic_id, clean)
+    actual = content_version(raw)
+    if actual != expected:
+        raise ConflictError(
+            "文件已被改动（芝士或其他人写过），这份清单是基于旧内容的",
+            data={"path": clean, "version": actual},
+        )
     try:
         made, left = decide(raw, clean, accept=accept, reject=reject)
     except RevisionsUnsupported as exc:
@@ -2348,7 +2370,13 @@ async def decide_document_revisions(
     except RevisionsFailed as exc:
         raise ValidationError(str(exc)) from exc
     ws.write_room_file(topic.project_id, topic_id, clean, made)
-    return ok({"path": clean, "revisions": [r.as_dict() for r in left]})
+    return ok(
+        {
+            "path": clean,
+            "version": content_version(made),
+            "revisions": [r.as_dict() for r in left],
+        }
+    )
 
 
 def _row_numbers(raw, field: str) -> list[int]:
