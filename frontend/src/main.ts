@@ -44,6 +44,7 @@ import { installErrorReporter } from './errorReporter'
 import { registerPwa } from './pwa'
 
 import i18n from '@/i18n'
+import { watchInstallPrompt } from '@/lib/pwaInstall'
 // Plugins
 import { registerPlugins } from '@/plugins'
 import vuetify from '@/plugins/vuetify'
@@ -90,3 +91,6 @@ app.mount('#app')
 // guard reopens for the next release.
 clearStaleBuildGuard()
 registerPwa()
+// 安装机会（beforeinstallprompt）来得比任何页面都早——早到用户还没来得及打开
+// 「设置 → 安装到手机」。所以在启动时就把它接住，"安装到手机"那一页才有得用。
+watchInstallPrompt()
