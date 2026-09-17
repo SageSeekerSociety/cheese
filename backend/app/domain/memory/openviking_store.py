@@ -515,6 +515,8 @@ class OpenVikingMemoryStore:
         layer: MemoryLayer = MemoryLayer.fact,
     ) -> list[dict[str, Any]]:
         """Memory card files of one scope layer (structural filter, no NL parsing)."""
+        from openviking_cli.exceptions import NotFoundError
+
         service = await self._rt.service()
         ctx = await self._rt.ctx_for(scope, scope_id, layer)
         try:
@@ -526,7 +528,20 @@ class OpenVikingMemoryStore:
                 node_limit=1000,
                 level_limit=6,
             )
-        except Exception:  # noqa: BLE001 - missing tree == no memories yet
+        except NotFoundError:
+            return []  # nothing written for this scope yet
+        except Exception:  # noqa: BLE001 - recall degrades, it never kills a turn
+            # Still an empty list: a turn that cannot reach the memory service
+            # should go on without memories rather than fail. But the agent is
+            # now answering as if it had none, and with nothing logged an outage
+            # looked exactly like a scope nobody has written to.
+            logger.warning(
+                "memory tree unreadable for %s/%s layer=%s; recalling nothing",
+                scope,
+                scope_id,
+                layer.value,
+                exc_info=True,
+            )
             return []
         files: list[dict[str, Any]] = []
         for e in entries:
@@ -540,9 +555,14 @@ class OpenVikingMemoryStore:
 
     async def _read_card(self, service: Any, ctx: Any, uri: str) -> str:
         """Whitespace-condensed card content, capped at the per-card budget."""
+        from openviking_cli.exceptions import NotFoundError
+
         try:
             text = await service.fs.read(uri, ctx=ctx)
-        except Exception:  # noqa: BLE001 - a racing prune must not kill recall
+        except NotFoundError:
+            return ""  # a racing prune took the card between the tree and the read
+        except Exception:  # noqa: BLE001 - recall degrades, it never kills a turn
+            logger.warning("memory card unreadable: %s", uri, exc_info=True)
             return ""
         # Strip OpenViking's structured metadata trailer (its own machine
         # token, not natural language) — prompts get the human part only.
