@@ -87,10 +87,29 @@ CONSUMED_TURN_META_KEY = "consumed_turn"
 # 而那正是原注释在防的事。
 PROMPT_ATTEMPTS_META_KEY = "prompt_attempts"
 
+# What this block has to say to 芝士, written by whoever created it — and absent
+# on the blocks that have nothing to say to it, which is most of them.
+#
+# 一个话题的事件流是给人看的时间线：预览更新了、同步完成了、话题改了名。芝士需要
+# 知道的只是其中很少的一部分，而「是哪一部分」只有**写下那条事件的代码**知道 ——
+# 它就是造成这件事的那段代码。反过来按 kind / author_type 去猜，等于把一份为人做
+# 的展示日志当成给模型的指令队列用。
+#
+# 措辞和 `content` 分开也是同一个理由：界面上要读到的是「张三 编辑了文档」，而芝士
+# 要听的是它手上那份已经旧了、以及现在该做什么。同一件事，两个读者，两句话。
+#
+# 与 `consumed_turn` 成对：一个说「这是说给芝士的」，一个说「哪一轮已经读过了」。
+AGENT_NOTICE_META_KEY = "agent_notice"
+
 
 def consumed_turn(block: "Block") -> str | None:
     """Which turn already read this block into a prompt (None = still pending)."""
     return (block.meta or {}).get(CONSUMED_TURN_META_KEY)
+
+
+def agent_notice(block: "Block") -> str | None:
+    """What this block says to 芝士, or None when it says nothing to it."""
+    return (block.meta or {}).get(AGENT_NOTICE_META_KEY) or None
 
 
 def prompt_attempts(block: "Block") -> int:

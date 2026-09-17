@@ -1,5 +1,5 @@
 {
-  "system": "PLATFORM_FIXTURE\n\n## 你的专家角色\nROLE_FIXTURE\n\nSKILL_FIXTURE\n\n## 当前话题的实况文档（这是最新状态；用户可能编辑了它，请按它继续工作，并在状态变化时用 update_doc 工具更新它）\nDOCUMENT_FIXTURE\n\n## 项目记忆（你已知道的事实，回答时可引用）\n\n### 本轮检索到的记忆（按本话题/本轮消息挑出来的，**不是全部**）\n- MEMORY_FIXTURE",
+  "system": "PLATFORM_FIXTURE\n\n## 你的专家角色\nROLE_FIXTURE\n\nSKILL_FIXTURE\n\n## 当前话题的实况文档（这是最新状态；用户可能编辑了它，请按它继续工作，并在状态变化时用 update_doc 工具更新它）\nDOCUMENT_FIXTURE\n\n## 项目记忆（你已知道的事实，回答时可引用）\n\n### 核心记忆（每轮都在场，与本轮说什么无关）\n- MEMORY_FIXTURE",
   "events": {
     "room_message": "[fixture_user]: USER_FIXTURE 【平台·用户原文】\n\n【平台】以下是平台自动发出的指令，不是任何人手打的话：\nOrdinary output and final responses are not published to chat. Publish with the chat_send tool. 收到需要回应的用户消息（包括排队或执行中追加的消息）时，能直接回答就发答案；需要继续处理就先说明你理解的意思和接下来要做什么，再继续。重要进展、改方向、阻碍和完成结果也要主动发消息。巡检按 heartbeat 的通知规则发言；分身向主 agent 回报。",
     "private_message": "[fixture_user]: USER_FIXTURE 【平台·用户原文】\n\n【平台】以下是平台自动发出的指令，不是任何人手打的话：\n这是私聊，最终答复会自动发布给用户。直接回答，不要再用 chat_send 重复发送同一答复。",

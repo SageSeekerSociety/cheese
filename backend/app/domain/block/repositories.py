@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.work_context import current_work_id
 from app.domain.block.models import (
+    AGENT_NOTICE_META_KEY,
     CONSUMED_TURN_META_KEY,
     PROMPT_ATTEMPTS_META_KEY,
     AuthorType,
@@ -435,7 +436,14 @@ class BlockRepository:
         return list((await self._session.scalars(stmt)).all())
 
     async def turn_history(self, topic_id: uuid.UUID) -> list[Block]:
-        """Inputs awaiting consumption and the two turn-preparation boundaries."""
+        """Inputs awaiting consumption and the two turn-preparation boundaries.
+
+        Inputs, not the timeline: a room's events are mostly for people to read,
+        and only the ones whose author wrote a sentence for 芝士 are addressed to
+        it. Those are selected by carrying that sentence, the same way a human
+        input is selected by being one — not by their kind, which says who can
+        see them rather than who they are for.
+        """
         place = self._in_place(topic_id, None)
         latest_ai = (
             select(Block.id)
@@ -471,6 +479,10 @@ class BlockRepository:
                     and_(
                         Block.author_type == AuthorType.human,
                         Block.kind.in_((BlockKind.message, BlockKind.attachment)),
+                        Block.meta[CONSUMED_TURN_META_KEY].as_string().is_(None),
+                    ),
+                    and_(
+                        Block.meta[AGENT_NOTICE_META_KEY].as_string().is_not(None),
                         Block.meta[CONSUMED_TURN_META_KEY].as_string().is_(None),
                     ),
                 ),

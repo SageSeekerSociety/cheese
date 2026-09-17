@@ -76,7 +76,7 @@ def summarize_doc_change(before: str, after: str) -> str:
 
     size = f"+{added} −{removed} 行"
     if not touched:
-        return f"改了 {size}"
+        return f"改动 {size}"
     named = "、".join(f"「{_trim(s)}」" for s in touched[:_MAX_SECTIONS])
     more = " 等几处" if len(touched) > _MAX_SECTIONS else ""
-    return f"动的是 {named}{more}，{size}"
+    return f"改动涉及{named}{more}，{size}"

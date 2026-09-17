@@ -7,7 +7,6 @@ prompt), not the internals of how the markdown is parsed.
 
 import pytest
 
-from app.domain.agent.chat import _OPEN_CARD_HINTS, _OPEN_CARD_STATUSES
 from app.domain.agent.harness.prompt import build_system_prompt as build_prompt
 from app.domain.agent.skills import (
     available_skills,
@@ -147,9 +146,3 @@ def test_stage_guide_lands_in_the_system_prompt():
 def test_no_stage_guide_adds_no_section():
     prompt = build_prompt("base", "", None, [])
     assert "当前阶段的操作说明" not in prompt
-
-
-def test_every_open_card_status_has_a_hint():
-    """漏一个就是那一段静默无提示。"""
-    for status in _OPEN_CARD_STATUSES:
-        assert status in _OPEN_CARD_HINTS

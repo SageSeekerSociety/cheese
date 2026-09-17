@@ -23,10 +23,9 @@ def build_system_prompt(
     roster: list[dict] | None = None,
     topics: list[dict] | None = None,
     untitled: bool = False,
-    turn_meta: list[str] | None = None,
+    session_opening: list[str] | None = None,
     stage_guide: str | None = None,
     memories_omitted: int = 0,
-    memories_core: int = 0,
     memories_core_omitted: int = 0,
 ) -> str:
     parts = [base]
@@ -85,29 +84,23 @@ def build_system_prompt(
             "请按它继续工作，并在状态变化时用 update_doc 工具更新它）\n" + doc
         )
     if memories or memories_omitted:
-        core = [f"- {chipify_paths(m)}" for m in memories[:memories_core]]
-        retrieved = [f"- {chipify_paths(m)}" for m in memories[memories_core:]]
         block = "## 项目记忆（你已知道的事实，回答时可引用）"
-        if core:
+        if memories:
             block += "\n\n### 核心记忆（每轮都在场，与本轮说什么无关）\n" + "\n".join(
-                core
-            )
-        if retrieved:
-            block += (
-                "\n\n### 本轮检索到的记忆（按本话题/本轮消息挑出来的，**不是全部**）\n"
-                + "\n".join(retrieved)
+                f"- {chipify_paths(m)}" for m in memories
             )
         if memories_omitted:
-            # 没注入必须可见: what did not come in is stated, never dropped in
-            # silence. A reader who cannot tell "nothing was stored" from "this
-            # turn did not ask for it" stops trusting memory entirely — and
-            # stops asking for the part it can still get.
+            # 没注入必须可见: the pool's size is stated even though its contents
+            # are not. A reader who cannot tell "nothing was stored" from "this
+            # is not everything" stops trusting memory entirely — and stops
+            # asking for the part it can still get. This line is the only entry
+            # to that part, so it says the number and how to reach it.
             block += (
-                f"\n\n> ⚠️ 记忆池里还有 **{memories_omitted} 条这一轮没注入**"
-                "（按与本轮上下文的相关性排的，排在后面的没进来；不是不存在）。"
-                "**没列出来 ≠ 不存在**——换个话题、要用到某条旧约定或踩过的坑时，"
-                '用 `cheese_recall(query="<关键词>")` 现查；一次没查到也不等于没有，'
-                "换个说法、用更短的词再试一次。"
+                f"\n\n> 📚 记忆池里另有 **{memories_omitted} 条**，"
+                "**不会自动出现在这里**——核心记忆之外的都要自己查。"
+                "开工前、话题拐弯时、要用到某条旧约定或踩过的坑时，"
+                '用 `cheese_recall(query="<关键词>")` 查一次。'
+                "**一次没查到不等于没有**：换个说法、或只用其中一两个关键词再试一次。"
             )
         if memories_core_omitted:
             # Core is the layer that is supposed to be unconditional. If even
@@ -118,9 +111,13 @@ def build_system_prompt(
                 "了——挑几条降级成普通记忆（`cheese_remember` 不带 `core`）。"
             )
         parts.append(block)
-    if turn_meta:
+    if session_opening:
+        # 会话开场，不是本轮：这两条一次写对就一直对（机器多大不会变；上次的清单
+        # 是给「不在场的那一轮」看的，会话活着的时候它自己的历史就是答案）。会变的
+        # 东西不在这里 —— 它们在变的那一刻写成平台提醒，跟着下一轮的消息进来。
         parts.append(
-            "## 本轮运行环境（平台元信息，非用户输入）\n" + "\n".join(turn_meta)
+            "## 这个会话开场时的运行环境（平台元信息，非用户输入）\n"
+            + "\n".join(session_opening)
         )
     return "\n\n".join(parts)
 

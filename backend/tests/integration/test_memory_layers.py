@@ -82,19 +82,22 @@ def test_core_comes_back_whole_and_never_competes_as_a_fact(
             "你是芝士",
             "回答先给结论",
         ]
-        ranked = await store.rank_facts(MemoryScope.project, pool, "你是芝士吗")
-        assert [content for _, content in ranked] == [
-            "前端构建用 pnpm",
-            "部署脚本在 deploy.sh",
-        ]
+        # Ordinary facts are in the pool's size and nowhere else: what injection
+        # carries is the core layer, and the rest is reached with `search`.
+        got = await recall_pools(store, [(MemoryScope.project, pool)])
+        assert got.facts == ["你是芝士", "回答先给结论"]
+        assert got.omitted == 2
         assert await store.count(MemoryScope.project, pool) == 4
 
     _portal.call(_run)
 
 
-def test_the_oldest_fact_wins_the_seat_when_the_turn_is_about_it(
+def test_a_fact_injection_did_not_carry_is_still_one_search_away(
     db_session: AsyncSession, _portal: "BlockingPortal"
 ):
+    """The whole bet of not injecting facts: the pool-size line sends 芝士 to
+    `search`, and `search` has to actually find the thing."""
+
     async def _run() -> None:
         store = DbMemoryStore(db_session)
         pool = _pool()
@@ -103,16 +106,14 @@ def test_the_oldest_fact_wins_the_seat_when_the_turn_is_about_it(
         for i in range(30):
             await store.remember(MemoryScope.project, pool, f"昨天顺手记的第 {i} 条")
 
-        got = await recall_pools(
-            store,
-            [(MemoryScope.project, pool)],
-            query="我加了一个 alembic 迁移，HEAD 冲突了怎么办",
-            char_budget=120,
-        )
+        got = await recall_pools(store, [(MemoryScope.project, pool)])
+        assert got.facts == []
+        assert got.omitted == 31
 
-        # Under the old newest-N rule this fact was the first one dropped.
-        assert got.facts[0] == answer
-        assert got.omitted == 31 - len(got.facts)
+        hits = await store.search(
+            MemoryScope.project, pool, "我加了一个 alembic 迁移，HEAD 冲突了怎么办"
+        )
+        assert [h.as_dict()["abstract"] for h in hits][:1] == [answer]
 
     _portal.call(_run)
 
@@ -134,16 +135,12 @@ def test_core_survives_a_pool_that_has_outgrown_the_prompt(
                 MemoryScope.project, pool, f"第 {i} 条事实：" + "细节" * 110
             )
 
-        got = await recall_pools(
-            store, [(MemoryScope.project, pool)], query="这一轮在聊部署"
-        )
+        got = await recall_pools(store, [(MemoryScope.project, pool)])
 
-        assert got.facts[0] == "你是芝士，说人话"
-        assert got.core_count == 1
+        assert got.facts == ["你是芝士，说人话"]
         assert got.core_omitted == 0
-        # The pool does not fit, and the prompt is told exactly how much of it
-        # did not — that is the part that must never go silent.
-        assert got.omitted == 156 - len(got.facts)
-        assert got.omitted > 0
+        # The prompt is told exactly how much of the pool it did not get —
+        # that is the part that must never go silent.
+        assert got.omitted == 155
 
     _portal.call(_run)
