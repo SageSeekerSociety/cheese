@@ -1,4 +1,5 @@
 import account from './account.json'
+import agentControls from './agentControls.json'
 import comments from './comments.json'
 import editor from './editor.json'
 import global from './global.json'
@@ -13,6 +14,7 @@ import teams from './teams.json'
 import users from './users.json'
 
 export default {
+  agentControls,
   global,
   navigation,
   projects,

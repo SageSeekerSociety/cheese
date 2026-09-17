@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render } from '@testing-library/vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import { answerAgentControl, getAgentControl, getAgentControlResult, sendAgentControl } from '../api'
+import { setLocale } from '../i18n'
 
 import AgentControls from './AgentControls.vue'
 
@@ -17,6 +18,7 @@ vi.mock('../api', () => ({
 
 beforeEach(() => {
   vi.resetAllMocks()
+  setLocale('zh-CN')
   vi.mocked(getAgentControl).mockResolvedValue({ id: 's1', connected: true })
 })
 afterEach(() => {

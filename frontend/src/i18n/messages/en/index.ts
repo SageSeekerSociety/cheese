@@ -1,4 +1,5 @@
 import account from './account.json'
+import agentControls from './agentControls.json'
 import comments from './comments.json'
 import editor from './editor.json'
 import global from './global.json'
@@ -17,6 +18,7 @@ import users from './users.json'
 // `frontend/src/i18n/catalog.spec.ts` — do not add an empty namespace to silence
 // that check; write the translation and delete the keys from that list instead.
 export default {
+  agentControls,
   global,
   navigation,
   projects,
