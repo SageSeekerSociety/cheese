@@ -26,6 +26,7 @@ the room picks for the reader, not a handle, so there is no honest test for
 from __future__ import annotations
 
 import importlib.util
+import sys
 import tempfile
 from dataclasses import dataclass
 from importlib.machinery import SourceFileLoader
@@ -58,6 +59,12 @@ def _script() -> Any:
 
     Imported by path rather than as a package: `sandbox/` is what ships to other
     people's machines and is deliberately not importable as one.
+
+    Bytecode writing is off for the duration. Python would otherwise leave a
+    `__pycache__` next to the script — inside the directory that travels to
+    every room, where a `.pyc` is both useless and, on the device path, written
+    through a shell heredoc that would corrupt it. `test_native_skill_files.py`
+    is what noticed.
     """
     global _office
     if _office is None:
@@ -66,7 +73,12 @@ def _script() -> Any:
         if spec is None:  # pragma: no cover - a missing script is a broken build
             raise RevisionsFailed("找不到处理文档修订的脚本")
         module = importlib.util.module_from_spec(spec)
-        loader.exec_module(module)
+        quiet = sys.dont_write_bytecode
+        sys.dont_write_bytecode = True
+        try:
+            loader.exec_module(module)
+        finally:
+            sys.dont_write_bytecode = quiet
         _office = module
     return _office
 

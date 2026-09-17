@@ -87,6 +87,19 @@ uv run --with lxml python3 "$SKILL/scripts/office.py" revisions 改后.docx -o �
 `--json` 输出同样的清单，给需要拿它做界面的地方用。页码不在里面：XML 里没有页的概念，
 页要等排版之后才存在，段号是这里唯一靠得住的坐标。
 
+### 用户也能在界面上处理这些修订
+
+点名之后，用户在预览旁边会看到同一份清单，可以自己逐条接受或拒绝。
+
+**他处理的是点名出去的那一份，不是你工作区里的那一份**——点名会把文件复制一份出去。
+所以用户说「前两处我接受了」之后，不要接着改你手上的旧副本，先把他那份取回来：
+
+```bash
+cheese api GET "/topics/$CHEESE_TOPIC/attachments/raw?path=output/合同.docx&download=true"     -o 合同.docx
+```
+
+不取回来就改，等于把他刚做的决定又覆盖掉一遍，而且过程里什么都不报。
+
 ## 拆在几个 run 里的句子
 
 Word 会按语言的切换、拼写检查、格式微调把一句话拆成好几个 `<w:r>`。`office.py` 会先把覆盖
