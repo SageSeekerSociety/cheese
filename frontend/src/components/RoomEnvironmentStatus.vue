@@ -89,6 +89,11 @@ const shown = computed(() => unreachable.value || working.value || stuck.value)
 /** 只有「在往前走」才画那条动的线；停住了和读不到都不该还有东西在动。 */
 const moving = computed(() => !unreachable.value && working.value)
 
+// `unbound` 也不在任何一组里，而且是故意的：房间还没挑机器，也没有云机器在建 ——
+// 没有任何东西在动，也没有任何东西需要人管，那就没有什么要说。它以前混在
+// `pending` 里，于是屏幕上写着「正在准备运行环境」，底下那条细线扫着一件不会发生
+// 的事。挑机器发生在第一条消息进来的时候，在那之前这里保持安静。
+//
 // `stopped` 不在上面任何一组里：它由设备端脚本返回，语义（是人停的？还是崩了？）
 // 我没核实，宁可继续不画，也不猜一句话贴到用户脸上。要补它得先去看
 // cheese-environment.py 到底什么时候返这个值。

@@ -141,11 +141,17 @@ async def get_room_environment(
         machine = await ProjectMachineRepository(db).get_active_for_topic(
             topic.resource_id or topic_id
         )
-        state = (
-            {"state": "failed", "log": "Cloud 机器创建失败，运行环境尚未接入。"}
-            if machine is not None and machine.status == MachineStatus.error
-            else {"state": "pending"}
-        )
+        if machine is None:
+            # Nothing is being prepared, and nothing will be until somebody
+            # speaks: the machine is chosen when the room's first message
+            # arrives. `pending` here was a promise nobody was keeping — the
+            # room sat under 「正在准备运行环境」 with nothing running at all.
+            state = {"state": "unbound"}
+        elif machine.status == MachineStatus.error:
+            state = {"state": "failed", "log": "Cloud 机器创建失败，运行环境尚未接入。"}
+        else:
+            # A cloud machine on its way IS preparation, whatever stage it's at.
+            state = {"state": "pending"}
     elif not device_hub.is_online(binding.device_id):
         state = {"state": "offline"}
     else:
