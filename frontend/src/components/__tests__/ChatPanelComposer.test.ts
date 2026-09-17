@@ -38,9 +38,11 @@ vi.mock('../../api', async () => {
     // 带不了这个头，挂上去的结果是 401。输入框的缩略图得用 attachmentImageUrl 取字节。
     attachmentRawUrl: () => '',
     attachmentImageUrl: vi.fn().mockResolvedValue('blob:composer-thumb'),
-    // PDF 缩略图要取的原始字节。jsdom 里画不出一页 PDF，所以让它拿不到——
-    // 这一格于是落到「图标 + title 写名字」的兜底上，正是下面断言的那个形状。
+    // 文档缩略图的两个字节来源：PDF 直接取原始字节，Word/幻灯片要平台先转一次。
+    // 测试环境里画不出一页 PDF，所以两个都让它拿不到——那一格于是停在「这个类型的
+    // 图标」上，正是下面断言的形状。
     previewFileBytes: vi.fn().mockRejectedValue(new Error('no bytes under test')),
+    previewDocumentPdf: vi.fn().mockRejectedValue(new Error('no renderer under test')),
     uploadAttachment: vi.fn(),
     downloadFile: vi.fn(),
   }
@@ -275,11 +277,44 @@ describe('对话栏自己的输入栏', () => {
       '截图.png',
       'Writing替换词.docx',
     ])
-    // 同一个块、同一个方格；里面一个是图，一个是这个类型的图标。
+    // 同一个块、同一个方格。
     expect(cards.every((c) => c.querySelector('.att-face'))).toBe(true)
+    // 图片是 <img>；.docx 走的是画布，因为它也有第一页可画——平台先把它转成 PDF。
     expect(cards[0].querySelector('img')).toBeTruthy()
     expect(cards[1].querySelector('img')).toBeNull()
+    expect(cards[1].querySelector('canvas')).toBeTruthy()
+    // 页面还没到（这里永远到不了）的时候摆的是这个类型自己的图标，不是一律 PDF。
     expect(cards[1].querySelector('.mdi-file-word-outline')).toBeTruthy()
+    expect(vi.mocked(api.previewDocumentPdf)).toHaveBeenCalledWith('topic-mixed', 'uploads/id/Writing替换词.docx')
+  })
+
+  // 表格没有第一页可画，而且是故意的：把一张表分页会拆散列、让单元格失去地址，
+  // 那正是它之所以是表的东西。所以它停在图标上，也不该去叫转换服务。
+  it('leaves a spreadsheet on its icon and does not try to convert it', async () => {
+    const api = await import('../../api')
+    vi.mocked(api.uploadAttachment).mockResolvedValue({
+      path: 'uploads/id/预算.xlsx',
+      mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+    const { container } = mountPanel({}, 'topic-sheet')
+    await flush()
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!
+    await fireEvent.change(input, {
+      target: {
+        files: [
+          new File(['x'], '预算.xlsx', {
+            type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          }),
+        ],
+      },
+    })
+    await flush()
+
+    const card = container.querySelector('.att-strip .att-card')!
+    expect(card.querySelector('.att-card__name')?.textContent).toBe('预算.xlsx')
+    expect(card.querySelector('canvas')).toBeNull()
+    expect(card.querySelector('.mdi-file-excel-outline')).toBeTruthy()
+    expect(vi.mocked(api.previewDocumentPdf)).not.toHaveBeenCalled()
   })
 
   // 名字在块边缘就截断了，所以悬停是拿到全名的唯一出口——它得真的弹出来。原来

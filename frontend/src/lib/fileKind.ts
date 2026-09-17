@@ -25,6 +25,18 @@ export const DOCUMENT_TYPES: Record<string, FileKind> = {
   markdown: { label: 'Markdown', icon: 'mdi-language-markdown-outline', view: 'markdown' },
 }
 
+/** 浏览器自己画不出来、要平台先转成 PDF 的那些。转换走的是 LibreOffice，一份约
+ *  2.5 秒，后端按内容哈希缓存。
+ *  表格不在里面，而且是故意的：把一张表分页会拆散列、让单元格失去地址，而那正是
+ *  它之所以是表的东西。 */
+export const NEEDS_CONVERSION = new Set(['docx', 'doc', 'odt', 'rtf', 'pptx', 'ppt', 'odp'])
+
+/** 这个文件有没有「第一页」可以画出来。PDF 直接就有，Office 文档转一次就有。 */
+export function hasPagePreview(path: string): boolean {
+  const suffix = suffixOf(path)
+  return suffix === 'pdf' || NEEDS_CONVERSION.has(suffix)
+}
+
 export function suffixOf(path: string): string {
   const name = path.split('/').pop() ?? ''
   const dot = name.lastIndexOf('.')

@@ -14,7 +14,7 @@ import {
   readPreviewFile,
   requestPreviewSession,
 } from '../../api'
-import { DOCUMENT_TYPES, suffixOf } from '../../lib/fileKind'
+import { DOCUMENT_TYPES, NEEDS_CONVERSION, suffixOf } from '../../lib/fileKind'
 import { markdown, sanitizeRendered } from '../../lib/markdown'
 import { postPreviewSession } from '../../lib/previewSession'
 
@@ -71,8 +71,6 @@ function openPreviewInNewTab() {
 // can open directly — paginating it would destroy exactly that. A markdown file
 // has neither pages nor cells, and nothing here converts it: it is shown as the
 // text it already is, parsed by the same renderer the chat uses.
-//: Formats the browser cannot draw itself, so the platform converts them first.
-const NEEDS_CONVERSION = new Set(['docx', 'doc', 'odt', 'rtf', 'pptx', 'ppt', 'odp'])
 //: 浏览器自己画得出来的图片。它们读不成文本（`content` 是 null），但那不是「没
 //: 法显示」——内容域就是拿 image/png、image/jpeg 把这些字节发出来的。
 const IMAGE_SUFFIXES = new Set(['png', 'jpg', 'jpeg'])
