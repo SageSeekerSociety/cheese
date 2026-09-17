@@ -212,6 +212,29 @@
       "reasonEntity": "用于{entity}",
       "reasonTask": "用于赛题认证",
       "reasonVerify": "身份验证"
+    },
+    "accessLogs": {
+      "title": "实名信息访问记录",
+      "count": "{count} 条访问记录",
+      "intro": "在这里您可以查看所有访问过您实名信息的记录，包括谁在何时出于什么目的查看了您的信息。我们记录每一次对您信息的访问，确保完全透明。",
+      "colAccessor": "访问者",
+      "colAccessTime": "访问时间",
+      "colAccessType": "访问类型",
+      "colAccessEntity": "访问目的",
+      "colIpAddress": "IP地址",
+      "loadingMore": "加载更多记录...",
+      "allLoaded": "已加载全部记录",
+      "empty": "暂无访问记录",
+      "emptyHint": "您的实名信息未被任何人访问过",
+      "loading": "正在加载访问记录...",
+      "typeView": "查看",
+      "typeExport": "导出",
+      "typeUnknown": "未知",
+      "entityTask": "赛题认证需要",
+      "entityVerify": "身份验证",
+      "noticeTitle": "关于实名信息访问",
+      "noticeBody": "我们严格限制对您实名信息的访问，只有在赛题认证、评优评奖等特定场景下，指定的工作人员才能查看这些信息。所有访问都会被记录并可以在此页面查看。如果您发现任何可疑的访问记录，请立即{contact}。",
+      "contactUs": "联系我们"
     }
   }
 }

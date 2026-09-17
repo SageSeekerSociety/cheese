@@ -212,6 +212,29 @@
       "reasonEntity": "Used for {entity}",
       "reasonTask": "Used for contest verification",
       "reasonVerify": "Identity verification"
+    },
+    "accessLogs": {
+      "title": "Real-name access log",
+      "count": "{count} access records",
+      "intro": "Every look at your real-name info appears here: who looked, when, and for what. We log each one so this page stays complete.",
+      "colAccessor": "Viewer",
+      "colAccessTime": "Time",
+      "colAccessType": "Type",
+      "colAccessEntity": "Purpose",
+      "colIpAddress": "IP address",
+      "loadingMore": "Loading more records...",
+      "allLoaded": "That is every record",
+      "empty": "No access records",
+      "emptyHint": "No one has viewed your real-name info",
+      "loading": "Loading access records...",
+      "typeView": "Viewed",
+      "typeExport": "Exported",
+      "typeUnknown": "Unknown",
+      "entityTask": "Needed for contest verification",
+      "entityVerify": "Identity verification",
+      "noticeTitle": "About access to your real-name info",
+      "noticeBody": "Access to your real-name info is tightly restricted: only designated staff can view it, and only for specific purposes such as contest verification or award review. Every view is logged and shown on this page. If you see a record you do not recognise, {contact} immediately.",
+      "contactUs": "contact us"
     }
   }
 }

@@ -12,7 +12,6 @@
   "global.formValidation.minLength",
   "global.formValidation.numeric",
   "global.loadFailed",
-  "global.loading",
   "global.no",
   "global.publishFailed",
   "global.publishSuccess",

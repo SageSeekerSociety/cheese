@@ -15,6 +15,10 @@
   "save": "Save",
   "updateFailed": "Couldn't update",
   "updateSuccess": "Updated",
+  "loadMore": "Load more",
+  "loading": "Loading...",
+  "noData": "No data",
+  "noMore": "No more",
   "editor": {
     "placeholder": "Say something..."
   },
