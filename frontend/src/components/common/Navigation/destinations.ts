@@ -84,6 +84,7 @@ export function railItems(src: NavSources): NavGenericItem[] {
       key: `cx-${p.id}`,
       type: 'item' as const,
       title: p.name,
+      projectId: p.id,
       to: `/projects/${p.id}`,
       img: src.projectAvatar(p.name),
       shortcut: i + 2, // ⌘1 = 首页，然后是项目

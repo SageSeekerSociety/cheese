@@ -4,7 +4,17 @@
        while its icons follow --v-theme-on-surface → white tile, pale icons. -->
   <v-navigation-drawer permanent rail :rail-width="64" class="app-rail pb-2" color="background" border="none">
     <!-- <v-avatar v-tooltip="'知是'" :image="logo" size="48" /> -->
-    <RailItem v-for="item in items" :key="item.key" :item="item"></RailItem>
+    <RailItem
+      v-for="item in items"
+      :key="item.key"
+      :item="item"
+      :dragging="isDragging(item)"
+      :drop-edge="dropEdgeFor(item)"
+      @drag-start="draggingId = $event"
+      @drag-over="aimAt"
+      @drop="finishDrag"
+      @drag-end="clearDrag"
+    ></RailItem>
     <v-spacer></v-spacer>
     <v-menu
       v-if="userMenu.loggedIn.value"
@@ -160,12 +170,14 @@
 </template>
 
 <script setup lang="ts">
-import { toRefs } from 'vue'
+import type { DropEdge } from '@/lib/projectOrder'
+
+import { ref, toRefs } from 'vue'
 
 import { useUserMenu } from '@/composables/useUserMenu'
 
 import RailItem from './RailItem.vue'
-import { NavBarProps } from './types'
+import { NavBarProps, NavGenericItem } from './types'
 
 import logo from '@/assets/logo.svg?url'
 import ThemeToggle from '@/components/common/ThemeToggle.vue'
@@ -175,6 +187,40 @@ const navBarProps = withDefaults(defineProps<NavBarProps>(), {
 })
 
 const { items } = toRefs(navBarProps)
+
+const emit = defineEmits<{
+  /** 把 `movedId` 放到 `targetId` 的这一边。顺序归 App.vue 保管，rail 只报告动作。 */
+  reorder: [movedId: string, targetId: string, edge: DropEdge]
+}>()
+
+// 拖拽的状态住在 rail 上而不是每个格子里：画插入线的那一格和被拖走的那一格不是
+// 同一个，两边都得知道现在拖的是谁。
+const draggingId = ref<string | null>(null)
+const dropTarget = ref<{ id: string; edge: DropEdge } | null>(null)
+
+const projectIdOf = (item: NavGenericItem) => (item.type === 'item' ? item.projectId : undefined)
+
+const isDragging = (item: NavGenericItem) => !!draggingId.value && projectIdOf(item) === draggingId.value
+
+function dropEdgeFor(item: NavGenericItem): DropEdge | null {
+  const id = projectIdOf(item)
+  return id && dropTarget.value?.id === id ? dropTarget.value.edge : null
+}
+
+function aimAt(projectId: string, edge: DropEdge) {
+  // 拖着的那一格自己不画线——那是个原地不动的落点。
+  dropTarget.value = projectId === draggingId.value ? null : { id: projectId, edge }
+}
+
+function clearDrag() {
+  draggingId.value = null
+  dropTarget.value = null
+}
+
+function finishDrag(movedId: string, targetId: string, edge: DropEdge) {
+  clearDrag()
+  if (movedId !== targetId) emit('reorder', movedId, targetId, edge)
+}
 
 // 使用用户菜单 composable
 const userMenu = useUserMenu()

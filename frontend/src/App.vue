@@ -7,7 +7,7 @@
         <app-bar v-if="!hideAppBar" :links="[]" />
       </keep-alive>
       <keep-alive>
-        <LeftAppRail v-if="!hideAppBar" :items="rail" />
+        <LeftAppRail v-if="!hideAppBar" :items="rail" @reorder="reorderRail" />
       </keep-alive>
 
       <!-- 二级导航：通过路由渲染 -->
@@ -159,6 +159,13 @@ import VersionBadge from '@/components/common/VersionBadge.vue'
 import ResourceLimitsNotice from '@/components/ResourceLimitsNotice.vue'
 import { trackKeyboardInset } from '@/lib/keyboardInset'
 import { loadCachedProjects, saveCachedProjects } from '@/lib/projectCache'
+import {
+  applyProjectOrder,
+  type DropEdge,
+  loadProjectOrder,
+  reorderProjects,
+  saveProjectOrder,
+} from '@/lib/projectOrder'
 import { myHandle } from '@/me'
 import { TeamsApi } from '@/network/api/teams'
 import AccountService from '@/services/account'
@@ -212,6 +219,18 @@ const hideTabs = computed(() => currentRoute.meta.hideTabs === true)
 // 一格方头像（Discord 式，取代了原来的元思助手），点开的是我们的完整工作区
 // (话题/群聊/doc/agent)。两端各拿到哪些格子由 Navigation/destinations.ts 说了算。
 const cxProjects = ref<Project[]>(loadCachedProjects(myHandle()))
+
+// 服务端那份清单是 created_at desc，rail 画的是这个人自己拖出来的顺序。两者分开
+// 存：拖过之后再刷新项目列表，排法不会被服务端的顺序盖掉。
+const projectOrder = ref<string[]>(loadProjectOrder(myHandle()))
+const railProjects = computed(() => applyProjectOrder(cxProjects.value, projectOrder.value))
+
+function reorderRail(movedId: string, targetId: string, edge: DropEdge) {
+  const next = reorderProjects(railProjects.value, movedId, targetId, edge)
+  projectOrder.value = next
+  saveProjectOrder(myHandle(), next)
+}
+
 const projectListWarning = ref('')
 const showProjectListWarning = ref(false)
 
@@ -263,17 +282,20 @@ watch(
 watch(
   () => AccountService.loggedIn,
   () => {
+    // 排法是按 handle 存的，所以换了人就得换一份读进来——否则新登录的人看到的是
+    // 上一个人的排法，直到下一次整页刷新。
+    projectOrder.value = loadProjectOrder(myHandle())
     void loadCxProjects()
   }
 )
 
 // 上次开过的那个项目存在 workspace store 的布局里，所以冷启动也落得回去。
 const workspaceProjectId = computed<string | null>(() =>
-  workspaceProject(cxProjects.value, workspace.projectId, lastOpenedProjectId())
+  workspaceProject(railProjects.value, workspace.projectId, lastOpenedProjectId())
 )
 
 const navSources = computed<NavSources>(() => ({
-  projects: cxProjects.value,
+  projects: railProjects.value,
   workspaceProjectId: workspaceProjectId.value,
   projectAvatar,
   createProject: createNewProject,
