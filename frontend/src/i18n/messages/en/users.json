@@ -176,5 +176,42 @@
       "warningTitle": "Install with Chrome, not with “Add to desktop”",
       "warningBody": "Most browsers that only offer “Add to desktop” — the ones common in China among them — install a shell around the web page rather than the app: no file picker inside it (so you cannot send images or upload files) and no push notifications. Chrome installs the real app."
     }
+  },
+  "privacy": {
+    "center": {
+      "title": "Privacy & security center",
+      "subtitle": "Review and manage everything privacy-related here, and see how we keep your data safe.",
+      "tabOverview": "Overview",
+      "tabRealName": "Real name",
+      "tabAccessLogs": "Access log",
+      "tabPolicy": "Privacy policy",
+      "helpTitle": "Need help?",
+      "helpBody": "If you have a privacy question or concern, contact our privacy support team.",
+      "contactSupport": "Contact support"
+    },
+    "overview": {
+      "title": "Privacy overview",
+      "statusGood": "Your privacy protection looks good",
+      "statProtectionRate": "Real-name info protected",
+      "statRecentVisits": "Recent views of your real-name info",
+      "statContests": "Real-name contests",
+      "recentActivity": "Recent activity",
+      "viewAll": "View all",
+      "you": "You",
+      "viewedOwn": "{who} viewed your own real-name info",
+      "viewedYours": "{who} viewed your real-name info",
+      "empty": "No access records",
+      "emptyHint": "No one has viewed your real-name info yet",
+      "quickActions": "Quick actions",
+      "actionRealNameTitle": "View real-name info",
+      "actionRealNameDesc": "View and manage your verified identity details",
+      "actionLogsTitle": "Access log",
+      "actionLogsDesc": "See who viewed your real-name info",
+      "actionContestsTitle": "Real-name contests",
+      "actionContestsDesc": "Contests you entered that require real-name verification",
+      "reasonEntity": "Used for {entity}",
+      "reasonTask": "Used for contest verification",
+      "reasonVerify": "Identity verification"
+    }
   }
 }

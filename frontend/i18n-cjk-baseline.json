@@ -217,8 +217,6 @@
     "src/views/teams/Pending.vue": 37,
     "src/views/user/privacy/AccessLogs.vue": 23,
     "src/views/user/privacy/DataSharing.vue": 47,
-    "src/views/user/privacy/Overview.vue": 21,
-    "src/views/user/privacy/PrivacyCenter.vue": 9,
     "src/views/user/privacy/PrivacyPolicy.vue": 63,
     "src/views/user/privacy/RealNameInfo.vue": 51,
     "src/views/workspace/DmView.vue": 2,

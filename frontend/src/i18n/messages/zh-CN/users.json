@@ -176,5 +176,42 @@
       "warningTitle": "请用 Chrome 装，别用「添加到桌面」的国产浏览器",
       "warningBody": "国产浏览器、以及大多数只提供「添加到桌面」的浏览器，装出来的不是应用，是一个包着网页的壳：壳里选不了文件（发不了图、传不了文件），也收不到消息推送。用 Chrome 装出来的才是真应用。"
     }
+  },
+  "privacy": {
+    "center": {
+      "title": "隐私与安全中心",
+      "subtitle": "在这里您可以查看和管理与隐私安全相关的所有设置，了解我们如何保护您的数据安全",
+      "tabOverview": "概览",
+      "tabRealName": "实名信息",
+      "tabAccessLogs": "访问记录",
+      "tabPolicy": "隐私政策",
+      "helpTitle": "需要帮助？",
+      "helpBody": "如有隐私方面的问题或疑虑，请联系我们的隐私支持团队",
+      "contactSupport": "联系支持团队"
+    },
+    "overview": {
+      "title": "隐私概览",
+      "statusGood": "隐私保护状态良好",
+      "statProtectionRate": "实名信息保护率",
+      "statRecentVisits": "实名信息近期访问次数",
+      "statContests": "实名赛题数量",
+      "recentActivity": "近期活动",
+      "viewAll": "查看全部",
+      "you": "您",
+      "viewedOwn": "{who}查看了自己的实名信息",
+      "viewedYours": "{who}查看了您的实名信息",
+      "empty": "暂无访问记录",
+      "emptyHint": "您的实名信息目前未被任何人访问",
+      "quickActions": "快捷操作",
+      "actionRealNameTitle": "查看实名信息",
+      "actionRealNameDesc": "查看和管理您的实名认证信息",
+      "actionLogsTitle": "访问记录",
+      "actionLogsDesc": "查看谁访问了您的实名信息",
+      "actionContestsTitle": "实名赛题",
+      "actionContestsDesc": "了解您参与的需要实名的赛题",
+      "reasonEntity": "用于{entity}",
+      "reasonTask": "用于赛题认证",
+      "reasonVerify": "身份验证"
+    }
   }
 }
