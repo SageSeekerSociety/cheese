@@ -1,0 +1,14 @@
+[Unit]
+Description=Reclaim regenerable caches daily, before the disk is the problem
+
+[Timer]
+# Nightly, jittered: several boxes install this, and a build cache prune is
+# heavy enough on I/O that having them all start on the same second is worth
+# avoiding.
+OnCalendar=*-*-* 04:00:00
+RandomizedDelaySec=30m
+# Catch up after a box has been off, rather than skipping a day silently.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

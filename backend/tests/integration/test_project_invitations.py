@@ -4,7 +4,16 @@
 不该由邀请方单方面决定谁能看。所以这一份钉的全是「谁做的决定」：没答复之前不算成
 员、只有本人能答复、答复过的邀请不能再答一次，以及那条待办不会在答复之后还挂在别
 人的收件箱里等一个已经没有答案的问题。
+
+另外两条钉的是**谁可以被邀请**：执行身份（带 agent_bindings 的 user）不能被**当人**
+请进来（直加名册那条路照旧，队友就是这么上名册的），以及「已经在项目里」要按完整名册
+算而不是成员表。
 """
+
+import asyncio
+import uuid
+
+from app.domain.identity.handles import topic_agent_handle
 
 OWNER = "owner-1"
 
@@ -238,3 +247,179 @@ def test_an_outsider_cannot_revoke(client, bearer):
     invitation = _invite(client, bearer, project_id, "alice").json()["data"]
     r = client.delete(f"/invitations/{invitation['id']}", headers=bearer("mallory"))
     assert r.status_code == 403
+
+
+# --- 谁可以被邀请 ---------------------------------------------------------------
+# 一眼看不出区别的两类拒绝，都是真发生过的：成员页按 uid 查人，查得到 agent（它
+# 就是一行 user），也查得到早就通过小队在项目里的人（他不在成员表里）。判断都得
+# 落在「这个人是谁、他在不在项目里」，而不是「成员表里有没有这一行」。
+
+
+def _seed_agent(client, handle: str) -> None:
+    """造一个 agent-user：真实的 User 行 + platform binding，和线上一模一样。"""
+    from app.domain.identity.services import IdentityService
+
+    async def _run() -> None:
+        async with client.test_factory() as session:  # type: ignore[attr-defined]
+            await IdentityService(session).ensure_agent_user(handle=handle)
+            await session.commit()
+
+    asyncio.run(_run())
+
+
+def test_an_agent_is_not_invited_into_a_project(client, bearer):
+    """成员页那个框收 uid，而 agent 的 uid 和真人同一段序列——查得到，但名册不收。
+
+    agent 进项目走的是 Agent 配置那条路（项目页的「AI 队友」），不是人名册。
+    """
+    project_id = _project(client)
+    _seed_agent(client, "cheese-elsewhere")
+
+    r = _invite(client, bearer, project_id, "cheese-elsewhere")
+    assert r.status_code == 422
+    assert "AI 队友" in r.json()["message"]
+    assert "cheese-elsewhere" not in _handles(client, project_id)
+
+
+def test_a_topic_derived_agent_handle_is_not_invited(client, bearer):
+    """真的去拿一个话题分身的 handle——它就是最容易被照着填进来的那个。
+
+    handle 是 ``cheese-<话题hex>``，判据不能是「长得像不像」，只能是不是带
+    agent_bindings 的 user：格式是派生的，不是契约。
+    """
+    project_id = _project(client)
+    topic_id = client.post(
+        "/topics",
+        json={"project_id": project_id, "title": "T", "created_by": OWNER},
+    ).json()["data"]["id"]
+    handle = topic_agent_handle(uuid.UUID(topic_id))
+
+    r = _invite(client, bearer, project_id, handle)
+    assert r.status_code == 422
+    assert "AI 队友" in r.json()["message"]
+    assert handle not in _handles(client, project_id)
+
+
+def test_an_agent_is_still_added_to_the_roster_directly(client, bearer):
+    """邀请那条挡住了 agent，直加名册这条必须照常——名册是「AI 队友」那一栏的来源。
+
+    agent 上名册走的是 ``MemberService.add``（建项目时铺名册、接受邀请时落行都走
+    它），成员页按这个标记把人 / 队友分成两栏，话题名册也靠它认队友。把这条路也
+    堵掉，队友就从整个界面上消失——那是另一个改动，不该顺手夹在「邀请」这个修复里。
+    """
+    project_id = _project(client)
+    _seed_agent(client, "cheese-direct")
+
+    r = client.post(
+        f"/projects/{project_id}/members",
+        json={"user_handle": "cheese-direct"},
+        headers=bearer(OWNER),
+    )
+    assert r.status_code == 200, r.text
+    assert "cheese-direct" in _handles(client, project_id)
+
+
+def test_a_teammate_who_joined_after_the_project_is_not_invited(client, bearer):
+    """「已经在项目里」按完整名册算，不是查成员表。
+
+    小队成员不在 ``project_members`` 里，读名册的时候才补出来。只查表的话他会再被
+    邀请一次，而接受之后落下的那一行会在**退队之后继续生效**——小队这条授权本来是
+    按读时推导、不留副本的。
+    """
+    team_id = _make_team(client, "teamlead")
+    r = client.post(
+        "/projects",
+        json={"name": "P", "owner_handle": OWNER, "team_id": team_id},
+    )
+    assert r.status_code == 200, r.text
+    project_id = r.json()["data"]["id"]
+
+    # 建项目之后才进队的人——建项目那次铺名册碰不到他。
+    _add_to_team(client, team_id, "bob")
+    assert "bob" in _handles(client, project_id), "他在名册上（读的时候补出来的）"
+
+    r = _invite(client, bearer, project_id, "bob")
+    assert r.status_code == 422
+    assert "已经在项目里" in r.json()["message"]
+    assert (
+        client.get(f"/projects/{project_id}/invitations").json()["data"]["data"] == []
+    )
+
+
+def _make_team(client, owner: str) -> int:
+    """``owner`` 一个人的小队。成员按 user id 存，所以先要有真实的 User 行。"""
+    from tests.conftest import seed_user
+
+    seed_user(client, owner)
+    return _insert_team(client, owner)
+
+
+def _add_to_team(client, team_id: int, handle: str) -> None:
+    from tests.conftest import seed_user
+
+    seed_user(client, handle)
+    _insert_team_relation(client, team_id, handle)
+
+
+def _insert_team(client, owner: str) -> int:
+    from datetime import UTC, datetime
+
+    from app.domain.team.models import Team, TeamMemberRole, TeamUserRelation
+    from app.domain.user.repositories import UserRepository
+
+    holder: dict[str, int] = {}
+
+    async def _run() -> None:
+        now = datetime.now(UTC)
+        async with client.test_factory() as session:  # type: ignore[attr-defined]
+            team = Team(
+                name=f"team-of-{owner}",
+                intro="",
+                description="",
+                avatar_id=1,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(team)
+            await session.flush()
+            user = await UserRepository(session).get_by_username(owner)
+            assert user is not None, owner
+            session.add(
+                TeamUserRelation(
+                    team_id=team.id,
+                    user_id=user.id,
+                    role=TeamMemberRole.OWNER,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            holder["id"] = team.id
+            await session.commit()
+
+    asyncio.run(_run())
+    return holder["id"]
+
+
+def _insert_team_relation(client, team_id: int, handle: str) -> None:
+    from datetime import UTC, datetime
+
+    from app.domain.team.models import TeamMemberRole, TeamUserRelation
+    from app.domain.user.repositories import UserRepository
+
+    async def _run() -> None:
+        now = datetime.now(UTC)
+        async with client.test_factory() as session:  # type: ignore[attr-defined]
+            user = await UserRepository(session).get_by_username(handle)
+            assert user is not None, handle
+            session.add(
+                TeamUserRelation(
+                    team_id=team_id,
+                    user_id=user.id,
+                    role=TeamMemberRole.MEMBER,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await session.commit()
+
+    asyncio.run(_run())

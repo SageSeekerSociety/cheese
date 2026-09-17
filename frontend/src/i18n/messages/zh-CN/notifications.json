@@ -96,5 +96,13 @@
     "title_anonymous": "加入请求已取消",
     "body": "已取消加入团队 \"{team}\" 的请求",
     "status": "已取消"
+  },
+  "ROOM_NOTICE": {
+    "body": "在「{topicTitle}」",
+    "untitled": "平台有一条提示"
+  },
+  "CHEESE_QUESTION": {
+    "body": "在「{topicTitle}」，本轮已暂停等待回答",
+    "untitled": "芝士有一个待确认问题"
   }
 }

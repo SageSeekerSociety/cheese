@@ -283,6 +283,25 @@ class BlockRepository:
         await self._session.flush()
         return highest
 
+    async def mark_step_failed(self, block_id: uuid.UUID, error: str) -> bool:
+        """Record on a 现场 step that its tool came back an error.
+
+        Written onto the step that is already there rather than as a second
+        block: "it failed" is a property of that one line, and a block of its
+        own would put the verdict somewhere the eye has to pair back up with
+        the action. Same `meta` replacement rule as `mark_consumed` — an
+        in-place mutation of a JSON column never saves.
+        """
+        block = await self._session.get(Block, block_id)
+        if block is None:
+            return False
+        meta = {**(block.meta or {}), "failed": True}
+        if error:
+            meta["error"] = error
+        block.meta = meta
+        await self._session.flush()
+        return True
+
     async def update_node(
         self, block: Block, *, node_type: str, struct_order: float
     ) -> Block:
@@ -342,6 +361,56 @@ class BlockRepository:
             .distinct()
         )
         return {row for row in (await self._session.scalars(stmt)).all() if row}
+
+    async def tasks_awaiting_an_answer(
+        self, task_ids: list[uuid.UUID]
+    ) -> set[uuid.UUID]:
+        """这些活里，哪几条停在一个未回答的提问上 —— 一次查完，看板用。
+
+        判据是 #1084 定的那一条：**最近一条提问消息没有 `answered`**。不需要新增
+        存储，因为回答本来就记在提问那一块上（`meta.answered`）。取「最近一条」而
+        不是「有没有任何一条」：已回答的旧提问不该让这条活长期停留在待处理。
+
+        每条活只取一行（`DISTINCT ON`），走 `ix_blocks_task_id_created_at`。
+        """
+        return await self._awaiting_an_answer(Block.task_id, task_ids)
+
+    async def rooms_awaiting_an_answer(
+        self, topic_ids: list[uuid.UUID]
+    ) -> set[uuid.UUID]:
+        """同一个判据，问的是房间自己那条线（`task_id IS NULL`）。
+
+        分成两个方法而不是一个带开关的：房间和活是两种东西，而「房间自己那条线」
+        这个条件只对前者成立 —— 合成一个函数就得在里面判断主语是谁。
+        """
+        return await self._awaiting_an_answer(
+            Block.topic_id, topic_ids, Block.task_id.is_(None)
+        )
+
+    async def _awaiting_an_answer(
+        self, place_column, place_ids: list[uuid.UUID], *extra
+    ) -> set[uuid.UUID]:
+        if not place_ids:
+            return set()
+        stmt = (
+            select(place_column, Block.meta)
+            .where(
+                place_column.in_(place_ids),
+                Block.kind == BlockKind.message,
+                # `meta` 是 json（不是 jsonb），所以用 `->>` 判存在，和
+                # `ix_blocks_cloud_provisioning` 那个部分索引同一个写法。
+                Block.meta["options"].as_string().isnot(None),
+                *extra,
+            )
+            .order_by(place_column, Block.created_at.desc())
+            .distinct(place_column)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return {
+            place_id
+            for place_id, meta in rows
+            if place_id is not None and not (meta or {}).get("answered")
+        }
 
     async def list_for_topic(
         self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None

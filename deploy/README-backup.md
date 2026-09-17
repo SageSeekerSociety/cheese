@@ -10,10 +10,10 @@ share this setup.
 | **production** (`cheese.ruc.edu.cn`) | `cheese-prod-app` (192.168.16.8) | `cheese-prod-postgresql` (192.168.16.10) | `prod-db/`, `prod-uploads/` |
 | **etrip** (`etrip.cn`, Aliyun HK, Dockerized) | `etrip` (8.217.1.152) | in-container `cheese_prod_postgres` + `cheesex-pg` | `etrip/` |
 
-The dev and prod boxes are bare-metal (systemd + local `.venv`); **etrip is a Docker
-Compose stack** (`cheese-backend-py:main` + a `cheesex` agent stack), so it has its
-own `etrip-backup.sh` that dumps via `docker exec` and tars the uploads Docker
-volume. Everything else (R2 upload, verify, off-site) is shared.
+Every box runs Docker Compose. dev and prod share `deploy/compose/`; **etrip has
+its own stack** (`cheese-backend-py:main` + a `cheesex` agent stack), so it also
+has its own `etrip-backup.sh` that dumps via `docker exec` and tars the uploads
+Docker volume. Everything else (R2 upload, verify, off-site) is shared.
 
 ## What runs
 

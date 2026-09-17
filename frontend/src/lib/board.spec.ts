@@ -23,7 +23,7 @@ describe('columnLabel', () => {
     // done 在折叠行上、archived 在房间上，两者都要有名字可写。
     expect(columnLabel('building')).toBe('施工中')
     expect(columnLabel('delivering')).toBe('交付中')
-    expect(columnLabel('needs_you')).toBe('等你')
+    expect(columnLabel('needs_you')).toBe('待处理')
     expect(columnLabel('done')).toBe('已完成')
     expect(columnLabel('archived')).toBe('已归档')
   })
@@ -47,7 +47,7 @@ describe('columnDotStyle', () => {
     }
   })
 
-  it('只有「等你」是实心暖色 —— 板上唯一该抓眼睛的一列', () => {
+  it('只有「待处理」是实心暖色 —— 板上唯一该抓眼睛的一列', () => {
     expect(columnDotStyle('needs_you')).toEqual({ borderColor: 'var(--warn)', background: 'var(--warn)' })
     // 其余没有一个用暖色，不然「该谁动」就没法一眼看出来。
     for (const column of ['building', 'delivering', 'archived'] as const) {

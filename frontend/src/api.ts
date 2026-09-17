@@ -46,6 +46,7 @@ import type {
   UpstreamSyncResult,
   UsageStats,
   UserProfile,
+  WaitingItem,
   WorkspaceFile,
 } from './cx_types'
 
@@ -447,6 +448,15 @@ export function screenWsUrl(sid: string): string {
 export function listProjects(teamId?: number): Promise<ListPayload<Project>> {
   const q = teamId != null ? `?team_id=${teamId}` : ''
   return request<ListPayload<Project>>(`/projects${q}`)
+}
+
+/** 待我处理：跨项目、点到我的那些事项，最近动过的在前。
+ *
+ *  和看板读同一份规则（后端 `room_task/presentation.py`），所以一件事在看板上是待
+ *  处理，在这里就是待处理。它不是通知列表的另一种视图：通知是事件记录，答不出
+ *  「现在还没处理完的有哪些」。 */
+export function listAwaitingMe(): Promise<ListPayload<WaitingItem>> {
+  return request<ListPayload<WaitingItem>>('/awaiting-me')
 }
 
 export function createProject(
@@ -1050,8 +1060,24 @@ export async function uploadAttachment(topicId: string, file: File): Promise<Cha
 }
 
 // <img src=…> URL for an uploaded attachment (binary raw endpoint).
+//
+// 注意这不是一个可以挂在 <img src> 上的地址：raw 端点从 Authorization 头认人，
+// 而浏览器发图片请求时带不了头（也读不到 localStorage）。挂上去的结果是 401，
+// 读者看到的是一张裂图。要显示图片用下面的 attachmentImageUrl。
 export function attachmentRawUrl(topicId: string, path: string): string {
   return `${BASE}/topics/${encodeURIComponent(topicId)}/attachments/raw?path=${encodeURIComponent(path)}`
+}
+
+/** 图片附件的字节，取回来做成 <img> 能用的 object URL。
+ *
+ * 先 fetch 再转 URL 不是为了多走一步，是因为只有 fetch 才能带上 Authorization：
+ * 这个端点不接受匿名请求，而 `<img src="/api/…/attachments/raw?path=…">` 恰恰
+ * 是匿名的。调用方负责在不再需要时 URL.revokeObjectURL（见 AttachmentImage）。
+ */
+export async function attachmentImageUrl(topicId: string, path: string): Promise<string> {
+  const res = await fetch(attachmentRawUrl(topicId, path), { headers: authHeaders() })
+  if (!res.ok) throw new Error(`图片加载失败（HTTP ${res.status}）`)
+  return URL.createObjectURL(await res.blob())
 }
 
 /** A published file's bytes, for a viewer that draws them in the page. */

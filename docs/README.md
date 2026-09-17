@@ -34,7 +34,6 @@
 |---|---|
 | [`fusion-design.md`](fusion-design.md) | 2026-07-09 决策汇编 |
 | [`convergence-plan.md`](convergence-plan.md) | local→device 收敛计划 |
-| [`deploy-unification-design.md`](deploy-unification-design.md) | **draft，未批准开工** |
 | [`permission-audit.md`](permission-audit.md) | 一次性权限审计记录 |
 | [`unification-plan.md`](unification-plan.md) | 统一化计划 |
 

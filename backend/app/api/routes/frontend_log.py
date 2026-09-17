@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.response import ok
+from app.core import alerting
 from app.core.db import get_db
 from app.core.errors import NotFoundError
 from app.domain import frontend_log  # module import: tests swap the intake singleton
@@ -56,5 +57,16 @@ async def report_frontend_errors(body: FrontendErrorBatchIn, db: DbSession) -> d
             meta=frontend_log.event_meta(err),
         )
         accepted += 1
+        # Only here: `admit` returned True, so this fingerprint is one nobody has
+        # seen in the dedup window. Every repeat of it is already excluded above,
+        # which is what keeps a render loop from becoming a thousand messages.
+        alerting.send(
+            f"前端报错：{err.message}",
+            [
+                f"页面：{err.page or '未知'}",
+                f"位置：{err.source or '未知'}",
+                f"房间：{topic.id}",
+            ],
+        )
     await db.commit()
     return ok({"accepted": accepted, "dropped": len(body.errors) - accepted})

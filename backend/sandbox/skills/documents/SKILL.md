@@ -5,8 +5,19 @@ description: 需要读取或产出 Word、PowerPoint、Excel、PDF 文件时用�
 
 # 办公文档
 
-这个环境里已经装好了 pandoc、typst 和中文字体，Python 库用 `uv run --with` 按需取用。
-不需要安装系统包，也没有权限安装。
+平台把 pandoc、typst、uv 和一对中文字体放在这台机器的 `$CHEESE_TOOLCHAIN` 下，并且已经
+在 PATH 和 `TYPST_FONT_PATHS` 里。Python 库用 `uv run --with` 按需取用；不需要安装系统包，
+也没有权限安装。
+
+放置是在后台进行的，所以**开工前先确认你要用的那个在不在**：
+
+```bash
+command -v typst && command -v pandoc
+```
+
+不在就是不在——可能还在下载，也可能这台机器的平台拿不到它。**这时候要如实告诉用户这台
+机器现在做不了，不要改用别的办法凑一个凑合的结果**：绕道生成的 PDF 和缺字体的 PDF 一样，
+看起来正常，问题要等人翻到那一页才发现。
 
 ## 读用户给的文件：用 pandoc，不要自己解析
 

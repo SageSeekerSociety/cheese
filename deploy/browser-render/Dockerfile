@@ -63,11 +63,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 RUN playwright install --with-deps chromium \
  && rm -rf /var/lib/apt/lists/*
 
-# crawl4ai's own database and config. Allowed to fail — but a build that ends
-# without a usable browser must not ship, and `|| true` on its own is exactly
-# what would let that through: the image builds, and every fetch comes back
-# empty. The check resolves the executable Playwright would actually launch.
-RUN crawl4ai-setup || true
+# A build that ends without a usable browser must not ship, so the browser is
+# checked rather than assumed: this resolves the executable playwright would
+# actually launch, which is the thing the version pin above protects.
 RUN python -c "\
 import pathlib, sys; \
 from playwright.sync_api import sync_playwright; \
@@ -83,6 +81,22 @@ COPY server.py /app/server.py
 # that matters if a page ever finds a renderer bug.
 RUN useradd -m render && chown -R render /app
 USER render
+
+# crawl4ai's cache directory and its SQLite database, prepared once at build time
+# rather than on the first request.
+#
+# It runs HERE, after the USER switch, because `crawl4ai-setup` builds that tree
+# under `Path.home()`. Run as root it made /root/.crawl4ai, which the service —
+# running as `render`, HOME=/home/render — never opens. The step was in this
+# image from the start and had never once done the thing it was added for.
+#
+# CRAWL4AI_MODE=api is crawl4ai's own switch for "do the setup, skip the browser
+# install", and without it this step downloads a SECOND browser: `patchright`, a
+# playwright fork that arrives as a transitive dependency, carries its own
+# revision (v1161 against playwright 1.49's v1148) and installs with `--force`.
+# That is 76 seconds of every build and several hundred MB of a layer, for an
+# engine this service never launches — it drives plain playwright.
+RUN CRAWL4AI_MODE=api crawl4ai-setup
 
 EXPOSE 8900
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \

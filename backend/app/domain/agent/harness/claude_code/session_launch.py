@@ -122,6 +122,11 @@ def hooks_settings(
             "UserPromptSubmit": plain,
             "PreToolUse": tool_matched,
             "PostToolUse": tool_matched,
+            # The tool call that ended in an error. Claude Code fires this
+            # INSTEAD of `PostToolUse` (same shape as `StopFailure` below), so
+            # without it a failed step is indistinguishable from one still
+            # running: the platform sees the call start and nothing come back.
+            "PostToolUseFailure": tool_matched,
             "MessageDisplay": plain,
             # A subagent's own boundaries. Its tool calls already arrive through
             # PreToolUse/PostToolUse above (those fire inside a subagent exactly

@@ -1,0 +1,57 @@
+name: okcheese.com reachability
+
+# Nothing watched the public domain. The boxes have heartbeats (box-heartbeat.yml
+# / box-uptime.yml) and the backups have freshness checks, but okcheese.com is
+# served over a reverse SSH tunnel from the dev box to a Hong Kong box, and every
+# way that can fail was silent: the tunnel dropping, the dev box going away, the
+# thing behind the tunnel answering without a usable login page, or the
+# certificate quietly failing to renew.
+#
+# Runs on a GitHub-HOSTED runner on purpose. A probe that runs on our own boxes
+# cannot tell you the domain is unreachable from outside, which is the only
+# question a visitor asks.
+#
+# WHY IT PROBES TWICE RATHER THAN ONCE
+#
+# The tunnel drops a few times a day and recovers on its own in about 20s
+# (measured 2026-09-17: 23s from a simulated silent drop to serving again). A
+# single probe that happened to land in one of those windows would email admins
+# about a site that was already back. The second probe is 90s later, which is
+# past recovery, so only a failure that outlives the self-healing is reported.
+#
+# It deliberately does NOT try to catch those 20s dips: at this interval it would
+# see roughly one in a hundred of them, which is worse than not looking, because
+# the ones it did catch would read as an outage rate rather than a sample.
+
+on:
+  schedule:
+    # Off the hour, and off the other monitors' slots, so a GitHub-side backlog
+    # does not correlate them (the lesson box-uptime.yml's header records).
+    - cron: '8,38 * * * *'
+  workflow_dispatch: {}
+
+permissions:
+  # checkout needs this and nothing else: the probe reads a script out of the
+  # repo and talks only to the public domain. A private repo refuses the
+  # checkout without it, so an empty block here fails on the first scheduled run.
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: What a visitor gets
+        run: |
+          set -uo pipefail
+          if bash scripts/ops/probe-okcheese.sh; then
+            exit 0
+          fi
+          echo
+          echo "First probe failed. The tunnel self-heals in ~20s, so waiting 90s"
+          echo "and asking again — only a failure that outlives that is real."
+          sleep 90
+          echo
+          bash scripts/ops/probe-okcheese.sh

@@ -12,7 +12,16 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import NamedTuple
 from urllib.parse import urlencode
+
+# How long a refused spool waits between passes: one second at first, then
+# doubling to a minute. An event the platform can never accept is bounded by
+# this and nothing else — the forwarder now refuses to spool the empty body that
+# produced one, but a spool already holding such a file still has to stop
+# costing 58 requests a minute forever.
+RETRY_MIN_S = 1.0
+RETRY_MAX_S = 60.0
 
 CHUNK_BYTES = 1024 * 1024
 
@@ -168,7 +177,7 @@ def collect_transcripts(
                 elif flush:
                     raise RuntimeError(f"transcript writer is still active: {source}")
         if flush:
-            if not deliver_events(Path(values["CHEESE_HOOK_SPOOL"]), values):
+            if deliver_events(Path(values["CHEESE_HOOK_SPOOL"]), values).rejected:
                 raise RuntimeError("hook events still await acknowledgement")
             base_url, topic = values["CHEESE_HOOK_URL"].rsplit("/hooks/", 1)
             for receipt in receipts:
@@ -231,8 +240,15 @@ def collect_transcripts(
         return receipts
 
 
-def deliver_events(spool: Path, values: dict) -> bool:
-    failed = False
+class Delivery(NamedTuple):
+    """What one pass over the spool achieved."""
+
+    delivered: int
+    rejected: int
+
+
+def deliver_events(spool: Path, values: dict) -> Delivery:
+    delivered = rejected = 0
     for event in sorted(spool.glob("[0-9]*")):
         # Keep curl's deployed proxy/TLS behavior. It runs only for an event,
         # while Python's sleep and file checks require no child processes.
@@ -265,9 +281,10 @@ def deliver_events(spool: Path, values: dict) -> bool:
             acknowledged = False
         if acknowledged:
             event.unlink(missing_ok=True)
+            delivered += 1
         else:
-            failed = True
-    return not failed
+            rejected += 1
+    return Delivery(delivered, rejected)
 
 
 def main(script: Path) -> None:
@@ -279,6 +296,7 @@ def main(script: Path) -> None:
     tether = os.environ.get("CHEESE_DRAIN_TETHER")
     next_prune = 0.0
     next_transcripts = 0.0
+    backoff = RETRY_MIN_S
     collector = ThreadPoolExecutor(max_workers=1)
     collecting = None
     while True:
@@ -296,7 +314,8 @@ def main(script: Path) -> None:
             continue
         spool = Path(values["CHEESE_HOOK_SPOOL"])
         had_events = any(spool.glob("[0-9]*"))
-        failed = not deliver_events(spool, values)
+        outcome = deliver_events(spool, values)
+        failed = bool(outcome.rejected)
         if had_events and not failed:
             next_transcripts = 0.0
         if collecting is not None and collecting.done():
@@ -322,8 +341,35 @@ def main(script: Path) -> None:
                     except FileNotFoundError:
                         pass
             next_prune = time.monotonic() + 60
-        # Keep the retry delay on delivery failure; only idle observation is faster.
-        time.sleep(1 if failed else 0.1)
+        # A pass that delivered nothing and was refused everything waits longer
+        # each time, up to RETRY_MAX_S. Retrying fast buys only a faster recovery
+        # once the far end works again; it costs unbounded load when the far end
+        # is never going to accept this spool — and some events never will be.
+        # One zero-byte event, which the backend answers `hook body must be a
+        # JSON object`, cost 12,658 requests in a day at the flat one-second
+        # retry this replaces (2026-09-16): a tenth of everything the platform
+        # served, for one file that could not be accepted at any rate.
+        #
+        # Progress resets it, so one poison event cannot slow down the events
+        # behind it: what backs off is a pass that moved nothing at all.
+        # Nothing is ever dropped — an unacknowledged event stays on disk,
+        # because until this loop is acknowledged the only copy is here.
+        if outcome.delivered:
+            backoff = RETRY_MIN_S
+        if failed:
+            time.sleep(backoff)
+            if backoff < RETRY_MAX_S:
+                backoff = min(backoff * 2, RETRY_MAX_S)
+                if backoff >= RETRY_MAX_S:
+                    with Path(str(script) + ".log").open("a") as log:
+                        log.write(
+                            f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} "
+                            f"hook delivery refused {outcome.rejected} event(s); "
+                            f"retrying every {RETRY_MAX_S:.0f}s until it is accepted\n"
+                        )
+        else:
+            backoff = RETRY_MIN_S
+            time.sleep(0.1)
 
 
 if __name__ == "__main__":

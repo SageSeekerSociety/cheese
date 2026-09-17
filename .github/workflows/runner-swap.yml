@@ -1,0 +1,99 @@
+# Give each CI box something to fall back on before the kernel starts killing.
+#
+# The pool VMs are 8G with NO swap, and each carries two runner slots. When the
+# two jobs on one box want more than 8G between them the kernel does not slow
+# anything down — it picks a process and kills it. What it picks is whatever is
+# biggest at that moment, which is usually not the job that caused the problem:
+#
+#   oom-kill: cpuset=actions.runner...cheese-ci-runner-1.service, global_oom,
+#             task_memcg=...cheese-ci-runner-1b.service, task=esbuild
+#   Out of memory: Killed process (esbuild) anon-rss:1096664kB
+#
+# Slot 1 filled the box; slot 1b's esbuild died for it. From inside the job that
+# dies this is unreadable: `exit code 137`, or a frontend dev server that stops
+# answering with no error of its own, or four pytest workers reporting "node
+# down: Not properly terminated" at once. Swap does not make the box bigger; it
+# makes the same overload arrive as slowness, which a job survives and a log can
+# explain.
+#
+# Separate from runner-maintenance.yml on purpose: that workflow's job schedules
+# a runner service restart, and applying swap must not take running jobs with it.
+#
+# Deliberately uses NO actions (not even checkout), for the same reason that file
+# gives: every action is a download from codeload.github.com, and maintenance
+# that dies of the disease it treats cannot cure anyone.
+#
+# Idempotent, and one job per machine label, so a single run covers all three.
+name: Runner swap
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  add-swap:
+    strategy:
+      fail-fast: false
+      # One job per MACHINE, addressed by that machine's own label. Fanning out
+      # over the shared `cheese-ci` label and hoping the jobs spread does not
+      # work when the pool is busy: a box whose two slots are held by a long
+      # test run takes none of them, and every job piles onto whichever slots
+      # free first. Measured — six jobs, five landed on runner-2 and one on
+      # runner-3, and runner-1 was never touched.
+      #
+      # A box whose slots are both busy leaves its job QUEUED rather than
+      # skipping it, which is what makes this deterministic: the job waits for
+      # that machine instead of being served by another one.
+      matrix:
+        box: [cheese-ci-box-1, cheese-ci-box-2, cheese-ci-box-3]
+    runs-on: [self-hosted, "${{ matrix.box }}"]
+    timeout-minutes: 30
+    steps:
+      - name: Add 4G of swap if the box has none
+        run: |
+          set -uo pipefail
+          HOST="$(hostname)"
+          echo "runner: $RUNNER_NAME  host: $HOST  label: ${{ matrix.box }}"
+
+          say() { echo "$HOST: $1" >> "$GITHUB_STEP_SUMMARY"; }
+
+          if ! sudo -n true 2>/dev/null; then
+            say "no passwordless sudo — nothing done"
+            exit 0
+          fi
+
+          # `swapon` lives in /sbin, which is not on this user's PATH; sudo's
+          # secure_path has it, so every call below goes through sudo.
+          if [ -n "$(sudo swapon --show=NAME --noheadings 2>/dev/null)" ]; then
+            echo "swap already active:"
+            sudo swapon --show
+            free -m | head -3
+            say "swap already active, left alone"
+            exit 0
+          fi
+
+          FREE_G="$(df -BG --output=avail / | tail -1 | tr -dc '0-9')"
+          if [ "${FREE_G:-0}" -lt 8 ]; then
+            # 40G disks that already leak docker volumes; taking 4G from a box
+            # that is nearly full trades one outage for another.
+            say "only ${FREE_G}G free on / — refused to take 4G for swap"
+            exit 0
+          fi
+
+          sudo fallocate -l 4G /swapfile \
+            || sudo dd if=/dev/zero of=/swapfile bs=1M count=4096 status=none
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile > /dev/null
+          sudo swapon /swapfile
+
+          # Survives a reboot; without this the next boot is back to no swap and
+          # the same unreadable kills.
+          grep -q "^/swapfile " /etc/fstab \
+            || echo "/swapfile none swap sw 0 0" | sudo tee -a /etc/fstab > /dev/null
+
+          echo "after:"
+          sudo swapon --show
+          free -m | head -3
+          say "4G swap added (had ${FREE_G}G free on /)"

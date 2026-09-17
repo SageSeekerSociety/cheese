@@ -255,6 +255,8 @@ class SchedulerService:
         runner = get_work_runner()
         synced = 0
         dispatched = 0
+        failed: list[str] = []
+        undispatched: list[str] = []
         errors: list[str] = []
         async with self._sessions() as session:
             projects = await ProjectRepository(session).list_all()
@@ -274,11 +276,28 @@ class SchedulerService:
                 errors.append(f"{project.id}: {exc}")
                 logger.exception("upstream sync failed for project %s", project.id)
                 continue
-            if result.get("synced") or not result.get("conflicts"):
+            if result.get("synced"):
                 synced += 1
                 continue
+            if not result.get("conflicts"):
+                # A failure that is not a conflict. `sync_upstream` reports those
+                # as {"synced": False, "reason": ...} with NO "conflicts" key —
+                # an expired App token, a 403, a fetch that blew its timeout, or
+                # the fast-forward losing its compare-and-set race. The test
+                # `not result.get("conflicts")` read every one of them as a
+                # success, so the job's own line said it had brought N projects
+                # current while some of them had not fetched a byte, and the
+                # reason was dropped. A base that is quietly behind is what makes
+                # an accept degrade to a local merge, which is the failure this
+                # whole job exists to prevent.
+                failed.append(f"{project.id}: {result.get('reason') or 'unknown'}")
+                continue
             if not project.owner_handle:
-                continue  # nobody to hand the conflict to
+                # A conflict with nobody to hand it to. Skipping is right — there
+                # is no owner to ask — but this project stays behind until
+                # somebody notices, so say which one rather than dropping it.
+                undispatched.append(str(project.id))
+                continue
             async with self._sessions() as session:
                 handoff = await upstream_conflict.dispatch(
                     session,
@@ -290,7 +309,13 @@ class SchedulerService:
                 await session.commit()
             if handoff is not None:
                 dispatched += 1
-        return {"synced": synced, "dispatched": dispatched, "errors": errors}
+        return {
+            "synced": synced,
+            "dispatched": dispatched,
+            "failed": failed,
+            "undispatched": undispatched,
+            "errors": errors,
+        }
 
     async def open_draft_prs(self) -> dict:
         """有东西就有 PR (#718 拍板①): give every batch with commits a draft PR,

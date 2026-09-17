@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from app.core.background import hold
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import event_spool
 from app.domain.agent.harness import (
@@ -151,8 +152,8 @@ class ActivityTracker:
     #: The one state a hook stream states outright: a tool is running. Set on
     #: `PreToolUse`; the first hook of any other kind afterwards means the tool
     #: returned (the model cannot emit anything else while a tool is in flight).
-    #: `PostToolUse` is the usual one, but reading "anything else" keeps this
-    #: right when a tool fails, since `PostToolUseFailure` is not subscribed.
+    #: `PostToolUse` is the usual one and `PostToolUseFailure` the other, but
+    #: reading "anything else" keeps this right whatever a build sends.
     tool_started_at: float | None = None
     tool_returned_at: float | None = None
     #: Last hook that means work moved: a tool about to run, or the turn ending.
@@ -189,12 +190,12 @@ class ActivityTracker:
 
 
 #: The hooks that mean work moved. `PreToolUse` is a tool about to run,
-#: `PostToolUse` is one that came back (a 40-minute command returning IS
-#: progress, and the model's next line after it must not look like a session
-#: that has done nothing since), `Stop` is the turn finishing on its own.
-#: Nothing else counts, and assistant output least of all: a session wedged in
-#: a loop produces exactly that.
-_PROGRESS_HOOKS = frozenset({"PreToolUse", "PostToolUse", "Stop"})
+#: `PostToolUse` / `PostToolUseFailure` one that came back (a 40-minute
+#: command returning IS progress whether or not it worked, and the model's next
+#: line after it must not look like a session that has done nothing since),
+#: `Stop` is the turn finishing on its own. Nothing else counts, and assistant
+#: output least of all: a session wedged in a loop produces exactly that.
+_PROGRESS_HOOKS = frozenset({"PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"})
 #: The hook that means the assistant produced text.
 _OUTPUT_HOOKS = frozenset({"MessageDisplay"})
 
@@ -910,9 +911,11 @@ class ClaudeCodeRuntime:
         async def _report() -> None:
             await consumer(topic_id, prompt)
 
-        task = asyncio.create_task(_report())
-        self._receipt_tasks.add(task)
-        task.add_done_callback(self._receipt_tasks.discard)
+        hold(
+            asyncio.create_task(_report()),
+            self._receipt_tasks,
+            name=f"prompt-receipt-{topic_id}",
+        )
 
     async def ensure_subscription(
         self,
@@ -1374,15 +1377,34 @@ class ClaudeCodeRuntime:
                 attribution = subscription.current_work
                 consumer = self._event_consumer
                 if attribution is not None and consumer is not None:
-                    await consumer(
-                        subscription.project_id,
-                        subscription.topic_id,
-                        attribution.work_id,
-                        event,
-                        None,
-                        False,
-                        attribution.platform_unsolicited,
-                    )
+                    try:
+                        await consumer(
+                            subscription.project_id,
+                            subscription.topic_id,
+                            attribution.work_id,
+                            event,
+                            None,
+                            False,
+                            attribution.platform_unsolicited,
+                        )
+                    except Exception:  # noqa: BLE001 — keep the subscription alive
+                        # The same call one screen up is already guarded this
+                        # way ("keep the stream alive"); this one was not, and
+                        # it is the one that runs while reporting a watchdog
+                        # verdict. A database blip here left by the
+                        # `except BaseException` below, which re-raises — out of
+                        # the consumer task, which nothing awaits — so that
+                        # topic's hooks were never translated again: no
+                        # assistant message, no Stop, no spool cursor, for the
+                        # life of the process, and the exception surfaced hours
+                        # later under a device-teardown line naming something
+                        # else entirely.
+                        logger.exception(
+                            "session error result could not be recorded "
+                            "(topic=%s, turn=%s)",
+                            subscription.topic_id,
+                            attribution.work_id,
+                        )
                 await self._end_session_activity(
                     subscription, activity, clear_work=True
                 )

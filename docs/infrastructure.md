@@ -42,9 +42,17 @@ dev and prod (RUC) run the app as **Docker containers** (`deploy/deploy-docker.s
 The frontend image bundles nginx (SPA + `/api` reverse-proxy). DB/Redis are
 **external** ghg hosts (the app only holds `DATABASE_URL`/`REDIS_URL`); uploads
 bind-mount a host dir outside the containers (`/home/nictheboy/shared/uploads`
-on prod — the 赛题 PDFs). Each box was cut over from bare-metal once
-(`deploy/{dev,prod}-docker-cutover.sh`); the old systemd service is kept
-**installed-but-disabled** as an instant rollback.
+on prod — the 赛题 PDFs).
+
+The boxes ran bare-metal releases before this, and two traces of that are still
+load-bearing rather than historical. `~/cheese-backend-py` is still a SYMLINK
+into a release directory under `~/releases/`, and the deploy reads the backend
+env file and the compose file through it — so neither the symlink nor that
+release directory can be cleaned up as leftovers; moving them takes a deliberate
+migration to a version-free path such as `~/ops/`. The old
+`cheese-backend-py.service` systemd unit is also still installed and disabled;
+it would start that same July release, so treat it as an artefact, not as a
+rollback path. Rollback is `deploy-docker.sh` restoring the previous images.
 
 Device control connections have a separate release boundary. The
 `device-connection` service owns `/connector/agent`, live terminal WebSockets,
@@ -144,6 +152,16 @@ keeps `cheese-dev` exclusively for what genuinely needs it (deploy, drift,
 heartbeat, backup checks) — its single slot used to serialize every heavy job
 (measured: 61% of CI time was queueing).
 
+- **Memory**: 8G per box, shared by its two runner slots, plus 4G of swap
+  (`/swapfile`, in `/etc/fstab`, applied by `runner-swap.yml`). Without the swap
+  two jobs that together want more than 8G did not slow down — the kernel killed
+  a process, and not necessarily one belonging to the job that caused it:
+  `oom-kill: cpuset=...runner-1.service, global_oom, task_memcg=...runner-1b.service,
+  task=esbuild`. What that looks like from inside the job is `exit code 137`, or
+  a Vite dev server that stops answering, or four pytest workers reporting "node
+  down" at once — none of which name memory. Swap does not make a box bigger; it
+  makes the same overload arrive as slowness, which is why `test` and `e2e` carry
+  timeouts at roughly twice their median runtime rather than just above it.
 - Provisioning is scripted: `deploy/ci-runner/deps.sh` (build-essential +
   rustup — `uv sync` compiles the local srp_rs crate; weekly docker prune —
   nothing else reclaims layers here) then `deploy/ci-runner/provision.sh
@@ -182,23 +200,37 @@ heartbeat, backup checks) — its single slot used to serialize every heavy job
   `backend/tests/isolation.py` for the names it scopes, and note that the test
   harness creates its databases with `DROP DATABASE ... WITH (FORCE)`, so two
   runs handed one name delete each other's data mid-test.
+- **Addressing one machine**: `provision.sh` gives each runner its box's own
+  label beside the shared one — `cheese-ci-runner-1` and `cheese-ci-runner-1b`
+  are both `cheese-ci-box-1`. `runs-on: [self-hosted, cheese-ci-box-1]`
+  therefore reaches that machine and only that machine, and a job for a box
+  whose slots are both busy stays **queued** rather than being served by another
+  box. That is the only way to be sure a given machine was touched;
+  `runner-swap.yml` uses it. An already-registered runner takes the label with
+  `config.sh --replace`, which is how the three in the pool got theirs before
+  provisioning assigned them — so a box rebuilt from an older `provision.sh`
+  would come back reachable only through the shared label.
+- **Fanning out over slots does not cover the pool.** The intuition that N jobs
+  on the shared label must land on N different machines is false, in both its
+  three-job and six-job forms: a job goes to whichever slot frees first, so one
+  machine can take several while another, busy with a long `test`, takes none.
+  Measured 2026-09-17 with six jobs: five landed on `cheese-ci-runner-2`, one on
+  `cheese-ci-runner-3`, and `cheese-ci-runner-1` was never touched. This is why
+  the hourly liveness check below asks the API instead of running a job per box.
 - Liveness (alerting): `box-uptime.yml`'s `ci-pool` job names every machine that
   is not there, hourly, by ASKING the runner API rather than running a job on
   each — a job per machine would need a slot per machine every hour and would
-  queue behind a merge burst, which the alert would have to read as death. Each
-  machine's slots carry a `cheese-ci-box-<n>` label beside the shared one, so a
-  half-dead machine (one slot gone) is named rather than averaged away. It says
-  so in Feishu when `FEISHU_ALERT_WEBHOOK` is set, and reddens the run either
-  way. `box-heartbeat.yml`'s `ci-pool` job remains as the "can the pool still
-  run anything at all" check.
-- Liveness (on demand): `box-diag.yml`'s `ci-pool` job covers the whole pool by
-  fanning out one job per SLOT — six, not three: with two slots per machine,
-  three jobs can take two machines and leave the third unseen. It prints
-  hostname, disk, and dangling-volume count, so each machine appears twice; a
-  job left **Queued** means the pool is short a slot. This trick is fine for a
-  manual probe (it saturates the pool for ~20s) but not for the hourly
-  heartbeat, which would then false-alarm whenever a merge burst holds the
-  slots — hence the ops step above.
+  queue behind a merge burst, which the alert would have to read as death. The
+  per-machine labels above are what let a half-dead machine (one slot gone) be
+  named rather than averaged away. It says so in Feishu when
+  `FEISHU_ALERT_WEBHOOK` is set, and reddens the run either way.
+  `box-heartbeat.yml`'s `ci-pool` job remains as the "can the pool still run
+  anything at all" check.
+- Liveness (on demand): `box-diag.yml`'s `ci-pool` job prints hostname, disk,
+  dangling-volume count, memory, swap and this boot's kernel OOM kills. It fans
+  out over slots, so by the paragraph above it samples the pool rather than
+  covering it — read the `host:` line of each job to see which machines you
+  actually got, and dispatch it again for the ones you did not.
 
 ## Disk — what actually fills a box, and what may be deleted
 

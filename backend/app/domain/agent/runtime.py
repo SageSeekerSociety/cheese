@@ -21,6 +21,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
 from functools import lru_cache
 
+from app.core.background import hold
 from app.core.errors import AppError
 from app.core.obs import bind_context, clear_context
 from app.domain.agent.host_failure import handle_host_failure, record_host_success
@@ -1439,9 +1440,11 @@ class AgentWorkRunner:
                 continuation_id=continuation_id,
             )
 
-        task = asyncio.create_task(_later())
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        hold(
+            asyncio.create_task(_later()),
+            self._tasks,
+            name=f"orphan-resend-{topic_id}",
+        )
         logger.info("scheduled orphan re-send for topic %s in %.0fs", topic_id, after_s)
 
     # Platform copy for the queue event — structured, never 芝士's own words.

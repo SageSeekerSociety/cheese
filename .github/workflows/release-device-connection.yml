@@ -12,6 +12,13 @@ on:
         description: Commit whose backend image owns device connections
         required: true
         default: main
+      interrupt:
+        description: >-
+          Recreate even while device calls are in flight. Each interrupted
+          executor call fails once; links reconnect and screens re-adopt.
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -38,6 +45,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
           logout: false
       - run: bash deploy/release-device-connection.sh "$(git rev-parse --short=7 HEAD)"
+        env:
+          DEVICE_CONNECTION_INTERRUPT: ${{ inputs.interrupt && '1' || '0' }}
 
   release-production:
     if: inputs.environment == 'production'
@@ -55,3 +64,5 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
           logout: false
       - run: bash deploy/release-device-connection.sh "$(git rev-parse --short=7 HEAD)"
+        env:
+          DEVICE_CONNECTION_INTERRUPT: ${{ inputs.interrupt && '1' || '0' }}

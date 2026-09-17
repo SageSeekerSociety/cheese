@@ -102,6 +102,19 @@ class RemoteDeviceHub:
                 # A release remains healthy enough to finish requests already in
                 # flight; the next successful poll restores the read view.
                 continue
+            except Exception:  # noqa: BLE001 — the read view must not freeze
+                # Anything else used to end this loop for the life of the
+                # process, and nothing observes the task: it is created bare and
+                # only ever awaited by `close()` under `return_exceptions=True`,
+                # which discards what killed it. The read view then froze at its
+                # last good snapshot — `is_online` kept answering yes about a
+                # machine that had gone, and the screen and device teardown that
+                # `refresh` drives stopped happening — with nothing said
+                # anywhere. A malformed body is enough to do it: the owner
+                # answering HTML instead of JSON raises inside `response.json()`,
+                # which is neither an HTTPError nor an OSError.
+                logger.exception("device snapshot refresh failed; retrying in 1s")
+                continue
 
     async def refresh(self) -> None:
         previous_devices = self._devices
@@ -163,7 +176,21 @@ class RemoteDeviceHub:
         assert self._client is not None
         response = await self._client.request(method, path, **kwargs)
         if response.status_code == 409:
-            raise DeviceOffline(response.headers["X-Device-Id"])
+            # Only the owner's 「device offline」 names the device, and reading
+            # that name out of a 409 that did not carry it raised KeyError from
+            # inside the transport — which then surfaced wherever the caller
+            # happened to catch things, as `pi entry read failed` on a poller
+            # and as a 500 on /topics/{id}/agent/control (2026-09-16, five
+            # times). The KeyError described none of that, and hid whatever the
+            # 409 actually said.
+            #
+            # So a 409 without the header falls through to raise_for_status,
+            # whose HTTPStatusError carries the status and the body — the next
+            # one of these says what sent it instead of being read as a device
+            # going offline.
+            offline = response.headers.get("X-Device-Id")
+            if offline is not None:
+                raise DeviceOffline(offline)
         response.raise_for_status()
         return response
 

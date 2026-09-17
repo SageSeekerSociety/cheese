@@ -143,6 +143,57 @@ describe('对话栏自己的输入栏', () => {
     expect(queryByRole('button', { name: '起草文档' })).toBeNull()
   })
 
+  // 退休判据是「芝士在这个房间里说过话」，不是「房间里有没有东西」。新用户常常先
+  // 自己说一句（而且往往忘了 @），那句话落在房间里，却没有任何一行字替他说明下一
+  // 步该说什么——入口正是在这个时刻最该还在。
+  it('keeps the starter drafts in a room 芝士 has not answered yet', async () => {
+    const api = await import('../../api')
+    vi.mocked(api.listBlocks).mockResolvedValueOnce({
+      data: [
+        {
+          id: 'm1',
+          topic_id: 'starter-talked',
+          kind: 'message',
+          content: '我打算把这学期的课程材料整理成一份大纲',
+          author: 'alice',
+          author_type: 'human',
+          created_at: '2026-09-16T10:00:00Z',
+        } as never,
+      ],
+      total: 1,
+      has_more: false,
+      oldest_id: 'm1',
+    })
+    const { rerender, queryByRole } = mountPanel({}, 'starter-talked')
+    await rerender({ topic: { ...topic('starter-talked'), kind: 'root' } })
+    await flush()
+    expect(queryByRole('button', { name: '起草文档' })).toBeTruthy()
+  })
+
+  it('retires the starter drafts once 芝士 has spoken in the room', async () => {
+    const api = await import('../../api')
+    vi.mocked(api.listBlocks).mockResolvedValueOnce({
+      data: [
+        {
+          id: 'm2',
+          topic_id: 'starter-answered',
+          kind: 'message',
+          content: '好，我先把材料归拢一下，再跟你确认大纲的结构。',
+          author: 'cheese-topica',
+          author_type: 'ai',
+          created_at: '2026-09-16T10:01:00Z',
+        } as never,
+      ],
+      total: 1,
+      has_more: false,
+      oldest_id: 'm2',
+    })
+    const { rerender, queryByRole } = mountPanel({}, 'starter-answered')
+    await rerender({ topic: { ...topic('starter-answered'), kind: 'root' } })
+    await flush()
+    expect(queryByRole('button', { name: '起草文档' })).toBeNull()
+  })
+
   it('previews a document and sends its uploaded path', async () => {
     const api = await import('../../api')
     vi.mocked(api.uploadAttachment).mockResolvedValue({
@@ -317,6 +368,49 @@ describe('对话栏自己的输入栏', () => {
     expect(btn.getAttribute('aria-pressed')).toBe('false')
     await fireEvent.update(box, '@芝士 看看这个')
     expect(btn.getAttribute('aria-pressed'), '正文里 @ 了它，按钮却没亮——两边说的不是同一件事').toBe('true')
+  })
+
+  // 切进一个房间的头几百毫秒里，房间名册还没到。那一瞬间名单里唯一带 AI 标记的是
+  // **项目**名册上那行共用的芝士——照它把 @ 写进正文，写出来的是另一个 handle：
+  // 消息照发、房间里会动的那位不动，而时间线上那条消息写着「叫了它」。
+  it('房间名册还没到的时候，按钮不认项目名册上那行共用的芝士', async () => {
+    const api = await import('../../api')
+    let release!: () => void
+    vi.mocked(api.listTopicMembers).mockReturnValueOnce(
+      new Promise((resolve) => {
+        release = () =>
+          resolve({
+            data: [
+              { id: 'm1', member_handle: 'alice', name: 'Alice', role: 'owner', agent: false },
+              { id: 'm2', member_handle: 'cheese-topicL', name: '芝士', role: 'member', agent: true },
+            ],
+            total: 2,
+          } as Awaited<ReturnType<typeof api.listTopicMembers>>)
+      })
+    )
+
+    const { container, getByRole } = mountPanel({}, 'topic-late-roster')
+    await flush()
+
+    const before = getByRole('button', { name: /交给/ }) as HTMLButtonElement
+    expect(before.disabled, '房间名册还没到，按钮却已经能点了——这时候它认的是项目名册上那行共用的芝士').toBe(true)
+
+    release()
+    await flush()
+
+    const box = composerBox(container)!
+    await fireEvent.update(box, '看看这个')
+    await fireEvent.click(getByRole('button', { name: /交给芝士/ }))
+    expect(box.value).toBe('@芝士 看看这个')
+
+    box.focus()
+    await fireEvent.keyDown(box, { key: 'Enter' })
+    await flush()
+    // 时间线上那条消息里的 @ 得指向**这个房间**那位，不是项目名册上共用的那位。
+    expect(JSON.parse(sent[0].payload)).toMatchObject({
+      content: '<@cheese-topicL> 看看这个',
+      summon: true,
+    })
   })
 
   // ⌘/Ctrl+Enter 是键盘上的同一个入口。它把 @ 写进正文再发，而不是在帧上偷偷把

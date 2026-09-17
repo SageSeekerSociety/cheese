@@ -64,6 +64,19 @@ else
 fi
 drain_attempts=240
 drain_interval=0.25
+# An idle owner is what the drain waits for, and on a platform anybody is using
+# it does not arrive: `call_executor` is held open under a shield and the
+# backend re-polls it about once a second, so `_active_rpc_calls` stays above
+# zero for as long as a room has an agent in it — hours, for one turn. A fix
+# that lives in this process then cannot ship at all; #1114 sat merged and
+# unreleased while the alerts it fixes kept arriving. So the wait can be waived
+# deliberately, and only deliberately: the default is unchanged.
+#
+# What interrupting costs is the in-flight executor call, and no more. Device
+# links dial out and reconnect on their own, the tmux sessions on the device
+# outlive the connector process, and `adopt_screen` re-binds each screen the cli
+# re-announces — that path exists precisely because this process restarts.
+interrupt="${DEVICE_CONNECTION_INTERRUPT:-0}"
 for attempt in $(seq 1 "$drain_attempts"); do
   status="$(owner_status /internal/device-connection/release-drain)" || {
     echo "device connection owner drain request failed" >&2
@@ -72,6 +85,10 @@ for attempt in $(seq 1 "$drain_attempts"); do
   case "$status" in
     200) drained=true; break ;;
     409)
+      if [ "$interrupt" = 1 ]; then
+        echo "device connection owner is busy; interrupting its in-flight calls as asked" >&2
+        break
+      fi
       if [ "$attempt" -eq "$drain_attempts" ]; then
         echo "device connection owner remained busy; release stopped" >&2
         exit 1

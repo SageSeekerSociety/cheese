@@ -19,6 +19,7 @@ Event mapping:
                                             assembled from its line-batch
                                             flushes; see the class docstring)
   PostToolUse{tool_name, tool_response}   → AgentToolResult (subagents only)
+  PostToolUseFailure{tool_use_id, error}  → AgentStepFailed
   SubagentStart{agent_id, agent_type}     → AgentSubagentStart
   SubagentStop{agent_id, last_assistant_message, agent_transcript_path}
                                           → AgentSubagentStop
@@ -40,10 +41,12 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.domain.agent.service import (
+    STEP_ERROR_MAX,
     AgentEvent,
     AgentMessage,
     AgentResult,
     AgentSessionInfo,
+    AgentStepFailed,
     AgentSubagentStart,
     AgentSubagentStop,
     AgentToolResult,
@@ -188,12 +191,34 @@ def translate_hook(hook: dict) -> AgentEvent | None:
     if event == "PreToolUse":
         tool_input = hook.get("tool_input")
         eid = hook.get("_eid")
+        call = hook.get("tool_use_id")
         return AgentToolUse(
             name=str(hook.get("tool_name") or ""),
             input=tool_input if isinstance(tool_input, dict) else {},
             eid=eid if isinstance(eid, str) else None,
+            call_id=call if isinstance(call, str) else None,
             agent_id=_agent_id(hook),
             agent_type=_agent_type(hook),
+        )
+
+    if event == "PostToolUseFailure":
+        # The one return value worth forwarding for EVERY tool. A tool's output
+        # does not become an event — a Read's return is the whole file, and the
+        # room is for people to read — but a failure is the one thing the room
+        # cannot learn from the effect: the effect of a failed step is that
+        # nothing happened, which looks exactly like a step still running.
+        # Not a block of its own either: it marks the step already on the
+        # timeline.
+        call = hook.get("tool_use_id")
+        if not isinstance(call, str) or hook.get("is_interrupt"):
+            # An interrupt is a person pressing stop, not a tool going wrong.
+            # Painting it red would tell the room something broke.
+            return None
+        text = " ".join(str(hook.get("error") or "").split())
+        return AgentStepFailed(
+            call_id=call,
+            text=text[-STEP_ERROR_MAX:],
+            agent_id=_agent_id(hook),
         )
 
     if event == "PostToolUse":

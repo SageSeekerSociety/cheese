@@ -480,6 +480,9 @@ async def list_project_tasks(
     # 每条活最后一次说话是什么时候 —— 看板判「失联」的心跳。第三次批查询，走的是
     # blocks 上那条 (task_id, created_at) 的部分索引，不是每条活一次。
     beats = await TaskRepository(db).last_block_at_for_tasks(task_ids)
+    # 哪几条停在一个未回答的提问上 —— 第四次批查询，同一条 (task_id, created_at)
+    # 索引。这是唯一会中断「运行中」的一格，所以不能留给调用方各自去问。
+    asked = await BlockRepository(db).tasks_awaiting_an_answer(task_ids)
     # 一次，给全部行用同一个「现在几点」：逐行取 now 会让同一批数据里两条本该
     # 一样的活分到不同格子，而那种差别没人再能复现。
     now = datetime.now(UTC)
@@ -495,6 +498,7 @@ async def list_project_tasks(
                 card,
                 beats.get(task.id),
                 room_screen_live=live_rooms[task.room_id],
+                awaiting_answer=task.id in asked,
             ),
             now=now,
         )

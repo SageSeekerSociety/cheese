@@ -4,10 +4,10 @@ Two layers, deliberately separate (review #190): mint()/verify() are the
 token-auth layer that only the HTTP door (app.api.routes.webhooks) calls;
 post_with_retries() is the internal shared "land a system post" function with
 no auth of its own — any trusted in-process caller (the HTTP route after it
-verifies, or a future internal caller like the merge-result-back-to-room card)
-invokes it directly.
+verifies, or the merge-result-back-to-room card) invokes it directly.
 
-Delivery is retried (0s, 5s, 30s) before giving up — a dropped inbound webhook
+What it adds over `announce()` is the retry and its own session per attempt:
+delivery is retried (0s, 5s, 30s) before giving up — a dropped inbound webhook
 is a silent hole in the topic's timeline (CI results, deploy outcomes), so a
 transient DB failure must not be the end of it.
 """
@@ -19,8 +19,7 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.webhook_auth import mint_webhook_token, webhook_token_claims
-from app.domain.block.models import AuthorType, BlockKind
-from app.domain.block.repositories import BlockRepository
+from app.domain.agent.announce import announce
 from app.domain.webhook.repositories import WebhookTokenRepository
 
 logger = logging.getLogger(__name__)
@@ -51,7 +50,6 @@ async def verify(session: AsyncSession, *, topic_id: uuid.UUID, token: str) -> b
 async def post_with_retries(
     session_factory,
     *,
-    project_id: uuid.UUID,
     topic_id: uuid.UUID,
     content: str,
     source: str,
@@ -63,12 +61,19 @@ async def post_with_retries(
 
     Deliberately does NOT call verify() or touch any token — that check lives
     only in the HTTP layer (app.api.routes.webhooks.receive_webhook), which
-    calls this AFTER authenticating the caller. An in-process caller (e.g. the
-    future "merge 后结果回房间" card) already knows its own project_id/topic_id
-    from context and is trusted by construction, so it calls this function
-    directly and skips the HTTP hop and the webhook-token check entirely —
-    that check is for the external HTTP door, not a gate this function itself
-    enforces.
+    calls this AFTER authenticating the caller. An in-process caller (the
+    "merge 后结果回房间" card) already knows its own topic_id from context and
+    is trusted by construction, so it calls this function directly and skips
+    the HTTP hop and the webhook-token check entirely — that check is for the
+    external HTTP door, not a gate this function itself enforces.
+
+    Each attempt gets its own session, which is the point of this wrapper: the
+    outcome it reports already happened elsewhere (a merge on GitHub, a CI run),
+    so the room has to learn about it even when the caller's own transaction is
+    about to roll back. Everything it posts is room-only — an outcome nobody was
+    named for. A notice that knows whose turn it now is names them, and naming
+    them means committing with whatever changed hands, so it calls `announce`
+    on the caller's own session instead of through this retry.
     """
     last_exc: Exception | None = None
     for delay in _RETRY_DELAYS_SECONDS:
@@ -76,15 +81,20 @@ async def post_with_retries(
             await asyncio.sleep(delay)
         try:
             async with session_factory() as session:
-                await BlockRepository(session).add(
-                    project_id=project_id,
-                    topic_id=topic_id,
-                    author=source,
-                    author_type=AuthorType.system,
+                block = await announce(
+                    session,
+                    place_id=topic_id,
                     content=content,
-                    kind=BlockKind.event,
                     meta={"source": source, **(meta or {})},
+                    author=source,
                 )
+                if block is None:
+                    logger.error(
+                        "dropping %s post: topic %s no longer exists",
+                        source,
+                        topic_id,
+                    )
+                    return False
                 await session.commit()
             return True
         except Exception as exc:  # noqa: BLE001 — retry, then give up loudly

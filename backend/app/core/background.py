@@ -22,8 +22,10 @@ outlives it. A crash inside is logged rather than swallowed, because a bare
 ``create_task`` whose exception nobody retrieves only surfaces (if ever) as an
 "exception was never retrieved" warning at GC time.
 
-``PeriodicRunner`` is the same idea for work that repeats: one maintenance job,
-one interval, one place where every loop's boilerplate is written down.
+``hold`` is the same guarantee for work the caller keeps a handle on so it can
+cancel it later, and ``PeriodicRunner`` is the idea for work that repeats: one
+maintenance job, one interval, one place where every loop's boilerplate is
+written down.
 """
 
 import asyncio
@@ -39,13 +41,45 @@ logger = logging.getLogger("cheesex.background")
 _INFLIGHT: set[asyncio.Task[Any]] = set()
 
 
-def _finished(task: asyncio.Task[Any]) -> None:
-    _INFLIGHT.discard(task)
+def _report_failure(task: asyncio.Task[Any]) -> None:
     if task.cancelled():
         return
     exc = task.exception()
     if exc is not None:
-        logger.warning("background task %r failed", task.get_name(), exc_info=exc)
+        # ERROR, not WARNING: reaching here means work the caller handed off was
+        # dropped — a room never told, a turn never resumed, spend never charged
+        # — and `obs.AlertOnError` only picks up ERROR.
+        logger.error("background task %r failed", task.get_name(), exc_info=exc)
+
+
+def _finished(task: asyncio.Task[Any]) -> None:
+    _INFLIGHT.discard(task)
+    _report_failure(task)
+
+
+def hold(
+    task: asyncio.Task[Any], registry: set[asyncio.Task[Any]], *, name: str
+) -> asyncio.Task[Any]:
+    """Keep ``task`` in ``registry`` until it ends, and say so if it crashed.
+
+    ``spawn`` is for work the caller will never touch again; this is for work the
+    caller holds on to so it can cancel it at shutdown. Both need the same crash
+    report, and hand-rolling half of it as ``add_done_callback(registry.discard)``
+    is exactly how the other half gets lost: an exception nobody retrieves
+    surfaces, if ever, as a warning at garbage-collection time attached to
+    nothing, long after the work it was doing went missing.
+
+    ``name`` is required because that report is the only thing anyone will have,
+    and ``Task-4172 failed`` names nothing.
+
+    A task that reports its own failures does not want this — an agent turn
+    writes its own failure event, and a second line here would only double it.
+    """
+    task.set_name(name)
+    registry.add(task)
+    task.add_done_callback(registry.discard)
+    task.add_done_callback(_report_failure)
+    return task
 
 
 def spawn(coro: Coroutine[Any, Any, Any], *, name: str | None = None) -> bool:

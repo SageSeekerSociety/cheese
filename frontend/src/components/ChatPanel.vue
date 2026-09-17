@@ -91,6 +91,7 @@ import { getAvatarUrl } from '../utils/materials'
 
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import AgentControls from './AgentControls.vue'
+import AttachmentImage from './AttachmentImage.vue'
 import CheeseAvatar from './CheeseAvatar.vue'
 import DispatchedMarker from './DispatchedMarker.vue'
 import TimelineMark from './TimelineMark.vue'
@@ -202,16 +203,29 @@ const errorMsg = ref<string | null>(null)
 // 正是叫它干活的唯一方式。
 const roomMembers = ref<TopicMemberRow[]>([])
 
+// 手上这份名单是**哪个房间**的。
+//
+// 名册按话题拉，切话题的那一瞬间上一份还在内存里。而「名单里没有 AI 队友」在两
+// 种状态下含义正相反：还没到（要等——此刻替人写的 @ 指不到这个房间那位）、到了
+// 确实没有（老话题没有自己的座位，得退回项目名册上那行共用的芝士）。一句「load
+// 完没完」的布尔分不开这两件事，所以记的是名单的主人。
+const rosterFor = ref<string | null>(null)
+const rosterLoaded = computed(() => !!props.topic && rosterFor.value === props.topic.id)
+
 async function loadRoster() {
   const place = props.topic
   if (!place) {
     roomMembers.value = []
+    rosterFor.value = null
     return
   }
   const id = place.id
   try {
     const payload = await listTopicMembers(id)
-    if (props.topic?.id === id) roomMembers.value = payload.data
+    if (props.topic?.id === id) {
+      roomMembers.value = payload.data
+      rosterFor.value = id
+    }
   } catch {
     // 名单拉不到就说出来：@ 补全会缺人（包括芝士）。静默的话，表现是「@ 不出
     // 芝士」，而屏幕上没有任何东西说明为什么。
@@ -221,12 +235,33 @@ async function loadRoster() {
 
 watch(() => props.topic?.id, loadRoster, { immediate: true })
 
+// 名册那一行有三种形状：话题名册是 member_handle，项目名册是 user_handle，而 @
+// 补全名单已经把它们归一到 handle 了。这里只关心「它叫什么、它的 handle 是哪个」。
+type RosterRow = { name?: string; handle?: string; member_handle?: string; user_handle?: string }
+function seatOf(row: RosterRow | null | undefined): { handle: string; label: string } | null {
+  const handle = row?.member_handle || row?.user_handle || row?.handle
+  return handle ? { handle, label: row?.name || handle } : null
+}
+
+// 这个房间名册上坐着的 AI 队友。座位是**每个话题一份**的（handle 带话题后缀），
+// 项目名册上那行共用的 `cheese` 不是它。
+//
+// 名册没到时是 null，不拿项目那位顶：那一位也叫「芝士」，顶上去的后果是消息里那
+// 个 @ 指到另一个身份，读的人以为叫了这个房间的它。
+const roomAgentSeat = computed(() => (rosterLoaded.value ? seatOf(roomMembers.value.find((m) => m.agent)) : null))
+
 // 这个房间现在交给的是哪个 AI 队友。名册那一行说了算（后端把芝士那一行的名字
 // 解析成当前队友的名字）。界面上任何一处写死「芝士」，换完队友都不会变，看起来
 // 就是「换人没生效」——这正是它被报上来的样子。
+//
+// 名册到了、这个房间确实没有 AI 座位（座位是后来才有的，老话题没有）时，退回
+// 项目名册上那行共用的芝士——否则这个话题永远叫不动它。名册还没到时两边都不猜，
+// 就写「芝士」：那一刻界面上任何一处说出的名字，都可能是上一个房间那位。
 const agentName = computed(() => {
-  const seat = roomMembers.value.find((m) => m.agent)
-  return seat?.name || seat?.member_handle || '芝士'
+  const seat = roomAgentSeat.value
+  if (seat) return seat.label
+  if (!rosterLoaded.value) return '芝士'
+  return seatOf(props.members.find((m) => m.agent))?.label || '芝士'
 })
 
 // 输入框那一行提示语。和芝士私聊时它**不能**说「交给它做」：私聊不占机器，那边
@@ -238,7 +273,10 @@ const composerHint = computed(() =>
 
 /** @ 得到的人：这个房间里的，加上项目里还没进这个房间的。 */
 const mentionPool = computed(() => {
-  const room = roomMembers.value.map((m) => ({
+  // 名册没到（切话题的那一瞬间）房间那半就是空的：宁可少一行，也不能把**上一个
+  // 房间**的座位留在名单里——那一位的名字也写着「芝士」，@ 出来却是个不在这儿的
+  // handle。人在项目名册上照样 @ 得到，缺的只是这一个房间自己的那几行。
+  const room = (rosterLoaded.value ? roomMembers.value : []).map((m) => ({
     handle: m.member_handle,
     label: m.name || m.member_handle,
     agent: !!m.agent,
@@ -931,10 +969,11 @@ function replySnippet(m: Block): string {
   return t.length > 24 ? t.slice(0, 24) + '…' : t
 }
 
-// An image attachment block (图片输入) — rendered as an inline <img>.
+// An image attachment block (图片输入) — drawn in place by AttachmentImage.
 function isImageBlock(m: Block): boolean {
   return m.kind === 'attachment' && (m.mime_type || '').startsWith('image/')
 }
+// 只给下载用：downloadFile 自己会带上 Authorization。显示图片不走这里。
 function imageUrl(m: Block): string {
   return props.topic ? attachmentRawUrl(props.topic.id, m.content) : ''
 }
@@ -1234,6 +1273,18 @@ const starterPrompts = [
   { label: '起草文档', text: '帮我起草一份文档，先和我确认目标与读者。我想写的是：' },
   { label: '拆解任务', text: '帮我把目标拆成可执行的任务，先给我看分工建议。我的目标是：' },
 ]
+// 起手区块什么时候退休：芝士在这个房间里说过第一句话之后。
+//
+// 退休判据**不是「房间里有东西」**。平台自己发的公告、赛题报名写进去的简报、
+// 用户对着同事说的那几句，都能把房间填满，但一件都不能替代「跟芝士说上话」这
+// 件事本身；照旧判据，新用户只要先说了句没 @ 的话，这个入口就没了，而他要找的
+// 恰恰是「我该跟它说什么」。
+//
+// 只看 message / attachment：芝士也可能留下 event 行（「芝士处理中」那类），
+// 那是它干活的过程，不是它对这个人开过口。
+const startersRetired = computed(() =>
+  visible.value.some((b) => b.author_type === 'ai' && (b.kind === 'message' || b.kind === 'attachment'))
+)
 const showStarters = computed(
   () =>
     props.topic?.kind === 'root' &&
@@ -1242,14 +1293,20 @@ const showStarters = computed(
     !loadingHistory.value &&
     !errorMsg.value &&
     !hasMore.value &&
-    !visible.value.length &&
+    !startersRetired.value &&
+    // 正在回话也先收起来：这一轮已经开了，芝士的答复落地之后由 `startersRetired`
+    // 接手。两者中间不留一条缝——不然刚 @ 完、还没等到回话的那几秒里，起手区块
+    // 会闪一下。
+    !awaitingReply.value &&
     !draft.value.trim() &&
     !outbox.value.length
 )
 
 function startDraft(text: string) {
   if (draft.value.trim()) return
-  const agent = mentionPool.value.find((m) => m.agent)
+  // 起手草稿里那个 @ 和按钮写进去的是同一个名字（见 `agentMention`）：写错了的话，
+  // 人点完「起草文档」发出去，屋里会动的那位不动，而草稿上明明 @ 着「芝士」。
+  const agent = agentMention.value
   draft.value = `${props.alwaysSummon ? '' : `@${agent?.label ?? '芝士'} `}${text}`
   void nextTick(() => composerInput.value?.focus?.())
 }
@@ -1360,18 +1417,29 @@ function onFilePicked(e: Event) {
   input.value = '' // allow re-picking the same file
 }
 
+// 房间里那位芝士 —— **房间名册**上坐着的那一行，不是项目名册上那行共用的。
+//
+// 名册没到时候没有它（按钮关着，见下面的 `summonReady`）：那时候名单里唯一带 AI
+// 标记的是项目那位，认了它，正文里写下的 @ 就指到另一个身份。名册到了、这个房间
+// 确实没有座位（老话题），才退回项目那一行。
+const agentMention = computed(
+  () => roomAgentSeat.value ?? (rosterLoaded.value ? seatOf(mentionPool.value.find((m) => m.agent)) : null)
+)
+
 // 叫不叫芝士，由**这条消息 @ 没 @ 它**决定 —— 和 @ 一个人走的是同一条路，
 // 区别只在于 @ 人是通知、@ 它是真的开一轮。这以前是输入区上一个单独的开关：
 // 芝士本来就在 @ 补全的名单里（`agent` 标记），于是同一个意图有两条并列的说法，
 // 而只有开关那条是通的 —— 在正文里 @ 了它，它读得到，却不会动。
 //
 // 群播 (@all/@here) 不算：那是通知房间里的人，不是把活派给它。
+//
+// 认的是上面那一位的 handle，不是「名单里哪个带 AI 标记的 handle」：后者在名册
+// 没到时认的是项目那位，于是正文里那个 @ 指不到房间里会动的人，而按钮和消息都写
+// 着「叫了它」——两份说法，正是这个功能一开始要消灭的东西。
 function mentionsAgent(expanded: string): boolean {
-  return mentionPool.value.some((m) => m.agent && expanded.includes(`<@${m.handle}>`))
+  const agent = agentMention.value
+  return agent !== null && expanded.includes(`<@${agent.handle}>`)
 }
-
-// 房间里那位芝士 —— @ 补全名单上带 agent 标记的那一行。
-const agentMention = computed(() => mentionPool.value.find((m) => m.agent) ?? null)
 
 // 这条草稿现在叫不叫它。**读的是正文**，不是一个单独存着的开关值：真相只有一条，
 // 入口可以有三个（手打 @、点按钮、⌘/Ctrl+Enter 都是往正文里写同一个 @）。
@@ -1888,10 +1956,9 @@ onBeforeUnmount(() => {
                   回复 {{ displayName(parentOf(m)!) }}：{{ replySnippet(parentOf(m)!) }}
                 </button>
                 <!-- 图片输入: an attachment block renders as the image itself
-                   (click opens the original in a new tab). -->
-                <a v-if="isImageBlock(m)" class="im-image-link" :href="imageUrl(m)" target="_blank" rel="noopener">
-                  <img class="im-image" :src="imageUrl(m)" :alt="m.content" loading="lazy" />
-                </a>
+                   (click opens the original in a new tab). 字节在 AttachmentImage
+                   里取——raw 端点只认 Authorization 头，裸挂 URL 是匿名请求。 -->
+                <AttachmentImage v-if="isImageBlock(m)" :topic-id="topic?.id ?? null" :path="m.content" />
                 <v-btn
                   v-else-if="m.kind === 'attachment'"
                   variant="text"
@@ -2912,20 +2979,8 @@ details.sys-row > summary::-webkit-details-marker {
 .im-text--verbatim {
   white-space: pre-wrap;
 }
-/* 图片输入: an image message — bounded thumbnail, click opens the original. */
-.im-image-link {
-  display: inline-block;
-  margin-top: 2px;
-  line-height: 0;
-}
-.im-image {
-  max-width: min(360px, 100%);
-  max-height: 260px;
-  border-radius: 8px;
-  border: 1px solid var(--line);
-  background: var(--fill);
-  object-fit: contain;
-}
+/* 图片输入那两张图自己的样式跟着 AttachmentImage 走了（它要负责取字节，样式
+   留在这里也够不着它内部的 <img>——scoped 只到子组件的根元素）。 */
 .im-file-link,
 .att-thumb,
 .att-thumb .v-chip {

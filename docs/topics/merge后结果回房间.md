@@ -4,12 +4,12 @@
 
 ## 依赖确认（不变）
 
-- 卡1（webhook 原语）已合并进 main：`backend/app/domain/webhook/service.py` 的 `post_with_retries(session_factory, *, project_id, topic_id, content, source)` 就是要调的内部函数——不鉴权、不走 HTTP。
+- 卡1（webhook 原语）已合并进 main：`backend/app/domain/webhook/service.py` 的 `post_with_retries(session_factory, *, topic_id, content, source)` 就是要调的内部函数——不鉴权、不走 HTTP。
 - `ACCEPT_VIA_PR`（#195 开关）这个沙箱的 main 上还搜不到，#195 还没合并。本卡只覆盖现在活着的 `AcceptService.accept()` → `ws.merge_topic()` 路径；#195 合并后再补一处调用，不算这张卡的返工。
 
 ## 实现（`backend/app/domain/review/services.py`）
 
-`AcceptService._notify_merge_result(topic, content)`：内部辅助方法，`asyncio.get_running_loop().create_task(webhook_service.post_with_retries(async_session_factory, project_id=..., topic_id=..., content=..., source="accept"))`。
+`AcceptService._notify_merge_result(topic, content)`：内部辅助方法，`asyncio.get_running_loop().create_task(webhook_service.post_with_retries(async_session_factory, topic_id=..., content=..., source="accept"))`。
 
 `accept()` 里四个收尾点各调一次（都不 `await`，只是调度）：
 1. `ws.merge_topic()` 抛异常 → 失败通知，`raise ValidationError`。
@@ -21,7 +21,7 @@
 
 ## 单测（`backend/tests/unit/test_review_acceptance_merge_failure.py`）
 
-6 个场景，全部 mock `webhook_service.post_with_retries`，断言 project_id/topic_id/source="accept"/成功失败文案：
+6 个场景，全部 mock `webhook_service.post_with_retries`，断言 topic_id/source="accept"/成功失败文案：
 - 合并抛异常 → 失败通知
 - 合并失败无冲突路径 → 失败通知
 - 合并冲突（真实 conflicts 路径）→ 失败通知 + card 转 conflict

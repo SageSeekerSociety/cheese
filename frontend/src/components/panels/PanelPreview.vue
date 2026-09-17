@@ -14,6 +14,7 @@ import {
   readPreviewFile,
   requestPreviewSession,
 } from '../../api'
+import { markdown, sanitizeRendered } from '../../lib/markdown'
 import { postPreviewSession } from '../../lib/previewSession'
 
 import PreviewPages from './preview/PreviewPages.vue'
@@ -63,11 +64,13 @@ function openPreviewInNewTab() {
 // it is shown here rather than offered as a download. A tab called 预览 that
 // hands over a file instead of displaying it is the same as having no tab.
 //
-// Two viewers, and which one a file gets is decided by what a reader can point
+// Three viewers, and which one a file gets is decided by what a reader can point
 // at afterwards. A paginated document keeps its text, so the reader points at a
 // sentence. A spreadsheet keeps its cell addresses, and `B7` is an address 芝士
-// can open directly — paginating it would destroy exactly that.
-const DOCUMENT_TYPES: Record<string, { label: string; icon: string; view: 'pages' | 'sheet' }> = {
+// can open directly — paginating it would destroy exactly that. A markdown file
+// has neither pages nor cells, and nothing here converts it: it is shown as the
+// text it already is, parsed by the same renderer the chat uses.
+const DOCUMENT_TYPES: Record<string, { label: string; icon: string; view: 'pages' | 'sheet' | 'markdown' }> = {
   pdf: { label: 'PDF', icon: 'mdi-file-pdf-box', view: 'pages' },
   docx: { label: 'Word 文档', icon: 'mdi-file-word-outline', view: 'pages' },
   doc: { label: 'Word 文档', icon: 'mdi-file-word-outline', view: 'pages' },
@@ -79,9 +82,14 @@ const DOCUMENT_TYPES: Record<string, { label: string; icon: string; view: 'pages
   xlsx: { label: '表格', icon: 'mdi-file-excel-outline', view: 'sheet' },
   xls: { label: '表格', icon: 'mdi-file-excel-outline', view: 'sheet' },
   csv: { label: 'CSV 表格', icon: 'mdi-file-delimited-outline', view: 'sheet' },
+  md: { label: 'Markdown', icon: 'mdi-language-markdown-outline', view: 'markdown' },
+  markdown: { label: 'Markdown', icon: 'mdi-language-markdown-outline', view: 'markdown' },
 }
 //: Formats the browser cannot draw itself, so the platform converts them first.
 const NEEDS_CONVERSION = new Set(['docx', 'doc', 'odt', 'rtf', 'pptx', 'ppt', 'odp'])
+//: 浏览器自己画得出来的图片。它们读不成文本（`content` 是 null），但那不是「没
+//: 法显示」——内容域就是拿 image/png、image/jpeg 把这些字节发出来的。
+const IMAGE_SUFFIXES = new Set(['png', 'jpg', 'jpeg'])
 
 function suffixOf(path: string): string {
   const name = path.split('/').pop() ?? ''
@@ -92,7 +100,21 @@ function suffixOf(path: string): string {
 const documentSuffix = computed(() => suffixOf(previewFile.value?.path ?? ''))
 const documentType = computed(() => DOCUMENT_TYPES[documentSuffix.value] ?? null)
 const documentName = computed(() => previewFile.value?.path.split('/').pop() ?? '')
+const isImageArtifact = computed(() => IMAGE_SUFFIXES.has(documentSuffix.value))
 const downloadError = ref('')
+
+// Markdown 由这里渲染，不交给 iframe：内容域按 artifact 自己的 mime 原样发字节，
+// 而 text/markdown 对浏览器来说不是网页——挂上去读者看到的是星号和竖线（这就是
+// 它一直以来的样子）。解析器和聊天、文档面板是同一个实例（lib/markdown.ts），
+// 所以 CJK 的 `**这句。**下一句` 在哪儿都不断行，链接也统一新开一页。
+//
+// 不传 breaks：文件里的单个换行是软换行，中文写作者在 .md 里不会为了断行敲回车。
+// 聊天那边反过来（breaks: true），那里的换行就是作者敲的那个换行。
+const previewMarkdownHtml = computed(() => {
+  const source = previewFile.value?.content
+  if (!source || documentType.value?.view !== 'markdown') return ''
+  return sanitizeRendered(markdown.parse(source, { async: false, gfm: true }) as string)
+})
 
 // ---- 文档字节 ----
 const docBytes = ref<ArrayBuffer | null>(null)
@@ -106,7 +128,8 @@ async function loadDocument() {
   const tid = props.topicId
   const path = previewFile.value?.path
   const type = documentType.value
-  if (!tid || !path || !type) return
+  // Markdown 没有字节要取：它的正文已经在 readPreviewFile 里拿到并渲染了。
+  if (!tid || !path || !type || type.view === 'markdown') return
   // The version changes when 芝士 rewrites the file; re-fetching on every poll
   // would otherwise re-convert a document that has not moved.
   const key = `${tid}:${path}:${previewFile.value?.version ?? ''}:${previewFile.value?.bytes ?? ''}`
@@ -161,7 +184,9 @@ function onQuote(payload: { text: string; page: number }) {
 }
 
 function onCell(payload: { address: string; value: string; sheet: string }) {
-  openLocator(`${payload.sheet}!${payload.address}`, payload.value || '（空）', `${payload.sheet}!${payload.address}`)
+  // CSV 没有工作表名，`!B7` 会让读者以为前面漏了个名字。
+  const where = payload.sheet ? `${payload.sheet}!${payload.address}` : payload.address
+  openLocator(where, payload.value || '（空）', where)
 }
 
 function sendLocator() {
@@ -173,7 +198,8 @@ function sendLocator() {
 }
 
 watch([documentType, () => previewFile.value?.path, () => previewFile.value?.version], () => {
-  if (documentType.value) void loadDocument()
+  // Markdown 没有字节要取（正文就是文件内容本身），和「不是文档」一样清空即可。
+  if (documentType.value && documentType.value.view !== 'markdown') void loadDocument()
   else {
     docGeneration += 1
     docBytes.value = null
@@ -261,7 +287,19 @@ async function load(opts: { silent?: boolean; reload?: boolean } = {}) {
         return
       }
       if (!stillCurrent()) return
-      if (previewFile.value.content === null && !previewFile.value.too_large) {
+      // 两种「读不到文本」的情形分开走：
+      // - 图片：它的内容本来就是字节，null 是正常的，交给 iframe 直接显示，
+      //   否则会掉进下面那句「这个文件不是文本」——预览域本身是拿 image/png
+      //   把这些字节发出来的，浏览器画得出来。
+      // - 其它二进制（docx/xlsx 走 documentType 那份分支，这里指没认出来的）：
+      //   没有 iframe 能显示它，停下。
+      if (previewFile.value.content === null && !previewFile.value.too_large && !isImageArtifact.value) {
+        previewUrl.value = null
+        return
+      }
+      // Markdown 由本组件渲染（previewMarkdownHtml），不进 iframe：预览域把 .md
+      // 原样按 text/markdown 发出来，浏览器只会显示源码。
+      if (documentType.value?.view === 'markdown') {
         previewUrl.value = null
         return
       }
@@ -455,10 +493,22 @@ watch(
         这是上一次生成的内容，刷新未能完成：{{ docError }}
       </v-alert>
 
+      <!-- Markdown 排在最前面：它不走 docBytes 那条路（loadDocument 直接跳过），
+           所以下面「缺转换服务」「转不了」两句对它都不成立，先落到这里才不会
+           把一篇好端端的 .md 显示成「文档预览未启用」。 -->
+      <!-- eslint-disable-next-line vue/no-v-html -- previewMarkdownHtml 是
+           sanitizeRendered 的输出，不是文件原文。 -->
+      <div
+        v-if="documentType.view === 'markdown'"
+        class="doc__md md-content"
+        data-testid="markdown"
+        v-html="previewMarkdownHtml"
+      />
+
       <!-- 只在还没有东西可看时转圈。面板每 20 秒重读一次，芝士一存文件版本就变——
            这时候把查看器卸掉重挂，读者的滚动位置和选中都没了，而新的字节本来可以
            直接换进去。 -->
-      <div v-if="docLoading && !docBytes" class="doc__state">
+      <div v-else-if="docLoading && !docBytes" class="doc__state">
         <v-progress-circular indeterminate color="primary" size="24" />
       </div>
       <!-- 两种失败说的不是一回事：一种是这个部署缺服务（换个文件也一样），一种是
@@ -473,7 +523,7 @@ watch(
         <div class="t-meta mt-1">{{ docError }}</div>
       </div>
       <PreviewPages v-else-if="documentType.view === 'pages'" :data="docBytes" @quote="onQuote" />
-      <PreviewSheet v-else :data="docBytes" @cell="onCell" />
+      <PreviewSheet v-else :data="docBytes" :kind="documentSuffix === 'csv' ? 'csv' : 'workbook'" @cell="onCell" />
 
       <!-- 指出位置：读者选中一句话或点中一个格子，这条就是交给芝士的坐标。 -->
       <Transition name="locator">
@@ -607,6 +657,15 @@ watch(
 }
 .doc__state--text {
   text-align: center;
+}
+
+/* .md 的正文。排版规则（标题、列表、代码块、表格）来自全局的 .md-content，
+   这里只管这块地方怎么滚——面板是定高的，所以自己滚，不要让整个面板跟着长。 */
+.doc__md {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 16px 24px;
 }
 
 /* 指出位置那一条。它浮在文档之上，所以有投影——第 3.4 节：投影只给浮起来的东西。 */

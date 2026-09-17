@@ -22,7 +22,7 @@ export interface BoardColumnSpec {
 const COLUMN_LABEL: Record<BoardColumn, string> = {
   building: '施工中',
   delivering: '交付中',
-  needs_you: '等你',
+  needs_you: '待处理',
   done: '已完成',
   archived: '已归档',
 }

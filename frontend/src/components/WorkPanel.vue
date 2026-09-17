@@ -306,7 +306,7 @@ function tabTitle(t: TabDef): string {
   if (t.key === 'site' && props.working) return `${t.label}（芝士正在工作）`
   if (t.key === 'overview' && threads.value.total) {
     const { total, open } = threads.value
-    return open ? `${t.label}（${total} 件活，${open} 件进行中）` : `${t.label}（${total} 件活）`
+    return open ? `${t.label}（${total} 件任务，${open} 件进行中）` : `${t.label}（${total} 件任务）`
   }
   if (t.key === 'preview' && previewHasNew.value) return `${t.label}（有新内容）`
   if (t.key === 'changes' && summary.value.changedFiles.length) {

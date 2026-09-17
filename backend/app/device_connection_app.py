@@ -174,6 +174,25 @@ async def call(
             detail="device offline",
             headers={"X-Device-Id": exc.device_id},
         ) from exc
+    except TimeoutError as exc:
+        # A device that holds a link but never answers. ``device_hub.exec``
+        # waits ``timeout + 5`` on the reply future and then raises; unclaimed,
+        # that reached the catch-all handler, which answers 500「服务器内部
+        # 错误」 — a fault in THIS process, which is the one thing it was not.
+        # The caller then reported the device's silence under its own name
+        # instead: `cleanup device inventory failed device=a3dc2940aee2` with a
+        # bare `Server error '500'`, three times in 90 minutes on 2026-09-16.
+        #
+        # No ``X-Device-Id`` here, deliberately: that header is how the client
+        # tells an offline device apart from everything else, and a device that
+        # is connected but silent is not offline. Sending it would turn every
+        # timeout into a `DeviceOffline`, which is the opposite of describing it.
+        device_id = body.get("device_id")
+        named = f" {device_id}" if isinstance(device_id, str) and device_id else ""
+        raise HTTPException(
+            status_code=504,
+            detail=f"device{named} did not answer {name} in time",
+        ) from exc
     finally:
         _active_rpc_calls -= 1
     return {"result": result}

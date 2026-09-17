@@ -70,8 +70,13 @@ jobs:
     if: ${{ vars.DEV_HEALTH_URL != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # Here rather than on the step: an `if:` cannot read the `secrets` context,
+    # so whether alerting is configured has to arrive as an ordinary variable.
+    env:
+      WEBHOOK: ${{ secrets.FEISHU_ALERT_WEBHOOK }}
     steps:
       - name: Probe dev /api/health latency from outside the box
+        id: probe
         env:
           HEALTH_URL: ${{ vars.DEV_HEALTH_URL }}
           MAX_MS: ${{ vars.DEV_HEALTH_MAX_MS || '5000' }}
@@ -107,4 +112,25 @@ jobs:
           done
 
           echo "::error::dev /api/health is slow or unreachable ($last, threshold ${MAX_MS}ms) — the box may be browning out (see #356: a migration lock wait starved it for ~70 min while the runner still looked alive)"
+          echo "reason=$last" >> "$GITHUB_OUTPUT"
           exit 1
+
+      # A red workflow is a notification only for whoever opens the Actions tab,
+      # and this is the one failure people meet as "the site is down". Silently
+      # skipped without the secret, which is what a fork and a first setup want.
+      - name: Tell the team the site is not answering
+        if: ${{ failure() && env.WEBHOOK != '' }}
+        env:
+          HEALTH_URL: ${{ vars.DEV_HEALTH_URL }}
+          REASON: ${{ steps.probe.outputs.reason }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          text="$(printf '站点探活失败：%s\n原因：%s\n这一轮：%s' \
+            "$HEALTH_URL" "${REASON:-两次探测都没有拿到 200}" "$RUN_URL")"
+          # Never fail the job on the alert itself: the probe result is the
+          # finding, and a webhook that is down must not hide it.
+          curl -sS -m 15 -X POST "$WEBHOOK" \
+            -H 'Content-Type: application/json' \
+            --data "$(jq -n --arg t "$text" '{msg_type:"text",content:{text:$t}}')" \
+            || echo "::warning::could not reach the alert webhook"

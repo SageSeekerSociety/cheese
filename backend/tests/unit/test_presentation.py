@@ -201,6 +201,8 @@ TASK_CASES = [
         Column.needs_you,
         "交付被退回",
     ),
+    # 芝士提出了待确认问题，本轮停在这里等回答。这是唯一一种会中断运行的。
+    ("提问未回答", task(awaiting_answer=True), Column.needs_you, "待确认"),
     ("已交付", task(accepted_at=JUST_NOW), Column.done, "已采纳"),
     ("收工了", task(status=TaskStatus.closed), Column.done, "已收工"),
 ]
@@ -232,6 +234,7 @@ ROOM_CASES = [
         "检查运行中",
     ),
     ("等人采纳", room(card=card(AcceptStatus.pending)), Column.needs_you, "等待验收"),
+    ("提问未回答", room(awaiting_answer=True), Column.needs_you, "待确认"),
     ("已交付", room(accepted_at=JUST_NOW), Column.done, "已采纳"),
     ("归档了", room(status=TopicStatus.archived), Column.archived, "已归档"),
 ]
@@ -282,6 +285,58 @@ def test_the_live_fact_beats_the_paperwork():
         now=NOW,
     )
     assert (shown.column, shown.display_status) == (Column.building, "运行中")
+
+
+def test_an_unanswered_question_beats_the_live_fact():
+    """提问压过「在跑」—— 规矩 2 唯一的例外，而且是同一个道理。
+
+    进程可能还在，但「在跑」已经不是此刻成立的事实：它停在那个问题上等回答，不会
+    自己往下走。而看板显示「运行中」，正是让人不来看的那一句。
+    """
+    shown = task_presentation(
+        task(
+            awaiting_answer=True,
+            has_worker=True,
+            last_signal_at=JUST_NOW,
+            card=card(AcceptStatus.pending),
+        ),
+        now=NOW,
+    )
+    assert (shown.column, shown.display_status) == (Column.needs_you, "待确认")
+
+
+def test_delivery_still_beats_an_unanswered_question():
+    """已交付压过它 —— 已经采纳，那个旧问题不再挡住任何事。"""
+    shown = task_presentation(task(awaiting_answer=True, accepted_at=JUST_NOW), now=NOW)
+    assert (shown.column, shown.display_status) == (Column.done, "已采纳")
+
+
+def test_a_room_with_an_unanswered_question_beats_running_too():
+    shown = room_presentation(
+        RoomFacts(
+            status=TopicStatus.active,
+            running=True,
+            accepted_at=None,
+            card=None,
+            awaiting_answer=True,
+        ),
+        now=NOW,
+    )
+    assert (shown.column, shown.display_status) == (Column.needs_you, "待确认")
+
+
+def test_an_archived_room_does_not_ask_anything_of_anyone():
+    shown = room_presentation(
+        RoomFacts(
+            status=TopicStatus.archived,
+            running=False,
+            accepted_at=None,
+            card=None,
+            awaiting_answer=True,
+        ),
+        now=NOW,
+    )
+    assert shown.column == Column.archived
 
 
 # —— 结算掉的卡不再替这条活说话 ————————————————————————————————————

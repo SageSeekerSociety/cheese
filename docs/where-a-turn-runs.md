@@ -31,6 +31,32 @@ The remaining sections describe ordinary work topics and their selected compute 
 
 These choices select the ordinary room's execution machine. Claude Code and RC run on the separately recorded central session host, which does not appear as a project execution choice. The two locations are described in `remote-execution.md`.
 
+## 这些机器上有什么工具
+
+工具分三层，落点各不相同：
+
+| | 是什么 | 谁放的 |
+|---|---|---|
+| **平台必需** | tmux、git、python3、harness 本身 | 机器接入时检查，缺了当场拒绝（`machine/enrollment.py`）。没有它们平台自己就跑不起来 |
+| **项目依赖** | 这个仓库要什么 | 项目自己的初始化脚本 |
+| **文档工具** | typst、pandoc、uv、一对中文可变字体 | 平台放（`machine/toolchain_dist.py` + `agent/machine_launcher.py`） |
+
+第三层放在机器的 home 下（`$CHEESE_TOOLCHAIN`，即 `~/.cheese/toolchain`），不在房间的
+session home 里：**这些属于机器，那台机器上每个房间共用一份**，而且比任何一个房间活得久。
+路径里带版本号，所以升级是落在旧的旁边，下次启动才取，没有东西需要卸载。
+
+**它们是能力，不是依赖。** 只回答问题的房间一样都不需要，所以放置是脱离启动脚本跑的，
+既不会让一轮失败也不会让它变慢。代价是刚开机的房间可能还取不到——`skills/documents`
+因此要求 agent 先确认工具在不在，不在就如实说这台机器现在做不了。
+
+二进制按 digest 钉死在 `toolchain_dist` 里，而不是取上游的校验和：typst 和 pandoc
+根本不发校验和（2026-09-16 实测），而钉在仓库里的 digest 还多一道 PR review，
+同一个 tag 被重新打包会验不过。
+
+字体是 `TYPST_FONT_PATHS` 指过去的，没有设 `TYPST_IGNORE_SYSTEM_FONTS`——我们的字体
+本来就排在系统字体前面，屏蔽掉只会白白拿走用户自己装的字。缺中文字体的失败是静默的：
+typst 退出码 0、PDF 大小正常、每个中文字是空心方框。
+
 ## 二、菜单和执行层现在是同一个答案
 
 项目设置里能选的算力（`agent/market.py` 的 `compute_listings`）就是上面这两条。哪一条挂「默认」，和一个没有做过选择的话题实际落在哪，**是同一个函数算出来的**：`compute_default_name`。
@@ -163,6 +189,8 @@ Installation and storage configuration are described in
 ## 相关
 
 - `backend/app/domain/agent/compute.py` — 两条路的装配与默认值
+- `backend/app/domain/machine/toolchain_dist.py` — 文档工具钉在哪个版本、哪个 digest
+- `backend/app/domain/agent/machine_launcher.py` — 把它们放到机器上的那一段
 - `backend/app/domain/agent/preview_tunnel.py` — 运行环境预览：机器那一半（发到机器上跑的那份）
 - `backend/app/api/routes/app_preview.py` — 运行环境预览：平台这一半，两端都在里面
 - `backend/app/domain/agent/market.py` — 菜单，以及默认值这一个答案

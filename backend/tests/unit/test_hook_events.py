@@ -11,9 +11,11 @@ from app.domain.agent.harness.claude_code.hook_events import (
     translate_hook,
 )
 from app.domain.agent.service import (
+    STEP_ERROR_MAX,
     AgentMessage,
     AgentResult,
     AgentSessionInfo,
+    AgentStepFailed,
     AgentSubagentStart,
     AgentSubagentStop,
     AgentToolResult,
@@ -605,3 +607,86 @@ def test_the_launch_subscribes_to_stop_failure():
     from app.domain.agent.harness.claude_code.session_launch import hooks_settings
 
     assert "StopFailure" in hooks_settings()["hooks"]
+
+
+# ---- 挂了的一步 ----
+#
+# 载荷形状取自 Claude Code 2.1.272 自己的 hook schema:
+#   PostToolUseFailure{tool_name, tool_input, tool_use_id, error,
+#                      is_interrupt?, duration_ms?}
+# 失败走的是这个事件，不是 PostToolUse —— 后者的 schema 里根本没有 error 字段。
+
+
+def _failure(**overrides):
+    return translate_hook(
+        {
+            "hook_event_name": "PostToolUseFailure",
+            "tool_name": "Bash",
+            "tool_input": {"command": "pandoc a.md -o a.docx"},
+            "tool_use_id": "toolu_1",
+            "error": "bash: pandoc: command not found",
+            "duration_ms": 12,
+            **overrides,
+        }
+    )
+
+
+def test_a_tool_call_carries_the_id_its_failure_will_name():
+    ev = translate_hook(
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_use_id": "toolu_1",
+            "tool_input": {"command": "pandoc a.md -o a.docx"},
+        }
+    )
+    assert isinstance(ev, AgentToolUse)
+    assert ev.call_id == "toolu_1"
+
+
+def test_a_failed_tool_says_which_step_failed_and_why():
+    ev = _failure()
+    assert isinstance(ev, AgentStepFailed)
+    assert ev.call_id == "toolu_1"
+    assert ev.text == "bash: pandoc: command not found"
+
+
+def test_a_tool_that_worked_reaches_the_room_through_its_effect_only():
+    # 每一步的返回值都上报，等于把现场变成一份日志 —— 一次 Read 的返回值是整个
+    # 文件。只有「挂了」是房间无法从效果看出来的。
+    assert (
+        translate_hook(
+            {
+                "hook_event_name": "PostToolUse",
+                "tool_name": "Bash",
+                "tool_use_id": "toolu_1",
+                "tool_response": {"stdout": "ok", "stderr": ""},
+            }
+        )
+        is None
+    )
+
+
+def test_someone_pressing_stop_is_not_a_tool_going_wrong():
+    assert _failure(is_interrupt=True, error="Interrupted by user") is None
+
+
+def test_a_long_failure_keeps_its_ending():
+    # 命令在最后一行说它为什么不行，开头往往还是正常的编译日志。
+    tail = "FAILED tests/test_x.py::test_y"
+    ev = _failure(error="x " * 2000 + tail)
+    assert ev.text.endswith(tail)
+    assert len(ev.text) == STEP_ERROR_MAX
+
+
+def test_a_subagent_conclusion_is_still_its_own_event():
+    ev = translate_hook(
+        {
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Task",
+            "tool_use_id": "toolu_2",
+            "tool_input": {"description": "查资料"},
+            "tool_response": "查到了",
+        }
+    )
+    assert isinstance(ev, AgentToolResult)
