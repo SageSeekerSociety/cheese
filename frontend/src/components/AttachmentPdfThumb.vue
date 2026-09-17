@@ -29,8 +29,6 @@ const canvas = ref<HTMLCanvasElement | null>(null)
 const failed = ref(false)
 const drawn = ref(false)
 
-const title = () => props.path.split('/').pop() || 'PDF'
-
 /** pdf.js needs its worker pinned before the first getDocument, or it guesses
  *  an address it cannot reach. Shared across tiles — loading it is the
  *  expensive part, and it is the same worker either way. */
@@ -97,7 +95,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <span class="att-face" :title="title()">
+  <span class="att-face">
     <canvas ref="canvas" class="pdf-thumb__page" :class="{ 'pdf-thumb__page--ready': drawn }" />
     <v-icon v-if="!drawn" size="16">mdi-file-pdf-box</v-icon>
   </span>

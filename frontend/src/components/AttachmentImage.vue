@@ -62,9 +62,9 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <!-- 缩略图：盒子先占住位置，成败都一样大——候选条不会因为一张图慢半拍而跳动。
-       文件名挂在 title 上，图没出来时鼠标移上去还知道它是什么。 -->
-  <span v-if="thumb" class="att-face" :title="altText">
+  <!-- 缩略图：盒子先占住位置，成败都一样大——待发条不会因为一张图慢半拍而跳动。
+       名字不挂在这儿：外面那张卡片已经写着它，并且负责弹出全名。 -->
+  <span v-if="thumb" class="att-face">
     <img v-if="url" class="im-thumb__img" :src="url" :alt="altText" />
     <v-icon v-else-if="failed" size="16" class="im-thumb__failed">mdi-image-broken-variant</v-icon>
   </span>

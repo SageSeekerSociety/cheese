@@ -2557,13 +2557,6 @@ details.sys-row > summary::-webkit-details-marker {
   border-top: 1px solid var(--line);
   padding-top: 4px;
 }
-/* 拖文件进来时的落区。描边加粗一档、底色垫一层琥珀的淡色，让它在一屏中性里真的
-   跳出来；两样都不占位置——占了会把输入框顶一下。 */
-.composer--drop {
-  outline: 2px dashed var(--accent);
-  outline-offset: -4px;
-  background: var(--accent-wash);
-}
 /* 发件箱: 已显示、还没落库。淡一档，不换形状——它就是那条消息。 */
 .im-row--pending .im-text,
 .im-row--pending .im-name {
@@ -2695,11 +2688,25 @@ details.sys-row > summary::-webkit-details-marker {
   padding: 4px 6px 4px 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
-  transition: border-color 0.12s ease;
+  transition:
+    border-color 0.12s ease,
+    box-shadow 0.12s ease,
+    background-color 0.12s ease;
 }
 /* 聚焦时那条边只提一档：--muted 是正文级的灰，一压就把整个盒子变成了主角。 */
 .composer-box:focus-within {
   border-color: var(--faint);
+}
+/* 拖着文件进来时，变的是输入框自己那圈边：提成琥珀的实线，再垫一层琥珀淡色。
+   虚线读起来像占位、像还没定，而这一刻要说的是「就是这儿」；描在这个盒子上而不是
+   外面那层，是因为盒子本来就是那个控件，它的圆角也已经在那儿了。
+   第二像素靠 box-shadow 加，不靠 border-width——后者会改盒子尺寸，把输入框顶一下。
+   这条排在 :focus-within 后面：拖进来的时候光标通常就在输入框里，两条同权，后面
+   的赢。 */
+.composer--drop .composer-box {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  background: var(--accent-wash);
 }
 .composer-input :deep(textarea) {
   font-size: 14px;
