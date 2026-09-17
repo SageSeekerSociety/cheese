@@ -202,7 +202,6 @@
     "src/views/tasks/detail/Submit.vue": 33,
     "src/views/tasks/Edit.vue": 6,
     "src/views/teams/Detail.vue": 1,
-    "src/views/teams/detail/Compute.vue": 77,
     "src/views/teams/detail/Members.vue": 51,
     "src/views/teams/detail/TeamProjects.vue": 8,
     "src/views/teams/DetailSidebar.vue": 9,
