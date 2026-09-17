@@ -113,6 +113,46 @@ class RedactSecrets(logging.Filter):
         return True
 
 
+_ANSWERED_LIMIT = 200
+
+
+def _what_the_server_answered(exc: BaseException | None) -> list[str]:
+    """The status and body behind an HTTP error, which its own message omits.
+
+    `httpx.HTTPStatusError` renders as `Client error '409 Conflict' for url
+    '...'` — the status, and nothing the server actually said. The reason is in
+    the body. On 2026-09-16 fifty of these were the device connection owner
+    answering `device offline`; neither the alert nor the log line carried that
+    word, so an error that named its own cause read as an unexplained one, and
+    finding out took reading the owner's logs and asking it directly.
+
+    Duck-typed on `.response` rather than importing httpx: this module sits
+    below the HTTP client, and any client whose error carries a response gets
+    the same treatment. The body is scrubbed — a 401 or a redirect can answer
+    with the credential it rejected, and an alert reaches a chat group.
+    """
+    response = getattr(exc, "response", None)
+    if response is None:
+        return []
+    lines = []
+    status = getattr(response, "status_code", None)
+    if status is not None:
+        lines.append(f"状态：{status}")
+    try:
+        body = response.text
+    except Exception:  # noqa: BLE001 — a body that will not read is not the news
+        return lines
+    if not isinstance(body, str) or not body.strip():
+        return lines
+    # One line: an alert is a list of short lines, and a JSON body arrives with
+    # newlines in it.
+    body = " ".join(body.split())
+    if len(body) > _ANSWERED_LIMIT:
+        body = body[:_ANSWERED_LIMIT] + "…"
+    lines.append(f"对方回答：{scrub_secrets(body)}")
+    return lines
+
+
 class AlertOnError(logging.Handler):
     """Put what the backend logs as an error where a person will actually see it.
 
@@ -155,6 +195,7 @@ class AlertOnError(logging.Handler):
                 lines.append(f"{key}：{value}")
         if record.exc_info and record.exc_info[0] is not None:
             lines.append(f"异常：{record.exc_info[0].__name__}")
+            lines.extend(_what_the_server_answered(record.exc_info[1]))
         return title or record.name, lines
 
     def emit(self, record: logging.LogRecord) -> None:
