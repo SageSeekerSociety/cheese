@@ -1665,7 +1665,13 @@ class ChatService:
         window honest. A provider may append native-image mentions to the text
         it types, so the receipt matches on equality or on carrying our text
         as its prefix."""
-        await self._place_seen_receipts(topic_id, prompt)
+        # 落记号是尽力而为的，而它下面那段是功能性的（把消息标记成已消费，也就是
+        # 下一轮不再重发它的那个边界）。一个纯装饰的东西不许把功能路径带下去：
+        # 记号丢了只是少一个 👀，标记丢了会让这条消息在下一轮被重发一遍。
+        try:
+            await self._place_seen_receipts(topic_id, prompt)
+        except Exception:  # noqa: BLE001 — the consumed stamp matters more
+            logger.exception("failed to place the seen receipt (topic=%s)", topic_id)
         pending = self._pending_receipts.get(topic_id)
         if not pending:
             return
