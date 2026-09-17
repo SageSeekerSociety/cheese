@@ -405,6 +405,7 @@ def _screen_launch(
     place = MachinePlace(
         home=home_dir,
         workdir=work_dir,
+        store="$HOME/.cheese/store/P",
         state="$HOME/.cheese/harness/p/r/claude-code/deadbeef",
         api_base="http://h",
         project_id="P",

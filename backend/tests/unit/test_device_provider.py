@@ -11,7 +11,12 @@ import pytest
 
 from app.core.config import settings
 from app.domain.agent.device_hub import HubScreen
-from app.domain.agent.device_provider import DeviceChannel, tunnel_port_for_topic
+from app.domain.agent.device_provider import (
+    DeviceChannel,
+    device_home_dir,
+    device_store_dir,
+    tunnel_port_for_topic,
+)
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.claude_code.device_launch import DEVICE_TUNNEL_PROBE
 from app.domain.agent.harness.claude_code.hook_events import HookRouter
@@ -567,7 +572,6 @@ async def test_a_live_screen_is_not_sent_the_launcher_again():
 
 
 async def test_reused_screen_refreshes_hook_without_restarting(monkeypatch, tmp_path):
-    from app.domain.agent.device_provider import device_home_dir
 
     class LocalTransferHub(FakeHub):
         async def exec(self, device_id, argv, *, stdin=None, **kwargs):
@@ -1024,6 +1028,30 @@ async def test_no_online_device_is_a_clean_error():
     ]
     assert len(events) == 1 and isinstance(events[0], AgentResult)
     assert events[0].is_error
+
+
+def test_rooms_never_share_a_home_but_always_share_their_project_store():
+    """The two halves of the same layout, stated together because they pull
+    opposite ways and both are load-bearing.
+
+    A room's HOME must be its own — hook events spool under it and the drainer
+    ships the spool with whichever token the last screen start wrote, so a
+    shared home sends every room's events to one topic. The packages installed
+    INTO that home must not be: every room of a project installs the same
+    lockfile, so a per-room store means a physical copy of the same dependency
+    tree per room, which is how 220 worktrees of one project came to hold 236GB.
+    """
+    project = uuid.uuid4()
+    other = uuid.uuid4()
+    room_a, room_b = uuid.uuid4(), uuid.uuid4()
+
+    assert device_home_dir(project, room_a) != device_home_dir(project, room_b)
+    assert device_store_dir(project) == device_store_dir(project)
+    assert device_store_dir(project) != device_store_dir(other)
+
+    # And the store is not inside either room, or retiring one would take it.
+    for room in (room_a, room_b):
+        assert not device_store_dir(project).startswith(device_home_dir(project, room))
 
 
 def test_every_device_work_dir_is_a_topic_scratch_dir():

@@ -371,6 +371,11 @@ def screen_env(
         "CHEESE_HOME": place.home,
         "CHEESE_WORK": place.workdir,
     }
+    if place.store:
+        # Absent rather than empty, for the reason spelled out below: a screen
+        # with no project (a probe, a fixture) has no project store, and the
+        # launcher must not point a package manager at `.cheese/store/`.
+        env["CHEESE_STORE"] = place.store
     # `CHEESE_API` is the backend root as-is: it maps 1:1 onto it (see
     # settings.connector_public_base) and every route is bare since #370 step 2,
     # so the CLI's base IS that base. Appending another `/api` was right only
@@ -460,6 +465,41 @@ CH="${{CHEESE_HOME:?Cheese session home is required}}"
 CW="${{CHEESE_WORK:?Cheese work directory is required}}"
 case "$CH" in "\\$HOME"*) CH="$REAL_HOME${{CH#\\$HOME}}";; esac
 case "$CW" in "\\$HOME"*) CW="$REAL_HOME${{CW#\\$HOME}}";; esac
+# Every room of this project on this machine installs the same lockfile, so
+# point the package managers at one store outside any room's HOME. uv and pnpm
+# then HARDLINK out of it instead of copying, which they can only do while the
+# store and the tree share a filesystem — `.cheese/store` and `.cheese/work`
+# both hang off the machine's own home, so they do by construction and there is
+# nothing to check at runtime. The last two hardlink nothing and are here for
+# the plainer half of the saving: not downloading the same archive again.
+#
+# `uv-python` is the exception in this list and the one a cleanup must not
+# touch: it is not a cache but the INTERPRETER a venv points at. `.venv/bin/python`
+# is an absolute symlink into it and `pyvenv.cfg`'s `home =` names it, so
+# deleting it leaves every venv in the project pointing at nothing until a plain
+# `uv run` rebuilds them. Sweeping `uv-cache` costs a download; sweeping
+# `uv-python` breaks rooms until they repair themselves.
+#
+# Placed before the `staging` hole, not after it: staging can spawn a process of
+# its own — claude-code's warm recovery restarts a room's runner from there —
+# and that process installs with whatever environment it inherited. Nothing here
+# needs HOME to have been swapped yet, only REAL_HOME.
+#
+# `mkdir` guarded because `set -e` is in force and nothing here is worth failing
+# a launch over — a store that cannot be made leaves every tool on its own
+# default, which is exactly where they were before this existed. A project that
+# sets any of these itself still wins: `cheese-environment.py` layers the room's
+# configured variables over the inherited environment, not under it.
+CS="${{CHEESE_STORE:-}}"
+case "$CS" in "\\$HOME"*) CS="$REAL_HOME${{CS#\\$HOME}}";; esac
+if [ -n "$CS" ] && mkdir -p "$CS" 2>/dev/null; then
+  export UV_CACHE_DIR="$CS/uv-cache"
+  export UV_PYTHON_INSTALL_DIR="$CS/uv-python"
+  export npm_config_store_dir="$CS/pnpm-store"
+  export npm_config_cache="$CS/npm-cache"
+  export PIP_CACHE_DIR="$CS/pip-cache"
+  CSLIVE=1
+fi
 {staging}export HOME="$CH" CHEESE_WORK="$CW"
 cheese_launch_phase warm_staged
 mkdir -p "$HOME" "$CHEESE_WORK"
@@ -467,6 +507,49 @@ mkdir -p "$HOME" "$CHEESE_WORK"
 # a tmux-hosted agent runs from a fresh server with a cwd of its own.
 export HOME="$(cd "$HOME" && pwd -P)"
 export CHEESE_WORK="$(cd "$CHEESE_WORK" && pwd -P)"
+# With the stores redirected above, the copies these tools left in the room's
+# own HOME are read by nothing. Reclaim them — a room created before the store
+# existed holds them until it is retired, and nothing retires an idle room.
+#
+# What that is worth is not uniform, measured 2026-09-17:
+#
+#   ~/.npm/_cacache   792MiB   100% reclaimed
+#   ~/.cache/pip      240MiB   100% reclaimed
+#   ~/.cache/uv       1.5GiB    12% reclaimed
+#   pnpm store        3.0GiB     2% reclaimed
+#
+# The first two are download caches that nothing links to, so every byte comes
+# back. uv's and pnpm's are content-addressed stores the install HARDLINKS out
+# of: 98% of their bytes are also in a `.venv`/`node_modules` that stays, so
+# deleting them drops a link count and frees nothing. Swept anyway — the
+# remainder is real and nothing can break — but not free either: the next
+# install in that room re-resolves and re-fetches whatever the shared store has
+# not seen. Once per room.
+#
+# NOT `$HOME/.local/share/uv`, nor its Darwin twin. That holds the managed
+# INTERPRETER, which a venv reaches by absolute symlink with `pyvenv.cfg`'s
+# `home =` naming it; deleting it leaves every venv in the room pointing at
+# nothing until a plain `uv run` rebuilds them.
+#
+# Two guards, and the second is the load-bearing one. CSLIVE says the redirect
+# above actually happened — without it these directories are still the live
+# ones. `$HOME != $REAL_HOME` says we are in a room at all, and not standing in
+# the machine owner's own home, which is whose `~/.cache` this would be.
+#
+# Detached, in the shape and for the reason the toolchain fetch below is:
+# `cleanup` ends in a bare `wait`, so a plain `&` would make tearing a screen
+# down wait on an `rm -rf` of 70k files that nothing needs.
+if [ -n "${{CSLIVE:-}}" ] && [ "$HOME" != "$REAL_HOME" ]; then
+  if [ "$(uname -s)" = Darwin ]; then
+    ( nohup rm -rf "$HOME/Library/Caches/uv" "$HOME/Library/Caches/pip" \\
+        "$HOME/.npm/_cacache" "$HOME/Library/pnpm/store" \\
+        </dev/null >/dev/null 2>&1 & )
+  else
+    ( nohup rm -rf "$HOME/.cache/uv" "$HOME/.cache/pip" \\
+        "$HOME/.npm/_cacache" "$HOME/.local/share/pnpm/store" \\
+        </dev/null >/dev/null 2>&1 & )
+  fi
+fi
 # The platform's own directory inside the session home. It used to be
 # $HOME/.claude — the platform squatting in one harness's directory, which
 # read as deliberate to everyone who came after it. A harness that wants a

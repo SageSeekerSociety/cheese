@@ -39,6 +39,7 @@ def _env(topic: str) -> dict[str, str]:
     place = MachinePlace(
         home="/h",
         workdir="/w",
+        store="/s",
         state="$HOME/.cheese/harness/p/r/claude-code/d",
         api_base="http://h",
         project_id="P",

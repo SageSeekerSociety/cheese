@@ -363,6 +363,30 @@ def _credential_expiry(token: str) -> int:
 # creates it and the retirement that removes it (topic/retire.py).
 DEVICE_HOME_ROOT = "$HOME/.cheese/home"
 DEVICE_WORK_ROOT = "$HOME/.cheese/work"
+# Where a PROJECT's rooms share the packages they install, on the machine they
+# share. Per project rather than per room because every room of a project
+# installs the same lockfile, while a room's home is its own — and uv and pnpm
+# both default their store inside `$HOME`, so N rooms meant N physical copies of
+# one dependency tree. That is not a prediction: it is the failure already
+# measured on the container path this replaces, where one project's 220
+# worktrees came to hold 236GB.
+#
+# Per project rather than per MACHINE for the boundary it draws, not for the
+# saving it gives up. Rooms of one project already share a repository and can
+# read each other's checkouts, so a store inside that line reaches nothing that
+# was not already reachable; a machine-wide store would cross a line that
+# exists. Today no device room is isolated from any other either (supply.py:
+# every screen is `host`), so this widens nothing at all — it is drawn per
+# project for #358's sake, not for today's.
+#
+# What #358 will have to solve rather than inherit: hardlinks cannot cross a
+# bind mount (link(2) → EXDEV even within one filesystem — verified on the dev
+# box, where a cross-mount `ln` inside a sandbox failed with "Invalid
+# cross-device link" and uv/pnpm silently fell back to full copies). So binding
+# this store into an isolated room read-only would give that room the isolation
+# and take the dedup straight back. The two levers are not the same lever, and
+# a design that assumes they are will re-discover 236GB.
+DEVICE_STORE_ROOT = "$HOME/.cheese/store"
 
 
 def device_home_dir(project_id: uuid.UUID, place_id: uuid.UUID) -> str:
@@ -371,6 +395,10 @@ def device_home_dir(project_id: uuid.UUID, place_id: uuid.UUID) -> str:
 
 def device_work_dir(project_id: uuid.UUID, place_id: uuid.UUID) -> str:
     return f"{DEVICE_WORK_ROOT}/{project_id}/{place_id}"
+
+
+def device_store_dir(project_id: uuid.UUID) -> str:
+    return f"{DEVICE_STORE_ROOT}/{project_id}"
 
 
 # Where a place's environment runner may have been left, relative to that
@@ -1338,6 +1366,7 @@ class DeviceChannel(Channel):
         place = MachinePlace(
             home=home_dir,
             workdir=work_dir,
+            store=device_store_dir(project_id),
             # Where this harness keeps the session's state on that machine,
             # AS THE CONNECTOR RESOLVES IT: the backend records this string
             # and later derives a socket from it, so it is a fact about the

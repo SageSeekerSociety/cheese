@@ -130,6 +130,7 @@ def _place() -> MachinePlace:
     return MachinePlace(
         home="$HOME/session",
         workdir="$HOME/session/work",
+        store="$HOME/.cheese/store/proj",
         state=STATE,
         api_base="https://cheese.example/api",
         project_id="proj",
