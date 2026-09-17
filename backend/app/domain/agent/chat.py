@@ -27,6 +27,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.background import hold
 from app.core.config import settings
 from app.core.errors import GatewayUnavailableError, NotFoundError, ValidationError
 from app.core.text import markdown_preview
@@ -3868,9 +3869,11 @@ class ChatService:
                 usage.output_tokens,
             )
 
-        task = asyncio.create_task(_later())
-        self._memory_tasks.add(task)
-        task.add_done_callback(self._memory_tasks.discard)
+        hold(
+            asyncio.create_task(_later()),
+            self._memory_tasks,
+            name=f"deferred-usage-drain-{turn_id}",
+        )
 
     async def _drain_gateway_usage(self, project_id: uuid.UUID) -> AgentUsage | None:
         """L1: real usage for gateway-routed turns. The hooks backends can't see

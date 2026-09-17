@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from app.core.background import hold
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import event_spool
 from app.domain.agent.harness import (
@@ -910,9 +911,11 @@ class ClaudeCodeRuntime:
         async def _report() -> None:
             await consumer(topic_id, prompt)
 
-        task = asyncio.create_task(_report())
-        self._receipt_tasks.add(task)
-        task.add_done_callback(self._receipt_tasks.discard)
+        hold(
+            asyncio.create_task(_report()),
+            self._receipt_tasks,
+            name=f"prompt-receipt-{topic_id}",
+        )
 
     async def ensure_subscription(
         self,
