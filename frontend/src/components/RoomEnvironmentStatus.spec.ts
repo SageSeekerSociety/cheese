@@ -138,6 +138,14 @@ describe('运行环境状态条', () => {
     expect(container.querySelector('.env')?.className).not.toContain('env--stuck')
   })
 
+  it('unbound：还没挑机器就整条不画 —— 没有东西在动，就没有什么要说', async () => {
+    env = { state: 'unbound' }
+    const { container } = mountStatus()
+    await settle()
+
+    expect(container.querySelector('.env')).toBeNull()
+  })
+
   it('offline：机器离线要人去管，而且不会自己好', async () => {
     env = { state: 'offline' }
     const { container } = mountStatus()

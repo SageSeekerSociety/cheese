@@ -131,6 +131,45 @@ def test_failed_cloud_creation_is_failed_environment_not_permanent_pending(warm_
     assert response.json()["data"]["state"] == "failed"
 
 
+def test_a_cloud_machine_still_being_created_is_a_room_that_really_is_preparing(
+    warm_case,
+):
+    """「正在准备」的那一半，钉在这里，因为另一半刚刚不再这么说。
+
+    没有设备绑定的房间现在回 `unbound`——除非有台云机器正在建起来，那是真的在
+    准备，说它在准备并不是假话。"""
+    client, topics, actor, cloud = warm_case
+
+    async def run():
+        async with client.test_factory() as session:
+            machine = await MachineService(session, cloud).ensure_topic_machine(
+                uuid.UUID(topics[1]), actor=actor
+            )
+            machine.device_id = None
+            machine.status = MachineStatus.provisioning
+            await session.commit()
+            from app.domain.device.models import DeviceTopicRow
+
+            binding = await session.scalar(
+                select(DeviceTopicRow).where(
+                    DeviceTopicRow.topic_id == uuid.UUID(topics[1])
+                )
+            )
+            if binding is not None:
+                await session.delete(binding)
+                await session.commit()
+
+    asyncio.run(run())
+    token = seed_user(client, "owner")
+    topic = client.get(f"/topics/{topics[1]}").json()["data"]
+    response = client.get(
+        f"/projects/{topic['project_id']}/environment/rooms/{topics[1]}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["state"] == "pending"
+
+
 @pytest.mark.parametrize(
     "supply,direct,center,internal,expected",
     [

@@ -20,6 +20,7 @@ let timer: ReturnType<typeof setTimeout> | undefined
 let disposed = false
 let generation = 0
 const labels: Record<EnvironmentStatus['state'], string> = {
+  unbound: '尚未接入机器',
   pending: '等待下次启动',
   preparing: '正在准备',
   ready: '已就绪',
