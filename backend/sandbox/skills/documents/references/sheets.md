@@ -57,10 +57,11 @@ cheese recalc 预算表.xlsx
 同理，用 `data_only=True` 读一份**从没被 Excel 打开过、也没重算过**的文件时，公式格读出来
 是 `None`。这不是文件坏了，是里面还没存过计算结果——先 `cheese recalc` 再读。
 
-### 老格式 `.xls` 读不了
+### 老格式 `.xls` 要先升级
 
-openpyxl 只认 `.xlsx` / `.xlsm`。用户传来 `.xls`（2007 以前的老格式）时，如实说读不了，
-请他在 Excel 里另存为 `.xlsx` 再发一次——不要用别的办法猜里面的数字。
+openpyxl 只认 `.xlsx` / `.xlsm`。用户传来 `.xls`（2007 以前的老格式）时先
+`cheese convert 报表.xls --to xlsx`，再读转出来那份——不要用别的办法猜里面的数字。
+升级完要告诉用户转出来的不是同一份文件，细节见 `reading.md`。
 
 ## 交付前
 
