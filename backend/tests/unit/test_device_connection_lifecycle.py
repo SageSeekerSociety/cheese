@@ -55,7 +55,7 @@ async def test_executor_call_survives_backend_client_restart(monkeypatch) -> Non
     first_waiter = asyncio.create_task(
         old_backend.call_executor(
             "machine",
-            "/room/.claude/executor",
+            "/room/.cheese/executor",
             "control",
             {"command": "sleep then answer"},
             trace_id="same-request-after-restart",
@@ -79,7 +79,7 @@ async def test_executor_call_survives_backend_client_restart(monkeypatch) -> Non
     recovered = asyncio.create_task(
         new_backend.call_executor(
             "machine",
-            "/room/.claude/executor",
+            "/room/.cheese/executor",
             "control",
             {"command": "sleep then answer"},
             trace_id="same-request-after-restart",

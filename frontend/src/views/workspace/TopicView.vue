@@ -9,6 +9,7 @@ import { useDisplay } from 'vuetify'
 import { usePageTitle } from '@/composables/usePageTitle'
 
 import { getTopicAgent } from '@/api'
+import PushPermissionPrompt from '@/components/PushPermissionPrompt.vue'
 import RoomEnvironmentStatus from '@/components/RoomEnvironmentStatus.vue'
 import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
@@ -317,6 +318,11 @@ watch(
         :project-id="projectId"
         :topic-id="topicId"
       />
+
+      <!-- 「本轮运行时间可能较长，完成后通知你」——问推送权限的那一刻。它自己决定
+           什么时候出现（这一轮跑过一分钟、而且这个浏览器还没问过），平常什么都不
+           画。放在这里而不是首屏：见组件自己的说明。 -->
+      <PushPermissionPrompt class="env-strip" :working="working" />
 
       <div class="panes d-flex flex-grow-1" style="min-width: 0; min-height: 0; position: relative">
         <!-- 桌面：对话是左边那一栏，和工作面板之间有一条可拖的分隔。 -->

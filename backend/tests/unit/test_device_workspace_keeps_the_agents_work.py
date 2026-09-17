@@ -233,7 +233,16 @@ def test_renaming_a_checkout_cannot_deliver_it_as_another_task(device):
     assert (work / "unfinished.txt").read_text() == "retained"
 
 
-def test_room_starts_before_task_dependencies_and_worktree_prepares_each_branch(device):
+# Which directory holds the runner is the launcher's choice, not the CLI's: the
+# machine launcher writes `.cheese/`, the claude-code remote-execution payload
+# writes its own config dir. Opening a task named one of them, so a room on a
+# machine prepared by the other launcher died before it could print the task id
+# — the checkout and the task record were already on disk, and the room saw
+# nothing happen at all.
+@pytest.mark.parametrize("shipped_by", (".cheese", ".claude"))
+def test_room_starts_before_task_dependencies_and_worktree_prepares_each_branch(
+    device, shipped_by
+):
     _, tasks, remote, home = device
     seed = remote.parent / "seed"
     for directory in ("backend", "frontend"):
@@ -246,7 +255,7 @@ def test_room_starts_before_task_dependencies_and_worktree_prepares_each_branch(
         git(remote, "branch", "-f", data["branch"], "main")
     room = home / "room"
     room.mkdir()
-    helpers = home / ".claude"
+    helpers = home / shipped_by
     helpers.mkdir()
     shutil.copy(environment_runner.__file__, helpers / "cheese-environment.py")
     config = EnvironmentConfig(

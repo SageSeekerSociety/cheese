@@ -15,36 +15,22 @@ from sqlalchemy import ColumnElement, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.domain.memory.keywords import (
-    INJECTION_MAX_TERMS,
-    is_relevant,
-    match_content,
-    query_terms,
-)
+from app.domain.memory.keywords import is_relevant, match_content, query_terms
 from app.domain.memory.models import MemoryEntry, MemoryLayer, MemoryScope
 
-# Two budgets, because the two layers are paid for differently.
+# Only `core` is injected. It is what the agent must know to be itself, it is
+# in every turn by definition, and it is small enough that being in every turn
+# is affordable — blowing through this cap is the signal that something in
+# there stopped being core.
 #
-# `core` is what the agent must know to be itself — it is injected in full,
-# every turn, and never competes with anything for a seat. That is only safe
-# while it stays small, so it gets a budget an order of magnitude tighter than
-# the other one: the cap is the thing that keeps "always injected" affordable,
-# and blowing through it is a signal that core has stopped being core.
-#
-# `fact` is everything learned. A pool of these outgrows any prompt eventually
-# — this project's own is 155 facts / ~42k chars — so the budget's job is not
-# to hold all of it but to spend the room on the facts this turn is about; the
-# rest stays one `cheese recall` away.
-#
-# Neither cap is silent: whatever they dropped comes back on ``RecallResult``
-# for the prompt to state out loud.
+# `fact` is everything learned, and it is NOT injected: it is retrieved by
+# `recall`, when the turn asks. Injection used to spend 20000 characters per
+# turn guessing which facts this turn was about, and the guess was paid for
+# whether or not it was right — while `recall` sat there unused, because a
+# prompt that already looks full is a prompt nobody searches. What injection
+# still owes is the one line saying the pool is not empty; the rest is a query
+# away.
 MEMORY_CORE_CHAR_BUDGET = 4000
-MEMORY_INJECTION_CHAR_BUDGET = 20000
-
-# How many non-core facts one pool ranks. Ranking happens in Python over the
-# fetched rows, so this bounds the work; pools are ~150 facts today, so it does
-# not bite. Anything past it is still counted as omitted, never silently gone.
-MEMORY_RANK_CANDIDATES = 500
 
 
 def live_entries() -> ColumnElement[bool]:
@@ -71,21 +57,6 @@ class MemoryStore(Protocol):
         """The pool's core layer, in full, oldest first. Prompt injection puts
         all of it in every turn, so what is in here is a curation decision, not
         a retrieval one."""
-        ...
-
-    async def rank_facts(
-        self,
-        scope: MemoryScope,
-        scope_id: str,
-        query: str,
-        limit: int = MEMORY_RANK_CANDIDATES,
-    ) -> list[tuple[float, str]]:
-        """Non-core facts as ``(score, content)``, best match first.
-
-        ``query`` is this turn's context. An empty query (or one with nothing
-        to match on) scores everything 0.0 and the order degrades to newest
-        first — the caller still gets a full budget's worth, it just has no
-        signal to pick with."""
         ...
 
     async def count(self, scope: MemoryScope, scope_id: str) -> int:
@@ -119,13 +90,10 @@ class RecallResult:
 
     facts: list[str]
     omitted: int
-    # How many leading entries of ``facts`` are the core layer. The prompt says
-    # so, because "always here" and "here because you happened to ask about it"
-    # are different promises and the reader has to be able to tell them apart.
-    core_count: int = 0
     # Core that did not fit its own budget. Distinct from ``omitted`` on
-    # purpose: a missing fact is normal, a missing *core* fact means the layer
-    # that is supposed to be unconditional has stopped being unconditional.
+    # purpose: a fact left to `recall` is the normal case, a missing *core*
+    # fact means the layer that is supposed to be unconditional has stopped
+    # being unconditional.
     core_omitted: int = 0
 
 
@@ -133,26 +101,20 @@ async def recall_pools(
     store: MemoryStore,
     pools: list[tuple[MemoryScope, str]],
     *,
-    query: str = "",
     core_char_budget: int = MEMORY_CORE_CHAR_BUDGET,
-    char_budget: int = MEMORY_INJECTION_CHAR_BUDGET,
 ) -> RecallResult:
-    """Recall several pools into one injection block: core first, then whatever
-    this turn is about.
+    """The core layer of several pools, as one injection block.
 
-    Two failures are being avoided at once. The first is silent truncation —
-    the writer thinks the fact was stored (it was), the reader never learns
-    something was held back, and both conclude memory is empty; so everything
-    the budgets dropped comes back as ``omitted``. The second is a pool that
-    outgrew the prompt, where taking "the newest N" means the seats go to
-    whatever was written last, which has nothing to do with what the turn
-    needs. Core is exempt from that competition by construction; the rest is
-    ranked against ``query`` and fills what room is left, best match first.
+    What is deliberately NOT here is the rest of the pool. Everything else it
+    holds comes back as ``omitted`` — a count, not the facts — because the
+    failure this guards against is not a missing fact but a reader who cannot
+    tell "nothing was ever stored" from "this turn did not ask for it". A
+    reader who cannot tell stops asking, and then memory has quietly stopped
+    existing no matter how much of it is on disk.
     """
     core: list[str] = []
     core_used = 0
     core_omitted = 0
-    ranked: list[tuple[float, str]] = []
     stored = 0
     for scope, scope_id in pools:
         stored += await store.count(scope, scope_id)
@@ -169,23 +131,9 @@ async def recall_pools(
             kept.append(fact)
         kept.reverse()  # back to oldest-first, the injection order
         core.extend(kept)
-        ranked.extend(await store.rank_facts(scope, scope_id, query))
-    # Stable sort over per-pool lists that are already best-first: relevance
-    # decides, and among equally-relevant facts the agent's own pool (listed
-    # first by the caller) and then the newer fact keep their order.
-    ranked.sort(key=lambda pair: -pair[0])
-    facts: list[str] = []
-    used = 0
-    for _, fact in ranked:
-        cost = len(fact) + 2
-        if facts and used + cost > char_budget:
-            break
-        used += cost
-        facts.append(fact)
     return RecallResult(
-        facts=core + facts,
-        omitted=max(0, stored - len(core) - len(facts)),
-        core_count=len(core),
+        facts=core,
+        omitted=max(0, stored - len(core)),
         core_omitted=core_omitted,
     )
 
@@ -242,44 +190,6 @@ class DbMemoryStore:
         )
         rows = (await self._session.scalars(stmt)).all()
         return [r.content for r in rows]
-
-    async def rank_facts(
-        self,
-        scope: MemoryScope,
-        scope_id: str,
-        query: str,
-        limit: int = MEMORY_RANK_CANDIDATES,
-    ) -> list[tuple[float, str]]:
-        """Score every non-core fact against the turn's context.
-
-        Matching is the same keyword coverage `search` ranks with, run over the
-        whole (non-core) pool rather than a SQL-prefiltered subset: with no
-        keyword to match, `search` would return nothing and injection must
-        still fill its budget. So the filter is the budget, not the query — a
-        turn with no signal degrades to newest-first, which is where this
-        started, and a turn with signal spends its room on the facts that
-        actually mention what it is about.
-        """
-        stmt = (
-            select(MemoryEntry)
-            .where(
-                MemoryEntry.scope == scope,
-                MemoryEntry.scope_id == scope_id,
-                MemoryEntry.layer == MemoryLayer.fact,
-                live_entries(),
-            )
-            .order_by(MemoryEntry.created_at.desc())
-            .limit(limit)
-        )
-        rows = (await self._session.scalars(stmt)).all()
-        terms = query_terms(query, max_terms=INJECTION_MAX_TERMS)
-        if not terms:
-            return [(0.0, r.content) for r in rows]
-        scored = [(match_content(terms, r.content)[0], r.content) for r in rows]
-        # Stable over a recency-ordered fetch: coverage decides, ties keep the
-        # newest first.
-        scored.sort(key=lambda pair: -pair[0])
-        return scored
 
     async def remember(
         self,

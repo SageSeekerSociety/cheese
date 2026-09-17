@@ -304,6 +304,24 @@ def _task_root() -> Path:
     return Path.home() / ".cheese" / "tasks"
 
 
+# Which directory holds the environment runner depends on which launcher
+# prepared this place, and that is not something the CLI can know: the machine
+# launcher writes `.cheese/`, the claude-code remote-execution payload writes
+# the harness config dir `.claude/`. The copies are byte-identical, so the
+# first one on disk answers — the order matching the platform's own probe
+# (`ENVIRONMENT_RUNNER_PATHS`). Naming one of them was how a room on a machine
+# prepared by the other launcher could not create a task at all.
+ENVIRONMENT_RUNNER_PATHS = (".cheese", ".claude")
+
+
+def _environment_runner() -> Path | None:
+    for directory in ENVIRONMENT_RUNNER_PATHS:
+        candidate = Path.home() / directory / "cheese-environment.py"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def _task_id(explicit: str | None = None) -> str:
     if explicit:
         return str(uuid.UUID(explicit))
@@ -420,14 +438,14 @@ def _task_worktree(task_id: str) -> Path:
     # The room has no checkout. Branch dependencies belong to this task and
     # must be prepared on every open, including after local branch changes.
     if (Path.home() / ".cheese-environment/config.json").exists():
-        result = subprocess.run(
-            [
-                sys.executable,
-                str(Path.home() / ".claude/cheese-environment.py"),
-                "task",
-                str(task_dir),
-            ],
-        )
+        # That config is the runner's own output, so a place that has one had a
+        # runner: it going missing is a broken place, not an unprepared one, and
+        # silently skipping would hand back a task directory whose dependencies
+        # were never installed.
+        runner = _environment_runner()
+        if runner is None:
+            raise SystemExit("[cheese] 这台机器的环境准备脚本不见了，任务目录没法准备")
+        result = subprocess.run([sys.executable, str(runner), "task", str(task_dir)])
         if result.returncode:
             raise SystemExit(result.returncode)
     return task_dir
@@ -973,7 +991,8 @@ def build_parser() -> argparse.ArgumentParser:
             "代码结构、改过什么 bug、本轮的临时状态都不要记。"
             "相对时间要换成绝对日期。\n"
             "\n"
-            "普通记忆按当轮上下文检索后注入,不一定每轮都在场;--core 的每轮全量注入。"
+            "普通记忆**不会自动出现在你的上下文里**,要用 recall 查;"
+            "--core 的每轮全量注入。"
         ),
     )
     prem.add_argument("fact", help="一条事实,一句话")
@@ -991,10 +1010,9 @@ def build_parser() -> argparse.ArgumentParser:
         "recall",
         help="按需检索记忆（关键词检索,不是语义检索）",
         description=(
-            "检索项目记忆。开场注入的不是全部——核心记忆每轮都在,其余的是按本轮"
-            "上下文挑出来的,挑剩下的注入块会明说「还有 N 条这一轮没注入」。所以:"
-            "话题拐弯了、需要某条的细节、或怀疑有相关旧记忆没出现在开场里时,"
-            "先 recall 再回答。\n"
+            "检索项目记忆。**自动注入的只有核心记忆**,其余一条都不会自己出现——"
+            "注入块会明说池子里还有 N 条,而那 N 条只能从这里拿。所以:开工前、"
+            "话题拐弯了、需要某条的细节时,先 recall 再回答。\n"
             "\n"
             "这是**关键词检索**,不是语义检索:你的问题会被拆成关键词,"
             "按命中覆盖度排序。**一次没查到不等于没有这条记忆**——"

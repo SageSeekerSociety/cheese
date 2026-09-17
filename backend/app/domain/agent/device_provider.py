@@ -264,6 +264,37 @@ def connect_transport(
 _DEVICE_PROXY_CA_PATH = "$HOME/.claude/proxy-ca.pem"
 
 
+def _launch_identity(
+    *,
+    agent_configuration: str,
+    harness_contract: str,
+    execution_target: dict | None,
+) -> str:
+    """What a live session is compared against to decide it still matches what
+    the backend would start today.
+
+    Everything a running process cannot adopt without being restarted, in one
+    value: the model and role it was born with, the harness build and the argv
+    it was started with, the executor it was handed, and the directory the
+    platform installed itself into. Anything left out is a change that lands in
+    the code and never reaches the rooms already running — the shape this
+    replaced compared only the first of the four, so a pinned harness version
+    could move while every reused screen kept the one it started with, and
+    nothing said so.
+    """
+    return hashlib.sha256(
+        json.dumps(
+            {
+                "agent": agent_configuration,
+                "harness": harness_contract,
+                "target": execution_target,
+                "root": machine_launcher.PLATFORM_DIR,
+            },
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()
+
+
 def _warn_if_model_endpoint_is_box_local(env: dict[str, str], device_id: str) -> None:
     # ANTHROPIC_BASE_URL is the gateway route; HTTPS_PROXY is the subscription's
     # CONNECT route to the metering proxy. Either one pointing at a box-local
@@ -402,14 +433,15 @@ def device_store_dir(project_id: uuid.UUID) -> str:
 
 
 # Where a place's environment runner may have been left, relative to that
-# place's home, in precedence order. Two launchers ship the same program to two
-# different directories: the machine launcher writes it under `$HOME/.cheese`,
-# while the claude-code remote-execution payload writes it into the harness
-# config dir `$HOME/.claude`. Both copies are byte-identical and both keep their
-# state in the same `$HOME/.cheese-environment/status.json`, so whichever one we
-# find answers for the place. Probing only `.cheese` is what made a place
-# prepared by the other launcher read as `pending` forever: the ready status was
-# on disk the whole time, one directory over.
+# place's home, in precedence order. Every root the platform has ever installed
+# into belongs here, because a place prepared under an earlier one keeps the
+# runner where that launcher put it until something relaunches it — and the
+# status it prepared is real the whole time. Each copy is byte-identical and all
+# of them keep their state in the same `$HOME/.cheese-environment/status.json`,
+# so whichever one we find answers for the place. Probing only the current root
+# is what made a place prepared by another launcher read as `pending` forever:
+# the ready status was on disk, one directory over. Every place that WRITES the
+# runner has to appear in this list — see test_environment_status_probe.py.
 ENVIRONMENT_RUNNER_PATHS = (
     "$HOME/.cheese/cheese-environment.py",
     "$HOME/.claude/cheese-environment.py",
@@ -873,7 +905,7 @@ class DeviceChannel(Channel):
         token (rotated every turn), and a read of the release marker when the
         caller tracks one. Shared by the launcher ship and the live-screen
         refresh, so both paths write the same files the same way."""
-        hook_dir = f"{home_dir}/.claude"
+        hook_dir = f"{home_dir}/.cheese"
         transfer = (
             f'mkdir -p "{hook_dir}"'
             f" && printf %s {shlex.quote(CHEESE_HOOK_SCRIPT)}"
@@ -1192,24 +1224,16 @@ class DeviceChannel(Channel):
                 )
             if status["state"] == "preparing":
                 return existing
-        configuration = (env or {}).get("CHEESE_AGENT_CONFIG", "")
-        if execution_target:
-            stable_target = {
+        agent_configuration = (env or {}).get("CHEESE_AGENT_CONFIG", "")
+        stable_target = (
+            {
                 name: value
                 for name, value in execution_target.items()
                 if name != "context_tree"
             }
-            configuration += json.dumps(stable_target, sort_keys=True)
-        if (
-            existing is not None
-            and configuration
-            and existing.agent_configuration != configuration
-        ):
-            # Called between turns. A running CLI cannot adopt a changed model or role.
-            await self._retire_screen(
-                existing, topic_id=topic_id, reason="agent_configuration_changed"
-            )
-            existing = None
+            if execution_target
+            else None
+        )
         if existing is not None and (
             existing.closing or self._credential_is_stale(existing)
         ):
@@ -1356,8 +1380,6 @@ class DeviceChannel(Channel):
         # the preview rides the path the connector proved, so a deployment that
         # can host a device can host a preview with nothing further to set.
         model_env["CHEESE_PREVIEW_URL"] = _preview_ws_url(api_base)
-        if execution_target:
-            model_env["CHEESE_AGENT_CONFIG"] = configuration
         mark("configuration_ready")
         # 跑什么，问计划要 —— 这个 channel 只说「在哪」。
         # Everything below is a fact about this room and this machine; what any
@@ -1384,9 +1406,10 @@ class DeviceChannel(Channel):
             remote_control=model_env.get("CHEESE_REMOTE_CONTROL") == "1",
             ca_pem=ca_pem,
         )
+        holes = launch.on(place)
         command, screen_env = machine_launcher.screen_launch(
             place,
-            launch.on(place),
+            holes,
             hook_url=f"{api_base}/sandbox/hooks/{topic_id}",
             token=token,
         )
@@ -1402,6 +1425,24 @@ class DeviceChannel(Channel):
                 "CHEESE_PREVIEW_UP",
             ):
                 screen_env.pop(name, None)
+        configuration = _launch_identity(
+            agent_configuration=agent_configuration,
+            harness_contract=holes.contract,
+            execution_target=stable_target,
+        )
+        # The machine reports its environment back, so this is the one value
+        # both sides of the seam can be asked for. Exported for every harness,
+        # not only the ones with an executor: a screen adopted after a backend
+        # restart is re-read from here, and one that came back without it read
+        # as a configuration change on its next turn, every turn.
+        screen_env["CHEESE_AGENT_CONFIG"] = configuration
+        if existing is not None and existing.agent_configuration != configuration:
+            # Called between turns, and only now: what a session was started
+            # with is not fully known until the harness has been asked.
+            await self._retire_screen(
+                existing, topic_id=topic_id, reason="agent_configuration_changed"
+            )
+            existing = None
         mark("launcher_built")
         release_state = {} if existing is not None and execution_target else None
         if existing is None:

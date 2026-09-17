@@ -39,7 +39,22 @@ def test_saving_pins_new_rooms_and_only_explicitly_changes_existing_rooms(client
     )
     assert applied.status_code == 200, applied.text
     state = client.get(f"{base}/rooms/{first}", headers=headers).json()["data"]
-    assert state == {"state": "pending", "pinned_revision": revision}
+    assert state == {"state": "unbound", "pinned_revision": revision}
+
+
+def test_a_room_that_has_not_picked_a_machine_says_so_instead_of_preparing(client):
+    """没有设备绑定、也没有云机器在建的房间：不是在准备，是还没开始准备。
+
+    说「正在准备」的那段时间里没有任何东西在动，而且不会自己变——挑机器发生在
+    第一条消息进来的时候，所以房间会一直停在这个状态。"""
+    project_id, headers = project(client)
+    topic_id = room(client, project_id)
+
+    state = client.get(
+        f"/projects/{project_id}/environment/rooms/{topic_id}", headers=headers
+    ).json()["data"]
+
+    assert state["state"] == "unbound"
 
 
 def test_only_human_stewards_can_change_scripts_and_members_can_read(client):

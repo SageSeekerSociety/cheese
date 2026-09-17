@@ -22,9 +22,14 @@ def build() -> bytes:
     }
     for relative in (
         "domain/agent/service.py",
+        # The platform CLI's own argparse tree, whole: it is one
+        # standard-library-only file, and a second copy of the mapping between
+        # a command and a tool schema is the thing worth carrying it to avoid.
+        "domain/agent/cli_worker.py",
         "domain/agent/harness/__init__.py",
         "domain/agent/harness/pi/rpc.py",
         "domain/agent/harness/pi/journal.py",
+        "domain/agent/harness/pi/catalog.py",
         "domain/agent/harness/pi/runner.py",
         "domain/agent/harness/pi/entry.py",
     ):

@@ -20,7 +20,7 @@ async def call(
     hub = hub or device_hub
     return await hub.call_executor(
         target["device_id"],
-        target["home"] + "/.claude/executor",
+        target["home"] + "/.cheese/executor",
         method,
         params,
         trace_id=trace_id,

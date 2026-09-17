@@ -407,10 +407,10 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
     minimum_version = pinned_version if remote_execution else CLAUDE_MIN_VERSION
     if remote_execution:
         helper_sources = release.sources()
-        execution_setup = 'mkdir -p "$HOME/.claude/remote-execution"\n'
+        execution_setup = 'mkdir -p "$HOME/.cheese/remote-execution"\n'
         for name, source in helper_sources.items():
             execution_setup += (
-                f'cat > "$HOME/.claude/remote-execution/{name}" '
+                f'cat > "$HOME/.cheese/remote-execution/{name}" '
                 "<<'CHEESE_EXECUTION_SOURCE'\n"
                 + source
                 + ("" if source.endswith("\n") else "\n")
@@ -418,12 +418,12 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
             )
         execution_setup += (
             f"printf %s {release.digest(helper_sources)} "
-            '> "$HOME/.claude/remote-execution/release-ready"\n'
+            '> "$HOME/.cheese/remote-execution/release-ready"\n'
         )
         execution_setup += """printf '%s' "$CHEESE_EXECUTION_TARGET" \\
-  > "$HOME/.claude/remote-target.json"
-EXECUTOR_CLIENT="$HOME/.claude/remote-execution/client.py"
-EXECUTOR_TARGET="$HOME/.claude/remote-target.json"
+  > "$HOME/.cheese/remote-target.json"
+EXECUTOR_CLIENT="$HOME/.cheese/remote-execution/client.py"
+EXECUTOR_TARGET="$HOME/.cheese/remote-target.json"
 CLAUDE="python3 \\"$EXECUTOR_CLIENT\\" bootstrap \\"$EXECUTOR_TARGET\\" $CLAUDE"
 """
     env: dict[str, str] = {
@@ -781,7 +781,6 @@ def build_launch_script(**named) -> str:
         configure=holes.configure,
         credentials=holes.credentials,
         prepare=holes.prepare,
-        contract=holes.contract,
         command=holes.command,
     )
 

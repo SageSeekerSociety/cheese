@@ -38,7 +38,7 @@ These choices select the ordinary room's execution machine. Claude Code and RC r
 | | 是什么 | 谁放的 |
 |---|---|---|
 | **平台必需** | tmux、git、python3、harness 本身 | 机器接入时检查，缺了当场拒绝（`machine/enrollment.py`）。没有它们平台自己就跑不起来 |
-| **项目依赖** | 这个仓库要什么 | 项目自己的初始化脚本，装进房间的 HOME；包本身落在项目共用的 store 里 |
+| **项目依赖** | 这个仓库要什么 | 项目自己的初始化脚本。工具装进项目共用的前缀，包也落在项目共用的 store 里 |
 | **文档工具** | typst、pandoc、uv、一对中文可变字体 | 平台放（`machine/toolchain_dist.py` + `agent/machine_launcher.py`） |
 
 第三层放在机器的 home 下（`$CHEESE_TOOLCHAIN`，即 `~/.cheese/toolchain`），不在房间的
@@ -49,8 +49,30 @@ session home 里：**这些属于机器，那台机器上每个房间共用一�
 既不会让一轮失败也不会让它变慢。代价是刚开机的房间可能还取不到——`skills/documents`
 因此要求 agent 先确认工具在不在，不在就如实说这台机器现在做不了。
 
-第二层的装法则相反：**脚本每个房间各跑一遍，包只存一份。** 房间的 HOME 是各自的（hook
-事件要按房间分开落盘），而 uv、pnpm、npm、pip 默认都把自己的 store 放在 HOME 里，所以
+第二层分两半，因为它们的寿命不同。
+
+**工具:每台机器每个项目装一次。** 初始化脚本唯一能写的地方是 `$HOME`，而房间的
+HOME 必须各自独立（hook 事件要按房间分开落盘）—— 这两件事凑一起，就是每个房间都
+把同一套工具重下一遍的原因。2026-09-17 实测：每房间一份 Node 22 约 254MB、228 个
+房间，三小时里看到 5 个房间各下一遍同一个 54MB 的 tarball。
+
+所以**脚本拿一个自己的 HOME**：`~/.cheese/store/<项目>/env`。这是平台给得起的 ——
+`HOME` 本来就是项目**不许设**的保留变量（`project/environment.py`），而产品里这个
+脚本就叫「安装工具」，写着「工作房间共用这份配置」。
+
+`agent/environment_runner.py` 里那条缝本来就在：`environment` 给 agent、
+`script_environment` 给脚本，今天已经用来区分（给脚本剥掉 HTTPS_PROXY）。现在多一条：
+**脚本的 HOME 是项目前缀，agent 的 HOME 还是房间自己的。**
+
+凭据和锁也跟着上移，所以 setup 每台机器每个项目只跑一次。两个房间同时启动时，**后到的
+那个等**，不是失败 —— 它的 `status.json` 一直是 preparing/setup，界面上就是「正在安装
+工具」，这话是真的，只是干活的不是它。拿到锁之后要**再读一次凭据**：等的那个东西很可能
+正是它想要的，不再读一遍就是两个房间前后各装一遍，锁白拿了。
+
+`startup`（准备任务代码）保持房间的 HOME：它写进检出，而且同一个项目的两个任务会并发，
+共享 HOME 只会让它们在一个谁都没锁的目录里打架。
+
+**包:每个项目一份 store。** uv、pnpm、npm、pip 默认都把自己的 store 放在 HOME 里，所以
 不管的话同一个项目每开一个房间就多一份完整的依赖树。启动脚本因此把它们指向
 `~/.cheese/store/<项目>/`（`agent/machine_launcher.py`，路径来自
 `device_provider.device_store_dir`）——uv 和 pnpm 会从 store 里**硬链接**出来而不是拷贝。

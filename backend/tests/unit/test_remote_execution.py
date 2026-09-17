@@ -76,7 +76,7 @@ def test_executor_bootstrap_starts_in_room_without_a_git_checkout(
     monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
     project, resource = uuid.uuid4(), uuid.uuid4()
     home = tmp_path / ".cheese/home" / str(project) / str(resource)
-    state = home / ".claude/executor"
+    state = home / ".cheese/executor"
     # Use the installation payload shipped to devices, including its CLI.
     program = script(
         project, resource, {"CHEESE_API": "http://unused", "CHEESE_TOKEN": "test"}
@@ -90,7 +90,7 @@ def test_executor_bootstrap_starts_in_room_without_a_git_checkout(
         config = json.loads((state / "config.json").read_text())
         assert "ANTHROPIC_API_KEY" not in config["env"]
         installed = subprocess.run(
-            [str(home / ".claude/cheese"), "--help"],
+            [str(home / ".cheese/cheese"), "--help"],
             env={**os.environ, **config["env"]},
             capture_output=True,
             text=True,
@@ -114,7 +114,7 @@ def test_executor_bootstrap_starts_in_room_without_a_git_checkout(
             },
         )
         assert "--request-id" in publication_help["value"]["stdout"]
-        (home / ".claude/cheese").write_text(
+        (home / ".cheese/cheese").write_text(
             "import sys\n"
             "if __name__ == 'preload':\n"
             "    sys.cheese_cli_preloaded = True\n"
@@ -159,6 +159,135 @@ def test_executor_bootstrap_starts_in_room_without_a_git_checkout(
         )
 
 
+def _room_prepared_under_the_previous_root(tmp_path, monkeypatch):
+    """A room as it exists today: its executor installed in `.claude`.
+
+    Returns the payload that would prepare it again under the root in force now,
+    and the previous root's directory.
+    """
+    from app.domain.agent.harness.claude_code.remote_execution import bootstrap
+    from app.domain.agent.harness.claude_code.remote_execution.launch import script
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
+    project, resource = uuid.uuid4(), uuid.uuid4()
+    home = tmp_path / ".cheese/home" / str(project) / str(resource)
+    previous = home / ".claude"
+    (previous / "remote-execution").mkdir(parents=True)
+    # Its OWN runtime, the one that started it: the protocol a running executor
+    # answers is the one it was installed with, not the one being installed now.
+    shutil.copyfile(RUNTIME, previous / "remote-execution/runtime.py")
+    work = home / "room"
+    work.mkdir(parents=True)
+    program = script(
+        project, resource, {"CHEESE_API": "http://unused", "CHEESE_TOKEN": "test"}
+    )
+    call = ast.parse(program).body[-1].value
+    payload = json.loads(ast.literal_eval(call.args[0].args[0]))
+    return payload, home, previous, resource
+
+
+def _await_socket(state, timeout=10):
+    deadline = time.monotonic() + timeout
+    while not Path(runtime.socket_path(state)).exists():
+        assert time.monotonic() < deadline, f"executor never answered at {state}"
+        time.sleep(0.01)
+
+
+def _start_executor(state, workspace):
+    subprocess.run(
+        [sys.executable, str(RUNTIME), "start", "--state", str(state)],
+        input=json.dumps({"workspace": str(workspace), "env": {}}),
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=30,
+    )
+
+
+def test_a_room_left_under_the_previous_root_loses_its_old_executor(
+    tmp_path, monkeypatch, capsys
+):
+    """Moving the platform's own directory has to come back for what the old one
+    started.
+
+    The executor is a detached daemon — closing a screen does not close it — and
+    the branch that stops a previous executor looks for its state under the root
+    in force today. A room prepared under an earlier root would therefore keep
+    its daemon running and get the new one beside it: two processes, one HOME,
+    one `.cheese-environment/status.json` between them.
+    """
+    from app.domain.agent.harness.claude_code.remote_execution import bootstrap
+
+    payload, home, previous, resource = _room_prepared_under_the_previous_root(
+        tmp_path, monkeypatch
+    )
+    old_state = previous / "executor"
+    _start_executor(old_state, home / "room")
+    old_pid = runtime.request(old_state, "ping")["pid"]
+    state = home / ".cheese/executor"
+    try:
+        bootstrap.configure(payload)
+
+        # The one that was running is not running any more, and what is left
+        # under the old root says nothing about a room that is.
+        deadline = time.monotonic() + 10
+        while True:
+            try:
+                os.kill(old_pid, 0)
+            except OSError:
+                break
+            assert time.monotonic() < deadline, "the old executor is still running"
+            time.sleep(0.01)
+        assert not old_state.exists()
+        assert not (previous / "execution-owner.json").exists()
+        # The room came up under the root in force, and only there.
+        _await_socket(state)
+        assert runtime.request(state, "ping")["workspace"] == str(home / "room")
+        assert json.loads((home / ".cheese/execution-owner.json").read_text()) == {
+            "resource": str(resource)
+        }
+    finally:
+        subprocess.run(
+            [sys.executable, str(RUNTIME), "stop", "--state", str(state)],
+            capture_output=True,
+            timeout=15,
+        )
+
+
+def test_a_previous_root_with_nothing_behind_it_does_not_hold_the_room_back(
+    tmp_path, monkeypatch, capsys
+):
+    """A machine that rebooted leaves the old executor's state on disk with no
+    process behind it. That is the ordinary case, not a reason to refuse the
+    room — the stop has to ask whether anything is there before insisting."""
+    from app.domain.agent.harness.claude_code.remote_execution import bootstrap
+
+    payload, home, previous, _resource = _room_prepared_under_the_previous_root(
+        tmp_path, monkeypatch
+    )
+    old_state = previous / "executor"
+    old_state.mkdir()
+    (old_state / "config.json").write_text(
+        json.dumps({"workspace": str(home / "room"), "env": {}})
+    )
+    (previous / "execution-owner.json").write_text('{"resource": "whatever"}')
+    state = home / ".cheese/executor"
+    try:
+        bootstrap.configure(payload)
+
+        _await_socket(state)
+        assert runtime.request(state, "ping")["workspace"] == str(home / "room")
+        assert not old_state.exists()
+        assert not (previous / "execution-owner.json").exists()
+    finally:
+        subprocess.run(
+            [sys.executable, str(RUNTIME), "stop", "--state", str(state)],
+            capture_output=True,
+            timeout=15,
+        )
+
+
 def test_executor_release_waits_for_commands_and_preserves_results(
     tmp_path, monkeypatch, capsys
 ):
@@ -172,8 +301,8 @@ def test_executor_release_waits_for_commands_and_preserves_results(
         project, resource, {"CHEESE_API": "http://unused", "CHEESE_TOKEN": "test"}
     )
     home = tmp_path / ".cheese/home" / str(project) / str(resource)
-    state = home / ".claude/executor"
-    source = home / ".claude/remote-execution/runtime.py"
+    state = home / ".cheese/executor"
+    source = home / ".cheese/remote-execution/runtime.py"
 
     def ready():
         deadline = time.monotonic() + 10
@@ -263,7 +392,7 @@ def test_running_executor_prepares_updated_room_without_restart(
     binary.chmod(0o700)
     project, resource = uuid.uuid4(), uuid.uuid4()
     home = tmp_path / ".cheese/home" / str(project) / str(resource)
-    state = home / ".claude/executor"
+    state = home / ".cheese/executor"
     call = (
         ast.parse(
             script(
@@ -306,7 +435,7 @@ def test_running_executor_prepares_updated_room_without_restart(
         delta = payload_for(project, resource, payload["env"], original["files"])
         # The fixture replaces the CLI; all other installed helpers are unchanged.
         assert set(delta["files"]) == {"cheese"}
-        (home / ".claude/cheese-hook").write_text("locally edited helper")
+        (home / ".cheese/cheese-hook").write_text("locally edited helper")
         changed = runtime.request(state, "ping")
         repair = payload_for(project, resource, payload["env"], changed["files"])
         assert set(repair["files"]) == {"cheese", "cheese-hook"}
@@ -315,8 +444,8 @@ def test_running_executor_prepares_updated_room_without_restart(
         ready = runtime.request(state, "prepare", payload)
         assert ready["pid"] == original["pid"]
         assert ready["workspace"] == str(home / "room")
-        assert (home / ".claude/cheese-preview.token").read_text() == "refreshed"
-        assert (home / ".claude/cheese-hook").read_text() == "updated hook"
+        assert (home / ".cheese/cheese-preview.token").read_text() == "refreshed"
+        assert (home / ".cheese/cheese-hook").read_text() == "updated hook"
         assert (
             json.loads((state / "config.json").read_text())["env"]["CHEESE_TOKEN"]
             == "refreshed"
@@ -332,7 +461,7 @@ def test_running_executor_prepares_updated_room_without_restart(
                 },
             )
             assert result["value"]["stdout"].strip() == "first CLI"
-            assert (home / ".claude/preload-calls").read_text() == "loaded\n"
+            assert (home / ".cheese/preload-calls").read_text() == "loaded\n"
             runtime.request(state, "prepare", payload)
         payload["files"]["cheese"] = base64.b64encode(
             cli.replace("first CLI", "updated CLI").encode()
@@ -348,7 +477,7 @@ def test_running_executor_prepares_updated_room_without_restart(
             },
         )
         assert updated["value"]["stdout"].strip() == "updated CLI"
-        assert (home / ".claude/preload-calls").read_text() == "loaded\nloaded\n"
+        assert (home / ".cheese/preload-calls").read_text() == "loaded\nloaded\n"
         checked = version_calls.read_text()
         runtime.request(state, "prepare", payload)
         assert version_calls.read_text() == checked

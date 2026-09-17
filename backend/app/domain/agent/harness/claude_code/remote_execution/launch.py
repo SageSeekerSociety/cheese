@@ -7,13 +7,12 @@ import json
 import time
 from pathlib import Path
 
-from app.domain.agent import environment_runner, preview_tunnel
+from app.domain.agent import cli_worker, environment_runner, preview_tunnel
 from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent.harness.claude_code.device_launch import CHEESE_SYNC_SCRIPT
 from app.domain.agent.harness.claude_code.remote_execution import (
     bootstrap,
     cli_client,
-    cli_worker,
     private,
     runtime,
     session_transfer,

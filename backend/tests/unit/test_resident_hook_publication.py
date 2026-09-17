@@ -151,16 +151,16 @@ def test_emitted_helpers_publish_without_the_backend_package(
 ):
     _, spool = hook_environment
     launcher = device_launch.build_launch_script(remote_execution=True)
-    start = launcher.index('mkdir -p "$HOME/.claude/remote-execution"')
+    start = launcher.index('mkdir -p "$HOME/.cheese/remote-execution"')
     end = launcher.index(
-        'EXECUTOR_CLIENT="$HOME/.claude/remote-execution/client.py"', start
+        'EXECUTOR_CLIENT="$HOME/.cheese/remote-execution/client.py"', start
     )
     subprocess.run(["sh"], input=launcher[start:end], text=True, check=True)
     runner = tmp_path / "standalone.py"
     runner.write_text(
         "import json, os, runpy, subprocess, sys\n"
         "from pathlib import Path\n"
-        "directory = Path.home() / '.claude/remote-execution'\n"
+        "directory = Path.home() / '.cheese/remote-execution'\n"
         "sys.path.insert(0, str(directory))\n"
         "module = runpy.run_path(str(directory / 'client.py'))\n"
         "def unexpected(*args, **kwargs):\n"

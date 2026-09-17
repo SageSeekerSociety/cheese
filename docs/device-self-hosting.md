@@ -175,8 +175,8 @@ Ordinary execution devices run a persistent Python service and the pinned `claud
 ```
 设备侧                                          后端侧
 claude COMMAND hooks                            /sandbox/hooks/{topic_id}
-  → ~/.claude/cheese-hook 转发器                  → 先写 topic 的服务端 spool
-  → 先写本地 spool (~/.claude/cheese-spool,        → 再推给活 turn（hook_router →
+  → ~/.cheese/cheese-hook 转发器                  → 先写 topic 的服务端 spool
+  → 先写本地 spool (~/.cheese/cheese-spool,        → 再推给活 turn（hook_router →
      CHEESE_HOOK_SPOOL_ONLY=1)                       translate_hook → AgentEvent）
   → 后台 drainer 用 curl POST                     → code:200 = 已落到我们盘上
      {CONNECTOR_PUBLIC_BASE}/sandbox/hooks/{topic}    （drainer 见 200 才删本地副本）

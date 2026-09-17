@@ -1,26 +1,38 @@
-"""`environment_status` must find the runner wherever the launcher put it.
+"""`environment_status` must find the runner wherever a launcher put it.
 
-Two launchers ship the same `cheese-environment.py` to two directories: the
-machine launcher writes `$HOME/.cheese/cheese-environment.py`, the claude-code
-remote-execution payload writes `$HOME/.claude/cheese-environment.py`. Both
-copies are byte-identical and both read and write the same
-`$HOME/.cheese-environment/status.json`, so whichever one is on disk can answer.
+Every copy of `cheese-environment.py` is byte-identical and every one of them
+reads and writes the same `$HOME/.cheese-environment/status.json`, so whichever
+one is on disk can answer for the place. What changes is where it was left: a
+launcher decides that, and a place keeps whatever the launcher that prepared it
+chose until something prepares it again. A root the platform has moved off is
+therefore still live on every room that has not relaunched since.
 
-The probe used to look only under `.cheese/`, so a place prepared by the other
+The probe used to look under one directory only, so a place prepared by another
 launcher read as `{"state": "pending"}` forever — the room waited out its whole
-deadline with `"state": "ready"` sitting on disk one directory over.
+deadline with `"state": "ready"` sitting on disk one directory over. The last
+test here is what keeps that from coming back: the write side may not move
+without the read side.
 """
 
+import importlib.util
 import os
+import re
 import subprocess
 import uuid
 from dataclasses import dataclass
+from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 import pytest
 
-from app.domain.agent.device_provider import environment_status
+from app.domain.agent import environment_runner, machine_launcher, resource_cleanup
+from app.domain.agent.device_provider import (
+    ENVIRONMENT_RUNNER_PATHS,
+    environment_status,
+)
 from app.domain.agent.harness.channel import ScreenSetupError
+from app.domain.agent.harness.claude_code.remote_execution import bootstrap
+from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
 
 
 @dataclass
@@ -68,8 +80,9 @@ def _place(
 ) -> Place:
     """A device $HOME with one place in it, prepared by the named launchers.
 
-    `shipped_by` names the directories a launcher has dropped the runner into —
-    ".cheese" for the machine launcher, ".claude" for remote execution.
+    `shipped_by` names the directories a launcher has dropped the runner into:
+    ".cheese" is where every launcher writes it today, ".claude" where a room
+    prepared before the platform moved its own files still has it.
     """
     project_id, topic_id = uuid.uuid4(), uuid.uuid4()
     home = tmp_path / ".cheese" / "home" / str(project_id) / str(topic_id)
@@ -89,20 +102,20 @@ async def _probe(place: Place, **kwargs):
     )
 
 
-async def test_probe_finds_the_runner_remote_execution_ships(tmp_path):
-    """The regression: cc prepares `.claude/`, and the room must still come up."""
+async def test_probe_finds_the_runner_a_previous_root_left(tmp_path):
+    """The regression: a room prepared under the old root must still come up."""
     place = _place(tmp_path, shipped_by=(".claude",))
 
     assert await _probe(place) == {"state": "ready"}
 
 
-async def test_probe_still_finds_the_runner_the_machine_launcher_writes(tmp_path):
+async def test_probe_finds_the_runner_the_launchers_write_today(tmp_path):
     place = _place(tmp_path, shipped_by=(".cheese",))
 
     assert await _probe(place) == {"state": "ready"}
 
 
-async def test_machine_launcher_copy_wins_when_both_are_on_disk(tmp_path):
+async def test_the_current_root_wins_when_both_are_on_disk(tmp_path):
     place = _place(tmp_path, shipped_by=(".cheese",))
     other = place.home / ".claude"
     other.mkdir()
@@ -145,3 +158,79 @@ async def test_probe_asks_the_runner_for_the_action_it_was_given(tmp_path):
 
     assert "prepare" in hub.commands[0][-1]
     assert "CHEESE_STATUS_WAIT=1" in hub.commands[0][-1]
+
+
+def test_the_cli_looks_for_the_runner_where_the_probe_does():
+    """The CLI runs the runner too, from inside the place, and cannot import
+    this module — it ships into the sandbox as a stdlib-only script. So its
+    candidates are a second copy, and a copy that drifts is exactly how a room
+    on a machine prepared by the other launcher stopped being able to open a
+    task at all: the write side moved and the read side did not."""
+    loader = SourceFileLoader(
+        "cheese_cli", str(Path(__file__).resolve().parents[2] / "sandbox" / "cheese")
+    )
+    cli = importlib.util.module_from_spec(
+        importlib.util.spec_from_loader(loader.name, loader)
+    )
+    loader.exec_module(cli)
+
+    assert [
+        f"$HOME/{directory}/cheese-environment.py"
+        for directory in cli.ENVIRONMENT_RUNNER_PATHS
+    ] == list(ENVIRONMENT_RUNNER_PATHS)
+
+
+def test_every_launcher_writes_the_runner_where_the_probe_looks():
+    """The two sides of one fact, pinned to each other.
+
+    A launcher that installs the runner somewhere this list does not name is
+    invisible rather than broken: the room really does prepare, the status
+    really is written, and the probe answers `pending` until the deadline runs
+    out. Nothing fails, so nothing says so. Read out of what each launcher
+    actually ships, not restated here, because a second copy of the answer is
+    the thing that drifts.
+    """
+    written = set(
+        re.findall(
+            r'cat > "\$HOME/([^/"]+)/cheese-environment\.py"',
+            machine_launcher.launch_script(command="$AGENT"),
+        )
+    )
+    assert written, "the machine launcher stopped writing the runner"
+    # The executor's payload names the file; its bootstrap picks the directory.
+    payload = payload_for(uuid.uuid4(), uuid.uuid4(), {})
+    assert "cheese-environment.py" in payload["file_names"]
+    written.add(bootstrap.PLATFORM_DIR)
+
+    assert {f"$HOME/{directory}/cheese-environment.py" for directory in written} <= set(
+        ENVIRONMENT_RUNNER_PATHS
+    )
+
+
+def test_every_reader_of_the_platform_root_accepts_every_root_written():
+    """One fact, spelled in four places that cannot import each other.
+
+    Three of these ship to a machine as standalone programs — the environment
+    runner, the cleanup script, the executor bootstrap — so the roots are copied
+    rather than shared, and a copy that drifts gives a silent wrong answer
+    rather than crashing. The probe drifting stalls a room at `pending`. The
+    cleanup script drifting is worse: a room installed under a root it does not
+    read is torn down as though it never had an executor, so the detached daemon
+    is left running under a home that is then deleted, the private seat it holds
+    is never released, and publication is checked on the wrong branch.
+    """
+    written = {bootstrap.PLATFORM_DIR, bootstrap.PREVIOUS_PLATFORM_DIR}
+    assert machine_launcher.PLATFORM_DIR in written
+
+    readers = {
+        "environment_status probe": [
+            path.split("/")[1] for path in ENVIRONMENT_RUNNER_PATHS
+        ],
+        "environment runner reset": list(environment_runner.PLATFORM_DIRS),
+        "resource cleanup": list(resource_cleanup.PLATFORM_DIRS),
+    }
+    for name, accepted in readers.items():
+        assert written <= set(accepted), name
+        # In precedence order: a room migrated mid-life has leftovers under
+        # both, and must be read as the root it is actually installed in.
+        assert accepted[0] == machine_launcher.PLATFORM_DIR, name

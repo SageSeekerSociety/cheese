@@ -686,6 +686,9 @@ class Settings(BaseSettings):
     # silent, which is why the intervals are on by default. 0 disables one.
     notification_finalize_interval_s: int = 60
     notification_email_drain_interval_s: int = 60
+    #: 推送比邮件跑得勤：推送的全部价值在于它比人自己回来看更早，一分钟的排队等待
+    #: 已经吃掉不少。邮件反过来 —— #1084 要它比推送晚一档。
+    notification_push_drain_interval_s: int = 15
     task_deadline_sweep_interval_s: int = 900
     # merge_method for the auto-merge (GitHub: merge | squash | rebase). MUST
     # be one the target repo actually allows — GitHub answers 405 forever for
@@ -806,6 +809,37 @@ class Settings(BaseSettings):
     notification_email_max_retries: int = Field(
         default=3, alias="NOTIFICATION_EMAIL_MAX_RETRIES"
     )
+
+    # --- 浏览器推送（#1084 第 5 步）---
+    #
+    # 一对 VAPID（Voluntary Application Server Identification）密钥：推送服务商
+    # （Chrome 的 FCM、Firefox 的 autopush）用公钥认出推送是谁发的，浏览器订阅时
+    # 也要拿着同一个公钥。没有配就整条链路关掉 —— 不是报错，是这个部署没开这个
+    # 渠道，订阅接口会如实说不可用。
+    #
+    # 私钥不能进仓库也不能进镜像：它是「以这个站的身份发推送」的凭据。
+    vapid_public_key: str = Field(default="", alias="VAPID_PUBLIC_KEY")
+    vapid_private_key: str = Field(default="", alias="VAPID_PRIVATE_KEY")
+    #: VAPID 要求一个联系方式，推送服务商用它在出问题时找到运营者。
+    vapid_subject: str = Field(default="mailto:ops@okcheese.com", alias="VAPID_SUBJECT")
+    notification_push_queue_key: str = Field(
+        default="cheese:notifications:push", alias="NOTIFICATION_PUSH_QUEUE_KEY"
+    )
+    notification_push_batch_size: int = Field(
+        default=100, alias="NOTIFICATION_PUSH_BATCH_SIZE"
+    )
+    notification_push_max_retries: int = Field(
+        default=3, alias="NOTIFICATION_PUSH_MAX_RETRIES"
+    )
+
+    @property
+    def web_push_configured(self) -> bool:
+        """这个部署能不能发浏览器推送。
+
+        两把钥匙缺一个就不能：只有公钥订阅得成但发不出去，只有私钥连订阅都换不到
+        凭据。所以这两个字段一起判断，调用点不各自数一遍。
+        """
+        return bool(self.vapid_public_key and self.vapid_private_key)
 
     meilisearch_url: str = Field(default="", alias="MEILISEARCH_URL")
     meilisearch_api_key: str = Field(default="", alias="MEILISEARCH_API_KEY")

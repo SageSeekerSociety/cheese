@@ -243,6 +243,41 @@ Two mechanisms, deliberately different in kind:
   the things that actually fill them.
 - **`deploy/dev-box-disk-cleanup.sh`** is the *routine* reclaim for any box.
   Reports by default; `--apply` deletes; `--self-test` checks its own arithmetic.
+  Run by hand — nothing schedules it.
+- **`deploy/reclaim-room-caches.sh`** is the *room-local* reclaim, and the only
+  one of the three a deploy runs on its own (`deploy-docker.sh`, right before
+  `DEPLOY OK`). Every room of a project now installs out of one store, so the
+  copies a room made under its own HOME are read by nothing; the launcher drops
+  them when that room next starts, and this reaches the rooms that never do.
+  On dev, 2026-09-17, that was nearly all of them: of 102 checkouts, 3 had been
+  touched in a week.
+
+  Same idiom as the one above — reports by default, `--apply` deletes,
+  `--self-test` checks itself — plus one thing neither of the others needs: it
+  takes each room's own `.cheese-environment/lock`, the lock
+  `agent/environment_runner.py` holds while a setup script installs, and skips a
+  room that is installing right now. It never touches `.claude` (transcripts),
+  `.cheese` (the room's spool and credentials) or `.local/share/uv` (the
+  interpreter a venv points at by absolute path).
+
+  What it CANNOT reclaim is the per-room Node install and the interpreter. Those
+  need the room gone, which is archival's job and verifies the backend holds the
+  transcript first — see `deploy/README-room-cleanup.md`.
+- **`deploy/reclaim-legacy-room-checkouts.py`** is the third, and the deploy runs
+  it too. Until #936 (2026-09-09) a room's working directory was
+  `~/.cheese/work/<project>/<room>` and held a full checkout; that commit moved a
+  room's cwd under its own home and the repository work to tasks, which
+  `cheese worktree` puts in `<room home>/.cheese/tasks`. Nothing has written the
+  old root since — `device_work_dir()` has had no caller, and
+  `agent/resource_cleanup.py` already calls what is there "legacy checkouts". On
+  dev, 2026-09-17, it was **107GB across 102 rooms**.
+
+  Being unreachable is not what makes it safe to delete; being **published** is.
+  A pre-#936 checkout can hold commits or edits that never left the box. So each
+  directory goes through `check_no_writers` and `check_published` — imported from
+  `resource_cleanup`, the module archival uses, so there is one definition of
+  "safe to delete" rather than two — and anything that fails either check is kept
+  and reported with the reason.
 
 What filled `cheese-dev-env6-app` (measured 2026-08-11 at **92%**, 2.6G free):
 docker build cache 3.0G (71 entries, none in use) · apt archives 1.7G · Go build

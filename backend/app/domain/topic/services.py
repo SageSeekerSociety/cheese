@@ -31,7 +31,12 @@ from app.domain.agent_instance.services import (
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.alert.services import AlertService
 from app.domain.block.doc_tree import PARAGRAPH, markdown_to_nodes
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import (
+    AGENT_NOTICE_META_KEY,
+    AuthorType,
+    Block,
+    BlockKind,
+)
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import looks_like_agent_handle, names_a_person
 from app.domain.membership.services import MemberService
@@ -41,6 +46,7 @@ from app.domain.review.services import AcceptService
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.room_task.services import TaskService
+from app.domain.topic.doc_change import summarize_doc_change
 from app.domain.topic.models import (
     RoomCleanup,
     Topic,
@@ -1194,6 +1200,22 @@ class TopicService:
         # ``cheese-<topic hex>`` handle, and a raw handle is not what a reader
         # should see — one familiar name, whichever 分身 wrote it.
         actor = "芝士" if looks_like_agent_handle(author) else f"<@{author}>"
+        # What the same event says to 芝士, written here because this is the code
+        # that moved the document. It locates the change and does NOT carry it:
+        # a document pushed into a running turn displaces the work instead of
+        # informing it, and the doc is one call away.
+        #
+        # 芝士's own edit is not news to 芝士 — it wrote the version it is holding.
+        for_agent = (
+            None
+            if author_type is AuthorType.ai
+            else (
+                f"实况文档已被 {actor} 更新至第 {doc.doc_version} 版，"
+                f"{summarize_doc_change(previous_content, content)}。"
+                "你此前读到的内容可能已经过期。继续依据它工作或写回之前，"
+                "先用 cheese_doc_get 重新读取；基于旧版本的写回会被拒绝。"
+            )
+        )
         notice = await self._blocks.add(
             project_id=topic.project_id,
             topic_id=place.room_id,
@@ -1209,6 +1231,7 @@ class TopicService:
                 "action": "doc",
                 "doc_version": doc.doc_version,
                 "editor_type": author_type.value,
+                AGENT_NOTICE_META_KEY: for_agent,
                 "detail_label": "查看本次修改",
                 "detail": "\n".join(
                     difflib.unified_diff(

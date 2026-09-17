@@ -5,6 +5,7 @@ import { computed, ref } from 'vue'
 import { clearPageCache } from '@/lib/pageCache'
 import { UserApi } from '@/network/api/users'
 import { BusinessError } from '@/network/types/error'
+import { disablePush } from '@/services/webPush'
 
 // 令牌快到期时也当过期处理：留一点余量，免得请求刚发出去令牌就死在路上。
 const EXPIRY_SKEW_MS = 30_000
@@ -26,6 +27,49 @@ export function isTokenExpired(token: string, now: number = Date.now()): boolean
   } catch {
     return true
   }
+}
+
+//: service worker 里那份 API 读缓存的名字（vite.config.ts 的 `cheese-api-get`）。
+const API_CACHE = 'cheese-api-get'
+
+/** localStorage 里存着的上一个人是谁 —— 内存里那份还没恢复时的退路。 */
+function storedUserId(): number | undefined {
+  try {
+    const raw = localStorage.getItem('user')
+    const id = raw ? JSON.parse(raw)?.id : undefined
+    return typeof id === 'number' ? id : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * 换人登录就把上一个人的缓存丢掉。
+ *
+ * 两份缓存都装着上一个人读过的东西，而两份都不按人分：
+ *
+ * - **service worker 的 API 读缓存**（vite.config.ts 的 `cheese-api-get`）按 URL
+ *   建键，请求头不进键，后端也没发 `Vary` —— 所以 `GET /api/projects` 全浏览器只
+ *   有一份。它是 NetworkFirst、五秒拿不到响应就回退缓存，于是一次慢请求会把上一
+ *   个人的数据画到这个人屏幕上。
+ * - **页面缓存**住在内存里，下一个人打开总览会先看到上一个人的项目名，然后才被
+ *   后台刷新盖掉 —— 那一眼已经泄露了。
+ *
+ * 两份本来都只在退出登录时清（`logout`），而危险的那一下不是退出，是**换人登录**：
+ * 上一个人关掉标签页就走了、没点退出，下一个人登进来时两份都还在。
+ *
+ * 同一个人不清：续签令牌走的也是 `login`（`refreshToken` 拦截器），每小时清一次
+ * 等于这两份缓存从来不存在。所以判据是**身份变了**，不是「又登了一次」。
+ *
+ * 认不出新身份时（OAuth 回调只给令牌，用户信息随后才拉）当作换了人：那条路径只在
+ * 一次全新的登录里走到，宁可多清一次。
+ */
+export function dropCachesIfSomeoneElseLogsIn(previous: number | undefined, next: number | undefined): boolean {
+  if (previous !== undefined && next !== undefined && previous === next) return false
+  clearPageCache()
+  // 即发即忘：缓存出问题绝不能挡住登录本身。
+  if (typeof caches !== 'undefined') void caches.delete(API_CACHE).catch(() => {})
+  return true
 }
 
 export class AccountService {
@@ -131,6 +175,7 @@ export class AccountService {
   }
 
   public async login(accessToken: string, user?: User) {
+    dropCachesIfSomeoneElseLogsIn(this.user?.id ?? storedUserId(), user?.id)
     this.loggedIn = true
     this.accessToken = accessToken
     localStorage.setItem('accessToken', accessToken)
@@ -146,6 +191,11 @@ export class AccountService {
   }
 
   public async logout() {
+    // 先退订推送，趁令牌还在：那一行订阅是按 user_id 存的，留着就等于这台浏览器继
+    // 续替上一个人收他的推送 —— 和下面两份缓存同一类问题，只是这一个会主动响。
+    // 它自己吞掉所有错误，最坏的后果是后端往一个死地址发几次，投递侧按 404/410
+    // 自己删掉。
+    await disablePush()
     this.loggedIn = false
     this.user = null
     this._accessToken = null
@@ -159,7 +209,7 @@ export class AccountService {
     // so offline shell loading survives). Fire-and-forget — a cache hiccup must
     // never block sign-out.
     if (typeof caches !== 'undefined') {
-      void caches.delete('cheese-api-get').catch(() => {})
+      void caches.delete(API_CACHE).catch(() => {})
     }
     // 同理，页面缓存住在内存里，退出登录不清就还在：下一个人打开总览会先看到上
     // 一个人的项目名，然后才被后台刷新盖掉——那一眼已经泄露了。

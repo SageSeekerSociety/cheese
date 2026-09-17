@@ -45,6 +45,7 @@ def periodic_jobs(
         drain_email_queue,
         finalize_expired_aggregations,
     )
+    from app.domain.notification.push_delivery import drain_push_queue
     from app.domain.task.deadline_scheduler import sweep_expired_deadlines
     from app.domain.usage.subscription_ingest import ingest_once
 
@@ -146,6 +147,13 @@ def periodic_jobs(
             "notification email drain",
             settings.notification_email_drain_interval_s,
             lambda: drain_email_queue(sessions),
+        ),
+        # 同一个形状，同一个理由：那条 Redis 队列没有第二个消费者，不跑就是一条
+        # 推送都发不出去。没配 VAPID 密钥时它自己空转（`web_push_configured`）。
+        PeriodicRunner(
+            "notification push drain",
+            settings.notification_push_drain_interval_s,
+            lambda: drain_push_queue(sessions),
         ),
         # A deadline nobody sweeps is a promise the platform made and quietly did
         # not keep: the moment it matters is the moment nobody is looking.

@@ -1,7 +1,11 @@
 """Private execution selection and control failures have no local fallback."""
 
+import asyncio
 import json
+import os
+import subprocess
 import uuid
+from pathlib import Path
 
 import pytest
 
@@ -136,3 +140,40 @@ def test_central_context_does_not_trust_a_modified_executor(tmp_path, monkeypatc
     assert snapshot["files"] == {}
     assert not (workspace / ".claude").exists()
     assert "temporary scratch" in (config / "CLAUDE.md").read_text()
+
+
+@pytest.mark.parametrize("installed_in", [".cheese", ".claude"])
+def test_releasing_a_private_room_reaches_the_root_it_was_installed_in(
+    tmp_path, installed_in
+):
+    """The release runs as a shell test-and-exec on the machine, so a root it
+    does not name is not an error there — it is silence, and the seat the room
+    holds is never given back. Run for real against a home laid out each way."""
+    project, topic = uuid.uuid4(), uuid.uuid4()
+    home = private_chat.device_home_dir(project, topic).replace("$HOME", str(tmp_path))
+    directory = Path(home) / installed_in
+    (directory / "remote-execution").mkdir(parents=True)
+    released = tmp_path / "released.json"
+    (directory / "remote-execution/client.py").write_text(
+        f"import json, sys\njson.dump(sys.argv[1:], open({str(released)!r}, 'w'))\n"
+    )
+    (directory / "remote-target.json").write_text('{"kind": "private"}')
+
+    class ShellHub:
+        async def exec(self, device_id, argv, *, timeout):
+            # The command carries a literal $HOME: the backend never knows the
+            # device user's home, and the machine's shell is what expands it.
+            done = subprocess.run(
+                argv,
+                env={**os.environ, "HOME": str(tmp_path)},
+                capture_output=True,
+                text=True,
+            )
+            return {"exit": done.returncode, "stderr": done.stderr}
+
+    asyncio.run(private_chat.release(project, topic, "dev1", ShellHub()))
+
+    assert json.loads(released.read_text()) == [
+        "release",
+        str(directory / "remote-target.json"),
+    ]

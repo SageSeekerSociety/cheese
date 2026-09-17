@@ -13,6 +13,35 @@ import time
 import uuid
 from pathlib import Path
 
+# Every directory the platform has installed a room's own files into, the
+# current one first. Tearing a room down reads what preparing it wrote, and a
+# room prepared under an earlier root still has all of it where that launcher
+# put it — it does not move until something prepares the room again, and a room
+# being deleted never will. Reading only where we would install today answers
+# "this room never had an executor" for a room that has one running, and the
+# answer is acted on: the detached daemon is left alive under a home that is
+# then removed from under it, the private seat it holds is never released, and
+# publication is checked on a branch meant for rooms without an executor.
+PLATFORM_DIRS = (".cheese", ".claude")
+
+
+def platform_dir(home: Path) -> Path:
+    """Where this room's platform files actually are.
+
+    Resolved once per room rather than per file, so a room's executor state, the
+    runtime that speaks to it and the markers that describe it are always read
+    out of the same installation — a room migrated mid-life has leftovers under
+    both, and picking a runtime from one root to drive a state directory in the
+    other would be worse than reading neither.
+    """
+    for name in PLATFORM_DIRS:
+        directory = home / name
+        if (directory / "executor").exists() or (
+            directory / "remote-target.json"
+        ).exists():
+            return directory
+    return home / PLATFORM_DIRS[0]
+
 
 def run_command(
     argv: list[str], *, cwd: Path | None = None, pass_fds: tuple[int, ...] = ()
@@ -56,18 +85,30 @@ def check_published_commits(repo: Path, *, include_head: bool = False) -> None:
 
 
 def check_no_writers(paths: list[Path]) -> None:
-    for path in paths:
-        if not path.exists():
-            continue
-        result = run_command(["lsof", "-t", "+D", str(path)])
-        if result.stdout.strip():
-            raise RuntimeError(
-                "resource still has processes holding files or working directories"
-            )
-        if result.returncode not in {0, 1} or result.stderr.strip():
-            raise RuntimeError(
-                "could not establish whether the resource has active writers"
-            )
+    """Refuse if anything holds a file or a working directory under these.
+
+    ONE lsof call, never one per path. `lsof +D` spends about two seconds
+    walking every process's descriptors before it so much as looks at the
+    directory, so its cost is per INVOCATION and not per tree: measured
+    2026-09-18, an empty directory costs the same 1.97s as a repository, five
+    directories in one call cost 2.07s, and the same five in five calls cost
+    10.14s. A sweep over 102 rooms was therefore 3.4 minutes of lsof alone.
+
+    Nothing is given up by batching: the message never named which path it was,
+    because for every caller the answer is the same either way — do not delete.
+    """
+    present = [str(path) for path in paths if path.exists()]
+    if not present:
+        return
+    result = run_command(["lsof", "-t", "+D", *present])
+    if result.stdout.strip():
+        raise RuntimeError(
+            "resource still has processes holding files or working directories"
+        )
+    if result.returncode not in {0, 1} or result.stderr.strip():
+        raise RuntimeError(
+            "could not establish whether the resource has active writers"
+        )
 
 
 def check_resource_publication(home: Path, work: Path) -> None:
@@ -229,7 +270,7 @@ def check_transcripts(home: Path, receipts: list[dict]) -> None:
 
 
 def session_target(home: Path, resource: str) -> dict | None:
-    marker = home / ".claude/remote-target.json"
+    marker = platform_dir(home) / "remote-target.json"
     if not marker.exists():
         return None
     target = json.loads(marker.read_text())
@@ -246,12 +287,13 @@ def session_target(home: Path, resource: str) -> dict | None:
 
 
 def stop_executor(home: Path, resource: str) -> None:
-    marker = home / ".claude/execution-owner.json"
+    installed = platform_dir(home)
+    marker = installed / "execution-owner.json"
     if marker.exists():
         if json.loads(marker.read_text())["resource"] != str(uuid.UUID(resource)):
             raise RuntimeError("execution marker names another resource generation")
-        runtime = home / ".claude/remote-execution/runtime.py"
-        state = home / ".claude/executor"
+        runtime = installed / "remote-execution/runtime.py"
+        state = installed / "executor"
         helper = runpy.run_path(str(runtime))
         if Path(helper["socket_path"](state)).exists():
             result = run_command(
@@ -326,7 +368,9 @@ def main() -> None:
                 home, json.loads(os.environ["CHEESE_TRANSCRIPT_RECEIPTS"])
             )
         if executor is not None and executor["kind"] == "private":
-            helper = runpy.run_path(str(home / ".claude/remote-execution/private.py"))
+            helper = runpy.run_path(
+                str(platform_dir(home) / "remote-execution/private.py")
+            )
             helper["release"](executor)
         for path in (work, home):
             if path.exists():

@@ -16,8 +16,10 @@ from app.domain.agent.harness.claude_code.remote_execution import release
 
 def test_staged_release_preserves_context_and_waits_for_reload(tmp_path):
     config = tmp_path / ".claude"
-    directory = config / "remote-session"
-    helpers = config / "remote-execution"
+    config.mkdir(exist_ok=True)
+    platform_dir = tmp_path / ".cheese"
+    directory = platform_dir / "remote-session"
+    helpers = platform_dir / "remote-execution"
     directory.mkdir(parents=True)
     helpers.mkdir()
     original_target = json.dumps(
@@ -142,8 +144,10 @@ def test_staged_release_unmounts_only_the_forwarded_view_before_replacement(
     tmp_path, monkeypatch
 ):
     config = tmp_path / ".claude"
-    directory = config / "remote-session"
-    helpers = config / "remote-execution"
+    config.mkdir(exist_ok=True)
+    platform_dir = tmp_path / ".cheese"
+    directory = platform_dir / "remote-session"
+    helpers = platform_dir / "remote-execution"
     directory.mkdir(parents=True)
     helpers.mkdir()
     (directory / "execution.json").write_text(
@@ -172,8 +176,10 @@ def test_staged_release_keeps_a_forwarded_view_used_as_the_native_cwd(
     tmp_path, monkeypatch
 ):
     config = tmp_path / ".claude"
-    directory = config / "remote-session"
-    helpers = config / "remote-execution"
+    config.mkdir(exist_ok=True)
+    platform_dir = tmp_path / ".cheese"
+    directory = platform_dir / "remote-session"
+    helpers = platform_dir / "remote-execution"
     forwarded = directory / "forwarded-project"
     directory.mkdir(parents=True)
     helpers.mkdir()
@@ -193,8 +199,10 @@ def test_staged_release_keeps_a_forwarded_view_used_as_the_native_cwd(
 
 def test_staged_release_only_removes_the_managed_context_hook(tmp_path):
     config = tmp_path / ".claude"
-    directory = config / "remote-session"
-    helpers = config / "remote-execution"
+    config.mkdir(exist_ok=True)
+    platform_dir = tmp_path / ".cheese"
+    directory = platform_dir / "remote-session"
+    helpers = platform_dir / "remote-execution"
     directory.mkdir(parents=True)
     helpers.mkdir()
     target_path = directory / "execution.json"
@@ -245,7 +253,7 @@ def test_emitted_release_runs_without_backend_imports(tmp_path):
     )
     assert json.loads(result.stdout) is None
     assert (
-        tmp_path / ".claude/remote-execution/release-ready"
+        tmp_path / ".cheese/remote-execution/release-ready"
     ).read_text() == "released"
 
 
@@ -279,11 +287,13 @@ def test_skill_reload_receipt_is_distinct_from_plugin_reload(tmp_path):
 
 def test_active_turn_blocks_changes_until_completion(tmp_path):
     config = tmp_path / ".claude"
-    (config / "remote-session").mkdir(parents=True)
-    (config / "remote-execution").mkdir()
-    (config / "remote-session/execution.json").write_text("{}")
+    config.mkdir(exist_ok=True)
+    platform_dir = tmp_path / ".cheese"
+    (platform_dir / "remote-session").mkdir(parents=True)
+    (platform_dir / "remote-execution").mkdir()
+    (platform_dir / "remote-session/execution.json").write_text("{}")
     (config / "settings.json").write_text("{}")
-    client = config / "remote-execution/client.py"
+    client = platform_dir / "remote-execution/client.py"
     client.write_text("previous")
     transcript = config / "projects/work/session.jsonl"
     transcript.parent.mkdir(parents=True)
@@ -308,8 +318,10 @@ async def test_release_acknowledgement_requires_connection(
     tmp_path, monkeypatch, connected
 ):
     config = tmp_path / ".claude"
-    (config / "remote-session").mkdir(parents=True)
-    (config / "remote-session/execution.json").write_text("{}")
+    config.mkdir(exist_ok=True)
+    platform_dir = tmp_path / ".cheese"
+    (platform_dir / "remote-session").mkdir(parents=True)
+    (platform_dir / "remote-session/execution.json").write_text("{}")
     (config / "settings.json").write_text("{}")
     transcript = config / "projects/work/session.jsonl"
     transcript.parent.mkdir(parents=True)
@@ -387,13 +399,13 @@ async def test_release_acknowledgement_requires_connection(
     if connected:
         assert await channel._refresh_resident(screen, str(tmp_path), {}) is True
         assert (
-            config / "remote-execution/release-ready"
+            platform_dir / "remote-execution/release-ready"
         ).read_text() == release.digest(release.sources())
         assert commands == ["mcp_reconnect", "mcp_status", "mcp_status"]
     else:
         with pytest.raises(ScreenSetupError, match="mcp_reconnect"):
             await channel._refresh_resident(screen, str(tmp_path), {})
-        assert not (config / "remote-execution/release-ready").exists()
+        assert not (platform_dir / "remote-execution/release-ready").exists()
 
 
 @pytest.mark.anyio
@@ -451,8 +463,10 @@ async def test_forwarded_context_reloads_skills_only_for_a_new_generation(
 
 def test_forwarded_context_replaces_mirror_files_with_links(tmp_path, monkeypatch):
     config = tmp_path / ".claude"
-    directory = config / "remote-session"
-    helpers = config / "remote-execution"
+    config.mkdir(exist_ok=True)
+    platform_dir = tmp_path / ".cheese"
+    directory = platform_dir / "remote-session"
+    helpers = platform_dir / "remote-execution"
     workspace = tmp_path / "old-workspace"
     hidden = directory / "forwarded-project"
     skill = workspace / ".claude/skills/check/SKILL.md"
@@ -586,7 +600,9 @@ def test_forwarded_context_replaces_mirror_files_with_links(tmp_path, monkeypatc
 
 def test_forwarded_context_rejects_unsupported_paths_before_mutation(tmp_path):
     config = tmp_path / ".claude"
-    directory = config / "remote-session"
+    config.mkdir(exist_ok=True)
+    platform_dir = tmp_path / ".cheese"
+    directory = platform_dir / "remote-session"
     workspace = tmp_path / "workspace"
     mirrored = workspace / "CLAUDE.md"
     directory.mkdir(parents=True)
@@ -634,8 +650,10 @@ def test_unchanged_forwarded_generation_remounts_after_helper_release(
     tmp_path, monkeypatch
 ):
     config = tmp_path / ".claude"
-    directory = config / "remote-session"
-    helpers = config / "remote-execution"
+    config.mkdir(exist_ok=True)
+    platform_dir = tmp_path / ".cheese"
+    directory = platform_dir / "remote-session"
+    helpers = platform_dir / "remote-execution"
     workspace = tmp_path / "workspace"
     directory.mkdir(parents=True)
     helpers.mkdir()

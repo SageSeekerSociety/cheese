@@ -24,6 +24,11 @@ from rc_fixture import RemoteControlFixture
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "backend/app/domain/agent/harness/claude_code/remote_execution"
+# The CLI preload worker is not the adapter's — it knows the platform CLI and
+# nothing about any harness, so it lives beside the other platform-side machine
+# helpers. Only the path it is FETCHED from moved; where it lands on the machine
+# is what `runtime.py` looks for, and that is unchanged.
+AGENT = ROOT / "backend/app/domain/agent"
 sys.path.insert(0, str(SOURCE))
 import release as execution_release  # noqa: E402 — from the source tree above
 
@@ -58,7 +63,7 @@ def setup(folder, options, api):
     run(remote_command(options, ["mkdir", "-p", remote + "/remote-execution"]))
     sources = (
         (SOURCE / "runtime.py", "runtime.py"),
-        (SOURCE / "cli_worker.py", "remote-execution/cli_worker.py"),
+        (AGENT / "cli_worker.py", "remote-execution/cli_worker.py"),
         (ROOT / "backend/sandbox/cheese", "cheese"),
         (Path(__file__).parent / "custom_mcp.py", "custom_mcp.py"),
         (Path(__file__).parent / "seed.py", "seed.py"),
@@ -200,12 +205,12 @@ def case(folder, options):
         if options.launcher == "device":
             os.close(center_fd)
             center_fd = None
-            center = folder / "device-home/.claude/remote-session/forwarded-project"
+            center = folder / "device-home/.cheese/remote-session/forwarded-project"
             center.mkdir(parents=True)
             center_fd = os.open(center, os.O_RDONLY | os.O_DIRECTORY)
             launch = {"cwd": str(center), "env": {}}
             execution_file = (
-                folder / "device-home/.claude/remote-session/execution.json"
+                folder / "device-home/.cheese/remote-session/execution.json"
             )
         center = Path(launch["cwd"])
         actions = [
@@ -585,7 +590,7 @@ def case(folder, options):
         subprocess.run(tmux + ["kill-server"], capture_output=True, timeout=10)
         for mountpoint in (
             folder / "central/forwarded-project",
-            folder / "device-home/.claude/remote-session/forwarded-project",
+            folder / "device-home/.cheese/remote-session/forwarded-project",
         ):
             # `release_mount` rather than a local ismount-then-unmount: this runs
             # in a `finally`, so the run that most needs it is the one that got

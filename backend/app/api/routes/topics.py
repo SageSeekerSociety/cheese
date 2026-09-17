@@ -52,7 +52,7 @@ from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent_instance.schemas import TopicAgentIn
 from app.domain.agent_instance.services import ResolvedAgent
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import AuthorType, Block, BlockKind, agent_notice
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.device.supply import Visibility
@@ -81,7 +81,6 @@ from app.domain.room_task.services import (
     RoomLockService,
     TaskService,
 )
-from app.domain.topic.doc_change import summarize_doc_change
 from app.domain.topic.models import Topic, TopicKind
 from app.domain.topic.relay import TopicRelayService
 from app.domain.topic.repositories import SortOrder, TopicSortField
@@ -1154,11 +1153,6 @@ async def edit_topic_doc(
     content = await canonicalize_refs(
         db, place.project_id, body.content, exclude_topic_id=place.room_id
     )
-    # Read before the write, for the summary. Not a race: a doc that moved in
-    # between is exactly what `expected_version` refuses, so the version this
-    # read saw is the version the accepted write replaced.
-    previous = await BlockRepository(db).doc_root(place.room_id)
-    was = previous.content if previous else ""
     doc, notice = await TopicService(db).edit_doc(
         topic_id=topic_id,
         content=content,
@@ -1179,16 +1173,14 @@ async def edit_topic_doc(
             },
         )
     await broker.publish(str(place.room_id), {"type": "state", "resource": "doc"})
-    if not actor.is_agent and notice is not None:
+    if notice is not None and (line := agent_notice(notice)):
         # The notice tells 芝士 to go re-read the doc, so the doc has to BE the
         # new one by the time it does — same ordering as the comment route.
-        # 芝士's own `cheese doc set` is not news to 芝士.
-        await chat.notify_running_turn(
-            topic_id,
-            f"{actor.handle} 刚改了实况文档，现在是第 {doc.doc_version} 版"
-            f"（{summarize_doc_change(was, content)}）。你手上那份可能已经旧了："
-            "要接着改文档，先 cheese doc get 重新读一遍，否则写回去会被拒。",
-        )
+        # What it says was written where the document moved (`edit_doc`), so the
+        # running turn and the next one are told the same thing; naming `notice`
+        # is what lets the receipt stamp it consumed instead of it being said
+        # twice.
+        await chat.notify_running_turn(topic_id, line, blocks=[notice.id])
     return ok(BlockOut.model_validate(doc).model_dump(mode="json"))
 
 

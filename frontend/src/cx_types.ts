@@ -892,7 +892,7 @@ export interface ProjectEnvironmentInfo {
 }
 export interface EnvironmentStatus {
   busy?: boolean
-  state: 'pending' | 'preparing' | 'ready' | 'stopped' | 'failed' | 'offline'
+  state: 'unbound' | 'pending' | 'preparing' | 'ready' | 'stopped' | 'failed' | 'offline'
   recovery_state?: 'requested' | 'retrying' | 'needs_help' | 'closed' | null
   stage?: string
   log?: string

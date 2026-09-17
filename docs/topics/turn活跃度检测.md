@@ -35,7 +35,7 @@ wangchangxin 拍板；设计文档在子话题 `e6ddab21-5b1a-4647-861d-a06a67b3
   `turn.activity`（读 `ChatService.tmux_activity_status`）；
   `backend/sandbox/cheese::_format_status` 渲染三态——正常运行中 / 疑似卡死
   （已 X 分钟无活跃信号）/ 接近硬顶。
-- `chat.py::_turn_meta_lines`：tmux 后端的系统提示去掉"到点会被中断"式紧迫感
+- `chat.py`：系统提示去掉"到点会被中断"式紧迫感
   措辞，只保留"长活记得边做边落盘"类建议；SDK/device 保留原有分钟数措辞不变。
 
 ## 验证
@@ -46,7 +46,7 @@ wangchangxin 拍板；设计文档在子话题 `e6ddab21-5b1a-4647-861d-a06a67b3
   的限制）起了真实 Postgres。
 - 直接相关的单测（`test_hooks_substrate`/`test_tmux_provider`/
   `test_device_provider`/`test_subscription_provider_env`/`test_cheese_cli`/
-  `test_turn_meta_prompt`/`test_runtime`/`test_turn_admission` + 集成测试
+  `test_session_opening_prompt`/`test_runtime`/`test_turn_admission` + 集成测试
   `test_topic_status`）：**96 + 3 全部通过**，新增覆盖两个必查方向——①正常长
   任务（有 pane 输出无 hook）不在 5min/15min 被误杀，靠 `confirm_alive` 持续
   探活撑到硬顶；②真卡死（`confirm_alive` 返回 false）在远小于硬顶的时间内被
@@ -92,7 +92,7 @@ hook 全静默：PreToolUse 开头响一次、PostToolUse 结束才响、中间�
   「认 `HooksTurnProvider`」——**这条是让内层修复真正生效的关键**：只改内层两层
   不够，`runtime.py` 外层墙不发 `turn_ceiling` 就仍在 900s 无差别杀 device turn。
   现在 device 也发 `turn_ceiling`（= 其 `hard_ceiling_s` 10800），外层墙同样放宽。
-  `_turn_meta_lines(activity_aware=True)` 的「无固定倒计时」提示对 device 也已属实。
+  「无固定倒计时」对 device 也已属实。那句提示本身后来删了：没被告知过倒计时的会话，不需要被告知它不存在。
 
 未做（另开卡）：PreToolUse 预读命令自带的 `tool_input.timeout` 动态放宽窗口——是
 优化不是正确性修复。`sweep_orphans` 的 30 分钟静默兜底（`SILENT_TURN_S=1800`）对

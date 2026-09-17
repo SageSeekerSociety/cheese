@@ -17,10 +17,10 @@ from pathlib import Path
 
 import pytest
 
-from app.domain.agent import execution, executor_transport
+from app.domain.agent import cli_worker, execution, executor_transport
 from app.domain.agent.device_hub import DeviceHub
-from app.domain.agent.harness.claude_code.remote_execution import cli_worker, runtime
 from app.domain.agent.harness.claude_code.remote_execution import client as central
+from app.domain.agent.harness.claude_code.remote_execution import runtime
 from app.domain.agent.harness.claude_code.remote_execution.client import (
     _local_chat_send_argv,
 )
@@ -141,15 +141,15 @@ def test_chat_publication_fast_path_posts_with_session_credentials(monkeypatch, 
 @pytest.fixture
 def executor(tmp_path):
     home = tmp_path / "session home"
-    helper = home / ".claude/remote-execution/runtime.py"
+    helper = home / ".cheese/remote-execution/runtime.py"
     helper.parent.mkdir(parents=True)
     shutil.copyfile(runtime.__file__, helper)
     shutil.copyfile(cli_worker.__file__, helper.parent / "cli_worker.py")
     shutil.copyfile(
         Path(__file__).resolve().parents[2] / "sandbox/cheese",
-        home / ".claude/cheese",
+        home / ".cheese/cheese",
     )
-    state = home / ".claude/executor"
+    state = home / ".cheese/executor"
     work = tmp_path / "project"
     work.mkdir()
     subprocess.run(
@@ -318,7 +318,7 @@ def central_transport(executor, tmp_path, request):
     )
     process.publications = publications
     process.platform_calls = platform_calls
-    process.cli_source = Path(target["home"]) / ".claude/cheese"
+    process.cli_source = Path(target["home"]) / ".cheese/cheese"
     try:
         yield process, clients, drop, work
     finally:

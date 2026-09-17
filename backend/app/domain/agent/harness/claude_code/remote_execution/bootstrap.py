@@ -16,6 +16,11 @@ import uuid
 from pathlib import Path
 
 VERSION = "2.1.265"
+# The platform's own directory inside a room's home, and the one it used before.
+# A harness's config dir is the harness's; everything the platform installs —
+# the executor, its helpers, the CLI, the environment runner — lives here.
+PLATFORM_DIR = ".cheese"
+PREVIOUS_PLATFORM_DIR = ".claude"
 
 
 def binary(owner, api, verified=None):
@@ -80,6 +85,47 @@ def binary(owner, api, verified=None):
     return str(destination)
 
 
+def stop_previous_root(home):
+    """Take down an executor the platform started under its previous directory.
+
+    The executor is a detached daemon: it outlives the screen that asked for it,
+    and nothing that closes a session closes it. So a room's executor survives a
+    change of install root, and the code that would otherwise stop it — the
+    "already running" branch below — looks for its state under the new root and
+    finds nothing. Two daemons then share one HOME and one environment status
+    file. Whoever moves the root has to come back for what the old one started.
+    """
+    previous = home / PREVIOUS_PLATFORM_DIR
+    state = previous / "executor"
+    runner = previous / "remote-execution/runtime.py"
+    if not (state / "config.json").exists() or not runner.exists():
+        return
+    # Asked of the runtime that started it, not the one being installed now: the
+    # protocol it answers is the one it was built with. Ask whether it is there
+    # before telling it to go — a room whose machine rebooted has this state on
+    # disk with nothing behind it, and that is not a reason to refuse the room.
+    # A stop that is asked for and fails IS a reason: the whole point is that
+    # two of these must not run over one home.
+    runtime = runpy.run_path(str(runner))
+    try:
+        alive = runtime["request"](state, "ping")
+    except (OSError, RuntimeError):
+        alive = None
+    if alive:
+        subprocess.run(
+            [sys.executable, str(runner), "stop", "--state", str(state)],
+            check=True,
+            timeout=30,
+        )
+    shutil.rmtree(state, ignore_errors=True)
+    # Every marker that says a room is installed here goes with it. What stays
+    # under the previous root is inert copies of programs; anything that still
+    # ANSWERS "the executor is over here" would go on being believed, by the
+    # teardown path most of all — it reads these to find what to stop.
+    (previous / "execution-owner.json").unlink(missing_ok=True)
+    (previous / "remote-target.json").unlink(missing_ok=True)
+
+
 @contextlib.contextmanager
 def prepared(payload, owner, verified=None, *, refresh_runtime=False):
     project, resource = (
@@ -88,14 +134,17 @@ def prepared(payload, owner, verified=None, *, refresh_runtime=False):
     )
     home = owner / ".cheese/home" / project / resource
     work = home / "room"
+    platform_dir = home / PLATFORM_DIR
     config_dir = home / ".claude"
+    platform_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     config_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     work.mkdir(parents=True, exist_ok=True)
-    with (config_dir / "executor-bootstrap.lock").open("a") as lock:
+    with (platform_dir / "executor-bootstrap.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
+        stop_previous_root(home)
         if refresh_runtime:
-            source = config_dir / "remote-execution/runtime.py"
-            state = config_dir / "executor"
+            source = platform_dir / "remote-execution/runtime.py"
+            state = platform_dir / "executor"
             if source.exists() and (state / "config.json").exists():
                 runtime = runpy.run_path(str(source))
                 try:
@@ -114,8 +163,8 @@ def prepared(payload, owner, verified=None, *, refresh_runtime=False):
                             "Executor update is waiting for running commands to finish"
                         )
         for name, content in payload["files"].items():
-            destination = config_dir / name
-            destination.relative_to(config_dir)
+            destination = platform_dir / name
+            destination.relative_to(platform_dir)
             destination.parent.mkdir(parents=True, exist_ok=True)
             decoded = base64.b64decode(content)
             # Keep unchanged CLI sources from invalidating the worker's preload.
@@ -123,7 +172,7 @@ def prepared(payload, owner, verified=None, *, refresh_runtime=False):
                 destination.write_bytes(decoded)
             destination.chmod(0o700)
         if "file_names" in payload:
-            manifest = config_dir / "executor-files.json"
+            manifest = platform_dir / "executor-files.json"
             contents = json.dumps(payload["file_names"])
             if not manifest.exists() or manifest.read_text() != contents:
                 manifest.write_text(contents)
@@ -140,8 +189,8 @@ def prepared(payload, owner, verified=None, *, refresh_runtime=False):
             CLAUDE_CONFIG_DIR=str(config_dir),
             CHEESE_WORK=str(work),
             CHEESE_WORKTREE_ROOT=str(work),
-            CHEESE_PREVIEW_UP=str(config_dir / "cheese-preview-up"),
-            PATH=str(config_dir) + os.pathsep + env.get("PATH", ""),
+            CHEESE_PREVIEW_UP=str(platform_dir / "cheese-preview-up"),
+            PATH=str(platform_dir) + os.pathsep + env.get("PATH", ""),
         )
         if payload.get("environment"):
             # Retained executors also need the pinned task configuration when
@@ -153,10 +202,10 @@ def prepared(payload, owner, verified=None, *, refresh_runtime=False):
                 not configuration.exists()
                 or json.loads(configuration.read_text()) != payload["environment"]
             ):
-                runner = runpy.run_path(str(config_dir / "cheese-environment.py"))
+                runner = runpy.run_path(str(platform_dir / "cheese-environment.py"))
                 runner["write_json"](configuration, payload["environment"])
-        (config_dir / "cheese-preview.token").write_text(env["CHEESE_TOKEN"])
-        (config_dir / "cheese-preview.token").chmod(0o600)
+        (platform_dir / "cheese-preview.token").write_text(env["CHEESE_TOKEN"])
+        (platform_dir / "cheese-preview.token").chmod(0o600)
         scoped_env = {
             name: value
             for name, value in env.items()
@@ -179,7 +228,7 @@ def prepared(payload, owner, verified=None, *, refresh_runtime=False):
         mcp = work / ".mcp.json"
         if mcp.exists():
             config["mcp_servers"] = json.loads(mcp.read_text()).get("mcpServers", {})
-        state = config_dir / "executor"
+        state = platform_dir / "executor"
         state.mkdir(exist_ok=True, mode=0o700)
         yield home, config, state, env
 
@@ -191,12 +240,12 @@ def configure(payload):
         state,
         env,
     ):
-        config_dir = home / ".claude"
+        platform_dir = home / PLATFORM_DIR
         work = Path(config["workspace"])
         scoped_env = config["env"]
-        log = config_dir / "executor-bootstrap.log"
-        sys.path.insert(0, str(config_dir / "remote-execution"))
-        runtime = runpy.run_path(str(config_dir / "remote-execution/runtime.py"))
+        log = platform_dir / "executor-bootstrap.log"
+        sys.path.insert(0, str(platform_dir / "remote-execution"))
+        runtime = runpy.run_path(str(platform_dir / "remote-execution/runtime.py"))
 
         if (state / "config.json").exists():
             previous = json.loads((state / "config.json").read_text())
@@ -215,7 +264,7 @@ def configure(payload):
                     runtime["request"](state, "configure", {"env": scoped_env})
                     if payload.get("environment"):
                         runner = runpy.run_path(
-                            str(config_dir / "cheese-environment.py")
+                            str(platform_dir / "cheese-environment.py")
                         )
                         info["environment_status"] = runner["read_status"](
                             home / ".cheese-environment"
@@ -227,7 +276,7 @@ def configure(payload):
                 subprocess.run(
                     [
                         sys.executable,
-                        str(config_dir / "remote-execution/runtime.py"),
+                        str(platform_dir / "remote-execution/runtime.py"),
                         "stop",
                         "--state",
                         str(state),
@@ -238,13 +287,13 @@ def configure(payload):
         runtime["write_json"](state / "config.json", config)
         runtime["write_json"](state / "environment.json", payload.get("environment"))
         runtime["write_json"](
-            config_dir / "execution-owner.json", {"resource": home.name}
+            platform_dir / "execution-owner.json", {"resource": home.name}
         )
         with log.open("a") as output:
             subprocess.Popen(
                 [
                     sys.executable,
-                    str(config_dir / "remote-execution/bootstrap.py"),
+                    str(platform_dir / "remote-execution/bootstrap.py"),
                     str(state),
                 ],
                 cwd=work,
