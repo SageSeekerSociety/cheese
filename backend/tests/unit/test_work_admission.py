@@ -526,9 +526,6 @@ async def test_receipted_mid_session_message_has_no_second_done():
             self.merged = args
             return True
 
-        async def ack_summon(self, block_id, topic_id):
-            return {"block_id": str(block_id), "reactions": []}
-
     chat = MergeIntoLive()
     runner, broker = _runner()
     topic = uuid.uuid4()
@@ -542,10 +539,20 @@ async def test_receipted_mid_session_message_has_no_second_done():
         )
         frames = []
         async with asyncio.timeout(2):
-            while len(frames) < 2:
+            while len(frames) < 1:
                 frames.append(await queue.get())
+        # Waited for the delivery itself, not for a frame count. The second
+        # frame this used to wait on was the mark, and waiting for it was
+        # also what gave the merge time to happen — a coincidence that goes
+        # away with it.
+        await _until(lambda: chat.merged is not None)
 
-    assert [frame["type"] for frame in frames] == ["user_block", "reaction"]
+    # Just the message. Delivery into the live session says the write was
+    # taken, not that the session read it, so no mark rides this path any
+    # more: `chat.arm_seen_receipt` names the block here and
+    # `chat.confirm_prompt_receipt` places the 👀 when the harness reports
+    # that the session has the text.
+    assert [frame["type"] for frame in frames] == ["user_block"]
     assert chat.merged is not None
     assert chat.merged[2:] == ("补充一条", "u", None)
     assert broker.active_turn_ids(str(topic)) == ["already-running"]
@@ -570,9 +577,6 @@ async def test_image_only_message_can_merge_into_live_session():
             self.merged = args
             return True
 
-        async def ack_summon(self, block_id, topic_id):
-            return {"block_id": str(block_id), "reactions": []}
-
     chat = MergeIntoLive()
     runner, broker = _runner()
     topic = uuid.uuid4()
@@ -590,9 +594,11 @@ async def test_image_only_message_can_merge_into_live_session():
             attachments=[attachment],
             summon=True,
         )
-        frames = [await queue.get(), await queue.get()]
+        frames = [await queue.get()]
+        await _until(lambda: chat.merged is not None)
 
-    assert [frame["type"] for frame in frames] == ["user_block", "reaction"]
+    # No mark on this path either — see the note in the test above.
+    assert [frame["type"] for frame in frames] == ["user_block"]
     assert chat.merged is not None
     block_ids = chat.merged[1]
     assert len(block_ids) == 1
