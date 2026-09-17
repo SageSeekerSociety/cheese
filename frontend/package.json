@@ -15,6 +15,8 @@
     "lint:style": "node scripts/stylelint-ratchet.mjs",
     "lint:style:fix": "stylelint \"src/**/*.{vue,css,scss}\" --fix",
     "lint:style:update": "node scripts/stylelint-ratchet.mjs --update",
+    "lint:i18n": "node scripts/i18n-cjk-ratchet.mjs",
+    "lint:i18n:update": "node scripts/i18n-cjk-ratchet.mjs --update",
     "prettier": "prettier --write \"**/*.{vue,js,jsx,ts,tsx}\"",
     "test": "vitest",
     "postinstall": "husky install",

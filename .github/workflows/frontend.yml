@@ -143,6 +143,21 @@ jobs:
       - name: Design tokens (stylelint ratchet)
         run: pnpm run lint:style
 
+      # Bilingual UI: no Chinese typed straight into a component. A ratchet
+      # (i18n-cjk-baseline.json) for the same reason as the two above — the tree
+      # starts at 3167 lines across 230 files, and a gate that goes red
+      # everywhere on day one gets switched off. Only NEW Chinese fails.
+      #
+      # This is the one gap catalog.spec.ts cannot cover. That suite compares
+      # the catalog against itself, so it is blind to a string that never
+      # reached the catalog: `views/user/privacy/DataSharing.vue` has zero `t()`
+      # calls and stays fully Chinese under the English locale while every check
+      # above passes. Spec: docs/i18n.md §5, wording: docs/i18n-glossary.md.
+      #
+      # Pure node, no new dependency, ~1.5s — it reads src/ and compares counts.
+      - name: Hardcoded Chinese (i18n ratchet)
+        run: pnpm run lint:i18n
+
       # Via the package script, not a bare `node --test scripts/`: passing a
       # DIRECTORY resolves as a module entry point on node 22 while node 20
       # treated it as a search path, so the two disagreed and CI failed on
