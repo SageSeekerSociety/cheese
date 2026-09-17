@@ -186,14 +186,30 @@ async def http_exception_handler(
 ) -> JSONResponse | PlainTextResponse:
     accept = request.headers.get("accept") or ""
     detail = exc.detail if isinstance(exc.detail, str) else "HTTP error"
+    # Whoever attached headers to the exception meant them to arrive. FastAPI's
+    # own handler forwards `exc.headers`; this one replaces that handler, and
+    # dropped them. The single place in this codebase that uses them is how the
+    # connection owner says WHICH device went offline
+    # (device_connection_app.py), so `DeviceOffline` never survived the trip:
+    # the client read a 409 with no `X-Device-Id`, and an offline machine
+    # arrived as a generic transport error instead. `pi/channel.py` treats those
+    # two differently on purpose — 「not something waiting fixes」 — so a room
+    # whose machine was simply off spent the full 120s startup wait retrying a
+    # ping to a machine that was not there, and then failed under a name that
+    # did not mention it.
+    headers = getattr(exc, "headers", None)
     if "text/event-stream" in accept:
         body = f"event: error\ndata: {detail}\n\n"
         return PlainTextResponse(
-            content=body, status_code=exc.status_code, media_type="text/event-stream"
+            content=body,
+            status_code=exc.status_code,
+            media_type="text/event-stream",
+            headers=headers,
         )
     return JSONResponse(
         status_code=exc.status_code,
         content=format_error_response(status_code=exc.status_code, message=detail),
+        headers=headers,
     )
 
 
