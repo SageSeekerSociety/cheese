@@ -38,6 +38,7 @@ import {
   revokeCard,
   setAutoMerge,
 } from '@/api'
+import { t } from '@/i18n'
 import { columnDotStyle } from '@/lib/board'
 import { mergeBadgeOf, visibleReasons } from '@/lib/mergeState'
 import { noteTone } from '@/lib/noteTone'
@@ -125,7 +126,7 @@ const acceptBlockedTitle = computed<string | null>(() => {
   if (!card || platformLane.value || needsPr.value) return null
   if (MERGEABLE_STATES.includes(card.merge_state.state)) return null
   const why = mergeReasons.value.map((r) => r.detail).filter(Boolean)
-  return ['现在采纳不会合并', ...why].join('：')
+  return [t('acceptCard.pending.blockedTitle'), ...why].join(t('acceptCard.pending.reasonSeparator'))
 })
 
 // 绿了自动合 (#718)：项目允许、且卡正停在 blocked/behind（规则还没满足）时才有
@@ -242,7 +243,7 @@ async function onApproveCard() {
     await approveCard(card.id, AUTHOR)
     await loadAcceptCard(true)
   } catch (e) {
-    store.reportError(e, '批准失败')
+    store.reportError(e, t('acceptCard.errors.approveFailed'))
   } finally {
     acceptBusy.value = false
   }
@@ -256,7 +257,7 @@ async function onReassignCard(handle: string) {
     await reassignCard(card.id, handle)
     await loadAcceptCard()
   } catch (e) {
-    store.reportError(e, '改验收人失败')
+    store.reportError(e, t('acceptCard.errors.reassignFailed'))
   } finally {
     acceptBusy.value = false
   }
@@ -269,11 +270,11 @@ async function onAcceptCard() {
   try {
     const updated = await acceptCard(card.id, AUTHOR, card.merge_state.head_sha)
     if (updated.status === 'conflict') {
-      store.error = '采纳时出现合并冲突，本次未合并。芝士正在解决，完成后可重试采纳。'
+      store.error = t('acceptCard.errors.mergeConflict')
     }
     await Promise.all([loadAcceptCard(), store.refreshTopicRow(props.topicId)])
   } catch (e) {
-    store.reportError(e, needsPr.value ? '创建 PR 未完成' : '采纳失败')
+    store.reportError(e, needsPr.value ? t('acceptCard.errors.createPrFailed') : t('acceptCard.errors.acceptFailed'))
     // 被拒的原因可能正是「你看到的版本已过时」——那就把屏幕换成新的那一版，
     // 否则人只能对着同一张旧卡再点一次，再被拒一次。
     await loadAcceptCard(true)
@@ -290,7 +291,7 @@ async function onRevokeCard() {
     await revokeCard(card.id, AUTHOR)
     await Promise.all([loadAcceptCard(), store.refreshTopicRow(props.topicId)])
   } catch (e) {
-    store.reportError(e, '撤回采纳失败')
+    store.reportError(e, t('acceptCard.errors.revokeFailed'))
   } finally {
     acceptBusy.value = false
   }
@@ -306,7 +307,7 @@ async function onForceMerge() {
     forceMergeReason.value = ''
     await Promise.all([loadAcceptCard(), store.refreshTopicRow(props.topicId)])
   } catch (e) {
-    store.reportError(e, '人工放行失败')
+    store.reportError(e, t('acceptCard.errors.forceMergeFailed'))
     await loadAcceptCard(true) // 见 onAcceptCard：过时的那一版要换掉
   } finally {
     acceptBusy.value = false
@@ -322,7 +323,7 @@ async function onToggleAutoMerge(enabled: unknown) {
     await setAutoMerge(card.id, !!enabled, card.merge_state.head_sha)
     await loadAcceptCard(true)
   } catch (e) {
-    store.reportError(e, '设置自动合并失败')
+    store.reportError(e, t('acceptCard.errors.autoMergeFailed'))
     await loadAcceptCard(true) // 见 onAcceptCard：过时的那一版要换掉
   } finally {
     acceptBusy.value = false
@@ -339,7 +340,7 @@ async function onRejectCard() {
     rejectNote.value = ''
     await Promise.all([loadAcceptCard(), store.refreshTopicRow(props.topicId)])
   } catch (e) {
-    store.reportError(e, '退回失败')
+    store.reportError(e, t('acceptCard.errors.rejectFailed'))
   } finally {
     acceptBusy.value = false
   }
@@ -379,20 +380,20 @@ defineExpose({ reload: loadAcceptCard })
       <div class="pa-3">
         <div class="d-flex align-center ga-2 mb-1">
           <v-icon color="error" size="19">mdi-close-octagon-outline</v-icon>
-          <span class="t-title">平台检查未通过</span>
+          <span class="t-title">{{ t('acceptCard.gate.failedTitle') }}</span>
         </div>
-        <div class="text-caption text-medium-emphasis mb-2">
-          这张验收卡没有送出。芝士已收到检查结果，会修复后重新提交。
-        </div>
+        <div class="text-caption text-medium-emphasis mb-2">{{ t('acceptCard.gate.failedBody') }}</div>
         <v-btn
           size="small"
           variant="text"
           :prepend-icon="showGateOutput ? 'mdi-chevron-up' : 'mdi-chevron-down'"
           @click="showGateOutput = !showGateOutput"
         >
-          {{ showGateOutput ? '收起输出' : '查看输出' }}
+          {{ showGateOutput ? t('acceptCard.gate.hideOutput') : t('acceptCard.gate.showOutput') }}
         </v-btn>
-        <pre v-if="showGateOutput" class="gate-output mt-2">{{ gateCard.gate_output || '暂无输出' }}</pre>
+        <pre v-if="showGateOutput" class="gate-output mt-2">{{
+          gateCard.gate_output || t('acceptCard.gate.noOutput')
+        }}</pre>
       </div>
     </v-card>
 
@@ -402,11 +403,14 @@ defineExpose({ reload: loadAcceptCard })
       <div class="pa-3">
         <div class="d-flex align-center ga-2 mb-1">
           <v-icon color="warning" size="19">mdi-help-circle-outline</v-icon>
-          <span class="t-title">平台检查未能执行</span>
+          <span class="t-title">{{ t('acceptCard.gate.blockedTitle') }}</span>
         </div>
+        <!-- 三截拼一句话：「没有结论」那半句要加粗，所以加粗的那一小段单独成词，
+             前后两截在模板里挨着写、不留空格（Vue 会把元素之间含换行的空白节点去掉），
+             拼出来和原来那句一模一样。 -->
         <div class="text-caption text-medium-emphasis mb-2">
-          检查程序未能启动，因此它对这次改动<strong>没有结论</strong>——既不是通过，也不是未通过。
-          这张验收卡没有送出。芝士已收到通知，会先恢复检查环境再重新提交；如果反复启动失败，需要人工介入。
+          {{ t('acceptCard.gate.blockedBody1') }}<strong>{{ t('acceptCard.gate.blockedVerdict') }}</strong
+          >{{ t('acceptCard.gate.blockedBody2') }}
         </div>
         <v-btn
           size="small"
@@ -414,9 +418,11 @@ defineExpose({ reload: loadAcceptCard })
           :prepend-icon="showGateOutput ? 'mdi-chevron-up' : 'mdi-chevron-down'"
           @click="showGateOutput = !showGateOutput"
         >
-          {{ showGateOutput ? '收起输出' : '查看输出' }}
+          {{ showGateOutput ? t('acceptCard.gate.hideOutput') : t('acceptCard.gate.showOutput') }}
         </v-btn>
-        <pre v-if="showGateOutput" class="gate-output mt-2">{{ gateCard.gate_output || '暂无输出' }}</pre>
+        <pre v-if="showGateOutput" class="gate-output mt-2">{{
+          gateCard.gate_output || t('acceptCard.gate.noOutput')
+        }}</pre>
       </div>
     </v-card>
 
@@ -427,12 +433,14 @@ defineExpose({ reload: loadAcceptCard })
             mdi-source-merge
           </v-icon>
           <span class="t-title">
-            {{ pendingCard.status === 'conflict' ? '合并冲突 · 芝士处理中' : '成果待采纳' }}
+            {{
+              pendingCard.status === 'conflict' ? t('acceptCard.pending.conflictTitle') : t('acceptCard.pending.title')
+            }}
           </span>
         </div>
         <div v-if="pendingCard.status === 'conflict'" class="text-caption text-medium-emphasis mb-2">
-          {{ pendingCard.note || '采纳时出现合并冲突，芝士正在解决。' }}
-          它完成后可重试采纳。
+          {{ pendingCard.note || t('acceptCard.pending.conflictFallback') }}
+          {{ t('acceptCard.pending.conflictRetry') }}
         </div>
         <!-- 合并态 (#718): 状态词 + 「谁的活」的圈。词和 who 都是后端算好下发的，
              圈用看板「该谁动」的点语言（同一个问题在整套界面里只有一种颜色）。
@@ -461,9 +469,9 @@ defineExpose({ reload: loadAcceptCard })
           <span>{{ pendingNote.text }}</span>
         </div>
         <div class="d-flex align-center flex-wrap ga-1 text-body-2 mb-1">
-          <span>等</span>
+          <span>{{ t('acceptCard.pending.waitingBefore') }}</span>
           <strong>@{{ pendingCard.reviewer_handle }}</strong>
-          <span>验收</span>
+          <span>{{ t('acceptCard.pending.waitingAfter') }}</span>
           <!-- 改验收人 (spec §4.4): 任何成员都可以改推荐/加人 -->
           <v-menu>
             <template #activator="{ props: menuProps }">
@@ -475,11 +483,11 @@ defineExpose({ reload: loadAcceptCard })
                 class="text-medium-emphasis"
                 :disabled="acceptBusy"
               >
-                改派
+                {{ t('acceptCard.pending.reassign') }}
               </v-btn>
             </template>
             <v-list density="compact">
-              <v-list-subheader>改派验收人</v-list-subheader>
+              <v-list-subheader>{{ t('acceptCard.pending.reassignTitle') }}</v-list-subheader>
               <v-list-item
                 v-for="mbr in store.members"
                 :key="mbr.user_handle"
@@ -492,13 +500,15 @@ defineExpose({ reload: loadAcceptCard })
                 </v-list-item-subtitle>
               </v-list-item>
               <v-list-item v-if="store.members.length === 0">
-                <v-list-item-title class="text-caption text-medium-emphasis"> 暂无可选成员 </v-list-item-title>
+                <v-list-item-title class="text-caption text-medium-emphasis">
+                  {{ t('acceptCard.pending.noMembers') }}
+                </v-list-item-title>
               </v-list-item>
             </v-list>
           </v-menu>
         </div>
         <div v-if="pendingCard.routing_reason" class="text-caption text-medium-emphasis mb-3">
-          推荐理由：{{ pendingCard.routing_reason }}
+          {{ t('acceptCard.pending.routingReason', { reason: pendingCard.routing_reason }) }}
         </div>
         <!--
           提交与 PR 规范: 采纳会把整个分支压成一个提交，标题就是这一行。
@@ -506,7 +516,7 @@ defineExpose({ reload: loadAcceptCard })
           等它进了 git 历史才有人发现写的是话题标题。
         -->
         <div v-if="pendingCard.change_subject" class="mb-3">
-          <div class="text-caption text-medium-emphasis">合并后的提交标题</div>
+          <div class="text-caption text-medium-emphasis">{{ t('acceptCard.pending.changeSubject') }}</div>
           <code class="text-caption">{{ pendingCard.change_subject }}</code>
         </div>
         <!--
@@ -521,7 +531,7 @@ defineExpose({ reload: loadAcceptCard })
         -->
         <div v-if="pendingCard.gate_passed_at" class="d-flex align-center ga-1 text-caption text-medium-emphasis mb-2">
           <v-icon size="15">mdi-timer-sand</v-icon>
-          平台检查已通过：只检查了代码规范和类型，未运行测试
+          {{ t('acceptCard.pending.gatePassed') }}
         </div>
         <!-- 采纳 PR 化 (#188 §5.1): the real PR + its CI, live. -->
         <div v-if="pendingCard.pr_url" class="mb-2">
@@ -536,7 +546,7 @@ defineExpose({ reload: loadAcceptCard })
               PR #{{ pendingCard.pr_number }}
             </v-chip>
             <span v-if="prChecks?.available && prChecks.mergeable === false" class="text-caption text-error">
-              与主分支冲突
+              {{ t('acceptCard.checks.conflictsWithMain') }}
             </span>
           </div>
           <div
@@ -557,7 +567,7 @@ defineExpose({ reload: loadAcceptCard })
               }}
             </v-icon>
             {{ chk.name }}
-            <span v-if="chk.status !== 'completed'">进行中</span>
+            <span v-if="chk.status !== 'completed'">{{ t('acceptCard.checks.inProgress') }}</span>
           </div>
         </div>
         <!-- 主分支保护 (spec §4.4): N 人批准后采纳才会真正合入。 -->
@@ -568,11 +578,15 @@ defineExpose({ reload: loadAcceptCard })
             :color="pendingCard.approvals.length >= pendingCard.approvals_required ? 'success' : undefined"
             prepend-icon="mdi-account-check-outline"
           >
-            {{ pendingCard.approvals.length }}/{{ pendingCard.approvals_required }}
-            已批准
+            {{
+              t('acceptCard.pending.approvedCount', {
+                done: pendingCard.approvals.length,
+                total: pendingCard.approvals_required,
+              })
+            }}
           </v-chip>
           <span v-if="pendingCard.approvals.length" class="text-caption text-medium-emphasis">
-            {{ pendingCard.approvals.map((h) => '@' + h).join('、') }}
+            {{ pendingCard.approvals.map((h) => '@' + h).join(t('acceptCard.pending.listSeparator')) }}
           </span>
           <v-btn
             v-if="!pendingCard.approvals.includes(AUTHOR)"
@@ -583,10 +597,10 @@ defineExpose({ reload: loadAcceptCard })
             prepend-icon="mdi-thumb-up-outline"
             @click="onApproveCard"
           >
-            批准
+            {{ t('acceptCard.pending.approve') }}
           </v-btn>
           <span v-else class="d-inline-flex align-center ga-1 text-caption text-medium-emphasis">
-            <v-icon size="14">mdi-check</v-icon>你已批准
+            <v-icon size="14">mdi-check</v-icon>{{ t('acceptCard.pending.youApproved') }}
           </span>
         </div>
         <div class="d-flex align-center ga-2">
@@ -599,7 +613,7 @@ defineExpose({ reload: loadAcceptCard })
             prepend-icon="mdi-file-search-outline"
             @click="emit('review')"
           >
-            去验收
+            {{ t('acceptCard.pending.review') }}
           </v-btn>
           <!-- 采纳 = 当场合并 (#718)：GitHub lane 亮在后端会合的那两档（clean /
                unstable），为什么灰写在 title 里；平台 lane 的采纳纯是人的判断，
@@ -613,7 +627,13 @@ defineExpose({ reload: loadAcceptCard })
               prepend-icon="mdi-check"
               @click="onAcceptCard"
             >
-              {{ needsPr ? '创建 PR' : pendingCard.status === 'conflict' ? '重试采纳' : '采纳' }}
+              {{
+                needsPr
+                  ? t('acceptCard.pending.createPr')
+                  : pendingCard.status === 'conflict'
+                    ? t('acceptCard.pending.retryAccept')
+                    : t('acceptCard.pending.accept')
+              }}
             </v-btn>
           </span>
           <v-btn
@@ -622,7 +642,7 @@ defineExpose({ reload: loadAcceptCard })
             prepend-icon="mdi-undo"
             @click="showRejectInput = !showRejectInput"
           >
-            退回
+            {{ t('acceptCard.pending.reject') }}
           </v-btn>
         </div>
         <!-- 绿了自动合 (#718)：项目允许、规则还没满足时才有；布防人由后端认定。 -->
@@ -633,11 +653,11 @@ defineExpose({ reload: loadAcceptCard })
             density="compact"
             hide-details
             :disabled="acceptBusy"
-            label="通过后自动合并"
+            :label="t('acceptCard.autoMerge.label')"
             @update:model-value="onToggleAutoMerge"
           />
           <span v-if="autoMergeArmedBy" class="text-caption text-medium-emphasis">
-            由 @{{ autoMergeArmedBy }} 开启
+            {{ t('acceptCard.autoMerge.armedBy', { who: '@' + autoMergeArmedBy }) }}
           </span>
         </div>
         <!--
@@ -654,16 +674,16 @@ defineExpose({ reload: loadAcceptCard })
             prepend-icon="mdi-alert-decagram-outline"
             @click="showForceMergeInput = true"
           >
-            人工放行并合并
+            {{ t('acceptCard.forceMerge.open') }}
           </v-btn>
           <template v-else>
             <div class="text-caption text-medium-emphasis mb-1">
-              在检查未全部通过的情况下强制合并。平台会记录操作人、时间和当时的检查状态。
+              {{ t('acceptCard.forceMerge.warning') }}
             </div>
             <v-textarea
               v-model="forceMergeReason"
               autocomplete="off"
-              label="理由"
+              :label="t('acceptCard.forceMerge.reasonLabel')"
               rows="2"
               auto-grow
               density="compact"
@@ -680,10 +700,10 @@ defineExpose({ reload: loadAcceptCard })
                 :disabled="acceptBusy"
                 @click="onForceMerge"
               >
-                确认放行并合并
+                {{ t('acceptCard.forceMerge.confirm') }}
               </v-btn>
               <v-btn size="small" variant="text" :disabled="acceptBusy" @click="showForceMergeInput = false">
-                取消
+                {{ t('global.cancel') }}
               </v-btn>
             </div>
           </template>
@@ -695,10 +715,12 @@ defineExpose({ reload: loadAcceptCard })
             variant="outlined"
             density="compact"
             hide-details
-            placeholder="退回说明（可选）"
+            :placeholder="t('acceptCard.pending.rejectNotePlaceholder')"
             class="flex-grow-1"
           />
-          <v-btn variant="outlined" class="btn-secondary" :loading="acceptBusy" @click="onRejectCard"> 确认退回 </v-btn>
+          <v-btn variant="outlined" class="btn-secondary" :loading="acceptBusy" @click="onRejectCard">{{
+            t('acceptCard.pending.confirmReject')
+          }}</v-btn>
         </div>
       </div>
     </v-card>
@@ -710,10 +732,11 @@ defineExpose({ reload: loadAcceptCard })
       <div class="pa-3">
         <div class="d-flex align-center ga-2 mb-1">
           <v-icon color="warning" size="19">mdi-history</v-icon>
-          <span class="t-title">已采纳，未完成合并</span>
+          <span class="t-title">{{ t('acceptCard.delivering.title') }}</span>
         </div>
         <div class="text-caption text-medium-emphasis mb-2">
-          已由 <strong>@{{ deliveringCard.decided_by }}</strong> 采纳，但合并没有完成。这是一张旧卡，需要人工处理
+          {{ t('acceptCard.delivering.by') }}<strong>@{{ deliveringCard.decided_by }}</strong
+          >{{ t('acceptCard.delivering.body') }}
         </div>
         <!-- 后端把故障写在卡的 note 上，这是它唯一露头的地方。轻重由后端下发的
              note_level 决定，不是从文案开头那个字符猜的 —— 所以这里画一个真的图
@@ -742,7 +765,7 @@ defineExpose({ reload: loadAcceptCard })
               {{ deliveringCard.pr_head_sha.slice(0, 7) }}
             </span>
             <span v-if="prChecks?.available && prChecks.mergeable === false" class="text-caption text-error">
-              与主分支冲突
+              {{ t('acceptCard.checks.conflictsWithMain') }}
             </span>
           </div>
           <div
@@ -763,7 +786,7 @@ defineExpose({ reload: loadAcceptCard })
               }}
             </v-icon>
             {{ chk.name }}
-            <span v-if="chk.status !== 'completed'">进行中</span>
+            <span v-if="chk.status !== 'completed'">{{ t('acceptCard.checks.inProgress') }}</span>
           </div>
         </div>
       </div>
@@ -774,10 +797,11 @@ defineExpose({ reload: loadAcceptCard })
       <div class="pa-3">
         <div class="d-flex align-center ga-2 mb-1">
           <v-icon color="success" size="19">mdi-check-circle-outline</v-icon>
-          <span class="t-title">已采纳</span>
+          <span class="t-title">{{ t('acceptCard.accepted.title') }}</span>
         </div>
         <div class="text-body-2 c-muted mb-3">
-          由 <strong>@{{ acceptedCard.decided_by }}</strong> 采纳
+          {{ t('acceptCard.accepted.by') }}<strong>@{{ acceptedCard.decided_by }}</strong
+          >{{ t('acceptCard.accepted.body') }}
         </div>
         <v-btn
           variant="outlined"
@@ -787,7 +811,7 @@ defineExpose({ reload: loadAcceptCard })
           prepend-icon="mdi-undo"
           @click="onRevokeCard"
         >
-          撤回采纳
+          {{ t('acceptCard.accepted.revoke') }}
         </v-btn>
       </div>
     </v-card>

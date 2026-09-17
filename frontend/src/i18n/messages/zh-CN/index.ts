@@ -1,3 +1,4 @@
+import acceptCard from './acceptCard.json'
 import account from './account.json'
 import agentControls from './agentControls.json'
 import comments from './comments.json'
@@ -14,6 +15,7 @@ import teams from './teams.json'
 import users from './users.json'
 
 export default {
+  acceptCard,
   agentControls,
   global,
   navigation,
