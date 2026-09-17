@@ -9,7 +9,7 @@
       style="cursor: pointer"
       @click="fetchPreciseInfo"
     ></v-icon>
-    <span class="text-subtitle-1">实名信息</span>
+    <span class="text-subtitle-1">{{ t('users.settings.realName.title') }}</span>
   </PageHeader>
   <v-container fluid>
     <!-- 简洁隐私提示横条 -->
@@ -24,14 +24,19 @@
       <v-card-text class="py-3">
         <div class="d-flex align-center">
           <v-icon icon="mdi-shield-lock-outline" color="primary" size="20" class="me-2"></v-icon>
-          <span class="text-body-2"
-            >某些赛题需要实名信息用于验证身份，您的信息将<strong>安全加密</strong>，平台活动<strong
-              >完全匿名</strong
-            ></span
-          >
+          <!-- scope="global"：词表只有全局一份，不写它 vue-i18n 会先去找父作用域并
+               在开发模式下打一条 "Not found parent scope" 警告。 -->
+          <i18n-t keypath="users.settings.realName.banner" scope="global" tag="span" class="text-body-2">
+            <template #encrypted>
+              <strong>{{ t('users.settings.realName.bannerEncrypted') }}</strong>
+            </template>
+            <template #anonymous>
+              <strong>{{ t('users.settings.realName.bannerAnonymous') }}</strong>
+            </template>
+          </i18n-t>
           <v-spacer></v-spacer>
           <span class="flex-shrink-0 ps-4 text-caption text-primary d-flex align-center">
-            查看隐私说明
+            {{ t('users.settings.realName.viewPrivacy') }}
             <v-icon icon="mdi-chevron-right" size="small" class="ms-1"></v-icon>
           </span>
         </div>
@@ -43,7 +48,7 @@
       <div class="form-section">
         <div class="d-flex align-center mb-2">
           <v-icon icon="mdi-account-details-outline" color="primary" class="me-2"></v-icon>
-          <h3 class="text-subtitle-1 font-weight-medium mb-0">基本信息</h3>
+          <h3 class="text-subtitle-1 font-weight-medium mb-0">{{ t('users.settings.realName.basicInfo') }}</h3>
         </div>
 
         <v-row>
@@ -53,8 +58,8 @@
               v-model="selectedRealName"
               autocomplete="name"
               name="selectedRealName"
-              label="真实姓名"
-              placeholder="请输入您的真实姓名"
+              :label="t('users.settings.realName.realName')"
+              :placeholder="t('users.settings.realName.realNamePlaceholder')"
               v-bind="realNameProps"
               variant="outlined"
               hide-details
@@ -68,24 +73,28 @@
                   color="primary"
                   icon="mdi-refresh"
                   size="small"
-                  title="恢复原值"
+                  :title="t('users.settings.realName.restoreOriginal')"
                   class="reset-icon"
                   @click.stop="resetField('realName')"
                 ></v-icon>
               </template>
             </v-text-field>
             <div v-if="hasRealNameInfo" class="text-caption mt-1 ms-2">
-              <span v-if="!isRealNameEdited && !showingPrecise" class="text-medium-emphasis">点击输入框编辑信息</span>
-              <span v-else-if="showingPrecise" class="text-primary">已显示完整信息</span>
-              <span v-else class="text-primary">已编辑，可点击恢复按钮还原</span>
+              <span v-if="!isRealNameEdited && !showingPrecise" class="text-medium-emphasis">{{
+                t('users.settings.realName.clickToEdit')
+              }}</span>
+              <span v-else-if="showingPrecise" class="text-primary">{{
+                t('users.settings.realName.showingPrecise')
+              }}</span>
+              <span v-else class="text-primary">{{ t('users.settings.realName.editedHint') }}</span>
             </div>
           </v-col>
           <v-col cols="12" md="6">
             <v-text-field
               v-model="selectedStudentId"
               autocomplete="off"
-              label="学号"
-              placeholder="请输入您的学号"
+              :label="t('users.settings.realName.studentId')"
+              :placeholder="t('users.settings.realName.studentIdPlaceholder')"
               v-bind="studentIdProps"
               variant="outlined"
               hide-details
@@ -99,16 +108,20 @@
                   color="primary"
                   icon="mdi-refresh"
                   size="small"
-                  title="恢复原值"
+                  :title="t('users.settings.realName.restoreOriginal')"
                   class="reset-icon"
                   @click.stop="resetField('studentId')"
                 ></v-icon>
               </template>
             </v-text-field>
             <div v-if="hasRealNameInfo" class="text-caption mt-1 ms-2">
-              <span v-if="!isStudentIdEdited && !showingPrecise" class="text-medium-emphasis">点击输入框编辑信息</span>
-              <span v-else-if="showingPrecise" class="text-primary">已显示完整信息</span>
-              <span v-else class="text-primary">已编辑，可点击恢复按钮还原</span>
+              <span v-if="!isStudentIdEdited && !showingPrecise" class="text-medium-emphasis">{{
+                t('users.settings.realName.clickToEdit')
+              }}</span>
+              <span v-else-if="showingPrecise" class="text-primary">{{
+                t('users.settings.realName.showingPrecise')
+              }}</span>
+              <span v-else class="text-primary">{{ t('users.settings.realName.editedHint') }}</span>
             </div>
           </v-col>
         </v-row>
@@ -118,7 +131,7 @@
       <div class="form-section mt-4">
         <div class="d-flex align-center mb-2">
           <v-icon icon="mdi-school-outline" color="primary" class="me-2"></v-icon>
-          <h3 class="text-subtitle-1 font-weight-medium mb-0">学业信息</h3>
+          <h3 class="text-subtitle-1 font-weight-medium mb-0">{{ t('users.settings.realName.academicInfo') }}</h3>
         </div>
 
         <v-row>
@@ -126,12 +139,12 @@
             <v-text-field
               v-model="selectedGrade"
               autocomplete="off"
-              label="年级"
-              placeholder="例如：2023级"
+              :label="t('users.settings.realName.grade')"
+              :placeholder="t('users.settings.realName.gradePlaceholder')"
               v-bind="gradeProps"
               variant="outlined"
               prepend-inner-icon="mdi-school"
-              hint="填写您的入学年份，如2023级"
+              :hint="t('users.settings.realName.gradeHint')"
               persistent-hint
             ></v-text-field>
           </v-col>
@@ -139,12 +152,12 @@
             <v-text-field
               v-model="selectedMajor"
               autocomplete="off"
-              label="专业"
-              placeholder="请输入您的专业"
+              :label="t('users.settings.realName.major')"
+              :placeholder="t('users.settings.realName.majorPlaceholder')"
               v-bind="majorProps"
               variant="outlined"
               prepend-inner-icon="mdi-book-education"
-              hint="填写您的专业名称"
+              :hint="t('users.settings.realName.majorHint')"
               persistent-hint
             ></v-text-field>
           </v-col>
@@ -152,12 +165,12 @@
             <v-text-field
               v-model="selectedClassName"
               autocomplete="off"
-              label="班级"
-              placeholder="请输入您的班级"
+              :label="t('users.settings.realName.className')"
+              :placeholder="t('users.settings.realName.classNamePlaceholder')"
               v-bind="classNameProps"
               variant="outlined"
               prepend-inner-icon="mdi-account-group"
-              hint="填写您所在的班级"
+              :hint="t('users.settings.realName.classNameHint')"
               persistent-hint
             ></v-text-field>
           </v-col>
@@ -168,23 +181,25 @@
         <div class="usage-note-content">
           <div class="d-flex align-center mb-2">
             <v-icon icon="mdi-information-outline" color="primary" size="20" class="me-2"></v-icon>
-            <h3 class="text-subtitle-2 font-weight-medium mb-0">实名信息的使用场景</h3>
+            <h3 class="text-subtitle-2 font-weight-medium mb-0">{{ t('users.settings.realName.usageTitle') }}</h3>
           </div>
-          <p class="text-body-2 mb-0">您的实名信息仅用于：</p>
+          <p class="text-body-2 mb-0">{{ t('users.settings.realName.usageIntro') }}</p>
           <div class="d-flex flex-wrap mt-1 usage-tags">
-            <span class="usage-tag">身份验证</span>
-            <span class="usage-tag">参与资格筛选</span>
-            <span class="usage-tag">项目结题认证</span>
-            <span class="usage-tag">评奖评优</span>
-            <span class="usage-tag">学分认定</span>
+            <!-- 五个标签各写各的 key，不拼字符串：拼出来的 key 目录闸门看不见，
+                 会被当成没有来源的键。 -->
+            <span class="usage-tag">{{ t('users.settings.realName.usageTag.identity') }}</span>
+            <span class="usage-tag">{{ t('users.settings.realName.usageTag.eligibility') }}</span>
+            <span class="usage-tag">{{ t('users.settings.realName.usageTag.completion') }}</span>
+            <span class="usage-tag">{{ t('users.settings.realName.usageTag.award') }}</span>
+            <span class="usage-tag">{{ t('users.settings.realName.usageTag.credit') }}</span>
           </div>
         </div>
       </div>
 
       <v-row>
         <v-col class="d-flex justify-end gap-4">
-          <v-btn variant="outlined" @click="handleReset">重置</v-btn>
-          <v-btn color="primary" type="submit" :loading="submitting">保存信息</v-btn>
+          <v-btn variant="outlined" @click="handleReset">{{ t('global.reset') }}</v-btn>
+          <v-btn color="primary" type="submit" :loading="submitting">{{ t('users.settings.realName.save') }}</v-btn>
         </v-col>
       </v-row>
     </v-form>
@@ -197,8 +212,8 @@
         <div class="d-flex align-start mb-5">
           <v-icon icon="mdi-shield-lock-outline" color="primary" size="28" class="me-3 mt-1"></v-icon>
           <div>
-            <h3 class="text-h5 font-weight-medium mb-1">实名信息保护说明</h3>
-            <p class="text-body-2 text-medium-emphasis">我们如何保护您的信息安全并确保平台体验的匿名性</p>
+            <h3 class="text-h5 font-weight-medium mb-1">{{ t('users.settings.realName.dialogTitle') }}</h3>
+            <p class="text-body-2 text-medium-emphasis">{{ t('users.settings.realName.dialogSubtitle') }}</p>
           </div>
           <v-spacer></v-spacer>
           <v-btn icon="mdi-close" variant="text" density="compact" @click="showPrivacyDialog = false"></v-btn>
@@ -207,9 +222,9 @@
         <v-container class="px-0">
           <!-- 为什么需要实名信息 -->
           <div class="mb-4">
-            <h3 class="text-subtitle-1 font-weight-medium mb-2">为什么需要填写实名信息？</h3>
+            <h3 class="text-subtitle-1 font-weight-medium mb-2">{{ t('users.settings.realName.dialogWhyTitle') }}</h3>
             <p class="text-body-2">
-              某些赛题需要收集实名信息用于身份验证、评审和颁奖等环节。我们仅收集必要的学校相关信息，并确保您在平台上的活动保持匿名性。
+              {{ t('users.settings.realName.dialogWhyBody') }}
             </p>
           </div>
 
@@ -217,32 +232,40 @@
             <v-col cols="12" sm="6">
               <div class="privacy-feature-card">
                 <v-icon icon="mdi-incognito" color="primary" size="24" class="mb-2"></v-icon>
-                <h3 class="text-subtitle-1 font-weight-medium mb-1">匿名参与</h3>
-                <p class="text-body-2">平台上的日常活动保持匿名，其他用户无法看到您的真实身份信息</p>
+                <h3 class="text-subtitle-1 font-weight-medium mb-1">
+                  {{ t('users.settings.realName.dialogAnonymousTitle') }}
+                </h3>
+                <p class="text-body-2">{{ t('users.settings.realName.dialogAnonymousBody') }}</p>
               </div>
             </v-col>
 
             <v-col cols="12" sm="6">
               <div class="privacy-feature-card">
                 <v-icon icon="mdi-key-variant" color="primary" size="24" class="mb-2"></v-icon>
-                <h3 class="text-subtitle-1 font-weight-medium mb-1">加密存储</h3>
-                <p class="text-body-2">使用行业标准的加密技术保护您的个人资料，防止未授权访问</p>
+                <h3 class="text-subtitle-1 font-weight-medium mb-1">
+                  {{ t('users.settings.realName.dialogEncryptedTitle') }}
+                </h3>
+                <p class="text-body-2">{{ t('users.settings.realName.dialogEncryptedBody') }}</p>
               </div>
             </v-col>
 
             <v-col cols="12" sm="6">
               <div class="privacy-feature-card">
                 <v-icon icon="mdi-file-document-outline" color="primary" size="24" class="mb-2"></v-icon>
-                <h3 class="text-subtitle-1 font-weight-medium mb-1">用途限制</h3>
-                <p class="text-body-2">您的实名信息仅在必要的赛题报名环节使用，不用于其他目的</p>
+                <h3 class="text-subtitle-1 font-weight-medium mb-1">
+                  {{ t('users.settings.realName.dialogPurposeTitle') }}
+                </h3>
+                <p class="text-body-2">{{ t('users.settings.realName.dialogPurposeBody') }}</p>
               </div>
             </v-col>
 
             <v-col cols="12" sm="6">
               <div class="privacy-feature-card">
                 <v-icon icon="mdi-eye-off-outline" color="primary" size="24" class="mb-2"></v-icon>
-                <h3 class="text-subtitle-1 font-weight-medium mb-1">身份隔离</h3>
-                <p class="text-body-2">严格隔离您的实名信息与平台账号，确保两者无法被关联</p>
+                <h3 class="text-subtitle-1 font-weight-medium mb-1">
+                  {{ t('users.settings.realName.dialogIsolationTitle') }}
+                </h3>
+                <p class="text-body-2">{{ t('users.settings.realName.dialogIsolationBody') }}</p>
               </div>
             </v-col>
           </v-row>
@@ -252,8 +275,7 @@
           <div class="d-flex align-start">
             <v-icon icon="mdi-information-outline" color="primary" size="20" class="me-2 mt-1"></v-icon>
             <p class="text-body-2">
-              我们的系统采用多层保护机制，在满足少数赛题对实名信息的需求的同时，确保您在平台上的隐私安全。
-              所有对您信息的访问都会被记录，您可以随时查看这些记录。
+              {{ t('users.settings.realName.dialogFooter') }}
             </p>
           </div>
         </v-container>
@@ -261,7 +283,9 @@
 
       <v-card-actions class="pb-5 px-6">
         <v-spacer></v-spacer>
-        <v-btn color="primary" variant="tonal" @click="showPrivacyDialog = false"> 明白了 </v-btn>
+        <v-btn color="primary" variant="tonal" @click="showPrivacyDialog = false">
+          {{ t('users.settings.realName.dialogConfirm') }}
+        </v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -271,6 +295,7 @@
 import type { RealNameInfo } from '@/network/api/users/types'
 
 import { computed, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { toTypedSchema } from '@vee-validate/zod'
@@ -285,6 +310,7 @@ import { UserApi } from '@/network/api/users'
 import { ServerError } from '@/network/types/error'
 import { currentUserId } from '@/services/account'
 
+const { t } = useI18n()
 const router = useRouter()
 const loading = ref(false)
 const loadingPrecise = ref(false)
@@ -315,11 +341,11 @@ const {
 } = useForm({
   validationSchema: toTypedSchema(
     z.object({
-      realName: z.string().min(2, { message: '请输入至少2个字符的真实姓名' }),
-      studentId: z.string().min(5, { message: '请输入有效的学号' }),
-      grade: z.string().min(2, { message: '请输入有效的年级' }),
-      major: z.string().min(2, { message: '请输入有效的专业' }),
-      className: z.string().min(2, { message: '请输入有效的班级' }),
+      realName: z.string().min(2, { message: t('users.settings.realName.realNameMin') }),
+      studentId: z.string().min(5, { message: t('users.settings.realName.studentIdInvalid') }),
+      grade: z.string().min(2, { message: t('users.settings.realName.gradeInvalid') }),
+      major: z.string().min(2, { message: t('users.settings.realName.majorInvalid') }),
+      className: z.string().min(2, { message: t('users.settings.realName.classNameInvalid') }),
     })
   ),
 })
@@ -416,7 +442,7 @@ const fetchRealNameInfo = async () => {
     }
   } catch (error: any) {
     console.error('获取实名信息失败', error)
-    toast.error(error.message || '获取实名信息失败')
+    toast.error(error.message || t('users.settings.realName.loadFailed'))
   } finally {
     loading.value = false
   }
@@ -448,13 +474,13 @@ const fetchPreciseInfo = async () => {
       isRealNameEdited.value = false
       isStudentIdEdited.value = false
 
-      toast.success('已加载完整实名信息')
+      toast.success(t('users.settings.realName.preciseLoaded'))
     } else {
-      toast.error('未填写过实名信息')
+      toast.error(t('users.settings.realName.notFilled'))
     }
   } catch (error: any) {
     console.error('获取精确实名信息失败', error)
-    toast.error(error?.message || '获取完整实名信息失败，请重试')
+    toast.error(error?.message || t('users.settings.realName.preciseFailed'))
     showingPrecise.value = false
   } finally {
     loadingPrecise.value = false
@@ -484,7 +510,7 @@ const onSubmit = handleSubmit(async (values) => {
         if (values.className !== realNameInfo.value.className) changedFields.className = values.className
 
         if (Object.keys(changedFields).length === 0) {
-          toast.info('未检测到任何修改')
+          toast.info(t('users.settings.realName.noChanges'))
           submitting.value = false
           return
         }
@@ -495,7 +521,7 @@ const onSubmit = handleSubmit(async (values) => {
 
         const wasPrecise = showingPrecise.value
 
-        toast.success('实名信息保存成功')
+        toast.success(t('users.settings.realName.saveSuccess'))
 
         if (wasPrecise) {
           await fetchPreciseInfo()
@@ -509,7 +535,7 @@ const onSubmit = handleSubmit(async (values) => {
     )
   } catch (error: any) {
     console.error('保存实名信息失败', error)
-    toast.error(error.message || '保存实名信息失败')
+    toast.error(error.message || t('users.settings.realName.saveFailed'))
   } finally {
     submitting.value = false
   }
