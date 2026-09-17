@@ -56,5 +56,12 @@ const tabs = [
     },
     icon: 'mdi-lock',
   },
+  {
+    label: '安装到手机',
+    route: {
+      name: 'UserSettingsApp',
+    },
+    icon: 'mdi-cellphone-arrow-down',
+  },
 ]
 </script>

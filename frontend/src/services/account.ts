@@ -2,6 +2,7 @@ import type { User } from '@/types/users'
 
 import { computed, ref } from 'vue'
 
+import { clearComposerDrafts } from '@/lib/composerDrafts'
 import { clearPageCache } from '@/lib/pageCache'
 import { UserApi } from '@/network/api/users'
 import { BusinessError } from '@/network/types/error'
@@ -67,6 +68,9 @@ function storedUserId(): number | undefined {
 export function dropCachesIfSomeoneElseLogsIn(previous: number | undefined, next: number | undefined): boolean {
   if (previous !== undefined && next !== undefined && previous === next) return false
   clearPageCache()
+  // 输入框草稿也带着上一个人的话（lib/composerDrafts.ts），而且它的键里只有话题
+  // id——话题是全站共享的，不清就等于把上一个人的半句话递给下一个人看。
+  clearComposerDrafts()
   // 即发即忘：缓存出问题绝不能挡住登录本身。
   if (typeof caches !== 'undefined') void caches.delete(API_CACHE).catch(() => {})
   return true
@@ -214,6 +218,8 @@ export class AccountService {
     // 同理，页面缓存住在内存里，退出登录不清就还在：下一个人打开总览会先看到上
     // 一个人的项目名，然后才被后台刷新盖掉——那一眼已经泄露了。
     clearPageCache()
+    // 输入框草稿同样：它是 localStorage 里的一句半句话，属于上一个人。
+    clearComposerDrafts()
   }
 }
 

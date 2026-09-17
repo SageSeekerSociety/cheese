@@ -18,6 +18,11 @@ const BOTTOM_THRESHOLD = 80
 // 之前只有待发图片被清掉，文字和回复目标原地不动地跟着你换话题：打了一半的话
 // 可能发错房间，而**回复目标**更糟——它指向的块在另一个话题里，屏幕上看不出
 // 异常（本话题找不到父块就不画引用条），库里的会话树已经串了。
+//
+// 这份内存镜像**不是持久的那一份**：service worker 更新触发的刷新没有卸载、没有
+// 切话题，这个 Map 连同页面一起没了。所以同一份内容还写进 localStorage
+// (lib/composerDrafts.ts)，刷新后由 restoreComposer 接回来；内存里这份仍然是
+// 权威——它连发件箱都带着，而发件箱故意不落盘。
 interface ComposerDraft {
   draft: string
   reply: Block | null
@@ -53,6 +58,7 @@ import type {
   WsClientMessage,
   WsServerFrame,
 } from '../cx_types'
+import type { StoredComposerDraft } from '../lib/composerDrafts'
 
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
@@ -75,6 +81,7 @@ import {
 import { usePendingAttachments } from '../lib/attachments'
 import { cachedWindow, setCachedWindow } from '../lib/blockCache'
 import { mergeRefreshedTail, PAGE_SIZE, prependOlder, scrollTopAfterPrepend, shouldLoadOlder } from '../lib/blockPaging'
+import { forgetComposerDraft, loadComposerDraft, saveComposerDraft } from '../lib/composerDrafts'
 import { parseDiffLines } from '../lib/diff'
 import { expandMentions as expandMentionNames } from '../lib/expandMentions'
 import { collapseNotices } from '../lib/platformNotice'
@@ -1553,18 +1560,34 @@ function sendDraft(opts?: { summon?: boolean }) {
 function rememberComposer(topicId: string) {
   const hasContent =
     !!draft.value.trim() || pendingAtts.value.length > 0 || !!replyTarget.value || outbox.value.length > 0
-  if (!hasContent) composerMemory.delete(topicId)
-  else
+  if (!hasContent) {
+    composerMemory.delete(topicId)
+    forgetComposerDraft(topicId)
+  } else {
     composerMemory.set(topicId, {
       draft: draft.value,
       reply: replyTarget.value,
       atts: pendingAtts.value.slice(),
       outbox: outbox.value.slice(),
     })
+    // 同一份内容落到磁盘上（发件箱除外，见 lib/composerDrafts.ts 的解释）。
+    saveComposerDraft(topicId, {
+      draft: draft.value,
+      reply: replyTarget.value,
+      atts: pendingAtts.value.slice(),
+    })
+  }
+}
+
+/** 落盘的那份没有发件箱（它不跨刷新，也不该跨）。 */
+function asComposerDraft(stored: StoredComposerDraft | null): ComposerDraft | undefined {
+  return stored ? { draft: stored.draft, reply: stored.reply, atts: stored.atts, outbox: [] } : undefined
 }
 
 function restoreComposer(topicId: string | undefined) {
-  const saved = topicId ? composerMemory.get(topicId) : undefined
+  // 内存里那一份优先：它带着发件箱。只有它不在时（刚刷新过、刚开机）才回落到
+  // 磁盘上那份。
+  const saved = topicId ? composerMemory.get(topicId) ?? asComposerDraft(loadComposerDraft(topicId)) : undefined
   draft.value = saved?.draft ?? ''
   replyTarget.value = saved?.reply ?? null
   pendingAtts.value = saved?.atts ?? []
@@ -1572,6 +1595,48 @@ function restoreComposer(topicId: string | undefined) {
   // 下次连上再走。它们不会在别的房间里露面。
   outbox.value = (saved?.outbox ?? []).map((o) => (o.state === 'sending' ? { ...o, state: 'queued' } : o))
 }
+
+// 边打边落盘。刷新是唯一会丢草稿的路径，而它**不会**经过 rememberComposer
+// （那个跑在切话题和卸载时）——所以输入本身也要定期存一次。800ms 是打字停顿的
+// 量级；localStorage 是同步的，写一次的成本就是这次停顿。
+let draftSaveTimer: ReturnType<typeof setTimeout> | null = null
+function flushComposer(topicId: string) {
+  if (draftSaveTimer) {
+    clearTimeout(draftSaveTimer)
+    draftSaveTimer = null
+  }
+  saveComposerDraft(topicId, {
+    draft: draft.value,
+    reply: replyTarget.value,
+    atts: pendingAtts.value.slice(),
+  })
+}
+
+watch(
+  [draft, replyTarget, pendingAtts],
+  () => {
+    const topicId = props.topic?.id
+    if (!topicId) return
+    if (draftSaveTimer) clearTimeout(draftSaveTimer)
+    draftSaveTimer = setTimeout(() => {
+      draftSaveTimer = null
+      // 停了 800ms 之后当前话题可能已经换了：那样这一笔该记在旧话题上，而旧话题
+      // 走的是 rememberComposer，不差这一下。
+      if (props.topic?.id === topicId) flushComposer(topicId)
+    }, 800)
+  },
+  { deep: false }
+)
+
+// 页面被切到后台 / 关掉之前最后记一次：手机上的标签页可以被直接丢掉，不一定会
+// 走 onBeforeUnmount。用的是同步写，来得及。
+function flushComposerOnHide() {
+  if (props.topic) flushComposer(props.topic.id)
+}
+useEventListener(window, 'pagehide', flushComposerOnHide)
+useEventListener(document, 'visibilitychange', () => {
+  if (document.visibilityState === 'hidden') flushComposerOnHide()
+})
 
 // IME (输入法) guard — see TopicView.vue for the full story: Safari fires
 // compositionend BEFORE the commit-Enter keydown, which then looks like a

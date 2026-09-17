@@ -88,9 +88,13 @@ export default defineConfig({
     // degrade gracefully and auto-recover when the network returns. NO offline
     // writes / message queue — reads only.
     VitePWA({
-      // registerSW requests a reload when an updated worker activates. Public
-      // HTML has its own online strategy below. Registration lives in pwa.ts.
-      registerType: 'autoUpdate',
+      // 新版本由**用户点**才接管（'prompt'，2026-09-17 从 'autoUpdate' 改过来的）。
+      // 'autoUpdate' 配套的 skipWaiting/clientsClaim 会让新 worker 一装好就顶掉旧的，
+      // 插件随即 window.location.reload()：开着的页面在用户眼皮底下刷新，正在打的
+      // 一段话没了（一天几十次部署，这不是罕见事件）。现在新 worker 停在 waiting，
+      // 由 components/common/UpdateBanner.vue 问一句。Public HTML has its own online
+      // strategy below. Registration lives in pwa.ts.
+      registerType: 'prompt',
       injectRegister: false,
       // The SW controls the whole origin; keep it at root scope.
       scope: '/',
@@ -102,6 +106,44 @@ export default defineConfig({
         display: 'standalone',
         start_url: '/',
         scope: '/',
+        // 应用身份。不写的话浏览器按 start_url 推断——将来改 start_url 就等于
+        // 换了一个应用（旧的那份装过的躲不掉、新的又要重装）。写死 '/'。
+        id: '/',
+        // 「安装到主屏后能干什么」的粗分类，桌面端商店/应用列表用它归类。
+        categories: ['productivity', 'developer'],
+        // 长按主屏图标弹出来的快捷方式（Chrome Android 84+）。url 必须落在 scope
+        // 里，且要是**打开就能到**的地址——两个都是顶层路由，不是需要参数才能拼出
+        // 来的深链。不写 icons：那会让每条快捷方式都顶着和 App 一样的图标，等于没
+        // 有图标；省略时浏览器自己兜底。
+        shortcuts: [
+          {
+            name: '待办',
+            short_name: '待办',
+            description: '打开待办列表',
+            url: '/inbox',
+          },
+          {
+            name: '空间',
+            short_name: '空间',
+            description: '浏览项目与小队空间',
+            url: '/spaces',
+          },
+        ],
+        // Android 的富安装弹窗会把截图铺在安装卡片里（没有截图就只有一行名字）。
+        // 眼下只有**桌面**这一张（用户手册里那张「我的小队」，同一张图，见
+        // docs/manual/public/images/teams-my-teams.png）——**还没有手机那张**
+        // (form_factor: 'narrow')，所以 Android 那边这条暂时用不上，等一张真机
+        // 截图补上。别拿桌面截图裁成竖图充数：安装弹窗里放一张比例不对的图，比
+        // 不放更难看。
+        screenshots: [
+          {
+            src: 'screenshots/my-teams-wide.png',
+            sizes: '2560x1432',
+            type: 'image/png',
+            form_factor: 'wide',
+            label: '我的小队：左侧栏选中「小队」，右侧列出你所在的每一支小队',
+          },
+        ],
         // Both mirror the LIGHT theme (src/plugins/vuetify.ts): amber #F57F17,
         // canvas #F7F8FA. The app gained a dark theme, but a web app manifest
         // has exactly one value for each of these and no media-query form, so
@@ -164,7 +206,10 @@ export default defineConfig({
         // this app's shell: precaching it made every install download 55 extra
         // files it may never open, and each edit to the manual would then have
         // to reach people through a service-worker update.
-        globIgnores: ['**/*.worker-*.js', '**/monaco-*.js', 'docs/**'],
+        // `screenshots/**` 是 manifest 里那几张安装截图（见上面的 manifest.screenshots）：
+        // 只有浏览器的安装弹窗会去取它，跟 App 能不能离线跑毫无关系，别让每次安装
+        // 都白下 100 KB。
+        globIgnores: ['**/*.worker-*.js', '**/monaco-*.js', 'docs/**', 'screenshots/**'],
         // Raised from the 2 MiB default so the shell-critical `vendor` chunk
         // (~5 MB) is precached — leaving it out is exactly the "离线白屏" the
         // spec warns against. Do NOT tune this number to drop one specific
@@ -172,10 +217,13 @@ export default defineConfig({
         // Anything that should not be precached goes in `globIgnores` by name.
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         cleanupOutdatedCaches: true,
-        // Activation follows completion of the precache download. Online
-        // navigation must not depend on that download to see current routes.
-        clientsClaim: true,
-        skipWaiting: true,
+        // 这两行**故意不写**（原来写着 clientsClaim/skipWaiting，都是 true）。
+        // 它们是「新 worker 立刻接管」的开关，留着就等于绕过 registerType: 'prompt'
+        // 的等待——提示条还没来得及出现，页面已经被新代码接管了。删掉之后新 worker
+        // 停在 waiting，直到用户点「立即更新」（pwa.ts 的 applyUpdate → messageSkipWaiting）。
+        //
+        // 在线导航本来就不依赖新 worker 是否接管：下面那条 NetworkOnly 规则每次
+        // 都去网上取当前 HTML，precache 只是它拿不到时的兜底。
         // Inline the workbox runtime into sw.js — one root file to keep
         // no-cached in nginx, instead of a separate workbox-*.js.
         inlineWorkboxRuntime: true,
