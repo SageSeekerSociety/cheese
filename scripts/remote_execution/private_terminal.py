@@ -348,7 +348,7 @@ def main():
             for mountpoint in (
                 folder / "central/forwarded-project",
                 folder / "resumed-center/forwarded-project",
-                room.home / ".claude/remote-session/forwarded-project",
+                room.home / ".cheese/remote-session/forwarded-project",
             ):
                 # See acceptance.py: a dead mount is the one that has to go, and
                 # it is the one `os.path.ismount` reports as nothing at all.

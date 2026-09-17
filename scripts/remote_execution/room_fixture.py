@@ -26,7 +26,7 @@ class RoomExecutor:
         self.owner = folder / "execution-host"
         self.home = self.owner / ".cheese/home" / str(project) / str(resource)
         self.work = self.home / "room"
-        self.state = self.home / ".claude/executor"
+        self.state = self.home / ".cheese/executor"
         repository = folder / "task-origin"
         repository.mkdir()
         (repository / "backend").mkdir()
@@ -116,7 +116,7 @@ class RoomExecutor:
             except (ConnectionError, FileNotFoundError):
                 if time.monotonic() >= deadline:
                     raise RuntimeError(
-                        (self.home / ".claude/executor-bootstrap.log").read_text()
+                        (self.home / ".cheese/executor-bootstrap.log").read_text()
                     )
                 time.sleep(0.1)
 
