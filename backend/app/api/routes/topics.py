@@ -57,6 +57,18 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.device.supply import Visibility
 from app.domain.device.wiring import sql_device_service
+from app.domain.documents.convert import (
+    ConvertFailed,
+    ConvertUnavailable,
+    convert,
+    upgraded_name,
+)
+from app.domain.documents.revisions import (
+    RevisionsFailed,
+    RevisionsUnsupported,
+    decide,
+    revisions_in,
+)
 from app.domain.documents.spreadsheet import (
     SpreadsheetRecalcFailed,
     SpreadsheetRecalcUnavailable,
@@ -2223,18 +2235,7 @@ async def recalc_spreadsheet(
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
     path = _clean_artifact_path(body.get("path") or "")
-    encoded = body.get("content_b64")
-    if isinstance(encoded, str):
-        try:
-            raw = base64.b64decode(encoded, validate=True)
-        except (ValueError, binascii.Error) as exc:
-            raise ValidationError("content_b64 不是合法的 base64") from exc
-    else:
-        raw = ws.read_room_file(place.project_id, topic_id, path)
-    if len(raw) > MAX_ARTIFACT_BYTES:
-        raise ValidationError(
-            f"文件超过 {MAX_ARTIFACT_BYTES // (1024 * 1024)}MB，无法重算"
-        )
+    raw = _document_bytes(body, place.project_id, topic_id, path)
     try:
         book, bad = await recalculate(raw, path, settings.office_render_endpoint)
     except SpreadsheetRecalcUnavailable as exc:
@@ -2248,6 +2249,143 @@ async def recalc_spreadsheet(
             "errors": [cell.as_dict() for cell in bad],
         }
     )
+
+
+@router.post("/{topic_id}/documents/convert")
+async def convert_document(
+    topic_id: uuid.UUID,
+    body: dict,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """Convert one document to another format — used by `cheese convert`.
+
+    The pre-2007 binary formats are the reason this exists: a room cannot read
+    or write them at all, so the alternative is asking the user to open Office
+    himself. It also gets a room a PDF of a Word file, which is how it looks at
+    its own layout before delivering it.
+    """
+    place = await TopicService(db).place_or_404(topic_id)
+    await _actor_in_place(resolver, place)
+    path = _clean_artifact_path(body.get("path") or "")
+    target = str(body.get("to") or "").strip()
+    raw = _document_bytes(body, place.project_id, topic_id, path)
+    try:
+        made = await convert(raw, path, target, settings.office_render_endpoint)
+    except ConvertUnavailable as exc:
+        raise SystemBusyError(str(exc)) from exc
+    except ConvertFailed as exc:
+        raise ValidationError(str(exc)) from exc
+    return ok(
+        {
+            "path": upgraded_name(path, target.lower().lstrip(".")),
+            "content_b64": base64.b64encode(made).decode(),
+        }
+    )
+
+
+@router.get("/{topic_id}/documents/revisions")
+async def list_document_revisions(
+    topic_id: uuid.UUID,
+    path: str,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """The tracked changes in a `.docx`, one row per decision a reader makes.
+
+    The preview beside this list already draws the changes — LibreOffice renders
+    insertions and deletions, measured — so the list is not there to show them.
+    It is there to act on them: a reader can accept or reject one without
+    opening Word.
+    """
+    topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
+    clean = _clean_artifact_path(path)
+    raw = ws.read_room_file(topic.project_id, topic_id, clean)
+    try:
+        found = revisions_in(raw, clean)
+    except RevisionsUnsupported as exc:
+        raise ValidationError(str(exc)) from exc
+    except RevisionsFailed as exc:
+        raise ValidationError(str(exc)) from exc
+    return ok({"path": clean, "revisions": [r.as_dict() for r in found]})
+
+
+@router.post("/{topic_id}/documents/revisions")
+async def decide_document_revisions(
+    topic_id: uuid.UUID,
+    body: dict,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """Accept or reject tracked changes, and write the document back.
+
+    Accepting an insertion removes its wrapper and keeps the text; accepting a
+    deletion removes the text with it; rejecting does the opposite. All of it is
+    a determinate transformation of the XML, so the file the reader downloads
+    afterwards is the file Word would have produced.
+    """
+    topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
+    clean = _clean_artifact_path(body.get("path") or "")
+    accept = _row_numbers(body.get("accept"), "accept")
+    reject = _row_numbers(body.get("reject"), "reject")
+    raw = ws.read_room_file(topic.project_id, topic_id, clean)
+    try:
+        made, left = decide(raw, clean, accept=accept, reject=reject)
+    except RevisionsUnsupported as exc:
+        raise ValidationError(str(exc)) from exc
+    except RevisionsFailed as exc:
+        raise ValidationError(str(exc)) from exc
+    ws.write_room_file(topic.project_id, topic_id, clean, made)
+    return ok({"path": clean, "revisions": [r.as_dict() for r in left]})
+
+
+def _row_numbers(raw, field: str) -> list[int]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValidationError(f"{field} 要是一个序号数组")
+    out: list[int] = []
+    for item in raw:
+        if not isinstance(item, int) or isinstance(item, bool) or item < 1:
+            raise ValidationError(f"{field} 里的序号要是从 1 起的整数")
+        out.append(item)
+    return out
+
+
+def _document_bytes(
+    body: dict, project_id: uuid.UUID, topic_id: uuid.UUID, path: str
+) -> bytes:
+    """The document a request is about, from the body or from the workspace.
+
+    A room on a remote machine has no file here, so it sends the bytes; the
+    panel is reading a file the platform already holds. Same reason
+    `artifact` takes `content_b64`.
+    """
+    encoded = body.get("content_b64")
+    if isinstance(encoded, str):
+        try:
+            raw = base64.b64decode(encoded, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise ValidationError("content_b64 不是合法的 base64") from exc
+    else:
+        raw = ws.read_room_file(project_id, topic_id, path)
+    if len(raw) > MAX_ARTIFACT_BYTES:
+        raise ValidationError(
+            f"文件超过 {MAX_ARTIFACT_BYTES // (1024 * 1024)}MB，处理不了"
+        )
+    return raw
 
 
 @router.get("/{topic_id}/preview")

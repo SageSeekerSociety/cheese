@@ -18,6 +18,12 @@ dependencies = [
     # TLS fingerprint, which is the only thing that gets past a class of sites
     # that refuse on JA3 alone.
     "markdownify>=0.13",
+    # The revision panel reads a .docx's tracked changes through the same
+    # script the room runs (app.domain.documents.revisions), so that what
+    # counts as one change has a single answer. That script needs lxml: it
+    # is the only parser that writes an OOXML part back without rewriting
+    # namespace declarations it had no reason to touch.
+    "lxml>=5.3.0",
     "curl-cffi>=0.7",
     "meilisearch-python-sdk>=7.1.4",
     "openviking>=0.4.7",
@@ -45,12 +51,6 @@ dev = [
     "aiosqlite>=0.22.1",
     "anyio>=4.13.0",
     "httpx>=0.28.1",
-    # The `documents` skill ships `office.py`, which edits Word XML with
-    # lxml because it is the only parser that writes a part back without
-    # rewriting namespace declarations it had no reason to touch. In a room
-    # the script takes it from `uv run --with lxml`; here it is a test
-    # dependency, so those edits stay under test.
-    "lxml>=5.3.0",
     "pyright>=1.1.410",
     "pytest>=9.1.0",
     "pytest-anyio>=0.0.0",

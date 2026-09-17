@@ -102,6 +102,7 @@ def test_worker_discovers_every_leaf_as_a_structured_tool(worker, tmp_path):
         "cheese_bind",
         "cheese_chat_send",
         "cheese_close_task",
+        "cheese_convert",
         "cheese_decision",
         "cheese_describe",
         "cheese_doc_get",

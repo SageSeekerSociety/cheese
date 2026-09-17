@@ -70,6 +70,28 @@ MAX_CONCURRENT = int(os.environ.get("OFFICE_RENDER_CONCURRENT", "4"))
 #: the container's disk. Matches the platform's own artifact ceiling.
 MAX_BYTES = int(os.environ.get("OFFICE_RENDER_MAX_BYTES", str(10 * 1024 * 1024)))
 
+#: What /convert will turn into what. The pairs are listed rather than derived
+#: because the interesting ones are the upgrades out of the pre-2007 binary
+#: formats, which nothing in a room can read: those files are not zips, and the
+#: alternative to converting them here is telling the user to go and do it in
+#: Office himself.
+#:
+#: A target equal to its source is absent on purpose — that is /recalc, which
+#: needs the profile seeding below, and routing it through here would quietly
+#: skip it.
+CONVERTIBLE = {
+    ".doc": ("docx", "pdf"),
+    ".rtf": ("docx", "pdf"),
+    ".odt": ("docx", "pdf"),
+    ".ppt": ("pptx", "pdf"),
+    ".odp": ("pptx", "pdf"),
+    ".xls": ("xlsx",),
+    ".ods": ("xlsx",),
+    ".docx": ("pdf",),
+    ".pptx": ("pdf",),
+    ".xlsx": ("pdf",),
+}
+
 #: What a spreadsheet arrives as, for /recalc. Only `.xlsx`, and deliberately
 #: not `.xlsm`: recalculation writes the workbook back through the plain xlsx
 #: filter, which drops the macros a `.xlsm` exists to carry — silently, with a
@@ -194,6 +216,49 @@ async def render(request: Request, suffix: str = "") -> Response:
         except Exception as exc:  # noqa: BLE001 — the message is the response
             return JSONResponse({"ok": False, "error": str(exc)}, status_code=422)
     return Response(content=pdf, media_type="application/pdf")
+
+
+@app.post("/convert")
+async def convert(request: Request, suffix: str = "", to: str = "") -> Response:
+    """Convert one document to another format. `suffix` is what arrives, `to`
+    what to produce — e.g. `.doc` to `docx`.
+
+    This is the upgrade path out of the pre-2007 binary formats, which are not
+    zips and which nothing in a room can read or write. It is also how a room
+    gets a page of a Word file as an image for its own inspection: convert to
+    pdf here, rasterise there.
+    """
+    body = await request.body()
+    suffix = suffix.lower().strip()
+    to = to.lower().strip().lstrip(".")
+    allowed = CONVERTIBLE.get(suffix)
+    if not allowed:
+        return JSONResponse(
+            {"ok": False, "error": f"不能转换 {suffix or '(未指明)'}"}, status_code=400
+        )
+    if to not in allowed:
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": f"{suffix} 只能转成 {'、'.join(allowed)}，收到 {to or '(未指明)'}",
+            },
+            status_code=400,
+        )
+    if not body:
+        return JSONResponse({"ok": False, "error": "没有收到文件内容"}, status_code=400)
+    if len(body) > MAX_BYTES:
+        return JSONResponse(
+            {"ok": False, "error": f"文件超过 {MAX_BYTES // (1024 * 1024)}MB"},
+            status_code=413,
+        )
+    async with _slots:
+        try:
+            made = await asyncio.to_thread(_convert, body, suffix, to)
+        except subprocess.TimeoutExpired:
+            return JSONResponse({"ok": False, "error": "转换超时"}, status_code=504)
+        except Exception as exc:  # noqa: BLE001 — the message is the response
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=422)
+    return Response(content=made, media_type="application/octet-stream")
 
 
 @app.post("/recalc")

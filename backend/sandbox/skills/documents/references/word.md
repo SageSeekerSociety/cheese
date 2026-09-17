@@ -108,7 +108,15 @@ Word 的公式是 OMML（`<m:oMath>`），不是图片也不是纯文本，pando
 pandoc 有公式的.docx -t markdown     # 公式会以 $LaTeX$ 出现，结构完整
 ```
 
-结构能对上，只有排版空格有差别（`\alpha^2` 会变成 `\alpha^{2}`），不影响你读懂它。
+**读**是可靠的：公式不会丢、不会变成图片，结构完整。
+
+**但转出来的 LaTeX 不等于原来的 LaTeX。** 实测七种论文里常见的形状，只有两种逐字一致，
+其余的意思没变、写法变了：`\mathrm{d}x` 变成 `dx`，`\mathrm{softmax}` 丢掉外面的
+`\mathrm`，`\begin{aligned}` 和 `\begin{cases}` 都变成 `\begin{matrix}`，`\to` 变成
+`\rightarrow`，`(x)` 变成 `\left(x\right)`。
+
+所以：**用 pandoc 读公式可以，用它把公式转出去再转回来不行**。用户要的是「原文里那个公式
+照抄到新文档」时，不要走 LaTeX 中转，直接把 `<m:oMath>` 节点搬过去（见下）。
 
 **往文档里写公式不要用 pandoc 重写整份文档**——那会把排版全丢掉。正确的做法是让 pandoc
 单独生成一份只含这个公式的临时文档，再把里面的 `<m:oMath>` 元素抠出来嵌进原文档：

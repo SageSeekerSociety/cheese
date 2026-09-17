@@ -44,7 +44,7 @@ command -v typst && command -v pandoc
 | 读或改一份表格 | `openpyxl`，改完 `cheese recalc` | `references/sheets.md` |
 | 做/读 PDF | `typst` / `pypdf` | `references/pdf.md` |
 | 造一份全新的文件 | `python-docx` / `python-pptx` / `openpyxl` / `typst` | 本文件下面 |
-| `.doc` / `.ppt` / `.xls` | 只读不改，要改请用户升级格式 | `references/reading.md` |
+| `.doc` / `.ppt` / `.xls` | 先 `cheese convert` 升级格式，再改 | `references/reading.md` |
 
 参考文件在技能目录的 `references/` 下，和 `scripts/office.py` 在同一个地方（下一节有定位
 它们的两行命令）。要动手做哪一类活，先读对应的那一份。
@@ -120,10 +120,13 @@ uv run --with lxml python3 "$SKILL/scripts/office.py" validate 改后.docx --bas
 | `.xlsx` | `uv run --with openpyxl` |
 | `.pdf` | `typst compile 源文件.typ 输出.pdf` |
 
-PDF 走 typst 直接排版，不要绕道「先生成 Word 再转 PDF」。这台机器上没有 LibreOffice，
-转换是平台另起的服务在做；你能调到它的只有一件事——`cheese recalc` 重算表格里的公式
-（见 `references/sheets.md`）。排版不要交给它：Word 转 PDF 是把文档重新渲染一遍，
-版面会变，而 typst 排出来的就是最终样子。
+**要产出 PDF 就用 typst 直接排版，不要绕道「先生成 Word 再转 PDF」。** 这台机器上没有
+LibreOffice，转换是平台另起的服务在做，`cheese convert --to pdf` 能调到它——但那条路是
+**给你自己看版面用的**，不是交付路径：Word 转 PDF 是把文档重新渲染一遍，字距、分页、
+图表位置都可能变，而 typst 排出来的就是最终样子。
+
+平台那边的 LibreOffice 一共给你三件事：`cheese recalc` 重算表格公式、`cheese convert`
+升级老格式、`cheese convert --to pdf` 转出来自己看一眼。
 
 ### python-docx 的默认纸张是 US Letter，必须改成 A4
 
@@ -163,6 +166,8 @@ for s in doc.sections:
 - **内容**：把产出的文件读回来（`pandoc 产出.docx -t markdown`），对照原始材料，确认没有编造
   数据、数字能对上。表格先 `cheese recalc`，确认算不出来的格一个都没有。
 - **版面**：中文有没有变成空心方框（缺字体时 typst 和 pandoc 都不报错）、纸张对不对、
-  页数是不是和要求的差不多。用 `typst compile --format png` 可以直接看一页的样子。
+  页数是不是和要求的差不多。**真的看一眼**：typst 排的用 `typst compile --format png`；
+  Word 和幻灯片用 `cheese convert 文件.docx --to pdf`，再 `uv run --with pymupdf` 把那一页
+  存成图片。排版错了退出码还是 0、文字提取还是对的，只有看才看得出来。
 
 不要把「命令执行成功」当成交付完成。
