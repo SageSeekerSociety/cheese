@@ -556,7 +556,7 @@ def _room(tmp_path, project: str, room: str, store: str | None = "$HOME"):
     work = machine_home / ".cheese/work" / project / room
     work.mkdir(parents=True)
     env = {
-        **os.environ,
+        **_no_inherited_stores(),
         "HOME": str(machine_home),
         "CHEESE_HOME": str(room_home),
         "CHEESE_WORK": str(work),
@@ -573,6 +573,17 @@ def _room(tmp_path, project: str, room: str, store: str | None = "$HOME"):
     elif store is not None:
         env["CHEESE_STORE"] = store
     return machine_home, room_home, env
+
+
+def _no_inherited_stores() -> dict[str, str]:
+    """The caller's environment, minus any store the caller had of its own.
+
+    CI exports `UV_CACHE_DIR` for its own uv. Inherited into a launch, it comes
+    back out of the agent and reads exactly like something the launcher set —
+    so a test asking "did the launcher set this" would be answered by the
+    machine it happens to run on.
+    """
+    return {name: v for name, v in os.environ.items() if name not in _STORE_VARS}
 
 
 _STORE_VARS = (
@@ -746,7 +757,7 @@ def test_a_machine_owners_own_caches_are_never_swept(tmp_path):
     work.mkdir()
     _seed_caches(home)
     env = {
-        **os.environ,
+        **_no_inherited_stores(),
         "HOME": str(home),
         # The machine's home and the session's home are the same directory.
         "CHEESE_HOME": str(home),

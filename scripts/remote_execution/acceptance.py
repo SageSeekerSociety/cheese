@@ -339,6 +339,7 @@ def case(folder, options):
             place = MachinePlace(
                 home=str(folder / "device-home"),
                 workdir=str(folder / "device-work"),
+                store="",
                 state="",
                 api_base="",
                 project_id="",
