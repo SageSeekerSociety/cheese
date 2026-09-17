@@ -39,7 +39,7 @@ chmod +x "$FAKE_BIN/nproc"
 # `config.sh` and `svc.sh` belong to the runner tarball the fake curl did not fetch.
 seed_runner_root() {
   mkdir -p "$1"
-  printf '#!/bin/sh\necho "√ Settings Saved."\n' > "$1/config.sh"
+  printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$RUN_DIR/config.args"\necho "√ Settings Saved."\n' > "$1/config.sh"
   printf '#!/bin/sh\nexit 0\n' > "$1/svc.sh"
   mkdir -p "$1/bin"
   printf '#!/bin/sh\nexit 0\n' > "$1/bin/installdependencies.sh"
@@ -49,7 +49,7 @@ seed_runner_root "$HOME_DIR/actions-runner"
 seed_runner_root "$HOME_DIR/actions-runner-1"
 
 run_from_elsewhere() {
-  ( cd "$RUN_DIR" && HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" \
+  ( cd "$RUN_DIR" && HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" RUN_DIR="$RUN_DIR" \
       bash "$BUNDLE/provision.sh" "$1" fake-token 2.337.0 "$2" >/dev/null 2>&1 )
 }
 
@@ -73,5 +73,12 @@ grep -q "CHEESE_CI_TEST_WORKERS=" "$HOME_DIR/actions-runner-1/.env" \
 #    clean slot 0's workspace.
 grep -q "ACTIONS_RUNNER_HOOK_JOB_STARTED=$HOME_DIR/actions-runner-1/job-started-hook.sh" \
   "$HOME_DIR/actions-runner-1/.env" || fail "slot 1 points at the wrong hook"
+
+# 5. Both slots of a machine answer to the same box label, which is what lets
+#    liveness say WHICH machine is missing instead of counting how many answered.
+grep -q -- "--labels cheese-ci,cheese-ci-box-9" "$RUN_DIR/config.args" \
+  || fail "slot 0 was not given its machine's label: $(cat "$RUN_DIR/config.args" 2>/dev/null)"
+[ "$(grep -c -- "--labels cheese-ci,cheese-ci-box-9" "$RUN_DIR/config.args")" -eq 2 ] \
+  || fail "both slots must carry it: $(cat "$RUN_DIR/config.args")"
 
 echo "ci-runner provisioning: all cases passed"

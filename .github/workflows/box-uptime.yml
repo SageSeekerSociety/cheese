@@ -11,6 +11,9 @@ on:
 permissions:
   actions: read
   contents: read
+  # Reading the self-hosted runner list is an administration read, which is not
+  # covered by `actions: read`.
+  administration: read
 
 jobs:
   check:
@@ -28,6 +31,39 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: python3 .github/scripts/box-uptime.py
+
+  # Which CI machines are there, asked of the API rather than by running a job
+  # on each. A job would need a slot per machine every hour, and would queue
+  # behind a merge burst and report that as death — which is why the old check
+  # asked only whether ONE machine answered, and why two of three being down on
+  # 2026-09-15 looked like nothing but slow CI.
+  ci-pool:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      WEBHOOK: ${{ secrets.FEISHU_ALERT_WEBHOOK }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Which machines are in the pool
+        id: pool
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: python3 .github/scripts/ci-pool-health.py
+
+      - name: Tell the team a CI machine is missing
+        if: ${{ failure() && env.WEBHOOK != '' }}
+        env:
+          PROBLEMS: ${{ steps.pool.outputs.problems }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          text="$(printf 'CI 机器掉了：%s\n这一轮：%s' \
+            "${PROBLEMS:-见运行日志}" "$RUN_URL")"
+          curl -sS -m 15 -X POST "$WEBHOOK" \
+            -H 'Content-Type: application/json' \
+            --data "$(jq -n --arg t "$text" '{msg_type:"text",content:{text:$t}}')" \
+            || echo "::warning::could not reach the alert webhook"
 
   # Opt-in endpoint probe. With no URL configured, the job is visibly skipped.
   dev-health:

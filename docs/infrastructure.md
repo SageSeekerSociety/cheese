@@ -200,26 +200,32 @@ heartbeat, backup checks) — its single slot used to serialize every heavy job
   `backend/tests/isolation.py` for the names it scopes, and note that the test
   harness creates its databases with `DROP DATABASE ... WITH (FORCE)`, so two
   runs handed one name delete each other's data mid-test.
-- **Addressing one machine**: every runner carries its box's own label as well
-  as the shared one — `cheese-ci-runner-1` and `cheese-ci-runner-1b` are both
-  `cheese-ci-box-1`. `runs-on: [self-hosted, cheese-ci-box-1]` therefore reaches
-  that machine and only that machine, and a job for a box whose slots are both
-  busy stays **queued** rather than being served by another box. That is the
-  only way to be sure a given machine was touched; `runner-swap.yml` uses it.
+- **Addressing one machine**: `provision.sh` gives each runner its box's own
+  label beside the shared one — `cheese-ci-runner-1` and `cheese-ci-runner-1b`
+  are both `cheese-ci-box-1`. `runs-on: [self-hosted, cheese-ci-box-1]`
+  therefore reaches that machine and only that machine, and a job for a box
+  whose slots are both busy stays **queued** rather than being served by another
+  box. That is the only way to be sure a given machine was touched;
+  `runner-swap.yml` uses it. An already-registered runner takes the label with
+  `config.sh --replace`, which is how the three in the pool got theirs before
+  provisioning assigned them — so a box rebuilt from an older `provision.sh`
+  would come back reachable only through the shared label.
 - **Fanning out over slots does not cover the pool.** The intuition that N jobs
   on the shared label must land on N different machines is false, in both its
   three-job and six-job forms: a job goes to whichever slot frees first, so one
   machine can take several while another, busy with a long `test`, takes none.
   Measured 2026-09-17 with six jobs: five landed on `cheese-ci-runner-2`, one on
-  `cheese-ci-runner-3`, and `cheese-ci-runner-1` was never touched.
-- Liveness (alerting): `box-heartbeat.yml`'s `ci-pool` job proves **at least
-  one** of the three is alive; `box-uptime.yml` alerts when the last two
-  heartbeats both failed to complete. It cannot see a partial outage, so a
-  single dead pool machine shows up only as slower CI. The per-machine labels
-  above now make a matrix over the three boxes possible; what has not been
-  measured is whether an hourly probe that wants one slot on **each** box would
-  sit queued through an ordinary merge burst often enough to trip the two-strike
-  rule. That measurement is the open step, not the labels.
+  `cheese-ci-runner-3`, and `cheese-ci-runner-1` was never touched. This is why
+  the hourly liveness check below asks the API instead of running a job per box.
+- Liveness (alerting): `box-uptime.yml`'s `ci-pool` job names every machine that
+  is not there, hourly, by ASKING the runner API rather than running a job on
+  each — a job per machine would need a slot per machine every hour and would
+  queue behind a merge burst, which the alert would have to read as death. The
+  per-machine labels above are what let a half-dead machine (one slot gone) be
+  named rather than averaged away. It says so in Feishu when
+  `FEISHU_ALERT_WEBHOOK` is set, and reddens the run either way.
+  `box-heartbeat.yml`'s `ci-pool` job remains as the "can the pool still run
+  anything at all" check.
 - Liveness (on demand): `box-diag.yml`'s `ci-pool` job prints hostname, disk,
   dangling-volume count, memory, swap and this boot's kernel OOM kills. It fans
   out over slots, so by the paragraph above it samples the pool rather than
