@@ -184,10 +184,26 @@ jobs:
       - name: Point uv at a venv built from the shared cache
         run: echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
 
+      # The cache the venv above is built from has to outlive the job, and it
+      # did not. setup-uv exports UV_CACHE_DIR unconditionally, and with
+      # `cache-local-path` empty it points at $RUNNER_TEMP/setup-uv-cache —
+      # inside the per-job temp the runner wipes. So every job resolved against
+      # an empty cache: 31 wheels, 356 MiB off the network, `Prepared 196
+      # packages in 2m 11s` (runner-2, run 35178186973), where a warm cache
+      # syncs in about a second. Setting UV_CACHE_DIR in GITHUB_ENV cannot fix
+      # it — the action overwrites it — so the input is the way in.
+      #
+      # $HOME rather than a literal path: `cheese-ci-any` also reaches the ARM
+      # runner, where the user is not `ci`. One cache per machine is deliberate;
+      # uv's cache is append-only and file-locked, so both slots can share it.
+      - name: Point uv's cache outside the per-job temp
+        run: echo "UV_SHARED_CACHE=$HOME/.cache/uv" >> "$GITHUB_ENV"
+
       - name: Install uv
         uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
         with:
           version: "0.12.1"
+          cache-local-path: ${{ env.UV_SHARED_CACHE }}
 
       - name: Set up Python
         run: uv python install 3.13
@@ -264,10 +280,16 @@ jobs:
       - name: Point uv at a venv built from the shared cache
         run: echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
 
+      # $RUNNER_TEMP/setup-uv-cache, setup-uv's default, dies with the job.
+      # See the note in test.yml's migration-heads job.
+      - name: Point uv's cache outside the per-job temp
+        run: echo "UV_SHARED_CACHE=$HOME/.cache/uv" >> "$GITHUB_ENV"
+
       - name: Install uv
         uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
         with:
           version: "0.12.1"
+          cache-local-path: ${{ env.UV_SHARED_CACHE }}
 
       - name: Set up Python
         run: uv python install 3.13
@@ -369,10 +391,16 @@ jobs:
       - name: Point uv at a venv built from the shared cache
         run: echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
 
+      # $RUNNER_TEMP/setup-uv-cache, setup-uv's default, dies with the job.
+      # See the note in test.yml's migration-heads job.
+      - name: Point uv's cache outside the per-job temp
+        run: echo "UV_SHARED_CACHE=$HOME/.cache/uv" >> "$GITHUB_ENV"
+
       - name: Install uv
         uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
         with:
           version: "0.12.1"
+          cache-local-path: ${{ env.UV_SHARED_CACHE }}
 
       - name: Set up Python
         run: uv python install 3.13
