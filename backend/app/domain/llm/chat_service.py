@@ -63,8 +63,11 @@ class AIChatService:
         self._conversation_repo = conversation_repo
         self._message_repo = message_repo
         self._quota_service = AiAdviceService(repo=quota_repo)
+        # Same key fallback as LLMClient: 百炼's DashScope key serves both its
+        # Anthropic and OpenAI-compatible endpoints, so the agent token doubles
+        # as this one instead of needing a second entry in deploy.
         self._client = openai.AsyncOpenAI(
-            api_key=settings.openai_api_key,
+            api_key=settings.openai_api_key or (settings.anthropic_auth_token or ""),
             base_url=settings.openai_base_url,
         )
 

@@ -1,0 +1,37 @@
+{
+  "_comment": [
+    "阶段一探测目标（话题《credits 额度设计》§7.1.2）。",
+    "复制到 tmp/probe_targets.json 再填 key_file —— tmp/ 已 gitignore。",
+    "网关与模型是两个独立的轴：前两个目标把模型固定为 glm-5.2，",
+    "差异即网关本身；后两个换模型，用于阶段二的能力对比。"
+  ],
+  "targets": [
+    {
+      "name": "智谱直连 / glm-5.2",
+      "base_url": "https://open.bigmodel.cn/api/anthropic",
+      "key_file": "tmp/zhipu.key",
+      "model": "glm-5.2",
+      "haiku_model": "glm-4.5-air",
+      "openai_base_url": "https://open.bigmodel.cn/api/paas/v4",
+      "embedding_model": "embedding-3"
+    },
+    {
+      "name": "百炼 / glm-5.2",
+      "base_url": "https://dashscope.aliyuncs.com/apps/anthropic",
+      "key_file": "tmp/bailian.key",
+      "model": "glm-5.2",
+      "haiku_model": "qwen3.7-flash",
+      "openai_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "embedding_model": "text-embedding-v4"
+    },
+    {
+      "name": "百炼 / qwen3-coder-next",
+      "base_url": "https://dashscope.aliyuncs.com/apps/anthropic",
+      "key_file": "tmp/bailian.key",
+      "model": "qwen3-coder-next",
+      "haiku_model": "qwen3.7-flash",
+      "openai_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "embedding_model": "text-embedding-v4"
+    }
+  ]
+}

@@ -76,7 +76,11 @@ class StreamChunk:
 
 class LLMClient:
     def __init__(self) -> None:
-        api_key = settings.openai_api_key
+        # The gateway is 百炼 now, whose DashScope key serves both its Anthropic
+        # and OpenAI-compatible endpoints — so the agent token doubles as this
+        # key rather than requiring a second one in deploy (same fallback as
+        # OpenViking uses). Without it these features answer with a placeholder.
+        api_key = settings.openai_api_key or (settings.anthropic_auth_token or "")
         base_url = settings.openai_base_url
         if api_key:
             self._client = AsyncOpenAI(api_key=api_key, base_url=base_url)
