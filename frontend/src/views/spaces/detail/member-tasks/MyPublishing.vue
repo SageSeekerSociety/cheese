@@ -2,10 +2,12 @@
   <v-sheet flat rounded="lg" class="member-page">
     <div class="member-page__hero">
       <div>
-        <h1 class="member-page__title">我发布的赛题</h1>
+        <h1 class="member-page__title">{{ t('spaces.detail.myPublishedContests') }}</h1>
       </div>
 
-      <v-btn color="primary" rounded="lg" prepend-icon="mdi-plus" @click="navigateToPublishTask">发布赛题</v-btn>
+      <v-btn color="primary" rounded="lg" prepend-icon="mdi-plus" @click="navigateToPublishTask">
+        {{ t('tasks.publish.title') }}
+      </v-btn>
     </div>
 
     <v-row dense class="mt-1">
@@ -19,36 +21,36 @@
           <MemberOverviewCard
             icon="mdi-clipboard-clock-outline"
             tone="warning"
-            label="待审核题目"
+            :label="t('spaces.detail.memberTasks.publishing.overview.pendingTaskApproval')"
             :value="formatCount(overview?.pendingTaskApprovalCount)"
-            helper="还在等待空间管理员审核的题目数"
+            :helper="t('spaces.detail.memberTasks.publishing.overview.pendingTaskApprovalHint')"
           />
         </v-col>
         <v-col cols="12" sm="6" xl="3">
           <MemberOverviewCard
             icon="mdi-account-alert-outline"
             tone="warning"
-            label="待审核报名"
+            :label="t('spaces.detail.memberTasks.publishing.overview.pendingParticipantApproval')"
             :value="formatCount(overview?.pendingParticipantApprovalCount)"
-            helper="需要你尽快确认的报名主体"
+            :helper="t('spaces.detail.memberTasks.publishing.overview.pendingParticipantApprovalHint')"
           />
         </v-col>
         <v-col cols="12" sm="6" xl="3">
           <MemberOverviewCard
             icon="mdi-clipboard-text-clock-outline"
             tone="info"
-            label="待评审提交"
+            :label="t('spaces.detail.memberTasks.publishing.overview.pendingReviewSubmission')"
             :value="formatCount(overview?.pendingReviewCount)"
-            helper="已经提交但还没有完成评审的作品"
+            :helper="t('spaces.detail.memberTasks.publishing.overview.pendingReviewSubmissionHint')"
           />
         </v-col>
         <v-col cols="12" sm="6" xl="3">
           <MemberOverviewCard
             icon="mdi-trophy-outline"
             tone="success"
-            label="成功主体数"
+            :label="t('spaces.detail.memberTasks.publishing.overview.successfulParticipants')"
             :value="formatCount(overview?.successfulParticipantCount)"
-            helper="当前空间内通过你题目的成功主体"
+            :helper="t('spaces.detail.memberTasks.publishing.overview.successfulParticipantsHint')"
           />
         </v-col>
       </template>
@@ -56,8 +58,10 @@
 
     <v-card flat rounded="lg" class="filter-card mt-5">
       <div class="filter-card__header">
-        <div class="filter-card__title">筛选</div>
-        <v-btn variant="text" color="primary" @click="clearFilters">清空筛选</v-btn>
+        <div class="filter-card__title">{{ t('spaces.detail.memberTasks.filter') }}</div>
+        <v-btn variant="text" color="primary" @click="clearFilters">{{
+          t('spaces.detail.memberTasks.clearFilters')
+        }}</v-btn>
       </div>
 
       <div class="filter-grid">
@@ -65,7 +69,7 @@
           v-model="categoryIdModel"
           autocomplete="off"
           :items="categoryItems"
-          label="分类"
+          :label="t('spaces.detail.memberTasks.publishing.category')"
           density="comfortable"
           hide-details
           variant="outlined"
@@ -74,7 +78,7 @@
           v-model="approvedModel"
           autocomplete="off"
           :items="approvedItems"
-          label="题目审批状态"
+          :label="t('spaces.detail.memberTasks.publishing.approvalStatus')"
           density="comfortable"
           hide-details
           variant="outlined"
@@ -83,7 +87,7 @@
           v-model="sortByModel"
           autocomplete="off"
           :items="sortByItems"
-          label="排序字段"
+          :label="t('spaces.detail.memberTasks.sortBy')"
           density="comfortable"
           hide-details
           variant="outlined"
@@ -92,7 +96,7 @@
           v-model="sortOrderModel"
           autocomplete="off"
           :items="sortOrderItems"
-          label="排序方向"
+          :label="t('spaces.detail.memberTasks.sortOrder')"
           density="comfortable"
           hide-details
           variant="outlined"
@@ -105,10 +109,10 @@
           color="warning"
           @click="togglePendingParticipantApproval"
         >
-          待审核报名
+          {{ t('spaces.detail.memberTasks.publishing.overview.pendingParticipantApproval') }}
         </v-chip>
         <v-chip :variant="filters.hasPendingReview ? 'flat' : 'outlined'" color="info" @click="togglePendingReview">
-          待评审提交
+          {{ t('spaces.detail.memberTasks.publishing.overview.pendingReviewSubmission') }}
         </v-chip>
       </div>
     </v-card>
@@ -121,11 +125,13 @@
       <template v-else-if="!tasks.length">
         <v-empty-state
           icon="mdi-pencil-box-multiple-outline"
-          title="还没有发布记录"
-          text="你在这个空间下还没有发布过赛题，发布后会在这里集中查看审核和参与状态。"
+          :title="t('spaces.detail.memberTasks.publishing.emptyTitle')"
+          :text="t('spaces.detail.memberTasks.publishing.emptyText')"
         />
         <div class="empty-actions">
-          <v-btn color="primary" rounded="lg" prepend-icon="mdi-plus" @click="navigateToPublishTask">去发布赛题</v-btn>
+          <v-btn color="primary" rounded="lg" prepend-icon="mdi-plus" @click="navigateToPublishTask">
+            {{ t('spaces.detail.memberTasks.publishing.goPublish') }}
+          </v-btn>
         </div>
       </template>
 
@@ -140,6 +146,7 @@
 import type { SpaceMyPublishedTask, SpaceMyPublishingOverview } from '@/network/api/spaces/types'
 
 import { computed, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
@@ -161,6 +168,7 @@ import { useSpaceStore } from '@/stores/space'
 
 const route = useRoute()
 const router = useRouter()
+const { t } = useI18n()
 
 const spaceStore = useSpaceStore()
 const { currentSpaceId, currentSpace, categories } = storeToRefs(spaceStore)
@@ -214,29 +222,30 @@ const sortOrderModel = computed({
 })
 
 const categoryItems = computed(() => [
-  { title: '全部分类', value: null },
+  { title: t('spaces.detail.allCategories'), value: null },
   ...categories.value.filter((item) => !item.archivedAt).map((item) => ({ title: item.name, value: item.id })),
 ])
 
-const approvedItems = [
-  { title: '全部', value: 'ALL' },
-  { title: '待审核', value: 'NONE' },
-  { title: '已通过', value: 'APPROVED' },
-  { title: '未通过', value: 'DISAPPROVED' },
-]
+// 和 MyParticipating 一样，下拉项的标题跟着语言走，所以这里是 computed。
+const approvedItems = computed(() => [
+  { title: t('spaces.detail.memberTasks.all'), value: 'ALL' },
+  { title: t('spaces.detail.memberTasks.approval.pending'), value: 'NONE' },
+  { title: t('spaces.detail.memberTasks.approval.approved'), value: 'APPROVED' },
+  { title: t('spaces.detail.memberTasks.approval.notApproved'), value: 'DISAPPROVED' },
+])
 
-const sortByItems = [
-  { title: '最新发布', value: 'publishedAt' },
-  { title: '最新发布', value: 'createdAt' },
-  { title: '报名主体数', value: 'participantCount' },
-  { title: '待评审数', value: 'pendingReviewCount' },
-  { title: '成功率', value: 'successRate' },
-]
+const sortByItems = computed(() => [
+  { title: t('spaces.detail.tasks.sortOptions.latestPublished'), value: 'publishedAt' },
+  { title: t('spaces.detail.tasks.sortOptions.latestPublished'), value: 'createdAt' },
+  { title: t('spaces.detail.memberTasks.publishing.sort.participantCount'), value: 'participantCount' },
+  { title: t('spaces.detail.memberTasks.publishing.sort.pendingReview'), value: 'pendingReviewCount' },
+  { title: t('spaces.detail.memberTasks.publishing.sort.successRate'), value: 'successRate' },
+])
 
-const sortOrderItems = [
-  { title: '降序', value: 'desc' },
-  { title: '升序', value: 'asc' },
-]
+const sortOrderItems = computed(() => [
+  { title: t('spaces.detail.memberTasks.sortDesc'), value: 'desc' },
+  { title: t('spaces.detail.memberTasks.sortAsc'), value: 'asc' },
+])
 
 const loadOverview = async () => {
   overviewLoading.value = true
@@ -245,7 +254,7 @@ const loadOverview = async () => {
     overview.value = data
   } catch (error) {
     console.error('load my publishing overview failed', error)
-    toast.error('加载发布概览失败')
+    toast.error(t('spaces.detail.memberTasks.publishing.loadOverviewFailed'))
   } finally {
     overviewLoading.value = false
   }
@@ -258,7 +267,7 @@ const loadTasks = async () => {
     tasks.value = data.tasks
   } catch (error) {
     console.error('load my publishing tasks failed', error)
-    toast.error('加载我发布的赛题失败')
+    toast.error(t('spaces.detail.memberTasks.publishing.loadFailed'))
   } finally {
     listLoading.value = false
   }
