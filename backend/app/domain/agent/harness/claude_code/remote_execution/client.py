@@ -40,7 +40,6 @@ NATIVE_TOOLS = (
     "Glob",
     "Grep",
     "NotebookEdit",
-    "TaskOutput",
     "TaskStop",
 )
 REMOTE_CONTROLS = {
