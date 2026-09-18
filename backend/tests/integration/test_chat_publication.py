@@ -28,6 +28,31 @@ def room(client):
     return topic["id"], {"X-Cheese-Token": token}
 
 
+# Frames a room publishes as live state rather than as turn progress: a 👀
+# receipt, a doc-changed notice, a session-state change. They are fanned out the
+# moment they happen and are not ordered against a publication, so reading "the
+# next frame" made every assertion below a race with them — the two tests in
+# this file that read positionally each failed about one run in three on the CI
+# box, on main as much as on any branch (#1190). Naming the frame keeps the
+# assertions strict: anything that is neither the frame wanted nor known live
+# state still fails, and says what arrived.
+LIVE_FRAMES = {"reaction", "state", "agent_control", "pong", "todo", "turn_active"}
+
+
+def next_frame(ws, kind: str, *, limit: int = 8) -> dict:
+    """The next frame of this kind, skipping live state that overtakes it."""
+    seen: list[str] = []
+    for _ in range(limit):
+        frame = ws.receive_json()
+        if frame["type"] == kind:
+            return frame
+        assert frame["type"] in LIVE_FRAMES, (
+            f"expected {kind}, got {frame['type']} after {seen}: {frame}"
+        )
+        seen.append(frame["type"])
+    raise AssertionError(f"no {kind} frame within {limit}; saw {seen}")
+
+
 def publish(client, topic, headers, content="我先核对当前流程。", **extra):
     return client.post(
         f"/topics/{topic}/messages",
@@ -47,7 +72,7 @@ def test_publication_is_durable_live_and_does_not_wake_model(
         response = publish(client, topic, headers, content)
         assert response.status_code == 200, response.text
         block = response.json()["data"]
-        frame = ws.receive_json()
+        frame = next_frame(ws, "assistant_block")
     assert frame == {"type": "assistant_block", "block": block}
     assert block["kind"] == "message"
     assert block["author_type"] == "ai"
@@ -196,10 +221,16 @@ def test_publish_during_work_keeps_turn_open_and_only_published_text_enters_memo
         assert turn_id is not None
         first = publish(client, topic, headers).json()["data"]
         assert first["turn_id"] == turn_id
-        assert ws.receive_json() == {"type": "assistant_block", "block": first}
+        assert next_frame(ws, "assistant_block") == {
+            "type": "assistant_block",
+            "block": first,
+        }
         second = publish(client, topic, headers, "检查通过了。").json()["data"]
         assert second["turn_id"] == turn_id
-        assert ws.receive_json() == {"type": "assistant_block", "block": second}
+        assert next_frame(ws, "assistant_block") == {
+            "type": "assistant_block",
+            "block": second,
+        }
         assert memories == []
         client.portal.call(stub_hooks.stops, uuid.UUID(topic), raw_text)
         while ws.receive_json()["type"] != "done":
@@ -263,7 +294,9 @@ def test_silence_reminder_only_queues_for_an_active_silent_response(
         assert client.portal.call(chat.remind_silent_turns) == 0
         clock += timedelta(seconds=1)
         client.portal.call(stub_hooks.says, uuid.UUID(topic), "More internal output")
-        assert ws.receive_json()["block"]["content"] == "More internal output"
+        assert (
+            next_frame(ws, "event_block")["block"]["content"] == "More internal output"
+        )
         sweep = client.portal.start_task_soon(chat.remind_silent_turns)
         client.portal.call(started.wait)
         assert not sweep.done()
@@ -283,18 +316,18 @@ def test_silence_reminder_only_queues_for_an_active_silent_response(
         assert len(notices) == 2
         request_id = str(uuid.uuid4())
         sent = publish(client, topic, headers, request_id=request_id).json()["data"]
-        assert ws.receive_json()["block"]["id"] == sent["id"]
+        assert next_frame(ws, "assistant_block")["block"]["id"] == sent["id"]
         assert client.portal.call(chat.remind_silent_turns) == 0
         clock += timedelta(seconds=threshold)
         # Replaying a previous send must not masquerade as a fresh update.
         assert publish(client, topic, headers, request_id=request_id).status_code == 200
-        assert ws.receive_json()["block"]["id"] == sent["id"]
+        assert next_frame(ws, "assistant_block")["block"]["id"] == sent["id"]
         assert client.portal.call(chat.remind_silent_turns) == 1
         assert len(notices) == 3
         system_event.assert_not_called()
         # Stop must disarm a fresh silence interval, not merely a sent reminder.
         sent = publish(client, topic, headers, content="检查已经结束。").json()["data"]
-        assert ws.receive_json()["block"]["id"] == sent["id"]
+        assert next_frame(ws, "assistant_block")["block"]["id"] == sent["id"]
         client.portal.call(stub_hooks.stops, uuid.UUID(topic), "Finished internally")
         while ws.receive_json()["type"] != "done":
             pass
