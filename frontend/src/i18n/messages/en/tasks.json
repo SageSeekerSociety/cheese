@@ -1,0 +1,36 @@
+{
+  "form": {
+    "taskName": "Challenge name",
+    "participantType": "Participant type",
+    "individual": "Individual",
+    "taskLevel": "Challenge difficulty",
+    "beginner": "Beginner",
+    "intermediate": "Intermediate",
+    "advanced": "Advanced",
+    "registrationStartAt": "Registration start date",
+    "registrationStartAtHint": "Leave empty to open registration right away",
+    "deadline": "Registration deadline",
+    "defaultDeadline": "Default completion deadline",
+    "taskDescription": "Challenge description",
+    "participantLimitHint": "Leave empty for no limit on participants",
+    "accessControl": {
+      "title": "Permissions",
+      "enableAccessRestriction": "Restrict access",
+      "enableAccessRestrictionHint": "When on, only users with an email from the selected domains can view and join this challenge",
+      "domainGroups": "Domain groups",
+      "domainGroupsHint": "Choose which domain groups can access this challenge. With none selected, everyone can.",
+      "noDomainGroups": "No domain groups available"
+    }
+  },
+  "publish": {
+    "title": "Publish challenge",
+    "submit": "Submit"
+  },
+  "status": {
+    "pending": "Pending review",
+    "notStarted": "Not started",
+    "ongoing": "Registration open",
+    "ended": "Closed",
+    "rejected": "Rejected"
+  }
+}
