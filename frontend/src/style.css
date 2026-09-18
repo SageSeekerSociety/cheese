@@ -288,6 +288,22 @@
 }
 
 /* Meta (timestamps, #ids, counts, branch): 12.5 / mono / --faint / tnum */
+/* 附件块左边那个方格：图片缩略图、PDF 首页、类型图标和上传中的转圈都落在它
+   里面。四种状态必须是同一个尺寸，否则上传结束的那一刻整条会跳；而它跨四个
+   组件，所以定义在这里，不在其中任何一个里面。 */
+.att-face {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-sm);
+  background: var(--fill);
+  color: var(--muted);
+  overflow: hidden;
+}
 .t-meta {
   font-family: var(--font-mono);
   font-size: 12.5px;

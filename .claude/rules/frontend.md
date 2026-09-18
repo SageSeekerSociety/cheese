@@ -103,6 +103,29 @@ avoid a white flash before first paint. Change the storage key
   10–11px and they are not a precedent to follow.
 - Spacing: 8px grid (4/8/12/16/24/32). Prefer Vuetify's `pa-*`/`ma-*` utilities.
 
+## A field's label sits OUTSIDE its box, and that is what collides
+
+An outlined field's floating label is `translateY(-50%)` on its own top border
+(`VField.sass`), so roughly half of it — ~8px — is above the field's box. Two
+things follow, and both have shipped:
+
+- **A field needs vertical space above it.** `.v-input` carries no margin of its
+  own; every pixel between two stacked fields comes from the `.v-input__details`
+  row under the upper one. Anything that removes that row — `hide-details`, or a
+  `hide-details="auto"` on a field that happens to have no hint — makes the two
+  boxes touch, and the lower label lands on the upper border. Set `hide-details`
+  on a field that stands alone or in a container with its own gap; when you set
+  it on a stacked field, give the stack the spacing yourself.
+- **A scroll container clips it.** In a `scrollable` dialog the scroller is
+  `.v-card-text` (`VDialog.sass`), so `pt-0` there cuts the top half off the
+  first field's label. The card-title above it is not padding — the clip happens
+  at the scroller's own edge.
+
+Neither shows up in vitest (happy-dom has no layout), in `vue-tsc`, or in
+stylelint. `e2e/tests/layout-invariants.spec.ts` measures the rendered boxes and
+is the only thing that catches them — add the screen you are building to it
+rather than eyeballing the form once.
+
 ## The Chinese copy is part of the design system
 
 Full rules: [`docs/design-system.md` §8](../../docs/design-system.md#8-文案). Colours

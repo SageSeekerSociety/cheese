@@ -109,14 +109,38 @@ NATIVE_CHAT_GUIDANCE = (
 _NATIVE_SKILL_SRC = Path(__file__).resolve().parents[3] / "sandbox" / "skills"
 _SHIPPED_NATIVE_SKILLS = ("documents",)
 
+#: What can travel. A skill is not one markdown file: `documents` ships the
+#: scripts that do the editing and the reference files they are explained in,
+#: and a skill that arrives without them is worse than one that never mentions
+#: them — the agent reads a command, runs it, and gets "No such file". So the
+#: whole directory travels.
+#:
+#: It is a list of suffixes rather than "everything there" because of the
+#: device path: each file is written through a shell heredoc, so a font or a
+#: screenshot would arrive corrupted rather than fail. Anything added to a
+#: skill outside this list is caught by
+#: `tests/unit/test_native_skill_files.py` at build time instead of silently
+#: not being shipped.
+_SKILL_FILE_SUFFIXES = (".md", ".py", ".sh", ".txt", ".json", ".typ")
+
+#: The device path ends each file's heredoc with this line, so a file
+#: containing it would cut itself off at that line. The test asserts no skill
+#: file does.
+SKILL_HEREDOC_MARKER = "CHEESE_NATIVE_SKILL"
+
 
 def native_skill_files() -> dict[str, str]:
     """Files relative to the session's CLAUDE_CONFIG_DIR, never its worktree."""
-    files = {}
+    files: dict[str, str] = {}
     for name in _SHIPPED_NATIVE_SKILLS:
-        source = _NATIVE_SKILL_SRC / name / "SKILL.md"
-        if source.is_file():
-            files[f"skills/{name}/SKILL.md"] = source.read_text(encoding="utf-8")
+        root = _NATIVE_SKILL_SRC / name
+        if not root.is_dir():
+            continue
+        for source in sorted(root.rglob("*")):
+            if source.suffix not in _SKILL_FILE_SUFFIXES or source.is_symlink():
+                continue
+            relative = source.relative_to(_NATIVE_SKILL_SRC).as_posix()
+            files[f"skills/{relative}"] = source.read_text(encoding="utf-8")
     for source, name in (("doc_form.md", "cheese-docs"),):
         meta, body = _parse(_SKILL_DIR / source)
         body = body.replace("doc-form", "cheese-docs")

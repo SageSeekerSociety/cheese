@@ -5,6 +5,7 @@ testing here is about processes: that the job is in its own session, that a pty
 is what the command sees, and that killing it kills what it started.
 """
 
+import hashlib
 import json
 import os
 import signal
@@ -12,6 +13,7 @@ import socket
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 
 import pytest
@@ -66,9 +68,12 @@ def output(directory: Path) -> str:
 
 
 def tell(directory: Path, request: dict) -> dict:
+    # Where to reach a job is something the job records, the same way the
+    # extension finds it — not somewhere a reader is expected to already know.
+    address = json.loads((directory / "meta.json").read_text())["sock"]
     connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     connection.settimeout(10)
-    connection.connect(str(directory / "sock"))
+    connection.connect(address)
     try:
         connection.sendall(json.dumps(request).encode() + b"\n")
         return json.loads(connection.recv(65536))
@@ -111,6 +116,63 @@ def test_a_command_that_cannot_run_is_recorded_rather_than_lost(tmp_path):
     until(lambda: (job / "exit").exists())
     assert json.loads((job / "exit").read_text())["status"] != 0
     assert "not" in output(job).lower(), "the shell's own complaint is kept"
+
+
+def room_shaped(tmp_path: Path, name: str) -> Path:
+    """A job directory the shape a room actually hands over.
+
+    Nothing here gets to choose it: the runner's state path carries a project
+    id, a topic id and a session digest, and on dev 2026-09-17 that came to 176
+    bytes before the job's own name. Every other test uses ``tmp_path``, which
+    is about fifty — and fifty is under every limit there is, so a job that
+    could not be reached on any real machine passed all of them.
+    """
+    return (
+        tmp_path
+        / str(uuid.uuid4())
+        / str(uuid.uuid4())
+        / "pi"
+        / hashlib.sha256(name.encode()).hexdigest()
+        / "bg"
+        / name
+    )
+
+
+def test_a_job_can_be_reached_under_the_path_a_room_gives_it(tmp_path):
+    """Output, typing and signals, on a path no shorter than a room's own.
+
+    A Unix socket address is 108 bytes including its terminator — a kernel
+    constant, not a filesystem one, so the job's other files are written at any
+    length and only the one that makes a job reachable is refused.
+    """
+    job = room_shaped(tmp_path, "job-1-reachable")
+    assert len(str(job)) > 108, "this test is about a path longer than that"
+    start(job, f"{sys.executable} -u -i")
+    until(lambda: ">>>" in output(job))
+    assert tell(job, {"write": "print(6 * 7)\n"})["ok"]
+    until(lambda: "42" in output(job))
+    tell(job, {"signal": int(signal.SIGTERM)})
+    until(lambda: (job / "exit").exists())
+
+
+def test_a_supervisor_that_cannot_get_going_leaves_the_reason(tmp_path):
+    """Its own failure is the one thing it cannot report through the job.
+
+    Past the daemonizing fork this process has no stdout, no stderr and nobody
+    waiting on it, and a reader that sees only ``meta.json`` reports the job as
+    running — forever, having printed nothing, whatever went wrong.
+    """
+    job = tmp_path / "blocked"
+    # Nothing can be appended to a directory, so the job's transcript cannot be
+    # opened — a stand-in for the class of thing that goes wrong before a
+    # command's output ever reaches disk.
+    (job / "output").mkdir(parents=True)
+
+    start(job, "echo 一")
+
+    until(lambda: (job / "exit").exists())
+    assert json.loads((job / "exit").read_text())["status"] != 0
+    assert "output" in (job / "error").read_text(), "what failed, in its own words"
 
 
 def test_stopping_a_job_stops_what_it_started(tmp_path):
@@ -161,7 +223,7 @@ async def test_closing_the_room_takes_its_background_jobs_with_it(tmp_path):
         extension=EXTENSION,
     )
     job = start(runner.state / "bg" / "job-1", "sleep 30")
-    held = json.loads((job / "meta.json").read_text())["child"]
+    held = json.loads(until(lambda: (job / "meta.json").read_text()))["child"]
     await runner.close()
 
     until(lambda: (job / "exit").exists())

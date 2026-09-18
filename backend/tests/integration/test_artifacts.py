@@ -49,6 +49,47 @@ def test_a_remote_artifact_is_readable_without_a_git_push(client):
     assert response.json()["data"]["content"] == html
 
 
+def test_a_room_file_reads_by_path_and_not_only_as_the_current_preview(client):
+    """A `<&path>` chip names a file, and the room may have moved on since.
+
+    The chip is a path with no store behind it, and a room's own files are not
+    on any branch — so this is the read that gets a reader from that chip to
+    the file. Reading only the pinned artifact would answer with whatever 芝士
+    delivered last instead.
+    """
+    from tests.integration.conftest import session_auth_headers
+
+    _pid, tid = _topic(client, "alice")
+    headers = session_auth_headers("alice")
+    for path, content in (("初稿.md", "# 初稿\n"), ("定稿.md", "# 定稿\n")):
+        made = client.post(
+            f"/topics/{tid}/artifact", json={"path": path, "content": content}
+        )
+        assert made.status_code == 200, made.text
+
+    earlier = client.get(
+        f"/topics/{tid}/preview/file", headers=headers, params={"path": "初稿.md"}
+    )
+    assert earlier.status_code == 200, earlier.text
+    assert earlier.json()["data"]["content"] == "# 初稿\n"
+
+    current = client.get(f"/topics/{tid}/preview/file", headers=headers)
+    assert current.json()["data"]["path"] == "定稿.md"
+
+
+def test_a_room_file_read_stays_inside_the_room(client):
+    from tests.integration.conftest import session_auth_headers
+
+    _pid, tid = _topic(client, "alice")
+    for bad in ["../../etc/passwd", "/etc/passwd", ".git/config"]:
+        answer = client.get(
+            f"/topics/{tid}/preview/file",
+            headers=session_auth_headers("alice"),
+            params={"path": bad},
+        )
+        assert answer.status_code == 422, bad
+
+
 def test_artifact_sets_current_preview(client):
     _pid, tid = _topic(client)
     # No artifact yet → no preview.

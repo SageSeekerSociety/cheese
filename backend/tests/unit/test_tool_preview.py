@@ -6,6 +6,8 @@
 
 import uuid
 
+import pytest
+
 from app.domain.agent.tool_preview import (
     DETAIL_MAX,
     PREVIEW_MAX,
@@ -330,6 +332,27 @@ def test_an_enormous_argument_is_capped_and_says_so():
     assert detail.endswith("…")
 
 
+# ---- 平台命令和后台任务：pi 房间里它们是工具，不是一行 shell ----
+
+
+def test_a_platform_command_shows_the_argument_that_says_which_one():
+    assert tool_preview("cheese_accept_request", {"reviewer": "alice"}).text == "alice"
+    remembered = tool_preview("cheese_remember", {"fact": "构建走 pnpm"})
+    assert remembered.text == "构建走 pnpm"
+
+
+def test_a_platform_command_writing_a_file_is_cut_to_the_workspace():
+    preview = tool_preview("cheese_doc_set", {"file": f"{ABS}/notes.md"}, work_dir=WORK)
+    assert preview == ToolPreview("notes.md")
+
+
+def test_a_background_job_shows_the_command_and_typing_shows_what_was_typed():
+    # 任务号是刚生出来的，对读的人什么也不说明；这两步真正在做的是那条命令和
+    # 那句话。
+    assert tool_preview("bash_start", {"command": "pnpm dev"}).text == "pnpm dev"
+    assert tool_preview("bash_write", {"id": "job-1-a", "text": "y"}).text == "y"
+
+
 def test_a_tool_with_no_telling_argument_has_nothing_to_open():
     assert _detail("FutureTool", {"x": 1}) == ""
     assert tool_detail("Bash", "not a dict", ToolPreview()) == ""  # type: ignore[arg-type]
@@ -408,3 +431,24 @@ def test_writing_a_skill_is_not_using_one():
 
 def test_a_lone_skill_file_has_no_skill_to_name():
     assert tool_preview("read", {"path": "SKILL.md"}) == ToolPreview("SKILL.md")
+
+
+# 2026-09-18，dev 上的后端卡死在这条命令的前缀剥离上：现场事件一条一条过
+# `_is_platform_tool`，一条读不完，整个事件循环就停在那里——`/healthz` 连续 24 次
+# 8 秒超时，容器被判 unhealthy，之后每一次部署都过不了健康门。
+#
+# 触发它的形状很朴素：一段看着像赋值前缀、最终却不匹配的命令。超时而不是断言失
+# 败是这条用例的正确失败方式——回溯一旦回来，它不会算错，它会不返回。
+@pytest.mark.timeout(10)
+def test_an_assignment_prefix_that_never_matches_still_returns():
+    command = "A=" + "a" * 4000 + "'"
+
+    assert cheese_subcommand(command) == ""
+    assert command_preview(command).action is None
+
+
+@pytest.mark.timeout(10)
+def test_a_long_assignment_prefix_is_still_dropped():
+    command = "TOKEN=" + "x" * 4000 + " cheese doc set"
+
+    assert cheese_subcommand(command) == "doc"

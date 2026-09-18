@@ -50,7 +50,12 @@ from app.core.errors import (
     UnauthorizedError,
 )
 from app.core.tokens import verify_session_token
-from app.domain.agent.device_hub import HubScreen, ViewerTransport, device_hub
+from app.domain.agent.device_hub import (
+    DeviceOffline,
+    HubScreen,
+    ViewerTransport,
+    device_hub,
+)
 from app.domain.device.repository import Device
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
@@ -84,6 +89,12 @@ async def recover_business_state(device_id: str) -> None:
         from app.api.deps import get_chat_service
 
         await get_chat_service().recover_sessions(device_id)
+    except DeviceOffline:
+        # It connected and went again before recovery could talk to it. The next
+        # connection runs this, so there is nothing here to fix.
+        logger.warning(
+            "hook subscriptions not recovered: device %s went offline", device_id
+        )
     except Exception:  # noqa: BLE001 — recovery cannot reject a healthy device
         logger.exception("hook subscription recovery failed for device %s", device_id)
     # Restore screen ownership before cleanup looks for sessions to close.

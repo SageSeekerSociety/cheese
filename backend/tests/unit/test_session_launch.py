@@ -11,6 +11,7 @@ import json
 import pytest
 
 from app.domain.agent.harness.claude_code import hooks_settings, session_launch
+from app.domain.agent.skills import native_skill_files
 
 pytestmark = pytest.mark.anyio
 
@@ -24,13 +25,18 @@ def test_the_launch_names_the_files_claude_reads_before_it_starts():
         config_dir="/sessions/x", workdir="/topics/t", system_prompt="你是芝士。"
     )
     planted = {f.name: f.content for f in launch.files}
+    # The skills are named by the module that ships them rather than listed
+    # here, because a skill is a directory: `documents` carries the scripts that
+    # do the editing and the reference files they are explained in, and a test
+    # that named only SKILL.md would pass while the script never left the
+    # building.
     assert set(planted) == {
         "settings.json",
         ".claude.json",
         "cheese-system-prompt.md",
         "webfetch_transport.cjs",
         "skills/cheese-docs/SKILL.md",
-        "skills/documents/SKILL.md",
+        *native_skill_files(),
     }
     assert planted["cheese-system-prompt.md"] == "你是芝士。"
     assert json.loads(planted["settings.json"])["enableArtifact"] is False

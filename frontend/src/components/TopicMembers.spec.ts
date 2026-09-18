@@ -104,6 +104,15 @@ describe('成员名册', () => {
   })
 })
 
+it('按钮上是一份名册：人数含 AI 队友，头像堆里没有单挂的那一颗', async () => {
+  // 名册列表本来就是全量渲染的；这颗按钮曾经只数人、再把 AI 队友作为一张单独的
+  // 头像挂在旁边，读起来像「几个人，另外还有个它」。
+  await openRoster()
+  expect(document.querySelector('.members-mini__count')!.textContent).toBe('4')
+  expect(document.querySelector('.members-mini__face--agent')).toBeNull()
+  expect(document.querySelector('.members-mini')!.getAttribute('title')).toContain('4 位')
+})
+
 function faceOf(handle: string): HTMLElement {
   const row = Array.from(document.querySelectorAll('.roster__item')).find((r) => r.textContent?.includes(handle))!
   return row.querySelector('.roster__avatar') as HTMLElement

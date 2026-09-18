@@ -26,7 +26,13 @@ import {
   writeFile,
 } from '../../api'
 import { parseDiffLines, splitDiffByFile } from '../../lib/diff'
+import { useDocumentBytes } from '../../lib/documentBytes'
+import { DOCUMENT_TYPES, needsDocumentView, suffixOf } from '../../lib/fileKind'
 import CodeEditor from '../CodeEditor.vue'
+
+import PreviewPages from './preview/PreviewPages.vue'
+import PreviewSheet from './preview/PreviewSheet.vue'
+import RevisionList from './preview/RevisionList.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -122,6 +128,9 @@ const loading = ref(false)
 // A background re-fetch: spins only the 刷新 button, never replaces the panel.
 const refreshing = ref(false)
 const errorMsg = ref<string | null>(null)
+// 一枚 chip 指来的文件，在当前这个来源里找不到。不是这块面板出了错，所以它不走
+// `errorMsg`——那一句的样子是「这一格加载失败」。
+const missing = ref<string | null>(null)
 async function downloadOpenFile() {
   if (!openRawUrl.value || !openPath.value) return
   try {
@@ -348,6 +357,37 @@ function isImagePath(path: string): boolean {
   return IMAGE_EXT.has(path.split('.').pop()?.toLowerCase() ?? '')
 }
 const openIsImage = computed(() => !!openPath.value && isImagePath(openPath.value))
+
+// ---- 文档: 这一版画出来，外加它自己带的修订 ----
+// 一份 .docx 的差异是一句「二进制文件不同」——按文件类型分派渲染器之前，这一格对一
+// 份交付的文档能说的只有这句话。现在它画出这一版的页面，再把文件里的修订逐条列出
+// 来：那才是「这一版比上一版改了什么」在一份 Word 文档里的真实形态。
+const openIsDocument = computed(() => !!openPath.value && needsDocumentView(openPath.value))
+const openDocumentType = computed(() => (openPath.value ? DOCUMENT_TYPES[suffixOf(openPath.value)] ?? null : null))
+// 处理完一处修订，文件就变了，而字节是按版本缓存的——这里打一下让它重取。
+const docNonce = ref(0)
+const {
+  bytes: docBytes,
+  loading: docLoading,
+  error: docError,
+  rendererMissing: docRendererMissing,
+} = useDocumentBytes({
+  topicId: () => props.topicId,
+  path: () => openPath.value,
+  version: () => fileVersion.value,
+  task: () => selectedTask.value,
+  nonce: () => docNonce.value,
+  enabled: () => openIsDocument.value,
+})
+
+async function onRevisionDecided() {
+  const path = openPath.value
+  docNonce.value += 1
+  // 文件的版本变了，树上那几个数字也跟着变：两边都重读，别让读者对着旧数字看。
+  if (path) await selectFile(path)
+  void loadGit({ silent: true })
+}
+
 // Raw bytes of the open file: what <img> renders for an image, and what the
 // download button hands over for anything else that can't be shown as text.
 const openRawUrl = computed(() =>
@@ -413,6 +453,13 @@ async function doLoadFiles() {
     files.value = listed
     const want = pendingOpen
     if (want) {
+      // 这个来源里没有这个文件时不要去读它：读回来的是一句后端的英文错误，它会把
+      // 整块面板顶掉，而读者只是点了一枚 chip。说清它不在这里，列表留在原地。
+      if (!listed.some((f) => f.path === want)) {
+        pendingOpen = null
+        missing.value = want
+        return
+      }
       // Keep the directed path reserved while its read is in flight, so a
       // later diff/list response cannot start an automatic first-file read.
       await selectFile(want)
@@ -422,6 +469,7 @@ async function doLoadFiles() {
     // Keep the open file if it still exists; otherwise open the first one in
     // scope — which is the first CHANGED file by default, i.e. the top of the
     // review list rather than whatever sorts first in the repo.
+    if (missing.value) return
     if (!openPath.value || !treeFiles.value.some((f) => f.path === openPath.value)) {
       openPath.value = null
       const first = treeFiles.value[0]?.path
@@ -437,6 +485,7 @@ async function doLoadFiles() {
 
 async function selectFile(path: string) {
   keepDraft()
+  missing.value = null
   const request = ++fileRequest
   const epoch = sourceEpoch
   const pid = props.projectId
@@ -610,6 +659,7 @@ function clearSource() {
   gitCommits.value = []
   gitDiff.value = ''
   errorMsg.value = null
+  missing.value = null
   resetFilePanel()
 }
 
@@ -672,6 +722,9 @@ watch(
 // the same race the in-flight guard on the listing exists for.
 watch(treeFiles, (rows) => {
   if (overview.value || errorMsg.value || openPath.value || pendingOpen || !rows.length) return
+  // 读者点的是某一份文件，而它不在这个来源里。这时打开别的文件，等于把「你要的
+  // 那份不在这儿」换成「这是另一份文件」，两句话里只有前一句是他问的。
+  if (missing.value) return
   void selectFile(rows[0].path)
 })
 
@@ -801,6 +854,11 @@ defineExpose({ openFile })
       </v-alert>
 
       <div v-else class="file-tool">
+        <!-- chip 指来的文件不在这个来源里。列表照常显示：读者本来就可以换一个
+             来源，或者在树上挑别的文件。 -->
+        <v-alert v-if="missing" type="info" variant="tonal" density="compact" class="ma-2" data-testid="missing-file">
+          {{ missing }} 不在{{ selectedTask ? '这个任务' : '项目当前代码' }}里
+        </v-alert>
         <div class="file-bar">
           <v-btn
             icon
@@ -827,8 +885,9 @@ defineExpose({ openFile })
           >
             下载
           </v-btn>
-          <!-- 看 diff / 改文件是同一个文件的两面，只有改过的文件才有两面。 -->
-          <div v-if="openDiff" class="seg seg--sm">
+          <!-- 看 diff / 改文件是同一个文件的两面，只有改过的文件才有两面。文档没有
+               这两面：它的差异是一句「二进制文件不同」，而按文本编辑会损坏它。 -->
+          <div v-if="openDiff && !openIsDocument" class="seg seg--sm">
             <button
               type="button"
               class="seg__btn"
@@ -919,9 +978,44 @@ defineExpose({ openFile })
             </template>
           </div>
           <div class="file-editor">
+            <!-- 文档：画出这一版，再把它自己带的修订列在旁边。排在差异前面，因为
+               一份 .docx 的差异只有一句「二进制文件不同」。 -->
+            <div v-if="openPath && openIsDocument" class="doc-view">
+              <div v-if="docLoading && !docBytes" class="file-blob">
+                <v-progress-circular indeterminate color="primary" size="24" />
+              </div>
+              <div v-else-if="docRendererMissing && !docBytes" class="file-blob">
+                <v-icon size="30" class="c-faint mb-2">mdi-eye-off-outline</v-icon>
+                <div class="file-blob__title">文档预览未启用</div>
+                <v-btn size="small" variant="tonal" class="mt-3" @click="downloadOpenFile">
+                  <v-icon size="16" class="me-1">mdi-download-outline</v-icon>
+                  下载原文件
+                </v-btn>
+              </div>
+              <div v-else-if="docError && !docBytes" class="file-blob">
+                <v-icon size="30" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
+                <div class="file-blob__title">无法显示这个文件</div>
+                <div class="file-blob__note">{{ docError }}</div>
+                <v-btn size="small" variant="tonal" class="mt-3" @click="downloadOpenFile">
+                  <v-icon size="16" class="me-1">mdi-download-outline</v-icon>
+                  下载原文件
+                </v-btn>
+              </div>
+              <div v-else class="doc-view__body">
+                <PreviewPages v-if="openDocumentType?.view === 'pages'" :data="docBytes" />
+                <PreviewSheet v-else :data="docBytes" kind="workbook" />
+                <RevisionList
+                  :topic-id="topicId"
+                  :path="suffixOf(openPath) === 'docx' ? openPath : null"
+                  :version="fileVersion"
+                  :task="selectedTask"
+                  @decided="onRevisionDecided"
+                />
+              </div>
+            </div>
             <!-- 逐文件 diff: 一个文件一段，增删各自着色。整块裸 diff 读不动，也没法
                定位到文件，所以验收动线以前根本立不起来。 -->
-            <div v-if="openPath && effectiveView === 'diff'" class="diff-view">
+            <div v-else-if="openPath && effectiveView === 'diff'" class="diff-view">
               <div v-for="(l, i) in openDiffLines" :key="i" class="diff-line" :class="`diff-line--${l.kind}`">
                 {{ l.text }}
               </div>
@@ -1301,6 +1395,24 @@ defineExpose({ openFile })
   min-height: 0;
   overflow: hidden;
   background: var(--surface);
+}
+/* 文档那一面：页面在左，修订柱在右，和预览那一格同一个排法。 */
+.doc-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.doc-view__body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+@media (max-width: 720px) {
+  .doc-view__body {
+    flex-direction: column;
+  }
 }
 .file-icon-btn--on :deep(.v-icon) {
   color: rgb(var(--v-theme-primary));

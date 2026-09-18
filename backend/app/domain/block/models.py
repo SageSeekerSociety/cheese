@@ -277,7 +277,7 @@ class BlockReaction(UuidPk, Base):
 
     One row per (block, emoji, author); reacting again with the same emoji
     removes the row (toggle). Both humans and 芝士 react through this table —
-    e.g. the platform's deterministic ✅ receipt on a summoning message."""
+    e.g. the platform's deterministic 👀 receipt on a summoning message."""
 
     __tablename__ = "block_reactions"
     __table_args__ = (
