@@ -25,6 +25,8 @@
   cheese status                             # 平台状态快照
   cheese artifact report.html               # 把产物设为本话题当前预览(进预览窗口)
   cheese artifact 评审简报.docx              # 文档类交付物同理,用户可以打开和下载
+  cheese recalc 预算表.xlsx                 # 重算表格里的公式,并报出算不出来的格
+  cheese convert 旧稿.doc --to docx         # 老格式升级;--to pdf 用来自己看版面
   cheese serve 5173 "Vue dev server"        # 应用起在 127.0.0.1:5173 后,设为预览
 """
 
@@ -1210,6 +1212,56 @@ def build_parser() -> argparse.ArgumentParser:
         help="渲染类型(默认按扩展名判断)",
     )
 
+    pcv = sub.add_parser(
+        "convert",
+        help="把文档转成另一种格式(2007 以前的老格式升级、或者转 PDF 自己看版面)",
+        description=(
+            "两个用途。\n"
+            "\n"
+            "**老格式升级**:`.doc` / `.ppt` / `.xls` 不是 zip,这台机器读不了也写不了。"
+            "用户要改这类文件时,用这条命令升级成 `.docx` / `.pptx` / `.xlsx` 再改,"
+            "**并且明确告诉用户这是一次格式升级**——转出来的文件和原件不是同一个东西,"
+            "他后面要发给别人的是哪一份,得由他决定。\n"
+            "\n"
+            "**自己看一眼版面**:转成 PDF,再用 `uv run --with pymupdf` 把某一页存成图片"
+            "看看。排版错了不会报错,文字提取也照样正确,只有看一眼才发现。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    pcv.add_argument("path", help="要转换的文件")
+    pcv.add_argument(
+        "--to",
+        required=True,
+        metavar="格式",
+        help="目标格式,如 docx / pptx / xlsx / pdf",
+    )
+    pcv.add_argument(
+        "--output", "-o", default=None, metavar="FILE", help="写到哪里(默认换扩展名)"
+    )
+
+    prc = sub.add_parser(
+        "recalc",
+        help="重算一份 .xlsx 里的公式,并报出算不出来的格",
+        description=(
+            "openpyxl 写进去的是公式本身,不是结果;改过一个格之后,依赖它的那些公式"
+            "存的还是改动之前的数。两种情况文件都能正常打开,公式栏也对,只有数是错的,"
+            "而且没有任何地方会报错。\n"
+            "\n"
+            "重算要在会算公式的程序里加载这份文件,这台机器上没有那个程序,"
+            "平台那边有——这条命令就是去那边算完再写回来。算不出来的格"
+            "(#DIV/0! #REF! 这些)会按 Sheet1!B7 的形式列出来;交付之前这张单子要是空的。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    prc.add_argument("path", help="要重算的表格,如 预算表.xlsx")
+    prc.add_argument(
+        "--output",
+        "-o",
+        default=None,
+        metavar="FILE",
+        help="写到哪里(默认覆盖原文件)",
+    )
+
     papi = sub.add_parser(
         "api",
         help="原始 API 逃生口(兜底,不推荐):直接打后端,带容器已有鉴权。无参=列可用操作",
@@ -1614,6 +1666,89 @@ def main() -> None:
                 sys.exit(1)
         _call("POST", f"/topics/{topic}/artifact", {"path": rel, "as": kind, **payload})
         print(f"已把 {rel} 设为当前预览（{kind}）。")
+    elif a.cmd == "convert":
+        topic = _need("CHEESE_TOPIC", TOPIC)
+        try:
+            raw = open(a.path, "rb").read()
+        except OSError as exc:
+            print(f"[cheese] 无法读取 {a.path}: {exc}", file=sys.stderr)
+            sys.exit(1)
+        root = os.environ.get("CHEESE_WORKTREE_ROOT", "/work")
+        rel = os.path.relpath(os.path.abspath(a.path), root)
+        if rel.startswith(".."):
+            rel = a.path
+        res = _call(
+            "POST",
+            f"/topics/{topic}/documents/convert",
+            {
+                "path": rel,
+                "to": a.to,
+                "content_b64": base64.b64encode(raw).decode("ascii"),
+            },
+            timeout=150,
+        )
+        data = res.get("data") or {}
+        # The platform names the converted file by swapping the extension; a
+        # local -o wins, and the fallback keeps the original beside it rather
+        # than writing over the user's file.
+        suggested = data.get("path") or f"{a.path}.{a.to}"
+        out = a.output or os.path.basename(suggested)
+        try:
+            with open(out, "wb") as f:
+                f.write(base64.b64decode(data.get("content_b64") or ""))
+        except OSError as exc:
+            print(f"[cheese] 无法写入 {out}: {exc}", file=sys.stderr)
+            sys.exit(1)
+        print(f"已把 {a.path} 转成 {out}。原文件没有改动。")
+        if a.path.lower().endswith((".doc", ".ppt", ".xls")):
+            print(
+                "这是一次格式升级——转出来的文件和原件不是同一个东西。"
+                "改完要告诉用户这件事，让他决定往后发哪一份。"
+            )
+    elif a.cmd == "recalc":
+        topic = _need("CHEESE_TOPIC", TOPIC)
+        try:
+            raw = open(a.path, "rb").read()
+        except OSError as exc:
+            print(f"[cheese] 无法读取 {a.path}: {exc}", file=sys.stderr)
+            sys.exit(1)
+        # The platform resolves paths against the worktree ROOT, and the agent's
+        # cwd may be a subdir — same normalization as `artifact`, for the same
+        # reason: an absolute path is refused outright there.
+        root = os.environ.get("CHEESE_WORKTREE_ROOT", "/work")
+        rel = os.path.relpath(os.path.abspath(a.path), root)
+        if rel.startswith(".."):  # outside the worktree — let the backend judge
+            rel = a.path
+        # Recalculation loads the whole workbook, so give it more than the
+        # default 20s: a sheet with a few thousand formulas is ordinary.
+        res = _call(
+            "POST",
+            f"/topics/{topic}/documents/recalc",
+            {
+                "path": rel,
+                "content_b64": base64.b64encode(raw).decode("ascii"),
+            },
+            timeout=150,
+        )
+        data = res.get("data") or {}
+        out = a.output or a.path
+        try:
+            with open(out, "wb") as f:
+                f.write(base64.b64decode(data.get("content_b64") or ""))
+        except OSError as exc:
+            print(f"[cheese] 无法写入 {out}: {exc}", file=sys.stderr)
+            sys.exit(1)
+        bad = data.get("errors") or []
+        print(f"已重算 {a.path}，写出 {out}。")
+        if not bad:
+            print("没有算不出来的格。")
+        else:
+            print(f"有 {len(bad)} 个格算不出来，交付前要处理掉：")
+            for cell in bad[:20]:
+                print(f"  {cell.get('address')}  {cell.get('value')}")
+            if len(bad) > 20:
+                print(f"  …… 还有 {len(bad) - 20} 个")
+            sys.exit(1)
     elif a.cmd == "api":
         if not a.method:
             _print_api_index()

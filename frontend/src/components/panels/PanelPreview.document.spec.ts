@@ -13,6 +13,8 @@ const downloadFile = vi.fn()
 const attachmentRawUrl = vi.fn()
 const previewFileBytes = vi.fn()
 const previewDocumentPdf = vi.fn()
+const documentRevisions = vi.fn()
+const decideDocumentRevisions = vi.fn()
 
 // Declared through vi.hoisted: the vi.mock factory below is lifted above every
 // other statement in this file, so a plain `class` here is still in its temporal
@@ -29,6 +31,8 @@ vi.mock('../../api', () => ({
   attachmentRawUrl: (...args: unknown[]) => attachmentRawUrl(...args),
   previewFileBytes: (...args: unknown[]) => previewFileBytes(...args),
   previewDocumentPdf: (...args: unknown[]) => previewDocumentPdf(...args),
+  documentRevisions: (...args: unknown[]) => documentRevisions(...args),
+  decideDocumentRevisions: (...args: unknown[]) => decideDocumentRevisions(...args),
   PreviewRendererUnavailable,
 }))
 
@@ -87,6 +91,7 @@ beforeEach(() => {
   downloadFile.mockResolvedValue(undefined)
   previewDocumentPdf.mockResolvedValue(new ArrayBuffer(4096))
   previewFileBytes.mockResolvedValue(new ArrayBuffer(2048))
+  documentRevisions.mockResolvedValue({ path: 'output/评审简报.docx', revisions: [] })
 })
 afterEach(cleanup)
 

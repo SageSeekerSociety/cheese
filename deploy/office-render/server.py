@@ -1,4 +1,4 @@
-"""Office documents to PDF, behind one HTTP endpoint.
+"""What LibreOffice knows about a document, behind two HTTP endpoints.
 
 A Word report, a deck or a budget is the deliverable itself, and a deliverable
 nobody can see without downloading it is most of the way to not having been
@@ -10,8 +10,14 @@ LibreOffice installs about 800MB and expects a writable profile directory. The
 sandbox image cannot carry it (that image is other people's base, and a room has
 no root to install into), and the backend image should not.
 
-The service is READ ONLY with respect to the caller: it takes bytes, returns a
-PDF, and keeps nothing. Every request works in its own directory, which is
+It answers two questions, both by loading the document in LibreOffice: what it
+looks like (a PDF, for showing a deliverable on screen) and what its formulas
+come to (a workbook, recalculated). The second is here rather than anywhere
+else for the same reason as the first — nothing outside this image can evaluate
+a spreadsheet.
+
+The service is READ ONLY with respect to the caller: it takes bytes, returns
+bytes, and keeps nothing. Every request works in its own directory, which is
 removed before the response is sent.
 """
 
@@ -64,6 +70,58 @@ MAX_CONCURRENT = int(os.environ.get("OFFICE_RENDER_CONCURRENT", "4"))
 #: the container's disk. Matches the platform's own artifact ceiling.
 MAX_BYTES = int(os.environ.get("OFFICE_RENDER_MAX_BYTES", str(10 * 1024 * 1024)))
 
+#: What /convert will turn into what. The pairs are listed rather than derived
+#: because the interesting ones are the upgrades out of the pre-2007 binary
+#: formats, which nothing in a room can read: those files are not zips, and the
+#: alternative to converting them here is telling the user to go and do it in
+#: Office himself.
+#:
+#: A target equal to its source is absent on purpose — that is /recalc, which
+#: needs the profile seeding below, and routing it through here would quietly
+#: skip it.
+CONVERTIBLE = {
+    ".doc": ("docx", "pdf"),
+    ".rtf": ("docx", "pdf"),
+    ".odt": ("docx", "pdf"),
+    ".ppt": ("pptx", "pdf"),
+    ".odp": ("pptx", "pdf"),
+    ".xls": ("xlsx",),
+    ".ods": ("xlsx",),
+    ".docx": ("pdf",),
+    ".pptx": ("pdf",),
+    ".xlsx": ("pdf",),
+}
+
+#: What a spreadsheet arrives as, for /recalc. Only `.xlsx`, and deliberately
+#: not `.xlsm`: recalculation writes the workbook back through the plain xlsx
+#: filter, which drops the macros a `.xlsm` exists to carry — silently, with a
+#: file of a normal size under the name it came in with.
+RECALCULABLE = (".xlsx",)
+
+#: LibreOffice trusts the value cached beside a formula and writes it straight
+#: back — `OOXMLRecalcMode` is 1, "never recalculate on load". Measured: a
+#: `SUM(A1:A2)` over 2 and 3 carrying a cached 999 converts to 999 again, while
+#: the same cell with no cached value at all comes out as 5. So the failure is
+#: exactly the one that has no symptom: the file opens, the formula is right,
+#: and the number under it is the one from before the edit.
+#:
+#: There is no command-line switch for this; the setting reaches soffice only
+#: through the profile it loads, and every request already gets a profile of its
+#: own (see MAX_CONCURRENT). Seeding that profile with mode 0 recalculates on
+#: load, which turns the 999 above into 5.
+RECALC_PROFILE = """<?xml version="1.0" encoding="UTF-8"?>
+<oor:items xmlns:oor="http://openoffice.org/2001/registry"
+ xmlns:xs="http://www.w3.org/2001/XMLSchema"
+ xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<item oor:path="/org.openoffice.Office.Calc/Formula/Load">
+<prop oor:name="OOXMLRecalcMode" oor:op="fuse"><value>0</value></prop>
+</item>
+<item oor:path="/org.openoffice.Office.Calc/Formula/Load">
+<prop oor:name="ODFRecalcMode" oor:op="fuse"><value>0</value></prop>
+</item>
+</oor:items>
+"""
+
 app = FastAPI(title="cheese office-render")
 _slots = asyncio.Semaphore(MAX_CONCURRENT)
 
@@ -77,12 +135,27 @@ async def healthz() -> dict:
     }
 
 
-def _convert(raw: bytes, suffix: str) -> bytes:
-    """Run one conversion in a directory of its own, and return the PDF."""
+
+def _convert(
+    raw: bytes, suffix: str, target: str = "pdf", recalculate: bool = False
+) -> bytes:
+    """Run one conversion in a directory of its own, and return the result."""
     workdir = Path(tempfile.mkdtemp(prefix="render-"))
     try:
         source = workdir / f"document{suffix}"
         source.write_bytes(raw)
+        # The result goes in a directory of its own. Converting .xlsx to xlsx
+        # would otherwise name its output exactly the source file, and soffice
+        # will not write over the document it is reading — it exits 0 having
+        # done nothing, and the file still sitting there reads as a success.
+        outdir = workdir / "out"
+        outdir.mkdir()
+        profile = workdir / "profile"
+        if recalculate:
+            (profile / "user").mkdir(parents=True)
+            (profile / "user" / "registrymodifications.xcu").write_text(
+                RECALC_PROFILE, encoding="utf8"
+            )
         # -env:UserInstallation is what makes concurrency work at all; see the
         # note on MAX_CONCURRENT for what sharing one costs.
         proc = subprocess.run(
@@ -90,17 +163,17 @@ def _convert(raw: bytes, suffix: str) -> bytes:
                 "soffice",
                 "--headless",
                 "--norestore",
-                f"-env:UserInstallation=file://{workdir / 'profile'}",
+                f"-env:UserInstallation=file://{profile}",
                 "--convert-to",
-                "pdf",
+                target,
                 "--outdir",
-                str(workdir),
+                str(outdir),
                 str(source),
             ],
             capture_output=True,
             timeout=CONVERT_TIMEOUT_S,
         )
-        out = workdir / "document.pdf"
+        out = outdir / f"document.{target}"
         if not out.exists():
             # soffice reports a refused document on stdout and still exits 0, so
             # the missing file is the signal, not the return code.
@@ -143,3 +216,96 @@ async def render(request: Request, suffix: str = "") -> Response:
         except Exception as exc:  # noqa: BLE001 — the message is the response
             return JSONResponse({"ok": False, "error": str(exc)}, status_code=422)
     return Response(content=pdf, media_type="application/pdf")
+
+
+@app.post("/convert")
+async def convert(request: Request, suffix: str = "", to: str = "") -> Response:
+    """Convert one document to another format. `suffix` is what arrives, `to`
+    what to produce — e.g. `.doc` to `docx`.
+
+    This is the upgrade path out of the pre-2007 binary formats, which are not
+    zips and which nothing in a room can read or write. It is also how a room
+    gets a page of a Word file as an image for its own inspection: convert to
+    pdf here, rasterise there.
+    """
+    body = await request.body()
+    suffix = suffix.lower().strip()
+    to = to.lower().strip().lstrip(".")
+    allowed = CONVERTIBLE.get(suffix)
+    if not allowed:
+        return JSONResponse(
+            {"ok": False, "error": f"不能转换 {suffix or '(未指明)'}"}, status_code=400
+        )
+    if to not in allowed:
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": f"{suffix} 只能转成 {'、'.join(allowed)}，收到 {to or '(未指明)'}",
+            },
+            status_code=400,
+        )
+    if not body:
+        return JSONResponse({"ok": False, "error": "没有收到文件内容"}, status_code=400)
+    if len(body) > MAX_BYTES:
+        return JSONResponse(
+            {"ok": False, "error": f"文件超过 {MAX_BYTES // (1024 * 1024)}MB"},
+            status_code=413,
+        )
+    async with _slots:
+        try:
+            made = await asyncio.to_thread(_convert, body, suffix, to)
+        except subprocess.TimeoutExpired:
+            return JSONResponse({"ok": False, "error": "转换超时"}, status_code=504)
+        except Exception as exc:  # noqa: BLE001 — the message is the response
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=422)
+    return Response(content=made, media_type="application/octet-stream")
+
+
+@app.post("/recalc")
+async def recalc(request: Request, suffix: str = ".xlsx") -> Response:
+    """Recompute every formula in one spreadsheet, and return the workbook.
+
+    A sheet written by a program carries formulas with no result under them, and
+    a sheet edited in place carries the result from before the edit. Both open
+    without complaint and both show the reader a number that is not the answer.
+    It is a separate endpoint rather than an argument to /render because the
+    caller wants the workbook back, not a picture of it.
+
+    Cells that cannot be computed come back as Excel error values (`#DIV/0!` and
+    friends) inside the workbook, so the caller reads them from what it
+    receives — this service still keeps nothing, and still says nothing about
+    the content it converted.
+    """
+    body = await request.body()
+    suffix = suffix.lower().strip()
+    if suffix not in RECALCULABLE:
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": (
+                    f"只能重算 {'、'.join(RECALCULABLE)}，"
+                    f"收到 {suffix or '(未指明)'}"
+                ),
+            },
+            status_code=400,
+        )
+    if not body:
+        return JSONResponse({"ok": False, "error": "没有收到文件内容"}, status_code=400)
+    if len(body) > MAX_BYTES:
+        return JSONResponse(
+            {"ok": False, "error": f"文件超过 {MAX_BYTES // (1024 * 1024)}MB"},
+            status_code=413,
+        )
+    async with _slots:
+        try:
+            book = await asyncio.to_thread(_convert, body, suffix, "xlsx", True)
+        except subprocess.TimeoutExpired:
+            return JSONResponse({"ok": False, "error": "重算超时"}, status_code=504)
+        except Exception as exc:  # noqa: BLE001 — the message is the response
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=422)
+    return Response(
+        content=book,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+    )

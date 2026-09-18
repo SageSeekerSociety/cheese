@@ -14,6 +14,7 @@ import type {
   ChatAttachment,
   ComputeProfiles,
   Contributions,
+  DocumentRevision,
   EnvironmentConfig,
   EnvironmentStatus,
   FileContent,
@@ -1117,6 +1118,40 @@ export async function previewFileBytes(topicId: string, path: string): Promise<A
   })
   if (!res.ok) throw new Error(`读取文件失败（HTTP ${res.status}）`)
   return res.arrayBuffer()
+}
+
+/** 一份 .docx 里的修订，按读者读到的顺序。
+ *
+ *  旁边那份 PDF 已经把改动画出来了（LibreOffice 会渲染修订：插入带下划线、删除带
+ *  删除线）。这份清单不是为了让人看见改动，是为了让人**处理**改动——不打开 Word 就能
+ *  逐条接受或拒绝。 */
+export function documentRevisions(
+  topicId: string,
+  path: string
+): Promise<{ path: string; version: string; revisions: DocumentRevision[] }> {
+  const query = `?path=${encodeURIComponent(path)}`
+  return request<{ path: string; version: string; revisions: DocumentRevision[] }>(
+    `/topics/${encodeURIComponent(topicId)}/documents/revisions${query}`
+  )
+}
+
+/** 接受或拒绝其中几处，写回文件，返回剩下的那些。
+ *
+ *  序号对应的是调用方刚拿到的那份清单。处理完之后剩下的会重新从 1 数起，所以调用方
+ *  要用返回的这份清单替换手上那份，不能接着用旧序号。
+ *
+ *  `version` 是读这份清单时那份文件的版本。芝士在这中间重新交付过这个文件时，这次处理
+ *  会被拒绝而不是把新的那份盖掉。 */
+export function decideDocumentRevisions(
+  topicId: string,
+  path: string,
+  version: string,
+  decision: { accept?: number[]; reject?: number[] }
+): Promise<{ path: string; version: string; revisions: DocumentRevision[] }> {
+  return request<{ path: string; version: string; revisions: DocumentRevision[] }>(
+    `/topics/${encodeURIComponent(topicId)}/documents/revisions`,
+    { method: 'POST', body: JSON.stringify({ path, version, ...decision }) }
+  )
 }
 
 /** Raised when the deployment has no document renderer, as opposed to when this

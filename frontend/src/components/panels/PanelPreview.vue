@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import type { FileContent, PreviewInfo } from '../../cx_types'
+import type { DocumentRevision, FileContent, PreviewInfo } from '../../cx_types'
 
 import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
 import { useFullscreen } from '@vueuse/core'
 
 import {
   attachmentRawUrl,
+  decideDocumentRevisions,
+  documentRevisions,
   downloadFile,
   getPreview,
   previewDocumentPdf,
@@ -135,6 +137,82 @@ async function loadDocument() {
   }
 }
 
+// ---- 修订清单 ----
+// 改别人的文档要留修订，所以一份芝士改过的 .docx 里带着 `<w:ins>` / `<w:del>`。
+// 旁边那份 PDF 已经把它们画出来了——LibreOffice 会渲染修订（实测：插入和删除的文字
+// 都出现在 PDF 里）。所以这份清单不是为了让人看见改动，是为了让人**处理**改动：
+// 逐条接受或拒绝，不用先装一个 Word。
+//
+// 每一条都带作者，而且一条都不过滤。用户传来的文档里本来就可能有别人未接受的修订，
+// 在自己的文档里接受同事的一处改动是件平常事；不平常的是不知不觉地接受了它。
+const revisions = ref<DocumentRevision[]>([])
+const revisionsError = ref('')
+const deciding = ref(0)
+let revisionsKey = ''
+// 读这份清单时文件是哪一版：处理时带回去，芝士在这中间重新交付过就不会被盖掉。
+let revisionsVersion = ''
+// 处理完一条之后 PDF 要重画，而它是按文件版本缓存的——版本没变，所以要自己打一下。
+const docNonce = ref(0)
+
+const hasRevisions = computed(() => documentSuffix.value === 'docx')
+
+async function loadRevisions() {
+  const tid = props.topicId
+  const path = previewFile.value?.path
+  if (!tid || !path || !hasRevisions.value) {
+    revisions.value = []
+    revisionsKey = ''
+    return
+  }
+  const key = `${tid}:${path}:${previewFile.value?.version ?? ''}:${docNonce.value}`
+  if (key === revisionsKey) return
+  revisionsKey = key
+  revisionsError.value = ''
+  try {
+    const read = await documentRevisions(tid, path)
+    revisions.value = read.revisions
+    revisionsVersion = read.version
+  } catch (e) {
+    // 读不到修订不该把文档也弄没：文档本身还好好地显示着。
+    revisions.value = []
+    revisionsVersion = ''
+    revisionsError.value = e instanceof Error ? e.message : '未能读取修订'
+  }
+}
+
+async function decide(decision: { accept?: number[]; reject?: number[] }) {
+  const tid = props.topicId
+  const path = previewFile.value?.path
+  if (!tid || !path) return
+  deciding.value += 1
+  revisionsError.value = ''
+  try {
+    const done = await decideDocumentRevisions(tid, path, revisionsVersion, decision)
+    revisions.value = done.revisions
+    revisionsVersion = done.version
+    // 文件改了，重新数的序号也变了：把两边都刷新，别让读者对着旧清单点第二下。
+    revisionsKey = ''
+    docNonce.value += 1
+    loadedDocKey = ''
+    await loadDocument()
+    await loadRevisions()
+  } catch (e) {
+    const said = e instanceof Error ? e.message : '未能处理这处修订'
+    // 写不进去多半是文件已经变了：先把清单换成现在这份，再说刚才那下没生效。
+    revisionsKey = ''
+    await loadRevisions()
+    revisionsError.value = said
+  } finally {
+    deciding.value -= 1
+  }
+}
+
+function revisionReads(row: DocumentRevision): string {
+  if (row.kind === 'replace') return `把「${row.removed}」改成「${row.added}」`
+  if (row.kind === 'insert') return `加了「${row.added}」`
+  return `删了「${row.removed}」`
+}
+
 // ---- 指出位置 ----
 // 读者指着文档里的一处说「这里不对」，交给芝士的是一句话：文件、位置、原文。
 // 不做能长期保留的批注——读者要改的那句话，正是芝士下一轮要改掉的那句话，锚点必然
@@ -184,6 +262,7 @@ watch([documentType, () => previewFile.value?.path, () => previewFile.value?.ver
     loadedDocKey = ''
     docError.value = ''
   }
+  void loadRevisions()
 })
 
 async function downloadArtifact() {
@@ -500,8 +579,67 @@ watch(
         <div>无法显示这个文件</div>
         <div class="t-meta mt-1">{{ docError }}</div>
       </div>
-      <PreviewPages v-else-if="documentType.view === 'pages'" :data="docBytes" @quote="onQuote" />
-      <PreviewSheet v-else :data="docBytes" :kind="documentSuffix === 'csv' ? 'csv' : 'workbook'" @cell="onCell" />
+      <div v-else class="doc__body">
+        <PreviewPages v-if="documentType.view === 'pages'" :data="docBytes" @quote="onQuote" />
+        <PreviewSheet v-else :data="docBytes" :kind="documentSuffix === 'csv' ? 'csv' : 'workbook'" @cell="onCell" />
+
+        <!-- 修订清单。页面上已经能看见改动了（LibreOffice 会把修订画出来），这里是
+             用来逐条处理的。 -->
+        <aside v-if="revisions.length" class="revs" data-testid="revisions">
+          <div class="revs__bar">
+            <span class="revs__count t-eyebrow">修订 {{ revisions.length }} 处</span>
+            <v-spacer />
+            <v-btn
+              size="x-small"
+              variant="text"
+              class="c-muted"
+              :disabled="deciding > 0"
+              @click="decide({ accept: revisions.map((r) => r.number) })"
+            >
+              全部接受
+            </v-btn>
+            <v-btn
+              size="x-small"
+              variant="text"
+              class="c-muted"
+              :disabled="deciding > 0"
+              @click="decide({ reject: revisions.map((r) => r.number) })"
+            >
+              全部拒绝
+            </v-btn>
+          </div>
+
+          <v-alert v-if="revisionsError" type="warning" density="compact" class="mb-2">
+            {{ revisionsError }}
+          </v-alert>
+
+          <ul class="revs__list">
+            <li v-for="row in revisions" :key="row.number" class="revs__item">
+              <div class="revs__what">{{ revisionReads(row) }}</div>
+              <div class="revs__who t-meta">第 {{ row.paragraph }} 段 · {{ row.author || '未署名' }}</div>
+              <div class="revs__acts">
+                <v-btn size="x-small" variant="text" :disabled="deciding > 0" @click="decide({ accept: [row.number] })">
+                  接受
+                </v-btn>
+                <v-btn
+                  size="x-small"
+                  variant="text"
+                  class="c-muted"
+                  :disabled="deciding > 0"
+                  @click="decide({ reject: [row.number] })"
+                >
+                  拒绝
+                </v-btn>
+              </div>
+            </li>
+          </ul>
+        </aside>
+      </div>
+
+      <!-- 清单读不出来时文档照旧显示，只在下面说一句。 -->
+      <v-alert v-if="revisionsError && !revisions.length" type="warning" density="compact" class="mx-3 mb-2">
+        {{ revisionsError }}
+      </v-alert>
 
       <!-- 指出位置：读者选中一句话或点中一个格子，这条就是交给芝士的坐标。 -->
       <Transition name="locator">
@@ -635,6 +773,77 @@ watch(
 }
 .doc__state--text {
   text-align: center;
+}
+
+/* 文档和修订清单并排。面板本来就窄，所以窄到一定程度就改成上下排，清单收在下面
+   限高自己滚——行内修订在小屏上几乎读不了，而清单读得了。 */
+.doc__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+}
+.doc__body > :first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.revs {
+  flex: none;
+  width: 236px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 12px 12px;
+  border-left: 1px solid var(--line);
+  background: var(--surface);
+}
+.revs__bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.revs__count {
+  color: var(--muted);
+}
+.revs__list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.revs__item {
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+.revs__what {
+  font-size: 13px;
+  color: var(--text);
+  word-break: break-word;
+}
+.revs__who {
+  margin-top: 2px;
+  color: var(--faint);
+}
+.revs__acts {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+@media (max-width: 720px) {
+  .doc__body {
+    flex-direction: column;
+  }
+  .revs {
+    width: auto;
+    max-height: 38%;
+    border-left: none;
+    border-top: 1px solid var(--line);
+  }
 }
 
 /* .md 的正文。排版规则（标题、列表、代码块、表格）来自全局的 .md-content，
