@@ -78,6 +78,7 @@ vi.mock('../../api', async () => {
 })
 
 import { listRoomTasks } from '../../api'
+import { setLocale } from '../../i18n'
 import WorkPanel from '../WorkPanel.vue'
 
 function topic(id: string): Topic {
@@ -162,6 +163,8 @@ beforeAll(() => {
 
 describe('文件面板', () => {
   beforeEach(() => {
+    // 这一份按 tab 的名字点它（`openFilesTool` 找的是 title 以「改动」开头的那一格）。
+    setLocale('zh-CN')
     vi.clearAllMocks()
     getGitDiff.mockResolvedValue({ diff: '' })
     listFiles.mockResolvedValue({ data: [{ path: 'a.py', bytes: 10 }], total: 1 })

@@ -12,23 +12,30 @@
 
 import type { BoardColumn } from '@/cx_types'
 
+import { t } from '@/i18n'
+
 export interface BoardColumnSpec {
   key: BoardColumn
-  label: string
+  /** 列名。**读的时候才取词**，不在模块加载时取一次：写成常量的话，挂载后切一次
+   *  语言，已经画出来的列名会停在旧语言那一份（同一个坑在 #1174 的筛选下拉里踩过）。 */
+  readonly label: string
   /** Class suffix the host styles: `board-dot--building` 等。 */
   cls: string
 }
 
-const COLUMN_LABEL: Record<BoardColumn, string> = {
-  building: '施工中',
-  delivering: '交付中',
-  needs_you: '待处理',
-  done: '已完成',
-  archived: '已归档',
+// 列名走词表。`workspace.status.*` 是**一张词表，不是各写一份**：施工中 / 交付中 /
+// 已完成同时也是话题状态徽章（lib/topicState.ts）上的词，两处同词同译，所以共用
+// 同一个键——各抄一份的话，改一边就会在两个屏幕上看到两种叫法。
+const COLUMN_LABEL_KEY: Record<BoardColumn, string> = {
+  building: 'workspace.status.building',
+  delivering: 'workspace.status.delivering',
+  needs_you: 'workspace.status.needsYou',
+  done: 'workspace.status.done',
+  archived: 'workspace.status.archived',
 }
 
 export function columnLabel(column: BoardColumn): string {
-  return COLUMN_LABEL[column]
+  return t(COLUMN_LABEL_KEY[column])
 }
 
 /** 色点的 class。列色是这套界面里唯一说「该谁动」的颜色，所以看板、房间总览、侧栏
@@ -60,7 +67,10 @@ export function columnDotStyle(column: BoardColumn): Record<string, string> {
  *  也不在：活不归档（只有房间会），一条活永远落不到那一列。 */
 export const BOARD_COLUMNS: BoardColumnSpec[] = (['building', 'delivering', 'needs_you'] as const).map((key) => ({
   key,
-  label: COLUMN_LABEL[key],
+  // 取值器而不是一个固定值：列名要跟着语言走，见 BoardColumnSpec.label。
+  get label() {
+    return columnLabel(key)
+  },
   cls: columnDotClass(key),
 }))
 

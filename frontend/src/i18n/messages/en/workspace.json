@@ -1,0 +1,33 @@
+{
+  "tabs": {
+    "chat": "Chat",
+    "overview": "Overview",
+    "site": "Activity",
+    "changes": "Changes",
+    "preview": "Preview"
+  },
+  "tabTitle": {
+    "siteWorking": "Activity (Cheese is working)",
+    "overviewTasks": "Overview (no tasks) | Overview (1 task) | Overview ({count} tasks)",
+    "overviewTasksInProgress": "Overview ({count} task(s), {open} in progress)",
+    "previewNewContent": "Preview (new content)",
+    "changesFiles": "Changes (no files) | Changes (1 file) | Changes ({count} files)",
+    "changesNewFiles": "Changes (no new files) | Changes (1 file, new changes) | Changes ({count} files, new changes)"
+  },
+  "status": {
+    "building": "Building",
+    "delivering": "Delivering",
+    "needsYou": "Needs you",
+    "done": "Done",
+    "archived": "Archived",
+    "accepted": "Accepted",
+    "draft": "Draft",
+    "reviewing": "In review",
+    "inProgress": "In progress"
+  },
+  "routes": {
+    "project": "Project workspace",
+    "overview": "Overview",
+    "board": "Board"
+  }
+}

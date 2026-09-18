@@ -13,6 +13,7 @@ import spaces from './spaces.json'
 import tasks from './tasks.json'
 import teams from './teams.json'
 import users from './users.json'
+import workspace from './workspace.json'
 
 export default {
   acceptCard,
@@ -30,4 +31,5 @@ export default {
   tasks,
   teams,
   notifications,
+  workspace,
 }

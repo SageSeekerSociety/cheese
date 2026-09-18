@@ -27,6 +27,12 @@ import PanelOverview from './panels/PanelOverview.vue'
 import PanelPreview from './panels/PanelPreview.vue'
 import PanelSite from './panels/PanelSite.vue'
 
+// `t` 从模块里来，不是 `useI18n()`：这一格四个子面板都拿它当壳，挂它的用例不装
+// i18n 插件（`WorkPanel.chatTab.spec.ts` 只装 vuetify），而 `useI18n()` 那种写法
+// 在没有插件的树上会直接抛异常。模块导出的 `t` 不依赖插件，在模板里照样跟着
+// locale 走。别「顺手改成规范写法」——那会一次砸掉一批用例。
+import { t } from '@/i18n'
+
 const props = withDefaults(
   defineProps<{
     topic: Topic | null
@@ -78,18 +84,20 @@ const emit = defineEmits<{
 type TabKey = 'chat' | 'overview' | 'site' | 'changes' | 'preview'
 interface TabDef {
   key: TabKey
-  label: string
+  /** 词表里的键，不是译文。这一格的名字要在**渲染时**取词（见模板里的 `t(...)`），
+   *  在这里写死成译文的话，切语言后 tab 栏会停在旧语言那一份。 */
+  labelKey: string
   icon: string
 }
 const ALL_TABS: TabDef[] = [
-  { key: 'chat', label: '对话', icon: 'mdi-message-outline' },
+  { key: 'chat', labelKey: 'workspace.tabs.chat', icon: 'mdi-message-outline' },
   // 文档 和 任务 合成了一格。它们回答的是同一个问题的两半——「这个房间在干什么」
   // ——分成两格意味着看完一半得先想起来还有另一半，于是大多数人只看文档，房间里
   // 有几条活在跑就没人知道。
-  { key: 'overview', label: '总览', icon: 'mdi-file-document-outline' },
-  { key: 'site', label: '现场', icon: 'mdi-hammer-wrench' },
-  { key: 'changes', label: '改动', icon: 'mdi-source-branch' },
-  { key: 'preview', label: '预览', icon: 'mdi-eye-outline' },
+  { key: 'overview', labelKey: 'workspace.tabs.overview', icon: 'mdi-file-document-outline' },
+  { key: 'site', labelKey: 'workspace.tabs.site', icon: 'mdi-hammer-wrench' },
+  { key: 'changes', labelKey: 'workspace.tabs.changes', icon: 'mdi-source-branch' },
+  { key: 'preview', labelKey: 'workspace.tabs.preview', icon: 'mdi-eye-outline' },
 ]
 // 地址没指定、阶段也没话说的时候落在哪一格：手机上是对话（你进话题多半是来说话
 // 的），桌面上对话就在旁边那一栏，所以是总览。
@@ -102,7 +110,7 @@ const active = ref<TabKey>(defaultTab.value)
 function tabFromUrl(): TabKey | null {
   const asked = props.tab
   if (!asked) return null
-  if (ALL_TABS.some((t) => t.key === asked)) return asked as TabKey
+  if (ALL_TABS.some((def) => def.key === asked)) return asked as TabKey
   return TAB_ALIASES[asked] ?? null
 }
 
@@ -299,21 +307,31 @@ function tabIsOffered(key: TabKey): boolean {
   return !!previewLatest.value
 }
 
-const tabs = computed(() => ALL_TABS.filter((t) => tabIsOffered(t.key)))
+const tabs = computed(() => ALL_TABS.filter((def) => tabIsOffered(def.key)))
 
-/** What the signal on a tab means, for people who reach it by hover or reader. */
-function tabTitle(t: TabDef): string {
-  if (t.key === 'site' && props.working) return `${t.label}（芝士正在工作）`
-  if (t.key === 'overview' && threads.value.total) {
+/** What the signal on a tab means, for people who reach it by hover or reader.
+ *
+ *  每一句整句都在词表里（`workspace.tabTitle.*`），**不是** `${label}（…）` 那样拼
+ *  出来的：带计数的几句英文要按件数选形态，而形态有几截决定了整串的占位符集合，
+ *  所以「格子名」只能是每截里写死的字面量，不能是 `{tab}` 那样的占位符——占了位就
+ *  写不了多形态（见 docs/i18n-glossary.md §3）。代价是这几句里各自带着 tab 名，
+ *  `workspace.tabs.*` 改了记得一起改。 */
+function tabTitle(def: TabDef): string {
+  if (def.key === 'site' && props.working) return t('workspace.tabTitle.siteWorking')
+  if (def.key === 'overview' && threads.value.total) {
     const { total, open } = threads.value
-    return open ? `${t.label}（${total} 件任务，${open} 件进行中）` : `${t.label}（${total} 件任务）`
+    return open
+      ? t('workspace.tabTitle.overviewTasksInProgress', { count: total, open })
+      : t('workspace.tabTitle.overviewTasks', { count: total }, total)
   }
-  if (t.key === 'preview' && previewHasNew.value) return `${t.label}（有新内容）`
-  if (t.key === 'changes' && summary.value.changedFiles.length) {
+  if (def.key === 'preview' && previewHasNew.value) return t('workspace.tabTitle.previewNewContent')
+  if (def.key === 'changes' && summary.value.changedFiles.length) {
     const n = summary.value.changedFiles.length
-    return changesHasNew.value ? `${t.label}（${n} 个文件，有新改动）` : `${t.label}（${n} 个文件）`
+    return changesHasNew.value
+      ? t('workspace.tabTitle.changesNewFiles', { count: n }, n)
+      : t('workspace.tabTitle.changesFiles', { count: n }, n)
   }
-  return t.label
+  return t(def.labelKey)
 }
 // 房间型话题（谁也没在里面干过活）就只剩文档一个 tab —— 一条只有一个选项的
 // tab 栏教不了任何东西，只是一条占着 33px 的横线。
@@ -389,35 +407,37 @@ defineExpose({ pulse, highlightTurn, openFile })
 
     <template v-else>
       <div v-if="showTabBar" ref="tabbarRef" class="tabbar" role="tablist">
+        <!-- 循环变量叫 tabDef 而不是 tab：`tab` 是这一格的 prop（地址里那个 ?tab=），
+             defineProps 的名字在模板里也占着一个绑定，重名会被 lint 判成遮蔽。 -->
         <button
-          v-for="t in tabs"
-          :key="t.key"
+          v-for="tabDef in tabs"
+          :key="tabDef.key"
           type="button"
           role="tab"
           class="tabbar__tab"
-          :class="{ 'tabbar__tab--on': active === t.key }"
-          :aria-selected="active === t.key"
-          :title="tabTitle(t)"
-          @click="setTab(t.key)"
+          :class="{ 'tabbar__tab--on': active === tabDef.key }"
+          :aria-selected="active === tabDef.key"
+          :title="tabTitle(tabDef)"
+          @click="setTab(tabDef.key)"
         >
-          <v-icon size="16">{{ t.icon }}</v-icon>
-          {{ t.label }}
+          <v-icon size="16">{{ tabDef.icon }}</v-icon>
+          {{ t(tabDef.labelKey) }}
           <!-- 信号上 Tab，不抢占视图: 芝士 works for minutes at a time and the
                reader is usually somewhere else while it does, so what it
                produced has to be visible from the tab it produced it on. None
                of these ever selects a tab for you. -->
-          <span v-if="t.key === 'site' && working" class="tabbar__pulse" />
+          <span v-if="tabDef.key === 'site' && working" class="tabbar__pulse" />
           <!-- A dot, not a count: there is only ever one current preview, so a
                number would be noise. -->
-          <span v-if="t.key === 'preview' && previewHasNew" class="tabbar__dot" />
+          <span v-if="tabDef.key === 'preview' && previewHasNew" class="tabbar__dot" />
           <!-- 有几件活在跑。和 改动 一样用数字而不是点：几件在跑本身就是要看的
                那个信息。它不变色——派出去的活不是「你还没看过的东西」。 -->
-          <span v-if="t.key === 'overview' && threads.total" class="tabbar__count">{{ threads.total }}</span>
+          <span v-if="tabDef.key === 'overview' && threads.total" class="tabbar__count">{{ threads.total }}</span>
           <!-- 改动 is the opposite: how much there is to review is the useful
                part, so the count carries the signal and turns amber when it is
                work you have not looked at yet. -->
           <span
-            v-if="t.key === 'changes' && summary.changedFiles.length"
+            v-if="tabDef.key === 'changes' && summary.changedFiles.length"
             class="tabbar__count"
             :class="{ 'tabbar__count--new': changesHasNew }"
             >{{ summary.changedFiles.length }}</span
