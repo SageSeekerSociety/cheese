@@ -1069,10 +1069,41 @@ export function toggleReaction(
   )
 }
 
+// ---- 资料库 ----
+
+// 用户给这个项目的文件，按原名。项目一级，所以一个房间引用得到另一个房间上传的
+// 那一份——「上周那份预算表」这句话正是在这种地方说的。
+export interface LibraryFile {
+  path: string
+  bytes: number
+  /** Unix seconds; the list comes back newest first. */
+  modified: number
+}
+
+export function listProjectLibrary(projectId: string): Promise<ListPayload<LibraryFile>> {
+  return request<ListPayload<LibraryFile>>(`/projects/${encodeURIComponent(projectId)}/library`)
+}
+
 // ---- Chat attachments ----
 
-// Upload a file into the topic's worktree. NOTE: raw fetch, not
-// request() — multipart needs the browser to set the boundary header itself.
+/** 把资料库里已有的一份文件附在这条消息上。返回的形状和一次上传相同。 */
+export async function attachLibraryFile(topicId: string, libraryPath: string): Promise<ChatAttachment> {
+  const form = new FormData()
+  form.append('library_path', libraryPath)
+  const res = await fetch(`${BASE}/topics/${encodeURIComponent(topicId)}/attachments`, {
+    method: 'POST',
+    body: form,
+    headers: authHeaders(),
+  })
+  const envelope = (await res.json().catch(() => null)) as ApiEnvelope<ChatAttachment> | null
+  if (!res.ok || !envelope || envelope.code !== 200) {
+    throw new Error(envelope?.message || `添加失败（HTTP ${res.status}）`)
+  }
+  return envelope.data
+}
+
+// Upload a file into the project's 资料库, with a copy in this room. NOTE: raw
+// fetch, not request() — multipart needs the browser to set the boundary itself.
 export async function uploadAttachment(topicId: string, file: File): Promise<ChatAttachment> {
   const form = new FormData()
   form.append('file', file)

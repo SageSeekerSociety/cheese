@@ -1,9 +1,9 @@
-// Files upload into the topic's worktree; sending a message references {path, mime}.
+// 上传的文件进项目的资料库，这个房间留一份；发消息时引用 {path, mime}。
 import type { ChatAttachment } from '../cx_types'
 
 import { ref } from 'vue'
 
-import { uploadAttachment } from '../api'
+import { attachLibraryFile, uploadAttachment } from '../api'
 
 const MAX_PENDING = 9
 
@@ -93,6 +93,43 @@ export function usePendingAttachments(
     }
   }
 
+  /** 资料库里已经有的一份文件：不重新上传，取这个项目里那一份。 */
+  async function addLibraryFile(libraryPath: string) {
+    const topicId = getTopicId()
+    if (!topicId) return
+    if (pending.value.length >= MAX_PENDING) {
+      onError?.('每条消息最多添加 9 个附件')
+      return
+    }
+    const name = libraryPath.split('/').pop() || libraryPath
+    // 同一个占位逻辑：这一步要向后端要一份房间内的拷贝，所以它也有等待时间。
+    const slot: PendingAttachment = {
+      path: `uploading:${++placeholderSeq}:${name}`,
+      mime: 'application/octet-stream',
+      uploading: true,
+      name,
+    }
+    pending.value.push(slot)
+    const drop = () => {
+      const at = pending.value.indexOf(slot)
+      if (at >= 0) pending.value.splice(at, 1)
+    }
+    let attachment
+    try {
+      attachment = await attachLibraryFile(topicId, libraryPath)
+    } catch (e) {
+      drop()
+      onError?.(e instanceof Error ? e.message : '添加文件失败')
+      return
+    }
+    if (getTopicId() !== topicId) {
+      drop()
+      return
+    }
+    const at = pending.value.indexOf(slot)
+    if (at >= 0) pending.value.splice(at, 1, attachment)
+  }
+
   // Composer paste handler: pasted image data (e.g. a screenshot) uploads
   // instead of landing as garbled text; plain-text pastes pass through.
   function onPaste(e: ClipboardEvent) {
@@ -127,5 +164,5 @@ export function usePendingAttachments(
     pending.value = []
   }
 
-  return { pending, uploading, addFiles, onPaste, onDrop, removeAt, clear }
+  return { pending, uploading, addFiles, addLibraryFile, onPaste, onDrop, removeAt, clear }
 }

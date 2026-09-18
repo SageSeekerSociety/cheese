@@ -45,6 +45,7 @@ interface Outgoing {
 </script>
 
 <script setup lang="ts">
+import type { LibraryFile } from '../api'
 import type {
   AgentControlState,
   Block,
@@ -74,6 +75,7 @@ import {
   getProgress,
   isRetryableGetFailure,
   listBlocks,
+  listProjectLibrary,
   listRoomTasks,
   listTopicMembers,
   summonAgent,
@@ -1374,7 +1376,7 @@ const mentionQuery = computed(() => {
 })
 interface MentionItem {
   label: string
-  kind: 'member' | 'topic' | 'broadcast'
+  kind: 'member' | 'topic' | 'broadcast' | 'file'
   // Text written after the "@" when picked (a handle/name/token).
   insert: string
   // Secondary line: @handle for people, status for topics, hint for broadcast.
@@ -1387,6 +1389,36 @@ const BROADCAST_ITEMS: MentionItem[] = [
   { label: '所有人', kind: 'broadcast', insert: 'all', sub: '@all · 通知话题全体成员', agent: false },
   { label: '在线成员', kind: 'broadcast', insert: 'here', sub: '@here · 通知在线成员', agent: false },
 ]
+// 资料库：项目给进来的文件，@ 一下就能带上这条消息。按需拉一次——打开一个房间的
+// 人不一定要引用文件，而打了 @ 的人正要挑东西。
+const libraryFiles = ref<LibraryFile[]>([])
+const libraryFor = ref<string | null>(null)
+async function loadLibrary() {
+  const projectId = props.topic?.project_id
+  if (!projectId || libraryFor.value === projectId) return
+  libraryFor.value = projectId
+  try {
+    libraryFiles.value = (await listProjectLibrary(projectId)).data
+  } catch {
+    // 挑文件是输入栏里的一个便利，不是这条消息发不出去的理由。
+    libraryFiles.value = []
+    libraryFor.value = null
+  }
+}
+watch(
+  () => props.topic?.project_id,
+  () => {
+    libraryFiles.value = []
+    libraryFor.value = null
+  }
+)
+watch(
+  () => mentionQuery.value !== null,
+  (typing) => {
+    if (typing) void loadLibrary()
+  }
+)
+
 const mentionMatches = computed<MentionItem[]>(() => {
   const q = mentionQuery.value
   if (q === null) return []
@@ -1409,6 +1441,13 @@ const mentionMatches = computed<MentionItem[]>(() => {
         sub: t.status === 'archived' ? '已归档' : '进行中',
         agent: false,
       })),
+    ...libraryFiles.value.map((f) => ({
+      label: f.path,
+      kind: 'file' as const,
+      insert: f.path,
+      sub: '资料库',
+      agent: false,
+    })),
   ].filter((i) => i.label.toLowerCase().includes(ql))
   // Agent 排在最前，群播让位。第一格就是 Enter 的默认答案，而「打一个 @ 然后回
   // 车」在这个产品里压倒性地是「交给芝士」——把 @all 摆在那个位置，等于让最常见
@@ -1419,6 +1458,14 @@ const mentionMatches = computed<MentionItem[]>(() => {
   return [...agents, ...broadcast, ...rest].slice(0, 7)
 })
 function pickMention(item: MentionItem) {
+  if (item.kind === 'file') {
+    // 文件不是一个能 @ 的人：挑中它是把它附在这条消息上，所以那个 @ 连同半个
+    // 名字都从正文里拿掉，文件去待发条里待着。
+    draft.value = draft.value.replace(/@([^\s@]*)$/, '')
+    void addLibraryFile(item.insert)
+    void nextTick(() => composerInput.value?.focus?.())
+    return
+  }
   draft.value = draft.value.replace(/@([^\s@]*)$/, `@${item.insert} `)
   // 挑完一个人，正是你要接着往下打字的时刻。鼠标点菜单会把焦点带到那颗按钮上，
   // 键盘挑则让整块菜单从 DOM 里消失——两条路都可能把光标从输入框里带走，而「@
@@ -1446,6 +1493,7 @@ const {
   pending: pendingAtts,
   uploading: attsUploading,
   addFiles,
+  addLibraryFile,
   onPaste: onComposerPaste,
   onDrop: onComposerDrop,
   removeAt: removePendingAtt,
@@ -2296,6 +2344,9 @@ onBeforeUnmount(() => {
                 :class="{ 'mention-avatar--agent': mm.agent }"
                 >{{ mm.label.slice(0, 1).toUpperCase() }}</span
               >
+              <span v-else-if="mm.kind === 'file'" class="mention-avatar mention-avatar--file">
+                <v-icon size="13">mdi-file-outline</v-icon>
+              </span>
               <span v-else class="mention-avatar mention-avatar--topic">
                 <v-icon size="13">mdi-pound</v-icon>
               </span>
@@ -2887,7 +2938,8 @@ details.sys-row > summary::-webkit-details-marker {
   color: var(--surface);
   background: var(--ink);
 }
-.mention-avatar--topic {
+.mention-avatar--topic,
+.mention-avatar--file {
   background: var(--fill);
   color: var(--muted);
 }
