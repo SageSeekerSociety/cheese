@@ -196,10 +196,16 @@ def test_publish_during_work_keeps_turn_open_and_only_published_text_enters_memo
         assert turn_id is not None
         first = publish(client, topic, headers).json()["data"]
         assert first["turn_id"] == turn_id
-        assert ws.receive_json() == {"type": "assistant_block", "block": first}
+        assert next_frame(ws, "assistant_block") == {
+            "type": "assistant_block",
+            "block": first,
+        }
         second = publish(client, topic, headers, "检查通过了。").json()["data"]
         assert second["turn_id"] == turn_id
-        assert ws.receive_json() == {"type": "assistant_block", "block": second}
+        assert next_frame(ws, "assistant_block") == {
+            "type": "assistant_block",
+            "block": second,
+        }
         assert memories == []
         client.portal.call(stub_hooks.stops, uuid.UUID(topic), raw_text)
         while ws.receive_json()["type"] != "done":
@@ -208,6 +214,28 @@ def test_publish_during_work_keeps_turn_open_and_only_published_text_enters_memo
     assert (
         memories[0]["assistant_text"] == first["content"] + "\n\n" + second["content"]
     )
+
+
+def next_frame(ws, kind):
+    """The next frame of that kind.
+
+    The room's socket carries more than publications: a session's control state
+    arrives on it too, and whether one of those lands between two publications
+    is a matter of timing. Reading the very next frame and expecting it to be
+    the publication is what made this file fail about one run in three.
+    """
+    while True:
+        frame = ws.receive_json()
+        if frame["type"] == kind:
+            return frame
+
+
+def next_block(ws):
+    """The block carried by the next frame that carries one."""
+    while True:
+        frame = ws.receive_json()
+        if "block" in frame:
+            return frame["block"]
 
 
 @pytest.mark.parametrize("threshold", [600, 90])
@@ -263,7 +291,7 @@ def test_silence_reminder_only_queues_for_an_active_silent_response(
         assert client.portal.call(chat.remind_silent_turns) == 0
         clock += timedelta(seconds=1)
         client.portal.call(stub_hooks.says, uuid.UUID(topic), "More internal output")
-        assert ws.receive_json()["block"]["content"] == "More internal output"
+        assert next_block(ws)["content"] == "More internal output"
         sweep = client.portal.start_task_soon(chat.remind_silent_turns)
         client.portal.call(started.wait)
         assert not sweep.done()
@@ -283,18 +311,18 @@ def test_silence_reminder_only_queues_for_an_active_silent_response(
         assert len(notices) == 2
         request_id = str(uuid.uuid4())
         sent = publish(client, topic, headers, request_id=request_id).json()["data"]
-        assert ws.receive_json()["block"]["id"] == sent["id"]
+        assert next_block(ws)["id"] == sent["id"]
         assert client.portal.call(chat.remind_silent_turns) == 0
         clock += timedelta(seconds=threshold)
         # Replaying a previous send must not masquerade as a fresh update.
         assert publish(client, topic, headers, request_id=request_id).status_code == 200
-        assert ws.receive_json()["block"]["id"] == sent["id"]
+        assert next_block(ws)["id"] == sent["id"]
         assert client.portal.call(chat.remind_silent_turns) == 1
         assert len(notices) == 3
         system_event.assert_not_called()
         # Stop must disarm a fresh silence interval, not merely a sent reminder.
         sent = publish(client, topic, headers, content="检查已经结束。").json()["data"]
-        assert ws.receive_json()["block"]["id"] == sent["id"]
+        assert next_block(ws)["id"] == sent["id"]
         client.portal.call(stub_hooks.stops, uuid.UUID(topic), "Finished internally")
         while ws.receive_json()["type"] != "done":
             pass
