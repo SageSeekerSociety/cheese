@@ -42,6 +42,10 @@ import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 import DocComments from './doc/DocComments.vue'
 import DocSlashMenu from './doc/DocSlashMenu.vue'
 
+// `t` 从模块里来，不是 `useI18n()`。理由同 WorkPanel.vue / PanelChanges.vue：
+// 这块面板会被不装 i18n 插件的用例挂起来，`useI18n()` 在没有插件的树上当场抛。
+import { t } from '@/i18n'
+
 // The living doc is the core interface (spec §2.2): an AI-maintained markdown
 // document the user can also edit ("改文档即指令"). Stored as markdown, so the
 // editor reads markdown in (contentType: 'markdown') and serializes markdown out
@@ -167,16 +171,25 @@ async function highlightNode(nodeId: string) {
 // meant for) neighbouring text — unlike the old absolutely-positioned overlay
 // track, which created cursor dead zones. ---
 
-const STATUS_LABEL: Record<string, string> = {
-  open: '进行中',
-  in_progress: '进行中',
-  active: '进行中',
-  draft: '草稿',
-  archived: '已完成',
-  completed: '已完成',
+// 状态词复用 `workspace.status.*`（#1202 建的那一张表），这里只留「后端的状态值 →
+// 表里的键」这一层别名，不在本组件里另起一套译法。取词在**调用时**做：这张表在
+// 模块加载时建好，存的是键，存成译好的词的话切了语言徽章会停在旧语言。
+//
+// 表里同时挂着两种东西的状态：`upgraded_to_topic_id` 指向话题（open / closed /
+// draft / archived），`upgraded_to_task_id` 指向任务（pending / in_progress /
+// completed）。没有别名的值（closed、pending）照原样显示 —— 这是改动前的行为，
+// 见交付说明里的「待定」那一条。
+const STATUS_KEY: Record<string, string> = {
+  open: 'workspace.status.inProgress',
+  in_progress: 'workspace.status.inProgress',
+  active: 'workspace.status.inProgress',
+  draft: 'workspace.status.draft',
+  archived: 'workspace.status.done',
+  completed: 'workspace.status.done',
 }
 function statusLabel(s: string): string {
-  return STATUS_LABEL[s] ?? s
+  const key = STATUS_KEY[s]
+  return key ? t(key) : s
 }
 
 // Top-level doc-node index → the subtopic id that paragraph was upgraded into.
@@ -196,7 +209,10 @@ function liveRefWidget(topicId: string): HTMLElement {
   el.dataset.topic = topicId
   el.contentEditable = 'false'
   el.setAttribute('role', 'button')
-  el.title = `「${sub?.title ?? '这件任务'}」· ${statusLabel(status)} — 点击打开`
+  el.title = t('workspace.doc.liveRefTitle', {
+    title: sub?.title ?? t('workspace.doc.thisTask'),
+    status: statusLabel(status),
+  })
   const dot = document.createElement('span')
   dot.className = `doc-liveref__dot is-${status}`
   // 图标而不是 🧩：emoji 在不同系统上是彩色位图，尺寸和基线都不跟随字号，混在
@@ -209,7 +225,7 @@ function liveRefWidget(topicId: string): HTMLElement {
   icon.setAttribute('aria-hidden', 'true')
   const label = document.createElement('span')
   label.className = 'doc-liveref__label'
-  label.textContent = sub?.title ?? '子话题'
+  label.textContent = sub?.title ?? t('workspace.doc.subtopic')
   const st = document.createElement('span')
   st.className = 'doc-liveref__status'
   st.textContent = statusLabel(status)
@@ -453,9 +469,7 @@ const paused = computed(() =>
   })
 )
 const pausedHint = computed(() =>
-  editable.value
-    ? '此文档含编辑器不完全支持的语法，自动保存已暂停；切到源码模式编辑即可保存'
-    : '只读模式下不会自动保存；切回编辑模式即可保存这些改动'
+  editable.value ? t('workspace.doc.pausedHintEditable') : t('workspace.doc.pausedHintReadOnly')
 )
 
 // Full markdown the file should contain if we saved right now.
@@ -496,7 +510,7 @@ function tokenWidget(kind: '@' | '#' | '&', id: string, lookupTopic: (tid: strin
   } else if (kind === '#') {
     el.className = 'mention topic-ref'
     el.dataset.topic = id
-    el.textContent = `#${lookupTopic(id) ?? '话题'}`
+    el.textContent = `#${lookupTopic(id) ?? t('workspace.doc.topic')}`
   } else {
     el.className = 'mention file-ref'
     el.dataset.file = id
@@ -667,7 +681,7 @@ onBeforeUnmount(() => {
 })
 
 function currentCodeLang(): string {
-  return codeCopyPre?.getAttribute('data-language') || '语言'
+  return codeCopyPre?.getAttribute('data-language') || t('workspace.doc.language')
 }
 
 function setCodeBlockLang(lang: string) {
@@ -704,7 +718,7 @@ async function copyCodeBlock() {
       if (codeCopy.value) codeCopy.value = { ...codeCopy.value, done: false }
     }, 1200)
   } catch {
-    errorMsg.value = '复制失败'
+    errorMsg.value = t('workspace.doc.copyFailed')
   }
 }
 
@@ -1029,7 +1043,7 @@ async function loadDoc(topicId: string) {
     // A2 badges + 常驻评论区: refresh nodes/comments for the new doc.
     void loadComments(topicId).catch(() => {})
   } catch (e) {
-    errorMsg.value = e instanceof Error ? e.message : '加载文档失败'
+    errorMsg.value = e instanceof Error ? e.message : t('workspace.doc.loadDocFailed')
   } finally {
     if (props.topic?.id === topicId) loading.value = false
   }
@@ -1138,7 +1152,7 @@ async function save(force = false) {
       // default: show the same conflict bar and let the person choose.
       await showConflictWithServerDoc(topic.id)
     } else {
-      errorMsg.value = e instanceof Error ? e.message : '保存失败'
+      errorMsg.value = e instanceof Error ? e.message : t('global.saveFailed')
     }
   } finally {
     saving.value = false
@@ -1155,7 +1169,7 @@ async function showConflictWithServerDoc(topicId: string) {
     docVersion.value = block?.doc_version ?? 0
     externalDoc.value = block?.content ?? ''
   } catch {
-    errorMsg.value = '文档在别处被改过了，这次保存没写进去'
+    errorMsg.value = t('workspace.doc.conflictReloadFailed')
   }
 }
 
@@ -1352,7 +1366,7 @@ onBeforeUnmount(() => {
     <div v-if="!topic" class="flex-grow-1 d-flex align-center justify-center text-medium-emphasis">
       <div class="text-center">
         <v-icon size="48" class="mb-2 text-disabled">mdi-file-document-outline</v-icon>
-        <div>选择一个话题查看文档</div>
+        <div>{{ t('workspace.doc.pickTopic') }}</div>
       </div>
     </div>
 
@@ -1361,21 +1375,21 @@ onBeforeUnmount(() => {
            这个 tab 里 —— 每个 tab 自带自己的控件，后面四张卡才各改各的文件。 -->
       <div class="doc-bar">
         <v-spacer />
-        <span v-if="saveStatus === 'loading'" class="t-meta me-2">加载中…</span>
-        <span v-else-if="saveStatus === 'saving'" class="t-meta me-2">保存中…</span>
+        <span v-if="saveStatus === 'loading'" class="t-meta me-2">{{ t('global.loading') }}</span>
+        <span v-else-if="saveStatus === 'saving'" class="t-meta me-2">{{ t('workspace.doc.saving') }}</span>
         <!-- 军规 1: autosave is paused — say so instead of faking progress. -->
         <span v-else-if="saveStatus === 'paused'" class="doc-status-paused me-2" :title="pausedHint">
           <v-icon size="13">mdi-pause-circle-outline</v-icon>
-          已暂停 · 改动未保存
+          {{ t('workspace.doc.paused') }}
         </span>
         <span
           v-else-if="saveStatus === 'saved'"
           class="d-inline-flex align-center ga-1 c-faint me-2"
           style="font-size: 12px"
         >
-          <span class="status-dot status-dot--ok" />已保存
+          <span class="status-dot status-dot--ok" />{{ t('workspace.doc.saved') }}
         </span>
-        <span v-else-if="saveStatus === 'dirty'" class="t-meta me-2">编辑中…</span>
+        <span v-else-if="saveStatus === 'dirty'" class="t-meta me-2">{{ t('workspace.doc.editing') }}</span>
 
         <v-btn
           v-if="!editingBlocked"
@@ -1385,7 +1399,7 @@ onBeforeUnmount(() => {
           :disabled="sourceMode"
           @click="toggleEditable"
         >
-          {{ editable ? '只读' : '编辑' }}
+          {{ editable ? t('global.readOnly') : t('global.edit') }}
         </v-btn>
         <!-- 源码: raw markdown in Monaco — the lossless escape hatch for any
              syntax the visual editor can't fully represent (军规 1)。手机上不提供，
@@ -1395,10 +1409,10 @@ onBeforeUnmount(() => {
           size="small"
           variant="text"
           :class="sourceMode ? 'tool-btn--active' : 'c-muted'"
-          title="源码模式（直接编辑 markdown 原文）"
+          :title="t('workspace.doc.sourceModeTitle')"
           @click="toggleSourceMode"
         >
-          源码
+          {{ t('workspace.doc.source') }}
         </v-btn>
       </div>
       <!-- 军规 1 notices. Above the stage so they show in BOTH visual and
@@ -1407,18 +1421,30 @@ onBeforeUnmount(() => {
       <div v-if="hasPendingEdits" class="doc-notice">
         <v-icon size="16" class="doc-notice__icon">mdi-content-save-alert-outline</v-icon>
         <div class="doc-notice__text">
-          有未保存的改动没有带入当前编辑器，编辑器显示的是磁盘上的版本。改动仍然保留，可以随时取回。
-          <template v-if="pendingEdits.length > 1">共 {{ pendingEdits.length }} 份，先取回最近一份。</template>
+          {{ t('workspace.doc.pendingEditsNotice') }}
+          <!-- 第二句只在暂存多于一份时出现，和上一句之间的空格由这里的换行
+               （Vue 压成一个空格）给，词条里不带前导空格。 -->
+          <template v-if="pendingEdits.length > 1">
+            {{ t('workspace.doc.pendingEditsCount', { count: pendingEdits.length }) }}
+          </template>
         </div>
-        <button type="button" class="doc-notice__btn" @click="applyPendingEdits">恢复我的改动</button>
-        <button type="button" class="doc-notice__btn doc-notice__btn--quiet" @click="discardPendingEdits">丢弃</button>
+        <button type="button" class="doc-notice__btn" @click="applyPendingEdits">
+          {{ t('workspace.doc.restoreMyEdits') }}
+        </button>
+        <button type="button" class="doc-notice__btn doc-notice__btn--quiet" @click="discardPendingEdits">
+          {{ t('workspace.doc.discard') }}
+        </button>
       </div>
       <!-- Server and local both moved: neither side wins silently. -->
       <div v-if="externalDoc !== null" class="doc-notice doc-notice--conflict">
         <v-icon size="16" class="doc-notice__icon">mdi-source-branch</v-icon>
-        <div class="doc-notice__text">芝士更新了磁盘上的这篇文档，而你有未保存的改动。两份都还在，选一份继续。</div>
-        <button type="button" class="doc-notice__btn" @click="viewExternalDoc">查看磁盘版本</button>
-        <button type="button" class="doc-notice__btn" @click="overwriteWithMine">用我的版本覆盖</button>
+        <div class="doc-notice__text">{{ t('workspace.doc.externalConflict') }}</div>
+        <button type="button" class="doc-notice__btn" @click="viewExternalDoc">
+          {{ t('workspace.doc.viewDiskVersion') }}
+        </button>
+        <button type="button" class="doc-notice__btn" @click="overwriteWithMine">
+          {{ t('workspace.doc.overwriteWithMine') }}
+        </button>
       </div>
 
       <!-- Stage: the editor + (optionally) a docked tool panel beside it. -->
@@ -1450,14 +1476,10 @@ onBeforeUnmount(() => {
             <div v-if="lossy" class="doc-lossy-banner">
               <v-icon size="16" class="doc-lossy-banner__icon">mdi-alert-outline</v-icon>
               <div class="doc-lossy-banner__text">
-                {{
-                  editingBlocked
-                    ? '此文档包含编辑器暂不完全支持的语法，改起来需要源码模式，手机上不提供。在电脑上打开可以编辑。'
-                    : '此文档包含编辑器暂不完全支持的语法，可视化编辑保存可能丢失格式。自动保存已暂停，建议用源码模式编辑。'
-                }}
+                {{ editingBlocked ? t('workspace.doc.lossyBannerBlocked') : t('workspace.doc.lossyBanner') }}
               </div>
               <button v-if="!editingBlocked" type="button" class="doc-lossy-banner__btn" @click="enterSourceMode()">
-                源码模式
+                {{ t('workspace.doc.sourceMode') }}
               </button>
             </div>
             <div class="doc-editor-wrap" @click="onDocClick" @keydown="onDocKeydown" @mouseover="onDocMouseOver">
@@ -1474,12 +1496,12 @@ onBeforeUnmount(() => {
                 type="button"
                 class="doc-comment-cta"
                 :style="{ top: `${commentCta.top}px`, left: `${commentCta.left}px` }"
-                title="评论选中内容"
+                :title="t('workspace.doc.commentOnSelection')"
                 @mousedown.prevent
                 @click="commentOnSelection"
               >
                 <v-icon size="14">mdi-comment-plus-outline</v-icon>
-                评论
+                {{ t('workspace.doc.comment') }}
               </button>
               <!-- Notion-style slash menu: anchored to the caret (suggestion
                  clientRect), wrap-relative like the other overlays. Keyboard
@@ -1523,7 +1545,7 @@ onBeforeUnmount(() => {
                   type="button"
                   class="doc-codecopy"
                   :class="{ 'doc-codecopy--done': codeCopy.done }"
-                  :title="codeCopy.done ? '已复制' : '复制代码'"
+                  :title="codeCopy.done ? t('workspace.doc.copied') : t('workspace.doc.copyCode')"
                   @mousedown.prevent
                   @click="copyCodeBlock"
                 >
@@ -1550,14 +1572,14 @@ onBeforeUnmount(() => {
                 <button
                   type="button"
                   class="doc-handle__btn doc-handle__add"
-                  title="在下方插入块"
+                  :title="t('workspace.doc.insertBlockBelow')"
                   draggable="false"
                   @dragstart.stop.prevent
                   @click="addBlockBelow"
                 >
                   <v-icon size="15">mdi-plus</v-icon>
                 </button>
-                <span class="doc-handle__btn doc-handle__grip" title="拖动以排序">
+                <span class="doc-handle__btn doc-handle__grip" :title="t('workspace.doc.dragToReorder')">
                   <v-icon size="15">mdi-drag-vertical</v-icon>
                 </span>
               </DragHandle>
@@ -1584,17 +1606,21 @@ onBeforeUnmount(() => {
         <v-card rounded="lg">
           <v-card-title class="text-subtitle-1 d-flex align-center ga-2">
             <v-icon size="20" color="warning">mdi-alert-outline</v-icon>
-            确认覆盖保存？
+            {{ t('workspace.doc.confirmOverwriteTitle') }}
           </v-card-title>
           <v-card-text class="text-body-2 pt-0">
-            此文档包含可视化编辑器暂不完全支持的语法。直接保存会按编辑器的理解重写文件，不支持的格式将丢失。
-            用源码模式编辑可以完整保留原文，你刚才的改动会被暂存，切过去之后可以一键取回。
+            {{ t('workspace.doc.confirmOverwriteBody') }}
+            {{ t('workspace.doc.confirmOverwriteHint') }}
           </v-card-text>
           <v-card-actions>
             <v-spacer />
-            <v-btn size="small" variant="text" @click="lossyConfirmOpen = false"> 取消 </v-btn>
-            <v-btn size="small" variant="tonal" color="primary" @click="enterSourceMode()"> 用源码模式 </v-btn>
-            <v-btn size="small" variant="flat" color="warning" @click="confirmLossySave"> 仍要保存 </v-btn>
+            <v-btn size="small" variant="text" @click="lossyConfirmOpen = false">{{ t('global.cancel') }}</v-btn>
+            <v-btn size="small" variant="tonal" color="primary" @click="enterSourceMode()">
+              {{ t('workspace.doc.useSourceMode') }}
+            </v-btn>
+            <v-btn size="small" variant="flat" color="warning" @click="confirmLossySave">
+              {{ t('workspace.doc.saveAnyway') }}
+            </v-btn>
           </v-card-actions>
         </v-card>
       </v-dialog>

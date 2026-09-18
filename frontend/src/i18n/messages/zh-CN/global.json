@@ -12,6 +12,8 @@
   "delete": "删除",
   "deleteFailed": "删除失败",
   "deleteSuccess": "删除成功",
+  "download": "下载",
+  "downloadFailed": "下载失败",
   "edit": "编辑",
   "editor": {
     "placeholder": "说点什么..."
@@ -33,11 +35,14 @@
   "publish": "发布",
   "publishFailed": "发布失败",
   "publishSuccess": "发布成功",
+  "readOnly": "只读",
+  "refresh": "刷新",
   "reply": "回复",
   "replyFailed": "回复失败",
   "replySuccess": "回复成功",
   "reset": "重置",
   "save": "保存",
+  "saveFailed": "保存失败",
   "submit": "提交",
   "success": "操作成功",
   "transportReadFailure": "服务暂时不可达，请稍后重试（HTTP {status}）",
