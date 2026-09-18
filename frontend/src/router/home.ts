@@ -25,6 +25,10 @@ export default {
       beforeEnter: async () => {
         // AccountService's API client imports the router; load it after route construction.
         const { default: AccountService } = await import('@/services/account')
+        // 冷打开时登录态可能还在恢复（过期令牌要先换新），不等就把回访用户
+        // 当成生人：先给他看推广页，恢复完再跳走——或者恢复得比推广页挂载
+        // 还快，那一跳就没人接，页面就停在推广页上。
+        await AccountService.sessionRestored
         return AccountService.loggedIn ? { name: 'HomeSpaces' } : true
       },
     },
