@@ -27,6 +27,7 @@ from app.domain.agent.harness.claude_code import REMOTE_CONTROLS
 from app.domain.agent.remote_control import CONTROLS, store
 from app.domain.agent.runtime import get_broker
 from app.domain.topic.services import TopicService
+from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(tags=["remote-control"])
 # How long the control read waits for the machine's background-task list.
@@ -269,15 +270,30 @@ async def rc_presence(sid: str, request: Request) -> dict:
     return {}
 
 
-async def controller(topic_id: uuid.UUID, db: AsyncSession, resolver):
+async def controller(
+    topic_id: uuid.UUID, db: AsyncSession, resolver, *, deciding: bool = False
+):
+    """Whoever is in this room, for reading; not this session's own agent, for
+    deciding.
+
+    What must not happen is a session approving its own tool use, answering its
+    own question or changing its own permission mode — the shape of "the party
+    under review is not the reviewer", which is about stake and not about being
+    an agent. A teammate reads the state either way: the page polls the read
+    route every few seconds, and refusing an agent there bought nothing.
+    """
     place = await TopicService(db).place_or_404(topic_id)
     actor = await resolver.resolve(
         fallback_handle=None, project_id=place.project_id, topic_id=place.room_id
     )
     if not actor.authenticated:
         raise AuthenticationRequiredError("Login required to control a session")
-    if actor.is_agent:
-        raise ForbiddenError("Session controls require a human identity")
+    if deciding and actor.is_agent:
+        seated = await TopicMemberService(db).resolve_agent_handle(
+            topic_id, room_id=place.room_id
+        )
+        if actor.handle == seated:
+            raise ForbiddenError("A session cannot answer its own controls")
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
     )
@@ -348,7 +364,7 @@ async def control(
     resolver: ActorResolverDep,
     wait: float = Query(default=15, ge=0, le=30),
 ) -> dict:
-    actor = await controller(topic_id, db, resolver)
+    actor = await controller(topic_id, db, resolver, deciding=True)
     session = await selected_session(topic_id, data.session_id)
     if data.request.get("subtype") not in CONTROLS:
         raise ValidationError("Unsupported RC control; see the session's controls list")
@@ -428,7 +444,7 @@ class MessageIn(BaseModel):
 async def control_message(
     topic_id: uuid.UUID, data: MessageIn, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    actor = await controller(topic_id, db, resolver)
+    actor = await controller(topic_id, db, resolver, deciding=True)
     await selected_session(topic_id, data.session_id)
     command = await store().enqueue(
         data.session_id,
@@ -447,7 +463,7 @@ async def control_message(
 async def answer(
     topic_id: uuid.UUID, data: AnswerIn, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    actor = await controller(topic_id, db, resolver)
+    actor = await controller(topic_id, db, resolver, deciding=True)
     await selected_session(topic_id, data.session_id)
     rc = store()
     command = await rc.enqueue(
