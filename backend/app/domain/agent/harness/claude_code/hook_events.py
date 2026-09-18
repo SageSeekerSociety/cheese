@@ -606,28 +606,3 @@ class HookRouter:
 
 # Shared singleton: the endpoint and the provider import this same instance.
 hook_router = HookRouter()
-
-
-def usage_from_hook(hook: dict) -> AgentUsage | None:
-    """A turn's real token counts, carried back from the machine.
-
-    Deliberately NOT part of ``translate_hook``: usage is not an event in the
-    turn's stream, it is a fact about the turn. Returning it from there made the
-    type checker object, and the objection was right — the caller records it,
-    the UI never shows it.
-    """
-    # The machine is the only place these numbers exist — Claude Code writes
-    # a usage block per assistant message and the transcript dies with the
-    # host. Carrying them back is what turns "300 RMB went somewhere" into a
-    # per-project, per-turn figure.
-    # Cache reads are NOT free and they dominate; AgentUsage has no cache field,
-    # so they fold into the input count (app.domain.usage.tokens — the same
-    # arithmetic every supply uses).
-    input_tokens, output_tokens = input_output_tokens(hook, dialect="hook")
-    if input_tokens + output_tokens <= 0:
-        return None
-    return AgentUsage(
-        model=str(hook.get("model") or "unknown"),
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-    )
