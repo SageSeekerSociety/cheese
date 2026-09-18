@@ -188,3 +188,74 @@ async def test_image_migration_keeps_other_settings_and_pins_all_rooms(db_factor
         connection = await session.connection()
         await connection.run_sync(exercise)
         await session.rollback()
+
+
+def test_applying_holds_no_room_lock_while_the_machine_is_reset(client, monkeypatch):
+    """While the machine is being told to stop the old environment, the room
+    row stays free for other writers; a room archived during the reset keeps
+    its old environment (dev outage of 2026-09-18: a row lock held across a
+    device call queued every writer of the row with a pool connection each)."""
+    import asyncio
+    import threading
+    import uuid
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from sqlalchemy import text
+
+    from app.api.routes import project_environment as routes
+    from app.domain.topic.models import Topic
+
+    project_id, headers = project(client)
+    topic_id = room(client, project_id)
+    base = f"/projects/{project_id}/environment"
+    before = client.get(f"{base}/rooms/{topic_id}", headers=headers).json()["data"]
+    binding = SimpleNamespace(device_id="machine")
+    monkeypatch.setattr(
+        routes,
+        "sql_device_service",
+        lambda db: SimpleNamespace(topic_binding=AsyncMock(return_value=binding)),
+    )
+    monkeypatch.setattr(routes.device_hub, "is_online", lambda device_id: True)
+    monkeypatch.setattr(routes.device_hub, "screens_for_topic", lambda tid: [])
+    in_flight = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_reset(*args, **kwargs):
+        in_flight.set()
+        await release.wait()
+        return {"state": "pending"}
+
+    monkeypatch.setattr(routes, "environment_status", slow_reset)
+    outcome: dict = {}
+
+    def apply():
+        outcome["response"] = client.post(
+            f"{base}/rooms/{topic_id}/apply", headers=headers, json={"latest": True}
+        )
+
+    request = threading.Thread(target=apply)
+    request.start()
+
+    async def during_reset():
+        try:
+            await asyncio.wait_for(in_flight.wait(), timeout=5)
+            async with client.test_factory() as session:
+                # NOWAIT fails at once if the request were holding the row.
+                locked = await session.scalar(
+                    text("SELECT id FROM topics WHERE id = :id FOR UPDATE NOWAIT"),
+                    {"id": uuid.UUID(topic_id)},
+                )
+                assert locked == uuid.UUID(topic_id)
+                topic = await session.get(Topic, uuid.UUID(topic_id))
+                topic.archived_at = datetime.now(UTC)
+                await session.commit()
+        finally:
+            release.set()  # a failed check must still let the request finish
+
+    client.portal.call(during_reset)
+    request.join(timeout=10)
+    assert outcome["response"].status_code == 422, outcome["response"].text
+    after = client.get(f"{base}/rooms/{topic_id}", headers=headers).json()["data"]
+    assert after["pinned_revision"] == before["pinned_revision"]

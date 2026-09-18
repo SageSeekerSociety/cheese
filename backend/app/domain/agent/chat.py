@@ -1476,17 +1476,22 @@ class ChatService:
         pending.append(entry)
         del pending[:-16]  # a dead session must not grow this forever
         try:
+            # Read the room's status, then deliver with no transaction open: a
+            # row lock held across the device call queues every writer of the
+            # room behind it with a pool connection each (dev outage of
+            # 2026-09-18), and it never held archival off anyway — the archive
+            # path takes the same non-conflicting KEY SHARE lock.
             async with self._sessions() as session:
-                room = await TopicRepository(session).lock(topic_id)
-                if room is None or room.status == TopicStatus.archived:
-                    delivered = False
-                else:
-                    delivered = (
-                        await self._compute.deliver(topic_id, line, images=images)
-                        if images
-                        else await self._compute.deliver(topic_id, line)
-                    )
-                await session.commit()
+                room = await TopicRepository(session).get(topic_id)
+                archived = room is None or room.status == TopicStatus.archived
+            if archived:
+                delivered = False
+            else:
+                delivered = (
+                    await self._compute.deliver(topic_id, line, images=images)
+                    if images
+                    else await self._compute.deliver(topic_id, line)
+                )
         except Exception:  # noqa: BLE001 — caller reports the queued fallback
             logger.exception("merge into running turn failed (topic=%s)", topic_id)
             delivered = False

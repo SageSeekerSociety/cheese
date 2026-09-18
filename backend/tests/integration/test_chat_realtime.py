@@ -864,6 +864,58 @@ async def test_failed_live_delivery_reports_error_then_queues_work(client, tmp_p
 
 
 @pytest.mark.anyio
+async def test_midturn_delivery_holds_no_topic_lock(client, tmp_path, monkeypatch):
+    """While the message is being handed to the machine, the topic row stays
+    free for other writers (dev outage of 2026-09-18: a row lock held across a
+    device call queued every writer of the row with a pool connection each)."""
+    import asyncio
+
+    from sqlalchemy import text
+
+    factory = client.test_factory  # type: ignore[attr-defined]
+    svc = ChatService(
+        session_factory=factory,
+        compute=stub_compute(InstantScreen()),
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        topic_id: uuid.UUID = topic.id
+        await session.commit()
+    _payloads, _block_id, block_ids, _ = await svc.post_user_message(
+        topic_id, author="u", content="改一下配色", turn_id=None, reply_to=None
+    )
+    in_flight = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_deliver(tid, text, images=None):
+        in_flight.set()
+        await release.wait()
+        return True
+
+    monkeypatch.setattr(svc._compute, "deliver", slow_deliver)
+    svc._active_turn_ids[topic_id] = uuid.uuid4()
+    merge = asyncio.create_task(
+        svc.merge_into_running_turn(topic_id, block_ids, "改一下配色", "u")
+    )
+    await asyncio.wait_for(in_flight.wait(), timeout=5)
+    async with factory() as session:
+        # NOWAIT fails at once if the delivery were holding the row.
+        locked = await session.scalar(
+            text("SELECT id FROM topics WHERE id = :id FOR UPDATE NOWAIT"),
+            {"id": topic_id},
+        )
+        await session.rollback()
+    assert locked == topic_id
+    release.set()
+    assert await asyncio.wait_for(merge, timeout=5) is True
+
+
+@pytest.mark.anyio
 async def test_midturn_message_stays_pending_until_its_receipt(
     client, tmp_path, monkeypatch
 ):
