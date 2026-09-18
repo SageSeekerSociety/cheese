@@ -46,6 +46,7 @@ interface Outgoing {
 
 <script setup lang="ts">
 import type {
+  AgentControlState,
   Block,
   ChatAttachment,
   ProjectMemberRow,
@@ -107,6 +108,10 @@ import TimelineMark from './TimelineMark.vue'
 // Message rendering (markdown / plain / reference chips) lives in
 // ../lib/renderMessage so it's unit-testable; here we just bind the
 // handle→name and id→title maps filled from the roster / topics props.
+// The room's session state as the socket last reported it. Null until the first
+// frame lands, and passing it at all is what puts AgentControls on the frames.
+const agentControl = ref<AgentControlState | null>(null)
+
 const mentionNames = reactive<Record<string, string>>({})
 const topicTitles = reactive<Record<string, string>>({})
 const refMaps = { mentionNames, topicTitles }
@@ -865,6 +870,9 @@ function handleFrame(frame: WsServerFrame) {
       break
     case 'retract_block':
       messages.value = messages.value.filter((m) => m.id !== frame.block_id)
+      break
+    case 'agent_control':
+      agentControl.value = frame.state
       break
     case 'turn_active':
       if (frame.turn_ids?.length) activeTurnIds.value = new Set(frame.turn_ids)
@@ -2260,7 +2268,7 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Built-in composer (private chat / standalone use). -->
-      <AgentControls v-if="topic" :topic-id="topic.id" :active="true" questions-only />
+      <AgentControls v-if="topic" :topic-id="topic.id" :active="true" :pushed="agentControl" questions-only />
       <template v-if="showComposer">
         <div
           class="composer pa-2 px-3"

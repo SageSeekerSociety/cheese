@@ -298,6 +298,34 @@ export type WsServerFrame =
   | { type: 'block_updated'; block: Block }
   // Answer to the client's liveness ping; carries nothing.
   | { type: 'pong' }
+  // The room's session state moved: the agent asked something, a session
+  // appeared, went quiet or came back. Carries what the platform's own store
+  // knows. The machine's background-task list is NOT in here — nothing tells
+  // the platform when that changes — so the panel that shows it still reads it
+  // over HTTP.
+  | { type: 'agent_control'; state: AgentControlState }
+
+export interface AgentControlRequest {
+  request_id: string
+  request: {
+    subtype: string
+    tool_name?: string
+    input?: Record<string, unknown>
+  }
+}
+
+export interface AgentControlState {
+  id: string | null
+  connected: boolean
+  title?: string
+  controls?: string[]
+  pending?: Record<string, AgentControlRequest>
+  tasks?: Record<
+    string,
+    { task_id: string; description?: string; status?: string; subtype?: string; tool_use_id?: string }
+  >
+  state?: Record<string, Record<string, unknown>>
+}
 
 // An uploaded worktree file the message carries. `path` comes from
 // POST /topics/{id}/attachments; the WS frame only references it (no binary).

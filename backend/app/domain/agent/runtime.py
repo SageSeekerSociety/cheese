@@ -247,7 +247,11 @@ class InProcessBroker:
         # rebuilt from GET /blocks on (re)connect — so they are fanned out live
         # but never buffered (buffering would also make an idle channel look
         # in_flight forever).
-        if kind == "reaction":
+        # `agent_control` is the same kind of fact: the room's session state
+        # changed, and a client that missed the frame reads the whole of it back
+        # from GET /topics/{id}/agent/control, so buffering it would only replay
+        # a state that has since moved on.
+        if kind in ("reaction", "agent_control"):
             for q in list(self._subs.get(channel, ())):
                 q.put_nowait(frame)
             return
