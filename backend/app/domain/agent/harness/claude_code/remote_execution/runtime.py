@@ -79,6 +79,21 @@ def request(state, method, params=None):
     return response["result"]
 
 
+# `claude mcp serve` writes a backgrounded command's output to
+# `<CLAUDE_CODE_TMPDIR>/claude-<uid>/<workspace>/<session>/tasks/<id>.output`,
+# and reading that file is the only way to get it: `TaskOutput` in serve mode
+# looks the task up in an app state the serve entrypoint throws away, so it
+# answers `No task found with ID` for the id its own Bash tool just handed out.
+# The session component is a UUID the process picks and never tells us — it is
+# deliberately unguessable, so a shared /tmp cannot be pre-empted — hence the
+# glob rather than a built path. We point CLAUDE_CODE_TMPDIR at the room's own
+# state directory, so the glob stays inside one room.
+# `scripts/remote_execution/mcp_contract.py` is what tells us this still holds.
+def serve_task_output(temp_root, task_id):
+    matches = sorted(Path(temp_root).glob(f"*/*/*/tasks/{task_id}.output"))
+    return matches[0] if matches else None
+
+
 class MCPProcess:
     def __init__(self, command, cwd, env, log):
         self.process = subprocess.Popen(
