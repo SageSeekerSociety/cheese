@@ -13,6 +13,8 @@ const downloadFile = vi.fn()
 const attachmentRawUrl = vi.fn()
 const previewFileBytes = vi.fn()
 const previewDocumentPdf = vi.fn()
+const documentRevisions = vi.fn()
+const decideDocumentRevisions = vi.fn()
 
 // Declared through vi.hoisted: the vi.mock factory below is lifted above every
 // other statement in this file, so a plain `class` here is still in its temporal
@@ -29,6 +31,8 @@ vi.mock('../../api', () => ({
   attachmentRawUrl: (...args: unknown[]) => attachmentRawUrl(...args),
   previewFileBytes: (...args: unknown[]) => previewFileBytes(...args),
   previewDocumentPdf: (...args: unknown[]) => previewDocumentPdf(...args),
+  documentRevisions: (...args: unknown[]) => documentRevisions(...args),
+  decideDocumentRevisions: (...args: unknown[]) => decideDocumentRevisions(...args),
   PreviewRendererUnavailable,
 }))
 
@@ -87,6 +91,7 @@ beforeEach(() => {
   downloadFile.mockResolvedValue(undefined)
   previewDocumentPdf.mockResolvedValue(new ArrayBuffer(4096))
   previewFileBytes.mockResolvedValue(new ArrayBuffer(2048))
+  documentRevisions.mockResolvedValue({ path: 'output/评审简报.docx', revisions: [] })
 })
 afterEach(cleanup)
 
@@ -96,7 +101,8 @@ it('shows a Word report rather than offering it as a download', async () => {
   const pages = await screen.findByTestId('pages')
   // The file the room produced is on screen, converted, not described.
   expect(pages.getAttribute('data-bytes')).toBe('4096')
-  expect(previewDocumentPdf).toHaveBeenCalledWith('topic-a', 'output/评审简报.docx')
+  // 末尾那个 null 是来源：房间自己的文件，不是某个任务分支上的那一份。
+  expect(previewDocumentPdf).toHaveBeenCalledWith('topic-a', 'output/评审简报.docx', null)
   expect(screen.getByText('评审简报.docx')).toBeTruthy()
 })
 

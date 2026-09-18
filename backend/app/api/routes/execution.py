@@ -10,7 +10,12 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
-from app.core.errors import AuthenticationRequiredError, ConflictError, ForbiddenError
+from app.core.errors import (
+    AuthenticationRequiredError,
+    ConflictError,
+    ForbiddenError,
+    GatewayTimeoutError,
+)
 from app.core.sandbox_auth import scoped_token_claims
 from app.domain.agent import execution
 from app.domain.topic.services import TopicService
@@ -78,6 +83,12 @@ async def execute(
         return await execution.call(
             target, payload.method, payload.params, trace_id=trace_id
         )
+    except TimeoutError as exc:
+        # The machine holds its link and does not answer. That is a fault of the
+        # far end, and answering 500「服务器内部错误」 blames the one process it
+        # cannot be — the same reasoning, and the same status, as the connection
+        # owner's own RPC path in `device_connection_app.call`.
+        raise GatewayTimeoutError("机器没有在时限内回应这次执行调用") from exc
     finally:
         await db.rollback()
         logger.debug(

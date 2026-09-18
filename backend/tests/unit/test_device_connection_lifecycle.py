@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import gc
 import json
 import uuid
 
@@ -548,3 +549,79 @@ def test_the_owner_process_scrubs_secrets_from_its_log() -> None:
         )
     finally:
         root.handlers[:] = before
+
+
+@pytest.mark.anyio
+async def test_a_call_nobody_came_back_for_does_not_report_a_lost_exception(
+    monkeypatch,
+) -> None:
+    """The shield exists so a backend rolling over cannot cancel a call this
+    process has already sent to the device. The call then finishes with nobody
+    holding it — and when it finishes by FAILING, asyncio used to report
+    「Future exception was never retrieved」 as it was collected: an ERROR
+    record with no route, no trace id and a traceback pointing into garbage
+    collection, which the alert channel carried as a fresh failure.
+    """
+    monkeypatch.setattr(settings, "device_connection_secret", "test-owner-secret")
+    device_hub._devices.clear()
+    device_hub._screens.clear()
+    device_hub._by_screen_token.clear()
+    device_connection_app._executor_calls.clear()
+    device_connection_app._release_draining = False
+    device_connection_app._active_rpc_calls = 0
+
+    lost: list[dict] = []
+    asyncio.get_running_loop().set_exception_handler(
+        lambda _loop, context: lost.append(context)
+    )
+
+    connector = ExecutorTransport()
+    await device_hub.attach_device("machine", connector)
+    await connector.sent.get()  # welcome
+    await device_hub.on_device_message(
+        "machine", {"t": "hello", "v": 3, "executor": True}
+    )
+
+    transport = httpx.ASGITransport(app=device_connection_app.app)
+    backend = RemoteDeviceHub("http://owner", "test-owner-secret", transport=transport)
+    await backend.start()
+    waiter = asyncio.create_task(
+        backend.call_executor(
+            "machine",
+            "/room/.cheese/executor",
+            "control",
+            {"command": "will fail"},
+            trace_id="nobody-comes-back",
+        )
+    )
+    outbound = await asyncio.wait_for(connector.sent.get(), 1)
+
+    # The backend that asked is gone before the device answers.
+    waiter.cancel()
+    await asyncio.gather(waiter, return_exceptions=True)
+    await backend.close()
+
+    await device_hub.on_device_message(
+        "machine",
+        {
+            "t": "execution.result",
+            "id": outbound["id"],
+            "error": "lstat /room/.cheese: no such file or directory",
+        },
+    )
+    call = device_connection_app._executor_calls[outbound["id"]]
+    for _ in range(100):
+        if call.done():
+            break
+        await asyncio.sleep(0)
+    assert call.done()
+
+    # Nothing holds it now — which is when asyncio reports an exception that was
+    # never read.
+    device_connection_app._executor_calls.clear()
+    del call
+    gc.collect()
+    await asyncio.sleep(0)
+
+    assert lost == []
+    await device_hub.detach_device("machine", connector)

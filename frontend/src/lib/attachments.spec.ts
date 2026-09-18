@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { usePendingAttachments } from './attachments'
+import { uploaded, usePendingAttachments } from './attachments'
 
 function file(name: string, type: string): File {
   return new File(['x'], name, { type })
@@ -10,13 +10,13 @@ beforeEach(() => {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (_url, options) => {
-      const uploaded = options.body.get('file') as File
+      const picked = options.body.get('file') as File
       return {
         ok: true,
         status: 200,
         json: async () => ({
           code: 200,
-          data: { path: `uploads/id/${uploaded.name}`, mime: uploaded.type },
+          data: { path: `uploads/id/${picked.name}`, mime: picked.type },
         }),
       }
     })
@@ -45,6 +45,56 @@ describe('chat attachments', () => {
       json: async () => ({ code: 200, data: { path: 'uploads/paper.pdf', mime: 'application/pdf' } }),
     })
     await uploading
+    expect(pending.value).toHaveLength(0)
+  })
+
+  it('holds the file a place in the strip while it is still going up', async () => {
+    let finish!: (value: unknown) => void
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve
+          })
+      )
+    )
+    const { addFiles, pending } = usePendingAttachments(() => 't1')
+    const done = addFiles([file('paper.pdf', 'application/pdf')])
+
+    expect(pending.value).toHaveLength(1)
+    expect(pending.value[0]).toMatchObject({ uploading: true, name: 'paper.pdf', mime: 'application/pdf' })
+    // 占位那一格的 path 不在工作区里，发不出去。
+    expect(uploaded(pending.value)).toEqual([])
+
+    finish({
+      ok: true,
+      json: async () => ({ code: 200, data: { path: 'uploads/id/paper.pdf', mime: 'application/pdf' } }),
+    })
+    await done
+    expect(pending.value).toHaveLength(1)
+    expect(uploaded(pending.value)).toEqual([{ path: 'uploads/id/paper.pdf', mime: 'application/pdf' }])
+  })
+
+  it('drops an upload removed from the strip while it was going up', async () => {
+    let finish!: (value: unknown) => void
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve
+          })
+      )
+    )
+    const { addFiles, pending, removeAt } = usePendingAttachments(() => 't1')
+    const done = addFiles([file('paper.pdf', 'application/pdf')])
+    removeAt(0)
+    finish({
+      ok: true,
+      json: async () => ({ code: 200, data: { path: 'uploads/id/paper.pdf', mime: 'application/pdf' } }),
+    })
+    await done
     expect(pending.value).toHaveLength(0)
   })
 

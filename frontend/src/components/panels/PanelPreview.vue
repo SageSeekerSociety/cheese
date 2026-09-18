@@ -1,24 +1,26 @@
 <script setup lang="ts">
-import type { FileContent, PreviewInfo } from '../../cx_types'
+import type { DocumentRevision, FileContent, PreviewInfo } from '../../cx_types'
 
 import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
 import { useFullscreen } from '@vueuse/core'
 
 import {
   attachmentRawUrl,
+  decideDocumentRevisions,
+  documentRevisions,
   downloadFile,
   getPreview,
-  previewDocumentPdf,
-  previewFileBytes,
-  PreviewRendererUnavailable,
   readPreviewFile,
   requestPreviewSession,
 } from '../../api'
+import { useDocumentBytes } from '../../lib/documentBytes'
+import { DOCUMENT_TYPES, IMAGE_SUFFIXES, suffixOf } from '../../lib/fileKind'
 import { markdown, sanitizeRendered } from '../../lib/markdown'
 import { postPreviewSession } from '../../lib/previewSession'
 
 import PreviewPages from './preview/PreviewPages.vue'
 import PreviewSheet from './preview/PreviewSheet.vue'
+import RevisionList from './preview/RevisionList.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -70,32 +72,10 @@ function openPreviewInNewTab() {
 // can open directly — paginating it would destroy exactly that. A markdown file
 // has neither pages nor cells, and nothing here converts it: it is shown as the
 // text it already is, parsed by the same renderer the chat uses.
-const DOCUMENT_TYPES: Record<string, { label: string; icon: string; view: 'pages' | 'sheet' | 'markdown' }> = {
-  pdf: { label: 'PDF', icon: 'mdi-file-pdf-box', view: 'pages' },
-  docx: { label: 'Word 文档', icon: 'mdi-file-word-outline', view: 'pages' },
-  doc: { label: 'Word 文档', icon: 'mdi-file-word-outline', view: 'pages' },
-  odt: { label: '文档', icon: 'mdi-file-document-outline', view: 'pages' },
-  rtf: { label: '文档', icon: 'mdi-file-document-outline', view: 'pages' },
-  pptx: { label: '幻灯片', icon: 'mdi-file-powerpoint-outline', view: 'pages' },
-  ppt: { label: '幻灯片', icon: 'mdi-file-powerpoint-outline', view: 'pages' },
-  odp: { label: '幻灯片', icon: 'mdi-file-powerpoint-outline', view: 'pages' },
-  xlsx: { label: '表格', icon: 'mdi-file-excel-outline', view: 'sheet' },
-  xls: { label: '表格', icon: 'mdi-file-excel-outline', view: 'sheet' },
-  csv: { label: 'CSV 表格', icon: 'mdi-file-delimited-outline', view: 'sheet' },
-  md: { label: 'Markdown', icon: 'mdi-language-markdown-outline', view: 'markdown' },
-  markdown: { label: 'Markdown', icon: 'mdi-language-markdown-outline', view: 'markdown' },
-}
-//: Formats the browser cannot draw itself, so the platform converts them first.
-const NEEDS_CONVERSION = new Set(['docx', 'doc', 'odt', 'rtf', 'pptx', 'ppt', 'odp'])
-//: 浏览器自己画得出来的图片。它们读不成文本（`content` 是 null），但那不是「没
-//: 法显示」——内容域就是拿 image/png、image/jpeg 把这些字节发出来的。
-const IMAGE_SUFFIXES = new Set(['png', 'jpg', 'jpeg'])
-
-function suffixOf(path: string): string {
-  const name = path.split('/').pop() ?? ''
-  const dot = name.lastIndexOf('.')
-  return dot > 0 ? name.slice(dot + 1).toLowerCase() : ''
-}
+//
+// 图片读不成文本（`content` 是 null），但那不是「没法显示」——内容域就是拿
+// image/png、image/jpeg 把这些字节发出来的。`IMAGE_SUFFIXES` 和上面那张类型表
+// 同住 `lib/fileKind`：一个文件是哪种类型只能有一个答案。
 
 const documentSuffix = computed(() => suffixOf(previewFile.value?.path ?? ''))
 const documentType = computed(() => DOCUMENT_TYPES[documentSuffix.value] ?? null)
@@ -117,44 +97,29 @@ const previewMarkdownHtml = computed(() => {
 })
 
 // ---- 文档字节 ----
-const docBytes = ref<ArrayBuffer | null>(null)
-const docLoading = ref(false)
-const docError = ref('')
-const rendererMissing = ref(false)
-let docGeneration = 0
-let loadedDocKey = ''
+// 那一页的字节由 `useDocumentBytes` 取：浏览器画不出来的先转 PDF，其余读原始字节。
+// 改动那一格取的是同一份东西，所以这件事只写在一处。
+const docNonce = ref(0)
+const {
+  bytes: docBytes,
+  loading: docLoading,
+  error: docError,
+  rendererMissing,
+  forget: forgetDocument,
+} = useDocumentBytes({
+  topicId: () => props.topicId,
+  path: () => previewFile.value?.path ?? null,
+  version: () => previewFile.value?.version ?? null,
+  nonce: () => docNonce.value,
+  enabled: () => !!documentType.value && documentType.value.view !== 'markdown',
+})
 
-async function loadDocument() {
-  const tid = props.topicId
-  const path = previewFile.value?.path
-  const type = documentType.value
-  // Markdown 没有字节要取：它的正文已经在 readPreviewFile 里拿到并渲染了。
-  if (!tid || !path || !type || type.view === 'markdown') return
-  // The version changes when 芝士 rewrites the file; re-fetching on every poll
-  // would otherwise re-convert a document that has not moved.
-  const key = `${tid}:${path}:${previewFile.value?.version ?? ''}:${previewFile.value?.bytes ?? ''}`
-  if (key === loadedDocKey && docBytes.value) return
-  const mine = ++docGeneration
-  docLoading.value = true
-  docError.value = ''
-  rendererMissing.value = false
-  try {
-    const bytes = NEEDS_CONVERSION.has(documentSuffix.value)
-      ? await previewDocumentPdf(tid, path)
-      : await previewFileBytes(tid, path)
-    if (mine !== docGeneration) return
-    docBytes.value = bytes
-    loadedDocKey = key
-  } catch (e) {
-    if (mine !== docGeneration) return
-    // 保留已经在屏幕上的那一份。刷新失败时把它清掉，读者失去的是一份本来好好的
-    // 文档，换来一句错误——而这份文档仍然是这个交付物最新的可见状态。
-    loadedDocKey = ''
-    rendererMissing.value = e instanceof PreviewRendererUnavailable
-    docError.value = e instanceof Error ? e.message : '无法显示这个文件'
-  } finally {
-    if (mine === docGeneration) docLoading.value = false
-  }
+const revisionsRef = ref<InstanceType<typeof RevisionList> | null>(null)
+
+// 处理完一处修订，文件就变了，而那一页是按文件版本缓存的——版本没变（是这里改的，
+// 不是芝士改的），所以自己打一下。
+function afterDecision() {
+  docNonce.value += 1
 }
 
 // ---- 指出位置 ----
@@ -197,17 +162,6 @@ function sendLocator() {
   clearLocator()
 }
 
-watch([documentType, () => previewFile.value?.path, () => previewFile.value?.version], () => {
-  // Markdown 没有字节要取（正文就是文件内容本身），和「不是文档」一样清空即可。
-  if (documentType.value && documentType.value.view !== 'markdown') void loadDocument()
-  else {
-    docGeneration += 1
-    docBytes.value = null
-    loadedDocKey = ''
-    docError.value = ''
-  }
-})
-
 async function downloadArtifact() {
   downloadError.value = ''
   const path = previewFile.value?.path
@@ -229,9 +183,52 @@ async function fullscreen() {
   }
 }
 
+// ---- 读者点开的某一份房间文件 ----
+// 消息里的 `<&路径>` 只是一个路径，不带它在哪个库。房间自己的文件都在这里，芝士
+// 点名的当前预览也只是其中一份——所以点开一份别的文件是同一个动作，不是另一处
+// 界面。点开之后轮询停手：它会把当前预览取回来，而读者要看的是他点的那一份。
+const asked = ref<string | null>(null)
+
+async function openFile(path: string): Promise<boolean> {
+  const tid = props.topicId
+  if (!tid) return false
+  const current = ++generation
+  loading.value = true
+  try {
+    const content = await readPreviewFile(tid, path)
+    if (current !== generation || props.topicId !== tid) return false
+    asked.value = path
+    previewUrl.value = null
+    previewAppNote.value = ''
+    previewError.value = null
+    previewReadError.value = null
+    previewNamed.value = true
+    previewNamedPath.value = path
+    previewMime.value = ''
+    loadedArtifact = null
+    previewFile.value = content
+    return true
+  } catch {
+    // 不在这个库里。调用方接着去别处找，所以这里一句错误都不留——留下来它会顶掉
+    // 屏幕上那份本来好好的交付物。
+    return false
+  } finally {
+    if (current === generation) loading.value = false
+  }
+}
+
+function backToArtifact() {
+  asked.value = null
+  forgetDocument()
+  void load({ reload: true })
+}
+
+defineExpose({ openFile })
+
 async function load(opts: { silent?: boolean; reload?: boolean } = {}) {
   // Metadata polling must not cancel an explicit refresh's pending grant.
   if (opts.silent && !opts.reload && (loading.value || refreshing.value)) return
+  if (asked.value && !opts.reload) return
   const tid = props.topicId
   const pid = props.projectId
   if (!tid || !pid) return
@@ -372,6 +369,7 @@ watch(
   () => props.topicId,
   () => {
     generation += 1
+    asked.value = null
     previewUrl.value = null
     previewAppNote.value = ''
     previewNamedPath.value = ''
@@ -429,6 +427,13 @@ watch(
     </div>
 
     <v-alert v-if="fullscreenError" type="warning" density="compact">{{ fullscreenError }}</v-alert>
+
+    <!-- 读者点开的是房间里某一份文件，不是芝士点名的那一份。说清现在看的是哪一份，
+         并留一条回去的路——否则这一格看起来像是交付物被换掉了。 -->
+    <div v-if="asked" class="asked px-3 py-2" data-testid="asked">
+      <span class="t-meta c-muted">正在看 {{ asked.split('/').pop() }}</span>
+      <v-btn variant="text" size="x-small" @click="backToArtifact">回到当前预览</v-btn>
+    </div>
 
     <div v-if="loading" class="d-flex justify-center py-8">
       <v-progress-circular indeterminate color="primary" size="28" />
@@ -522,8 +527,20 @@ watch(
         <div>无法显示这个文件</div>
         <div class="t-meta mt-1">{{ docError }}</div>
       </div>
-      <PreviewPages v-else-if="documentType.view === 'pages'" :data="docBytes" @quote="onQuote" />
-      <PreviewSheet v-else :data="docBytes" :kind="documentSuffix === 'csv' ? 'csv' : 'workbook'" @cell="onCell" />
+      <div v-else class="doc__body">
+        <PreviewPages v-if="documentType.view === 'pages'" :data="docBytes" @quote="onQuote" />
+        <PreviewSheet v-else :data="docBytes" :kind="documentSuffix === 'csv' ? 'csv' : 'workbook'" @cell="onCell" />
+
+        <!-- 修订清单。页面上已经能看见改动了（LibreOffice 会把修订画出来），这里是
+             用来逐条处理的。改动那一格用的是同一个组件。 -->
+        <RevisionList
+          ref="revisionsRef"
+          :topic-id="topicId"
+          :path="documentSuffix === 'docx' ? previewFile.path : null"
+          :version="previewFile.version"
+          @decided="afterDecision"
+        />
+      </div>
 
       <!-- 指出位置：读者选中一句话或点中一个格子，这条就是交给芝士的坐标。 -->
       <Transition name="locator">
@@ -573,6 +590,12 @@ watch(
   min-height: 0;
   overflow-y: auto;
   background: var(--surface);
+}
+.asked {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--line);
 }
 .preview-head {
   display: flex;
@@ -657,6 +680,77 @@ watch(
 }
 .doc__state--text {
   text-align: center;
+}
+
+/* 文档和修订清单并排。面板本来就窄，所以窄到一定程度就改成上下排，清单收在下面
+   限高自己滚——行内修订在小屏上几乎读不了，而清单读得了。 */
+.doc__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+}
+.doc__body > :first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.revs {
+  flex: none;
+  width: 236px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 12px 12px;
+  border-left: 1px solid var(--line);
+  background: var(--surface);
+}
+.revs__bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.revs__count {
+  color: var(--muted);
+}
+.revs__list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.revs__item {
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+.revs__what {
+  font-size: 13px;
+  color: var(--text);
+  word-break: break-word;
+}
+.revs__who {
+  margin-top: 2px;
+  color: var(--faint);
+}
+.revs__acts {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+@media (max-width: 720px) {
+  .doc__body {
+    flex-direction: column;
+  }
+  .revs {
+    width: auto;
+    max-height: 38%;
+    border-left: none;
+    border-top: 1px solid var(--line);
+  }
 }
 
 /* .md 的正文。排版规则（标题、列表、代码块、表格）来自全局的 .md-content，

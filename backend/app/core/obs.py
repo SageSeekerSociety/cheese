@@ -11,6 +11,8 @@
 
 import logging
 import re
+import traceback
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -163,6 +165,82 @@ def _what_the_server_answered(exc: BaseException | None) -> list[str]:
     return lines
 
 
+_DETAIL_LIMIT = 200
+# What structlog puts in the event dict that is not news: the message itself is
+# the title, and the rest is rendering machinery.
+_NOT_DETAIL = {
+    "event",
+    "timestamp",
+    "level",
+    "logger",
+    # structlog renders the traceback into the event dict under this name. It is
+    # reported below as the exception it is, one line of it, rather than pasted
+    # into a chat message whole.
+    "exception",
+    "exc_info",
+    "stack_info",
+    "stack",
+    "positional_args",
+    "_record",
+    "_from_structlog",
+}
+# An id in a message makes every occurrence unique, which is exactly what a
+# repeat check must not think. Two rooms hitting one broken thing is one broken
+# thing; which rooms is in the alert's body, not in what counts as "the same".
+_AN_ID_RE = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\b[0-9a-f]{12,}\b",
+    re.IGNORECASE,
+)
+# Written onto an exception once it has been reported. One unhandled exception
+# is logged three times on the way out — the request middleware, the catch-all
+# handler, and uvicorn re-raising past both — and three alerts for one failure
+# is how a channel teaches people that its counts mean nothing.
+#
+# The mark rides on the exception rather than in a table here because that is
+# the thing whose identity decides it, and it then needs no eviction policy and
+# cannot mistake a reused address for a repeat. A table of weak references would
+# say the same and cannot be used: built-in exceptions refuse weak references.
+_REPORTED = "_cheese_alerted"
+
+
+def _first_report_of(exc: BaseException) -> bool:
+    """False when this very exception has already been reported.
+
+    An exception that will not take the mark is reported anyway: a duplicate
+    alert is a nuisance, and a swallowed one is the thing this module exists to
+    prevent.
+    """
+    if getattr(exc, _REPORTED, False):
+        return False
+    try:
+        setattr(exc, _REPORTED, True)
+    except (AttributeError, TypeError):
+        pass
+    return True
+
+
+def _short(value: object) -> str:
+    """One line, short enough to read in a chat message, with no credentials."""
+    text = " ".join(scrub_secrets(str(value)).split())
+    return text if len(text) <= _DETAIL_LIMIT else text[:_DETAIL_LIMIT] + "…"
+
+
+def _where_it_was_raised(exc: BaseException) -> list[str]:
+    """The line that actually raised, which no other field carries.
+
+    An alert saying `异常：RuntimeError` and nothing else is a message whose
+    entire content is that something went wrong — the reader still has to open
+    the logs, and by then the container may have been redeployed out from under
+    them. The deepest frame is the one line that tells them where to look.
+    """
+    frames = traceback.extract_tb(exc.__traceback__)
+    if not frames:
+        return []
+    last = frames[-1]
+    where = f"抛出：{Path(last.filename).name}:{last.lineno} in {last.name}"
+    return [where, f"　　{last.line}"] if last.line else [where]
+
+
 class AlertOnError(logging.Handler):
     """Put what the backend logs as an error where a person will actually see it.
 
@@ -185,7 +263,18 @@ class AlertOnError(logging.Handler):
         super().__init__(level=logging.ERROR)
 
     @staticmethod
-    def _summary(record: logging.LogRecord) -> tuple[str, list[str]]:
+    def _summary(record: logging.LogRecord) -> tuple[str, list[str], str]:
+        """Title, body, and what makes two of these the same problem.
+
+        Everything the record carries goes in, not a list of field names chosen
+        in advance: the fields that matter are bound by whoever logged, this
+        handler cannot know them, and a whitelist silently drops the one that
+        would have explained it. The 2026-09-17 alerts are the demonstration —
+        a whitelist of five keys sent `异常：RuntimeError` with neither the
+        message the device had written nor the request it belonged to, and the
+        room, the correlation id and the raising line were all present and all
+        discarded.
+        """
         # structlog hands the formatter a dict; uvicorn and friends hand it a
         # string. Both reach this handler, so both shapes are read here.
         event = record.msg
@@ -198,23 +287,55 @@ class AlertOnError(logging.Handler):
                 title = record.getMessage()
             except Exception:  # noqa: BLE001 — a bad format string is not our bug
                 title = str(event)
-        lines = [f"来源：{record.name}"]
-        for key in ("method", "path", "error", "topic", "device"):
-            value = context.get(key)
-            if value:
-                lines.append(f"{key}：{value}")
-        if record.exc_info and record.exc_info[0] is not None:
-            lines.append(f"异常：{record.exc_info[0].__name__}")
-            lines.extend(_what_the_server_answered(record.exc_info[1]))
-        return title or record.name, lines
+        title = title or record.name
+        lines = [
+            f"来源：{record.name}",
+            f"位置：{Path(record.pathname).name}:{record.lineno}",
+        ]
+        for key, value in context.items():
+            if key in _NOT_DETAIL or value in (None, "", (), [], {}):
+                continue
+            lines.append(f"{key}：{_short(value)}")
+        exc = record.exc_info[1] if record.exc_info else None
+        kind = ""
+        if exc is not None:
+            kind = type(exc).__name__
+            said = _short(exc)
+            lines.append(f"异常：{kind}: {said}" if said else f"异常：{kind}")
+            lines.extend(_what_the_server_answered(exc))
+            lines.extend(_where_it_was_raised(exc))
+        elif record.exc_info and record.exc_info[0] is not None:
+            kind = record.exc_info[0].__name__
+            lines.append(f"异常：{kind}")
+        elif isinstance(context.get("exception"), str):
+            # A rendered traceback and no exception object with it. Its last
+            # line is the exception; the rest is the frames, which a chat
+            # message is the wrong place for.
+            rendered = [
+                line for line in context["exception"].splitlines() if line.strip()
+            ]
+            if rendered:
+                lines.append(f"异常：{_short(rendered[-1])}")
+        key = "|".join(
+            [
+                record.name,
+                _AN_ID_RE.sub("<id>", title),
+                kind,
+                _AN_ID_RE.sub("<id>", str(context.get("path", ""))),
+            ]
+        )
+        return title, lines, key
 
     def emit(self, record: logging.LogRecord) -> None:
         # The alerter logs its own failures; forwarding those would be a loop.
         if record.name.startswith("app.core.alerting"):
             return
         try:
-            title, lines = self._summary(record)
-            alerting.send(f"后端报错：{title}", lines)
+            exc = record.exc_info[1] if record.exc_info else None
+            if exc is not None and not _first_report_of(exc):
+                return
+            title, lines, key = self._summary(record)
+            alerting.send(f"后端报错：{title}", lines, key=key, when=record.created)
         except Exception:  # noqa: BLE001 — logging must never raise into a caller
             pass
 

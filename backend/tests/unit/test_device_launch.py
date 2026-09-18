@@ -361,6 +361,61 @@ def test_liveness_probe_requires_an_exact_topic_environment_field(tmp_path, key,
         process.wait(timeout=5)
 
 
+def _alive_probe(topic):
+    return subprocess.check_output(
+        ["sh", "-c", device_launch.DEVICE_ALIVE_PROBE],
+        env={**os.environ, "CHEESE_ALIVE_TOPIC": topic},
+        text=True,
+    ).strip()
+
+
+@pytest.mark.skipif(not os.path.exists("/proc/self/environ"), reason="Linux procfs")
+@pytest.mark.parametrize(
+    "relative", [".cheese/claude/versions/9.9.9", ".local/bin/claude"]
+)
+def test_liveness_probe_matches_a_session_by_its_own_executable(tmp_path, relative):
+    """The two install layouts a screen is launched from: the pin at
+    `~/.cheese/claude/versions/<v>`, and `~/.local/bin/claude`."""
+    executable = tmp_path / relative
+    executable.parent.mkdir(parents=True)
+    executable.symlink_to(sys.executable)
+    topic = str(uuid.uuid4())
+    process = subprocess.Popen(
+        [str(executable), "-c", "import time; time.sleep(30)"],
+        env={**os.environ, "CHEESE_TOPIC": topic},
+    )
+    try:
+        assert _alive_probe(topic) == "alive"
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
+    assert _alive_probe(topic) == "dead"
+
+
+@pytest.mark.skipif(not os.path.exists("/proc/self/environ"), reason="Linux procfs")
+def test_liveness_probe_ignores_a_helper_that_merely_carries_a_claude_path(tmp_path):
+    """The remote-execution helpers run as `<python> .../.claude/remote-execution/
+    forwarded_fs.py` and inherit the screen's CHEESE_TOPIC. Matching the `claude`
+    substring anywhere in a command line adopted such a helper as the session
+    itself: the room was reported alive with its claude long gone, so every
+    message sent to it was delivered to nobody and timed out, instead of the
+    platform retiring the dead screen and opening a new one."""
+    script = tmp_path / ".claude/remote-execution/forwarded_fs.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("import time\ntime.sleep(30)\n")
+    topic = str(uuid.uuid4())
+    process = subprocess.Popen(
+        [sys.executable, str(script)], env={**os.environ, "CHEESE_TOPIC": topic}
+    )
+    try:
+        # The helper really is running; only a session is missing.
+        assert process.poll() is None
+        assert _alive_probe(topic) == "dead"
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
+
+
 def test_hooks_settings_wire_command_hook_to_forwarder():
     s = device_launch.hooks_settings()
     assert s["skipDangerousModePermissionPrompt"] is True
@@ -512,6 +567,31 @@ def test_forwarder_posts_hook_json_with_token():
     assert '"hasTrustDialogAccepted":true' in script
 
 
+def _commands_in(script: str) -> list[str]:
+    """The lines the shell would run, with heredoc bodies left out.
+
+    A skill travels inside the script — `cat > ... <<'CHEESE_NATIVE_SKILL'`, then
+    the file, then the marker. Those lines are DATA. Reading the script as a flat
+    list of lines would judge a Python variable named `node` to be a node
+    command, which is exactly the mistake to avoid in a test about what the
+    script runs.
+    """
+    commands: list[str] = []
+    body_until: str | None = None
+    for line in script.splitlines():
+        if body_until is not None:
+            if line.strip() == body_until:
+                body_until = None
+            continue
+        opened = re.search(r"<<-?'?([A-Za-z_][A-Za-z0-9_]*)'?", line)
+        if opened:
+            body_until = opened.group(1)
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            commands.append(stripped)
+    return commands
+
+
 def test_the_launch_needs_no_interpreter_the_machine_may_not_have():
     """A machine whose `claude` is the native binary has no node.
 
@@ -523,12 +603,7 @@ def test_the_launch_needs_no_interpreter_the_machine_may_not_have():
     script = device_launch.build_launch_script()
     # Only executable lines matter — the comment above the replacement explains
     # why node is gone and would match a naive substring check.
-    commands = [
-        line.strip()
-        for line in script.splitlines()
-        if line.strip() and not line.strip().startswith("#")
-    ]
-    assert not any(c.startswith("node ") for c in commands)
+    assert not any(c.startswith("node ") for c in _commands_in(script))
     assert "mktrust" not in script
     # The gates still land — inside CLAUDE_CONFIG_DIR, where claude reads them
     # once the config dir is set — with the work dir the shell resolved.

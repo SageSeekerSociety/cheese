@@ -270,7 +270,13 @@ def configure(payload):
                             home / ".cheese-environment"
                         )["state"]
                     print(
-                        json.dumps({**info, "mcp_servers": list(config["mcp_servers"])})
+                        json.dumps(
+                            {
+                                **info,
+                                "mcp_servers": list(config["mcp_servers"]),
+                                "state": str(state),
+                            }
+                        )
                     )
                     return
                 subprocess.run(
@@ -303,9 +309,17 @@ def configure(payload):
                 stderr=output,
                 start_new_session=True,
             )
+        # The caller records this rather than deriving it: the process that
+        # reaches the executor later is released separately from the one that
+        # installs it, so a directory named in both is a directory two builds
+        # can disagree about. See `agent.execution.executor_state`.
         print(
             json.dumps(
-                {"workspace": str(work), "mcp_servers": list(config["mcp_servers"])}
+                {
+                    "workspace": str(work),
+                    "mcp_servers": list(config["mcp_servers"]),
+                    "state": str(state),
+                }
             )
         )
 

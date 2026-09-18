@@ -113,6 +113,39 @@ _TOOL_ARG = {
     "ls": "path",
     "find": "pattern",
     "grep": "pattern",
+    # 平台 CLI 的命令，在 pi 房间里各是一个工具。这张表是判断题不是覆盖题 ——
+    # 收录的是「后面跟哪个参数才说得出这一步在动什么」有答案的那些。`cheese
+    # status`、`cheese members`、`cheese doc get` 这种只有动词就够了，硬找一个
+    # 参数填进去反而不如留空。
+    "cheese_chat_send": "content",
+    "chat_send": "content",
+    "cheese_doc_set": "file",
+    "cheese_split": "title",
+    # 任务的 id 是个 UUID，跟在动词后面等于什么都没说 —— 同一条理由让上面那批
+    # 路径要剪掉工作区前缀。关掉一条活时说的是为什么关。
+    "cheese_close_task": "conclusion",
+    "cheese_fetch": "url",
+    "cheese_lock": "kind",
+    "cheese_unlock": "kind",
+    "cheese_decision": "text",
+    "cheese_title": "text",
+    "cheese_remember": "fact",
+    "cheese_recall": "query",
+    "cheese_notify": "title",
+    "cheese_ask": "question",
+    "cheese_accept_request": "reviewer",
+    "cheese_describe": "subject",
+    "cheese_tell": "message",
+    "cheese_milestone": "title",
+    "cheese_serve": "note",
+    "cheese_artifact": "path",
+    "cheese_api": "path",
+    # 后台任务。起任务时说的是那条命令 —— 任务号是刚生出来的，对读的人不说明
+    # 任何事；往里打字时说的是打进去的那句，同理。
+    "bash_start": "command",
+    "bash_read": "id",
+    "bash_write": "text",
+    "bash_kill": "id",
 }
 
 #: 参数是一条 shell 命令的工具 —— 命令要拆开读，不是照着参数名取一截就完事。
@@ -154,6 +187,8 @@ _PATH_TOOLS = frozenset(
         "edit",
         "write",
         "ls",
+        "cheese_doc_set",
+        "cheese_artifact",
     }
 )
 
@@ -192,9 +227,21 @@ _NOISE_HEADS = frozenset({"cd", "export", "set", "unset", "source", ".", "true",
 #: 在第一个空格处断开，现场显示的是 ``gh-token 2>/dev/null)`` —— 半截替换出来的
 #: 残句，不是任何人写过的命令。同理，最后一个赋值后面允许什么都不跟：整段只有
 #: 赋值时它该被当成没信息量而跳过，而不是原样显示一行 ``root=/home/…``。
+# 两处占有型量词（``++`` 和 ``*+``）不是微调，是这条正则能不能用的分界。没有它们
+# 这里是 ``(A*)+`` 的形状：值那一段的重复可以回吐，外面的重复再换一种切法重来，
+# 于是一条「看着像赋值前缀、最终却不匹配」的命令（``A=<一串字符>'`` 这种没配对的
+# 引号就够）要走指数级的回溯。量过：23 个字符 113 毫秒，往后每多一个字符翻一倍。
+#
+# 它确实发生了。2026-09-18 dev 上的后端卡死在这一行——现场事件是一条一条过
+# ``_is_platform_tool`` 的，一条读不完，这个 async 的消费者就再也不动，而它和整个
+# 应用共用一个事件循环：``/healthz`` 连续 24 次 8 秒超时，容器被判 unhealthy，后
+# 面每一次部署都过不了健康门。
+#
+# 回吐在这里从来不是「匹配对」所需要的：各分支的起始字符互不相同，值那一段能吃
+# 的字符也不包含空白，所以吃到最多就是对的。占有型量词把那条回溯的路直接封死。
 _LEADING_ASSIGNMENTS = re.compile(
     r"""^(?:[A-Za-z_][A-Za-z0-9_]*="""
-    r"""(?:'[^']*'|"[^"]*"|\$\([^)]*\)|`[^`]*`|[^\s'"`$]+|\$)*"""
+    r"""(?:'[^']*'|"[^"]*"|\$\([^)]*\)|`[^`]*`|[^\s'"`$]++|\$)*+"""
     r"""(?:\s+|$))+"""
 )
 

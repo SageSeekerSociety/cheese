@@ -11,6 +11,7 @@ import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import httpx
 from sqlalchemy import func, or_, select
 
 from app.core.config import settings
@@ -25,12 +26,25 @@ logger = logging.getLogger("cheesex.scheduler")
 
 IDLE_MEMORY_HOURS = 8
 
+# A poller against a network misses sometimes: a DNS blip, the connection owner
+# restarting mid-release, a TLS handshake that never finished. The first miss is
+# not news — the next tick is a minute away and usually fixes it — and reporting
+# each one as an error made 39 of the alert channel's first 600 messages, none
+# of which anybody acted on. What IS news is that the retries are not working,
+# so a card has to miss this many ticks in a row before it is reported as an
+# error. Everything else still fails loudly on the first occurrence: a bug in
+# the poller is not something a later tick repairs.
+TRANSIENT_MISSES_BEFORE_ERROR = 3
+
 
 class SchedulerService:
     def __init__(self, *, chat_service: ChatService):
         self._chat = chat_service
         # Same DB binding as the chat service (real PG, or the test factory).
         self._sessions = chat_service.session_factory
+        # Consecutive ticks each card has lost to the network, so that a blip
+        # and an outage do not read the same. One instance drives every tick.
+        self._transient_misses: dict[uuid.UUID, int] = {}
 
     async def tick(self) -> dict:
         """Parked — see docs/agent-principles.md §12.
@@ -354,12 +368,39 @@ class SchedulerService:
                     )
                     await session.commit()
                     checked += 1
+                    self._transient_misses.pop(card_id, None)
                 except Exception as exc:  # noqa: BLE001 — one card must not stop the rest
                     await session.rollback()
                     errors.append(f"{card_id}: {exc}")
-                    logger.exception("poll_open_prs failed for card %s", card_id)
+                    self._report_card_failure(card_id, exc)
                     await self._note_card_poll_crashed(card_id, exc)
         return {"cards_checked": checked, "errors": errors}
+
+    def _report_card_failure(self, card_id: uuid.UUID, exc: BaseException) -> None:
+        """Loudly, unless the network is the only thing that went wrong and the
+        retries have not yet run out of excuses."""
+        if not isinstance(exc, httpx.TransportError):
+            self._transient_misses.pop(card_id, None)
+            logger.exception("poll_open_prs failed for card %s", card_id)
+            return
+        misses = self._transient_misses.get(card_id, 0) + 1
+        self._transient_misses[card_id] = misses
+        if misses < TRANSIENT_MISSES_BEFORE_ERROR:
+            logger.warning(
+                "poll_open_prs could not reach the network for card %s "
+                "(%d in a row, reporting at %d): %r",
+                card_id,
+                misses,
+                TRANSIENT_MISSES_BEFORE_ERROR,
+                exc,
+            )
+            return
+        logger.exception(
+            "poll_open_prs has been unable to reach the network for card %s "
+            "for %d ticks in a row",
+            card_id,
+            misses,
+        )
 
     async def _note_card_poll_crashed(
         self, card_id: uuid.UUID, exc: BaseException

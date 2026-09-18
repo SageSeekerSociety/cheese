@@ -7,7 +7,7 @@
         <app-bar v-if="!hideAppBar" :links="[]" />
       </keep-alive>
       <keep-alive>
-        <LeftAppRail v-if="!hideAppBar" :items="rail" />
+        <LeftAppRail v-if="!hideAppBar" :items="rail" @reorder="reorderRail" />
       </keep-alive>
 
       <!-- 二级导航：通过路由渲染 -->
@@ -140,13 +140,14 @@ import type { NavSources } from './components/common/Navigation/destinations'
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useRouter } from 'vue-router'
+import { useEventListener } from '@vueuse/core'
 
 import { defaultTeamFor, teamIdInPath, useNewProjectDialog } from '@/composables/useNewProjectDialog'
 import { usePageTitle } from '@/composables/usePageTitle'
 
 import MyApp from './components/common/MyApp.vue'
 import BottomAppBar from './components/common/Navigation/BottomAppBar.vue'
-import { railItems, tabItems, workspaceProject } from './components/common/Navigation/destinations'
+import { railItems, shortcutTarget, tabItems, workspaceProject } from './components/common/Navigation/destinations'
 import LeftAppRail from './components/common/Navigation/LeftAppRail.vue'
 import { usePageTitleStore } from './stores/title'
 
@@ -159,6 +160,13 @@ import VersionBadge from '@/components/common/VersionBadge.vue'
 import ResourceLimitsNotice from '@/components/ResourceLimitsNotice.vue'
 import { trackKeyboardInset } from '@/lib/keyboardInset'
 import { loadCachedProjects, saveCachedProjects } from '@/lib/projectCache'
+import {
+  applyProjectOrder,
+  type DropEdge,
+  loadProjectOrder,
+  reorderProjects,
+  saveProjectOrder,
+} from '@/lib/projectOrder'
 import { myHandle } from '@/me'
 import { TeamsApi } from '@/network/api/teams'
 import AccountService from '@/services/account'
@@ -212,6 +220,18 @@ const hideTabs = computed(() => currentRoute.meta.hideTabs === true)
 // 一格方头像（Discord 式，取代了原来的元思助手），点开的是我们的完整工作区
 // (话题/群聊/doc/agent)。两端各拿到哪些格子由 Navigation/destinations.ts 说了算。
 const cxProjects = ref<Project[]>(loadCachedProjects(myHandle()))
+
+// 服务端那份清单是 created_at desc，rail 画的是这个人自己拖出来的顺序。两者分开
+// 存：拖过之后再刷新项目列表，排法不会被服务端的顺序盖掉。
+const projectOrder = ref<string[]>(loadProjectOrder(myHandle()))
+const railProjects = computed(() => applyProjectOrder(cxProjects.value, projectOrder.value))
+
+function reorderRail(movedId: string, targetId: string, edge: DropEdge) {
+  const next = reorderProjects(railProjects.value, movedId, targetId, edge)
+  projectOrder.value = next
+  saveProjectOrder(myHandle(), next)
+}
+
 const projectListWarning = ref('')
 const showProjectListWarning = ref(false)
 
@@ -263,23 +283,44 @@ watch(
 watch(
   () => AccountService.loggedIn,
   () => {
+    // 排法是按 handle 存的，所以换了人就得换一份读进来——否则新登录的人看到的是
+    // 上一个人的排法，直到下一次整页刷新。
+    projectOrder.value = loadProjectOrder(myHandle())
     void loadCxProjects()
   }
 )
 
 // 上次开过的那个项目存在 workspace store 的布局里，所以冷启动也落得回去。
 const workspaceProjectId = computed<string | null>(() =>
-  workspaceProject(cxProjects.value, workspace.projectId, lastOpenedProjectId())
+  workspaceProject(railProjects.value, workspace.projectId, lastOpenedProjectId())
 )
 
 const navSources = computed<NavSources>(() => ({
-  projects: cxProjects.value,
+  projects: railProjects.value,
   workspaceProjectId: workspaceProjectId.value,
   projectAvatar,
   createProject: createNewProject,
 }))
 
 const rail = computed(() => railItems(navSources.value))
+
+// rail 的悬停浮层一直在说 ⌘N 能切过去；这里是它真正被绑上的地方。
+//
+// 这是从浏览器手里**抢**来的：⌘1–9 本来是切标签页，和 Slack 网页版一样的取舍。
+// 所以只在这个数字真的对上某一格时才拦下来，对不上的照旧交回给浏览器——项目只有
+// 三个的时候 ⌘7 仍然切你的第七个标签页。
+//
+// 认 `code` 不认 `key`：`key` 跟着键盘布局走，法语 AZERTY 上不按 Shift 的那一排
+// 根本不是数字，而人看着的是同一个物理键。
+useEventListener(window, 'keydown', (event: KeyboardEvent) => {
+  if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return
+  const digit = /^Digit([1-9])$/.exec(event.code)
+  if (!digit) return
+  const to = shortcutTarget(rail.value, Number(digit[1]))
+  if (!to) return
+  event.preventDefault()
+  void router.push(to)
+})
 const tabs = computed(() => tabItems(navSources.value))
 // The "+" rail affordance opens an in-app dialog (no native prompt). On confirm
 // we create the project owned by the current user, refresh the rail so the new

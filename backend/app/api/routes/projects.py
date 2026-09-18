@@ -101,9 +101,10 @@ logger = logging.getLogger("cheesex.projects")
 def _is_a_real_person(handle: str | None) -> bool:
     """Could this handle ever match a human account?
 
-    `anonymous` is what an unidentified caller resolves to and 芝士's handles
-    are agents; neither can hold owner authority, so neither counts as an owner
-    even though both are non-empty strings.
+    `anonymous` is what an unidentified caller resolves to: nobody, so no owner.
+    An agent handle is somebody, and can hold a project role like anybody else —
+    it is excluded here only because this answers "is there a person to name in
+    the log", and naming 芝士 as the person answers nothing.
 
     Advisory only — this decides whether to LOG, never whether to allow. That
     is why `looks_like_agent_handle` is fair game here despite its docstring
@@ -980,12 +981,10 @@ async def set_branch_protection(
 
     ``approvals_required`` predates this block and stays at
     ``settings["approvals_required"]`` — read and written here, never moved,
-    never dual-written. Review policy is controlled by human owners/leads;
-    an agent's management role does not grant authority to relax its checks.
+    never dual-written. Who may change review policy is the steward dependency's
+    question, and it is a question about role: an owner or a lead, whoever they
+    are.
     """
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    if actor.is_agent:
-        raise ForbiddenError("只有人类项目 owner / 组长能修改合并规则")
     project = await ProjectRepository(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
