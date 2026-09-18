@@ -60,8 +60,7 @@ jobs:
       - name: Ensure a YAML-capable python3
         run: |
           python3 -c 'import yaml' 2>/dev/null && exit 0
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq python3-yaml
+          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh python3-yaml
           python3 -c 'import yaml'
 
       - name: App-tier deploy contract

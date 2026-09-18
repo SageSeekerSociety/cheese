@@ -88,6 +88,9 @@ jobs:
       - name: Test image build planning
         run: bash .github/scripts/test-plan-image-builds.sh
 
+      - name: Test the apt guard
+        run: bash .github/scripts/test-ensure-apt.sh
+
       - name: Plan builds from the last successful image set
         id: plan
         env:
