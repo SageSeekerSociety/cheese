@@ -76,6 +76,8 @@ const props = withDefaults(
 const emit = defineEmits<{
   (e: 'open-topic', topicId: string): void
   (e: 'open-card', taskId: string | null): void
+  /** 卡片面板里的「去验收」——同 `chatEvents.review`，切到「改动」那一格。 */
+  (e: 'review'): void
   (e: 'mention-click', handle: string): void
   (e: 'update:tab', key: string): void
   // 预览面板里读者指着文档说的那一句，交给拿着对话的那一层。
@@ -483,6 +485,7 @@ defineExpose({ pulse, highlightTurn, openFile })
           :open-card-id="openCardId"
           @open-topic="emit('open-topic', $event)"
           @open-card="emit('open-card', $event)"
+          @review="emit('review')"
           @mention-click="emit('mention-click', $event)"
           @open-file="openFile"
         />

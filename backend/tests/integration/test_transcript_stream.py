@@ -1,5 +1,6 @@
 """Raw transcript delivery survives retries and refuses gaps or changed bytes."""
 
+import asyncio
 import hashlib
 import uuid
 
@@ -174,3 +175,63 @@ async def test_http_ingress_and_readable_download_enforce_room_scope(
         ).status_code
         == 404
     )
+
+
+async def test_a_stalled_upload_holds_no_row_lock(client, tmp_path):
+    """The dev outage of 2026-09-18: one upload that never returned held the
+    file's row lock, and every later upload of that file queued behind it
+    with a pool connection each. Now a second delivery of the same bytes
+    completes while the first is still stuck in storage, and the stuck one
+    lands as the same single chunk once it returns."""
+    release = asyncio.Event()
+
+    class StalledStorage(LocalStorageBackend):
+        async def upload(self, file, key, content_type):
+            await release.wait()
+            return await super().upload(file, key, content_type)
+
+    args = dict(
+        project_id=uuid.uuid4(),
+        topic_id=uuid.uuid4(),
+        file_id=uuid.uuid4(),
+        source=".claude/projects/p/s.jsonl",
+        offset=0,
+        content=b"abc\n",
+    )
+    async with client.test_factory() as stuck, client.test_factory() as db:
+        first = asyncio.create_task(
+            stream.append(stuck, **args, storage=StalledStorage(str(tmp_path), "/u"))
+        )
+        await asyncio.sleep(0.2)
+        assert not first.done()
+        receipt = await asyncio.wait_for(
+            stream.append(db, **args, storage=LocalStorageBackend(str(tmp_path), "/u")),
+            timeout=5,
+        )
+        release.set()
+        assert await asyncio.wait_for(first, timeout=5) == receipt
+        assert await stream.files(db, args["project_id"], args["topic_id"]) == [
+            {"id": str(args["file_id"]), "source": args["source"], "size": 4}
+        ]
+
+
+async def test_a_transfer_that_never_returns_fails_in_bounded_time(
+    client, monkeypatch, tmp_path
+):
+    class HangingStorage(LocalStorageBackend):
+        async def upload(self, file, key, content_type):
+            await asyncio.Event().wait()
+
+    monkeypatch.setattr(stream, "TRANSFER_SECONDS", 0.2)
+    async with client.test_factory() as db:
+        with pytest.raises(TimeoutError):
+            await stream.append(
+                db,
+                project_id=uuid.uuid4(),
+                topic_id=uuid.uuid4(),
+                file_id=uuid.uuid4(),
+                source=".claude/projects/p/s.jsonl",
+                offset=0,
+                content=b"abc\n",
+                storage=HangingStorage(str(tmp_path), "/u"),
+            )
