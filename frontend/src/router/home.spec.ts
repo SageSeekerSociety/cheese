@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import AccountService from '@/services/account'
 
-vi.mock('@/services/account', () => ({ default: { loggedIn: false } }))
+vi.mock('@/services/account', () => ({ default: { loggedIn: false, sessionRestored: Promise.resolve() } }))
 vi.mock('@/layouts/home/Home.vue', () => ({ default: { template: '<div />' } }))
 vi.mock('@/components/home/HomeSidebar.vue', () => ({ default: { template: '<div />' } }))
 vi.mock('@/views/home/Landing.vue', () => ({ default: { template: '<div />' } }))
@@ -30,6 +30,7 @@ function router() {
 describe('首页那一层', () => {
   beforeEach(() => {
     AccountService.loggedIn = false
+    AccountService.sessionRestored = Promise.resolve()
   })
   it('小队落在「我的」上', async () => {
     const r = router()
@@ -48,6 +49,21 @@ describe('首页那一层', () => {
     AccountService.loggedIn = true
     const r = router()
     await r.push('/')
+    expect(r.currentRoute.value.name).toBe('HomeSpaces')
+  })
+
+  // 离开超过 15 分钟再回来：访问令牌过期，恢复会话要先换一个新的。换回来之前
+  // loggedIn 是 false，根地址不能拿这个答案去决定——回访的人不该先看一眼推广页。
+  it('会话还在恢复时根地址等它恢复完再落地', async () => {
+    let restored!: () => void
+    AccountService.sessionRestored = new Promise<void>((resolve) => (restored = resolve))
+    const r = router()
+    const navigation = r.push('/')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(r.currentRoute.value.name).toBeUndefined()
+    AccountService.loggedIn = true
+    restored()
+    await navigation
     expect(r.currentRoute.value.name).toBe('HomeSpaces')
   })
 })
