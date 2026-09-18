@@ -1,16 +1,20 @@
 """Topic membership (话题成员名册) CRUD + permissions over HTTP."""
 
-import uuid
-
-from app.domain.identity.handles import topic_agent_handle
 from tests.integration.conftest import session_auth_headers
 
 MISSING_TOPIC = "00000000-0000-0000-0000-000000000000"
 
 
-def _agent(tid: str) -> str:
-    """The handle THIS topic's 分身 sits in the roster under (分身独立身份)."""
-    return topic_agent_handle(uuid.UUID(tid))
+def _agent(client, tid: str) -> str:
+    """The handle the agent seated in this room acts under.
+
+    Read from the roster rather than derived from the room: a room is a
+    collaboration space and does not name an agent, so which agent sits here is
+    a fact to look up.
+    """
+    seats = [m for m in _roster(client, tid) if m["agent"]]
+    assert len(seats) == 1, seats
+    return seats[0]["member_handle"]
 
 
 def _topic(client, created_by: str = "alice") -> str:
@@ -34,9 +38,9 @@ def test_seed_creator_owner_and_cheese_member(client):
     tid = _topic(client, created_by="alice")
     members = {m["member_handle"]: m for m in _roster(client, tid)}
     assert members["alice"]["role"] == "owner"
-    assert members[_agent(tid)]["role"] == "member"
-    assert members[_agent(tid)]["agent"] is True
-    assert members[_agent(tid)]["name"] == "芝士"
+    assert members[_agent(client, tid)]["role"] == "member"
+    assert members[_agent(client, tid)]["agent"] is True
+    assert members[_agent(client, tid)]["name"] == "芝士"
     assert members["alice"]["agent"] is False
 
 
@@ -50,7 +54,7 @@ def test_owner_can_add_member(client):
     assert r.status_code == 200
     assert r.json()["data"]["member_handle"] == "bob"
     handles = {m["member_handle"] for m in _roster(client, tid)}
-    assert handles == {"alice", _agent(tid), "bob"}
+    assert handles == {"alice", _agent(client, tid), "bob"}
 
 
 def test_non_manager_cannot_add_member(client):
@@ -199,8 +203,8 @@ def test_endpoints_require_existing_topic(client):
     assert r.status_code == 404
 
 
-def test_agent_row_is_named_after_the_agent_the_room_was_handed_to(client):
-    """换了 AI 队友，名册上那一行就得跟着改名。
+def test_the_agent_row_shows_the_name_of_the_agent_seated_there(client):
+    """换成另一个 AI 队友坐这儿，名册上那一行就得跟着改名。
 
     界面上「这个房间的 AI 队友叫什么」只有这一个来源——对话里它说的每一句话、
     名册上它那一行、头像上那个字，读的都是这里。而座位账号自己的昵称是建号那一刻
@@ -214,7 +218,7 @@ def test_agent_row_is_named_after_the_agent_the_room_was_handed_to(client):
         json={"project_id": p["id"], "title": "T", "created_by": "alice"},
     ).json()["data"]["id"]
 
-    seat = _agent(tid)
+    seat = _agent(client, tid)
     assert {m["member_handle"]: m["name"] for m in _roster(client, tid)}[seat] == "芝士"
 
     reviewer = client.post(
@@ -305,6 +309,6 @@ def test_roster_reports_the_global_default_avatar_as_no_avatar(client):
     assert rows["pat"]["avatar_id"] == avatar_ids["pat"]
     assert rows["uma"]["avatar_id"] == avatar_ids["uma"]
     # 名册上有、但背后没有用户档案的 handle（芝士的座位就是）也是 null。
-    assert rows[_agent(tid)]["avatar_id"] is None
+    assert rows[_agent(client, tid)]["avatar_id"] is None
     # 名字不受影响。
     assert rows["dan"]["name"] == "DAN"

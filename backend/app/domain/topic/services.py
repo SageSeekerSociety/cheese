@@ -231,6 +231,29 @@ class TopicService:
             raise ConflictError("房间已归档，请先取消归档再继续工作")
         return topic
 
+    async def _starting_agent_handle(self, topic: Topic) -> str | None:
+        """The identity of the agent this room starts with, or None.
+
+        A room does not have an agent; it seats one, and seating needs the
+        agent's own identity rather than a name derived from the room. Which
+        agent a new room starts with is still the project's choice — replacing
+        that choice with explicit seating is the next step, and this is the seam
+        it will land on.
+        """
+        from app.domain.agent_instance.services import AgentInstanceService
+
+        resolved = await self.resolve_agent(topic)
+        if resolved.instance_id is None:
+            return None
+        service = AgentInstanceService(self._session)
+        try:
+            instance = await service.get_in_project(
+                project_id=topic.project_id, instance_id=resolved.instance_id
+            )
+        except NotFoundError:
+            return None
+        return await service.ensure_identity(instance)
+
     async def resolve_agent(self, topic: Topic) -> ResolvedAgent:
         """Which agent works in this room — its own, else the project's."""
         project = await self._projects.get(topic.project_id)
@@ -320,6 +343,7 @@ class TopicService:
         # topic is a standalone act with nobody to ask.
         await self._members.seed(
             topic.id,
+            agent_handle=await self._starting_agent_handle(topic),
             owner_handle=await self._resolve_owner(
                 created_by,
                 project_id=project_id,
@@ -878,6 +902,7 @@ class TopicService:
         # rooms after create()/dispatch were fixed.
         await self._members.seed(
             new_room.id,
+            agent_handle=await self._starting_agent_handle(new_room),
             owner_handle=await self._resolve_owner(
                 created_by,
                 project_id=block.project_id,
