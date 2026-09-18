@@ -250,10 +250,22 @@ fi
 if [ -d /proc ] && [ -r /proc/self/environ ]; then
   command -v awk >/dev/null 2>&1 || { echo unknown; exit 0; }
   # Read NUL-delimited fields in one process, without Python startup per turn.
+  #
+  # Only argv[0] decides whether a process is a session — the same shape the
+  # Darwin branch below asks through `comm`. Scanning the REST of the arguments
+  # for the `claude` substring is what this must not do: the remote-execution
+  # helpers (`.../.claude/remote-execution/forwarded_fs.py`) carry a `.claude`
+  # path in their args, and one of them holding a stale CHEESE_TOPIC made the
+  # platform adopt a session that no longer existed — every message for that
+  # room then timed out instead of reopening a screen. `/.claude/` is not a
+  # match for `/claude/`, so the config directory is excluded by construction:
+  # a real executable is `<...>/claude`, `<...>/claude/versions/<v>` (the pin)
+  # or `<...>/.local/bin/claude`.
   printf '%s\n' /proc/[0-9]*/cmdline | awk -v topic="$topic" '
   {
     path=$0; RS="\0"; candidate=0
-    while ((getline part < path)>0) if (index(part,"claude")) candidate=1
+    if ((getline part < path)>0)
+      candidate = (part=="claude" || index(part,"/claude/") || part ~ /\/claude$/)
     close(path)
     if (candidate) {
       sub(/cmdline$/,"environ",path)

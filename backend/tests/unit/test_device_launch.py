@@ -361,6 +361,61 @@ def test_liveness_probe_requires_an_exact_topic_environment_field(tmp_path, key,
         process.wait(timeout=5)
 
 
+def _alive_probe(topic):
+    return subprocess.check_output(
+        ["sh", "-c", device_launch.DEVICE_ALIVE_PROBE],
+        env={**os.environ, "CHEESE_ALIVE_TOPIC": topic},
+        text=True,
+    ).strip()
+
+
+@pytest.mark.skipif(not os.path.exists("/proc/self/environ"), reason="Linux procfs")
+@pytest.mark.parametrize(
+    "relative", [".cheese/claude/versions/9.9.9", ".local/bin/claude"]
+)
+def test_liveness_probe_matches_a_session_by_its_own_executable(tmp_path, relative):
+    """The two install layouts a screen is launched from: the pin at
+    `~/.cheese/claude/versions/<v>`, and `~/.local/bin/claude`."""
+    executable = tmp_path / relative
+    executable.parent.mkdir(parents=True)
+    executable.symlink_to(sys.executable)
+    topic = str(uuid.uuid4())
+    process = subprocess.Popen(
+        [str(executable), "-c", "import time; time.sleep(30)"],
+        env={**os.environ, "CHEESE_TOPIC": topic},
+    )
+    try:
+        assert _alive_probe(topic) == "alive"
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
+    assert _alive_probe(topic) == "dead"
+
+
+@pytest.mark.skipif(not os.path.exists("/proc/self/environ"), reason="Linux procfs")
+def test_liveness_probe_ignores_a_helper_that_merely_carries_a_claude_path(tmp_path):
+    """The remote-execution helpers run as `<python> .../.claude/remote-execution/
+    forwarded_fs.py` and inherit the screen's CHEESE_TOPIC. Matching the `claude`
+    substring anywhere in a command line adopted such a helper as the session
+    itself: the room was reported alive with its claude long gone, so every
+    message sent to it was delivered to nobody and timed out, instead of the
+    platform retiring the dead screen and opening a new one."""
+    script = tmp_path / ".claude/remote-execution/forwarded_fs.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("import time\ntime.sleep(30)\n")
+    topic = str(uuid.uuid4())
+    process = subprocess.Popen(
+        [sys.executable, str(script)], env={**os.environ, "CHEESE_TOPIC": topic}
+    )
+    try:
+        # The helper really is running; only a session is missing.
+        assert process.poll() is None
+        assert _alive_probe(topic) == "dead"
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
+
+
 def test_hooks_settings_wire_command_hook_to_forwarder():
     s = device_launch.hooks_settings()
     assert s["skipDangerousModePermissionPrompt"] is True
