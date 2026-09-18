@@ -8,6 +8,7 @@
 资料只有一份字节，哪个房间引用它都读的是那一份。
 """
 
+from app.core.sandbox_auth import mint_scoped_token
 from tests.integration.conftest import session_auth_headers
 
 
@@ -176,6 +177,75 @@ def test_a_file_the_library_does_not_have(client):
 
     neither = client.post(f"/topics/{topic_id}/attachments")
     assert neither.status_code == 422
+
+
+def test_a_document_in_the_library_opens_in_the_preview(client):
+    """`library/…` 是一个地址，预览那一格得认它——芝士 读过一份资料之后会在消息里
+    引用它，点那枚 chip 不能落到「这个来源里没有这份文件」。"""
+    project_id = _project(client)
+    topic_id = _topic(client, project_id, "房间一")
+    _upload(client, topic_id, "说明.md", "# 说明\n第一行\n".encode())
+    _upload(client, topic_id, "合同.docx", b"PK\x03\x04\xff\xfe\x00\x01docx")
+
+    text = client.get(
+        f"/topics/{topic_id}/preview/file", params={"path": "library/说明.md"}
+    )
+    assert text.status_code == 200, text.text
+    assert "第一行" in text.json()["data"]["content"]
+
+    # 二进制那一份不给正文，但给版本——文档视图靠它取页面。
+    binary = client.get(
+        f"/topics/{topic_id}/preview/file", params={"path": "library/合同.docx"}
+    )
+    assert binary.status_code == 200, binary.text
+    assert binary.json()["data"]["binary"] is True
+    assert binary.json()["data"]["version"]
+
+    missing = client.get(
+        f"/topics/{topic_id}/preview/file", params={"path": "library/没有.md"}
+    )
+    assert missing.status_code == 422
+
+
+def test_the_agent_takes_a_copy_of_a_file_nobody_attached(client):
+    """`cheese library get` 走的这条路：芝士 自己的凭据也读得到资料库。"""
+    project_id = _project(client)
+    topic_id = _topic(client, project_id, "房间一")
+    _upload(client, topic_id, "预算表.xlsx", b"budget")
+
+    client.headers.pop("Authorization", None)
+    client.cookies.clear()
+    agent = {
+        "X-Cheese-Token": mint_scoped_token(
+            project_id=project_id, topic_id=topic_id, ttl_s=3600
+        )
+    }
+    # 凭据是为一轮、一个地方铸的，所以它得说自己在哪儿干活；不说就够不到项目。
+    assert (
+        client.get(f"/projects/{project_id}/library", headers=agent).status_code == 403
+    )
+
+    listed = client.get(
+        f"/projects/{project_id}/library", params={"topic": topic_id}, headers=agent
+    )
+    assert listed.status_code == 200, listed.text
+    assert [f["path"] for f in listed.json()["data"]["data"]] == ["预算表.xlsx"]
+
+    raw = client.get(
+        f"/projects/{project_id}/library/raw",
+        params={"path": "预算表.xlsx", "topic": topic_id},
+        headers=agent,
+    )
+    assert raw.status_code == 200, raw.text
+    assert raw.content == b"budget"
+    assert raw.headers["x-content-type-options"] == "nosniff"
+
+    escape = client.get(
+        f"/projects/{project_id}/library/raw",
+        params={"path": "../secret.txt", "topic": topic_id},
+        headers=agent,
+    )
+    assert escape.status_code == 422
 
 
 def test_the_library_is_the_project_members_only(client):

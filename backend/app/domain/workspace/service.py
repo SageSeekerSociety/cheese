@@ -829,6 +829,14 @@ def read_attachment(project_id: uuid.UUID, room_id: uuid.UUID, path: str) -> byt
     return read_room_file(project_id, room_id, path)
 
 
+def read_attachment_text(project_id: uuid.UUID, room_id: uuid.UUID, path: str) -> dict:
+    """同一个地址，读成文本(二进制的那一份照旧只回元数据和版本)。"""
+    name = library_name(path)
+    if name is not None:
+        return _read_text_path(_safe_path(library_root(project_id), name), path)
+    return read_room_text_file(project_id, room_id, path)
+
+
 def library_root(project_id: uuid.UUID) -> Path:
     root = Path(settings.workspace_root) / ".library" / str(project_id)
     root.mkdir(parents=True, exist_ok=True)

@@ -6,8 +6,10 @@ import uuid
 from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Annotated
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
@@ -451,17 +453,61 @@ async def set_project_default_agent(
     return ok(_agent_out(project_id, agent, is_default=True))
 
 
+@router.get("/{project_id}/library/raw")
+async def library_file_raw(
+    project_id: uuid.UUID,
+    path: str,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    topic: str = "",
+) -> Response:
+    """一份资料的字节。给下载，也给 `cheese library get`——芝士 要读一份没有被这条
+    消息带上的资料时，只能自己来取（那时带着它干活的那个话题，见 `_authorized_place`）。
+    """
+    await ProjectService(db).get_or_404(project_id)
+    await _project_reader(db, resolver, project_id, topic)
+    name = (path or "").strip()
+    parts = name.split("/")
+    if not name or name.startswith("/") or ".." in parts:
+        raise ValidationError("path 必须是资料库里的相对路径")
+    data = ws.read_library_file(project_id, name)
+    filename = quote(parts[-1], safe="")
+    return Response(
+        content=data,
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{filename}",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+            "Cache-Control": "private, max-age=3600",
+        },
+    )
+
+
+async def _project_reader(
+    db: DbSession,
+    resolver: ActorResolverDep,
+    project_id: uuid.UUID,
+    topic_raw: str,
+) -> None:
+    """谁读得到这个项目的东西：项目成员，或者正在这个项目某个话题里干活的 芝士。"""
+    if topic_raw:
+        await _authorized_place(db, resolver, project_id, topic_raw)
+        return
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+
+
 @router.get("/{project_id}/library")
 async def list_library(
-    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep, topic: str = ""
 ) -> dict:
     """资料库：用户给这个项目的文件，按原名，每个房间都引用得到。
 
     Project-level on purpose — 「上周那份预算表」is a sentence someone says in a
     room that has never seen that file."""
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
     await ProjectService(db).get_or_404(project_id)
+    await _project_reader(db, resolver, project_id, topic)
     files = ws.list_library_files(project_id)
     return ok(page(files, len(files)))
 
@@ -554,17 +600,21 @@ async def list_project_tasks(
     return ok(page(items, len(items)))
 
 
-async def _authorized_memory_topic(
+async def _authorized_place(
     db: DbSession,
     resolver: ActorResolverDep,
     project_id: uuid.UUID,
     topic_raw: str,
 ) -> Place | None:
-    """Resolve and authorize the body-carried place, when present.
+    """Resolve and authorize the caller-named place, when present.
 
     A place, not a room: `cheese remember` is run by whoever is doing the work,
     and that is usually a thread. Resolving only rooms answered 404 for the one
     caller this endpoint exists for.
+
+    This is also how 芝士 reaches a project-level route at all: its credential
+    is minted for one turn in one place, so a bare `authorize_project` refuses
+    it (403) even though the token is valid and the project is right.
     """
     if not topic_raw:
         return None
@@ -654,7 +704,7 @@ async def add_memory(
     from app.domain.memory.store import memory_store
 
     await ProjectService(db).get_or_404(project_id)
-    place = await _authorized_memory_topic(
+    place = await _authorized_place(
         db, resolver, project_id, (body.get("topic") or "").strip()
     )
     content = (body.get("content") or "").strip()
@@ -697,7 +747,7 @@ async def search_memory(
     from app.domain.memory.store import memory_store
 
     await ProjectService(db).get_or_404(project_id)
-    place = await _authorized_memory_topic(
+    place = await _authorized_place(
         db, resolver, project_id, (body.get("topic") or "").strip()
     )
     query = (body.get("query") or "").strip()

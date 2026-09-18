@@ -2519,13 +2519,14 @@ async def preview_file(
     A `<&path>` chip in a message names a file without saying which store holds
     it, and a room's own files are here rather than on a branch. Reading one by
     path is how a reader gets from that chip to the file, instead of to a
-    listing that does not contain it.
+    listing that does not contain it — including a `library/…` chip, which is
+    what 芝士 writes once it has read something the project was given.
     """
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
     if path:
         return ok(
-            ws.read_room_text_file(
+            ws.read_attachment_text(
                 place.project_id, topic_id, _clean_artifact_path(path)
             )
         )
