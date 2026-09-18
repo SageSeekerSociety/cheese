@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from typing import Annotated
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -2533,9 +2533,9 @@ async def preview_file(
 
 
 # ---- Chat attachments -----------------------------------------------------
-# An attachment is a REAL file in the topic's worktree (所有产出都是 git): the
-# upload writes bytes under uploads/, the message references it as an
-# attachment block, and 芝士 sees it by Read-ing the file in its sandbox.
+# 用户给进来的文件落进项目的资料库 (`ws.write_library_file`)，按原名寻址，所有房间
+# 都能引用。附在一条消息上的是这个房间收到的那一份——拷进房间的文件区 uploads/ 下，
+# 芝士 在自己的工作目录里 Read 它。资料库那一份只读，不会被改。
 
 # Only these image types may render inline; other files require download.
 _IMAGE_MIME_EXT = {
@@ -2556,10 +2556,18 @@ MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 
 @router.post("/{topic_id}/attachments")
 async def upload_attachment(
-    topic_id: uuid.UUID, file: UploadFile, db: DbSession, resolver: ActorResolverDep
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    file: UploadFile | None = File(None),
+    library_path: str | None = Form(None),
 ) -> dict:
-    """Upload a file into the topic's worktree (uploads/…). Returns the
-    {path, mime} the client then references when sending the message."""
+    """Attach a file to a message being written in this room.
+
+    Either a new upload (`file`), which enters the project's 资料库 under its
+    own name, or one already there (`library_path`). Both end the same way: a
+    copy in this room's files, and the {path, mime} the client references when
+    it sends the message."""
     topic = await TopicService(db).get_or_404(topic_id)
     await resolver.require_verified_caller(
         project_id=topic.project_id, topic_id=topic_id
@@ -2570,26 +2578,39 @@ async def upload_attachment(
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
-    mime = (
-        (file.content_type or "application/octet-stream").split(";")[0].strip().lower()
-    )
-    ext = _IMAGE_MIME_EXT.get(mime)
-    if mime.startswith("image/") and ext is None:
-        mime = "application/octet-stream"
-    data = await file.read(MAX_ATTACHMENT_BYTES + 1)
-    if not data:
-        raise ValidationError("空文件")
-    if len(data) > MAX_ATTACHMENT_BYTES:
-        raise ValidationError("文件太大（上限 10MB）")
-    # Preserve the basename; a unique directory prevents overwrites.
-    name = (file.filename or "file").replace("\\", "/").rsplit("/", 1)[-1]
-    name = re.sub(r"[\x00-\x1f\x7f]", "_", name).strip().strip(".") or "file"
-    name = name.encode("utf-8")[:180].decode("utf-8", errors="ignore")
-    if ext and not name.lower().endswith(ext):
-        name += ext
-    path = f"uploads/{uuid.uuid4().hex}/{name}"
+    if (file is None) == (library_path is None):
+        raise ValidationError("要么上传一个文件，要么选资料库里的一份")
+    if library_path is not None:
+        name = _clean_artifact_path(library_path)
+        data = ws.read_library_file(topic.project_id, name)
+        suffix = "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        mime = _EXT_IMAGE_MIME.get(suffix, "application/octet-stream")
+    else:
+        assert file is not None
+        mime = (
+            (file.content_type or "application/octet-stream")
+            .split(";")[0]
+            .strip()
+            .lower()
+        )
+        ext = _IMAGE_MIME_EXT.get(mime)
+        if mime.startswith("image/") and ext is None:
+            mime = "application/octet-stream"
+        data = await file.read(MAX_ATTACHMENT_BYTES + 1)
+        if not data:
+            raise ValidationError("空文件")
+        if len(data) > MAX_ATTACHMENT_BYTES:
+            raise ValidationError("文件太大（上限 10MB）")
+        name = (file.filename or "file").replace("\\", "/").rsplit("/", 1)[-1]
+        name = re.sub(r"[\x00-\x1f\x7f]", "_", name).strip().strip(".") or "file"
+        name = name.encode("utf-8")[:180].decode("utf-8", errors="ignore")
+        if ext and not name.lower().endswith(ext):
+            name += ext
+        # 名字就是身份，所以撞名不覆盖：拿下一个 `(n)`。
+        name = ws.write_library_file(topic.project_id, name, data)
+    path = f"uploads/{name}"
     ws.write_room_file(topic.project_id, topic_id, path, data)
-    return ok({"path": path, "mime": mime, "bytes": len(data)})
+    return ok({"path": path, "mime": mime, "bytes": len(data), "library_path": name})
 
 
 @router.get("/{topic_id}/attachments/raw")

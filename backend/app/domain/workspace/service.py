@@ -794,6 +794,74 @@ def read_room_text_file(project_id: uuid.UUID, room_id: uuid.UUID, path: str) ->
     return _read_text_path(_safe_path(room_files_root(project_id, room_id), path), path)
 
 
+# ---- 资料库 -----------------------------------------------------------------
+# 用户给这个项目的文件。项目级、按原名寻址、只读：「上周那份预算表」这句话里，名字
+# 就是它的身份，所以这里不放随机串。不在任何 git 树里——这些字节是输入，不是成品的
+# 源，而被托管的仓库不该因为我们多出一个目录。
+
+
+def library_root(project_id: uuid.UUID) -> Path:
+    root = Path(settings.workspace_root) / ".library" / str(project_id)
+    root.mkdir(parents=True, exist_ok=True)
+    return root.resolve()
+
+
+def _next_name(name: str, attempt: int) -> str:
+    if attempt == 1:
+        return name
+    stem, dot, ext = name.rpartition(".")
+    if not dot:
+        return f"{name}({attempt})"
+    return f"{stem}({attempt}).{ext}"
+
+
+def write_library_file(project_id: uuid.UUID, name: str, data: bytes) -> str:
+    """Keep the name the user gave it; a taken name takes the next `(n)`.
+
+    Allocating the name IS the write (`open(..., "xb")`): two uploads of the
+    same name in flight is the case this exists for, and check-then-write loses
+    one of them. Returns the name it ended up with."""
+    root = library_root(project_id)
+    for attempt in range(1, 1000):
+        candidate = _next_name(name, attempt)
+        target = _safe_path(root, candidate)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with target.open("xb") as sink:
+                sink.write(data)
+        except FileExistsError:
+            continue
+        return candidate
+    raise ValidationError(f"同名文件太多：{name}")
+
+
+def read_library_file(project_id: uuid.UUID, path: str) -> bytes:
+    target = _safe_path(library_root(project_id), path)
+    if not target.is_file():
+        raise NotFoundError("资料库里没有这份文件")
+    return target.read_bytes()
+
+
+def list_library_files(project_id: uuid.UUID) -> list[dict]:
+    """Newest first: the file someone just gave the project is the one they are
+    about to reference."""
+    root = library_root(project_id)
+    files = []
+    for entry in root.rglob("*"):
+        if not entry.is_file():
+            continue
+        stat = entry.stat()
+        files.append(
+            {
+                "path": str(entry.relative_to(root)),
+                "bytes": stat.st_size,
+                "modified": stat.st_mtime,
+            }
+        )
+    files.sort(key=lambda f: f["modified"], reverse=True)
+    return files
+
+
 def read_preview_file(
     project_id: uuid.UUID, topic_id: uuid.UUID, entry: str, relative: str
 ) -> bytes:

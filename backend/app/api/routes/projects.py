@@ -451,6 +451,21 @@ async def set_project_default_agent(
     return ok(_agent_out(project_id, agent, is_default=True))
 
 
+@router.get("/{project_id}/library")
+async def list_library(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """资料库：用户给这个项目的文件，按原名，每个房间都引用得到。
+
+    Project-level on purpose — 「上周那份预算表」is a sentence someone says in a
+    room that has never seen that file."""
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    await ProjectService(db).get_or_404(project_id)
+    files = ws.list_library_files(project_id)
+    return ok(page(files, len(files)))
+
+
 @router.get("/{project_id}/decisions")
 async def list_decisions(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep

@@ -1,9 +1,8 @@
 """图片输入 (chat image attachments): upload → attachment block → 芝士 sees it.
 
-The image is a REAL worktree file (所有产出都是 git): POST /attachments writes
-the bytes under uploads/, the WS message references it, the timeline gains an
-attachment block, and the agent prompt points 芝士 at the file (its sandbox
-Read tool is image-capable).
+POST /attachments 把字节收进项目的资料库，并在这个房间的文件区 uploads/ 下留一份。
+消息引用的是后者：时间线上多一个 attachment block，提示词把 芝士 指向那个文件（沙箱
+里的 Read 能看图）。资料库本身见 test_library.py。
 """
 
 from urllib.parse import quote
