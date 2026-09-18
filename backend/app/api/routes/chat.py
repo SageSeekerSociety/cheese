@@ -44,6 +44,7 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from starlette.websockets import WebSocketState
 
 from app.api.auth import ActorResolver
 from app.api.deps import get_broker, get_chat_service, get_work_runner
@@ -149,7 +150,14 @@ async def chat(
 
         relay_task = asyncio.create_task(relay(queue))
         try:
-            while True:
+            # A send that finds the peer gone closes the socket on our side and
+            # is swallowed by `send` above, so nothing raises: the next read is
+            # what notices — and a read on a socket already closed is answered
+            # with a RuntimeError, not a disconnect. That is uvicorn's
+            # 「Exception in ASGI application」 for a browser that merely went
+            # away (three on 2026-09-18, each one an alert); the state is the
+            # fact to check, and it ends the loop the way a disconnect does.
+            while websocket.application_state == WebSocketState.CONNECTED:
                 payload = await websocket.receive_json()
                 if payload.get("type") == "ping":
                     await send({"type": "pong"})
