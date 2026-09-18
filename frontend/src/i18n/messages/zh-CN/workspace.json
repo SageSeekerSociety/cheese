@@ -1,0 +1,33 @@
+{
+  "tabs": {
+    "chat": "对话",
+    "overview": "总览",
+    "site": "现场",
+    "changes": "改动",
+    "preview": "预览"
+  },
+  "tabTitle": {
+    "siteWorking": "现场（芝士正在工作）",
+    "overviewTasks": "总览（{count} 件任务）",
+    "overviewTasksInProgress": "总览（{count} 件任务，{open} 件进行中）",
+    "previewNewContent": "预览（有新内容）",
+    "changesFiles": "改动（{count} 个文件）",
+    "changesNewFiles": "改动（{count} 个文件，有新改动）"
+  },
+  "status": {
+    "building": "施工中",
+    "delivering": "交付中",
+    "needsYou": "待处理",
+    "done": "已完成",
+    "archived": "已归档",
+    "accepted": "已采纳",
+    "draft": "草稿",
+    "reviewing": "待验收",
+    "inProgress": "进行中"
+  },
+  "routes": {
+    "project": "项目工作台",
+    "overview": "总览",
+    "board": "看板"
+  }
+}

@@ -13,6 +13,7 @@ import spaces from './spaces.json'
 import tasks from './tasks.json'
 import teams from './teams.json'
 import users from './users.json'
+import workspace from './workspace.json'
 
 // Namespaces absent here have no English translation yet. They are listed, key by
 // key, in `frontend/src/i18n/untranslated.json` and asserted by
@@ -34,4 +35,5 @@ export default {
   teams,
   spaces,
   notifications,
+  workspace,
 }

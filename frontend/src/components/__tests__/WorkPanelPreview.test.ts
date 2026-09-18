@@ -59,6 +59,7 @@ vi.mock('../../api', async () => {
   }
 })
 
+import { setLocale } from '../../i18n'
 import WorkPanel from '../WorkPanel.vue'
 
 function topic(id: string): Topic {
@@ -101,6 +102,8 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  // 这一份按 tab 的名字点它（`previewButton` 找的是 title 以「预览」开头的那一格）。
+  setLocale('zh-CN')
   vi.clearAllMocks()
   getPreview.mockResolvedValue(null)
   readFile.mockResolvedValue({ path: 'report.html', content: '<p>hi</p>' })

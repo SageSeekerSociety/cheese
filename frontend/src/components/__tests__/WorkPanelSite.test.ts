@@ -52,6 +52,7 @@ vi.mock('../../api', async () => {
   }
 })
 
+import { setLocale } from '../../i18n'
 import WorkPanel from '../WorkPanel.vue'
 
 /** Whatever the layout would have been — only "did it go to the bottom" matters. */
@@ -128,6 +129,8 @@ afterAll(() => restoreScrollHeight?.())
 
 describe('现场面板', () => {
   beforeEach(() => {
+    // 这一份按 tab 的名字点它（`openTab(container, '现场')`），名字走词表了。
+    setLocale('zh-CN')
     vi.clearAllMocks()
     getTranscript.mockResolvedValue({
       data: [block('b1', '最早的一条'), block('b2', '中间的一条'), block('b3', '最新的一条')],

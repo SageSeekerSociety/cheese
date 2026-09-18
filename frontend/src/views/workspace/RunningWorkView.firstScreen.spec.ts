@@ -36,6 +36,8 @@ vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => store }))
 
 import RunningWorkView from './RunningWorkView.vue'
 
+import { setLocale } from '@/i18n'
+
 const Board = RunningWorkView as unknown as Component
 const ROOT = { id: 'root-1', title: '项目总览', kind: 'root' }
 const ROOM = { id: 'room-1', title: '第一周的调研', kind: 'topic' }
@@ -61,6 +63,8 @@ beforeAll(() => {
   })
 })
 beforeEach(() => {
+  // 列名走词表了，这一份断言的是中文那一边（happy-dom 报 en-US，不钉就是英文）。
+  setLocale('zh-CN')
   vi.clearAllMocks()
   store.topics = [ROOT]
   store.loadingTopics = false

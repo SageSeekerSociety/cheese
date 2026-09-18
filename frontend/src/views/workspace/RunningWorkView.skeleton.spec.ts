@@ -30,6 +30,8 @@ vi.mock('@/stores/workspace', () => ({
 
 import RunningWorkView from './RunningWorkView.vue'
 
+import { setLocale } from '@/i18n'
+
 const Board = RunningWorkView as unknown as Component
 
 function task(over: Partial<RoomTask> = {}): RoomTask {
@@ -61,6 +63,9 @@ function pending<T>() {
 }
 
 beforeEach(() => {
+  // 列名走词表了，这一份断言的是中文那一边：不钉语言的话（happy-dom 报 en-US）
+  // 骨架外面那圈列头会写成 Building。
+  setLocale('zh-CN')
   listProjectTasks.mockReset()
 })
 
