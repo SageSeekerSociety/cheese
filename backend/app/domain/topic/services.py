@@ -240,19 +240,19 @@ class TopicService:
         that choice with explicit seating is the next step, and this is the seam
         it will land on.
         """
-        from app.domain.agent_instance.services import AgentInstanceService
+        from app.domain.identity.handles import agent_instance_handle
+        from app.domain.identity.services import IdentityService
 
         resolved = await self.resolve_agent(topic)
         if resolved.instance_id is None:
             return None
-        service = AgentInstanceService(self._session)
-        try:
-            instance = await service.get_in_project(
-                project_id=topic.project_id, instance_id=resolved.instance_id
-            )
-        except NotFoundError:
-            return None
-        return await service.ensure_identity(instance)
+        # Read-only on purpose. Creating an identity here would put a user
+        # insert inside the transaction that creates a topic, and seeding a
+        # roster is not where an agent comes into being: an agent gets its
+        # identity when it is created. An agent that predates identities has
+        # none to seat yet, and the room-derived seat still answers for it.
+        handle = agent_instance_handle(resolved.instance_id)
+        return handle if await IdentityService(self._session).is_agent(handle) else None
 
     async def resolve_agent(self, topic: Topic) -> ResolvedAgent:
         """Which agent works in this room — its own, else the project's."""
