@@ -56,10 +56,12 @@ async def detailed_health_check() -> dict[str, Any]:
 
 
 async def _check_database() -> dict[str, Any]:
+    from app.core.db import pool_status
+
     try:
         async with AsyncSessionLocal() as session:
             await session.execute(text("SELECT 1"))
-        return {"status": "up"}
+        return {"status": "up", "pool": pool_status()}
     except Exception as e:
         logger.warning("Database health check failed: %s", e)
         return {"status": "down", "error": str(e)}
