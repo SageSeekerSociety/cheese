@@ -86,6 +86,31 @@
 - **大小写：句子式（sentence case）。** 只大写第一个词和专有名词：`Create account`、`New project`、
   `Sign in`、`Delivery notes`。**不用 Title Case**（`Create Account` 是错的）。PR #929 在这点上不一致，以本节为准。
 - **单复数**：导航项和列表标题用**复数**（`Spaces`、`Teams`），其余界面文本用**单数**（`Space name`、`New project`）。
+- **带 `{count}` 的字符串写 3 个形态，不要写 2 个。** 这个仓库没有配 `pluralizationRules`，形态是按
+  **形态条数**选的，不是按语言选的——中英走的是同一条规则，实测（vue-i18n 9.14.5，`legacy: false`）：
+
+  | 形态条数 | n=0 | n=1 | n≥2 |
+  |---|---|---|---|
+  | 3 条 | 第 1 条 | 第 2 条 | 第 3 条 |
+  | 2 条 | **第 2 条** | **第 1 条** | 第 2 条 |
+
+  **2 条是反的**：第 1 条管「正好 1」，第 2 条管「其余」。所以照抄中文的 2 条会出错——
+  `{count} 条回复 = No replies | {count} replies` 在 n=0 时渲染成 `0 replies`，而写成
+  `No views | 1 view` 这种直觉顺序时，n=0 反而渲染成 `1 view`。英文一律写 3 条：
+  `{count} 条回复 = No replies | 1 reply | {count} replies`、
+  `查看全部 {count} 条回答 = View all answers | View the answer | View all {count} answers`。
+  写 4 条不比 3 条多出效果（实测 n=0/1/≥2 取的仍是第 1/2/3 条），别为此加形态。
+
+  `catalog.spec.ts` 只比**整串**的占位符总数，不看形态条数，所以「2 条的中文配 3 条的英文」是能过闸门的——
+  闸门不会替你发现形态写错，得自己按上表核。上线前用真实 `vue-i18n` 把 n=0/1/2 渲染一遍最稳。
+- **除了 `{count}` 还有别的占位符时，写不了多形态，只能靠不依赖单复数的措辞兜着。** 闸门比的是整串的
+  占位符集合，每条形态都会重复那个占位符，`{name} has 1 reply | {name} has {count} replies` 的
+  `{name}` 就变成了两个，直接对不上。`创建者 {creator} 和 {count} 位管理员` 这类只能写一条，
+  于是用 `Created by {creator} · {count} admin(s)` 这种数量为 1 也读得通的写法。要根治得让闸门按
+  形态比占位符，那是另一笔的事。
+- **某个数量会不会取到 1，去看调用点，别看文案。** `spaces.detail.creatorAndAdmins` 的 `count` 传的是
+  `admins.length - 1` 且只有 `length >= 2` 才会走到，所以 1 取得到、0 取不到。形态该写几条、有没有
+  写错的风险，取决于这个区间，不取决于中文里有没有出现数字。
 - **标点**：中文全角标点（，。：（））换成英文半角并加空格；句末的「。」在按钮和标签里**去掉**，
   在完整句子里换成 `.`。
 - **占位符**：`{name}` 这类花括号占位符原样保留，不翻译、不调顺序、不改大小写。`catalog.spec.ts` 会检查两边占位符集合相同。

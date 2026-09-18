@@ -15,7 +15,7 @@
       "favorite": "Favorite",
       "unfavorite": "Unfavorite",
       "postAnswer": "Post answer",
-      "allAnswers": "View all answers | View all {count} answers",
+      "allAnswers": "View all answers | View the answer | View all {count} answers",
       "invite": "Invite to answer",
       "bounty": "Bounty",
       "addBounty": "Add bounty",
