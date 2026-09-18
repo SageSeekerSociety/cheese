@@ -146,6 +146,15 @@ class AgentInstanceService:
                 return self.resolved(instance)
         return None
 
+    async def project_of_seat(self, handle: str) -> uuid.UUID | None:
+        """Which project's teammate sits on rosters as ``handle``, or None when
+        the handle is not a saved teammate's seat at all (a person, the shared
+        ``cheese`` seat, a room-derived seat, a device's agent)."""
+        for instance in await self._repo.list_all():
+            if agent_instance_handle(instance.id) == handle:
+                return instance.project_id
+        return None
+
     async def for_handle(self, project: Project, handle: str | None) -> AgentInstance:
         """The saved teammate a caller named by handle, else the project default.
 

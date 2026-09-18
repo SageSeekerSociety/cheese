@@ -17,7 +17,6 @@ from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.domain.identity.handles import (
     CHEESE_HANDLE,
     TOPIC_AGENT_PREFIX,
-    agent_instance_handle,
     looks_like_agent_handle,
     topic_agent_handle,
 )
@@ -383,19 +382,14 @@ class TopicMemberService:
             raise NotFoundError("Topic not found")
         await self._require_manager(topic_id, actor)
         if handle.startswith(TOPIC_AGENT_PREFIX):
-            # An agent's seat is derived from its instance, so this is the one
-            # place a roster can be handed a seat nothing will ever act as — a
-            # teammate of another project, or a made-up handle. Nothing addresses
-            # such a row and nothing writes as it; refuse it rather than seat it.
-            from app.domain.agent_instance.repositories import AgentInstanceRepository
+            # A teammate's seat is derived from its instance, and an instance
+            # keys a memory pool inside ITS project — so another project's
+            # teammate must not be seated here: nothing in this project would
+            # address it, and its token would write as this room's default.
+            from app.domain.agent_instance.services import AgentInstanceService
 
-            seats = {
-                agent_instance_handle(i.id)
-                for i in await AgentInstanceRepository(self._session).list_for_project(
-                    topic.project_id
-                )
-            }
-            if handle not in seats:
+            owner = await AgentInstanceService(self._session).project_of_seat(handle)
+            if owner is not None and owner != topic.project_id:
                 raise NotFoundError("这个项目里没有这个 AI 队友")
         existing = await self._repo.get(topic_id=topic_id, member_handle=handle)
         if existing is not None:

@@ -13,10 +13,11 @@ from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
-from app.domain.identity.handles import CHEESE_HANDLE
+from app.domain.identity.handles import CHEESE_HANDLE, agent_instance_handle
 from app.domain.project.services import ProjectService
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
+from app.domain.topic_membership.services import TopicMemberService
 from tests.conftest import StubChannel, settle_turn, stub_compute
 
 
@@ -271,22 +272,20 @@ async def test_queued_message_retains_selected_teammate(client, tmp_path):
             type_name=None,
             display_name="Second",
         )
-        topic.agent_instance_id = first.id
-        topic_id, second_id = topic.id, second.id
+        members = TopicMemberService(session)
+        for made in (first, second):
+            await members.ensure_agent_seat(topic.id, agent_instance_handle(made.id))
+        topic_id = topic.id
         await session.commit()
     _, original, _, _ = await svc.post_user_message(
-        topic_id, author="u", content="For first", turn_id=None, reply_to=None
+        topic_id, author="u", content="@First For first", turn_id=None, reply_to=None
     )
-    async with factory() as session:
-        topic = await TopicRepository(session).get(topic_id)
-        topic.agent_instance_id = second_id
-        await session.commit()
     await svc.post_user_message(
-        topic_id, author="u", content="For second", turn_id=None, reply_to=None
+        topic_id, author="u", content="@Second For second", turn_id=None, reply_to=None
     )
     prepared = await svc._assemble_turn(
         topic_id=topic_id,
-        content="For first",
+        content="@First For first",
         turn_id=original,
         user_block_id=original,
         provision_actor=None,
@@ -378,17 +377,16 @@ async def test_other_teammate_message_waits_for_live_turn(
             type_name=None,
             display_name="Second",
         )
-        topic_id, second_id = topic.id, second.id
+        await TopicMemberService(session).ensure_agent_seat(
+            topic.id, agent_instance_handle(second.id)
+        )
+        topic_id = topic.id
         await session.commit()
     async for _ in svc.converse(
         topic_id=topic_id, author="u", content="First task", summon=True
     ):
         pass
     await screen.started.wait()
-    async with factory() as session:
-        topic = await TopicRepository(session).get(topic_id)
-        topic.agent_instance_id = second_id
-        await session.commit()
     waiting = asyncio.Event()
     wait = svc.wait_for_recipient
 
