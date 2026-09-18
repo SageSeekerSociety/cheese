@@ -151,6 +151,10 @@ class WarmPoolService:
         """
         if machine.topic_id is None or not machine.warm_claim_pending:
             return False
+        # Let go of the caller's locks before waiting for another claimer: it
+        # will need the same topic lock to record its result, and a claimer
+        # that waits here while holding it would deadlock with it.
+        await self.session.commit()
         async with _claim_locks.setdefault(machine.id, asyncio.Lock()):
             return await self._finish_claim(machine)
 
