@@ -1,7 +1,6 @@
 """The actual HTTP identity and room policy protect every RC controller route."""
 
 import time
-import uuid
 
 import pytest
 
@@ -168,52 +167,23 @@ def test_a_task_list_that_never_comes_back_does_not_break_the_state_the_page_pol
         client.portal.call(cleanup)
 
 
-def test_the_rooms_own_agent_reads_its_session_but_cannot_answer_for_it(client, place):
-    """Stake, not identity: a session must not answer its own question.
-
-    Reading is a different act. The page polls the read route every couple of
-    seconds, and a teammate — agent or person — being unable to see whether a
-    session is connected bought nothing.
-    """
+def test_reading_a_session_is_open_to_whoever_is_in_the_room(client, place):
+    """The page polls this every couple of seconds. Refusing a teammate — agent
+    or person — bought nothing: deciding is what has a party under review."""
     from app.api.routes.remote_control import store
     from app.domain.agent.remote_control import key
-    from app.domain.identity.handles import topic_agent_handle
 
     project, topic = place
-    seated = topic_agent_handle(uuid.UUID(topic))
-
-    async def create_session():
-        row = await store().create(
-            {"p": project, "t": topic, "exp": int(time.time()) + 3600}, {}
-        )
-        await store().update(row["id"], {"status": "active", "last_seen": time.time()})
-        return row["id"]
-
-    sid = client.portal.call(create_session)
+    token = mint_scoped_token(project_id=project, topic_id=topic, remote_control=True)
+    created = client.post(
+        "/v1/code/sessions", json={}, headers={"X-Cheese-Token": token}
+    )
+    sid = created.json()["session"]["id"]
     try:
-        headers = session_auth_headers(seated)
-        assert (
-            client.get(f"/topics/{topic}/agent/control", headers=headers).status_code
-            == 200
+        read = client.get(
+            f"/topics/{topic}/agent/control", headers={"X-Cheese-Token": token}
         )
-
-        refused = client.post(
-            f"/topics/{topic}/agent/answer",
-            headers=headers,
-            json={
-                "session_id": sid,
-                "request_id": "ask-1",
-                "response": {"behavior": "allow"},
-            },
-        )
-        assert refused.status_code == 403, refused.text
-
-        refused = client.post(
-            f"/topics/{topic}/agent/control",
-            headers=headers,
-            json={"session_id": sid, "request": {"subtype": "interrupt"}},
-        )
-        assert refused.status_code == 403, refused.text
+        assert read.status_code == 200, read.text
     finally:
 
         async def cleanup():
@@ -275,14 +245,32 @@ def test_control_state_requires_room_membership_even_with_rollout_disabled(
     ],
 )
 def test_agent_cannot_approve_or_control_itself(client, place, endpoint, payload):
+    """Whether this actor IS this session is asked of the session, so the test
+    opens a real one: with a made-up id the honest answer is that no such
+    session is current, which is a different refusal."""
+    from app.api.routes.remote_control import store
+    from app.domain.agent.remote_control import key
+
     project, topic = place
     token = mint_scoped_token(project_id=project, topic_id=topic, remote_control=True)
-    response = client.post(
-        f"/topics/{topic}/agent/{endpoint}",
-        json=payload,
-        headers={"X-Cheese-Token": token},
+    created = client.post(
+        "/v1/code/sessions", json={}, headers={"X-Cheese-Token": token}
     )
-    assert response.status_code == 403, response.text
+    assert created.status_code == 200, created.text
+    sid = created.json()["session"]["id"]
+    try:
+        response = client.post(
+            f"/topics/{topic}/agent/{endpoint}",
+            json={**payload, "session_id": sid},
+            headers={"X-Cheese-Token": token},
+        )
+        assert response.status_code == 403, response.text
+    finally:
+
+        async def cleanup():
+            await store().redis.delete(key(sid), key(topic, "current"))
+
+        client.portal.call(cleanup)
 
 
 def test_bootstrap_rejects_a_place_from_another_project(client, place):

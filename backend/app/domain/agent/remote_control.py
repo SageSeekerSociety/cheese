@@ -79,6 +79,11 @@ class RemoteControl:
             "project_id": claims["p"],
             "topic_id": claims["t"],
             "expires_at": claims["exp"],
+            # WHICH agent this session is. The credential already names it
+            # (claim `a`), and a room cannot answer the question: a room is a
+            # collaboration space that may hold several agents, so asking it for
+            # "its agent" can only mean picking one.
+            "agent_handle": claims.get("a"),
             "title": body.get("title", "Cheese"),
             "config": body.get("config", {}),
             "execution": body.get("execution"),

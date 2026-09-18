@@ -28,8 +28,9 @@ from app.domain.agent.device_hub import DeviceOffline
 from app.domain.agent.harness.claude_code import REMOTE_CONTROLS
 from app.domain.agent.remote_control import CONTROLS, key, store
 from app.domain.agent.runtime import get_broker
+from app.domain.identity.actor import Actor
+from app.domain.identity.handles import topic_agent_handle
 from app.domain.topic.services import TopicService
-from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(tags=["remote-control"])
 # How long the control read waits for the machine's background-task list.
@@ -98,7 +99,7 @@ async def voice_pending(db: AsyncSession, session: dict, chat: ChatService) -> N
             roster=None,
             topic_refs=[],
             publish=True,
-            author=await TopicMemberService(db).resolve_agent_handle(topic_id),
+            author=session.get("agent_handle") or topic_agent_handle(topic_id),
             publication_id=f"rc-ask-{request_id}",
         )
         if payload is not None:
@@ -336,30 +337,14 @@ async def rc_presence(sid: str, request: Request) -> dict:
     return {}
 
 
-async def controller(
-    topic_id: uuid.UUID, db: AsyncSession, resolver, *, deciding: bool = False
-):
-    """Whoever is in this room, for reading; not this session's own agent, for
-    deciding.
-
-    What must not happen is a session approving its own tool use, answering its
-    own question or changing its own permission mode — the shape of "the party
-    under review is not the reviewer", which is about stake and not about being
-    an agent. A teammate reads the state either way: the page polls the read
-    route every few seconds, and refusing an agent there bought nothing.
-    """
+async def controller(topic_id: uuid.UUID, db: AsyncSession, resolver):
+    """Whoever is in this room may read and control a session here."""
     place = await TopicService(db).place_or_404(topic_id)
     actor = await resolver.resolve(
         fallback_handle=None, project_id=place.project_id, topic_id=place.room_id
     )
     if not actor.authenticated:
         raise AuthenticationRequiredError("Login required to control a session")
-    if deciding and actor.is_agent:
-        seated = await TopicMemberService(db).resolve_agent_handle(
-            topic_id, room_id=place.room_id
-        )
-        if actor.handle == seated:
-            raise ForbiddenError("A session cannot answer its own controls")
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
     )
@@ -422,6 +407,27 @@ async def selected_session(topic_id: uuid.UUID, sid: str) -> dict:
     return session
 
 
+def not_its_own(session: dict, actor: Actor) -> None:
+    """A session may not decide its own controls.
+
+    Approving the tool you are about to run, answering the question you just
+    asked, or raising your own permission mode is the party under review acting
+    as the reviewer. The question is whether this actor IS this session — asked
+    of the session, which knows, and never of the room, which holds whatever
+    collaborators it holds and cannot be said to have an agent.
+
+    A session opened before it recorded this falls back to the handle its own
+    credential would have carried, derived from its place the way
+    `mint_scoped_token` derives it. That is still the session answering for
+    itself, and without it every session already running would be unguarded.
+    """
+    mine = session.get("agent_handle") or topic_agent_handle(
+        uuid.UUID(session["topic_id"])
+    )
+    if actor.is_agent and actor.handle == mine:
+        raise ForbiddenError("A session cannot decide its own controls")
+
+
 @router.post("/topics/{topic_id}/agent/control", operation_id="agent-control")
 async def control(
     topic_id: uuid.UUID,
@@ -430,8 +436,9 @@ async def control(
     resolver: ActorResolverDep,
     wait: float = Query(default=15, ge=0, le=30),
 ) -> dict:
-    actor = await controller(topic_id, db, resolver, deciding=True)
+    actor = await controller(topic_id, db, resolver)
     session = await selected_session(topic_id, data.session_id)
+    not_its_own(session, actor)
     if data.request.get("subtype") not in CONTROLS:
         raise ValidationError("Unsupported RC control; see the session's controls list")
     payload = {
@@ -510,8 +517,8 @@ class MessageIn(BaseModel):
 async def control_message(
     topic_id: uuid.UUID, data: MessageIn, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    actor = await controller(topic_id, db, resolver, deciding=True)
-    await selected_session(topic_id, data.session_id)
+    actor = await controller(topic_id, db, resolver)
+    not_its_own(await selected_session(topic_id, data.session_id), actor)
     command = await store().enqueue(
         data.session_id,
         {
@@ -533,8 +540,8 @@ async def answer(
     resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
-    actor = await controller(topic_id, db, resolver, deciding=True)
-    await selected_session(topic_id, data.session_id)
+    actor = await controller(topic_id, db, resolver)
+    not_its_own(await selected_session(topic_id, data.session_id), actor)
     rc = store()
     command = await rc.enqueue(
         data.session_id,
