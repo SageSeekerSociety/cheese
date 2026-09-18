@@ -178,3 +178,36 @@ describe('简报块自己滚动', () => {
     expect(rule).toContain('overflow-y: auto')
   })
 })
+
+// 上一条只堵住了简报一个块。验收卡（`TopicAcceptCard`）比简报更能长：检查项、批准
+// 人、推荐理由、PR 上的检查每多一条它就高一截，而它和标题、元信息、结论、发言框
+// 一样是 `min-height: auto` —— 收缩不到内容高度以下。整格唯一肯缩的是对话区，它被
+// 压到 0 之后，多出来的部分就从面板底部溢出去、被外壳裁掉：看不见，也滚不到（马霄
+// 宇报的）。
+//
+// 所以两件事都要成立：这一格自己是一个滚动层；对话区有一个非零的下限，别被压成一
+// 个高度 0、连滚动条都没有的盒子。两条都是 CSS，挂载测试量不到布局，照上面那条的
+// 老办法用源码断言钉住。
+describe('面板不够高时滚得动', () => {
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'PanelCard.vue'), 'utf8')
+
+  function rule(selector: string): string {
+    const start = src.indexOf(`\n${selector} {`)
+    if (start < 0) throw new Error(`PanelCard.vue 里没有这条规则：${selector}`)
+    const body = src.slice(src.indexOf('{', start) + 1, src.indexOf('}', start))
+    // 注释里也会出现 `overflow-y: auto` 这种词，先摘掉再断言，免得注释把测试骗绿。
+    return body.replace(/\/\*[\s\S]*?\*\//g, '')
+  }
+
+  it('面板自己就是这一格的滚动层', () => {
+    expect(rule('.panel-card')).toContain('overflow-y: auto')
+  })
+
+  it('对话区有一个非零的下限', () => {
+    const timeline = rule('.panel-card__timeline')
+    const min = /min-height:\s*(\d+)px/.exec(timeline)
+    expect(min).not.toBeNull()
+    expect(Number(min?.[1])).toBeGreaterThan(0)
+    expect(timeline).toContain('overflow-y: auto')
+  })
+})
