@@ -5,16 +5,17 @@ The executor runs its shell commands through the assigned machine's
 the workspace root, and its output all behave the way the same build's own Bash
 tool behaves. Three of those properties are not in any contract Anthropic
 publishes, and one of them — where a backgrounded command's output lands on
-disk — is a path we read directly, because `TaskOutput` in serve mode cannot
-find the task its own Bash tool just registered.
+disk — is a path we read directly, because the build offers no way back to a
+task its own Bash tool backgrounded: `TaskStop` answers `No task found` for
+the id, and 2.1.277 stopped serving `TaskOutput` at all.
 
 So this script is the contract. It runs against a given build and says which
 properties still hold. Point it at the pinned build to gate a merge, and at the
 newest published build to learn that the next upgrade will break us before the
 upgrade is what we are debugging.
 
-The last check is inverted on purpose: it asserts that `TaskOutput` and
-`TaskStop` are still broken in serve mode. The day that check fails, the
+The last check is inverted on purpose: it asserts that the build still
+offers no way back to a backgrounded task. The day that check fails, the
 workaround in `runtime.py` has become dead weight and goes.
 
 Usage:
@@ -40,7 +41,7 @@ sys.path.insert(
         / "backend/app/domain/agent/harness/claude_code/remote_execution"
     ),
 )
-from runtime import serve_task_output  # noqa: E402 — path set above
+from runtime import serve_task_output
 
 
 class Serve:
@@ -101,7 +102,8 @@ class Serve:
 
     def notify(self, method, params=None):
         self.process.stdin.write(
-            json.dumps({"jsonrpc": "2.0", "method": method, "params": params or {}}) + "\n"
+            json.dumps({"jsonrpc": "2.0", "method": method, "params": params or {}})
+            + "\n"
         )
         self.process.stdin.flush()
 
@@ -120,7 +122,9 @@ class Serve:
     def read(self):
         line = self.process.stdout.readline()
         if not line:
-            raise RuntimeError("serve closed stdout: " + self.process.stderr.read()[-400:])
+            raise RuntimeError(
+                "serve closed stdout: " + self.process.stderr.read()[-400:]
+            )
         return json.loads(line)
 
     def call(self, method, params):
@@ -132,6 +136,8 @@ class Serve:
 
     def tool(self, name, **arguments):
         answer = self.call("tools/call", {"name": name, "arguments": arguments})
+        if "error" in answer and "result" not in answer:
+            return {"error": json.dumps(answer["error"])}
         body = answer.get("result") or {}
         text = (body.get("content") or [{}])[0].get("text", "")
         if body.get("isError"):
@@ -174,7 +180,9 @@ def checks(serve):
     yield (
         "the tools the executor forwards are all served",
         needed <= tools,
-        f"missing {sorted(needed - tools)}" if needed - tools else f"{len(tools)} tools",
+        f"missing {sorted(needed - tools)}"
+        if needed - tools
+        else f"{len(tools)} tools",
     )
 
     started = time.monotonic()
@@ -251,22 +259,30 @@ def checks(serve):
         with contextlib.suppress(ProcessLookupError):
             os.kill(pid, signal.SIGKILL)
     time.sleep(0.5)
-    left = subprocess.run(["pgrep", "-f", "sleep 47"], capture_output=True, text=True).stdout
+    left = subprocess.run(
+        ["pgrep", "-f", "sleep 47"], capture_output=True, text=True
+    ).stdout
     yield (
         "we can find and stop a running command ourselves",
         bool(sleepers) and not left.strip(),
         f"found {len(sleepers)} process(es), {len(left.split())} left after the kill",
     )
 
-    output = serve.tool("TaskOutput", task_id=task)
-    stop = serve.tool("TaskStop", task_id=task)
-    refused = "No task found with ID" in output.get("error", "") and (
-        "No task found with ID" in stop.get("error", "")
-    )
+    # Either the tool is not served at all (2.1.277 dropped TaskOutput from
+    # serve mode) or it answers `No task found` for the id Bash just handed out
+    # (every build so far, for TaskStop). Both mean the same: no way back to
+    # the task through the build, which is why the executor keeps its own.
+    def blind(name):
+        answer = serve.tool(name, task_id=task)
+        text = answer.get("error", "") or answer.get("raw", "") or json.dumps(answer)
+        return "not found" in text.lower() or "no task found" in text.lower()
+
     yield (
-        "TaskOutput/TaskStop STILL cannot see the task (delete our workaround when this fails)",
-        refused,
-        f"TaskOutput: {json.dumps(output)[:90]} / TaskStop: {json.dumps(stop)[:90]}",
+        "the build STILL offers no way back to a backgrounded task (delete our workaround when this fails)",
+        blind("TaskOutput") and blind("TaskStop"),
+        "TaskOutput/TaskStop absent or blind"
+        if blind("TaskOutput") and blind("TaskStop")
+        else "one of them now finds the task",
     )
 
 
@@ -299,7 +315,9 @@ def main():
     }
     if arguments.output:
         arguments.output.mkdir(parents=True, exist_ok=True)
-        (arguments.output / "mcp-contract.json").write_text(json.dumps(receipt, indent=2))
+        (arguments.output / "mcp-contract.json").write_text(
+            json.dumps(receipt, indent=2)
+        )
     shutil.rmtree(root, ignore_errors=True)
     print(f"\n{version}: {sum(r['holds'] for r in results)}/{len(results)} held")
     return 0 if receipt["held"] else 1

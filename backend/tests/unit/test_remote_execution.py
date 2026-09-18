@@ -18,6 +18,13 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
+if __package__:
+    from tests.pinned_claude import claude_binary
+else:
+    # The acceptance suite runs this file as a script, from outside the package.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from pinned_claude import claude_binary
+
 RUNTIME = (
     Path(__file__).resolve().parents[2]
     / "app/domain/agent/harness/claude_code/remote_execution/runtime.py"
@@ -27,23 +34,15 @@ runtime = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runtime)
 
 
-def test_background_command_keeps_task_id_when_it_finishes_before_response(
-    tmp_path, monkeypatch
+def test_a_background_command_that_finishes_at_once_still_has_an_id_and_an_exit(
+    tmp_path,
 ):
     state = tmp_path / "state"
     state.mkdir()
     (state / "config.json").write_text(
-        json.dumps({"workspace": str(tmp_path), "env": {}})
+        json.dumps({"workspace": str(tmp_path), "claude": claude_binary(), "env": {}})
     )
     executor = runtime.Executor(state)
-    original_start = threading.Thread.start
-
-    def finish_before_return(thread):
-        original_start(thread)
-        thread.join(timeout=5)
-        assert not thread.is_alive()
-
-    monkeypatch.setattr(threading.Thread, "start", finish_before_return)
     try:
         for code in (0, 7):
             result = executor.invoke(
@@ -57,10 +56,10 @@ def test_background_command_keeps_task_id_when_it_finishes_before_response(
                 }
             )
             task_id = result["value"]["backgroundTaskId"]
-            output = executor.output(task_id)
-            assert output["stdout"] == "completed"
-            assert output["exit_code"] == code
-            assert output["status"] == ("completed" if code == 0 else "failed")
+            report = executor.task_output({"task_id": task_id, "timeout": 10000})
+            assert report["task"]["output"] == "completed"
+            assert report["task"]["exitCode"] == code
+            assert report["task"]["status"] == ("completed" if code == 0 else "failed")
     finally:
         executor.close()
 
@@ -73,7 +72,7 @@ def test_executor_bootstrap_starts_in_room_without_a_git_checkout(
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("ANTHROPIC_API_KEY", "must-not-reach-executor")
-    monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
+    monkeypatch.setattr(bootstrap, "binary", lambda *_: claude_binary())
     project, resource = uuid.uuid4(), uuid.uuid4()
     home = tmp_path / ".cheese/home" / str(project) / str(resource)
     state = home / ".cheese/executor"
@@ -169,7 +168,7 @@ def _room_prepared_under_the_previous_root(tmp_path, monkeypatch):
     from app.domain.agent.harness.claude_code.remote_execution.launch import script
 
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
+    monkeypatch.setattr(bootstrap, "binary", lambda *_: claude_binary())
     project, resource = uuid.uuid4(), uuid.uuid4()
     home = tmp_path / ".cheese/home" / str(project) / str(resource)
     previous = home / ".claude"
@@ -295,7 +294,7 @@ def test_executor_release_waits_for_commands_and_preserves_results(
     from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
 
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
+    monkeypatch.setattr(bootstrap, "binary", lambda *_: claude_binary())
     project, resource = uuid.uuid4(), uuid.uuid4()
     payload = payload_for(
         project, resource, {"CHEESE_API": "http://unused", "CHEESE_TOKEN": "test"}
@@ -391,7 +390,7 @@ def test_a_platform_tool_answers_while_a_shell_command_still_holds_the_room(
     from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
 
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
+    monkeypatch.setattr(bootstrap, "binary", lambda *_: claude_binary())
     project, resource = uuid.uuid4(), uuid.uuid4()
     payload = payload_for(
         project, resource, {"CHEESE_API": "http://unused", "CHEESE_TOKEN": "test"}
@@ -454,8 +453,16 @@ def test_running_executor_prepares_updated_room_without_restart(
     binary = tmp_path / ".cheese/claude/versions" / bootstrap.VERSION
     binary.parent.mkdir(parents=True)
     version_calls = tmp_path / "version-calls"
+    # The stub counts version checks; the executor's commands need the real
+    # build behind it, because every command runs through its `mcp serve`.
     binary.write_text(
-        f"#!/bin/sh\necho checked >> '{version_calls}'\necho '{bootstrap.VERSION}'\n"
+        "#!/bin/sh\n"
+        'if [ "$1" = "--version" ]; then\n'
+        f"  echo checked >> '{version_calls}'\n"
+        f"  echo '{bootstrap.VERSION}'\n"
+        "  exit 0\n"
+        "fi\n"
+        f"exec '{claude_binary()}' \"$@\"\n"
     )
     binary.chmod(0o700)
     project, resource = uuid.uuid4(), uuid.uuid4()
@@ -704,11 +711,30 @@ class RemoteExecutionTests(unittest.TestCase):
                 "printf failure >&2; exit 7"
             },
         )
-        self.assertEqual(
-            result["stdout"], str(self.workspace / "sub dir") + "\nremote-environment\n"
+        # A failure comes back the way the build gives it to its own agent:
+        # the exit code first, then everything the command printed, together.
+        self.assertTrue(result["stdout"].startswith("Exit code 7"), result)
+        self.assertIn(
+            str(self.workspace / "sub dir") + "\nremote-environment", result["stdout"]
         )
-        self.assertEqual(result["stderr"], "failure")
-        self.assertEqual(result["returnCodeInterpretation"], "Exit code 7")
+        self.assertIn("failure", result["stdout"])
+        self.assertEqual(result["stderr"], "")
+
+    def test_a_refreshed_environment_reaches_the_next_command(self):
+        # A token arrives refreshed through `configure` while the serve process
+        # keeps the environment it started with; the command must see the new
+        # value, or every `cheese` call from the shell dies with the old token.
+        self.assertEqual(
+            self.invoke("Bash", {"command": 'printf "$EXECUTOR_MARKER"'})["stdout"],
+            "remote-environment",
+        )
+        runtime.request(
+            self.state, "configure", {"env": {"EXECUTOR_MARKER": "refreshed"}}
+        )
+        self.assertEqual(
+            self.invoke("Bash", {"command": 'printf "$EXECUTOR_MARKER"'})["stdout"],
+            "refreshed",
+        )
 
     def test_request_replay_does_not_repeat_write(self):
         args = {"command": "printf x >> count.txt"}
@@ -962,6 +988,31 @@ class RemoteExecutionTests(unittest.TestCase):
                 {"task_id": result["backgroundTaskId"], "block": True, "timeout": 5000},
             )
             self.assertEqual(task["task"]["output"], "done")
+
+    def test_a_foreground_command_past_its_timeout_becomes_a_task_the_room_can_see(
+        self,
+    ):
+        # The agent's timeout is enforced here, not by the serve process: at
+        # the deadline the command is left running and handed back as a task.
+        result = self.invoke(
+            "Bash",
+            {"command": "touch started; sleep 2; printf done", "timeout": 500},
+            "foreground",
+        )
+        self.assertIn("backgroundTaskId", result)
+        listed = runtime.request(
+            self.state, "control", {"subtype": "background_tasks"}
+        )["tasks"]
+        self.assertIn(
+            result["backgroundTaskId"],
+            [task["task_id"] for task in listed if task["status"] == "running"],
+        )
+        task = self.invoke(
+            "TaskOutput",
+            {"task_id": result["backgroundTaskId"], "block": True, "timeout": 5000},
+        )
+        self.assertEqual(task["task"]["output"], "done")
+        self.assertEqual(task["task"]["status"], "completed")
 
     def test_remote_command_hook_can_prevent_a_write(self):
         config = self.workspace / ".claude"
