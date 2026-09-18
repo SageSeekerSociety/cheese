@@ -59,12 +59,7 @@ beforeEach(() => {
         total: 3,
       }
     } else if (href.includes('/attachments')) {
-      data = {
-        path: 'uploads/预算表.xlsx',
-        mime: 'application/octet-stream',
-        bytes: 2048,
-        library_path: '预算表.xlsx',
-      }
+      data = { path: 'library/预算表.xlsx', mime: 'application/octet-stream', bytes: 2048 }
     } else if (href.includes('/progress')) {
       data = { items: [], updated_at: null }
     }

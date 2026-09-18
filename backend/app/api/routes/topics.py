@@ -2146,14 +2146,17 @@ def _source_bytes(
     """One of this room's files, from whichever store holds it.
 
     A room keeps what it delivered outside git; a card keeps what it is still
-    writing, on its own branch. Both are 「这个房间的文件」 to a reader, so the
-    viewers take the source as a parameter instead of each being wired to one
-    store — that wiring is why a document on a branch had no view but a raw
-    binary diff.
+    writing, on its own branch; the project's 资料库 keeps what someone gave it,
+    and `library/<名字>` says so in the path itself. All three are 「这个房间的
+    文件」 to a reader, so the viewers take the source as a parameter instead of
+    each being wired to one store — that wiring is why a document on a branch
+    had no view but a raw binary diff.
     """
     if task is not None:
+        if ws.library_name(path) is not None:
+            raise ValidationError("资料库里的文件不属于某个任务分支")
         return ws.read_file_bytes(project_id, path, topic_id=task)
-    return ws.read_room_file(project_id, room_id, path)
+    return ws.read_attachment(project_id, room_id, path)
 
 
 async def _reject_unreachable_app(topic_id: uuid.UUID) -> None:
@@ -2534,12 +2537,12 @@ async def preview_file(
 
 # ---- Chat attachments -----------------------------------------------------
 # 用户挑出来或拖进来的文件落进项目的资料库 (`ws.write_library_file`)，按原名寻址，
-# 所有房间都能引用。附在一条消息上的是这个房间收到的那一份——拷进房间的文件区
-# uploads/ 下，芝士 在自己的工作目录里 Read 它。资料库那一份只读，不会被改。
+# 所有房间都能引用。消息里带的就是它自己那个地址 `library/<名字>`——**不拷贝**：
+# 一份资料在这个项目里只有一份字节，芝士 在工作目录的 library/ 下 Read 它。
 #
 # 剪贴板里贴进来的那张图**不进资料库**：资料库的前提是「名字就是身份」，而剪贴板里
-# 的截图没有名字，`image.png` 是浏览器替它编的。它只属于这条消息，所以照旧落在房间
-# 文件区一个独占的目录下。
+# 的截图没有名字，`image.png` 是浏览器替它编的。它只属于这条消息，所以落在房间文件
+# 区一个独占的目录下。
 
 # Only these image types may render inline; other files require download.
 _IMAGE_MIME_EXT = {
@@ -2590,9 +2593,11 @@ async def upload_attachment(
         raise ValidationError("要么上传一个文件，要么选资料库里的一份")
     if library_path is not None:
         name = _clean_artifact_path(library_path)
+        # 读一次：既确认它真的在，也把大小告诉输入栏。一个字节都不写。
         data = ws.read_library_file(topic.project_id, name)
         suffix = "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
         mime = _EXT_IMAGE_MIME.get(suffix, "application/octet-stream")
+        return ok({"path": ws.library_ref(name), "mime": mime, "bytes": len(data)})
     else:
         assert file is not None
         mime = (
@@ -2617,19 +2622,10 @@ async def upload_attachment(
         if origin == "clipboard":
             path = f"uploads/{uuid.uuid4().hex}/{name}"
             ws.write_room_file(topic.project_id, topic_id, path, data)
-            return ok(
-                {
-                    "path": path,
-                    "mime": mime,
-                    "bytes": len(data),
-                    "library_path": None,
-                }
-            )
+            return ok({"path": path, "mime": mime, "bytes": len(data)})
         # 名字就是身份，所以撞名不覆盖：拿下一个 `(n)`。
         name = ws.write_library_file(topic.project_id, name, data)
-    path = f"uploads/{name}"
-    ws.write_room_file(topic.project_id, topic_id, path, data)
-    return ok({"path": path, "mime": mime, "bytes": len(data), "library_path": name})
+    return ok({"path": ws.library_ref(name), "mime": mime, "bytes": len(data)})
 
 
 @router.get("/{topic_id}/attachments/raw")

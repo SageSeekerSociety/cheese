@@ -778,6 +778,10 @@ def room_files_root(project_id: uuid.UUID, room_id: uuid.UUID) -> Path:
 def write_room_file(
     project_id: uuid.UUID, room_id: uuid.UUID, path: str, data: bytes
 ) -> None:
+    if path.split("/")[0] == LIBRARY_PREFIX:
+        # `library/…` 是资料库那一份的地址（见 `read_attachment`）。房间里再写一个
+        # 同名的东西，读的人就会拿到房间那份、以为看的是资料库里的原件。
+        raise ValidationError(f"{LIBRARY_PREFIX}/ 留给资料库，房间文件不能写在这里")
     target = _safe_path(room_files_root(project_id, room_id), path)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(data)
@@ -798,6 +802,31 @@ def read_room_text_file(project_id: uuid.UUID, room_id: uuid.UUID, path: str) ->
 # 用户给这个项目的文件。项目级、按原名寻址、只读：「上周那份预算表」这句话里，名字
 # 就是它的身份，所以这里不放随机串。不在任何 git 树里——这些字节是输入，不是成品的
 # 源，而被托管的仓库不该因为我们多出一个目录。
+#
+# 一份资料在消息里、在设备的工作目录里、在字节端点的 query 上都是同一个地址
+# `library/<名字>`——**不拷贝**。带着房间走的那种地址（`uploads/<随机串>/<名字>`）
+# 只属于贴进来的那一份：它没有名字，也就没有第二个房间会引用它。
+
+LIBRARY_PREFIX = "library"
+
+
+def library_ref(name: str) -> str:
+    """资料库里那一份在消息和工作目录里的地址。"""
+    return f"{LIBRARY_PREFIX}/{name}"
+
+
+def library_name(path: str) -> str | None:
+    """这个地址指的是资料库里哪一份,不是的话给 None。"""
+    prefix = f"{LIBRARY_PREFIX}/"
+    return path[len(prefix) :] if path.startswith(prefix) else None
+
+
+def read_attachment(project_id: uuid.UUID, room_id: uuid.UUID, path: str) -> bytes:
+    """一个附件的字节:资料库里那一份,或者只属于这个房间的那一份。"""
+    name = library_name(path)
+    if name is not None:
+        return read_library_file(project_id, name)
+    return read_room_file(project_id, room_id, path)
 
 
 def library_root(project_id: uuid.UUID) -> Path:

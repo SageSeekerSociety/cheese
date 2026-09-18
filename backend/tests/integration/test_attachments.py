@@ -57,8 +57,8 @@ def test_upload_then_raw_roundtrip(client):
     _, topic_id = _create_project_and_topic(client)
     att = _upload(client, topic_id)
     assert att["mime"] == "image/png"
-    assert att["path"].startswith("uploads/")
-    assert att["path"].endswith(".png")
+    # 挑出来的那一份按它自己的名字进资料库，消息里带的就是那个地址。
+    assert att["path"] == "library/screenshot.png"
 
     raw = client.get(
         f"/topics/{topic_id}/attachments/raw", params={"path": att["path"]}

@@ -196,7 +196,7 @@ class CodexChannel:
             return []
         urls = []
         for image in images:
-            data = ws.read_room_file(
+            data = ws.read_attachment(
                 handle.session.project_id, handle.session.topic_id, image["path"]
             )
             encoded = base64.b64encode(data).decode()

@@ -4,7 +4,8 @@
 那份文件的房间里说的，所以它的身份是名字，不是随机串。同名不覆盖：撞了取下一个
 `(n)`，两次上传就是两份。
 
-附在一条消息上的那一份是这个房间收到的拷贝；资料库里那一份只读。
+消息里带的是这份资料自己的地址 `library/<名字>`，不是一份拷贝：一个项目里同一份
+资料只有一份字节，哪个房间引用它都读的是那一份。
 """
 
 from tests.integration.conftest import session_auth_headers
@@ -45,8 +46,8 @@ def test_upload_keeps_the_name_and_a_collision_takes_the_next_number(client):
     first = _upload(client, topic_id, "预算表.xlsx", b"first")
     second = _upload(client, topic_id, "预算表.xlsx", b"second")
 
-    assert first["library_path"] == "预算表.xlsx"
-    assert second["library_path"] == "预算表(2).xlsx"
+    assert first["path"] == "library/预算表.xlsx"
+    assert second["path"] == "library/预算表(2).xlsx"
 
     names = [f["path"] for f in _library(client, project_id)]
     assert sorted(names) == ["预算表(2).xlsx", "预算表.xlsx"]
@@ -70,7 +71,7 @@ def test_another_room_attaches_a_file_it_never_saw(client):
     r = client.post(f"/topics/{later}/attachments", data={"library_path": "合同.docx"})
     assert r.status_code == 200, r.text
     att = r.json()["data"]
-    assert att["library_path"] == "合同.docx"
+    assert att["path"] == "library/合同.docx"
     assert att["bytes"] == len(b"PK\x03\x04contract")
 
     raw = client.get(
@@ -82,6 +83,58 @@ def test_another_room_attaches_a_file_it_never_saw(client):
 
     # 引用一份已有的文件不会在资料库里多出一项。
     assert [f["path"] for f in _library(client, project_id)] == ["合同.docx"]
+
+
+def test_the_room_reads_the_library_copy_itself_not_a_copy(client):
+    """同一份资料被两个房间引用，两边读到的是同一份字节。"""
+    project_id = _project(client)
+    one = _topic(client, project_id, "房间一")
+    two = _topic(client, project_id, "房间二")
+    att = _upload(client, one, "预算表.xlsx", b"one-and-only")
+
+    for room in (one, two):
+        ref = client.post(
+            f"/topics/{room}/attachments", data={"library_path": "预算表.xlsx"}
+        ).json()["data"]
+        assert ref["path"] == att["path"]
+        raw = client.get(
+            f"/topics/{room}/attachments/raw",
+            params={"path": ref["path"], "download": "true"},
+        )
+        assert raw.status_code == 200
+        assert raw.content == b"one-and-only"
+
+    # 引用多少次，资料库里都只有那一项。
+    assert [f["path"] for f in _library(client, project_id)] == ["预算表.xlsx"]
+
+
+def test_the_room_cannot_shadow_a_library_file(client):
+    """`library/…` 是资料库那一份的地址，房间里写不了同名的东西——否则读的人拿到
+    的是房间那份，还以为看的是原件。"""
+    project_id = _project(client)
+    topic_id = _topic(client, project_id, "房间一")
+
+    declared = client.post(
+        f"/topics/{topic_id}/artifact",
+        json={"path": "library/预算表.xlsx", "content": "<p>假的</p>", "as": "html"},
+    )
+    assert declared.status_code == 422, declared.text
+
+
+def test_a_library_file_does_not_belong_to_a_task_branch(client):
+    project_id = _project(client)
+    topic_id = _topic(client, project_id, "房间一")
+    _upload(client, topic_id, "预算表.xlsx", b"first")
+
+    r = client.get(
+        f"/topics/{topic_id}/attachments/raw",
+        params={
+            "path": "library/预算表.xlsx",
+            "download": "true",
+            "task": "00000000-0000-0000-0000-000000000001",
+        },
+    )
+    assert r.status_code in (404, 422)
 
 
 def test_a_pasted_screenshot_stays_in_the_room(client):
@@ -96,7 +149,7 @@ def test_a_pasted_screenshot_stays_in_the_room(client):
     )
     assert r.status_code == 200, r.text
     att = r.json()["data"]
-    assert att["library_path"] is None
+    assert att["path"].startswith("uploads/")
     assert _library(client, project_id) == []
 
     # 这条消息照样带得走它。
