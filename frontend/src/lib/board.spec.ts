@@ -1,6 +1,12 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import { BOARD_COLUMNS, columnDotClass, columnDotStyle, columnLabel, compareTasks } from './board'
+
+import { setLocale } from '@/i18n'
+
+// 列名现在走词表。断言的是中文那一边，所以先把语言钉住：happy-dom 的
+// navigator.language 是 en-US，不钉的话 columnLabel 回的是 Building。
+beforeEach(() => setLocale('zh-CN'))
 
 function task(over: Partial<Parameters<typeof compareTasks>[0]> = {}) {
   return { id: 'a', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', ...over }

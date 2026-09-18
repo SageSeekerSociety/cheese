@@ -3,6 +3,7 @@ import { createVuetify } from 'vuetify'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import * as api from '../api'
+import i18n, { setLocale } from '../i18n'
 
 import ProjectSettingsView from './ProjectSettingsView.vue'
 
@@ -18,6 +19,8 @@ vi.mock('vue-router', () => ({
 
 beforeEach(() => {
   vi.resetAllMocks()
+  // 下面的断言写的是中文文案，所以语言钉死——不钉的话跟着 navigator.language 走。
+  setLocale('zh-CN')
   vi.mocked(api.getProject).mockResolvedValue({ name: 'Example' } as Awaited<ReturnType<typeof api.getProject>>)
   vi.mocked(api.getUpstream).mockResolvedValue({ url: null })
   vi.mocked(api.listAgentTypes).mockResolvedValue({ data: [], total: 0 })
@@ -29,6 +32,8 @@ async function openSettings() {
   const element = document.createElement('div')
   const app = createApp(ProjectSettingsView, { projectId: 'project' })
   app.use(createVuetify())
+  // 页面文案现在从词表来；默认语言是 zh-CN，所以下面那些中文断言仍然成立。
+  app.use(i18n)
   app.mount(element)
   await vi.waitFor(() => expect(element.textContent).toContain('运行环境'))
   return { element, unmount: () => app.unmount() }

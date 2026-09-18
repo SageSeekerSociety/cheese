@@ -2,7 +2,7 @@
   <v-sheet flat rounded="lg" class="member-page">
     <div class="member-page__hero">
       <div>
-        <h1 class="member-page__title">我参与的赛题</h1>
+        <h1 class="member-page__title">{{ t('spaces.detail.myJoinedContests') }}</h1>
       </div>
 
       <v-btn
@@ -11,7 +11,7 @@
         prepend-icon="mdi-compass-outline"
         :to="{ name: 'SpacesDetailTasksList', params: { spaceId } }"
       >
-        去看全部赛题
+        {{ t('spaces.detail.memberTasks.viewAllChallenges') }}
       </v-btn>
     </div>
 
@@ -26,36 +26,36 @@
           <MemberOverviewCard
             icon="mdi-timer-sand"
             tone="warning"
-            label="待审核"
+            :label="t('spaces.detail.memberTasks.approval.pending')"
             :value="formatCount(overview?.pendingApprovalCount)"
-            helper="报名还在等待老师或管理员确认"
+            :helper="t('spaces.detail.memberTasks.participating.overview.pendingApproval')"
           />
         </v-col>
         <v-col cols="12" sm="6" xl="3">
           <MemberOverviewCard
             icon="mdi-upload-outline"
             tone="primary"
-            label="待提交"
+            :label="t('spaces.detail.memberTasks.completion.notSubmitted')"
             :value="formatCount(overview?.awaitingSubmissionCount)"
-            helper="已经通过审核，但还没有完成提交"
+            :helper="t('spaces.detail.memberTasks.participating.overview.awaitingSubmission')"
           />
         </v-col>
         <v-col cols="12" sm="6" xl="3">
           <MemberOverviewCard
             icon="mdi-clipboard-text-clock-outline"
             tone="info"
-            label="待评审"
+            :label="t('spaces.detail.memberTasks.completion.pendingReview')"
             :value="formatCount(overview?.pendingReviewCount)"
-            helper="作品已经提交，等待老师给出评审结果"
+            :helper="t('spaces.detail.memberTasks.participating.overview.pendingReview')"
           />
         </v-col>
         <v-col cols="12" sm="6" xl="3">
           <MemberOverviewCard
             icon="mdi-refresh"
             tone="warning"
-            label="可重提"
+            :label="t('spaces.detail.memberTasks.completion.resubmittable')"
             :value="formatCount(overview?.resubmittableCount)"
-            helper="被打回但仍然可以继续修改并重新提交"
+            :helper="t('spaces.detail.memberTasks.participating.overview.resubmittable')"
           />
         </v-col>
       </template>
@@ -63,8 +63,10 @@
 
     <v-card flat rounded="lg" class="filter-card mt-5">
       <div class="filter-card__header">
-        <div class="filter-card__title">筛选</div>
-        <v-btn variant="text" color="primary" @click="clearFilters">清空筛选</v-btn>
+        <div class="filter-card__title">{{ t('spaces.detail.memberTasks.filter') }}</div>
+        <v-btn variant="text" color="primary" @click="clearFilters">{{
+          t('spaces.detail.memberTasks.clearFilters')
+        }}</v-btn>
       </div>
 
       <div class="filter-grid">
@@ -72,7 +74,7 @@
           v-model="approvedModel"
           autocomplete="off"
           :items="approvedItems"
-          label="报名审批状态"
+          :label="t('spaces.detail.memberTasks.participating.approvalStatus')"
           density="comfortable"
           hide-details
           variant="outlined"
@@ -81,7 +83,7 @@
           v-model="completionStatusModel"
           autocomplete="off"
           :items="completionItems"
-          label="完成状态"
+          :label="t('spaces.detail.memberTasks.completion.status')"
           density="comfortable"
           hide-details
           variant="outlined"
@@ -90,7 +92,7 @@
           v-model="identityTypeModel"
           autocomplete="off"
           :items="identityTypeItems"
-          label="参与身份"
+          :label="t('spaces.detail.memberTasks.identity.label')"
           density="comfortable"
           hide-details
           variant="outlined"
@@ -99,7 +101,7 @@
           v-model="sortByModel"
           autocomplete="off"
           :items="sortByItems"
-          label="排序字段"
+          :label="t('spaces.detail.memberTasks.sortBy')"
           density="comfortable"
           hide-details
           variant="outlined"
@@ -111,7 +113,7 @@
           v-model="sortOrderModel"
           autocomplete="off"
           :items="sortOrderItems"
-          label="排序方向"
+          :label="t('spaces.detail.memberTasks.sortOrder')"
           density="comfortable"
           hide-details
           variant="outlined"
@@ -127,8 +129,8 @@
       <template v-else-if="!participations.length">
         <v-empty-state
           icon="mdi-account-check-outline"
-          title="还没有参与记录"
-          text="你在这个空间里还没有参与任何赛题，可以先去全部赛题里挑一个开始。"
+          :title="t('spaces.detail.memberTasks.participating.emptyTitle')"
+          :text="t('spaces.detail.memberTasks.participating.emptyText')"
         />
         <div class="empty-actions">
           <v-btn
@@ -137,7 +139,7 @@
             prepend-icon="mdi-compass-outline"
             :to="{ name: 'SpacesDetailTasksList', params: { spaceId } }"
           >
-            去看全部赛题
+            {{ t('spaces.detail.memberTasks.viewAllChallenges') }}
           </v-btn>
         </div>
       </template>
@@ -159,6 +161,7 @@
 import type { SpaceMyParticipatingOverview, SpaceMyParticipation } from '@/network/api/spaces/types'
 
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
@@ -180,6 +183,7 @@ import { SpacesApi } from '@/network/api/spaces'
 
 const route = useRoute()
 const router = useRouter()
+const { t } = useI18n()
 
 const spaceId = computed(() => Number(route.params.spaceId))
 const filters = computed(() => normalizeParticipatingQuery(route.query as Record<string, unknown>))
@@ -235,39 +239,41 @@ const sortOrderModel = computed({
   },
 })
 
-const approvedItems = [
-  { title: '全部', value: 'ALL' },
-  { title: '待审核', value: 'NONE' },
-  { title: '已通过', value: 'APPROVED' },
-  { title: '未通过', value: 'DISAPPROVED' },
-]
+// 下拉项的标题跟着语言走，所以是 computed 而不是常量：写死成常量的话挂载后切语言，
+// 已经画出来的筛选项还是旧语言那一份。
+const approvedItems = computed(() => [
+  { title: t('spaces.detail.memberTasks.all'), value: 'ALL' },
+  { title: t('spaces.detail.memberTasks.approval.pending'), value: 'NONE' },
+  { title: t('spaces.detail.memberTasks.approval.approved'), value: 'APPROVED' },
+  { title: t('spaces.detail.memberTasks.approval.notApproved'), value: 'DISAPPROVED' },
+])
 
-const completionItems = [
-  { title: '全部', value: 'ALL' },
-  { title: '待提交', value: 'NOT_SUBMITTED' },
-  { title: '待评审', value: 'PENDING_REVIEW' },
-  { title: '可重提', value: 'REJECTED_RESUBMITTABLE' },
-  { title: '未完成', value: 'FAILED' },
-  { title: '已成功', value: 'SUCCESS' },
-]
+const completionItems = computed(() => [
+  { title: t('spaces.detail.memberTasks.all'), value: 'ALL' },
+  { title: t('spaces.detail.memberTasks.completion.notSubmitted'), value: 'NOT_SUBMITTED' },
+  { title: t('spaces.detail.memberTasks.completion.pendingReview'), value: 'PENDING_REVIEW' },
+  { title: t('spaces.detail.memberTasks.completion.resubmittable'), value: 'REJECTED_RESUBMITTABLE' },
+  { title: t('spaces.detail.memberTasks.completion.failed'), value: 'FAILED' },
+  { title: t('spaces.detail.memberTasks.completion.success'), value: 'SUCCESS' },
+])
 
-const identityTypeItems = [
-  { title: '全部', value: 'ALL' },
-  { title: '个人参与', value: 'USER' },
-  { title: '团队参与', value: 'TEAM' },
-]
+const identityTypeItems = computed(() => [
+  { title: t('spaces.detail.memberTasks.all'), value: 'ALL' },
+  { title: t('spaces.detail.memberTasks.identity.individual'), value: 'USER' },
+  { title: t('spaces.detail.memberTasks.identity.team'), value: 'TEAM' },
+])
 
-const sortByItems = [
-  { title: '最近加入', value: 'joinedAt' },
-  { title: '截止时间', value: 'deadline' },
-  { title: '最近提交', value: 'latestSubmissionAt' },
-  { title: '完成状态', value: 'completionStatus' },
-]
+const sortByItems = computed(() => [
+  { title: t('spaces.detail.memberTasks.participating.sort.joinedAt'), value: 'joinedAt' },
+  { title: t('spaces.detail.memberTasks.participating.sort.deadline'), value: 'deadline' },
+  { title: t('spaces.detail.memberTasks.participating.sort.latestSubmission'), value: 'latestSubmissionAt' },
+  { title: t('spaces.detail.memberTasks.completion.status'), value: 'completionStatus' },
+])
 
-const sortOrderItems = [
-  { title: '降序', value: 'desc' },
-  { title: '升序', value: 'asc' },
-]
+const sortOrderItems = computed(() => [
+  { title: t('spaces.detail.memberTasks.sortDesc'), value: 'desc' },
+  { title: t('spaces.detail.memberTasks.sortAsc'), value: 'asc' },
+])
 
 const loadOverview = async () => {
   overviewLoading.value = true
@@ -276,7 +282,7 @@ const loadOverview = async () => {
     overview.value = data
   } catch (error) {
     console.error('load my participating overview failed', error)
-    toast.error('加载参与概览失败')
+    toast.error(t('spaces.detail.memberTasks.participating.loadOverviewFailed'))
   } finally {
     overviewLoading.value = false
   }
@@ -289,7 +295,7 @@ const loadParticipations = async () => {
     participations.value = data.participations
   } catch (error) {
     console.error('load my participations failed', error)
-    toast.error('加载我参与的赛题失败')
+    toast.error(t('spaces.detail.memberTasks.participating.loadFailed'))
   } finally {
     listLoading.value = false
   }

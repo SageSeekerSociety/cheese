@@ -1,0 +1,86 @@
+{
+  "gate": {
+    "failedTitle": "Platform check failed",
+    "failedBody": "This accept card was never filed. Cheese has the result and will fix things before resubmitting.",
+    "blockedTitle": "Platform check could not run",
+    "blockedBody1": "The check program never started, so it says ",
+    "blockedVerdict": "nothing",
+    "blockedBody2": " about this change — it neither passed nor failed. This accept card was never filed. Cheese has been notified and will restore the check environment before resubmitting; if it keeps failing to start, a human needs to step in.",
+    "showOutput": "Show output",
+    "hideOutput": "Hide output",
+    "noOutput": "No output"
+  },
+  "pending": {
+    "conflictTitle": "Merge conflict · Cheese is on it",
+    "title": "Work ready to accept",
+    "conflictFallback": "The merge hit a conflict; Cheese is resolving it.",
+    "conflictRetry": "You can retry accepting once it is done.",
+    "waitingBefore": "Waiting on ",
+    "waitingAfter": " to review",
+    "reassign": "Reassign",
+    "reassignTitle": "Reassign the reviewer",
+    "noMembers": "No members to pick from",
+    "routingReason": "Why them: {reason}",
+    "changeSubject": "Commit subject after the merge",
+    "gatePassed": "Platform check passed: code style and types only, no tests",
+    "approvedCount": "{done}/{total} approved",
+    "approve": "Approve",
+    "youApproved": "You approved",
+    "review": "Review the work",
+    "createPr": "Create pull request",
+    "retryAccept": "Retry accept",
+    "accept": "Accept",
+    "reject": "Reject",
+    "rejectNotePlaceholder": "Reason (optional)",
+    "confirmReject": "Confirm reject",
+    "blockedTitle": "Accepting now will not merge",
+    "reasonSeparator": ": ",
+    "listSeparator": ", "
+  },
+  "autoMerge": {
+    "label": "Merge automatically once it passes",
+    "armedBy": "Enabled by {who}"
+  },
+  "forceMerge": {
+    "open": "Merge anyway",
+    "warning": "Merge even though not every check has passed. The platform records who did it, when, and what the checks said at the time.",
+    "reasonLabel": "Reason",
+    "confirm": "Confirm and merge"
+  },
+  "delivering": {
+    "title": "Accepted, merge not finished",
+    "by": "Accepted by ",
+    "body": ", but the merge never finished. This is an old card that needs a human."
+  },
+  "accepted": {
+    "title": "Accepted",
+    "by": "Accepted by ",
+    "body": "",
+    "revoke": "Undo accept"
+  },
+  "merge": {
+    "clean": "Ready to merge",
+    "dirty": "Cheese is on it",
+    "behind": "Platform is updating the branch",
+    "unknown": "Checking the state",
+    "agent": "Cheese is on it",
+    "ci": "Waiting on CI",
+    "human": "Waiting on you",
+    "platform": "Platform is on it"
+  },
+  "checks": {
+    "inProgress": "running",
+    "conflictsWithMain": "Conflicts with the main branch"
+  },
+  "errors": {
+    "approveFailed": "Couldn't approve",
+    "reassignFailed": "Couldn't reassign the reviewer",
+    "mergeConflict": "The merge hit a conflict, so nothing was merged. Cheese is resolving it; you can retry the accept once it is done.",
+    "createPrFailed": "Creating the pull request did not finish",
+    "acceptFailed": "Couldn't accept",
+    "revokeFailed": "Couldn't undo the accept",
+    "forceMergeFailed": "Couldn't merge anyway",
+    "autoMergeFailed": "Couldn't arm auto-merge",
+    "rejectFailed": "Couldn't reject"
+  }
+}

@@ -7,7 +7,7 @@
     <slot v-if="initialLoading" name="skeleton">
       <div class="skeleton d-flex justify-center align-center flex-column">
         <v-progress-circular indeterminate size="48" />
-        <span class="text-subtitle-1 mt-2">加载中...</span>
+        <span class="text-subtitle-1 mt-2">{{ t('global.loading') }}</span>
       </div>
     </slot>
     <template v-else>
@@ -15,24 +15,24 @@
       <slot v-if="isEmpty" name="empty">
         <div class="empty d-flex justify-center align-center flex-row">
           <v-icon>mdi-alert-circle</v-icon>
-          <span class="text-caption ml-2">暂无数据</span>
+          <span class="text-caption ml-2">{{ t('global.noData') }}</span>
         </div>
       </slot>
       <slot v-if="loading" name="loading">
         <div class="loading d-flex justify-center align-center flex-row">
           <v-progress-circular indeterminate size="16" width="2" />
-          <span class="text-caption ml-2">加载中...</span>
+          <span class="text-caption ml-2">{{ t('global.loading') }}</span>
         </div>
       </slot>
       <slot v-if="manualMode && hasMore && !loading" name="manual-load">
         <div class="manual-load-button">
-          <v-btn size="small" variant="tonal" @click="manualLoadMore">加载更多</v-btn>
+          <v-btn size="small" variant="tonal" @click="manualLoadMore">{{ t('global.loadMore') }}</v-btn>
         </div>
       </slot>
       <slot v-if="!hasMore && !isEmpty" name="no-more">
         <div class="no-more d-flex justify-center align-center flex-row text-medium-emphasis gap-1">
           <v-icon size="small">mdi-alert-circle-outline</v-icon>
-          <span class="text-caption">没有更多了</span>
+          <span class="text-caption">{{ t('global.noMore') }}</span>
         </div>
       </slot>
     </template>
@@ -41,6 +41,9 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 
 interface Props {
   loading: boolean

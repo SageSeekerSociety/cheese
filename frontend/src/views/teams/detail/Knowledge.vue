@@ -10,7 +10,7 @@
         <v-text-field
           v-model="searchQuery"
           autocomplete="off"
-          label="搜索知识库"
+          :label="t('teams.knowledge.searchLabel')"
           prepend-inner-icon="mdi-magnify"
           density="compact"
           variant="solo"
@@ -24,14 +24,16 @@
         <v-select
           v-model="filter.type"
           autocomplete="off"
-          label="资料类型"
+          :label="t('teams.knowledge.resourceTypeLabel')"
           density="compact"
           variant="solo"
           flat
           hide-details
           rounded="lg"
           clearable
-          :items="resourceTypes"
+          :items="resourceTypeOptions"
+          item-title="title"
+          item-value="value"
           class="resource-type-filter"
           @update:model-value="loadKnowledges"
         ></v-select>
@@ -39,7 +41,7 @@
         <v-select
           v-model="filter.tag"
           autocomplete="off"
-          label="标签"
+          :label="t('teams.knowledge.tagLabel')"
           density="compact"
           variant="solo"
           flat
@@ -53,7 +55,9 @@
 
         <v-spacer></v-spacer>
 
-        <v-btn color="primary" prepend-icon="mdi-upload" class="mr-2" @click="openUploadDialog"> 上传资料 </v-btn>
+        <v-btn color="primary" prepend-icon="mdi-upload" class="mr-2" @click="openUploadDialog">
+          {{ t('teams.knowledge.upload') }}
+        </v-btn>
 
         <v-btn-toggle v-model="viewMode" density="comfortable" variant="outlined" rounded="lg">
           <v-btn value="grid" icon="mdi-view-grid"></v-btn>
@@ -64,12 +68,12 @@
       <!-- 知识库内容 -->
       <div v-if="knowledges.length === 0" class="empty-knowledge-state text-center py-12">
         <v-icon icon="mdi-book-open-page-variant" size="64" class="mb-4 empty-state-icon"></v-icon>
-        <h3 class="text-h6 font-weight-medium mb-2">知识库暂无内容</h3>
+        <h3 class="text-h6 font-weight-medium mb-2">{{ t('teams.knowledge.emptyTitle') }}</h3>
         <p v-if="hasFilters" class="text-body-2 text-medium-emphasis mb-4">
-          没有找到匹配当前筛选条件的资料，请尝试调整筛选条件
+          {{ t('teams.knowledge.emptyFiltered') }}
         </p>
         <p v-else class="text-body-2 text-medium-emphasis mb-6">
-          在频道聊天中添加有价值的内容到知识库，方便团队随时查阅
+          {{ t('teams.knowledge.emptyHint') }}
         </p>
       </div>
 
@@ -154,12 +158,12 @@
       <v-table v-else class="resource-table rounded-lg">
         <thead>
           <tr>
-            <th>资料名称</th>
-            <th>类型</th>
-            <th>添加者</th>
-            <th>添加时间</th>
-            <th>标签</th>
-            <th>操作</th>
+            <th>{{ t('teams.knowledge.name') }}</th>
+            <th>{{ t('teams.knowledge.type') }}</th>
+            <th>{{ t('teams.knowledge.creator') }}</th>
+            <th>{{ t('teams.knowledge.createdAt') }}</th>
+            <th>{{ t('teams.knowledge.tags') }}</th>
+            <th>{{ t('teams.knowledge.actions') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -274,7 +278,7 @@
               max-width="100%"
             >
               <source :src="selectedResource.material.url" />
-              您的浏览器不支持视频播放
+              {{ t('teams.knowledge.videoUnsupported') }}
             </video>
 
             <!-- 音频预览 -->
@@ -285,7 +289,7 @@
               style="width: 100%"
             >
               <source :src="selectedResource.material.url" />
-              您的浏览器不支持音频播放
+              {{ t('teams.knowledge.audioUnsupported') }}
             </audio>
 
             <!-- 文档预览 -->
@@ -301,12 +305,14 @@
               ></v-icon>
               <div class="text-center">
                 <div class="text-body-2 mb-2">
-                  {{ (selectedResource.material.meta as FileMeta).name || '该文档需要在外部程序中查看' }}
+                  {{ (selectedResource.material.meta as FileMeta).name || t('teams.knowledge.documentExternal') }}
                 </div>
                 <div class="text-caption text-medium-emphasis mb-3">
                   {{ formatFileSize((selectedResource.material.meta as FileMeta).size) }}
                 </div>
-                <v-btn color="primary" size="small" @click="openResourceLink(selectedResource)"> 打开文档 </v-btn>
+                <v-btn color="primary" size="small" @click="openResourceLink(selectedResource)">
+                  {{ t('teams.knowledge.openDocument') }}
+                </v-btn>
               </div>
             </v-sheet>
 
@@ -344,7 +350,9 @@
                   <div class="text-caption text-medium-emphasis mb-3 text-truncate">
                     {{ selectedResourceContent.url }}
                   </div>
-                  <v-btn color="primary" size="small" @click="openResourceLink(selectedResource)"> 访问链接 </v-btn>
+                  <v-btn color="primary" size="small" @click="openResourceLink(selectedResource)">
+                    {{ t('teams.knowledge.visitLink') }}
+                  </v-btn>
                 </div>
               </div>
             </v-sheet>
@@ -356,7 +364,7 @@
               class="pa-4 code-preview rounded-lg"
             >
               <div class="d-flex align-center mb-2">
-                <div class="text-subtitle-1 font-weight-medium">代码片段</div>
+                <div class="text-subtitle-1 font-weight-medium">{{ t('teams.knowledge.typeCode') }}</div>
                 <v-chip v-if="selectedResourceContent.language" class="ml-2" size="small" variant="tonal">
                   {{ selectedResourceContent.language }}
                 </v-chip>
@@ -375,34 +383,34 @@
                 :icon="getResourceIcon(selectedResource.type, selectedResource.material?.type)"
                 size="64"
               ></v-icon>
-              <div class="mt-2 text-body-2">此类型的资料没有预览</div>
+              <div class="mt-2 text-body-2">{{ t('teams.knowledge.noPreview') }}</div>
             </div>
           </div>
 
           <!-- 资料信息 -->
           <v-sheet color="surface-light" rounded="lg" class="pa-4 mb-4">
-            <div class="text-subtitle-1 font-weight-medium mb-2">资料信息</div>
+            <div class="text-subtitle-1 font-weight-medium mb-2">{{ t('teams.knowledge.resourceInfo') }}</div>
             <div class="d-flex resource-info-row">
-              <div class="resource-info-label">类型</div>
+              <div class="resource-info-label">{{ t('teams.knowledge.type') }}</div>
               <div>{{ getResourceTypeName(selectedResource.type, selectedResource.material?.type) }}</div>
             </div>
             <div v-if="selectedResource.material?.type === 'file'" class="d-flex resource-info-row">
-              <div class="resource-info-label">文件名</div>
+              <div class="resource-info-label">{{ t('teams.knowledge.fileName') }}</div>
               <div>{{ (selectedResource.material.meta as FileMeta).name }}</div>
             </div>
             <div v-if="selectedResource.material" class="d-flex resource-info-row">
-              <div class="resource-info-label">大小</div>
+              <div class="resource-info-label">{{ t('teams.knowledge.size') }}</div>
               <div>{{ formatFileSize(selectedResource.material.meta.size) }}</div>
             </div>
             <div
               v-if="selectedResource.material?.type === 'video' || selectedResource.material?.type === 'audio'"
               class="d-flex resource-info-row"
             >
-              <div class="resource-info-label">时长</div>
+              <div class="resource-info-label">{{ t('teams.knowledge.duration') }}</div>
               <div>{{ formatDuration((selectedResource.material.meta as VideoMeta | AudioMeta).duration) }}</div>
             </div>
             <div class="d-flex resource-info-row">
-              <div class="resource-info-label">添加者</div>
+              <div class="resource-info-label">{{ t('teams.knowledge.creator') }}</div>
               <div class="d-flex align-center">
                 <v-avatar size="24" color="surface-variant" class="mr-2">
                   <v-img :src="getAvatarUrl(selectedResource.creator.avatarId)"></v-img>
@@ -411,19 +419,19 @@
               </div>
             </div>
             <div class="d-flex resource-info-row">
-              <div class="resource-info-label">添加时间</div>
+              <div class="resource-info-label">{{ t('teams.knowledge.createdAt') }}</div>
               <div>{{ formatDetailDate(selectedResource.createdAt) }}</div>
             </div>
             <div class="d-flex resource-info-row">
-              <div class="resource-info-label">来源频道</div>
-              <div>{{ selectedResource.sourceChannel?.name || '未知频道' }}</div>
+              <div class="resource-info-label">{{ t('teams.knowledge.sourceChannel') }}</div>
+              <div>{{ selectedResource.sourceChannel?.name || t('teams.knowledge.unknownChannel') }}</div>
             </div>
             <div v-if="selectedResource.description" class="d-flex resource-info-row">
-              <div class="resource-info-label">描述</div>
+              <div class="resource-info-label">{{ t('teams.knowledge.description') }}</div>
               <div>{{ selectedResource.description }}</div>
             </div>
             <div v-if="selectedResource.labels && selectedResource.labels.length > 0" class="d-flex resource-info-row">
-              <div class="resource-info-label">标签</div>
+              <div class="resource-info-label">{{ t('teams.knowledge.tags') }}</div>
               <div class="d-flex flex-wrap">
                 <v-chip
                   v-for="tag in selectedResource.labels"
@@ -440,7 +448,7 @@
 
           <!-- 原始讨论上下文 -->
           <v-sheet color="surface-light" rounded="lg" class="pa-4">
-            <div class="text-subtitle-1 font-weight-medium mb-2">原始讨论</div>
+            <div class="text-subtitle-1 font-weight-medium mb-2">{{ t('teams.knowledge.originalDiscussion') }}</div>
             <div v-if="selectedResource.originalMessage" class="original-message-context">
               <div class="d-flex">
                 <v-avatar size="36" color="surface-variant" class="mt-1">
@@ -458,7 +466,9 @@
               </div>
               <!-- 频道已退役（都归项目）：原始消息就地展示，不再提供跳转。 -->
             </div>
-            <div v-else class="text-center py-4 text-body-2 text-medium-emphasis">没有关联的原始讨论信息</div>
+            <div v-else class="text-center py-4 text-body-2 text-medium-emphasis">
+              {{ t('teams.knowledge.noOriginalDiscussion') }}
+            </div>
           </v-sheet>
         </v-card-text>
 
@@ -472,11 +482,11 @@
             variant="text"
             @click="confirmDeleteResource(selectedResource)"
           >
-            删除资料
+            {{ t('teams.knowledge.deleteResource') }}
           </v-btn>
           <v-btn color="primary" variant="tonal" @click="openResourceLink(selectedResource)">
             <v-icon start>mdi-open-in-new</v-icon>
-            打开资料
+            {{ t('teams.knowledge.openResource') }}
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -486,7 +496,7 @@
     <v-dialog v-model="uploadDialog" max-width="600">
       <v-card rounded="lg" class="upload-dialog">
         <v-card-title class="d-flex justify-space-between align-center pa-4">
-          <div class="text-h6 font-weight-medium">添加资料</div>
+          <div class="text-h6 font-weight-medium">{{ t('teams.knowledge.addResource') }}</div>
           <v-btn icon="mdi-close" variant="text" @click="uploadDialog = false"></v-btn>
         </v-card-title>
 
@@ -496,16 +506,18 @@
             <v-text-field
               v-model="uploadData.name"
               autocomplete="off"
-              label="资料名称"
+              :label="t('teams.knowledge.name')"
               variant="outlined"
               hide-details="auto"
               class="mb-4"
               density="comfortable"
-              :rules="[(v) => !!v || '请输入资料名称']"
+              :rules="[(v) => !!v || t('teams.knowledge.nameRequired')]"
             ></v-text-field>
 
             <div class="type-selector mb-5">
-              <label class="text-body-2 text-medium-emphasis mb-3 d-block">资料类型</label>
+              <label class="text-body-2 text-medium-emphasis mb-3 d-block">{{
+                t('teams.knowledge.resourceTypeLabel')
+              }}</label>
 
               <div class="type-options">
                 <div
@@ -528,11 +540,11 @@
               <div v-if="uploadData.type === 'MATERIAL'" class="upload-content">
                 <v-file-input
                   v-model="uploadData.file"
-                  label="选择文件"
+                  :label="t('teams.knowledge.chooseFile')"
                   variant="outlined"
                   density="comfortable"
                   accept="image/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,video/*,audio/*"
-                  :rules="[(v) => !!v || '请选择文件']"
+                  :rules="[(v) => !!v || t('teams.knowledge.fileRequired')]"
                   hide-details="auto"
                   class="mb-4"
                   show-size
@@ -575,23 +587,26 @@
                 <v-text-field
                   v-model="uploadData.url"
                   autocomplete="off"
-                  label="链接地址"
+                  :label="t('teams.knowledge.linkUrl')"
                   variant="outlined"
                   density="comfortable"
                   hide-details="auto"
                   class="mb-4"
-                  :rules="[(v) => !!v || '请输入链接地址', (v) => /^https?:\/\//.test(v) || '请输入有效的URL']"
+                  :rules="[
+                    (v) => !!v || t('teams.knowledge.linkUrlRequired'),
+                    (v) => /^https?:\/\//.test(v) || t('teams.knowledge.linkUrlInvalid'),
+                  ]"
                   placeholder="https://"
                   prepend-inner-icon="mdi-link"
                 ></v-text-field>
                 <v-text-field
                   v-model="uploadData.title"
                   autocomplete="off"
-                  label="链接标题（可选）"
+                  :label="t('teams.knowledge.linkTitle')"
                   variant="outlined"
                   density="comfortable"
                   hide-details="auto"
-                  placeholder="如果留空，将使用资料名称"
+                  :placeholder="t('teams.knowledge.linkTitleHint')"
                 ></v-text-field>
               </div>
 
@@ -600,7 +615,7 @@
                 <v-select
                   v-model="uploadData.language"
                   autocomplete="off"
-                  label="编程语言"
+                  :label="t('teams.knowledge.language')"
                   :items="languageOptions"
                   item-title="text"
                   item-value="value"
@@ -613,13 +628,13 @@
                 <v-textarea
                   v-model="uploadData.code"
                   autocomplete="off"
-                  label="代码内容"
+                  :label="t('teams.knowledge.codeContent')"
                   variant="outlined"
                   density="comfortable"
-                  :rules="[(v) => !!v || '请输入代码内容']"
+                  :rules="[(v) => !!v || t('teams.knowledge.codeRequired')]"
                   rows="6"
                   hide-details="auto"
-                  placeholder="在此处粘贴代码..."
+                  :placeholder="t('teams.knowledge.codePlaceholder')"
                   class="code-textarea"
                   color="primary"
                 ></v-textarea>
@@ -633,26 +648,26 @@
                   <v-expansion-panel-title>
                     <div class="d-flex align-center">
                       <v-icon icon="mdi-information-outline" size="small" class="mr-2"></v-icon>
-                      附加信息
+                      {{ t('teams.knowledge.additionalInfo') }}
                     </div>
                   </v-expansion-panel-title>
                   <v-expansion-panel-text>
                     <v-textarea
                       v-model="uploadData.description"
                       autocomplete="off"
-                      label="资料描述"
+                      :label="t('teams.knowledge.descriptionLabel')"
                       variant="outlined"
                       density="comfortable"
                       rows="2"
                       hide-details="auto"
                       class="mb-3"
-                      placeholder="简要描述此资料的内容和用途"
+                      :placeholder="t('teams.knowledge.descriptionPlaceholder')"
                     ></v-textarea>
 
                     <v-combobox
                       v-model="uploadData.labels"
                       autocomplete="off"
-                      label="标签"
+                      :label="t('teams.knowledge.tagLabel')"
                       variant="outlined"
                       density="comfortable"
                       multiple
@@ -660,7 +675,7 @@
                       closable-chips
                       hide-details="auto"
                       :items="availableTags"
-                      placeholder="添加标签，便于分类和查找"
+                      :placeholder="t('teams.knowledge.tagsPlaceholder')"
                     ></v-combobox>
                   </v-expansion-panel-text>
                 </v-expansion-panel>
@@ -673,8 +688,10 @@
 
         <v-card-actions class="pa-4">
           <v-spacer></v-spacer>
-          <v-btn variant="text" @click="uploadDialog = false">取消</v-btn>
-          <v-btn color="primary" :loading="uploading" :disabled="uploading" @click="submitUpload">上传</v-btn>
+          <v-btn variant="text" @click="uploadDialog = false">{{ t('teams.knowledge.cancel') }}</v-btn>
+          <v-btn color="primary" :loading="uploading" :disabled="uploading" @click="submitUpload">{{
+            t('teams.knowledge.uploadSubmit')
+          }}</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -687,6 +704,7 @@ import type { CreateKnowledgeRequest, Knowledge, KnowledgeType } from '@/types'
 import type { AudioMeta, FileMeta, ImageMeta, Material, MaterialType, VideoMeta } from '@/types/materials'
 
 import { computed, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { VForm } from 'vuetify/lib/components/index.mjs'
 import { toast } from 'vuetify-sonner'
@@ -701,6 +719,8 @@ import { useDialog } from '@/plugins/dialog'
 import { currentUserId } from '@/services/account'
 import { Page, parseKnowledgeContent, stringifyKnowledgeContent } from '@/types'
 import { KnowledgeContentData } from '@/types'
+
+const { t, locale } = useI18n()
 
 // 状态
 const route = useRoute()
@@ -729,8 +749,14 @@ const hasFilters = computed(() => {
   return !!(searchQuery.value || filter.value.type || filter.value.tag)
 })
 
-// 资源类型选项
-const resourceTypes = ['文本', '文件', '链接', '代码片段']
+// 资源类型选项。筛选项自带值：以前 v-model 存的是中文标签、再靠 getResourceTypeCode
+// 翻回代码，换成英文之后那一步就再也对不上了。
+const resourceTypeOptions = computed(() => [
+  { title: t('teams.knowledge.typeText'), value: 'TEXT' as KnowledgeType },
+  { title: t('teams.knowledge.typeFile'), value: 'MATERIAL' as KnowledgeType },
+  { title: t('teams.knowledge.typeLink'), value: 'LINK' as KnowledgeType },
+  { title: t('teams.knowledge.typeCode'), value: 'CODE' as KnowledgeType },
+])
 
 // 获取可用标签列表
 const availableTags = computed(() => {
@@ -749,12 +775,12 @@ const uploadTab = ref('file')
 const uploading = ref(false)
 const uploadForm = ref<InstanceType<typeof VForm>>()
 
-const typeOptions = [
-  { text: '文件', value: 'MATERIAL' as KnowledgeType },
-  { text: '文本', value: 'TEXT' as KnowledgeType },
-  { text: '链接', value: 'LINK' as KnowledgeType },
-  { text: '代码片段', value: 'CODE' as KnowledgeType },
-]
+const typeOptions = computed(() => [
+  { text: t('teams.knowledge.typeFile'), value: 'MATERIAL' as KnowledgeType },
+  { text: t('teams.knowledge.typeText'), value: 'TEXT' as KnowledgeType },
+  { text: t('teams.knowledge.typeLink'), value: 'LINK' as KnowledgeType },
+  { text: t('teams.knowledge.typeCode'), value: 'CODE' as KnowledgeType },
+])
 
 const uploadData = ref({
   name: '',
@@ -771,7 +797,7 @@ const uploadData = ref({
 })
 
 // 编程语言选项
-const languageOptions = [
+const languageOptions = computed(() => [
   { text: 'JavaScript', value: 'javascript' },
   { text: 'TypeScript', value: 'typescript' },
   { text: 'HTML', value: 'html' },
@@ -783,8 +809,8 @@ const languageOptions = [
   { text: 'Ruby', value: 'ruby' },
   { text: 'PHP', value: 'php' },
   { text: 'Shell', value: 'shell' },
-  { text: '其他', value: 'plaintext' },
-]
+  { text: t('teams.knowledge.languageOther'), value: 'plaintext' },
+])
 
 // 存储选中资源的解析后内容
 const selectedResourceContent = ref<KnowledgeContentData>({})
@@ -816,7 +842,7 @@ const loadKnowledges = async () => {
 
     // 添加类型筛选
     if (filter.value.type) {
-      params.type = getResourceTypeCode(filter.value.type)
+      params.type = filter.value.type
     }
 
     // 添加标签筛选
@@ -851,22 +877,6 @@ const openResourceDetail = (resource: Knowledge) => {
   resourceDetailDialog.value = true
 }
 
-// 获取资源类型代码
-const getResourceTypeCode = (typeName: string): KnowledgeType => {
-  switch (typeName) {
-    case '文件':
-      return 'MATERIAL'
-    case '文本':
-      return 'TEXT'
-    case '链接':
-      return 'LINK'
-    case '代码片段':
-      return 'CODE'
-    default:
-      return 'TEXT'
-  }
-}
-
 // 打开资源链接
 const openResourceLink = (resource: Knowledge) => {
   const contentData = parseKnowledgeContent(resource)
@@ -882,8 +892,8 @@ const openResourceLink = (resource: Knowledge) => {
 // 确认删除资源
 const confirmDeleteResource = async (resource: Knowledge) => {
   const result = await dialog
-    .confirm(`确定要删除资源"${resource.name}"吗？此操作不可撤销。`, {
-      title: '删除资源',
+    .confirm(t('teams.knowledge.deleteConfirm', { name: resource.name }), {
+      title: t('teams.knowledge.deleteTitle'),
     })
     .wait()
 
@@ -899,7 +909,7 @@ const confirmDeleteResource = async (resource: Knowledge) => {
       }
     } catch (error) {
       console.error('删除资源失败', error)
-      dialog.alert('删除资源失败，请稍后重试。')
+      dialog.alert(t('teams.knowledge.deleteFailed'))
     }
   }
 }
@@ -944,27 +954,27 @@ const getResourceTypeName = (type: KnowledgeType, materialType?: MaterialType) =
   if (type === 'MATERIAL') {
     switch (materialType) {
       case 'file':
-        return '文档'
+        return t('teams.knowledge.typeDocument')
       case 'image':
-        return '图片'
+        return t('teams.knowledge.typeImage')
       case 'video':
-        return '视频'
+        return t('teams.knowledge.typeVideo')
       case 'audio':
-        return '音频'
+        return t('teams.knowledge.typeAudio')
       default:
-        return '文件'
+        return t('teams.knowledge.typeFile')
     }
   }
 
   switch (type) {
     case 'TEXT':
-      return '文本'
+      return t('teams.knowledge.typeText')
     case 'LINK':
-      return '链接'
+      return t('teams.knowledge.typeLink')
     case 'CODE':
-      return '代码片段'
+      return t('teams.knowledge.typeCode')
     default:
-      return '未知类型'
+      return t('teams.knowledge.unknownType')
   }
 }
 
@@ -973,9 +983,15 @@ const formatDate = (timestamp: number) => {
   return dayjs(timestamp).format('MM/DD')
 }
 
-// 格式化详细日期
+// 格式化详细日期。格式跟着界面语言走，写法与用户隐私总览页一致。
 const formatDetailDate = (timestamp: number) => {
-  return dayjs(timestamp).format('YYYY年MM月DD日 HH:mm')
+  return new Date(timestamp).toLocaleString(locale.value === 'en' ? 'en' : 'zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
 // 格式化消息时间
@@ -988,7 +1004,7 @@ const formatMessageTime = (timestamp: number) => {
     return messageTime.format('HH:mm')
   } else if (now.diff(messageTime, 'day') === 1) {
     // 昨天
-    return `昨天 ${messageTime.format('HH:mm')}`
+    return t('teams.knowledge.yesterday', { time: messageTime.format('HH:mm') })
   } else if (now.diff(messageTime, 'day') < 7) {
     // 本周
     return messageTime.format('ddd HH:mm')
@@ -1036,13 +1052,13 @@ const submitUpload = async () => {
 
   // 根据当前选择的类型检查必要字段
   if (uploadData.value.type === 'MATERIAL' && !uploadData.value.file) {
-    toast.error('请选择要上传的文件')
+    toast.error(t('teams.knowledge.fileNotChosen'))
     return
   } else if (uploadData.value.type === 'LINK' && !uploadData.value.url) {
-    toast.error('请输入有效的链接地址')
+    toast.error(t('teams.knowledge.linkUrlInvalidToast'))
     return
   } else if (uploadData.value.type === 'CODE' && !uploadData.value.code) {
-    toast.error('请输入代码内容')
+    toast.error(t('teams.knowledge.codeRequired'))
     return
   }
 
@@ -1119,10 +1135,10 @@ const submitUpload = async () => {
     uploadDialog.value = false
     resetUploadForm()
 
-    toast.success('资料上传成功')
+    toast.success(t('teams.knowledge.uploadSuccess'))
   } catch (error) {
     console.error('上传资料失败', error)
-    toast.error('上传资料失败，请稍后重试')
+    toast.error(t('teams.knowledge.uploadFailed'))
   } finally {
     uploading.value = false
   }
@@ -1182,7 +1198,7 @@ const handleTypeChange = (type: KnowledgeType) => {
 
 // 获取文件上传标签
 const getFileUploadLabel = () => {
-  return '选择要上传的文件（图片、文档、视频、音频等）'
+  return t('teams.knowledge.fileUploadHint')
 }
 
 // 判断是否为图片文件

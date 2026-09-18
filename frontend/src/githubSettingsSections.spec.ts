@@ -17,25 +17,27 @@ import { describe, expect, it } from 'vitest'
 const SRC = dirname(fileURLToPath(import.meta.url))
 const view = readFileSync(join(SRC, 'views/ProjectSettingsView.vue'), 'utf8')
 
-/** The markup between a `<span class="page-section-title">TITLE</span>` and the
- *  next section title — i.e. one settings section's body. */
-function section(title: string): string {
-  const head = `<span class="page-section-title">${title}</span>`
+/** One settings section: from its `data-section` title to the next section
+ *  title. Anchored by attribute rather than by heading text — the headings are
+ *  catalog entries now, so their wording lives in the message files and the
+ *  template no longer spells it out. */
+function section(name: string): string {
+  const head = `<span class="page-section-title" data-section="${name}">`
   const start = view.indexOf(head)
-  expect(start, `section 「${title}」 not found`).toBeGreaterThan(-1)
-  const next = view.indexOf('<span class="page-section-title">', start + head.length)
+  expect(start, `section 「${name}」 not found`).toBeGreaterThan(-1)
+  const next = view.indexOf('<span class="page-section-title"', start + head.length)
   return view.slice(start, next === -1 ? undefined : next)
 }
 
 describe('the GitHub settings sections', () => {
   it('shows the 账号 flow outcome in the 账号 section', () => {
-    const account = section('连接 GitHub 账号')
+    const account = section('account')
     expect(account).toContain('githubAccountNotice')
     expect(account).not.toContain('githubRepoNotice')
   })
 
   it('shows the 仓库 flow outcome in the 仓库 section', () => {
-    const repo = section('连接 GitHub 仓库')
+    const repo = section('repo')
     expect(repo).toContain('githubRepoNotice')
     expect(repo).not.toContain('githubAccountNotice')
   })

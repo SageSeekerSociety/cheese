@@ -37,6 +37,7 @@ vi.mock('../../api', async () => {
   }
 })
 
+import { setLocale } from '../../i18n'
 import TopicAcceptCard from '../TopicAcceptCard.vue'
 
 function mergeState(over: Partial<MergeStateInfo>): MergeStateInfo {
@@ -111,6 +112,9 @@ function acceptButton(container: Element): HTMLButtonElement {
 }
 
 beforeEach(() => {
+  // 这块卡上的字都走词表了，用例断言的是中文，先把语言钉在 zh-CN 上——
+  // happy-dom 的 navigator.language 是 en-US，不钉就是英文。
+  setLocale('zh-CN')
   setActivePinia(createPinia())
   getAcceptCards.mockReset()
   setAutoMerge.mockReset()

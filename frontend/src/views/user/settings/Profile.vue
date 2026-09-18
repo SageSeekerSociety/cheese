@@ -6,12 +6,12 @@
   和 components/common/AvatarUploader.vue 是同一套写法，要改一起改。
 -->
 <template>
-  <v-card title="个人资料" rounded="lg">
+  <v-card :title="t('users.settings.profile.title')" rounded="lg">
     <template #text>
       <form class="pt-2 pl-5 pr-5" @submit.prevent="submit">
         <v-row>
           <v-col cols="4">
-            <v-list-subheader inset>头像</v-list-subheader>
+            <v-list-subheader inset>{{ t('users.settings.profile.avatar') }}</v-list-subheader>
             <div class="avatar-upload">
               <v-img
                 :src="previewUrl || getAvatarUrl(profile.avatarId)"
@@ -35,13 +35,13 @@
                   class="rounded-lg d-flex flex-column align-center justify-center gap-4 pa-4 text-white uploader-inner"
                 >
                   <v-icon size="32">mdi-camera</v-icon>
-                  <div class="text-body-1 text-white">上传头像</div>
+                  <div class="text-body-1 text-white">{{ t('users.settings.profile.uploadAvatar') }}</div>
                 </div>
               </file-select>
             </div>
           </v-col>
           <v-col cols="8">
-            <v-list-subheader inset>昵称</v-list-subheader>
+            <v-list-subheader inset>{{ t('users.settings.profile.nickname') }}</v-list-subheader>
             <v-text-field
               id="field-selectedNickname"
               v-model="selectedNickname"
@@ -49,14 +49,14 @@
               name="selectedNickname"
               v-bind="nicknameProps"
             ></v-text-field>
-            <v-list-subheader inset>个人简介</v-list-subheader>
+            <v-list-subheader inset>{{ t('users.settings.profile.intro') }}</v-list-subheader>
             <v-text-field v-model="selectedIntro" autocomplete="off" :counter="60" v-bind="introProps"></v-text-field>
           </v-col>
         </v-row>
         <v-row>
           <v-col class="d-flex justify-end gap-4">
-            <v-btn @click="handleReset">重置</v-btn>
-            <v-btn color="primary" type="submit">保存</v-btn>
+            <v-btn @click="handleReset">{{ t('global.reset') }}</v-btn>
+            <v-btn color="primary" type="submit">{{ t('global.save') }}</v-btn>
           </v-col>
         </v-row>
       </form>
@@ -66,6 +66,7 @@
 
 <script lang="ts" setup>
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { toast } from 'vuetify-sonner'
 import { toTypedSchema } from '@vee-validate/zod'
 import { useForm } from 'vee-validate'
@@ -79,6 +80,7 @@ import { AvatarsApi } from '@/network/api/avatars'
 import { UserApi } from '@/network/api/users'
 import AccountService from '@/services/account'
 
+const { t } = useI18n()
 const profile = computed(() => AccountService._user.value!)
 
 const { handleSubmit, defineField, handleReset, resetForm } = useForm({
@@ -87,13 +89,17 @@ const { handleSubmit, defineField, handleReset, resetForm } = useForm({
       nickname: z
         .string()
         .trim()
-        .min(1, '昵称不能为空')
-        .max(50, '昵称最多 50 个字符')
+        .min(1, t('users.settings.profile.nicknameRequired'))
+        .max(50, t('users.settings.profile.nicknameMax'))
         // 至少有一个汉字、字母或数字，挡住纯符号/纯空白的昵称
-        .regex(/[0-9A-Za-z㐀-䶿一-鿿]/, '昵称至少包含一个汉字、字母或数字'),
+        .regex(/[0-9A-Za-z㐀-䶿一-鿿]/, t('users.settings.profile.nicknameCharset')),
       intro: z.string().max(60),
       avatar: z
-        .array(z.instanceof(File).refine((v) => v.size < 2 * 1024 * 1024, { message: '文件大小不能超过 2MB' }))
+        .array(
+          z
+            .instanceof(File)
+            .refine((v) => v.size < 2 * 1024 * 1024, { message: t('users.settings.profile.avatarTooLarge') })
+        )
         .optional(),
     })
   ),
@@ -144,7 +150,7 @@ const submit = handleSubmit(async (values) => {
       const { data } = await AvatarsApi.createAvatar(selectedAvatar.value[0])
       avatarId = data.avatarId
     } catch (error) {
-      toast.error('上传头像失败')
+      toast.error(t('users.settings.profile.uploadAvatarFailed'))
       return
     }
   }
@@ -155,10 +161,10 @@ const submit = handleSubmit(async (values) => {
   }
   try {
     await UserApi.updateUserInfo(profile.value.id, submitData)
-    toast.success('更新成功')
+    toast.success(t('global.updateSuccess'))
     resetForm()
   } catch (error) {
-    toast.error('更新失败')
+    toast.error(t('global.updateFailed'))
   }
 })
 </script>

@@ -1,9 +1,9 @@
 <template>
   <div class="privacy-overview">
     <div class="d-flex justify-space-between align-center mb-6">
-      <h2 class="text-h5 font-weight-medium mb-0">隐私概览</h2>
+      <h2 class="text-h5 font-weight-medium mb-0">{{ t('users.privacy.overview.title') }}</h2>
       <v-chip color="success" variant="tonal" size="small" class="privacy-status-chip" prepend-icon="mdi-shield-check">
-        隐私保护状态良好
+        {{ t('users.privacy.overview.statusGood') }}
       </v-chip>
     </div>
 
@@ -18,7 +18,9 @@
               </v-avatar>
               <div>
                 <div class="text-h5 font-weight-bold">100%</div>
-                <div class="text-caption text-medium-emphasis">实名信息保护率</div>
+                <div class="text-caption text-medium-emphasis">
+                  {{ t('users.privacy.overview.statProtectionRate') }}
+                </div>
               </div>
             </div>
           </v-card-text>
@@ -34,7 +36,7 @@
               </v-avatar>
               <div>
                 <div class="text-h5 font-weight-bold">{{ accessLogCount || 0 }}</div>
-                <div class="text-caption text-medium-emphasis">实名信息近期访问次数</div>
+                <div class="text-caption text-medium-emphasis">{{ t('users.privacy.overview.statRecentVisits') }}</div>
               </div>
             </div>
           </v-card-text>
@@ -50,7 +52,7 @@
               </v-avatar>
               <div>
                 <div class="text-h5 font-weight-bold">3</div>
-                <div class="text-caption text-medium-emphasis">实名赛题数量</div>
+                <div class="text-caption text-medium-emphasis">{{ t('users.privacy.overview.statContests') }}</div>
               </div>
             </div>
           </v-card-text>
@@ -61,7 +63,7 @@
     <!-- Recent activity -->
     <div class="mb-6">
       <div class="d-flex justify-space-between align-center mb-4">
-        <h3 class="text-subtitle-1 font-weight-medium mb-0">近期活动</h3>
+        <h3 class="text-subtitle-1 font-weight-medium mb-0">{{ t('users.privacy.overview.recentActivity') }}</h3>
         <v-btn
           variant="text"
           color="primary"
@@ -69,7 +71,7 @@
           :to="{ name: 'PrivacyCenterAccessLogs' }"
           density="comfortable"
         >
-          查看全部
+          {{ t('users.privacy.overview.viewAll') }}
           <template #append>
             <v-icon icon="mdi-chevron-right" size="small"></v-icon>
           </template>
@@ -90,12 +92,25 @@
                 </v-avatar>
               </template>
 
+              <!-- 主语加粗、其余用强调色，所以句子得整条交给词表、把主语留成插槽：
+                   拆成两段拼起来的话，英文要在中间补空格中文不要，拼不出来。 -->
               <v-list-item-title>
-                <span class="font-weight-medium">
-                  {{ log.accessor.id === currentUserId ? '您' : log.accessor.nickname }}
-                </span>
                 <span class="text-medium-emphasis">
-                  {{ log.accessor.id === currentUserId ? '查看了自己的实名信息' : '查看了您的实名信息' }}
+                  <i18n-t
+                    v-if="log.accessor.id === currentUserId"
+                    keypath="users.privacy.overview.viewedOwn"
+                    scope="global"
+                    tag="span"
+                  >
+                    <template #who>
+                      <span class="font-weight-medium">{{ t('users.privacy.overview.you') }}</span>
+                    </template>
+                  </i18n-t>
+                  <i18n-t v-else keypath="users.privacy.overview.viewedYours" scope="global" tag="span">
+                    <template #who>
+                      <span class="font-weight-medium">{{ log.accessor.nickname }}</span>
+                    </template>
+                  </i18n-t>
                 </span>
               </v-list-item-title>
 
@@ -114,8 +129,8 @@
           <v-list-item v-if="!recentLogs || recentLogs.length === 0">
             <v-list-item-title class="text-center py-4">
               <v-icon icon="mdi-shield-check" size="48" color="success" class="mb-2"></v-icon>
-              <div class="text-h6">暂无访问记录</div>
-              <div class="text-body-2 text-medium-emphasis">您的实名信息目前未被任何人访问</div>
+              <div class="text-h6">{{ t('users.privacy.overview.empty') }}</div>
+              <div class="text-body-2 text-medium-emphasis">{{ t('users.privacy.overview.emptyHint') }}</div>
             </v-list-item-title>
           </v-list-item>
         </v-list>
@@ -124,7 +139,7 @@
 
     <!-- Quick actions -->
     <div class="mb-6">
-      <h3 class="text-subtitle-1 font-weight-medium mb-4">快捷操作</h3>
+      <h3 class="text-subtitle-1 font-weight-medium mb-4">{{ t('users.privacy.overview.quickActions') }}</h3>
 
       <v-row>
         <v-col cols="12" sm="6" md="4">
@@ -135,8 +150,12 @@
                   <v-icon color="primary" icon="mdi-account-card-outline"></v-icon>
                 </v-avatar>
                 <div>
-                  <div class="text-subtitle-1 font-weight-medium">查看实名信息</div>
-                  <div class="text-caption text-medium-emphasis">查看和管理您的实名认证信息</div>
+                  <div class="text-subtitle-1 font-weight-medium">
+                    {{ t('users.privacy.overview.actionRealNameTitle') }}
+                  </div>
+                  <div class="text-caption text-medium-emphasis">
+                    {{ t('users.privacy.overview.actionRealNameDesc') }}
+                  </div>
                 </div>
               </div>
             </v-card-text>
@@ -151,8 +170,10 @@
                   <v-icon color="primary" icon="mdi-history"></v-icon>
                 </v-avatar>
                 <div>
-                  <div class="text-subtitle-1 font-weight-medium">访问记录</div>
-                  <div class="text-caption text-medium-emphasis">查看谁访问了您的实名信息</div>
+                  <div class="text-subtitle-1 font-weight-medium">
+                    {{ t('users.privacy.overview.actionLogsTitle') }}
+                  </div>
+                  <div class="text-caption text-medium-emphasis">{{ t('users.privacy.overview.actionLogsDesc') }}</div>
                 </div>
               </div>
             </v-card-text>
@@ -167,8 +188,12 @@
                   <v-icon color="primary" icon="mdi-clipboard-text-outline"></v-icon>
                 </v-avatar>
                 <div>
-                  <div class="text-subtitle-1 font-weight-medium">实名赛题</div>
-                  <div class="text-caption text-medium-emphasis">了解您参与的需要实名的赛题</div>
+                  <div class="text-subtitle-1 font-weight-medium">
+                    {{ t('users.privacy.overview.actionContestsTitle') }}
+                  </div>
+                  <div class="text-caption text-medium-emphasis">
+                    {{ t('users.privacy.overview.actionContestsDesc') }}
+                  </div>
                 </div>
               </div>
             </v-card-text>
@@ -183,11 +208,14 @@
 import type { UserIdentityAccessLog } from '@/network/api/users/types'
 
 import { computed, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 import { getAvatarUrl } from '@/utils/materials'
 
 import { UserApi } from '@/network/api/users'
 import { currentUserId } from '@/services/account'
+
+const { t, locale } = useI18n()
 
 // 实名信息访问记录
 const accessLogs = ref<UserIdentityAccessLog[]>([])
@@ -219,7 +247,8 @@ const recentLogs = computed(() => {
 // 格式化日期
 const formatDate = (timestamp: number) => {
   const date = new Date(timestamp)
-  return date.toLocaleString('zh-CN', {
+  // 跟界面语言走：写死 'zh-CN' 的时候英文用户看到的是「2026/09/17 14:30」。
+  return date.toLocaleString(locale.value === 'en' ? 'en' : 'zh-CN', {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -231,14 +260,14 @@ const formatDate = (timestamp: number) => {
 // 获取访问原因
 const getAccessReason = (log: UserIdentityAccessLog) => {
   if (log.accessEntityName) {
-    return `用于${log.accessEntityName}`
+    return t('users.privacy.overview.reasonEntity', { entity: log.accessEntityName })
   }
 
   switch (log.accessModuleType) {
     case 'TASK':
-      return '用于赛题认证'
+      return t('users.privacy.overview.reasonTask')
     default:
-      return '身份验证'
+      return t('users.privacy.overview.reasonVerify')
   }
 }
 onMounted(() => {

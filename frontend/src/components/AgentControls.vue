@@ -4,6 +4,11 @@ import type { AgentControlRequest, AgentControlResult, AgentControlState } from 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { answerAgentControl, getAgentControl, getAgentControlResult, sendAgentControl } from '../api'
+// 用模块里那个全局 t，而不是 useI18n()：这块面板嵌在 ChatPanel 里，父组件在若干
+// 测试中是不带 i18n 插件挂载的，useI18n() 会当场抛「Need to install with
+// `app.use` function」。全局 t 读的是同一个 composer，模板里照样随语言切换重渲染
+// （SignIn.vue、AppBar.vue 也是这么用的）。
+import { t } from '../i18n'
 
 const props = defineProps<{ topicId: string; active: boolean; questionsOnly?: boolean }>()
 const state = ref<AgentControlState | null>(null)
@@ -36,11 +41,11 @@ async function refresh(epoch = generation) {
         waiting.value = null
         receiveResult(result.result)
       } else if (epoch === generation && result.status === 'uncertain') {
-        notice.value = '尚未确认送达；为避免重复执行，系统不会自动重发'
+        notice.value = t('agentControls.deliveryUnconfirmed')
       }
     }
   } catch (e) {
-    if (epoch === generation) error.value = e instanceof Error ? e.message : '加载会话控制失败'
+    if (epoch === generation) error.value = e instanceof Error ? e.message : t('agentControls.loadFailed')
   }
 }
 
@@ -68,22 +73,26 @@ onBeforeUnmount(() => {
 
 const pending = computed(() => Object.values(state.value?.pending ?? {}))
 const tasks = computed(() => Object.values(state.value?.tasks ?? {}))
-const taskLabels: Record<string, string> = {
-  running: '运行中',
-  queued: '排队中',
-  pending: '等待中',
-  completed: '已完成',
-  failed: '失败',
-  stopped: '已停止',
-  task_started: '运行中',
-  task_progress: '运行中',
-}
+// computed 而不是模块级常量表：常量表在 setup 时求值一次，切语言不会重算。
+const taskLabels = computed<Record<string, string>>(() => ({
+  running: t('agentControls.statuses.running'),
+  queued: t('agentControls.statuses.queued'),
+  pending: t('agentControls.statuses.pending'),
+  completed: t('agentControls.statuses.completed'),
+  failed: t('agentControls.statuses.failed'),
+  stopped: t('agentControls.statuses.stopped'),
+  task_started: t('agentControls.statuses.running'),
+  task_progress: t('agentControls.statuses.running'),
+}))
 
 function receiveResult(result: NonNullable<AgentControlResult['result']>) {
   const response = result.response
-  if (response.subtype === 'error') throw new Error(response.error ?? '操作未完成')
+  if (response.subtype === 'error') throw new Error(response.error ?? t('agentControls.incomplete'))
   output.value = response.response ?? null
-  notice.value = response.response?.backgrounded === false ? '当前任务无法转入后台' : '指令已确认'
+  notice.value =
+    response.response?.backgrounded === false
+      ? t('agentControls.cannotBackground')
+      : t('agentControls.commandConfirmed')
 }
 
 async function run(request: Record<string, unknown>) {
@@ -97,14 +106,14 @@ async function run(request: Record<string, unknown>) {
     const result = await sendAgentControl(props.topicId, state.value.id, request)
     if (epoch !== generation) return
     if (!result.result) {
-      notice.value = '已发送，尚未收到执行结果'
+      notice.value = t('agentControls.sentNoResult')
       waiting.value = { sessionId: state.value.id, requestId: result.request_id }
       return
     }
     receiveResult(result.result)
     await refresh(epoch)
   } catch (e) {
-    if (epoch === generation) error.value = e instanceof Error ? e.message : '操作失败'
+    if (epoch === generation) error.value = e instanceof Error ? e.message : t('agentControls.runFailed')
   } finally {
     busy.value = false
   }
@@ -142,49 +151,61 @@ async function answer(item: AgentControlRequest, allow: boolean) {
               ...(questions(item).length ? { answers: answers.value[item.request_id] } : {}),
             },
           }
-        : { behavior: 'deny', message: '用户拒绝了此操作' }
+        : { behavior: 'deny', message: t('agentControls.denyMessage') }
     )
     if (epoch !== generation) return
-    notice.value = '回答已提交，正在等待会话确认'
+    notice.value = t('agentControls.answerSubmitted')
     await refresh(epoch)
   } catch (e) {
-    if (epoch === generation) error.value = e instanceof Error ? e.message : '提交回答失败'
+    if (epoch === generation) error.value = e instanceof Error ? e.message : t('agentControls.answerFailed')
   } finally {
     busy.value = false
   }
 }
 
-const operations = [
-  { value: 'initialize', title: '会话状态', fields: [] },
-  { value: 'set_model', title: '切换模型', fields: ['model'] },
-  { value: 'set_permission_mode', title: '工具权限', fields: ['mode'] },
-  { value: 'apply_flag_settings', title: '思考强度', fields: ['effort'] },
-  { value: 'set_max_thinking_tokens', title: '思考预算', fields: ['budget'] },
-  { value: 'rename_session', title: '会话名称', fields: ['title'] },
-  { value: 'set_color', title: '会话颜色', fields: ['color'] },
-  { value: 'file_suggestions', title: '查找文件', fields: ['query'] },
-  { value: 'read_file', title: '查看文件', fields: ['path'] },
-  { value: 'get_workspace_diff', title: '工作区变更', fields: [] },
-  { value: 'get_context_usage', title: '上下文用量', fields: [] },
-  { value: 'get_usage', title: '账号用量', fields: [] },
-  { value: 'mcp_status', title: '外部工具连接', fields: [] },
-  { value: 'mcp_reconnect', title: '重连外部工具', fields: ['serverName'] },
-  { value: 'mcp_authenticate', title: '授权外部工具', fields: ['serverName'] },
-  { value: 'mcp_oauth_callback_url', title: '完成外部工具授权', fields: ['serverName', 'callbackUrl'] },
-]
+// 每一项都写成字面量 t('...') 调用：目录门禁只认源码里出现的字面 key，
+// 拼出来的 `t('agentControls.operations.' + value)` 会被判成「没人用」。
+const operations = computed(() => [
+  { value: 'initialize', title: t('agentControls.operations.initialize'), fields: [] },
+  { value: 'set_model', title: t('agentControls.operations.setModel'), fields: ['model'] },
+  { value: 'set_permission_mode', title: t('agentControls.operations.setPermissionMode'), fields: ['mode'] },
+  { value: 'apply_flag_settings', title: t('agentControls.operations.applyFlagSettings'), fields: ['effort'] },
+  { value: 'set_max_thinking_tokens', title: t('agentControls.operations.setMaxThinkingTokens'), fields: ['budget'] },
+  { value: 'rename_session', title: t('agentControls.operations.renameSession'), fields: ['title'] },
+  { value: 'set_color', title: t('agentControls.operations.setColor'), fields: ['color'] },
+  { value: 'file_suggestions', title: t('agentControls.operations.fileSuggestions'), fields: ['query'] },
+  { value: 'read_file', title: t('agentControls.operations.readFile'), fields: ['path'] },
+  { value: 'get_workspace_diff', title: t('agentControls.operations.getWorkspaceDiff'), fields: [] },
+  { value: 'get_context_usage', title: t('agentControls.operations.getContextUsage'), fields: [] },
+  { value: 'get_usage', title: t('agentControls.operations.getUsage'), fields: [] },
+  { value: 'mcp_status', title: t('agentControls.operations.mcpStatus'), fields: [] },
+  { value: 'mcp_reconnect', title: t('agentControls.operations.mcpReconnect'), fields: ['serverName'] },
+  { value: 'mcp_authenticate', title: t('agentControls.operations.mcpAuthenticate'), fields: ['serverName'] },
+  {
+    value: 'mcp_oauth_callback_url',
+    title: t('agentControls.operations.mcpOauthCallbackUrl'),
+    fields: ['serverName', 'callbackUrl'],
+  },
+])
 const operation = ref('initialize')
 const values = ref<Record<string, string>>({ mode: 'default', effort: 'medium', budget: '2048' })
-const selected = computed(() => operations.find((op) => op.value === operation.value)!)
-const labels: Record<string, string> = {
-  model: '模型名称',
-  title: '会话名称',
-  color: '颜色',
-  query: '文件名',
-  path: '文件路径',
-  serverName: '工具服务名称',
-  callbackUrl: '授权完成后的地址',
-  budget: '思考 token 上限',
-}
+const selected = computed(() => operations.value.find((op) => op.value === operation.value)!)
+const labels = computed<Record<string, string>>(() => ({
+  model: t('agentControls.fields.model'),
+  title: t('agentControls.fields.title'),
+  color: t('agentControls.fields.color'),
+  query: t('agentControls.fields.query'),
+  path: t('agentControls.fields.path'),
+  serverName: t('agentControls.fields.serverName'),
+  callbackUrl: t('agentControls.fields.callbackUrl'),
+  budget: t('agentControls.fields.budget'),
+}))
+const permissionOptions = computed(() => [
+  { title: t('agentControls.permissions.default'), value: 'default' },
+  { title: t('agentControls.permissions.acceptEdits'), value: 'acceptEdits' },
+  { title: t('agentControls.permissions.plan'), value: 'plan' },
+  { title: t('agentControls.permissions.bypassPermissions'), value: 'bypassPermissions' },
+])
 function execute() {
   const fields = Object.fromEntries(selected.value.fields.map((field) => [field, values.value[field] ?? '']))
   const request: Record<string, unknown> = { subtype: operation.value, ...fields }
@@ -218,21 +239,21 @@ const authUrl = computed(() => {
 </script>
 
 <template>
-  <section v-if="!questionsOnly || pending.length" class="agent-controls" aria-label="会话控制">
+  <section v-if="!questionsOnly || pending.length" class="agent-controls" :aria-label="t('agentControls.ariaLabel')">
     <div v-if="!questionsOnly" class="control-bar">
-      <span>{{ state?.connected ? '控制已连接' : '暂无可用控制连接' }}</span>
+      <span>{{ state?.connected ? t('agentControls.connected') : t('agentControls.disconnected') }}</span>
       <v-btn
         size="small"
         variant="text"
         :disabled="!state?.connected || busy"
         @click="run({ subtype: 'background_tasks' })"
-        >转入后台</v-btn
+        >{{ t('agentControls.background') }}</v-btn
       >
-      <v-btn size="small" variant="text" :disabled="!state?.connected || busy" @click="run({ subtype: 'interrupt' })"
-        >中断当前任务</v-btn
-      >
+      <v-btn size="small" variant="text" :disabled="!state?.connected || busy" @click="run({ subtype: 'interrupt' })">{{
+        t('agentControls.interrupt')
+      }}</v-btn>
       <v-btn size="small" variant="text" :aria-expanded="expanded" @click="expanded = !expanded">{{
-        expanded ? '收起控制' : '更多控制'
+        expanded ? t('agentControls.fewerControls') : t('agentControls.moreControls')
       }}</v-btn>
     </div>
     <v-alert v-if="error" type="error" density="compact" class="ma-2">{{ error }}</v-alert>
@@ -251,7 +272,7 @@ const authUrl = computed(() => {
               "
               :items="question.options?.map((option) => option.label)"
               :multiple="question.multiSelect"
-              label="你的回答"
+              :label="t('agentControls.yourAnswer')"
               density="compact"
               hide-details
               @update:model-value="
@@ -263,12 +284,12 @@ const authUrl = computed(() => {
               "
             />
             <p v-for="option in question.options" :key="option.label" class="control-description">
-              {{ option.label }}：{{ option.description }}
+              {{ t('agentControls.optionLine', { label: option.label, description: option.description ?? '' }) }}
             </p>
           </div>
         </template>
         <template v-else>
-          <p>{{ item.request.tool_name ?? '操作' }} 请求执行许可</p>
+          <p>{{ t('agentControls.toolRequest', { tool: item.request.tool_name ?? t('agentControls.operation') }) }}</p>
           <pre>{{ JSON.stringify(item.request.input, null, 2) }}</pre>
         </template>
         <div class="control-bar">
@@ -277,16 +298,18 @@ const authUrl = computed(() => {
             variant="tonal"
             :disabled="busy || questions(item).some((q) => !answers[item.request_id]?.[q.question])"
             @click="answer(item, true)"
-            >{{ questions(item).length ? '提交回答' : '允许本次' }}</v-btn
+            >{{ questions(item).length ? t('agentControls.submitAnswer') : t('agentControls.allowOnce') }}</v-btn
           >
-          <v-btn size="small" variant="text" :disabled="busy" @click="answer(item, false)">拒绝</v-btn>
+          <v-btn size="small" variant="text" :disabled="busy" @click="answer(item, false)">{{
+            t('agentControls.deny')
+          }}</v-btn>
         </div>
       </article>
       <template v-if="expanded">
         <div v-for="task in tasks" :key="task.task_id" class="control-bar">
           <span
             >{{ task.description ?? task.task_id }} ·
-            {{ taskLabels[task.status ?? task.subtype ?? ''] ?? '状态待更新' }}</span
+            {{ taskLabels[task.status ?? task.subtype ?? ''] ?? t('agentControls.statusUnknown') }}</span
           >
           <v-btn
             v-if="task.tool_use_id"
@@ -294,14 +317,14 @@ const authUrl = computed(() => {
             variant="text"
             :disabled="busy || !state?.connected"
             @click="run({ subtype: 'background_tasks', tool_use_id: task.tool_use_id })"
-            >转入后台</v-btn
+            >{{ t('agentControls.background') }}</v-btn
           >
           <v-btn
             size="small"
             variant="text"
             :disabled="busy || !state?.connected || ['completed', 'failed', 'stopped'].includes(task.status ?? '')"
             @click="run({ subtype: 'stop_task', task_id: task.task_id })"
-            >停止</v-btn
+            >{{ t('agentControls.stop') }}</v-btn
           >
         </div>
         <form class="control-form" @submit.prevent="execute">
@@ -309,7 +332,7 @@ const authUrl = computed(() => {
             v-model="operation"
             autocomplete="off"
             :items="operations"
-            label="操作"
+            :label="t('agentControls.operation')"
             density="compact"
             hide-details
           />
@@ -318,13 +341,8 @@ const authUrl = computed(() => {
               v-if="field === 'mode'"
               v-model="values.mode"
               autocomplete="off"
-              label="工具权限"
-              :items="[
-                { title: '逐次确认', value: 'default' },
-                { title: '自动接受编辑', value: 'acceptEdits' },
-                { title: '仅规划', value: 'plan' },
-                { title: '自动执行', value: 'bypassPermissions' },
-              ]"
+              :label="t('agentControls.operations.setPermissionMode')"
+              :items="permissionOptions"
               density="compact"
               hide-details
             />
@@ -332,7 +350,7 @@ const authUrl = computed(() => {
               v-else-if="field === 'effort'"
               v-model="values.effort"
               autocomplete="off"
-              label="思考强度"
+              :label="t('agentControls.operations.applyFlagSettings')"
               :items="['low', 'medium', 'high', 'max']"
               density="compact"
               hide-details
@@ -349,13 +367,15 @@ const authUrl = computed(() => {
             />
           </template>
           <p v-if="operation === 'set_max_thinking_tokens'" class="control-description">
-            采用自适应思考的模型会自行决定预算
+            {{ t('agentControls.effortHint') }}
           </p>
-          <v-btn type="submit" size="small" variant="tonal" :disabled="busy || !state?.connected">执行</v-btn>
+          <v-btn type="submit" size="small" variant="tonal" :disabled="busy || !state?.connected">{{
+            t('agentControls.run')
+          }}</v-btn>
         </form>
-        <v-btn v-if="authUrl" :href="authUrl" target="_blank" rel="noopener noreferrer" variant="tonal"
-          >打开授权页面</v-btn
-        >
+        <v-btn v-if="authUrl" :href="authUrl" target="_blank" rel="noopener noreferrer" variant="tonal">{{
+          t('agentControls.openAuthPage')
+        }}</v-btn>
         <pre v-if="formattedOutput" class="control-output">{{ formattedOutput }}</pre>
       </template>
     </div>

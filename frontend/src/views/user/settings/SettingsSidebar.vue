@@ -19,49 +19,52 @@
 <script lang="ts" setup>
 import type { User } from '@/types/users'
 
-import { inject } from 'vue'
+import { computed, inject } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 import { getAvatarUrl } from '@/utils/materials'
 
 import AccountService from '@/services/account'
 
+const { t } = useI18n()
 const userData = AccountService._user
 
-const tabs = [
+// 写成 computed 而不是常量：切语言时标签要跟着变。
+const tabs = computed(() => [
   {
-    label: '个人资料',
+    label: t('users.settings.sidebar.profile'),
     route: {
       name: 'UserSettingsProfile',
     },
     icon: 'mdi-account',
   },
   {
-    label: '实名信息',
+    label: t('users.settings.sidebar.realName'),
     route: {
       name: 'UserSettingsRealName',
     },
     icon: 'mdi-account-card',
   },
   {
-    label: '隐私中心',
+    label: t('users.settings.sidebar.privacy'),
     route: {
       name: 'UserPrivacyCenter',
     },
     icon: 'mdi-shield-lock',
   },
   {
-    label: '密码与安全',
+    label: t('users.settings.sidebar.security'),
     route: {
       name: 'UserSettingsSecurity',
     },
     icon: 'mdi-lock',
   },
   {
-    label: '安装到手机',
+    label: t('users.settings.sidebar.app'),
     route: {
       name: 'UserSettingsApp',
     },
     icon: 'mdi-cellphone-arrow-down',
   },
-]
+])
 </script>

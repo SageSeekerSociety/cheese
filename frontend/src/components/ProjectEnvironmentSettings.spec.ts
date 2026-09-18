@@ -12,6 +12,8 @@ const api = vi.hoisted(() => ({
 }))
 vi.mock('../api', () => api)
 
+import i18n, { setLocale } from '../i18n'
+
 import ProjectEnvironmentSettings from './ProjectEnvironmentSettings.vue'
 
 const config = {
@@ -22,6 +24,8 @@ const config = {
 }
 beforeEach(() => {
   vi.resetAllMocks()
+  // 文案现在从词表来；断言写的是中文，所以语言钉死——不钉就跟着环境走。
+  setLocale('zh-CN')
   api.getProjectEnvironment.mockResolvedValue({
     config,
     can_edit: true,
@@ -42,7 +46,7 @@ afterEach(cleanup)
 function mount() {
   return render(ProjectEnvironmentSettings, {
     props: { projectId: 'p' },
-    global: { plugins: [createVuetify({ components, directives })] },
+    global: { plugins: [createVuetify({ components, directives }), i18n] },
   })
 }
 

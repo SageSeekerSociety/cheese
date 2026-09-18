@@ -1,6 +1,13 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
+import { columnLabel } from './board'
 import { topicPhase, topicPhaseBadge, topicShortId, topicStateBadge } from './topicState'
+
+import { setLocale } from '@/i18n'
+
+// 状态词现在走词表，断言的是中文那一边：happy-dom 的 navigator.language 是
+// en-US，不钉语言的话徽章上写的是 Accepted / Building。
+beforeEach(() => setLocale('zh-CN'))
 
 describe('话题状态标', () => {
   it('归档的话题读作「已采纳」，不是 git 的 merged', () => {
@@ -56,5 +63,32 @@ describe('话题所处阶段', () => {
     expect(topicPhaseBadge('working').label).toBe('施工中')
     expect(topicPhaseBadge('delivering').label).toBe('交付中')
     expect(topicPhaseBadge('archived').label).toBe('已采纳')
+  })
+})
+
+// 徽章上的词和看板列名是**同一张表**（`workspace.status.*`）：施工中 / 交付中 /
+// 已完成在屏幕上是同一个词，一处改了另一处没改，看的人只会以为界面在说两件事。
+// 这一组钉的就是那句「一处改、两处跟着变」——两处各写一份词也能各自通过自己的
+// 用例，只有把它俩摆在一起才看得出来。
+describe('状态词和看板列名共用一张表', () => {
+  it('施工中 / 交付中 / 已完成两处说同一个词', () => {
+    expect(columnLabel('building')).toBe(topicPhaseBadge('working').label)
+    expect(columnLabel('delivering')).toBe(topicPhaseBadge('delivering').label)
+    expect(columnLabel('done')).toBe(topicStateBadge('closed').label)
+  })
+
+  it('换语言时两处一起换', () => {
+    expect(columnLabel('building')).toBe('施工中')
+    setLocale('en')
+    expect(columnLabel('building')).toBe('Building')
+    expect(topicPhaseBadge('working').label).toBe('Building')
+  })
+
+  // 反面：`archived` 这个标识符在两处不是一件事。看板那一列是「已归档」（房间收了，
+  // 列还画着），话题这一档是「已采纳」（验收通过、收工）。共用一个键的话，总有一屏
+  // 会说错，所以它们是两个键——这条守住别被「顺手合并」掉。
+  it('archived 在两处同名不同义：列是「已归档」，话题是「已采纳」', () => {
+    expect(columnLabel('archived')).toBe('已归档')
+    expect(topicStateBadge('archived').label).toBe('已采纳')
   })
 })

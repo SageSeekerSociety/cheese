@@ -75,7 +75,56 @@ const callSite = new RegExp(`(?:\\$?t|te|tm)\\(\\s*['"\`](${NS})\\.${PATH}['"\`]
 // A key named in a comment is not a call site, and a commented-out call does not
 // show the user a raw key. Strip comments before looking for references, so this
 // scan reports what the running code actually asks for.
-const stripComments = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/gm, '$1')
+//
+// String-aware on purpose. A regex pair is not enough: `/*` inside a *string*
+// opens a "block comment" that runs to the next `*/` anywhere in the file.
+// Profile.vue carries `accept="image/*"` in its template, and the regex version
+// swallowed 4600 of its 5760 characters — every key used below that line read
+// as unused, and, worse, a genuine call site down there could not be checked at
+// all. The failure is silent and it points the wrong way: it invents debt
+// instead of reporting it.
+//
+// It does not try to recognise regex literals, so a regex containing a quote
+// can still desync the scan for the rest of that one file. That is a strictly
+// smaller hole than the one above and it is not silently in either direction:
+// the affected file's keys show up in `unused`, which is checked too.
+function stripComments(text: string): string {
+  let out = ''
+  let i = 0
+  while (i < text.length) {
+    const c = text[i]
+    if (c === '"' || c === "'" || c === '`') {
+      out += c
+      i++
+      while (i < text.length) {
+        if (text[i] === '\\') {
+          out += text[i] + (text[i + 1] ?? '')
+          i += 2
+          continue
+        }
+        out += text[i]
+        if (text[i] === c) {
+          i++
+          break
+        }
+        i++
+      }
+      continue
+    }
+    if (c === '/' && text[i + 1] === '/') {
+      while (i < text.length && text[i] !== '\n') i++
+      continue
+    }
+    if (c === '/' && text[i + 1] === '*') {
+      const end = text.indexOf('*/', i + 2)
+      i = end === -1 ? text.length : end + 2
+      continue
+    }
+    out += c
+    i++
+  }
+  return out
+}
 
 const sourceText = new Map(
   sourceFiles(SRC)

@@ -249,7 +249,11 @@ const tally = computed(() => {
   const all = totalByColumn.value
   return [
     ...BOARD_COLUMNS.map((c) => ({ label: c.label, n: all.get(c.key)?.length ?? 0 })),
-    { label: '已完成', n: all.get('done')?.length ?? 0 },
+    // 「板自己的词」包括折起来的那一列：这里原来硬写了一份「已完成」，而它和
+    // columnLabel('done') 是同一个词的第二份拷贝——下面那行折叠行的按钮用的就是
+    // 那一份。列名走词表之后，两份拷贝会在同一屏上分家（一行英文、一个中文词），
+    // 所以这里取同一个来源。中文渲染一字未变。
+    { label: columnLabel('done'), n: all.get('done')?.length ?? 0 },
   ].filter((t) => t.n > 0)
 })
 

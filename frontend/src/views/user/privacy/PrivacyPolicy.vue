@@ -1,18 +1,17 @@
 <template>
   <div class="privacy-policy">
     <div class="d-flex justify-space-between align-center mb-6">
-      <h2 class="text-h5 font-weight-medium mb-0">隐私政策</h2>
+      <h2 class="text-h5 font-weight-medium mb-0">{{ t('users.privacy.policy.title') }}</h2>
       <v-chip color="primary" variant="tonal" size="small" class="status-chip">
         <template #prepend>
           <v-icon icon="mdi-shield-lock" size="small"></v-icon>
         </template>
-        最近更新: 2023/12/01
+        {{ t('users.privacy.policy.updatedAt', { date: '2023/12/01' }) }}
       </v-chip>
     </div>
 
     <p class="text-body-2 text-medium-emphasis mb-6">
-      本隐私政策阐述了我们如何收集、使用、保护和共享您的个人信息，以及您对这些信息的控制权限。
-      请仔细阅读，以了解我们的数据处理方式和您的权利。
+      {{ t('users.privacy.policy.intro') }}
     </p>
 
     <!-- 政策导航卡片 -->
@@ -22,7 +21,7 @@
           <v-avatar rounded size="42" class="primary-soft mr-3">
             <v-icon icon="mdi-text-box-search" size="24" color="primary"></v-icon>
           </v-avatar>
-          <div class="text-subtitle-1 font-weight-medium">快速导航</div>
+          <div class="text-subtitle-1 font-weight-medium">{{ t('users.privacy.policy.quickNav') }}</div>
         </div>
 
         <v-row class="policy-nav">
@@ -35,7 +34,7 @@
               @click="scrollToSection('information-collection')"
             >
               <v-icon icon="mdi-file-document-outline" class="mr-2"></v-icon>
-              信息收集
+              {{ t('users.privacy.policy.navCollection') }}
             </v-btn>
           </v-col>
 
@@ -48,7 +47,7 @@
               @click="scrollToSection('information-usage')"
             >
               <v-icon icon="mdi-clipboard-text-outline" class="mr-2"></v-icon>
-              信息使用
+              {{ t('users.privacy.policy.navUsage') }}
             </v-btn>
           </v-col>
 
@@ -61,7 +60,7 @@
               @click="scrollToSection('information-protection')"
             >
               <v-icon icon="mdi-shield-check" class="mr-2"></v-icon>
-              信息保护
+              {{ t('users.privacy.policy.navProtection') }}
             </v-btn>
           </v-col>
 
@@ -74,7 +73,7 @@
               @click="scrollToSection('user-rights')"
             >
               <v-icon icon="mdi-account-check" class="mr-2"></v-icon>
-              用户权利
+              {{ t('users.privacy.policy.navRights') }}
             </v-btn>
           </v-col>
         </v-row>
@@ -91,36 +90,42 @@
               <v-icon icon="mdi-file-document-outline" size="24" color="primary"></v-icon>
             </v-avatar>
             <div>
-              <h3 class="text-h6 font-weight-medium mb-1">信息收集</h3>
-              <p class="text-body-2 text-medium-emphasis mb-0">我们收集哪些信息以及如何收集</p>
+              <h3 class="text-h6 font-weight-medium mb-1">{{ t('users.privacy.policy.collectionTitle') }}</h3>
+              <p class="text-body-2 text-medium-emphasis mb-0">{{ t('users.privacy.policy.collectionSubtitle') }}</p>
             </div>
           </div>
 
           <div class="section-content">
-            <h4 class="text-subtitle-2 font-weight-medium mb-2">账户信息</h4>
+            <h4 class="text-subtitle-2 font-weight-medium mb-2">
+              {{ t('users.privacy.policy.collectionAccountTitle') }}
+            </h4>
             <p class="text-body-2 mb-4">
-              当您注册账户时，我们会收集您的用户名、电子邮件地址和密码。这些信息用于创建和管理您的账户，以及验证您的身份。
+              {{ t('users.privacy.policy.collectionAccountBody') }}
             </p>
 
-            <h4 class="text-subtitle-2 font-weight-medium mb-2">实名信息</h4>
+            <h4 class="text-subtitle-2 font-weight-medium mb-2">
+              {{ t('users.privacy.policy.collectionRealNameTitle') }}
+            </h4>
             <p class="text-body-2 mb-4">
-              对于需要实名认证的赛题和项目，我们会收集您的真实姓名、学号、年级、专业和班级等信息。
-              这些信息是选填的，仅在您参与特定需要实名认证的活动时才需要提供。所有实名信息都会进行加密存储。
+              {{ t('users.privacy.policy.collectionRealNameBody') }}
             </p>
 
-            <h4 class="text-subtitle-2 font-weight-medium mb-2">使用数据</h4>
-            <p class="text-body-2 mb-2">我们会收集有关您如何使用我们平台的数据，包括：</p>
+            <h4 class="text-subtitle-2 font-weight-medium mb-2">
+              {{ t('users.privacy.policy.collectionUsageTitle') }}
+            </h4>
+            <p class="text-body-2 mb-2">{{ t('users.privacy.policy.collectionUsageBody') }}</p>
             <ul class="text-body-2 mb-4">
-              <li>访问日志和IP地址</li>
-              <li>您访问的页面和功能</li>
-              <li>设备信息（浏览器类型、操作系统等）</li>
-              <li>点击和浏览行为</li>
+              <li>{{ t('users.privacy.policy.collectionUsageBullet1') }}</li>
+              <li>{{ t('users.privacy.policy.collectionUsageBullet2') }}</li>
+              <li>{{ t('users.privacy.policy.collectionUsageBullet3') }}</li>
+              <li>{{ t('users.privacy.policy.collectionUsageBullet4') }}</li>
             </ul>
 
-            <h4 class="text-subtitle-2 font-weight-medium mb-2">Cookies和类似技术</h4>
+            <h4 class="text-subtitle-2 font-weight-medium mb-2">
+              {{ t('users.privacy.policy.collectionCookiesTitle') }}
+            </h4>
             <p class="text-body-2 mb-0">
-              我们使用cookies和类似技术来增强您的浏览体验，记住您的偏好设置，并提供个性化的服务。
-              您可以通过浏览器设置控制cookies的使用。
+              {{ t('users.privacy.policy.collectionCookiesBody') }}
             </p>
           </div>
         </div>
@@ -134,33 +139,30 @@
               <v-icon icon="mdi-clipboard-text-outline" size="24" color="primary"></v-icon>
             </v-avatar>
             <div>
-              <h3 class="text-h6 font-weight-medium mb-1">信息使用</h3>
-              <p class="text-body-2 text-medium-emphasis mb-0">我们如何使用您的信息</p>
+              <h3 class="text-h6 font-weight-medium mb-1">{{ t('users.privacy.policy.usageTitle') }}</h3>
+              <p class="text-body-2 text-medium-emphasis mb-0">{{ t('users.privacy.policy.usageSubtitle') }}</p>
             </div>
           </div>
 
           <div class="section-content">
-            <h4 class="text-subtitle-2 font-weight-medium mb-2">提供服务</h4>
+            <h4 class="text-subtitle-2 font-weight-medium mb-2">{{ t('users.privacy.policy.usageServiceTitle') }}</h4>
             <p class="text-body-2 mb-4">
-              我们使用您的信息来提供、维护和改进我们的平台和服务，包括处理您的请求，响应您的查询，
-              以及提供技术支持和客户服务。
+              {{ t('users.privacy.policy.usageServiceBody') }}
             </p>
 
-            <h4 class="text-subtitle-2 font-weight-medium mb-2">赛题参与</h4>
+            <h4 class="text-subtitle-2 font-weight-medium mb-2">{{ t('users.privacy.policy.usageContestTitle') }}</h4>
             <p class="text-body-2 mb-4">
-              对于需要实名认证的赛题，我们会使用您的实名信息进行资格验证、结果认证和奖项发放等。
-              这些信息仅在必要时由授权人员访问，且每次访问都会被记录。
+              {{ t('users.privacy.policy.usageContestBody') }}
             </p>
 
-            <h4 class="text-subtitle-2 font-weight-medium mb-2">安全与防欺诈</h4>
+            <h4 class="text-subtitle-2 font-weight-medium mb-2">{{ t('users.privacy.policy.usageSecurityTitle') }}</h4>
             <p class="text-body-2 mb-4">
-              我们使用您的信息来验证身份、防止欺诈行为和保护账户安全， 以及检测和防止平台上的恶意活动和违规行为。
+              {{ t('users.privacy.policy.usageSecurityBody') }}
             </p>
 
-            <h4 class="text-subtitle-2 font-weight-medium mb-2">分析与改进</h4>
+            <h4 class="text-subtitle-2 font-weight-medium mb-2">{{ t('users.privacy.policy.usageAnalyticsTitle') }}</h4>
             <p class="text-body-2 mb-0">
-              我们会分析用户行为数据来了解您如何使用我们的服务，以便改进用户体验、开发新功能，
-              并提升平台的整体质量。这些分析通常基于匿名化或聚合数据。
+              {{ t('users.privacy.policy.usageAnalyticsBody') }}
             </p>
           </div>
         </div>
@@ -174,33 +176,38 @@
               <v-icon icon="mdi-shield-check" size="24" color="primary"></v-icon>
             </v-avatar>
             <div>
-              <h3 class="text-h6 font-weight-medium mb-1">信息保护</h3>
-              <p class="text-body-2 text-medium-emphasis mb-0">我们如何保护您的信息安全</p>
+              <h3 class="text-h6 font-weight-medium mb-1">{{ t('users.privacy.policy.protectionTitle') }}</h3>
+              <p class="text-body-2 text-medium-emphasis mb-0">{{ t('users.privacy.policy.protectionSubtitle') }}</p>
             </div>
           </div>
 
           <div class="section-content">
-            <h4 class="text-subtitle-2 font-weight-medium mb-2">数据加密</h4>
+            <h4 class="text-subtitle-2 font-weight-medium mb-2">
+              {{ t('users.privacy.policy.protectionEncryptionTitle') }}
+            </h4>
             <p class="text-body-2 mb-4">
-              所有敏感信息（特别是实名信息）都通过行业标准的加密技术进行存储和传输，
-              确保未经授权的人员无法访问这些数据。
+              {{ t('users.privacy.policy.protectionEncryptionBody') }}
             </p>
 
-            <h4 class="text-subtitle-2 font-weight-medium mb-2">访问控制</h4>
+            <h4 class="text-subtitle-2 font-weight-medium mb-2">
+              {{ t('users.privacy.policy.protectionAccessTitle') }}
+            </h4>
             <p class="text-body-2 mb-4">
-              我们实施严格的访问控制政策，只有经过授权的工作人员才能在特定场景下访问用户信息，
-              且每次访问都会被详细记录，并可供用户查看。
+              {{ t('users.privacy.policy.protectionAccessBody') }}
             </p>
 
-            <h4 class="text-subtitle-2 font-weight-medium mb-2">安全审计</h4>
+            <h4 class="text-subtitle-2 font-weight-medium mb-2">
+              {{ t('users.privacy.policy.protectionAuditTitle') }}
+            </h4>
             <p class="text-body-2 mb-4">
-              我们定期进行安全审计和漏洞扫描，确保系统安全并及时修复潜在的风险。
-              我们的安全团队持续监控系统，防止未授权访问和数据泄露。
+              {{ t('users.privacy.policy.protectionAuditBody') }}
             </p>
 
-            <h4 class="text-subtitle-2 font-weight-medium mb-2">数据隔离</h4>
+            <h4 class="text-subtitle-2 font-weight-medium mb-2">
+              {{ t('users.privacy.policy.protectionIsolationTitle') }}
+            </h4>
             <p class="text-body-2 mb-0">
-              您的实名信息和平台账号信息严格隔离，确保您的日常活动保持匿名， 其他用户无法将您的平台活动与实名身份关联。
+              {{ t('users.privacy.policy.protectionIsolationBody') }}
             </p>
           </div>
         </div>
@@ -214,32 +221,34 @@
               <v-icon icon="mdi-account-check" size="24" color="primary"></v-icon>
             </v-avatar>
             <div>
-              <h3 class="text-h6 font-weight-medium mb-1">用户权利</h3>
-              <p class="text-body-2 text-medium-emphasis mb-0">您对自己信息的控制权</p>
+              <h3 class="text-h6 font-weight-medium mb-1">{{ t('users.privacy.policy.rightsTitle') }}</h3>
+              <p class="text-body-2 text-medium-emphasis mb-0">{{ t('users.privacy.policy.rightsSubtitle') }}</p>
             </div>
           </div>
 
           <div class="section-content">
-            <h4 class="text-subtitle-2 font-weight-medium mb-2">访问与修改</h4>
+            <h4 class="text-subtitle-2 font-weight-medium mb-2">{{ t('users.privacy.policy.rightsAccessTitle') }}</h4>
             <p class="text-body-2 mb-4">
-              您有权访问和修改您的个人信息，包括账户信息和实名信息。 您可以在账户设置中随时更新这些信息。
+              {{ t('users.privacy.policy.rightsAccessBody') }}
             </p>
 
-            <h4 class="text-subtitle-2 font-weight-medium mb-2">访问记录查看</h4>
+            <h4 class="text-subtitle-2 font-weight-medium mb-2">
+              {{ t('users.privacy.policy.rightsAccessLogTitle') }}
+            </h4>
             <p class="text-body-2 mb-4">
-              您可以查看所有对您实名信息的访问记录，包括访问者、访问时间、访问原因等详细信息，
-              确保您的信息使用透明可追溯。
+              {{ t('users.privacy.policy.rightsAccessLogBody') }}
             </p>
 
-            <h4 class="text-subtitle-2 font-weight-medium mb-2">数据删除</h4>
+            <h4 class="text-subtitle-2 font-weight-medium mb-2">{{ t('users.privacy.policy.rightsDeletionTitle') }}</h4>
             <p class="text-body-2 mb-4">
-              您可以要求删除您的部分或全部个人信息。但请注意，某些信息可能因法律要求或合法理由而保留一段时间。
+              {{ t('users.privacy.policy.rightsDeletionBody') }}
             </p>
 
-            <h4 class="text-subtitle-2 font-weight-medium mb-2">权限管理</h4>
+            <h4 class="text-subtitle-2 font-weight-medium mb-2">
+              {{ t('users.privacy.policy.rightsPermissionsTitle') }}
+            </h4>
             <p class="text-body-2 mb-0">
-              您可以控制哪些赛题和项目能够使用您的实名信息，并可随时撤销或限制授权。
-              在信任与隐私中心，您可以详细了解所有需要实名信息的赛题并进行管理。
+              {{ t('users.privacy.policy.rightsPermissionsBody') }}
             </p>
           </div>
         </div>
@@ -249,9 +258,11 @@
 </template>
 
 <script lang="ts" setup>
+import { useI18n } from 'vue-i18n'
 import { useGoTo } from 'vuetify'
 
 const goTo = useGoTo()
+const { t } = useI18n()
 
 // 修改滚动函数
 const scrollToSection = (sectionId: string) => {

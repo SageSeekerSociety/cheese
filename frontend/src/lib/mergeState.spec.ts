@@ -1,8 +1,14 @@
 import type { MergeStateInfo, MergeStateWord, MergeWho } from '../cx_types'
 
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import { mergeBadgeOf, visibleReasons } from './mergeState'
+
+import { setLocale } from '@/i18n'
+
+// 这几个词现在走词表了，断言的是中文；happy-dom 的 navigator.language 是 en-US，
+// 不钉住语言，渲染出来的就是英文。
+beforeEach(() => setLocale('zh-CN'))
 
 function ms(state: MergeStateWord, who: MergeWho, over: Partial<MergeStateInfo> = {}): MergeStateInfo {
   return {
