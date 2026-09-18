@@ -2,13 +2,50 @@ import type { Project } from '@/cx_types'
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { applyProjectOrder, loadProjectOrder, reorderProjects, saveProjectOrder } from './projectOrder'
+import { applyProjectOrder, dropTargetAt, loadProjectOrder, reorderProjects, saveProjectOrder } from './projectOrder'
 
 const project = (id: string): Project => ({ id, name: id.toUpperCase() }) as Project
 const names = (projects: Project[]) => projects.map((p) => p.id)
 
 // 服务端给的是 created_at desc，所以清单头上的是最新的那个。
 const listed = [project('c'), project('b'), project('a')]
+
+// 一列三格，各高 40，相邻之间留 8 的缝：a=[100,140] b=[148,188] c=[196,236]。
+const column = [
+  { id: 'a', top: 100, bottom: 140 },
+  { id: 'b', top: 148, bottom: 188 },
+  { id: 'c', top: 196, bottom: 236 },
+]
+
+describe('rail 这一列里，某个纵坐标落在哪儿', () => {
+  it('落在一格身上，按上下半边分', () => {
+    expect(dropTargetAt(column, 110)).toEqual({ id: 'a', edge: 'before' })
+    expect(dropTargetAt(column, 135)).toEqual({ id: 'a', edge: 'after' })
+    expect(dropTargetAt(column, 230)).toEqual({ id: 'c', edge: 'after' })
+  })
+
+  // 这一条就是那个 bug：第一格上方本来没人负责，插入线画着「插到最前」，松手却
+  // 什么都不发生，而想把一个项目挪到最前面，手势天然会往上多走一点。
+  it('第一格上方的留白算插到最前', () => {
+    expect(dropTargetAt(column, 99)).toEqual({ id: 'a', edge: 'before' })
+    expect(dropTargetAt(column, 0)).toEqual({ id: 'a', edge: 'before' })
+    expect(dropTargetAt(column, -50)).toEqual({ id: 'a', edge: 'before' })
+  })
+
+  it('最后一格下方的留白算插到最末', () => {
+    expect(dropTargetAt(column, 237)).toEqual({ id: 'c', edge: 'after' })
+    expect(dropTargetAt(column, 9999)).toEqual({ id: 'c', edge: 'after' })
+  })
+
+  // 缝里读成「上面那一格的后面」，和读成「下面那一格的前面」是同一个位置。
+  it('两格之间的缝落在上面那一格的后面', () => {
+    expect(dropTargetAt(column, 144)).toEqual({ id: 'a', edge: 'after' })
+  })
+
+  it('一个格子都没有时不认领', () => {
+    expect(dropTargetAt([], 120)).toBeNull()
+  })
+})
 
 describe('project rail order', () => {
   beforeEach(() => localStorage.clear())

@@ -53,6 +53,40 @@ export function applyProjectOrder(projects: Project[], order: string[]): Project
   return [...projects.filter((p) => !placed.has(p.id)), ...ranked]
 }
 
+/** 一个项目格子在 rail 这一列里占的纵向区间。 */
+export interface TileSpan {
+  id: string
+  top: number
+  bottom: number
+}
+
+/**
+ * rail 这一列里，纵坐标 `y` 意味着插到哪一格的哪一边。
+ *
+ * 格子之间、第一格上方、最后一格下方的留白（分隔线、首页那一格、列尾）以前没有
+ * 任何东西负责：那些地方既不收货也不撤销插入线，线还画着「放这儿就插到最前」，
+ * 松手却什么都不发生。而「挪到最前面」这个手势天然会往上多走一点，正好走进那片
+ * 地方，所以最前面那一格是唯一真的挪不过去的位置。
+ *
+ * 这里把整列都算上：第一格上沿以上是插到最前，最后一格下沿以下是插到最后，落在
+ * 某一格身上则按上下半边分。
+ */
+export function dropTargetAt(tiles: TileSpan[], y: number): { id: string; edge: DropEdge } | null {
+  if (!tiles.length) return null
+  const first = tiles[0]
+  if (y < first.top) return { id: first.id, edge: 'before' }
+  const last = tiles[tiles.length - 1]
+  if (y > last.bottom) return { id: last.id, edge: 'after' }
+  for (const tile of tiles) {
+    if (y >= tile.top && y <= tile.bottom) {
+      return { id: tile.id, edge: y < tile.top + (tile.bottom - tile.top) / 2 ? 'before' : 'after' }
+    }
+  }
+  // 两格之间的缝：算作上面那一格的后面，和把它读成下面那一格的前面是同一个位置。
+  const above = [...tiles].reverse().find((tile) => tile.bottom < y)
+  return above ? { id: above.id, edge: 'after' } : { id: first.id, edge: 'before' }
+}
+
 /**
  * 把 `movedId` 插到 `targetId` 的前面或后面，返回新的完整顺序。
  *
