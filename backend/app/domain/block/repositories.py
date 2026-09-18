@@ -24,11 +24,7 @@ from app.domain.block.models import (
 
 @dataclass(frozen=True)
 class BlockPage:
-    """One bottom-anchored window of a topic's timeline.
-
-    `has_more` is about OLDER blocks only — the window always ends at the
-    newest block the cursor allows, so "more" can only lie above it.
-    """
+    """A chronological window; has_more follows the requested cursor direction."""
 
     items: list[Block]
     has_more: bool
@@ -520,9 +516,16 @@ class BlockRepository:
         limit: int,
         before: Block | None = None,
         kinds: Collection[BlockKind] | None = None,
+        after: Block | None = None,
+        query: str | None = None,
+        reply_to: uuid.UUID | None = None,
+        author: str | None = None,
     ) -> BlockPage:
-        """A bottom-anchored slice of the timeline: the newest `limit` blocks,
-        or — with `before` — the `limit` blocks immediately OLDER than it.
+        """The newest `limit` blocks, or a page before/after a cursor.
+
+        An after cursor reads the oldest newer records first, so catching up
+        through multiple pages cannot skip intervening messages. Explicit kinds
+        include document-view records; otherwise the timeline exclusions apply.
 
         Cursor, not offset, because chat grows at the tail while you read it: an
         offset window slides every time a message lands, so page 2 re-serves or
@@ -533,16 +536,34 @@ class BlockRepository:
         a timestamp and single-column ordering wouldn't be a total order (the
         cursor could then skip or repeat the tied rows).
         """
-        stmt = select(Block).where(
-            *self._in_place(topic_id, task_id),
-            Block.kind.not_in(self._NON_TIMELINE),
-        )
+        stmt = select(Block).where(*self._in_place(topic_id, task_id))
         # 现场 wants events and nothing else; narrowing HERE rather than in the
         # caller is the difference between paging and pretending to — filtering
         # a page after the fact returns fewer rows than asked for and reports
         # has_more against the wrong set.
         if kinds is not None:
             stmt = stmt.where(Block.kind.in_(list(kinds)))
+        else:
+            stmt = stmt.where(Block.kind.not_in(self._NON_TIMELINE))
+        if query:
+            # Literal matching: a pasted log containing % or _ is not SQL syntax.
+            pattern = (
+                "%"
+                + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                + "%"
+            )
+            stmt = stmt.where(
+                or_(
+                    Block.content.ilike(pattern, escape="\\"),
+                    # JSONB renders stored Unicode escapes as searchable text.
+                    cast(cast(Block.meta, JSONB), Text).ilike(pattern, escape="\\"),
+                    Block.anchor_quote.ilike(pattern, escape="\\"),
+                )
+            )
+        if reply_to is not None:
+            stmt = stmt.where(Block.reply_to == reply_to)
+        if author is not None:
+            stmt = stmt.where(Block.author == author)
         if before is not None:
             # Row-value comparison: `(created_at, id) < (:ts, :id)` in one go,
             # so the cursor test matches the ORDER BY key exactly. There is no
@@ -552,13 +573,23 @@ class BlockRepository:
             stmt = stmt.where(
                 tuple_(Block.created_at, Block.id) < (before.created_at, before.id)
             )
-        # One row past the window tells us whether older blocks remain, without
+        if after is not None:
+            stmt = stmt.where(
+                tuple_(Block.created_at, Block.id) > (after.created_at, after.id)
+            )
+        # One row past the window tells us whether more blocks remain, without
         # a second COUNT query.
-        stmt = stmt.order_by(Block.created_at.desc(), Block.id.desc()).limit(limit + 1)
+        order = (
+            (Block.created_at, Block.id)
+            if after is not None
+            else (Block.created_at.desc(), Block.id.desc())
+        )
+        stmt = stmt.order_by(*order).limit(limit + 1)
         rows = list((await self._session.scalars(stmt)).all())
         has_more = len(rows) > limit
         rows = rows[:limit]
-        rows.reverse()  # callers render oldest-first, same as list_for_topic
+        if after is None:
+            rows.reverse()  # callers render oldest-first, same as list_for_topic
         return BlockPage(items=rows, has_more=has_more)
 
     async def count_for_topic(
