@@ -23,13 +23,12 @@ project, and a member.
 
 from contextlib import contextmanager
 
+from tests.conftest import seed_user
 from tests.integration.test_team_member_enters_team_project import (
     _bearer,
     _team,
     _team_project,
 )
-
-from tests.conftest import seed_user
 
 # The reads a non-member must not get. Named by what a person loses if it leaks.
 READS = {
@@ -72,7 +71,8 @@ def test_someone_who_is_not_on_the_project_reads_nothing(client):
     _, pid = _project(client)
     outsider = _bearer(seed_user(client, "mallory"))
     for what, path in READS.items():
-        assert client.get(path.format(pid=pid), headers=outsider).status_code == 403, what
+        r = client.get(path.format(pid=pid), headers=outsider)
+        assert r.status_code == 403, what
 
 
 def test_a_member_still_reads_everything(client):
@@ -94,10 +94,8 @@ def test_a_team_project_list_is_not_a_directory(client):
     with off_the_street(client) as anon:
         assert anon.get("/projects", params={"team_id": team_id}).status_code == 401
     outsider = _bearer(seed_user(client, "mallory"))
-    assert (
-        client.get("/projects", params={"team_id": team_id}, headers=outsider).status_code
-        == 403
-    )
+    r = client.get("/projects", params={"team_id": team_id}, headers=outsider)
+    assert r.status_code == 403
 
 
 def test_the_team_still_sees_its_own_projects(client):
