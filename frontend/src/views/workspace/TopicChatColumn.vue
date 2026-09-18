@@ -6,6 +6,7 @@ import { computed, ref } from 'vue'
 import { useDisplay } from 'vuetify'
 
 import ChatPanel from '@/components/ChatPanel.vue'
+import AgentFeedbackCard from '@/components/feedback/AgentFeedbackCard.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
 import TopicComputePicker from '@/components/TopicComputePicker.vue'
 
@@ -92,6 +93,13 @@ defineExpose({
           @phase="emit('phase', $event)"
           @review="emit('review')"
         />
+        <!-- Agent 反馈卡（**原型**）。和采纳框同一个位置：都是「这一轮结束时，平台
+             要人做的一个决定」。
+             现在它**无条件出现**，因为这一轮没有后端 —— 真接线时它该由「这一轮里
+             芝士是否递了一张反馈卡」决定（后端还没有这个概念，见任务 ccec43d0 的
+             brief：Agent SendFeedback 是下一轮单独研究的事）。在那之前，无条件出现
+             是唯一能让人看到这张卡长什么样的办法；点一次「不用」它这一轮就不再出现。 -->
+        <AgentFeedbackCard />
       </template>
       <!-- 输入区那一行只放**这条消息**的动作，所以这里只剩话题的状态。谁在跑
          （AI 队友）和在哪跑（算力）都是话题级的设置，发第一条消息之后就不再变，

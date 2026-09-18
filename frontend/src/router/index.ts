@@ -3,6 +3,7 @@ import type { RouteRecordRaw } from 'vue-router'
 import { createRouter, createWebHistory } from 'vue-router'
 
 import AccountRoutes from './account'
+import FeedbackRoutes from './feedback'
 import HomeRoutes from './home'
 import { legacyProjectRedirects } from './legacyProjectPaths'
 import ProjectsRoutes from './projects'
@@ -41,6 +42,9 @@ const routes: RouteRecordRaw[] = [
   // shape and is distinguished only by the id being numeric.
   ...legacyProjectRedirects,
   workspaceRoutes,
+  // 反馈（纯前端原型）：/feedback、/feedback/:id、/admin/feedback。三条都是顶层
+  // 路由，必须挂在下面的 NotFound 通配**之前**，否则会被它吃掉。
+  ...FeedbackRoutes,
   {
     name: 'preview-open',
     path: '/previews/:topicId',

@@ -7,6 +7,20 @@
     <div class="text-caption font-weight-bold title-bar flex-grow-1">
       <span class="text-caption">{{ currentTitle }}</span>
     </div>
+    <!-- 反馈入口（原型）。它是一条**路由**不是一个弹窗：反馈中心是一个完整的页面
+         （有搜索、Tab、详情页、可以分享出去的链接），塞进浮层里这四件事一件都做
+         不了。登录与否都显示——没登录的人遇到的问题同样值得记下来。 -->
+    <v-btn
+      class="feedback-entry"
+      variant="text"
+      color="on-surface-variant"
+      :size="28"
+      to="/feedback"
+      title="反馈"
+      aria-label="反馈"
+    >
+      反馈
+    </v-btn>
     <div class="position-relative d-flex align-center justify-center">
       <v-spacer></v-spacer>
       <LanguageToggle />
@@ -156,6 +170,13 @@ onMounted(() => {
 .app-system-bar .language-toggle {
   min-height: 24px;
   padding: 2px 8px;
+  font-size: 12px;
+}
+
+/* 和语言开关同一档尺寸：这条系统栏里的东西高度必须一致，否则整条会看起来参差。 */
+.app-system-bar .feedback-entry {
+  min-height: 24px;
+  padding: 2px 10px;
   font-size: 12px;
 }
 
