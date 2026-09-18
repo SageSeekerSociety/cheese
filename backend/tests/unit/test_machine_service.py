@@ -233,7 +233,8 @@ _UNSET = object()
 
 def build_service(client=None, project=_UNSET, repo=None):
     service = MachineService.__new__(MachineService)
-    service._session = None
+    # The service commits around provider calls and re-reads afterwards.
+    service._session = SimpleNamespace(commit=AsyncMock(), refresh=AsyncMock())
     service._client = client or FakeMicroCloud()
     service._repo = repo or FakeRepo()
     service._devices = FakeDevices()

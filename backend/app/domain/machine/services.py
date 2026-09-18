@@ -222,7 +222,10 @@ class MachineService:
             raise NotFoundError("project not found")
 
         team_id = await self.quota_team_id(project_id)
-        await self._repo.lock_team_quota(team_id)
+        # The provider reads and the account setup happen before the quota lock:
+        # only counting the team's machines and creating one need to be atomic,
+        # and every provider call made under the lock keeps every other
+        # admission of the team waiting with a pool connection each.
         offering = await self._pick_offering()
 
         def clamp(value: int | None, default: int, lo: str, hi: str) -> int:
@@ -249,6 +252,10 @@ class MachineService:
             ),
         }
 
+        customer_id, account_id = await self._ensure_account(project_id)
+        user = login_user or settings.microcloud_login_user
+
+        await self._repo.lock_team_quota(team_id)
         existing = await self.quota_machines(team_id)
         limit = await get_machine_limit(self._session, team_id)
         if len(existing) >= limit:
@@ -258,9 +265,6 @@ class MachineService:
             )
         project_used = sum(m.project_id == project_id for m in existing)
         hostname = derive_hostname(project.name, project_id, project_used + 1)
-
-        customer_id, account_id = await self._ensure_account(project_id)
-        user = login_user or settings.microcloud_login_user
 
         body = {
             "customerId": customer_id,
@@ -348,7 +352,13 @@ class MachineService:
 
         existing = await self._repo.get_active_for_topic(topic_id)
         if existing is not None:
-            await self._warm_pool.finish_claim(existing)
+            if existing.warm_claim_pending:
+                await self._warm_pool.finish_claim(existing)
+                # finish_claim commits around the provider call, which lets go
+                # of the locks above; take them again before deciding.
+                topic = await TopicService(self._session).lock_for_execution(topic_id)
+                await self._repo.lock_topic(topic_id)
+                await self._session.refresh(existing)
             if _still_moving(existing) or _stale(existing):
                 await self.refresh(existing)
             if existing.status not in GONE:
@@ -403,22 +413,32 @@ class MachineService:
             return
         if machine.topic_id is None:
             raise ValidationError("Cleanup resource is not a room allocation")
-        await self._repo.lock_topic(machine.topic_id)
+        topic_id = machine.topic_id
+        await self._repo.lock_topic(topic_id)
         if machine.device_id is not None:
             pins = await self._devices.list_topic_bindings(machine.device_id)
-            if any(pin.topic_id != machine.topic_id for pin in pins):
+            if any(pin.topic_id != topic_id for pin in pins):
                 raise ConflictError("Cloud machine is shared by another room")
-        if machine.status not in {MachineStatus.deleting, MachineStatus.deleted}:
-            if machine.device_id is not None:
+        deleting = machine.status not in {MachineStatus.deleting, MachineStatus.deleted}
+        device_id, provider_id = machine.device_id, machine.machine_id
+        # The device listing and the provider delete run with no transaction
+        # open; the room lock is taken again to record the outcome.
+        await self._session.commit()
+        if deleting:
+            if device_id is not None:
                 from app.domain.agent.device_provider import list_device_storage
 
-                if await list_device_storage(machine.device_id):
+                if await list_device_storage(device_id):
                     raise ConflictError("Cloud machine still contains room directories")
-            await self.destroy(machine)
-        binding = await self._devices.topic_binding(machine.topic_id)
+            await self._client.delete_machine(provider_id)
+        await self._repo.lock_topic(topic_id)
+        await self._session.refresh(machine)
+        if deleting:
+            await self._repo.set_state(machine, status=MachineStatus.deleting, ip=None)
+        binding = await self._devices.topic_binding(topic_id)
         if binding is not None and binding.device_id == machine.device_id:
             await self._devices.release_topic_device(
-                machine.topic_id, reason="archived room cleanup completed"
+                topic_id, reason="archived room cleanup completed"
             )
         await self._repo.mark_released(machine, when=datetime.now(UTC))
 
