@@ -4,6 +4,7 @@ from fastapi import Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.requests import ClientDisconnect
 from starlette.status import (
     HTTP_400_BAD_REQUEST,
     HTTP_401_UNAUTHORIZED,
@@ -15,6 +16,7 @@ from starlette.status import (
     HTTP_429_TOO_MANY_REQUESTS,
     HTTP_500_INTERNAL_SERVER_ERROR,
     HTTP_503_SERVICE_UNAVAILABLE,
+    HTTP_504_GATEWAY_TIMEOUT,
 )
 
 
@@ -156,8 +158,17 @@ class SystemBusyError(BaseError):
         super().__init__(HTTP_503_SERVICE_UNAVAILABLE, message, None)
 
 
-def format_error_response(status_code: int, message: str) -> dict:
-    name = "Error"
+class GatewayTimeoutError(BaseError):
+    """Something we called did not answer in time. Not a fault of this server,
+    and a 500 says it was — see the execution route and `device_connection_app`."""
+
+    def __init__(self, message: str = "Upstream did not answer in time") -> None:
+        super().__init__(HTTP_504_GATEWAY_TIMEOUT, message, None)
+
+
+def format_error_response(status_code: int, message: str, name: str = "Error") -> dict:
+    """The envelope every client of ours parses. ``name`` is what a caller
+    switches on when the status alone does not say which condition it was."""
     return {
         "code": status_code,
         "message": f"{name}: {message}",
@@ -276,6 +287,59 @@ def register_exception_handlers(app: FastAPI) -> None:
     """Register BOTH error frameworks (fusion merge): main's BaseError family +
     HTTP/validation handlers, and cheesex's AppError handler. Called from our
     main.py; main's product code raises BaseError, ours raises AppError."""
+    # Imported here, not at module scope: `device_hub` sits above this module and
+    # imports back through `app.core`, and nothing but this registration needs
+    # the name.
+    from app.domain.agent.device_hub import DeviceOffline
+
+    @app.exception_handler(DeviceOffline)
+    async def _handle_device_offline(_: Request, exc: DeviceOffline) -> JSONResponse:
+        """A machine that is off is an answer, not a fault of this server.
+
+        It was reaching the catch-all below, so a laptop somebody closed came
+        out as 500「服务器内部错误」 and, because an unhandled exception is
+        logged on three separate ways out, as three alerts. Over the first 15
+        hours of the alert channel that one condition was 162 of 600 messages —
+        more than a quarter of everything the channel said, for a state with
+        nothing to fix.
+
+        409 with `X-Device-Id` is what the connection owner already answers on
+        its own RPC path (`device_connection_app.call`), and what the clients
+        already read to tell 「the machine is not there」 from 「the call went
+        wrong」 — waiting fixes the second and never the first.
+        """
+        _log.warning("device_offline", device=exc.device_id)
+        return JSONResponse(
+            status_code=HTTP_409_CONFLICT,
+            content=format_error_response(
+                status_code=HTTP_409_CONFLICT,
+                message=f"设备 {exc.device_id} 离线",
+                name="DeviceOffline",
+            ),
+            headers={"X-Device-Id": exc.device_id},
+        )
+
+    @app.exception_handler(ClientDisconnect)
+    async def _handle_client_disconnect(
+        request: Request, _: ClientDisconnect
+    ) -> JSONResponse:
+        """The browser hung up while we were reading its request.
+
+        Nothing failed here and nobody is left to answer: a tab closed
+        mid-upload raises this, and answering 500 tells a client that is gone
+        about a fault that did not happen — while the log line and its three
+        alerts describe our own server to whoever is on call. Registered rather
+        than caught in the handler below because a handler registered for a
+        specific type runs INSIDE the request middleware, so the request log
+        never sees a failure either.
+        """
+        _log.info("client_disconnected", path=request.url.path, method=request.method)
+        return JSONResponse(
+            status_code=499,
+            content=format_error_response(
+                status_code=499, message="客户端已断开", name="ClientDisconnect"
+            ),
+        )
 
     @app.exception_handler(AppError)
     async def _handle_app_error(_: Request, exc: AppError) -> JSONResponse:

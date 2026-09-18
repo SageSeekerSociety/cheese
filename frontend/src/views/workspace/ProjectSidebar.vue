@@ -63,8 +63,12 @@ async function onArchiveTopic(topicId: string) {
 <template>
   <!-- 私聊不在这里了：名册和它的未读都归成员页，侧栏只在「成员」那一行上挂一个
        未读总数（privateUnreadMap 传的就是给它算总数用的）。 -->
+  <!-- 进不来的时候侧栏整个不渲染。留着它，非成员看到的是一份点得动的目录——包括
+       一颗「＋新建话题」，按下去只会撞一个 403。说明那一屏已经说了他该干什么，
+       旁边不该再摆一排他做不到的事。左边那条项目 rail 不在这个组件里，所以「离开
+       这里」的路还在。 -->
   <TopicSidebar
-    v-if="page || mdAndUp"
+    v-if="!store.accessDenied && (page || mdAndUp)"
     :page="page"
     :width="store.railWidth"
     :projects="store.projects"

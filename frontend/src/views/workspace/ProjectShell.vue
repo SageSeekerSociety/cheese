@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import { useWorkspaceStore } from '@/stores/workspace'
+import ProjectAccessNotice from '@/views/workspace/ProjectAccessNotice.vue'
 
 // 项目工作台的框架层 (P0). Everything inside a project is a CHILD of this
 // route, which is the whole point: the project sidebar (rendered through the
@@ -59,7 +60,10 @@ const hasError = computed<boolean>({
 
 <template>
   <div class="project-shell fill-height">
-    <router-view />
+    <!-- 进不来的时候，整块内容区换成说明，而不是让人对着一个空壳猜。侧栏和顶栏
+         留着，因为「离开这里」的路都在那上面。 -->
+    <ProjectAccessNotice v-if="store.accessDenied" :reason="store.accessDenied" />
+    <router-view v-else />
 
     <v-snackbar v-model="hasError" color="error" timeout="4000" location="bottom">
       {{ store.error }}

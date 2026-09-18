@@ -101,9 +101,10 @@ logger = logging.getLogger("cheesex.projects")
 def _is_a_real_person(handle: str | None) -> bool:
     """Could this handle ever match a human account?
 
-    `anonymous` is what an unidentified caller resolves to and 芝士's handles
-    are agents; neither can hold owner authority, so neither counts as an owner
-    even though both are non-empty strings.
+    `anonymous` is what an unidentified caller resolves to: nobody, so no owner.
+    An agent handle is somebody, and can hold a project role like anybody else —
+    it is excluded here only because this answers "is there a person to name in
+    the log", and naming 芝士 as the person answers nothing.
 
     Advisory only — this decides whether to LOG, never whether to allow. That
     is why `looks_like_agent_handle` is fair game here despite its docstring
@@ -191,6 +192,14 @@ async def list_projects(
     """
     service = ProjectService(db)
     if team_id is not None:
+        # A team's project list is not a directory: every row carries the
+        # project's `id`, and that id opens its roster, decisions and usage. So
+        # this answered "which projects does that team have, and what are their
+        # ids" to anyone who asked — including callers with no credential at
+        # all, while the SAME route without `team_id` was strict.
+        await resolver.authorize_team(
+            await resolver.resolve(fallback_handle=None), team_id=team_id
+        )
         projects = await service.list_for_team(team_id)
         total = len(projects)
     else:
@@ -259,7 +268,11 @@ async def project_for_team(team_id: int, db: DbSession) -> dict:
 
 
 @router.get("/{project_id}")
-async def get_project(project_id: uuid.UUID, db: DbSession) -> dict:
+async def get_project(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectService(db).get_or_404(project_id)
     return ok(ProjectOut.model_validate(project).model_dump(mode="json"))
 
@@ -439,9 +452,16 @@ async def set_project_default_agent(
 
 
 @router.get("/{project_id}/decisions")
-async def list_decisions(project_id: uuid.UUID, db: DbSession) -> dict:
+async def list_decisions(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
     """决策记录 (spec §7.1): project-wide decision blocks, each traceable to its
-    source topic via topic_id."""
+    source topic via topic_id.
+
+    These are the project's own words, not metadata about it — the same content
+    ``/topics`` has always guarded."""
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     await ProjectService(db).get_or_404(project_id)
     blocks = await BlockRepository(db).list_by_kind_for_project(
         project_id, BlockKind.decision
@@ -980,12 +1000,10 @@ async def set_branch_protection(
 
     ``approvals_required`` predates this block and stays at
     ``settings["approvals_required"]`` — read and written here, never moved,
-    never dual-written. Review policy is controlled by human owners/leads;
-    an agent's management role does not grant authority to relax its checks.
+    never dual-written. Who may change review policy is the steward dependency's
+    question, and it is a question about role: an owner or a lead, whoever they
+    are.
     """
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    if actor.is_agent:
-        raise ForbiddenError("只有人类项目 owner / 组长能修改合并规则")
     project = await ProjectRepository(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")

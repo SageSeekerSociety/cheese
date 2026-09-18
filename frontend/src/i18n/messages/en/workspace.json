@@ -67,7 +67,9 @@
     "draftsKept": "Unsaved edits are kept on this page — switch back to that file to keep editing",
     "loadChangesFailed": "Couldn't load the changes",
     "loadTasksFailed": "Couldn't load the tasks",
-    "readFileFailed": "Couldn't read the file"
+    "readFileFailed": "Couldn't read the file",
+    "missingInTask": "{path} is not in this task",
+    "missingInProject": "{path} is not in the current project code"
   },
   "doc": {
     "pickTopic": "Pick a topic to see its document",
@@ -146,6 +148,34 @@
     "typeSlides": "Slides",
     "typeSheet": "Spreadsheet",
     "typeCsv": "CSV spreadsheet",
-    "typeMarkdown": "Markdown"
+    "typeMarkdown": "Markdown",
+    "viewingAsked": "Viewing {name}",
+    "backToArtifact": "Back to the current preview"
+  },
+  "attachment": {
+    "unnamed": "Attachment",
+    "remove": "Remove"
+  },
+  "access": {
+    "signedOutTitle": "Sign in to view this project",
+    "signedOutBody": "Once you sign in, you'll see what's here if you're a member of this project",
+    "signedOutAction": "Sign in",
+    "forbiddenTitle": "You're not a member of this project",
+    "forbiddenBody": "Only project members can see what is here. If you need access, ask someone on the project to add you",
+    "forbiddenAction": "Back to my projects"
+  },
+  "revisions": {
+    "loadFailed": "Couldn't read the revisions",
+    "decideFailed": "Couldn't apply this revision",
+    "replaced": "Changed \"{removed}\" to \"{added}\"",
+    "inserted": "Inserted \"{added}\"",
+    "deleted": "Deleted \"{removed}\"",
+    "count": "No revisions | 1 revision | {count} revisions",
+    "acceptAll": "Accept all",
+    "rejectAll": "Reject all",
+    "where": "Paragraph {paragraph} · {author}",
+    "anonymous": "Unnamed",
+    "accept": "Accept",
+    "reject": "Reject"
   }
 }

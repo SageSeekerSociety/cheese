@@ -67,7 +67,7 @@ def channel(client, monkeypatch):
         exec=AsyncMock(
             return_value={
                 "exit": 0,
-                "stdout": json.dumps({"workspace": "/project", "mcp_servers": []}),
+                "stdout": json.dumps(INSTALLED),
             }
         ),
     )
@@ -106,12 +106,23 @@ async def test_a_harness_without_an_executor_is_refused_by_name(
         )
 
 
+# What the executor installation reports about itself. ``state`` is where it put
+# the executor: the placement carries that answer rather than deriving it, so
+# the process that reaches the executor later — released separately from the one
+# that installs it — cannot disagree about it. See `agent.execution`.
+INSTALLED = {
+    "workspace": "/project",
+    "mcp_servers": [],
+    "state": "/room/.cheese/executor",
+}
+
+
 @pytest.mark.anyio
 async def test_codex_placement_recovers_only_as_codex(client, room, monkeypatch):
     project, topic = room
     central = channel(client, monkeypatch)
     central._hub.exec.side_effect = [
-        {"exit": 0, "stdout": json.dumps({"workspace": "/project", "mcp_servers": []})},
+        {"exit": 0, "stdout": json.dumps(INSTALLED)},
         {"exit": 0, "stdout": json.dumps({"thread_id": "codex-thread", "alive": True})},
     ]
     codex = CodexChannel(central, ClaudeLaunch("system").execution)
@@ -176,9 +187,8 @@ async def test_center_uses_the_selected_harness_for_bootstrap_and_history(
     central._hub.call_executor.side_effect = [
         {"pid": 123, "capabilities": ["prepare"]},
         {
+            **INSTALLED,
             "pid": 123,
-            "workspace": "/project",
-            "mcp_servers": [],
             "context_tree": {"generation": "fixture", "entries": {}},
         },
     ]
@@ -281,9 +291,8 @@ async def test_running_executor_prepares_without_python_launch(
             "runtime_sha256": executor_runtime.SOURCE_SHA256,
         },
         {
+            **INSTALLED,
             "pid": 123,
-            "workspace": "/project",
-            "mcp_servers": [],
             "environment_status": environment_state,
             "context_tree": {"generation": "fixture", "entries": {}},
         },
@@ -402,7 +411,7 @@ async def test_executor_readiness_reuses_bootstrap_reply(
 ):
     project, topic = room
     central = channel(client, monkeypatch)
-    reply = {"workspace": "/project", "mcp_servers": []}
+    reply = dict(INSTALLED)
     if running:
         reply["pid"] = 123
         reply["environment_status"] = "ready"
@@ -440,12 +449,7 @@ async def test_running_executor_does_not_hide_failed_environment(
     project, topic = room
     central = channel(client, monkeypatch)
     central._hub.exec.return_value["stdout"] = json.dumps(
-        {
-            "workspace": "/project",
-            "mcp_servers": [],
-            "pid": 123,
-            "environment_status": "failed",
-        }
+        {**INSTALLED, "pid": 123, "environment_status": "failed"}
     )
     central._wait_executor = CentralChannel._wait_executor.__get__(central)
     status = AsyncMock(return_value={"state": "failed", "error": "build failed"})
@@ -512,10 +516,30 @@ async def test_executor_release_excludes_new_tool_admission(client, room, monkey
     assert response.json() == {"value": "kept"}
 
 
+@pytest.mark.parametrize(
+    ("recorded", "dialled"),
+    [
+        pytest.param({}, "/room/.cheese/executor", id="recorded-before-the-field"),
+        pytest.param(
+            {"state": "/room/.elsewhere/executor"},
+            "/room/.elsewhere/executor",
+            id="recorded-by-the-installation",
+        ),
+    ],
+)
 @pytest.mark.anyio
 async def test_owner_execution_route_preserves_scope_and_reaches_device(
-    client, room, monkeypatch
+    client, room, monkeypatch, recorded, dialled
 ):
+    """The owner dials where the placement says, not where it would install.
+
+    This route is served by the device connection owner, which an app deploy
+    deliberately leaves alone, so it routinely runs an older build than the
+    backend that placed the room. A directory this process derives is therefore
+    a directory two builds can disagree about, and when they did — the install
+    root moved in one of them — every room's tools and every bootstrap ping
+    failed against a path that was correct in the other half.
+    """
     project, topic = room
     async with client.test_factory() as db:
         stored = await db.get(Topic, topic)
@@ -528,6 +552,7 @@ async def test_owner_execution_route_preserves_scope_and_reaches_device(
                 "kind": "device",
                 "device_id": "executor",
                 "home": "/room",
+                **recorded,
             },
         }
         await db.commit()
@@ -562,7 +587,7 @@ async def test_owner_execution_route_preserves_scope_and_reaches_device(
             )
             outbound = await asyncio.wait_for(connector.sent.get(), 1)
             assert outbound["t"] == "execution.call"
-            assert outbound["path"] == "/room/.cheese/executor"
+            assert outbound["path"] == dialled
             encoded = json.dumps({"result": {"content": "executor file"}}).encode()
             await device_hub.on_device_message(
                 "executor",
@@ -598,6 +623,43 @@ async def test_owner_execution_route_preserves_scope_and_reaches_device(
     finally:
         device_connection_app.app.dependency_overrides.pop(get_db, None)
         await device_hub.detach_device("executor", connector)
+
+
+@pytest.mark.anyio
+async def test_a_machine_that_does_not_answer_is_not_a_fault_of_this_server(
+    client, room, monkeypatch
+):
+    """A device that holds its link and stays silent answered 500「服务器内部
+    错误」, which blames the one process it cannot be — and, an unhandled error
+    being logged three times on its way out, said so three times into the alert
+    channel. The connection owner's own RPC path has answered 504 for this
+    since it was written."""
+    project, topic = room
+    async with client.test_factory() as db:
+        stored = await db.get(Topic, topic)
+        resource = stored.resource_id or topic
+        stored.session_placement = {
+            "device_id": "center",
+            "resource_id": str(resource),
+            "channel": "device",
+            "execution": {"kind": "device", "device_id": "executor"},
+        }
+        await db.commit()
+
+    async def never_answers(*_args, **_kwargs):
+        raise TimeoutError
+
+    monkeypatch.setattr(execution, "call", never_answers)
+    token = mint_scoped_token(
+        project_id=str(project), topic_id=str(topic), resource_id=str(resource)
+    )
+    response = await asyncio.to_thread(
+        client.post,
+        f"/topics/{topic}/execution/{resource}",
+        headers={"X-Cheese-Token": token},
+        json={"method": "invoke", "params": {"tool": "Read"}},
+    )
+    assert response.status_code == 504, response.text
 
 
 @pytest.mark.anyio

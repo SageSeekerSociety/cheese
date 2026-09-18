@@ -90,3 +90,28 @@ it('collects a delayed result without sending the command twice', async () => {
   await view.findByText('指令已确认')
   expect(sendAgentControl).toHaveBeenCalledTimes(1)
 })
+
+it('takes the room session state off the socket instead of asking again', async () => {
+  // The room already holds a socket, so a question from the agent arrives as a
+  // frame. What this pins is the half that saves the requests: having been given
+  // one, the panel does not go back to asking every two seconds.
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  const props = { topicId: 'topic1', active: true, questionsOnly: true }
+  const view = render(AgentControls, {
+    props: { ...props, pushed: null },
+    global: { plugins: [createVuetify({ components, directives })] },
+  })
+  await view.rerender({
+    ...props,
+    pushed: {
+      id: 's1',
+      connected: true,
+      pending: {
+        q1: { request_id: 'q1', request: { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: 'pwd' } } },
+      },
+    },
+  })
+  await view.findByText('允许本次')
+  await vi.advanceTimersByTimeAsync(6000)
+  expect(getAgentControl).toHaveBeenCalledTimes(1)
+})

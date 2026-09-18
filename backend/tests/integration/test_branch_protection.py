@@ -208,7 +208,13 @@ def test_update_allows_project_lead_not_ordinary_member(client):
 
 
 @pytest.mark.parametrize("role", ["lead", "owner"])
-def test_agent_stewards_cannot_change_merge_policy(client, role):
+def test_an_agent_steward_changes_merge_policy_like_any_other_steward(client, role):
+    """The role answers this, not whether the steward is a person.
+
+    Nothing about relaxing a check is safer in a human's hands: whoever holds
+    owner or lead was given that authority deliberately, and a project that does
+    not want an agent changing its checks does not make one a steward.
+    """
     pid = _make_project(client)
     project = client.get(f"/projects/{pid}").json()["data"]
     handle = topic_agent_handle(uuid.UUID(project["root_topic_id"]))
@@ -220,8 +226,25 @@ def test_agent_stewards_cannot_change_merge_policy(client, role):
     if role == "owner":
         response = client.put(f"/projects/{pid}/owner", json={"owner_handle": handle})
         assert response.status_code == 200, response.text
+    client.headers.update(session_auth_headers(handle))
+    response = _put(client, pid, {"auto_merge_allowed": True})
+    assert response.status_code == 200, response.text
+    assert _get(client, pid)["auto_merge_allowed"] is True
+
+
+def test_an_agent_who_is_not_a_steward_still_cannot(client):
+    """The role is the whole of it: seated as an ordinary member, refused."""
+    pid = _make_project(client)
+    project = client.get(f"/projects/{pid}").json()["data"]
+    handle = topic_agent_handle(uuid.UUID(project["root_topic_id"]))
+    assert (
+        client.post(
+            f"/projects/{pid}/members",
+            json={"user_handle": handle, "role": "member"},
+        ).status_code
+        == 200
+    )
     before = _get(client, pid)
     client.headers.update(session_auth_headers(handle))
-    response = _put(client, pid, {"auto_merge_allowed": True, "required_checks": []})
-    assert response.status_code == 403, response.text
+    assert _put(client, pid, {"auto_merge_allowed": True}).status_code == 404
     assert _get(client, pid) == before

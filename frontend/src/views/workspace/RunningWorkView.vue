@@ -400,10 +400,19 @@ function openTask(task: RoomTask) {
 </template>
 
 <style scoped>
+/* 这一页得自己钉在视口高度上，`min-height: 0` 那条链才传得下去：列头 / 列里的清单
+   / 已完成那一块都写着 `flex: 0 0 auto` 或 `min-height: 0`，可它们传的是「我有多少
+   高度」，而这一格一直没有确定的高度 —— 于是 `.board-col__list` 的
+   `overflow-y: auto` 永远等于它自己的内容高，永远不滚。活一多，板就被外面那层
+   `.project-shell { overflow: hidden }` 裁掉，整页没有滚动条。
+   `border-box`：这一格带 16/12/12 的内边距，默认的 content-box 会让它比 `100%`
+   再高出 28px，底部那一条照样被裁。 */
 .board {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
+  height: 100%;
+  box-sizing: border-box;
   min-height: 0;
   padding: 16px 12px 12px;
 }

@@ -443,6 +443,36 @@ class ActorResolver:
         _log.info("project_access_denied", handle=actor.handle, project=str(project_id))
         raise ForbiddenError("你不是这个项目的成员，无权查看")
 
+    async def authorize_team(self, actor: Actor, *, team_id: int) -> None:
+        """Require a verified member of this team.
+
+        A team's project list is not a directory: it carries every project's
+        ``id``, and the id is the key to that project's roster, decisions and
+        usage. So listing somebody else's team leaks whatever those routes
+        expose, which is why this guard sits alongside ``authorize_project``
+        rather than being folded into a milder "is anyone logged in" check.
+        """
+        if not settings.authz_enforce_topic_access:
+            return
+        self.reject_failed_credential(actor)
+        if not actor.authenticated:
+            if is_global_sandbox_token(self._cheese_token):
+                return  # Trusted development credential; anonymous access stays denied.
+            raise AuthenticationRequiredError("Login required to access a team")
+        if await self._is_team_member(team_id, actor.handle):
+            return
+        _log.info("team_access_denied", handle=actor.handle, team=team_id)
+        raise ForbiddenError("你不是这个团队的成员，无权查看")
+
+    async def _is_team_member(self, team_id: int, handle: str) -> bool:
+        """Team membership is keyed by user id while every other authorization
+        key is the handle string, so the handle is resolved to its user here —
+        see the same note in ``_is_project_member``."""
+        user = await UserRepository(self._session).get_by_username(handle)
+        if user is None:
+            return False
+        return await TeamRepository(self._session).is_team_member(team_id, user.id)
+
     async def _is_project_member(self, project_id: uuid.UUID, handle: str) -> bool:
         """The one notion of 项目成员 both guards share: on the project's roster,
         its owner, or a member of the team the project belongs to.

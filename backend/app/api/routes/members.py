@@ -47,7 +47,16 @@ async def add_member(
 
 
 @router.get("/projects/{project_id}/members")
-async def list_members(project_id: uuid.UUID, db: DbSession) -> dict:
+async def list_members(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """The project's roster.
+
+    Names and avatars of real people, so it takes the same 项目成员 door as the
+    topic list — it used to answer in full without any credential, which made a
+    non-member's empty-looking workspace still show everyone's face."""
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     from app.domain.identity.repositories import AgentBindingRepository
     from app.domain.project.repositories import ProjectRepository
     from app.domain.user.repositories import UserRepository

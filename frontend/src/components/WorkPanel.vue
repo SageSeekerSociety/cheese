@@ -21,6 +21,7 @@ import type { TopicPhase } from '../lib/topicState'
 import { computed, nextTick, ref, watch } from 'vue'
 
 import { getPreview, getTopicWorkSummary, listRoomTasks } from '../api'
+import { previewCanShow } from '../lib/fileKind'
 
 import PanelChanges from './panels/PanelChanges.vue'
 import PanelOverview from './panels/PanelOverview.vue'
@@ -169,12 +170,14 @@ watch(
 // the transcript all survived a close/open). 文档 is mounted from the start
 // because it is the default tab and its editor is expensive to rebuild.
 const mounted = ref<Set<TabKey>>(new Set<TabKey>([active.value]))
-watch(active, (k) => {
+function show(k: TabKey) {
   if (!mounted.value.has(k)) mounted.value = new Set(mounted.value).add(k)
-})
+}
+watch(active, show)
 
 const overviewRef = ref<InstanceType<typeof PanelOverview> | null>(null)
 const changesRef = ref<InstanceType<typeof PanelChanges> | null>(null)
+const previewRef = ref<InstanceType<typeof PanelPreview> | null>(null)
 
 const topicId = computed(() => props.topic?.id ?? null)
 const projectId = computed(() => props.topic?.project_id ?? null)
@@ -386,12 +389,30 @@ function highlightTurn(turnId: string) {
   setTab('overview')
   void nextTick(() => overviewRef.value?.highlightTurn(turnId))
 }
+// A chip is a path with no store, and a room has three: its own files (what 芝士
+// delivered and what people uploaded — no branch, no history), a task's worktree,
+// and the project's current code. So find the file FIRST and pick the tab from
+// where it turned out to be. Done the other way round, a reader who clicks a file
+// 芝士 just made gets the 改动 tab appearing out of nowhere, a listing that does
+// not contain it, and then a read error on top — the file was never in a tree.
 async function openFile(path: string, taskId?: string | null) {
+  // A chip may carry the lines it was pointing at (`src/a.ts:12-30`) — that part
+  // names a place inside the file, not a file, and neither store knows it.
+  const want = path.replace(/:\d+(?:-\d+)?$/, '')
+  if (previewCanShow(want)) {
+    show('preview')
+    await nextTick()
+    if (await previewRef.value?.openFile(want)) {
+      setTab('preview')
+      return
+    }
+  }
   setTab('changes')
   await nextTick()
-  // A chip may carry the lines it was pointing at (`src/a.ts:12-30`) — that part
-  // names a place inside the file, not a file, and the tree only knows paths.
-  await changesRef.value?.openFile(path.replace(/:\d+(?:-\d+)?$/, ''), taskId)
+  // `undefined`, not `null`: a message under no card says nothing about which
+  // source holds the file, while `null` means 「项目当前代码」 — and a file this
+  // room is still working on is not on main yet.
+  await changesRef.value?.openFile(want, taskId ?? undefined)
 }
 defineExpose({ pulse, highlightTurn, openFile })
 </script>
@@ -487,6 +508,7 @@ defineExpose({ pulse, highlightTurn, openFile })
         <PanelPreview
           v-if="mounted.has('preview')"
           v-show="active === 'preview'"
+          ref="previewRef"
           :topic-id="topicId"
           :project-id="projectId"
           :active="active === 'preview'"

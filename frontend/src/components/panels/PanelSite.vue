@@ -183,14 +183,18 @@ function fmtTime(iso: string): string {
 
 // 施工现场 tool-event lines: backend stores "verb\npreview"; legacy rows are
 // "🔧 toolname". Split into the action verb and an optional argument preview.
+// 老记录（没有 meta 的那些）只能从正文第一行认出这是哪一步：那一行是**入库当时**
+// 烤好的中文。所以这张表的两边答的是两个问题——键是认路的凭据（数据），值说这是
+// 哪个工具（标识），词本身仍然由 `toolLabel` 当场从词表取。别再在这里存一份中文
+// 动词：存在这里的副本不会跟着语言走，而且和 `TOOL_LABELS` 那份迟早各写各的。
 const LEGACY_VERB: Record<string, string> = {
-  update_doc: '更新文档',
-  remember: '记入记忆',
-  notify: '发送通知',
-  request_accept: '提交验收卡',
-  pin_milestone: '添加里程碑',
-  write_file: '写入文件',
-  record_decision: '记录决策',
+  更新文档: 'update_doc',
+  记入记忆: 'remember',
+  发送通知: 'notify',
+  提交验收卡: 'request_accept',
+  添加里程碑: 'pin_milestone',
+  写入文件: 'write_file',
+  记录决策: 'record_decision',
 }
 // Meta-first rendering: an event block with structured meta ({tool, arg}) is
 // translated at DISPLAY time via the full toolLabels table — so a verb missing
@@ -201,7 +205,10 @@ function eventVerb(b: Block): string {
   // tool 仍然如实记着真正跑的是哪个工具。
   if (b.meta?.tool) return toolLabel(b.meta.as_tool ?? b.meta.tool)
   const first = (b.content.split('\n')[0] || '').replace(/^🔧\s*/, '')
-  return LEGACY_VERB[first] ?? first
+  // 认得出来的走词表；认不出来（芝士自己说的话、或者表外的新动词）原样显示——那是
+  // 这一行唯一还留着旧字面量的去处，也正是「该给表里加一行」的信号。
+  const tool = LEGACY_VERB[first]
+  return tool === undefined ? first : toolLabel(tool)
 }
 function eventArg(b: Block): string {
   if (b.meta?.tool) return b.meta.arg ?? ''

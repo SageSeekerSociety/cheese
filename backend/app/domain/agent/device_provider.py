@@ -1288,6 +1288,11 @@ class DeviceChannel(Channel):
                 remote_control=True,
                 resource_id=str(resource_id),
                 model=launch.model,
+                # WHO acts with it. The launcher has known this all along and
+                # let the minter fall back to a handle derived from the room —
+                # which is the one thing a room cannot answer once it may seat
+                # more than one agent.
+                agent_handle=agent_handle,
             )
             tunnel_url = settings.subscription_tunnel_url.strip()
             via_tunnel = uses_tunnel(tunnel_url=tunnel_url)

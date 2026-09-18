@@ -59,9 +59,14 @@ def test_a_good_token_still_gets_its_own_projects(client):
     assert [p["name"] for p in r.json()["data"]["data"]] == ["P"]
 
 
-def test_the_team_scoped_listing_is_untouched(client):
-    """带 `team_id` 的那条分支根本不解析调用者（它答的是「这个团队的项目」，不是
-    「我的项目」）。这条规则只属于 per-caller 的那半，别顺手把另一半也关上。"""
+def test_the_team_scoped_listing_answers_401_too(client):
+    """带 `team_id` 的那条分支现在也在这条规则里。
+
+    它曾经根本不解析调用者——理由是「它答的是这个团队的项目，不是我的项目」。那个
+    理由在 2026-09-09 作废了：那份列表每一行都带着项目的 `id`，而 id 就是这个项目
+    的名册、决策记录和用量的钥匙，所以它答的从来就不只是团队的事。现在它要求调用
+    者是这个团队的成员，于是「递了但验不过」在这条分支上也是 401——和这个文件里
+    其余几条同一个理由，不是新规矩。"""
     r = client.get("/projects?team_id=1", headers={"Authorization": "Bearer bad"})
 
-    assert r.status_code == 200, r.text
+    assert r.status_code == 401, r.text

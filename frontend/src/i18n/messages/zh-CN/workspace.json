@@ -67,7 +67,9 @@
     "draftsKept": "未保存的修改已保留在当前页面，切回对应文件可继续编辑",
     "loadChangesFailed": "改动加载失败",
     "loadTasksFailed": "任务加载失败",
-    "readFileFailed": "读取文件失败"
+    "readFileFailed": "读取文件失败",
+    "missingInTask": "{path} 不在这个任务里",
+    "missingInProject": "{path} 不在项目当前代码里"
   },
   "doc": {
     "pickTopic": "选择一个话题查看文档",
@@ -146,6 +148,34 @@
     "typeSlides": "幻灯片",
     "typeSheet": "表格",
     "typeCsv": "CSV 表格",
-    "typeMarkdown": "Markdown"
+    "typeMarkdown": "Markdown",
+    "viewingAsked": "正在看 {name}",
+    "backToArtifact": "回到当前预览"
+  },
+  "attachment": {
+    "unnamed": "附件",
+    "remove": "移除"
+  },
+  "access": {
+    "signedOutTitle": "需要登录才能查看这个项目",
+    "signedOutBody": "登录后，如果你是这个项目的成员，就能看到这里的内容",
+    "signedOutAction": "登录",
+    "forbiddenTitle": "你不是这个项目的成员",
+    "forbiddenBody": "只有项目成员能查看这里的内容。需要访问权限的话，找项目里的人把你加进成员名单",
+    "forbiddenAction": "回到我的项目"
+  },
+  "revisions": {
+    "loadFailed": "未能读取修订",
+    "decideFailed": "未能处理这处修订",
+    "replaced": "把「{removed}」改成「{added}」",
+    "inserted": "加了「{added}」",
+    "deleted": "删了「{removed}」",
+    "count": "修订 {count} 处",
+    "acceptAll": "全部接受",
+    "rejectAll": "全部拒绝",
+    "where": "第 {paragraph} 段 · {author}",
+    "anonymous": "未署名",
+    "accept": "接受",
+    "reject": "拒绝"
   }
 }

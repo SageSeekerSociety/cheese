@@ -117,7 +117,13 @@ class TopicMemberService:
             return False
         return any(m.user_handle == actor for m in members)
 
-    async def seed(self, topic_id: uuid.UUID, *, owner_handle: str | None) -> None:
+    async def seed(
+        self,
+        topic_id: uuid.UUID,
+        *,
+        owner_handle: str | None,
+        agent_handle: str | None = None,
+    ) -> None:
         """Seed a newborn topic's roster: the creator becomes owner and 芝士
         joins as a member (fusion-design §3). Idempotent — re-seeding never
         duplicates a row. Called at topic-create time, outside the actor check
@@ -128,7 +134,10 @@ class TopicMemberService:
         and individually revocable."""
         if owner_handle and not self._is_agent_handle(owner_handle):
             await self._ensure_member(topic_id, owner_handle, role=TopicRole.owner)
-        await self.ensure_topic_agent_seat(topic_id)
+        if agent_handle:
+            await self.ensure_agent_seat(topic_id, agent_handle)
+        else:
+            await self.ensure_topic_agent_seat(topic_id)
 
     async def seed_root(
         self,
@@ -299,23 +308,31 @@ class TopicMemberService:
             and user.id in agent_ids
         ]
 
-    async def ensure_topic_agent_seat(self, topic_id: uuid.UUID) -> str:
-        """Give this topic its own 分身: an agent-user row plus a roster seat.
+    async def ensure_agent_seat(self, topic_id: uuid.UUID, handle: str) -> str:
+        """Seat THIS agent in this room, and return the handle it acts under.
 
-        The seat is the grant. One 分身 per room is what makes an action
-        attributable to it, and what makes de-authorizing it a single row delete
-        instead of waiting out a shared token's TTL.
+        The seat is the grant: an action is attributable to the agent that holds
+        one, and de-authorizing it is a single row delete rather than waiting out
+        a token's TTL. What the seat does not do is tell the room who its agent
+        is — a room is a collaboration space and may seat several, so the caller
+        names the agent it means.
 
         Idempotent, and cheap on the fast path (one indexed lookup)."""
-        handle = topic_agent_handle(topic_id)
         if await self._repo.get(topic_id=topic_id, member_handle=handle) is None:
-            from app.domain.identity.services import IdentityService
-
-            await IdentityService(self._session).ensure_topic_agent_user(topic_id)
             await self._repo.add(
                 topic_id=topic_id, member_handle=handle, role=TopicRole.member
             )
         return handle
+
+    async def ensure_topic_agent_seat(self, topic_id: uuid.UUID) -> str:
+        """Seat the room-derived 分身. Reached only where no agent has been named
+        yet — a room seeded before an agent could hold an identity of its own —
+        and kept until every seat is an agent's own."""
+        handle = topic_agent_handle(topic_id)
+        from app.domain.identity.services import IdentityService
+
+        await IdentityService(self._session).ensure_topic_agent_user(topic_id)
+        return await self.ensure_agent_seat(topic_id, handle)
 
     async def migrate_shared_agent_seat(self, topic_id: uuid.UUID) -> None:
         """Retire a pre-分身独立身份 room's shared ``cheese`` seat in favour of its

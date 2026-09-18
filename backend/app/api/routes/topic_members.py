@@ -11,6 +11,8 @@ from app.api.auth import ActorResolverDep
 from app.api.response import ok, page
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError
+from app.domain.agent_instance.services import AgentInstanceService
+from app.domain.identity.handles import agent_instance_handle
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.schemas import (
     TopicMemberCreate,
@@ -53,13 +55,19 @@ async def list_topic_members(
     # User row only carries the handle (username). Fall back to the handle.
     profile_by_uid = await profiles.get_profiles_by_user_ids(user_ids)
     avatar_by_uid = await profiles.chosen_avatar_ids(user_ids)
-    # 芝士's seat is one row per room whose profile nickname is a constant fixed
-    # at creation (``IdentityService.ensure_topic_agent_user``), so it does NOT
-    # follow the agent the room was handed to. Name that seat after whoever is
-    # actually working here — the roster is where the UI reads the AI teammate's
-    # name from, and a stale name there is indistinguishable from the swap not
-    # having happened.
-    agent_name = (await TopicService(db).resolve_agent(topic)).display_name
+    # An agent seat's profile nickname is a constant fixed when the seat's user
+    # row was created, so the name has to come from the agent. Each seat carries
+    # its OWN agent's: a room may seat several, and one name for all of them
+    # showed two teammates as the same person — the same defect the mention
+    # roster had. A seat still under the room-derived handle belongs to the
+    # agent the room points at, which is what `fallback_name` is.
+    seats = {
+        agent_instance_handle(instance.id): instance
+        for instance in await AgentInstanceService(db).list_for_project(
+            topic.project_id
+        )
+    }
+    fallback_name = (await TopicService(db).resolve_agent(topic)).display_name
     items = []
     for m in members:
         d = TopicMemberOut.model_validate(m).model_dump(mode="json")
@@ -69,7 +77,8 @@ async def list_topic_members(
         is_agent = user is not None and user.id in agent_ids
         d["agent"] = is_agent
         if is_agent:
-            d["name"] = agent_name
+            seated = seats.get(m.member_handle)
+            d["name"] = seated.display_name if seated else fallback_name
         else:
             d["name"] = (
                 profile.nickname if profile and profile.nickname else m.member_handle

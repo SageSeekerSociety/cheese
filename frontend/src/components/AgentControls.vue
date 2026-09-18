@@ -10,7 +10,20 @@ import { answerAgentControl, getAgentControl, getAgentControlResult, sendAgentCo
 // （SignIn.vue、AppBar.vue 也是这么用的）。
 import { t } from '../i18n'
 
-const props = defineProps<{ topicId: string; active: boolean; questionsOnly?: boolean }>()
+const props = defineProps<{
+  topicId: string
+  active: boolean
+  questionsOnly?: boolean
+  /** The room's socket already carries this state. A parent that passes it puts
+   * the panel on the frames and drops it to the idle cadence below; a parent
+   * that does not (the expanded panel, which also shows the machine's task list
+   * and so has to ask for it) keeps asking every two seconds. */
+  pushed?: AgentControlState | null
+}>()
+const LIVE_POLL_MS = 2000
+// Only a floor under a frame that never arrived: a socket that dropped, a room
+// opened in a view with no socket. Everything this panel shows arrives pushed.
+const IDLE_POLL_MS = 30000
 const state = ref<AgentControlState | null>(null)
 const error = ref('')
 const notice = ref('')
@@ -51,8 +64,26 @@ async function refresh(epoch = generation) {
 
 async function poll(epoch: number) {
   await refresh(epoch)
-  if (epoch === generation && props.active) timer = setTimeout(() => void poll(epoch), 2000)
+  const every = props.pushed === undefined ? LIVE_POLL_MS : IDLE_POLL_MS
+  if (epoch === generation && props.active) timer = setTimeout(() => void poll(epoch), every)
 }
+
+// A frame lands: take it as the whole platform-side state, the same shape the
+// request returns. Answers in flight are keyed by request id, so a question that
+// is still open keeps the text already typed into it.
+watch(
+  () => props.pushed,
+  (next) => {
+    if (!next) return
+    if (next.id !== state.value?.id) {
+      answers.value = {}
+      output.value = null
+      notice.value = ''
+      waiting.value = null
+    }
+    state.value = next
+  }
+)
 
 watch(
   () => [props.topicId, props.active],

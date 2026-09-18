@@ -1020,3 +1020,26 @@ def test_every_tool_listing_says_how_many_platform_tools_it_found(monkeypatch, c
     # a probe of something else.
     assert central._cli_tools(Unreachable()) == []
     assert "ConnectionRefusedError" in capsys.readouterr().err
+
+
+def test_a_listing_the_executor_never_answers_still_leaves_the_session_its_tools(
+    monkeypatch, capsys
+):
+    """Being late is worse than being short.
+
+    A listing without the `cheese_*` family costs a retry; one that misses
+    Claude Code's 30s deadline costs the session every file, shell and chat
+    tool, because it drops the server and never asks again.
+    """
+    monkeypatch.setattr(central, "LISTING_DEADLINE_S", 0.2)
+
+    class Wedged:
+        @staticmethod
+        def call(method, params=None):
+            time.sleep(30)
+            raise AssertionError("the listing waited for this call")
+
+    started = time.monotonic()
+    assert central._cli_tools(Wedged()) == []
+    assert time.monotonic() - started < 5
+    assert "did not answer" in capsys.readouterr().err

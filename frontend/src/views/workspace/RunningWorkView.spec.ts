@@ -3,6 +3,10 @@
  * 这一份钉的是那个区别本身——列按「该谁动」分、短语一个字都不改地照抄后端、空列
  * 不消失、已完成不占板面，以及排序是全序（不然板会在两次刷新之间自己跳）。
  */
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import type { Component } from 'vue'
 import type { RoomTask } from '@/cx_types'
 
@@ -309,5 +313,31 @@ describe('一件活都没有', () => {
       expect(container.querySelector('.board__head p')?.textContent?.replace(/\s+/g, '')).toBe('已完成2')
     )
     getByText('在房间里说明要做什么，芝士会把它拆成任务')
+  })
+})
+
+// 板的高度必须在这一格上定死，列里那些 `min-height: 0` 才有意义。以前这里只有
+// `flex: 1 1 auto`，而外面那层 `.project-shell` 只给了 `overflow: hidden`、不是
+// flex 容器 —— 那句 flex 一路空转，板的高度等于内容高度，`.board-col__list` 的
+// `overflow-y: auto` 于是永远等于自己的内容高、永远不滚：活一多，板的下半截就被
+// 外壳裁掉，整页没有滚动条（马霄宇报「验收的地方显示不全」时一起查出来的同类）。
+// 这是 CSS，jsdom 量不到布局，照 `PanelCard.spec.ts` 的老办法用源码断言钉住。
+describe('板自己钉在视口高度上', () => {
+  it('.board 有确定高度，而且是 border-box', () => {
+    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'RunningWorkView.vue'), 'utf8')
+    const start = src.indexOf('\n.board {')
+    expect(start).toBeGreaterThan(-1)
+    const rule = src.slice(src.indexOf('{', start) + 1, src.indexOf('}', start)).replace(/\/\*[\s\S]*?\*\//g, '')
+    expect(rule).toContain('height: 100%')
+    // 这一格带内边距：content-box 会让它比 100% 再高 28px，底部照样被裁。
+    expect(rule).toContain('box-sizing: border-box')
+  })
+
+  it('列里的清单仍然是唯一的滚动层', () => {
+    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'RunningWorkView.vue'), 'utf8')
+    const start = src.indexOf('\n.board-col__list {')
+    const rule = src.slice(src.indexOf('{', start) + 1, src.indexOf('}', start)).replace(/\/\*[\s\S]*?\*\//g, '')
+    expect(rule).toContain('overflow-y: auto')
+    expect(rule).toContain('min-height: 0')
   })
 })

@@ -4,6 +4,7 @@ import asyncio
 import base64
 import dataclasses
 import logging
+import time
 import uuid
 from collections.abc import Callable, Coroutine
 from typing import Any
@@ -13,6 +14,23 @@ import httpx
 from app.domain.agent.device_hub import DeviceOffline, HubScreen
 
 logger = logging.getLogger(__name__)
+
+# How long a call into the owner waits out an owner that is not listening.
+# Releasing the owner force-recreates its container
+# (deploy/release-device-connection.sh), and for those seconds every call into it
+# is refused: on 2026-09-17 a room's control poll turned that window into six
+# 500s on the page (20:01:24 to 20:01:38Z, the owner back at 20:01:34Z). Waiting
+# is the honest answer — a refused connect means the request never left this
+# process, so nothing can have happened twice, and the window closes by itself:
+# the release gives the new container these same 60 seconds to become healthy and
+# fails if it does not.
+#
+# ONLY calls wait. The snapshot read does not, because `start()` awaits one in
+# the lifespan: a backend booting while the owner is down would hold its own
+# startup here, fail the deploy's health check, and be rolled back over a
+# condition that resolves on the next poll a second later.
+OWNER_CONNECT_RETRY_WINDOW_S = 60
+OWNER_CONNECT_RETRY_MAX_DELAY_S = 5
 
 
 def screen_to_json(screen: HubScreen) -> dict[str, Any]:
@@ -194,10 +212,31 @@ class RemoteDeviceHub:
         response.raise_for_status()
         return response
 
+    async def _call_owner(self, name: str, payload: dict[str, Any]) -> httpx.Response:
+        """The owner call itself, waiting out an owner that is being recreated.
+
+        Retries a refused connect and nothing else: a failure any later — a
+        reset, a lost response — can follow work the owner already did, and
+        repeating that is not ours to decide.
+        """
+        deadline = time.monotonic() + OWNER_CONNECT_RETRY_WINDOW_S
+        attempt = 0
+        while True:
+            try:
+                return await self._request(
+                    "POST", f"/internal/device-connection/call/{name}", json=payload
+                )
+            except httpx.ConnectError:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise
+                await asyncio.sleep(
+                    min(2**attempt * 0.5, OWNER_CONNECT_RETRY_MAX_DELAY_S, remaining)
+                )
+                attempt += 1
+
     async def _call(self, name: str, payload: dict[str, Any]) -> Any:
-        response = await self._request(
-            "POST", f"/internal/device-connection/call/{name}", json=payload
-        )
+        response = await self._call_owner(name, payload)
         result = response.json().get("result")
         if name in {"open_screen", "reassert_screen", "adopt_screen", "close_screen"}:
             await self.refresh()

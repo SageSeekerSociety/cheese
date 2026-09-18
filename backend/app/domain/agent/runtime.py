@@ -247,7 +247,11 @@ class InProcessBroker:
         # rebuilt from GET /blocks on (re)connect — so they are fanned out live
         # but never buffered (buffering would also make an idle channel look
         # in_flight forever).
-        if kind == "reaction":
+        # `agent_control` is the same kind of fact: the room's session state
+        # changed, and a client that missed the frame reads the whole of it back
+        # from GET /topics/{id}/agent/control, so buffering it would only replay
+        # a state that has since moved on.
+        if kind in ("reaction", "agent_control"):
             for q in list(self._subs.get(channel, ())):
                 q.put_nowait(frame)
             return
@@ -1622,7 +1626,6 @@ class AgentWorkRunner:
         attachments=None,
         **_message,
     ) -> bool:
-        channel = str(topic_id)
         if recipient_handle is not None:
             if await chat_service.wait_for_recipient(topic_id, recipient_handle):
                 live_delivery_expected = False
@@ -1640,9 +1643,10 @@ class AgentWorkRunner:
                 ),
             )
             if delivered is True:
-                ack = await chat_service.ack_summon(landed_user_block_id, topic_id)
-                if ack is not None:
-                    await self._broker.publish(channel, {"type": "reaction", **ack})
+                # 这里曾经打 👀。现在不打了：这一句证明的是「传输层收下了这次写
+                # 入」，而 harness 说「会话把它读进去了」是另一件事，由
+                # `confirm_prompt_receipt` 统一落记号——两处都打会变成同一条消息
+                # 上先后出现两个来源不同、含义不同的同一个符号。
                 return True
             if delivered is False or live_delivery_expected:
                 logger.warning(
@@ -1764,7 +1768,7 @@ class AgentWorkRunner:
             #
             # The mark gets opened on the first frame, and the frames that
             # arrive first are not this turn producing anything: they are the
-            # room acknowledging the request (`ack_summon`'s ✅, a system event
+            # room acknowledging the request (`ack_summon`'s 👀, a system event
             # block). `session_lifecycle` comes after them, so by the time the
             # runner learns a session will own the ending it has already opened
             # a mark — and used to decline to close it on the strength of that

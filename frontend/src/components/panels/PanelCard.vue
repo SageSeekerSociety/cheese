@@ -197,6 +197,12 @@ async function send() {
   flex: 1 1 auto;
   min-height: 0;
   padding: 8px 12px 10px;
+  /* 这一格自己就是它的滚动层 —— 同 `.panel-site` / `.panel-preview`。
+     标题、验收卡、元信息、简报、结论、发言框的高度都由数据决定，加起来可以比面板
+     高；它们又都是 `min-height: auto`，收缩不到内容高度以下。唯一的例外是下面那段
+     对话区，于是它先被压扁，压到头之后多出来的部分直接从底部溢出、被外壳裁掉——
+     以前这里没有滚动层，那一截既看不见也滚不到（验收卡越长、窗口越矮越明显）。 */
+  overflow-y: auto;
 }
 .panel-card__head {
   display: flex;
@@ -257,7 +263,10 @@ async function send() {
 }
 .panel-card__timeline {
   flex: 1 1 auto;
-  min-height: 0;
+  /* 曾经是 0：flex 收缩的下限。整个面板不够高时它会一路缩到底，而对话区自己是个
+     `overflow-y: auto` 的盒子 —— 高度 0 的滚动盒子里的话，连滚动条都没有，等于
+     读不到。留一个下限，再矮就把这一格交给面板自己的滚动条。 */
+  min-height: 160px;
   overflow-y: auto;
   border-top: 1px solid var(--line);
   padding-top: 6px;

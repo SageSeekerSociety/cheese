@@ -50,13 +50,14 @@ def test_each_message_boundary_lands_as_own_block(client):
 
     # No delta frames ever reach the chat; messages arrive as they complete,
     # interleaved with the tool activity that separates them.
-    types = [f["type"] for f in frames]
+    # 芝士's 👀 rides the harness's prompt receipt, reported on its own task, so
+    # it has no fixed position here and is filtered out (asserted in
+    # test_reactions.py).
+    types = [f["type"] for f in frames if f["type"] != "reaction"]
     assert "delta" not in types
     assert types == [
         "user_block",
         "turn_started",  # explicit lifecycle for every open client
-        "reaction",  # the platform's ✅ receipt on the summoning message
-        "turn_started",  # again, from the session that picked the work up
         "event_block",  # execution note
         "event_block",  # the tool call, as the 现场 record of it
         "event_block",  # complete final text retained in activity

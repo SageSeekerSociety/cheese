@@ -17,6 +17,7 @@ import {
   unarchiveTopic,
   upgradeBlock,
 } from '@/api'
+import { ApiError } from '@/api'
 import { cachedWindow, refreshBlockCache } from '@/lib/blockCache'
 import { myHandle } from '@/me'
 
@@ -104,6 +105,24 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     error.value = e instanceof Error ? e.message : fallback
   }
 
+  /**
+   * 这个项目为什么打不开——**一个不会自己消失的状态**，不是那条 4 秒的红条。
+   *
+   * 非成员打开项目链接时，话题列表 401/403，而红条弹 4 秒就没了：之后页面上没有
+   * 任何解释，话题列表空白、项目名也不显示，看起来跟「一个刚建好、还什么都没有
+   * 的项目」一模一样。错过那 4 秒就再无线索。
+   *
+   * 两档分开，因为下一步动作不一样：没登录的人要去登录，登录了的人得去要权限。
+   */
+  const accessDenied = ref<'unauthenticated' | 'forbidden' | null>(null)
+  function noteAccess(e: unknown) {
+    if (!(e instanceof ApiError)) return false
+    if (e.status === 401) accessDenied.value = 'unauthenticated'
+    else if (e.status === 403) accessDenied.value = 'forbidden'
+    else return false
+    return true
+  }
+
   const rootTopic = computed<Topic | null>(() => topics.value.find((t) => t.kind === 'root') ?? null)
 
   // 正在取的那些，用来区分「还没取到」和「取到了，不存在」——少了它，深链接进
@@ -189,6 +208,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     unreadMap.value = {}
     privateUnreadMap.value = {}
     loadingTopics.value = true
+    accessDenied.value = null
     void refreshMembers()
     if (projects.value.length === 0) void refreshProjects()
     try {
@@ -196,6 +216,9 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
       if (projectId.value !== id) return
       topics.value = payload.data
     } catch (e) {
+      // 「进不来」和「进来了但这一次没取到」是两件事：前者要一屏说明，后者是那条
+      // 红条。分不开的话，一次网络抖动会被写成「你没有权限」。
+      if (projectId.value === id && noteAccess(e)) return
       reportError(e, '加载话题失败')
     } finally {
       if (projectId.value === id) loadingTopics.value = false
@@ -349,6 +372,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   return {
     projectId,
     projects,
+    accessDenied,
     topics,
     members,
     loadingTopics,

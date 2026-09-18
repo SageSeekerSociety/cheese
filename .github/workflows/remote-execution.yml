@@ -54,8 +54,7 @@ jobs:
       - run: uv sync --project backend --locked
       - name: Install native terminal test dependencies
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y tmux openssl
+          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh tmux openssl
           npm ci --prefix scripts/remote_execution --no-audit --no-fund
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
         with:
@@ -121,8 +120,7 @@ jobs:
           version: '0.12.1'
       - name: Install terminal test dependencies
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y tmux redis-tools openssl ripgrep fuse libfuse2
+          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh tmux redis-tools openssl ripgrep fuse libfuse2
           mkdir -p tmp/remote-execution/deps
           (cd tmp/remote-execution/deps && apt-get download redis-server redis-tools)
           for package in tmp/remote-execution/deps/*.deb; do

@@ -19,9 +19,23 @@ def sent(monkeypatch):
     """Capture what would go to the channel, without a webhook or a network."""
     posted: list[tuple[str, list[str]]] = []
     monkeypatch.setattr(
-        alerting, "send", lambda title, lines: posted.append((title, lines))
+        alerting,
+        "send",
+        lambda title, lines, **_: posted.append((title, lines)),
     )
     return posted
+
+
+@pytest.fixture
+def keys(monkeypatch):
+    """What each alert said makes two of these the same problem."""
+    taken: list[str] = []
+    monkeypatch.setattr(
+        alerting,
+        "send",
+        lambda title, lines, *, key=None, **_: taken.append(key or title),
+    )
+    return taken
 
 
 @pytest.fixture
@@ -190,3 +204,98 @@ def test_a_body_that_will_not_read_still_reports_its_status(logger, sent):
     assert len(sent) == 1
     _, lines = sent[0]
     assert any("502" in line for line in lines), lines
+
+
+def test_an_alert_carries_what_the_exception_said(logger, sent):
+    """`异常：RuntimeError` is a message whose entire content is that something
+    went wrong. The device had written the reason and it was thrown away —
+    every 「executor 找不到」 alert on 2026-09-17 named neither the directory
+    nor the room, and reading the logs was the only way to find out."""
+    try:
+        raise RuntimeError("lstat /room/.cheese: no such file or directory")
+    except RuntimeError:
+        logger.exception("unhandled_error")
+
+    _, lines = sent[0]
+    assert any("no such file" in line for line in lines), lines
+
+
+def test_an_alert_says_where_it_was_raised(logger, sent):
+    """The log file may be gone by the time anyone reads the alert — a
+    container is redeployed and `docker logs` starts over."""
+
+    def deep_inside() -> None:
+        raise ValueError("nope")
+
+    try:
+        deep_inside()
+    except ValueError:
+        logger.exception("unhandled_error")
+
+    _, lines = sent[0]
+    assert any("deep_inside" in line for line in lines), lines
+
+
+def test_bound_context_is_reported_whatever_it_is_called(logger, sent):
+    """A whitelist of field names drops the one field that would have explained
+    it, and never says that it did."""
+    logger.error(
+        {
+            "event": "unhandled_error",
+            "req": "db7f40382975",
+            "trace_id": "execution-9f",
+            "room": "cc2958d7",
+        }
+    )
+
+    _, lines = sent[0]
+    body = "\n".join(lines)
+    assert "db7f40382975" in body
+    assert "execution-9f" in body
+    assert "cc2958d7" in body
+
+
+def test_one_exception_is_one_alert_however_many_layers_log_it(logger, sent):
+    """An unhandled request error is logged three times on its way out: the
+    request middleware, the catch-all handler, and uvicorn re-raising past
+    both. Three alerts for one failure is how a channel teaches people that its
+    counts mean nothing."""
+    try:
+        raise RuntimeError("one failure")
+    except RuntimeError:
+        logger.exception("request failed")
+        logger.exception("unhandled_error")
+        logger.exception("Exception in ASGI application")
+
+    assert len(sent) == 1
+    assert "request failed" in sent[0][0]
+
+
+def test_two_failures_that_happen_to_share_a_message_are_both_reported(logger, sent):
+    for _ in range(2):
+        try:
+            raise RuntimeError("one failure")
+        except RuntimeError:
+            logger.exception("request failed")
+
+    assert len(sent) == 2
+
+
+def test_the_room_in_a_message_does_not_make_it_a_different_problem(logger, keys):
+    """One broken thing on seventy machines is one broken thing. Which rooms is
+    in the body; it is not what decides whether this has been reported."""
+    logger.error(
+        {"event": "pi entry read failed topic=4fa8562d-2593-40d9-98ee-59e67d6477e3"}
+    )
+    logger.error(
+        {"event": "pi entry read failed topic=963aa806-9b8c-492a-b9a3-2895af82918e"}
+    )
+
+    assert len(set(keys)) == 1
+
+
+def test_different_failures_keep_different_keys(logger, keys):
+    logger.error({"event": "unhandled_error", "path": "/topics/x/agent/control"})
+    logger.error({"event": "unhandled_error", "path": "/projects/y/environment"})
+
+    assert len(set(keys)) == 2

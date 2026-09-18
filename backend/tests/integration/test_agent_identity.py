@@ -7,6 +7,7 @@ to the one that wrote it.
 """
 
 import asyncio
+import time
 import uuid
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -100,7 +101,7 @@ def test_ai_blocks_follow_the_rooms_agent_not_a_fixed_handle(client):
 
 
 def test_the_summon_receipt_carries_the_same_agent(client):
-    """The ✅ receipt is authored by the platform, so it must agree with the
+    """The 👀 receipt is authored by the platform, so it must agree with the
     message author — otherwise the room shows a reaction from someone absent."""
     _, topic_id = _project_and_topic(client)
     _seed_agent("ops")
@@ -114,9 +115,20 @@ def test_the_summon_receipt_carries_the_same_agent(client):
         headers=session_auth_headers("alice"),
     )
 
-    frames = _turn(client, topic_id)
-    ack = next(f for f in frames if f["type"] == "reaction")
-    assert ack["reactions"] == [{"emoji": "✅", "count": 1, "authors": ["ops"]}]
+    _turn(client, topic_id)
+    # Asked of the durable block, not of the turn's frames: the receipt that
+    # places the mark is reported on the harness's own task, so it is not
+    # ordered against them.
+    expected = [{"emoji": "👀", "count": 1, "authors": ["ops"]}]
+    for _ in range(200):
+        blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
+        landed = [b["reactions"] for b in blocks if b["reactions"]]
+        if landed:
+            assert landed == [expected]
+            break
+        time.sleep(0.02)
+    else:
+        raise AssertionError("the 👀 receipt never landed")
 
 
 def _swap_agent(client, topic_id: str, handle: str) -> None:

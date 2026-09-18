@@ -27,6 +27,7 @@ from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import (
+    ConflictError,
     ForbiddenError,
     NotFoundError,
     SystemBusyError,
@@ -57,6 +58,23 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.device.supply import Visibility
 from app.domain.device.wiring import sql_device_service
+from app.domain.documents.convert import (
+    ConvertFailed,
+    ConvertUnavailable,
+    convert,
+    upgraded_name,
+)
+from app.domain.documents.revisions import (
+    RevisionsFailed,
+    RevisionsUnsupported,
+    decide,
+    revisions_in,
+)
+from app.domain.documents.spreadsheet import (
+    SpreadsheetRecalcFailed,
+    SpreadsheetRecalcUnavailable,
+    recalculate,
+)
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
@@ -101,6 +119,7 @@ from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
 from app.domain.webhook import service as webhook_service
 from app.domain.workspace import service as ws
+from app.domain.workspace.textfile import content_version
 
 router = APIRouter(prefix="/topics", tags=["topics"])
 
@@ -2111,6 +2130,32 @@ def _clean_artifact_path(raw: str) -> str:
     return path
 
 
+async def _bind_source_task(
+    db: AsyncSession, room_id: uuid.UUID, task: uuid.UUID
+) -> None:
+    """Refuse a card that is not this room's: a source is not a free-form id."""
+    work = await TaskRepository(db).get(task)
+    if work is None or work.room_id != room_id or work.branch_name is None:
+        raise NotFoundError("Task not found")
+    TaskService._bind_workspace(work)
+
+
+def _source_bytes(
+    project_id: uuid.UUID, room_id: uuid.UUID, path: str, task: uuid.UUID | None
+) -> bytes:
+    """One of this room's files, from whichever store holds it.
+
+    A room keeps what it delivered outside git; a card keeps what it is still
+    writing, on its own branch. Both are 「这个房间的文件」 to a reader, so the
+    viewers take the source as a parameter instead of each being wired to one
+    store — that wiring is why a document on a branch had no view but a raw
+    binary diff.
+    """
+    if task is not None:
+        return ws.read_file_bytes(project_id, path, topic_id=task)
+    return ws.read_room_file(project_id, room_id, path)
+
+
 async def _reject_unreachable_app(topic_id: uuid.UUID) -> None:
     """Refuse an app artifact the platform provably cannot render (``cheese serve``).
 
@@ -2197,6 +2242,216 @@ async def set_artifact(
     return ok(BlockOut.model_validate(block).model_dump(mode="json"))
 
 
+@router.post("/{topic_id}/documents/recalc")
+async def recalc_spreadsheet(
+    topic_id: uuid.UUID,
+    body: dict,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """Recompute a workbook's formulas — used by `cheese recalc`.
+
+    The room cannot do this itself: recomputing means loading the workbook in
+    something that evaluates formulas, and the sandbox image carries no
+    LibreOffice and has no root to install one. The platform already runs one
+    for previews, so this is the path to it.
+
+    The workbook travels in the body rather than being read from the worktree,
+    because a room on a remote machine has no file here — the same reason
+    `artifact` takes `content_b64`.
+    """
+    place = await TopicService(db).place_or_404(topic_id)
+    await _actor_in_place(resolver, place)
+    path = _clean_artifact_path(body.get("path") or "")
+    raw = _document_bytes(body, place.project_id, topic_id, path)
+    try:
+        book, bad = await recalculate(raw, path, settings.office_render_endpoint)
+    except SpreadsheetRecalcUnavailable as exc:
+        raise SystemBusyError(str(exc)) from exc
+    except SpreadsheetRecalcFailed as exc:
+        raise ValidationError(str(exc)) from exc
+    return ok(
+        {
+            "path": path,
+            "content_b64": base64.b64encode(book).decode(),
+            "errors": [cell.as_dict() for cell in bad],
+        }
+    )
+
+
+@router.post("/{topic_id}/documents/convert")
+async def convert_document(
+    topic_id: uuid.UUID,
+    body: dict,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """Convert one document to another format — used by `cheese convert`.
+
+    The pre-2007 binary formats are the reason this exists: a room cannot read
+    or write them at all, so the alternative is asking the user to open Office
+    himself. It also gets a room a PDF of a Word file, which is how it looks at
+    its own layout before delivering it.
+    """
+    place = await TopicService(db).place_or_404(topic_id)
+    await _actor_in_place(resolver, place)
+    path = _clean_artifact_path(body.get("path") or "")
+    target = str(body.get("to") or "").strip()
+    raw = _document_bytes(body, place.project_id, topic_id, path)
+    try:
+        made = await convert(raw, path, target, settings.office_render_endpoint)
+    except ConvertUnavailable as exc:
+        raise SystemBusyError(str(exc)) from exc
+    except ConvertFailed as exc:
+        raise ValidationError(str(exc)) from exc
+    return ok(
+        {
+            "path": upgraded_name(path, target.lower().lstrip(".")),
+            "content_b64": base64.b64encode(made).decode(),
+        }
+    )
+
+
+@router.get("/{topic_id}/documents/revisions")
+async def list_document_revisions(
+    topic_id: uuid.UUID,
+    path: str,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    task: uuid.UUID | None = None,
+) -> dict:
+    """The tracked changes in a `.docx`, one row per decision a reader makes.
+
+    The preview beside this list already draws the changes — LibreOffice renders
+    insertions and deletions, measured — so the list is not there to show them.
+    It is there to act on them: a reader can accept or reject one without
+    opening Word.
+    """
+    topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
+    clean = _clean_artifact_path(path)
+    if task is not None:
+        await _bind_source_task(db, topic_id, task)
+    raw = _source_bytes(topic.project_id, topic_id, clean, task)
+    try:
+        found = revisions_in(raw, clean)
+    except RevisionsUnsupported as exc:
+        raise ValidationError(str(exc)) from exc
+    except RevisionsFailed as exc:
+        raise ValidationError(str(exc)) from exc
+    return ok(
+        {
+            "path": clean,
+            "version": content_version(raw),
+            "revisions": [r.as_dict() for r in found],
+        }
+    )
+
+
+@router.post("/{topic_id}/documents/revisions")
+async def decide_document_revisions(
+    topic_id: uuid.UUID,
+    body: dict,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """Accept or reject tracked changes, and write the document back.
+
+    Accepting an insertion removes its wrapper and keeps the text; accepting a
+    deletion removes the text with it; rejecting does the opposite. All of it is
+    a determinate transformation of the XML, so the file the reader downloads
+    afterwards is the file Word would have produced.
+
+    ``version`` is the one the list was read at. A room re-publishing the
+    artifact between that read and this write would otherwise lose its newer
+    copy to a decision taken against the older one, so a moved file is a
+    conflict here rather than an overwrite.
+    """
+    topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
+    clean = _clean_artifact_path(body.get("path") or "")
+    accept = _row_numbers(body.get("accept"), "accept")
+    reject = _row_numbers(body.get("reject"), "reject")
+    expected = str(body.get("version") or "")
+    if not expected:
+        raise ValidationError("缺少 version：要处理的是哪一版清单")
+    source = body.get("task")
+    task = uuid.UUID(str(source)) if source else None
+    if task is not None:
+        await _bind_source_task(db, topic_id, task)
+    raw = _source_bytes(topic.project_id, topic_id, clean, task)
+    actual = content_version(raw)
+    if actual != expected:
+        raise ConflictError(
+            "文件已被改动（芝士或其他人写过），这份清单是基于旧内容的",
+            data={"path": clean, "version": actual},
+        )
+    try:
+        made, left = decide(raw, clean, accept=accept, reject=reject)
+    except RevisionsUnsupported as exc:
+        raise ValidationError(str(exc)) from exc
+    except RevisionsFailed as exc:
+        raise ValidationError(str(exc)) from exc
+    if task is not None:
+        ws.write_file_bytes(topic.project_id, clean, made, topic_id=task)
+    else:
+        ws.write_room_file(topic.project_id, topic_id, clean, made)
+    return ok(
+        {
+            "path": clean,
+            "version": content_version(made),
+            "revisions": [r.as_dict() for r in left],
+        }
+    )
+
+
+def _row_numbers(raw, field: str) -> list[int]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValidationError(f"{field} 要是一个序号数组")
+    out: list[int] = []
+    for item in raw:
+        if not isinstance(item, int) or isinstance(item, bool) or item < 1:
+            raise ValidationError(f"{field} 里的序号要是从 1 起的整数")
+        out.append(item)
+    return out
+
+
+def _document_bytes(
+    body: dict, project_id: uuid.UUID, topic_id: uuid.UUID, path: str
+) -> bytes:
+    """The document a request is about, from the body or from the workspace.
+
+    A room on a remote machine has no file here, so it sends the bytes; the
+    panel is reading a file the platform already holds. Same reason
+    `artifact` takes `content_b64`.
+    """
+    encoded = body.get("content_b64")
+    if isinstance(encoded, str):
+        try:
+            raw = base64.b64decode(encoded, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise ValidationError("content_b64 不是合法的 base64") from exc
+    else:
+        raw = ws.read_room_file(project_id, topic_id, path)
+    if len(raw) > MAX_ARTIFACT_BYTES:
+        raise ValidationError(
+            f"文件超过 {MAX_ARTIFACT_BYTES // (1024 * 1024)}MB，处理不了"
+        )
+    return raw
+
+
 @router.get("/{topic_id}/preview")
 async def get_preview(
     topic_id: uuid.UUID,
@@ -2251,10 +2506,26 @@ async def get_preview(
 
 @router.get("/{topic_id}/preview/file")
 async def preview_file(
-    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    path: str | None = None,
 ) -> dict:
+    """The file the preview is showing: the room's current artifact, or `path`.
+
+    A `<&path>` chip in a message names a file without saying which store holds
+    it, and a room's own files are here rather than on a branch. Reading one by
+    path is how a reader gets from that chip to the file, instead of to a
+    listing that does not contain it.
+    """
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
+    if path:
+        return ok(
+            ws.read_room_text_file(
+                place.project_id, topic_id, _clean_artifact_path(path)
+            )
+        )
     art = await BlockRepository(db).latest_artifact(place.room_id)
     if art is None or art.mime_type == _ARTIFACT_MIME["app"]:
         raise NotFoundError("No file preview")
@@ -2328,6 +2599,7 @@ async def attachment_raw(
     db: DbSession,
     resolver: ActorResolverDep,
     download: bool = False,
+    task: uuid.UUID | None = None,
 ) -> Response:
     """Raw bytes of an image attachment, for <img src=…>. Extension-whitelisted
     to images so this can never serve executable HTML from the worktree."""
@@ -2347,7 +2619,9 @@ async def attachment_raw(
     mime = _EXT_IMAGE_MIME.get(suffix)
     if mime is None and not download:
         raise ValidationError("只能读取图片附件")
-    data = ws.read_room_file(topic.project_id, topic_id, clean)
+    if task is not None:
+        await _bind_source_task(db, topic_id, task)
+    data = _source_bytes(topic.project_id, topic_id, clean, task)
     filename = quote(clean.rsplit("/", 1)[-1], safe="")
     return Response(
         content=data,
@@ -2369,6 +2643,7 @@ async def attachment_as_pdf(
     path: str,
     db: DbSession,
     resolver: ActorResolverDep,
+    task: uuid.UUID | None = None,
 ) -> Response:
     """A Word or PowerPoint deliverable, converted so a browser can show it.
 
@@ -2389,7 +2664,9 @@ async def attachment_as_pdf(
     clean = _clean_artifact_path(path)
     if not is_renderable(clean):
         raise ValidationError("这个格式不能转换为预览")
-    data = ws.read_room_file(topic.project_id, topic_id, clean)
+    if task is not None:
+        await _bind_source_task(db, topic_id, task)
+    data = _source_bytes(topic.project_id, topic_id, clean, task)
     if len(data) > MAX_ARTIFACT_BYTES:
         raise ValidationError(
             f"文件超过 {MAX_ARTIFACT_BYTES // (1024 * 1024)}MB，无法生成预览"

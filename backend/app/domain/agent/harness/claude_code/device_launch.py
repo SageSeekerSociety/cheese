@@ -34,7 +34,7 @@ from app.domain.agent.harness.claude_code.remote_execution import release
 from app.domain.agent.harness.claude_code.session_launch import hooks_settings
 from app.domain.agent.harness.launch import MachineLaunch, MachinePlace
 from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
-from app.domain.agent.skills import native_skill_files
+from app.domain.agent.skills import SKILL_HEREDOC_MARKER, native_skill_files
 
 # First-launch gates (Claude Code 2.1.x) for $CLAUDE_CONFIG_DIR/.claude.json,
 # kept here as the readable statement of what the launch script writes inline.
@@ -250,10 +250,22 @@ fi
 if [ -d /proc ] && [ -r /proc/self/environ ]; then
   command -v awk >/dev/null 2>&1 || { echo unknown; exit 0; }
   # Read NUL-delimited fields in one process, without Python startup per turn.
+  #
+  # Only argv[0] decides whether a process is a session — the same shape the
+  # Darwin branch below asks through `comm`. Scanning the REST of the arguments
+  # for the `claude` substring is what this must not do: the remote-execution
+  # helpers (`.../.claude/remote-execution/forwarded_fs.py`) carry a `.claude`
+  # path in their args, and one of them holding a stale CHEESE_TOPIC made the
+  # platform adopt a session that no longer existed — every message for that
+  # room then timed out instead of reopening a screen. `/.claude/` is not a
+  # match for `/claude/`, so the config directory is excluded by construction:
+  # a real executable is `<...>/claude`, `<...>/claude/versions/<v>` (the pin)
+  # or `<...>/.local/bin/claude`.
   printf '%s\n' /proc/[0-9]*/cmdline | awk -v topic="$topic" '
   {
     path=$0; RS="\0"; candidate=0
-    while ((getline part < path)>0) if (index(part,"claude")) candidate=1
+    if ((getline part < path)>0)
+      candidate = (part=="claude" || index(part,"/claude/") || part ~ /\/claude$/)
     close(path)
     if (candidate) {
       sub(/cmdline$/,"environ",path)
@@ -384,8 +396,8 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
     webfetch_transport = Path(__file__).with_name("webfetch_transport.cjs").read_text()
     skill_setup = "\n".join(
         f'mkdir -p "$CLAUDE_CONFIG_DIR/{Path(name).parent}"\n'
-        f"cat > \"$CLAUDE_CONFIG_DIR/{name}\" <<'CHEESE_NATIVE_SKILL'\n"
-        f"{content}\nCHEESE_NATIVE_SKILL"
+        f"cat > \"$CLAUDE_CONFIG_DIR/{name}\" <<'{SKILL_HEREDOC_MARKER}'\n"
+        f"{content}\n{SKILL_HEREDOC_MARKER}"
         for name, content in native_skill_files().items()
     )
     settings_json = json.dumps(

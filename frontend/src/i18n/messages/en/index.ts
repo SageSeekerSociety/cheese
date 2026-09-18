@@ -12,6 +12,7 @@ import questions from './questions.json'
 import spaces from './spaces.json'
 import tasks from './tasks.json'
 import teams from './teams.json'
+import toolLabels from './toolLabels.json'
 import users from './users.json'
 import workspace from './workspace.json'
 
@@ -36,4 +37,5 @@ export default {
   spaces,
   notifications,
   workspace,
+  toolLabels,
 }
