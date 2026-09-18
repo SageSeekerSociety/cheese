@@ -44,7 +44,7 @@ vi.mock('@/stores/workspace', () => ({
   }),
 }))
 vi.mock('@/me', () => ({ myHandle: () => 'alice' }))
-vi.mock('@/api', () => ({ getTopicAgent: vi.fn(async () => null) }))
+vi.mock('@/api', () => ({ listTopicMembers: vi.fn(async () => ({ data: [], total: 0 })) }))
 vi.mock('@/composables/usePageTitle', () => ({
   usePageTitle: () => ({ setDynamicTitle: vi.fn(), clearDynamicTitle: vi.fn() }),
 }))

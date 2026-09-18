@@ -16,6 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.domain.identity.handles import (
     CHEESE_HANDLE,
+    TOPIC_AGENT_PREFIX,
+    agent_instance_handle,
     looks_like_agent_handle,
     topic_agent_handle,
 )
@@ -376,8 +378,25 @@ class TopicMemberService:
     async def add(
         self, *, topic_id: uuid.UUID, handle: str, role: TopicRole, actor: str
     ) -> TopicMembership:
-        await self._ensure_topic(topic_id)
+        topic = await self._topics.get(topic_id)
+        if topic is None:
+            raise NotFoundError("Topic not found")
         await self._require_manager(topic_id, actor)
+        if handle.startswith(TOPIC_AGENT_PREFIX):
+            # An agent's seat is derived from its instance, so this is the one
+            # place a roster can be handed a seat nothing will ever act as — a
+            # teammate of another project, or a made-up handle. Nothing addresses
+            # such a row and nothing writes as it; refuse it rather than seat it.
+            from app.domain.agent_instance.repositories import AgentInstanceRepository
+
+            seats = {
+                agent_instance_handle(i.id)
+                for i in await AgentInstanceRepository(self._session).list_for_project(
+                    topic.project_id
+                )
+            }
+            if handle not in seats:
+                raise NotFoundError("这个项目里没有这个 AI 队友")
         existing = await self._repo.get(topic_id=topic_id, member_handle=handle)
         if existing is not None:
             raise ValidationError("该成员已在话题里")

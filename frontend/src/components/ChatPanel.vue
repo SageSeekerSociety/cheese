@@ -1231,11 +1231,25 @@ const memberByHandle = computed(() => {
   for (const row of props.members) map.set(row.user_handle, row)
   return map
 })
+// handle → 这个房间名册上的那一行。AI 队友的座位只在房间名册上（项目名册那行
+// 共用的 `cheese` 不是它），所以 AI 的署名查这张表，不查 memberByHandle。
+const seatByHandle = computed(() => {
+  const map = new Map<string, TopicMemberRow>()
+  for (const row of roomMembers.value) map.set(row.member_handle, row)
+  return map
+})
 // 消息里存的 author 是登录身份的 handle（后端有意固定成这个，防伪造），所以
 // 「显示成昵称」只能在这里做：查名册，查不到（退出项目的人、anonymous 兜底
 // 作者）就把 handle 原样显示出来。
+//
+// AI 的一条和人的一条是同一个规矩：署它的作者，不署「这个房间的那位」。一个房
+// 间可以先后交给两个队友，两个人的话都还在记录里，各自署各自的名。名册还没到
+// 时写「芝士」——那一刻界面上任何一处说出的名字都可能是上一个房间那位。
 function displayName(m: Block): string {
-  if (m.author_type === 'ai') return agentName.value
+  if (m.author_type === 'ai') {
+    if (!rosterLoaded.value) return '芝士'
+    return seatByHandle.value.get(m.author)?.name || m.author
+  }
   return memberByHandle.value.get(m.author)?.name || m.author
 }
 // 真头像加载失败过的 handle —— 退回彩色首字母，不留破图。

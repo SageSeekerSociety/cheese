@@ -52,15 +52,15 @@ const props = withDefaults(
     withChat?: boolean
     // 地址里的 `?card=` —— 非空就是总览那一格正看着一张卡。
     openCardId?: string | null
-    // 现场那一格用它给 AI 干的每一行署名。一路透传：漏掉它不报错，只是换完
-    // 队友那一格里还写着上一个的名字。
-    agentName?: string
+    // 房间名册 handle → 名字。现场那一格用它给每一行署名。一路透传：漏掉它不
+    // 报错，只是那一格里写的是 handle。
+    memberNames?: Record<string, string>
   }>(),
   {
     working: false,
     topicList: () => [],
     openCardId: null,
-    agentName: '芝士',
+    memberNames: () => ({}),
     tab: undefined,
     phase: undefined,
     withChat: false,
@@ -474,7 +474,7 @@ defineExpose({ pulse, highlightTurn, openFile })
           v-show="active === 'site'"
           :topic="topic"
           :active="active === 'site'"
-          :agent-name="agentName"
+          :member-names="memberNames"
           :working="working"
         />
         <PanelChanges

@@ -203,14 +203,12 @@ def test_endpoints_require_existing_topic(client):
     assert r.status_code == 404
 
 
-def test_the_agent_row_shows_the_name_of_the_agent_seated_there(client):
-    """换成另一个 AI 队友坐这儿，名册上那一行就得跟着改名。
+def test_each_agent_row_is_named_after_the_agent_seated_there(client):
+    """名册上每个 AI 队友一行，各写各的名字。
 
-    界面上「这个房间的 AI 队友叫什么」只有这一个来源——对话里它说的每一句话、
-    名册上它那一行、头像上那个字，读的都是这里。而座位账号自己的昵称是建号那一刻
-    写死的常量（``IdentityService.ensure_topic_agent_user``），换人格不会动它，
-    所以照原样报出去，换完队友屏幕上留着的仍是上一个的名字——和「换人根本没生效」
-    长得一模一样。
+    界面上「这一行的 AI 队友叫什么」只有这一个来源——对话里它说的每一句话、名册上
+    它那一行、头像上那个字，读的都是这里。座位账号自己的昵称是建号那一刻写死的
+    常量，照原样报出去，两个队友就成了同一个名字。
     """
     p = client.post("/projects", json={"name": "P"}).json()["data"]
     tid = client.post(
@@ -225,18 +223,16 @@ def test_the_agent_row_shows_the_name_of_the_agent_seated_there(client):
         f"/projects/{p['id']}/agents",
         json={"handle": "reviewer", "display_name": "评审"},
     ).json()["data"]
-    assert (
-        client.put(
-            f"/topics/{tid}/agent", json={"instance_id": reviewer["id"]}
-        ).status_code
-        == 200
+    r = client.post(
+        f"/topics/{tid}/members",
+        json={"handle": reviewer["seat_handle"], "role": "member", "actor": "alice"},
+        headers=session_auth_headers("alice"),
     )
+    assert r.status_code == 200, r.text
 
-    row = {m["member_handle"]: m for m in _roster(client, tid)}[seat]
-    assert row["name"] == "评审"
-    # 座位没换，只是它现在归另一个队友：换人不能把这个房间的 AI 身份换掉。
-    assert row["agent"] is True
-    assert row["member_handle"] == seat
+    rows = {m["member_handle"]: m for m in _roster(client, tid) if m["agent"]}
+    assert rows[seat]["name"] == "芝士"
+    assert rows[reviewer["seat_handle"]]["name"] == "评审"
 
 
 def test_roster_reports_the_global_default_avatar_as_no_avatar(client):

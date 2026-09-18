@@ -255,40 +255,16 @@ class TopicService:
         return handle if await IdentityService(self._session).is_agent(handle) else None
 
     async def resolve_agent(self, topic: Topic) -> ResolvedAgent:
-        """Which agent works in this room — its own, else the project's."""
+        """The agent a turn here runs as when nobody was addressed.
+
+        A room does not have an agent; a room's fallback is the project's
+        default, and a private 1:1 names its own teammate. Nothing hands a room
+        to an agent any more — an agent is seated on the roster, and addressed.
+        """
         project = await self._projects.get(topic.project_id)
         if project is None:
             return IMPLICIT_DEFAULT
         return await AgentInstanceService(self._session).for_topic(topic, project)
-
-    async def set_agent(
-        self, topic_id: uuid.UUID, instance_id: uuid.UUID | None
-    ) -> tuple[Topic, ResolvedAgent]:
-        """Hand this topic to a different agent.
-
-        Nothing is destroyed. A conversation is keyed by (topic, agent) in
-        ``agent_sessions``, so the incoming agent looks up a key that has no row
-        and starts fresh, the outgoing agent's row stays exactly where it is, and
-        handing the topic back finds it again. It used to be otherwise — one
-        session column per topic meant a switch had to erase the thread, and the
-        caller had to warn about it first.
-
-        Passing ``None`` hands the topic back to the project's default.
-        """
-        topic = await self.get_or_404(topic_id)
-        agents = AgentInstanceService(self._session)
-        instance = (
-            await agents.get_in_project(
-                project_id=topic.project_id, instance_id=instance_id
-            )
-            if instance_id is not None
-            else None
-        )
-        wanted = instance.id if instance is not None else None
-        if topic.agent_instance_id != wanted:
-            topic.agent_instance_id = wanted
-            await self._session.flush()
-        return topic, await self.resolve_agent(topic)
 
     async def create(
         self,
@@ -297,7 +273,6 @@ class TopicService:
         title: str,
         parent_id: uuid.UUID | None = None,
         created_by: str | None = None,
-        agent_instance_id: uuid.UUID | None = None,
     ) -> Topic:
         project = await self._projects.get(project_id)
         if project is None:
@@ -312,20 +287,12 @@ class TopicService:
             if parent is None:
                 raise NotFoundError("Parent topic not found")
             _require_room(parent)
-        # An explicit agent is checked to be this project's; NULL means "the
-        # project's default", which follows the project if that default changes
-        # later — a copy taken now would silently stop following it.
-        if agent_instance_id is not None:
-            await AgentInstanceService(self._session).get_in_project(
-                project_id=project_id, instance_id=agent_instance_id
-            )
         topic = await self._repo.add(
             project_id=project_id,
             title=title,
             parent_id=parent_id,
             kind=kind,
             created_by=created_by,
-            agent_instance_id=agent_instance_id,
         )
         # No branch parent: this path only ever makes ROOMS now, and a room forks
         # the base branch. Binding one to its parent would have made the project
@@ -892,7 +859,6 @@ class TopicService:
             kind=TopicKind.topic,
             created_by=created_by,
             upgraded_from_block_id=block.id,
-            agent_instance_id=parent.agent_instance_id,
         )
         # Same fallback ladder as create()/dispatch_task — 升级 is usually the
         # 分身's own suggestion, and this route does not resolve an actor at all

@@ -70,9 +70,6 @@ export interface Topic {
   // i_participate 必然为真，所以「需要我行动的」只看这一个字段就够。
   // 只有 list/get 话题时才带。
   awaits_me?: boolean
-  // 哪个 AI 队友在这个话题里工作。null = 跟着项目的默认走（不是「没有」），
-  // 所以换了项目默认，这个话题也跟着换。
-  agent_instance_id?: string | null
   // 这个房间在看板那套词里处在哪一列。侧栏房间行的色点读它。
   //
   // 和上面 `running` / `awaits_me` / `i_participate` 一样是「只有 list/get 话题时
@@ -1108,6 +1105,9 @@ export interface ProjectAgent {
   project_id: string
   // The memory pool key inside the project (`{project}:{handle}`).
   handle: string
+  // 它坐在房间名册上时用的 handle —— 把它请进一个房间就是往名册上加这个。
+  // 旧客户端和还没保存的行没有。
+  seat_handle?: string | null
   type_name: string | null
   display_name: string
   // What a new topic in this project gets.

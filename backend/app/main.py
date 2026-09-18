@@ -96,6 +96,26 @@ async def lifespan(_: FastAPI):
             "agent-user seed skipped", reason=str(exc)[:120]
         )
 
+    # Every project agent is a collaborator with an identity of its own — a user
+    # row under `agent_instance_handle(id)`, which is what its roster seats name.
+    # `ensure_identity` runs on create, so this only reaches agents created before
+    # it existed; and the migration that seated each room's former agent wrote
+    # the seat's handle without the user row behind it, which this supplies.
+    # Idempotent, and never blocks boot for the same reason as the seed above.
+    try:
+        from app.domain.agent_instance.repositories import AgentInstanceRepository
+        from app.domain.agent_instance.services import AgentInstanceService
+
+        async with async_session_factory() as session:
+            service = AgentInstanceService(session)
+            for instance in await AgentInstanceRepository(session).list_all():
+                await service.ensure_identity(instance)
+            await session.commit()
+    except Exception as exc:  # noqa: BLE001 — same rule as the seed above
+        get_logger("cheesex.runtime").warning(
+            "agent identity backfill skipped", reason=str(exc)[:120]
+        )
+
     # The backend and the in-container agent share one git store and must run as
     # the same uid (ws.AGENT_UID). When they don't, nothing here fails — the file
     # panel just 422s for every topic in the project. Say it out loud at boot.

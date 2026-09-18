@@ -50,8 +50,6 @@ from app.domain.agent.market import (
 from app.domain.agent.preview_hub import preview_hub
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent.runtime import AgentWorkRunner
-from app.domain.agent_instance.schemas import TopicAgentIn
-from app.domain.agent_instance.services import ResolvedAgent
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import AuthorType, Block, BlockKind, agent_notice
 from app.domain.block.repositories import BlockRepository
@@ -156,66 +154,12 @@ async def create_topic(
         title=body.title,
         parent_id=body.parent_id,
         created_by=actor.handle if actor.handle != "anonymous" else body.created_by,
-        agent_instance_id=body.agent_instance_id,
     )
     response = ok(TopicOut.model_validate(topic).model_dump(mode="json"))
     # The caller can configure or enter this room as soon as it gets the ID.
     # Dependency teardown commits after the response, which races that request.
     await db.commit()
     return response
-
-
-@router.get("/{topic_id}/agent")
-async def get_topic_agent(
-    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    """Which agent works in this topic, and whether that was chosen here.
-
-    ``inherited`` is what a settings screen needs to render honestly: a topic
-    that never picked one is not "using 芝士", it is *following the project*, and
-    changing the project's default will move it.
-
-    """
-    service = TopicService(db)
-    place = await service.place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
-    agent = await service.resolve_agent(place.room)
-    return ok(_topic_agent_payload(place.room, agent))
-
-
-@router.put("/{topic_id}/agent")
-async def set_topic_agent(
-    topic_id: uuid.UUID, body: TopicAgentIn, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    """Hand this topic to a different agent (``instance_id: null`` = back to the
-    project's default).
-
-    Costs nothing and warns about nothing: each agent's conversation here is its
-    own row, so the incoming one starts fresh and the outgoing one's thread is
-    still there if the topic is handed back.
-    """
-    service = TopicService(db)
-    topic = await service.get_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
-    )
-    await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
-    )
-    topic, agent = await service.set_agent(topic_id, body.instance_id)
-    await db.commit()
-    return ok(_topic_agent_payload(topic, agent))
-
-
-def _topic_agent_payload(topic: Topic, agent: ResolvedAgent) -> dict:
-    return {
-        "topic_id": str(topic.id),
-        "instance_id": str(agent.instance_id) if agent.instance_id else None,
-        "handle": agent.handle,
-        "type_name": agent.type_name,
-        "display_name": agent.display_name,
-        "inherited": topic.agent_instance_id is None,
-    }
 
 
 def _viewer(actor: Actor) -> str | None:
