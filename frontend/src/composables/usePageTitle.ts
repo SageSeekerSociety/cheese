@@ -13,7 +13,7 @@ export function usePageTitle() {
   const router = useRouter()
   const store = usePageTitleStore()
   const { t } = useI18n()
-  const siteName = computed(() => (store.siteName === '知是社区' ? t('website.cheese2') : store.siteName))
+  const siteName = computed(() => (store.siteName === '知是社区' ? t('global.cheese2') : store.siteName))
 
   const getRouteHierarchy = computed((): RouteHierarchyItem[] => {
     const matched = route.matched

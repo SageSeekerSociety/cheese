@@ -5,20 +5,20 @@
       <v-card>
         <v-card-item
           prepend-icon="mdi-email-alert"
-          :title="t('website.chooseAnEmailAddress')"
+          :title="t('account.chooseAnEmailAddress')"
           class="bg-info-container"
         />
         <v-card-text class="pt-4">
           <p class="text-body-1 mb-3">
-            {{ t('website.weRecommendA') }} <strong>{{ t('website.workEmail') }}</strong> {{ t('website.or') }}
-            <strong>{{ t('website.universityEmail') }}</strong>
-            {{ t('website.forRegistration') }}
+            {{ t('account.weRecommendA') }} <strong>{{ t('account.workEmail') }}</strong> {{ t('account.or') }}
+            <strong>{{ t('account.universityEmail') }}</strong>
+            {{ t('account.forRegistration') }}
           </p>
-          <p class="text-body-2 text-medium-emphasis">{{ t('website.someChallengesAreOnlyAvailableToParticular') }}</p>
+          <p class="text-body-2 text-medium-emphasis">{{ t('account.someChallengesAreOnlyAvailableToParticular') }}</p>
         </v-card-text>
         <v-card-actions class="justify-end pa-4">
-          <v-btn variant="text" @click="showDomainWarning = false">{{ t('website.close') }}</v-btn>
-          <v-btn color="primary" variant="flat" @click="onDomainWarningConfirm">{{ t('website.dontShowAgain') }}</v-btn>
+          <v-btn variant="text" @click="showDomainWarning = false">{{ t('account.close') }}</v-btn>
+          <v-btn color="primary" variant="flat" @click="onDomainWarningConfirm">{{ t('account.dontShowAgain') }}</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -28,11 +28,11 @@
       <div class="d-flex align-center mb-3">
         <v-icon color="primary" size="28" class="mr-3">mdi-account-plus</v-icon>
         <h1 class="text-h3 font-weight-light" style="color: var(--ink); line-height: 1.2">
-          {{ t('website.joinCheese') }}
+          {{ t('account.joinCheese') }}
         </h1>
       </div>
       <p class="text-body-1" style="color: var(--muted); line-height: 1.5">
-        {{ t('website.startSharingKnowledgeWithYourTeam') }}
+        {{ t('account.startSharingKnowledgeWithYourTeam') }}
       </p>
     </div>
 
@@ -54,7 +54,7 @@
                 v-model="username"
                 name="username"
                 autocomplete="username"
-                :label="t('website.username')"
+                :label="t('account.username')"
                 variant="outlined"
                 :loading="isSubmitting"
                 v-bind="usernameProps"
@@ -67,7 +67,7 @@
                 v-model="nickname"
                 name="nickname"
                 autocomplete="nickname"
-                :label="t('website.displayName')"
+                :label="t('account.displayName')"
                 variant="outlined"
                 :loading="isSubmitting"
                 v-bind="nicknameProps"
@@ -83,7 +83,7 @@
                 v-model="password"
                 name="password"
                 autocomplete="new-password"
-                :label="t('website.password')"
+                :label="t('account.password')"
                 type="password"
                 variant="outlined"
                 :loading="isSubmitting"
@@ -97,7 +97,7 @@
                 v-model="confirmPassword"
                 name="confirmPassword"
                 autocomplete="new-password"
-                :label="t('website.confirmPassword')"
+                :label="t('account.confirmPassword')"
                 type="password"
                 variant="outlined"
                 :loading="isSubmitting"
@@ -112,7 +112,7 @@
             v-model="email"
             name="email"
             autocomplete="email"
-            :label="t('website.emailAddress')"
+            :label="t('account.emailAddress')"
             type="email"
             variant="outlined"
             :loading="isSubmitting"
@@ -124,7 +124,7 @@
             v-if="requireInviteCode"
             v-model="inviteCode"
             autocomplete="off"
-            :label="t('website.invitationCode')"
+            :label="t('account.invitationCode')"
             variant="outlined"
             :loading="isSubmitting"
             v-bind="inviteCodeProps"
@@ -135,15 +135,15 @@
             <v-checkbox v-model="agree" density="compact" v-bind="agreeProps" hide-details>
               <template #label>
                 <span class="text-body-2" style="color: var(--muted); line-height: 1.4">
-                  {{ t('website.iAgreeToThe') }}
-                  <a href="#" class="text-primary text-decoration-none">{{ t('website.termsOfService') }}</a>
-                  {{ t('website.and') }}
-                  <a href="#" class="text-primary text-decoration-none">{{ t('website.privacyPolicy') }}</a>
+                  {{ t('account.iAgreeToThe') }}
+                  <a href="#" class="text-primary text-decoration-none">{{ t('account.termsOfService') }}</a>
+                  {{ t('account.and') }}
+                  <a href="#" class="text-primary text-decoration-none">{{ t('account.privacyPolicy') }}</a>
                 </span>
               </template>
             </v-checkbox>
             <v-btn variant="text" color="primary" to="/account/signin" size="small" style="text-transform: none">
-              {{ t('website.iHaveAnAccount') }}
+              {{ t('account.iHaveAnAccount') }}
             </v-btn>
           </div>
 
@@ -157,11 +157,11 @@
             style="text-transform: none; font-weight: 500; height: 48px"
             class="mb-4"
           >
-            {{ t('website.createAccount') }}
+            {{ t('account.createAccount') }}
           </v-btn>
 
           <p class="text-body-2" style="color: var(--muted)">
-            {{ t('website.alreadyHaveAnAccount') }}
+            {{ t('account.alreadyHaveAnAccount') }}
             <v-btn
               variant="text"
               color="primary"
@@ -170,7 +170,7 @@
               style="text-transform: none; padding: 0; min-width: auto; height: auto; vertical-align: baseline"
               class="text-decoration-none"
             >
-              {{ t('website.signIn2') }}
+              {{ t('account.signIn2') }}
             </v-btn>
           </p>
         </v-form>
@@ -208,46 +208,46 @@ const { handleSubmit, defineField, isSubmitting } = useForm({
             .min(4)
             .max(32)
             .regex(/^[a-zA-Z0-9_-]{4,32}$/, {
-              message: t('website.useLettersNumbersUnderscoresOrHyphensFor'),
+              message: t('account.useLettersNumbersUnderscoresOrHyphensFor'),
             }),
           nickname: z
             .string()
             .min(1)
             .max(16)
             .regex(/^[a-zA-Z0-9_\u4e00-\u9fa5]{1,16}$/, {
-              message: t('website.useLettersNumbersUnderscoresOrChineseCharacters'),
+              message: t('account.useLettersNumbersUnderscoresOrChineseCharacters'),
             }),
 
           password: z
             .string()
             .min(8)
             .regex(REGEX_PASSWORD, {
-              message: t('website.yourPasswordMustContainALetterA'),
+              message: t('account.yourPasswordMustContainALetterA'),
             }),
 
           confirmPassword: z
             .string()
             .min(8)
             .regex(REGEX_PASSWORD, {
-              message: t('website.yourPasswordMustContainALetterA'),
+              message: t('account.yourPasswordMustContainALetterA'),
             }),
           email: z.string().email(),
           inviteCode: z.string().optional(),
-          agree: z.boolean().refine((v) => v, { message: t('website.pleaseAcceptTheTermsOfServiceAnd') }),
+          agree: z.boolean().refine((v) => v, { message: t('account.pleaseAcceptTheTermsOfServiceAnd') }),
         })
         .superRefine(({ password, confirmPassword, inviteCode }, ctx) => {
           if (password !== confirmPassword) {
             ctx.addIssue({
               code: z.ZodIssueCode.custom,
               path: ['confirmPassword'],
-              message: t('website.passwordsDoNotMatch'),
+              message: t('account.passwordsDoNotMatch'),
             })
           }
           if (requireInviteCode.value && !inviteCode?.trim()) {
             ctx.addIssue({
               code: z.ZodIssueCode.custom,
               path: ['inviteCode'],
-              message: t('website.enterAnInvitationCode'),
+              message: t('account.enterAnInvitationCode'),
             })
           }
         })
@@ -292,7 +292,7 @@ onMounted(async () => {
     requireInviteCode.value = data.requireInviteCode
     registrationConfigReady.value = true
   } catch (e) {
-    error.value = requestErrorMessage(e, t('website.registrationSettingsCouldNotBeLoadedRefresh'))
+    error.value = requestErrorMessage(e, t('account.registrationSettingsCouldNotBeLoadedRefresh'))
   }
 })
 
@@ -313,7 +313,7 @@ const submit = handleSubmit(async (value) => {
 
     router.push('/account/signup/verify-email')
   } catch (e) {
-    error.value = requestErrorMessage(e, t('website.registrationFailedPleaseTryAgain'))
+    error.value = requestErrorMessage(e, t('account.registrationFailedPleaseTryAgain'))
   }
 })
 </script>

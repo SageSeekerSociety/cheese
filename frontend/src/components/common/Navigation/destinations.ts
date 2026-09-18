@@ -66,7 +66,7 @@ function workspace(src: NavSources): NavItem {
   const tab = {
     key: 'Workspace',
     type: 'item' as const,
-    title: t('website.workspace'),
+    title: t('navigation.workspace'),
     icon: 'mdi-folder-multiple-outline',
   }
   return src.workspaceProjectId
@@ -77,7 +77,7 @@ function workspace(src: NavSources): NavItem {
 /** 桌面左侧 rail：首页（容器，空间/小队在它的侧栏里）+ 项目实例 + ＋新建项目。 */
 export function railItems(src: NavSources): NavGenericItem[] {
   return [
-    { ...HOME, title: t('website.home') },
+    { ...HOME, title: t('navigation.home') },
     ...(src.projects.length ? [{ key: 'cx-divider', type: 'divider' as const }] : []),
     // Discord 式：一个项目一格方头像（首字母 + 颜色），不是截断的标题。
     ...src.projects.map((p, i) => ({
@@ -92,7 +92,7 @@ export function railItems(src: NavSources): NavGenericItem[] {
     {
       key: 'cx-add',
       type: 'item' as const,
-      title: t('website.newProject'),
+      title: t('navigation.newProject'),
       icon: 'mdi-plus',
       add: true,
       action: src.createProject,
@@ -118,5 +118,5 @@ export function shortcutTarget(items: NavGenericItem[], digit: number): string |
 
 /** 手机底栏：格数固定，不随项目数量增长。 */
 export function tabItems(src: NavSources): NavItem[] {
-  return [{ ...SPACES, title: t('website.spaces') }, workspace(src), { ...INBOX, title: t('website.inbox') }]
+  return [{ ...SPACES, title: t('navigation.spaces') }, workspace(src), { ...INBOX, title: t('navigation.inbox') }]
 }

@@ -3,9 +3,9 @@
     <!-- 标题区域 - 美观大气 -->
     <div class="mb-12">
       <h1 class="text-h3 font-weight-light mb-3" style="color: var(--ink); line-height: 1.2">
-        {{ t('website.signIn') }}
+        {{ t('account.signIn') }}
       </h1>
-      <p class="text-body-1" style="color: var(--muted); line-height: 1.5">{{ t('website.welcomeBackToCheese') }}</p>
+      <p class="text-body-1" style="color: var(--muted); line-height: 1.5">{{ t('account.welcomeBackToCheese') }}</p>
     </div>
 
     <!-- 错误/成功提示区域 -->
@@ -30,7 +30,7 @@
                 v-model="username"
                 name="username"
                 autocomplete="username"
-                :label="t('website.username')"
+                :label="t('account.username')"
                 variant="outlined"
                 v-bind="usernameProps"
                 class="mb-4"
@@ -41,7 +41,7 @@
                 v-model="password"
                 name="password"
                 autocomplete="current-password"
-                :label="t('website.password')"
+                :label="t('account.password')"
                 :type="showPassword ? 'text' : 'password'"
                 variant="outlined"
                 :append-inner-icon="showPassword ? 'mdi-eye-off-outline' : 'mdi-eye-outline'"
@@ -56,15 +56,15 @@
                 <v-checkbox v-model="agree" density="compact" v-bind="agreeProps" hide-details>
                   <template #label>
                     <span class="text-body-2" style="color: var(--muted); line-height: 1.4">
-                      {{ t('website.iAgreeToThe') }}
-                      <a href="#" class="text-primary text-decoration-none ml-1">{{ t('website.termsOfService') }}</a>
-                      {{ t('website.and') }}
-                      <a href="#" class="text-primary text-decoration-none">{{ t('website.privacyPolicy') }}</a>
+                      {{ t('account.iAgreeToThe') }}
+                      <a href="#" class="text-primary text-decoration-none ml-1">{{ t('account.termsOfService') }}</a>
+                      {{ t('account.and') }}
+                      <a href="#" class="text-primary text-decoration-none">{{ t('account.privacyPolicy') }}</a>
                     </span>
                   </template>
                 </v-checkbox>
                 <v-btn variant="text" color="primary" to="recover/password" size="small" style="text-transform: none">
-                  {{ t('website.forgotPassword') }}
+                  {{ t('account.forgotPassword') }}
                 </v-btn>
               </div>
             </div>
@@ -79,12 +79,12 @@
               style="text-transform: none; font-weight: 500; height: 48px"
               class="mb-4"
             >
-              {{ t('website.signIn2') }}
+              {{ t('account.signIn2') }}
             </v-btn>
 
             <!-- 注册链接 - 自然文本流 -->
             <p class="text-body-2" style="color: var(--muted)">
-              {{ t('website.newToCheese') }}
+              {{ t('account.newToCheese') }}
               <v-btn
                 variant="text"
                 color="primary"
@@ -92,7 +92,7 @@
                 size="small"
                 style="text-transform: none; padding: 0; min-width: auto; height: auto; vertical-align: baseline"
                 class="text-decoration-none"
-                >{{ t('website.createAccount') }}</v-btn
+                >{{ t('account.createAccount') }}</v-btn
               >
             </p>
           </v-form>
@@ -103,7 +103,7 @@
           <!-- 优雅的分割线 -->
           <div class="d-flex align-center mb-6">
             <v-divider class="flex-grow-1" />
-            <span class="px-4 text-body-2" style="color: var(--faint)">{{ t('website.or') }}</span>
+            <span class="px-4 text-body-2" style="color: var(--faint)">{{ t('account.or') }}</span>
             <v-divider class="flex-grow-1" />
           </div>
 
@@ -119,17 +119,17 @@
               style="text-transform: none; font-weight: 500; height: 48px"
               @click="handlePasskeyLogin"
             >
-              <v-icon start icon="mdi-key-chain" size="20" /> {{ t('website.signInWithAPasskey') }}
+              <v-icon start icon="mdi-key-chain" size="20" /> {{ t('account.signInWithAPasskey') }}
             </v-btn>
             <p v-if="!webAuthnSupported" class="text-body-2 mt-2" style="color: var(--faint)">
-              {{ t('website.passkeysAreNotSupportedInThisEnvironment') }}
+              {{ t('account.passkeysAreNotSupportedInThisEnvironment') }}
             </p>
           </div>
 
           <!-- 第三方登录 -->
           <div v-if="oAuthProviders.length > 0">
             <div class="text-body-1 font-weight-medium mb-4" style="color: var(--text)">
-              {{ t('website.continueWithAnotherAccount') }}
+              {{ t('account.continueWithAnotherAccount') }}
             </div>
             <div class="d-flex flex-column" style="gap: 12px">
               <v-btn
@@ -199,7 +199,7 @@ const { handleSubmit, defineField, isSubmitting } = useForm({
         username: z.string().min(4).max(30),
         password: z.string().min(8),
         agree: z.boolean().refine((v) => v, {
-          message: t('website.pleaseAcceptTheTermsOfServiceAnd'),
+          message: t('account.pleaseAcceptTheTermsOfServiceAnd'),
         }),
       })
     )
@@ -271,7 +271,7 @@ const login = handleSubmit(async (value) => {
       }
 
       AccountService.login(accessToken!, user!)
-      toast.success(t('website.signedIn'))
+      toast.success(t('account.signedIn'))
       router.replace(postLoginTarget())
     } else {
       // 使用传统登录流程
@@ -284,19 +284,19 @@ const login = handleSubmit(async (value) => {
         return
       }
       AccountService.login(data.accessToken!, data.user!)
-      toast.success(t('website.signedIn'))
+      toast.success(t('account.signedIn'))
       router.replace(postLoginTarget())
     }
   } catch (e) {
     console.error('登录失败:', e)
-    toast.error(requestErrorMessage(e, t('website.signinFailedPleaseTryAgain')))
+    toast.error(requestErrorMessage(e, t('account.signinFailedPleaseTryAgain')))
   }
 })
 
 // 处理通行密钥登录
 const handlePasskeyLogin = async () => {
   if (!browserSupportsWebAuthn()) {
-    toast.error(t('website.yourBrowserDoesNotSupportPasskeys'))
+    toast.error(t('account.yourBrowserDoesNotSupportPasskeys'))
     return
   }
 
@@ -314,17 +314,17 @@ const handlePasskeyLogin = async () => {
 
     // 4. 处理登录成功
     AccountService.login(data.accessToken!, data.user!)
-    toast.success(t('website.signedIn'))
+    toast.success(t('account.signedIn'))
     router.replace('/')
   } catch (error: any) {
     console.error('通行密钥登录失败:', error)
 
     if (error.name === 'NotAllowedError') {
-      toast.error(t('website.canceled'))
+      toast.error(t('account.canceled'))
     } else if (error.response?.data?.code === 'PASSKEY_NOT_FOUND') {
-      toast.error(t('website.noMatchingPasskeyFound'))
+      toast.error(t('account.noMatchingPasskeyFound'))
     } else {
-      toast.error(error.message || t('website.passkeySigninFailed'))
+      toast.error(error.message || t('account.passkeySigninFailed'))
     }
   } finally {
     isPasskeyLoading.value = false
@@ -356,7 +356,7 @@ const handleOAuthLogin = async (providerId: string) => {
   } catch (error) {
     oAuthLoading.value = null
     console.error('OAuth 登录失败:', error)
-    toast.error(t('website.thirdpartySigninFailed'))
+    toast.error(t('account.thirdpartySigninFailed'))
   }
 }
 

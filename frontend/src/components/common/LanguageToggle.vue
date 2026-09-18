@@ -1,18 +1,25 @@
 <script setup lang="ts">
-import i18n, { setLocale } from '@/i18n'
+import { computed } from 'vue'
+
+import i18n, { LANGUAGE_NAMES, LANGUAGE_SWITCH_LABELS, otherLocale, setLocale } from '@/i18n'
 
 const locale = i18n.global.locale
+
+// The button names the language it switches *to*, written in that language, so a
+// visitor who cannot read the current one can still find it. `target` drives all
+// three properties from one decision.
+const target = computed(() => otherLocale(locale.value))
 </script>
 
 <template>
   <button
     type="button"
     class="language-toggle"
-    :lang="locale === 'en' ? 'zh-CN' : 'en'"
-    :aria-label="locale === 'en' ? '切换到中文' : 'Switch to English'"
-    @click="setLocale(locale === 'en' ? 'zh-CN' : 'en')"
+    :lang="target"
+    :aria-label="LANGUAGE_SWITCH_LABELS[target]"
+    @click="setLocale(target)"
   >
-    {{ locale === 'en' ? '中文' : 'English' }}
+    {{ LANGUAGE_NAMES[target] }}
   </button>
 </template>
 

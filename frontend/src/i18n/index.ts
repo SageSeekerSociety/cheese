@@ -1,9 +1,8 @@
 import { watch } from 'vue'
 import { createI18n } from 'vue-i18n'
 
-import websiteEnglish from './messages/en/website.json'
+import en from './messages/en'
 import zhCN from './messages/zh-CN'
-import websiteChinese from './messages/zh-CN/website.json'
 
 export type Locale = 'zh-CN' | 'en'
 const preferenceKey = 'cheese:locale'
@@ -18,17 +17,23 @@ export function resolveInitialLocale(): Locale {
   return typeof navigator !== 'undefined' && navigator.language.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en'
 }
 
+// A key missing from the active locale falls back to `zh-CN` so a half-translated
+// screen degrades to readable text rather than to the raw key. That fallback is
+// silent at runtime by design — the guarantee that the gap is *known* lives in
+// `untranslated.json` and `catalog.spec.ts`, not here. Development builds warn on
+// every missing and every fallback so the gap is visible while working.
 const i18n = createI18n({
   legacy: false,
   locale: resolveInitialLocale(),
   fallbackLocale: 'zh-CN',
-  messages: {
-    'zh-CN': { ...zhCN, website: websiteChinese },
-    en: { website: websiteEnglish },
-  },
+  missingWarn: import.meta.env.DEV,
+  fallbackWarn: import.meta.env.DEV,
+  messages: { 'zh-CN': zhCN, en },
 })
 
 export const { t } = i18n.global
+
+export { LANGUAGE_NAMES, LANGUAGE_SWITCH_LABELS, otherLocale } from './languages'
 
 export function setLocale(locale: Locale) {
   i18n.global.locale.value = locale

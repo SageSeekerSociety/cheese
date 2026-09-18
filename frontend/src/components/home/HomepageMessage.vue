@@ -12,7 +12,7 @@ defineProps<{ who: string; ai?: boolean }>()
     </span>
     <div>
       <div class="message-author">
-        {{ who }} <small v-if="ai">{{ t('website.aiTeammate') }}</small>
+        {{ who }} <small v-if="ai">{{ t('publicSite.aiTeammate') }}</small>
       </div>
       <slot />
     </div>

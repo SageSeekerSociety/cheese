@@ -5,12 +5,12 @@
       <div class="d-flex align-center mb-3">
         <v-icon color="primary" size="28" class="mr-3">mdi-email-check</v-icon>
         <h1 class="text-h3 font-weight-light" style="color: var(--ink); line-height: 1.2">
-          {{ t('website.verifyYourEmail') }}
+          {{ t('account.verifyYourEmail') }}
         </h1>
       </div>
       <p class="text-body-1" style="color: var(--muted); line-height: 1.5">
-        {{ t('website.weSentAVerificationCodeTo') }}
-        <strong style="color: var(--text)">{{ signupStore.email }}</strong> {{ t('website.sentenceEnd2') }}
+        {{ t('account.weSentAVerificationCodeTo') }}
+        <strong style="color: var(--text)">{{ signupStore.email }}</strong> {{ t('account.sentenceEnd2') }}
       </p>
     </div>
 
@@ -40,12 +40,12 @@
               style="text-transform: none; font-weight: 500; height: 48px"
               class="mb-6"
             >
-              {{ t('website.finishRegistration') }}
+              {{ t('account.finishRegistration') }}
             </v-btn>
 
             <div class="d-flex align-center justify-space-between">
               <p class="text-body-2" style="color: var(--muted)">
-                {{ t('website.didntReceiveACode') }}
+                {{ t('account.didntReceiveACode') }}
                 <v-btn
                   variant="text"
                   color="primary"
@@ -54,11 +54,11 @@
                   class="text-decoration-none"
                   @click="handleResend"
                 >
-                  {{ t('website.resendCode') }}
+                  {{ t('account.resendCode') }}
                 </v-btn>
               </p>
               <v-btn variant="text" color="primary" to="/account/signin" size="small" style="text-transform: none">
-                {{ t('website.backToSignIn') }}
+                {{ t('account.backToSignIn') }}
               </v-btn>
             </div>
           </v-form>
@@ -91,7 +91,7 @@ const { handleSubmit, defineField, isSubmitting } = useForm({
       z.object({
         otp: z
           .string()
-          .length(6, { message: t('website.enterASixdigitVerificationCode') })
+          .length(6, { message: t('account.enterASixdigitVerificationCode') })
           .default(''),
       })
     )
@@ -104,17 +104,17 @@ const submit = handleSubmit(async ({ otp }) => {
     const username = signupStore.username
     const res = await signupStore.signup(otp)
     if (res) {
-      toast.success(t('website.accountCreated'))
+      toast.success(t('account.accountCreated'))
       router.push({
         name: 'SignIn',
         query: {
           username,
-          message: t('website.yourAccountIsReadySignInTo'),
+          message: t('account.yourAccountIsReadySignInTo'),
         },
       })
     }
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : t('website.verificationFailed'))
+    toast.error(error instanceof Error ? error.message : t('account.verificationFailed'))
   }
 })
 
@@ -127,9 +127,9 @@ const handleOtpInput = (value: string) => {
 const handleResend = async () => {
   try {
     // await signupStore.resendVerification()
-    toast.success(t('website.verificationCodeResent'))
+    toast.success(t('account.verificationCodeResent'))
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : t('website.couldNotSendTheCode'))
+    toast.error(error instanceof Error ? error.message : t('account.couldNotSendTheCode'))
   }
 }
 </script>

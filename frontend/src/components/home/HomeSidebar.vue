@@ -3,7 +3,7 @@
        只在桌面存在。 -->
   <SecondaryNavigation v-if="mdAndUp">
     <div class="sidebar-header">
-      <span class="text-subtitle-1">{{ t('website.home') }}</span>
+      <span class="text-subtitle-1">{{ t('navigation.home') }}</span>
       <v-spacer></v-spacer>
     </div>
     <v-list nav :lines="false">
@@ -11,7 +11,7 @@
         rounded="lg"
         prepend-icon="mdi-view-dashboard"
         to="/spaces"
-        :title="t('website.spaces')"
+        :title="t('navigation.spaces')"
         color="primary"
       >
       </v-list-item>
@@ -19,7 +19,7 @@
         rounded="lg"
         prepend-icon="mdi-account-group"
         to="/teams"
-        :title="t('website.teams')"
+        :title="t('navigation.teams')"
         color="primary"
       >
       </v-list-item>
