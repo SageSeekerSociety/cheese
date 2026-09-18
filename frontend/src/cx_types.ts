@@ -85,7 +85,7 @@ export interface Topic {
 export type AuthorType = 'human' | 'ai' | 'system'
 
 // One aggregated emoji reaction group on a block (Slack-style chip):
-// e.g. {emoji: '✅', count: 2, authors: ['cheese', 'alice']}.
+// e.g. {emoji: '👀', count: 2, authors: ['cheese', 'alice']}.
 export interface ReactionAgg {
   emoji: string
   count: number
@@ -178,6 +178,22 @@ export interface WaitingItem {
   displayStatus: string
   reason: 'reviewer' | 'reporter' | 'asked'
   at: string
+}
+
+/** 一份 .docx 里的一处修订（后端 `documents/revisions.py`）。
+ *
+ *  一次替换在 XML 里是一个 `<w:ins>` 加一个 `<w:del>`，这里是**一条**：读者要判断的
+ *  是「这处改动要不要」，分成两条就可以只接受一半——新句子进来了，旧句子还留着。
+ *  `paragraph` 是段号，和 `office.py text` 报的是同一个坐标；XML 里没有页的概念，
+ *  页要等排版之后才存在。 */
+export interface DocumentRevision {
+  number: number
+  paragraph: number
+  kind: 'replace' | 'insert' | 'delete'
+  added: string
+  removed: string
+  author: string
+  date: string
 }
 
 // A working-log task item (芝士's TaskCreate/TaskUpdate, rendered as a checklist
@@ -274,7 +290,7 @@ export interface TopicProgress {
 // discrete assistant_block messages (one per completed SDK message boundary).
 export type WsServerFrame =
   | { type: 'user_block'; block: Block }
-  // A block's reactions changed (someone toggled / 芝士's ✅ receipt landed).
+  // A block's reactions changed (someone toggled / 芝士's 👀 receipt landed).
   | { type: 'reaction'; block_id: string; reactions: ReactionAgg[] }
   // `restored` = this is the checklist a PREVIOUS turn left behind, replayed at
   // turn start; without the flag the UI cannot tell it from live progress.
@@ -298,6 +314,34 @@ export type WsServerFrame =
   | { type: 'block_updated'; block: Block }
   // Answer to the client's liveness ping; carries nothing.
   | { type: 'pong' }
+  // The room's session state moved: the agent asked something, a session
+  // appeared, went quiet or came back. Carries what the platform's own store
+  // knows. The machine's background-task list is NOT in here — nothing tells
+  // the platform when that changes — so the panel that shows it still reads it
+  // over HTTP.
+  | { type: 'agent_control'; state: AgentControlState }
+
+export interface AgentControlRequest {
+  request_id: string
+  request: {
+    subtype: string
+    tool_name?: string
+    input?: Record<string, unknown>
+  }
+}
+
+export interface AgentControlState {
+  id: string | null
+  connected: boolean
+  title?: string
+  controls?: string[]
+  pending?: Record<string, AgentControlRequest>
+  tasks?: Record<
+    string,
+    { task_id: string; description?: string; status?: string; subtype?: string; tool_use_id?: string }
+  >
+  state?: Record<string, Record<string, unknown>>
+}
 
 // An uploaded worktree file the message carries. `path` comes from
 // POST /topics/{id}/attachments; the WS frame only references it (no binary).

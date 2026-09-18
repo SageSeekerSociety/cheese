@@ -22,6 +22,13 @@ We are the easiest repo in the world to get this wrong in, being both the platfo
 
 ## Production changes to this codebase go through CI/CD
 
+dev and production are separate deployments of this codebase: a change reaching
+one does not reach the other, and neither inherits the other's state. What is
+particular about dev is that it is continuously deployed — merging to main ships
+it — so a merge there is a release, and a failure someone is hitting right now is
+fixed by merging the fix, with no release window to wait for. Which is also why an
+unconsidered merge is on other people's work just as fast.
+
 Apply this rule to the Cheese codebase in this repository. Treat its shared live
 deployment as production even when it is named dev.
 Changes to this repository's code, deployment configuration and database schema

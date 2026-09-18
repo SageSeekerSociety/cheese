@@ -38,6 +38,11 @@ vi.mock('../../api', async () => {
     // 带不了这个头，挂上去的结果是 401。输入框的缩略图得用 attachmentImageUrl 取字节。
     attachmentRawUrl: () => '',
     attachmentImageUrl: vi.fn().mockResolvedValue('blob:composer-thumb'),
+    // 文档缩略图的两个字节来源：PDF 直接取原始字节，Word/幻灯片要平台先转一次。
+    // 测试环境里画不出一页 PDF，所以两个都让它拿不到——那一格于是停在「这个类型的
+    // 图标」上，正是下面断言的形状。
+    previewFileBytes: vi.fn().mockRejectedValue(new Error('no bytes under test')),
+    previewDocumentPdf: vi.fn().mockRejectedValue(new Error('no renderer under test')),
     uploadAttachment: vi.fn(),
     downloadFile: vi.fn(),
   }
@@ -88,6 +93,24 @@ function composerBox(container: Element): HTMLTextAreaElement | null {
 }
 
 beforeAll(() => {
+  // happy-dom 少两个东西，而 Vuetify 的浮层定位正好都要：visualViewport，以及
+  // **裸的** devicePixelRatio（它不是 window.devicePixelRatio ?? 1，取不到就抛）。
+  // 少了任何一个，tooltip 一弹就是一条未捕获异常。照这个文件既有的做法补，不是
+  // 替——真有的时候不动它。
+  if (!('devicePixelRatio' in globalThis)) {
+    ;(globalThis as unknown as { devicePixelRatio: number }).devicePixelRatio = 1
+  }
+  if (!('visualViewport' in globalThis)) {
+    ;(globalThis as unknown as { visualViewport: unknown }).visualViewport = {
+      offsetLeft: 0,
+      offsetTop: 0,
+      width: 1280,
+      height: 800,
+      scale: 1,
+      addEventListener() {},
+      removeEventListener() {},
+    }
+  }
   if (!('ResizeObserver' in globalThis)) {
     ;(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
       observe() {}
@@ -210,13 +233,119 @@ describe('对话栏自己的输入栏', () => {
     const file = new File(['%PDF'], '需求 文档.pdf', { type: 'application/pdf' })
     await fireEvent.change(input, { target: { files: [file] } })
     await flush()
-    expect(container.querySelector('.att-strip')?.textContent).toContain('需求 文档.pdf')
+    // 每一格都是同一个块：左边那个方格说明它是什么，右边一直写着名字。PDF 在
+    // 方格里画首页——发之前要确认的是「附的是哪一份」，光有名字答不了。
+    const card = container.querySelector('.att-strip .att-card')!
+    expect(card.querySelector('.att-card__name')?.textContent).toBe('需求 文档.pdf')
+    expect(card.querySelector('canvas')).toBeTruthy()
     expect(container.querySelector('.att-strip img')).toBeNull()
     await fireEvent.click(container.querySelector('[title="发送"]')!)
     await flush()
     expect(JSON.parse(sent[0].payload).attachments).toEqual([
       { path: 'uploads/id/需求 文档.pdf', mime: 'application/pdf' },
     ])
+  })
+
+  // 一条消息里常常同时有图片和文档。两种形状并排是两样不相干的东西，而上传完成
+  // 的那一刻形状一换，整条会跳——所以图片和一份 .docx 占的是同一个块，区别只在
+  // 方格里画的是缩略图还是这个类型的图标。名字两种都写着。
+  it('gives an image and a document the same block, and always the name', async () => {
+    const api = await import('../../api')
+    vi.mocked(api.uploadAttachment)
+      .mockResolvedValueOnce({ path: 'uploads/id/截图.png', mime: 'image/png' })
+      .mockResolvedValueOnce({
+        path: 'uploads/id/Writing替换词.docx',
+        mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      })
+    const { container } = mountPanel({}, 'topic-mixed')
+    await flush()
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!
+    await fireEvent.change(input, {
+      target: {
+        files: [
+          new File(['png'], '截图.png', { type: 'image/png' }),
+          new File(['doc'], 'Writing替换词.docx', {
+            type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          }),
+        ],
+      },
+    })
+    await flush()
+
+    const cards = Array.from(container.querySelectorAll('.att-strip .att-card'))
+    expect(cards.map((c) => c.querySelector('.att-card__name')?.textContent)).toEqual([
+      '截图.png',
+      'Writing替换词.docx',
+    ])
+    // 同一个块、同一个方格。
+    expect(cards.every((c) => c.querySelector('.att-face'))).toBe(true)
+    // 图片是 <img>；.docx 走的是画布，因为它也有第一页可画——平台先把它转成 PDF。
+    expect(cards[0].querySelector('img')).toBeTruthy()
+    expect(cards[1].querySelector('img')).toBeNull()
+    expect(cards[1].querySelector('canvas')).toBeTruthy()
+    // 页面还没到（这里永远到不了）的时候摆的是这个类型自己的图标，不是一律 PDF。
+    expect(cards[1].querySelector('.mdi-file-word-outline')).toBeTruthy()
+    expect(vi.mocked(api.previewDocumentPdf)).toHaveBeenCalledWith('topic-mixed', 'uploads/id/Writing替换词.docx')
+  })
+
+  // 表格没有第一页可画，而且是故意的：把一张表分页会拆散列、让单元格失去地址，
+  // 那正是它之所以是表的东西。所以它停在图标上，也不该去叫转换服务。
+  it('leaves a spreadsheet on its icon and does not try to convert it', async () => {
+    const api = await import('../../api')
+    vi.mocked(api.uploadAttachment).mockResolvedValue({
+      path: 'uploads/id/预算.xlsx',
+      mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+    const { container } = mountPanel({}, 'topic-sheet')
+    await flush()
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!
+    await fireEvent.change(input, {
+      target: {
+        files: [
+          new File(['x'], '预算.xlsx', {
+            type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          }),
+        ],
+      },
+    })
+    await flush()
+
+    const card = container.querySelector('.att-strip .att-card')!
+    expect(card.querySelector('.att-card__name')?.textContent).toBe('预算.xlsx')
+    expect(card.querySelector('canvas')).toBeNull()
+    expect(card.querySelector('.mdi-file-excel-outline')).toBeTruthy()
+    expect(vi.mocked(api.previewDocumentPdf)).not.toHaveBeenCalled()
+  })
+
+  // 名字在块边缘就截断了，所以悬停是拿到全名的唯一出口——它得真的弹出来。原来
+  // 用的是 title 属性：系统气泡要鼠标停住约一秒才出现，读者多半以为没有。
+  it('gives the whole filename on hover', async () => {
+    const api = await import('../../api')
+    vi.mocked(api.uploadAttachment).mockResolvedValue({
+      path: 'uploads/id/一份名字长得放不进那一格的说明文档.docx',
+      mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    })
+    const { container } = mountPanel({}, 'topic-hover')
+    await flush()
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!
+    await fireEvent.change(input, {
+      target: {
+        files: [
+          new File(['d'], '一份名字长得放不进那一格的说明文档.docx', {
+            type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          }),
+        ],
+      },
+    })
+    await flush()
+
+    const card = container.querySelector('.att-strip .att-card')!
+    expect(card.getAttribute('title')).toBeNull()
+    await fireEvent.mouseEnter(card)
+    await flush()
+    expect(document.querySelector('.v-tooltip .v-overlay__content')?.textContent?.trim()).toBe(
+      '一份名字长得放不进那一格的说明文档.docx'
+    )
   })
 
   // 输入框里那张图曾经是一张裂图：它被挂上了一个只认 Authorization 头的地址，而
@@ -284,6 +413,24 @@ describe('对话栏自己的输入栏', () => {
     const chip = container.querySelector('.probe-chip')
     expect(chip, 'composer-chips 插槽没渲染').toBeTruthy()
     expect(chip!.closest('.composer'), 'chips 没落在输入栏那一行里').toBeTruthy()
+  })
+
+  // 「发出去」和「送到芝士手上」不是一件事：中间隔着一次投递，它可能失败退回队列，
+  // 冷启动时还可能一分多钟里根本没有会话。所以刚发完只说在送，说它在处理要等芝士的
+  // 👀 回执（后端 chat.confirm_prompt_receipt 落的，意思是会话已经把消息拿进去了）。
+  it('刚发出去时只说正在送，不说芝士在处理', async () => {
+    // 自己的话题 id：草稿是模块级的，用默认那个会把这条没发完的字留给下一条用例
+    const view = mountPanel({}, 'seen-indicator')
+    await flush()
+
+    const box = composerBox(view.container)!
+    box.focus()
+    await fireEvent.update(box, '@芝士 看看这个')
+    await fireEvent.keyDown(box, { key: 'Enter' })
+    await flush()
+
+    expect(view.getByText('正在送给芝士…')).toBeTruthy()
+    expect(view.queryByText('芝士正在处理…')).toBeNull()
   })
 
   it('@ 了芝士的那条消息才召唤它', async () => {

@@ -13,10 +13,19 @@
       'app-rail-item-cheese': item.icon === 'cheese',
       'app-rail-item--tile': item.img,
       'app-rail-item--add': item.add,
+      'app-rail-item--dragging': dragging,
+      'app-rail-item--drop-before': dropEdge === 'before',
+      'app-rail-item--drop-after': dropEdge === 'after',
     }"
+    :draggable="!!projectId"
+    :data-project-id="projectId"
     @click="!item.to && item.action ? item.action() : undefined"
     @mouseenter="warmDestination()"
     @mouseleave="cancelPrefetch()"
+    @dragstart="onDragStart"
+    @dragover="onDragOver"
+    @drop="onDrop"
+    @dragend="emit('dragEnd')"
   >
     <!-- Discord-style hover flyout: name + ⌘N quick-switch key -->
     <v-tooltip activator="parent" location="end" content-class="rail-flyout">
@@ -53,7 +62,9 @@
 </template>
 
 <script lang="ts" setup>
-import { toRefs } from 'vue'
+import type { DropEdge } from '@/lib/projectOrder'
+
+import { computed, toRefs } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { NavGenericItem } from './types'
@@ -61,11 +72,58 @@ import { NavGenericItem } from './types'
 import CheeseLogo from '@/assets/logo-plain.svg?component'
 import { cancelPrefetch, prefetchOnHover } from '@/lib/routePrefetch'
 
+// 自定义的拖拽类型，不是 text/plain：rail 只接自己格子拖过来的东西，从桌面拖一个
+// 文件或从别的标签页拖一段文字进来时不该有任何反应。
+const DRAG_TYPE = 'application/x-cheese-project'
+
 const navBarProps = defineProps<{
   item: NavGenericItem
+  /** 这一格正被拖着。 */
+  dragging?: boolean
+  /** 插入线画在这一格的哪一边；不是落点就是 null。 */
+  dropEdge?: DropEdge | null
+}>()
+
+const emit = defineEmits<{
+  dragStart: [projectId: string]
+  dragOver: [projectId: string, edge: DropEdge]
+  drop: [movedId: string, targetId: string, edge: DropEdge]
+  dragEnd: []
 }>()
 
 const { item } = toRefs(navBarProps)
+
+const projectId = computed(() => (item.value.type === 'item' ? item.value.projectId : undefined))
+
+function onDragStart(e: DragEvent) {
+  const id = projectId.value
+  if (!id || !e.dataTransfer) return
+  // 项目格子有 `to`，所以它渲染出来是个 <a> —— 而 <a href> 本来就可以拖，拖的是那条
+  // 链接。写进自己的类型，拖的才是这一格。
+  e.dataTransfer.setData(DRAG_TYPE, id)
+  e.dataTransfer.effectAllowed = 'move'
+  emit('dragStart', id)
+}
+
+function onDragOver(e: DragEvent) {
+  // dragover 里 getData() 一定是空的（拖放的安全限制只放行 types），所以认类型。
+  if (!projectId.value || !e.dataTransfer?.types.includes(DRAG_TYPE)) return
+  // 不 preventDefault 就没有 drop 事件——浏览器默认「这里不收」。
+  e.preventDefault()
+  e.dataTransfer.dropEffect = 'move'
+  // 落在上半还是下半决定插在前面还是后面。只认「插在某一格前面」的话，一列项目的
+  // 最末位置就永远够不着。
+  const box = (e.currentTarget as HTMLElement).getBoundingClientRect()
+  emit('dragOver', projectId.value, e.clientY < box.top + box.height / 2 ? 'before' : 'after')
+}
+
+function onDrop(e: DragEvent) {
+  const moved = e.dataTransfer?.getData(DRAG_TYPE)
+  const edge = navBarProps.dropEdge
+  if (!moved || !projectId.value || !edge) return
+  e.preventDefault()
+  emit('drop', moved, projectId.value, edge)
+}
 
 // 一级导航的每一格都是整整一个页面。指针停在格子上的那几百毫秒，正好够把那个页面
 // 的代码下下来——按下去的时候就只剩下拉数据那一段了。
@@ -166,6 +224,32 @@ function warmDestination() {
     white-space: nowrap;
     font-size: 10px;
   }
+}
+
+// 拖着换顺序：被拖的那一格淡下去，落点那一格画一条插入线。线用中性的
+// on-surface，不用琥珀——琥珀留给唯一的主操作、当前选中的导航格和品牌标记。
+.app-rail-item--dragging {
+  opacity: 0.4;
+}
+
+.app-rail-item--drop-before,
+.app-rail-item--drop-after {
+  &::after {
+    content: '';
+    position: absolute;
+    inset-inline: 0;
+    height: 2px;
+    background-color: rgba(var(--v-theme-on-surface), 0.55);
+    pointer-events: none;
+  }
+}
+
+.app-rail-item--drop-before::after {
+  top: -3px;
+}
+
+.app-rail-item--drop-after::after {
+  bottom: -3px;
 }
 
 // project tiles: the colored rounded-square IS the visual (like the 元思 app

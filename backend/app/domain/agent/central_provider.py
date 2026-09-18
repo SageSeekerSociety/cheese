@@ -312,6 +312,12 @@ class CentralChannel(DeviceChannel):
                     "resource_id": str(resource),
                     "device_id": executor_id,
                     "home": device_home_dir(project_id, resource),
+                    # Where the installation actually put the executor, asked of
+                    # the installation. Whoever reaches it later must not derive
+                    # this: that reader runs in the device connection owner,
+                    # which an app deploy leaves alone — see
+                    # `agent.execution.executor_state`.
+                    "state": info["state"],
                     "workspace": info["workspace"],
                     "mcp_servers": info["mcp_servers"],
                     "url": (

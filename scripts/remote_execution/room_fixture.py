@@ -107,6 +107,9 @@ class RoomExecutor:
             "home": str(self.home),
             "workspace": str(self.work),
             "mcp_servers": info["mcp_servers"],
+            # Recorded, not derived — a room's target carries where its executor
+            # actually is, the same way a real placement does.
+            "state": info["state"],
         }
         deadline = time.monotonic() + 30
         while True:

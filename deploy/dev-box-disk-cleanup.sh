@@ -146,7 +146,13 @@ self_test() {
   test "$out" = "0" || { printf 'self-test FAIL: size_of on missing path -> %s\n' "$out"; exit 1; }
   # Every size feeds $(( )), so one integer and nothing else. A root-owned tree
   # is the case that actually broke this: it returned two lines and $(( )) died.
-  for probe in /var/cache/apt/archives /var/log / "$HOME/.cache"; do
+  # `/etc` stands in for that case rather than `/`: both are root-owned with
+  # unreadable subdirectories (`/etc/ssl/private` is 0700), and `du -sxb /`
+  # walks the whole root filesystem — on the box that needed this script, 431GB
+  # of it, which took the self-test past ten minutes. A check that costs that
+  # much is one nobody runs, and a self-test nobody runs is how the size-parsing
+  # bug above survived in every release.
+  for probe in /var/cache/apt/archives /var/log /etc "$HOME/.cache"; do
     out="$(size_of "$probe")"
     case "$out" in
       ''|*[!0-9]*) printf 'self-test FAIL: size_of %s -> %q\n' "$probe" "$out"; exit 1 ;;

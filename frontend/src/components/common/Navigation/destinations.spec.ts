@@ -3,7 +3,7 @@ import type { NavItem } from './types'
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { railItems, tabItems, workspaceProject } from './destinations'
+import { railItems, shortcutTarget, tabItems, workspaceProject } from './destinations'
 
 import { setLocale } from '@/i18n'
 
@@ -30,6 +30,31 @@ describe('一级导航的两份清单', () => {
         expect(item.to ?? item.action, `${item.title} 既没有地址也没有动作`).toBeTruthy()
       }
     }
+  })
+
+  // 浮层上那个 ⌘N 在很长一段时间里指着一个不存在的功能：显示了键，没人绑它。
+  describe('⌘N 切到哪一格', () => {
+    it('⌘1 是首页，之后依次是项目', () => {
+      const rail = railItems(sources(3, 'p1'))
+      expect(shortcutTarget(rail, 1)).toBe('/')
+      expect(shortcutTarget(rail, 2)).toBe('/projects/p0')
+      expect(shortcutTarget(rail, 3)).toBe('/projects/p1')
+    })
+
+    // 对不上就交回给浏览器（它自己用这些键切标签页），所以这里必须是 null 而不是
+    // 「最后一格」之类的兜底。
+    it('没有对应格子的数字不认领', () => {
+      const rail = railItems(sources(2, 'p0'))
+      expect(shortcutTarget(rail, 9)).toBeNull()
+    })
+
+    // 「＋新建项目」是个动作不是目的地：一个手滑就按到的键不该建出东西来。
+    it('不会落到「新建项目」上', () => {
+      const rail = railItems(sources(2, 'p0'))
+      const add = items(rail).find((i) => i.action && !i.to)
+      expect(add, '清单里没有那个只有动作的格子，这条用例失去了对象').toBeTruthy()
+      expect(add?.shortcut, '「新建项目」被分到了一个数字键').toBeUndefined()
+    })
   })
 
   it('新建项目在两端都到得着', () => {

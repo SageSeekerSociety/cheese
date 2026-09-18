@@ -32,6 +32,7 @@ from app.core.errors import GatewayUnavailableError, NotFoundError, ValidationEr
 from app.core.text import markdown_preview
 from app.domain.agent.announce import announce
 from app.domain.agent.compute import ComputePool, ComputeProvider
+from app.domain.agent.device_hub import DeviceOffline
 from app.domain.agent.gateway import LlmGateway, drain_new_usage
 from app.domain.agent.harness import Opening, SessionRef, harness_name, runtime_for
 from app.domain.agent.harness.prompt import (
@@ -372,10 +373,18 @@ def _format_tool_event(name: str, preview: ToolPreview) -> str:
 # head of the command segment 现场 displays. NEVER inferred from natural
 # language, and never from the word appearing somewhere else in the command:
 # the dot and the text on that line have to be about the same thing.
+#: 平台动作在各个 harness 里叫什么。同一件事三种拼法，因为把工具交给模型的机制
+#: 各不相同：MCP 服务器自己加前缀，pi 那边的目录是从 CLI 的命令树生成的，而
+#: `chat_send` 是系统提示每一轮都在点名、于是 extension 额外注册的那个别名。
+_PLATFORM_PREFIXES = ("mcp__cheese__", "cheese_")
+_PLATFORM_ALIASES = frozenset({"chat_send"})
+
+
 def _is_platform_tool(raw_name: str, args: dict) -> bool:
-    """True when the tool call is a platform action: a cheese MCP tool, or a
-    shell command that invokes the machine's `cheese` CLI."""
-    if raw_name.startswith("mcp__cheese__"):
+    """True when the tool call is a platform action: a cheese tool under any of
+    the names a harness publishes it as, or a shell command that invokes the
+    machine's `cheese` CLI."""
+    if raw_name.startswith(_PLATFORM_PREFIXES) or raw_name in _PLATFORM_ALIASES:
         return True
     if raw_name in SHELL_TOOLS and isinstance(args, dict):
         return bool(cheese_subcommand(str(args.get("command", ""))))
@@ -1132,6 +1141,14 @@ class ChatService:
         self._pending_receipts: dict[
             uuid.UUID, list[tuple[str, list[uuid.UUID], uuid.UUID, float]]
         ] = {}
+        # 写进会话、还没等到 harness 说「收下了」的人类消息：topic → [(写下去的
+        # 那段文本, 该打 👀 的 block)]。
+        #
+        # 和 `_pending_receipts` 分开，因为两者回答的是不同的问题。那一份管重放
+        # 和「有人在等、会话却不读了」（`oldest_unread_at`）——把一轮新对话塞进
+        # 去，冷启动那一分多钟就会读成「会话不读了」，而那时根本还没有会话。这一
+        # 份只管屏幕上那个记号落在哪条消息上，落完就没了。
+        self._awaiting_seen: dict[uuid.UUID, list[tuple[str, list[uuid.UUID]]]] = {}
         # Per-project ExecutionProfile (model + provider). None → always the
         # agent's built-in default (tests / single-profile deploys).
         self._profiles = profiles
@@ -1285,13 +1302,18 @@ class ChatService:
                 yield {"type": "done"}
                 return
 
-            # Slack-style receipt: the PLATFORM (not the model) puts 芝士's ✅
-            # on the summoning message the moment its turn is underway — a
-            # deterministic ack. Only a real human summon gets it: a resume /
-            # nudge / kickoff turn has no user block and skips this branch.
-            ack = await self.ack_summon(user_block_id, topic_id)
-            if ack is not None:
-                yield {"type": "reaction", **ack}
+            # 芝士's 👀 is NOT placed here. This point is "the platform took
+            # the message" — the delivery below has not been attempted yet, and
+            # the branch right after this one handles it FAILING. A mark put
+            # here says the AI has the message while the message may still end
+            # up back in the queue.
+            #
+            # It is placed where the harness says the session took the input:
+            # `arm_seen_receipt` names the blocks, `confirm_prompt_receipt`
+            # places the mark. That receipt is harness-independent — Claude
+            # Code's UserPromptSubmit hook, pi's and codex's app-server response
+            # — and every one of them means the same thing: it is in front of
+            # 芝士 now.
 
         # A turn is already running on this topic. Don't queue behind it —
         # hand the message to the session that is running RIGHT NOW.
@@ -1363,9 +1385,6 @@ class ChatService:
         ``InProcessBroker.receive_message`` owns the receive-before-admission ordering;
         this method starts only after the project gate admits the model work.
         """
-        ack = await self.ack_summon(user_block_id, topic_id)
-        if ack is not None:
-            yield {"type": "reaction", **ack}
         async with self._prompt_lock(topic_id, turn_id, recipient_handle):
             async for frame in self._converse_impl(
                 topic_id=topic_id,
@@ -1441,6 +1460,10 @@ class ChatService:
         # (confirm_prompt_receipt). Until then the message stays pending, so a
         # session death replays it — 宁可重复不可丢失.
         pending = self._pending_receipts.setdefault(topic_id, [])
+        # 同一个回执，两件事：把消息标记成被消费（上面那段说的重放边界），以及在
+        # 它身上落下 👀。人说的话才有记号——平台自己塞进去的通知走的是同一条登记，
+        # 但它不是谁发的消息，不该被 ack。
+        self.arm_seen_receipt(topic_id, line, list(user_block_ids))
         entry = (
             line,
             list(user_block_ids),
@@ -1642,6 +1665,13 @@ class ChatService:
         window honest. A provider may append native-image mentions to the text
         it types, so the receipt matches on equality or on carrying our text
         as its prefix."""
+        # 落记号是尽力而为的，而它下面那段是功能性的（把消息标记成已消费，也就是
+        # 下一轮不再重发它的那个边界）。一个纯装饰的东西不许把功能路径带下去：
+        # 记号丢了只是少一个 👀，标记丢了会让这条消息在下一轮被重发一遍。
+        try:
+            await self._place_seen_receipts(topic_id, prompt)
+        except Exception:  # noqa: BLE001 — the consumed stamp matters more
+            logger.exception("failed to place the seen receipt (topic=%s)", topic_id)
         pending = self._pending_receipts.get(topic_id)
         if not pending:
             return
@@ -1972,6 +2002,13 @@ class ChatService:
                 # is the harness's.
                 await self._compute.replay(
                     session, known_texts=await self._said(session)
+                )
+            except DeviceOffline:
+                # The machine holding this session is not there. Nothing to
+                # recover and nothing to fix; its next connection runs this.
+                logger.warning(
+                    "session not recovered for topic %s: device offline",
+                    session.topic_id,
                 )
             except Exception:  # noqa: BLE001 — one topic cannot block startup
                 logger.exception(
@@ -2781,23 +2818,74 @@ class ChatService:
             await session.commit()
         return payloads, anchor_id, block_ids, False
 
+    #: How many un-marked messages one topic keeps waiting for a receipt.
+    _SEEN_RECEIPT_BACKLOG = 8
+
+    def arm_seen_receipt(
+        self, topic_id: uuid.UUID, text: str, block_ids: list[uuid.UUID]
+    ) -> None:
+        """Say which blocks get 芝士's 👀 when the session says it took ``text``.
+
+        Called BEFORE the write, for the same reason the consumed-stamp entry is:
+        the receipt can come back before the caller gets its next line in.
+        """
+        if not text or not block_ids:
+            return
+        waiting = self._awaiting_seen.setdefault(topic_id, [])
+        waiting.append((text, list(block_ids)))
+        # A receipt that never comes (the session died before reading, a harness
+        # that does not report one) leaves its entry behind, and this process
+        # runs for weeks. The mark is worth nothing once the next messages have
+        # gone by, so the oldest simply fall off — dropping one costs one 👀,
+        # never a message.
+        del waiting[: -self._SEEN_RECEIPT_BACKLOG]
+
+    async def _place_seen_receipts(self, topic_id: uuid.UUID, prompt: str) -> None:
+        """The session took ``prompt`` — put 👀 on whatever that text carried.
+
+        Matching is the same as the consumed stamp's: equality, or our text as
+        the prefix of what the session reports (a provider may append its own
+        native-image mentions to the line it types).
+        """
+        waiting = self._awaiting_seen.get(topic_id)
+        if not waiting:
+            return
+        for entry in list(waiting):
+            text, block_ids = entry
+            if prompt != text and not (text and prompt.startswith(text)):
+                continue
+            waiting.remove(entry)
+            if not waiting:
+                self._awaiting_seen.pop(topic_id, None)
+            from app.domain.agent.runtime import get_broker
+
+            for block_id in block_ids:
+                ack = await self.ack_summon(block_id, topic_id)
+                if ack is None:
+                    continue
+                # 这条不是从 converse 的那个生成器里出去的——回执是会话过一阵子
+                # 自己说的，那时候请求早就返回了——所以走 broker，房间里开着的
+                # 客户端照样收得到。
+                await get_broker().publish(str(topic_id), {"type": "reaction", **ack})
+            return
+
     async def ack_summon(
         self, user_block_id: uuid.UUID, topic_id: uuid.UUID
     ) -> dict | None:
-        """Add 芝士's ✅ receipt to the summoning user message (idempotent) and
+        """Add 芝士's 👀 receipt to the summoning user message (idempotent) and
         return the WS reaction payload. Best-effort: a failed receipt must
         never kill the turn."""
         try:
             async with self._sessions() as session:
                 blocks = BlockRepository(session)
                 await blocks.add_reaction_if_absent(
-                    user_block_id, "✅", await self._agent_handle(session, topic_id)
+                    user_block_id, "👀", await self._agent_handle(session, topic_id)
                 )
                 reactions = await blocks.reactions_for_block(user_block_id)
                 await session.commit()
             return {"block_id": str(user_block_id), "reactions": reactions}
         except Exception:  # noqa: BLE001 — the turn matters more than the ack
-            logger.exception("failed to ✅-ack block %s", user_block_id)
+            logger.exception("failed to 👀-ack block %s", user_block_id)
             return None
 
     async def _resolved_agent(
@@ -4641,6 +4729,10 @@ class ChatService:
             if prompt_text not in state.user_text:
                 state.user_text = f"{state.user_text}\n{prompt_text}"
 
+        # 这一轮的提示词写下去之前先登记：会话说「收下了」的时候，记号落在召唤它
+        # 的那条人类消息上。登记在 send 之前，因为回执可能比 send 返回还快。
+        if user_block_id is not None and not is_resume and not platform_turn:
+            self.arm_seen_receipt(topic_id, prompt_text, [user_block_id])
         try:
             await self._compute.activate(SessionRef(project_id, topic_id), runtime)
             ready = await runtime.send(

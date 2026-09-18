@@ -46,23 +46,17 @@ async function load() {
 
 watch(() => props.topicId, load, { immediate: true })
 
-// 群聊感: humans + whether 芝士 is in the room, shown as "N 人 + 芝士".
-const humans = computed(() => members.value.filter((m) => !m.agent))
-const agentRow = computed(() => members.value.find((m) => m.agent) ?? null)
-// 这个房间现在交给的是哪个 AI 队友 —— 名册那一行说了算（后端把它解析成当前
-// 队友的名字）。**不要**在界面上写死「芝士」：一个项目可以有好几个队友，写死
-// 的字换完队友不会变，看起来就像换人没生效。
-const agentName = computed(() => agentRow.value?.name || agentRow.value?.member_handle || '')
-const countLabel = computed(() => {
-  const n = humans.value.length
-  return agentRow.value ? `${n} 人 + ${agentName.value}` : `${n} 人`
-})
+// 一份名册：AI 队友就是上面的一行，不在人数外面再挂一个。列表本来就是这样渲染
+// 的（`members` 全量），只有这颗按钮上的头像堆和人数把它挑出去单独摆，读起来像
+// 「几个人，另外还有个它」。
+// 「位」而不是「人」：同一句话要数得下一个 AI 队友。
+const countLabel = computed(() => `${members.value.length} 位`)
 
 // Compact indicator: the first few human faces as a stack, capped so the
 // stack never grows unbounded — extra people fold into a "+N" tile.
 const MAX_FACES = 3
-const stackFaces = computed(() => humans.value.slice(0, MAX_FACES))
-const overflow = computed(() => Math.max(0, humans.value.length - MAX_FACES))
+const stackFaces = computed(() => members.value.slice(0, MAX_FACES))
+const overflow = computed(() => Math.max(0, members.value.length - MAX_FACES))
 
 // My role in THIS topic decides whether the management controls show at all.
 const myRole = computed(() => members.value.find((m) => m.member_handle === props.me)?.role ?? null)
@@ -159,15 +153,8 @@ async function onSetRole(handle: string, role: string) {
           <span v-if="overflow" class="members-mini__face members-mini__face--more" :style="{ zIndex: 0 }"
             >+{{ overflow }}</span
           >
-          <span
-            v-if="agentRow"
-            class="members-mini__face members-mini__face--agent"
-            :style="{ zIndex: MAX_FACES + 1 }"
-            :title="`${agentName}在这个话题里`"
-            >{{ initial(agentName) }}</span
-          >
         </span>
-        <span class="members-mini__count">{{ humans.length }}</span>
+        <span class="members-mini__count">{{ members.length }}</span>
       </button>
     </template>
 
@@ -182,7 +169,9 @@ async function onSetRole(handle: string, role: string) {
       <LoadingSkeleton v-if="loading" variant="roster" />
       <ul v-else class="roster__list">
         <li v-for="m in members" :key="m.id" class="roster__item">
-          <span v-if="m.agent" class="roster__avatar roster__avatar--agent">{{ initial(agentName) }}</span>
+          <span v-if="m.agent" class="roster__avatar roster__avatar--agent">{{
+            initial(m.name || m.member_handle)
+          }}</span>
           <img
             v-else-if="faceSrc(m)"
             class="roster__avatar roster__avatar--photo"

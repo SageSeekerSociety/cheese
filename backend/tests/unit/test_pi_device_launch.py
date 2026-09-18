@@ -446,11 +446,21 @@ def test_the_platforms_own_skills_reach_the_room(tmp_path):
             body = Path(directory) / "SKILL.md"
             assert body.is_file(), f"{directory} was named but not written"
             assert body.read_text().startswith("---"), "a skill needs its frontmatter"
-        # Whatever the platform ships, all of it arrives — a skill present on one
-        # harness and missing on the other is the split nobody notices.
+        # A skill is a directory, and only its root is a skill. Everything it
+        # ships underneath arrives as a file, but naming each of those
+        # directories would have pi load `references` as if it were a skill.
+        shipped = launch.configuration()["skills"]
         assert {Path(d).name for d in named} == {
-            name.split("/")[1] for name in launch.configuration()["skills"]
+            name.split("/")[1] for name in shipped if name.endswith("/SKILL.md")
         }
+        for relative in shipped:
+            assert (state / relative).is_file(), f"{relative} did not reach the machine"
+        # Whatever the platform ships, all of it arrives — a skill present on one
+        # harness and missing on the other is the split nobody notices. The
+        # script is the case that matters: it is what the instructions tell the
+        # room to run, and a room that names it and cannot find it is stuck.
+        assert "skills/documents/scripts/office.py" in shipped
+        assert "skills/documents/references/word.md" in shipped
     finally:
         process.terminate()
         process.wait(timeout=20)

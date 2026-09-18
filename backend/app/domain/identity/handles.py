@@ -44,6 +44,27 @@ def topic_agent_handle(topic_id: uuid.UUID | str) -> str:
     return f"{TOPIC_AGENT_PREFIX}{hexed[:_TOPIC_AGENT_HEX]}"
 
 
+def agent_instance_handle(instance_id: uuid.UUID | str) -> str:
+    """The handle THIS agent acts under, anywhere it is a member. Pure.
+
+    A room is a collaboration space and may seat several agents, so an agent's
+    identity cannot be derived from a room — the same derivation would give two
+    agents in one room the same name, and the same agent two names in two rooms.
+    It is derived from the agent instead, which is the thing being attributed to
+    and the thing a seat grants.
+
+    Opaque on purpose, exactly like every other agent handle here: the name a
+    person reads lives on the display profile, so renaming an agent never
+    rewrites what it already signed.
+    """
+    hexed = (
+        instance_id.hex
+        if isinstance(instance_id, uuid.UUID)
+        else str(instance_id).replace("-", "")
+    )
+    return f"{TOPIC_AGENT_PREFIX}{hexed[:_TOPIC_AGENT_HEX]}"
+
+
 # How a 私聊 with an AI teammate is addressed — in the URL the browser shows and
 # in the unread map keyed by "who am I talking to". Prefixed rather than bare,
 # because a teammate's handle is chosen per project (``AgentInstance.handle``)

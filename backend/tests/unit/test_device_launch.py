@@ -512,6 +512,31 @@ def test_forwarder_posts_hook_json_with_token():
     assert '"hasTrustDialogAccepted":true' in script
 
 
+def _commands_in(script: str) -> list[str]:
+    """The lines the shell would run, with heredoc bodies left out.
+
+    A skill travels inside the script — `cat > ... <<'CHEESE_NATIVE_SKILL'`, then
+    the file, then the marker. Those lines are DATA. Reading the script as a flat
+    list of lines would judge a Python variable named `node` to be a node
+    command, which is exactly the mistake to avoid in a test about what the
+    script runs.
+    """
+    commands: list[str] = []
+    body_until: str | None = None
+    for line in script.splitlines():
+        if body_until is not None:
+            if line.strip() == body_until:
+                body_until = None
+            continue
+        opened = re.search(r"<<-?'?([A-Za-z_][A-Za-z0-9_]*)'?", line)
+        if opened:
+            body_until = opened.group(1)
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            commands.append(stripped)
+    return commands
+
+
 def test_the_launch_needs_no_interpreter_the_machine_may_not_have():
     """A machine whose `claude` is the native binary has no node.
 
@@ -523,12 +548,7 @@ def test_the_launch_needs_no_interpreter_the_machine_may_not_have():
     script = device_launch.build_launch_script()
     # Only executable lines matter — the comment above the replacement explains
     # why node is gone and would match a naive substring check.
-    commands = [
-        line.strip()
-        for line in script.splitlines()
-        if line.strip() and not line.strip().startswith("#")
-    ]
-    assert not any(c.startswith("node ") for c in commands)
+    assert not any(c.startswith("node ") for c in _commands_in(script))
     assert "mktrust" not in script
     # The gates still land — inside CLAUDE_CONFIG_DIR, where claude reads them
     # once the config dir is set — with the work dir the shell resolved.

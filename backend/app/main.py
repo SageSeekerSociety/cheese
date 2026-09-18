@@ -67,6 +67,7 @@ async def lifespan(_: FastAPI):
 
     from app.api.deps import get_chat_service, get_work_runner
     from app.domain.agent.device_hub import (
+        DeviceOffline,
         configure_subscription_cleanup,
         device_hub,
     )
@@ -145,6 +146,14 @@ async def lifespan(_: FastAPI):
             get_logger("cheesex.runtime").info(
                 "hook_subscriptions_recovered", topics=recovered
             )
+    except DeviceOffline as exc:
+        # Nothing to recover on a machine that is not there, and nothing to fix
+        # either: it comes back and reconnects, and `recover_business_state`
+        # runs this again for it. Reported as an error it was 9 alerts on the
+        # channel's first day, every one of them a laptop that was closed.
+        get_logger("cheesex.runtime").warning(
+            "hook subscriptions not recovered: device offline", device=exc.device_id
+        )
     except Exception:  # noqa: BLE001 — never block startup
         get_logger("cheesex.runtime").exception("hook subscription recovery failed")
 

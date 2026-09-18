@@ -243,11 +243,17 @@ class Runner:
         # paths are additive even then, so the platform's own skills are written
         # here and named — for the same reason the system prompt is: they are
         # assembled by the platform, and the machine has no copy to point at.
+        #
+        # A skill is a directory and everything under it travels, so the files
+        # go wherever their relative paths say — but only the directories that
+        # hold a SKILL.md are named. Naming every file's parent would point pi
+        # at `skills/documents/references`, which is not a skill at all.
         for relative, content in sorted((skills or {}).items()):
-            skill = self.state / relative
-            skill.parent.mkdir(parents=True, exist_ok=True)
-            skill.write_text(content, encoding="utf-8")
-            appended += ["--skill", str(skill.parent)]
+            file = self.state / relative
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.write_text(content, encoding="utf-8")
+            if file.name == "SKILL.md":
+                appended += ["--skill", str(file.parent)]
         if extension is not None:
             home = self.write_extension(extension, notice)
             appended += ["--extension", str(home / "index.ts")]

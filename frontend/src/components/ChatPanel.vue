@@ -46,6 +46,7 @@ interface Outgoing {
 
 <script setup lang="ts">
 import type {
+  AgentControlState,
   Block,
   ChatAttachment,
   ProjectMemberRow,
@@ -78,7 +79,7 @@ import {
   summonAgent,
   toggleReaction as apiToggleReaction,
 } from '../api'
-import { usePendingAttachments } from '../lib/attachments'
+import { uploaded, usePendingAttachments } from '../lib/attachments'
 import { cachedWindow, setCachedWindow } from '../lib/blockCache'
 import { mergeRefreshedTail, PAGE_SIZE, prependOlder, scrollTopAfterPrepend, shouldLoadOlder } from '../lib/blockPaging'
 import { forgetComposerDraft, loadComposerDraft, saveComposerDraft } from '../lib/composerDrafts'
@@ -99,6 +100,7 @@ import { getAvatarUrl } from '../utils/materials'
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import AgentControls from './AgentControls.vue'
 import AttachmentImage from './AttachmentImage.vue'
+import AttachmentTile from './AttachmentTile.vue'
 import CheeseAvatar from './CheeseAvatar.vue'
 import DispatchedMarker from './DispatchedMarker.vue'
 import TimelineMark from './TimelineMark.vue'
@@ -106,6 +108,10 @@ import TimelineMark from './TimelineMark.vue'
 // Message rendering (markdown / plain / reference chips) lives in
 // ../lib/renderMessage so it's unit-testable; here we just bind the
 // handle→name and id→title maps filled from the roster / topics props.
+// The room's session state as the socket last reported it. Null until the first
+// frame lands, and passing it at all is what puts AgentControls on the frames.
+const agentControl = ref<AgentControlState | null>(null)
+
 const mentionNames = reactive<Record<string, string>>({})
 const topicTitles = reactive<Record<string, string>>({})
 const refMaps = { mentionNames, topicTitles }
@@ -329,6 +335,10 @@ const connected = ref(false)
 // message lands as an `assistant_block` frame. `awaitingReply` drives the
 // 正在看… indicator from summon until every active turn explicitly finishes.
 const awaitingReply = ref(false)
+// 这一轮的消息到没到芝士手上。平台收下和会话读到是两件事，中间隔着一次投递：
+// 它可能失败退回队列，冷启动时还可能一分多钟里根本没有会话。所以这条指示分两
+// 段说，翻页的那一下就是芝士的 👀 回执。
+const reachedAgent = ref(false)
 const activeTurnIds = ref<Set<string>>(new Set())
 watch(awaitingReply, (v) => emit('working', v))
 
@@ -796,7 +806,13 @@ function handleFrame(frame: WsServerFrame) {
       autoScroll()
       break
     case 'reaction':
-      // Someone toggled an emoji / 芝士's ✅ receipt landed — update the chip
+      // 芝士的 👀 是平台落的回执：会话已经把这条消息拿进去了（后端
+      // chat.confirm_prompt_receipt）。认「作者不是我自己」而不是去比对队友的
+      // handle，因为名册可能还没到，那时比对不上会把指示永远卡在「正在送给」。
+      // 代价是房间里有人手点 👀 会让它提早翻一下，下一轮就自己纠正。
+      if (frame.reactions?.some((r) => r.emoji === '👀' && r.authors.some((a) => a !== AUTHOR)))
+        reachedAgent.value = true
+      // Someone toggled an emoji / 芝士's 👀 receipt landed — update the chip
       // row in place (the frame carries the block's full fresh aggregate).
       applyReactions(frame.block_id, frame.reactions)
       break
@@ -855,15 +871,22 @@ function handleFrame(frame: WsServerFrame) {
     case 'retract_block':
       messages.value = messages.value.filter((m) => m.id !== frame.block_id)
       break
+    case 'agent_control':
+      agentControl.value = frame.state
+      break
     case 'turn_active':
       if (frame.turn_ids?.length) activeTurnIds.value = new Set(frame.turn_ids)
       awaitingReply.value = true
+      // 这个话题上有活在跑，就说明消息早到它手上了。回执是精确的那一路，这是
+      // 兜底的一路：重连进来、或者会话自己开的一轮，本来就不该说「正在送给」。
+      reachedAgent.value = true
       break
     case 'turn_started': {
       const next = new Set(activeTurnIds.value)
       next.add(frame.turn_id)
       activeTurnIds.value = next
       awaitingReply.value = true
+      reachedAgent.value = true
       break
     }
     case 'turn_finished': {
@@ -1093,8 +1116,11 @@ function send(content: string, summon: boolean, attachments?: ChatAttachment[]):
   replyTarget.value = null
   flushOutbox()
   // Only show the "awaiting reply" indicator when 芝士 was summoned — an
-  // instant local ack (正在看…) even before the backend's ✅ receipt lands.
-  if (summon) awaitingReply.value = true
+  // instant local ack, before anything has been delivered anywhere yet.
+  if (summon) {
+    awaitingReply.value = true
+    reachedAgent.value = false
+  }
   // The stored checklist stays on screen until this turn's first live frame
   // replaces it — blanking it here would hide 进度 during the cold start, which
   // is precisely when someone is wondering where the work got to.
@@ -1276,6 +1302,19 @@ const prState = computed(() => topicStateBadge(props.topic?.status))
 const draft = ref('')
 // 拖文件到输入栏 (spec §7.1)。只是把落区标出来，判断留给 usePendingAttachments。
 const dragOver = ref(false)
+// 只有真拖着文件才亮：拖一段选中的文字经过输入栏，落区亮起来是在承诺一件它不会
+// 做的事。
+function onDragOverFiles(e: DragEvent) {
+  if (!e.dataTransfer?.types.includes('Files')) return
+  dragOver.value = true
+}
+// dragleave 在指针移到**子元素**上时也会触发，所以一路拖过输入栏时落区会一路闪。
+// relatedTarget 是指针进入的那个元素：它还在盒子里，就不算离开。
+function onDragLeaveFiles(e: DragEvent) {
+  const entering = e.relatedTarget
+  if (entering instanceof Node && (e.currentTarget as HTMLElement).contains(entering)) return
+  dragOver.value = false
+}
 function onDropFiles(e: DragEvent) {
   dragOver.value = false
   onComposerDrop(e)
@@ -1548,7 +1587,7 @@ function sendDraft(opts?: { summon?: boolean }) {
   if (attsUploading.value) return
   if (!draft.value.trim() && !pendingAtts.value.length) return
   const content = expandMentions(opts?.summon ? withAgentMention(draft.value) : draft.value)
-  if (send(content, props.alwaysSummon || mentionsAgent(content), pendingAtts.value.slice())) {
+  if (send(content, props.alwaysSummon || mentionsAgent(content), uploaded(pendingAtts.value))) {
     draft.value = ''
     clearPendingAtts()
   }
@@ -1567,14 +1606,14 @@ function rememberComposer(topicId: string) {
     composerMemory.set(topicId, {
       draft: draft.value,
       reply: replyTarget.value,
-      atts: pendingAtts.value.slice(),
+      atts: uploaded(pendingAtts.value),
       outbox: outbox.value.slice(),
     })
     // 同一份内容落到磁盘上（发件箱除外，见 lib/composerDrafts.ts 的解释）。
     saveComposerDraft(topicId, {
       draft: draft.value,
       reply: replyTarget.value,
-      atts: pendingAtts.value.slice(),
+      atts: uploaded(pendingAtts.value),
     })
   }
 }
@@ -1608,7 +1647,7 @@ function flushComposer(topicId: string) {
   saveComposerDraft(topicId, {
     draft: draft.value,
     reply: replyTarget.value,
-    atts: pendingAtts.value.slice(),
+    atts: uploaded(pendingAtts.value),
   })
 }
 
@@ -2087,7 +2126,7 @@ onBeforeUnmount(() => {
                   </button>
                 </div>
                 <!-- Emoji reaction chips (Slack): count per emoji, own reactions
-                   highlighted; click toggles. 芝士's ✅ receipt lands here too. -->
+                   highlighted; click toggles. 芝士's 👀 receipt lands here too. -->
                 <div v-if="m.reactions?.length" class="rx-row">
                   <button
                     v-for="r in m.reactions"
@@ -2195,7 +2234,9 @@ onBeforeUnmount(() => {
 
               <!-- Instant ack before the first message / during cold start -->
               <div v-if="awaitingReply" class="im-text">
-                <span class="text-medium-emphasis">{{ agentName }}正在处理…</span>
+                <span class="text-medium-emphasis">{{
+                  reachedAgent ? `${agentName}正在处理…` : `正在送给${agentName}…`
+                }}</span>
                 <span class="caret" />
               </div>
             </div>
@@ -2227,15 +2268,15 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Built-in composer (private chat / standalone use). -->
-      <AgentControls v-if="topic" :topic-id="topic.id" :active="true" questions-only />
+      <AgentControls v-if="topic" :topic-id="topic.id" :active="true" :pushed="agentControl" questions-only />
       <template v-if="showComposer">
         <div
           class="composer pa-2 px-3"
           :class="{ 'composer--drop': dragOver }"
-          @dragenter.prevent="dragOver = true"
-          @dragover.prevent="dragOver = true"
-          @dragleave="dragOver = false"
-          @drop="onDropFiles"
+          @dragenter.prevent="onDragOverFiles"
+          @dragover.prevent="onDragOverFiles"
+          @dragleave="onDragLeaveFiles"
+          @drop.prevent="onDropFiles"
         >
           <!-- @-autocomplete: pick a teammate / topic / broadcast while typing @ -->
           <div v-if="mentionMatches.length" class="mention-menu">
@@ -2268,26 +2309,15 @@ onBeforeUnmount(() => {
                「待发的图片 + 输入框 + 动作」框成一块。盒子自己就是和时间线之间的
                分隔，所以上面那条 divider 没了。 -->
           <div class="composer-box">
-            <!-- 图片输入: images waiting to go with the next send. -->
-            <div v-if="pendingAtts.length || attsUploading" class="att-strip">
-              <div v-for="(a, i) in pendingAtts" :key="a.path" class="att-thumb">
-                <!-- 待发的图走 AttachmentImage：附件字节的端点从 Authorization 头认人，
-                     裸 <img src> 挂上去只会拿到 401 和一张裂图。 -->
-                <AttachmentImage v-if="a.mime.startsWith('image/')" thumb :topic-id="topic.id" :path="a.path" />
-                <v-chip
-                  v-else
-                  variant="tonal"
-                  class="pe-6"
-                  prepend-icon="mdi-file-document-outline"
-                  :title="a.path.split('/').pop()"
-                >
-                  <span class="text-truncate">{{ a.path.split('/').pop() }}</span>
-                </v-chip>
-                <button type="button" class="att-remove" title="移除" @click="removePendingAtt(i)">
-                  <v-icon size="12">mdi-close</v-icon>
-                </button>
-              </div>
-              <v-progress-circular v-if="attsUploading" indeterminate size="18" width="2" />
+            <!-- 待发条: the attachments waiting to go with the next send. -->
+            <div v-if="pendingAtts.length" class="att-strip">
+              <AttachmentTile
+                v-for="(a, i) in pendingAtts"
+                :key="a.path"
+                :topic-id="topic.id"
+                :attachment="a"
+                @remove="removePendingAtt(i)"
+              />
             </div>
             <!-- 输入框独占一整行。它旁边并排放按钮时，真正能打字的那块在手机上只剩
                半屏——而按钮的数量只会往上加。 -->
@@ -2554,11 +2584,6 @@ details.sys-row > summary::-webkit-details-marker {
   border-top: 1px solid var(--line);
   padding-top: 4px;
 }
-/* 拖文件进来时的落区，只描一圈，不改布局（改了会把输入框顶一下）。 */
-.composer--drop {
-  outline: 1px dashed var(--accent);
-  outline-offset: -3px;
-}
 /* 发件箱: 已显示、还没落库。淡一档，不换形状——它就是那条消息。 */
 .im-row--pending .im-text,
 .im-row--pending .im-name {
@@ -2690,11 +2715,25 @@ details.sys-row > summary::-webkit-details-marker {
   padding: 4px 6px 4px 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
-  transition: border-color 0.12s ease;
+  transition:
+    border-color 0.12s ease,
+    box-shadow 0.12s ease,
+    background-color 0.12s ease;
 }
 /* 聚焦时那条边只提一档：--muted 是正文级的灰，一压就把整个盒子变成了主角。 */
 .composer-box:focus-within {
   border-color: var(--faint);
+}
+/* 拖着文件进来时，变的是输入框自己那圈边：提成琥珀的实线，再垫一层琥珀淡色。
+   虚线读起来像占位、像还没定，而这一刻要说的是「就是这儿」；描在这个盒子上而不是
+   外面那层，是因为盒子本来就是那个控件，它的圆角也已经在那儿了。
+   第二像素靠 box-shadow 加，不靠 border-width——后者会改盒子尺寸，把输入框顶一下。
+   这条排在 :focus-within 后面：拖进来的时候光标通常就在输入框里，两条同权，后面
+   的赢。 */
+.composer--drop .composer-box {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  background: var(--accent-wash);
 }
 .composer-input :deep(textarea) {
   font-size: 14px;
@@ -3053,52 +3092,20 @@ details.sys-row > summary::-webkit-details-marker {
 .im-text--verbatim {
   white-space: pre-wrap;
 }
-/* 图片输入那两张图自己的样式跟着 AttachmentImage 走了（它要负责取字节，样式
-   留在这里也够不着它内部的 <img>——scoped 只到子组件的根元素）。 */
-.im-file-link,
-.att-thumb,
-.att-thumb .v-chip {
+.im-file-link {
   max-width: 100%;
 }
 .im-file-link :deep(.v-btn__content) {
   min-width: 0;
 }
-/* Pending attachments, each with a remove button. */
+/* 待发条。一格长什么样归 AttachmentTile，这里只排它们；行距留 10px，因为每格
+   右上角那个移除按钮探出了边界 6px。 */
 .att-strip {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   flex-wrap: wrap;
-  padding: 6px 2px;
-}
-.att-thumb {
-  position: relative;
-  line-height: 0;
-}
-.att-thumb .v-chip {
-  line-height: normal;
-}
-/* 缩略图那个 56×56 的盒子跟着 AttachmentImage 走了——它要负责取字节，而且加载中、
-   加载成功、加载失败必须是同一个尺寸的盒子。这里也够不着它内部的 <img>：scoped
-   样式只到子组件的根元素。 */
-.att-remove {
-  display: inline-flex;
-  position: absolute;
-  top: -6px;
-  right: -6px;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  border: 1px solid var(--line);
-  background: var(--surface);
-  color: var(--muted);
-  line-height: 1;
-  cursor: pointer;
-}
-.att-remove:hover {
-  color: var(--ink);
+  padding: 10px 2px 6px;
 }
 /* Live link from an upgraded block to its new topic. */
 /* B3: the "回复 X：…" cue above a reply, and the composer reply-to bar. */
