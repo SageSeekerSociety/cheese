@@ -12,6 +12,7 @@ import zipfile
 import pytest
 
 from app.domain.workspace import service as ws
+from tests.delivery import delivery_task
 
 pytest.importorskip("lxml", reason="修订解析要用 lxml")
 
@@ -75,8 +76,9 @@ def contract(client) -> tuple[uuid.UUID, uuid.UUID]:
     return pid, tid
 
 
-def _listing(client, tid: uuid.UUID) -> dict:
-    response = client.get(f"/topics/{tid}/documents/revisions", params={"path": PATH})
+def _listing(client, tid: uuid.UUID, task: str | None = None) -> dict:
+    params = {"path": PATH, **({"task": task} if task else {})}
+    response = client.get(f"/topics/{tid}/documents/revisions", params=params)
     assert response.status_code == 200, response.text
     return response.json()["data"]
 
@@ -124,3 +126,43 @@ def test_a_decision_with_no_version_is_refused(client, contract):
     _pid, tid = contract
 
     assert _decide(client, tid, accept=[1]).status_code == 422
+
+
+def test_a_document_on_a_card_branch_is_read_and_written_there(client, contract):
+    """改动那一格看的是任务工作树上的那一份，不是房间交付的那一份。
+
+    同一个路径在两个库里可以是两份不同的文件，所以「处理哪一份的修订」必须由调用方
+    说出来——不说的那个版本，是把审阅时的一下点击写进另一个文件里。
+    """
+    pid, tid = contract
+    task = delivery_task(client, tid)
+    target = ws.topic_worktree(pid, task.id) / PATH
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(_docx(LATER))
+
+    read = _listing(client, tid, str(task.id))
+    assert [row["number"] for row in read["revisions"]] == [1]
+
+    answer = _decide(
+        client, tid, version=read["version"], accept=[1], task=str(task.id)
+    )
+    assert answer.status_code == 200, answer.text
+
+    # 分支上那一份处理过了……
+    assert "<w:ins" not in _document_xml(target.read_bytes())
+    # ……而房间交付的那一份一个字没动。
+    assert "<w:ins" in _document_xml(ws.read_room_file(pid, tid, PATH))
+
+
+def test_another_room_s_card_is_not_a_source(client, contract):
+    _pid, tid = contract
+    other = client.post("/projects", json={"name": "P2", "owner_handle": "alice"})
+    other_pid = other.json()["data"]["id"]
+    room = client.post("/topics", json={"project_id": other_pid, "title": "别人的房间"})
+    stranger = delivery_task(client, room.json()["data"]["id"])
+
+    answer = client.get(
+        f"/topics/{tid}/documents/revisions",
+        params={"path": PATH, "task": str(stranger.id)},
+    )
+    assert answer.status_code == 404

@@ -139,7 +139,9 @@ it('接受一条只提交那一条', async () => {
   await waitFor(() => expect(screen.getByText('删了「（暂定）」')).toBeTruthy())
   await fireEvent.click(screen.getAllByText('接受')[0])
 
-  await waitFor(() => expect(decideDocumentRevisions).toHaveBeenCalledWith('topic-a', PATH, 'doc-1', { accept: [1] }))
+  await waitFor(() =>
+    expect(decideDocumentRevisions).toHaveBeenCalledWith('topic-a', PATH, 'doc-1', { accept: [1] }, null)
+  )
 })
 
 it('处理完之后重新取一次 PDF，页面上看到的才是处理过的那一版', async () => {
@@ -167,9 +169,7 @@ it('全部接受把每一条的序号都带上', async () => {
   await fireEvent.click(screen.getByText('全部接受'))
 
   await waitFor(() =>
-    expect(decideDocumentRevisions).toHaveBeenCalledWith('topic-a', PATH, 'doc-1', {
-      accept: [1, 2, 3],
-    })
+    expect(decideDocumentRevisions).toHaveBeenCalledWith('topic-a', PATH, 'doc-1', { accept: [1, 2, 3] }, null)
   )
 })
 
@@ -220,9 +220,7 @@ it('每次处理带的都是刚读到的那一版文件', async () => {
   await fireEvent.click(screen.getAllByText('接受')[0])
 
   await waitFor(() =>
-    expect(decideDocumentRevisions).toHaveBeenLastCalledWith('topic-a', PATH, 'doc-3', {
-      accept: [1],
-    })
+    expect(decideDocumentRevisions).toHaveBeenLastCalledWith('topic-a', PATH, 'doc-3', { accept: [1] }, null)
   )
 })
 

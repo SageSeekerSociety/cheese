@@ -31,6 +31,29 @@ export const DOCUMENT_TYPES: Record<string, FileKind> = {
  *  它之所以是表的东西。 */
 export const NEEDS_CONVERSION = new Set(['docx', 'doc', 'odt', 'rtf', 'pptx', 'ppt', 'odp'])
 
+/** 浏览器自己画得出来的图片。它们不是文档，所以不在上面那张表里，但预览域按
+ *  image/png、image/jpeg 把字节发出来，浏览器画得出来。 */
+export const IMAGE_SUFFIXES = new Set(['png', 'jpg', 'jpeg'])
+
+/** 预览面板自己显示得出这个文件吗。
+ *
+ *  一枚 `<&路径>` chip 只是一个路径，不带它在哪个库；要决定把它开在哪一格，先得
+ *  知道预览显示不显示得了它。 */
+export function previewCanShow(path: string): boolean {
+  const suffix = suffixOf(path)
+  return !!DOCUMENT_TYPES[suffix] || IMAGE_SUFFIXES.has(suffix)
+}
+
+/** 文本 diff 读不了的文档。
+ *
+ *  它的字节是压缩包或者二进制，git 只会说「二进制文件不同」，所以改动那一格对它得
+ *  换一副面孔：画出这一版的页面，外加文件自己带的修订。`.md` 和 `.csv` 不在里面——
+ *  它们的文本 diff 正是审阅最需要的那一面，换成渲染反而更差。 */
+export function needsDocumentView(path: string): boolean {
+  const suffix = suffixOf(path)
+  return NEEDS_CONVERSION.has(suffix) || suffix === 'pdf' || suffix === 'xlsx' || suffix === 'xls'
+}
+
 /** 这个文件有没有「第一页」可以画出来。PDF 直接就有，Office 文档转一次就有。 */
 export function hasPagePreview(path: string): boolean {
   const suffix = suffixOf(path)

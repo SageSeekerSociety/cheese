@@ -1093,8 +1093,11 @@ export async function uploadAttachment(topicId: string, file: File): Promise<Cha
 // 注意这不是一个可以挂在 <img src> 上的地址：raw 端点从 Authorization 头认人，
 // 而浏览器发图片请求时带不了头（也读不到 localStorage）。挂上去的结果是 401，
 // 读者看到的是一张裂图。要显示图片用下面的 attachmentImageUrl。
-export function attachmentRawUrl(topicId: string, path: string): string {
-  return `${BASE}/topics/${encodeURIComponent(topicId)}/attachments/raw?path=${encodeURIComponent(path)}`
+/** `task` 说的是从哪个库读：某个任务工作树上的那一份，还是房间自己的文件（不传）。
+ *  同一个路径在两个库里可以是两份不同的文件，所以看谁的文件必须说出来。 */
+export function attachmentRawUrl(topicId: string, path: string, task?: string | null): string {
+  const from = task ? `&task=${encodeURIComponent(task)}` : ''
+  return `${BASE}/topics/${encodeURIComponent(topicId)}/attachments/raw?path=${encodeURIComponent(path)}${from}`
 }
 
 /** 图片附件的字节，取回来做成 <img> 能用的 object URL。
@@ -1110,10 +1113,10 @@ export async function attachmentImageUrl(topicId: string, path: string): Promise
 }
 
 /** A published file's bytes, for a viewer that draws them in the page. */
-export async function previewFileBytes(topicId: string, path: string): Promise<ArrayBuffer> {
+export async function previewFileBytes(topicId: string, path: string, task?: string | null): Promise<ArrayBuffer> {
   // `download=true` is what makes the raw endpoint serve a non-image at all; it
   // only changes the Content-Disposition, which nothing here reads.
-  const res = await fetch(`${attachmentRawUrl(topicId, path)}&download=true`, {
+  const res = await fetch(`${attachmentRawUrl(topicId, path, task)}&download=true`, {
     headers: authHeaders(),
   })
   if (!res.ok) throw new Error(`读取文件失败（HTTP ${res.status}）`)
@@ -1127,9 +1130,10 @@ export async function previewFileBytes(topicId: string, path: string): Promise<A
  *  逐条接受或拒绝。 */
 export function documentRevisions(
   topicId: string,
-  path: string
+  path: string,
+  task?: string | null
 ): Promise<{ path: string; version: string; revisions: DocumentRevision[] }> {
-  const query = `?path=${encodeURIComponent(path)}`
+  const query = `?path=${encodeURIComponent(path)}` + (task ? `&task=${encodeURIComponent(task)}` : '')
   return request<{ path: string; version: string; revisions: DocumentRevision[] }>(
     `/topics/${encodeURIComponent(topicId)}/documents/revisions${query}`
   )
@@ -1146,11 +1150,12 @@ export function decideDocumentRevisions(
   topicId: string,
   path: string,
   version: string,
-  decision: { accept?: number[]; reject?: number[] }
+  decision: { accept?: number[]; reject?: number[] },
+  task?: string | null
 ): Promise<{ path: string; version: string; revisions: DocumentRevision[] }> {
   return request<{ path: string; version: string; revisions: DocumentRevision[] }>(
     `/topics/${encodeURIComponent(topicId)}/documents/revisions`,
-    { method: 'POST', body: JSON.stringify({ path, version, ...decision }) }
+    { method: 'POST', body: JSON.stringify({ path, version, task: task ?? undefined, ...decision }) }
   )
 }
 
@@ -1160,8 +1165,11 @@ export function decideDocumentRevisions(
 export class PreviewRendererUnavailable extends Error {}
 
 /** A Word or PowerPoint file converted to PDF, so a browser can draw it. */
-export async function previewDocumentPdf(topicId: string, path: string): Promise<ArrayBuffer> {
-  const url = `${BASE}/topics/${encodeURIComponent(topicId)}/attachments/pdf` + `?path=${encodeURIComponent(path)}`
+export async function previewDocumentPdf(topicId: string, path: string, task?: string | null): Promise<ArrayBuffer> {
+  const url =
+    `${BASE}/topics/${encodeURIComponent(topicId)}/attachments/pdf` +
+    `?path=${encodeURIComponent(path)}` +
+    (task ? `&task=${encodeURIComponent(task)}` : '')
   const res = await fetch(url, { headers: authHeaders() })
   if (res.ok) return res.arrayBuffer()
   let message = ''
@@ -1446,8 +1454,13 @@ export function getPreview(topicId: string): Promise<PreviewInfo | null> {
   return request<PreviewInfo | null>(`/topics/${encodeURIComponent(topicId)}/preview`)
 }
 
-export function readPreviewFile(topicId: string): Promise<FileContent> {
-  return request<FileContent>(`/topics/${encodeURIComponent(topicId)}/preview/file`)
+/** 预览正在显示的那份文件，或者房间里指名的某一份。
+ *
+ *  消息里的 `<&路径>` 只是一个路径，不带它在哪个库。房间自己的文件不在任何分支上，
+ *  所以按路径读这里，是从那枚 chip 走到那份文件的唯一一条路。 */
+export function readPreviewFile(topicId: string, path?: string): Promise<FileContent> {
+  const query = path ? `?path=${encodeURIComponent(path)}` : ''
+  return request<FileContent>(`/topics/${encodeURIComponent(topicId)}/preview/file${query}`)
 }
 
 // 资源: aggregated token/cost usage for a topic and for the whole project.
