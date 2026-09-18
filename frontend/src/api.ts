@@ -3,6 +3,8 @@
 import type {
   AcceptCard,
   AgentConfiguration,
+  AgentControlRequest,
+  AgentControlState,
   AgentType,
   ApiEnvelope,
   Block,
@@ -1287,33 +1289,13 @@ export function requestPreviewSession(topicId: string): Promise<PreviewSession> 
   return request<PreviewSession>(`/topics/${encodeURIComponent(topicId)}/preview-session`, { method: 'POST' })
 }
 
-export interface AgentControlRequest {
-  request_id: string
-  request: {
-    subtype: string
-    tool_name?: string
-    input?: Record<string, unknown>
-  }
-}
-
-export interface AgentControlState {
-  id: string | null
-  connected: boolean
-  title?: string
-  controls?: string[]
-  pending?: Record<string, AgentControlRequest>
-  tasks?: Record<
-    string,
-    { task_id: string; description?: string; status?: string; subtype?: string; tool_use_id?: string }
-  >
-  state?: Record<string, Record<string, unknown>>
-}
-
 export interface AgentControlResult {
   request_id: string
   status: string
   result: { response: { subtype: string; error?: string; response?: Record<string, unknown> } } | null
 }
+
+export type { AgentControlRequest, AgentControlState }
 
 export function getAgentControl(topicId: string) {
   return request<AgentControlState>(`/topics/${encodeURIComponent(topicId)}/agent/control`)

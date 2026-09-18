@@ -25,6 +25,7 @@ from app.domain.agent import private_chat
 from app.domain.agent.device_hub import DeviceOffline
 from app.domain.agent.harness.claude_code import REMOTE_CONTROLS
 from app.domain.agent.remote_control import CONTROLS, store
+from app.domain.agent.runtime import get_broker
 from app.domain.topic.services import TopicService
 
 router = APIRouter(tags=["remote-control"])
@@ -37,6 +38,28 @@ router = APIRouter(tags=["remote-control"])
 # failure into a 「后端报错」 line in the room. A normal read of this list takes
 # about a tenth of a second.
 TASK_LIST_BUDGET_S = 5
+# How long a room that hears nothing waits before reading this state anyway. The
+# page used to ask every two seconds whether or not anything had happened, which
+# was a third of the platform's HTTP requests, nearly all of them answered "still
+# nothing". It now hears about a change when the change happens; this is only the
+# floor under a frame that was never delivered.
+IDLE_CONTROL_REFRESH_S = 30
+
+
+async def announce(session: dict) -> None:
+    """Tell the room its session state moved.
+
+    The platform's own half only: the machine's background-task list is not in
+    here, because nothing tells this process when that changes. The panel that
+    shows that list keeps reading it; the one in every open room shows the
+    agent's questions, which are all in this frame.
+    """
+    state = await store().snapshot(session)
+    await get_broker().publish(
+        session["topic_id"], {"type": "agent_control", "state": state}
+    )
+
+
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
@@ -90,13 +113,16 @@ async def rc_create(request: Request, db: DbSession) -> dict:
     data = await body(request)
     # Placement is platform-owned; ignore an execution target supplied by a worker.
     data["execution"] = place.room.session_placement
-    return {"session": await store().create(claims, data)}
+    session = await store().create(claims, data)
+    await announce(session)
+    return {"session": session}
 
 
 @router.post("/v1/code/sessions/{sid}/bridge", include_in_schema=False)
 async def rc_bridge(sid: str, request: Request) -> dict:
     rc = store()
-    result = await rc.bridge(await bootstrap_session(sid, request))
+    session = await bootstrap_session(sid, request)
+    result = await rc.bridge(session)
     await rc.enqueue(
         sid,
         {
@@ -109,6 +135,7 @@ async def rc_bridge(sid: str, request: Request) -> dict:
         },
         "cheese",
     )
+    await announce(await rc.get(sid))
     return result
 
 
@@ -134,6 +161,7 @@ async def rc_lifecycle(
     await store().update(
         sid, {"status": "archived" if action == "archive" else "active"}
     )
+    await announce(await store().get(sid))
     return {}
 
 
@@ -200,6 +228,7 @@ async def rc_worker_events(sid: str, request: Request) -> dict:
         await store().receive(sid, events, epoch=data["worker_epoch"])
     except (ValueError, KeyError) as exc:
         raise ValidationError("Invalid RC worker event") from exc
+    await announce(session)
     return {}
 
 
@@ -224,7 +253,13 @@ async def rc_delivery(sid: str, request: Request) -> dict:
 @router.post("/v1/code/sessions/{sid}/worker/heartbeat", include_in_schema=False)
 async def rc_heartbeat(sid: str, request: Request) -> dict:
     session, _ = await worker_session(sid, request)
+    # `connected` is this heartbeat's recency, so a worker that has been quiet
+    # long enough to read as gone comes back on this call and nowhere else.
+    # Announcing every heartbeat would be a frame a minute saying nothing moved.
+    revived = time.time() - session["last_seen"] >= 90
     await store().update(sid, {"last_seen": time.time()}, epoch=session["epoch"])
+    if revived:
+        await announce(await store().get(sid))
     return {}
 
 
