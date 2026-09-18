@@ -84,6 +84,29 @@ def test_another_room_attaches_a_file_it_never_saw(client):
     assert [f["path"] for f in _library(client, project_id)] == ["合同.docx"]
 
 
+def test_a_pasted_screenshot_stays_in_the_room(client):
+    """资料库按名字寻址，而剪贴板里那张图没有名字——`image.png` 是浏览器编的。"""
+    project_id = _project(client)
+    topic_id = _topic(client, project_id, "房间一")
+
+    r = client.post(
+        f"/topics/{topic_id}/attachments",
+        files={"file": ("image.png", b"\x89PNG\r\n\x1a\n", "image/png")},
+        data={"origin": "clipboard"},
+    )
+    assert r.status_code == 200, r.text
+    att = r.json()["data"]
+    assert att["library_path"] is None
+    assert _library(client, project_id) == []
+
+    # 这条消息照样带得走它。
+    raw = client.get(
+        f"/topics/{topic_id}/attachments/raw", params={"path": att["path"]}
+    )
+    assert raw.status_code == 200
+    assert raw.content == b"\x89PNG\r\n\x1a\n"
+
+
 def test_a_file_the_library_does_not_have(client):
     project_id = _project(client)
     topic_id = _topic(client, project_id, "房间一")

@@ -2533,9 +2533,13 @@ async def preview_file(
 
 
 # ---- Chat attachments -----------------------------------------------------
-# 用户给进来的文件落进项目的资料库 (`ws.write_library_file`)，按原名寻址，所有房间
-# 都能引用。附在一条消息上的是这个房间收到的那一份——拷进房间的文件区 uploads/ 下，
-# 芝士 在自己的工作目录里 Read 它。资料库那一份只读，不会被改。
+# 用户挑出来或拖进来的文件落进项目的资料库 (`ws.write_library_file`)，按原名寻址，
+# 所有房间都能引用。附在一条消息上的是这个房间收到的那一份——拷进房间的文件区
+# uploads/ 下，芝士 在自己的工作目录里 Read 它。资料库那一份只读，不会被改。
+#
+# 剪贴板里贴进来的那张图**不进资料库**：资料库的前提是「名字就是身份」，而剪贴板里
+# 的截图没有名字，`image.png` 是浏览器替它编的。它只属于这条消息，所以照旧落在房间
+# 文件区一个独占的目录下。
 
 # Only these image types may render inline; other files require download.
 _IMAGE_MIME_EXT = {
@@ -2561,13 +2565,17 @@ async def upload_attachment(
     resolver: ActorResolverDep,
     file: UploadFile | None = File(None),
     library_path: str | None = Form(None),
+    origin: str | None = Form(None),
 ) -> dict:
     """Attach a file to a message being written in this room.
 
-    Either a new upload (`file`), which enters the project's 资料库 under its
-    own name, or one already there (`library_path`). Both end the same way: a
-    copy in this room's files, and the {path, mime} the client references when
-    it sends the message."""
+    Either a new upload (`file`) or one the 资料库 already holds
+    (`library_path`). Both end the same way: a copy in this room's files, and
+    the {path, mime} the client references when it sends the message.
+
+    `origin="clipboard"` says the bytes came off the clipboard — they stay in
+    this room, because a pasted screenshot has no name of its own to be filed
+    under."""
     topic = await TopicService(db).get_or_404(topic_id)
     await resolver.require_verified_caller(
         project_id=topic.project_id, topic_id=topic_id
@@ -2606,6 +2614,17 @@ async def upload_attachment(
         name = name.encode("utf-8")[:180].decode("utf-8", errors="ignore")
         if ext and not name.lower().endswith(ext):
             name += ext
+        if origin == "clipboard":
+            path = f"uploads/{uuid.uuid4().hex}/{name}"
+            ws.write_room_file(topic.project_id, topic_id, path, data)
+            return ok(
+                {
+                    "path": path,
+                    "mime": mime,
+                    "bytes": len(data),
+                    "library_path": None,
+                }
+            )
         # 名字就是身份，所以撞名不覆盖：拿下一个 `(n)`。
         name = ws.write_library_file(topic.project_id, name, data)
     path = f"uploads/{name}"

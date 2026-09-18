@@ -40,7 +40,7 @@ export function usePendingAttachments(
   const pending = ref<PendingAttachment[]>([])
   const uploading = ref(false)
 
-  async function addFiles(files: Iterable<File>) {
+  async function addFiles(files: Iterable<File>, origin: 'file' | 'clipboard' = 'file') {
     const topicId = getTopicId()
     if (!topicId) return
     const all = [...files]
@@ -71,7 +71,7 @@ export function usePendingAttachments(
         }
         let attachment
         try {
-          attachment = await uploadAttachment(topicId, f)
+          attachment = await uploadAttachment(topicId, f, origin)
         } catch (e) {
           // A slot left behind would spin for ever.
           drop()
@@ -131,7 +131,8 @@ export function usePendingAttachments(
   }
 
   // Composer paste handler: pasted image data (e.g. a screenshot) uploads
-  // instead of landing as garbled text; plain-text pastes pass through.
+  // instead of landing as garbled text; plain-text pastes pass through. 贴进来
+  // 的那一份不进资料库——见 uploadAttachment。
   function onPaste(e: ClipboardEvent) {
     const items = e.clipboardData?.items
     if (!items) return
@@ -144,7 +145,7 @@ export function usePendingAttachments(
     }
     if (files.length) {
       e.preventDefault()
-      void addFiles(files)
+      void addFiles(files, 'clipboard')
     }
   }
 

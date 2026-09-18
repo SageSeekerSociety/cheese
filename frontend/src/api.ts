@@ -1104,9 +1104,17 @@ export async function attachLibraryFile(topicId: string, libraryPath: string): P
 
 // Upload a file into the project's 资料库, with a copy in this room. NOTE: raw
 // fetch, not request() — multipart needs the browser to set the boundary itself.
-export async function uploadAttachment(topicId: string, file: File): Promise<ChatAttachment> {
+//
+// `origin: 'clipboard'` 的那一份只留在这个房间：贴进来的截图没有名字（`image.png`
+// 是浏览器编的），而资料库是按名字寻址的。
+export async function uploadAttachment(
+  topicId: string,
+  file: File,
+  origin: 'file' | 'clipboard' = 'file'
+): Promise<ChatAttachment> {
   const form = new FormData()
   form.append('file', file)
+  form.append('origin', origin)
   const res = await fetch(`${BASE}/topics/${encodeURIComponent(topicId)}/attachments`, {
     method: 'POST',
     body: form,
