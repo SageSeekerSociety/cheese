@@ -15,6 +15,8 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ChatPanel from './ChatPanel.vue'
 
+import { setLocale } from '@/i18n'
+
 const Panel = ChatPanel as unknown as Component
 const SEAT = 'cheese-t1'
 
@@ -121,6 +123,9 @@ function mount(topicId = 't1') {
   })
 }
 
+// 默认语言是 en（happy-dom 的 navigator.language 是 en-US），而这份用例断言的是
+// 中文界面的字。先把语言钉住，别让它跟着环境飘。
+beforeEach(() => setLocale('zh-CN'))
 describe('没叫芝士的那条消息', () => {
   it('房间里最后一句没 @ 它，就说出来，并给出一次点击', async () => {
     history = [humanMsg('h1', '这个分页方案你看下')]

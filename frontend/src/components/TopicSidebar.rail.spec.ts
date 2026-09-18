@@ -15,9 +15,11 @@ import { VLayout } from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { fireEvent, render } from '@testing-library/vue'
 import { createPinia } from 'pinia'
-import { beforeAll, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import TopicSidebar from './TopicSidebar.vue'
+
+import { setLocale } from '@/i18n'
 
 const Sidebar = TopicSidebar as unknown as Component
 
@@ -132,6 +134,9 @@ beforeAll(() => {
   }
 })
 
+// 默认语言是 en（happy-dom 的 navigator.language 是 en-US）。这份用例断言的是
+// 中文界面，所以先把语言钉住，别让它跟着环境飘。
+beforeEach(() => setLocale('zh-CN'))
 describe('C1 置顶导航组', () => {
   it('全局 / 总览 / 看板 / 日历 / AI 队友 / 成员 是与话题行同语法的列表行，不再是 pills', () => {
     const { container } = mount()

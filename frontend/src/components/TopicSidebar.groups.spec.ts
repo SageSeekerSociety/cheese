@@ -17,6 +17,8 @@ import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import TopicSidebar from './TopicSidebar.vue'
 
+import { setLocale } from '@/i18n'
+
 const Sidebar = TopicSidebar as unknown as Component
 
 function topic(id: string, parentId: string | null, flags: Partial<Topic> = {}): Topic {
@@ -129,6 +131,9 @@ beforeAll(() => {
   }
 })
 
+// 默认语言是 en（happy-dom 的 navigator.language 是 en-US）。这份用例断言的是
+// 中文界面，所以先把语言钉住，别让它跟着环境飘。
+beforeEach(() => setLocale('zh-CN'))
 describe('左侧话题列表：按相关性分两组', () => {
   beforeEach(() => localStorage.clear())
 

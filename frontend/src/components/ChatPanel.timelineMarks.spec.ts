@@ -14,6 +14,8 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ChatPanel from './ChatPanel.vue'
 
+import { setLocale } from '@/i18n'
+
 const Panel = ChatPanel as unknown as Component
 
 function topicOf(id: string): Topic {
@@ -89,6 +91,9 @@ beforeEach(() => {
 
 const settle = () => new Promise((r) => setTimeout(r, 0))
 
+// 默认语言是 en（happy-dom 的 navigator.language 是 en-US），而这份用例断言的是
+// 中文界面的字。先把语言钉住，别让它跟着环境飘。
+beforeEach(() => setLocale('zh-CN'))
 describe('日期分隔线', () => {
   it('跨天的地方标一次，同一天的连续消息不重复标', async () => {
     history = [msg('a', 'other', daysAgo(2)), msg('b', 'other', daysAgo(2, 14)), msg('c', 'other', daysAgo(0))]

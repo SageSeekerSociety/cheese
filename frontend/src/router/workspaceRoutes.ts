@@ -80,14 +80,14 @@ export const workspaceRoutes: RouteRecordRaw = {
       props: true,
       // ← 回成员页，不回话题列表：私聊只有一个入口，就是名册。手机顶栏那颗 ←
       // 读的是这里，桌面上私聊头里那颗读的是 DmView，两颗指同一个地方。
-      meta: { title: '私聊', hideTabs: true, backTo: 'project-members' },
+      meta: { titleKey: 'workspace.routes.dm', hideTabs: true, backTo: 'project-members' },
     },
     {
       name: 'project-docs',
       path: 'docs/:kind',
       component: () => import('@/views/ProjectDocsView.vue'),
       props: true,
-      meta: { title: '项目文档', hideTabs: true, backTo: 'workspace-project' },
+      meta: { titleKey: 'workspace.routes.docs', hideTabs: true, backTo: 'workspace-project' },
     },
     {
       name: 'overview',
@@ -101,28 +101,28 @@ export const workspaceRoutes: RouteRecordRaw = {
       path: 'calendar',
       component: () => import('@/views/CalendarView.vue'),
       props: true,
-      meta: { title: '日历', hideTabs: true, backTo: 'workspace-project' },
+      meta: { titleKey: 'workspace.routes.calendar', hideTabs: true, backTo: 'workspace-project' },
     },
     {
       name: 'project-agents',
       path: 'agents',
       component: () => import('@/views/ProjectAgentsView.vue'),
       props: true,
-      meta: { title: 'AI 队友', backTo: 'workspace-project' },
+      meta: { titleKey: 'workspace.routes.agents', backTo: 'workspace-project' },
     },
     {
       name: 'project-settings',
       path: 'settings',
       component: () => import('@/views/ProjectSettingsView.vue'),
       props: true,
-      meta: { title: '项目设置', hideTabs: true, backTo: 'workspace-project' },
+      meta: { titleKey: 'projects.settings.title', hideTabs: true, backTo: 'workspace-project' },
     },
     {
       name: 'project-delivery',
       path: 'delivery',
       component: () => import('@/views/ProjectDeliveryView.vue'),
       props: true,
-      meta: { title: '导出与发布', hideTabs: true, backTo: 'workspace-project' },
+      meta: { titleKey: 'workspace.routes.delivery', hideTabs: true, backTo: 'workspace-project' },
     },
     {
       // 名册页和单人主页共用 `members` 这一段路径，父子关系就是它们的关系：
@@ -131,14 +131,14 @@ export const workspaceRoutes: RouteRecordRaw = {
       path: 'members',
       component: () => import('@/views/workspace/ProjectMembersView.vue'),
       props: true,
-      meta: { title: '成员', hideTabs: true, backTo: 'workspace-project' },
+      meta: { titleKey: 'workspace.routes.members', hideTabs: true, backTo: 'workspace-project' },
     },
     {
       name: 'member',
       path: 'members/:handle',
       component: () => import('@/views/MemberView.vue'),
       props: true,
-      meta: { title: '成员', hideTabs: true, backTo: 'workspace-project' },
+      meta: { titleKey: 'workspace.routes.members', hideTabs: true, backTo: 'workspace-project' },
     },
     ...DOC_KINDS.map(
       (kind): RouteRecordRaw => ({

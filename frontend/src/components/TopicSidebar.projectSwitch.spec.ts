@@ -14,9 +14,11 @@ import { VLayout } from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { fireEvent, render } from '@testing-library/vue'
 import { createPinia } from 'pinia'
-import { beforeAll, describe, expect, it } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import TopicSidebar from './TopicSidebar.vue'
+
+import { setLocale } from '@/i18n'
 
 const Sidebar = TopicSidebar as unknown as Component
 
@@ -132,6 +134,9 @@ beforeAll(() => {
   }
 })
 
+// 默认语言是 en（happy-dom 的 navigator.language 是 en-US）。这份用例断言的是
+// 中文界面，所以先把语言钉住，别让它跟着环境飘。
+beforeEach(() => setLocale('zh-CN'))
 describe('手机上的切换项目', () => {
   it('整页形态的项目头菜单里列出我的每一个项目', async () => {
     const { container, baseElement } = mount({ page: true })

@@ -20,6 +20,8 @@ vi.mock('@/api', async () => {
 
 import ChatPanel from './ChatPanel.vue'
 
+import { setLocale } from '@/i18n'
+
 const topic: Topic = {
   id: 'session-activity-topic',
   project_id: 'p1',
@@ -75,6 +77,9 @@ beforeEach(() => {
   vi.stubGlobal('WebSocket', FakeWebSocket)
 })
 
+// 默认语言是 en（happy-dom 的 navigator.language 是 en-US），而这份用例断言的是
+// 中文界面的字。先把语言钉住，别让它跟着环境飘。
+beforeEach(() => setLocale('zh-CN'))
 describe('session activity', () => {
   it('keeps the working indicator until every active work id finishes', async () => {
     const vuetify = createVuetify({ components, directives })

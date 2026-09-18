@@ -79,6 +79,7 @@ import {
   summonAgent,
   toggleReaction as apiToggleReaction,
 } from '../api'
+import { default as i18n, t } from '../i18n'
 import { uploaded, usePendingAttachments } from '../lib/attachments'
 import { cachedWindow, setCachedWindow } from '../lib/blockCache'
 import { mergeRefreshedTail, PAGE_SIZE, prependOlder, scrollTopAfterPrepend, shouldLoadOlder } from '../lib/blockPaging'
@@ -242,7 +243,7 @@ async function loadRoster() {
   } catch {
     // 名单拉不到就说出来：@ 补全会缺人（包括芝士）。静默的话，表现是「@ 不出
     // 芝士」，而屏幕上没有任何东西说明为什么。
-    errorMsg.value = '成员名单加载失败，@ 补全可能不全'
+    errorMsg.value = t('workspace.chat.memberListFailed')
   }
 }
 
@@ -273,15 +274,17 @@ const roomAgentSeat = computed(() => (rosterLoaded.value ? seatOf(roomMembers.va
 const agentName = computed(() => {
   const seat = roomAgentSeat.value
   if (seat) return seat.label
-  if (!rosterLoaded.value) return '芝士'
-  return seatOf(props.members.find((m) => m.agent))?.label || '芝士'
+  if (!rosterLoaded.value) return t('workspace.chat.defaultAgentName')
+  return seatOf(props.members.find((m) => m.agent))?.label || t('workspace.chat.defaultAgentName')
 })
 
 // 输入框那一行提示语。和芝士私聊时它**不能**说「交给它做」：私聊不占机器，那边
 // 的芝士没有工具，读不了文件也跑不了命令。一句承诺它做不到的事的提示语，换来的
 // 是一次「我试了但做不了」，而人只会记得是它没做成。
 const composerHint = computed(() =>
-  props.alwaysSummon ? `和${agentName.value}聊聊，或交给它一件事…` : `输入消息，@${agentName.value} 交给它做`
+  props.alwaysSummon
+    ? t('workspace.chat.composerPlaceholderSummon', { agent: agentName.value })
+    : t('workspace.chat.composerPlaceholderPlain', { agent: agentName.value })
 )
 
 /** @ 得到的人：这个房间里的，加上项目里还没进这个房间的。 */
@@ -307,14 +310,14 @@ const mentionPool = computed(() => {
 // Keep the module-level handle→name map in sync with the roster, so
 // <@handle> tokens render with the member's display name.
 watch(
-  mentionPool,
-  (pool) => {
+  [mentionPool, () => i18n.global.locale.value],
+  ([pool]) => {
     for (const k of Object.keys(mentionNames)) delete mentionNames[k]
     for (const row of pool) mentionNames[row.handle] = row.label
     // 群播 tokens (fusion-design §3): <@all>/<@here> render as friendly chips,
     // not the raw literal — they are reserved handles, not roster members.
-    mentionNames.all = '所有人'
-    mentionNames.here = '在线成员'
+    mentionNames.all = t('workspace.chat.mentionAll')
+    mentionNames.here = t('workspace.chat.mentionHere')
   },
   { immediate: true, deep: true }
 )
@@ -356,13 +359,13 @@ const todoRestored = ref(false)
 // 只有按钮文案在这里。动作行那句话由后端写进块内容（`_ACTION_LABEL` /
 // `编辑了文档`），这里曾经并排放着一份 `verb` 副本，谁都没读过它，改了也不会
 // 生效——两份会漂移的文案里，看不见的那份最危险。
-const ACTION_META: Record<string, { btn: string }> = {
-  doc: { btn: '查看文档' },
-  decision: { btn: '查看决策记录' },
-  topics: { btn: '' },
-  milestone: { btn: '查看日历' },
-  accept: { btn: '前往验收' },
-  notify: { btn: '' },
+const ACTION_META: Record<string, { btnKey: string }> = {
+  doc: { btnKey: 'workspace.chat.viewDoc' },
+  decision: { btnKey: 'workspace.chat.viewDecisions' },
+  topics: { btnKey: '' },
+  milestone: { btnKey: 'workspace.chat.viewCalendar' },
+  accept: { btnKey: 'acceptCard.pending.review' },
+  notify: { btnKey: '' },
 }
 
 // 三态用图标而不是文字符号（✓ / ◐ / ○）：那三个字符的字重和基线随系统字体变，
@@ -393,7 +396,7 @@ async function pickOption(m: Block, option: string) {
     const bi = messages.value.findIndex((x) => x.id === m.id)
     if (bi >= 0) messages.value.splice(bi, 1, updated)
   } catch (e) {
-    errorMsg.value = e instanceof Error ? e.message : '选择失败'
+    errorMsg.value = e instanceof Error ? e.message : t('workspace.chat.pickFailed')
   } finally {
     askBusy.value = null
   }
@@ -401,6 +404,10 @@ async function pickOption(m: Block, option: string) {
 
 // ---- Emoji reactions (Slack semantics, 协作平台的消息表情) ----
 // MVP picker: a fixed strip of the 8 most common reactions.
+// 表情是数据，不是文案：任何语言下都是这几个字符，没有一条词条该收它们。
+// 底下这两行要用 `i18n-cjk-allow-next-line` 挡一下，是因为闸门的汉字区间
+// （U+8C48–U+FAFF）把 emoji 的代理对低位也算成了汉字——不是这里真有中文。
+// i18n-cjk-allow-next-line
 const QUICK_EMOJIS = ['👍', '✅', '❤️', '😂', '🎉', '👀', '🙏', '➕']
 // Which message's picker is open (one at a time).
 const reactionPickerFor = ref<string | null>(null)
@@ -422,7 +429,7 @@ async function onReact(m: Block, emoji: string) {
     const out = await apiToggleReaction(m.id, emoji, AUTHOR)
     applyReactions(m.id, out.reactions)
   } catch (e) {
-    errorMsg.value = e instanceof Error ? e.message : '表情未能更新'
+    errorMsg.value = e instanceof Error ? e.message : t('workspace.chat.reactionFailed')
   }
 }
 
@@ -575,7 +582,7 @@ async function loadOlder() {
     if (sc) sc.scrollTop = scrollTopAfterPrepend(before, sc.scrollHeight)
   } catch (e) {
     failed = true
-    errorMsg.value = e instanceof Error ? e.message : '加载更早的消息失败'
+    errorMsg.value = e instanceof Error ? e.message : t('workspace.chat.olderFailed')
   } finally {
     // Unconditional: a topic switch mid-flight must not leave the flag stuck,
     // or the new topic could never page back.
@@ -757,7 +764,7 @@ function openSocket(topicId: string) {
   }
   ws.onerror = () => {
     // The close handler owns retry; the banner just explains the grey dot.
-    if (!connectRefused.value) errorMsg.value = '连接断开，正在自动重连…'
+    if (!connectRefused.value) errorMsg.value = t('workspace.chat.reconnecting')
   }
   ws.onmessage = (ev: MessageEvent) => {
     // Guard against frames from a stale socket after topic switch.
@@ -810,6 +817,8 @@ function handleFrame(frame: WsServerFrame) {
       // chat.confirm_prompt_receipt）。认「作者不是我自己」而不是去比对队友的
       // handle，因为名册可能还没到，那时比对不上会把指示永远卡在「正在送给」。
       // 代价是房间里有人手点 👀 会让它提早翻一下，下一轮就自己纠正。
+      // 👀 是协议里的回执标记（Cheese 已接收），不是界面文案。
+      // i18n-cjk-allow-next-line
       if (frame.reactions?.some((r) => r.emoji === '👀' && r.authors.some((a) => a !== AUTHOR)))
         reachedAgent.value = true
       // Someone toggled an emoji / 芝士's 👀 receipt landed — update the chip
@@ -971,7 +980,7 @@ async function loadTopic(topic: Topic) {
     void fillViewportIfNeeded()
   } catch (e) {
     if (disposed || props.topic?.id !== topic.id) return
-    errorMsg.value = e instanceof Error ? e.message : '加载历史失败'
+    errorMsg.value = e instanceof Error ? e.message : t('workspace.chat.historyFailed')
     // A failed history fetch must not terminate socket recovery during an outage.
     if (isRetryableGetFailure('GET', e instanceof ApiError ? e.status : undefined, e)) {
       scheduleReconnect(topic.id)
@@ -1001,9 +1010,11 @@ function showReplyCue(m: Block): boolean {
   return m.author_type === 'human' && !!parentOf(m)
 }
 function replySnippet(m: Block): string {
-  if (m.kind === 'attachment') return isImageBlock(m) ? '[图片]' : '[文件]'
-  const t = m.content.replace(/\s+/g, ' ').trim()
-  return t.length > 24 ? t.slice(0, 24) + '…' : t
+  if (m.kind === 'attachment') {
+    return isImageBlock(m) ? t('workspace.chat.attachmentImage') : t('workspace.chat.attachmentFile')
+  }
+  const text = m.content.replace(/\s+/g, ' ').trim()
+  return text.length > 24 ? text.slice(0, 24) + '…' : text
 }
 
 // An image attachment block (图片输入) — drawn in place by AttachmentImage.
@@ -1018,7 +1029,7 @@ async function downloadAttachment(m: Block) {
   try {
     await downloadFile(imageUrl(m), m.content.split('/').pop() || 'file')
   } catch (e) {
-    errorMsg.value = e instanceof Error ? e.message : '下载失败'
+    errorMsg.value = e instanceof Error ? e.message : t('workspace.chat.downloadFailed')
   }
 }
 function scrollToMessage(id: string) {
@@ -1153,9 +1164,13 @@ function dayLabel(iso: string): string {
   const today = new Date()
   const startOf = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
   const days = Math.round((startOf(today) - startOf(d)) / DAY_MS)
-  if (days === 0) return '今天'
-  if (days === 1) return '昨天'
-  if (days < 7 && days > 0) return ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()]
+  if (days === 0) return t('workspace.chat.today')
+  if (days === 1) return t('workspace.chat.yesterday')
+  if (days < 7 && days > 0) {
+    // 星期几是格式不是文案，所以交给 Intl 按界面语言出：写死 'zh-CN' 的话，
+    // 英文用户会在一串英文里看到「周日」。
+    return d.toLocaleDateString(i18n.global.locale.value === 'en' ? 'en' : 'zh-CN', { weekday: 'short' })
+  }
   const sameYear = d.getFullYear() === today.getFullYear()
   return d.toLocaleDateString([], sameYear ? { month: 'long', day: 'numeric' } : undefined)
 }
@@ -1255,8 +1270,8 @@ function onAvatarError(handle: string): void {
 const myName = computed(() => memberByHandle.value.get(AUTHOR)?.name || AUTHOR)
 
 function outgoingState(item: Outgoing): string {
-  if (item.state === 'failed') return '未送达'
-  return connected.value ? '发送中…' : '等待连接'
+  if (item.state === 'failed') return t('workspace.chat.notDelivered')
+  return connected.value ? t('workspace.chat.sendingNow') : t('workspace.chat.waitingConnection')
 }
 
 function fmtTime(iso: string): string {
@@ -1321,11 +1336,11 @@ function onDropFiles(e: DragEvent) {
 }
 const composerInput = ref<{ focus?: () => void } | null>(null)
 
-const starterPrompts = [
-  { label: '查找资料', text: '帮我查找相关资料，注明来源，并整理成文档。我要了解的是：' },
-  { label: '起草文档', text: '帮我起草一份文档，先和我确认目标与读者。我想写的是：' },
-  { label: '拆解任务', text: '帮我把目标拆成可执行的任务，先给我看分工建议。我的目标是：' },
-]
+const starterPrompts = computed(() => [
+  { label: t('workspace.chat.starter.research'), text: t('workspace.chat.starter.researchText') },
+  { label: t('workspace.chat.starter.draft'), text: t('workspace.chat.starter.draftText') },
+  { label: t('workspace.chat.starter.breakdown'), text: t('workspace.chat.starter.breakdownText') },
+])
 // 起手区块什么时候退休：芝士在这个房间里说过第一句话之后。
 //
 // 退休判据**不是「房间里有东西」**。平台自己发的公告、赛题报名写进去的简报、
@@ -1360,7 +1375,8 @@ function startDraft(text: string) {
   // 起手草稿里那个 @ 和按钮写进去的是同一个名字（见 `agentMention`）：写错了的话，
   // 人点完「起草文档」发出去，屋里会动的那位不动，而草稿上明明 @ 着「芝士」。
   const agent = agentMention.value
-  draft.value = `${props.alwaysSummon ? '' : `@${agent?.label ?? '芝士'} `}${text}`
+  const name = agent?.label ?? t('workspace.chat.defaultAgentName')
+  draft.value = `${props.alwaysSummon ? '' : `@${name} `}${text}`
   void nextTick(() => composerInput.value?.focus?.())
 }
 
@@ -1383,15 +1399,27 @@ interface MentionItem {
 }
 // 群播 (fusion-design §3): @all/@here are FIXED-LITERAL tokens (rule 4), pinned
 // at the top. expandMentions turns them into <@all>/<@here>.
-const BROADCAST_ITEMS: MentionItem[] = [
-  { label: '所有人', kind: 'broadcast', insert: 'all', sub: '@all · 通知话题全体成员', agent: false },
-  { label: '在线成员', kind: 'broadcast', insert: 'here', sub: '@here · 通知在线成员', agent: false },
-]
+const BROADCAST_ITEMS = computed<MentionItem[]>(() => [
+  {
+    label: t('workspace.chat.mentionAll'),
+    kind: 'broadcast',
+    insert: 'all',
+    sub: t('workspace.chat.mentionAllSub'),
+    agent: false,
+  },
+  {
+    label: t('workspace.chat.mentionHere'),
+    kind: 'broadcast',
+    insert: 'here',
+    sub: t('workspace.chat.mentionHereSub'),
+    agent: false,
+  },
+])
 const mentionMatches = computed<MentionItem[]>(() => {
   const q = mentionQuery.value
   if (q === null) return []
   const ql = q.toLowerCase()
-  const broadcast = BROADCAST_ITEMS.filter((b) => b.insert.startsWith(ql) || b.label.includes(q))
+  const broadcast = BROADCAST_ITEMS.value.filter((b) => b.insert.startsWith(ql) || b.label.includes(q))
   const named: MentionItem[] = [
     ...mentionPool.value.map((m) => ({
       label: m.label,
@@ -1401,12 +1429,12 @@ const mentionMatches = computed<MentionItem[]>(() => {
       agent: m.agent,
     })),
     ...props.topicList
-      .filter((t) => t.kind !== 'root')
-      .map((t) => ({
-        label: t.title,
+      .filter((topic) => topic.kind !== 'root')
+      .map((topic) => ({
+        label: topic.title,
         kind: 'topic' as const,
-        insert: t.title,
-        sub: t.status === 'archived' ? '已归档' : '进行中',
+        insert: topic.title,
+        sub: topic.status === 'archived' ? t('workspace.status.archived') : t('workspace.status.inProgress'),
         agent: false,
       })),
   ].filter((i) => i.label.toLowerCase().includes(ql))
@@ -1574,7 +1602,7 @@ async function summonNow() {
     summonedFor.value = rows.value.at(-1)?.block.id ?? null
     if (res.started) awaitingReply.value = true
   } catch (e) {
-    errorMsg.value = e instanceof Error ? e.message : '没能叫醒它，请重试'
+    errorMsg.value = e instanceof Error ? e.message : t('workspace.chat.wakeFailed')
   } finally {
     summonBusy.value = false
   }
@@ -1777,7 +1805,7 @@ onBeforeUnmount(() => {
     <div v-if="!topic" class="flex-grow-1 d-flex align-center justify-center text-medium-emphasis">
       <div class="text-center">
         <v-icon size="48" class="mb-2 text-disabled">mdi-forum-outline</v-icon>
-        <div>选择一个话题开始对话</div>
+        <div>{{ t('workspace.chat.pickTopic') }}</div>
       </div>
     </div>
 
@@ -1793,7 +1821,7 @@ onBeforeUnmount(() => {
           <span
             class="status-dot"
             :class="connected ? 'status-dot--ok' : 'status-dot--muted'"
-            :title="connected ? '已连接' : '未连接'"
+            :title="connected ? t('workspace.chat.connected') : t('workspace.chat.disconnected')"
           />
         </div>
       </div>
@@ -1817,7 +1845,7 @@ onBeforeUnmount(() => {
           <span
             class="status-dot"
             :class="connected ? 'status-dot--ok' : 'status-dot--muted'"
-            :title="connected ? '已连接' : '未连接'"
+            :title="connected ? t('workspace.chat.connected') : t('workspace.chat.disconnected')"
           />
         </div>
       </div>
@@ -1836,9 +1864,9 @@ onBeforeUnmount(() => {
         <div ref="contentRef">
           <LoadingSkeleton v-if="loadingHistory" variant="chat" />
 
-          <section v-if="showStarters" class="chat-start px-5 py-8" aria-label="开始项目协作">
-            <h2 class="t-title mb-2">从一件具体的事开始</h2>
-            <p class="t-body c-muted mb-4">说说你想解决什么问题，@芝士 可以查资料、写文档，也能和你一起拆任务</p>
+          <section v-if="showStarters" class="chat-start px-5 py-8" :aria-label="t('workspace.chat.startAria')">
+            <h2 class="t-title mb-2">{{ t('workspace.chat.startTitle') }}</h2>
+            <p class="t-body c-muted mb-4">{{ t('workspace.chat.startBody') }}</p>
             <div class="d-flex flex-wrap ga-2">
               <v-btn
                 v-for="prompt in starterPrompts"
@@ -1850,7 +1878,7 @@ onBeforeUnmount(() => {
                 >{{ prompt.label }}</v-btn
               >
             </div>
-            <p class="t-meta mt-3">点选后补充你的需求，再发送</p>
+            <p class="t-meta mt-3">{{ t('workspace.chat.starterHint') }}</p>
           </section>
 
           <!-- Paging back through history. The row is always rendered while
@@ -1863,7 +1891,7 @@ onBeforeUnmount(() => {
             class="text-medium-emphasis text-body-2 px-4 py-2 text-center"
             data-testid="chat-older-loader"
           >
-            {{ loadingOlder ? '加载更早的消息…' : '更早的消息' }}
+            {{ loadingOlder ? t('workspace.chat.loadingOlder') : t('workspace.chat.older') }}
           </div>
 
           <template v-for="({ block: m, notice }, i) in rows" :key="m.id">
@@ -1874,7 +1902,7 @@ onBeforeUnmount(() => {
                这条线回答「新的从哪开始」。开话题时算一次就冻住，不随新消息移动。 -->
             <TimelineMark v-if="m.id === unreadAnchorId" tone="unread">
               <v-icon size="12">mdi-arrow-down</v-icon>
-              以下是新消息
+              {{ t('workspace.chat.newMessages') }}
             </TimelineMark>
             <!-- 「已派出」标记 (issue #314): 拆出子话题在库里不留任何 block，所以
                这一行是按支线的 created_at 现算出来的，插在它被派出去的那个时刻
@@ -1902,7 +1930,7 @@ onBeforeUnmount(() => {
               </div>
               <div class="sys-sub">{{ notice.lead }}</div>
               <details v-if="notice.rest" class="sys-more">
-                <summary>{{ notice.detailLabel || '展开详情' }}</summary>
+                <summary>{{ notice.detailLabel || t('workspace.chat.expandDetail') }}</summary>
                 <pre class="sys-detail">{{ notice.rest }}</pre>
               </details>
             </div>
@@ -1914,9 +1942,13 @@ onBeforeUnmount(() => {
                 <span class="sys-mark sys-mark--dot" aria-hidden="true" />
                 <span class="sys-text">
                   <template v-if="notice.changes">
-                    本轮改了 {{ notice.changes.filesTotal }} 个文件 (+{{ notice.changes.added }} −{{
-                      notice.changes.removed
-                    }})
+                    {{
+                      t('workspace.chat.changesSummary', {
+                        count: notice.changes.filesTotal,
+                        added: notice.changes.added,
+                        removed: notice.changes.removed,
+                      })
+                    }}
                   </template>
                   <template v-for="(act, ai) in notice.actions" :key="ai">
                     <span v-if="ai > 0 || notice.changes" class="sys-sep"> · </span>
@@ -1929,12 +1961,14 @@ onBeforeUnmount(() => {
                   class="sys-action"
                   @click="emit('open-resource', 'changes', notice.turnId ?? undefined)"
                 >
-                  查看改动
+                  {{ t('workspace.chat.viewChanges') }}
                 </button>
               </div>
               <div v-if="notice.changes?.files.length" class="sys-sub sys-files">
                 {{ notice.changes.files.join(' · ')
-                }}<template v-if="notice.changes.filesOmitted"> · 另 {{ notice.changes.filesOmitted }} 个</template>
+                }}<template v-if="notice.changes.filesOmitted">
+                  · {{ t('workspace.chat.moreFiles', { count: notice.changes.filesOmitted }) }}</template
+                >
               </div>
             </div>
             <!-- 芝士这轮改了平台上的什么东西（没能折进本轮摘要的那一条） -->
@@ -1945,23 +1979,29 @@ onBeforeUnmount(() => {
                    through the shared token→chip path so the actor is clickable. -->
                 <span class="sys-text" v-html="renderPlain(notice.text)" />
                 <button
-                  v-if="ACTION_META[notice.resource]?.btn"
+                  v-if="ACTION_META[notice.resource]?.btnKey"
                   type="button"
                   class="sys-action"
                   @click="emit('open-resource', notice.resource, m.turn_id ?? undefined)"
                 >
-                  {{ ACTION_META[notice.resource].btn }}
+                  {{ t(ACTION_META[notice.resource].btnKey) }}
                 </button>
               </div>
               <details v-if="notice.detail" class="sys-more">
-                <summary>{{ notice.detailLabel || '展开详情' }}</summary>
-                <div v-if="notice.resource === 'doc'" class="doc-edit-diff" aria-label="文档修改对比">
+                <summary>{{ notice.detailLabel || t('workspace.chat.expandDetail') }}</summary>
+                <div v-if="notice.resource === 'doc'" class="doc-edit-diff" :aria-label="t('workspace.chat.docDiff')">
                   <template v-for="(line, index) in parseDiffLines(notice.detail)" :key="index">
                     <div
                       v-if="(line.kind === 'add' || line.kind === 'del') && docDiffText(line.text)"
                       class="doc-edit-line"
                       :class="`doc-edit-line--${line.kind}`"
-                      :aria-label="line.kind === 'add' ? '新增' : line.kind === 'del' ? '删除' : undefined"
+                      :aria-label="
+                        line.kind === 'add'
+                          ? t('workspace.changes.fileAdded')
+                          : line.kind === 'del'
+                            ? t('workspace.changes.fileRemoved')
+                            : undefined
+                      "
                     >
                       <span class="doc-edit-mark" aria-hidden="true">{{
                         line.kind === 'add' ? '+' : line.kind === 'del' ? '−' : ' '
@@ -2013,7 +2053,8 @@ onBeforeUnmount(() => {
               <div class="sys-fold">
                 <div v-for="(occ, oi) in notice.occurrences" :key="oi" class="sys-occurrence">
                   <div class="sys-meta">
-                    {{ occ.label || '详情' }}<template v-if="notice.count > 1"> · {{ occ.line }}</template>
+                    {{ occ.label || t('workspace.chat.detail')
+                    }}<template v-if="notice.count > 1"> · {{ occ.line }}</template>
                   </div>
                   <pre class="sys-detail">{{ occ.detail }}</pre>
                 </div>
@@ -2064,7 +2105,12 @@ onBeforeUnmount(() => {
                 <!-- B3: a reply shows the message it threads under -->
                 <button v-if="showReplyCue(m)" type="button" class="im-replied" @click="scrollToMessage(m.reply_to!)">
                   <v-icon size="12">mdi-reply</v-icon>
-                  回复 {{ displayName(parentOf(m)!) }}：{{ replySnippet(parentOf(m)!) }}
+                  {{
+                    t('workspace.chat.replyTo', {
+                      name: displayName(parentOf(m)!),
+                      snippet: replySnippet(parentOf(m)!),
+                    })
+                  }}
                 </button>
                 <!-- 图片输入: an attachment block renders as the image itself
                    (click opens the original in a new tab). 字节在 AttachmentImage
@@ -2076,7 +2122,7 @@ onBeforeUnmount(() => {
                   prepend-icon="mdi-file-document-outline"
                   append-icon="mdi-download-outline"
                   class="text-none im-file-link"
-                  :title="`下载 ${m.content.split('/').pop()}`"
+                  :title="t('workspace.chat.download', { name: m.content.split('/').pop() })"
                   @click="downloadAttachment(m)"
                 >
                   <span class="text-truncate">{{ m.content.split('/').pop() }}</span>
@@ -2102,7 +2148,7 @@ onBeforeUnmount(() => {
                   </template>
                   <div v-else class="ask-answered">
                     <v-icon size="13" color="primary">mdi-check-circle</v-icon>
-                    {{ askAnswered(m)!.by }} 选了「{{ askAnswered(m)!.option }}」
+                    {{ t('workspace.chat.askAnswered', { by: askAnswered(m)!.by, option: askAnswered(m)!.option }) }}
                   </div>
                 </div>
                 <!-- 活引用 (eval A1): 升级出去的块指向它变成的那个地点。房间里
@@ -2115,14 +2161,14 @@ onBeforeUnmount(() => {
                   @click="emit('open-topic', (m.upgraded_to_task_id || m.upgraded_to_topic_id)!)"
                 >
                   <v-icon size="13">mdi-arrow-top-right</v-icon>
-                  已升级为话题，点击查看
+                  {{ t('workspace.chat.upgradedToTopic') }}
                 </button>
                 <!-- 忘了 @ 的补救：房间里最后一句是对着人说的，芝士就不会动，
                    而在这一行出现之前，房间里没有任何东西说明这一点。 -->
                 <div v-if="showSummonHint(m, i)" class="summon-hint">
-                  <span class="summon-hint-text">这条没叫{{ agentName }}，它不会现在动</span>
+                  <span class="summon-hint-text">{{ t('workspace.chat.summonHint', { agent: agentName }) }}</span>
                   <button type="button" class="summon-hint-btn" :disabled="summonBusy" @click="summonNow">
-                    让它现在就看
+                    {{ t('workspace.chat.summonNow') }}
                   </button>
                 </div>
                 <!-- Emoji reaction chips (Slack): count per emoji, own reactions
@@ -2150,15 +2196,20 @@ onBeforeUnmount(() => {
                   type="button"
                   class="im-act rx-toggle"
                   :class="{ 'im-act--on': reactionPickerFor === m.id }"
-                  title="添加表情"
+                  :title="t('workspace.chat.addReaction')"
                   @click="reactionPickerFor = reactionPickerFor === m.id ? null : m.id"
                 >
                   <v-icon size="15">mdi-emoticon-happy-outline</v-icon>
                 </button>
-                <button type="button" class="im-act" title="回复" @click="setReply(m)">
+                <button type="button" class="im-act" :title="t('global.reply')" @click="setReply(m)">
                   <v-icon size="15">mdi-reply-outline</v-icon>
                 </button>
-                <button type="button" class="im-act" title="升级为话题" @click="emit('upgrade-message', m.id)">
+                <button
+                  type="button"
+                  class="im-act"
+                  :title="t('workspace.chat.upgrade')"
+                  @click="emit('upgrade-message', m.id)"
+                >
                   <v-icon size="15">mdi-comment-arrow-right-outline</v-icon>
                 </button>
                 <!-- MVP emoji picker: the 8 common reactions, Slack-style. -->
@@ -2202,8 +2253,12 @@ onBeforeUnmount(() => {
               </div>
               <div class="im-text im-text--verbatim" v-html="renderPlain(item.content)" />
               <div v-if="item.state === 'failed'" class="outbox-actions">
-                <button type="button" class="outbox-act" @click="retrySend(item.clientId)">重试</button>
-                <button type="button" class="outbox-act" @click="dropSend(item.clientId)">删除</button>
+                <button type="button" class="outbox-act" @click="retrySend(item.clientId)">
+                  {{ t('global.retry') }}
+                </button>
+                <button type="button" class="outbox-act" @click="dropSend(item.clientId)">
+                  {{ t('global.delete') }}
+                </button>
               </div>
             </div>
           </div>
@@ -2224,18 +2279,22 @@ onBeforeUnmount(() => {
                  turn; between turns this is the topic's stored 进度层 (#187),
                  labelled so a leftover 进行中 row is not read as "running right
                  now". -->
-              <div v-if="todoItems.length && todoRestored" class="todo-label">上次的进度</div>
+              <div v-if="todoItems.length && todoRestored" class="todo-label">
+                {{ t('workspace.chat.restoredTodo') }}
+              </div>
               <ul v-if="todoItems.length" class="todo-list">
-                <li v-for="t in todoItems" :key="t.id" class="todo-item" :class="'todo-' + t.status">
-                  <v-icon class="todo-mark" size="14">{{ todoIcon(t.status) }}</v-icon>
-                  <span class="todo-text">{{ t.subject }}</span>
+                <li v-for="item in todoItems" :key="item.id" class="todo-item" :class="'todo-' + item.status">
+                  <v-icon class="todo-mark" size="14">{{ todoIcon(item.status) }}</v-icon>
+                  <span class="todo-text">{{ item.subject }}</span>
                 </li>
               </ul>
 
               <!-- Instant ack before the first message / during cold start -->
               <div v-if="awaitingReply" class="im-text">
                 <span class="text-medium-emphasis">{{
-                  reachedAgent ? `${agentName}正在处理…` : `正在送给${agentName}…`
+                  reachedAgent
+                    ? t('workspace.chat.working', { agent: agentName })
+                    : t('workspace.chat.sending', { agent: agentName })
                 }}</span>
                 <span class="caret" />
               </div>
@@ -2263,7 +2322,9 @@ onBeforeUnmount(() => {
       <!-- B3: replying-to indicator — the next message threads under this one. -->
       <div v-if="replyTarget" class="reply-bar">
         <v-icon size="14" class="me-1">mdi-reply</v-icon>
-        <span class="reply-bar__text"> 回复 {{ displayName(replyTarget) }}：{{ replySnippet(replyTarget) }} </span>
+        <span class="reply-bar__text">{{
+          t('workspace.chat.replyTo', { name: displayName(replyTarget), snippet: replySnippet(replyTarget) })
+        }}</span>
         <v-btn icon="mdi-close" size="x-small" variant="text" density="comfortable" @click="clearReply" />
       </div>
 
@@ -2300,7 +2361,7 @@ onBeforeUnmount(() => {
                 <v-icon size="13">mdi-pound</v-icon>
               </span>
               <span class="mention-menu-name">{{ mm.label }}</span>
-              <span v-if="mm.agent" class="mention-agent-badge">AI 队友</span>
+              <span v-if="mm.agent" class="mention-agent-badge">{{ t('workspace.chat.agentBadge') }}</span>
               <span class="mention-menu-sub">{{ mm.sub }}</span>
               <span v-if="i === 0" class="mention-menu-hint">Enter</span>
             </button>
@@ -2335,8 +2396,8 @@ onBeforeUnmount(() => {
               :placeholder="composerHint"
               :title="
                 enterSends
-                  ? `Enter 发送，Shift+Enter 换行，⌘/Ctrl+Enter 发送并交给${agentName}，可直接粘贴图片`
-                  : '可直接粘贴图片'
+                  ? t('workspace.chat.composerHintSummon', { agent: agentName })
+                  : t('workspace.chat.composerHint')
               "
               @keydown="onComposerKey"
               @paste="onComposerPaste"
@@ -2367,7 +2428,7 @@ onBeforeUnmount(() => {
                 variant="text"
                 size="small"
                 color="medium-emphasis"
-                title="上传文件（每个最大 10MB）"
+                :title="t('workspace.chat.uploadFile')"
                 @click="pickFiles"
               />
               <!-- 手机上多一颗「照片」：那儿没有截图可贴、也没有东西可拖，从文件
@@ -2379,7 +2440,7 @@ onBeforeUnmount(() => {
                 variant="text"
                 size="small"
                 color="medium-emphasis"
-                title="发送照片"
+                :title="t('workspace.chat.sendPhoto')"
                 @click="pickImages"
               />
               <v-spacer />
@@ -2399,13 +2460,13 @@ onBeforeUnmount(() => {
                 :aria-pressed="summonOn"
                 :title="
                   summonOn
-                    ? `正文里已经 @ 了${agentName}，点这里取消`
-                    : `交给${agentName}（也可以直接按 ⌘/Ctrl+Enter 发送并交给它）`
+                    ? t('workspace.chat.mentionedAlready', { agent: agentName })
+                    : t('workspace.chat.handToAgent', { agent: agentName })
                 "
                 @click="toggleSummon"
               >
                 <v-icon size="14">mdi-at</v-icon>
-                <span class="summon-btn-label">交给{{ agentName }}</span>
+                <span class="summon-btn-label">{{ t('workspace.chat.handToAgentShort', { agent: agentName }) }}</span>
               </button>
               <!-- 断线时照样能发：消息进发件箱、立刻显示，连上就自己走 (§14.1)。
                  按 `connected` 禁用会把「打字」和「后端此刻在不在」绑在一起。 -->
@@ -2415,7 +2476,7 @@ onBeforeUnmount(() => {
                 variant="flat"
                 icon="mdi-send"
                 size="small"
-                title="发送"
+                :title="t('workspace.preview.send')"
                 :disabled="attsUploading || (!draft.trim() && !pendingAtts.length)"
                 @click="sendDraft()"
               />
