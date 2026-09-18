@@ -100,6 +100,22 @@ export function railItems(src: NavSources): NavGenericItem[] {
   ]
 }
 
+/**
+ * 按下 ⌘N 该去哪儿，没有对应的格子就是 null。
+ *
+ * rail 的悬停浮层一直在显示这个键（`shortcut`），而在此之前没有任何地方绑它——
+ * 一个指着不存在功能的提示。
+ *
+ * 只认有地址的格子：「＋新建项目」是个动作而不是目的地，给它一个数字键等于把一
+ * 个会建出东西来的操作放在一个手滑就按到的键上。
+ */
+export function shortcutTarget(items: NavGenericItem[], digit: number): string | null {
+  for (const item of items) {
+    if (item.type === 'item' && item.shortcut === digit && item.to) return item.to
+  }
+  return null
+}
+
 /** 手机底栏：格数固定，不随项目数量增长。 */
 export function tabItems(src: NavSources): NavItem[] {
   return [{ ...SPACES, title: t('website.spaces') }, workspace(src), { ...INBOX, title: t('website.inbox') }]
