@@ -1,6 +1,7 @@
 """The actual HTTP identity and room policy protect every RC controller route."""
 
 import time
+import uuid
 
 import pytest
 
@@ -159,6 +160,60 @@ def test_a_task_list_that_never_comes_back_does_not_break_the_state_the_page_pol
         assert data["tasks"] == {}
         assert data["tasks_unread"] is True
         assert data["connected"] is True
+    finally:
+
+        async def cleanup():
+            await store().redis.delete(key(sid), key(topic, "current"))
+
+        client.portal.call(cleanup)
+
+
+def test_the_rooms_own_agent_reads_its_session_but_cannot_answer_for_it(client, place):
+    """Stake, not identity: a session must not answer its own question.
+
+    Reading is a different act. The page polls the read route every couple of
+    seconds, and a teammate — agent or person — being unable to see whether a
+    session is connected bought nothing.
+    """
+    from app.api.routes.remote_control import store
+    from app.domain.agent.remote_control import key
+    from app.domain.identity.handles import topic_agent_handle
+
+    project, topic = place
+    seated = topic_agent_handle(uuid.UUID(topic))
+
+    async def create_session():
+        row = await store().create(
+            {"p": project, "t": topic, "exp": int(time.time()) + 3600}, {}
+        )
+        await store().update(row["id"], {"status": "active", "last_seen": time.time()})
+        return row["id"]
+
+    sid = client.portal.call(create_session)
+    try:
+        headers = session_auth_headers(seated)
+        assert (
+            client.get(f"/topics/{topic}/agent/control", headers=headers).status_code
+            == 200
+        )
+
+        refused = client.post(
+            f"/topics/{topic}/agent/answer",
+            headers=headers,
+            json={
+                "session_id": sid,
+                "request_id": "ask-1",
+                "response": {"behavior": "allow"},
+            },
+        )
+        assert refused.status_code == 403, refused.text
+
+        refused = client.post(
+            f"/topics/{topic}/agent/control",
+            headers=headers,
+            json={"session_id": sid, "request": {"subtype": "interrupt"}},
+        )
+        assert refused.status_code == 403, refused.text
     finally:
 
         async def cleanup():

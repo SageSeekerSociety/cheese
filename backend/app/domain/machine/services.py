@@ -148,8 +148,14 @@ class MachineService:
         await members.require_manager(project_id, actor)
 
     async def require_use_authority(self, project_id: uuid.UUID, actor: Actor) -> None:
-        """Team membership authorizes room execution within the team's quota."""
-        if actor.via != "token" or actor.is_agent or actor.user_id is None:
+        """Team membership authorizes room execution within the team's quota.
+
+        Membership is the whole question. `TeamUserRelation` is (team, user) with
+        no human/agent distinction, so an agent seated on a team is as entitled
+        to the team's machines as anyone else on it. What is still required is an
+        id to check that membership against.
+        """
+        if actor.via != "token" or actor.user_id is None:
             raise AuthenticationRequiredError("Login required to use cloud compute")
         project = await self._projects.get(project_id)
         if project is None:
