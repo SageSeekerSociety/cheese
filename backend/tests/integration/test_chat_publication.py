@@ -301,3 +301,6 @@ def test_silence_reminder_only_queues_for_an_active_silent_response(
         clock += timedelta(seconds=threshold)
         assert client.portal.call(chat.remind_silent_turns) == 0
         assert len(notices) == 3
+
+# Control: this branch changes nothing else, so CI answers whether the
+# silence-reminder test fails on its own.
