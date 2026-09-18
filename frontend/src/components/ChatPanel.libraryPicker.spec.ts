@@ -1,8 +1,12 @@
-// 输入栏里引用资料库里已有的一份文件——形式和 @ 一个人相同。
+// 输入栏里引用资料库里已有的一份文件——入口和 @ 一个人是同一个。
 //
 // 这解决的是「跨话题拿不到之前上传的文件」：那份预算表是上周在另一个房间传的，
 // 而说「上周那份预算表」的人正在这个房间里。所以挑中它不是往正文里写一个名字，
 // 是把它附到这条消息上：@ 连同打了一半的名字从正文里消失，文件进待发条。
+//
+// 菜单分两级。没打字的时候资料库只是一行入口：一个项目的文件会比房间里的人多得
+// 多，平铺进来等于把「@ 一个人」这件最常做的事挤掉。打了字就不分级了，人、话题、
+// 文件一起搜。
 import type { Component } from 'vue'
 import type { Topic } from '@/cx_types'
 
@@ -50,8 +54,9 @@ beforeEach(() => {
         data: [
           { path: '预算表.xlsx', bytes: 2048, modified: 1758000000 },
           { path: '合同.docx', bytes: 4096, modified: 1757000000 },
+          { path: '现场照片.png', bytes: 8192, modified: 1756000000 },
         ],
-        total: 2,
+        total: 3,
       }
     } else if (href.includes('/attachments')) {
       data = {
@@ -86,18 +91,52 @@ async function typeAt(container: Element, text: string) {
   return box as HTMLTextAreaElement
 }
 
+function row(container: Element, text: string): Element | undefined {
+  return Array.from(container.querySelectorAll('.mention-menu-item')).find((b) => b.textContent?.includes(text))
+}
+
 describe('输入栏引用资料库里的文件', () => {
-  it('打一个 @ 之后，资料库里的文件也在候选里', async () => {
+  it('刚打上 @ 的时候资料库是一行入口，文件不平铺进来', async () => {
+    const c = composer()
+    await flush()
+    await typeAt(c, '@')
+
+    const menu = c.querySelector('.mention-menu')!
+    expect(menu.textContent).toContain('资料库')
+    expect(menu.textContent).toContain('3 份文件')
+    expect(menu.textContent).not.toContain('预算表.xlsx')
+  })
+
+  it('翻进资料库：文件和图片分开列，Esc 退回来', async () => {
+    const c = composer()
+    await flush()
+    await typeAt(c, '@')
+    await fireEvent.click(row(c, '资料库')!)
+    await flush()
+
+    const menu = c.querySelector('.mention-menu')!
+    const groups = Array.from(menu.querySelectorAll('.mention-menu-group')).map((g) => g.textContent?.trim())
+    expect(groups).toEqual(['文件', '图片'])
+    expect(menu.textContent).toContain('预算表.xlsx')
+    expect(menu.textContent).toContain('现场照片.png')
+    // 图片排在文件后面——找资料的人多半在找文档。
+    expect(menu.textContent!.indexOf('预算表.xlsx')).toBeLessThan(menu.textContent!.indexOf('现场照片.png'))
+
+    await fireEvent.keyDown(c.querySelector('textarea')!, { key: 'Escape' })
+    await flush()
+    expect(c.querySelector('.mention-menu')!.textContent).not.toContain('预算表.xlsx')
+  })
+
+  it('打了字就是搜索：文件和人、话题一起出现', async () => {
     const c = composer()
     await flush()
     await typeAt(c, '@预算')
 
     const menu = c.querySelector('.mention-menu')!
-    expect(menu).toBeTruthy()
     expect(menu.textContent).toContain('预算表.xlsx')
-    expect(menu.textContent).toContain('资料库')
-    // 打的是「预算」，另一份不该出现在候选里。
+    // 打的是「预算」，另外两份不该出现。
     expect(menu.textContent).not.toContain('合同.docx')
+    expect(menu.textContent).not.toContain('现场照片.png')
   })
 
   it('挑中一份文件：它附在这条消息上，正文里不留那个 @', async () => {
@@ -105,9 +144,7 @@ describe('输入栏引用资料库里的文件', () => {
     await flush()
     const box = await typeAt(c, '看看 @预算')
 
-    const item = Array.from(c.querySelectorAll('.mention-menu-item')).find((b) =>
-      b.textContent?.includes('预算表.xlsx')
-    )
+    const item = row(c, '预算表.xlsx')
     expect(item, '候选里没有那份文件').toBeTruthy()
     await fireEvent.click(item!)
     await flush()
