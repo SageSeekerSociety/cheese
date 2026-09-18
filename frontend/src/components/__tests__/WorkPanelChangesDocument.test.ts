@@ -99,9 +99,7 @@ async function flush() {
 }
 
 async function openChanges(container: Element) {
-  const tab = Array.from(container.querySelectorAll('button')).find((b) =>
-    b.getAttribute('title')?.startsWith('改动')
-  )
+  const tab = Array.from(container.querySelectorAll('button')).find((b) => b.getAttribute('title')?.startsWith('改动'))
   expect(tab, '找不到 改动 tab').toBeTruthy()
   await fireEvent.click(tab!)
   await flush()

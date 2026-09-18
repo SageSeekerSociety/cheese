@@ -1113,11 +1113,7 @@ export async function attachmentImageUrl(topicId: string, path: string): Promise
 }
 
 /** A published file's bytes, for a viewer that draws them in the page. */
-export async function previewFileBytes(
-  topicId: string,
-  path: string,
-  task?: string | null
-): Promise<ArrayBuffer> {
+export async function previewFileBytes(topicId: string, path: string, task?: string | null): Promise<ArrayBuffer> {
   // `download=true` is what makes the raw endpoint serve a non-image at all; it
   // only changes the Content-Disposition, which nothing here reads.
   const res = await fetch(`${attachmentRawUrl(topicId, path, task)}&download=true`, {
@@ -1169,11 +1165,7 @@ export function decideDocumentRevisions(
 export class PreviewRendererUnavailable extends Error {}
 
 /** A Word or PowerPoint file converted to PDF, so a browser can draw it. */
-export async function previewDocumentPdf(
-  topicId: string,
-  path: string,
-  task?: string | null
-): Promise<ArrayBuffer> {
+export async function previewDocumentPdf(topicId: string, path: string, task?: string | null): Promise<ArrayBuffer> {
   const url =
     `${BASE}/topics/${encodeURIComponent(topicId)}/attachments/pdf` +
     `?path=${encodeURIComponent(path)}` +
