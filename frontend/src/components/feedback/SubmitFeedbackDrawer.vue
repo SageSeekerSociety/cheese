@@ -19,9 +19,17 @@ import { useFeedbackStore } from '@/stores/feedback'
 const emit = defineEmits<{ (e: 'submitted', id: string): void }>()
 
 const store = useFeedbackStore()
-const { xs } = useDisplay()
+const { xs, width: viewportWidth } = useDisplay()
 
-const drawerWidth = computed(() => (xs.value ? '100%' : 460))
+// 宽度必须是**数字**，不能给 '100%'。VNavigationDrawer 把它当成
+// `Number(props.width)` 收下，'100%' 会变成 NaN，而 NaN 一路走到 layoutItemStyles
+// 里的 `translateX(${...}px)` —— 那不是合法的 CSS，浏览器把整条 transform 丢掉：
+// 抽屉再也移不出屏幕，「关着」的抽屉就整屏压在页面上，底栏正好盖住输入框那一行，
+// 点击全被它接走。桌面宽度原本就是数字 460，所以这个坑只在窄屏露头。
+//
+// 给视口宽度的像素值而不是留空：留空会退回 Vuetify 默认的 256px，窄屏上就成了一条
+// 盖不住全屏、但也不该出现的缝。
+const drawerWidth = computed(() => (xs.value ? viewportWidth.value : 460))
 const kinds: FeedbackKind[] = ['bug', 'suggestion', 'other']
 
 const fileInput = ref<HTMLInputElement | null>(null)
@@ -117,7 +125,11 @@ function submit() {
           </v-btn>
           <span class="t-meta">截图、日志、导出文件（原型：只记录文件名，不会真的上传）</span>
         </div>
-        <input ref="fileInputRef" type="file" multiple class="visually-hidden" @change="onPickFiles" />
+        <!-- `:ref` 不是 `ref`：这里是函数式 ref（拿到元素就存进 fileInput）。
+             写成静态的 `ref="fileInputRef"` 时 Vue 会警告「used on a non-ref value,
+             will not work in the production build」——开发时看着能点开文件选择框，
+             构建之后 fileInput 永远是 null，「选择文件」就成了死按钮。 -->
+        <input :ref="fileInputRef" type="file" multiple class="visually-hidden" @change="onPickFiles" />
         <div v-if="store.draft.attachments.length" class="d-flex flex-wrap ga-2 mb-3">
           <v-chip
             v-for="name in store.draft.attachments"
