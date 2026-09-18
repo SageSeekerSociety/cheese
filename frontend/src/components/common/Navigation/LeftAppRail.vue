@@ -2,7 +2,16 @@
   <!-- `background` (not a fixed grey): the rail is on every page, so a Material
        palette name like grey-lighten-5 would pin it to #FAFAFA in dark theme
        while its icons follow --v-theme-on-surface → white tile, pale icons. -->
-  <v-navigation-drawer permanent rail :rail-width="64" class="app-rail pb-2" color="background" border="none">
+  <v-navigation-drawer
+    permanent
+    rail
+    :rail-width="64"
+    class="app-rail pb-2"
+    color="background"
+    border="none"
+    @dragover="onRailDragOver"
+    @drop="onRailDrop"
+  >
     <!-- <v-avatar v-tooltip="'知是'" :image="logo" size="48" /> -->
     <RailItem
       v-for="item in items"
@@ -170,8 +179,6 @@
 </template>
 
 <script setup lang="ts">
-import type { DropEdge } from '@/lib/projectOrder'
-
 import { ref, toRefs } from 'vue'
 
 import { useUserMenu } from '@/composables/useUserMenu'
@@ -181,6 +188,7 @@ import { NavBarProps, NavGenericItem } from './types'
 
 import logo from '@/assets/logo.svg?url'
 import ThemeToggle from '@/components/common/ThemeToggle.vue'
+import { type DropEdge, dropTargetAt } from '@/lib/projectOrder'
 
 const navBarProps = withDefaults(defineProps<NavBarProps>(), {
   items: () => [],
@@ -210,6 +218,42 @@ function dropEdgeFor(item: NavGenericItem): DropEdge | null {
 function aimAt(projectId: string, edge: DropEdge) {
   // 拖着的那一格自己不画线——那是个原地不动的落点。
   dropTarget.value = projectId === draggingId.value ? null : { id: projectId, edge }
+}
+
+// 一列格子之间的空白、分隔线、首页那一格——这些地方以前既不收货也不撤销插入线：
+// 线还画着「放这儿就插到最前」，松手却什么都不发生。而「挪到最前面」这个动作，手
+// 势天然会往上多走一点，正好走进那片只画线不收货的区域，所以最前面那一格是唯一
+// 真的挪不过去的位置。
+//
+// 指针停在某个格子上时那一格自己已经处理过并 preventDefault 了，所以这里只管它没
+// 处理的部分：第一格上方就是插到最前，最后一格下方就是插到最后。
+const DRAG_TYPE = 'application/x-cheese-project'
+
+function projectTiles(event: DragEvent): HTMLElement[] {
+  return Array.from((event.currentTarget as HTMLElement).querySelectorAll<HTMLElement>('[data-project-id]'))
+}
+
+function onRailDragOver(event: DragEvent) {
+  if (event.defaultPrevented) return
+  if (!event.dataTransfer?.types.includes(DRAG_TYPE)) return
+  const spans = projectTiles(event)
+    .map((tile) => ({ id: tile.dataset.projectId ?? '', ...tile.getBoundingClientRect() }))
+    .filter((span) => span.id)
+  const aim = dropTargetAt(spans, event.clientY)
+  if (!aim) return
+  // 不 preventDefault 就没有 drop 事件——浏览器默认「这里不收」。
+  event.preventDefault()
+  event.dataTransfer.dropEffect = 'move'
+  aimAt(aim.id, aim.edge)
+}
+
+function onRailDrop(event: DragEvent) {
+  if (event.defaultPrevented) return
+  const moved = event.dataTransfer?.getData(DRAG_TYPE)
+  const target = dropTarget.value
+  if (!moved || !target) return
+  event.preventDefault()
+  finishDrag(moved, target.id, target.edge)
 }
 
 function clearDrag() {

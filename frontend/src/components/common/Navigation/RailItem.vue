@@ -18,6 +18,7 @@
       'app-rail-item--drop-after': dropEdge === 'after',
     }"
     :draggable="!!projectId"
+    :data-project-id="projectId"
     @click="!item.to && item.action ? item.action() : undefined"
     @mouseenter="warmDestination()"
     @mouseleave="cancelPrefetch()"
