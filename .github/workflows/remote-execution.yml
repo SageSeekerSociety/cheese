@@ -107,6 +107,7 @@ jobs:
           path: |
             tmp/remote-execution/private-ci-*/
             tmp/remote-execution/ordinary-ci-*/
+          retention-days: 5
   acceptance:
     runs-on: [self-hosted, cheese-ci]
     timeout-minutes: 20
@@ -163,4 +164,4 @@ jobs:
             tmp/remote-execution/ci-*/*/rc*.json*
             tmp/remote-execution/ci-*/*/release.jsonl
             tmp/remote-execution/ci-*/*/execution/state/events.jsonl
-          retention-days: 14
+          retention-days: 5
