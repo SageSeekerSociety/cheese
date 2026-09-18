@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
+from app.api.deps import get_chat_service
 from app.api.response import ok
 from app.core.db import get_db
 from app.core.errors import (
@@ -22,12 +23,14 @@ from app.core.errors import (
 )
 from app.core.sandbox_auth import scoped_token_claims
 from app.domain.agent import private_chat
+from app.domain.agent.chat import ChatService
 from app.domain.agent.device_hub import DeviceOffline
 from app.domain.agent.harness.claude_code import REMOTE_CONTROLS
-from app.domain.agent.remote_control import CONTROLS, store
+from app.domain.agent.remote_control import CONTROLS, key, store
 from app.domain.agent.runtime import get_broker
+from app.domain.identity.actor import Actor
+from app.domain.identity.handles import topic_agent_handle
 from app.domain.topic.services import TopicService
-from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(tags=["remote-control"])
 # How long the control read waits for the machine's background-task list.
@@ -45,6 +48,64 @@ TASK_LIST_BUDGET_S = 5
 # nothing". It now hears about a change when the change happens; this is only the
 # floor under a frame that was never delivered.
 IDLE_CONTROL_REFRESH_S = 30
+
+
+def _question_text(request: dict) -> str:
+    """What the room should read as the question.
+
+    The two kinds the platform declares support for: a tool the agent wants to
+    run, and questions it wants answered. Anything else still gets a line, by
+    its subtype, rather than being swallowed.
+    """
+    questions = (request.get("input") or {}).get("questions")
+    if isinstance(questions, list) and questions:
+        asked = [
+            str(q.get("question")).strip()
+            for q in questions
+            if isinstance(q, dict) and str(q.get("question") or "").strip()
+        ]
+        if asked:
+            return "\n".join(asked)
+    tool = request.get("tool_name")
+    if tool:
+        return f"要用 {tool} 做一件事，需要你同意。"
+    return f"在等你回答一个 {request.get('subtype') or 'control'} 请求。"
+
+
+async def voice_pending(db: AsyncSession, session: dict, chat: ChatService) -> None:
+    """Write each newly pending request into the room, once.
+
+    The panel above the composer is the live surface and stays that way; what
+    the room had no record of was that the question was ever asked. A question
+    answered there used to vanish from the panel leaving nothing behind, so
+    scroll-back could not say what the agent had been stopped for.
+
+    `SADD` returning 1 is the whole of the idempotency: the worker re-sends its
+    pending list with every batch, and the room must not fill with copies.
+    """
+    sid = session["id"]
+    topic_id = uuid.UUID(session["topic_id"])
+    rc = store()
+    snapshot = await rc.snapshot(session)
+    for request_id, pending in (snapshot.get("pending") or {}).items():
+        if not await rc.redis.sadd(key(sid, "voiced"), request_id):
+            continue
+        payload = await chat._persist_assistant_message(
+            project_id=uuid.UUID(session["project_id"]),
+            topic_id=topic_id,
+            text=_question_text(pending.get("request") or {}),
+            turn_id=None,
+            reply_to=None,
+            roster=None,
+            topic_refs=[],
+            publish=True,
+            author=session.get("agent_handle") or topic_agent_handle(topic_id),
+            publication_id=f"rc-ask-{request_id}",
+        )
+        if payload is not None:
+            await get_broker().publish(
+                str(topic_id), {"type": "assistant_block", "block": payload}
+            )
 
 
 async def announce(session: dict) -> None:
@@ -210,7 +271,12 @@ async def rc_worker_stream(sid: str, request: Request) -> StreamingResponse:
 
 
 @router.post("/v1/code/sessions/{sid}/worker/events", include_in_schema=False)
-async def rc_worker_events(sid: str, request: Request) -> dict:
+async def rc_worker_events(
+    sid: str,
+    request: Request,
+    db: DbSession,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+) -> dict:
     session, _ = await worker_session(sid, request)
     data = await body(request)
     if data.get("worker_epoch") != session["epoch"]:
@@ -229,6 +295,7 @@ async def rc_worker_events(sid: str, request: Request) -> dict:
         await store().receive(sid, events, epoch=data["worker_epoch"])
     except (ValueError, KeyError) as exc:
         raise ValidationError("Invalid RC worker event") from exc
+    await voice_pending(db, session, chat)
     await announce(session)
     return {}
 
@@ -270,30 +337,14 @@ async def rc_presence(sid: str, request: Request) -> dict:
     return {}
 
 
-async def controller(
-    topic_id: uuid.UUID, db: AsyncSession, resolver, *, deciding: bool = False
-):
-    """Whoever is in this room, for reading; not this session's own agent, for
-    deciding.
-
-    What must not happen is a session approving its own tool use, answering its
-    own question or changing its own permission mode — the shape of "the party
-    under review is not the reviewer", which is about stake and not about being
-    an agent. A teammate reads the state either way: the page polls the read
-    route every few seconds, and refusing an agent there bought nothing.
-    """
+async def controller(topic_id: uuid.UUID, db: AsyncSession, resolver):
+    """Whoever is in this room may read and control a session here."""
     place = await TopicService(db).place_or_404(topic_id)
     actor = await resolver.resolve(
         fallback_handle=None, project_id=place.project_id, topic_id=place.room_id
     )
     if not actor.authenticated:
         raise AuthenticationRequiredError("Login required to control a session")
-    if deciding and actor.is_agent:
-        seated = await TopicMemberService(db).resolve_agent_handle(
-            topic_id, room_id=place.room_id
-        )
-        if actor.handle == seated:
-            raise ForbiddenError("A session cannot answer its own controls")
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
     )
@@ -356,6 +407,27 @@ async def selected_session(topic_id: uuid.UUID, sid: str) -> dict:
     return session
 
 
+def not_its_own(session: dict, actor: Actor) -> None:
+    """A session may not decide its own controls.
+
+    Approving the tool you are about to run, answering the question you just
+    asked, or raising your own permission mode is the party under review acting
+    as the reviewer. The question is whether this actor IS this session — asked
+    of the session, which knows, and never of the room, which holds whatever
+    collaborators it holds and cannot be said to have an agent.
+
+    A session opened before it recorded this falls back to the handle its own
+    credential would have carried, derived from its place the way
+    `mint_scoped_token` derives it. That is still the session answering for
+    itself, and without it every session already running would be unguarded.
+    """
+    mine = session.get("agent_handle") or topic_agent_handle(
+        uuid.UUID(session["topic_id"])
+    )
+    if actor.is_agent and actor.handle == mine:
+        raise ForbiddenError("A session cannot decide its own controls")
+
+
 @router.post("/topics/{topic_id}/agent/control", operation_id="agent-control")
 async def control(
     topic_id: uuid.UUID,
@@ -364,8 +436,9 @@ async def control(
     resolver: ActorResolverDep,
     wait: float = Query(default=15, ge=0, le=30),
 ) -> dict:
-    actor = await controller(topic_id, db, resolver, deciding=True)
+    actor = await controller(topic_id, db, resolver)
     session = await selected_session(topic_id, data.session_id)
+    not_its_own(session, actor)
     if data.request.get("subtype") not in CONTROLS:
         raise ValidationError("Unsupported RC control; see the session's controls list")
     payload = {
@@ -444,8 +517,8 @@ class MessageIn(BaseModel):
 async def control_message(
     topic_id: uuid.UUID, data: MessageIn, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    actor = await controller(topic_id, db, resolver, deciding=True)
-    await selected_session(topic_id, data.session_id)
+    actor = await controller(topic_id, db, resolver)
+    not_its_own(await selected_session(topic_id, data.session_id), actor)
     command = await store().enqueue(
         data.session_id,
         {
@@ -461,10 +534,14 @@ async def control_message(
 
 @router.post("/topics/{topic_id}/agent/answer", operation_id="agent-answer")
 async def answer(
-    topic_id: uuid.UUID, data: AnswerIn, db: DbSession, resolver: ActorResolverDep
+    topic_id: uuid.UUID,
+    data: AnswerIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
-    actor = await controller(topic_id, db, resolver, deciding=True)
-    await selected_session(topic_id, data.session_id)
+    actor = await controller(topic_id, db, resolver)
+    not_its_own(await selected_session(topic_id, data.session_id), actor)
     rc = store()
     command = await rc.enqueue(
         data.session_id,
@@ -479,6 +556,12 @@ async def answer(
         },
         actor.handle,
     )
+    # The turn is already moving again on the control response, so this is a
+    # record and not a prompt: an event block, never a summoning message, or
+    # answering would start a second turn on top of the one it just released.
+    behavior = str(data.response.get("behavior") or "").strip()
+    said = {"allow": "同意了", "deny": "拒绝了"}.get(behavior, "回答了")
+    await chat.post_system_event(topic_id, f"{actor.handle} {said}芝士的请求")
     return ok({"status": command["status"]})
 
 
