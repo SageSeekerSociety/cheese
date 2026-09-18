@@ -627,7 +627,7 @@ class BlockRepository:
     async def add_reaction_if_absent(
         self, block_id: uuid.UUID, emoji: str, author: str
     ) -> bool:
-        """Idempotent add (never removes) — for platform receipts like 芝士's ✅
+        """Idempotent add (never removes) — for platform receipts like 芝士's 👀
         on the message that summoned it. Returns True when a row was created."""
         if await self._get_reaction(block_id, emoji, author) is not None:
             return False

@@ -415,6 +415,24 @@ describe('对话栏自己的输入栏', () => {
     expect(chip!.closest('.composer'), 'chips 没落在输入栏那一行里').toBeTruthy()
   })
 
+  // 「发出去」和「送到芝士手上」不是一件事：中间隔着一次投递，它可能失败退回队列，
+  // 冷启动时还可能一分多钟里根本没有会话。所以刚发完只说在送，说它在处理要等芝士的
+  // 👀 回执（后端 chat.confirm_prompt_receipt 落的，意思是会话已经把消息拿进去了）。
+  it('刚发出去时只说正在送，不说芝士在处理', async () => {
+    // 自己的话题 id：草稿是模块级的，用默认那个会把这条没发完的字留给下一条用例
+    const view = mountPanel({}, 'seen-indicator')
+    await flush()
+
+    const box = composerBox(view.container)!
+    box.focus()
+    await fireEvent.update(box, '@芝士 看看这个')
+    await fireEvent.keyDown(box, { key: 'Enter' })
+    await flush()
+
+    expect(view.getByText('正在送给芝士…')).toBeTruthy()
+    expect(view.queryByText('芝士正在处理…')).toBeNull()
+  })
+
   it('@ 了芝士的那条消息才召唤它', async () => {
     const { container } = mountPanel()
     await flush()

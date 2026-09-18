@@ -67,20 +67,19 @@ def test_blocks_empty_then_populated_after_chat(client):
         ws.send_json({"type": "message", "content": "你好芝士", "summon": True})
         frames = _drain_until_done(ws)
 
-    types = [f["type"] for f in frames]
-    # Slack-style: no token deltas — the platform ✅-acks the summoning message,
-    # announces the working turn, then retains terminal output in activity.
+    # Slack-style: no token deltas — the turn announces itself and terminal
+    # output is retained in activity.
     #
-    # `turn_started` twice, for the same turn: the platform says it when the
-    # turn opens, and the session says it again when it actually picks the work
-    # up. They carry the same id and a client applies whichever arrives — the
-    # second one is what a session that starts working WITHOUT being asked (a
-    # resumed screen, a 分身) has to announce itself with, and it does not stop
-    # saying it just because this turn was asked for.
+    # One `turn_started`, not two: the platform emits its own only while no
+    # session has claimed the lifecycle (`session_lifecycle` → `session_owned`),
+    # and here the session claims it first.
+    #
+    # `reaction` (芝士's 👀) is filtered out rather than placed: it rides the
+    # harness's prompt receipt, which is reported on its own task, so it has no
+    # fixed position among these. test_reactions.py is where it is asserted.
+    types = [f["type"] for f in frames if f["type"] != "reaction"]
     assert types == [
         "user_block",
-        "turn_started",
-        "reaction",
         "turn_started",
         "event_block",
         "done",
@@ -88,7 +87,7 @@ def test_blocks_empty_then_populated_after_chat(client):
 
     ack = next(f for f in frames if f["type"] == "reaction")
     agent = topic_agent_handle(uuid.UUID(topic_id))
-    assert ack["reactions"] == [{"emoji": "✅", "count": 1, "authors": [agent]}]
+    assert ack["reactions"] == [{"emoji": "👀", "count": 1, "authors": [agent]}]
 
     assistant = next(f for f in frames if f["type"] == "event_block")["block"]
     assert assistant["content"] == "Hello world"
@@ -221,7 +220,7 @@ def test_message_without_summon_does_not_invoke_cheese(client):
         frames = _drain_until_done(ws)
 
     types = [f["type"] for f in frames]
-    assert types == ["user_block", "done"]  # no ✅ ack / assistant_block
+    assert types == ["user_block", "done"]  # no 👀 ack / assistant_block
 
     blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
     assert [b["author_type"] for b in blocks] == ["human"]  # only the human msg

@@ -85,7 +85,7 @@ export interface Topic {
 export type AuthorType = 'human' | 'ai' | 'system'
 
 // One aggregated emoji reaction group on a block (Slack-style chip):
-// e.g. {emoji: '✅', count: 2, authors: ['cheese', 'alice']}.
+// e.g. {emoji: '👀', count: 2, authors: ['cheese', 'alice']}.
 export interface ReactionAgg {
   emoji: string
   count: number
@@ -274,7 +274,7 @@ export interface TopicProgress {
 // discrete assistant_block messages (one per completed SDK message boundary).
 export type WsServerFrame =
   | { type: 'user_block'; block: Block }
-  // A block's reactions changed (someone toggled / 芝士's ✅ receipt landed).
+  // A block's reactions changed (someone toggled / 芝士's 👀 receipt landed).
   | { type: 'reaction'; block_id: string; reactions: ReactionAgg[] }
   // `restored` = this is the checklist a PREVIOUS turn left behind, replayed at
   // turn start; without the flag the UI cannot tell it from live progress.

@@ -330,6 +330,10 @@ const connected = ref(false)
 // message lands as an `assistant_block` frame. `awaitingReply` drives the
 // 正在看… indicator from summon until every active turn explicitly finishes.
 const awaitingReply = ref(false)
+// 这一轮的消息到没到芝士手上。平台收下和会话读到是两件事，中间隔着一次投递：
+// 它可能失败退回队列，冷启动时还可能一分多钟里根本没有会话。所以这条指示分两
+// 段说，翻页的那一下就是芝士的 👀 回执。
+const reachedAgent = ref(false)
 const activeTurnIds = ref<Set<string>>(new Set())
 watch(awaitingReply, (v) => emit('working', v))
 
@@ -797,7 +801,13 @@ function handleFrame(frame: WsServerFrame) {
       autoScroll()
       break
     case 'reaction':
-      // Someone toggled an emoji / 芝士's ✅ receipt landed — update the chip
+      // 芝士的 👀 是平台落的回执：会话已经把这条消息拿进去了（后端
+      // chat.confirm_prompt_receipt）。认「作者不是我自己」而不是去比对队友的
+      // handle，因为名册可能还没到，那时比对不上会把指示永远卡在「正在送给」。
+      // 代价是房间里有人手点 👀 会让它提早翻一下，下一轮就自己纠正。
+      if (frame.reactions?.some((r) => r.emoji === '👀' && r.authors.some((a) => a !== AUTHOR)))
+        reachedAgent.value = true
+      // Someone toggled an emoji / 芝士's 👀 receipt landed — update the chip
       // row in place (the frame carries the block's full fresh aggregate).
       applyReactions(frame.block_id, frame.reactions)
       break
@@ -859,12 +869,16 @@ function handleFrame(frame: WsServerFrame) {
     case 'turn_active':
       if (frame.turn_ids?.length) activeTurnIds.value = new Set(frame.turn_ids)
       awaitingReply.value = true
+      // 这个话题上有活在跑，就说明消息早到它手上了。回执是精确的那一路，这是
+      // 兜底的一路：重连进来、或者会话自己开的一轮，本来就不该说「正在送给」。
+      reachedAgent.value = true
       break
     case 'turn_started': {
       const next = new Set(activeTurnIds.value)
       next.add(frame.turn_id)
       activeTurnIds.value = next
       awaitingReply.value = true
+      reachedAgent.value = true
       break
     }
     case 'turn_finished': {
@@ -1094,8 +1108,11 @@ function send(content: string, summon: boolean, attachments?: ChatAttachment[]):
   replyTarget.value = null
   flushOutbox()
   // Only show the "awaiting reply" indicator when 芝士 was summoned — an
-  // instant local ack (正在看…) even before the backend's ✅ receipt lands.
-  if (summon) awaitingReply.value = true
+  // instant local ack, before anything has been delivered anywhere yet.
+  if (summon) {
+    awaitingReply.value = true
+    reachedAgent.value = false
+  }
   // The stored checklist stays on screen until this turn's first live frame
   // replaces it — blanking it here would hide 进度 during the cold start, which
   // is precisely when someone is wondering where the work got to.
@@ -2101,7 +2118,7 @@ onBeforeUnmount(() => {
                   </button>
                 </div>
                 <!-- Emoji reaction chips (Slack): count per emoji, own reactions
-                   highlighted; click toggles. 芝士's ✅ receipt lands here too. -->
+                   highlighted; click toggles. 芝士's 👀 receipt lands here too. -->
                 <div v-if="m.reactions?.length" class="rx-row">
                   <button
                     v-for="r in m.reactions"
@@ -2209,7 +2226,9 @@ onBeforeUnmount(() => {
 
               <!-- Instant ack before the first message / during cold start -->
               <div v-if="awaitingReply" class="im-text">
-                <span class="text-medium-emphasis">{{ agentName }}正在处理…</span>
+                <span class="text-medium-emphasis">{{
+                  reachedAgent ? `${agentName}正在处理…` : `正在送给${agentName}…`
+                }}</span>
                 <span class="caret" />
               </div>
             </div>
