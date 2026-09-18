@@ -53,6 +53,13 @@ const openCardId = computed(() => {
   const q = route.query.card
   return typeof q === 'string' && q ? q : null
 })
+// 「去验收」：决策在聊天，审查在面板 —— 它不把人带去任何地方，只把右栏切到
+// 「改动」那一格。对话栏末尾那张验收卡和总览里那张卡上的按钮是同一个动作，所以
+// 只有这一处定义（`chatEvents.review` 和 `<WorkPanel @review>` 都指过来）。
+function onReview() {
+  onPanelTab('changes')
+}
+
 function onOpenCard(taskId: string | null) {
   if (openCardId.value === taskId) return
   // push，不是 replace：往下钻一层是「去了一个地方」，浏览器的返回该退回看板。
@@ -151,7 +158,7 @@ const chatEvents = {
   'upgrade-message': handleUpgradeMessage,
   'open-topic': openTopic,
   phase: (p: CardPhase) => (cardPhase.value = p),
-  review: () => onPanelTab('changes'),
+  review: onReview,
 }
 
 // 芝士 是不是正在这个话题里干活 —— 话题头上的状态词和工作面板的 tab 都读它。
@@ -360,6 +367,7 @@ watch(
           :agent-name="agentName"
           @open-topic="openTopic"
           @open-card="onOpenCard"
+          @review="onReview"
           @mention-click="handleMentionClick"
           @update:tab="onPanelTab"
           @locate="onLocate"

@@ -10,7 +10,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import type { Component } from 'vue'
-import type { Block, RoomTask } from '@/cx_types'
+import type { AcceptCard, Block, MergeStateInfo, RoomTask } from '@/cx_types'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -18,16 +18,17 @@ import * as directives from 'vuetify/directives'
 import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => ({ project: null }) }))
+vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => ({ project: null, members: [] }) }))
 
 const getRoomTask = vi.fn()
 const sayOnRoomTask = vi.fn()
+const getAcceptCards = vi.fn()
 
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
   return {
     ...actual,
-    getAcceptCards: vi.fn().mockResolvedValue({ data: [], total: 0 }),
+    getAcceptCards: (...a: unknown[]) => getAcceptCards(...a),
     getPrChecks: vi.fn().mockResolvedValue({ available: false }),
     getRoomTask: (...a: unknown[]) => getRoomTask(...a),
     sayOnRoomTask: (...a: unknown[]) => sayOnRoomTask(...a),
@@ -94,6 +95,9 @@ beforeAll(() => {
 beforeEach(() => {
   getRoomTask.mockReset()
   sayOnRoomTask.mockReset()
+  getAcceptCards.mockReset()
+  // 默认没有验收卡：绝大多数用例里的卡不值得验收，验收框那一块不出现。
+  getAcceptCards.mockResolvedValue({ data: [], total: 0 })
   getRoomTask.mockResolvedValue(card())
   sayOnRoomTask.mockResolvedValue(block({ id: 'b2' }))
 })
@@ -209,5 +213,57 @@ describe('面板不够高时滚得动', () => {
     expect(min).not.toBeNull()
     expect(Number(min?.[1])).toBeGreaterThan(0)
     expect(timeline).toContain('overflow-y: auto')
+  })
+})
+
+// 待采纳卡：形状照 `components/__tests__/TopicAcceptCardMergeState.test.ts` 那份夹具，
+// 只是这张挂在 `task-1` 上——验收框是按卡拉的，`task_id` 对不上它就当没有卡。
+function acceptCard(over: Partial<AcceptCard> = {}): AcceptCard {
+  return {
+    id: 'accept-1',
+    task_id: 'task-1',
+    topic_id: 'room-1',
+    reviewer_handle: 'alice',
+    routing_reason: '最懂',
+    change_subject: 'fix: do a thing',
+    change_body: null,
+    status: 'pending',
+    decided_by: null,
+    decided_at: null,
+    note: '',
+    note_level: null,
+    created_at: '2026-09-06T02:00:00Z',
+    gate_passed_at: null,
+    gate_output: '',
+    approvals: [],
+    approvals_required: 1,
+    pr_number: null,
+    pr_url: null,
+    // 平台 lane 的常态（#363 拍板）：没有外部检查可读，后端直接下发 clean。
+    merge_state: {
+      state: 'clean',
+      who: 'human',
+      reasons: [{ kind: 'no_obstacle', checks: [], detail: '可以合并' }],
+      head_sha: null,
+      checked_at: null,
+      since: null,
+    } as MergeStateInfo,
+    has_external_checks: false,
+    auto_merge: { allowed: false, armed_by: null, armed_at: null },
+    ...over,
+  } as AcceptCard
+}
+
+// 「去验收」是这张卡上唯一一个自己不干活的按钮（批准 / 采纳 / 退回 / 撤回都自己打
+// API）：它要去的那个地方是右栏的「改动」那一格，而开在哪一格是 `TopicView` 的事。
+// PanelCard 以前没接这个事件，于是点下去什么都不发生。这一条钉的是「点了要 emit 出
+// 去」；透到哪一格由 PanelOverview.spec.ts 和 TopicView 那边管。
+describe('卡上的「去验收」', () => {
+  it('点下去把 review emit 出去，而不是自己找个地方去', async () => {
+    getAcceptCards.mockResolvedValue({ data: [acceptCard()], total: 1 })
+    const { emitted, getByText } = mount()
+    await waitFor(() => getByText('去验收'))
+    await fireEvent.click(getByText('去验收'))
+    expect(emitted().review).toBeTruthy()
   })
 })

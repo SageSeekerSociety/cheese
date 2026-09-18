@@ -32,6 +32,8 @@ const props = withDefaults(
 const emit = defineEmits<{
   (e: 'open-topic', topicId: string): void
   (e: 'open-card', taskId: string | null): void
+  /** 卡上的「去验收」，一路透到 `TopicView`（那里才知道面板开在哪一格）。 */
+  (e: 'review'): void
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string): void
 }>()
@@ -55,6 +57,7 @@ defineExpose({
       :active="props.active"
       :refresh-tick="props.refreshTick"
       @back="emit('open-card', null)"
+      @review="emit('review')"
     />
     <template v-else>
       <TaskProgress

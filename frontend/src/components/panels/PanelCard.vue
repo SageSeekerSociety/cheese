@@ -33,7 +33,12 @@ const props = withDefaults(
   { active: false, refreshTick: 0 }
 )
 
-const emit = defineEmits<{ (e: 'back'): void }>()
+const emit = defineEmits<{
+  (e: 'back'): void
+  /** 去验收: 把右栏切到「改动」那一格看这份 diff。这里干不了——开在哪一格是
+      `TopicView` 的事（它拿着地址），所以照 `back` 那条线一路透上去。 */
+  (e: 'review'): void
+}>()
 
 const card = ref<(RoomTask & { blocks: Block[] }) | null>(null)
 const loading = ref(false)
@@ -130,7 +135,7 @@ async function send() {
         <span class="board-dot" :style="dotStyle" aria-hidden="true" />
         <span class="t-body panel-card__name">{{ card.title }}</span>
       </div>
-      <TopicAcceptCard :topic-id="card.room_id" :task-id="card.id" topic-status="active" />
+      <TopicAcceptCard :topic-id="card.room_id" :task-id="card.id" topic-status="active" @review="emit('review')" />
       <div class="panel-card__meta t-meta">
         <span data-testid="card-status">{{ card.presentation.display_status }}</span>
         <span class="panel-card__sep">·</span>
