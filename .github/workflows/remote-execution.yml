@@ -68,7 +68,7 @@ jobs:
             [registry."docker.io"]
               mirrors = ["mirror.gcr.io"]
       - name: Build private execution image
-        run: docker buildx build --load -f backend/sandbox/Dockerfile.private -t cheese-private-executor:2.1.265 .
+        run: docker buildx build --load -f backend/sandbox/Dockerfile.private -t cheese-private-executor:2.1.277 .
       - name: Verify real scratch execution
         id: scratch
         run: >-
@@ -140,6 +140,25 @@ jobs:
           backend/.venv/bin/python scripts/remote_execution/private_terminal.py
           --ordinary --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
           --output tmp/remote-execution/ordinary-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      # The receipts go to the job log as well as to an artifact: when the
+      # account's artifact storage is full (2026-09-16, again 2026-09-18) the
+      # upload below is the only copy and it silently produces nothing, which
+      # leaves a red case with no log to read anywhere.
+      - name: Print the failing case's receipts
+        if: failure()
+        run: |
+          for log in tmp/remote-execution/ci-*/*.attempt-*.log; do
+            [ -f "$log" ] || continue
+            echo "::group::$log"
+            tail -n 200 "$log"
+            echo "::endgroup::"
+          done
+          for terminal in tmp/remote-execution/ci-*/*/terminal.txt; do
+            [ -f "$terminal" ] || continue
+            echo "::group::$terminal"
+            tail -n 120 "$terminal"
+            echo "::endgroup::"
+          done
       - name: Upload acceptance receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

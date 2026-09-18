@@ -110,7 +110,8 @@ def test_version_floor_compares_semver_the_right_way_round():
         "2.1.223": False,
         "2.1.224": False,  # the old floor: reads a mid-tool prompt, no receipt
         "2.1.233": False,
-        "2.1.261": True,  # the floor itself
+        "2.1.261": False,  # the previous floor
+        "2.1.277": True,  # the floor itself
         "2.2.0": True,
         "3.0.1": True,
         "2.0.99": False,

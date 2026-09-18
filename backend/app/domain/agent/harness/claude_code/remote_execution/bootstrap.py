@@ -15,7 +15,7 @@ import sys
 import uuid
 from pathlib import Path
 
-VERSION = "2.1.265"
+VERSION = "2.1.277"
 # The platform's own directory inside a room's home, and the one it used before.
 # A harness's config dir is the harness's; everything the platform installs —
 # the executor, its helpers, the CLI, the environment runner — lives here.

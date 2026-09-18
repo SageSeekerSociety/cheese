@@ -15,14 +15,14 @@ from app.domain.agent.harness.claude_code.remote_execution.launch import script
 
 
 def test_executor_prepares_room_without_model_credentials(tmp_path):
-    pin = Path.home() / ".local/share/claude/versions/2.1.265"
+    pin = Path.home() / ".local/share/claude/versions/2.1.277"
     binary = os.environ.get("CHEESE_TEST_CLAUDE") or (
         str(pin) if pin.exists() else None
     )
     if not binary:
         pytest.skip("Native executor acceptance supplies CHEESE_TEST_CLAUDE in CI")
     owner = tmp_path / "owner"
-    destination = owner / ".cheese/claude/versions/2.1.265"
+    destination = owner / ".cheese/claude/versions/2.1.277"
     destination.parent.mkdir(parents=True)
     destination.symlink_to(binary)
     project, resource = uuid.uuid4(), uuid.uuid4()

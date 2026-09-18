@@ -12,7 +12,7 @@ import subprocess
 import uuid
 from pathlib import Path
 
-IMAGE = "cheese-private-executor:2.1.265"
+IMAGE = "cheese-private-executor:2.1.277"
 LABEL = "com.cheese.private-chat"
 SCRATCH_BYTES = 64 * 1024 * 1024
 RUNTIME = "/opt/cheese/runtime.py"

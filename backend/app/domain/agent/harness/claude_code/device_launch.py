@@ -61,8 +61,8 @@ _CHEESE_HOOK_SCRIPT = CHEESE_HOOK_SCRIPT
 #
 # Raising these is a deliberate act: re-run cli/e2e (CHEESE_RV=1) against the
 # new build first, because "it launched" is not evidence the frames still work.
-CLAUDE_PINNED_VERSION = "2.1.261"
-CLAUDE_MIN_VERSION = "2.1.261"
+CLAUDE_PINNED_VERSION = "2.1.277"
+CLAUDE_MIN_VERSION = "2.1.277"
 
 # CLAUDE_BASE_CMD starts with the bare word `claude`; the launcher resolves a
 # specific binary (pin, then ~/.local/bin, then PATH) and needs only the flags.
