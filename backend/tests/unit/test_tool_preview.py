@@ -6,6 +6,8 @@
 
 import uuid
 
+import pytest
+
 from app.domain.agent.tool_preview import (
     DETAIL_MAX,
     PREVIEW_MAX,
@@ -429,3 +431,24 @@ def test_writing_a_skill_is_not_using_one():
 
 def test_a_lone_skill_file_has_no_skill_to_name():
     assert tool_preview("read", {"path": "SKILL.md"}) == ToolPreview("SKILL.md")
+
+
+# 2026-09-18，dev 上的后端卡死在这条命令的前缀剥离上：现场事件一条一条过
+# `_is_platform_tool`，一条读不完，整个事件循环就停在那里——`/healthz` 连续 24 次
+# 8 秒超时，容器被判 unhealthy，之后每一次部署都过不了健康门。
+#
+# 触发它的形状很朴素：一段看着像赋值前缀、最终却不匹配的命令。超时而不是断言失
+# 败是这条用例的正确失败方式——回溯一旦回来，它不会算错，它会不返回。
+@pytest.mark.timeout(10)
+def test_an_assignment_prefix_that_never_matches_still_returns():
+    command = "A=" + "a" * 4000 + "'"
+
+    assert cheese_subcommand(command) == ""
+    assert command_preview(command).action is None
+
+
+@pytest.mark.timeout(10)
+def test_a_long_assignment_prefix_is_still_dropped():
+    command = "TOKEN=" + "x" * 4000 + " cheese doc set"
+
+    assert cheese_subcommand(command) == "doc"
