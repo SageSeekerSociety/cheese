@@ -188,6 +188,23 @@ async def set_topic_agent(
     return ok(_topic_agent_payload(topic, agent))
 
 
+async def _relay_wakes_someone_else(
+    db: AsyncSession, room_id: uuid.UUID, actor: Actor
+) -> bool:
+    """Whether this author's message has anyone left to relay to.
+
+    The relay wakes the room's own agent, so the one author it must not fire for
+    is that agent: it would be telling itself what it just said, and the turn it
+    starts would post again. Every other author gets relayed — including a
+    second agent seated in the room, which is a different collaborator with as
+    much reason to be passed along as a person.
+    """
+    if not actor.is_agent:
+        return True
+    seated = await TopicMemberService(db).resolve_agent_handle(room_id)
+    return actor.handle != seated
+
+
 def _topic_agent_payload(topic: Topic, agent: ResolvedAgent) -> dict:
     return {
         "topic_id": str(topic.id),
@@ -647,7 +664,7 @@ async def say_on_task(
     await get_broker().publish(
         str(task.id), {"type": "assistant_block", "block": payload}
     )
-    if not actor.is_agent:
+    if await _relay_wakes_someone_else(db, place.room_id, actor):
         runner.submit(
             chat,
             place.room_id,
@@ -1053,7 +1070,7 @@ async def add_comment(
     await db.commit()  # the comment must be visible before the turn reads it
     # 评论即反馈：文档是芝士维护的界面，人评论了就叫它来处理（回应/改文档）。
 
-    if not actor.is_agent:
+    if await _relay_wakes_someone_else(db, place.room_id, actor):
         where = f"「{quote[:80]}」" if quote else "整篇"
         said = f"在实况文档 {where} 处评论：{content}"
         runner.submit(
