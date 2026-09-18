@@ -21,12 +21,11 @@ import {
   listAgentTypes,
   listMemory,
   listProjectAgents,
-  listTopics,
   setProjectDefaultAgent,
 } from '../api'
 import AgentEditorDialog from '../components/agents/AgentEditorDialog.vue'
 import UserAvatar from '../components/common/UserAvatar.vue'
-import { agentKey, memoryCountsByHandle, topicCountsByAgent } from '../lib/projectAgents'
+import { agentKey, memoryCountsByHandle } from '../lib/projectAgents'
 import { relTime } from '../lib/relTime'
 
 defineOptions({ name: 'ProjectAgentsView' })
@@ -37,7 +36,6 @@ interface AgentsPayload {
   agents: ProjectAgent[]
   types: AgentType[]
   memories: MemoryEntryOut[]
-  topicCounts: Record<string, number>
   // 运行方式的人话名字。名字只有后端那份目录知道（HARNESSES），在这里留第二份
   // 清单就是留一份会过期的副本 —— 所以它跟别的补充数据一样，拉得到就用，拉不到
   // 就退回 id 本身。
@@ -58,7 +56,6 @@ const { data, loading, refreshing, refresh } = useCachedResource(
       agents: [],
       types: [],
       memories: [],
-      topicCounts: {},
       harnessLabels: {},
       backendMissing: false,
       loadError: null,
@@ -70,8 +67,8 @@ const { data, loading, refreshing, refresh } = useCachedResource(
       else payload.loadError = e instanceof Error ? e.message : '加载 AI 队友失败'
       return payload
     }
-    // 四个补充数据，谁失败谁空着。
-    const [typeList, memoryList, topicList, harnessLabels] = await Promise.all([
+    // 三个补充数据，谁失败谁空着。
+    const [typeList, memoryList, harnessLabels] = await Promise.all([
       listAgentTypes().then(
         (r) => r.data,
         () => [] as AgentType[]
@@ -80,10 +77,6 @@ const { data, loading, refreshing, refresh } = useCachedResource(
         (r) => r.data,
         () => [] as MemoryEntryOut[]
       ),
-      listTopics(props.projectId).then(
-        (r) => r.data,
-        () => []
-      ),
       getProjectAgentOptions(props.projectId).then(
         (r) => Object.fromEntries((r.harness?.choices ?? []).map((c) => [c.id, c.label])),
         () => ({}) as Record<string, string>
@@ -91,7 +84,6 @@ const { data, loading, refreshing, refresh } = useCachedResource(
     ])
     payload.types = typeList
     payload.memories = memoryList
-    payload.topicCounts = topicCountsByAgent(topicList, payload.agents)
     payload.harnessLabels = harnessLabels
     return payload
   }
@@ -100,7 +92,6 @@ const { data, loading, refreshing, refresh } = useCachedResource(
 const agents = computed<ProjectAgent[]>(() => data.value?.agents ?? [])
 const types = computed<AgentType[]>(() => data.value?.types ?? [])
 const memories = computed<MemoryEntryOut[]>(() => data.value?.memories ?? [])
-const topicCounts = computed<Record<string, number>>(() => data.value?.topicCounts ?? {})
 const harnessLabels = computed<Record<string, string>>(() => data.value?.harnessLabels ?? {})
 const backendMissing = computed<boolean>(() => data.value?.backendMissing ?? false)
 // 名册取不回来，和「设为默认 / 停用」那一下失败，都显示在同一条 alert 上。
@@ -290,10 +281,6 @@ async function confirmDeactivate() {
             <v-icon size="14" class="mr-1">mdi-book-open-variant-outline</v-icon>
             {{ memoryCounts[a.handle] ?? 0 }} 条记忆
           </button>
-          <span class="t-meta c-muted">
-            <v-icon size="14" class="mr-1">mdi-forum-outline</v-icon>
-            {{ topicCounts[agentKey(a)] ?? 0 }} 个话题在用
-          </span>
         </div>
 
         <v-expand-transition>

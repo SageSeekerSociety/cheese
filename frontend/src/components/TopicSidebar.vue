@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import type { Project, ProjectAgent, Topic } from '../cx_types'
+import type { Project, Topic } from '../cx_types'
 import type { FlatRow, VisibleRow } from '../lib/topicTree'
 
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { listProjectAgents } from '../api'
 import { columnDotStyle } from '../lib/board'
 import { cancelPrefetch, prefetchOnHover } from '../lib/routePrefetch'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '../lib/topicTitle'
@@ -52,7 +51,7 @@ const emit = defineEmits<{
   // 会发生什么由 select-topic 的接收方决定，所以「提前准备什么」也归它。
   (e: 'hover-topic', id: string): void
   (e: 'leave-topic'): void
-  (e: 'create-topic', title: string, agentInstanceId?: string | null): void
+  (e: 'create-topic', title: string): void
   // 归档去向: manual archive / unarchive from the row's ⋯ actions.
   (e: 'archive-topic', id: string): void
   (e: 'unarchive-topic', id: string): void
@@ -117,34 +116,11 @@ function openProject(projectId: string) {
 // New topic: don't ask the human for a title — create an untitled one and open
 // it; the title is derived from the first message (and 芝士 can refine it).
 //
-// 队友是另一回事，必须在这一刻选：换队友会丢掉话题的会话，所以事后再改改的是一
-// 段已经有人说过话的对话。菜单第一项就是默认那个，常用路径仍然是「点开、点第一
-// 项」两下，而且点之前就看得见这个房间要交给谁。
-function newTopic(agentInstanceId?: string | null) {
-  emit('create-topic', '', agentInstanceId)
+// 房间是个群聊，不「交给」谁：建出来时坐着项目的默认队友，别的队友和人一样从
+// 成员名册请进来。
+function newTopic() {
+  emit('create-topic', '')
 }
-
-// 这个项目有哪些队友，供上面那个菜单用。拿不到就退化成不带队友创建（跟项目默认
-// 走）—— 一个还没上线 agent 接口的环境不该连新建话题都点不动。
-const projectAgents = ref<ProjectAgent[]>([])
-async function loadProjectAgents(pid: string | null | undefined) {
-  if (!pid) {
-    projectAgents.value = []
-    return
-  }
-  try {
-    projectAgents.value = (await listProjectAgents(pid)).data
-  } catch {
-    projectAgents.value = []
-  }
-}
-watch(() => props.selectedProjectId, loadProjectAgents, { immediate: true })
-
-// 默认那个排第一 —— 常用路径是「点开、点第一项」，不用在列表里找。已停用的
-// 不列：这个菜单是在给一个还没建的话题挑队友，正是停用要挡住的那件事。
-const newTopicAgents = computed(() =>
-  projectAgents.value.filter((a) => a.is_active !== false).sort((a, b) => Number(b.is_default) - Number(a.is_default))
-)
 
 // ----- Topic tree -----
 // A flattened tree node: a topic plus its nesting depth, so the template can
@@ -597,27 +573,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
 
           <div class="t-eyebrow side-subhead side-subhead--row">
             <span>话题</span>
-            <!-- 建话题时就把房间交给谁定下来。队友列表拿不到时（旧环境）退回
-                 一键直建，不让侧栏的主要动作被一个可选接口卡住。 -->
-            <v-menu v-if="projectAgents.length" location="bottom end">
-              <template #activator="{ props: menu }">
-                <v-btn v-bind="menu" icon="mdi-plus" size="x-small" variant="tonal" color="primary" title="新建话题" />
-              </template>
-              <v-list density="compact" min-width="220">
-                <v-list-subheader>交给哪个 AI 队友</v-list-subheader>
-                <v-list-item v-for="a in newTopicAgents" :key="a.id ?? a.handle" @click="newTopic(a.id)">
-                  <template #prepend>
-                    <v-icon size="small" icon="mdi-robot-outline" />
-                  </template>
-                  <v-list-item-title>{{ a.display_name }}</v-list-item-title>
-                  <template v-if="a.is_default" #append>
-                    <span class="t-meta c-muted">默认</span>
-                  </template>
-                </v-list-item>
-              </v-list>
-            </v-menu>
             <v-btn
-              v-else
               icon="mdi-plus"
               size="x-small"
               variant="tonal"

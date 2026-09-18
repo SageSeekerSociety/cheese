@@ -8,7 +8,7 @@ import { useDisplay } from 'vuetify'
 
 import { usePageTitle } from '@/composables/usePageTitle'
 
-import { getTopicAgent } from '@/api'
+import { listTopicMembers } from '@/api'
 import PushPermissionPrompt from '@/components/PushPermissionPrompt.vue'
 import RoomEnvironmentStatus from '@/components/RoomEnvironmentStatus.vue'
 import TopicHeader from '@/components/TopicHeader.vue'
@@ -259,21 +259,24 @@ async function handleUpgradeMessage(messageId: string) {
 // 所以在归零之前抓一次，交给对话栏去画那条线。
 const unreadOnOpen = ref(0)
 
-// 这个房间现在交给的 AI 队友叫什么。「现场」那一格给它干的每一行署名，而那一格
-// 自己不拉名册。一个项目可以有好几个队友，所以这个名字不能写死。
-const agentName = ref('芝士')
-async function loadAgentName(id: string) {
+// 这个房间名册上每个 handle 叫什么。「现场」那一格给每一行署名用它，人和 AI 队
+// 友一个规矩：署作者，不署「这个房间的那位」——一个房间可以先后交给两个队友。
+// 那一格自己不拉名册，所以在这里拉一次传下去。
+const memberNames = ref<Record<string, string>>({})
+async function loadMemberNames(id: string) {
   try {
-    const agent = await getTopicAgent(id)
-    if (props.topicId === id) agentName.value = agent.display_name || '芝士'
+    const payload = await listTopicMembers(id)
+    if (props.topicId === id)
+      memberNames.value = Object.fromEntries(payload.data.map((m) => [m.member_handle, m.name || m.member_handle]))
   } catch {
-    // 支线（和旧环境）没有这条路由。写死的兜底名字比空白好，也比报错好。
+    // 名册拉不到，现场那一格就按 handle 署名——比空白好，也比报错好。
   }
 }
 watch(
   () => props.topicId,
   () => {
-    if (props.topicId) void loadAgentName(props.topicId)
+    memberNames.value = {}
+    if (props.topicId) void loadMemberNames(props.topicId)
   },
   { immediate: true }
 )
@@ -364,7 +367,7 @@ watch(
           :phase="phase"
           :with-chat="!mdAndUp"
           :open-card-id="openCardId"
-          :agent-name="agentName"
+          :member-names="memberNames"
           @open-topic="openTopic"
           @open-card="onOpenCard"
           @review="onReview"

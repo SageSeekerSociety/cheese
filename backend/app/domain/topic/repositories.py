@@ -78,7 +78,6 @@ class TopicRepository:
         kind: TopicKind = TopicKind.topic,
         created_by: str | None = None,
         upgraded_from_block_id: uuid.UUID | None = None,
-        agent_instance_id: uuid.UUID | None = None,
     ) -> Topic:
         project = await self._session.get(Project, project_id)
         topic = Topic(
@@ -89,7 +88,6 @@ class TopicRepository:
             kind=kind,
             created_by=created_by,
             upgraded_from_block_id=upgraded_from_block_id,
-            agent_instance_id=agent_instance_id,
         )
         self._session.add(topic)
         await self._session.flush()

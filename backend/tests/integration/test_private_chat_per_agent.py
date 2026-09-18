@@ -58,10 +58,13 @@ def _dm_id(client, project_id: str, user: str, agent: str | None = None) -> str:
     return r.json()["data"]["id"]
 
 
-def _who_answers(client, topic_id: str) -> dict:
-    r = client.get(f"/topics/{topic_id}/agent")
+def _who_answers(client, topic_id: str) -> str:
+    """The teammate this DM is with, as the roster names it."""
+    r = client.get(f"/topics/{topic_id}/members")
     assert r.status_code == 200, r.text
-    return r.json()["data"]
+    names = [m["name"] for m in r.json()["data"]["data"] if m["agent"]]
+    assert len(names) == 1, names
+    return names[0]
 
 
 def _seed_message(client, project_id: str, topic_id: str, author: str) -> None:
@@ -104,9 +107,8 @@ def test_each_teammate_gets_its_own_room_and_keeps_it(client):
     assert _dm_id(client, project_id, "user-1", default["handle"]) == with_default
 
     # And each room is answered by the teammate it belongs to — the payoff.
-    assert _who_answers(client, with_reviewer)["handle"] == "reviewer"
-    assert _who_answers(client, with_reviewer)["display_name"] == "评审"
-    assert _who_answers(client, with_default)["handle"] == default["handle"]
+    assert _who_answers(client, with_reviewer) == "评审"
+    assert _who_answers(client, with_default) == default["display_name"]
 
     # Different people do not share a room with the same teammate.
     assert _dm_id(client, project_id, "user-2", "reviewer") != with_reviewer
@@ -131,7 +133,7 @@ def test_a_room_stays_with_its_teammate_when_the_default_moves(client):
     _make_default(client, project_id, reviewer["id"])
 
     # The old conversation is still the old teammate's...
-    assert _who_answers(client, room)["handle"] == first["handle"]
+    assert _who_answers(client, room) == first["display_name"]
     assert _dm_id(client, project_id, "user-1", first["handle"]) == room
     # ...and the new default is a new room, not a takeover of that one.
     assert _dm_id(client, project_id, "user-1") != room
@@ -159,7 +161,7 @@ def test_a_dm_from_before_teammates_were_named_keeps_its_history(client):
     # Adopted, so it no longer moves with the project's default.
     reviewer = _add_agent(client, project_id, "reviewer", "评审")
     _make_default(client, project_id, reviewer["id"])
-    assert _who_answers(client, legacy)["handle"] == default["handle"]
+    assert _who_answers(client, legacy) == default["display_name"]
 
 
 def test_an_unopened_old_dm_is_settled_before_the_default_moves(client):
@@ -185,8 +187,10 @@ def test_an_unopened_old_dm_is_settled_before_the_default_moves(client):
     reviewer = _add_agent(client, project_id, "reviewer", "评审")
     _make_default(client, project_id, reviewer["id"])
 
-    assert _who_answers(client, legacy)["handle"] == first["handle"]
+    # Opening it is what seats its teammate on the roster; a DM nobody has
+    # opened has no roster to ask.
     assert _dm_id(client, project_id, "user-1", first["handle"]) == legacy
+    assert _who_answers(client, legacy) == first["display_name"]
     assert _dm_id(client, project_id, "user-1", "reviewer") != legacy
 
 

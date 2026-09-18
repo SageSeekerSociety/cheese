@@ -5,6 +5,7 @@ from app.domain.agent_instance.configuration import AgentConfiguration
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.agent_type.library import preset_types
 from app.domain.project.services import ProjectService
+from tests.integration.conftest import session_auth_headers
 
 
 def test_agents_own_independent_configuration(db_session, _portal, monkeypatch):
@@ -88,10 +89,14 @@ def test_room_switch_preserves_the_selected_agents_model(client, monkeypatch):
     for title in ["First room", "Second room"]:
         room = client.post(
             "/topics",
-            json={"project_id": pid, "title": title, "agent_instance_id": agent["id"]},
+            json={"project_id": pid, "title": title, "created_by": "alice"},
         ).json()["data"]
-        selected = client.get(f"/topics/{room['id']}/agent").json()["data"]
-        assert selected["instance_id"] == agent["id"]
+        r = client.post(
+            f"/topics/{room['id']}/members",
+            json={"handle": agent["seat_handle"], "role": "member", "actor": "alice"},
+            headers=session_auth_headers("alice"),
+        )
+        assert r.status_code == 200, r.text
     updated = client.put(
         f"/projects/{pid}/agents/{agent['id']}",
         json={"configuration": {**agent["configuration"], "model": "fable"}},

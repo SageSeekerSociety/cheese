@@ -4,11 +4,11 @@
 // drawer showing every member with their role; an owner/admin can add project
 // members, remove them, or change roles. 芝士 (the AI member) wears an Agent
 // badge, mirroring the @-mention menu.
-import type { ProjectMemberRow, TopicMemberRow } from '../cx_types'
+import type { ProjectAgent, ProjectMemberRow, TopicMemberRow } from '../cx_types'
 
 import { computed, ref, watch } from 'vue'
 
-import { addTopicMember, listTopicMembers, removeTopicMember, updateTopicMemberRole } from '../api'
+import { addTopicMember, listProjectAgents, listTopicMembers, removeTopicMember, updateTopicMemberRole } from '../api'
 import { avatarColor, avatarInitial } from '../utils/avatar'
 import { getAvatarUrl } from '../utils/materials'
 
@@ -16,9 +16,22 @@ import LoadingSkeleton from './common/LoadingSkeleton.vue'
 
 const props = defineProps<{
   topicId: string
+  projectId: string
   projectMembers: ProjectMemberRow[]
   me: string
 }>()
+
+// 这个项目的 AI 队友。请一个进房间和请一个人是同一件事——往名册上加一行——
+// 所以它们和项目成员一起出现在下面那个「添加」列表里。拿不到就只列人。
+const projectAgents = ref<ProjectAgent[]>([])
+async function loadProjectAgents() {
+  try {
+    projectAgents.value = (await listProjectAgents(props.projectId)).data
+  } catch {
+    projectAgents.value = []
+  }
+}
+watch(() => props.projectId, loadProjectAgents, { immediate: true })
 
 const members = ref<TopicMemberRow[]>([])
 const loading = ref(false)
@@ -63,16 +76,25 @@ const myRole = computed(() => members.value.find((m) => m.member_handle === prop
 const canManage = computed(() => myRole.value === 'owner' || myRole.value === 'admin')
 const ownerCount = computed(() => members.value.filter((m) => m.role === 'owner').length)
 
-// Project members not already in the room — the "add member" dropdown.
+// Project members and AI teammates not already in the room — the "add member"
+// dropdown. 已停用的队友不列：停用就是为了挡住新的邀请。
 const addable = computed(() => {
   const inRoom = new Set(members.value.map((m) => m.member_handle))
-  return props.projectMembers
+  const people = props.projectMembers
     .filter((m) => !inRoom.has(m.user_handle))
     .map((m) => ({
       title: m.name || m.user_handle,
       subtitle: `@${m.user_handle}`,
       value: m.user_handle,
     }))
+  const agents = projectAgents.value
+    .filter((a) => a.seat_handle && a.is_active !== false && !inRoom.has(a.seat_handle))
+    .map((a) => ({
+      title: `${a.display_name}（AI 队友）`,
+      subtitle: `@${a.seat_handle}`,
+      value: a.seat_handle as string,
+    }))
+  return [...people, ...agents]
 })
 
 // 头像：本人挑过就画本人的，没挑过画按 handle 哈希出的彩色首字母。种子用
@@ -188,9 +210,11 @@ async function onSetRole(handle: string, role: string) {
           </span>
           <span v-if="m.agent" class="roster__badge">AI 队友</span>
 
-          <!-- Owner/admin: change role via a small menu; else a static chip. -->
-          <template v-if="canManage && !m.agent">
-            <v-menu location="bottom end">
+          <!-- Owner/admin: change role via a small menu; else a static chip.
+               队友没有角色菜单——它在房间里的身份是「AI 队友」那个标——但和人一样
+               能被移出。 -->
+          <template v-if="canManage">
+            <v-menu v-if="!m.agent" location="bottom end">
               <template #activator="{ props: rp }">
                 <button v-bind="rp" type="button" class="roster__role roster__role--btn" :disabled="busy">
                   {{ roleLabel(m.role) }}
@@ -221,8 +245,7 @@ async function onSetRole(handle: string, role: string) {
               <v-icon size="15">mdi-close</v-icon>
             </button>
           </template>
-          <!-- 芝士不写角色：它在房间里的身份是 Agent 那个标，「成员」对它没有意义，
-               和左边的「换」并排更像是两个能点的东西。 -->
+          <!-- 芝士不写角色：它在房间里的身份是 Agent 那个标，「成员」对它没有意义。 -->
           <span v-else-if="!m.agent" class="roster__role">{{ roleLabel(m.role) }}</span>
         </li>
       </ul>
@@ -237,7 +260,7 @@ async function onSetRole(handle: string, role: string) {
           variant="outlined"
           hide-details
           placeholder="添加成员…"
-          no-data-text="项目成员都已在话题中"
+          no-data-text="项目成员和队友都已在话题中"
           class="roster__select"
         />
         <v-btn
