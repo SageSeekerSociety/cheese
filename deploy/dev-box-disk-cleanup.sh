@@ -136,33 +136,29 @@ docker_build_cache() { docker_df_reclaimable "Build Cache"; }
 # on the box that needed this (718 volumes) that call alone ran over five
 # minutes, and a cleanup that costs more than it reclaims will not be run.
 #
-# One named volume routinely dominates this row: `buildx_buildkit_<node>_state`,
-# where a docker-container buildx builder keeps its layer cache. Nothing mounts
-# it between builds, so `docker system df` counts it as unused, and the prune
-# above leaves it alone because it is named. On dev 2026-09-18 that was 12.5GB
-# of a 19GB row — the nightly run reported reclaiming 19GB and the disk stayed
-# at 84%. That cache is reclaimed by the buildx tier below, not by this one.
-docker_unused_volumes() { docker_df_reclaimable "Local Volumes"; }
-
-# Builders that run in their own container (`docker buildx create --driver
-# docker-container`) hold their cache in that container's volume, out of reach
-# of `docker builder prune`, which only knows the daemon's own cache.
-buildx_container_builders() {
-  command -v docker >/dev/null 2>&1 || return 0
-  docker buildx ls --format '{{.Name}}\t{{.DriverEndpoint}}' 2>/dev/null \
-    | awk -F'\t' '$2=="docker-container"{print $1}'
+# One named volume dominates this row on dev, and it is not reclaimable:
+# `buildx_buildkit_cheese-box-builder0_state`, the layer cache of the builder
+# `.github/workflows/build.yml` creates with `keep-state: true`. The builder
+# only exists while a build job runs; between jobs the volume stands alone, so
+# `docker system df` counts it as unused, `docker volume prune` skips it for
+# being named, and there is no builder for `docker buildx prune` to address.
+# That is by design — build.yml prunes it itself after every job
+# (`--max-used-space 20GB --min-free-space 10GB`), and emptying it here on
+# 2026-09-18 only made the next box-image build refill all 12GB from scratch.
+# So the row reports the aggregate MINUS those volumes: what the prune below
+# can actually free. Sized with `du` on the volume directories rather than
+# `docker system df -v`, which walks every volume and took over five minutes.
+# The names come from docker (the docker group can list them) and the bytes
+# from sudo (`/var/lib/docker/volumes` is root-only, so a glob there is empty).
+docker_unused_volumes() {
+  local total kept=0 name n
+  total="$(docker_df_reclaimable "Local Volumes")"
+  for name in $(docker volume ls -q --filter name=buildx_buildkit_ 2>/dev/null); do
+    n="$(sudo du -sxb "/var/lib/docker/volumes/$name/_data" 2>/dev/null | head -1 | cut -f1)"
+    case "$n" in ''|*[!0-9]*) ;; *) kept=$((kept + n)) ;; esac
+  done
+  [ "$total" -gt "$kept" ] && printf '%s' "$((total - kept))" || printf '0'
 }
-
-# `docker buildx du` ends with "Total:\t\t8.424GB"; the Reclaimable line above
-# it is what a plain prune would take, but this reclaims with `--all` (below),
-# so the whole cache is the number.
-buildx_du_total() { docker_bytes "$(printf '%s\n' "$1" | awk -F'\t' '/^Total:/{print $NF; exit}')"; }
-
-buildx_cache() { buildx_du_total "$(docker buildx du --builder "$1" 2>/dev/null)"; }
-
-# `--all` rather than the default dangling-only prune: this script only runs
-# above 75%, and the box image this builder makes rebuilds in a few minutes.
-prune_buildx() { docker buildx prune --builder "$1" --all -f; }
 
 self_test() {
   # The one thing worth asserting: size_of must not abort the script on a
@@ -202,18 +198,14 @@ self_test() {
   out="$(docker_build_cache)"
   [ "$out" = 5228000000 ] \
     || { printf 'self-test FAIL: build cache row -> %s, want 5228000000\n' "$out"; exit 1; }
+  # The volumes row is the aggregate minus the buildx state volumes, and on a
+  # box that has one it must come out smaller, never negative: `du` on a
+  # directory that is not there contributes nothing, so here it is the whole row.
   out="$(docker_unused_volumes)"
-  [ "$out" = 15980000000 ] \
-    || { printf 'self-test FAIL: volumes row -> %s, want 15980000000\n' "$out"; exit 1; }
+  case "$out" in ''|*[!0-9]*) printf 'self-test FAIL: volumes row -> %s\n' "$out"; exit 1 ;; esac
+  [ "$out" -le 15980000000 ] \
+    || { printf 'self-test FAIL: volumes row -> %s, above the aggregate\n' "$out"; exit 1; }
   DOCKER_DF=""
-  # Same reason for the buildx row: the number is read off a text table, and a
-  # parse that silently yields 0 is a tier that never runs.
-  out="$(buildx_du_total "$(printf 'ID\tRECLAIMABLE\tSIZE\nabc\ttrue\t117.3MB\nReclaimable:\t0B\nTotal:\t\t8.424GB\n')")"
-  [ "$out" = 8424000000 ] \
-    || { printf 'self-test FAIL: buildx du total -> %s, want 8424000000\n' "$out"; exit 1; }
-  out="$(buildx_du_total "")"
-  [ "$out" = 0 ] \
-    || { printf 'self-test FAIL: buildx du on no output -> %s, want 0\n' "$out"; exit 1; }
   out="$(vscode_servers_reclaimable)"
   case "$out" in ''|*[!0-9]*) printf 'self-test FAIL: non-numeric reclaimable -> %s\n' "$out"; exit 1 ;; esac
   printf 'self-test OK\n'
@@ -229,9 +221,6 @@ if [ "$APPLY" -eq 1 ]; then printf 'reclaiming:\n'; else printf 'reclaimable (dr
 
 plan "docker build cache" "$(docker_build_cache)" docker builder prune -f
 plan "docker unused volumes" "$(docker_unused_volumes)" docker volume prune -f
-for builder in $(buildx_container_builders); do
-  plan "buildx cache ($builder)" "$(buildx_cache "$builder")" prune_buildx "$builder"
-done
 plan "apt archives" "$(size_of /var/cache/apt/archives)" sudo apt-get clean
 plan "go build cache" "$(size_of "$HOME/.cache/go-build")" go clean -cache
 plan "rust toolchain downloads" "$(size_of "$HOME/.cache/puccinialin")" rm -rf "$HOME/.cache/puccinialin"
