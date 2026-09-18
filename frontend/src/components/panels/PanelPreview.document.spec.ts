@@ -60,6 +60,8 @@ vi.mock('./preview/PreviewSheet.vue', () => ({
 
 import PanelPreview from './PanelPreview.vue'
 
+import { setLocale } from '@/i18n'
+
 const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
@@ -80,6 +82,10 @@ function mount() {
 }
 
 beforeEach(() => {
+  // 这一份断言的是中文界面（下载按钮、定位条的占位符和那句话都在内）。默认语言
+  // 是 en，所以先钉住语言：面板的文字进了词表之后，屏幕上出现哪一版词不再由写死
+  // 的中文决定。
+  setLocale('zh-CN')
   vi.clearAllMocks()
   getPreview.mockResolvedValue(artifact('output/评审简报.docx', DOCX))
   readPreviewFile.mockResolvedValue(fileContent('output/评审简报.docx'))
