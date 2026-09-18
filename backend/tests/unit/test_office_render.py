@@ -136,3 +136,75 @@ async def test_the_cache_stays_bounded(client):
         await office.render_to_pdf(f"doc-{i}".encode(), "a.docx", "http://r:8901")
 
     assert len(office._cache) <= office._CACHE_MAX_ENTRIES
+
+
+# ---- 表格的投影（.xls → xlsx）-------------------------------------------
+# 与 PDF 那条路分开测，因为它问的是另一个端点、要的是另一种东西：一份读者能读出
+# 单元格的工作簿，而不是一页画。上游的合同（服务会做哪些转换）在 CONVERTIBLE 里。
+
+
+async def test_a_legacy_spreadsheet_is_asked_for_as_a_workbook(client):
+    """soffice 按扩展名挑导入过滤器，而目标格式要明说：`/render` 只做 PDF。"""
+    client.responses.append(_Response(200, b"PK\x03\x04 workbook"))
+
+    book = await office.project_to_xlsx(
+        b"\xd0\xcf\x11\xe0legacy", "out/预算表.xls", "http://r:8901"
+    )
+
+    assert book == b"PK\x03\x04 workbook"
+    assert client.calls[0]["url"] == "http://r:8901/convert"
+    assert client.calls[0]["params"] == {"suffix": ".xls", "to": "xlsx"}
+    assert client.calls[0]["content"] == b"\xd0\xcf\x11\xe0legacy"
+
+
+async def test_a_workbook_the_reader_can_read_is_refused_before_it_is_sent(client):
+    """`.xlsx` 走原始字节那条路；到这里来问的是一个不该被问的问题。"""
+    with pytest.raises(office.OfficeRenderFailed):
+        await office.project_to_xlsx(b"PK", "预算.xlsx", "http://r:8901")
+
+    assert client.calls == [], "nothing should have been sent"
+
+
+async def test_a_projection_that_is_not_a_zip_is_not_passed_off_as_a_workbook(client):
+    """代理或登录页回一个 200 的 HTML，否则会以「表格」的名义交给阅读器，
+    读者看到的是一个空白的方格。"""
+    client.responses.append(_Response(200, b"<html>gateway</html>"))
+
+    with pytest.raises(office.OfficeRenderFailed):
+        await office.project_to_xlsx(b"legacy", "预算.xls", "http://r:8901")
+
+
+async def test_a_deployment_without_a_renderer_cannot_project_either():
+    with pytest.raises(office.OfficeRenderUnavailable):
+        await office.project_to_xlsx(b"legacy", "预算.xls", None)
+
+
+async def test_an_unreachable_renderer_is_the_deployment_s_problem_here_too(client):
+    client.responses.append(_Response(503, payload={"error": "renderer down"}))
+
+    with pytest.raises(office.OfficeRenderUnavailable):
+        await office.project_to_xlsx(b"legacy", "预算.xls", "http://r:8901")
+
+
+async def test_a_projection_is_cached_by_content(client):
+    client.responses.append(_Response(200, b"PK\x03\x04 first"))
+
+    first = await office.project_to_xlsx(b"same", "预算.xls", "http://r:8901")
+    second = await office.project_to_xlsx(b"same", "预算.xls", "http://r:8901")
+
+    assert first == second == b"PK\x03\x04 first"
+    assert len(client.calls) == 1, "the panel re-reads on a timer"
+
+
+async def test_the_same_bytes_asked_for_two_ways_do_not_answer_for_each_other(client):
+    """缓存键里有目标格式。同一串字节既可能是一份要被投影的 `.xls`，也可能是别的
+    什么——按内容哈希取，第二次就会拿到第一次的那份，而且没有任何地方会报错。"""
+    client.responses.append(_Response(200, b"%PDF-1.7 pages"))
+    client.responses.append(_Response(200, b"PK\x03\x04 cells"))
+
+    pdf = await office.render_to_pdf(b"same", "a.docx", "http://r:8901")
+    book = await office.project_to_xlsx(b"same", "a.xls", "http://r:8901")
+
+    assert pdf == b"%PDF-1.7 pages"
+    assert book == b"PK\x03\x04 cells"
+    assert len(client.calls) == 2

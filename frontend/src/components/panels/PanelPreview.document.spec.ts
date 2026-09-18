@@ -13,6 +13,7 @@ const downloadFile = vi.fn()
 const attachmentRawUrl = vi.fn()
 const previewFileBytes = vi.fn()
 const previewDocumentPdf = vi.fn()
+const previewDocumentXlsx = vi.fn()
 const documentRevisions = vi.fn()
 const decideDocumentRevisions = vi.fn()
 
@@ -31,6 +32,7 @@ vi.mock('../../api', () => ({
   attachmentRawUrl: (...args: unknown[]) => attachmentRawUrl(...args),
   previewFileBytes: (...args: unknown[]) => previewFileBytes(...args),
   previewDocumentPdf: (...args: unknown[]) => previewDocumentPdf(...args),
+  previewDocumentXlsx: (...args: unknown[]) => previewDocumentXlsx(...args),
   documentRevisions: (...args: unknown[]) => documentRevisions(...args),
   decideDocumentRevisions: (...args: unknown[]) => decideDocumentRevisions(...args),
   PreviewRendererUnavailable,
@@ -90,6 +92,7 @@ beforeEach(() => {
   attachmentRawUrl.mockReturnValue('/api/topics/topic-a/attachments/raw?path=x')
   downloadFile.mockResolvedValue(undefined)
   previewDocumentPdf.mockResolvedValue(new ArrayBuffer(4096))
+  previewDocumentXlsx.mockResolvedValue(new ArrayBuffer(3072))
   previewFileBytes.mockResolvedValue(new ArrayBuffer(2048))
   documentRevisions.mockResolvedValue({ path: 'output/评审简报.docx', revisions: [] })
 })
@@ -117,6 +120,33 @@ it('reads a spreadsheet from its own bytes, not from a converted copy', async ()
   const sheet = await screen.findByTestId('sheet')
   expect(sheet.getAttribute('data-bytes')).toBe('2048')
   expect(previewDocumentPdf).not.toHaveBeenCalled()
+})
+
+it('turns a legacy .xls into a workbook the sheet reader can read', async () => {
+  getPreview.mockResolvedValue(artifact('output/台账.xls', 'application/vnd.ms-excel'))
+  readPreviewFile.mockResolvedValue(fileContent('output/台账.xls'))
+
+  mount()
+
+  // `.xls` 不是 zip，阅读器读不出其中的单元格——它得先变成 xlsx。转的不是 PDF，
+  // 理由和上面那条 xlsx 一样：分页会把列拆散，而 `B7` 是读者在表里唯一能指的东西。
+  const sheet = await screen.findByTestId('sheet')
+  expect(sheet.getAttribute('data-bytes')).toBe('3072')
+  expect(previewDocumentXlsx).toHaveBeenCalledWith('topic-a', 'output/台账.xls', null)
+  // 原始字节是读不出单元格的那一份，谁都不该拿它去画。
+  expect(previewFileBytes).not.toHaveBeenCalled()
+  expect(previewDocumentPdf).not.toHaveBeenCalled()
+})
+
+it('says the deployment has no renderer for a legacy sheet too', async () => {
+  getPreview.mockResolvedValue(artifact('output/台账.xls', 'application/vnd.ms-excel'))
+  readPreviewFile.mockResolvedValue(fileContent('output/台账.xls'))
+  previewDocumentXlsx.mockRejectedValue(new PreviewRendererUnavailable('这个部署没有启用格式转换'))
+
+  mount()
+
+  await waitFor(() => expect(screen.getByText('文档预览未启用')).toBeTruthy())
+  expect(screen.queryByText('无法显示这个文件')).toBeNull()
 })
 
 it('says the deployment has no renderer, and still hands the file over', async () => {

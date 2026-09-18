@@ -31,6 +31,21 @@ export const DOCUMENT_TYPES: Record<string, FileKind> = {
  *  它之所以是表的东西。 */
 export const NEEDS_CONVERSION = new Set(['docx', 'doc', 'odt', 'rtf', 'pptx', 'ppt', 'odp'])
 
+/** 表格里连「原样读字节」都不行的那些。`.xls` 比 zip 还早，不是压缩包，阅读器
+ *  读不出其中的单元格；它得先转成 xlsx。转的是表格格式而不是 PDF，理由同上一条。 */
+export const NEEDS_XLSX = new Set(['xls'])
+
+/** 一份文档的字节从哪儿来：转 PDF、转 xlsx，还是原样读。
+ *
+ *  放在这里而不是取字节的那一处，是因为它是「这个文件是哪种类型」的一部分——同一份
+ *  文件在预览和改动两个面板里必须走同一条路，各判一次的结果就是两处显示得不一样。 */
+export function previewSource(path: string): 'pdf' | 'xlsx' | 'raw' {
+  const suffix = suffixOf(path)
+  if (NEEDS_CONVERSION.has(suffix)) return 'pdf'
+  if (NEEDS_XLSX.has(suffix)) return 'xlsx'
+  return 'raw'
+}
+
 /** 浏览器自己画得出来的图片。它们不是文档，所以不在上面那张表里，但预览域按
  *  image/png、image/jpeg 把字节发出来，浏览器画得出来。 */
 export const IMAGE_SUFFIXES = new Set(['png', 'jpg', 'jpeg'])

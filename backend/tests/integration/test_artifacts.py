@@ -457,3 +457,90 @@ def test_a_deployment_without_a_renderer_says_so_rather_than_failing(client):
 
     assert r.status_code == 503, r.text
     assert "文档预览" in r.json()["message"]
+
+
+def test_a_legacy_excel_file_becomes_a_workbook_the_sheet_viewer_can_read(
+    client, monkeypatch
+):
+    """`.xls` 不是 zip，阅读器读不出其中的单元格，所以它只能先转一次。
+
+    转的是 xlsx 而不是 PDF，和右邻那条路由对表格的处理是同一个理由：分页会把列拆散、
+    让单元格失去地址，而地址是读者在表里唯一能指的东西（`B7`）。
+
+    这里同时钉住「投影不改动房间里的那一份」：预览是只读的，写成一份新文件的是
+    `cheese convert` 那条路（`POST /documents/convert`）。
+    """
+    import base64
+
+    from app.api.routes import topics as topics_routes
+
+    _pid, tid = _topic(client)
+    raw = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1legacy excel"
+    client.post(
+        f"/topics/{tid}/artifact",
+        json={"path": "预算表.xls", "content_b64": base64.b64encode(raw).decode()},
+    )
+
+    seen: dict = {}
+
+    async def fake_project(data, path, endpoint, timeout=120.0):
+        seen["data"], seen["path"], seen["endpoint"] = data, path, endpoint
+        return b"PK\x03\x04 a workbook"
+
+    monkeypatch.setattr(settings, "office_render_endpoint", "http://renderer:8901")
+    monkeypatch.setattr(topics_routes, "project_to_xlsx", fake_project)
+
+    r = client.get(f"/topics/{tid}/attachments/xlsx", params={"path": "预算表.xls"})
+
+    assert r.status_code == 200, r.text
+    assert r.content == b"PK\x03\x04 a workbook"
+    # 发出去的是 xlsx——表格阅读器读的就是这个类型。
+    assert r.headers["content-type"] == (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    # 交给转换服务的是文件自己的字节，不是它够不着的一个路径。
+    assert seen["data"] == raw
+
+    back = client.get(f"/topics/{tid}/attachments/raw?path=预算表.xls&download=true")
+    assert back.content == raw
+
+
+def test_a_spreadsheet_the_reader_can_already_read_is_not_converted(client):
+    """`.xlsx` 是 zip，阅读器直接读得出单元格，所以它走原始字节那条路。
+
+    这条钉的是「别顺手把表格也拿去转」：一次转换约 2.5 秒，而结果和原文件里的单元格
+    是同一份东西。表格转 PDF 更是另一回事（右邻那条路由已经拒绝过）。
+    """
+    import base64
+
+    _pid, tid = _topic(client)
+    client.post(
+        f"/topics/{tid}/artifact",
+        json={
+            "path": "预算表.xlsx",
+            "content_b64": base64.b64encode(b"PK\x03\x04").decode(),
+        },
+    )
+
+    r = client.get(f"/topics/{tid}/attachments/xlsx", params={"path": "预算表.xlsx"})
+
+    assert r.status_code == 422, r.text
+
+
+def test_a_legacy_sheet_has_no_renderer_to_convert_it_either(client):
+    """和 PDF 那条一样：没有转换服务是 503（部署的状态），不是这个文件的错。"""
+    import base64
+
+    _pid, tid = _topic(client)
+    client.post(
+        f"/topics/{tid}/artifact",
+        json={
+            "path": "预算表.xls",
+            "content_b64": base64.b64encode(b"\xd0\xcf\x11\xe0").decode(),
+        },
+    )
+
+    r = client.get(f"/topics/{tid}/attachments/xlsx", params={"path": "预算表.xls"})
+
+    assert r.status_code == 503, r.text
+    assert "转换" in r.json()["message"]

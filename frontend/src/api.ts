@@ -1164,10 +1164,19 @@ export function decideDocumentRevisions(
  *  each: one is about the deployment and one is about the file. */
 export class PreviewRendererUnavailable extends Error {}
 
-/** A Word or PowerPoint file converted to PDF, so a browser can draw it. */
-export async function previewDocumentPdf(topicId: string, path: string, task?: string | null): Promise<ArrayBuffer> {
+/** 文件本身浏览器画不出来时，平台把它转成的那一份。
+ *
+ *  `to` 是那个端点给出的目标格式，也是上面那个错误分工的一部分：转换服务不在
+ *  （503）是部署的事，这个文件转不了（其余）是文件的事。两条投影走同一段代码，
+ *  是因为这两句话必须对两者都不变。 */
+async function previewProjection(
+  to: 'pdf' | 'xlsx',
+  topicId: string,
+  path: string,
+  task?: string | null
+): Promise<ArrayBuffer> {
   const url =
-    `${BASE}/topics/${encodeURIComponent(topicId)}/attachments/pdf` +
+    `${BASE}/topics/${encodeURIComponent(topicId)}/attachments/${to}` +
     `?path=${encodeURIComponent(path)}` +
     (task ? `&task=${encodeURIComponent(task)}` : '')
   const res = await fetch(url, { headers: authHeaders() })
@@ -1182,6 +1191,19 @@ export async function previewDocumentPdf(topicId: string, path: string, task?: s
     throw new PreviewRendererUnavailable(message || '这个部署没有启用文档预览')
   }
   throw new Error(message || `无法生成预览（HTTP ${res.status}）`)
+}
+
+/** A Word or PowerPoint file converted to PDF, so a browser can draw it. */
+export function previewDocumentPdf(topicId: string, path: string, task?: string | null): Promise<ArrayBuffer> {
+  return previewProjection('pdf', topicId, path, task)
+}
+
+/** 一份 `.xls` 转成 xlsx，好让表格阅读器读出它的单元格。
+ *
+ *  转的是 xlsx 而不是 PDF：表格里读者唯一能指的是单元格地址（`B7`），把它分页
+ *  会连列带地址一起毁掉。返回的是字节，不是一份新文件——房间里的原文件不会被改写。 */
+export function previewDocumentXlsx(topicId: string, path: string, task?: string | null): Promise<ArrayBuffer> {
+  return previewProjection('xlsx', topicId, path, task)
 }
 
 // Downloads carry the same credentials as API requests, including token-only sessions.

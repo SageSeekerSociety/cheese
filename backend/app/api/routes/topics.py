@@ -83,7 +83,9 @@ from app.domain.mentions import canonicalize_refs
 from app.domain.preview.office import (
     OfficeRenderFailed,
     OfficeRenderUnavailable,
+    is_projectable,
     is_renderable,
+    project_to_xlsx,
     render_to_pdf,
 )
 from app.domain.project.repositories import ProjectRepository
@@ -2652,7 +2654,9 @@ async def attachment_as_pdf(
 
     Spreadsheets are not here on purpose: paginating a sheet breaks the columns
     apart and throws away the cell addresses, which are the only thing anyone can
-    point at afterwards. Those are drawn from the original bytes instead.
+    point at afterwards. Those are drawn from the original bytes instead — and
+    the one spreadsheet that has no bytes to draw from comes back as a workbook
+    rather than as a page, in ``attachments/xlsx`` below.
     """
     topic = await TopicService(db).get_or_404(topic_id)
     actor = await resolver.resolve(
@@ -2684,6 +2688,65 @@ async def attachment_as_pdf(
     return Response(
         content=pdf,
         media_type="application/pdf",
+        headers={
+            "Content-Disposition": "inline",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+            "Cache-Control": "private, max-age=3600",
+        },
+    )
+
+
+@router.get("/{topic_id}/attachments/xlsx")
+async def attachment_as_xlsx(
+    topic_id: uuid.UUID,
+    path: str,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    task: uuid.UUID | None = None,
+) -> Response:
+    """A pre-2007 Excel file, converted so the sheet viewer can read its cells.
+
+    Not a PDF, unlike the route above: a sheet drawn onto pages loses its columns
+    and its cell addresses, and an address is the only thing anyone can point at
+    in one afterwards. `.xls` is the spreadsheet whose own bytes cannot be drawn
+    instead — it predates zip, so nothing in a room can read a cell out of it —
+    which leaves converting it, and converting it to the format that keeps the
+    addresses.
+
+    Read-only by construction: the workbook goes to the browser and nowhere else.
+    The path that writes one into the worktree is `POST /documents/convert`
+    (`cheese convert`), and it is a different thing on purpose.
+    """
+    topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
+    clean = _clean_artifact_path(path)
+    if not is_projectable(clean):
+        raise ValidationError("这个格式不能转换为表格预览")
+    if task is not None:
+        await _bind_source_task(db, topic_id, task)
+    data = _source_bytes(topic.project_id, topic_id, clean, task)
+    if len(data) > MAX_ARTIFACT_BYTES:
+        raise ValidationError(
+            f"文件超过 {MAX_ARTIFACT_BYTES // (1024 * 1024)}MB，无法生成预览"
+        )
+    try:
+        book = await project_to_xlsx(data, clean, settings.office_render_endpoint)
+    except OfficeRenderUnavailable as exc:
+        # Same split as the PDF route: 503 is "this deployment has no renderer",
+        # 400 is "this file cannot be converted". The panel says different things
+        # for them, and only one of the two is worth retrying.
+        raise SystemBusyError(str(exc)) from exc
+    except OfficeRenderFailed as exc:
+        raise ValidationError(str(exc)) from exc
+    return Response(
+        content=book,
+        media_type=_ARTIFACT_MIME["xlsx"],
         headers={
             "Content-Disposition": "inline",
             "X-Content-Type-Options": "nosniff",
