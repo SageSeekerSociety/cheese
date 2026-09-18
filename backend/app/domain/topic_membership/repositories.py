@@ -83,6 +83,32 @@ class TopicMembershipRepository:
         )
         return int((await self._session.scalar(stmt)) or 0)
 
+    async def owners_by_topic(
+        self, topic_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, list[str]]:
+        """Who owns each of these topics, in ONE query.
+
+        By topic-SET for the same reason as ``topic_ids_for_member``: the caller
+        is a project-level exit (退项目 / 被移出项目) asking one question about
+        every room the leaver holds a seat in — "would revoking this seat leave
+        the room with nobody in charge". Asking it per topic is the N+1 that
+        makes a hundred-topic project expensive, and the answer comes back
+        grouped here.
+
+        Handles, not a count: the asker has to tell "he is the only one left"
+        apart from "others are still there", and a number cannot say which.
+        """
+        if not topic_ids:
+            return {}
+        stmt = select(TopicMembership.topic_id, TopicMembership.member_handle).where(
+            TopicMembership.topic_id.in_(topic_ids),
+            TopicMembership.role == TopicRole.owner,
+        )
+        owners: dict[uuid.UUID, list[str]] = {}
+        for topic_id, member_handle in (await self._session.execute(stmt)).all():
+            owners.setdefault(topic_id, []).append(member_handle)
+        return owners
+
     async def update_role(
         self, member: TopicMembership, *, role: TopicRole
     ) -> TopicMembership:

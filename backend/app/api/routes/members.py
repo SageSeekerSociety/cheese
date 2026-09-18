@@ -1,8 +1,8 @@
 """Project membership routes (nested under /api/projects).
 
-The three write routes decide who is a member of the project, and project
-membership is what ``authorize_topic_access`` reads to let someone into every
-topic of that project. So the acting identity is resolved at the trust boundary
+The write routes decide who is a member of the project, and project membership
+is what ``authorize_topic_access`` reads to let someone into every topic of that
+project. So the acting identity is resolved at the trust boundary
 (``ActorResolverDep``) and the service authorizes it — unlike most 2.0 routes
 these do NOT honor a handle passed in the body: a claimed handle is exactly the
 forgery this surface must not accept. Reading the roster stays open, as it was.
@@ -137,6 +137,23 @@ async def remove_member(
     await MemberService(db).remove(
         project_id=project_id, user_handle=user_handle, actor=who
     )
+    return ok({"deleted": True})
+
+
+@router.delete("/projects/{project_id}/membership")
+async def leave_project(
+    project_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """退出项目 —— 成员自己走，不是被谁移出。
+
+    路径是 ``/membership`` 而不是 ``/members/me``：``/members/{user_handle}`` 注册在
+    上面，``me`` 到了那里就是一个 handle，会被当成「把 me 这个人移出项目」。身份照
+    旧只从 resolver 来，退的恒是动作人自己 —— 代退没有入口，也不接受任何自称。
+    """
+    who = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await MemberService(db).leave(project_id=project_id, actor=who)
     return ok({"deleted": True})
 
 

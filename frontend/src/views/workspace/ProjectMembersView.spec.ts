@@ -18,6 +18,7 @@ const listProjectInvitations = vi.fn()
 const revokeInvitation = vi.fn()
 const updateProjectMemberRole = vi.fn()
 const removeProjectMember = vi.fn()
+const leaveProject = vi.fn()
 const listProjectAgents = vi.fn()
 
 vi.mock('@/api', async () => {
@@ -29,6 +30,7 @@ vi.mock('@/api', async () => {
     revokeInvitation: (...a: unknown[]) => revokeInvitation(...a),
     updateProjectMemberRole: (...a: unknown[]) => updateProjectMemberRole(...a),
     removeProjectMember: (...a: unknown[]) => removeProjectMember(...a),
+    leaveProject: (...a: unknown[]) => leaveProject(...a),
     listProjectAgents: (...a: unknown[]) => listProjectAgents(...a),
   }
 })
@@ -45,6 +47,7 @@ let meHandle = 'alice'
 vi.mock('@/me', () => ({ myHandle: () => meHandle }))
 
 const refreshMembers = vi.fn()
+const refreshProjects = vi.fn()
 let members: ProjectMemberRow[] = []
 let privateUnreadMap: Record<string, number> = {}
 vi.mock('@/stores/workspace', () => ({
@@ -53,6 +56,7 @@ vi.mock('@/stores/workspace', () => ({
     privateUnreadMap,
     projects: [{ id: 'p1', name: 'P1', created_at: '', owner_handle: 'alice' }],
     refreshMembers,
+    refreshProjects,
   }),
 }))
 
@@ -101,6 +105,8 @@ beforeEach(() => {
   revokeInvitation.mockReset().mockResolvedValue({})
   updateProjectMemberRole.mockReset().mockResolvedValue({})
   removeProjectMember.mockReset().mockResolvedValue({ deleted: true })
+  leaveProject.mockReset().mockResolvedValue({ deleted: true })
+  refreshProjects.mockReset().mockResolvedValue(undefined)
   listProjectAgents.mockReset().mockResolvedValue({
     data: [
       { handle: 'cheese', display_name: '芝士', is_default: true, is_active: true },
@@ -199,6 +205,44 @@ describe('成员页', () => {
     expect(removeProjectMember).not.toHaveBeenCalled()
     await fireEvent.click(await screen.findByRole('button', { name: '移出' }))
     await waitFor(() => expect(removeProjectMember).toHaveBeenCalledWith('p1', 'ligan'))
+  })
+
+  // 退出项目是**自己走**那条路（后端 `DELETE /projects/{id}/membership`），不是名册
+  // 上某一行的管理动作——所以它在右上角，不在任何一行里，而且非所有者都看得见。
+  // 「来自小队」的人照样看得见：他得到的那句「请在小队里退出」正是他要的下一步。
+  it('退出项目要先确认——点一下不会直接退出去', async () => {
+    meHandle = 'ligan'
+    const { getByText } = mount()
+    await fireEvent.click(getByText('退出项目'))
+    expect(leaveProject).not.toHaveBeenCalled()
+    await fireEvent.click(await screen.findByRole('button', { name: '退出' }))
+    await waitFor(() => expect(leaveProject).toHaveBeenCalledWith('p1'))
+  })
+
+  it('退出去之后刷新名册和项目列表，并离开这一页', async () => {
+    meHandle = 'ligan'
+    const { getByText } = mount()
+    await fireEvent.click(getByText('退出项目'))
+    await fireEvent.click(await screen.findByRole('button', { name: '退出' }))
+    // 不刷新就走的话，退到的那一页会拿着旧数据把我送回这个项目。
+    await waitFor(() => expect(refreshMembers).toHaveBeenCalled())
+    expect(refreshProjects).toHaveBeenCalled()
+    await waitFor(() => expect(push).toHaveBeenCalledWith({ name: 'HomeSpaces' }))
+  })
+
+  it('退不掉时把后端那句理由说出来，人留在原地', async () => {
+    meHandle = 'ligan'
+    leaveProject.mockRejectedValue(new Error('你对这个项目的访问来自所属小队，退出项目要在小队里操作'))
+    const { getByText } = mount()
+    await fireEvent.click(getByText('退出项目'))
+    await fireEvent.click(await screen.findByRole('button', { name: '退出' }))
+    expect(await screen.findByText(/退出项目要在小队里操作/)).toBeTruthy()
+    expect(push).not.toHaveBeenCalled()
+  })
+
+  it('所有者看不到退出项目——后端会拒他，按钮不该先给一个必定失败的动作', () => {
+    const { queryByText } = mount()
+    expect(queryByText('退出项目')).toBeNull()
   })
 
   // 邀请按 uid，不按 handle：uid 抄得准（就在个人主页地址里），而 handle 打错一个

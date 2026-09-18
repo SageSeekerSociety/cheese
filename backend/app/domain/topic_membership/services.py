@@ -413,3 +413,57 @@ class TopicMemberService:
         ):
             raise ValidationError("不能移除最后一个 owner")
         await self._repo.delete(member)
+
+    async def revoke_project_seats(
+        self, *, project_id: uuid.UUID, member_handle: str
+    ) -> list[uuid.UUID]:
+        """把这个人从这个项目的每一间房里撤出去 —— 退项目 / 被移出项目走这里。
+
+        返回**真的撤掉席位的房间**（``MemberService.leave`` 靠它区分「他在这份名
+        册上只剩这些席位」和「他本来就和这个项目没关系」）。空列表 = 一个字节都没
+        动：要么他没有席位，要么他唯一的席位在最后一个 owner 那条例外上。
+
+        为什么项目级的退场必须走到话题这一层：项目成员身份是**进得来这个项目的全部
+        话题**的凭据（``authorize_topic_access`` 认它），只删名册那一行、把话题席位
+        留着，人还是每个房间都进得去 —— 退项目就只退了个名单。所以两条路（自己退、
+        被 owner / lead 移出）共用这一份撤销。
+
+        没有授权检查，因为**它不是一条被别人调用的用户动作**：调用方是项目级的退场
+        动作，授权已经在那里做完了（``MemberService.leave`` 认本人，``remove`` 认
+        owner / lead）。
+
+        只管项目的话题树，不管私聊：私聊是两个人之间的一间房，不是项目发的通行证
+        （``TopicRepository.list_for_project`` 本来就不含它），人离开项目不该把它
+        带走。
+
+        唯一的例外是**最后一个 owner**：撤掉他，这间房就没有人管得了 —— 无主房间在
+        产品里是死路（``_require_manager`` 那个逃逸口正是为修这种房间存在的）。所以
+        既不静默放行，也不替房间指定继任者：拒绝，并点名是哪间房，让人先把房间交出
+        去再走。
+        """
+        topics = await self._topics.list_for_project(project_id)
+        if not topics:
+            return []
+        titles = {t.id: t.title for t in topics}
+        seats = await self._repo.topic_ids_for_member(list(titles), member_handle)
+        if not seats:
+            return []
+        owners = await self._repo.owners_by_topic(sorted(seats))
+        orphaned = sorted(
+            titles[topic_id]
+            for topic_id in seats
+            if member_handle in owners.get(topic_id, []) and len(owners[topic_id]) <= 1
+        )
+        if orphaned:
+            raise ValidationError(
+                "你是话题「"
+                + "」「".join(orphaned)
+                + "」唯一的 owner，先把话题交给别人"
+            )
+        revoked: list[uuid.UUID] = []
+        for topic_id in sorted(seats):
+            seat = await self._repo.get(topic_id=topic_id, member_handle=member_handle)
+            if seat is not None:
+                await self._repo.delete(seat)
+                revoked.append(topic_id)
+        return revoked

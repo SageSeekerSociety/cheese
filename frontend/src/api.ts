@@ -1603,6 +1603,15 @@ export function removeProjectMember(projectId: string, handle: string): Promise<
   )
 }
 
+// 自己退出项目。路径是 `/membership` 而不是 `/members/me`：`/members/{handle}` 那条
+// 路由先注册，`me` 到了那里就是一个人的名字。同样不传 handle —— 退的恒是当前身份
+// 那个人，后端没有代退的入口（membership/services.py 的 `leave`）。
+export function leaveProject(projectId: string): Promise<{ deleted: boolean }> {
+  return request<{ deleted: boolean }>(`/projects/${encodeURIComponent(projectId)}/membership`, {
+    method: 'DELETE',
+  })
+}
+
 // ---- 邀请：加人这件事要两个人同意 --------------------------------------------
 // 进了项目就看得见这个项目的全部话题，那是别人的工作内容，所以从界面上加人得由
 // 被加的那个人点头。`addProjectMember` 那条路仍然在，它是接受之后真正把人放上名册

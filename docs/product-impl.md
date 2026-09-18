@@ -212,7 +212,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 通知   GET /api/projects/{id}/{notifications,inbox} · POST /api/projects/{id}/notifications
        POST /api/notifications/{id}/{read,feedback,resolve}
 里程碑 GET/POST /api/projects/{id}/milestones · GET /{id}/calendar · PUT/DELETE /api/milestones/{id}
-成员   GET/POST /api/projects/{id}/members · PUT/DELETE .../{handle} · GET .../{handle}/summary
+成员   GET/POST /api/projects/{id}/members · PUT/DELETE .../{handle} · DELETE .../membership（自己退出） · GET .../{handle}/summary
 机构   POST/GET /api/spaces · GET /spaces/{id}/dashboard · POST/GET /api/spaces/{id}/templates
 任务   POST/GET /api/templates/{id}/tasks · POST/GET/DELETE /api/projects/{id}/tasks[/{task_id}]
 工作区 GET /api/projects/{id}/{files,file,git/log,git/diff} · POST /{id}/{activities,heartbeat,summary}
