@@ -192,6 +192,14 @@ async def list_projects(
     """
     service = ProjectService(db)
     if team_id is not None:
+        # A team's project list is not a directory: every row carries the
+        # project's `id`, and that id opens its roster, decisions and usage. So
+        # this answered "which projects does that team have, and what are their
+        # ids" to anyone who asked — including callers with no credential at
+        # all, while the SAME route without `team_id` was strict.
+        await resolver.authorize_team(
+            await resolver.resolve(fallback_handle=None), team_id=team_id
+        )
         projects = await service.list_for_team(team_id)
         total = len(projects)
     else:
@@ -260,7 +268,11 @@ async def project_for_team(team_id: int, db: DbSession) -> dict:
 
 
 @router.get("/{project_id}")
-async def get_project(project_id: uuid.UUID, db: DbSession) -> dict:
+async def get_project(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectService(db).get_or_404(project_id)
     return ok(ProjectOut.model_validate(project).model_dump(mode="json"))
 
@@ -440,9 +452,16 @@ async def set_project_default_agent(
 
 
 @router.get("/{project_id}/decisions")
-async def list_decisions(project_id: uuid.UUID, db: DbSession) -> dict:
+async def list_decisions(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
     """决策记录 (spec §7.1): project-wide decision blocks, each traceable to its
-    source topic via topic_id."""
+    source topic via topic_id.
+
+    These are the project's own words, not metadata about it — the same content
+    ``/topics`` has always guarded."""
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     await ProjectService(db).get_or_404(project_id)
     blocks = await BlockRepository(db).list_by_kind_for_project(
         project_id, BlockKind.decision
