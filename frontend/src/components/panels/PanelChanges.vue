@@ -122,6 +122,9 @@ const loading = ref(false)
 // A background re-fetch: spins only the 刷新 button, never replaces the panel.
 const refreshing = ref(false)
 const errorMsg = ref<string | null>(null)
+// 一枚 chip 指来的文件，在当前这个来源里找不到。不是这块面板出了错，所以它不走
+// `errorMsg`——那一句的样子是「这一格加载失败」。
+const missing = ref<string | null>(null)
 async function downloadOpenFile() {
   if (!openRawUrl.value || !openPath.value) return
   try {
@@ -413,6 +416,13 @@ async function doLoadFiles() {
     files.value = listed
     const want = pendingOpen
     if (want) {
+      // 这个来源里没有这个文件时不要去读它：读回来的是一句后端的英文错误，它会把
+      // 整块面板顶掉，而读者只是点了一枚 chip。说清它不在这里，列表留在原地。
+      if (!listed.some((f) => f.path === want)) {
+        pendingOpen = null
+        missing.value = want
+        return
+      }
       // Keep the directed path reserved while its read is in flight, so a
       // later diff/list response cannot start an automatic first-file read.
       await selectFile(want)
@@ -422,6 +432,7 @@ async function doLoadFiles() {
     // Keep the open file if it still exists; otherwise open the first one in
     // scope — which is the first CHANGED file by default, i.e. the top of the
     // review list rather than whatever sorts first in the repo.
+    if (missing.value) return
     if (!openPath.value || !treeFiles.value.some((f) => f.path === openPath.value)) {
       openPath.value = null
       const first = treeFiles.value[0]?.path
@@ -437,6 +448,7 @@ async function doLoadFiles() {
 
 async function selectFile(path: string) {
   keepDraft()
+  missing.value = null
   const request = ++fileRequest
   const epoch = sourceEpoch
   const pid = props.projectId
@@ -610,6 +622,7 @@ function clearSource() {
   gitCommits.value = []
   gitDiff.value = ''
   errorMsg.value = null
+  missing.value = null
   resetFilePanel()
 }
 
@@ -672,6 +685,9 @@ watch(
 // the same race the in-flight guard on the listing exists for.
 watch(treeFiles, (rows) => {
   if (overview.value || errorMsg.value || openPath.value || pendingOpen || !rows.length) return
+  // 读者点的是某一份文件，而它不在这个来源里。这时打开别的文件，等于把「你要的
+  // 那份不在这儿」换成「这是另一份文件」，两句话里只有前一句是他问的。
+  if (missing.value) return
   void selectFile(rows[0].path)
 })
 
@@ -801,6 +817,11 @@ defineExpose({ openFile })
       </v-alert>
 
       <div v-else class="file-tool">
+        <!-- chip 指来的文件不在这个来源里。列表照常显示：读者本来就可以换一个
+             来源，或者在树上挑别的文件。 -->
+        <v-alert v-if="missing" type="info" variant="tonal" density="compact" class="ma-2" data-testid="missing-file">
+          {{ missing }} 不在{{ selectedTask ? '这个任务' : '项目当前代码' }}里
+        </v-alert>
         <div class="file-bar">
           <v-btn
             icon

@@ -2470,10 +2470,26 @@ async def get_preview(
 
 @router.get("/{topic_id}/preview/file")
 async def preview_file(
-    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    path: str | None = None,
 ) -> dict:
+    """The file the preview is showing: the room's current artifact, or `path`.
+
+    A `<&path>` chip in a message names a file without saying which store holds
+    it, and a room's own files are here rather than on a branch. Reading one by
+    path is how a reader gets from that chip to the file, instead of to a
+    listing that does not contain it.
+    """
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
+    if path:
+        return ok(
+            ws.read_room_text_file(
+                place.project_id, topic_id, _clean_artifact_path(path)
+            )
+        )
     art = await BlockRepository(db).latest_artifact(place.room_id)
     if art is None or art.mime_type == _ARTIFACT_MIME["app"]:
         raise NotFoundError("No file preview")

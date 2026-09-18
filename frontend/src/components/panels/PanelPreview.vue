@@ -16,7 +16,7 @@ import {
   readPreviewFile,
   requestPreviewSession,
 } from '../../api'
-import { DOCUMENT_TYPES, NEEDS_CONVERSION, suffixOf } from '../../lib/fileKind'
+import { DOCUMENT_TYPES, IMAGE_SUFFIXES, NEEDS_CONVERSION, suffixOf } from '../../lib/fileKind'
 import { markdown, sanitizeRendered } from '../../lib/markdown'
 import { postPreviewSession } from '../../lib/previewSession'
 
@@ -73,9 +73,10 @@ function openPreviewInNewTab() {
 // can open directly — paginating it would destroy exactly that. A markdown file
 // has neither pages nor cells, and nothing here converts it: it is shown as the
 // text it already is, parsed by the same renderer the chat uses.
-//: 浏览器自己画得出来的图片。它们读不成文本（`content` 是 null），但那不是「没
-//: 法显示」——内容域就是拿 image/png、image/jpeg 把这些字节发出来的。
-const IMAGE_SUFFIXES = new Set(['png', 'jpg', 'jpeg'])
+//
+// 图片读不成文本（`content` 是 null），但那不是「没法显示」——内容域就是拿
+// image/png、image/jpeg 把这些字节发出来的。`IMAGE_SUFFIXES` 和上面那张类型表
+// 同住 `lib/fileKind`：一个文件是哪种类型只能有一个答案。
 
 const documentSuffix = computed(() => suffixOf(previewFile.value?.path ?? ''))
 const documentType = computed(() => DOCUMENT_TYPES[documentSuffix.value] ?? null)
@@ -286,9 +287,52 @@ async function fullscreen() {
   }
 }
 
+// ---- 读者点开的某一份房间文件 ----
+// 消息里的 `<&路径>` 只是一个路径，不带它在哪个库。房间自己的文件都在这里，芝士
+// 点名的当前预览也只是其中一份——所以点开一份别的文件是同一个动作，不是另一处
+// 界面。点开之后轮询停手：它会把当前预览取回来，而读者要看的是他点的那一份。
+const asked = ref<string | null>(null)
+
+async function openFile(path: string): Promise<boolean> {
+  const tid = props.topicId
+  if (!tid) return false
+  const current = ++generation
+  loading.value = true
+  try {
+    const content = await readPreviewFile(tid, path)
+    if (current !== generation || props.topicId !== tid) return false
+    asked.value = path
+    previewUrl.value = null
+    previewAppNote.value = ''
+    previewError.value = null
+    previewReadError.value = null
+    previewNamed.value = true
+    previewNamedPath.value = path
+    previewMime.value = ''
+    loadedArtifact = null
+    previewFile.value = content
+    return true
+  } catch {
+    // 不在这个库里。调用方接着去别处找，所以这里一句错误都不留——留下来它会顶掉
+    // 屏幕上那份本来好好的交付物。
+    return false
+  } finally {
+    if (current === generation) loading.value = false
+  }
+}
+
+function backToArtifact() {
+  asked.value = null
+  loadedDocKey = ''
+  void load({ reload: true })
+}
+
+defineExpose({ openFile })
+
 async function load(opts: { silent?: boolean; reload?: boolean } = {}) {
   // Metadata polling must not cancel an explicit refresh's pending grant.
   if (opts.silent && !opts.reload && (loading.value || refreshing.value)) return
+  if (asked.value && !opts.reload) return
   const tid = props.topicId
   const pid = props.projectId
   if (!tid || !pid) return
@@ -429,6 +473,7 @@ watch(
   () => props.topicId,
   () => {
     generation += 1
+    asked.value = null
     previewUrl.value = null
     previewAppNote.value = ''
     previewNamedPath.value = ''
@@ -486,6 +531,13 @@ watch(
     </div>
 
     <v-alert v-if="fullscreenError" type="warning" density="compact">{{ fullscreenError }}</v-alert>
+
+    <!-- 读者点开的是房间里某一份文件，不是芝士点名的那一份。说清现在看的是哪一份，
+         并留一条回去的路——否则这一格看起来像是交付物被换掉了。 -->
+    <div v-if="asked" class="asked px-3 py-2" data-testid="asked">
+      <span class="t-meta c-muted">正在看 {{ asked.split('/').pop() }}</span>
+      <v-btn variant="text" size="x-small" @click="backToArtifact">回到当前预览</v-btn>
+    </div>
 
     <div v-if="loading" class="d-flex justify-center py-8">
       <v-progress-circular indeterminate color="primary" size="28" />
@@ -689,6 +741,12 @@ watch(
   min-height: 0;
   overflow-y: auto;
   background: var(--surface);
+}
+.asked {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--line);
 }
 .preview-head {
   display: flex;

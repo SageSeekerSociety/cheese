@@ -1446,8 +1446,13 @@ export function getPreview(topicId: string): Promise<PreviewInfo | null> {
   return request<PreviewInfo | null>(`/topics/${encodeURIComponent(topicId)}/preview`)
 }
 
-export function readPreviewFile(topicId: string): Promise<FileContent> {
-  return request<FileContent>(`/topics/${encodeURIComponent(topicId)}/preview/file`)
+/** 预览正在显示的那份文件，或者房间里指名的某一份。
+ *
+ *  消息里的 `<&路径>` 只是一个路径，不带它在哪个库。房间自己的文件不在任何分支上，
+ *  所以按路径读这里，是从那枚 chip 走到那份文件的唯一一条路。 */
+export function readPreviewFile(topicId: string, path?: string): Promise<FileContent> {
+  const query = path ? `?path=${encodeURIComponent(path)}` : ''
+  return request<FileContent>(`/topics/${encodeURIComponent(topicId)}/preview/file${query}`)
 }
 
 // 资源: aggregated token/cost usage for a topic and for the whole project.
