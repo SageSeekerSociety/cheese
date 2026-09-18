@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from app.domain.agent.device_hub import DeviceOffline
+from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness import (
     ActivityConsumer,
     EventConsumer,
@@ -206,6 +206,17 @@ class PiRuntime:
                 if not waiting:
                     waiting = True
                     logger.warning("pi entries waiting for the device topic=%s", topic)
+                await asyncio.sleep(2)
+            except DeviceCallError as exc:
+                # The machine is there and said no — the runner's socket is not
+                # up yet (a cold pi takes about a minute) or its home is gone.
+                # Either way the next read is what tells, and the machine's
+                # own words are the fact worth writing down, once.
+                if not waiting:
+                    waiting = True
+                    logger.warning(
+                        "pi entries waiting for the runner topic=%s: %s", topic, exc
+                    )
                 await asyncio.sleep(2)
             except Exception:
                 # The runner outlives a backend or connector outage. Re-reading
