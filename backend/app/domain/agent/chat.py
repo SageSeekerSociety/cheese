@@ -123,7 +123,10 @@ from app.domain.block.schemas import BlockOut
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
-from app.domain.identity.handles import looks_like_agent_handle
+from app.domain.identity.handles import (
+    agent_instance_handle,
+    looks_like_agent_handle,
+)
 from app.domain.memory.models import MemoryScope
 from app.domain.memory.store import RecallResult, memory_store, recall_pools
 from app.domain.mentions import expand_mention_names
@@ -2685,6 +2688,21 @@ class ChatService:
                 if "@" in content
                 else []
             )
+            # Which agent each seat belongs to. A room may seat several, so one
+            # display name cannot stand for all of them: labelling every seat
+            # with the room's pointed-at agent made the other teammates
+            # unaddressable — their names matched nobody, so no mention token
+            # was written and nobody was ever recorded as addressed (#1192).
+            by_seat = (
+                {
+                    agent_instance_handle(instance.id): instance
+                    for instance in await AgentInstanceService(
+                        session
+                    ).list_for_project(topic.project_id)
+                }
+                if agent_handles
+                else {}
+            )
             recipient = {
                 "instance_id": str(agent.instance_id) if agent.instance_id else None,
                 "handle": agent.handle,
@@ -2722,9 +2740,17 @@ class ChatService:
                     if topic.is_private or "@" not in content
                     else await ProjectRepository(session).list_members(topic.project_id)
                 )
-                # Use the same room seat and display name as the mention picker.
+                # Use the same room seat and display name as the mention picker,
+                # each seat under its own agent's name.
                 roster = [
-                    {"handle": handle, "name": agent.display_name}
+                    {
+                        "handle": handle,
+                        "name": (
+                            by_seat[handle].display_name
+                            if handle in by_seat
+                            else agent.display_name
+                        ),
+                    }
                     for handle in agent_handles
                 ] + [row for row in roster if row["handle"] not in agent_handles]
                 if roster:
@@ -2734,9 +2760,23 @@ class ChatService:
                         if t.kind != TopicKind.root and t.id != topic.id
                     ]
                     content = expand_mention_names(content, roster, topic_refs)
-                recipient["mentioned"] = any(
-                    f"<@{handle}>" in content for handle in agent_handles
+                # WHICH agent was addressed, not merely whether one was. The
+                # flag alone left `handle`/`instance_id` naming whoever the room
+                # pointed at, so @-ing the second teammate ran the first one's
+                # turn. A room holds members; the one addressed answers, exactly
+                # as for a person.
+                addressed = next(
+                    (h for h in agent_handles if f"<@{h}>" in content), None
                 )
+                if addressed is not None:
+                    recipient["mentioned"] = True
+                    named = by_seat.get(addressed)
+                    if named is not None:
+                        recipient["instance_id"] = str(named.id)
+                        recipient["handle"] = named.handle
+                    # A seat still under the room-derived handle names no
+                    # instance, and that seat IS the agent the room points at,
+                    # so the recipient resolved above is already the right one.
                 user_block = await blocks.add(
                     project_id=topic.project_id,
                     topic_id=place.room_id,
