@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import { ApiError, authToken, requestSiteSession } from '../api'
@@ -8,7 +8,7 @@ const route = useRoute()
 const loading = ref(false)
 const error = ref('')
 const needsLogin = ref(!authToken())
-const loginLink = computed(() => ({ name: 'SignIn', query: { redirect: route.fullPath } }))
+const loginLink = { name: 'SignIn' }
 
 async function openSite() {
   const projectId = String(route.params.projectId)

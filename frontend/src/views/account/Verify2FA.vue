@@ -111,6 +111,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
 import { UserApi } from '@/network/api/users'
+import { postLoginTarget } from '@/router/loginRedirect'
 import AccountService from '@/services/account'
 
 const router = useRouter()
@@ -154,7 +155,7 @@ const handleVerify = async () => {
     if (data.usedBackupCode) {
       showBackupCodeDialog.value = true
     } else {
-      router.replace('/')
+      router.replace(postLoginTarget(route.query))
     }
   } catch (error: any) {
     // 验证票是一次性的（#357），所以每次失败后端都会连同拒绝理由回一张新票。
@@ -222,7 +223,7 @@ const handleGoToSecurity = () => {
 
 const handleLater = () => {
   showBackupCodeDialog.value = false
-  router.replace('/')
+  router.replace(postLoginTarget(route.query))
 }
 
 onMounted(() => {

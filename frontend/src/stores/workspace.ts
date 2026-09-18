@@ -194,8 +194,10 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   async function openProject(id: string) {
     // Re-entering the project you were already in (back from 首页, a rail click):
     // the tree is still here and blanking it would flash the whole sidebar, but
-    // it is as old as the time you spent away, so bring it up to date.
-    if (projectId.value === id) {
+    // it is as old as the time you spent away, so bring it up to date. Unless
+    // the door was shut last time — back from 登录 there is no tree to keep, and
+    // this shortcut would leave the 「需要登录」 screen up for a signed-in member.
+    if (projectId.value === id && !accessDenied.value) {
       void refreshTopics()
       void refreshMembers()
       void refreshUnread()
