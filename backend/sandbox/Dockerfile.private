@@ -5,7 +5,7 @@ RUN mkdir -p /etc/ssl/certs \
     && sed -i 's|http://deb.debian.org|https://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources \
     && apt-get update && apt-get install -y --no-install-recommends python3 bash ca-certificates ripgrep \
     && rm -rf /var/lib/apt/lists/* \
-    && npm install -g @anthropic-ai/claude-code@2.1.265 \
+    && npm install -g @anthropic-ai/claude-code@2.1.277 \
     && npm cache clean --force \
     && rm -rf /tmp && ln -s /work/.tmp /tmp
 COPY backend/app/domain/agent/harness/claude_code/remote_execution/runtime.py /opt/cheese/runtime.py

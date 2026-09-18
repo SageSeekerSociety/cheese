@@ -68,7 +68,7 @@ jobs:
             [registry."docker.io"]
               mirrors = ["mirror.gcr.io"]
       - name: Build private execution image
-        run: docker buildx build --load -f backend/sandbox/Dockerfile.private -t cheese-private-executor:2.1.265 .
+        run: docker buildx build --load -f backend/sandbox/Dockerfile.private -t cheese-private-executor:2.1.277 .
       - name: Verify real scratch execution
         id: scratch
         run: >-

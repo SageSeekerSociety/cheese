@@ -584,7 +584,7 @@ def test_generated_prefix_preserves_local_hook_and_remote_command_boundary(
     command = "cat > 'hook receipt.txt'; printf '%s' 'quoted * ? [value]'"
     directory = tmp_path / "prepared with spaces"
     version_probe = tmp_path / "claude-version"
-    version_probe.write_text("#!/bin/sh\nprintf '2.1.265\\n'\n")
+    version_probe.write_text("#!/bin/sh\nprintf '2.1.277\\n'\n")
     version_probe.chmod(0o700)
     launch = central.prepare(
         directory,

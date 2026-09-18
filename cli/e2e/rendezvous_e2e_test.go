@@ -133,8 +133,15 @@ func (f *rvFixture) userTurns(needle string) int {
 	return strings.Count(body, needle)
 }
 
-// lastModelRequest returns the body of the most recent /v1/messages the mock
-// received, as raw JSON text.
+// lastModelRequest returns the body of the most recent CONVERSATION request
+// to /v1/messages the mock received, as raw JSON text.
+//
+// Not simply the most recent /v1/messages: Claude Code also sends side
+// requests on its own schedule — on 2.1.277, a session-title request after
+// each prompt, carrying only that prompt and no tool list — and one of those
+// landing last made this read "prompt 1 became 0 user turns" for a prompt
+// that had been delivered. A conversation request is the one that offers the
+// model its tools, so that is the distinguishing mark.
 func (f *rvFixture) lastModelRequest() (string, error) {
 	req, err := http.NewRequest(http.MethodPut,
 		f.apiBase+"/mockserver/retrieve?type=requests&format=json", nil)
@@ -159,9 +166,18 @@ func (f *rvFixture) lastModelRequest() (string, error) {
 	}
 	last := ""
 	for _, r := range recorded {
-		if strings.Contains(r.Path, "/v1/messages") {
-			last = string(r.Body)
+		if !strings.Contains(r.Path, "/v1/messages") {
+			continue
 		}
+		var body struct {
+			JSON struct {
+				Tools []json.RawMessage `json:"tools"`
+			} `json:"json"`
+		}
+		if json.Unmarshal(r.Body, &body) != nil || len(body.JSON.Tools) == 0 {
+			continue
+		}
+		last = string(r.Body)
 	}
 	return last, nil
 }
