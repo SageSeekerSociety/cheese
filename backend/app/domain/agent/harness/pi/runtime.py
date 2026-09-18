@@ -38,6 +38,12 @@ logger = logging.getLogger(__name__)
 
 PI = "pi"
 
+# Every read of a room's entry log is a call to its device, and an idle room
+# answers it with nothing. Read at the floor while there is anything to read;
+# let the wait grow towards the ceiling once the log has gone quiet.
+READ_FLOOR_S = 0.1
+READ_CEILING_S = 1.0
+
 
 @dataclass(frozen=True)
 class Handle:
@@ -79,6 +85,7 @@ class PiRuntime:
         self.tasks: dict[uuid.UUID, asyncio.Task] = {}
         self.work: dict[uuid.UUID, uuid.UUID] = {}
         self.queues: dict[uuid.UUID, asyncio.Queue[AgentEvent]] = {}
+        self.woken: dict[uuid.UUID, asyncio.Event] = {}
         self.consumer: EventConsumer | None = None
         self.activity: ActivityConsumer | None = None
         self.receipts: ReceiptConsumer | None = None
@@ -157,15 +164,29 @@ class PiRuntime:
                 self._poll(topic), name=f"pi entries {topic}"
             )
 
+    def _wake(self, topic: uuid.UUID) -> None:
+        """Cut short the wait of a room that has just been given something."""
+        if event := self.woken.get(topic):
+            event.set()
+
+    async def _wait(self, topic: uuid.UUID, delay: float) -> None:
+        event = self.woken.setdefault(topic, asyncio.Event())
+        try:
+            await asyncio.wait_for(event.wait(), delay)
+        except TimeoutError:
+            return
+        event.clear()
+
     async def _poll(self, topic: uuid.UUID) -> None:
         checked_at = 0.0
         # Waiting for a device to come back is this loop's job, not a failure of
         # it, so the wait is said once and the return is said once. Per-task
         # state: one of these runs per topic.
         waiting = False
+        delay = READ_FLOOR_S
         while topic in self.subscriptions:
             try:
-                await self.subscriptions[topic].drain()
+                delivered = await self.subscriptions[topic].drain()
                 if topic in self.work and time.monotonic() - checked_at >= 1:
                     handle = self.live[topic]
                     status = await self.channel.call(handle, "ping", {})
@@ -196,7 +217,17 @@ class PiRuntime:
                 if waiting:
                     waiting = False
                     logger.info("pi entries resumed topic=%s", topic)
-                await asyncio.sleep(0.1)
+                # A room being worked reads at the floor, and so does one whose
+                # log just gave us something — the next entry of a stream is due
+                # immediately. A room nobody is talking to costs a call every
+                # 100ms for an empty page, and the cost is per room: eleven of
+                # them idling held a core between them. Sending wakes the wait,
+                # so nothing a person does is served at the backed-off rate.
+                if delivered or topic in self.work:
+                    delay = READ_FLOOR_S
+                else:
+                    delay = min(delay * 2, READ_CEILING_S)
+                await self._wait(topic, delay)
 
     async def _died(self, handle: Handle) -> None:
         """The process is gone with a turn open. Say so where the turn is, or
@@ -259,6 +290,7 @@ class PiRuntime:
             False,
         )
         self.work[session.topic_id] = work_id
+        self._wake(session.topic_id)
         try:
             await self.channel.call(
                 handle,
@@ -329,6 +361,7 @@ class PiRuntime:
         self.subscriptions.pop(topic, None)
         self.live.pop(topic, None)
         self.work.pop(topic, None)
+        self.woken.pop(topic, None)
 
     async def close(self, session: SessionRef) -> None:
         if subscription := self.subscriptions.get(session.topic_id):
