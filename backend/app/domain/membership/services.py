@@ -159,11 +159,22 @@ class MemberService:
     async def remove(
         self, *, project_id: uuid.UUID, user_handle: str, actor: Actor
     ) -> None:
-        await self._ensure_project(project_id)
+        project = await self._ensure_project(project_id)
         await self.require_manager(project_id, actor)
         member = await self._repo.get(project_id=project_id, user_handle=user_handle)
         if member is None:
             raise NotFoundError("Member not found")
+        # 小队带进来的人删不得，理由和 ``leave`` 里那条一模一样（那里解释得细）：名册
+        # 里还有一份小队读时补出来的行，删掉表里这一行，下一次读名册他又在，接口却回
+        # 了成功 —— 管理者以为清理干净了，其实什么都没变。他真正退得出的地方是小队。
+        #
+        # 位置放在取到成员行之后：人本来就不在名册上时，404 才是那句话该有的答复，不
+        # 该被这条挡成 409。放在任何写之前：这条路不许写任何数据。
+        if await self._access_comes_from_the_team(project, user_handle):
+            raise ConflictError(
+                "TA 的访问来自所属小队，移出要在小队里操作"
+                "——删掉名册这一行 TA 还在项目里"
+            )
         # 顺带把他在本项目各话题里的席位也撤掉。从前只删这一行，人就从名册上消失了
         # 却还是每个房间都进得来（``authorize_topic_access`` 认话题角色），移出项目
         # 于是成了一件没做完的事。退项目走的是同一条撤销（返回值在那儿有用，这里不看）。
@@ -172,7 +183,9 @@ class MemberService:
         )
         await self._repo.delete(member)
 
-    async def _access_comes_from_the_team(self, project: Project, actor: Actor) -> bool:
+    async def _access_comes_from_the_team(
+        self, project: Project, handle: str, user_id: int | None = None
+    ) -> bool:
         """他在这个项目里的位置，是所属小队给的吗。
 
         「小队带进来的」有两种长相：名册上读时补出来的 ``source: "team"`` 那一行
@@ -181,18 +194,25 @@ class MemberService:
         照样把他带回来，重新读一次名册他又在，接口却回了成功。他真正退得出的是小
         队，所以两种都挡在这里。
 
+        ``ProjectRepository.list_members`` 里那句 ``if handle in explicit: continue``
+        就是这件事的根据：小队那一行只在名册上没有同名成员行时才补出来，所以「删掉
+        表里那一行」不是让他离开项目，只是把盖在小队行上的那块布掀开。
+
+        问的是 handle 而不是 ``Actor``：``remove`` 的管理者问的是**别人**在不在小队
+        里，手上只有名册上的 handle，没有对方的 actor。调用方已知 uid 就传进来
+        （``leave`` 有，省一次查用户行），否则按 handle 查用户行；查不到（脚本、夹具
+        的 handle 没有用户行）就按「不是」走，别把路堵死。
+
         没有 ``team_id`` 的项目（旧数据）不进这一支：那时小队带不出访问，他走了就
-        是走了。解析不出用户行的 handle（脚本、夹具）同理 —— 没有 uid 就谈不上是
-        不是小队成员，按「不是」走，别把路堵死。
+        是走了。
         """
         if project.team_id is None:
             return False
         from app.domain.team.services import team_service
         from app.domain.user.services import user_by_handle
 
-        user_id = actor.user_id
         if user_id is None:
-            user = await user_by_handle(self._session, actor.handle)
+            user = await user_by_handle(self._session, handle)
             if user is None:
                 return False
             user_id = user.id
@@ -232,7 +252,7 @@ class MemberService:
             raise ForbiddenError("需要登录后才能退出项目")
         if project.owner_handle and project.owner_handle == actor.handle:
             raise ForbiddenError("项目所有者不能退出项目，需要先把项目转让给别人")
-        if await self._access_comes_from_the_team(project, actor):
+        if await self._access_comes_from_the_team(project, actor.handle, actor.user_id):
             raise ConflictError(
                 "你对这个项目的访问来自所属小队，退出项目要在小队里操作"
             )

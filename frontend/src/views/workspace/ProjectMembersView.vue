@@ -214,20 +214,25 @@ async function confirmLeave() {
   error.value = null
   try {
     await leaveProject(props.projectId)
-    leaveOpen.value = false
-    // 先刷新再走：这一页读的两份数据都变了（名册里没有我了，项目列表里也没有这
-    // 个项目了）。不刷新的话，退到的那一页会拿着旧数据把我送回这个项目。
-    await Promise.all([store.refreshMembers(), store.refreshProjects()])
-    void router.push({ name: 'HomeSpaces' })
   } catch (e) {
-    // 拒绝的理由（需要先转让、访问来自小队、还是某个话题唯一的 owner）就是用户要
-    // 的全部内容，原样摆在页面上 —— 关掉弹窗，因为它等的是一个已经不会有结果的
-    // 「退出」。
+    // 只有退出本身失败才算是失败。拒绝的理由（需要先转让、访问来自小队、还是某个
+    // 话题唯一的 owner）就是用户要的全部内容，原样摆在页面上 —— 关掉弹窗，因为它
+    // 等的是一个已经不会有结果的「退出」。
     leaveOpen.value = false
     error.value = e instanceof Error ? e.message : '退出失败'
-  } finally {
     leaving.value = false
+    return
   }
+  leaveOpen.value = false
+  // 退出的那一刻，这条请求已经成功了：**接下来做什么都不能再把它变成失败**。
+  // 两份刷新是为了让别的页面不拿着旧数据把我送回这个项目（名册里没有我了，项目
+  // 列表里也没有这个项目了），但它们是锦上添花 —— 刷新接口抖一下，用 allSettled
+  // 让失败就地咽掉，人照样是退出成功的，照样该离开这一页。用 Promise.all 的话一次
+  // 刷新失败会走到 catch 里，页面上挂出「退出失败」，而人其实已经退出了 —— 他再
+  // 点一次只会拿到 409。这一页本身也留不住：我已经不在名册上，它下一次读就是空的。
+  await Promise.allSettled([store.refreshMembers(), store.refreshProjects()])
+  void router.push({ name: 'HomeSpaces' })
+  leaving.value = false
 }
 
 // ---- 邀请 ----

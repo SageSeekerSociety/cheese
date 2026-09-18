@@ -230,6 +230,20 @@ describe('成员页', () => {
     await waitFor(() => expect(push).toHaveBeenCalledWith({ name: 'HomeSpaces' }))
   })
 
+  // 退出请求成功的那一刻，人**已经不在项目里了**。刷新是锦上添花（让别的页面不拿着
+  // 旧数据把我送回来），它失败不该把一件已经做成的事报成失败：页面上挂一句「退出失
+  // 败」，而人其实退掉了，再点一次只会拿到 409。所以刷新失败也照样走。
+  it('刷新失败也照样离开——退出已经成功了', async () => {
+    meHandle = 'ligan'
+    refreshMembers.mockRejectedValue(new Error('boom'))
+    refreshProjects.mockRejectedValue(new Error('boom'))
+    const { getByText, queryByText } = mount()
+    await fireEvent.click(getByText('退出项目'))
+    await fireEvent.click(await screen.findByRole('button', { name: '退出' }))
+    await waitFor(() => expect(push).toHaveBeenCalledWith({ name: 'HomeSpaces' }))
+    expect(queryByText(/退出失败/)).toBeNull()
+  })
+
   it('退不掉时把后端那句理由说出来，人留在原地', async () => {
     meHandle = 'ligan'
     leaveProject.mockRejectedValue(new Error('你对这个项目的访问来自所属小队，退出项目要在小队里操作'))

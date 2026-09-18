@@ -2,7 +2,7 @@
 
 import uuid
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.topic.models import TopicMembership, TopicRole
@@ -97,12 +97,23 @@ class TopicMembershipRepository:
 
         Handles, not a count: the asker has to tell "he is the only one left"
         apart from "others are still there", and a number cannot say which.
+
+        ``FOR UPDATE``, because the answer decides whether the caller deletes
+        the only owner of a room: 两个人同时退同一个项目，各自读到「这间房有两个
+        owner」，各自删掉自己，房间就没人管了。锁住这些 owner 行之后，两个事务排队，
+        后一个读到的是前一个已提交的结果，看见的是一间只剩一个 owner 的房，正确地
+        拒掉。锁的粒度是本次问到的那些 owner 行，不锁全表 —— 退项目只关心自己手上
+        的那几间房。
         """
         if not topic_ids:
             return {}
-        stmt = select(TopicMembership.topic_id, TopicMembership.member_handle).where(
-            TopicMembership.topic_id.in_(topic_ids),
-            TopicMembership.role == TopicRole.owner,
+        stmt = (
+            select(TopicMembership.topic_id, TopicMembership.member_handle)
+            .where(
+                TopicMembership.topic_id.in_(topic_ids),
+                TopicMembership.role == TopicRole.owner,
+            )
+            .with_for_update()
         )
         owners: dict[uuid.UUID, list[str]] = {}
         for topic_id, member_handle in (await self._session.execute(stmt)).all():
@@ -120,3 +131,33 @@ class TopicMembershipRepository:
     async def delete(self, member: TopicMembership) -> None:
         await self._session.delete(member)
         await self._session.flush()
+
+    async def delete_for_member(
+        self, *, topic_ids: list[uuid.UUID], member_handle: str
+    ) -> list[uuid.UUID]:
+        """把这个人在这批话题里的席位一次删掉，返回**真的删掉**的那些 topic id。
+
+        退项目 / 被移出项目一次要清掉他在整个项目里的席位，早先是一条一条
+        ``get`` 再 ``delete``（一个项目多少间房就多少次往返）。一条 ``DELETE ...
+        IN (...)`` 是同一件事，但**答案更准**：以前那条路只能拿「查到的席位」当
+        「删掉的席位」交出去，中途被别人删掉的那几条会让调用方以为它撤了其实没撤；
+        ``RETURNING topic_id`` 交出的就是数据库实际删掉的行。
+
+        空列表（这批话题里他本来就没席位）就等于「什么都没写」，调用方靠它把「确实
+        撤销了」和「压根没动」分开 —— 退项目最后那句「你不是成员」只在前者为空时
+        才说得出口。
+
+        用 ``execute(...).all()`` 而不是 ORM 的实体删除：这里只要 id，不需要把行
+        取回对象再标记删除，省一趟数据库。
+        """
+        if not topic_ids:
+            return []
+        stmt = (
+            delete(TopicMembership)
+            .where(
+                TopicMembership.topic_id.in_(topic_ids),
+                TopicMembership.member_handle == member_handle,
+            )
+            .returning(TopicMembership.topic_id)
+        )
+        return [row[0] for row in (await self._session.execute(stmt)).all()]

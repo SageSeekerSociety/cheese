@@ -12,14 +12,21 @@
 进得来全部话题的凭据，``authorize_topic_access`` 认它），所以席位要和成员行一起撤销。
 """
 
+import uuid
 from datetime import UTC, datetime
 from typing import Any
+
+import pytest
+from sqlalchemy import select
+from sqlalchemy.exc import DBAPIError
 
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.project.services import ProjectService
 from app.domain.team.models import TeamMemberRole
 from app.domain.team.repositories import TeamRepository
 from app.domain.team.services import team_service
+from app.domain.topic.models import TopicMembership, TopicRole
+from app.domain.topic_membership.repositories import TopicMembershipRepository
 from app.domain.user.models import User
 from tests.integration.conftest import session_auth_headers
 
@@ -108,6 +115,131 @@ def test_removing_a_member_revokes_their_seats_too(client, bearer):
 
     assert _project_handles(client, pid) == [OWNER]
     assert "alice" not in _topic_handles(client, tid)
+
+
+def test_removing_the_last_owner_of_a_topic_writes_nothing(client, bearer):
+    """管理者也移不掉「某间房唯一的 owner」，而且这条路上不许留半成品。
+
+    同一个撤销（``revoke_project_seats``）两条路共用，所以「最后一个 owner」这条规矩
+    在移出这边一样管用。这条用例另钉一件事：拒绝时**两个表都原封不动**。撤销和删成
+    员行是两次写，次序错了就会出现「席位没了，人还留在名册上」这种半成品 —— 比什么
+    都不做更难收拾，因为名册上那个人已经进不去任何房间了。"""
+    pid = _project(client)
+    assert _add(client, pid, "alice").status_code == 200
+    tid = _topic(client, pid, "alice", title="设计讨论")
+
+    r = client.delete(
+        f"/projects/{pid}/members/alice", headers=session_auth_headers(OWNER)
+    )
+    assert r.status_code == 422, r.text
+    assert "设计讨论" in r.json()["message"]
+    assert "alice" in _project_handles(client, pid)
+    assert "alice" in _topic_handles(client, tid)
+
+
+async def test_removing_a_teammate_is_refused_and_points_at_the_team(client):
+    """小队带进来的人，管理者也移不掉 —— 删名册那一行不会让他离开项目。
+
+    ``list_members`` 里有一句 ``if handle in explicit: continue``：小队那一行只在名册
+    上没有同名成员行时才补出来。所以删掉表里那一行不是把人移出去，只是把盖在小队行
+    上的那块布掀开 —— 下一次读名册他又在。接口回成功而什么都没变，比拒绝更糟：管理
+    者以为清理干净了。拒绝要指向真正的出口（小队），并且**一个字节都不写**。"""
+    factory = client.test_factory  # type: ignore[attr-defined]
+    captain = await _user(factory, "captain")
+    mate = await _user(factory, "mate")
+
+    async with factory() as session:
+        team = await team_service(session).create_team(
+            name="小队", intro="", description="", avatar_id=1, owner_id=captain
+        )
+        await TeamRepository(session).add_member(team.id, mate, TeamMemberRole.MEMBER)
+        project = await ProjectService(session).create(
+            name="P", owner_handle="captain", team_id=team.id
+        )
+        pid = str(project.id)
+        await session.commit()
+
+    # 建项目时 ``_seed_roster`` 已经替队友落了一行 —— 正是「删得掉但删了没用」那种。
+    assert "mate" in _project_handles(client, pid)
+
+    r = client.delete(
+        f"/projects/{pid}/members/mate", headers=session_auth_headers("captain")
+    )
+    assert r.status_code == 409, r.text
+    assert "小队" in r.json()["error"]["message"]
+    assert "mate" in _project_handles(client, pid)
+
+
+async def test_a_team_row_without_a_member_row_is_still_a_404(client):
+    """后进小队的人在小队里读出来（没有成员行），移他仍是 404 —— 次序不变。
+
+    「他不在名册上」和「他的访问来自小队」是两件事，答复也不同：名册上根本没有这一
+    行时，404 才是那句话该有的答复，不该被小队那条挡成 409。这里用「建完项目之后才
+    入队」造出这个形状 —— 那一行是 ``list_members`` 读时补的。"""
+    factory = client.test_factory  # type: ignore[attr-defined]
+    captain = await _user(factory, "captain")
+    latecomer = await _user(factory, "latecomer")
+
+    async with factory() as session:
+        team = await team_service(session).create_team(
+            name="小队", intro="", description="", avatar_id=1, owner_id=captain
+        )
+        project = await ProjectService(session).create(
+            name="P", owner_handle="captain", team_id=team.id
+        )
+        pid = str(project.id)
+        # 入队发生在建项目**之后**：没有人替他落成员行。
+        await TeamRepository(session).add_member(
+            team.id, latecomer, TeamMemberRole.MEMBER
+        )
+        await session.commit()
+
+    rows = client.get(f"/projects/{pid}/members").json()["data"]["data"]
+    row = next(m for m in rows if m["user_handle"] == "latecomer")
+    assert row["source"] == "team"  # 读时补的，不是表里那一行
+
+    r = client.delete(
+        f"/projects/{pid}/members/latecomer", headers=session_auth_headers("captain")
+    )
+    assert r.status_code == 404, r.text
+    assert "latecomer" in _project_handles(client, pid)
+
+
+async def test_the_owner_query_locks_the_rows_it_reads(client):
+    """``owners_by_topic`` 真的把这些 owner 行锁住了 —— 「两个人同时退」的根据。
+
+    「最后一个 owner」是**读出来再决定**的，两笔并发退项目的各自读到「这间房有两个
+    owner」，就会各自把自己删掉，房间照样没人管。修法是在读的时候落行锁，让第二个事
+    务看见第一个提交后的结果。
+
+    这里不去写「两个协程一起退」那种用例：它要靠调度顺序才撞得上，跑一百次里红一次
+    也说明不了什么。改成直接问数据库：一个事务拿住这些行不放，另一个连接
+    ``FOR UPDATE NOWAIT`` 去要同一批行，立刻被拒 —— NOWAIT 不等待，所以时序是确定的。
+    """
+    pid = _project(client)
+    assert _add(client, pid, "alice").status_code == 200
+    tid = _topic(client, pid, "alice")
+    topic_id = uuid.UUID(tid)
+
+    factory = client.test_factory  # type: ignore[attr-defined]
+    async with factory() as holder:
+        locked = await TopicMembershipRepository(holder).owners_by_topic([topic_id])
+        assert locked == {topic_id: ["alice"]}
+        async with factory() as other:
+            # 收 DBAPIError 而不是 OperationalError：asyncpg 的 LockNotAvailableError
+            # 不在 SQLAlchemy 那张「哪种 DBAPI 异常等于哪种 DBAPIError」的表里，于是
+            # 原样包成最外层的 DBAPIError —— 那也是 55P03 在这条驱动上唯一的共同祖先。
+            with pytest.raises(DBAPIError) as err:
+                await other.execute(
+                    select(TopicMembership)
+                    .where(
+                        TopicMembership.topic_id == topic_id,
+                        TopicMembership.role == TopicRole.owner,
+                    )
+                    .with_for_update(nowait=True)
+                )
+            # 55P03 lock_not_available：别的连接正握着这些行。
+            assert "lock" in str(err.value).lower()
 
 
 def test_the_owner_cannot_leave(client, bearer):
@@ -280,7 +412,9 @@ async def test_a_teammate_is_told_to_leave_the_team(client):
         pid = str(project.id)
         await session.commit()
 
-    # 队友在名册上（带 source=team），但不是项目的成员行。
+    # 队友在名册上 —— 而且是 ``_seed_roster`` 落下的**真**成员行，删得掉但那不是他要
+    # 的「离开」（小队下一次读名册又把他带回来）。挡在前面的因此必须是「访问来自小
+    # 队」这条判断，不是「表里有没有他这一行」。
     assert "mate" in _project_handles(client, pid)
 
     r = _leave(client, pid, "mate")

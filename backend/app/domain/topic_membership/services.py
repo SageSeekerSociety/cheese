@@ -440,6 +440,11 @@ class TopicMemberService:
         产品里是死路（``_require_manager`` 那个逃逸口正是为修这种房间存在的）。所以
         既不静默放行，也不替房间指定继任者：拒绝，并点名是哪间房，让人先把房间交出
         去再走。
+
+        「最后一个 owner」这个判断要读得**准**：两个人同时退同一个项目，各自读到
+        「这间房有两个 owner」就各自把自己删掉，房间照样落进无主状态。所以读 owner
+        的那条查询带 ``FOR UPDATE``（见 ``owners_by_topic``），两个事务在这里排队，
+        后一个读到的是前一个提交后的结果，正确拒掉。
         """
         topics = await self._topics.list_for_project(project_id)
         if not topics:
@@ -460,10 +465,9 @@ class TopicMemberService:
                 + "」「".join(orphaned)
                 + "」唯一的 owner，先把话题交给别人"
             )
-        revoked: list[uuid.UUID] = []
-        for topic_id in sorted(seats):
-            seat = await self._repo.get(topic_id=topic_id, member_handle=member_handle)
-            if seat is not None:
-                await self._repo.delete(seat)
-                revoked.append(topic_id)
-        return revoked
+        # 一条 DELETE 清掉全部席位，返回值就是数据库真的删掉的那些房间。以前是一条
+        # 一条 get + delete —— 项目多少间房就多少次往返，而且「查到」被当成了「删
+        # 掉」：中途被别人删掉的那几条会让调用方以为撤了其实没撤。
+        return await self._repo.delete_for_member(
+            topic_ids=sorted(seats), member_handle=member_handle
+        )
