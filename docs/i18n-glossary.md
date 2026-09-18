@@ -24,7 +24,7 @@
 | 项目 | **project** | `views/projects/`、后端 `/projects/{project_id}`。**不用 program**：那是「项目集」 |
 | 团队 | **team** | `views/teams/`、`navigation.teams = "Teams"`。**不用 group**：group 留给「域名组」 |
 | 赛题 | **challenge** | 既有英文已经这么用：中文「部分赛题可能仅对特定域名邮箱开放」对应的 `account.someChallengesAreOnlyAvailableToParticular` 写的是 `Some challenges are…`。出现 25 次，是这套 catalog 里最大的一个术语。**不用 problem / contest**：problem 是算法题，contest 是比赛本身而非题目。见 §5 第 3 条，这里有个命名陷阱 |
-| 任务 | **task** | 指平台里的工作单元时（`publicSite.taskProgress = 任务进展`、`/topics/{topic_id}/tasks/{task_id}`）。**不用 job**：job 在技术语境里是后台作业。注意「任务」在 catalog 里还有第二种用法，见 §5 第 3 条 |
+| 任务 | **task** | 指平台里的工作单元时（`publicSite.taskProgress = 任务进展`、`/topics/{topic_id}/tasks/{task_id}`）。**不用 job**：job 在技术语境里是后台作业。中文「任务」在 catalog 里还有第二种用法，指的其实是**赛题 = challenge**，见 §5 第 3 条 |
 | 分类 | **category** | `views/spaces/detail/ManageCategories.vue`、`spaces.detail.manageCategories.*`。**不用 tag**：tag 是另一套东西（`network/api/tags/`） |
 | 域名组 | **domain group** | `views/spaces/detail/ManageDomainGroups.vue`、`spaces.domainGroups.*`。域 = **domain**，不用 field / realm |
 | 模板 | **template** | `views/spaces/detail/ManageTemplates.vue`、`views/spaces/detail/SelectTemplate.vue`、`views/spaces/detail/TemplateForm.vue`。**不用 boilerplate / preset** |
@@ -112,7 +112,8 @@ Delete this discussion? All of its replies will be deleted too.`
 
 ## 5. 存疑——需要产品 owner 拍板
 
-这四条我不擅自定，写在这里防止翻译任务各译各的：
+第 1、2、4 条我不擅自定（1 和 4 要 owner 给个话，2 只影响键的组织方式、不影响译法），
+写在这里防止翻译任务各译各的；**第 3 条已经查清并落定，不再是存疑项**。
 
 1. **「芝士」作为悬赏单位。** `questions.detail.bountyTip` 里「可获得 {bounty} 芝士」的「芝士」是**积分单位**，
    不是平台名。直接译成 `{bounty} Cheese` 会读成「获得 50 个 Cheese」，语义不通。
@@ -121,22 +122,32 @@ Delete this discussion? All of its replies will be deleted too.`
    两者关系（话题是讨论的分类标签？还是并列的另一种内容？）只能从界面看出这么多。
    英文都定为 topic 没有歧义风险，但如果两者其实是同一层概念，键的组织方式可能需要调整。
 
-3. **中文把「赛题」和「任务」当成同一个东西在叫。** 同一个实体，在 catalog 里有两套中文：
+3. **中文把「赛题」和「任务」当成同一个东西在叫——已经查清，按 challenge 统一。**
 
-   | 位置                                                     | 中文                   | 键名          |
-   | -------------------------------------------------------- | ---------------------- | ------------- |
-   | `tasks.form.taskName`                                    | 赛题名称               | `tasks`       |
-   | `spaces.detail.publishTask.taskName`                     | 任务名称               | `publishTask` |
-   | `tasks.publish.title`                                    | 发布赛题               | `tasks`       |
-   | `spaces.detail.publishTask.createSuccessAndWaitingAudit` | 创建任务成功，等待审核 | `publishTask` |
+   同一个实体，在 catalog 里有两套中文，而且**同一组键内部就自相矛盾**：
 
-   `tasks.form.deadline`（报名截止日期）、`tasks.status.joined`（已报名）说明 `tasks.*` 装的就是赛题。
-   所以**英译统一用 challenge**，但同时暴露两个问题：
+   | 位置 | 中文 | 键名 |
+   |---|---|---|
+   | `spaces.detail.publishTask.title` | 发布**赛题** | `publishTask` |
+   | `spaces.detail.publishTask.taskName` | **任务**名称 | `publishTask` |
+   | `spaces.detail.publishTask.taskLevel` | **任务**等级 | `publishTask` |
+   | `spaces.detail.tasks.publishTask` | 发布**赛题** | `tasks` |
+   | `spaces.detail.tasks.noTasks` | 暂无**赛题** | `tasks` |
+   | `tasks.form.taskName` | **赛题**名称 | `tasks` |
+   | `tasks.form.taskLevel` | **赛题**难度 | `tasks` |
+   | `tasks.publish.title` | 发布**赛题** | `tasks` |
 
-   - catalog 的 `tasks` 命名空间名不副实（与 `website` 同一种病），它装的是赛题不是任务；
-   - 中文文案本身在「赛题」和「任务」之间摇，这是要改中文的地方，不是翻译能解决的。
+   两边是同一个实体的证据：字段名一一对应（`taskName` / `taskLevel` / `taskDescription`），
+   而且 `PublishTask.vue` 与 `Tasks.vue` 用的是同一个 `TasksApi`（`@/network/api/tasks`）。
+   外部佐证是既有英文：`tasks.form.accessControl.enableAccessRestrictionHint`（开启后，只有指定域名邮箱的
+   用户才能查看和参与此**赛题**）对应 `account.someChallengesAreOnlyAvailableToParticular`
+   （Some **challenges** are only available to…）。
 
-   **这一条不擅自定：翻译任务遇到「任务」时，先看它指的是赛题还是平台工作单元，拿不准就跳过并在 PR 里列出来。**
+   **所以英译一律 challenge，`spaces.detail.publishTask.*` 也一样。** 这条不再是存疑项。
+   剩下的是要改**中文**的地方，不是翻译能解决的：
+   - `tasks` 这个命名空间名不副实（装的是赛题，与 `website` 同一种病）；
+   - `spaces.detail.publishTask.*` 的中文该跟 `title` 一样叫「赛题」，现在叫「任务」。
+
 
 4. **团队 / 队伍 / 小队是三个词。** `notifications.TEAM_INVITATION`（邀请你加入**团队**）说的是平台的一等实体
    （`views/teams/`、角色、邀请）；`tasks.form.teamLockingPolicy`（**队伍**成员锁定策略）说的是赛题里报名的那组人；
