@@ -50,6 +50,8 @@ vi.mock('../../api', async () => {
 
 import ChatPanel from '../ChatPanel.vue'
 
+import { setLocale } from '@/i18n'
+
 const sent: { payload: string }[] = []
 
 function topic(id = 'topic-A'): Topic {
@@ -139,6 +141,9 @@ beforeEach(() => {
   sent.length = 0
 })
 
+// 默认语言是 en（happy-dom 的 navigator.language 是 en-US），而这份用例断言的是
+// 中文界面的字。先把语言钉住，别让它跟着环境飘。
+beforeEach(() => setLocale('zh-CN'))
 describe('对话栏自己的输入栏', () => {
   it('offers editable starter drafts in an empty project and sends only on confirmation', async () => {
     const { container, rerender, getByRole, queryByRole } = mountPanel({}, 'starter-project')

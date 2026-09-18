@@ -124,13 +124,20 @@
 | 待验收 | **In review** | `TopicPhase = 'reviewing'`（采纳卡非空的那两档），§2「审核」= review。不用 Pending review：这个徽章要说的是「东西在你这边」，不是「排在一个队列里」 |
 | 进行中 | **In progress** | `TopicPhase = 'open'`，依据既有 `publicSite.inProgress = "In progress"`。不用 Ongoing：界面里没有先例 |
 
-**路由标题（`meta.titleKey`，本轮只抽已拍板的三条）**
+**路由标题（`meta.titleKey`，十条已全部拍定）**
 
 | 中文 | 英文 | 依据 / 不采用什么 |
 |---|---|---|
 | 项目工作台 | **Project workspace** | `workspace.routes.project`，§1「工作台」= workspace、「项目」= project。不用 Workbench：那是木工台 |
 | 总览 | **Overview** | `workspace.routes.overview`，与面板页签同词 |
 | 看板 | **Board** | `workspace.routes.board`、`lib/board.ts`。不用 Kanban：那是具体某种看板方法的名字，这里只是「一块板」 |
+| 私聊 | **Chat** | `workspace.routes.dm`。**owner 拍板用 Chat**。不用 DM：那是标识符，界面里没人这么说；不用 Direct messages：太长，侧栏那一行放不下 |
+| 项目文档 | **Project docs** | `workspace.routes.docs`。不用 Documents / Files：docs 是代码里的原词，且这一页装的是项目自己的文档，不是任意文件 |
+| 日历 | **Calendar** | `workspace.routes.calendar`，与 `/cal` 面板里那个 `workspace.chat.viewCalendar` 同词 |
+| AI 队友 | **Agents** | `workspace.routes.agents`。**owner 拍板用 Agents**。不用 AI teammate：一个项目里可以有多个队友，侧栏那一行是**一列队友的入口**，复数才对；另见下面的收口提醒 |
+| 项目设置 | **Project settings** | **复用 `projects.settings.title`**，路由不另建键——同一件事在设置弹窗和路由标题里必须是同一个词 |
+| 导出与发布 | **Export & publish** | `workspace.routes.delivery`。不用 Deliver：那是 §2「交付」= deliver（芝士把活交给你），这一页是**把项目交出去 / 发出去**；用 Deliver 也会和看板列 Delivering 撞词 |
+| 成员 | **Members** | `workspace.routes.members`，与 `members` 命名空间里的既有词一致 |
 
 两条落地规则：
 
@@ -143,9 +150,11 @@
   只能写一条，于是用词表允许的写法：`Overview ({count} task(s), {open} in progress)`。
   单个 `{count}` 的（`总览（{count} 件任务）`、`改动（{count} 个文件）` 等）照 §3 的形态表写足 3 条。
 
-`workspaceRoutes.ts` 里还有七条路由标题（私聊 / 项目文档 / 日历 / AI 队友 / 项目设置 / 导出与发布 /
-成员）**中英对照未定**，这次不臆造英文、保持中文；候选译法列在本次 PR 正文的「待 owner 定」表里，
-定下来之后补进本节。
+这十条都走 `meta.titleKey`：`usePageTitle` 按它取词，侧栏的每一行和顶栏标题读同一份，
+切语言时两处一起变。`workspaceRoutes.ts` 里不再有中文标题。
+
+**收口提醒：`publicSite.aiTeammate` 目前是 "AI teammate"，与上面拍板的 Agents 不一致。**
+它属于公开站点那一层，本系列未动；等「AI 队友」在公开站也要用 Agents 时，单独一笔改。
 
 ## 3. 形态约定
 

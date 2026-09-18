@@ -16,6 +16,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ChatPanel from './ChatPanel.vue'
 
+import { setLocale } from '@/i18n'
+
 const Panel = ChatPanel as unknown as Component
 
 const topic = {
@@ -64,6 +66,9 @@ function fileInputs(c: Element): HTMLInputElement[] {
   return Array.from(c.querySelectorAll<HTMLInputElement>('.composer-actions input[type="file"]'))
 }
 
+// 默认语言是 en（happy-dom 的 navigator.language 是 en-US），而这份用例断言的是
+// 中文界面的字。先把语言钉住，别让它跟着环境飘。
+beforeEach(() => setLocale('zh-CN'))
 describe('输入区的上传入口', () => {
   it('文件选择框藏起来但没有被 display:none —— 那样 iOS 上按钮就点不动了', () => {
     const inputs = fileInputs(mount(390))

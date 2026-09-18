@@ -14,6 +14,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ChatPanel from './ChatPanel.vue'
 
+import { setLocale } from '@/i18n'
 import { loadComposerDraft, saveComposerDraft } from '@/lib/composerDrafts'
 
 const Panel = ChatPanel as unknown as Component
@@ -88,6 +89,9 @@ beforeEach(() => {
 
 const settle = () => new Promise((r) => setTimeout(r, 0))
 
+// 默认语言是 en（happy-dom 的 navigator.language 是 en-US），而这份用例断言的是
+// 中文界面的字。先把语言钉住，别让它跟着环境飘。
+beforeEach(() => setLocale('zh-CN'))
 describe('输入框的内容属于它被打出来的那个话题', () => {
   it('切走再回来，草稿还在；切到别的话题，输入框是空的', async () => {
     const { container, rerender } = render(Panel, {

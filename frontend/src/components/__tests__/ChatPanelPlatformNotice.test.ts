@@ -35,6 +35,8 @@ vi.mock('../../api', async () => {
 
 import ChatPanel from '../ChatPanel.vue'
 
+import { setLocale } from '@/i18n'
+
 let seq = 0
 /** 每个用例一个新房间 id —— 时间线窗口有个模块级缓存，共用 id 会串味。 */
 function freshRoom(): string {
@@ -170,6 +172,9 @@ beforeEach(() => {
   vi.clearAllMocks()
 })
 
+// 默认语言是 en（happy-dom 的 navigator.language 是 en-US），而这份用例断言的是
+// 中文界面的字。先把语言钉住，别让它跟着环境飘。
+beforeEach(() => setLocale('zh-CN'))
 describe('平台提示：一行 + 可展开', () => {
   it('4000 字的 CI 日志默认占不到三行，而且一个字都不在屏幕上', async () => {
     expect(CI_LOG.length).toBeGreaterThan(4000)

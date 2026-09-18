@@ -79,6 +79,25 @@ const label = '姓名'
   assert.deepEqual(scanSource('src/a.vue', vue), [2, 6])
 })
 
+test('scanSource: every <script> block is read, not just the first', () => {
+  // 一个 `.vue` 可以带两个脚本块（`<script>` + `<script setup>`）。只读第一个
+  // 的话，ChatPanel.vue 整个 `<script setup>` 里的中文对这道闸门就是隐形的——
+  // 而那正是它曾经的样子。
+  const vue = `<script lang="ts">
+const a = '外层'
+</script>
+
+<script setup lang="ts">
+const b = '里层'
+</script>
+
+<template>
+  <div>标题</div>
+</template>
+`
+  assert.deepEqual(scanSource('src/a.vue', vue), [2, 6, 10])
+})
+
 test('scanSource: an inner <template #slot> still belongs to the outer block', () => {
   const vue = `<template>
   <v-data-table>

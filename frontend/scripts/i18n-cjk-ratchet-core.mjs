@@ -321,8 +321,7 @@ export function scanSource(relPath, text) {
       const stripped = template.body.replace(/<!--[\s\S]*?-->/g, (m) => m.replace(/[^\n]/g, ' '))
       for (const line of cjkLines(stripped)) found.add(lineOf(template.start) + line - 1)
     }
-    const script = extractBlock(src, 'script')
-    if (script) {
+    for (const script of extractBlocks(src, 'script')) {
       for (const span of stringSpans(script.body)) addSpan(script.body, span, script.start)
     }
     // `<style>` is deliberately not scanned: the catalog cannot reach CSS, and
@@ -386,22 +385,60 @@ function cjkLines(text) {
 }
 
 /**
- * `<template>…</template>` / `<script …>…</script>` block and its content
- * offset. The template match is greedy so the *outermost* block wins — inner
- * `<template #slot>` elements are part of it, which is what we want.
+/**
+ * `<template>…</template>` block and its content offset. Both ends are taken
+ * greedily (first `<template`, last `</template>`) so the *outermost* block
+ * wins — inner `<template #slot>` elements are part of it, which is what we
+ * want. A per-close walk would stop at the first `</template>` it meets, which
+ * is an inner slot's, and hand back a fragment.
  */
 function extractBlock(src, tag) {
   const open = src.search(new RegExp(`<${tag}\\b`))
   if (open === -1) return null
   const openEnd = src.indexOf('>', open)
   if (openEnd === -1) return null
-  const close = tag === 'template' ? src.lastIndexOf('</template>') : src.indexOf(`</${tag}>`, openEnd)
+  const close = src.lastIndexOf(`</${tag}>`)
   if (close === -1 || close < openEnd) return null
   // `.vue` blocks are wrapped in a newline; dropping it keeps line numbers
   // right for every line after the first one in the block.
   let start = openEnd + 1
-  if (src[start] === '\n') start++
+  if (src[start] === '\\n') start++
   return { start, body: src.slice(start, close) }
+}
+
+/**
+ * Every `<script …>…</script>` block, in file order, with its content offset.
+ *
+ * A `.vue` file may carry more than one: `<script>` for module-scope helpers and
+ * `<script setup>` for the component itself. Reading only the first left the
+ * entire `<script setup>` of such a file unscanned — `ChatPanel.vue` was the one
+ * file in the tree where that was true, and every Chinese string in its setup
+ * block was invisible to this gate.
+ */
+function extractBlocks(src, tag) {
+  const blocks = []
+  let from = 0
+  for (;;) {
+    const open = src.indexOf(`<${tag}`, from)
+    if (open === -1) break
+    // `<scriptx` is not a `<script` block.
+    const after = src[open + tag.length + 1]
+    if (after !== undefined && /[\w-]/.test(after)) {
+      from = open + 1
+      continue
+    }
+    const openEnd = src.indexOf('>', open)
+    if (openEnd === -1) break
+    const close = src.indexOf(`</${tag}>`, openEnd)
+    if (close === -1) break
+    // `.vue` blocks are wrapped in a newline; dropping it keeps line numbers
+    // right for every line after the first one in the block.
+    let start = openEnd + 1
+    if (src[start] === '\n') start++
+    blocks.push({ start, body: src.slice(start, close) })
+    from = close
+  }
+  return blocks
 }
 
 /**

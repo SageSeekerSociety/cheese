@@ -14,6 +14,8 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ChatPanel from './ChatPanel.vue'
 
+import { setLocale } from '@/i18n'
+
 const Panel = ChatPanel as unknown as Component
 
 const SEAT = 'cheese-t1'
@@ -96,6 +98,9 @@ const settle = async () => {
   for (let i = 0; i < 8; i += 1) await new Promise((r) => setTimeout(r, 0))
 }
 
+// 默认语言是 en（happy-dom 的 navigator.language 是 en-US），而这份用例断言的是
+// 中文界面的字。先把语言钉住，别让它跟着环境飘。
+beforeEach(() => setLocale('zh-CN'))
 describe('AI 说的话署谁的名', () => {
   it('名册晚到时，已有消息里的点名也更新为显示名', async () => {
     const originalFetch = globalThis.fetch

@@ -16,6 +16,8 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import TopicSidebar from './TopicSidebar.vue'
 
+import { setLocale } from '@/i18n'
+
 vi.mock('../api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api')>()),
   listProjectAgents: vi.fn().mockResolvedValue({ data: [] }),
@@ -137,6 +139,9 @@ beforeAll(() => {
   }
 })
 
+// 默认语言是 en（happy-dom 的 navigator.language 是 en-US）。这份用例断言的是
+// 中文界面，所以先把语言钉住，别让它跟着环境飘。
+beforeEach(() => setLocale('zh-CN'))
 describe('左侧话题列表：房间下面那些活的折叠', () => {
   beforeEach(() => localStorage.clear())
 

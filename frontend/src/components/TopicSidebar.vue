@@ -6,6 +6,7 @@ import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { listProjectAgents } from '../api'
+import { t } from '../i18n'
 import { columnDotStyle } from '../lib/board'
 import { cancelPrefetch, prefetchOnHover } from '../lib/routePrefetch'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '../lib/topicTitle'
@@ -87,14 +88,16 @@ function startResize(e: MouseEvent) {
 const router = useRouter()
 const route = useRoute()
 
+// 这几行的文字和顶栏标题是同一句话，所以取的是路由表里那一份 `workspace.routes.*`：
+// 侧栏换了叫法而顶栏没换，是这种表最典型的漂移。
 const projectPages = [
-  { key: 'overview', label: '总览', icon: 'mdi-view-agenda-outline' },
-  { key: 'workspace-running', label: '看板', icon: 'mdi-view-column-outline' },
-  { key: 'calendar', label: '日历', icon: 'mdi-calendar-outline' },
-  { key: 'project-delivery', label: '导出与发布', icon: 'mdi-export-variant' },
-  { key: 'project-agents', label: 'AI 队友', icon: 'mdi-robot-outline' },
+  { key: 'overview', labelKey: 'workspace.routes.overview', icon: 'mdi-view-agenda-outline' },
+  { key: 'workspace-running', labelKey: 'workspace.routes.board', icon: 'mdi-view-column-outline' },
+  { key: 'calendar', labelKey: 'workspace.routes.calendar', icon: 'mdi-calendar-outline' },
+  { key: 'project-delivery', labelKey: 'workspace.routes.delivery', icon: 'mdi-export-variant' },
+  { key: 'project-agents', labelKey: 'workspace.routes.agents', icon: 'mdi-robot-outline' },
   // 成员紧挨着 AI 队友：这两行答的是同一个问题的两半——这个项目里都有谁。
-  { key: 'project-members', label: '成员', icon: 'mdi-account-group-outline' },
+  { key: 'project-members', labelKey: 'workspace.routes.members', icon: 'mdi-account-group-outline' },
 ] as const
 function openProjectPage(name: string) {
   if (!props.selectedProjectId) return
@@ -163,20 +166,20 @@ function inferKind(t: Topic): string {
 
 // 边栏画的是房间。房间里派出去的活是**卡**，不是地点，看得见的地方是那个房间的
 // 看板（总览那一格）和项目级那块板 —— 一行一个房间，一件活不再占一行。
-const KIND_BADGE: Record<string, string> = {
-  root: '全局',
-  topic: '话题',
-}
-
-function kindLabel(t: Topic): string {
-  return KIND_BADGE[inferKind(t)] ?? '话题'
+function kindLabel(topic: Topic): string {
+  // 认不出的 kind 一律当话题：这一格是给行做注脚的，不该因为它把标题挤掉。
+  return inferKind(topic) === 'root' ? t('workspace.sidebar.kind.root') : t('workspace.sidebar.kind.topic')
 }
 
 // Status: only show when notable (archived / draft); active is implicit. Shown
 // as a small neutral dot + text, never a colored chip.
+//
+// 这里的 `archived` 是这个侧栏自己的意思——房间被收进下面那个「已归档」组，
+// 用 `workspace.status.archived`（Archived）。它和话题头那个 `archived`（= 已采纳 /
+// Accepted，见 `lib/topicState.ts`）是同一个字面量、两个意思，见词表的命名陷阱。
 function statusBadge(status: string): string | null {
-  if (status === 'archived') return '已归档'
-  if (status === 'draft') return '草稿'
+  if (status === 'archived') return t('workspace.status.archived')
+  if (status === 'draft') return t('workspace.status.draft')
   return null
 }
 
@@ -365,7 +368,7 @@ const railSections = computed(() => [
   { key: 'mine', label: '', head: false, count: 0, unread: 0, open: true, rows: mineTree.value },
   {
     key: 'others',
-    label: '其他话题',
+    label: t('workspace.sidebar.others'),
     head: grouped.value.others.length > 0,
     count: grouped.value.others.length,
     unread: othersUnread.value,
@@ -391,10 +394,10 @@ function rowRunning(row: VisibleRow<Topic>): boolean {
   return row.topic.running === true || row.hiddenRunning
 }
 function toggleTitle(row: VisibleRow<Topic>): string {
-  if (!row.collapsed) return '收起'
-  if (row.hiddenAwaits) return '展开：里面有待处理的事项'
-  if (row.hiddenRunning) return '展开：芝士正在里面工作'
-  return '展开'
+  if (!row.collapsed) return t('workspace.sidebar.collapse')
+  if (row.hiddenAwaits) return t('workspace.sidebar.expandAwaits')
+  if (row.hiddenRunning) return t('workspace.sidebar.expandRunning')
+  return t('workspace.sidebar.expand')
 }
 
 function toggleCollapse(id: string) {
@@ -410,7 +413,7 @@ function toggleCollapse(id: string) {
 // header is a label, not a button that opens a room nobody could guess at.
 const rootTopic = computed<Topic | null>(() => props.topics.find((t) => inferKind(t) === 'root') ?? null)
 const currentProjectName = computed<string>(
-  () => props.projects.find((p) => p.id === props.selectedProjectId)?.name ?? '选择项目'
+  () => props.projects.find((p) => p.id === props.selectedProjectId)?.name ?? t('workspace.sidebar.selectProject')
 )
 
 // Inline rename (pattern mirrors MyDevicesView's rename-in-place): a click on
@@ -464,7 +467,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   >
     <!-- Drag handle on the right edge to resize the rail. 整页形态下没有可拖的
          宽度——它占满内容区。 -->
-    <div v-if="!page" class="rail-resizer" title="拖动调整宽度" @mousedown="startResize" />
+    <div v-if="!page" class="rail-resizer" :title="t('workspace.sidebar.resize')" @mousedown="startResize" />
     <!-- 两段式: 头固定 / 下面唯一滚动。原来还有第三段（尾固定的私聊栏），它
          撤掉了：私聊的未读改挂在「成员」那一行上，而那一行在头下面的置顶组里，
          本来就不随话题列表滚。 -->
@@ -485,7 +488,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
               type="button"
               class="sidebar-header sidebar-header-menu rail-header"
               :class="{ 'sidebar-header-menu-active': isActive, 'rail-header--bar': page }"
-              title="项目菜单"
+              :title="t('workspace.sidebar.projectMenu')"
             >
               <!-- 名字自己留一个 title：它是省略号截断的，鼠标停在名字上要能看到全名。 -->
               <span class="rail-header__name" :title="currentProjectName">{{ currentProjectName }}</span>
@@ -498,7 +501,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                  手机上进了一个项目就再也走不到别的项目去。桌面不列——rail 已经
                  是那个入口，同一件事有两个入口只会让人猜哪个才算数。 -->
             <template v-if="page && projects.length > 1">
-              <v-list-subheader class="t-eyebrow">切换项目</v-list-subheader>
+              <v-list-subheader class="t-eyebrow">{{ t('workspace.sidebar.switchProject') }}</v-list-subheader>
               <v-list-item
                 v-for="p in projects"
                 :key="p.id"
@@ -519,7 +522,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
             </template>
             <v-list-item
               prepend-icon="mdi-cog-outline"
-              title="项目设置"
+              :title="t('projects.settings.title')"
               :disabled="!selectedProjectId"
               @click="openProjectPage('project-settings')"
             />
@@ -530,7 +533,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
       <!-- 中段：这个侧栏里唯一会滚的东西 -->
       <div class="rail-scroll flex-grow-1 overflow-y-auto">
         <template v-if="!selectedProjectId">
-          <div class="t-body c-muted pa-4">先选择一个项目</div>
+          <div class="t-body c-muted pa-4">{{ t('workspace.sidebar.selectProjectFirst') }}</div>
         </template>
         <template v-else>
           <!-- 置顶行 (C1): 全局房间 + 总览 + 日历。和话题行同一种语法——同图标
@@ -560,7 +563,9 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                   />
                 </span>
               </template>
-              <v-list-item-title :class="{ 'title-unread': unreadOf(rootTopic.id) > 0 }">全局</v-list-item-title>
+              <v-list-item-title :class="{ 'title-unread': unreadOf(rootTopic.id) > 0 }">{{
+                t('workspace.sidebar.kind.root')
+              }}</v-list-item-title>
               <template #append>
                 <span v-if="unreadOf(rootTopic.id) > 0" class="unread-badge">{{ unreadLabel(rootTopic.id) }}</span>
               </template>
@@ -583,7 +588,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                   <v-icon size="16" class="row-glyph" :icon="p.icon" />
                 </span>
               </template>
-              <v-list-item-title>{{ p.label }}</v-list-item-title>
+              <v-list-item-title>{{ t(p.labelKey) }}</v-list-item-title>
               <!-- 私聊的未读挂在「成员」这一行上。私聊那一栏撤掉之后，这是
                    「有人找你」在主导航上唯一会亮的地方，所以它必须在这里；进了
                    成员页才精确到是谁（每个人的私聊按钮上各带各的）。 -->
@@ -596,22 +601,29 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
           <v-divider class="mx-3 my-1" />
 
           <div class="t-eyebrow side-subhead side-subhead--row">
-            <span>话题</span>
+            <span>{{ t('workspace.sidebar.kind.topic') }}</span>
             <!-- 建话题时就把房间交给谁定下来。队友列表拿不到时（旧环境）退回
                  一键直建，不让侧栏的主要动作被一个可选接口卡住。 -->
             <v-menu v-if="projectAgents.length" location="bottom end">
               <template #activator="{ props: menu }">
-                <v-btn v-bind="menu" icon="mdi-plus" size="x-small" variant="tonal" color="primary" title="新建话题" />
+                <v-btn
+                  v-bind="menu"
+                  icon="mdi-plus"
+                  size="x-small"
+                  variant="tonal"
+                  color="primary"
+                  :title="t('workspace.sidebar.newTopic')"
+                />
               </template>
               <v-list density="compact" min-width="220">
-                <v-list-subheader>交给哪个 AI 队友</v-list-subheader>
+                <v-list-subheader>{{ t('workspace.sidebar.assignAgent') }}</v-list-subheader>
                 <v-list-item v-for="a in newTopicAgents" :key="a.id ?? a.handle" @click="newTopic(a.id)">
                   <template #prepend>
                     <v-icon size="small" icon="mdi-robot-outline" />
                   </template>
                   <v-list-item-title>{{ a.display_name }}</v-list-item-title>
                   <template v-if="a.is_default" #append>
-                    <span class="t-meta c-muted">默认</span>
+                    <span class="t-meta c-muted">{{ t('workspace.sidebar.defaultAgent') }}</span>
                   </template>
                 </v-list-item>
               </v-list>
@@ -622,7 +634,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
               size="x-small"
               variant="tonal"
               color="primary"
-              title="新建话题"
+              :title="t('workspace.sidebar.newTopic')"
               @click="newTopic()"
             />
           </div>
@@ -633,7 +645,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
             <!-- 一组都不相关的时候（刚进项目、还没参与任何话题），上组是空的。
                  说清楚"空的是这一组，不是这个项目"，否则下面那个折叠组会像个谜。 -->
             <v-list v-if="mineTree.length === 0 && grouped.others.length > 0" density="compact" nav class="py-0">
-              <v-list-item class="c-faint t-body"> 暂无与你相关的话题 </v-list-item>
+              <v-list-item class="c-faint t-body">{{ t('workspace.sidebar.noMineTopics') }}</v-list-item>
             </v-list>
 
             <!-- 分组 (C2): 两组走同一段模板。上组直接平铺；下组「其他话题」多一个
@@ -656,7 +668,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                 <span
                   v-if="!section.open && section.unread > 0"
                   class="unread-badge unread-badge--dot"
-                  title="其他话题里有新消息"
+                  :title="t('workspace.sidebar.othersUnread')"
                 />
               </button>
 
@@ -704,12 +716,12 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                     <!-- 等你处理：有点名给你的验收卡，或有 @你 的未读。排在"在跑"
                          前面——芝士在忙是它的事，等你做事才是你的事。 -->
                     <span v-else-if="row.topic.awaits_me" class="row-slot">
-                      <span class="await-dot" title="有待处理的事项" />
+                      <span class="await-dot" :title="t('workspace.sidebar.awaitsTip')" />
                     </span>
                     <!-- 芝士还在这个话题里工作：呼吸点，人凭它判断啥时候该派下一个
                          任务——和归档/采纳状态无关，只是这会儿有没有跑完。 -->
                     <span v-else-if="row.topic.running" class="row-slot">
-                      <span class="running-dot" title="芝士正在这个话题里工作" />
+                      <span class="running-dot" :title="t('workspace.sidebar.runningTip')" />
                     </span>
                     <span v-else class="row-slot" />
                   </template>
@@ -747,7 +759,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                       <span
                         v-if="row.collapsed && row.hiddenCount > 0"
                         class="subtree-count ms-2"
-                        :title="`收起了 ${row.hiddenCount} 项`"
+                        :title="t('workspace.sidebar.hiddenCount', { count: row.hiddenCount })"
                         >{{ countLabel(row.hiddenCount) }}</span
                       >
                       <span
@@ -764,7 +776,11 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                     <span
                       v-if="row.unreadTotal > 0"
                       class="unread-badge"
-                      :title="row.hiddenUnread > 0 ? `含收起的子话题 ${row.hiddenUnread} 条新消息` : undefined"
+                      :title="
+                        row.hiddenUnread > 0
+                          ? t('workspace.sidebar.hiddenUnread', { count: row.hiddenUnread })
+                          : undefined
+                      "
                       >{{ countLabel(row.unreadTotal) }}</span
                     >
                     <!-- hover 浮出的操作入口：一颗 ⋯，绝对定位覆盖行尾，不占布局宽度 -->
@@ -781,20 +797,20 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                             size="small"
                             variant="text"
                             density="comfortable"
-                            title="更多操作"
+                            :title="t('workspace.sidebar.moreActions')"
                             class="row-actions__btn"
                           />
                         </template>
                         <v-list density="compact" nav>
                           <v-list-item
                             prepend-icon="mdi-pencil-outline"
-                            title="重命名"
+                            :title="t('workspace.sidebar.rename')"
                             @click="startRename(row.topic)"
                           />
                           <v-list-item
                             v-if="row.topic.can_archive"
                             prepend-icon="mdi-archive-arrow-down-outline"
-                            title="归档"
+                            :title="t('workspace.sidebar.archive')"
                             @click="emit('archive-topic', row.topic.id)"
                           />
                         </v-list>
@@ -806,7 +822,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
             </template>
 
             <v-list v-if="activeTree.length === 0" density="compact" nav class="py-0">
-              <v-list-item class="c-faint t-body"> 暂无话题 </v-list-item>
+              <v-list-item class="c-faint t-body">{{ t('spaces.detail.manageTopics.noTopics') }}</v-list-item>
             </v-list>
           </template>
 
@@ -818,46 +834,46 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
               <v-icon size="15" class="c-faint">
                 {{ archivedOpen ? 'mdi-chevron-down' : 'mdi-chevron-right' }}
               </v-icon>
-              <span class="t-eyebrow">已归档</span>
+              <span class="t-eyebrow">{{ t('workspace.status.archived') }}</span>
               <span class="group-count">{{ archivedRows.length }}</span>
               <span
                 v-if="!archivedOpen && archivedUnread > 0"
                 class="unread-badge unread-badge--dot"
-                title="归档话题里有新消息"
+                :title="t('workspace.sidebar.archivedUnread')"
               />
             </button>
             <v-list v-if="archivedOpen" density="compact" nav class="py-0">
               <v-list-item
-                v-for="t in archivedRows"
-                :key="t.id"
-                :active="t.id === selectedTopicId"
+                v-for="topic in archivedRows"
+                :key="topic.id"
+                :active="topic.id === selectedTopicId"
                 rounded="lg"
                 class="topic-row topic-row--archived"
-                :class="{ 'is-active': t.id === selectedTopicId }"
-                @click="emit('select-topic', t.id)"
-                @mouseenter="emit('hover-topic', t.id)"
+                :class="{ 'is-active': topic.id === selectedTopicId }"
+                @click="emit('select-topic', topic.id)"
+                @mouseenter="emit('hover-topic', topic.id)"
                 @mouseleave="emit('leave-topic')"
               >
                 <template #prepend>
                   <v-icon size="16" class="me-1 c-faint" icon="mdi-archive-outline" />
                 </template>
                 <v-list-item-title class="d-flex align-center ga-2 topic-title">
-                  <span class="text-truncate">{{ t.title }}</span>
-                  <span class="kind-text">{{ kindLabel(t) }}</span>
+                  <span class="text-truncate">{{ topic.title }}</span>
+                  <span class="kind-text">{{ kindLabel(topic) }}</span>
                 </v-list-item-title>
                 <template #append>
-                  <span v-if="unreadOf(t.id) > 0" class="unread-badge me-1">
-                    {{ unreadLabel(t.id) }}
+                  <span v-if="unreadOf(topic.id) > 0" class="unread-badge me-1">
+                    {{ unreadLabel(topic.id) }}
                   </span>
                   <v-btn
-                    v-if="t.can_archive"
+                    v-if="topic.can_archive"
                     icon="mdi-archive-arrow-up-outline"
                     size="small"
                     variant="text"
                     density="comfortable"
-                    title="取消归档"
+                    :title="t('workspace.sidebar.unarchive')"
                     class="split-btn"
-                    @click.stop="emit('unarchive-topic', t.id)"
+                    @click.stop="emit('unarchive-topic', topic.id)"
                   />
                 </template>
               </v-list-item>
@@ -875,7 +891,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
               :class="{ 'is-active': onDocs }"
               :style="ROW_INDENT"
               prepend-icon="mdi-file-document-outline"
-              title="项目文档"
+              :title="t('workspace.routes.docs')"
               @click="emit('select-docs', 'charter')"
             />
           </v-list>

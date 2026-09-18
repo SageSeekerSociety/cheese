@@ -5,7 +5,6 @@
   "global.confirmDelete",
   "global.createFailed",
   "global.createSuccess",
-  "global.delete",
   "global.error",
   "global.formValidation.email",
   "global.formValidation.minLength",
