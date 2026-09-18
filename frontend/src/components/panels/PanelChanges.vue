@@ -26,7 +26,13 @@ import {
   writeFile,
 } from '../../api'
 import { parseDiffLines, splitDiffByFile } from '../../lib/diff'
+import { useDocumentBytes } from '../../lib/documentBytes'
+import { DOCUMENT_TYPES, needsDocumentView, suffixOf } from '../../lib/fileKind'
 import CodeEditor from '../CodeEditor.vue'
+
+import PreviewPages from './preview/PreviewPages.vue'
+import PreviewSheet from './preview/PreviewSheet.vue'
+import RevisionList from './preview/RevisionList.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -351,6 +357,37 @@ function isImagePath(path: string): boolean {
   return IMAGE_EXT.has(path.split('.').pop()?.toLowerCase() ?? '')
 }
 const openIsImage = computed(() => !!openPath.value && isImagePath(openPath.value))
+
+// ---- 文档: 这一版画出来，外加它自己带的修订 ----
+// 一份 .docx 的差异是一句「二进制文件不同」——按文件类型分派渲染器之前，这一格对一
+// 份交付的文档能说的只有这句话。现在它画出这一版的页面，再把文件里的修订逐条列出
+// 来：那才是「这一版比上一版改了什么」在一份 Word 文档里的真实形态。
+const openIsDocument = computed(() => !!openPath.value && needsDocumentView(openPath.value))
+const openDocumentType = computed(() => (openPath.value ? DOCUMENT_TYPES[suffixOf(openPath.value)] ?? null : null))
+// 处理完一处修订，文件就变了，而字节是按版本缓存的——这里打一下让它重取。
+const docNonce = ref(0)
+const {
+  bytes: docBytes,
+  loading: docLoading,
+  error: docError,
+  rendererMissing: docRendererMissing,
+} = useDocumentBytes({
+  topicId: () => props.topicId,
+  path: () => openPath.value,
+  version: () => fileVersion.value,
+  task: () => selectedTask.value,
+  nonce: () => docNonce.value,
+  enabled: () => openIsDocument.value,
+})
+
+async function onRevisionDecided() {
+  const path = openPath.value
+  docNonce.value += 1
+  // 文件的版本变了，树上那几个数字也跟着变：两边都重读，别让读者对着旧数字看。
+  if (path) await selectFile(path)
+  void loadGit({ silent: true })
+}
+
 // Raw bytes of the open file: what <img> renders for an image, and what the
 // download button hands over for anything else that can't be shown as text.
 const openRawUrl = computed(() =>
@@ -848,8 +885,9 @@ defineExpose({ openFile })
           >
             下载
           </v-btn>
-          <!-- 看 diff / 改文件是同一个文件的两面，只有改过的文件才有两面。 -->
-          <div v-if="openDiff" class="seg seg--sm">
+          <!-- 看 diff / 改文件是同一个文件的两面，只有改过的文件才有两面。文档没有
+               这两面：它的差异是一句「二进制文件不同」，而按文本编辑会损坏它。 -->
+          <div v-if="openDiff && !openIsDocument" class="seg seg--sm">
             <button
               type="button"
               class="seg__btn"
@@ -940,9 +978,44 @@ defineExpose({ openFile })
             </template>
           </div>
           <div class="file-editor">
+            <!-- 文档：画出这一版，再把它自己带的修订列在旁边。排在差异前面，因为
+               一份 .docx 的差异只有一句「二进制文件不同」。 -->
+            <div v-if="openPath && openIsDocument" class="doc-view">
+              <div v-if="docLoading && !docBytes" class="file-blob">
+                <v-progress-circular indeterminate color="primary" size="24" />
+              </div>
+              <div v-else-if="docRendererMissing && !docBytes" class="file-blob">
+                <v-icon size="30" class="c-faint mb-2">mdi-eye-off-outline</v-icon>
+                <div class="file-blob__title">文档预览未启用</div>
+                <v-btn size="small" variant="tonal" class="mt-3" @click="downloadOpenFile">
+                  <v-icon size="16" class="me-1">mdi-download-outline</v-icon>
+                  下载原文件
+                </v-btn>
+              </div>
+              <div v-else-if="docError && !docBytes" class="file-blob">
+                <v-icon size="30" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
+                <div class="file-blob__title">无法显示这个文件</div>
+                <div class="file-blob__note">{{ docError }}</div>
+                <v-btn size="small" variant="tonal" class="mt-3" @click="downloadOpenFile">
+                  <v-icon size="16" class="me-1">mdi-download-outline</v-icon>
+                  下载原文件
+                </v-btn>
+              </div>
+              <div v-else class="doc-view__body">
+                <PreviewPages v-if="openDocumentType?.view === 'pages'" :data="docBytes" />
+                <PreviewSheet v-else :data="docBytes" kind="workbook" />
+                <RevisionList
+                  :topic-id="topicId"
+                  :path="suffixOf(openPath) === 'docx' ? openPath : null"
+                  :version="fileVersion"
+                  :task="selectedTask"
+                  @decided="onRevisionDecided"
+                />
+              </div>
+            </div>
             <!-- 逐文件 diff: 一个文件一段，增删各自着色。整块裸 diff 读不动，也没法
                定位到文件，所以验收动线以前根本立不起来。 -->
-            <div v-if="openPath && effectiveView === 'diff'" class="diff-view">
+            <div v-else-if="openPath && effectiveView === 'diff'" class="diff-view">
               <div v-for="(l, i) in openDiffLines" :key="i" class="diff-line" :class="`diff-line--${l.kind}`">
                 {{ l.text }}
               </div>
@@ -1322,6 +1395,24 @@ defineExpose({ openFile })
   min-height: 0;
   overflow: hidden;
   background: var(--surface);
+}
+/* 文档那一面：页面在左，修订柱在右，和预览那一格同一个排法。 */
+.doc-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.doc-view__body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+@media (max-width: 720px) {
+  .doc-view__body {
+    flex-direction: column;
+  }
 }
 .file-icon-btn--on :deep(.v-icon) {
   color: rgb(var(--v-theme-primary));

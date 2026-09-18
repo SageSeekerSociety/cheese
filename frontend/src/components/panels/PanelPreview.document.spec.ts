@@ -101,7 +101,8 @@ it('shows a Word report rather than offering it as a download', async () => {
   const pages = await screen.findByTestId('pages')
   // The file the room produced is on screen, converted, not described.
   expect(pages.getAttribute('data-bytes')).toBe('4096')
-  expect(previewDocumentPdf).toHaveBeenCalledWith('topic-a', 'output/评审简报.docx')
+  // 末尾那个 null 是来源：房间自己的文件，不是某个任务分支上的那一份。
+  expect(previewDocumentPdf).toHaveBeenCalledWith('topic-a', 'output/评审简报.docx', null)
   expect(screen.getByText('评审简报.docx')).toBeTruthy()
 })
 

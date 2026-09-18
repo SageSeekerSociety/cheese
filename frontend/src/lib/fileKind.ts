@@ -44,6 +44,16 @@ export function previewCanShow(path: string): boolean {
   return !!DOCUMENT_TYPES[suffix] || IMAGE_SUFFIXES.has(suffix)
 }
 
+/** 文本 diff 读不了的文档。
+ *
+ *  它的字节是压缩包或者二进制，git 只会说「二进制文件不同」，所以改动那一格对它得
+ *  换一副面孔：画出这一版的页面，外加文件自己带的修订。`.md` 和 `.csv` 不在里面——
+ *  它们的文本 diff 正是审阅最需要的那一面，换成渲染反而更差。 */
+export function needsDocumentView(path: string): boolean {
+  const suffix = suffixOf(path)
+  return NEEDS_CONVERSION.has(suffix) || suffix === 'pdf' || suffix === 'xlsx' || suffix === 'xls'
+}
+
 /** 这个文件有没有「第一页」可以画出来。PDF 直接就有，Office 文档转一次就有。 */
 export function hasPagePreview(path: string): boolean {
   const suffix = suffixOf(path)

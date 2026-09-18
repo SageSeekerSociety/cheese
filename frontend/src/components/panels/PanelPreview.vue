@@ -10,18 +10,17 @@ import {
   documentRevisions,
   downloadFile,
   getPreview,
-  previewDocumentPdf,
-  previewFileBytes,
-  PreviewRendererUnavailable,
   readPreviewFile,
   requestPreviewSession,
 } from '../../api'
-import { DOCUMENT_TYPES, IMAGE_SUFFIXES, NEEDS_CONVERSION, suffixOf } from '../../lib/fileKind'
+import { useDocumentBytes } from '../../lib/documentBytes'
+import { DOCUMENT_TYPES, IMAGE_SUFFIXES, suffixOf } from '../../lib/fileKind'
 import { markdown, sanitizeRendered } from '../../lib/markdown'
 import { postPreviewSession } from '../../lib/previewSession'
 
 import PreviewPages from './preview/PreviewPages.vue'
 import PreviewSheet from './preview/PreviewSheet.vue'
+import RevisionList from './preview/RevisionList.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -98,120 +97,29 @@ const previewMarkdownHtml = computed(() => {
 })
 
 // ---- 文档字节 ----
-const docBytes = ref<ArrayBuffer | null>(null)
-const docLoading = ref(false)
-const docError = ref('')
-const rendererMissing = ref(false)
-let docGeneration = 0
-let loadedDocKey = ''
-
-async function loadDocument() {
-  const tid = props.topicId
-  const path = previewFile.value?.path
-  const type = documentType.value
-  // Markdown 没有字节要取：它的正文已经在 readPreviewFile 里拿到并渲染了。
-  if (!tid || !path || !type || type.view === 'markdown') return
-  // The version changes when 芝士 rewrites the file; re-fetching on every poll
-  // would otherwise re-convert a document that has not moved.
-  const key = `${tid}:${path}:${previewFile.value?.version ?? ''}:${previewFile.value?.bytes ?? ''}`
-  if (key === loadedDocKey && docBytes.value) return
-  const mine = ++docGeneration
-  docLoading.value = true
-  docError.value = ''
-  rendererMissing.value = false
-  try {
-    const bytes = NEEDS_CONVERSION.has(documentSuffix.value)
-      ? await previewDocumentPdf(tid, path)
-      : await previewFileBytes(tid, path)
-    if (mine !== docGeneration) return
-    docBytes.value = bytes
-    loadedDocKey = key
-  } catch (e) {
-    if (mine !== docGeneration) return
-    // 保留已经在屏幕上的那一份。刷新失败时把它清掉，读者失去的是一份本来好好的
-    // 文档，换来一句错误——而这份文档仍然是这个交付物最新的可见状态。
-    loadedDocKey = ''
-    rendererMissing.value = e instanceof PreviewRendererUnavailable
-    docError.value = e instanceof Error ? e.message : '无法显示这个文件'
-  } finally {
-    if (mine === docGeneration) docLoading.value = false
-  }
-}
-
-// ---- 修订清单 ----
-// 改别人的文档要留修订，所以一份芝士改过的 .docx 里带着 `<w:ins>` / `<w:del>`。
-// 旁边那份 PDF 已经把它们画出来了——LibreOffice 会渲染修订（实测：插入和删除的文字
-// 都出现在 PDF 里）。所以这份清单不是为了让人看见改动，是为了让人**处理**改动：
-// 逐条接受或拒绝，不用先装一个 Word。
-//
-// 每一条都带作者，而且一条都不过滤。用户传来的文档里本来就可能有别人未接受的修订，
-// 在自己的文档里接受同事的一处改动是件平常事；不平常的是不知不觉地接受了它。
-const revisions = ref<DocumentRevision[]>([])
-const revisionsError = ref('')
-const deciding = ref(0)
-let revisionsKey = ''
-// 读这份清单时文件是哪一版：处理时带回去，芝士在这中间重新交付过就不会被盖掉。
-let revisionsVersion = ''
-// 处理完一条之后 PDF 要重画，而它是按文件版本缓存的——版本没变，所以要自己打一下。
+// 那一页的字节由 `useDocumentBytes` 取：浏览器画不出来的先转 PDF，其余读原始字节。
+// 改动那一格取的是同一份东西，所以这件事只写在一处。
 const docNonce = ref(0)
+const {
+  bytes: docBytes,
+  loading: docLoading,
+  error: docError,
+  rendererMissing,
+  forget: forgetDocument,
+} = useDocumentBytes({
+  topicId: () => props.topicId,
+  path: () => previewFile.value?.path ?? null,
+  version: () => previewFile.value?.version ?? null,
+  nonce: () => docNonce.value,
+  enabled: () => !!documentType.value && documentType.value.view !== 'markdown',
+})
 
-const hasRevisions = computed(() => documentSuffix.value === 'docx')
+const revisionsRef = ref<InstanceType<typeof RevisionList> | null>(null)
 
-async function loadRevisions() {
-  const tid = props.topicId
-  const path = previewFile.value?.path
-  if (!tid || !path || !hasRevisions.value) {
-    revisions.value = []
-    revisionsKey = ''
-    return
-  }
-  const key = `${tid}:${path}:${previewFile.value?.version ?? ''}:${docNonce.value}`
-  if (key === revisionsKey) return
-  revisionsKey = key
-  revisionsError.value = ''
-  try {
-    const read = await documentRevisions(tid, path)
-    revisions.value = read.revisions
-    revisionsVersion = read.version
-  } catch (e) {
-    // 读不到修订不该把文档也弄没：文档本身还好好地显示着。
-    revisions.value = []
-    revisionsVersion = ''
-    revisionsError.value = e instanceof Error ? e.message : '未能读取修订'
-  }
-}
-
-async function decide(decision: { accept?: number[]; reject?: number[] }) {
-  const tid = props.topicId
-  const path = previewFile.value?.path
-  if (!tid || !path) return
-  deciding.value += 1
-  revisionsError.value = ''
-  try {
-    const done = await decideDocumentRevisions(tid, path, revisionsVersion, decision)
-    revisions.value = done.revisions
-    revisionsVersion = done.version
-    // 文件改了，重新数的序号也变了：把两边都刷新，别让读者对着旧清单点第二下。
-    revisionsKey = ''
-    docNonce.value += 1
-    loadedDocKey = ''
-    await loadDocument()
-    await loadRevisions()
-  } catch (e) {
-    const said = e instanceof Error ? e.message : '未能处理这处修订'
-    // 写不进去多半是文件已经变了：先把清单换成现在这份，再说刚才那下没生效。
-    revisionsKey = ''
-    await loadRevisions()
-    revisionsError.value = said
-  } finally {
-    deciding.value -= 1
-  }
-}
-
-function revisionReads(row: DocumentRevision): string {
-  if (row.kind === 'replace') return `把「${row.removed}」改成「${row.added}」`
-  if (row.kind === 'insert') return `加了「${row.added}」`
-  return `删了「${row.removed}」`
+// 处理完一处修订，文件就变了，而那一页是按文件版本缓存的——版本没变（是这里改的，
+// 不是芝士改的），所以自己打一下。
+function afterDecision() {
+  docNonce.value += 1
 }
 
 // ---- 指出位置 ----
@@ -253,18 +161,6 @@ function sendLocator() {
   emit('locate', `在 ${previewFile.value?.path ?? ''} 的 ${target.address}（「${target.quote}」）：${note}`)
   clearLocator()
 }
-
-watch([documentType, () => previewFile.value?.path, () => previewFile.value?.version], () => {
-  // Markdown 没有字节要取（正文就是文件内容本身），和「不是文档」一样清空即可。
-  if (documentType.value && documentType.value.view !== 'markdown') void loadDocument()
-  else {
-    docGeneration += 1
-    docBytes.value = null
-    loadedDocKey = ''
-    docError.value = ''
-  }
-  void loadRevisions()
-})
 
 async function downloadArtifact() {
   downloadError.value = ''
@@ -323,7 +219,7 @@ async function openFile(path: string): Promise<boolean> {
 
 function backToArtifact() {
   asked.value = null
-  loadedDocKey = ''
+  forgetDocument()
   void load({ reload: true })
 }
 
@@ -636,62 +532,15 @@ watch(
         <PreviewSheet v-else :data="docBytes" :kind="documentSuffix === 'csv' ? 'csv' : 'workbook'" @cell="onCell" />
 
         <!-- 修订清单。页面上已经能看见改动了（LibreOffice 会把修订画出来），这里是
-             用来逐条处理的。 -->
-        <aside v-if="revisions.length" class="revs" data-testid="revisions">
-          <div class="revs__bar">
-            <span class="revs__count t-eyebrow">修订 {{ revisions.length }} 处</span>
-            <v-spacer />
-            <v-btn
-              size="x-small"
-              variant="text"
-              class="c-muted"
-              :disabled="deciding > 0"
-              @click="decide({ accept: revisions.map((r) => r.number) })"
-            >
-              全部接受
-            </v-btn>
-            <v-btn
-              size="x-small"
-              variant="text"
-              class="c-muted"
-              :disabled="deciding > 0"
-              @click="decide({ reject: revisions.map((r) => r.number) })"
-            >
-              全部拒绝
-            </v-btn>
-          </div>
-
-          <v-alert v-if="revisionsError" type="warning" density="compact" class="mb-2">
-            {{ revisionsError }}
-          </v-alert>
-
-          <ul class="revs__list">
-            <li v-for="row in revisions" :key="row.number" class="revs__item">
-              <div class="revs__what">{{ revisionReads(row) }}</div>
-              <div class="revs__who t-meta">第 {{ row.paragraph }} 段 · {{ row.author || '未署名' }}</div>
-              <div class="revs__acts">
-                <v-btn size="x-small" variant="text" :disabled="deciding > 0" @click="decide({ accept: [row.number] })">
-                  接受
-                </v-btn>
-                <v-btn
-                  size="x-small"
-                  variant="text"
-                  class="c-muted"
-                  :disabled="deciding > 0"
-                  @click="decide({ reject: [row.number] })"
-                >
-                  拒绝
-                </v-btn>
-              </div>
-            </li>
-          </ul>
-        </aside>
+             用来逐条处理的。改动那一格用的是同一个组件。 -->
+        <RevisionList
+          ref="revisionsRef"
+          :topic-id="topicId"
+          :path="documentSuffix === 'docx' ? previewFile.path : null"
+          :version="previewFile.version"
+          @decided="afterDecision"
+        />
       </div>
-
-      <!-- 清单读不出来时文档照旧显示，只在下面说一句。 -->
-      <v-alert v-if="revisionsError && !revisions.length" type="warning" density="compact" class="mx-3 mb-2">
-        {{ revisionsError }}
-      </v-alert>
 
       <!-- 指出位置：读者选中一句话或点中一个格子，这条就是交给芝士的坐标。 -->
       <Transition name="locator">

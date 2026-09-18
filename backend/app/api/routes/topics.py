@@ -2130,6 +2130,32 @@ def _clean_artifact_path(raw: str) -> str:
     return path
 
 
+async def _bind_source_task(
+    db: AsyncSession, room_id: uuid.UUID, task: uuid.UUID
+) -> None:
+    """Refuse a card that is not this room's: a source is not a free-form id."""
+    work = await TaskRepository(db).get(task)
+    if work is None or work.room_id != room_id or work.branch_name is None:
+        raise NotFoundError("Task not found")
+    TaskService._bind_workspace(work)
+
+
+def _source_bytes(
+    project_id: uuid.UUID, room_id: uuid.UUID, path: str, task: uuid.UUID | None
+) -> bytes:
+    """One of this room's files, from whichever store holds it.
+
+    A room keeps what it delivered outside git; a card keeps what it is still
+    writing, on its own branch. Both are 「这个房间的文件」 to a reader, so the
+    viewers take the source as a parameter instead of each being wired to one
+    store — that wiring is why a document on a branch had no view but a raw
+    binary diff.
+    """
+    if task is not None:
+        return ws.read_file_bytes(project_id, path, topic_id=task)
+    return ws.read_room_file(project_id, room_id, path)
+
+
 async def _reject_unreachable_app(topic_id: uuid.UUID) -> None:
     """Refuse an app artifact the platform provably cannot render (``cheese serve``).
 
@@ -2292,6 +2318,7 @@ async def list_document_revisions(
     path: str,
     db: DbSession,
     resolver: ActorResolverDep,
+    task: uuid.UUID | None = None,
 ) -> dict:
     """The tracked changes in a `.docx`, one row per decision a reader makes.
 
@@ -2308,7 +2335,9 @@ async def list_document_revisions(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
     clean = _clean_artifact_path(path)
-    raw = ws.read_room_file(topic.project_id, topic_id, clean)
+    if task is not None:
+        await _bind_source_task(db, topic_id, task)
+    raw = _source_bytes(topic.project_id, topic_id, clean, task)
     try:
         found = revisions_in(raw, clean)
     except RevisionsUnsupported as exc:
@@ -2356,7 +2385,11 @@ async def decide_document_revisions(
     expected = str(body.get("version") or "")
     if not expected:
         raise ValidationError("缺少 version：要处理的是哪一版清单")
-    raw = ws.read_room_file(topic.project_id, topic_id, clean)
+    source = body.get("task")
+    task = uuid.UUID(str(source)) if source else None
+    if task is not None:
+        await _bind_source_task(db, topic_id, task)
+    raw = _source_bytes(topic.project_id, topic_id, clean, task)
     actual = content_version(raw)
     if actual != expected:
         raise ConflictError(
@@ -2369,7 +2402,10 @@ async def decide_document_revisions(
         raise ValidationError(str(exc)) from exc
     except RevisionsFailed as exc:
         raise ValidationError(str(exc)) from exc
-    ws.write_room_file(topic.project_id, topic_id, clean, made)
+    if task is not None:
+        ws.write_file_bytes(topic.project_id, clean, made, topic_id=task)
+    else:
+        ws.write_room_file(topic.project_id, topic_id, clean, made)
     return ok(
         {
             "path": clean,
@@ -2563,6 +2599,7 @@ async def attachment_raw(
     db: DbSession,
     resolver: ActorResolverDep,
     download: bool = False,
+    task: uuid.UUID | None = None,
 ) -> Response:
     """Raw bytes of an image attachment, for <img src=…>. Extension-whitelisted
     to images so this can never serve executable HTML from the worktree."""
@@ -2582,7 +2619,9 @@ async def attachment_raw(
     mime = _EXT_IMAGE_MIME.get(suffix)
     if mime is None and not download:
         raise ValidationError("只能读取图片附件")
-    data = ws.read_room_file(topic.project_id, topic_id, clean)
+    if task is not None:
+        await _bind_source_task(db, topic_id, task)
+    data = _source_bytes(topic.project_id, topic_id, clean, task)
     filename = quote(clean.rsplit("/", 1)[-1], safe="")
     return Response(
         content=data,
@@ -2604,6 +2643,7 @@ async def attachment_as_pdf(
     path: str,
     db: DbSession,
     resolver: ActorResolverDep,
+    task: uuid.UUID | None = None,
 ) -> Response:
     """A Word or PowerPoint deliverable, converted so a browser can show it.
 
@@ -2624,7 +2664,9 @@ async def attachment_as_pdf(
     clean = _clean_artifact_path(path)
     if not is_renderable(clean):
         raise ValidationError("这个格式不能转换为预览")
-    data = ws.read_room_file(topic.project_id, topic_id, clean)
+    if task is not None:
+        await _bind_source_task(db, topic_id, task)
+    data = _source_bytes(topic.project_id, topic_id, clean, task)
     if len(data) > MAX_ARTIFACT_BYTES:
         raise ValidationError(
             f"文件超过 {MAX_ARTIFACT_BYTES // (1024 * 1024)}MB，无法生成预览"
