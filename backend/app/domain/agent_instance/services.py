@@ -191,13 +191,33 @@ class AgentInstanceService:
         project = await self._project(project_id)
         config = configuration or await self.initial_configuration(project, type_name)
         validate_configuration(config, project.settings)
-        return await self._repo.create(
+        instance = await self._repo.create(
             project_id=project_id,
             handle=handle,
             type_name=type_name or None,
             display_name=display_name.strip() or CHEESE_NAME,
             configuration=config.model_dump(),
         )
+        await self.ensure_identity(instance)
+        return instance
+
+    async def ensure_identity(self, instance: AgentInstance) -> str:
+        """Give this agent the identity it acts under, and return its handle.
+
+        An agent is a collaborator: it can be seated in a room, attributed to,
+        and de-authorized by deleting that seat. All of that needs a user row of
+        its own, derived from the agent rather than from any room it works in.
+
+        Idempotent, and called on read as well as on create, so an agent that
+        existed before this did gets its identity the next time anything asks —
+        no alembic chain to fork, the same way a room's seat migrates itself.
+        """
+        from app.domain.identity.services import IdentityService
+
+        user = await IdentityService(self._session).ensure_instance_agent_user(
+            instance.id, instance.display_name
+        )
+        return user.username
 
     async def set_type(
         self, instance: AgentInstance, type_name: str | None
