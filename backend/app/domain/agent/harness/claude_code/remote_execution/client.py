@@ -689,6 +689,15 @@ def publish_event(config, payload):
     return output
 
 
+# Claude Code allows a server 30s to answer `tools/list` and drops it for the
+# rest of the session when the answer is late: the room then denies every file,
+# shell and chat tool with `no connected MCP tool "invoke"` until it is
+# relaunched (three hours of one room, 2026-09-17). A listing that arrives
+# without the `cheese_*` family costs a retry, so the listing answers inside a
+# budget of its own however long the executor takes.
+LISTING_DEADLINE_S = 20
+
+
 # A listing names the platform tools from what the executor answers right then,
 # so a listing taken at the wrong moment can come back without the whole
 # `cheese_*` family, and the agent is told `No such tool available:
@@ -701,16 +710,31 @@ def publish_event(config, payload):
 # in the MCP server's log instead of a mystery.
 def _cli_tools(client):
     """The platform tools the executor can name right now, reported either way."""
-    try:
-        capabilities = client.call("ping", {}).get("capabilities", [])
-        tools = (
-            client.call("cli", {"method": "tools/list"})["tools"]
-            if "cli_worker" in capabilities
-            else []
-        )
-        reason = "" if tools else "the executor reports no CLI worker"
-    except Exception as exc:  # noqa: BLE001 — a listing must still answer
-        tools, reason = [], f"{type(exc).__name__}: {exc}"
+    import threading
+
+    answer = {}
+
+    def listing():
+        try:
+            capabilities = client.call("ping", {}).get("capabilities", [])
+            tools = (
+                client.call("cli", {"method": "tools/list"})["tools"]
+                if "cli_worker" in capabilities
+                else []
+            )
+            answer["value"] = (
+                tools,
+                "" if tools else "the executor reports no CLI worker",
+            )
+        except Exception as exc:  # noqa: BLE001 — a listing must still answer
+            answer["value"] = ([], f"{type(exc).__name__}: {exc}")
+
+    worker = threading.Thread(target=listing, daemon=True)
+    worker.start()
+    worker.join(LISTING_DEADLINE_S)
+    tools, reason = answer.get(
+        "value", ([], f"the executor did not answer within {LISTING_DEADLINE_S}s")
+    )
     print(
         f"[cheese] native tools/list: {len(tools)} platform tools"
         + (f" ({reason})" if reason else ""),
