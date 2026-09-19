@@ -27,6 +27,14 @@ tmp_frontend.log
 # sqlite file scripts/preview_sqlite.py creates fresh on every run
 backend/preview.db
 
+# 反馈原型的单文件产物与它的中间目录：`pack-feedback-prototype.py` 每次现生成，
+# 1.2MB、内容随构建变，进仓库只会让每个 PR 的 diff 里多一份没法 review 的 HTML。
+# 需要预览时按脚本 docstring 里的两条命令重建即可。
+/feedback-prototype.html
+/frontend/dist-feedback-proto/
+# 本地起静态服务喂预览时用的目录（`cheese serve` 只转发端口，文件得有个地方放）
+/.preview/
+
 # ---- Tooling / local agent config ----
 # .claude/ IS tracked (skills/rules/scripts are team-shared specs); only the
 # machine-local pieces are ignored. A blanket `.claude/` here silently blocked
