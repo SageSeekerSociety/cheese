@@ -1,7 +1,7 @@
 """A project machine row may exist before the provider has created the machine.
 
 Revision ID: d8e3f5a71b22
-Revises: c7d2e4f60a11
+Revises: e7d2b91a4c06
 Create Date: 2026-09-19 04:30:00
 
 `provision` used to hold the team quota lock across the MicroCloud create call
@@ -15,7 +15,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "d8e3f5a71b22"
-down_revision = "c7d2e4f60a11"
+down_revision = "e7d2b91a4c06"
 branch_labels = None
 depends_on = None
 
