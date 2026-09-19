@@ -309,13 +309,25 @@ class CodexRuntime:
 
     async def recover(self, device_id=None) -> list[SessionRef]:
         handles = await self.channel.discover(device_id)
+        recovered = []
         for handle in handles:
+            try:
+                async with asyncio.timeout(15):
+                    status = await self.channel.call(handle, "ping", {})
+            except (DeviceOffline, DeviceCallError, TimeoutError) as exc:
+                logger.warning(
+                    "Codex recovery failed topic=%s device=%s: %s",
+                    handle.session.topic_id,
+                    handle.device_id,
+                    exc,
+                )
+                continue
             await self._attach(handle)
-            status = await self.channel.call(handle, "ping", {})
             if status.get("turn_id") and status.get("work_id"):
                 self.work[handle.session.topic_id] = uuid.UUID(status["work_id"])
+            recovered.append(handle.session)
         # Chat restores room bookkeeping before replay starts consumption.
-        return [handle.session for handle in handles]
+        return recovered
 
     async def replay(self, session: SessionRef, *, known_texts: set[str]) -> None:
         if subscription := self.subscriptions.get(session.topic_id):
