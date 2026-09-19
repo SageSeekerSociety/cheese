@@ -602,48 +602,81 @@ class DeviceChannel(Channel):
 
             factory = async_session_factory
         restored = []
+        # What the database knows, gathered first and committed, so that the
+        # adoptions below — a call to the connection owner each when it runs as
+        # its own service — run with no transaction open. One transaction across
+        # every room of a reconnecting device kept a pool connection for as long
+        # as the whole device took (dev, 2026-09-19).
+        rooms: list[
+            tuple[uuid.UUID, uuid.UUID, str, uuid.UUID | None, list, tuple]
+        ] = []
         async with factory() as session:
             for project_id, topic_id, device_id in scopes:
-                screen = None
                 room = await TopicService(session).get(topic_id)
                 current_resource = (room.resource_id or topic_id) if room else None
-                for entry in inventories[device_id]:
-                    env = entry.get("env", {})
-                    if (env.get("CHEESE_PROJECT"), env.get("CHEESE_TOPIC")) != (
-                        str(project_id),
-                        str(topic_id),
-                    ):
-                        continue
+                entries = [
+                    entry
+                    for entry in inventories[device_id]
+                    if (
+                        entry.get("env", {}).get("CHEESE_PROJECT"),
+                        entry.get("env", {}).get("CHEESE_TOPIC"),
+                    )
+                    == (str(project_id), str(topic_id))
+                ]
+                identity: tuple = ()
+                if entries:
                     agent = await IdentityService(session).ensure_topic_agent_user(
                         topic_id
                     )
-                    expiry = env.get("CHEESE_TOKEN_EXPIRES")
-                    target = env.get("CHEESE_EXECUTION_TARGET")
-                    recovered = self._hub.adopt_screen(
+                    identity = (agent.id, agent.username)
+                rooms.append(
+                    (
+                        project_id,
+                        topic_id,
                         device_id,
-                        entry["sid"],
-                        token=entry["screen"],
-                        agent_user_id=agent.id,
-                        agent_handle=agent.username,
-                        project_id=project_id,
-                        topic_id=topic_id,
-                        resource_id=uuid.UUID(
-                            env.get("CHEESE_RESOURCE_ID") or str(topic_id)
-                        ),
-                        command=entry["command"],
-                        hook_key=str(topic_id),
-                        credential_expires=int(expiry) if expiry else None,
-                        execution_target=json.loads(target) if target else None,
-                        agent_configuration=env.get("CHEESE_AGENT_CONFIG", ""),
+                        current_resource,
+                        entries,
+                        identity,
                     )
-                    if inspect.isawaitable(recovered):
-                        recovered = await recovered
-                    # Retired generations remain registered for durable cleanup;
-                    # only the room's current generation can resume its turn.
-                    if recovered.resource_id == current_resource:
-                        screen = recovered
-                restored.append((project_id, topic_id, screen, None))
+                )
             await session.commit()
+        for (
+            project_id,
+            topic_id,
+            device_id,
+            current_resource,
+            entries,
+            identity,
+        ) in rooms:
+            screen = None
+            for entry in entries:
+                env = entry.get("env", {})
+                expiry = env.get("CHEESE_TOKEN_EXPIRES")
+                target = env.get("CHEESE_EXECUTION_TARGET")
+                recovered = self._hub.adopt_screen(
+                    device_id,
+                    entry["sid"],
+                    token=entry["screen"],
+                    agent_user_id=identity[0],
+                    agent_handle=identity[1],
+                    project_id=project_id,
+                    topic_id=topic_id,
+                    resource_id=uuid.UUID(
+                        env.get("CHEESE_RESOURCE_ID") or str(topic_id)
+                    ),
+                    command=entry["command"],
+                    hook_key=str(topic_id),
+                    credential_expires=int(expiry) if expiry else None,
+                    execution_target=json.loads(target) if target else None,
+                    agent_configuration=env.get("CHEESE_AGENT_CONFIG", ""),
+                )
+                if inspect.isawaitable(recovered):
+                    recovered = await recovered
+                # Retired generations remain registered for durable cleanup;
+                # only the room's current generation can resume its turn.
+                if recovered.resource_id == current_resource:
+                    screen = recovered
+            restored.append((project_id, topic_id, screen, None))
         return restored
 
     def topics_on_device(self, device_id: str) -> list[uuid.UUID]:
