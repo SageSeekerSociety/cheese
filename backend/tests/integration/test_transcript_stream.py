@@ -5,12 +5,65 @@ import hashlib
 import uuid
 
 import pytest
+from sqlalchemy import select, text
+from sqlalchemy.exc import DBAPIError
 
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.storage import LocalStorageBackend
 from app.domain.topic import transcript_stream as stream
+from app.domain.topic.models import RawTranscript
 
 pytestmark = pytest.mark.anyio
+
+
+async def test_a_blocked_upload_times_out_and_can_retry(client, tmp_path):
+    args = dict(
+        project_id=uuid.uuid4(),
+        topic_id=uuid.uuid4(),
+        file_id=uuid.uuid4(),
+        source=".claude/projects/p/session.jsonl",
+        storage=LocalStorageBackend(str(tmp_path), "/unused"),
+    )
+    async with client.test_factory() as writer, client.test_factory() as blocker:
+        await stream.append(writer, **args, offset=0, content=b"a")
+        await blocker.scalar(
+            select(RawTranscript)
+            .where(RawTranscript.id == args["file_id"])
+            .with_for_update()
+        )
+        with pytest.raises(DBAPIError, match="lock timeout"):
+            await asyncio.wait_for(
+                stream.append(writer, **args, offset=1, content=b"b"), timeout=8
+            )
+        await writer.rollback()
+        await blocker.rollback()
+        await stream.append(writer, **args, offset=1, content=b"b")
+        assert (
+            await writer.scalar(text("SHOW idle_in_transaction_session_timeout")) == "0"
+        )
+        assert await writer.scalar(text("SHOW statement_timeout")) == "0"
+
+
+async def test_confirmation_releases_database_before_reading_storage(client, tmp_path):
+    async with client.test_factory() as db:
+
+        class CheckingStorage(LocalStorageBackend):
+            async def download(self, key):
+                assert not db.in_transaction()
+                return await super().download(key)
+
+        storage = CheckingStorage(str(tmp_path), "/unused")
+        args = dict(
+            project_id=uuid.uuid4(),
+            topic_id=uuid.uuid4(),
+            file_id=uuid.uuid4(),
+            source=".claude/projects/p/session.jsonl",
+            storage=storage,
+        )
+        await stream.append(db, **args, offset=0, content=b"abc")
+        await stream.confirm(
+            db, **args, size=3, sha256=hashlib.sha256(b"abc").hexdigest()
+        )
 
 
 async def test_raw_files_reassemble_exactly_and_retries_do_not_duplicate(

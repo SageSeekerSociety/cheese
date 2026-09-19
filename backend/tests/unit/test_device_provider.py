@@ -304,6 +304,30 @@ async def test_restart_recovery_uses_durable_topic_pins(monkeypatch):
     assert router.push(str(topic_id), {"hook_event_name": "Stop"}) is False
 
 
+async def test_screen_inventory_failure_does_not_skip_the_next_device():
+    from app.domain.agent.device_hub import DeviceCallError
+
+    visited = set()
+
+    class Hub(FakeHub):
+        async def list_screens(self, device_id):
+            visited.add(device_id)
+            if device_id == "broken":
+                raise DeviceCallError("dial unix: no such file")
+            return []
+
+    project, first, second = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    channel = DeviceChannel(hub=Hub())
+    restored = await channel.restore_screens(
+        [
+            (project, first, "broken"),
+            (project, second, "healthy"),
+        ]
+    )
+    assert visited == {"broken", "healthy"}
+    assert restored == [(project, first, None, None), (project, second, None, None)]
+
+
 async def test_central_recovery_restores_actual_screen_and_close_reaches_device(
     monkeypatch,
 ):
@@ -2237,7 +2261,10 @@ async def test_tools_that_are_still_connected_are_left_alone(monkeypatch):
     control = _Control(["connected"])
     monkeypatch.setattr("app.domain.agent.remote_control.store", lambda: control)
     provider = DeviceChannel(hub=FakeHub())
-    assert await provider.recover_native_tools(uuid.uuid4()) is False
+    assert (
+        await provider.recover_native_tools(uuid.uuid4(), agent_handle="agent-x")
+        is False
+    )
     assert control.asked == ["mcp_status"]
 
 
@@ -2245,7 +2272,10 @@ async def test_disconnected_tools_are_reconnected_and_reported(monkeypatch):
     control = _Control(["failed", "pending", "connected"])
     monkeypatch.setattr("app.domain.agent.remote_control.store", lambda: control)
     provider = DeviceChannel(hub=FakeHub())
-    assert await provider.recover_native_tools(uuid.uuid4()) is True
+    assert (
+        await provider.recover_native_tools(uuid.uuid4(), agent_handle="agent-x")
+        is True
+    )
     assert control.asked == ["mcp_status", "mcp_reconnect", "mcp_status", "mcp_status"]
 
 
@@ -2255,5 +2285,8 @@ async def test_a_room_with_no_live_control_session_is_not_resent(monkeypatch):
     control = _Control([], session_status="closed")
     monkeypatch.setattr("app.domain.agent.remote_control.store", lambda: control)
     provider = DeviceChannel(hub=FakeHub())
-    assert await provider.recover_native_tools(uuid.uuid4()) is False
+    assert (
+        await provider.recover_native_tools(uuid.uuid4(), agent_handle="agent-x")
+        is False
+    )
     assert control.asked == []

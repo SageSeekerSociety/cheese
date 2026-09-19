@@ -2,12 +2,14 @@
 
 import asyncio
 import base64
+import hashlib
 import json
 import os
 import sys
 import threading
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -25,6 +27,9 @@ from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import DeviceChannel, EnvironmentPreparationError
 from app.domain.agent.harness import Opening, SessionRef
 from app.domain.agent.harness.channel import ScreenSetupError
+from app.domain.agent.harness.claude_code.remote_execution import (
+    bootstrap as executor_bootstrap,
+)
 from app.domain.agent.harness.claude_code.remote_execution import (
     client as execution_client,
 )
@@ -289,6 +294,11 @@ async def test_running_executor_prepares_without_python_launch(
             "pid": 123,
             "capabilities": ["prepare"],
             "runtime_sha256": executor_runtime.SOURCE_SHA256,
+            "files": {
+                "remote-execution/bootstrap.py": hashlib.sha256(
+                    Path(executor_bootstrap.__file__).read_bytes()
+                ).hexdigest(),
+            },
         },
         {
             **INSTALLED,
@@ -332,6 +342,11 @@ async def test_running_executor_prepare_failure_is_not_retried_as_install(
             "pid": 123,
             "capabilities": ["prepare"],
             "runtime_sha256": executor_runtime.SOURCE_SHA256,
+            "files": {
+                "remote-execution/bootstrap.py": hashlib.sha256(
+                    Path(executor_bootstrap.__file__).read_bytes()
+                ).hexdigest(),
+            },
         },
         RuntimeError("Executor configuration changed"),
     ]

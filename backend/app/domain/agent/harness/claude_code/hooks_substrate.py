@@ -34,6 +34,7 @@ from pathlib import Path
 from app.core.background import hold
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import event_spool
+from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness import (
     CLAUDE_CODE,
     ActivityConsumer,
@@ -974,9 +975,14 @@ class ClaudeCodeRuntime:
                 # would mean translating another harness's output with this
                 # one's assembler and reporting it as ours.
                 continue
-            await self.ensure_subscription(project_id, topic_id, paused=True)
             if screen is not None:
                 self._live[topic_id] = screen
+            try:
+                await self.ensure_subscription(project_id, topic_id, paused=True)
+            except (DeviceOffline, DeviceCallError, TimeoutError) as exc:
+                # A failed subscription does not prove a surviving screen died.
+                logger.warning("Hook recovery failed for topic %s: %s", topic_id, exc)
+                continue
             recovered.append(SessionRef(project_id, topic_id))
         return recovered
 

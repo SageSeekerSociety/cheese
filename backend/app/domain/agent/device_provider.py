@@ -35,6 +35,7 @@ from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token, scoped_token_claims
 from app.domain.agent import machine_launcher, provider_env
 from app.domain.agent.device_hub import (
+    DeviceCallError,
     DeviceHub,
     DeviceOffline,
     HubScreen,
@@ -590,10 +591,15 @@ class DeviceChannel(Channel):
         self, scopes: list[tuple[uuid.UUID, uuid.UUID, str]]
     ) -> list[tuple[uuid.UUID, uuid.UUID, object | None, str | None]]:
         """Rebuild screen identities for the rooms this channel owns in the DB."""
-        inventories = {
-            device_id: await self._hub.list_screens(device_id)
-            for device_id in {scope[2] for scope in scopes}
-        }
+        inventories = {}
+        for device_id in {scope[2] for scope in scopes}:
+            try:
+                inventories[device_id] = await self._hub.list_screens(device_id)
+            except (DeviceOffline, DeviceCallError, TimeoutError) as exc:
+                logger.warning(
+                    "Screen recovery failed for device %s: %s", device_id, exc
+                )
+                inventories[device_id] = []
         if not any(inventories.values()):
             return [(project, topic, None, None) for project, topic, _ in scopes]
         factory = self._session_factory

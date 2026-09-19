@@ -718,7 +718,7 @@ class Executor:
             # A command that exits non-zero is not a failure of the executor.
             # This is the text the build gives its own agent: the exit code
             # line first, then whatever the command printed.
-            (record / "output").write_text(text)
+            self._publish_output(record, text)
             settled = self._settle(marker)
             return {
                 "stdout": text,
@@ -736,11 +736,17 @@ class Executor:
             # The room sees one kind of task id, ours, whichever side started
             # the background task.
             return {**value, "backgroundTaskId": marker}
-        (record / "output").write_text(
-            value.get("stdout", "") + value.get("stderr", "")
-        )
+        self._publish_output(record, value.get("stdout", "") + value.get("stderr", ""))
         self._settle(marker)
         return value
+
+    @staticmethod
+    def _publish_output(record, text):
+        # The exit trap can finish before this reply arrives. Readers must not
+        # mistake the empty file created by open() for a completed empty reply.
+        temporary = record / ("output." + uuid.uuid4().hex)
+        temporary.write_text(text)
+        temporary.replace(record / "output")
 
     def _settle(self, marker):
         """Record how a command ended, from the exit file its trap wrote."""
