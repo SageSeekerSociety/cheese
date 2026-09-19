@@ -31,6 +31,7 @@ from app.domain.agent.runtime import get_broker
 from app.domain.identity.actor import Actor
 from app.domain.identity.handles import topic_agent_handle
 from app.domain.topic.services import TopicService
+from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(tags=["remote-control"])
 # How long the control read waits for the machine's background-task list.
@@ -366,7 +367,11 @@ async def control_state(
     topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     await controller(topic_id, db, resolver)
-    session = await store().current(str(topic_id))
+    # Which agent's controls the room shows: the one that answers here, the
+    # same one a room-scoped credential acts as.
+    session = await store().current(
+        str(topic_id), await TopicMemberService(db).resolve_agent_handle(topic_id)
+    ) or await store().current(str(topic_id))
     result = (
         await store().snapshot(session) if session else {"connected": False, "id": None}
     )
@@ -416,7 +421,13 @@ class ControlIn(BaseModel):
 
 
 async def selected_session(topic_id: uuid.UUID, sid: str) -> dict:
-    session = await store().current(str(topic_id))
+    """The session the caller named, if it is still its own agent's live one.
+
+    Asked per agent: a room may hold one live session per seated agent, and a
+    second agent launching must not make the first one's controls unreachable.
+    """
+    chosen = await store().get(sid)
+    session = await store().current(str(topic_id), chosen.get("agent_handle"))
     if not session or session["id"] != sid or session["status"] != "active":
         raise ConflictError("The active session changed; refresh before controlling it")
     return session
