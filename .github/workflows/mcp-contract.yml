@@ -47,6 +47,10 @@ jobs:
           --output tmp/mcp-contract/pinned
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         continue-on-error: true
+        # A quota-refused upload retries until the JOB timeout cancels the job
+        # — 20 minutes after the tests passed, reported as cancelled, which
+        # `continue-on-error` never gets to tolerate. Bound the step instead.
+        timeout-minutes: 3
         if: always()
         with:
           name: mcp-contract-pinned-${{ github.sha }}
@@ -73,6 +77,10 @@ jobs:
           --output tmp/mcp-contract/latest
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         continue-on-error: true
+        # A quota-refused upload retries until the JOB timeout cancels the job
+        # — 20 minutes after the tests passed, reported as cancelled, which
+        # `continue-on-error` never gets to tolerate. Bound the step instead.
+        timeout-minutes: 3
         if: always()
         with:
           name: mcp-contract-latest-${{ github.sha }}
