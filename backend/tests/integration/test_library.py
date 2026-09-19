@@ -8,6 +8,8 @@
 资料只有一份字节，哪个房间引用它都读的是那一份。
 """
 
+import pytest
+
 from app.core.sandbox_auth import mint_scoped_token
 from tests.integration.conftest import session_auth_headers
 
@@ -246,6 +248,43 @@ def test_the_agent_takes_a_copy_of_a_file_nobody_attached(client):
         headers=agent,
     )
     assert escape.status_code == 422
+
+
+def test_a_library_document_lists_its_revisions_but_does_not_take_a_decision(client):
+    """用户传进来的那份合同带着修订：读得出来，但按「接受」不能改原件。
+
+    改的是所有房间都在引用的那一份，而这一下没有人要求过——要改这份文档，产出的是
+    另一份。"""
+    lxml = pytest.importorskip("lxml", reason="修订解析要用 lxml")
+    assert lxml
+    from tests.integration.test_document_revisions_endpoint import DOCUMENT, _docx
+
+    project_id = _project(client)
+    topic_id = _topic(client, project_id, "房间一")
+    att = _upload(client, topic_id, "合同.docx", _docx(DOCUMENT))
+
+    listed = client.get(
+        f"/topics/{topic_id}/documents/revisions", params={"path": att["path"]}
+    )
+    assert listed.status_code == 200, listed.text
+    assert [row["number"] for row in listed.json()["data"]["revisions"]] == [1]
+
+    refused = client.post(
+        f"/topics/{topic_id}/documents/revisions",
+        json={
+            "path": att["path"],
+            "version": listed.json()["data"]["version"],
+            "accept": [1],
+        },
+    )
+    assert refused.status_code == 422, refused.text
+    assert "原件" in refused.json()["message"]
+
+    # 原件一个字节没动：清单还是那一处修订。
+    again = client.get(
+        f"/topics/{topic_id}/documents/revisions", params={"path": att["path"]}
+    )
+    assert again.json()["data"]["version"] == listed.json()["data"]["version"]
 
 
 def test_a_file_the_project_no_longer_wants(client):

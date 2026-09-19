@@ -27,7 +27,12 @@ concurrency:
 jobs:
   private-chat:
     runs-on: [self-hosted, cheese-ci]
-    timeout-minutes: 20
+    # Measured 2026-09-19 on the shared pool with 11 runs queued: job setup 4m,
+    # `uv sync` 10-14m, the image build 4-5m — the budget was gone before the
+    # ~2m of tests ran, twice in a row, and a job killed by its own budget
+    # reports as cancelled with nothing to read. The tests are not slow; the
+    # setup scales with contention, so the budget has to leave room for it.
+    timeout-minutes: 45
     services:
       postgres:
         image: mirror.gcr.io/paradedb/paradedb:v0.18.8-pg16@sha256:8a14fee5257f554a60d70afc89490a6460a9833c3f7f99f7d88dbbf12e4042a2
@@ -114,7 +119,12 @@ jobs:
           retention-days: 3
   acceptance:
     runs-on: [self-hosted, cheese-ci]
-    timeout-minutes: 20
+    # Measured 2026-09-19 on the shared pool with 11 runs queued: job setup 4m,
+    # `uv sync` 10-14m, the image build 4-5m — the budget was gone before the
+    # ~2m of tests ran, twice in a row, and a job killed by its own budget
+    # reports as cancelled with nothing to read. The tests are not slow; the
+    # setup scales with contention, so the budget has to leave room for it.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4

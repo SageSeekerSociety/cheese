@@ -11,7 +11,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import ActorResolverDep
+from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.deps import get_chat_service
 from app.api.response import ok
 from app.core.db import get_db
@@ -31,6 +31,7 @@ from app.domain.agent.runtime import get_broker
 from app.domain.identity.actor import Actor
 from app.domain.identity.handles import topic_agent_handle
 from app.domain.topic.services import TopicService
+from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(tags=["remote-control"])
 # How long the control read waits for the machine's background-task list.
@@ -175,7 +176,15 @@ async def rc_create(request: Request, db: DbSession) -> dict:
     data = await body(request)
     # Placement is platform-owned; ignore an execution target supplied by a worker.
     data["execution"] = place.room.session_placement
-    session = await store().create(claims, data)
+    # A credential naming the room's stand-in seat acts as the agent seated
+    # there; the session records who that is, so its questions and answers are
+    # attributed to the same identity every other write of that turn carries.
+    acting = claims.get("a")
+    if acting:
+        acting = await ActorResolver(
+            session=db, bearer=None, cheese_token=""
+        ).seated_agent(place.room_id, acting)
+    session = await store().create({**claims, "a": acting}, data)
     await announce(session)
     return {"session": session}
 
@@ -358,7 +367,11 @@ async def control_state(
     topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     await controller(topic_id, db, resolver)
-    session = await store().current(str(topic_id))
+    # Which agent's controls the room shows: the one that answers here, the
+    # same one a room-scoped credential acts as.
+    session = await store().current(
+        str(topic_id), await TopicMemberService(db).resolve_agent_handle(topic_id)
+    ) or await store().current(str(topic_id))
     result = (
         await store().snapshot(session) if session else {"connected": False, "id": None}
     )
@@ -408,7 +421,13 @@ class ControlIn(BaseModel):
 
 
 async def selected_session(topic_id: uuid.UUID, sid: str) -> dict:
-    session = await store().current(str(topic_id))
+    """The session the caller named, if it is still its own agent's live one.
+
+    Asked per agent: a room may hold one live session per seated agent, and a
+    second agent launching must not make the first one's controls unreachable.
+    """
+    chosen = await store().get(sid)
+    session = await store().current(str(topic_id), chosen.get("agent_handle"))
     if not session or session["id"] != sid or session["status"] != "active":
         raise ConflictError("The active session changed; refresh before controlling it")
     return session

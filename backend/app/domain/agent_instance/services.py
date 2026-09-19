@@ -368,6 +368,10 @@ class AgentInstanceService:
             display_name=IMPLICIT_DEFAULT.display_name,
             configuration=(await self.initial_configuration(project)).model_dump(),
         )
+        # An agent gets its identity when it comes into being, and the implicit
+        # 芝士 comes into being here rather than in create(). Without it the first
+        # room of a project could not seat it under its own seat.
+        await self.ensure_identity(instance)
         # Configuring the project's 芝士 is choosing it, so a retired row under
         # that handle comes back rather than becoming a default nobody may pick.
         # Same pool either way — the handle never moved.

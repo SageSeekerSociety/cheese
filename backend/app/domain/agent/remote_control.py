@@ -57,6 +57,21 @@ def key(sid: str, suffix: str = "session") -> str:
     return f"cheese:rc:{sid}:{suffix}"
 
 
+def live_key(topic_id: str, agent_handle: str | None) -> str:
+    """Where the id of an agent's live session in a room is kept.
+
+    Per (room, agent), because a room seats collaborators and each of its
+    agents runs its own worker: one slot per room meant the second agent to
+    launch took the pointer, and from then on the first one's questions could
+    not be answered and its permission prompts could not be approved — the
+    panel was asking the room, which cannot say which agent it means.
+
+    A session from before the agent was recorded keeps the room-wide slot; it
+    is the only session in that room, so nothing collides.
+    """
+    return key(topic_id, f"current:{agent_handle}" if agent_handle else "current")
+
+
 def text(value: bytes | str) -> str:
     return value.decode() if isinstance(value, bytes) else value
 
@@ -96,7 +111,7 @@ class RemoteControl:
         }
         async with self.redis.pipeline(transaction=True) as pipe:
             pipe.set(key(sid), json.dumps(session), ex=RETENTION)
-            pipe.set(key(claims["t"], "current"), sid, ex=RETENTION)
+            pipe.set(live_key(claims["t"], session["agent_handle"]), sid, ex=RETENTION)
             await pipe.execute()
         return session
 
@@ -106,8 +121,13 @@ class RemoteControl:
             raise NotFoundError("RC session not found")
         return json.loads(raw)
 
-    async def current(self, topic_id: str) -> dict | None:
-        sid = await self.redis.get(key(topic_id, "current"))
+    async def current(
+        self, topic_id: str, agent_handle: str | None = None
+    ) -> dict | None:
+        """This agent's live session in the room. Without an agent, the one a
+        session opened before agents were recorded left in the room-wide slot.
+        """
+        sid = await self.redis.get(live_key(topic_id, agent_handle))
         return await self.get(text(sid)) if sid else None
 
     async def update(
@@ -137,7 +157,7 @@ class RemoteControl:
             "if redis.call('GET',KEYS[1])==ARGV[1] then "
             "return redis.call('EXPIRE',KEYS[1],ARGV[2]) end; return 0",
             1,
-            key(session["topic_id"], "current"),
+            live_key(session["topic_id"], session.get("agent_handle")),
             sid,
             RETENTION,
         )
@@ -396,7 +416,10 @@ return 1
 """,
             2,
             key(sid),
-            key((await self.get(sid))["topic_id"], "current"),
+            live_key(
+                (existing := await self.get(sid))["topic_id"],
+                existing.get("agent_handle"),
+            ),
             epoch,
             key(sid, ""),
             RETENTION,

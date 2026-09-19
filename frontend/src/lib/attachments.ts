@@ -1,4 +1,4 @@
-// 上传的文件进项目的资料库，这个房间留一份；发消息时引用 {path, mime}。
+// 上传的文件进项目的资料库，消息里引用的是它自己的地址 {path, mime}，不是拷贝。
 import type { ChatAttachment } from '../cx_types'
 
 import { ref } from 'vue'
@@ -102,7 +102,7 @@ export function usePendingAttachments(
       return
     }
     const name = libraryPath.split('/').pop() || libraryPath
-    // 同一个占位逻辑：这一步要向后端要一份房间内的拷贝，所以它也有等待时间。
+    // 同一个占位逻辑：这一步要等后端确认那份资料还在、有多大，所以它也有等待时间。
     const slot: PendingAttachment = {
       path: `uploading:${++placeholderSeq}:${name}`,
       mime: 'application/octet-stream',

@@ -746,6 +746,45 @@ class RemoteExecutionTests(unittest.TestCase):
                 "Bash", {"command": "printf y >> count.txt"}, key="same-request"
             )
 
+    def finished_task(self, task_id, timeout=30000):
+        """A task's output once it has finished, or a failure that says why.
+
+        `'' != 'done'` has been failing this file on CI since at least
+        2026-09-19 and says nothing about the cause. `TaskOutput` reports
+        `retrieval_status: "timeout"` when its wait runs out, and `status:
+        "unknown"` for a task this executor no longer holds — both of which
+        come back with the output so far. Checking them here turns the next
+        failure into its own diagnosis instead of a bare string mismatch.
+        """
+        result = self.invoke(
+            "TaskOutput", {"task_id": task_id, "block": True, "timeout": timeout}
+        )
+        self.assertEqual(
+            result["retrieval_status"],
+            "success",
+            f"task did not finish within {timeout} ms: {result}",
+        )
+        self.assertEqual(
+            result["task"]["status"],
+            "completed",
+            f"task did not complete: {result}{self.task_on_disk(task_id)}",
+        )
+        return result
+
+    def task_on_disk(self, task_id):
+        """What the executor's own state directory holds for this task.
+
+        The API's answer and the files it is built from can disagree — and
+        which of the two is empty is the whole question when a completed task
+        reports no output.
+        """
+        directory = self.state / "tasks" / task_id
+        return "".join(
+            f"\n  {name}={(directory / name).read_text(errors='replace')!r}"
+            for name in ("status.json", "stdout", "stderr")
+            if (directory / name).exists()
+        )
+
     def test_reconnect_retains_background_task(self):
         task = self.invoke(
             "Bash",
@@ -754,11 +793,12 @@ class RemoteExecutionTests(unittest.TestCase):
         previous_pid = self.pid
         self.start()
         self.assertEqual(self.pid, previous_pid)
-        result = self.invoke(
-            "TaskOutput",
-            {"task_id": task["backgroundTaskId"], "block": True, "timeout": 5000},
+        result = self.finished_task(task["backgroundTaskId"])
+        self.assertEqual(
+            result["task"]["output"],
+            "background-done",
+            f"{result}{self.task_on_disk(task['backgroundTaskId'])}",
         )
-        self.assertEqual(result["task"]["output"], "background-done")
         self.assertEqual(result["task"]["status"], "completed")
 
     def test_stop_kills_descendant_ignoring_term(self):
@@ -983,11 +1023,12 @@ class RemoteExecutionTests(unittest.TestCase):
                 {"subtype": "background_tasks", "tool_use_id": "foreground"},
             )
             result = pending.result(timeout=1)
-            task = self.invoke(
-                "TaskOutput",
-                {"task_id": result["backgroundTaskId"], "block": True, "timeout": 5000},
+            task = self.finished_task(result["backgroundTaskId"])
+            self.assertEqual(
+                task["task"]["output"],
+                "done",
+                f"{task}{self.task_on_disk(result['backgroundTaskId'])}",
             )
-            self.assertEqual(task["task"]["output"], "done")
 
     def test_a_foreground_command_past_its_timeout_becomes_a_task_the_room_can_see(
         self,

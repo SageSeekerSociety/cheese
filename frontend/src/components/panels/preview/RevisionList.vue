@@ -13,9 +13,10 @@
 // 的表现是读者点了第 2 条、生效的是第 3 条。
 import type { DocumentRevision } from '../../../cx_types'
 
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import { decideDocumentRevisions, documentRevisions } from '../../../api'
+import { isLibraryPath } from '../../../lib/library'
 
 const props = withDefaults(
   defineProps<{
@@ -32,6 +33,10 @@ const props = withDefaults(
 // 处理完一条，文件就变了：宿主要重画那一页，而它是按文件版本缓存的——版本这时还没
 // 变（是这里改的，不是芝士改的），所以要明说一句。
 const emit = defineEmits<{ (e: 'decided'): void }>()
+
+// 资料库里的那一份是用户给进来的原件，只读——修订照样列出来（它们是这份文档的一部
+// 分，读者有权看见），但处理不了：接受一处修订会改写所有房间都在引用的那一份。
+const readOnly = computed(() => isLibraryPath(props.path ?? ''))
 
 const revisions = ref<DocumentRevision[]>([])
 const error = ref('')
@@ -112,6 +117,7 @@ defineExpose({ reload: load })
       <span class="revs__count t-eyebrow">修订 {{ revisions.length }} 处</span>
       <v-spacer />
       <v-btn
+        v-if="!readOnly"
         size="x-small"
         variant="text"
         class="c-muted"
@@ -121,6 +127,7 @@ defineExpose({ reload: load })
         全部接受
       </v-btn>
       <v-btn
+        v-if="!readOnly"
         size="x-small"
         variant="text"
         class="c-muted"
@@ -131,11 +138,15 @@ defineExpose({ reload: load })
       </v-btn>
     </div>
 
+    <p v-if="readOnly && revisions.length" class="revs__note t-meta">
+      资料库里的原件不改。要改这份文档，让芝士基于它做一份新的
+    </p>
+
     <ul v-if="revisions.length" class="revs__list">
       <li v-for="row in revisions" :key="row.number" class="revs__item">
         <div class="revs__what">{{ reads(row) }}</div>
         <div class="revs__who t-meta">第 {{ row.paragraph }} 段 · {{ row.author || '未署名' }}</div>
-        <div class="revs__acts">
+        <div v-if="!readOnly" class="revs__acts">
           <v-btn size="x-small" variant="text" :disabled="deciding > 0" @click="decide({ accept: [row.number] })">
             接受
           </v-btn>
@@ -172,6 +183,10 @@ defineExpose({ reload: load })
 }
 .revs__count {
   color: var(--muted);
+}
+.revs__note {
+  margin: 0 0 8px;
+  color: var(--faint);
 }
 .revs__list {
   list-style: none;

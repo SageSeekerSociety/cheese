@@ -20,6 +20,7 @@
 
 import asyncio
 import uuid
+from types import SimpleNamespace
 
 import pytest
 
@@ -218,3 +219,57 @@ async def test_a_recovered_message_lands_once_and_whole(client, tmp_path):
     ]
 
     assert said == [REPLY]
+
+
+async def test_screens_are_adopted_with_no_transaction_open(client):
+    """Adopting a screen asks the connection owner (a network call when it
+    runs as its own service). That happens after the database work of the
+    device is committed, not inside it: one transaction across every room of
+    a reconnecting device kept a pool connection for the whole device."""
+    factory = client.test_factory
+    seeded = await _seed(factory)
+    own_device = str(seeded["own_device"])
+    open_sessions = 0
+    seen_open: list[int] = []
+
+    class _Scope:
+        """One session of the channel's factory, counted while it is open."""
+
+        def __init__(self):
+            self.session = factory()
+
+        async def __aenter__(self):
+            nonlocal open_sessions
+            open_sessions += 1
+            return await self.session.__aenter__()
+
+        async def __aexit__(self, *exc):
+            nonlocal open_sessions
+            open_sessions -= 1
+            return await self.session.__aexit__(*exc)
+
+    class _AdoptingHub(_Hub):
+        async def list_screens(self, device_id: str) -> list[dict]:
+            return [
+                {
+                    "sid": "s1",
+                    "screen": "tok",
+                    "command": ["claude"],
+                    "env": {
+                        "CHEESE_PROJECT": str(seeded["project_id"]),
+                        "CHEESE_TOPIC": str(seeded["on_own_box"]),
+                    },
+                }
+            ]
+
+        async def adopt_screen(self, device_id: str, sid: str, **kwargs):
+            seen_open.append(open_sessions)
+            return SimpleNamespace(
+                resource_id=kwargs["resource_id"], sid=sid, device_id=device_id
+            )
+
+    device = DeviceChannel(session_factory=_Scope, hub=_AdoptingHub({own_device}))
+    restored = await device.discover(own_device)
+    assert [t for _p, t, _s, _r in restored] == [seeded["on_own_box"]]
+    assert restored[0][2] is not None
+    assert seen_open == [0], "adopt_screen ran inside an open session"

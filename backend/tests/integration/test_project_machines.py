@@ -7,11 +7,14 @@ rather than failing somewhere inside a provider call.
 
 import asyncio
 import uuid
+from unittest.mock import AsyncMock
 
+import pytest
 from anyio.from_thread import BlockingPortal
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import ValidationError
 from app.domain.identity.actor import Actor
 from app.domain.machine import enrollment
 from app.domain.machine.models import MachineStatus
@@ -438,3 +441,70 @@ def test_reopen_after_cleanup_claim_provisions_a_new_machine(client, monkeypatch
     assert new_id != old_id
     assert released_at is not None
     assert len(cloud.created) == 1
+
+
+def test_a_room_waiting_on_the_provider_holds_no_team_lock(client, monkeypatch):
+    """While one room's machine is being created at the provider, another
+    room of the same team is admitted at once — and the first room's slot is
+    already counted, so the team limit still holds."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "microcloud_base_url", "https://example.invalid")
+    monkeypatch.setattr(settings, "microcloud_tenant_secret", "test-only")
+    monkeypatch.setattr(
+        "app.domain.machine.services.get_machine_limit", AsyncMock(return_value=2)
+    )
+    token = seed_user(client, "owner")
+    project_id = _project(client, {"Authorization": f"Bearer {token}"})
+    topics = [
+        client.post(
+            "/topics",
+            json={"project_id": project_id, "title": title, "created_by": "owner"},
+        ).json()["data"]["id"]
+        for title in ("First", "Second", "Third")
+    ]
+    cloud = FakeMicroCloud()
+    in_flight = asyncio.Event()
+    release = asyncio.Event()
+    original = cloud.create_machine
+
+    async def slow_create(body):
+        if body["hostname"].endswith("-1"):
+            in_flight.set()
+            await release.wait()
+        return await original(body)
+
+    cloud.create_machine = slow_create
+
+    async def _keypair():
+        return "private", "ssh-ed25519 public"
+
+    monkeypatch.setattr(enrollment, "generate_keypair", _keypair)
+
+    async def _authorized(_self, _project_id, _actor):
+        return None
+
+    monkeypatch.setattr(MachineService, "require_use_authority", _authorized)
+    actor = Actor("owner", 1, False, "token")
+
+    async def _ensure(topic_id: str):
+        async with client.test_factory() as session:
+            machine = await MachineService(session, cloud).ensure_topic_machine(
+                uuid.UUID(topic_id), actor=actor
+            )
+            await session.commit()
+            return machine.machine_id
+
+    async def _run():
+        first = asyncio.create_task(_ensure(topics[0]))
+        await asyncio.wait_for(in_flight.wait(), timeout=5)
+        # The team lock is free: the second room does not wait for the first.
+        second = await asyncio.wait_for(_ensure(topics[1]), timeout=5)
+        # And the first room's reservation already counts: the team is full.
+        with pytest.raises(ValidationError, match="2 / 2"):
+            await _ensure(topics[2])
+        release.set()
+        return await asyncio.wait_for(first, timeout=5), second
+
+    first, second = asyncio.run(_run())
+    assert {first, second} == {101, 102}

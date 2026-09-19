@@ -26,7 +26,8 @@ class MachineOut(BaseModel):
 
     id: uuid.UUID
     project_id: uuid.UUID
-    machine_id: int
+    # None while the provider is still creating the machine.
+    machine_id: int | None
     hostname: str
     login_user: str
     cores: int
