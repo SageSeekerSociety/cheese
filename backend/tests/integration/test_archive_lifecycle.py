@@ -323,7 +323,7 @@ async def test_a_sweep_asked_for_while_one_runs_makes_it_go_round_again(
         return {"completed": 0, "pending": 0}
 
     # The app's startup sweep may still be running; this test wants to be the
-    # one that runs.
+    # sweep that runs, not one more caller waiting on that one.
     for _ in range(100):
         if not retire._sweeping:
             break
@@ -333,18 +333,21 @@ async def test_a_sweep_asked_for_while_one_runs_makes_it_go_round_again(
     first = asyncio.create_task(retire.sweep_retired_storage(client.test_factory))
     await asyncio.wait_for(started.wait(), timeout=5)
     # Two more asks while the first is still running: neither starts a sweep.
-    assert await retire.sweep_retired_storage(client.test_factory) == {
-        "completed": 0,
-        "pending": 0,
-    }
-    assert await retire.sweep_retired_storage(client.test_factory) == {
-        "completed": 0,
-        "pending": 0,
-    }
-    assert passes == 1
+    waiting = [
+        asyncio.create_task(retire.sweep_retired_storage(client.test_factory))
+        for _ in range(2)
+    ]
+    await asyncio.sleep(0.05)
+    assert passes == 1, "a second sweep started while one was running"
+    assert not any(task.done() for task in waiting), "a waiter answered early"
     release.set()
     await asyncio.wait_for(first, timeout=5)
     assert passes == 2
+    # The waiters answer for the round that covered them, not with zeros.
+    assert await asyncio.wait_for(asyncio.gather(*waiting), timeout=5) == [
+        {"completed": 0, "pending": 0},
+        {"completed": 0, "pending": 0},
+    ]
 
 
 async def test_a_cleanup_leased_to_another_sweep_is_left_alone_until_it_expires(
