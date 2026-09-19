@@ -254,13 +254,25 @@ def configure(payload):
             except (ConnectionError, FileNotFoundError):
                 info = None
             if info:
-                if {k: v for k, v in previous.items() if k != "env"} != {
-                    k: v for k, v in config.items() if k != "env"
-                }:
+                if {
+                    k: v for k, v in previous.items() if k not in {"env", "claude"}
+                } != {k: v for k, v in config.items() if k not in {"env", "claude"}}:
                     raise RuntimeError(
                         "Executor configuration changed; restart the room environment"
                     )
-                if info.get("runtime_sha256") == runtime["SOURCE_SHA256"]:
+                binary_changed = previous.get("claude") != config["claude"]
+                if binary_changed:
+                    tasks = runtime["request"](
+                        state, "control", {"subtype": "background_tasks"}
+                    )["tasks"]
+                    if any(task["status"] == "running" for task in tasks):
+                        raise RuntimeError(
+                            "Executor update is waiting for running commands to finish"
+                        )
+                if (
+                    not binary_changed
+                    and info.get("runtime_sha256") == runtime["SOURCE_SHA256"]
+                ):
                     runtime["request"](state, "configure", {"env": scoped_env})
                     if payload.get("environment"):
                         runner = runpy.run_path(

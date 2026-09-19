@@ -18,6 +18,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 if __package__:
     from tests.pinned_claude import claude_binary
 else:
@@ -32,6 +34,52 @@ RUNTIME = (
 spec = importlib.util.spec_from_file_location("execution_runtime", RUNTIME)
 runtime = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runtime)
+
+
+def test_task_output_waits_for_the_complete_reply(tmp_path, monkeypatch):
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "config.json").write_text(
+        json.dumps({"workspace": str(tmp_path), "claude": claude_binary(), "env": {}})
+    )
+    executor = runtime.Executor(state)
+    writing, release = threading.Event(), threading.Event()
+    original_write = Path.write_text
+
+    def slow_output_write(path, data, *args, **kwargs):
+        if path.parent.parent == state / "tasks" and path.name.startswith("output"):
+            # Reproduce a reader arriving between file creation and its write.
+            with path.open("w"):
+                writing.set()
+                assert release.wait(10)
+        return original_write(path, data, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", slow_output_write)
+    try:
+        result = executor.invoke(
+            {
+                "id": "slow-reply",
+                "tool": "Bash",
+                "args": {"command": "sleep 0.5; printf done", "timeout": 1},
+            }
+        )
+        task_id = result["value"]["backgroundTaskId"]
+        assert writing.wait(10)
+        with ThreadPoolExecutor() as pool:
+            pending = pool.submit(
+                executor.task_output, {"task_id": task_id, "timeout": 5000}
+            )
+            try:
+                time.sleep(0.1)
+                assert not pending.done(), "A partial reply was reported as complete"
+            finally:
+                release.set()
+            report = pending.result(timeout=5)
+        assert report["task"]["output"] == "done"
+        assert report["task"]["exitCode"] == 0
+    finally:
+        release.set()
+        executor.close()
 
 
 def test_a_background_command_that_finishes_at_once_still_has_an_id_and_an_exit(
@@ -287,8 +335,9 @@ def test_a_previous_root_with_nothing_behind_it_does_not_hold_the_room_back(
         )
 
 
+@pytest.mark.parametrize("update_kind", ["runtime", "binary"])
 def test_executor_release_waits_for_commands_and_preserves_results(
-    tmp_path, monkeypatch, capsys
+    tmp_path, monkeypatch, capsys, update_kind
 ):
     from app.domain.agent.harness.claude_code.remote_execution import bootstrap
     from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
@@ -330,10 +379,13 @@ def test_executor_release_waits_for_commands_and_preserves_results(
                 },
             },
         )["value"]["backgroundTaskId"]
-        changed = (
-            base64.b64decode(payload["files"]["remote-execution/runtime.py"])
-            + b"\n# release fixture\n"
-        )
+        changed = base64.b64decode(payload["files"]["remote-execution/runtime.py"])
+        if update_kind == "runtime":
+            changed += b"\n# release fixture\n"
+        else:
+            next_binary = tmp_path / "next-claude"
+            next_binary.symlink_to(claude_binary())
+            monkeypatch.setattr(bootstrap, "binary", lambda *_: str(next_binary))
         payload["files"]["remote-execution/runtime.py"] = base64.b64encode(
             changed
         ).decode()
@@ -781,7 +833,7 @@ class RemoteExecutionTests(unittest.TestCase):
         directory = self.state / "tasks" / task_id
         return "".join(
             f"\n  {name}={(directory / name).read_text(errors='replace')!r}"
-            for name in ("status.json", "stdout", "stderr")
+            for name in ("task.json", "output", "exit")
             if (directory / name).exists()
         )
 

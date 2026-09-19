@@ -25,6 +25,9 @@ def can_prepare(info):
     return (
         "prepare" in info.get("capabilities", [])
         and info.get("runtime_sha256") == runtime.SOURCE_SHA256
+        # The bootstrap pins the native binary independently of runtime.py.
+        and info.get("files", {}).get("remote-execution/bootstrap.py")
+        == hashlib.sha256(Path(bootstrap.__file__).read_bytes()).hexdigest()
     )
 
 

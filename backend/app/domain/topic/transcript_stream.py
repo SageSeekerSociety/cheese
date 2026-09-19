@@ -8,7 +8,7 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -154,6 +154,18 @@ async def _row(
     return row
 
 
+async def _bound_write_transaction(session: AsyncSession) -> None:
+    # These transactions only update an index; object transfers finish first.
+    # Server-side bounds also release locks when the client disappears.
+    await session.execute(
+        text(
+            "SELECT set_config('lock_timeout', '5s', true), "
+            "set_config('statement_timeout', '15s', true), "
+            "set_config('idle_in_transaction_session_timeout', '15s', true)"
+        )
+    )
+
+
 async def append(
     session: AsyncSession,
     *,
@@ -193,6 +205,7 @@ async def append(
         identity_key, identity = source_record(project_id, topic_id, file_id, source)
         await _upload(backend, identity, identity_key, "application/json")
     await _upload(backend, content, key, "application/octet-stream")
+    await _bound_write_transaction(session)
     await session.execute(_insert_missing(project_id, topic_id, file_id, source))
     row = await _row(session, project_id, topic_id, file_id, source, lock=True)
     assert row is not None
@@ -244,6 +257,7 @@ async def confirm(
         await session.commit()
         if row is None or row.size == 0:
             await _upload(backend, identity, identity_key, "application/json")
+        await _bound_write_transaction(session)
         await session.execute(_insert_missing(project_id, topic_id, file_id, source))
         try:
             row = await _row(session, project_id, topic_id, file_id, source, lock=True)
@@ -260,14 +274,14 @@ async def confirm(
         source,
     ):
         raise NotFoundError("Transcript not found")
-    if await _download(backend, identity_key) != identity:
-        raise RuntimeError("Transcript identity record is unavailable or corrupt")
     chunks = [chunk for chunk in row.chunks if chunk["offset"] == offset]
     if size and (
         len(chunks) != 1 or chunks[0]["size"] != size or chunks[0]["sha256"] != sha256
     ):
         raise ConflictError("Transcript range does not match stored bytes")
     await session.commit()
+    if await _download(backend, identity_key) != identity:
+        raise RuntimeError("Transcript identity record is unavailable or corrupt")
     digest = hashlib.sha256()
     stored_size = 0
     async for content in contents(chunks, storage=storage):

@@ -56,6 +56,10 @@ jobs:
       - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a
         with:
           version: '0.12.1'
+      - name: Load the runner Rust toolchain
+        run: |
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          "$HOME/.cargo/bin/cargo" --version
       - run: uv sync --project backend --locked
       - name: Install native terminal test dependencies
         run: |
@@ -135,6 +139,9 @@ jobs:
           version: '0.12.1'
       - name: Install terminal test dependencies
         run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          cargo --version
           "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh tmux redis-tools openssl ripgrep fuse libfuse2
           mkdir -p tmp/remote-execution/deps
           (cd tmp/remote-execution/deps && apt-get download redis-server redis-tools)
