@@ -25,6 +25,7 @@ from app.domain.agent.harness.claude_code.remote_execution.client import (
     _local_chat_send_argv,
 )
 from app.domain.agent.harness.codex.tools import RemoteTools
+from tests.pinned_claude import claude_binary
 
 
 def test_device_requests_read_the_current_room_token_file(tmp_path, monkeypatch):
@@ -154,7 +155,9 @@ def executor(tmp_path):
     work.mkdir()
     subprocess.run(
         [sys.executable, str(helper), "start", "--state", str(state)],
-        input=json.dumps({"workspace": str(work), "env": {}}),
+        input=json.dumps(
+            {"workspace": str(work), "claude": claude_binary(), "env": {}}
+        ),
         text=True,
         capture_output=True,
         check=True,
